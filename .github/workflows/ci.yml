@@ -16,7 +16,8 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install deps
-        run: pip install pytest ruff requests python-dotenv
+        # ruff는 로컬과 동일 버전 고정 — 버전 차이로 규칙 셋이 달라져 로컬 통과·CI 실패가 갈리는 것 방지
+        run: pip install pytest==9.1.1 ruff==0.15.9 requests python-dotenv
       - name: Lint
         run: python -m ruff check scripts/ tests/
       - name: Test
