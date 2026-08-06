@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Seoul  # 로컬(KST)과 시간축 통일 — 시간대 flaky 방지
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: pip install pytest ruff requests python-dotenv
+      - name: Lint
+        run: python -m ruff check scripts/ tests/
+      - name: Test
+        run: python -m pytest tests/ -q

@@ -1,0 +1,5 @@
+[tool.pytest.ini_options]
+pythonpath = ["scripts", "scripts/collectors"]
+
+[tool.pyright]
+extraPaths = ["scripts", "scripts/collectors"]

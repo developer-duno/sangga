@@ -16,6 +16,30 @@ create extension if not exists postgis;
 create extension if not exists pg_trgm;   -- 상호명 부분검색용
 
 -- =====================================================================
+-- L0. bjd_code — 법정동코드 (행정표준코드관리시스템, code.go.kr)
+-- =====================================================================
+-- PNU 조립·시군구코드 조회의 기준 테이블. 존재/폐지 이력을 모두 보관한다.
+-- 폐지된 코드도 지우지 않는 이유: 과거 실거래(수십 년 전 계약)가 그 시절 코드로
+-- 찍혀 있을 수 있어, 폐지 코드까지 남겨둬야 과거 데이터 조인이 끊기지 않는다.
+create table if not exists bjd_code (
+  bjd_code      char(10)  primary key,             -- 법정동코드 10자리
+  sigungu_code  char(5)   not null,                -- bjd_code 앞 5자리. 실거래가 API 조회 키·parcel.sigungu_code 조인용
+  bjd_nm        text      not null,                -- 법정동명 전체 원본 (예: '서울특별시 종로구 청운동')
+  sido_nm       text,                              -- 시도명 (법정동코드 자릿수 계층으로 상위 코드 행에서 파생. 세종처럼 시도 전용 코드가 없으면 시군구 레벨 행의 이름을 그대로 사용)
+  sigungu_nm    text,                              -- 시군구명 (파생, 그 레벨 행이 없으면 NULL. '용인시 처인구'처럼 시 아래 구가 있으면 합쳐서 보관)
+  emd_nm        text,                              -- 읍면동명 (파생, 그 레벨 행이 없으면 NULL)
+  ri_nm         text,                              -- 리명 (파생, 리 레벨 행이 아니면 NULL)
+  is_active     boolean   not null,                -- true=존재 / false=폐지
+  updated_at    timestamptz default now()
+);
+
+comment on table bjd_code is '법정동코드 전체자료(code.go.kr /etc/codeFullDown.do). 폐지 코드 포함 전량 적재';
+comment on column bjd_code.sigungu_code is 'PNU 19자리 = 법정동코드(10) + 대지구분(1) + 본번(4) + 부번(4) 조립의 1단계 재료';
+
+create index if not exists idx_bjd_sigungu on bjd_code (sigungu_code);
+create index if not exists idx_bjd_active  on bjd_code (is_active);
+
+-- =====================================================================
 -- L1. parcel — 필지
 -- =====================================================================
 create table if not exists parcel (
@@ -118,7 +142,8 @@ create table if not exists unit_business (
   lng           double precision,
   geom          geometry(Point, 4326),
   created_at    timestamptz default now(),
-  primary key (snapshot_ym, biz_no)
+  primary key (snapshot_ym, biz_no),
+  constraint chk_ub_floor check (floor_no is null or floor_no <> 0)
 );
 
 comment on table unit_business is '분기 스냅샷. append only. 이전 분기에 있고 이번에 없으면 폐업/이전 = 공실 후보';
