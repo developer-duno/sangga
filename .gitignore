@@ -11,3 +11,4 @@ data/staging/
 node_modules/
 .omc/
 .serena/
+__pycache__/
