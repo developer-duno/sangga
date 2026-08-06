@@ -264,6 +264,9 @@ def sanitize_filename(raw_name: str) -> str:
     한 번 더 확인한다(이중 방어).
     """
     name = html.unescape(raw_name)
+    # 리눅스 basename은 역슬래시를 구분자로 안 봐서 Windows식 경로 성분이 살아남는다
+    # (CI 리눅스 실측) — 구분자를 슬래시로 통일한 뒤 잘라 플랫폼 무관하게 만든다.
+    name = name.replace("\\", "/")
     name = os.path.basename(name)
     name = RE_FORBIDDEN_FILENAME_CHARS.sub("_", name)
     name = name.strip(" .")
@@ -278,6 +281,10 @@ def resolve_dest_path(save_dir: str, safe_name: str) -> str:
     이탈이 감지되면 ValueError를 던진다 (sanitize_filename을 거쳤어도 만약을
     대비한 이중 방어).
     """
+    # 경로 구분자가 남아 있으면 그 자체로 거부 — 리눅스에선 '..\'가 구분자가 아니라
+    # commonpath 검사를 통과해 버리므로(CI 실측) 플랫폼 무관 명시 검사가 먼저다.
+    if "/" in safe_name or "\\" in safe_name:
+        raise ValueError(f"파일명에 경로 구분자 포함: {safe_name!r}")
     save_dir_abs = os.path.abspath(save_dir)
     dest_abs = os.path.abspath(os.path.join(save_dir, safe_name + ".zip"))
     if os.path.commonpath([save_dir_abs, dest_abs]) != save_dir_abs:
