@@ -12,3 +12,7 @@ node_modules/
 .omc/
 .serena/
 __pycache__/
+.pytest_cache/
+.ruff_cache/
+.playwright-mcp/
+supabase/.temp/

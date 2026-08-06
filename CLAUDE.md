@@ -9,7 +9,7 @@
 - **상세 계획** — `docs/상세계획.md` (데이터 소스·분석 로직·검증 설계·로드맵 전부)
 - **DB 스키마** — `supabase/schema.sql`
 - **부동산 데이터 처리 규격** — `budongsan-data` 스킬 참조 (PNU 조립·층 정규화·API 카탈로그)
-- **현재 Phase** — Phase 0 (수집 준비). `docs/PROGRESS.md` 참조
+- **현재 Phase** — Phase 1 진행 중 (PNU/층 정규화 + 건축물대장 조인). Phase 0(수집 준비)은 완료. `docs/PROGRESS.md` 참조
 
 ## 절대 규칙
 
