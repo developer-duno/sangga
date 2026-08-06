@@ -1,0 +1,13 @@
+# 환경변수 (Supabase 키 등 — 절대 커밋 금지)
+.env
+.env.*
+
+# 원본 데이터 (수백 MB — GitHub 100MB 제한 초과)
+data/raw/
+data/staging/
+*.zip
+
+# 의존성·운영 잔재물
+node_modules/
+.omc/
+.serena/
