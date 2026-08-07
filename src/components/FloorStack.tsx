@@ -71,7 +71,7 @@ export function FloorStack({ building }: Props) {
             <dd>{floors.length}개</dd>
           </div>
           <div>
-            <dt>점포</dt>
+            <dt>점포(참고)</dt>
             <dd>{totalStores.toLocaleString('ko-KR')}곳</dd>
           </div>
         </dl>
@@ -87,14 +87,19 @@ export function FloorStack({ building }: Props) {
 
       <ol className="floors">
         {floors.map((f) => {
-          const ratio = (f.floor_area_m2 ?? 0) / maxArea;
+          // 면적이 아예 없는 층(그 층이 전부 연면적 제외분 — 전체의 약 3%)에는 막대를
+          // 그리지 않는다. 최소 폭 2%를 강제하면 "면적 미상"이 "아주 좁은 층"처럼 보인다.
+          const hasArea = f.floor_area_m2 != null;
+          const ratio = hasArea ? f.floor_area_m2! / maxArea : 0;
           const isOpen = openFloor === f.floor_no;
           return (
             <li key={f.floor_no} className={`floor${f.floor_no < 0 ? ' floor--under' : ''}`}>
               <button className="floor__row" onClick={() => setOpenFloor(isOpen ? null : f.floor_no)}>
                 <span className="floor__label">{formatFloor(f.floor_no, f.floor_label)}</span>
                 <span className="floor__bar">
-                  <span className="floor__fill" style={{ width: `${Math.max(ratio * 100, 2)}%` }} />
+                  {hasArea && (
+                    <span className="floor__fill" style={{ width: `${Math.max(ratio * 100, 2)}%` }} />
+                  )}
                 </span>
                 <span className="floor__use">{f.main_use || '용도 미상'}</span>
                 <span className="floor__area">{formatArea(f.floor_area_m2)}</span>
@@ -114,6 +119,14 @@ export function FloorStack({ building }: Props) {
         <span className="grade__badge">D등급 · 간접 추론</span>
         점포 목록은 호수가 아니라 <strong>“땅 + 층”</strong>으로 맞춘 값입니다. 어느 호실인지까지는
         알 수 없습니다. 면적·용도는 건축물대장 <strong>실측(A등급)</strong>입니다.
+      </p>
+      <p className="grade grade--sub">
+        <strong>점포 수는 실제와 다를 수 있습니다.</strong> ① <strong>빠짐</strong> — 상권정보에 층이
+        적히지 않은 점포가 <strong>약 3곳 중 1곳(32.9%)</strong>인데, 이런 점포는 어느 층에도 붙지
+        않아 목록에서 통째로 빠집니다. ② <strong>겹침</strong> — 한 주소를 여러 점포가 나눠 쓰는
+        공유오피스나 같은 땅의 옆 동 점포가 함께 잡혀 실제보다 많아 보일 수 있습니다.
+        <br />
+        근거: 강남 2026년 1분기 상권정보 64,239곳 기준(2026-08-08 실측).
       </p>
     </section>
   );
