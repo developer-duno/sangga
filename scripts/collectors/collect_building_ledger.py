@@ -198,25 +198,33 @@ def pnu_to_params(pnu):
     }, None
 
 
+def _section(payload, name):
+    """payload['response'][name]을 dict로 꺼낸다. 어느 단계든 dict가 아니면 {}.
+
+    포털은 오류 시 `response`가 dict가 아니라 문자열인 봉투를 내려주기도 한다.
+    한 단계라도 그냥 .get()을 부르면 AttributeError로 터진다 — 응답이 이상할 때
+    수집기가 죽는 게 아니라 "코드 없음"으로 조용히 흘러가야 재시도·보고가 돈다.
+    (단위 테스트가 실제로 잡아낸 결함이다.)
+    """
+    if not isinstance(payload, dict):
+        return {}
+    resp = payload.get("response")
+    if not isinstance(resp, dict):
+        return {}
+    sec = resp.get(name)
+    return sec if isinstance(sec, dict) else {}
+
+
 def read_result_code(payload):
     """응답 JSON에서 (resultCode, resultMsg)를 뽑는다. 형태가 이상하면 ('', '')."""
-    if not isinstance(payload, dict):
-        return "", ""
-    header = (payload.get("response") or {}).get("header") or {}
-    if not isinstance(header, dict):
-        return "", ""
+    header = _section(payload, "header")
     return str(header.get("resultCode", "")).strip(), str(header.get("resultMsg", "")).strip()
 
 
 def read_total_count(payload):
     """응답 JSON에서 totalCount(int)를 뽑는다. 없거나 이상하면 0."""
-    if not isinstance(payload, dict):
-        return 0
-    body = (payload.get("response") or {}).get("body") or {}
-    if not isinstance(body, dict):
-        return 0
     try:
-        return int(str(body.get("totalCount", "")).strip())
+        return int(str(_section(payload, "body").get("totalCount", "")).strip())
     except (TypeError, ValueError):
         return 0
 
@@ -230,11 +238,7 @@ def extract_items(payload):
       0건    items 가 빈 문자열/None   -> []
     세 케이스 모두 방어한다.
     """
-    if not isinstance(payload, dict):
-        return []
-    body = (payload.get("response") or {}).get("body") or {}
-    if not isinstance(body, dict):
-        return []
+    body = _section(payload, "body")
     items = body.get("items")
     if not isinstance(items, dict):
         return []

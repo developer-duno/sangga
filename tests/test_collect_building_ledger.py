@@ -205,6 +205,20 @@ def test_read_total_count():
     assert target.read_total_count({"response": {"body": {"totalCount": "x"}}}) == 0
 
 
+def test_parsers_handle_string_response_envelope():
+    """`response`가 dict가 아니라 문자열인 오류 봉투에도 죽지 않아야 한다.
+
+    포털이 오류 시 실제로 내려주는 형태다. 예전 구현은 isinstance 검사가
+    .get() 뒤에 있어서 "이상함".get("header")를 부르다 AttributeError로 터졌다 —
+    수집기가 죽는 대신 "코드 없음 / 0건 / 아이템 없음"으로 흘러가야
+    재시도·실패기록이 정상으로 돈다.
+    """
+    garbage = {"response": "이상함"}
+    assert target.read_result_code(garbage) == ("", "")
+    assert target.read_total_count(garbage) == 0
+    assert target.extract_items(garbage) == []
+
+
 # ── 3. page_count ────────────────────────────────────────────────────────────
 
 
