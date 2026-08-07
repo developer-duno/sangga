@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-건축물대장 raw JSONL → Supabase 적재 (building + unit) + §5.6 조인률 실측 보고
+건축물대장 raw JSONL → Supabase 적재 (building + building_floor + unit) + §5.6 조인률 실측 보고
 
 collect_building_ledger.py가 받아둔 raw(표제부·층별개요·전유공용면적)를 읽어
-building/unit 테이블을 채우고, `docs/상세계획.md` §5.6 "건축물대장 조인 성공률"을
-실제로 재서 보고한다. raw는 읽기만 한다 (CLAUDE.md 수집 규칙: raw 불변).
+building/building_floor/unit 테이블을 채우고, `docs/상세계획.md` §5.6 "건축물대장 조인
+성공률"을 실제로 재서 보고한다. raw는 읽기만 한다 (CLAUDE.md 수집 규칙: raw 불변).
 
 무엇을 하나:
   1. building — 표제부 한 행 = 건물 하나.
@@ -20,11 +20,17 @@ building/unit 테이블을 채우고, `docs/상세계획.md` §5.6 "건축물대
      새 대장PK가 섞여 들어오면 정렬 순번이 흔들려 기존 unit들의 FK가 조용히
      다른 건물로 넘어가는 결함이 있었다). 대장PK가 비어 있는 행만
      make_bld_id(pnu, dongNm) 폴백을 쓴다 — build_buildings() 참조.
-  2. unit — 전유공용면적 중 전유(exposPubuseGbCd='1') 행만 모아
+  2. building_floor — 층별개요 한 행 = 그 층의 한 용도 구획.
+       floor_id = bld_id + 층 + 용도코드 + 세부용도 + 플래그2   ← make_floor_id
+     unit(호실)과 달리 **모든 건물**에 있다 — 전유공용면적은 집합건물에만 있어
+     강남 실측 1,083/5,903 = 18.35%에서 막히지만 층별개요는 5,903/5,903 = 100%다.
+     그래서 §8.6 층별 스택 뷰는 "호실 쌓기"가 아니라 "층 쌓기"로 만들고, 그 유일한
+     재료가 이 테이블이다. 같은 키가 여러 줄로 오면 면적을 합산한다(build_floors).
+  3. unit — 전유공용면적 중 전유(exposPubuseGbCd='1') 행만 모아
      (건물, 층, 호) 단위로 area를 합산해 excl_area_m2를 만든다. 공용부는 제외한다
      (공용을 더하면 전용면적이 아니라 분양면적이 돼버린다).
      floor_use는 층별개요의 (건물, 층) -> mainPurpsCdNm 룩업으로 채운다.
-  3. 적재 후 §5.6 조인률을 실측해 출력한다 (목표 90%+) — 수집이 아직 진행
+  4. 적재 후 §5.6 조인률을 실측해 출력한다 (목표 90%+) — 수집이 아직 진행
      중이면(collect_progress에 pending/failed가 남아 있으면) 잠정치임을 먼저
      알린다.
 
@@ -91,6 +97,15 @@ ROOFTOP_FLOOR = ROOFTOP  # normalize_floor.ROOFTOP(99) 재사용 — 이 파일�
 # 전유/공용 구분 (exposPubuseGbCd). 전용면적은 전유만 더한다.
 EXPOS_GB_PRIVATE = "1"
 
+# 층별개요 areaExctYn — '1'이면 연면적 산정 제외분(계단실·물탱크실·옥탑 등).
+# 데이터 근거(2026-08-07 강남 raw 63,053행): 층별개요 면적을 전부 더하면 표제부
+# 연면적과 ±1% 일치가 64.1%인데, 이 행들을 빼면 82.6%로 오른다. 부속건축물까지
+# 빼면 81.7%로 도로 떨어져 부속은 연면적에 포함됨이 확인됐다.
+AREA_EXCLUDED_YN = "1"
+
+# 층별개요 mainAtchGbCd — '0' 주건축물 / '1' 부속건축물.
+MAIN_ATCH_ANNEX = "1"
+
 # 주차 대수 4종 (옥내자주식/옥내기계식/옥외자주식/옥외기계식)
 PARKING_FIELDS = ("indrAutoUtcnt", "indrMechUtcnt", "oudrAutoUtcnt", "oudrMechUtcnt")
 
@@ -128,6 +143,7 @@ EXPOS_ROW_TRUNCATION_CAP = 10_000
 TABLE_UPSERT_RESOLUTION = {
     "building": "merge-duplicates",
     "unit": "merge-duplicates",
+    "building_floor": "merge-duplicates",
 }
 
 
@@ -202,6 +218,31 @@ def make_unit_id(bld_id, floor_no, ho):
     """
     floor_token = "NA" if floor_no is None else str(floor_no)
     return "{}_{}_{}".format(bld_id, floor_token, ho or "")
+
+
+def make_floor_id(bld_id, floor_no, main_purps_cd, etc_purps, area_excluded, is_annex):
+    """building_floor의 PK. bld_id + 층 + 용도코드 + 세부용도 + 플래그 2개.
+
+    왜 이 조합인가: 층별개요 원본에는 행을 1:1로 가리킬 자연키가 없다. 강남
+    실측(2026-08-07, 63,053행)에서 (건물·층·용도코드·세부용도·제외여부·부속구분)을
+    전부 합쳐도 713그룹이 중복이다 — 같은 층에 같은 이름의 일반음식점 구획이 7개
+    있는 식이다. 남은 후보는 rnum(응답 내 순번)뿐인데 이건 영속 키로 못 쓴다:
+    순번의 정의상 대장에 행이 하나만 추가·삭제돼도 그 뒤가 통째로 밀려, 같은 구획이
+    다음 수집 때 다른 키를 갖는다(밀림 자체는 필연이고 실제 갱신 빈도는 아직 측정
+    안 했다 — 어느 쪽이든 키로 쓸 이유가 없다).
+    그래서 unit과 같은 해법을 쓴다: **같은 키는 면적을 합산**하고 몇 줄이 합쳐졌는지
+    src_row_cnt로 남긴다(build_floors).
+
+    층이 판정 불가면 'NA' — 0을 쓰지 않는다(절대 규칙 4, make_unit_id와 같은 관례).
+    세부용도(etcPurps)는 호출부에서 공백을 제거한 값을 그대로 받는다 — 여기서 다시
+    자르면 그룹 키와 PK의 표기가 어긋난다(make_unit_id의 ho와 같은 함정).
+    """
+    floor_token = "NA" if floor_no is None else str(floor_no)
+    return "{}_{}_{}_{}_{}{}".format(
+        bld_id, floor_token, main_purps_cd or "", etc_purps or "",
+        "X" if area_excluded else "I",   # eXcluded / Included (연면적 산정)
+        "A" if is_annex else "M",        # Annex / Main (부속·주건축물)
+    )
 
 
 def parse_use_apr_day(raw):
@@ -523,6 +564,99 @@ def build_floor_use_lookup(flr_rows, buildings, buildings_by_pnu):
     }
 
 
+def build_floors(flr_rows, buildings, buildings_by_pnu):
+    """층별개요 raw 행 -> (building_floor dict 목록, 통계).
+
+    한 행 = "그 층의 한 용도 구획"이다. 원본은 한 층이 용도별로 여러 줄로 쪼개져
+    오므로(실측: 어느 4층 하나가 사무소·일반음식점 5개·예식장 4개·복도·계단 등
+    19줄) 층 하나로 뭉치지 않고 그대로 담는다 — 뭉치는 건 뷰(v_building_floor_stack)로
+    언제든 되지만 버린 세부는 되살릴 수 없다.
+
+    같은 (건물, 층, 용도코드, 세부용도, 연면적제외, 부속구분) 키가 여러 줄로 오면
+    면적을 합산하고 합쳐진 줄 수를 src_row_cnt에 남긴다 — 원본에 행을 1:1로 가리킬
+    자연키가 없기 때문이다(make_floor_id 참조). build_units가 (건물, 층, 호)에
+    쓰는 것과 같은 해법이다.
+
+    ⚠️ 이 함수는 unit.floor_use를 채우는 build_floor_use_lookup과 **별개**다.
+    같은 raw를 두 번 훑지만 목적이 다르다 — 룩업은 층당 대표 용도 하나(첫 값)만
+    필요하고, 여기는 구획을 전부 보존한다. 룩업의 "첫 값" 규칙을 "면적 최대"로
+    바꾸면 라이브 unit.floor_use 값이 바뀌므로 이번 범위에서 건드리지 않는다.
+
+    건물 귀속은 build_units와 반드시 같은 규칙(resolve_bld_id)을 쓴다. 실측
+    (2026-08-07 강남 raw 63,053행): 대장PK 매칭 100%, 귀속 실패 0건.
+    """
+    grouped = {}
+    stats = Counter()
+    floor_unmapped = Counter()
+    resolve_reasons = Counter()
+
+    for row in flr_rows:
+        item = row["item"]
+        stats["rows"] += 1
+
+        floor_no = floor_from_codes(item.get("flrGbCd"), item.get("flrNo"))
+        if floor_no is None:
+            floor_unmapped["flrGbCd={!r} flrNo={!r}".format(
+                item.get("flrGbCd"), item.get("flrNo"))] += 1
+        # 층 판정 불가여도 행 자체는 살린다(floor_no=NULL 허용 — 절대 규칙 4).
+        # 스택에 쌓을 자리가 없을 뿐이라 v_building_floor_stack이 걸러낸다.
+
+        pnu = row["pnu"]
+        bld_id, reason = resolve_bld_id(
+            pnu, item.get("dongNm"), item.get("mgmBldrgstPk"),
+            item.get("bldNm"), _is_jiphap(item), buildings, buildings_by_pnu)
+        resolve_reasons[reason] += 1
+        if bld_id is None:
+            stats["건물 귀속 실패로 스킵"] += 1
+            continue
+
+        purps_cd = str(item.get("mainPurpsCd") or "").strip() or None
+        # 세부용도는 여기서 한 번만 공백 정규화한다 — 그룹 키와 floor_id가 항상
+        # 같은 표기를 쓰게 하려는 것(build_units의 ho와 같은 이유).
+        etc = "".join(str(item.get("etcPurps") or "").split()) or None
+        excluded = str(item.get("areaExctYn") or "").strip() == AREA_EXCLUDED_YN
+        annex = str(item.get("mainAtchGbCd") or "").strip() == MAIN_ATCH_ANNEX
+
+        key = (bld_id, floor_no, purps_cd, etc, excluded, annex)
+        area = _to_float(item.get("area"))
+
+        if key not in grouped:
+            grouped[key] = {
+                "floor_id": make_floor_id(bld_id, floor_no, purps_cd, etc, excluded, annex),
+                "bld_id": bld_id,
+                "pnu": pnu,
+                "floor_no": floor_no,
+                "flr_gb_nm": (item.get("flrGbCdNm") or "").strip() or None,
+                "flr_no_nm": (item.get("flrNoNm") or "").strip() or None,
+                "main_purps_cd": purps_cd,
+                "main_purps_nm": (item.get("mainPurpsCdNm") or "").strip() or None,
+                "etc_purps": etc,
+                "strct_nm": (item.get("strctCdNm") or "").strip() or None,
+                "area_m2": None,
+                "area_excluded": excluded,
+                "is_annex": annex,
+                "src_row_cnt": 0,
+            }
+        rec = grouped[key]
+        rec["src_row_cnt"] += 1
+        if area is not None:
+            rec["area_m2"] = area if rec["area_m2"] is None else rec["area_m2"] + area
+            stats["면적 합산 행"] += 1
+        else:
+            stats["area 결측"] += 1
+
+    floors = list(grouped.values())
+    stats["층 구획"] = len(floors)
+    stats["연면적 제외분"] = sum(1 for f in floors if f["area_excluded"])
+    stats["부속건축물"] = sum(1 for f in floors if f["is_annex"])
+    stats["여러 줄이 합쳐진 구획"] = sum(1 for f in floors if f["src_row_cnt"] > 1)
+    return floors, {
+        "counts": stats,
+        "floor_unmapped": floor_unmapped,
+        "resolve_reasons": resolve_reasons,
+    }
+
+
 def build_units(expos_rows, buildings, buildings_by_pnu, floor_use_lookup):
     """전유공용면적 raw 행 -> (unit dict 목록, 통계).
 
@@ -774,13 +908,45 @@ def _pgrst_in_list(values):
 def delete_stale_units(base_url, headers, unit_records, period_key, raw_row_counts,
                        truncated_pnus,
                        pnu_chunk=STALE_PNU_CHUNK, delete_chunk=STALE_DELETE_CHUNK):
-    """원본이 온전함이 확인된 PNU 범위 안에서, 계산 결과에 없는 옛 unit 행을 지운다.
+    """계산 결과에 없는 옛 unit 행을 지운다 (_delete_stale_rows의 unit용 껍데기).
 
-    왜 필요한가: unit_id에 층이 들어간다(make_unit_id -> bld_id_층_호). 층
-    판정 규칙이 바뀌면 같은 호실의 unit_id가 통째로 바뀐다 — 복수층 복원
-    전 '..._NA_501호'였던 행이 복원 후 '..._5_501호'가 되는 식이다. 적재는
-    upsert뿐이라 새 행만 생기고 옛 행은 남는다. 그러면 같은 호실이 두 줄로
-    존재해 전용면적이 이중 집계된다. 그래서 적재 직후 옛 행을 지운다.
+    왜 unit에 필요한가: unit_id에 층이 들어간다(make_unit_id -> bld_id_층_호).
+    층 판정 규칙이 바뀌면 같은 호실의 unit_id가 통째로 바뀐다 — 복수층 복원 전
+    '..._NA_501호'였던 행이 복원 후 '..._5_501호'가 되는 식이다. 적재는 upsert뿐이라
+    새 행만 생기고 옛 행은 남아, 같은 호실이 두 줄이 되어 전용면적이 이중 집계된다.
+    """
+    return _delete_stale_rows(
+        base_url, headers, "unit", "unit_id", unit_records, period_key,
+        raw_row_counts, truncated_pnus, pnu_chunk, delete_chunk)
+
+
+def delete_stale_floors(base_url, headers, floor_records, period_key, raw_row_counts,
+                        truncated_pnus,
+                        pnu_chunk=STALE_PNU_CHUNK, delete_chunk=STALE_DELETE_CHUNK):
+    """계산 결과에 없는 옛 building_floor 행을 지운다 (_delete_stale_rows의 층용 껍데기).
+
+    왜 층에도 필요한가: floor_id에 층·용도코드·세부용도가 들어간다(make_floor_id).
+    층 판정이나 용도 표기가 바뀌면 키가 바뀌어 옛 행이 남고, 그러면 같은 층 면적이
+    v_building_floor_stack에서 이중으로 더해진다 — unit과 정확히 같은 함정이다.
+
+    ⚠️ truncated_pnus는 전유공용면적(expos_area)의 페이지 절단 목록이라 층별개요와
+    직접 관계가 없다. 그래도 그대로 넘겨 그 PNU들을 정리 대상에서 빼는 쪽을 택했다 —
+    옛 행이 남는 것(면적 이중 집계, 재실행으로 정리됨)보다 멀쩡한 행이 지워지는 쪽이
+    훨씬 비싸기 때문이다. 보수적으로 트는 것이 이 함수 전체의 설계 기조다.
+    """
+    return _delete_stale_rows(
+        base_url, headers, "building_floor", "floor_id", floor_records, period_key,
+        raw_row_counts, truncated_pnus, pnu_chunk, delete_chunk)
+
+
+def _delete_stale_rows(base_url, headers, table, id_field, records, period_key,
+                       raw_row_counts, truncated_pnus, pnu_chunk, delete_chunk):
+    """원본이 온전함이 확인된 PNU 범위 안에서, 계산 결과에 없는 옛 행을 지운다.
+
+    unit·building_floor 공용 — 두 테이블 모두 PK에 층 등 "계산으로 정해지는 값"이
+    들어가서 규칙이 바뀌면 키가 통째로 바뀌고 옛 행이 남는다. 정리 규칙이 갈라지면
+    한쪽만 조용히 이중 집계되므로 로직을 하나로 둔다(호출부는 delete_stale_units /
+    delete_stale_floors).
 
     ⚠️ 삭제 범위를 정하는 규칙이 이 함수의 전부다. "raw에 그 PNU 행이 있다"만
     으로는 부족하다 — 그 PNU를 **이번에 온전히 다시 계산했다**는 보장이 없으면
@@ -809,11 +975,11 @@ def delete_stale_units(base_url, headers, unit_records, period_key, raw_row_coun
 
     반환: 지운 행 수.
     """
-    if not unit_records:
+    if not records:
         return 0
 
-    keep = {r["unit_id"] for r in unit_records}
-    candidates = {r["pnu"] for r in unit_records}
+    keep = {r[id_field] for r in records}
+    candidates = {r["pnu"] for r in records}
     done_counts = fetch_done_row_counts(base_url, headers, period_key)
     truncated = set(truncated_pnus or ())
     pnus = sorted(
@@ -824,25 +990,25 @@ def delete_stale_units(base_url, headers, unit_records, period_key, raw_row_coun
     )
     skipped = len(candidates) - len(pnus)
     if skipped:
-        print("  [unit] 원본 완전성 미확인 PNU {:,}개는 정리 대상에서 제외 "
-              "(collect_progress done + row_count 일치인 PNU만 정리)".format(skipped),
+        print("  [{}] 원본 완전성 미확인 PNU {:,}개는 정리 대상에서 제외 "
+              "(collect_progress done + row_count 일치인 PNU만 정리)".format(table, skipped),
               flush=True)
     if not pnus:
-        print("  [unit] 정리 가능한 PNU 없음 — 옛 행 정리를 건너뜁니다", flush=True)
+        print("  [{}] 정리 가능한 PNU 없음 — 옛 행 정리를 건너뜁니다".format(table), flush=True)
         return 0
 
     stale = []
     for i in range(0, len(pnus), pnu_chunk):
         part = pnus[i:i + pnu_chunk]
         rows = rest_select(
-            base_url, headers, "unit",
-            "select=unit_id&pnu=in.({})".format(",".join(part)),
-            order="unit_id",
+            base_url, headers, table,
+            "select={}&pnu=in.({})".format(id_field, ",".join(part)),
+            order=id_field,
         )
-        stale.extend(r["unit_id"] for r in rows if r["unit_id"] not in keep)
+        stale.extend(r[id_field] for r in rows if r[id_field] not in keep)
 
     if not stale:
-        print("  [unit] 정리할 옛 행 없음", flush=True)
+        print("  [{}] 정리할 옛 행 없음".format(table), flush=True)
         return 0
 
     deleted = 0
@@ -852,26 +1018,61 @@ def delete_stale_units(base_url, headers, unit_records, period_key, raw_row_coun
         batch_no = i // delete_chunk + 1
         try:
             r = requests.delete(
-                "{}/rest/v1/unit".format(base_url),
-                params={"unit_id": _pgrst_in_list(part)},
+                "{}/rest/v1/{}".format(base_url, table),
+                params={id_field: _pgrst_in_list(part)},
                 headers=headers, timeout=TIMEOUT_SEC,
             )
         except requests.RequestException as e:
             raise RuntimeError(
-                "unit 옛 행 삭제 {}/{} 중 네트워크 오류: {}. 적재 자체는 끝났으므로 "
+                "{} 옛 행 삭제 {}/{} 중 네트워크 오류: {}. 적재 자체는 끝났으므로 "
                 "같은 명령을 다시 실행하면 남은 옛 행부터 정리합니다.".format(
-                    batch_no, total_batches, e)
+                    table, batch_no, total_batches, e)
             )
         if r.status_code >= 300:
             raise RuntimeError(
-                "unit 옛 행 삭제 {}/{} 실패 (HTTP {}): {}. 적재 자체는 끝났으므로 "
+                "{} 옛 행 삭제 {}/{} 실패 (HTTP {}): {}. 적재 자체는 끝났으므로 "
                 "같은 명령을 다시 실행하면 남은 옛 행부터 정리합니다.".format(
-                    batch_no, total_batches, r.status_code, r.text[:300])
+                    table, batch_no, total_batches, r.status_code, r.text[:300])
             )
         deleted += len(part)
-        print("  [unit] 옛 행 정리 {}/{} 배치 {}행 (누적 {:,}/{:,})".format(
+        print("  [{}] 옛 행 정리 {}/{} 배치 {}행 (누적 {:,}/{:,})".format(
+            table,
             batch_no, total_batches, len(part), deleted, len(stale)), flush=True)
     return deleted
+
+
+def assert_tables_exist(base_url, headers, tables):
+    """적재를 시작하기 전에 대상 테이블이 라이브에 있는지 먼저 확인한다.
+
+    왜 필요한가: upsert는 building -> building_floor -> unit 순서라, 새 테이블이
+    아직 안 만들어진 DB에 돌리면 **건물만 들어가고 층에서 멈춰 호실이 빠진** 어중간한
+    상태가 된다. 데이터가 깨지진 않지만(재실행하면 정리된다) 원인을 찾는 데 시간이
+    든다. 아무것도 건드리기 전에 막고, 무엇을 해야 하는지까지 알려주는 편이 낫다.
+    """
+    missing = []
+    for table in tables:
+        try:
+            r = requests.get(
+                "{}/rest/v1/{}".format(base_url, table),
+                params={"select": "*", "limit": "1"},
+                headers=headers, timeout=TIMEOUT_SEC,
+            )
+        except requests.RequestException as e:
+            raise RuntimeError("Supabase 연결 실패({}): {}".format(table, e))
+        # PostgREST는 없는 테이블에 404를 준다 (권한 문제면 401/403).
+        if r.status_code == 404:
+            missing.append(table)
+        elif r.status_code >= 300:
+            raise RuntimeError("{} 조회 실패 (HTTP {}): {}".format(
+                table, r.status_code, r.text[:200]))
+    if missing:
+        raise RuntimeError(
+            "라이브 DB에 테이블이 없습니다: {}\n"
+            "       Supabase 대시보드 → SQL Editor → New query 에서\n"
+            "       supabase/migrations/2026-08-07_building_floor.sql 전체를 붙여넣고 Run 하세요.\n"
+            "       (여러 번 실행해도 안전합니다. 기존 데이터는 건드리지 않습니다.)".format(
+                ", ".join(missing))
+        )
 
 
 def rest_count(base_url, headers, table, query):
@@ -952,10 +1153,11 @@ def fetch_done_row_counts(base_url, headers, period_key):
 # ── 보고 출력 ────────────────────────────────────────────────────────────────
 
 
-def print_transform_report(raw_dir, broken_lines, bld_stats, flr_stats, unit_stats,
-                           building_count, unit_count, truncated_pnus):
+def print_transform_report(raw_dir, broken_lines, bld_stats, flr_stats, floor_stats,
+                           unit_stats, building_count, floor_count, unit_count,
+                           truncated_pnus):
     print("=" * 78)
-    print("건축물대장 raw → building/unit 변환 결과")
+    print("건축물대장 raw → building/building_floor/unit 변환 결과")
     print("=" * 78)
     print("raw 폴더: {}".format(raw_dir))
     print("")
@@ -979,6 +1181,16 @@ def print_transform_report(raw_dir, broken_lines, bld_stats, flr_stats, unit_sta
     print("    대장PK 결측 — 동명칭 폴백: {:,}건 (실측상 0건이 정상)".format(
         bld_stats["pk_missing_fallback"]))
     print("    building이 붙은 PNU: {:,}개".format(len(bld_stats["pnu_with_building"])))
+
+    print("")
+    print("[ building_floor ] {:,}행 (would-upsert) — §8.6 층별 스택 뷰의 재료".format(floor_count))
+    fcounts = floor_stats["counts"]
+    for label in ("건물 귀속 실패로 스킵", "면적 합산 행", "area 결측",
+                  "여러 줄이 합쳐진 구획", "연면적 제외분", "부속건축물"):
+        print("    {:<22} {:>10,}".format(label, fcounts[label]))
+    print("    건물 귀속 사유:")
+    for reason, cnt in floor_stats["resolve_reasons"].most_common():
+        print("      - {}: {:,}건".format(reason, cnt))
 
     print("")
     print("[ unit ] {:,}행 (would-upsert)".format(unit_count))
@@ -1142,25 +1354,30 @@ def count_raw_rows_by_pnu(*row_lists):
 
 
 def transform(raw_dir):
-    """raw 폴더 -> (building 목록, unit 목록, 보고용 통계 묶음)."""
+    """raw 폴더 -> (building 목록, unit 목록, building_floor 목록, 보고용 통계 묶음)."""
     title_rows, flr_rows, expos_rows, broken = load_raw(raw_dir)
     buildings, bld_stats = build_buildings(title_rows)
     # 층별개요·전유부 모두 같은 건물 귀속 규칙(resolve_bld_id)을 쓴다 — 키가 어긋나면
     # floor_use가 조용히 NULL로 남는다.
     floor_use, flr_stats = build_floor_use_lookup(
         flr_rows, buildings, bld_stats["buildings_by_pnu"])
+    floors, floor_stats = build_floors(
+        flr_rows, buildings, bld_stats["buildings_by_pnu"])
     units, unit_stats = build_units(
         expos_rows, buildings, bld_stats["buildings_by_pnu"], floor_use)
 
     building_records = list(buildings.values())
     assert_no_zero_floor(units)
+    assert_no_zero_floor(floors)
     assert_unique(building_records, "bld_id")
     assert_unique(units, "unit_id")
+    assert_unique(floors, "floor_id")
 
-    return building_records, units, {
+    return building_records, units, floors, {
         "broken": broken,
         "bld_stats": bld_stats,
         "flr_stats": flr_stats,
+        "floor_stats": floor_stats,
         "unit_stats": unit_stats,
         "pnu_in_raw_title": {r["pnu"] for r in title_rows},
         "truncated_pnus": find_truncated_pnu(expos_rows),
@@ -1233,14 +1450,14 @@ def main():
 
     print("raw 읽는 중: {}".format(raw_dir), flush=True)
     try:
-        building_records, unit_records, stats = transform(raw_dir)
+        building_records, unit_records, floor_records, stats = transform(raw_dir)
     except RuntimeError as e:
         print("[에러] {}".format(e))
         return 1
 
     print_transform_report(raw_dir, stats["broken"], stats["bld_stats"], stats["flr_stats"],
-                           stats["unit_stats"], len(building_records), len(unit_records),
-                           stats["truncated_pnus"])
+                           stats["floor_stats"], stats["unit_stats"], len(building_records),
+                           len(floor_records), len(unit_records), stats["truncated_pnus"])
 
     if opts["dry_run"]:
         print("")
@@ -1260,11 +1477,23 @@ def main():
         return 1
     headers = {"apikey": key, "Authorization": "Bearer {}".format(key)}
 
-    print("적재 시작... (building -> unit 순서, unit.bld_id FK 때문에 순서 고정)", flush=True)
+    # 아무것도 건드리기 전에 대상 테이블 존재부터 확인한다 — 반쯤 적재된 상태 방지.
+    try:
+        assert_tables_exist(base_url, headers, ("building", "building_floor", "unit"))
+    except RuntimeError as e:
+        print("[에러] {}".format(e))
+        return 1
+
+    print("적재 시작... (building -> building_floor -> unit 순서, "
+          "두 자식 테이블의 bld_id FK 때문에 순서 고정)", flush=True)
     try:
         bld_sent = upsert_batch(base_url, headers, "building", building_records)
+        floor_sent = upsert_batch(base_url, headers, "building_floor", floor_records)
         unit_sent = upsert_batch(base_url, headers, "unit", unit_records)
-        # 적재 뒤에 정리한다 — 층 판정이 바뀌면 unit_id가 바뀌어 옛 행이 남는다.
+        # 적재 뒤에 정리한다 — 층·용도 판정이 바뀌면 PK가 바뀌어 옛 행이 남는다.
+        floor_deleted = delete_stale_floors(
+            base_url, headers, floor_records,
+            opts["period_key"], stats["raw_row_counts"], stats["truncated_pnus"])
         unit_deleted = delete_stale_units(
             base_url, headers, unit_records,
             opts["period_key"], stats["raw_row_counts"], stats["truncated_pnus"])
@@ -1274,8 +1503,10 @@ def main():
 
     print("")
     print("=" * 78)
-    print("적재 완료: building {:,}행 / unit {:,}행 (옛 unit {:,}행 정리)".format(
-        bld_sent, unit_sent, unit_deleted))
+    print("적재 완료: building {:,}행 / building_floor {:,}행 / unit {:,}행".format(
+        bld_sent, floor_sent, unit_sent))
+    print("           (옛 행 정리: building_floor {:,}행 / unit {:,}행)".format(
+        floor_deleted, unit_deleted))
     print("=" * 78)
 
     print("")
