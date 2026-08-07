@@ -76,7 +76,8 @@ def raw_row(pnu, item, fetched_at="2026-08-07T10:00:00+09:00"):
     return {"pnu": pnu, "fetched_at": fetched_at, "item": item}
 
 
-def flr_item(flr_gb_cd="20", flr_no="1", purpose="제1종근린생활시설", dong_nm="", area="500.5"):
+def flr_item(flr_gb_cd="20", flr_no="1", purpose="제1종근린생활시설", dong_nm="", area="500.5",
+             purps_cd="02000", etc_purps="소매점", area_exct_yn="0", main_atch_gb_cd="0"):
     return {
         "dongNm": dong_nm,
         "flrGbCd": flr_gb_cd,
@@ -84,8 +85,12 @@ def flr_item(flr_gb_cd="20", flr_no="1", purpose="제1종근린생활시설", do
         "flrNo": flr_no,
         "flrNoNm": "{}층".format(flr_no),
         "area": area,
-        "mainPurpsCd": "02000",
+        "mainPurpsCd": purps_cd,
         "mainPurpsCdNm": purpose,
+        "etcPurps": etc_purps,
+        "strctCdNm": "철근콘크리트구조",
+        "areaExctYn": area_exct_yn,
+        "mainAtchGbCd": main_atch_gb_cd,
         "mgmBldrgstPk": "11680-100123",
     }
 
@@ -441,6 +446,201 @@ def test_build_floor_use_lookup_counts_unresolved_when_ambiguous():
 
     assert lookup == {}
     assert stats["unresolved"] == 1
+
+
+# ── 7-a. make_floor_id / build_floors (§8.6 층별 스택 뷰의 재료) ──────────────
+#
+# 층별개요는 호실(unit)과 달리 모든 건물에 있다 — 스택 뷰를 "층 쌓기"로 만드는
+# 근거다. 원본은 한 층이 용도별로 여러 줄로 쪼개져 오고, 그 줄들을 1:1로 가리킬
+# 자연키가 없어 같은 키는 면적을 합산한다(build_units의 (건물,층,호)와 같은 해법).
+
+
+def _floors_for(rows, *building_specs):
+    """build_floors를 building 맥락과 함께 호출하는 도우미."""
+    buildings, bstats = _buildings_for(*(building_specs or ((PNU_A, ""),)))
+    return target.build_floors(rows, buildings, bstats["buildings_by_pnu"])
+
+
+def test_make_floor_id_composes_every_part():
+    assert target.make_floor_id("B", 3, "02000", "소매점", False, False) == "B_3_02000_소매점_IM"
+
+
+def test_make_floor_id_unknown_floor_is_na_not_zero():
+    fid = target.make_floor_id("B", None, "02000", "소매점", False, False)
+    assert "_NA_" in fid
+    assert "_0_" not in fid
+
+
+def test_make_floor_id_flags_split_excluded_and_annex():
+    """연면적 제외분·부속건축물은 같은 층·같은 용도여도 다른 행이어야 한다.
+
+    합쳐 버리면 area_excluded 한 값으로 두 성격의 면적이 뭉개져, 임대 가능 면적을
+    구하려고 area_excluded=false만 더할 때 계단실 면적이 섞여 들어온다.
+    """
+    ids = {
+        target.make_floor_id("B", 1, "02000", "소매점", excl, annex)
+        for excl in (False, True) for annex in (False, True)
+    }
+    assert len(ids) == 4
+
+
+def test_build_floors_sums_area_for_same_key():
+    """같은 층·같은 용도·같은 세부용도 구획이 여러 줄로 오면 면적을 합산한다."""
+    rows = [
+        raw_row(PNU_A, flr_item(area="86.18", etc_purps="일반음식점")),
+        raw_row(PNU_A, flr_item(area="277.70", etc_purps="일반음식점")),
+    ]
+    floors, stats = _floors_for(rows)
+
+    assert len(floors) == 1
+    assert floors[0]["area_m2"] == pytest.approx(363.88)
+    assert floors[0]["src_row_cnt"] == 2
+    assert stats["counts"]["여러 줄이 합쳐진 구획"] == 1
+
+
+def test_build_floors_keeps_uses_on_same_floor_separate():
+    """같은 층이라도 용도가 다르면 따로 남는다 — 층을 펼쳤을 때 보여줄 세부다."""
+    rows = [
+        raw_row(PNU_A, flr_item(purps_cd="14204", purpose="사무소", etc_purps="사무소", area="683.77")),
+        raw_row(PNU_A, flr_item(purps_cd="04001", purpose="일반음식점", etc_purps="일반음식점", area="86.18")),
+    ]
+    floors, _ = _floors_for(rows)
+
+    assert len(floors) == 2
+    assert {f["main_purps_nm"] for f in floors} == {"사무소", "일반음식점"}
+    assert all(f["floor_no"] == 1 for f in floors)
+
+
+def test_build_floors_marks_area_excluded_from_area_exct_yn():
+    """areaExctYn='1' = 연면적 산정 제외분(계단실·물탱크실 등).
+
+    데이터 근거: 이 행들을 빼고 합산하면 표제부 연면적과 ±1% 일치가
+    64.1% -> 82.6%로 오른다(2026-08-07 강남 raw 63,053행 실측).
+    """
+    rows = [
+        raw_row(PNU_A, flr_item(etc_purps="계단실(연면적제외)", area_exct_yn="1", area="30.0")),
+        raw_row(PNU_A, flr_item(etc_purps="소매점", area_exct_yn="0", area="500.0")),
+    ]
+    floors, stats = _floors_for(rows)
+
+    by_detail = {f["etc_purps"]: f for f in floors}
+    assert by_detail["계단실(연면적제외)"]["area_excluded"] is True
+    assert by_detail["소매점"]["area_excluded"] is False
+    assert stats["counts"]["연면적 제외분"] == 1
+
+
+def test_build_floors_marks_annex_building():
+    rows = [raw_row(PNU_A, flr_item(main_atch_gb_cd="1"))]
+    floors, stats = _floors_for(rows)
+
+    assert floors[0]["is_annex"] is True
+    assert stats["counts"]["부속건축물"] == 1
+
+
+def test_build_floors_blank_main_atch_code_is_not_annex():
+    """실측 raw에 mainAtchGbCd=' '(공백) 27행이 있다 — 부속으로 오판하면 안 된다."""
+    rows = [raw_row(PNU_A, flr_item(main_atch_gb_cd=" "))]
+    floors, _ = _floors_for(rows)
+    assert floors[0]["is_annex"] is False
+
+
+def test_build_floors_normalizes_etc_purps_whitespace_into_one_group():
+    """'계단실, 물탱크실'과 '계단실,물탱크실'이 다른 행으로 갈라지면 면적이 나뉘어 저장된다."""
+    rows = [
+        raw_row(PNU_A, flr_item(etc_purps="계단실, 물탱크실", area="10.0")),
+        raw_row(PNU_A, flr_item(etc_purps="계단실,물탱크실", area="20.0")),
+    ]
+    floors, _ = _floors_for(rows)
+
+    assert len(floors) == 1
+    assert floors[0]["etc_purps"] == "계단실,물탱크실"
+    assert floors[0]["area_m2"] == pytest.approx(30.0)
+
+
+def test_build_floors_maps_underground_and_rooftop():
+    """지하 flrNo는 실측상 전부 양수로 온다 — flrGbCd로 부호를 정해야 한다."""
+    rows = [
+        raw_row(PNU_A, flr_item(flr_gb_cd="10", flr_no="3", etc_purps="주차장")),
+        raw_row(PNU_A, flr_item(flr_gb_cd="30", flr_no="1", etc_purps="옥탑")),
+    ]
+    floors, _ = _floors_for(rows)
+
+    assert {f["floor_no"] for f in floors} == {-3, 99}
+
+
+def test_build_floors_merges_rooftop_levels_into_99():
+    """옥탑1·옥탑2는 절대 규칙 4에 따라 둘 다 99다 — 면적은 합쳐지고 원본 표기는 남는다.
+
+    실측상 옥탑은 flrNo 1~19까지 존재한다. 층 축에서는 옥탑이 한 칸이라 합치는 게
+    맞지만, 원본 층 표기가 필요할 때를 위해 flr_no_nm를 남겨둔다.
+    """
+    rows = [
+        raw_row(PNU_A, flr_item(flr_gb_cd="30", flr_no="1", etc_purps="옥탑", area="10.0")),
+        raw_row(PNU_A, flr_item(flr_gb_cd="30", flr_no="2", etc_purps="옥탑", area="5.0")),
+    ]
+    floors, _ = _floors_for(rows)
+
+    assert len(floors) == 1
+    assert floors[0]["floor_no"] == 99
+    assert floors[0]["area_m2"] == pytest.approx(15.0)
+    assert floors[0]["flr_no_nm"] == "1층"      # 첫 행의 원본 표기가 남는다
+
+
+def test_build_floors_keeps_row_when_floor_unmapped():
+    """층을 못 정해도 행은 살린다 — 면적·용도 정보 자체는 유효하다(절대 규칙 4)."""
+    rows = [raw_row(PNU_A, flr_item(flr_gb_cd="40", flr_no="0"))]
+    floors, stats = _floors_for(rows)
+
+    assert len(floors) == 1
+    assert floors[0]["floor_no"] is None
+    assert "_NA_" in floors[0]["floor_id"]
+    assert sum(stats["floor_unmapped"].values()) == 1
+
+
+def test_build_floors_skips_when_building_ambiguous():
+    """건물을 유일하게 못 고르면 임의 귀속하지 않고 스킵한다(unit과 같은 규칙)."""
+    rows = [raw_row(PNU_A, flr_item(dong_nm="다동"))]
+    floors, stats = _floors_for(rows, (PNU_A, "가동"), (PNU_A, "나동"))
+
+    assert floors == []
+    assert stats["counts"]["건물 귀속 실패로 스킵"] == 1
+
+
+def test_build_floors_counts_missing_area():
+    rows = [raw_row(PNU_A, flr_item(area=""))]
+    floors, stats = _floors_for(rows)
+
+    assert floors[0]["area_m2"] is None
+    assert stats["counts"]["area 결측"] == 1
+
+
+def test_build_floors_never_produces_zero_floor():
+    """DB CHECK(chk_bf_floor) 사전 차단 — 층 0은 어떤 입력에서도 안 나온다."""
+    rows = []
+    for gb in ("10", "20", "30", "21", "22", "40", "00", "", None):
+        for no in (-2, -1, 0, 1, 2, "", None):
+            rows.append(raw_row(PNU_A, flr_item(flr_gb_cd=gb, flr_no=no, etc_purps="X")))
+    floors, _ = _floors_for(rows)
+
+    assert floors
+    assert all(f["floor_no"] != 0 for f in floors)
+    target.assert_no_zero_floor(floors)
+
+
+def test_build_floors_ids_are_unique_so_upsert_cannot_collide():
+    """floor_id가 겹치면 upsert가 조용히 한 행을 덮어써 면적이 사라진다."""
+    rows = [
+        raw_row(PNU_A, flr_item(flr_gb_cd=gb, flr_no=no, purps_cd=cd, etc_purps=etc,
+                                area_exct_yn=ex, main_atch_gb_cd=at))
+        for gb in ("10", "20", "30")
+        for no in ("1", "2")
+        for cd in ("02000", "14204")
+        for etc in ("소매점", "사무소")
+        for ex in ("0", "1")
+        for at in ("0", "1")
+    ]
+    floors, _ = _floors_for(rows)
+    target.assert_unique(floors, "floor_id")
 
 
 # ── 8. resolve_bld_id / build_units ─────────────────────────────────────────
@@ -866,13 +1066,18 @@ def test_transform_end_to_end(tmp_path):
             raw_row(PNU_A, expos_item(ho_nm="공용부", area="500.0", gb_cd="2")),
         ],
     )
-    buildings, units, stats = target.transform(raw_dir)
+    buildings, units, floors, stats = target.transform(raw_dir)
 
     assert len(buildings) == 1
     assert buildings[0]["bld_id"] == PNU_A + "_" + TITLE_ITEM["mgmBldrgstPk"]
     assert len(units) == 1
     assert units[0]["excl_area_m2"] == pytest.approx(59.9)
     assert units[0]["floor_use"] == "제1종근린생활시설"
+    assert len(floors) == 1
+    assert floors[0]["bld_id"] == buildings[0]["bld_id"]
+    assert floors[0]["floor_no"] == 1
+    assert floors[0]["area_m2"] == pytest.approx(500.5)
+    assert floors[0]["area_excluded"] is False
     assert stats["pnu_in_raw_title"] == {PNU_A}
     assert stats["truncated_pnus"] == []
 
@@ -888,17 +1093,21 @@ def test_transform_fills_floor_use_despite_dong_name_mismatch(tmp_path):
         flr=[raw_row(PNU_A, flr_item(dong_nm="가동", purpose="제2종근린생활시설"))],
         expos=[raw_row(PNU_A, expos_item(dong_nm="가동", ho_nm="101호", area="30.0"))],
     )
-    _buildings, units, _stats = target.transform(raw_dir)
+    _buildings, units, floors, _stats = target.transform(raw_dir)
 
     assert len(units) == 1
     assert units[0]["bld_id"] == PNU_A + "_" + TITLE_ITEM["mgmBldrgstPk"]
     assert units[0]["floor_use"] == "제2종근린생활시설"
+    # 층 행도 같은 건물로 귀속돼야 한다 — 룩업만 맞고 building_floor가 새면 스택 뷰가 빈다.
+    assert len(floors) == 1
+    assert floors[0]["bld_id"] == units[0]["bld_id"]
 
 
 def test_transform_missing_files_yields_empty(tmp_path):
-    buildings, units, _ = target.transform(str(tmp_path))
+    buildings, units, floors, _ = target.transform(str(tmp_path))
     assert buildings == []
     assert units == []
+    assert floors == []
 
 
 class _FakeResponse:
@@ -1319,6 +1528,55 @@ def test_parse_args_defaults_and_overrides():
     assert opts2["dry_run"] is True
 
 
+def test_assert_tables_exist_passes_when_all_present(monkeypatch):
+    monkeypatch.setattr(target.requests, "get",
+                        lambda *a, **kw: _FakeResponse(200, text="[]"))
+    target.assert_tables_exist("https://x.supabase.co", {}, ("building", "building_floor"))
+
+
+def test_assert_tables_exist_names_missing_table_and_the_fix(monkeypatch):
+    """새 테이블이 없는 DB에 돌리면 아무것도 건드리기 전에 멈추고 조치법을 알려준다."""
+    def fake_get(url, params=None, headers=None, timeout=None):
+        return _FakeResponse(404 if url.endswith("building_floor") else 200, text="not found")
+
+    monkeypatch.setattr(target.requests, "get", fake_get)
+    with pytest.raises(RuntimeError) as e:
+        target.assert_tables_exist("https://x.supabase.co", {}, ("building", "building_floor"))
+    assert "building_floor" in str(e.value)
+    assert "2026-08-07_building_floor.sql" in str(e.value)
+
+
+def test_assert_tables_exist_raises_on_other_http_error(monkeypatch):
+    """404(없음)와 401/500(권한·장애)을 구분한다 — 후자를 '테이블 없음'으로 오진하면 안 된다."""
+    monkeypatch.setattr(target.requests, "get",
+                        lambda *a, **kw: _FakeResponse(401, text="unauthorized"))
+    with pytest.raises(RuntimeError, match="401"):
+        target.assert_tables_exist("https://x.supabase.co", {}, ("building",))
+
+
+def test_main_stops_before_upsert_when_table_missing(tmp_path, monkeypatch, capsys):
+    """반쯤 적재된 상태 방지 — 테이블이 없으면 upsert를 단 한 번도 부르면 안 된다."""
+    raw_dir = _write_raw(
+        tmp_path,
+        title=[raw_row(PNU_A, TITLE_ITEM)],
+        flr=[raw_row(PNU_A, flr_item())],
+        expos=[raw_row(PNU_A, expos_item())],
+    )
+    monkeypatch.setattr(target, "get_supabase_config", lambda: ("https://x.supabase.co", "k"))
+    monkeypatch.setattr(target.requests, "get",
+                        lambda url, **kw: _FakeResponse(
+                            404 if url.endswith("building_floor") else 200, text="x"))
+
+    def boom(*a, **kw):
+        raise AssertionError("테이블이 없으면 적재를 시작하면 안 된다")
+
+    monkeypatch.setattr(target, "upsert_batch", boom)
+    monkeypatch.setattr(sys, "argv", ["prog", "--raw-dir", raw_dir])
+
+    assert target.main() == 1
+    assert "building_floor" in capsys.readouterr().out
+
+
 def test_parse_args_missing_value():
     with pytest.raises(ValueError, match="뒤에 값이 필요"):
         target.parse_args(["--raw-dir"])
@@ -1367,10 +1625,11 @@ def test_main_loads_and_reports(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(target, "report_join_rate", lambda *a, **kw: None)
     # 적재 뒤 옛 unit 행 정리가 DB를 조회한다 — 기존 행이 없는 상태로 흉내낸다.
     monkeypatch.setattr(target, "rest_select", lambda *a, **kw: [])
+    monkeypatch.setattr(target, "assert_tables_exist", lambda *a, **kw: None)
     monkeypatch.setattr(sys, "argv", ["prog", "--raw-dir", raw_dir])
 
     assert target.main() == 0
-    assert sent == {"building": 1, "unit": 1}
+    assert sent == {"building": 1, "building_floor": 1, "unit": 1}
     out = capsys.readouterr().out
     assert "적재 완료" in out
-    assert "옛 unit 0행 정리" in out
+    assert "옛 행 정리: building_floor 0행 / unit 0행" in out
