@@ -1,0 +1,1098 @@
+# -*- coding: utf-8 -*-
+"""
+건축물대장 raw JSONL → Supabase 적재 (building + unit) + §5.6 조인률 실측 보고
+
+collect_building_ledger.py가 받아둔 raw(표제부·층별개요·전유공용면적)를 읽어
+building/unit 테이블을 채우고, `docs/상세계획.md` §5.6 "건축물대장 조인 성공률"을
+실제로 재서 보고한다. raw는 읽기만 한다 (CLAUDE.md 수집 규칙: raw 불변).
+
+무엇을 하나:
+  1. building — 표제부 한 행 = 건물 하나.
+       bld_id = PNU + '_' + mgmBldrgstPk(관리건축물대장PK)   ← schema.sql 갱신 필요
+     동명칭이 아니라 대장PK로 식별한다. 이유 둘:
+       (a) 같은 (PNU, 동명칭)이라도 서로 다른 대장(별동·재건축 이력 등)이 실재한다
+           (11 에이전트 적대검증 실측 — 강남구 라이브 raw 23그룹·30건).
+       (b) 동명칭 텍스트는 정부 데이터가 갱신되면 바뀔 수 있어 영속 키로 부적합.
+     대장PK는 실측(2026-08-08, 라이브 raw 461,027행 전량 스트리밍) 결측 0행이고
+     (PNU, 대장PK) 조합이 건물과 1:1이므로 이 값 자체를 bld_id에 직접 쓴다 —
+     "몇 번째 수집인가"·"같은 PNU에 다른 어떤 건물이 있는가"에 좌우되지 않는
+     영속 식별자가 된다(적대검증 Critical 수정: 예전 순번 방식은 재수집 때
+     새 대장PK가 섞여 들어오면 정렬 순번이 흔들려 기존 unit들의 FK가 조용히
+     다른 건물로 넘어가는 결함이 있었다). 대장PK가 비어 있는 행만
+     make_bld_id(pnu, dongNm) 폴백을 쓴다 — build_buildings() 참조.
+  2. unit — 전유공용면적 중 전유(exposPubuseGbCd='1') 행만 모아
+     (건물, 층, 호) 단위로 area를 합산해 excl_area_m2를 만든다. 공용부는 제외한다
+     (공용을 더하면 전용면적이 아니라 분양면적이 돼버린다).
+     floor_use는 층별개요의 (건물, 층) -> mainPurpsCdNm 룩업으로 채운다.
+  3. 적재 후 §5.6 조인률을 실측해 출력한다 (목표 90%+) — 수집이 아직 진행
+     중이면(collect_progress에 pending/failed가 남아 있으면) 잠정치임을 먼저
+     알린다.
+
+층 코드 매핑 (이 소스의 정본 — scripts/normalize_floor.py는 문자열 파서라
+여기선 쓰지 않는다. 건축HUB는 flrGbCd+flrNo로 이미 구조화돼 있어 파싱이 불필요):
+    flrGbCd '10'(지하) -> -flrNo
+    flrGbCd '20'(지상) -> +flrNo
+    flrGbCd '30'(옥탑) -> ROOFTOP(99, normalize_floor 정본 재사용)
+    그 외 코드 / flrNo가 0·결측 -> None (경고 카운트)
+  0은 절대 만들지 않는다 — CLAUDE.md 절대 규칙 4, DB CHECK(chk_floor_not_zero).
+
+raw 중복 방어:
+  수집기가 PNU 단위 원자적 append를 하므로 정상 흐름에선 중복이 안 생기지만,
+  혹시 같은 PNU가 두 번 수집돼 raw에 두 배치가 쌓였다면 면적 합이 부풀어 오른다.
+  그래서 PNU마다 fetched_at이 가장 늦은 배치 한 벌만 채택한다(2차 방어선).
+
+사용법:
+  python scripts/collectors/load_building_ledger.py --dry-run
+  python scripts/collectors/load_building_ledger.py
+  python scripts/collectors/load_building_ledger.py --raw-dir data/raw/bldrgst/202609 --snapshot-ym 202606
+"""
+
+import json
+import os
+import sys
+from collections import Counter, defaultdict
+from datetime import datetime
+
+import requests
+from dotenv import load_dotenv
+
+# ── 설정 ──────────────────────────────────────────────────────────────────────
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# scripts/ 를 sys.path에 넣어 normalize_floor를 import (재구현 금지 — 정본 재사용,
+# load_sangkwon_snapshot.py와 동일한 관례).
+_SCRIPTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
+from normalize_floor import ROOFTOP  # noqa: E402
+
+DEFAULT_PERIOD_KEY = "202608"
+DEFAULT_SIGUNGU_CODE = "11680"   # 강남구 (§0.2 파일럿)
+DEFAULT_SNAPSHOT_YM = "202603"   # 강남 2026Q1 상권정보 스냅샷 (§5.6 지표 ②의 분모)
+
+RAW_TITLE = "title.jsonl"
+RAW_FLR_OULN = "flr_ouln.jsonl"
+RAW_EXPOS_AREA = "expos_area.jsonl"
+
+# 동명칭이 빈 문자열인 건물(단일동 일반건축물에서 흔함)의 bld_id 꼬리표.
+MAIN_DONG_TOKEN = "MAIN"
+
+# 층 구분 코드 (건축HUB flrGbCd, 2026-08-07 실측)
+FLR_GB_UNDER = "10"    # 지하
+FLR_GB_GROUND = "20"   # 지상
+FLR_GB_ROOFTOP = "30"  # 옥탑
+ROOFTOP_FLOOR = ROOFTOP  # normalize_floor.ROOFTOP(99) 재사용 — 이 파일에서 재정의하지 않는다
+
+# 전유/공용 구분 (exposPubuseGbCd). 전용면적은 전유만 더한다.
+EXPOS_GB_PRIVATE = "1"
+
+# 주차 대수 4종 (옥내자주식/옥내기계식/옥외자주식/옥외기계식)
+PARKING_FIELDS = ("indrAutoUtcnt", "indrMechUtcnt", "oudrAutoUtcnt", "oudrMechUtcnt")
+
+# 집합건물 여부 (regstrGbCd 1=일반 / 2=집합)
+REGSTR_GB_JIPHAP = "2"
+
+# PNU 대지구분(11번째 글자) 정상값 — '1'=대지, '2'=산. 산지는 건축물이 없는 경우가 많다.
+PLAT_GB_LAND = "1"
+PLAT_GB_MOUNTAIN = "2"
+
+BATCH_SIZE = 1000
+SELECT_PAGE_SIZE = 1000
+TIMEOUT_SEC = 120
+
+# §5.6 목표선 (docs/상세계획.md)
+JOIN_RATE_TARGET = 90.0
+
+# 이 수집기의 collect_progress.collector 값. collect_building_ledger.COLLECTOR와
+# 반드시 같은 문자열이어야 한다 — 두 스크립트는 서로 import하지 않는 관례라
+# 상수를 각자 갖되 값을 맞춘다(공유 모듈을 새로 만들면 다른 수집기 작업과 충돌).
+BLDRGST_COLLECTOR = "bldrgst"
+
+# 전유공용면적 raw 행이 이 값에 도달하면 collect_building_ledger.py의 페이지
+# 상한(NUM_OF_ROWS=100 x MAX_PAGES=100)에 걸려 절단됐을 가능성이 있다.
+EXPOS_ROW_TRUNCATION_CAP = 10_000
+
+# upsert 충돌 해소 정책. building·unit은 재실행 때 최신 대장 내용으로 갱신돼야
+# 하므로 merge-duplicates (append-only 테이블인 unit_business와 성격이 다르다).
+TABLE_UPSERT_RESOLUTION = {
+    "building": "merge-duplicates",
+    "unit": "merge-duplicates",
+}
+
+
+# ── 순수 로직 (네트워크·DB 없음 — 테스트 대상) ─────────────────────────────────
+
+
+def _to_float(raw):
+    """빈 값/파싱 불가는 None. 그 외 float 변환."""
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _to_int(raw):
+    """빈 값/파싱 불가는 None. '3.0' 같은 실수 표기도 int로 받아준다."""
+    f = _to_float(raw)
+    if f is None:
+        return None
+    return int(f)
+
+
+def make_bld_id(pnu, dong_nm):
+    """PNU + '_' + (동명칭 또는 'MAIN') — 대장PK(mgmBldrgstPk)가 없을 때만 쓰는 폴백.
+
+    동명칭은 표제부에서 빈 문자열로 오는 경우가 흔하다(단일동 건물). 빈 값을 그대로
+    이어붙이면 PNU 뒤에 '_'만 남아 사람이 읽기 어렵고, 공백만 든 값과도 구분이
+    안 되므로 'MAIN'으로 통일한다.
+
+    정상 경로의 bld_id는 make_bld_id_from_pk()가 만든다 — 대장PK가 실측상
+    거의 항상 있기 때문이다(build_buildings() 참조). 이 함수는 대장PK가
+    비어 있는 방어적 케이스에만 호출된다.
+    """
+    dong = (dong_nm or "").strip()
+    return "{}_{}".format(pnu, dong or MAIN_DONG_TOKEN)
+
+
+def _normalize_pk(raw):
+    """mgmBldrgstPk 원본값(실측상 int, 방어적으로 문자열도 허용)을 문자열로 통일.
+
+    없으면(None) 빈 문자열 — is None으로만 판정한다("or" 패턴은 정수 0이 legit한
+    PK일 가능성을 결측으로 오판할 수 있어 피한다).
+    """
+    if raw is None:
+        return ""
+    return str(raw).strip()
+
+
+def make_bld_id_from_pk(pnu, mgm_pk):
+    """bld_id = PNU + '_' + mgmBldrgstPk(관리건축물대장PK) — 정상 경로의 식별자.
+
+    이 값은 raw 안에 같은 PNU의 다른 건물이 무엇이 있든, 몇 번째 수집이든
+    항상 같다(PNU + 대장PK만으로 결정되고 다른 행에 의존하지 않는다). 예전
+    "정렬 순번" 방식은 재수집 때 새 대장PK가 섞여 들어오면 순번이 흔들려
+    기존 unit들의 FK가 조용히 다른 건물로 넘어가는 결함이 있었다(적대검증
+    Critical, 확신도 85 — 2026-08-08).
+    """
+    return "{}_{}".format(pnu, mgm_pk)
+
+
+def make_unit_id(bld_id, floor_no, ho):
+    """unit_id = bld_id + '_' + 층 + '_' + 호 (schema.sql 주석 규격).
+
+    층이 판정 불가면 'NA'를 넣는다 — 0을 쓰지 않는다(절대 규칙 4). ho는 호출부
+    (build_units)에서 이미 공백 정규화를 마친 값을 그대로 받는다 — 여기서 다시
+    다르게 자르면 그룹 키(ho)와 unit_id의 호 표기가 어긋날 수 있다(수정 4).
+    """
+    floor_token = "NA" if floor_no is None else str(floor_no)
+    return "{}_{}_{}".format(bld_id, floor_token, ho or "")
+
+
+def parse_use_apr_day(raw):
+    """useAprDay(YYYYMMDD 문자열) -> 'YYYY-MM-DD'. 빈값·형식 이상은 None.
+
+    실측상 ''(빈 문자열)과 0이 섞여 들어오고, 달력에 없는 날짜(20241350 등)도
+    가능하므로 실제 날짜로 파싱되는지까지 확인한다.
+    """
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if len(s) != 8 or not s.isdigit():
+        return None
+    try:
+        return datetime.strptime(s, "%Y%m%d").date().isoformat()
+    except ValueError:
+        return None
+
+
+def floor_from_codes(flr_gb_cd, flr_no):
+    """건축HUB (flrGbCd, flrNo) -> 정수 층. 판정 불가는 None (0은 절대 안 나온다).
+
+    지하 '10' -> -n / 지상 '20' -> +n / 옥탑 '30' -> ROOFTOP_FLOOR(99).
+    옥탑은 flrNo가 무엇이든 규격 고정값을 쓴다(층수가 아니라 분류값).
+
+    나머지 코드는 공식 층구분코드표(건축HUB 층별개요 명세, 2026-08-07 확인:
+    00 미지정 / 21 복수층(하층) / 22 복수층(상층) / 40 각층) 기준으로 전부
+    의도적 None이다 — '40' 각층은 단일 층으로 환원 자체가 불가하고(EV·계단 등,
+    flrNo=0으로 옴), '21'/'22' 복수층은 코드에 지하/지상 방향이 없어 부호를
+    정할 수 없으며, '00'은 미지정. 추측 매핑 금지 원칙(CLAUDE.md)에 따른다.
+    """
+    code = "" if flr_gb_cd is None else str(flr_gb_cd).strip()
+    if code == FLR_GB_ROOFTOP:
+        return ROOFTOP_FLOOR
+    if code not in (FLR_GB_UNDER, FLR_GB_GROUND):
+        return None
+    n = _to_int(flr_no)
+    if n is None or n == 0:
+        return None
+    n = abs(n)
+    return -n if code == FLR_GB_UNDER else n
+
+
+def sum_parking(item):
+    """주차 4종 합. 전부 결측이면 None, 일부만 있으면 있는 것만 더한다."""
+    values = [_to_int(item.get(f)) for f in PARKING_FIELDS]
+    present = [v for v in values if v is not None]
+    if not present:
+        return None
+    return sum(present)
+
+
+def _is_jiphap(item):
+    """regstrGbCd로 집합건물 여부 판정 (건물 레코드·전유부/층별개요 행 양쪽에서 재사용).
+
+    코드값(regstrGbCd)으로 비교한다 — 로컬라이즈된 이름(regstrGbCdNm)은 인코딩·
+    공백 변형에 취약해 코드 비교가 더 안전하다(resolve_bld_id 후보 좁히기 ②에서
+    행 자신이 들고 있는 이 값과 건물의 이 값을 직접 대조한다).
+    """
+    return str(item.get("regstrGbCd") or "").strip() == REGSTR_GB_JIPHAP
+
+
+def build_building_record(pnu, item):
+    """표제부 item -> building 테이블 upsert용 dict.
+
+    여기서 만드는 bld_id는 base_id(동 단위)일 뿐이다 — build_buildings()가
+    대장PK 순번을 반영해 최종 bld_id로 덮어쓴다.
+    """
+    dong = (item.get("dongNm") or "").strip()
+    return {
+        "bld_id": make_bld_id(pnu, dong),
+        "pnu": pnu,
+        "dong_nm": dong or None,
+        "bld_nm": (item.get("bldNm") or "").strip() or None,
+        "total_area_m2": _to_float(item.get("totArea")),
+        "ground_floors": _to_int(item.get("grndFlrCnt")),
+        "under_floors": _to_int(item.get("ugrndFlrCnt")),
+        "approve_date": parse_use_apr_day(item.get("useAprDay")),
+        "main_use": (item.get("mainPurpsCdNm") or "").strip() or None,
+        "bcr": _to_float(item.get("bcRat")),
+        "far": _to_float(item.get("vlRat")),
+        "parking_cnt": sum_parking(item),
+        "is_jiphap": _is_jiphap(item),
+    }
+
+
+def read_jsonl(path):
+    """raw JSONL을 [{"pnu","fetched_at","item"}, ...]로 읽는다. 없으면 빈 목록.
+
+    깨진 줄(JSON 파싱 실패)은 건너뛰고 개수만 세어 두 번째 반환값으로 돌려준다.
+    """
+    rows = []
+    broken = 0
+    if not os.path.exists(path):
+        return rows, broken
+    with open(path, encoding="utf-8") as fp:
+        for line in fp:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except ValueError:
+                broken += 1
+                continue
+            if isinstance(obj, dict) and obj.get("pnu") and isinstance(obj.get("item"), dict):
+                rows.append(obj)
+            else:
+                broken += 1
+    return rows, broken
+
+
+def latest_batch_by_pnu(rows):
+    """PNU마다 fetched_at이 가장 늦은 배치의 행만 남긴다 (중복 수집 2차 방어선).
+
+    같은 PNU를 두 번 수집하면 raw에 두 배치가 쌓이는데, 그대로 두면 전용면적
+    합계가 두 배로 부풀어 오른다. 배치 = 같은 (pnu, fetched_at) 묶음.
+    """
+    latest = {}
+    for row in rows:
+        pnu = row["pnu"]
+        fetched_at = row.get("fetched_at") or ""
+        if pnu not in latest or fetched_at > latest[pnu]:
+            latest[pnu] = fetched_at
+    return [r for r in rows if (r.get("fetched_at") or "") == latest[r["pnu"]]]
+
+
+def build_buildings(title_rows):
+    """표제부 raw 행 -> (bld_id -> building dict, 통계).
+
+    bld_id는 원칙적으로 make_bld_id_from_pk(pnu, mgmBldrgstPk) — 대장PK 자체가
+    영속 식별자이므로 raw 안에 같은 PNU의 다른 건물이 무엇이 있든, 몇 번째
+    수집이든 항상 같다(적대검증 Critical 수정 — 예전 "정렬 순번" 방식은 재수집
+    때 새 대장PK가 섞여 들어오면 순번이 흔들려 기존 unit들의 FK가 조용히 다른
+    건물로 넘어가는 결함이 있었다).
+
+    실측(2026-08-08, 라이브 raw 461,027행 전량 스트리밍): mgmBldrgstPk 결측
+    0행(title/flr_ouln/expos_area 전부), (PNU, 대장PK) 고유 조합 5,903개 =
+    building 행수와 정확히 일치, 한 대장PK가 서로 다른 동명칭을 갖는 경우
+    0건 — (PNU, 대장PK)가 건물과 1:1이라는 근거.
+
+    대장PK가 비어 있는(현재 raw는 0행이지만 방어) 행만 make_bld_id(pnu, dongNm)
+    폴백을 쓴다. 같은 bld_id가 여러 행으로 중복 등장하면(raw에 같은 건물이
+    두 번 실린 경우) 첫 행만 채택하고 나머지는 duplicated_bld_id로만 센다.
+
+    반환: records(bld_id -> building dict), stats(rows, duplicated_bld_id,
+          pk_missing_fallback, buildings_by_pnu, pnu_with_building)
+    """
+    records = {}
+    buildings_by_pnu = defaultdict(list)
+    duplicated = 0
+    pk_missing = 0
+
+    for row in title_rows:
+        pnu = row["pnu"]
+        item = row["item"]
+        mgm_pk = _normalize_pk(item.get("mgmBldrgstPk"))
+        if mgm_pk:
+            bld_id = make_bld_id_from_pk(pnu, mgm_pk)
+        else:
+            bld_id = make_bld_id(pnu, item.get("dongNm"))
+            pk_missing += 1
+
+        if bld_id in records:
+            duplicated += 1
+            continue
+
+        rec = build_building_record(pnu, item)
+        rec["bld_id"] = bld_id
+        records[bld_id] = rec
+        buildings_by_pnu[pnu].append(bld_id)
+
+    return records, {
+        "rows": len(title_rows),
+        "duplicated_bld_id": duplicated,
+        "pk_missing_fallback": pk_missing,
+        "buildings_by_pnu": dict(buildings_by_pnu),
+        "pnu_with_building": set(buildings_by_pnu.keys()),
+    }
+
+
+def _narrow_by(pool, buildings, key_fn, row_value):
+    """pool(bld_id 목록)을 key_fn(building) == row_value 인 것만 남겨 좁힌다.
+
+    정확히 1개로 좁혀지면 그 bld_id를, 아니면 (None, 다음 단계에 넘길 pool)을
+    돌려준다. 아무것도 안 남으면(0개) 이 속성으로는 판단할 근거가 없다는
+    뜻이므로 원래 pool을 그대로 유지한다 — "모른다"를 "다르다"로 취급해
+    후보를 통째로 날리지 않는다(CLAUDE.md 추측 매핑 금지의 연장).
+    """
+    narrowed = [c for c in pool if key_fn(buildings[c]) == row_value]
+    if len(narrowed) == 1:
+        return narrowed[0], narrowed
+    return None, (narrowed if narrowed else pool)
+
+
+def resolve_bld_id(pnu, dong_nm, mgm_pk, bld_nm, is_jiphap, buildings, buildings_by_pnu):
+    """층별개요·전유부 행 하나를 building에 귀속시킨다. (bld_id, 사유) — 못 찾으면 (None, 사유).
+
+    우선순위:
+      ① (pnu, 대장PK) 직접 조회 — bld_id가 이제 이 조합만으로 결정되므로
+         (make_bld_id_from_pk), 후보를 만들어 buildings에 있는지 확인하면
+         끝난다. 실측(2026-08-08): 층별개요는 표제부와 대장PK가 100% 일치해
+         이 경로가 사실상 전부를 처리한다. 전유공용면적의 mgmBldrgstPk는
+         표제부와 다른 값 공간(전유부 자체의 관리번호)이라 이 경로는 거의
+         항상 no-op이다(실측: 매칭 0/392,070) — 그래도 시도 자체는 무해하다.
+      ② 그 PNU에 건물이 하나뿐이면 그걸로 확정(모호성 자체가 없다).
+      ③ 후보가 2개 이상이면 "후보 좁히기"로 유일해질 때까지 단계적으로
+         거른다 — 전부 *행이 실제로 들고 있는 값끼리 비교*이지 추측이 아니다:
+           (a) 동명칭 일치 (공백 정규화, 공란도 유효한 비교값)
+           (b) 대장구분(집합/일반, regstrGbCd) 일치
+           (c) 건물명(bldNm) 일치
+         각 단계는 남은 후보 중에서 정확히 1개로 좁혀질 때만 확정하고, 그
+         전 단계에서 걸러진 후보 집합을 다음 단계로 넘긴다(순차 좁히기).
+         끝까지 유일해지지 않으면 임의로 고르지 않고 스킵한다(2차 적대검증
+         Critical 수정 — 예전에는 base_id 문자열이 우연히 일치하면 모호성
+         체크 없이 그 건물로 단정해 조용히 오귀속했다. 실측 강남구: 표제부
+         기준 건물 2개 이상인 PNU 117개 중 동명칭으로 못 가르는 23개·15,656행
+         가운데 (a)가 14,748행, (b)가 639행을 추가로 해소하고, 진짜 판정
+         불가는 269행뿐이다).
+    """
+    normalized_pk = _normalize_pk(mgm_pk)
+    if normalized_pk:
+        candidate = make_bld_id_from_pk(pnu, normalized_pk)
+        if candidate in buildings:
+            return candidate, "대장PK 매칭"
+
+    candidates = buildings_by_pnu.get(pnu) or []
+    if not candidates:
+        return None, "표제부에 해당 PNU 건물 없음"
+    if len(candidates) == 1:
+        return candidates[0], "PNU 단일 건물로 귀속"
+
+    pool = candidates
+
+    dong = (dong_nm or "").strip()
+    hit, pool = _narrow_by(pool, buildings, lambda b: (b.get("dong_nm") or ""), dong)
+    if hit:
+        return hit, "동명칭 일치"
+
+    hit, pool = _narrow_by(pool, buildings, lambda b: b.get("is_jiphap"), bool(is_jiphap))
+    if hit:
+        return hit, "대장구분(집합/일반) 일치"
+
+    name = (bld_nm or "").strip()
+    hit, pool = _narrow_by(pool, buildings, lambda b: (b.get("bld_nm") or ""), name)
+    if hit:
+        return hit, "건물명 일치"
+
+    return None, "동명칭·대장구분·건물명으로도 유일하게 좁혀지지 않음(귀속 불가)"
+
+
+def build_floor_use_lookup(flr_rows, buildings, buildings_by_pnu):
+    """층별개요 raw 행 -> {(bld_id, floor_no): 주용도명}, 통계.
+
+    bld_id는 반드시 build_units와 같은 규칙(resolve_bld_id)으로 정한다(대장PK
+    우선, 그다음 동명칭). 같은 (건물, 층)이 여러 번 나오면 첫 값을 유지한다
+    (대장상 같은 층이 여러 줄로 쪼개진 경우 — 주용도는 대표값 하나면 충분).
+    """
+    lookup = {}
+    floor_unmapped = Counter()
+    resolve_reasons = Counter()
+    unresolved = 0
+    for row in flr_rows:
+        item = row["item"]
+        floor_no = floor_from_codes(item.get("flrGbCd"), item.get("flrNo"))
+        if floor_no is None:
+            floor_unmapped["flrGbCd={!r} flrNo={!r}".format(
+                item.get("flrGbCd"), item.get("flrNo"))] += 1
+            continue
+        bld_id, reason = resolve_bld_id(
+            row["pnu"], item.get("dongNm"), item.get("mgmBldrgstPk"),
+            item.get("bldNm"), _is_jiphap(item), buildings, buildings_by_pnu)
+        resolve_reasons[reason] += 1
+        if bld_id is None:
+            unresolved += 1
+            continue
+        purpose = (item.get("mainPurpsCdNm") or "").strip() or None
+        if purpose is None:
+            continue
+        lookup.setdefault((bld_id, floor_no), purpose)
+    return lookup, {
+        "rows": len(flr_rows),
+        "floor_unmapped": floor_unmapped,
+        "resolve_reasons": resolve_reasons,
+        "unresolved": unresolved,
+    }
+
+
+def build_units(expos_rows, buildings, buildings_by_pnu, floor_use_lookup):
+    """전유공용면적 raw 행 -> (unit dict 목록, 통계).
+
+    전유(exposPubuseGbCd='1')만 (건물, 층, 호)로 묶어 area를 합산한다. 호실
+    이름(hoNm)은 여기서 한 번만 정규화한다 — 내부 공백까지 제거해 그룹 키와
+    unit_id가 항상 같은 표기를 쓰게 한다('101 호'와 '101호'가 다른 그룹으로
+    갈라지면 같은 PK를 만들면서도 면적이 나뉘어 저장되는 조용한 버그가 된다,
+    수정 4).
+    """
+    grouped = {}
+    stats = Counter()
+    floor_unmapped = Counter()
+    resolve_reasons = Counter()
+
+    for row in expos_rows:
+        item = row["item"]
+        stats["rows"] += 1
+
+        if str(item.get("exposPubuseGbCd") or "").strip() != EXPOS_GB_PRIVATE:
+            stats["공용 등 제외"] += 1
+            continue
+
+        floor_no = floor_from_codes(item.get("flrGbCd"), item.get("flrNo"))
+        if floor_no is None:
+            floor_unmapped["flrGbCd={!r} flrNo={!r}".format(
+                item.get("flrGbCd"), item.get("flrNo"))] += 1
+        # 층 판정 불가여도 호실 자체는 살린다 (floor_no=NULL 허용 — 절대 규칙 4)
+
+        pnu = row["pnu"]
+        bld_id, reason = resolve_bld_id(
+            pnu, item.get("dongNm"), item.get("mgmBldrgstPk"),
+            item.get("bldNm"), _is_jiphap(item), buildings, buildings_by_pnu)
+        resolve_reasons[reason] += 1
+        if bld_id is None:
+            stats["건물 귀속 실패로 스킵"] += 1
+            continue
+
+        ho = "".join((item.get("hoNm") or "").split()) or None
+        key = (bld_id, floor_no, ho)
+        area = _to_float(item.get("area"))
+
+        if key not in grouped:
+            grouped[key] = {
+                "unit_id": make_unit_id(bld_id, floor_no, ho),
+                "bld_id": bld_id,
+                "pnu": pnu,
+                "floor_no": floor_no,
+                "ho": ho,
+                "excl_area_m2": None,
+                "floor_use": floor_use_lookup.get((bld_id, floor_no)),
+            }
+        if area is not None:
+            current = grouped[key]["excl_area_m2"]
+            grouped[key]["excl_area_m2"] = area if current is None else current + area
+            stats["면적 합산 행"] += 1
+        else:
+            stats["area 결측"] += 1
+
+    units = list(grouped.values())
+    stats["전유 호실"] = len(units)
+    stats["floor_use 채움"] = sum(1 for u in units if u["floor_use"])
+    return units, {
+        "counts": stats,
+        "floor_unmapped": floor_unmapped,
+        "resolve_reasons": resolve_reasons,
+    }
+
+
+def assert_no_zero_floor(records, field="floor_no"):
+    """층 0이 한 건이라도 있으면 즉시 멈춘다 (절대 규칙 4 / DB CHECK 사전 차단)."""
+    bad = [r for r in records if r.get(field) == 0]
+    if bad:
+        raise RuntimeError(
+            "층 0인 행이 {}건 있습니다 — 층 매핑 로직을 확인하세요 (예: {}).".format(
+                len(bad), bad[0])
+        )
+    return len(records)
+
+
+def assert_unique(records, field):
+    """records의 field 값이 전부 유일한지 확인한다 — 업서트 직전 PK 충돌 사전 차단.
+
+    building은 bld_id, unit은 unit_id가 대상. dict에서 만든 값이라 이론상
+    대개 유일하지만, base_id 뒤에 대장PK 순번을 이어붙이는 방식(build_buildings)
+    이나 호 표기 정규화(build_units)가 우연히 다른 조합과 같은 문자열을 만들
+    가능성을 사전에 잡는다(예: 동명칭이 우연히 'MAIN_2'인 건물과 순번 2가 붙은
+    건물의 충돌).
+    """
+    seen = set()
+    dup = None
+    for r in records:
+        v = r.get(field)
+        if v in seen:
+            dup = v
+            break
+        seen.add(v)
+    if dup is not None:
+        raise RuntimeError(
+            "{} 값이 중복된 행이 있습니다 (예: {!r}) — upsert 전에 반드시 해결해야 합니다.".format(
+                field, dup)
+        )
+    return len(records)
+
+
+def classify_missing_pnu(pnu, pnu_in_raw_title, pnu_with_building, pending_pnus, failed_pnus):
+    """building이 안 붙은 PNU의 사유를 분류한다 (§5.6 보고용).
+
+    pending/failed는 조인 성공률(b) 분모에서 제외해야 하는 두 바구니다 — 아직
+    안 걷었거나(pending) 실패해서 재시도 대기 중인(failed) PNU를 "정규화 로직이
+    깨졌다"는 증거로 잘못 세면 안 된다.
+    """
+    if pnu in pnu_with_building:
+        return None
+    if pnu[10:11] == PLAT_GB_MOUNTAIN:
+        return "산(대지구분 2) — 건축물 없는 임야가 대부분"
+    if pnu[10:11] != PLAT_GB_LAND:
+        return "대지구분 코드 미지원 — 수집 대상 제외"
+    if pnu in pending_pnus:
+        return "미수집(pending)"
+    if pnu in failed_pnus:
+        return "수집 실패(failed, 재시도 대상)"
+    if pnu not in pnu_in_raw_title:
+        return "표제부 raw에 아이템 없음 (API 무데이터 또는 미수집)"
+    return "수집 완료했으나 API 무데이터"
+
+
+def join_rate(matched, total):
+    """total이 0이면 측정 불가 — 0.0으로 슬쩍 채우면 '0% 미달'로 잘못 읽힌다."""
+    return (matched * 100.0 / total) if total else None
+
+
+def find_truncated_pnu(expos_rows, cap=EXPOS_ROW_TRUNCATION_CAP):
+    """전유공용면적 raw 행이 PNU당 cap(기본 10,000)에 도달한 PNU 목록(정렬).
+
+    collect_building_ledger.py의 페이지 상한(NUM_OF_ROWS=100 x MAX_PAGES=100)에
+    실제로 걸렸을 가능성이 있다는 뜻 — 그 PNU는 전유행이 잘렸을 수 있으므로
+    재수집 검토 대상으로 특정할 수 있게 리포트에 노출한다.
+    """
+    counts = Counter(row["pnu"] for row in expos_rows)
+    return sorted(pnu for pnu, cnt in counts.items() if cnt >= cap)
+
+
+# ── Supabase(PostgREST) ──────────────────────────────────────────────────────
+
+
+def get_supabase_config():
+    """env에서 URL/서비스키를 읽는다. 값은 절대 print하지 않는다."""
+    load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
+    url = os.environ.get("SANGGA_SUPABASE_URL")
+    key = os.environ.get("SANGGA_SUPABASE_SERVICE_KEY")
+    if not url or not key:
+        raise RuntimeError(
+            "SANGGA_SUPABASE_URL / SANGGA_SUPABASE_SERVICE_KEY가 .env에 없습니다."
+        )
+    return url.rstrip("/"), key
+
+
+def rest_select(base_url, headers, table, query, page_size=SELECT_PAGE_SIZE, order="pnu"):
+    """PostgREST select를 offset/limit로 끝까지 훑어 dict 목록을 돌려준다.
+
+    order를 항상 붙인다 — 정렬 없는 limit/offset 페이지네이션은 PostgreSQL이
+    반환 순서를 보장하지 않아 페이지 경계에서 행이 누락되거나 중복될 수 있다
+    (collect_building_ledger.py가 이미 페이지네이션 쿼리마다 order를 넣는 관례).
+    네트워크 오류는 재실행하면 이어서 처리되도록 안내를 붙여 RuntimeError로
+    바꾼다.
+    """
+    rows = []
+    offset = 0
+    while True:
+        url = "{}/rest/v1/{}?{}&order={}&limit={}&offset={}".format(
+            base_url, table, query, order, page_size, offset)
+        try:
+            r = requests.get(url, headers=headers, timeout=TIMEOUT_SEC)
+        except requests.RequestException as e:
+            raise RuntimeError(
+                "{} 조회 중 네트워크 오류: {}. 같은 명령을 다시 실행하면 이어서 "
+                "처리됩니다.".format(table, e)
+            )
+        if r.status_code >= 300:
+            raise RuntimeError("{} 조회 실패 (HTTP {}): {}".format(
+                table, r.status_code, r.text[:300]))
+        chunk = r.json()
+        if not isinstance(chunk, list):
+            raise RuntimeError("{} 조회 응답 형식 이상: {!r}".format(table, str(chunk)[:200]))
+        rows.extend(chunk)
+        if len(chunk) < page_size:
+            break
+        offset += page_size
+    return rows
+
+
+def upsert_batch(base_url, headers, table, rows, batch_size=BATCH_SIZE):
+    """rows를 batch_size 단위로 table에 upsert. 실제로 보낸 행 수를 돌려준다.
+
+    네트워크 오류는 "이미 올라간 배치는 그대로, 같은 명령을 다시 실행하면
+    이어서 채운다"는 안내와 함께 RuntimeError로 바꾼다 — 64개 배치 중 하나가
+    타임아웃으로 죽어도 traceback만 남기고 끝나지 않게 한다.
+    """
+    resolution = TABLE_UPSERT_RESOLUTION.get(table)
+    if resolution is None:
+        raise ValueError(
+            "{}: TABLE_UPSERT_RESOLUTION에 정의되지 않은 테이블입니다 — "
+            "충돌 해소 정책을 먼저 정의하세요.".format(table)
+        )
+    upsert_headers = dict(headers)
+    upsert_headers["Content-Type"] = "application/json"
+    upsert_headers["Prefer"] = "resolution={},return=minimal".format(resolution)
+
+    sent = 0
+    total_batches = (len(rows) + batch_size - 1) // batch_size
+    for i in range(0, len(rows), batch_size):
+        batch = rows[i:i + batch_size]
+        batch_no = i // batch_size + 1
+        try:
+            r = requests.post(
+                "{}/rest/v1/{}".format(base_url, table),
+                json=batch, headers=upsert_headers, timeout=TIMEOUT_SEC,
+            )
+        except requests.RequestException as e:
+            raise RuntimeError(
+                "{} 배치 {}/{} upsert 중 네트워크 오류: {}. 이미 올라간 배치는 그대로입니다. "
+                "같은 명령을 다시 실행하면 이어서 채웁니다.".format(
+                    table, batch_no, total_batches, e)
+            )
+        if r.status_code >= 300:
+            raise RuntimeError(
+                "{} 배치 {}/{} upsert 실패 (HTTP {}): {}. 이미 올라간 배치는 그대로입니다. "
+                "같은 명령을 다시 실행하면 이어서 채웁니다.".format(
+                    table, batch_no, total_batches, r.status_code, r.text[:500]
+                )
+            )
+        sent += len(batch)
+        print("  [{}] {}/{} 배치 {}행 (누적 {:,}/{:,})".format(
+            table, batch_no, total_batches, len(batch), sent, len(rows)), flush=True)
+    return sent
+
+
+def rest_count(base_url, headers, table, query):
+    """PostgREST HEAD 요청으로 정확한 행 수를 돌려준다 (Content-Range 헤더)."""
+    h = dict(headers)
+    h["Prefer"] = "count=exact"
+    try:
+        r = requests.head(
+            "{}/rest/v1/{}?{}".format(base_url, table, query), headers=h, timeout=60
+        )
+    except requests.RequestException as e:
+        raise RuntimeError(
+            "{} count 조회 중 네트워크 오류: {}. 같은 명령을 다시 실행하면 이어서 "
+            "처리됩니다.".format(table, e)
+        )
+    if r.status_code not in (200, 206):
+        raise RuntimeError("{} count 조회 실패 (HTTP {}): {}".format(
+            table, r.status_code, r.text[:300]))
+    content_range = r.headers.get("Content-Range", "")
+    if "/" not in content_range:
+        raise RuntimeError("{}: Content-Range 헤더 형식 이상: {!r}".format(table, content_range))
+    return int(content_range.split("/")[-1])
+
+
+def fetch_pnu_set(base_url, headers, table, query):
+    """table에서 pnu 컬럼만 전량 읽어 set으로 돌려준다."""
+    rows = rest_select(base_url, headers, table, query, order="pnu")
+    return {r["pnu"] for r in rows if r.get("pnu")}
+
+
+def fetch_pnu_list(base_url, headers, table, query, order="pnu"):
+    """table에서 pnu 컬럼만 전량 읽어 목록으로 돌려준다 (행 단위 비율 계산용)."""
+    rows = rest_select(base_url, headers, table, query, order=order)
+    return [r.get("pnu") for r in rows]
+
+
+def fetch_progress_status_sets(base_url, headers, period_key):
+    """collect_progress(collector='bldrgst', period_key=...)의 status별 PNU 집합.
+
+    수집 커버리지(§5.6 지표 (a))와 조인 성공률 분모 보정(pending/failed 제외,
+    classify_missing_pnu)에 함께 쓰인다.
+    """
+    rows = rest_select(
+        base_url, headers, "collect_progress",
+        "select=scope_key,status&collector=eq.{}&period_key=eq.{}".format(
+            BLDRGST_COLLECTOR, period_key),
+        order="scope_key",
+    )
+    sets = defaultdict(set)
+    for r in rows:
+        status = r.get("status")
+        pnu = r.get("scope_key")
+        if status and pnu:
+            sets[status].add(pnu)
+    return sets
+
+
+# ── 보고 출력 ────────────────────────────────────────────────────────────────
+
+
+def print_transform_report(raw_dir, broken_lines, bld_stats, flr_stats, unit_stats,
+                           building_count, unit_count, truncated_pnus):
+    print("=" * 78)
+    print("건축물대장 raw → building/unit 변환 결과")
+    print("=" * 78)
+    print("raw 폴더: {}".format(raw_dir))
+    print("")
+    print("[ raw 행 수 ]")
+    print("    표제부(title)            {:>10,}행".format(bld_stats["rows"]))
+    print("    층별개요(flr_ouln)       {:>10,}행".format(flr_stats["rows"]))
+    print("    전유공용면적(expos_area) {:>10,}행".format(unit_stats["counts"]["rows"]))
+    if any(broken_lines.values()):
+        print("    [경고] 파싱 불가로 건너뛴 줄: {}".format(
+            ", ".join("{} {}줄".format(k, v) for k, v in broken_lines.items() if v)))
+
+    if flr_stats["unresolved"]:
+        print("    [경고] 건물 귀속 실패로 floor_use에 못 넣은 층별개요 행: {:,}행".format(
+            flr_stats["unresolved"]))
+
+    print("")
+    print("[ building ] {:,}행 (would-upsert)".format(building_count))
+    if bld_stats["duplicated_bld_id"]:
+        print("    같은 bld_id 재등장(raw 중복 행): {:,}건 (첫 행 유지)".format(
+            bld_stats["duplicated_bld_id"]))
+    print("    대장PK 결측 — 동명칭 폴백: {:,}건 (실측상 0건이 정상)".format(
+        bld_stats["pk_missing_fallback"]))
+    print("    building이 붙은 PNU: {:,}개".format(len(bld_stats["pnu_with_building"])))
+
+    print("")
+    print("[ unit ] {:,}행 (would-upsert)".format(unit_count))
+    counts = unit_stats["counts"]
+    for label in ("공용 등 제외", "건물 귀속 실패로 스킵", "면적 합산 행", "area 결측",
+                  "floor_use 채움"):
+        print("    {:<22} {:>10,}".format(label, counts[label]))
+    print("    건물 귀속 사유:")
+    for reason, cnt in unit_stats["resolve_reasons"].most_common():
+        print("      - {}: {:,}건".format(reason, cnt))
+
+    print("")
+    print("[ 층 코드 매핑 경고 ] (flrGbCd/flrNo -> None. 0은 절대 만들지 않는다)")
+    total_unmapped = (sum(flr_stats["floor_unmapped"].values())
+                      + sum(unit_stats["floor_unmapped"].values()))
+    if not total_unmapped:
+        print("    없음")
+    else:
+        print("    층별개요 {:,}건 / 전유부 {:,}건".format(
+            sum(flr_stats["floor_unmapped"].values()),
+            sum(unit_stats["floor_unmapped"].values())))
+        merged = Counter()
+        merged.update(flr_stats["floor_unmapped"])
+        merged.update(unit_stats["floor_unmapped"])
+        for value, cnt in merged.most_common(10):
+            print("      - {}: {:,}건".format(value, cnt))
+
+    print("")
+    print("[ 전유공용면적 {:,}행(페이지 상한) 도달 PNU ] 절단 의심 — 재수집 검토 대상".format(
+        EXPOS_ROW_TRUNCATION_CAP))
+    if not truncated_pnus:
+        print("    없음")
+    else:
+        print("    {:,}개".format(len(truncated_pnus)))
+        for pnu in truncated_pnus:
+            print("      - {}".format(pnu))
+    print("=" * 78)
+
+
+def print_join_report(sigungu_code, snapshot_ym, parcel_total, done_total, join_matched,
+                      ub_total, ub_covered, ub_join_matched, missing_reasons):
+    print("")
+    print("=" * 78)
+    print("§5.6 건축물대장 조인률 실측 — {} / 상권 스냅샷 {}".format(sigungu_code, snapshot_ym))
+    print("=" * 78)
+
+    coverage_rate = join_rate(done_total, parcel_total)
+    pending = coverage_rate is not None and coverage_rate < 100.0
+    if pending:
+        print("⚠ 수집 {:.2f}% 진행 중 — §5.6 최종 판정 보류(잠정치)".format(coverage_rate))
+        print("")
+
+    print("[ (a) 수집 커버리지 ] collect_progress done / parcel 전체  (진척도 — 판정 없음)")
+    if coverage_rate is None:
+        print("    측정 불가 (분모 0 — sigungu_code 필터 확인)")
+    else:
+        print("    {:,} / {:,}  ->  {:.2f}%".format(done_total, parcel_total, coverage_rate))
+
+    join_rate_value = join_rate(join_matched, done_total)
+    print("[ (b) 조인 성공률 ] done PNU 중 building이 1개 이상 붙은 비율  "
+          "(목표 {:.0f}%+, §5.6 판정 대상)".format(JOIN_RATE_TARGET))
+    if join_rate_value is None:
+        print("    측정 불가 (분모 0 — done PNU가 없음)")
+    else:
+        print("    {:,} / {:,}  ->  {:.2f}%  [{}]".format(
+            join_matched, done_total, join_rate_value,
+            "달성" if join_rate_value >= JOIN_RATE_TARGET else "미달 — 원인 확인 필요"))
+
+    # ② 점포 PNU 기준 — unit_business 행이 어느 PNU에 속하는지만 본다(그 PNU에 층·호
+    # 단위로 실제 조인되는지는 별개 문제. 호실 축 커버리지는 감사 지적 #7의 별도
+    # 과제라 여기서는 이름만 정확히 하고 넘어간다). ①과 같은 구조로 진척도(a)와
+    # 판정 대상(b)을 분리한다 — 안 그러면 "아직 덜 걷었을 뿐"인 상태가 "미달"로
+    # 잘못 찍혀 멀쩡한 정규화 로직을 재점검하러 가게 만든다(수정 3).
+    if pending:
+        print("⚠ 수집 {:.2f}% 진행 중 — ② 판정도 보류(잠정치)".format(coverage_rate))
+        print("")
+
+    ub_coverage_rate = join_rate(ub_covered, ub_total)
+    print("[ ② (a) 점포 PNU 기준 커버리지 ] unit_business 행 중 done PNU에 속한 비율  "
+          "(진척도 — 판정 없음, 점포 PNU 존재 여부만 확인 — 층·호 단위 조인 아님)")
+    if ub_coverage_rate is None:
+        print("    측정 불가 (분모 0 — snapshot_ym/시군구 필터 확인)")
+    else:
+        print("    {:,} / {:,}  ->  {:.2f}%".format(ub_covered, ub_total, ub_coverage_rate))
+
+    ub_join_rate_value = join_rate(ub_join_matched, ub_covered)
+    print("[ ② (b) 점포 PNU 기준 조인률 ] done PNU에 속한 점포 행 중 building이 붙은 비율  "
+          "(목표 {:.0f}%+, §5.6 판정 대상)".format(JOIN_RATE_TARGET))
+    if ub_join_rate_value is None:
+        print("    측정 불가 (분모 0 — done PNU에 속한 점포 행이 없음)")
+    else:
+        print("    {:,} / {:,}  ->  {:.2f}%  [{}]".format(
+            ub_join_matched, ub_covered, ub_join_rate_value,
+            "달성" if ub_join_rate_value >= JOIN_RATE_TARGET else "미달 — 원인 확인 필요"))
+
+    if missing_reasons:
+        print("")
+        print("[ building이 안 붙은 PNU 사유별 ] 총 {:,}개".format(sum(missing_reasons.values())))
+        for reason, cnt in missing_reasons.most_common():
+            print("    - {}: {:,}개".format(reason, cnt))
+    print("=" * 78)
+
+
+# ── 메인 ──────────────────────────────────────────────────────────────────────
+
+
+def parse_args(argv):
+    opts = {
+        "raw_dir": None,
+        "period_key": DEFAULT_PERIOD_KEY,
+        "sigungu_code": DEFAULT_SIGUNGU_CODE,
+        "snapshot_ym": DEFAULT_SNAPSHOT_YM,
+        "dry_run": "--dry-run" in argv,
+    }
+    for flag, key in (
+        ("--raw-dir", "raw_dir"),
+        ("--period-key", "period_key"),
+        ("--sigungu-code", "sigungu_code"),
+        ("--snapshot-ym", "snapshot_ym"),
+    ):
+        if flag in argv:
+            i = argv.index(flag)
+            if i + 1 >= len(argv):
+                raise ValueError("{} 뒤에 값이 필요합니다.".format(flag))
+            opts[key] = argv[i + 1]
+    if opts["raw_dir"] is None:
+        opts["raw_dir"] = os.path.join(
+            PROJECT_ROOT, "data", "raw", "bldrgst", opts["period_key"])
+    return opts
+
+
+def load_raw(raw_dir):
+    """raw 3종을 읽어 (title, flr, expos, broken 카운트)를 돌려준다.
+
+    각 파일은 PNU별 최신 배치만 남긴다(latest_batch_by_pnu — 중복 수집 방어).
+    """
+    title, b1 = read_jsonl(os.path.join(raw_dir, RAW_TITLE))
+    flr, b2 = read_jsonl(os.path.join(raw_dir, RAW_FLR_OULN))
+    expos, b3 = read_jsonl(os.path.join(raw_dir, RAW_EXPOS_AREA))
+    broken = {RAW_TITLE: b1, RAW_FLR_OULN: b2, RAW_EXPOS_AREA: b3}
+    return (
+        latest_batch_by_pnu(title),
+        latest_batch_by_pnu(flr),
+        latest_batch_by_pnu(expos),
+        broken,
+    )
+
+
+def transform(raw_dir):
+    """raw 폴더 -> (building 목록, unit 목록, 보고용 통계 묶음)."""
+    title_rows, flr_rows, expos_rows, broken = load_raw(raw_dir)
+    buildings, bld_stats = build_buildings(title_rows)
+    # 층별개요·전유부 모두 같은 건물 귀속 규칙(resolve_bld_id)을 쓴다 — 키가 어긋나면
+    # floor_use가 조용히 NULL로 남는다.
+    floor_use, flr_stats = build_floor_use_lookup(
+        flr_rows, buildings, bld_stats["buildings_by_pnu"])
+    units, unit_stats = build_units(
+        expos_rows, buildings, bld_stats["buildings_by_pnu"], floor_use)
+
+    building_records = list(buildings.values())
+    assert_no_zero_floor(units)
+    assert_unique(building_records, "bld_id")
+    assert_unique(units, "unit_id")
+
+    return building_records, units, {
+        "broken": broken,
+        "bld_stats": bld_stats,
+        "flr_stats": flr_stats,
+        "unit_stats": unit_stats,
+        "pnu_in_raw_title": {r["pnu"] for r in title_rows},
+        "truncated_pnus": find_truncated_pnu(expos_rows),
+    }
+
+
+def report_join_rate(base_url, headers, sigungu_code, snapshot_ym, period_key, pnu_in_raw_title):
+    """§5.6 조인률을 DB 실측으로 재서 출력한다.
+
+    수집 커버리지(진행 중이면 잠정치)와 조인 성공률을 분리한다 — 안 그러면
+    "아직 다 못 걷었을 뿐"인 상황을 "정규화 로직이 깨졌다"로 잘못 결론짓고
+    이미 검증된 PNU 조립·층 정규화를 다시 뜯게 된다(§5.6 오판 방지, 수정 2).
+    """
+    parcel_pnus = fetch_pnu_set(
+        base_url, headers, "parcel", "select=pnu&pnu=like.{}*".format(sigungu_code))
+    building_pnus = fetch_pnu_set(
+        base_url, headers, "building", "select=pnu&pnu=like.{}*".format(sigungu_code))
+    status_sets = fetch_progress_status_sets(base_url, headers, period_key)
+    done_pnus = status_sets.get("done", set()) & parcel_pnus
+    pending_pnus = status_sets.get("pending", set()) & parcel_pnus
+    failed_pnus = status_sets.get("failed", set()) & parcel_pnus
+
+    missing_reasons = Counter()
+    for pnu in parcel_pnus - building_pnus:
+        reason = classify_missing_pnu(
+            pnu, pnu_in_raw_title, building_pnus, pending_pnus, failed_pnus)
+        if reason:
+            missing_reasons[reason] += 1
+
+    join_matched = len(done_pnus & building_pnus)
+
+    ub_total = rest_count(
+        base_url, headers, "unit_business",
+        "select=biz_no&snapshot_ym=eq.{}&pnu=like.{}*".format(snapshot_ym, sigungu_code))
+    ub_pnus = fetch_pnu_list(
+        base_url, headers, "unit_business",
+        "select=pnu&snapshot_ym=eq.{}&pnu=like.{}*".format(snapshot_ym, sigungu_code),
+        order="snapshot_ym,biz_no")
+    # ② (a) 커버리지 분모=ub_total, 분자=done PNU에 속한 행. ② (b) 조인률은
+    # done PNU에 속한 행만을 모집단으로 삼아야 한다 — 아직 안 걷은 PNU의 점포
+    # 행까지 분모에 넣으면 "미수집"이 "정규화 실패"로 잘못 찍힌다(수정 3).
+    ub_covered = sum(1 for p in ub_pnus if p in done_pnus)
+    ub_join_matched = sum(1 for p in ub_pnus if p in done_pnus and p in building_pnus)
+
+    print_join_report(sigungu_code, snapshot_ym, len(parcel_pnus), len(done_pnus), join_matched,
+                      ub_total, ub_covered, ub_join_matched, missing_reasons)
+
+
+def main():
+    try:
+        if sys.stdout.isatty():
+            sys.stdout.reconfigure(errors="replace")
+        else:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+    try:
+        opts = parse_args(sys.argv[1:])
+    except ValueError as e:
+        print("[에러] {}".format(e))
+        return 2
+
+    raw_dir = opts["raw_dir"]
+    if not os.path.isdir(raw_dir):
+        print("[에러] raw 폴더를 찾을 수 없습니다: {}".format(raw_dir))
+        print("       먼저 python scripts/collectors/collect_building_ledger.py 를 실행하세요.")
+        return 1
+
+    print("raw 읽는 중: {}".format(raw_dir), flush=True)
+    try:
+        building_records, unit_records, stats = transform(raw_dir)
+    except RuntimeError as e:
+        print("[에러] {}".format(e))
+        return 1
+
+    print_transform_report(raw_dir, stats["broken"], stats["bld_stats"], stats["flr_stats"],
+                           stats["unit_stats"], len(building_records), len(unit_records),
+                           stats["truncated_pnus"])
+
+    if opts["dry_run"]:
+        print("")
+        print("--dry-run 지정 — DB 적재·조인률 실측을 건너뜁니다.")
+        return 0
+
+    if not building_records:
+        print("[에러] 적재할 building 행이 없습니다. raw 폴더를 확인하세요.")
+        return 1
+
+    print("")
+    print("Supabase 연결 확인 중...", flush=True)
+    try:
+        base_url, key = get_supabase_config()
+    except RuntimeError as e:
+        print("[에러] {}".format(e))
+        return 1
+    headers = {"apikey": key, "Authorization": "Bearer {}".format(key)}
+
+    print("적재 시작... (building -> unit 순서, unit.bld_id FK 때문에 순서 고정)", flush=True)
+    try:
+        bld_sent = upsert_batch(base_url, headers, "building", building_records)
+        unit_sent = upsert_batch(base_url, headers, "unit", unit_records)
+    except RuntimeError as e:
+        print("[에러] {}".format(e))
+        return 1
+
+    print("")
+    print("=" * 78)
+    print("적재 완료: building {:,}행 / unit {:,}행".format(bld_sent, unit_sent))
+    print("=" * 78)
+
+    print("")
+    print("§5.6 조인률 실측 중... (DB 기준)", flush=True)
+    try:
+        report_join_rate(base_url, headers, opts["sigungu_code"], opts["snapshot_ym"],
+                         opts["period_key"], stats["pnu_in_raw_title"])
+    except RuntimeError as e:
+        print("[에러] 조인률 실측 실패: {}".format(e))
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
