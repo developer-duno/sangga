@@ -22,3 +22,25 @@ jobs:
         run: python -m ruff check scripts/ tests/
       - name: Test
         run: python -m pytest tests/ -q
+
+  # 프론트엔드 검사. 없으면 타입 오류가 그대로 머지된다 — PR #9로 React 앱이 들어온 뒤
+  # 이 job이 없어서 src/**가 CI 사각지대였다(2026-08-08 적대검증에서 발견).
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          # package.json에 packageManager가 없어 명시한다. 로컬과 메이저를 맞춘다.
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm exec oxlint
+      # build가 `tsc -b && vite build`라 타입 검사까지 함께 돈다.
+      - name: Typecheck + build
+        run: pnpm build
