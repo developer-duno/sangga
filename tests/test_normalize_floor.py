@@ -32,6 +32,26 @@ class TestSpecBasics:
         assert normalize_floor("지하2층") == -2
         assert normalize_floor("지하 1 층") == -1  # 공백 섞인 표기
 
+    def test_basement_ji_abbreviation(self):
+        """'지1층'은 지하1층 약칭 — 지상으로 읽으면 부호가 뒤집힌다.
+
+        건축물대장 전유공용면적의 flrNoNm에서 '지1층'·'지4-지3' 형태로 실제
+        관측된다(2026-08-07 강남구 실측). '지상'은 걸리지 않아야 한다.
+        """
+        assert normalize_floor("지1층") == -1
+        assert normalize_floor("지2층") == -2
+        assert normalize_floor("지 3 층") == -3
+        assert normalize_floor("지4") == -4
+        # '지상'은 지하 약칭이 아니다 (회귀 방지)
+        assert normalize_floor("지상2층") == 2
+        assert normalize_floor("지상10층") == 10
+
+    def test_basement_ji_abbreviation_ranges(self):
+        """약칭이 범위로 올 때도 지하로 읽고 대표층은 가장 깊은 층."""
+        assert normalize_floor("지4-지3") == -4
+        assert normalize_floor("지5~지3, 지1") == -5
+        assert normalize_floor("지8-지1") == -8
+
     def test_basement_b_prefix(self):
         assert normalize_floor("B1") == -1
         assert normalize_floor("B2") == -2

@@ -39,6 +39,13 @@ AMBIGUOUS_THRESHOLD = 100
 # 케이스는 아니라 이 파일의 판단 — 근거를 여기 docstring에 남긴다.)
 BANJIHA_FLOOR = -1
 
+# 지하 약칭 — '지1층'·'지4'처럼 '지' 바로 뒤에 숫자가 오는 표기.
+# 건축물대장 층별개요·전유공용면적의 flrNoNm에서 '지1층'(지하1층)·'지4-지3'
+# (지하4층~지하3층) 형태로 실제 관측된다(2026-08-07 강남구 실측). '지상2층'은
+# '지' 뒤가 '상'이라 걸리지 않고, 방향 표시만 있고 숫자가 없는 '지'도 걸리지
+# 않는다(그건 아래 숫자 추출 단계에서 None이 된다).
+_UNDER_ABBR_RE = re.compile(r"^\s*지\s*\d")
+
 # 복합 표기("1,2층" · "1~3층")에서 여러 층이 나오면 대표층으로 무엇을
 # 고를지 정하는 값. 상가는 통상 접수(출입구)가 가장 낮은 층에 있으므로
 # 최저층을 대표층으로 삼는다. (스킬 규격에 명시 없음 — 이 파일의 판단.)
@@ -84,10 +91,11 @@ def _extract_single(token: str, force_under: bool = False) -> Optional[int]:
     if "반지하" in s or "반지층" in s or s == "반":
         return BANJIHA_FLOOR
 
-    # 지하 판별: "지하" 포함 / B 로 시작(B1, B2 등) / 앞에 마이너스 부호 /
-    # 복합 표기 전체의 지하 문맥(force_under)을 물려받은 경우
+    # 지하 판별: "지하" 포함 / '지1층' 같은 지하 약칭 / B 로 시작(B1, B2 등) /
+    # 앞에 마이너스 부호 / 복합 표기 전체의 지하 문맥(force_under)을 물려받은 경우
     is_under = bool(
         "지하" in s
+        or _UNDER_ABBR_RE.match(s)
         or re.match(r"^\s*B", s, re.IGNORECASE)
         or s.strip().startswith("-")
         or force_under
@@ -143,6 +151,8 @@ def normalize_floor(raw) -> Optional[int]:
         (99, None, None)
         >>> normalize_floor("101"), normalize_floor("지"), normalize_floor("반지층")
         (None, None, -1)
+        >>> normalize_floor("지1층"), normalize_floor("지상2층")   # '지N'은 지하 약칭
+        (-1, 2)
         >>> normalize_floor("1,2층"), normalize_floor("지하1~3층")
         (1, -3)
     """
@@ -163,7 +173,8 @@ def normalize_floor(raw) -> Optional[int]:
     # "지하1~3층"처럼 맨 앞에만 지하/B 표시가 있고 뒷조각("3층")엔 표시가
     # 없어도, 범위('~')로 이어진 뒷조각까지는 그 문맥을 물려준다. 다만
     # ','·'/'로 이어진 조각(열거)은 물려받지 않고 자기 표기를 그대로 쓴다.
-    global_under = bool(re.match(r"^\s*(지하|B)", s, re.IGNORECASE))
+    global_under = bool(
+        re.match(r"^\s*(지하|B)", s, re.IGNORECASE) or _UNDER_ABBR_RE.match(s))
 
     floors = []
     for delim, p in raw_parts:
@@ -198,6 +209,7 @@ if __name__ == "__main__":
         "1", "3층", "B1", "지하2층", "-1", "1F", "옥탑", "", None, "B2F",
         "지하 1 층", "0", "지", "반", "반지층", "101", "B103", "15015",
         "1,2층", "1~3층", "지하1~3층",
+        "지1층", "지상2층", "지4-지3", "지5~지3, 지1",
     ]
     for c in cases:
         f = normalize_floor(c)

@@ -33,6 +33,7 @@ building/unit 테이블을 채우고, `docs/상세계획.md` §5.6 "건축물대
     flrGbCd '10'(지하) -> -flrNo
     flrGbCd '20'(지상) -> +flrNo
     flrGbCd '30'(옥탑) -> ROOFTOP(99, normalize_floor 정본 재사용)
+    flrGbCd '21'/'22'(복수층 하층/상층) -> flrNo 그대로 (부호까지 — floor_from_codes 참고)
     그 외 코드 / flrNo가 0·결측 -> None (경고 카운트)
   0은 절대 만들지 않는다 — CLAUDE.md 절대 규칙 4, DB CHECK(chk_floor_not_zero).
 
@@ -83,6 +84,8 @@ MAIN_DONG_TOKEN = "MAIN"
 FLR_GB_UNDER = "10"    # 지하
 FLR_GB_GROUND = "20"   # 지상
 FLR_GB_ROOFTOP = "30"  # 옥탑
+# 복수층 — 한 호실이 아래위 두 층을 쓰는 경우. 하층/상층 행이 짝으로 온다.
+FLR_GB_MULTI = ("21", "22")  # 21=복수층(하층) / 22=복수층(상층)
 ROOFTOP_FLOOR = ROOFTOP  # normalize_floor.ROOFTOP(99) 재사용 — 이 파일에서 재정의하지 않는다
 
 # 전유/공용 구분 (exposPubuseGbCd). 전용면적은 전유만 더한다.
@@ -101,6 +104,12 @@ PLAT_GB_MOUNTAIN = "2"
 BATCH_SIZE = 1000
 SELECT_PAGE_SIZE = 1000
 TIMEOUT_SEC = 120
+
+# 유령 행 정리(delete_stale_units)에서 URL 하나에 담을 값 개수. PostgREST의
+# in.(...)은 URL 쿼리스트링이라 값이 많으면 URL 길이 제한에 걸린다. PNU는
+# 19자리 고정이라 넉넉히, unit_id는 호실명(한글·기호)이 붙어 길고 가변이라 짧게.
+STALE_PNU_CHUNK = 200
+STALE_DELETE_CHUNK = 100
 
 # §5.6 목표선 (docs/상세계획.md)
 JOIN_RATE_TARGET = 90.0
@@ -218,15 +227,48 @@ def floor_from_codes(flr_gb_cd, flr_no):
     지하 '10' -> -n / 지상 '20' -> +n / 옥탑 '30' -> ROOFTOP_FLOOR(99).
     옥탑은 flrNo가 무엇이든 규격 고정값을 쓴다(층수가 아니라 분류값).
 
-    나머지 코드는 공식 층구분코드표(건축HUB 층별개요 명세, 2026-08-07 확인:
-    00 미지정 / 21 복수층(하층) / 22 복수층(상층) / 40 각층) 기준으로 전부
-    의도적 None이다 — '40' 각층은 단일 층으로 환원 자체가 불가하고(EV·계단 등,
-    flrNo=0으로 옴), '21'/'22' 복수층은 코드에 지하/지상 방향이 없어 부호를
-    정할 수 없으며, '00'은 미지정. 추측 매핑 금지 원칙(CLAUDE.md)에 따른다.
+    복수층 '21'(하층)·'22'(상층)은 flrNo를 부호까지 그대로 층으로 쓴다. 이
+    두 코드는 방향(지하/지상)을 코드가 아니라 flrNo 부호가 들고 있다 — 공식
+    층구분코드표(건축HUB 층별개요 명세)는 코드 의미만 정의하고 flrNo 부호
+    규약은 아예 정의하지 않으므로, 아래 실측을 근거로 삼는다(2026-08-07,
+    강남구 raw 202608):
+      - **하층/상층 짝의 연속성**: 같은 (건물, 호)의 21행·22행 186쌍 중
+        185쌍이 (n, n+1) 연속이다. flrNo가 층과 무관한 값이라면 이런 분포가
+        나올 수 없다 — 이게 이 결정의 핵심 근거다.
+      - **부호를 지우면 모순이 생긴다**: 유일한 음수 행(flrNo=-1,
+        flrNoNm='복수층(하층)-1')의 짝은 22/flrNo=1이다. abs()를 하면 하층과
+        상층이 둘 다 1층이 되어 "복층"이 성립하지 않는다. 부호를 살려야
+        지하1층~지상1층 복층이 되고, 그 건물의 층별개요도 정확히 [-1, 1, 2]다.
+        (다만 음수 표본이 1건뿐이라, raw가 늘면 재확인할 것.)
+      - **이름표 일치**: flrNoNm이 '복수층(하층)4'·'복수층(하층)-1'처럼 flrNo를
+        부호까지 그대로 담고 있다. 487행 중 이름표가 값과 모순되는 행은 1건뿐
+        (아래 참고).
+    ⚠️ **근거로 쓰지 말 것 — 층별개요 실재층 대조**: "복원한 층이 그 건물에
+    실제로 있는 층인가"를 대조하면 486/487(99.8%)이 나오지만, 이건 아무것도
+    증명하지 못한다. 적대검증에서 flrNo 대신 그 건물 층 범위의 **난수**를
+    300회 넣어도 100% 일치가 나왔다 — 이 건물들은 층 목록이 촘촘해 어떤 값이든
+    실재 층에 걸린다. 같은 함정을 다시 파지 않도록 여기 남긴다.
+    참고로 유일한 모순 행(PNU 1168010300112800000, 이름표 '지5~지3,지1'인데
+    flrGbCd=21·flrNo=1)은 exposPubuseGbCd='2'(공용)라 unit 테이블에 애초에
+    반영되지 않고, 값 자체도 그 동의 grndFlrCnt=0을 넘어 물리적으로 불가능한
+    소스 오류다. 실제 unit에 반영되는 전유 441행에서는 확인된 오류가 0건이다.
+    flrNo가 0인 행은 방향도 층수도 없어 그대로 None이다(이름표에 '1~5층',
+    '지5~지3, 지1' 같은 범위가 섞여 한 층으로 환원 자체가 불가).
+    ⚠️ 알려진 한계: flrNo의 절대값이 99면 ROOFTOP_FLOOR(옥탑) 표식과 구분되지
+    않는다. 이는 "옥탑=99" 규격 자체의 한계로 지상 '20' 경로에도 똑같이 있다
+    (강남 실측 최대 |flrNo|=35라 현재 영향 0건). 고층 지역 확장 시 재검토.
+
+    나머지 코드는 공식 층구분코드표(00 미지정 / 40 각층) 기준으로 의도적
+    None이다 — '40' 각층은 단일 층으로 환원 자체가 불가하고(EV·계단 등,
+    flrNo=0으로 옴), '00'은 미지정. 추측 매핑 금지 원칙(CLAUDE.md)에 따른다.
     """
     code = "" if flr_gb_cd is None else str(flr_gb_cd).strip()
     if code == FLR_GB_ROOFTOP:
         return ROOFTOP_FLOOR
+    if code in FLR_GB_MULTI:
+        n = _to_int(flr_no)
+        # 0/결측은 None (절대 규칙 4). 부호는 flrNo가 들고 있으므로 abs()하지 않는다.
+        return n or None
     if code not in (FLR_GB_UNDER, FLR_GB_GROUND):
         return None
     n = _to_int(flr_no)
@@ -718,6 +760,120 @@ def upsert_batch(base_url, headers, table, rows, batch_size=BATCH_SIZE):
     return sent
 
 
+def _pgrst_in_list(values):
+    """PostgREST in.(...) 필터 문자열을 만든다. 각 값을 큰따옴표로 감싼다.
+
+    unit_id에는 호실명이 그대로 들어가 한글·공백·콤마·괄호가 섞일 수 있다.
+    감싸지 않으면 값 안의 콤마가 구분자로 읽혀 엉뚱한 행이 지워진다.
+    """
+    quoted = ['"{}"'.format(str(v).replace("\\", "\\\\").replace('"', '\\"'))
+              for v in values]
+    return "in.({})".format(",".join(quoted))
+
+
+def delete_stale_units(base_url, headers, unit_records, period_key, raw_row_counts,
+                       truncated_pnus,
+                       pnu_chunk=STALE_PNU_CHUNK, delete_chunk=STALE_DELETE_CHUNK):
+    """원본이 온전함이 확인된 PNU 범위 안에서, 계산 결과에 없는 옛 unit 행을 지운다.
+
+    왜 필요한가: unit_id에 층이 들어간다(make_unit_id -> bld_id_층_호). 층
+    판정 규칙이 바뀌면 같은 호실의 unit_id가 통째로 바뀐다 — 복수층 복원
+    전 '..._NA_501호'였던 행이 복원 후 '..._5_501호'가 되는 식이다. 적재는
+    upsert뿐이라 새 행만 생기고 옛 행은 남는다. 그러면 같은 호실이 두 줄로
+    존재해 전용면적이 이중 집계된다. 그래서 적재 직후 옛 행을 지운다.
+
+    ⚠️ 삭제 범위를 정하는 규칙이 이 함수의 전부다. "raw에 그 PNU 행이 있다"만
+    으로는 부족하다 — 그 PNU를 **이번에 온전히 다시 계산했다**는 보장이 없으면
+    멀쩡한 라이브 행이 "이제 없는 행"으로 오인돼 지워진다. 실제로 두 경로가
+    있다(독립 코드리뷰 지적, 2026-08-07):
+      (1) raw 파일 일부 손상 — read_jsonl은 깨진 줄을 세고 건너뛴 뒤 나머지를
+          그대로 처리하므로, 그 PNU는 "행이 있긴 한데 일부만" 있는 상태가 된다.
+      (2) `--raw-dir`로 작은/오래된 폴더를 지정 — 이 옵션은 upsert 전용이던
+          시절엔 무해했지만(최악이 '덜 채움'), 삭제가 붙은 뒤로는 파괴적이다.
+      (3) 전유공용면적 응답이 페이지 상한(10,000행)에서 잘린 PNU — 재수집 때
+          API가 같은 부분집합을 준다는 보장이 없어, 이전에 정상 적재됐던 행이
+          "이번 raw에 없다"는 이유만으로 지워질 수 있다. row_count도 잘린 값이
+          그대로 저장돼 있어 (2)의 대조로는 걸러지지 않는다.
+    그래서 PNU마다 아래 세 조건을 **전부** 만족할 때만 삭제 범위에 넣는다:
+      - collect_progress(collector='bldrgst', period_key)에서 status='done'
+      - 그 행의 row_count == 이번 raw에서 센 그 PNU의 행 수(raw_row_counts)
+      - truncated_pnus(find_truncated_pnu 결과)에 들어 있지 않을 것
+    row_count는 수집기가 저장한 "API가 준 아이템 수의 합"이라 raw가 잘리거나
+    폴더가 부분집합이면 즉시 어긋난다(2026-08-07 실측: 강남 5,375개 PNU 전부
+    정확히 일치, 불일치 0건 — 판정 기준으로 쓸 수 있음이 확인됐다).
+    조건을 못 채운 PNU는 조용히 넘어가지 않고 개수를 출력한다.
+
+    호출 순서 전제 — 반드시 upsert 뒤에 부른다. 먼저 지우고 적재하다 중간에
+    죽으면 데이터가 사라지지만, 적재 후 지우면 최악의 경우 중복이 남을 뿐이라
+    다시 실행하면 정리된다.
+
+    반환: 지운 행 수.
+    """
+    if not unit_records:
+        return 0
+
+    keep = {r["unit_id"] for r in unit_records}
+    candidates = {r["pnu"] for r in unit_records}
+    done_counts = fetch_done_row_counts(base_url, headers, period_key)
+    truncated = set(truncated_pnus or ())
+    pnus = sorted(
+        p for p in candidates
+        if p not in truncated
+        and done_counts.get(p) is not None
+        and done_counts[p] == raw_row_counts.get(p, 0)
+    )
+    skipped = len(candidates) - len(pnus)
+    if skipped:
+        print("  [unit] 원본 완전성 미확인 PNU {:,}개는 정리 대상에서 제외 "
+              "(collect_progress done + row_count 일치인 PNU만 정리)".format(skipped),
+              flush=True)
+    if not pnus:
+        print("  [unit] 정리 가능한 PNU 없음 — 옛 행 정리를 건너뜁니다", flush=True)
+        return 0
+
+    stale = []
+    for i in range(0, len(pnus), pnu_chunk):
+        part = pnus[i:i + pnu_chunk]
+        rows = rest_select(
+            base_url, headers, "unit",
+            "select=unit_id&pnu=in.({})".format(",".join(part)),
+            order="unit_id",
+        )
+        stale.extend(r["unit_id"] for r in rows if r["unit_id"] not in keep)
+
+    if not stale:
+        print("  [unit] 정리할 옛 행 없음", flush=True)
+        return 0
+
+    deleted = 0
+    total_batches = (len(stale) + delete_chunk - 1) // delete_chunk
+    for i in range(0, len(stale), delete_chunk):
+        part = stale[i:i + delete_chunk]
+        batch_no = i // delete_chunk + 1
+        try:
+            r = requests.delete(
+                "{}/rest/v1/unit".format(base_url),
+                params={"unit_id": _pgrst_in_list(part)},
+                headers=headers, timeout=TIMEOUT_SEC,
+            )
+        except requests.RequestException as e:
+            raise RuntimeError(
+                "unit 옛 행 삭제 {}/{} 중 네트워크 오류: {}. 적재 자체는 끝났으므로 "
+                "같은 명령을 다시 실행하면 남은 옛 행부터 정리합니다.".format(
+                    batch_no, total_batches, e)
+            )
+        if r.status_code >= 300:
+            raise RuntimeError(
+                "unit 옛 행 삭제 {}/{} 실패 (HTTP {}): {}. 적재 자체는 끝났으므로 "
+                "같은 명령을 다시 실행하면 남은 옛 행부터 정리합니다.".format(
+                    batch_no, total_batches, r.status_code, r.text[:300])
+            )
+        deleted += len(part)
+        print("  [unit] 옛 행 정리 {}/{} 배치 {}행 (누적 {:,}/{:,})".format(
+            batch_no, total_batches, len(part), deleted, len(stale)), flush=True)
+    return deleted
+
+
 def rest_count(base_url, headers, table, query):
     """PostgREST HEAD 요청으로 정확한 행 수를 돌려준다 (Content-Range 헤더)."""
     h = dict(headers)
@@ -771,6 +927,26 @@ def fetch_progress_status_sets(base_url, headers, period_key):
         if status and pnu:
             sets[status].add(pnu)
     return sets
+
+
+def fetch_done_row_counts(base_url, headers, period_key):
+    """수집 완료(status='done') PNU -> 수집 시점 row_count 매핑.
+
+    delete_stale_units가 "이번 raw로 그 PNU를 온전히 다시 계산했는가"를
+    판정하는 근거다. row_count가 비어 있는 행은 판정 근거가 없으므로 아예
+    빼서, 그런 PNU는 삭제 범위에 들어가지 않게 한다(모르면 지우지 않는다).
+    """
+    rows = rest_select(
+        base_url, headers, "collect_progress",
+        "select=scope_key,row_count&collector=eq.{}&period_key=eq.{}&status=eq.done".format(
+            BLDRGST_COLLECTOR, period_key),
+        order="scope_key",
+    )
+    return {
+        r["scope_key"]: r["row_count"]
+        for r in rows
+        if r.get("scope_key") and r.get("row_count") is not None
+    }
 
 
 # ── 보고 출력 ────────────────────────────────────────────────────────────────
@@ -951,6 +1127,20 @@ def load_raw(raw_dir):
     )
 
 
+def count_raw_rows_by_pnu(*row_lists):
+    """PNU별 raw 행 수 (최신 배치 기준, 넘겨받은 목록 전부를 합산).
+
+    collect_progress.row_count(수집기가 저장한 "그 PNU에서 API가 준 아이템 수의
+    합")와 대조해 **이번 실행이 그 PNU를 온전히 다시 계산했는지** 판정하는 데
+    쓴다 — delete_stale_units가 삭제해도 되는 범위를 정하는 근거다.
+    """
+    counts = Counter()
+    for rows in row_lists:
+        for row in rows:
+            counts[row["pnu"]] += 1
+    return counts
+
+
 def transform(raw_dir):
     """raw 폴더 -> (building 목록, unit 목록, 보고용 통계 묶음)."""
     title_rows, flr_rows, expos_rows, broken = load_raw(raw_dir)
@@ -974,6 +1164,7 @@ def transform(raw_dir):
         "unit_stats": unit_stats,
         "pnu_in_raw_title": {r["pnu"] for r in title_rows},
         "truncated_pnus": find_truncated_pnu(expos_rows),
+        "raw_row_counts": count_raw_rows_by_pnu(title_rows, flr_rows, expos_rows),
     }
 
 
@@ -1073,13 +1264,18 @@ def main():
     try:
         bld_sent = upsert_batch(base_url, headers, "building", building_records)
         unit_sent = upsert_batch(base_url, headers, "unit", unit_records)
+        # 적재 뒤에 정리한다 — 층 판정이 바뀌면 unit_id가 바뀌어 옛 행이 남는다.
+        unit_deleted = delete_stale_units(
+            base_url, headers, unit_records,
+            opts["period_key"], stats["raw_row_counts"], stats["truncated_pnus"])
     except RuntimeError as e:
         print("[에러] {}".format(e))
         return 1
 
     print("")
     print("=" * 78)
-    print("적재 완료: building {:,}행 / unit {:,}행".format(bld_sent, unit_sent))
+    print("적재 완료: building {:,}행 / unit {:,}행 (옛 unit {:,}행 정리)".format(
+        bld_sent, unit_sent, unit_deleted))
     print("=" * 78)
 
     print("")
