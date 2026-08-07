@@ -12,6 +12,11 @@ data/logs/
 
 # 의존성·운영 잔재물
 node_modules/
+dist/
+
+# Claude Code 로컬 자산 — 작업방(worktree)이 이 밑에 통째로 생기므로 반드시 제외
+.claude/worktrees/
+.claude/settings.local.json
 .omc/
 .serena/
 __pycache__/
