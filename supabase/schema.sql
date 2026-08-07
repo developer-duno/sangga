@@ -503,6 +503,13 @@ alter view v_floor_stack           set (security_invoker = false);
 alter view v_building_floor_stack  set (security_invoker = false);
 alter view v_unit_current          set (security_invoker = false);
 
+-- ⚠️ 위 revoke는 **표만** 다룬다 — 함수(RPC)는 별개다.
+--    Postgres는 새로 만든 함수에 EXECUTE를 PUBLIC에게 기본으로 준다. 즉 우리가 public
+--    스키마에 함수를 하나 만들면 그 순간 anon이 REST `/rpc/<이름>`으로 부를 수 있다.
+--    **새 함수를 만들 때는 노출 여부를 의식적으로 정할 것**(화면이 쓸 함수면 그대로 두고,
+--    아니면 `revoke execute on function ... from anon, authenticated`).
+--    지금 우리가 만든 함수는 0개다(노출된 256개는 전부 PostGIS·pg_trgm 것).
+
 -- ⚠️ 남은 구멍 — PostGIS 시스템 표 (우리 권한으로는 못 막는다, 2026-08-08 실측)
 --    spatial_ref_sys / geometry_columns / geography_columns는 소유자가
 --    supabase_admin이라 postgres 롤의 revoke가 WARNING만 내고 실패한다

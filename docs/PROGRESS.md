@@ -197,9 +197,28 @@ PR #8·#9와 이 문서의 주장을 **독립 관점 3개**(수집기 코드 / �
 | 그 설정이 `schema.sql`에 있나 | **없었다.** Supabase 공식 문서: SQL Editor로 만든 표는 RLS가 자동으로 안 켜진다 → 누군가 손으로 켠 것이고 기록이 없었다 |
 | 뷰 3개가 열린 건 의도인가 | **아니다.** 공식 문서: 뷰는 기본이 `security definer`라 RLS를 우회한다 — 부수효과였다 |
 | 실증 | 일회용 Supabase Postgres 컨테이너에 **옛 `schema.sql`만** 적용하니 11개 표 전부 `rls=false`. anon이 원본 표를 읽고 INSERT하고 **`building_floor`를 통째로 DELETE**하는 데 성공했다 |
-| 조치 | `schema.sql`에 RLS 11줄 + 권한 회수 + `v_floor_stack`만 grant를 박고, 새 컨테이너에서 재생성 → **RLS 11/11, anon 권한은 `v_floor_stack=SELECT` 하나뿐, 쓰기 차단, service_role 정상**. 라이브 적용용 발췌본 = `supabase/migrations/2026-08-08_public_read_policy.sql` (👤 사장님이 SQL Editor에서 실행) |
+| 조치 | `schema.sql`에 RLS 11줄 + 권한 회수 + `v_floor_stack`만 grant를 박고, 새 컨테이너에서 재생성 → **RLS 11/11, anon 권한은 `v_floor_stack=SELECT` 하나뿐, 쓰기 차단, service_role 정상**. 라이브 적용용 발췌본 = `supabase/migrations/2026-08-08_public_read_policy.sql` |
 
-⚠️ **못 막은 것 — PostGIS 시스템 표**: `spatial_ref_sys` 등 3개는 소유자가 `supabase_admin`이라 우리 `postgres` 롤로는 권한 회수가 안 된다(`set role supabase_admin`도 거부). 라이브 실측 결과 **anon에게 INSERT·DELETE 권한이 있다**(안전 시험으로 확인 — 중복 키 409 / 0건 매칭 204). `parcel.geom`이 12,274행 전부 채워져 PostGIS 실사용 중이라 좌표계표가 지워지면 좌표 변환이 깨진다. 원인은 PostGIS가 `extensions`가 아니라 `public` 스키마에 설치돼 REST에 노출되는 것(Supabase 공식 권장은 `extensions`).
+#### ✅ 라이브 적용 완료·검증 (2026-08-08 04:1x, 사장님이 SQL Editor에서 실행)
+
+| 검사 | 적용 전 | **적용 후** |
+|---|---|---|
+| 원본 표 11개 (anon) | `200` + 빈 배열 (권한은 있고 RLS가 막던 상태) | **`401/42501` 11/11** — 권한 자체가 없음 = 이중 잠금 |
+| `v_floor_stack` (anon) | 🔓 읽힘 | 🔓 읽힘 (화면 정상) |
+| `v_building_floor_stack`·`v_unit_current` (anon) | 🔓 읽힘 | **🔒 `401/42501`** |
+| anon INSERT (실제 컬럼으로) | 401 (RLS) | **401/42501** (권한 없음) |
+| anon DELETE | 204 (RLS가 0행으로) | **401** |
+| PostgREST 루트(객체 목록) | 조회 가능 | **401** — 어떤 표가 있는지도 못 본다 |
+| service_role (수집·적재) | 정상 | **정상** (121,569 / 64,239 / 12,514 / 7행 확인) |
+
+**REST 노출 객체 전수 열거(273개) 후 anon으로 하나씩 두드린 결과 — 열린 것은 딱 4개**: `v_floor_stack` + PostGIS 시스템 객체 3개(아래).
+
+⚠️ **RPC 256개도 노출돼 있으나 악용은 불가**(놀라지 말 것). PostGIS가 `public`에 있어 `/rpc/st_*` 등이 anon에게 호출 가능하다. DDL 계열을 컨테이너에서 직접 시험한 결과 **전부 막힌다** — `dropgeometrytable('public','parcel')` → `must be owner of table parcel`(표 생존 확인), `addgeometrycolumn`·`postgis_extensions_upgrade`·`enablelongtransactions`·직접 `CREATE TABLE` 모두 차단. 전부 `security_definer=false`라 호출자 권한으로 돌기 때문이다.
+📌 다만 **우리 revoke는 표만 다뤘고 함수는 아니다.** Postgres는 새 함수의 EXECUTE를 기본으로 열어 주므로, 앞으로 `public`에 함수를 만들면 그 즉시 anon이 부를 수 있다 — 만들 때마다 노출 여부를 의식적으로 정할 것(`schema.sql` 주석에 규칙 기록).
+
+⚠️ **못 막은 것 — PostGIS 시스템 표**: `spatial_ref_sys` 등 3개는 소유자가 `supabase_admin`이라 우리 `postgres` 롤로는 권한 회수가 안 된다(`set role supabase_admin`도 거부). 라이브 실측 결과 **anon에게 INSERT·DELETE 권한이 있다**(안전 시험 — 중복 키 409 / 0건 매칭 204).
+
+**피해 범위를 컨테이너에서 정밀 측정했다**: anon이 좌표계 8,500행을 **전부 삭제할 수 있다.** 단 ① 우리 `parcel.geom` 값은 **그대로 살아남고 읽힌다**(저장된 도형이 SRID를 자기 안에 갖고 있어 이 표를 안 본다) ② 깨지는 건 **좌표 변환뿐**(`ST_Transform` → "Cannot find SRID (4326)"). ★ **현재 서비스 영향은 0이다** — 코드 전체에 `ST_Transform`·`ST_DWithin`·`::geography` 호출이 하나도 없고(grep 확인), 화면이 읽는 `v_floor_stack`에도 geom이 없다. 지도·반경 검색(§6.4)을 만들 때부터 문제가 된다. 원인은 PostGIS가 `extensions`가 아니라 `public` 스키마에 설치돼 REST에 노출되는 것(Supabase 공식 권장은 `extensions`).
 
 🚧 **결정 (2026-08-08) — 공개 배포의 선행 게이트로 확정**: PostgREST 노출 스키마를 `public` → `api`로 바꿔 public 자체를 REST에서 없앤다. **오늘 실행하지 않는 이유**는 ① 앱이 배포 전이라 실제 노출 위험이 0이고 ② 필요한 두 전제(노출 목록에서 public 제거 가능 여부 / pass-through 뷰로 업서트 가능 여부)가 **공식 문서에 없어 미검증**이며 ③ 훼손돼도 우리 데이터가 아니라 PostGIS 표준 참조표라 복구가 되기 때문이다. 검증 안 된 큰 변경을 동작 중인 수집 파이프라인 위에 얹는 쪽이 더 큰 위험이다. **배포 착수 시 이 항목부터 처리한다** — 시험 항목·복구 절차는 마이그레이션 파일 §5.
 

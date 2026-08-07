@@ -115,11 +115,27 @@ comment on view v_floor_stack is
 --      컨테이너 실측). 원인은 PostGIS가 extensions가 아니라 public 스키마에 설치돼
 --      REST에 그대로 노출되는 것이다(Supabase 공식 권장 = extensions 스키마).
 --
--- 실제 위험(2026-08-08 라이브 실측):
---   · anon INSERT 권한 있음 — 중복 PK로 안전 시험해 HTTP 409(권한 아님) 확인
---   · anon DELETE 권한 있음 — 0건 매칭 필터로 안전 시험해 HTTP 204 확인
---   · parcel.geom이 12,274행 전부 채워져 PostGIS 실사용 중 → 좌표계표가 지워지면
---     좌표 변환이 깨진다
+-- 실제 위험 — 적용 후 정밀 측정 완료 (2026-08-08):
+--   · anon INSERT·DELETE 권한 있음 (라이브 안전 시험: 중복 PK 409 / 0건 매칭 204)
+--   · 컨테이너에서 실제 피해를 재현: anon이 spatial_ref_sys 8,500행을 **전부 삭제**할 수
+--     있다. 다만 피해 범위는 좁다 —
+--       - 우리 parcel.geom 값은 **그대로 살아남고 읽힌다**(`POINT(127.05 37.5)` 확인).
+--         저장된 도형은 SRID 숫자를 자기 안에 갖고 있어 이 표를 참조하지 않는다.
+--       - 깨지는 것은 **좌표 변환**뿐: `ST_Transform` → "Cannot find SRID (4326)".
+--   · ★ **현재 서비스 영향 = 0**. 코드 전체에 `ST_Transform`·`ST_DWithin`·`::geography`
+--     호출이 하나도 없고(2026-08-08 grep), 화면이 읽는 v_floor_stack에도 geom이 없다.
+--     지도·반경 검색(§6.4 상권 유사도)을 만들 때부터 문제가 된다.
+--
+-- ✅ 함께 확인한 것 — RPC 256개는 노출돼 있으나 **악용 불가**(놀라지 말 것):
+--   PostGIS가 public에 있어 `/rpc/st_*` 등 256개 함수가 anon에게 호출 가능하다. 그중
+--   DDL 계열을 컨테이너에서 직접 시험한 결과 전부 권한 모델에서 막힌다:
+--     dropgeometrytable('public','parcel')  -> ERROR: must be owner of table parcel (표 생존)
+--     addgeometrycolumn(...)                -> ERROR: must be owner of table parcel
+--     postgis_extensions_upgrade()          -> ERROR: must be owner of extension postgis
+--     enablelongtransactions()              -> ERROR: permission denied for schema public
+--     anon 직접 CREATE TABLE                -> ERROR: permission denied for schema public
+--   (전부 security_definer=false라 호출자 권한으로 돌기 때문. 라이브에서도 401/42501 동일)
+--   남는 것은 무거운 연산 함수(st_generatepoints 등) 반복 호출로 인한 자원 낭비 정도다.
 --
 -- ─────────────────────────────────────────────────────────────────────
 -- 결정 (2026-08-08): 별도 스키마 노출로 간다. 단 공개 배포 직전에 한다.
