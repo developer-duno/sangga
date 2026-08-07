@@ -72,7 +72,11 @@ create index if not exists idx_parcel_geom    on parcel using gist (geom);
 -- L2. building — 건물
 -- =====================================================================
 create table if not exists building (
-  bld_id          text      primary key,            -- pnu + '_' + 동명칭
+  bld_id          text      primary key,            -- pnu + '_' + 관리건축물대장PK(mgmBldrgstPk).
+                                                      -- 동명칭이 아닌 이유: 같은 동명칭인데 서로 다른
+                                                      -- 대장(별동·재건축 이력)이 실재하고(강남구 23그룹
+                                                      -- 실측), 동명칭 텍스트는 정부 데이터 갱신으로
+                                                      -- 바뀔 수 있어 영속 키로 부적합하다.
   pnu             char(19)  not null references parcel(pnu) on delete cascade,
   dong_nm         text,
   bld_nm          text,
