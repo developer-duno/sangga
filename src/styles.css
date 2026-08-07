@@ -1,0 +1,382 @@
+/* 층별 스택뷰 — 검증용 화면이라 화려함보다 "읽히는 것"을 우선한다. */
+
+:root {
+  --bg: #f7f7f8;
+  --card: #ffffff;
+  --line: #e3e4e8;
+  --text: #1c1d21;
+  --muted: #6b6d76;
+  --accent: #2f5fd0;
+  --accent-soft: #dde5f8;
+  --under: #8a6d3b;
+  --under-soft: #f3e7cf;
+  --warn-bg: #fdf3e3;
+  --warn-line: #e2c68a;
+  --err: #b3261e;
+
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Malgun Gothic',
+    system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.app {
+  max-width: 940px;
+  margin: 0 auto;
+  padding: 32px 20px 80px;
+}
+
+.app__title {
+  font-size: 26px;
+  margin: 0 0 6px;
+  letter-spacing: -0.02em;
+}
+
+.app__sub {
+  margin: 0 0 28px;
+  color: var(--muted);
+}
+
+/* ── 검색 ───────────────────────────────────────────────────────────── */
+
+.search__form {
+  display: flex;
+  gap: 8px;
+}
+
+.search__input {
+  flex: 1;
+  padding: 11px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  font: inherit;
+  color: inherit;
+}
+
+.search__input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.search__btn {
+  padding: 11px 22px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.search__btn:disabled {
+  background: #b6bcc9;
+  cursor: default;
+}
+
+.search__count {
+  margin: 18px 0 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.search__hint {
+  color: var(--accent);
+}
+
+.hits {
+  list-style: none;
+  margin: 0 0 28px;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.hit {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) auto;
+  gap: 12px;
+  align-items: baseline;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hit:hover {
+  border-color: var(--accent);
+}
+
+.hit--on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.hit__name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hit__addr,
+.hit__meta {
+  color: var(--muted);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hit__warn {
+  color: var(--under);
+}
+
+/* ── 스택 ───────────────────────────────────────────────────────────── */
+
+.stack {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 22px;
+}
+
+.stack__title {
+  margin: 0 0 2px;
+  font-size: 20px;
+}
+
+.stack__addr {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.stack__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 26px;
+  margin: 0 0 18px;
+  padding: 14px 0 0;
+  border-top: 1px solid var(--line);
+}
+
+.stack__facts dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.stack__facts dd {
+  margin: 2px 0 0;
+  font-weight: 600;
+}
+
+.warn {
+  margin: 0 0 18px;
+  padding: 12px 14px;
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-line);
+  border-radius: 8px;
+  font-size: 13.5px;
+}
+
+.floors {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.floor__row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 74px minmax(80px, 1fr) 118px 168px 62px 20px;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.floor__row:hover {
+  background: #f2f4f9;
+  border-color: var(--line);
+}
+
+.floor__label {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.floor--under .floor__label {
+  color: var(--under);
+}
+
+.floor__bar {
+  display: block;
+  height: 16px;
+  background: #eef0f4;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.floor__fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 4px;
+}
+
+.floor--under .floor__fill {
+  background: var(--under);
+}
+
+.floor__use {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.floor__area,
+.floor__stores {
+  color: var(--muted);
+  font-size: 13.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.floor__caret {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+/* ── 층 펼침 ─────────────────────────────────────────────────────────── */
+
+.detail {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 22px;
+  margin: 2px 10px 14px;
+  padding: 14px 16px;
+  background: #fafbfd;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.detail__h {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.detail__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.detail__list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  font-size: 13.5px;
+}
+
+.detail__name {
+  font-weight: 500;
+}
+
+.detail__sub {
+  color: var(--muted);
+  font-size: 12.5px;
+  grid-column: 1;
+}
+
+.detail__val {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  grid-row: 1;
+  grid-column: 2;
+}
+
+.detail__none,
+.detail__note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+/* ── 신뢰도 배지 · 메시지 ─────────────────────────────────────────────── */
+
+.grade {
+  margin: 20px 0 0;
+  padding: 12px 14px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.grade__badge {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-line);
+  color: var(--under);
+  font-weight: 600;
+  font-size: 11.5px;
+}
+
+.msg {
+  color: var(--muted);
+  padding: 14px 2px;
+}
+
+.msg--idle {
+  text-align: center;
+  padding: 48px 0;
+}
+
+.msg--error {
+  color: var(--err);
+}
+
+@media (max-width: 720px) {
+  .hit,
+  .floor__row,
+  .detail {
+    grid-template-columns: 1fr;
+  }
+
+  .floor__bar {
+    display: none;
+  }
+}
