@@ -343,6 +343,14 @@ body {
   font-size: 12.5px;
 }
 
+/* 점포 수 한계 설명 — 위 D등급 문단에 바로 이어 붙는다(구분선 없이). */
+.grade--sub {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+  line-height: 1.65;
+}
+
 .grade__badge {
   display: inline-block;
   margin-right: 8px;

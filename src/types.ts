@@ -53,7 +53,15 @@ export type BuildingHit = {
   bld_nm: string | null;
   road_addr: string | null;
   bld_cnt_in_pnu: number;
+  /** 옥탑을 포함한 전체 층 수(뷰 한 행 = 한 층). */
   floor_cnt: number;
-  min_floor: number;
-  max_floor: number;
+  /**
+   * 옥탑(99)을 **뺀** 최저·최고 층. 옥탑은 층수가 몇이든 99 하나로 합쳐지므로
+   * 여기에 섞으면 "지하 7층 ~ 옥탑"이 되어 지상 최고층(19층)이 사라진다.
+   * 층이 옥탑밖에 없으면 둘 다 null.
+   */
+  min_floor: number | null;
+  max_floor: number | null;
+  /** 옥탑 층이 따로 있는가. 범위 뒤에 "+ 옥탑"으로 붙인다. */
+  has_roof: boolean;
 };

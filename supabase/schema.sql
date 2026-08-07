@@ -449,7 +449,75 @@ left join lateral (
 ) st on true;
 
 comment on view v_floor_stack is
-  '§8.6 층별 스택 뷰. store_cnt/stores는 (PNU, 층) 매칭이라 bld_cnt_in_pnu>1이면 건물 간 중복 — D등급 표시 필수';
+  '§8.6 층별 스택 뷰. store_cnt/stores는 (PNU, 층) 매칭이라 bld_cnt_in_pnu>1이면 건물 간 중복 — D등급 표시 필수. '
+  '★ 공개 접근: 이 뷰만 anon/authenticated에게 SELECT 허용된다(아래 "공개 접근 정책" 절). '
+  '원본 표는 RLS 켬 + 정책 0개 + 권한 회수로 닫혀 있고, 이 뷰가 소유자 권한으로 대신 읽는다';
+
+-- =====================================================================
+-- 공개 접근 정책 — RLS + 최소 권한 (2026-08-08 추가)
+-- =====================================================================
+-- ⚠️ 이 절이 없으면 이 파일로 만든 DB는 무방비다. 2026-08-08에 일회용 Supabase
+--    Postgres 컨테이너로 실증했다 — 이 절 이전의 schema.sql만 적용한 DB에서
+--    공개키 롤(anon)이 원본 표를 읽고, INSERT하고, building_floor를 통째로
+--    DELETE하는 데까지 성공했다.
+--
+-- 왜 여기 없었나: Supabase 공식 문서상 SQL Editor로 만든 표는 RLS가 자동으로
+--    켜지지 않는다("If you create one in raw SQL or with the SQL Editor,
+--    remember to enable RLS yourself"). 라이브 DB는 누군가 손으로 켜 둔 상태였고
+--    그 사실이 코드 어디에도 없었다 = 재현 불가능한 보안.
+--
+-- 설계 선택: 뷰를 security_invoker=true로 바꿔 원본 표에 읽기 정책을 다는 길도
+--    있으나, 그러면 unit_business(상호명)·transaction(실거래)이 anon에게 통째로
+--    열린다. 상호명 노출은 CLAUDE.md에서 변호사 검토 대상이므로 노출면을 최소로
+--    유지한다 — 원본 표는 닫고, 화면이 읽는 뷰 하나만 연다.
+
+alter table bjd_code         enable row level security;
+alter table parcel           enable row level security;
+alter table building         enable row level security;
+alter table building_floor   enable row level security;
+alter table unit             enable row level security;
+alter table unit_business    enable row level security;
+alter table transaction      enable row level security;
+alter table district         enable row level security;
+alter table rent_stat        enable row level security;
+alter table collect_progress enable row level security;
+alter table api_quota_log    enable row level security;
+
+-- 정책은 일부러 하나도 만들지 않는다. RLS 켬 + 정책 0개 = 공개 롤에게 원본 표는
+-- 완전히 안 보인다. 수집·적재 스크립트는 service_role 키를 쓰고, service_role은
+-- RLS를 우회하므로 영향이 없다(2026-08-08 컨테이너 실측: 읽기·쓰기 정상).
+
+-- 이중 잠금 — Supabase는 public 스키마 표에 anon/authenticated 권한을 기본으로
+-- 준다. RLS만으로도 막히지만, 나중에 정책 하나를 잘못 달면 그 순간 열린다.
+-- 권한 자체를 회수해 두면 실수 하나로는 안 뚫린다.
+-- (PostGIS 시스템 객체 관련 WARNING 몇 줄이 나오는 것은 정상 — 아래 주석 참조)
+revoke all on all tables in schema public from anon, authenticated;
+
+-- 화면이 실제로 읽는 뷰 하나만 연다(src/lib/supabase.ts의 FLOOR_STACK_VIEW).
+-- authenticated에도 주는 이유: 지금은 로그인이 없지만 나중에 붙였을 때 화면이
+-- 조용히 빈 목록으로 바뀌는 사고를 막는다. 둘 다 읽기 전용이다.
+grant select on v_floor_stack to anon, authenticated;
+
+-- 뷰가 RLS를 우회하는 것이 사고가 아니라 선택임을 코드에 남긴다(기본값이지만 명시).
+alter view v_floor_stack           set (security_invoker = false);
+alter view v_building_floor_stack  set (security_invoker = false);
+alter view v_unit_current          set (security_invoker = false);
+
+-- ⚠️ 남은 구멍 — PostGIS 시스템 표 (우리 권한으로는 못 막는다, 2026-08-08 실측)
+--    spatial_ref_sys / geometry_columns / geography_columns는 소유자가
+--    supabase_admin이라 postgres 롤의 revoke가 WARNING만 내고 실패한다
+--    (postgres는 슈퍼유저가 아니고 set role supabase_admin도 거부된다).
+--    라이브 실측: anon이 spatial_ref_sys에 INSERT 권한(HTTP 409 중복키로 확인)과
+--    DELETE 권한(HTTP 204로 확인)을 가진다. parcel.geom은 12,274행 전부 채워져
+--    있어 PostGIS를 실사용 중이므로 좌표계표가 지워지면 좌표 변환이 깨진다.
+--    원인: PostGIS가 extensions가 아니라 public 스키마에 설치돼 REST에 노출됨.
+--    (Supabase 공식 권장 = extensions 스키마 설치)
+--    해결 후보 — 공개 배포 전 결정 필요:
+--      (A) 공개용 뷰만 별도 스키마(api)에 두고 PostgREST 노출 스키마를 그쪽으로
+--          변경 → public 자체가 REST에서 사라진다. 단 service_role로 public 표에
+--          REST 쓰기를 하는 수집·적재기의 경로를 함께 조정해야 한다.
+--      (B) Supabase 지원팀에 권한 회수 요청.
+--    지금 당장 급하지 않은 이유: 앱이 아직 배포 전이라 anon 키가 공개되지 않았다.
 
 -- =====================================================================
 -- 완료
