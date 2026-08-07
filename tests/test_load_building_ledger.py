@@ -5,7 +5,7 @@ scripts/collectors/load_building_ledger.py 단위 테스트
 라이브 API·Supabase 없이 순수 로직만 검증한다:
   1. make_bld_id / make_unit_id — 동명칭 빈값 -> MAIN, 층 불명 -> NA
   2. parse_use_apr_day          — YYYYMMDD 파싱 방어(빈값·0·달력에 없는 날짜)
-  3. floor_from_codes           — 층 코드 매핑 (0이 절대 안 나옴을 명시 검증)
+  3. floor_from_codes           — 층 코드 매핑 (복수층 부호 보존·0이 절대 안 나옴)
   4. sum_parking                — 주차 4종 합·전부 결측
   5. build_building_record      — 표제부 item -> building 행
   6. build_buildings            — 대장PK(mgmBldrgstPk) 기반 2패스 bld_id 확정
@@ -16,6 +16,7 @@ scripts/collectors/load_building_ledger.py 단위 테스트
  10. classify_missing_pnu / join_rate / find_truncated_pnu — §5.6 보고 재료
  11. assert_unique              — 업서트 직전 PK 유일성 가드
  12. upsert_batch / rest_count / transform / main — 흉내낸 requests로 동작만 확인
+ 12-1. delete_stale_units       — 층 복원으로 unit_id가 바뀔 때 옛 행 정리·PNU 범위 한정
 
 conftest.py를 새로 만들지 않기 위해(다른 수집기 작업과 충돌 방지),
 sys.path 조작은 이 파일 안에서만 한다.
@@ -179,6 +180,10 @@ def test_parse_use_apr_day(raw, expected):
     ("10", -2, -2),      # 이미 음수로 온 값도 지하로 유지
     ("30", "1", 99),     # 옥탑
     ("30", "", 99),      # 옥탑은 flrNo와 무관한 분류값
+    ("21", "4", 4),      # 복수층(하층) — flrNo가 곧 그 행의 층
+    ("22", 5, 5),        # 복수층(상층)
+    ("21", "-1", -1),    # 복수층인데 지하 — 부호는 flrNo가 들고 있다
+    ("22", -2, -2),
 ])
 def test_floor_from_codes_maps_known_codes(gb, no, expected):
     assert target.floor_from_codes(gb, no) == expected
@@ -189,14 +194,29 @@ def test_floor_from_codes_maps_known_codes(gb, no, expected):
     ("20", ""), ("10", None),              # flrNo 결측
     ("40", "1"), ("", "1"), (None, "1"),   # 미지 코드
     ("20", "층"),                          # 숫자 아님
+    ("21", "0"), ("22", 0),                # 복수층인데 flrNo 0 -> 층수를 모른다
+    ("21", None), ("22", ""), ("21", "층"),  # 복수층인데 결측·숫자 아님
 ])
 def test_floor_from_codes_returns_none_not_zero(gb, no):
     assert target.floor_from_codes(gb, no) is None
 
 
+def test_floor_from_codes_multi_floor_keeps_sign_unlike_ground_code():
+    """복수층(21/22)은 flrNo 부호를 그대로 살린다 — 지상 코드와 처리가 다르다.
+
+    지상 '20'은 코드가 방향을 정하므로 flrNo가 음수로 와도 abs()해서 지상으로
+    올린다. 반면 복수층 '21'/'22'는 코드에 방향이 없고 flrNo 부호가 방향을
+    들고 있어(2026-08-07 강남구 실측: flrNo=-1 행이 속한 건물에 실제 지하
+    1층이 존재) 부호를 지우면 지하가 지상으로 뒤집힌다.
+    """
+    assert target.floor_from_codes("20", -3) == 3     # 지상 코드는 부호를 무시
+    assert target.floor_from_codes("21", -3) == -3    # 복수층은 부호를 보존
+    assert target.floor_from_codes("22", -3) == -3
+
+
 def test_floor_from_codes_never_yields_zero_over_wide_input():
     """어떤 조합을 넣어도 0이 나오면 안 된다 (DB CHECK chk_floor_not_zero 사전 차단)."""
-    codes = ["10", "20", "30", "40", "", None, "1", "2"]
+    codes = ["10", "20", "21", "22", "30", "40", "", None, "1", "2"]
     numbers = ["0", 0, "", None, "1", "-1", 1, -1, "99", "층", "0.0"]
     for gb in codes:
         for no in numbers:
@@ -955,6 +975,244 @@ def test_rest_select_always_includes_order(monkeypatch):
     assert "order=snapshot_ym,biz_no" in urls[1]
 
 
+# ── 12-1. delete_stale_units (층이 바뀌면 unit_id가 바뀌어 옛 행이 남는다) ────
+
+PNU_1 = "1" * 19
+PERIOD = "202608"
+
+
+def _fake_delete(sink, status=204):
+    def _delete(url, params=None, headers=None, timeout=None):
+        sink.append(params)
+        return _FakeResponse(status, text="err")
+    return _delete
+
+
+def _progress_says_complete(monkeypatch, counts):
+    """collect_progress가 "이 PNU들은 done이고 row_count가 이렇다"고 답하게 만든다."""
+    monkeypatch.setattr(target, "fetch_done_row_counts", lambda *a, **kw: dict(counts))
+
+
+def _call(units, raw_counts, truncated=(), **kw):
+    return target.delete_stale_units(
+        "https://x.supabase.co", {}, units, PERIOD, raw_counts, truncated, **kw)
+
+
+def test_delete_stale_units_deletes_only_ids_missing_from_new_set(monkeypatch):
+    """복원 전 '_NA_' 행만 지우고, 이번에 계산된 행은 건드리지 않는다."""
+    _progress_says_complete(monkeypatch, {PNU_1: 7})
+    monkeypatch.setattr(target, "rest_select", lambda *a, **kw: [
+        {"unit_id": "B_NA_501호"}, {"unit_id": "B_5_501호"}, {"unit_id": "B_3_101호"},
+    ])
+    sent = []
+    monkeypatch.setattr(target.requests, "delete", _fake_delete(sent))
+
+    units = [{"unit_id": "B_5_501호", "pnu": PNU_1},
+             {"unit_id": "B_3_101호", "pnu": PNU_1}]
+    assert _call(units, {PNU_1: 7}) == 1
+    assert sent[0]["unit_id"] == 'in.("B_NA_501호")'
+
+
+def test_delete_stale_units_scopes_lookup_to_pnus_in_records(monkeypatch):
+    """조회 범위를 raw에 있는 PNU로 좁힌다 — 아직 수집 안 된 지역을 지우면 안 된다."""
+    pnu_a, pnu_b = "1168010300100120000", "1168010300100130003"
+    _progress_says_complete(monkeypatch, {pnu_a: 3, pnu_b: 4})
+    queries = []
+
+    def fake_select(base_url, headers, table, query, **kw):
+        queries.append((table, query))
+        return []
+
+    monkeypatch.setattr(target, "rest_select", fake_select)
+    units = [{"unit_id": "A_1_1호", "pnu": pnu_a}, {"unit_id": "B_1_1호", "pnu": pnu_b}]
+    assert _call(units, {pnu_a: 3, pnu_b: 4}) == 0
+    assert queries[0][0] == "unit"
+    assert "select=unit_id" in queries[0][1]
+    assert "pnu=in.({},{})".format(pnu_a, pnu_b) in queries[0][1]
+
+
+def test_delete_stale_units_quotes_ids_so_commas_do_not_split(monkeypatch):
+    """호실명에 콤마가 있어도 값 하나로 전달돼야 한다 (엉뚱한 행 삭제 방지)."""
+    _progress_says_complete(monkeypatch, {PNU_1: 2})
+    monkeypatch.setattr(target, "rest_select",
+                        lambda *a, **kw: [{"unit_id": 'P_1_101,102호'}])
+    sent = []
+    monkeypatch.setattr(target.requests, "delete", _fake_delete(sent))
+
+    units = [{"unit_id": "P_1_103호", "pnu": PNU_1}]
+    assert _call(units, {PNU_1: 2}) == 1
+    assert sent[0]["unit_id"] == 'in.("P_1_101,102호")'
+
+
+def test_pgrst_in_list_escapes_quotes_and_backslashes():
+    assert target._pgrst_in_list(['a"b']) == 'in.("a\\"b")'
+    assert target._pgrst_in_list(["a\\b"]) == 'in.("a\\\\b")'
+    assert target._pgrst_in_list(["a", "b"]) == 'in.("a","b")'
+
+
+def test_delete_stale_units_sends_nothing_when_all_rows_still_exist(monkeypatch):
+    _progress_says_complete(monkeypatch, {PNU_1: 1})
+    monkeypatch.setattr(target, "rest_select", lambda *a, **kw: [{"unit_id": "A_1_1호"}])
+
+    def boom(*a, **kw):
+        raise AssertionError("지울 행이 없으면 DELETE를 보내면 안 된다")
+
+    monkeypatch.setattr(target.requests, "delete", boom)
+    units = [{"unit_id": "A_1_1호", "pnu": PNU_1}]
+    assert _call(units, {PNU_1: 1}) == 0
+
+
+def test_delete_stale_units_empty_records_touches_no_network(monkeypatch):
+    def boom(*a, **kw):
+        raise AssertionError("빈 입력에 네트워크를 건드리면 안 된다")
+
+    monkeypatch.setattr(target, "fetch_done_row_counts", boom)
+    monkeypatch.setattr(target, "rest_select", boom)
+    monkeypatch.setattr(target.requests, "delete", boom)
+    assert _call([], {}) == 0
+
+
+def test_delete_stale_units_chunks_deletes(monkeypatch):
+    _progress_says_complete(monkeypatch, {PNU_1: 1})
+    monkeypatch.setattr(target, "rest_select",
+                        lambda *a, **kw: [{"unit_id": "OLD{}".format(i)} for i in range(5)])
+    sent = []
+    monkeypatch.setattr(target.requests, "delete", _fake_delete(sent))
+
+    units = [{"unit_id": "NEW", "pnu": PNU_1}]
+    assert _call(units, {PNU_1: 1}, delete_chunk=2) == 5
+    assert len(sent) == 3          # 2 + 2 + 1
+
+
+def test_delete_stale_units_chunks_pnu_lookups(monkeypatch):
+    counts = {str(i).zfill(19): 1 for i in range(5)}
+    _progress_says_complete(monkeypatch, counts)
+    queries = []
+    monkeypatch.setattr(
+        target, "rest_select",
+        lambda base, h, table, query, **kw: (queries.append(query) or []))
+
+    units = [{"unit_id": "U{}".format(i), "pnu": str(i).zfill(19)} for i in range(5)]
+    assert _call(units, counts, pnu_chunk=2) == 0
+    assert len(queries) == 3
+
+
+def test_delete_stale_units_wraps_network_error(monkeypatch):
+    _progress_says_complete(monkeypatch, {PNU_1: 1})
+    monkeypatch.setattr(target, "rest_select", lambda *a, **kw: [{"unit_id": "OLD"}])
+
+    def boom(url, params=None, headers=None, timeout=None):
+        raise target.requests.exceptions.ConnectionError("연결 끊김")
+
+    monkeypatch.setattr(target.requests, "delete", boom)
+    with pytest.raises(RuntimeError, match="다시 실행하면"):
+        _call([{"unit_id": "NEW", "pnu": PNU_1}], {PNU_1: 1})
+
+
+def test_delete_stale_units_raises_on_bad_status(monkeypatch):
+    _progress_says_complete(monkeypatch, {PNU_1: 1})
+    monkeypatch.setattr(target, "rest_select", lambda *a, **kw: [{"unit_id": "OLD"}])
+    monkeypatch.setattr(target.requests, "delete", _fake_delete([], status=400))
+    with pytest.raises(RuntimeError, match="옛 행 삭제"):
+        _call([{"unit_id": "NEW", "pnu": PNU_1}], {PNU_1: 1})
+
+
+# 아래 4개는 독립 코드리뷰가 지적한 HIGH 결함(원본이 불완전한데도 삭제가 도는
+# 경로)의 회귀 테스트다. 삭제는 "그 PNU를 이번에 온전히 다시 계산했다"가
+# 증명될 때만 돌아야 한다.
+
+
+def _explode_on_delete(monkeypatch, why):
+    monkeypatch.setattr(target, "rest_select", lambda *a, **kw: [{"unit_id": "OLD"}])
+
+    def boom(*a, **kw):
+        raise AssertionError(why)
+
+    monkeypatch.setattr(target.requests, "delete", boom)
+
+
+def test_delete_stale_units_skips_pnu_when_raw_row_count_mismatches(monkeypatch):
+    """raw가 잘렸거나 일부 손상돼 행 수가 모자라면 그 PNU는 손대지 않는다.
+
+    read_jsonl이 깨진 줄을 건너뛰고 나머지를 처리하므로 "행은 있는데 일부만"
+    인 상태가 실제로 만들어진다. 그때 옛 행을 지우면 멀쩡한 라이브 행이 사라진다.
+    """
+    _progress_says_complete(monkeypatch, {PNU_1: 10})     # 수집 당시 10행
+    _explode_on_delete(monkeypatch, "원본이 불완전하면 삭제하면 안 된다")
+    units = [{"unit_id": "NEW", "pnu": PNU_1}]
+    assert _call(units, {PNU_1: 7}) == 0                  # 지금 raw엔 7행뿐
+
+
+def test_delete_stale_units_skips_pnu_not_marked_done(monkeypatch):
+    """collect_progress에 done으로 안 찍힌 PNU는 삭제 범위에서 뺀다."""
+    _progress_says_complete(monkeypatch, {})              # done 목록이 비어 있음
+    _explode_on_delete(monkeypatch, "done이 아닌 PNU를 삭제하면 안 된다")
+    assert _call([{"unit_id": "NEW", "pnu": PNU_1}], {PNU_1: 3}) == 0
+
+
+def test_delete_stale_units_skips_pnu_with_unknown_row_count(monkeypatch):
+    """row_count를 모르면(NULL) 판정 근거가 없으므로 지우지 않는다."""
+    _progress_says_complete(monkeypatch, {})              # fetch가 None 행을 걸러낸 결과
+    _explode_on_delete(monkeypatch, "판정 근거가 없으면 삭제하면 안 된다")
+    assert _call([{"unit_id": "NEW", "pnu": PNU_1}], {PNU_1: 0}) == 0
+
+
+def test_delete_stale_units_skips_truncated_pnu(monkeypatch):
+    """페이지 상한(10,000행)에 잘린 PNU는 행 수가 맞아떨어져도 손대지 않는다.
+
+    잘린 응답은 재수집 때 API가 같은 부분집합을 준다는 보장이 없다. 게다가
+    collect_progress.row_count도 잘린 값이 그대로 저장돼 있어 행 수 대조만으론
+    걸러지지 않는다 — 그래서 절단 목록을 따로 받아 제외한다.
+    """
+    _progress_says_complete(monkeypatch, {PNU_1: 10_000})
+    _explode_on_delete(monkeypatch, "절단된 PNU를 삭제하면 안 된다")
+    units = [{"unit_id": "NEW", "pnu": PNU_1}]
+    # 행 수는 정확히 일치하지만 절단 목록에 있으므로 제외돼야 한다
+    assert _call(units, {PNU_1: 10_000}, truncated={PNU_1}) == 0
+
+
+def test_delete_stale_units_subset_raw_dir_deletes_nothing(monkeypatch):
+    """--raw-dir로 부분집합 폴더를 가리켜도 파괴적이지 않다.
+
+    부분집합 폴더는 PNU마다 행 수가 원래보다 적으므로 전부 완전성 검사에 걸린다.
+    """
+    pnus = [str(i).zfill(19) for i in range(3)]
+    _progress_says_complete(monkeypatch, {p: 100 for p in pnus})
+    _explode_on_delete(monkeypatch, "부분집합 raw로는 삭제하면 안 된다")
+    units = [{"unit_id": "U{}".format(i), "pnu": p} for i, p in enumerate(pnus)]
+    assert _call(units, {p: 5 for p in pnus}) == 0
+
+
+def test_fetch_done_row_counts_drops_null_row_count(monkeypatch):
+    """row_count가 비어 있는 행은 아예 안 돌려준다 — 모르면 지우지 않기 위해서."""
+    monkeypatch.setattr(target, "rest_select", lambda *a, **kw: [
+        {"scope_key": "A", "row_count": 12},
+        {"scope_key": "B", "row_count": None},
+        {"scope_key": None, "row_count": 3},
+    ])
+    assert target.fetch_done_row_counts("https://x.supabase.co", {}, PERIOD) == {"A": 12}
+
+
+def test_fetch_done_row_counts_filters_to_done_and_period(monkeypatch):
+    queries = []
+    monkeypatch.setattr(
+        target, "rest_select",
+        lambda base, h, table, query, **kw: (queries.append((table, query)) or []))
+    target.fetch_done_row_counts("https://x.supabase.co", {}, "202609")
+    table, query = queries[0]
+    assert table == "collect_progress"
+    assert "status=eq.done" in query
+    assert "period_key=eq.202609" in query
+    assert "collector=eq.{}".format(target.BLDRGST_COLLECTOR) in query
+
+
+def test_count_raw_rows_by_pnu_sums_across_files():
+    title = [{"pnu": "A"}, {"pnu": "B"}]
+    flr = [{"pnu": "A"}, {"pnu": "A"}]
+    expos = [{"pnu": "B"}, {"pnu": "C"}]
+    assert target.count_raw_rows_by_pnu(title, flr, expos) == {"A": 3, "B": 2, "C": 1}
+
+
 def test_report_join_rate_output(monkeypatch, capsys):
     monkeypatch.setattr(
         target, "fetch_pnu_set",
@@ -1107,8 +1365,12 @@ def test_main_loads_and_reports(tmp_path, monkeypatch, capsys):
             sent.__setitem__(table, len(rows)) or len(rows)),
     )
     monkeypatch.setattr(target, "report_join_rate", lambda *a, **kw: None)
+    # 적재 뒤 옛 unit 행 정리가 DB를 조회한다 — 기존 행이 없는 상태로 흉내낸다.
+    monkeypatch.setattr(target, "rest_select", lambda *a, **kw: [])
     monkeypatch.setattr(sys, "argv", ["prog", "--raw-dir", raw_dir])
 
     assert target.main() == 0
     assert sent == {"building": 1, "unit": 1}
-    assert "적재 완료" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "적재 완료" in out
+    assert "옛 unit 0행 정리" in out
