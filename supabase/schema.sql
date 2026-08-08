@@ -454,6 +454,106 @@ comment on view v_floor_stack is
   '원본 표는 RLS 켬 + 정책 0개 + 권한 회수로 닫혀 있고, 이 뷰가 소유자 권한으로 대신 읽는다';
 
 -- =====================================================================
+-- 함수: search_buildings — 건물 검색 (§8.1 진입점)
+-- =====================================================================
+-- ⛔ 화면에서 "건물 × 층" 뷰를 표본으로 받아 건물로 접지 말 것. 층이 27개인 건물
+--    하나가 27줄을 먹으므로 표본이 건물을 대표하지 못하고, 정렬을 bld_id로 주면
+--    앞자리가 법정동 코드라 **검색 결과가 한 동네에 갇힌다**(2026-08-08 실측:
+--    '빌딩' 매칭 15,068행인데 화면엔 역삼동 69개 건물뿐, '테헤란로' 10,517행 →
+--    역삼동 95개뿐. 다른 동네는 재검색해도 안 나왔다).
+--
+-- 이 함수는 **건물 1개 = 1행**을 돌려주고 total_cnt로 정확한 전체 건수를 함께 준다.
+-- 정렬은 지역이 아니라 이름 관련도이고, 층 수·최저/최고층·옥탑 여부까지 한 번에 준다.
+--
+-- ⚠️ security definer 인 이유: 원본 표가 anon에게 닫혀 있어(아래 공개 접근 정책)
+--    이 함수가 소유자 권한으로 대신 읽는다. search_path를 고정해 가로채기를 막고,
+--    입력은 파라미터로만 받아 문자열을 이어 붙이지 않는다(주입 4종 시험 통과).
+create or replace function search_buildings(q text, lim int default 25)
+returns table (
+  bld_id         text,
+  pnu            char(19),
+  bld_nm         text,
+  road_addr      text,
+  bld_cnt_in_pnu int,
+  floor_cnt      int,
+  min_floor      smallint,
+  max_floor      smallint,
+  has_roof       boolean,
+  total_cnt      bigint
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with pat as (
+    -- LIKE 특수문자를 리터럴로. 역슬래시를 **먼저** 바꿔야 한다(나중에 바꾸면
+    -- 방금 넣은 이스케이프까지 다시 이스케이프된다).
+    select '%' ||
+           replace(replace(replace(coalesce(q, ''), '\', '\\'), '%', '\%'), '_', '\_') ||
+           '%' as p
+  ),
+  hit as (
+    select b.bld_id, b.pnu, b.bld_nm, pc.road_addr
+    from building b
+    join parcel pc on pc.pnu = b.pnu
+    cross join pat
+    where b.bld_nm     ilike pat.p escape '\'
+       or pc.road_addr ilike pat.p escape '\'
+  ),
+  -- 그릴 층이 하나도 없는 건물은 목록에 올리지 않는다(눌러도 빈 화면).
+  eligible as (
+    select h.*, count(*) over () as total_cnt
+    from hit h
+    where exists (
+      select 1 from building_floor f
+      where f.bld_id = h.bld_id and f.floor_no is not null
+    )
+  ),
+  -- 무거운 층 집계는 실제로 보여줄 몇 개에만 돌린다.
+  top as (
+    select e.*
+    from eligible e
+    order by
+      (lower(e.bld_nm) = lower(q))      desc nulls last,
+      (e.bld_nm ilike q || '%')         desc nulls last,
+      (e.bld_nm is null)                asc,
+      length(e.bld_nm)                  asc nulls last,
+      e.road_addr                       asc nulls last,
+      e.bld_id
+    limit greatest(1, least(coalesce(lim, 25), 100))
+  )
+  select
+    t.bld_id, t.pnu, t.bld_nm, t.road_addr,
+    (select count(*)::int from building b2 where b2.pnu = t.pnu) as bld_cnt_in_pnu,
+    fs.floor_cnt, fs.min_floor, fs.max_floor, fs.has_roof,
+    t.total_cnt
+  from top t
+  join lateral (
+    -- 옥탑(99)은 범위에서 뺀다. 섞으면 최고층이 항상 99가 되어 지상 최고층이 사라진다.
+    select
+      count(*)::int                                    as floor_cnt,
+      min(s.floor_no) filter (where s.floor_no <> 99)  as min_floor,
+      max(s.floor_no) filter (where s.floor_no <> 99)  as max_floor,
+      coalesce(bool_or(s.floor_no = 99), false)        as has_roof
+    from v_building_floor_stack s
+    where s.bld_id = t.bld_id
+  ) fs on true
+  order by
+    (lower(t.bld_nm) = lower(q))      desc nulls last,
+    (t.bld_nm ilike q || '%')         desc nulls last,
+    (t.bld_nm is null)                asc,
+    length(t.bld_nm)                  asc nulls last,
+    t.road_addr                       asc nulls last,
+    t.bld_id;
+$$;
+
+comment on function search_buildings(text, int) is
+  '§8.1 건물 검색. 건물 1개 = 1행이며 total_cnt로 정확한 전체 건수를 함께 준다. '
+  'security definer — 원본 표가 anon에게 닫혀 있어 소유자 권한으로 대신 읽는다. '
+  '입력의 % _ \ 는 서버가 리터럴로 이스케이프하므로 프론트에서 따로 처리하지 않는다';
+
+-- =====================================================================
 -- 공개 접근 정책 — RLS + 최소 권한 (2026-08-08 추가)
 -- =====================================================================
 -- ⚠️ 이 절이 없으면 이 파일로 만든 DB는 무방비다. 2026-08-08에 일회용 Supabase
@@ -497,6 +597,11 @@ revoke all on all tables in schema public from anon, authenticated;
 -- authenticated에도 주는 이유: 지금은 로그인이 없지만 나중에 붙였을 때 화면이
 -- 조용히 빈 목록으로 바뀌는 사고를 막는다. 둘 다 읽기 전용이다.
 grant select on v_floor_stack to anon, authenticated;
+
+-- 검색 함수도 명시적으로만 연다. Postgres는 새 함수의 EXECUTE를 PUBLIC에게 기본
+-- 부여하므로 **먼저 회수하고** 정확히 필요한 롤에만 준다.
+revoke all on function search_buildings(text, int) from public;
+grant execute on function search_buildings(text, int) to anon, authenticated;
 
 -- 뷰가 RLS를 우회하는 것이 사고가 아니라 선택임을 코드에 남긴다(기본값이지만 명시).
 alter view v_floor_stack           set (security_invoker = false);
