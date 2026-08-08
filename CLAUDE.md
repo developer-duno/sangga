@@ -120,6 +120,9 @@ python -m ruff check scripts/ tests/            # 파이썬 린트
 python scripts/collectors/collect_building_ledger.py --dry-run   # 수집 예산 확인(API 0콜)
 python scripts/collectors/collect_building_ledger.py             # 건축물대장 수집 (이어받기)
 python scripts/collectors/load_building_ledger.py                # raw → DB 적재
+python scripts/collectors/collect_vworld_land.py --dry-run       # 브이월드 토지특성 예산 확인(API 0콜)
+python scripts/collectors/collect_vworld_land.py --limit 50      # 토지특성 수집 (이어받기, 필지당 1콜)
+python scripts/collectors/load_vworld_land.py --dry-run          # raw → parcel 갱신 미리보기(DB 쓰기 0)
 python scripts/make_env_local.py                # .env → .env.local (브라우저용 공개키만)
 python scripts/backup_raw.py --dry-run          # 원본 백업 대상 확인 (쓰기 0)
 python scripts/backup_raw.py                    # data/raw → F:\sangga-raw-backup (외장 SSD 연결 필요)
