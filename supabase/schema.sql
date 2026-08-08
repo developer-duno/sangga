@@ -457,6 +457,33 @@ comment on view v_floor_stack is
   '원본 표는 RLS 켬 + 정책 0개 + 권한 회수로 닫혀 있고, 이 뷰가 소유자 권한으로 대신 읽는다';
 
 -- =====================================================================
+-- 뷰: v_coverage_stats — 스택 뷰 각주용 집계
+-- =====================================================================
+-- 화면 각주("점포 N곳 중 층이 없는 것이 M%")의 숫자를 런타임에 계산하기 위한 뷰.
+-- 예전에는 이 숫자가 FloorStack.tsx에 문자열로 박혀 있었는데, 점포 데이터는
+-- 아래 where 절대로 **최신 분기를 자동으로 따라가므로** 새 분기를 적재하는 순간
+-- 코드 변경 0인 채로 각주만 옛 숫자를 말하게 된다.
+--
+-- ⚠️ v_floor_stack과 **똑같은** 분기 기준을 쓴다. 한쪽만 바꾸면 화면의 점포 목록과
+--    각주가 서로 다른 분기를 말하게 되므로 항상 함께 고칠 것.
+-- ⚠️ 내보내는 것은 집계값뿐이다 — 상호명·좌표·주소는 넣지 않는다(노출면 최소 원칙).
+create or replace view v_coverage_stats as
+select
+  ub.snapshot_ym,
+  count(*)                                                    as store_cnt,
+  count(*) filter (where ub.floor_no is null)                 as floor_missing_cnt,
+  round(100.0 * count(*) filter (where ub.floor_no is null)
+        / count(*), 1)                                        as floor_missing_pct
+from unit_business ub
+where ub.snapshot_ym = (select max(snapshot_ym) from unit_business)
+group by ub.snapshot_ym;
+-- group by라 행이 있을 때만 결과가 나온다 = 0으로 나누는 경우가 없다.
+
+comment on view v_coverage_stats is
+  '§8.6 스택 뷰 각주용 집계. v_floor_stack과 동일한 전역 최신 분기 기준 — 둘을 항상 함께 고칠 것. '
+  '★ 공개 접근: anon/authenticated에게 SELECT 허용(집계값만, 상호명 없음)';
+
+-- =====================================================================
 -- 함수: search_buildings — 건물 검색 (§8.1 진입점)
 -- =====================================================================
 -- ⛔ 화면에서 "건물 × 층" 뷰를 표본으로 받아 건물로 접지 말 것. 층이 27개인 건물
@@ -619,6 +646,8 @@ revoke all on all tables in schema public from anon, authenticated;
 -- authenticated에도 주는 이유: 지금은 로그인이 없지만 나중에 붙였을 때 화면이
 -- 조용히 빈 목록으로 바뀌는 사고를 막는다. 둘 다 읽기 전용이다.
 grant select on v_floor_stack to anon, authenticated;
+-- 각주 숫자용 집계 뷰(집계값 4개뿐 — 상호명·좌표 없음).
+grant select on v_coverage_stats to anon, authenticated;
 
 -- 검색 함수도 명시적으로만 연다. Postgres는 새 함수의 EXECUTE를 PUBLIC에게 기본
 -- 부여하므로 **먼저 회수하고** 정확히 필요한 롤에만 준다.
@@ -629,6 +658,7 @@ grant execute on function search_buildings(text, int) to anon, authenticated;
 alter view v_floor_stack           set (security_invoker = false);
 alter view v_building_floor_stack  set (security_invoker = false);
 alter view v_unit_current          set (security_invoker = false);
+alter view v_coverage_stats        set (security_invoker = false);
 
 -- ⚠️ 위 revoke는 **표만** 다룬다 — 함수(RPC)는 별개다.
 --    Postgres는 새로 만든 함수에 EXECUTE를 PUBLIC에게 기본으로 준다. 즉 우리가 public

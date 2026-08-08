@@ -21,5 +21,13 @@ export const supabase = createClient(url, anonKey, {
   auth: { persistSession: false },
 });
 
-/** 이 화면이 읽는 유일한 대상. */
+/** 층별 스택의 본체. */
 export const FLOOR_STACK_VIEW = 'v_floor_stack';
+
+/**
+ * 화면 각주 숫자(점포 수·층 결측 비율)의 출처.
+ *
+ * 각주를 손으로 박아 두면 새 분기를 적재하는 순간 화면만 옛 숫자를 말한다
+ * — 코드는 한 줄도 안 고쳤는데 거짓말이 시작되는 종류의 결함이다.
+ */
+export const COVERAGE_STATS_VIEW = 'v_coverage_stats';
