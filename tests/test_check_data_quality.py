@@ -192,6 +192,28 @@ def test_main_missing_dir_arg_value_returns_two(tmp_path, monkeypatch):
     assert cdq.main() == 2
 
 
+def test_parse_args_defaults_and_overrides():
+    assert cdq.parse_args([]) == cdq.DEFAULT_DATA_DIR
+    assert cdq.parse_args(["--dir", "X"]) == "X"
+
+
+def test_parse_args_missing_value():
+    with pytest.raises(ValueError, match="뒤에"):
+        cdq.parse_args(["--dir"])
+
+
+def test_parse_args_rejects_unknown_flag_like_help():
+    """--help 를 조용히 무시하면 안 된다(다른 수집기들과 동일한 실사고 방지, 2026-08-08)."""
+    with pytest.raises(ValueError, match="알 수 없는 인자"):
+        cdq.parse_args(["--help"])
+
+
+def test_parse_args_rejects_typo_flag():
+    """--diir(오타)를 무시하면 의도한 폴더가 아니라 기본 폴더가 조용히 쓰인다."""
+    with pytest.raises(ValueError, match="알 수 없는 인자"):
+        cdq.parse_args(["--diir", "X"])
+
+
 def test_main_nonexistent_dir_returns_one(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "argv", ["check_data_quality.py", "--dir", str(tmp_path / "no_such_dir")])
     assert cdq.main() == 1

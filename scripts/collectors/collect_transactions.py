@@ -593,7 +593,37 @@ def print_run_report(processed, status_counter, session_calls, elapsed_sec, stop
 # ── 메인 ─────────────────────────────────────────────────────────────────────
 
 
+def _reject_unknown_args(argv, bool_flags, value_flags):
+    """모르는 인자를 만나면 즉시 멈춘다.
+
+    왜: 예전에는 인식 못 하는 인자를 조용히 무시하고 실행을 계속했다. 그래서
+    `--help` 를 붙이면 dry_run=False 인 **실제 실행**이 되어 라이브 DB 쓰기가
+    나갔고(2026-08-08 실제 발생), `--dryrun`·`--limitt 50` 같은 오타는
+    "소량 시험"이 "전량 실행"으로 바뀐다. 조용한 오작동보다 시끄러운 중단이 낫다.
+    """
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in value_flags:
+            i += 2          # 값 하나를 건너뛴다 (값 누락은 기존 검사가 잡는다)
+            continue
+        if a in bool_flags:
+            i += 1
+            continue
+        raise ValueError(
+            "알 수 없는 인자: {!r}\n  쓸 수 있는 인자: {}".format(
+                a, " ".join(sorted(set(bool_flags) | set(value_flags)))
+            )
+        )
+
+
 def parse_args(argv):
+    _reject_unknown_args(
+        argv,
+        bool_flags=("--dry-run", "--retry-failed"),
+        value_flags=("--sigungu-code", "--months", "--end-ym", "--raw-dir",
+                      "--daily-budget", "--limit"),
+    )
     opts = {
         "sigungu_code": DEFAULT_SIGUNGU_CODE,
         "months": DEFAULT_MONTHS,

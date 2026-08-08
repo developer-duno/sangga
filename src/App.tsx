@@ -16,7 +16,17 @@ export default function App() {
         </p>
       </header>
 
-      <BuildingSearch onSelect={setSelected} selectedBldId={selected?.bld_id ?? null} />
+      {/*
+        onSearchStart 로 선택을 비운다. 안 그러면 새 검색을 해도 아래 스택이 **이전에 고른
+        건물** 그대로 남는다 — 목록엔 없는 건물이라 하이라이트도 사라져서, 아래 화면이
+        무엇을 가리키는지 알 수 없게 된다. 심지어 "결과가 없습니다"가 뜬 상태에서도
+        옛 건물 스택이 그대로 보였다(2026-08-08 적대검증 라이브 재현).
+      */}
+      <BuildingSearch
+        onSelect={setSelected}
+        onSearchStart={() => setSelected(null)}
+        selectedBldId={selected?.bld_id ?? null}
+      />
 
       {selected ? (
         <FloorStack building={selected} />
