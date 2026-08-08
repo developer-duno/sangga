@@ -64,4 +64,9 @@ export type BuildingHit = {
   max_floor: number | null;
   /** 옥탑 층이 따로 있는가. 범위 뒤에 "+ 옥탑"으로 붙인다. */
   has_roof: boolean;
+  /**
+   * 검색어에 걸린 **전체** 건물 수. 서버 함수 `search_buildings`가 모든 행에 같은 값으로
+   * 실어 보낸다 — 목록은 상위 일부만 오므로 "몇 개 중 몇 개"를 정직하게 말하려면 이게 필요하다.
+   */
+  total_cnt?: number;
 };

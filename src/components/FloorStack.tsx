@@ -34,8 +34,11 @@ export function FloorStack({ building }: Props) {
       .order('floor_no', { ascending: false })
       .then(({ data, error: err }) => {
         if (cancelled) return;
-        if (err) setError(err.message);
-        else setFloors((data ?? []) as FloorRow[]);
+        if (err) {
+          // 원문에는 내부 표 이름이 섞여 나올 수 있다 — 콘솔에만 남긴다.
+          console.error('층 정보 조회 실패', err);
+          setError('층 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.');
+        } else setFloors((data ?? []) as FloorRow[]);
         setLoading(false);
       });
 
@@ -45,7 +48,7 @@ export function FloorStack({ building }: Props) {
   }, [building.bld_id]);
 
   if (loading) return <p className="msg">층 정보를 불러오는 중…</p>;
-  if (error) return <p className="msg msg--error">불러오기 실패: {error}</p>;
+  if (error) return <p className="msg msg--error">{error}</p>;
   if (floors.length === 0) return <p className="msg">이 건물에는 층 정보가 없습니다.</p>;
 
   const head = floors[0];
@@ -126,6 +129,13 @@ export function FloorStack({ building }: Props) {
         않아 목록에서 통째로 빠집니다. ② <strong>겹침</strong> — 한 주소를 여러 점포가 나눠 쓰는
         공유오피스나 같은 땅의 옆 동 점포가 함께 잡혀 실제보다 많아 보일 수 있습니다.
         <br />
+        {/*
+          ⚠️ 이 숫자들은 손으로 박은 값이다. 뷰 v_floor_stack의 점포는
+          `snapshot_ym = (select max(snapshot_ym) from unit_business)`로 **항상 최신 분기를
+          자동으로 따라가는데** 이 문구는 안 따라간다 — 새 분기(2026Q2 등)를 적재하는
+          순간 화면만 거짓말을 시작한다. 분기를 넣을 때 이 문구도 함께 고치거나,
+          런타임 계산으로 바꿀 것(백로그 P1).
+        */}
         근거: 강남 2026년 1분기 상권정보 64,239곳 기준(2026-08-08 실측).
       </p>
     </section>

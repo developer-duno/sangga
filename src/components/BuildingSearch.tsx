@@ -1,23 +1,24 @@
 import { useRef, useState } from 'react';
 import type { SubmitEvent } from 'react';
-import { supabase, FLOOR_STACK_VIEW } from '../lib/supabase';
+import { supabase } from '../lib/supabase';
 import { formatFloor } from '../lib/format';
 import type { BuildingHit } from '../types';
 
 /**
  * 건물명·도로명주소로 건물을 찾는다.
  *
- * 뷰는 "건물 × 층"이라 한 건물이 여러 줄로 온다. 그래서 받아온 뒤 건물 단위로 접어서
- * 층 수·최고/최저 층을 같이 보여준다 — 검색 결과에서 이미 "몇 층짜리인지"가 보이면
- * 원하는 건물을 고르기 쉽다.
+ * 서버 함수 `search_buildings`가 **건물 1개 = 1행**으로 돌려주고, 검색어에 걸린 전체
+ * 건수(`total_cnt`)도 함께 준다.
+ *
+ * ⛔ 예전처럼 뷰에서 "건물 × 층" 줄을 표본으로 받아 건물로 접으면 안 된다. 층이 27개인
+ *    건물 하나가 27줄을 먹으므로 표본이 건물을 대표하지 못하고, 정렬을 `bld_id`로 주면
+ *    앞자리가 법정동 코드라 **검색 결과가 한 동네에 갇힌다.**
+ *    2026-08-08 실측: '빌딩' 검색 → 매칭 15,068행인데 화면엔 역삼동 69개 건물뿐,
+ *    '테헤란로' → 10,517행인데 역삼동 95개뿐. 다른 동네는 재검색해도 안 나왔다.
  */
 
-/** 1차 검색에서 훑을 "건물 × 층" 줄 수. */
-const FETCH_LIMIT = 600;
-/** 목록에 보여줄 건물 수. 이 만큼만 2차로 진짜 층 목록을 받아온다. */
+/** 목록에 보여줄 건물 수. 서버가 관련도 높은 순으로 이 수만큼만 돌려준다. */
 const MAX_BUILDINGS = 25;
-/** 2차 조회 상한. 25개 건물 × 최대 층수를 넉넉히 덮는 값. */
-const FLOOR_FETCH_LIMIT = 3000;
 
 type Props = {
   onSelect: (hit: BuildingHit) => void;
@@ -27,11 +28,11 @@ type Props = {
 export function BuildingSearch({ onSelect, selectedBldId }: Props) {
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<BuildingHit[]>([]);
+  /** 검색어에 걸린 전체 건물 수(보여주는 수가 아니다). */
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searched, setSearched] = useState(false);
-  /** 1차 표본이 상한에 잘렸거나 건물이 MAX_BUILDINGS보다 많아 일부만 보여주는 중인가. */
-  const [truncated, setTruncated] = useState(false);
   /** 늦게 도착한 옛 검색 응답이 최신 결과를 덮는 것을 막는다. */
   const latestRun = useRef(0);
 
@@ -44,47 +45,33 @@ export function BuildingSearch({ onSelect, selectedBldId }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const pattern = likePattern(q);
-
-      // 1차 — 어떤 건물이 걸리는지 찾는다. 뷰는 "건물 × 층"이라 한 건물이 여러 줄로 온다.
-      //
-      // order가 없으면 안 된다: PostgreSQL은 ORDER BY 없는 LIMIT의 행 순서를 보장하지
-      // 않아서, 같은 검색어를 다시 눌러도 다른 건물 묶음이 온다(2026-08-08 실측 —
-      // '래미안' 20회 반복에 93개/48개 두 상태가 번갈아 나왔고 겹치는 건물은 1개뿐이었다).
-      const { data, error: err } = await supabase
-        .from(FLOOR_STACK_VIEW)
-        .select('bld_id,pnu,bld_nm,road_addr,bld_cnt_in_pnu')
-        .or(`bld_nm.ilike.${pattern},road_addr.ilike.${pattern}`)
-        .order('bld_id')
-        .limit(FETCH_LIMIT);
+      // 검색어는 파라미터로 넘어간다 — % _ \ 를 서버가 리터럴로 이스케이프하므로
+      // 여기서 따로 손대지 않는다(직접 문자열을 이어 붙이면 필터가 깨진다).
+      const { data, error: err } = await supabase.rpc('search_buildings', {
+        q,
+        lim: MAX_BUILDINGS,
+      });
 
       if (runId !== latestRun.current) return; // 그새 새 검색이 시작됐다
-      if (err) throw new Error(err.message);
+      if (err) throw err;
 
-      const rows = data ?? [];
-      const found = dedupeBuildings(rows);
-      // 1차가 상한까지 꽉 찼다면 그 뒤에 건물이 더 있어도 우리는 못 봤다.
-      // 이때 "건물 N개"를 확정적으로 말하면 거짓이 된다.
-      setTruncated(rows.length >= FETCH_LIMIT || found.length > MAX_BUILDINGS);
-      const shown = found.slice(0, MAX_BUILDINGS);
-
-      // 2차 — 보여줄 건물들의 "진짜" 층 목록을 다시 받는다.
-      //
-      // 1차 결과로 층 수를 세면 안 된다. 그건 줄 수 상한(FETCH_LIMIT)에 잘린 표본이라
-      // 층이 많은 건물일수록 심하게 모자라게 나온다 — KB손해보험빌딩(실제 27개 층)이
-      // "5개 층"으로 찍혔다(2026-08-08 실측). 층 수는 반드시 건물을 특정해 다시 센다.
-      const withFloors = await attachFloorRange(shown);
-      if (runId !== latestRun.current) return;
-      setHits(withFloors);
+      const rows = (data ?? []) as BuildingHit[];
+      setHits(rows);
+      setTotal(rows.length ? Number(rows[0].total_cnt ?? rows.length) : 0);
       setSearched(true);
     } catch (ex) {
       if (runId !== latestRun.current) return;
-      setError(ex instanceof Error ? ex.message : String(ex));
+      // 원문에는 내부 표 이름이 섞여 있다 — 콘솔에만 남기고 화면엔 사람 말로.
+      console.error('건물 검색 실패', ex);
+      setError(describeError(ex));
       setHits([]);
+      setTotal(0);
     } finally {
       if (runId === latestRun.current) setLoading(false);
     }
   }
+
+  const shownAll = total > 0 && total <= hits.length;
 
   return (
     <section className="search">
@@ -93,7 +80,7 @@ export function BuildingSearch({ onSelect, selectedBldId }: Props) {
           className="search__input"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="건물명 또는 도로명주소 (예: 테헤란로, 미도맨션)"
+          placeholder="건물명 또는 도로명주소 (예: 테헤란로 117, 미도맨션)"
           aria-label="건물명 또는 도로명주소"
         />
         <button className="search__btn" type="submit" disabled={loading || !query.trim()}>
@@ -101,7 +88,7 @@ export function BuildingSearch({ onSelect, selectedBldId }: Props) {
         </button>
       </form>
 
-      {error && <p className="msg msg--error">검색 실패: {error}</p>}
+      {error && <p className="msg msg--error">{error}</p>}
 
       {searched && !loading && hits.length === 0 && !error && (
         <p className="msg">결과가 없습니다. 지금 담긴 자료는 <strong>서울 강남구</strong>뿐입니다.</p>
@@ -110,11 +97,11 @@ export function BuildingSearch({ onSelect, selectedBldId }: Props) {
       {hits.length > 0 && (
         <>
           <p className="search__count">
-            건물 {hits.length.toLocaleString('ko-KR')}개{truncated && ' 이상'}
-            {truncated && (
+            건물 {total.toLocaleString('ko-KR')}개
+            {!shownAll && (
               <span className="search__hint">
                 {' '}
-                · 전부는 아닙니다. 검색어를 좁혀 주세요
+                · 이 중 {hits.length}개만 보여드립니다. 검색어를 좁혀 주세요
               </span>
             )}
           </p>
@@ -143,68 +130,25 @@ export function BuildingSearch({ onSelect, selectedBldId }: Props) {
   );
 }
 
-type RawHit = Pick<BuildingHit, 'bld_id' | 'pnu' | 'bld_nm' | 'road_addr' | 'bld_cnt_in_pnu'>;
-
 /**
- * 검색어를 PostgREST `ilike` 값으로 안전하게 감싼다.
+ * 서버 원문 대신 사람이 읽을 문구로 바꾼다.
  *
- * 큰따옴표로 감싸지 않으면 검색어 안의 `(` `)` `,` 가 `or=(...)` 문법으로 해석돼
- * 조건이 통째로 잘려 나간다 — 실재하는 "역삼동 609-26 제1종근린생활시설 (안제호)"를
- * 화면에 뜬 이름 그대로 "(안제호)"로 검색하면 **에러 없이** "결과 없음"이 떴다
- * (2026-08-08 실측. 이름에 괄호가 든 건물이 전체 5,903개 중 276개 = 4.7%).
- * 괄호를 지워버리는 대신 감싸는 이유는 검색어를 훼손하지 않기 위해서다.
- *
- * 큰따옴표 안에서는 `"` 와 `\` 만 이스케이프하면 된다.
+ * 원문에는 `permission denied for table building_floor`처럼 내부 표 이름이 섞여 나올 수
+ * 있어 그대로 화면에 띄우지 않는다. 단 "함수가 아직 DB에 없다"(PGRST202)는 원인이
+ * 분명하고 조치가 정해져 있으므로 그대로 안내한다.
  */
-function likePattern(q: string): string {
-  const escaped = q.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  return `"*${escaped}*"`;
-}
-
-/** "건물 × 층" 줄들에서 건물만 골라낸다(층 수는 여기서 세지 않는다 — 표본이라 틀린다). */
-function dedupeBuildings(rows: RawHit[]): RawHit[] {
-  const byId = new Map<string, RawHit>();
-  for (const r of rows) {
-    if (!byId.has(r.bld_id)) byId.set(r.bld_id, r);
+function describeError(ex: unknown): string {
+  const code =
+    typeof ex === 'object' && ex !== null && 'code' in ex
+      ? String((ex as { code: unknown }).code)
+      : '';
+  if (code === 'PGRST202') {
+    return (
+      '검색 기능이 아직 DB에 적용되지 않았습니다. ' +
+      'supabase/migrations/2026-08-08b_search_buildings.sql을 Supabase SQL Editor에서 실행해 주세요.'
+    );
   }
-  return [...byId.values()];
-}
-
-/** 건물별 진짜 층 목록을 받아 층 수·최저·최고 층을 채운다. */
-async function attachFloorRange(rows: RawHit[]): Promise<BuildingHit[]> {
-  if (rows.length === 0) return [];
-
-  const ids = rows.map((r) => r.bld_id);
-  const { data, error } = await supabase
-    .from(FLOOR_STACK_VIEW)
-    .select('bld_id,floor_no')
-    .in('bld_id', ids)
-    .limit(FLOOR_FETCH_LIMIT);
-
-  if (error) throw new Error(error.message);
-
-  const floors = new Map<string, number[]>();
-  for (const f of (data ?? []) as { bld_id: string; floor_no: number }[]) {
-    const list = floors.get(f.bld_id);
-    if (list) list.push(f.floor_no);
-    else floors.set(f.bld_id, [f.floor_no]);
-  }
-
-  return rows
-    .map((r) => {
-      const list = floors.get(r.bld_id) ?? [];
-      // 옥탑(99)은 범위 계산에서 뺀다. 섞으면 최고층이 항상 99가 되어 지상 최고층이
-      // 사라진다 — KB손해보험빌딩(지상 19층 + 옥탑)이 "지하 7층 ~ 옥탑"으로만 보였다.
-      const ground = list.filter((f) => f !== 99);
-      return {
-        ...r,
-        floor_cnt: list.length,
-        min_floor: ground.length ? Math.min(...ground) : null,
-        max_floor: ground.length ? Math.max(...ground) : null,
-        has_roof: list.includes(99),
-      };
-    })
-    .sort((a, b) => b.floor_cnt - a.floor_cnt);
+  return '검색에 실패했습니다. 잠시 후 다시 시도해 주세요.';
 }
 
 /**
