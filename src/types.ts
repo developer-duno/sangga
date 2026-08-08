@@ -46,6 +46,22 @@ export type FloorRow = {
   stores: Store[] | null;
 };
 
+/**
+ * 화면 각주용 집계 한 행(뷰 `v_coverage_stats`).
+ *
+ * v_floor_stack과 **같은 분기 기준**이라 화면의 점포 목록과 각주가 항상 같은 분기를 말한다.
+ */
+export type CoverageStats = {
+  /** '202603' 형태의 분기 스냅샷 키. */
+  snapshot_ym: string;
+  /** 그 분기의 전체 점포 수. */
+  store_cnt: number;
+  /** 그중 층이 적히지 않아 어느 층에도 붙지 못하는 점포 수. */
+  floor_missing_cnt: number;
+  /** 층 결측 비율(%). 소수 첫째 자리까지. */
+  floor_missing_pct: number;
+};
+
 /** 검색 결과 한 줄 = 건물 하나(층 여러 개를 접은 것). */
 export type BuildingHit = {
   bld_id: string;

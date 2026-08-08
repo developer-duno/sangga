@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { supabase, FLOOR_STACK_VIEW } from '../lib/supabase';
-import type { BuildingHit, FloorRow } from '../types';
-import { formatArea, formatApproveDate, formatFloor } from '../lib/format';
+import { supabase, FLOOR_STACK_VIEW, COVERAGE_STATS_VIEW } from '../lib/supabase';
+import type { BuildingHit, CoverageStats, FloorRow } from '../types';
+import { formatArea, formatApproveDate, formatFloor, formatQuarter, oneInEvery } from '../lib/format';
 
 /**
  * 층별 스택 뷰 — 이 서비스의 시그니처 화면(§8.6).
@@ -20,6 +20,35 @@ export function FloorStack({ building }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [openFloor, setOpenFloor] = useState<number | null>(null);
+  /** 각주에 쓸 집계. 건물과 무관하므로 처음 한 번만 읽는다. */
+  const [stats, setStats] = useState<CoverageStats | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    supabase
+      .from(COVERAGE_STATS_VIEW)
+      .select('*')
+      .limit(1)
+      .then(({ data, error: err }) => {
+        if (cancelled) return;
+        if (err || !data || data.length === 0) {
+          // 각주 숫자는 없어도 화면 본체는 정상이다. 실패해도 옛 숫자를 되살리지 않는다
+          // — 틀린 숫자를 보여주는 것이 숫자를 안 보여주는 것보다 나쁘다.
+          console.warn('각주 집계 조회 실패 — 숫자 없이 표시합니다', err);
+          return;
+        }
+        const row = data[0] as CoverageStats;
+        setStats({
+          snapshot_ym: row.snapshot_ym,
+          store_cnt: Number(row.store_cnt),
+          floor_missing_cnt: Number(row.floor_missing_cnt),
+          floor_missing_pct: Number(row.floor_missing_pct),
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -54,6 +83,17 @@ export function FloorStack({ building }: Props) {
   const head = floors[0];
   const maxArea = Math.max(...floors.map((f) => f.floor_area_m2 ?? 0), 1);
   const totalStores = floors.reduce((sum, f) => sum + (f.store_cnt ?? 0), 0);
+
+  // 각주 숫자는 DB에서 계산해 온다. 못 불러왔으면 숫자를 빼고 경고만 남긴다
+  // — 옛 숫자로 되돌리면 이 코드가 고치려던 문제(화면만 틀려지는 것)가 그대로 살아난다.
+  const missingEvery = stats ? oneInEvery(stats.floor_missing_pct) : null;
+  const missingPhrase =
+    stats && missingEvery
+      ? `약 ${missingEvery}곳 중 1곳(${stats.floor_missing_pct}%)`
+      : '적지 않은 수';
+  const basisPhrase = stats
+    ? `근거: ${formatQuarter(stats.snapshot_ym)} 상권정보 ${stats.store_cnt.toLocaleString('ko-KR')}곳 기준.`
+    : '근거: 상권정보 최신 분기 기준.';
 
   return (
     <section className="stack">
@@ -125,18 +165,17 @@ export function FloorStack({ building }: Props) {
       </p>
       <p className="grade grade--sub">
         <strong>점포 수는 실제와 다를 수 있습니다.</strong> ① <strong>빠짐</strong> — 상권정보에 층이
-        적히지 않은 점포가 <strong>약 3곳 중 1곳(32.9%)</strong>인데, 이런 점포는 어느 층에도 붙지
+        적히지 않은 점포가 <strong>{missingPhrase}</strong>인데, 이런 점포는 어느 층에도 붙지
         않아 목록에서 통째로 빠집니다. ② <strong>겹침</strong> — 한 주소를 여러 점포가 나눠 쓰는
         공유오피스나 같은 땅의 옆 동 점포가 함께 잡혀 실제보다 많아 보일 수 있습니다.
         <br />
         {/*
-          ⚠️ 이 숫자들은 손으로 박은 값이다. 뷰 v_floor_stack의 점포는
-          `snapshot_ym = (select max(snapshot_ym) from unit_business)`로 **항상 최신 분기를
-          자동으로 따라가는데** 이 문구는 안 따라간다 — 새 분기(2026Q2 등)를 적재하는
-          순간 화면만 거짓말을 시작한다. 분기를 넣을 때 이 문구도 함께 고치거나,
-          런타임 계산으로 바꿀 것(백로그 P1).
+          이 숫자들은 뷰 v_coverage_stats에서 읽어 온다. v_floor_stack의 점포가
+          `snapshot_ym = (select max(snapshot_ym) from unit_business)`로 최신 분기를 자동
+          추종하므로, 각주도 같은 기준으로 따라가야 새 분기 적재 때 화면만 틀려지지 않는다.
+          (예전에는 "32.9%·64,239곳"이 문자열로 박혀 있었다.)
         */}
-        근거: 강남 2026년 1분기 상권정보 64,239곳 기준(2026-08-08 실측).
+        {basisPhrase}
       </p>
     </section>
   );

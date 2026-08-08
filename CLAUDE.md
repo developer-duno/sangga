@@ -77,7 +77,7 @@ constants → scoring → theme → components → hooks → App   (단방향)
 | API | Vercel Serverless |
 | DB | Supabase PostgreSQL + PostGIS (**별도 프로젝트**) |
 | 수집 | ⬜ **아직 로컬 수동 실행이다** — GitHub Actions 자동화는 설계만 됐고 구현 전(`.github/workflows/`에 `ci.yml` 하나뿐, cron 0건. 2026-08-08 실측). 네이버 수집이 없어 로컬 PC 상주는 불필요하나, **분기 스냅샷은 사람이 챙겨야 한다**(절대 규칙 6) |
-| 테스트 | 파이썬(수집·적재)만 **pytest 516개**. ⬜ **프론트는 테스트 러너 자체가 없다** — `package.json`에 vitest·playwright 미설치, CI `web` job도 lint+build뿐(2026-08-08 실측). 계획은 Vitest + Playwright |
+| 테스트 | 파이썬 **pytest 573개** + 프론트 **vitest 51개**(jsdom + @testing-library/react). CI가 둘 다 돌린다. ⬜ **E2E(playwright)는 아직 없다** — 브라우저 클릭 검증은 사람이 한다 |
 
 **성능 원칙**: 상권(수천 개)은 사전계산 정적 JSON, 호실(수백만)은 Supabase 쿼리.
 정적 JSON 폴백을 호실에는 두지 않는다.
@@ -109,6 +109,7 @@ constants → scoring → theme → components → hooks → App   (단방향)
 ```bash
 pnpm dev                                        # 개발 서버 (http://localhost:5173)
 pnpm build                                      # 타입 검사 + 빌드 (tsc -b && vite build)
+pnpm test                                       # 프론트 테스트 (vitest, 51개)
 pnpm exec oxlint                                # 프론트 린트
 ```
 
@@ -119,7 +120,13 @@ python scripts/collectors/collect_building_ledger.py --dry-run   # 수집 예산
 python scripts/collectors/collect_building_ledger.py             # 건축물대장 수집 (이어받기)
 python scripts/collectors/load_building_ledger.py                # raw → DB 적재
 python scripts/make_env_local.py                # .env → .env.local (브라우저용 공개키만)
+python scripts/backup_raw.py --dry-run          # 원본 백업 대상 확인 (쓰기 0)
+python scripts/backup_raw.py                    # data/raw → F:\sangga-raw-backup (외장 SSD 연결 필요)
+python scripts/backup_raw.py --verify           # 백업본을 다시 읽어 SHA-256 대조
 ```
+
+> 💾 **원본 백업은 자동이 아니다.** 새 분기 zip을 받았거나 대량 수집을 마쳤으면 `backup_raw.py`를
+> 직접 한 번 돌린다. 과거 분기 zip은 포털에서 내려가면 **재수집이 불가능**하다(절대 규칙 6).
 
 > ⚠️ **`npm run test`·`npm run collect`는 존재하지 않는다** (2026-08-08 실측 — `package.json`
 > scripts는 dev·build·lint·typecheck·preview 5개뿐). 예전 이 표가 없는 명령을 안내하고 있었다.
