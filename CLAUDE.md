@@ -6,6 +6,7 @@
 ## 즉시 알아야 할 것
 
 - **사용자는 비개발자.** 쉬운 말 원칙. 코드는 복사-붙여넣기로 바로 도는 완전한 형태로. 조각 코드 금지
+- **알려진 한계** — `docs/알려진한계.md` ★ **조사 전에 먼저 읽을 것.** 여기 있는 건 이미 아는 것이라 다시 조사하지 않는다(매 세션 같은 걸 재발견하는 낭비를 막는 기준선)
 - **상세 계획** — `docs/상세계획.md` (데이터 소스·분석 로직·검증 설계·로드맵 전부)
 - **DB 스키마** — `supabase/schema.sql`
 - **부동산 데이터 처리 규격** — `budongsan-data` 스킬 참조 (PNU 조립·층 정규화·API 카탈로그)
@@ -76,7 +77,7 @@ constants → scoring → theme → components → hooks → App   (단방향)
 | API | Vercel Serverless |
 | DB | Supabase PostgreSQL + PostGIS (**별도 프로젝트**) |
 | 수집 | ⬜ **아직 로컬 수동 실행이다** — GitHub Actions 자동화는 설계만 됐고 구현 전(`.github/workflows/`에 `ci.yml` 하나뿐, cron 0건. 2026-08-08 실측). 네이버 수집이 없어 로컬 PC 상주는 불필요하나, **분기 스냅샷은 사람이 챙겨야 한다**(절대 규칙 6) |
-| 테스트 | Vitest + Playwright |
+| 테스트 | 파이썬(수집·적재)만 **pytest 516개**. ⬜ **프론트는 테스트 러너 자체가 없다** — `package.json`에 vitest·playwright 미설치, CI `web` job도 lint+build뿐(2026-08-08 실측). 계획은 Vitest + Playwright |
 
 **성능 원칙**: 상권(수천 개)은 사전계산 정적 JSON, 호실(수백만)은 Supabase 쿼리.
 정적 JSON 폴백을 호실에는 두지 않는다.

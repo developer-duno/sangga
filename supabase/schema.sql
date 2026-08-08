@@ -67,6 +67,9 @@ comment on column parcel.road_contact is '광대로한면/중로각지/세로한
 
 create index if not exists idx_parcel_sigungu on parcel (sigungu_code);
 create index if not exists idx_parcel_geom    on parcel using gist (geom);
+-- 주소 검색용. building.bld_nm 과 대칭을 맞춘다 — 이게 없으면 search_buildings 의
+-- 주소 가지가 parcel 전수 스캔이 된다(2026-08-08 실측: 같은 선택도에서 비용 8배·시간 28배).
+create index if not exists idx_parcel_road_addr on parcel using gin (road_addr gin_trgm_ops);
 
 -- =====================================================================
 -- L2. building — 건물
@@ -487,19 +490,37 @@ security definer
 set search_path = public
 as $$
   with pat as (
-    -- LIKE 특수문자를 리터럴로. 역슬래시를 **먼저** 바꿔야 한다(나중에 바꾸면
+    -- 빈 검색어(NULL·''·공백뿐)는 NULL 패턴으로 만들어 아래에서 0건이 되게 한다.
+    -- 안 그러면 패턴이 '%%'가 되어 **전 건물 목록 덤프**가 된다(2026-08-08 실측
+    -- total_cnt=12,405). 화면은 빈 검색어를 막지만 RPC 직접 호출은 안 막힌다.
+    -- LIKE 특수문자는 리터럴로. 역슬래시를 **먼저** 바꿔야 한다(나중에 바꾸면
     -- 방금 넣은 이스케이프까지 다시 이스케이프된다).
-    select '%' ||
-           replace(replace(replace(coalesce(q, ''), '\', '\\'), '%', '\%'), '_', '\_') ||
-           '%' as p
+    select case
+             when coalesce(btrim(q), '') = '' then null
+             else '%' ||
+                  replace(replace(replace(q, '\', '\\'), '%', '\%'), '_', '\_') ||
+                  '%'
+           end as p
   ),
   hit as (
+    -- ⛔ OR 하나로 합치지 말 것 — `bld_nm ilike X OR road_addr ilike X` 처럼 **서로 다른
+    --    두 조인 테이블에 걸친 OR** 은 어느 한쪽만으로 매칭을 못 정해서, Postgres 가
+    --    조인 전에 한 표만 거르지 못한다 → gin_trgm 인덱스가 통째로 무력화된다.
+    --    2026-08-08 EXPLAIN 실측: OR = Seq Scan 두 개 / UNION = Bitmap Index Scan 두 개.
+    --    UNION 은 각 가지가 표 하나만 거르므로 인덱스를 타고, 중복은 UNION 이 제거한다.
     select b.bld_id, b.pnu, b.bld_nm, pc.road_addr
-    from building b
-    join parcel pc on pc.pnu = b.pnu
-    cross join pat
-    where b.bld_nm     ilike pat.p escape '\'
-       or pc.road_addr ilike pat.p escape '\'
+      from building b
+      join parcel pc on pc.pnu = b.pnu
+      cross join pat
+     where pat.p is not null
+       and b.bld_nm ilike pat.p escape '\'
+    union
+    select b.bld_id, b.pnu, b.bld_nm, pc.road_addr
+      from building b
+      join parcel pc on pc.pnu = b.pnu
+      cross join pat
+     where pat.p is not null
+       and pc.road_addr ilike pat.p escape '\'
   ),
   -- 그릴 층이 하나도 없는 건물은 목록에 올리지 않는다(눌러도 빈 화면).
   eligible as (
@@ -551,7 +572,8 @@ $$;
 comment on function search_buildings(text, int) is
   '§8.1 건물 검색. 건물 1개 = 1행이며 total_cnt로 정확한 전체 건수를 함께 준다. '
   'security definer — 원본 표가 anon에게 닫혀 있어 소유자 권한으로 대신 읽는다. '
-  '입력의 % _ \ 는 서버가 리터럴로 이스케이프하므로 프론트에서 따로 처리하지 않는다';
+  '입력의 % _ \ 는 서버가 리터럴로 이스케이프하고, 빈 검색어는 0건으로 잘라낸다. '
+  '⛔ WHERE를 OR로 되돌리지 말 것 — 두 조인 테이블에 걸친 OR은 gin_trgm 인덱스를 무력화한다';
 
 -- =====================================================================
 -- 공개 접근 정책 — RLS + 최소 권한 (2026-08-08 추가)

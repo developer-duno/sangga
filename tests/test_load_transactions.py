@@ -335,3 +335,15 @@ def test_parse_args_defaults_and_overrides():
 def test_parse_args_missing_value():
     with pytest.raises(ValueError, match="뒤에 값이 필요"):
         target.parse_args(["--sigungu-code"])
+
+
+def test_parse_args_rejects_unknown_flag_like_help():
+    """--help 를 조용히 무시하면 dry_run=False 인 실제 실행이 되어버린다(2026-08-08 실사고)."""
+    with pytest.raises(ValueError, match="알 수 없는 인자"):
+        target.parse_args(["--help"])
+
+
+def test_parse_args_rejects_typo_does_not_silently_set_dry_run():
+    """--dryrun(오타)이 --dry-run으로 조용히 넘어가면 실제 실행이 되어버린다."""
+    with pytest.raises(ValueError, match="알 수 없는 인자"):
+        target.parse_args(["--dryrun"])

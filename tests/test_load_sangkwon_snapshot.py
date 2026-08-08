@@ -447,6 +447,38 @@ def test_rest_count_raises_on_bad_status(monkeypatch):
         target.rest_count("https://x.supabase.co", {"apikey": "k"}, "parcel", "select=pnu")
 
 
+# ── 8.5 parse_args ───────────────────────────────────────────────────────────
+
+
+def test_parse_args_defaults_and_overrides():
+    opts = target.parse_args([])
+    assert opts["dir"] == target.DEFAULT_DATA_DIR
+    assert opts["sigungu_code"] == target.DEFAULT_SIGUNGU_CODE
+    assert opts["dry_run"] is False
+
+    opts2 = target.parse_args(["--dir", "X", "--snapshot-ym", "202606", "--dry-run"])
+    assert opts2["dir"] == "X"
+    assert opts2["snapshot_ym"] == "202606"
+    assert opts2["dry_run"] is True
+
+
+def test_parse_args_missing_value():
+    with pytest.raises(ValueError, match="뒤에 값이 필요"):
+        target.parse_args(["--dir"])
+
+
+def test_parse_args_rejects_unknown_flag_like_help():
+    """--help 를 조용히 무시하면 dry_run=False 인 실제 실행이 되어버린다(2026-08-08 실사고)."""
+    with pytest.raises(ValueError, match="알 수 없는 인자"):
+        target.parse_args(["--help"])
+
+
+def test_parse_args_rejects_typo_does_not_silently_set_dry_run():
+    """--dryrun(오타)이 --dry-run으로 조용히 넘어가면 실제 실행이 되어버린다."""
+    with pytest.raises(ValueError, match="알 수 없는 인자"):
+        target.parse_args(["--dryrun"])
+
+
 # ── 9. main() 통합 동작 (RuntimeError 래핑·--snapshot-ym 검증·REST 교차검증) ──
 
 

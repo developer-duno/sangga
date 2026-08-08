@@ -22,10 +22,12 @@ const MAX_BUILDINGS = 25;
 
 type Props = {
   onSelect: (hit: BuildingHit) => void;
+  /** 새 검색이 시작될 때. 아래 스택뷰가 옛 건물을 계속 그리지 않도록 선택을 비운다. */
+  onSearchStart: () => void;
   selectedBldId: string | null;
 };
 
-export function BuildingSearch({ onSelect, selectedBldId }: Props) {
+export function BuildingSearch({ onSelect, onSearchStart, selectedBldId }: Props) {
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<BuildingHit[]>([]);
   /** 검색어에 걸린 전체 건물 수(보여주는 수가 아니다). */
@@ -44,6 +46,7 @@ export function BuildingSearch({ onSelect, selectedBldId }: Props) {
     const runId = ++latestRun.current;
     setLoading(true);
     setError(null);
+    onSearchStart(); // 새 검색 = 이전 선택 해제(아래 스택뷰가 옛 건물을 계속 그리지 않게)
     try {
       // 검색어는 파라미터로 넘어간다 — % _ \ 를 서버가 리터럴로 이스케이프하므로
       // 여기서 따로 손대지 않는다(직접 문자열을 이어 붙이면 필터가 깨진다).

@@ -381,6 +381,24 @@ def test_parse_args_missing_value():
         target.parse_args(["--months"])
 
 
+def test_parse_args_rejects_unknown_flag_like_help():
+    """--help 를 조용히 무시하면 dry_run=False 인 실제 실행이 되어버린다(2026-08-08 실사고)."""
+    with pytest.raises(ValueError, match="알 수 없는 인자"):
+        target.parse_args(["--help"])
+
+
+def test_parse_args_rejects_typo_does_not_silently_set_dry_run():
+    """--dryrun(오타)이 --dry-run으로 조용히 넘어가면 실제 실행 + API 예산 소모로 이어진다."""
+    with pytest.raises(ValueError, match="알 수 없는 인자"):
+        target.parse_args(["--dryrun"])
+
+
+def test_parse_args_rejects_typo_limit_flag():
+    """--limitt(오타)를 무시하면 '소량 시험'이 전량 실행으로 바뀐다."""
+    with pytest.raises(ValueError, match="알 수 없는 인자"):
+        target.parse_args(["--limitt", "50"])
+
+
 def test_budget_verdict_fits_when_budget_is_enough():
     v = target.budget_verdict(calls_used=100, planned_calls=240, budget=9500)
     assert v["remaining"] == 9400
