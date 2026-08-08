@@ -45,6 +45,12 @@ jobs:
       # 결함이 lint·build를 그대로 통과했다(2026-08-08 적대검증에서 라이브로 발견).
       - name: Test
         run: pnpm test
+      # E2E(playwright): 검색→선택→층 스택이 실제 브라우저에서 이어 붙는지.
+      # 네트워크는 전부 가로채므로(mock) DB 비밀값이 필요 없다. chromium 하나만 설치.
+      - name: Install Playwright (Chromium only)
+        run: pnpm exec playwright install --with-deps chromium
+      - name: E2E test
+        run: pnpm test:e2e
       # build가 `tsc -b && vite build`라 타입 검사까지 함께 돈다.
       - name: Typecheck + build
         run: pnpm build
