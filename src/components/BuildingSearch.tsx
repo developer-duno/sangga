@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import type { SubmitEvent } from 'react';
 import { supabase } from '../lib/supabase';
-import { formatFloor } from '../lib/format';
+import { describeError, describeRange } from '../lib/format';
 import type { BuildingHit } from '../types';
 
 /**
@@ -131,42 +131,4 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId }: Props
       )}
     </section>
   );
-}
-
-/**
- * 서버 원문 대신 사람이 읽을 문구로 바꾼다.
- *
- * 원문에는 `permission denied for table building_floor`처럼 내부 표 이름이 섞여 나올 수
- * 있어 그대로 화면에 띄우지 않는다. 단 "함수가 아직 DB에 없다"(PGRST202)는 원인이
- * 분명하고 조치가 정해져 있으므로 그대로 안내한다.
- */
-function describeError(ex: unknown): string {
-  const code =
-    typeof ex === 'object' && ex !== null && 'code' in ex
-      ? String((ex as { code: unknown }).code)
-      : '';
-  if (code === 'PGRST202') {
-    return (
-      '검색 기능이 아직 DB에 적용되지 않았습니다. ' +
-      'supabase/migrations/2026-08-08b_search_buildings.sql을 Supabase SQL Editor에서 실행해 주세요.'
-    );
-  }
-  return '검색에 실패했습니다. 잠시 후 다시 시도해 주세요.';
-}
-
-/**
- * "지하 2층 ~ 15층 + 옥탑"처럼 층 범위를 한 줄로.
- *
- * 부호 처리를 직접 하지 않고 `formatFloor`를 재사용한다 — 예전엔 아래쪽만 음수를
- * 처리하고 위쪽은 그대로 찍어서, 지하만 있는 건물이 "지하 5층 ~ -1층"으로 보였다
- * (2026-08-08 실측: 강남에 지하층만 있는 건물 213개).
- */
-function describeRange(h: BuildingHit): string {
-  if (h.min_floor === null || h.max_floor === null) {
-    return h.has_roof ? '옥탑만' : '층 정보 없음';
-  }
-  const bottom = formatFloor(h.min_floor, null);
-  const top = formatFloor(h.max_floor, null);
-  const range = bottom === top ? bottom : `${bottom} ~ ${top}`;
-  return h.has_roof ? `${range} + 옥탑` : range;
 }
