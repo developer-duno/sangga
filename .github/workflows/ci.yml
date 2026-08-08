@@ -41,6 +41,10 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Lint
         run: pnpm exec oxlint
+      # 화면 로직 테스트(vitest). 예전에는 러너 자체가 없어서 지하층 표기·선택 잔존 같은
+      # 결함이 lint·build를 그대로 통과했다(2026-08-08 적대검증에서 라이브로 발견).
+      - name: Test
+        run: pnpm test
       # build가 `tsc -b && vite build`라 타입 검사까지 함께 돈다.
       - name: Typecheck + build
         run: pnpm build
