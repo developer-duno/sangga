@@ -1,0 +1,63 @@
+# 소상공인 상권정보 — 새 분기 스냅샷 감시
+#
+# 왜: 분기 스냅샷은 포털에서 내려가면 **다시 못 받는다**(CLAUDE.md 절대 규칙 6).
+#     수집은 전부 사람 손인데 "새 분기가 떴다"를 알려주는 장치가 없었다.
+#     사람이 잊는 것이 이 데이터를 잃는 가장 현실적인 경로다.
+#
+# 무엇을 하나: 매주 포털 목록을 확인해 **새 분기가 보이면 이슈를 연다.** 그게 전부다.
+#     받는 것·적재·백업은 사람이 로컬에서 한다 —
+#       ① 원본 백업이 어차피 외장 SSD(F:)라 사람 손이 필요하고,
+#       ② 적재하려면 DB 서비스키를 GitHub 에 올려야 하는데 알림만 하면 비밀값이 0개다.
+#     즉 이 워크플로우는 **비밀값을 하나도 쓰지 않는다**(기본 GITHUB_TOKEN 만).
+#
+# ⚠️ GitHub 는 저장소에 60일간 활동이 없으면 예약 실행을 자동으로 멈춘다.
+#    오래 쉬었다가 돌아왔다면 Actions 탭에서 이 워크플로우가 살아 있는지 한 번 본다.
+name: 분기 스냅샷 감시
+
+on:
+  schedule:
+    # 매주 월요일 00:00 UTC = 09:00 KST. 게시일(분기 말일 근처)이 밀려도
+    # 날짜를 맞히려 하지 않고 **실제 게시를 감지**하므로 주 1회로 충분하다.
+    - cron: "0 0 * * 1"
+  # 손으로 즉시 돌려보고 싶을 때 (Actions 탭 → Run workflow)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Seoul # 로컬(KST)과 시간축 통일
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # 스크립트는 표준 라이브러리만 쓴다 — 설치 단계가 없다.
+      - name: 새 분기가 떴는지 확인
+        id: check
+        run: python scripts/check_new_sangkwon_quarter.py
+
+      # 같은 분기로 이슈가 매주 다시 열리면 알림이 소음이 된다.
+      # 제목에 분기 날짜가 박혀 있으므로, 열린·닫힌 이슈를 통틀어 같은 제목이
+      # 있으면 건너뛴다 → 한 번 닫으면 그 분기로는 다시 안 열린다.
+      - name: 새 분기면 이슈를 연다
+        if: steps.check.outputs.found == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ steps.check.outputs.title }}
+        run: |
+          set -euo pipefail
+          if gh issue list --state all --limit 200 --json title \
+               --jq '.[].title' | grep -Fxq "$TITLE"; then
+            echo "같은 제목의 이슈가 이미 있습니다 — 건너뜁니다: $TITLE"
+            exit 0
+          fi
+          gh issue create \
+            --title "$TITLE" \
+            --body-file sangkwon_new_quarter_issue.md
+          echo "이슈를 열었습니다: $TITLE"
