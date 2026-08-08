@@ -403,6 +403,69 @@ def latest_batch_by_pnu(rows):
     return [r for r in rows if (r.get("fetched_at") or "") == latest[r["pnu"]]]
 
 
+def verified_latest_batch_by_pnu(title_rows, flr_rows, expos_rows, done_counts):
+    """latest_batch_by_pnu를 collect_progress.row_count로 검증해 안전하게 고른다.
+
+    latest_batch_by_pnu는 title·flr·expos 3개 파일에서 **따로따로** fetched_at
+    최댓값만 본다. 그런데 append_jsonl은 한 엔드포인트의 아이템을 한 줄씩
+    순차로 쓰므로(collect_one_pnu), 그 쓰기 루프 도중 프로세스가 죽으면
+    "가장 늦은 배치"가 일부 행만 쓰인 채로 파일에 남을 수 있다. 그래도
+    latest_batch_by_pnu는 "시각이 가장 늦다"는 이유만으로 그 불완전한 배치를
+    고르고, 온전했던 옛 배치를 밀어낸다(독립 코드리뷰 지적).
+
+    이 함수는 PNU마다 3개 파일에 나타나는 fetched_at 후보를 모아(한 번의
+    collect_one_pnu 호출은 3파일에 항상 같은 fetched_at을 쓰므로 유효한 후보
+    키다) 최신순으로 훑으며, 그 fetched_at의 3파일 합산 행수가
+    done_counts.get(pnu)(그 PNU가 마지막으로 온전히 끝났을 때 collect_progress에
+    저장된 행수)와 일치하는 첫 후보를 채택한다.
+
+    PNU에 fetched_at 후보가 1개뿐이면(대다수 정상 케이스) 검증을 건너뛰고
+    그대로 채택한다 — latest_batch_by_pnu와 동작·성능이 그대로다. 끝까지
+    일치하는 후보가 없으면(done_counts에 그 PNU 자체가 없는 등, 판정 근거
+    부재) 최신 배치를 쓰되 조용히 넘어가지 않고 경고를 출력한다
+    (_delete_stale_rows의 "판정 근거 없으면 스킵 개수를 출력한다" 관례 답습
+    — 다만 여기는 지울 수 없으니 "쓰되 경고"로 응용한다).
+
+    반환: (title_rows, flr_rows, expos_rows)를 검증된 fetched_at으로 필터링한 튜플.
+    """
+    candidates_by_pnu = defaultdict(set)
+    batch_counts = Counter()
+    for rows in (title_rows, flr_rows, expos_rows):
+        for row in rows:
+            pnu = row["pnu"]
+            fetched_at = row.get("fetched_at") or ""
+            candidates_by_pnu[pnu].add(fetched_at)
+            batch_counts[(pnu, fetched_at)] += 1
+
+    chosen = {}
+    unverifiable = 0
+    for pnu, candidates in candidates_by_pnu.items():
+        ordered = sorted(candidates, reverse=True)
+        if len(ordered) == 1:
+            chosen[pnu] = ordered[0]
+            continue
+        expected = done_counts.get(pnu)
+        picked = None
+        if expected is not None:
+            for fetched_at in ordered:
+                if batch_counts[(pnu, fetched_at)] == expected:
+                    picked = fetched_at
+                    break
+        if picked is None:
+            picked = ordered[0]
+            unverifiable += 1
+        chosen[pnu] = picked
+
+    if unverifiable:
+        print("  [경고] {:,}개 PNU는 여러 배치 중 어느 것이 온전한지 collect_progress로 "
+              "확인할 수 없어 최신 배치를 그대로 씁니다.".format(unverifiable), flush=True)
+
+    def _filter(rows):
+        return [r for r in rows if (r.get("fetched_at") or "") == chosen.get(r["pnu"])]
+
+    return _filter(title_rows), _filter(flr_rows), _filter(expos_rows)
+
+
 def build_buildings(title_rows):
     """표제부 raw 행 -> (bld_id -> building dict, 통계).
 
@@ -1351,21 +1414,27 @@ def parse_args(argv):
     return opts
 
 
-def load_raw(raw_dir):
+def load_raw(raw_dir, done_counts=None):
     """raw 3종을 읽어 (title, flr, expos, broken 카운트)를 돌려준다.
 
-    각 파일은 PNU별 최신 배치만 남긴다(latest_batch_by_pnu — 중복 수집 방어).
+    done_counts가 None(기본값, 오프라인)이면 각 파일에서 따로 latest_batch_by_pnu만
+    적용한다 — 오늘과 100% 동일한 경로다. done_counts를 주면(main()이 DB 연결
+    이후에만 넘긴다) 3파일을 함께 검증하는 verified_latest_batch_by_pnu로 바꾼다
+    (B2 — 크래시로 일부만 쓰인 최신 배치가 조용히 선택되는 결함 방어).
     """
     title, b1 = read_jsonl(os.path.join(raw_dir, RAW_TITLE))
     flr, b2 = read_jsonl(os.path.join(raw_dir, RAW_FLR_OULN))
     expos, b3 = read_jsonl(os.path.join(raw_dir, RAW_EXPOS_AREA))
     broken = {RAW_TITLE: b1, RAW_FLR_OULN: b2, RAW_EXPOS_AREA: b3}
-    return (
-        latest_batch_by_pnu(title),
-        latest_batch_by_pnu(flr),
-        latest_batch_by_pnu(expos),
-        broken,
-    )
+    if done_counts is None:
+        return (
+            latest_batch_by_pnu(title),
+            latest_batch_by_pnu(flr),
+            latest_batch_by_pnu(expos),
+            broken,
+        )
+    title, flr, expos = verified_latest_batch_by_pnu(title, flr, expos, done_counts)
+    return title, flr, expos, broken
 
 
 def count_raw_rows_by_pnu(*row_lists):
@@ -1382,9 +1451,12 @@ def count_raw_rows_by_pnu(*row_lists):
     return counts
 
 
-def transform(raw_dir):
-    """raw 폴더 -> (building 목록, unit 목록, building_floor 목록, 보고용 통계 묶음)."""
-    title_rows, flr_rows, expos_rows, broken = load_raw(raw_dir)
+def transform(raw_dir, done_counts=None):
+    """raw 폴더 -> (building 목록, unit 목록, building_floor 목록, 보고용 통계 묶음).
+
+    done_counts는 load_raw에 그대로 전달한다(B2 — verified_latest_batch_by_pnu).
+    """
+    title_rows, flr_rows, expos_rows, broken = load_raw(raw_dir, done_counts=done_counts)
     buildings, bld_stats = build_buildings(title_rows)
     # 층별개요·전유부 모두 같은 건물 귀속 규칙(resolve_bld_id)을 쓴다 — 키가 어긋나면
     # floor_use가 조용히 NULL로 남는다.
@@ -1509,6 +1581,19 @@ def main():
     # 아무것도 건드리기 전에 대상 테이블 존재부터 확인한다 — 반쯤 적재된 상태 방지.
     try:
         assert_tables_exist(base_url, headers, ("building", "building_floor", "unit"))
+    except RuntimeError as e:
+        print("[에러] {}".format(e))
+        return 1
+
+    # raw가 중복 수집으로 여러 배치를 갖고 있으면, 파일별로 따로 "가장 늦은
+    # fetched_at"만 보는 latest_batch_by_pnu는 수집 도중 죽어 일부만 쓰인 배치를
+    # 온전한 배치로 착각할 수 있다(B2, 독립 코드리뷰 지적). 위 transform(raw_dir)은
+    # 리포트 출력용 1차 계산(오프라인)이었고, 실제로 DB에 넣을 레코드는
+    # collect_progress의 완료 시점 행수로 검증해 다시 계산한다.
+    try:
+        done_counts = fetch_done_row_counts(base_url, headers, opts["period_key"])
+        building_records, unit_records, floor_records, stats = transform(
+            raw_dir, done_counts=done_counts)
     except RuntimeError as e:
         print("[에러] {}".format(e))
         return 1

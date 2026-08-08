@@ -80,6 +80,11 @@ TABLE_UPSERT_RESOLUTION = {
     "transaction": "merge-duplicates",
 }
 
+# collect_transactions.py의 COLLECTOR와 반드시 같은 문자열이어야 한다 — 두
+# 스크립트는 서로 import하지 않는 관례라 상수를 각자 갖되 값을 맞춘다
+# (load_building_ledger.py의 BLDRGST_COLLECTOR와 같은 관례).
+RTMS_COLLECTOR = "rtms_commercial"
+
 
 # ── 순수 로직 (네트워크·DB 없음 — 테스트 대상) ─────────────────────────────────
 
@@ -295,6 +300,61 @@ def latest_batch(rows):
                 (r.get("sigungu_code"), r.get("deal_ym")))]
 
 
+def verified_latest_batch(rows, done_counts):
+    """latest_batch를 collect_progress.row_count로 검증해 안전하게 고른다.
+
+    latest_batch는 (시군구, 계약년월)마다 fetched_at 최댓값만 본다. append_jsonl은
+    한 회차의 아이템을 한 줄씩 순차로 쓰므로(collect_one_month), 그 쓰기 루프
+    도중 프로세스가 죽으면 "가장 늦은 배치"가 일부 행만 쓰인 채로 raw에 남을 수
+    있다. 그래도 latest_batch는 "시각이 가장 늦다"는 이유만으로 그 불완전한
+    배치를 고르고, 온전했던 옛 배치를 밀어낸다(load_building_ledger.py의
+    latest_batch_by_pnu와 같은 결함, 독립 코드리뷰 지적).
+
+    done_counts는 (sigungu_code, deal_ym) -> row_count — 그 조합이 마지막으로
+    온전히 끝났을 때 collect_progress에 저장된 행수다(fetch_done_row_counts가
+    돌려주는 period_key 기준 dict를 호출부가 이 키 형태로 감싸 넘긴다). 후보
+    fetched_at을 최신순으로 훑으며 그 배치의 행수가 done_counts와 일치하는 첫
+    후보를 채택한다. 후보가 1개뿐이면(대다수 정상 케이스) 검증을 건너뛰고
+    그대로 채택한다 — latest_batch와 동작·성능이 그대로다. 끝까지 일치하는
+    후보가 없으면 최신 배치를 쓰되 조용히 넘어가지 않고 경고를 출력한다.
+    """
+    candidates = defaultdict(set)
+    batch_counts = Counter()
+    for r in rows:
+        key = (r.get("sigungu_code"), r.get("deal_ym"))
+        fetched_at = r.get("fetched_at") or ""
+        candidates[key].add(fetched_at)
+        batch_counts[(key, fetched_at)] += 1
+
+    chosen = {}
+    unverifiable = 0
+    for key, fetched_ats in candidates.items():
+        ordered = sorted(fetched_ats, reverse=True)
+        if len(ordered) == 1:
+            chosen[key] = ordered[0]
+            continue
+        expected = done_counts.get(key)
+        picked = None
+        if expected is not None:
+            for fetched_at in ordered:
+                if batch_counts[(key, fetched_at)] == expected:
+                    picked = fetched_at
+                    break
+        if picked is None:
+            picked = ordered[0]
+            unverifiable += 1
+        chosen[key] = picked
+
+    if unverifiable:
+        print("  [경고] {:,}개 (시군구,계약월) 조합은 여러 배치 중 어느 것이 온전한지 "
+              "collect_progress로 확인할 수 없어 최신 배치를 그대로 씁니다.".format(
+                  unverifiable), flush=True)
+
+    return [r for r in rows
+            if (r.get("fetched_at") or "") == chosen.get(
+                (r.get("sigungu_code"), r.get("deal_ym")))]
+
+
 def build_transactions(raw_rows, emd_lookup, include_canceled=False):
     """raw 행 목록 -> (transaction dict 목록, 통계).
 
@@ -416,6 +476,27 @@ def upsert_batch(base_url, headers, table, rows, batch_size=BATCH_SIZE):
         print("  [{}] {}/{} 배치 {:,}행 (누적 {:,}/{:,})".format(
             table, no, total, len(part), sent, len(rows)), flush=True)
     return sent
+
+
+def fetch_done_row_counts(base_url, headers, sigungu_code):
+    """수집 완료(status='done') 계약년월(period_key) -> 수집 시점 row_count 매핑.
+
+    verified_latest_batch가 "이번 raw로 그 달을 온전히 다시 계산했는가"를
+    판정하는 근거다(load_building_ledger.py의 동명 함수와 같은 역할 —
+    scope_key가 PNU 대신 시군구코드, period_key가 계약월인 점만 다르다).
+    row_count가 비어 있는 행은 판정 근거가 없으므로 아예 뺀다.
+    """
+    rows = rest_select(
+        base_url, headers, "collect_progress",
+        "select=period_key,row_count&collector=eq.{}&scope_key=eq.{}&status=eq.done".format(
+            RTMS_COLLECTOR, sigungu_code),
+        order="period_key",
+    )
+    return {
+        r["period_key"]: r["row_count"]
+        for r in rows
+        if r.get("period_key") and r.get("row_count") is not None
+    }
 
 
 def assert_table_exists(base_url, headers, table):
@@ -567,7 +648,6 @@ def main():
         print("[에러] raw가 비어 있습니다: {}".format(path))
         print("       먼저 python scripts/collectors/collect_transactions.py 를 실행하세요.")
         return 1
-    raw_rows = latest_batch(raw_rows)
 
     try:
         base_url, key = get_supabase_config()
@@ -575,6 +655,18 @@ def main():
         print("[에러] {}".format(e))
         return 1
     headers = {"apikey": key, "Authorization": "Bearer {}".format(key)}
+
+    # raw가 재수집으로 여러 배치를 갖고 있으면, "가장 늦은 fetched_at"만 보는
+    # latest_batch는 수집 도중 죽어 일부만 쓰인 배치를 온전한 배치로 착각할 수
+    # 있다(B2, load_building_ledger.py와 같은 결함). collect_progress의 완료
+    # 시점 행수로 검증해 안전한 배치를 고른다.
+    try:
+        done_row_counts = fetch_done_row_counts(base_url, headers, sigungu)
+    except RuntimeError as e:
+        print("[에러] {}".format(e))
+        return 1
+    done_counts = {(sigungu, period_key): cnt for period_key, cnt in done_row_counts.items()}
+    raw_rows = verified_latest_batch(raw_rows, done_counts)
 
     print("법정동코드 읽는 중...", flush=True)
     bjd = rest_select(base_url, headers, "bjd_code",

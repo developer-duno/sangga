@@ -978,6 +978,73 @@ def test_latest_batch_by_pnu_keeps_all_rows_of_same_batch():
     assert len(target.latest_batch_by_pnu(rows)) == 2
 
 
+# ── 9-1. verified_latest_batch_by_pnu (독립 코드리뷰 지적 — B2) ──────────────
+#
+# latest_batch_by_pnu는 파일마다 따로 fetched_at 최댓값만 본다. append_jsonl은
+# 아이템을 한 줄씩 순차로 쓰므로, 그 루프 도중 프로세스가 죽으면 "가장 늦은
+# 배치"가 일부 행만 쓰인 채로 남을 수 있다. 그래도 latest_batch_by_pnu는
+# "가장 늦다"는 이유만으로 그 불완전한 배치를 고르고, 멀쩡한 옛 배치를 밀어낸다.
+# verified_latest_batch_by_pnu는 collect_progress가 기록한 "완료 시점 행수"
+# (done_counts)로 후보를 검증해 이 함정을 막는다.
+
+T1 = "2026-08-07T10:00:00+09:00"
+T2 = "2026-08-08T10:00:00+09:00"
+
+
+def test_verified_latest_batch_by_pnu_falls_back_when_newest_batch_incomplete():
+    """최신 배치(T2)가 크래시로 expos 1건만 쓰였으면, 온전한 옛 배치(T1)로 되돌아간다."""
+    title_rows = [raw_row(PNU_A, TITLE_ITEM, fetched_at=T1),
+                  raw_row(PNU_A, TITLE_ITEM, fetched_at=T2)]
+    flr_rows = [raw_row(PNU_A, flr_item(), fetched_at=T1),
+                raw_row(PNU_A, flr_item(), fetched_at=T2)]
+    expos_rows = [
+        raw_row(PNU_A, expos_item(ho_nm="101호"), fetched_at=T1),
+        raw_row(PNU_A, expos_item(ho_nm="102호"), fetched_at=T1),
+        raw_row(PNU_A, expos_item(ho_nm="103호"), fetched_at=T1),
+        raw_row(PNU_A, expos_item(ho_nm="101호"), fetched_at=T2),  # 크래시로 1건만 쓰임
+    ]
+    # T1이 온전히 끝났을 때 collect_progress에 저장된 행수: title 1 + flr 1 + expos 3
+    done_counts = {PNU_A: 5}
+
+    v_title, v_flr, v_expos = target.verified_latest_batch_by_pnu(
+        title_rows, flr_rows, expos_rows, done_counts)
+
+    assert {r["fetched_at"] for r in v_title} == {T1}
+    assert {r["fetched_at"] for r in v_flr} == {T1}
+    assert len(v_expos) == 3
+    assert {r["fetched_at"] for r in v_expos} == {T1}
+
+
+def test_verified_latest_batch_by_pnu_keeps_current_behavior_for_single_batch():
+    """배치가 1개뿐인 PNU(대다수 정상 케이스)는 done_counts와 무관하게 그대로 채택한다."""
+    title_rows = [raw_row(PNU_A, TITLE_ITEM)]
+    flr_rows = [raw_row(PNU_A, flr_item())]
+    expos_rows = [raw_row(PNU_A, expos_item())]
+
+    v_title, v_flr, v_expos = target.verified_latest_batch_by_pnu(
+        title_rows, flr_rows, expos_rows, {})   # done_counts가 비어 있어도 무관
+
+    assert v_title == title_rows
+    assert v_flr == flr_rows
+    assert v_expos == expos_rows
+
+
+def test_verified_latest_batch_by_pnu_warns_when_no_batch_matches(capsys):
+    """done_counts에 그 PNU 기록이 아예 없으면(첫 수집 진행 중 등) 최신 배치를 쓰되 경고한다."""
+    title_rows = [raw_row(PNU_A, TITLE_ITEM, fetched_at=T1),
+                  raw_row(PNU_A, TITLE_ITEM, fetched_at=T2)]
+    flr_rows = [raw_row(PNU_A, flr_item(), fetched_at=T1),
+                raw_row(PNU_A, flr_item(), fetched_at=T2)]
+    expos_rows = [raw_row(PNU_A, expos_item(), fetched_at=T1),
+                  raw_row(PNU_A, expos_item(), fetched_at=T2)]
+
+    v_title, _, _ = target.verified_latest_batch_by_pnu(
+        title_rows, flr_rows, expos_rows, {})   # done_counts에 PNU_A 없음
+
+    assert {r["fetched_at"] for r in v_title} == {T2}   # 검증 불가 -> 그래도 최신을 쓴다
+    assert "확인할 수 없어" in capsys.readouterr().out
+
+
 # ── 10. §5.6 보고 재료 ──────────────────────────────────────────────────────
 
 
