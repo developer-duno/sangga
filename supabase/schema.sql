@@ -101,6 +101,77 @@ create index if not exists idx_building_pnu on building (pnu);
 create index if not exists idx_building_nm  on building using gin (bld_nm gin_trgm_ops);
 
 -- =====================================================================
+-- 건물 표시명 — 동명칭 폴백 + 개인 성명 가리기 (2026-08-08e)
+-- =====================================================================
+-- 건축물대장에는 이름 칸이 둘이다. bld_nm(건물명)만 보면 **이름이 있는데 못 찾는
+-- 건물이 404개** 생긴다 — dong_nm(동명칭)에만 진짜 이름이 든 경우다.
+-- 실측(2026-08-08): bld_nm 없음 7,044 중 dong_nm 있음 688, 그 중 '주건축물제1동'
+-- 같은 일반 라벨 284를 뺀 404가 진짜 이름(7층 이상 43개). 라이브에서 '노보텔'·
+-- 'WeWork Building'·'강남텔레피아빌딩'이 전부 0건이었다.
+--
+-- 그리고 bld_nm 5,361개 중 93개가 '… 단독주택 (김남연)' 형태로 **개인 성명**을
+-- 담고 있다(괄호 안 값 빈도가 거의 전부 1회 = 사람 이름의 특징).
+--
+-- 검색도 표시도 building_display_nm() 하나만 쓴다 → "보이는 것 = 검색되는 것".
+-- 원본 표의 값은 건드리지 않는다(되돌릴 수 있게). 내보낼 때만 가린다.
+
+-- 건물명 끝의 (사람이름)을 지운다. 괄호 안이 건물 지칭어면 그대로 둔다
+-- ('썬프라자(태양빌딩)'·'은하빌딩2(신관)'은 보호). 이름만 남으면 NULL 로 돌려
+-- 동명칭 폴백이 이어받게 한다. IMMUTABLE — 이 식 위에 인덱스를 걸어야 하기 때문.
+create or replace function mask_person_name(nm text)
+returns text
+language sql
+immutable
+parallel safe
+as $$
+  select case
+    when nm is null then null
+    when nm ~ '\([가-힣]{2,4}\)\s*$'
+     and nm !~ '\([가-힣]*(빌딩|타워|하우스|플라자|프라자|스퀘어|센터|주택|상가|본관|별관|신관|구관|아파트|오피스|사옥|회관|시장)[가-힣]*\)\s*$'
+    then nullif(btrim(regexp_replace(nm, '\s*\([가-힣]{2,4}\)\s*$', '')), '')
+    else nm
+  end
+$$;
+
+comment on function mask_person_name(text) is
+  '건물명 끝의 (사람이름)을 지운다. 원본 표는 그대로 두고 내보낼 때만 가린다. '
+  'IMMUTABLE — 이 식 위에 인덱스를 걸기 위해 필요하다';
+
+-- 화면에 보일 이름: 건물명(성명 가림) → 동명칭(일반 라벨 제외) → NULL
+-- 일반 라벨 = 이름이 아니라 "몇 번째 동인지"를 적은 것. 실측 상위 15종
+-- (주건축물제1동 190·가동 12·나동 11·1동 8·2동 7·A동 7·B동 6·1 5·주건축물제2동 2·
+--  D동 2·근린생활시설 2·다동 1·2 1·C동 1·3동 1)을 아래 한 줄이 전부 덮는다.
+create or replace function building_display_nm(bld_nm text, dong_nm text)
+returns text
+language sql
+immutable
+parallel safe
+as $$
+  select coalesce(
+    nullif(btrim(mask_person_name(bld_nm)), ''),
+    case
+      when btrim(coalesce(dong_nm, '')) = '' then null
+      when btrim(dong_nm) ~ '^((주|부속)?건축물)?(제)?[0-9]*동$|^[가-힣]동$|^[A-Za-z]동$|^[0-9]+$|^(근린생활시설|본관|별관|신관|구관|관리동|경비실|주차장|창고)$'
+        then null
+      else btrim(dong_nm)
+    end
+  )
+$$;
+
+comment on function building_display_nm(text, text) is
+  '§8.1 화면에 보일 건물 이름. 건물명(성명 가림) → 동명칭(일반 라벨 제외) → NULL. '
+  '검색과 표시가 이 함수 하나만 쓰므로 "보이는 것 = 검색되는 것"이 항상 일치한다';
+
+-- 도우미 함수는 공개 롤에게 열지 않는다 — 뷰·검색 함수가 소유자 권한으로 대신 부른다.
+revoke all on function mask_person_name(text) from public;
+revoke all on function building_display_nm(text, text) from public;
+
+-- 검색용 인덱스. WHERE 절과 **글자 하나까지 같은 식**이어야 인덱스를 탄다.
+-- 이름이 둘 다 없는 건물은 NULL 이라 색인되지 않는다 = 이름으로는 안 찾힌다(의도).
+create index if not exists idx_building_display_nm
+  on building using gin ((building_display_nm(bld_nm, dong_nm)) gin_trgm_ops);
+
+-- =====================================================================
 -- L2-a. building_floor — 층별개요 ★ 층별 스택 뷰(§8.6)의 재료
 -- =====================================================================
 -- 건축HUB getBrFlrOulnInfo. 호실(unit)과 달리 **모든 건물**에 존재한다.
@@ -425,7 +496,9 @@ select
   s.segment_cnt,
   s.main_use,
   s.uses,
-  b.bld_nm,
+  -- ⚠️ 원본 건물명이 아니라 화면에 보일 이름이다(동명칭 폴백 + 개인 성명 가림).
+  --    원본은 building.bld_nm 에 그대로 있고, 이 뷰는 내보낼 때만 가린다.
+  building_display_nm(b.bld_nm, b.dong_nm) as bld_nm,
   b.approve_date,
   b.is_jiphap,
   p.road_addr,
@@ -454,7 +527,8 @@ left join lateral (
 comment on view v_floor_stack is
   '§8.6 층별 스택 뷰. store_cnt/stores는 (PNU, 층) 매칭이라 bld_cnt_in_pnu>1이면 건물 간 중복 — D등급 표시 필수. '
   '★ 공개 접근: 이 뷰만 anon/authenticated에게 SELECT 허용된다(아래 "공개 접근 정책" 절). '
-  '원본 표는 RLS 켬 + 정책 0개 + 권한 회수로 닫혀 있고, 이 뷰가 소유자 권한으로 대신 읽는다';
+  '원본 표는 RLS 켬 + 정책 0개 + 권한 회수로 닫혀 있고, 이 뷰가 소유자 권한으로 대신 읽는다. '
+  '⚠️ bld_nm은 원본이 아니라 building_display_nm() 결과다(동명칭 폴백 + 개인 성명 가림, 2026-08-08e)';
 
 -- =====================================================================
 -- 뷰: v_coverage_stats — 스택 뷰 각주용 집계
@@ -535,14 +609,19 @@ as $$
     --    조인 전에 한 표만 거르지 못한다 → gin_trgm 인덱스가 통째로 무력화된다.
     --    2026-08-08 EXPLAIN 실측: OR = Seq Scan 두 개 / UNION = Bitmap Index Scan 두 개.
     --    UNION 은 각 가지가 표 하나만 거르므로 인덱스를 타고, 중복은 UNION 이 제거한다.
-    select b.bld_id, b.pnu, b.bld_nm, pc.road_addr
+    --    ⛔ 이름 가지의 식은 idx_building_display_nm 과 **글자 하나까지 같아야** 한다.
+    select b.bld_id, b.pnu,
+           building_display_nm(b.bld_nm, b.dong_nm) as bld_nm,
+           pc.road_addr
       from building b
       join parcel pc on pc.pnu = b.pnu
       cross join pat
      where pat.p is not null
-       and b.bld_nm ilike pat.p escape '\'
+       and building_display_nm(b.bld_nm, b.dong_nm) ilike pat.p escape '\'
     union
-    select b.bld_id, b.pnu, b.bld_nm, pc.road_addr
+    select b.bld_id, b.pnu,
+           building_display_nm(b.bld_nm, b.dong_nm),
+           pc.road_addr
       from building b
       join parcel pc on pc.pnu = b.pnu
       cross join pat
@@ -600,6 +679,7 @@ comment on function search_buildings(text, int) is
   '§8.1 건물 검색. 건물 1개 = 1행이며 total_cnt로 정확한 전체 건수를 함께 준다. '
   'security definer — 원본 표가 anon에게 닫혀 있어 소유자 권한으로 대신 읽는다. '
   '입력의 % _ \ 는 서버가 리터럴로 이스케이프하고, 빈 검색어는 0건으로 잘라낸다. '
+  '이름은 building_display_nm() 하나만 본다(동명칭 폴백 + 개인 성명 가림) — 보이는 것 = 검색되는 것. '
   '⛔ WHERE를 OR로 되돌리지 말 것 — 두 조인 테이블에 걸친 OR은 gin_trgm 인덱스를 무력화한다';
 
 -- =====================================================================
