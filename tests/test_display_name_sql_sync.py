@@ -176,6 +176,44 @@ def test_floor_stack_view_masks_name(schema_sql, migration_sql):
         )
 
 
+def extract_display_nm_body(sql):
+    """building_display_nm 함수 본문($$ ... $$)만 잘라낸다."""
+    head = "create or replace function building_display_nm("
+    i = sql.find(head)
+    if i < 0:
+        return None
+    a = sql.find("$$", i)
+    b = sql.find("$$", a + 2)
+    return sql[a : b + 2] if a > 0 and b > 0 else None
+
+
+def test_mask_call_inside_display_nm_is_schema_qualified(schema_sql, migration_sql):
+    """building_display_nm 안의 mask_person_name 호출은 반드시 `public.` 을 붙여야 한다.
+
+    왜 (2026-08-08 라이브 실패로 확인)
+    ----------------------------------
+    `CREATE INDEX` 가 도는 동안 Postgres 는 보안을 위해 search_path 를
+    **`pg_catalog, pg_temp` 로 일시적으로 바꾼다**(공식 문서 명시). 그 순간 public 이
+    안 보이므로 이름만 적은 `mask_person_name(...)` 은
+    `42883: 함수가 존재하지 않습니다` 로 실패하고, SQL Editor 는 스크립트 전체를
+    한 트랜잭션으로 돌리므로 **마이그레이션이 통째로 되돌아간다.**
+
+    함수가 없어서가 아니라 그 순간에만 안 보여서 나는 오류라, 로컬 문법 검사로는
+    절대 안 잡힌다 — 이 테스트가 유일한 가드다.
+    """
+    for label, sql in (("schema.sql", schema_sql), ("migration", migration_sql)):
+        body = extract_display_nm_body(sql)
+        assert body, "{}: building_display_nm 본문을 못 찾았습니다".format(label)
+        assert "public.mask_person_name(" in body, (
+            "{}: building_display_nm 이 mask_person_name 을 스키마 없이 부릅니다 — "
+            "CREATE INDEX 단계에서 42883 으로 마이그레이션 전체가 되돌아갑니다".format(label)
+        )
+        assert not re.search(r"(?<![.\w])mask_person_name\s*\(", body), (
+            "{}: building_display_nm 본문에 스키마 없는 mask_person_name( 호출이 "
+            "남아 있습니다".format(label)
+        )
+
+
 def test_helper_functions_are_immutable(schema_sql, migration_sql):
     """IMMUTABLE 이 아니면 그 식 위에 인덱스를 못 만든다 (마이그레이션이 실패한다)."""
     for label, sql in (("schema.sql", schema_sql), ("migration", migration_sql)):

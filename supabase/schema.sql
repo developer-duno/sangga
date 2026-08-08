@@ -141,6 +141,13 @@ comment on function mask_person_name(text) is
 -- 일반 라벨 = 이름이 아니라 "몇 번째 동인지"를 적은 것. 실측 상위 15종
 -- (주건축물제1동 190·가동 12·나동 11·1동 8·2동 7·A동 7·B동 6·1 5·주건축물제2동 2·
 --  D동 2·근린생활시설 2·다동 1·2 1·C동 1·3동 1)을 아래 한 줄이 전부 덮는다.
+--
+-- ⛔ 아래 `public.` 을 떼지 말 것 (2026-08-08 실패로 확인).
+--    CREATE INDEX 가 도는 동안 Postgres 는 보안을 위해 search_path 를
+--    `pg_catalog, pg_temp` 로 **일시적으로 바꾼다**(공식 문서 명시). 그 순간
+--    public 이 안 보이므로 이름만 적은 `mask_person_name(...)` 은
+--    "함수가 존재하지 않습니다"(42883)로 실패하고 마이그레이션 전체가 되돌아간다.
+--    함수가 없어서가 아니라 **그 순간에만 안 보여서** 나는 오류다.
 create or replace function building_display_nm(bld_nm text, dong_nm text)
 returns text
 language sql
@@ -148,7 +155,7 @@ immutable
 parallel safe
 as $$
   select coalesce(
-    nullif(btrim(mask_person_name(bld_nm)), ''),
+    nullif(btrim(public.mask_person_name(bld_nm)), ''),
     case
       when btrim(coalesce(dong_nm, '')) = '' then null
       when btrim(dong_nm) ~ '^((주|부속)?건축물)?(제)?[0-9]*동$|^[가-힣]동$|^[A-Za-z]동$|^[0-9]+$|^(근린생활시설|본관|별관|신관|구관|관리동|경비실|주차장|창고)$'
