@@ -32,6 +32,12 @@ export type FloorRow = {
   /** 그 층에서 면적이 가장 큰 용도. */
   main_use: string | null;
   uses: FloorUse[] | null;
+  /**
+   * 화면에 보일 건물 이름. **원본 건물명이 아니다** — 서버(`building_display_nm`)가
+   * ① 건물명 끝의 개인 성명을 지우고 ② 건물명이 없으면 동명칭으로 대신하되
+   * '주건축물제1동' 같은 일반 라벨은 버린 결과다(2026-08-08e).
+   * 둘 다 없으면 null이고, 그때만 화면이 '(이름 없는 건물)'로 적는다.
+   */
   bld_nm: string | null;
   approve_date: string | null;
   is_jiphap: boolean | null;
@@ -66,6 +72,11 @@ export type CoverageStats = {
 export type BuildingHit = {
   bld_id: string;
   pnu: string;
+  /**
+   * 화면에 보일 건물 이름. `FloorRow.bld_nm`과 **같은 규칙**(서버 `building_display_nm`)이다
+   * — 개인 성명은 지워지고, 건물명이 없으면 동명칭이 대신 온다(일반 라벨은 제외).
+   * 검색도 이 값 하나만 보므로 **보이는 것 = 검색되는 것**이 항상 일치한다.
+   */
   bld_nm: string | null;
   road_addr: string | null;
   bld_cnt_in_pnu: number;

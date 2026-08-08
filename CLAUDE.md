@@ -77,7 +77,7 @@ constants → scoring → theme → components → hooks → App   (단방향)
 | API | Vercel Serverless |
 | DB | Supabase PostgreSQL + PostGIS (**별도 프로젝트**) |
 | 수집 | ⬜ **아직 로컬 수동 실행이다** — GitHub Actions 자동화는 설계만 됐고 구현 전(`.github/workflows/`에 `ci.yml` 하나뿐, cron 0건. 2026-08-08 실측). 네이버 수집이 없어 로컬 PC 상주는 불필요하나, **분기 스냅샷은 사람이 챙겨야 한다**(절대 규칙 6) |
-| 테스트 | 파이썬 **pytest 573개** + 프론트 **vitest 51개**(jsdom + @testing-library/react). CI가 둘 다 돌린다. ⬜ **E2E(playwright)는 아직 없다** — 브라우저 클릭 검증은 사람이 한다 |
+| 테스트 | 파이썬 **pytest 582개** + 프론트 **vitest 51개**(jsdom + @testing-library/react). CI가 둘 다 돌린다. ⬜ **E2E(playwright)는 아직 없다** — 브라우저 클릭 검증은 사람이 한다 |
 
 **성능 원칙**: 상권(수천 개)은 사전계산 정적 JSON, 호실(수백만)은 Supabase 쿼리.
 정적 JSON 폴백을 호실에는 두지 않는다.
