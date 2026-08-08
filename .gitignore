@@ -10,6 +10,9 @@ data/staging/
 # 수집·적재 실행 로그 (매 실행마다 새로 생기는 운영 잔재물)
 data/logs/
 
+# 분기 감시가 만드는 이슈 본문 임시 파일 (CI가 gh issue create 에 넘기고 버린다)
+sangkwon_new_quarter_issue.md
+
 # 의존성·운영 잔재물
 node_modules/
 dist/

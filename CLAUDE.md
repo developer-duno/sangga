@@ -76,8 +76,8 @@ constants → scoring → theme → components → hooks → App   (단방향)
 | 프론트 | React 19 + Vite, 카카오맵 + deck.gl |
 | API | Vercel Serverless |
 | DB | Supabase PostgreSQL + PostGIS (**별도 프로젝트**) |
-| 수집 | ⬜ **아직 로컬 수동 실행이다** — GitHub Actions 자동화는 설계만 됐고 구현 전(`.github/workflows/`에 `ci.yml` 하나뿐, cron 0건. 2026-08-08 실측). 네이버 수집이 없어 로컬 PC 상주는 불필요하나, **분기 스냅샷은 사람이 챙겨야 한다**(절대 규칙 6) |
-| 테스트 | 파이썬 **pytest 582개** + 프론트 **vitest 51개**(jsdom + @testing-library/react). CI가 둘 다 돌린다. ⬜ **E2E(playwright)는 아직 없다** — 브라우저 클릭 검증은 사람이 한다 |
+| 수집 | ⬜ **여전히 로컬 수동 실행이다** — 받기·적재·백업 전부 사람 손. 다만 **놓치는 것만은 막아 뒀다**: `sangkwon-quarterly-watch.yml`이 매주 포털을 확인해 새 분기가 뜨면 이슈를 자동으로 연다(비밀값 0개). 적재 후 `scripts/check_new_sangkwon_quarter.py`의 `LATEST_KNOWN_QUARTER`를 **사람이 올려야** 다음 분기를 감지한다(절대 규칙 6) |
+| 테스트 | 파이썬 **pytest 610개** + 프론트 **vitest 51개**(jsdom + @testing-library/react). CI가 둘 다 돌린다. ⬜ **E2E(playwright)는 아직 없다** — 브라우저 클릭 검증은 사람이 한다 |
 
 **성능 원칙**: 상권(수천 개)은 사전계산 정적 JSON, 호실(수백만)은 Supabase 쿼리.
 정적 JSON 폴백을 호실에는 두지 않는다.
@@ -114,7 +114,8 @@ pnpm exec oxlint                                # 프론트 린트
 ```
 
 ```bash
-python -m pytest tests/ -q                      # 파이썬 테스트 (516개)
+python -m pytest tests/ -q                      # 파이썬 테스트 (610개)
+python scripts/check_new_sangkwon_quarter.py    # 새 분기 스냅샷이 떴나 (읽기만, 키 불필요)
 python -m ruff check scripts/ tests/            # 파이썬 린트
 python scripts/collectors/collect_building_ledger.py --dry-run   # 수집 예산 확인(API 0콜)
 python scripts/collectors/collect_building_ledger.py             # 건축물대장 수집 (이어받기)
