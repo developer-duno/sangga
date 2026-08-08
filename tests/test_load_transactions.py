@@ -297,6 +297,74 @@ def test_latest_batch_is_per_month():
     assert len(target.latest_batch([a, b])) == 2
 
 
+# ── 8-1. fetch_done_row_counts / verified_latest_batch (독립 코드리뷰 지적 — B2) ──
+#
+# latest_batch는 (시군구, 계약년월)마다 fetched_at 최댓값만 본다. append_jsonl은
+# 한 회차의 아이템을 한 줄씩 순차로 쓰므로(collect_one_month), 그 루프 도중
+# 프로세스가 죽으면 "가장 늦은 배치"가 일부 행만 쓰인 채로 남을 수 있는데도
+# 그게 그대로 선택된다(load_building_ledger.py와 같은 결함). verified_latest_batch는
+# collect_progress가 기록한 "완료 시점 행수"로 후보를 검증해 이 함정을 막는다.
+
+T1 = "2026-08-07T10:00:00+09:00"
+T2 = "2026-08-08T10:00:00+09:00"
+PERIOD_YM = "202606"
+
+
+def test_fetch_done_row_counts_maps_period_key_to_row_count(monkeypatch):
+    monkeypatch.setattr(target, "rest_select", lambda *a, **kw: [
+        {"period_key": "202605", "row_count": 40},
+        {"period_key": "202606", "row_count": None},   # 결측은 버린다
+    ])
+    assert target.fetch_done_row_counts("https://x.supabase.co", {}, "11680") == {"202605": 40}
+
+
+def test_fetch_done_row_counts_filters_to_collector_scope_and_done(monkeypatch):
+    queries = []
+    monkeypatch.setattr(
+        target, "rest_select",
+        lambda base, h, table, query, **kw: (queries.append((table, query)) or []))
+    target.fetch_done_row_counts("https://x.supabase.co", {}, "11680")
+    table, query = queries[0]
+    assert table == "collect_progress"
+    assert "collector=eq.{}".format(target.RTMS_COLLECTOR) in query
+    assert "scope_key=eq.11680" in query
+    assert "status=eq.done" in query
+
+
+def test_verified_latest_batch_falls_back_when_newest_batch_incomplete():
+    """최신 배치(T2)가 크래시로 1건만 쓰였으면, 온전한 옛 배치(T1)로 되돌아간다."""
+    rows = [
+        raw(ITEM, deal_ym=PERIOD_YM, fetched_at=T1),
+        raw(dict(ITEM, dealDay=26), deal_ym=PERIOD_YM, fetched_at=T1),
+        raw(dict(ITEM, dealDay=27), deal_ym=PERIOD_YM, fetched_at=T1),
+        raw(ITEM, deal_ym=PERIOD_YM, fetched_at=T2),   # 크래시로 1건만 쓰임
+    ]
+    # T1이 온전히 끝났을 때 collect_progress에 저장된 행수
+    done_counts = {("11680", PERIOD_YM): 3}
+
+    kept = target.verified_latest_batch(rows, done_counts)
+
+    assert len(kept) == 3
+    assert {r["fetched_at"] for r in kept} == {T1}
+
+
+def test_verified_latest_batch_keeps_current_behavior_for_single_batch():
+    """배치가 1개뿐인 (시군구,계약월)(대다수 정상 케이스)는 done_counts와 무관하게 그대로 채택한다."""
+    rows = [raw(ITEM, deal_ym=PERIOD_YM), raw(dict(ITEM, dealDay=26), deal_ym=PERIOD_YM)]
+    assert target.verified_latest_batch(rows, {}) == rows
+
+
+def test_verified_latest_batch_warns_when_no_batch_matches(capsys):
+    """done_counts에 그 (시군구,계약월) 기록이 아예 없으면 최신 배치를 쓰되 경고한다."""
+    rows = [
+        raw(ITEM, deal_ym=PERIOD_YM, fetched_at=T1),
+        raw(ITEM, deal_ym=PERIOD_YM, fetched_at=T2),
+    ]
+    kept = target.verified_latest_batch(rows, {})   # done_counts에 그 조합 없음
+    assert {r["fetched_at"] for r in kept} == {T2}   # 검증 불가 -> 그래도 최신을 쓴다
+    assert "확인할 수 없어" in capsys.readouterr().out
+
+
 # ── 9. 불변식 / CLI ──────────────────────────────────────────────────────────
 
 
