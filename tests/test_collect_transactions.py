@@ -421,3 +421,79 @@ def test_budget_verdict_exact_fit_is_still_a_fit():
 def test_budget_verdict_never_reports_negative_remaining():
     v = target.budget_verdict(calls_used=99999, planned_calls=10, budget=9500)
     assert v["remaining"] == 0 and v["fits"] is False and v["shortfall"] == 10
+
+
+# ── 11. 호출 수 주기 기록 (강제 종료 시 유실 방지) ───────────────────────────
+
+
+def test_maybe_flush_does_not_write_before_interval(monkeypatch):
+    """조합마다 DB를 두드리면 수집이 느려진다 — 주기에 도달했을 때만 적는다."""
+    called = []
+    monkeypatch.setattr(target, "flush_quota_log", lambda *a: called.append(a[-1]))
+    assert target.maybe_flush_quota_log("u", {}, "2026-08-09", 0, 99, 0) == 0
+    assert called == []
+
+
+def _stub_main_deps(monkeypatch, months, flushed, flush_fail_first=0):
+    """main()의 DB·API를 전부 흉내낸다. flushed에 flush_quota_log가 받은 session_calls를 쌓는다."""
+    state = {"fails": flush_fail_first}
+    processed = []
+
+    monkeypatch.setattr(target, "get_supabase_config", lambda: ("https://x.supabase.co", "k"))
+    monkeypatch.setattr(target, "get_api_key", lambda: "APIKEY")
+    monkeypatch.setattr(target, "seed_progress", lambda *a, **kw: len(months))
+    monkeypatch.setattr(target, "fetch_pending", lambda *a, **kw: [(ym, 0) for ym in months])
+    monkeypatch.setattr(target, "progress_status_counts", lambda *a, **kw: target.Counter())
+    monkeypatch.setattr(target, "read_quota_baseline", lambda *a, **kw: 0)
+    monkeypatch.setattr(target, "save_progress", lambda *a, **kw: None)
+    monkeypatch.setattr(target, "install_sigint_handler", lambda: None)
+
+    def fake_collect_one_month(session, key, sigungu, deal_ym, raw_dir, **kw):  # noqa: ARG001
+        processed.append(deal_ym)
+        return {"status": "done", "row_count": 1, "error_msg": None, "calls": 1}
+
+    def fake_flush(base_url, headers, log_date, baseline, session_calls):  # noqa: ARG001
+        if state["fails"] > 0:
+            state["fails"] -= 1
+            raise RuntimeError("api_quota_log 저장 실패 (HTTP 503)")
+        flushed.append(session_calls)
+
+    monkeypatch.setattr(target, "collect_one_month", fake_collect_one_month)
+    monkeypatch.setattr(target, "flush_quota_log", fake_flush)
+    monkeypatch.setattr(sys, "argv", ["prog", "--months", "250", "--end-ym", "202607",
+                                      "--daily-budget", "100000"])
+    return processed
+
+
+def test_main_flushes_quota_every_100_calls(monkeypatch):
+    """★ finally에서만 적으면 강제 종료 시 그 세션 호출 수가 통째로 증발한다.
+
+    2026-08-09 브이월드 실측: raw 10,000줄인데 api_quota_log는 6,952건 — 약 3,000건
+    유실. 구조가 같은 이 수집기도 똑같이 뚫린다. 유실된 만큼 같은 날 재실행의
+    baseline이 낮게 읽혀 일 예산 캡이 뚫린다.
+    """
+    flushed = []
+    processed = _stub_main_deps(monkeypatch, target.month_range("202607", 250), flushed)
+
+    assert target.main() == 0
+    assert len(processed) == 250
+    # 100·200에서 중간 기록 + finally 마지막 기록. 값은 누적치라 단조 증가한다.
+    assert flushed == [100, 200, 250]
+
+
+def test_main_continues_and_warns_when_interim_flush_fails(monkeypatch, capsys):
+    """기록은 안전장치일 뿐이다 — 그것 때문에 수집이 죽으면 손해가 더 크다.
+
+    단 조용히 넘어가지도 않는다(PR #32: 침묵하는 실패가 가장 위험하다).
+    """
+    flushed = []
+    processed = _stub_main_deps(monkeypatch, target.month_range("202607", 250), flushed,
+                                flush_fail_first=1)
+
+    assert target.main() == 0
+    assert len(processed) == 250          # 250개월 전부 계속 처리됐다
+    out = capsys.readouterr().out
+    assert "[경고]" in out and "중간 기록 실패" in out
+    # 100에서 실패 → 기준점이 안 밀리므로 **다음 호출(101)에서 곧바로 재시도**한다.
+    # 값이 누적치라 한 번만 성공해도 그때까지의 호출이 전부 장부에 들어간다(손실 0).
+    assert flushed == [101, 201, 250]
