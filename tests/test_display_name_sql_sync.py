@@ -29,6 +29,11 @@ SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
 MIGRATION = os.path.join(
     ROOT, "supabase", "migrations", "2026-08-08e_building_display_name.sql"
 )
+# 2026-08-10: `from public`만으로는 anon 직접 GRANT가 안 빠진다는 게 라이브로
+# 확인돼, 이 마이그레이션이 anon·authenticated에서 직접 회수한다.
+REVOKE_MIGRATION = os.path.join(
+    ROOT, "supabase", "migrations", "2026-08-10_revoke_helper_fns_from_anon.sql"
+)
 
 # 표시명 식 — 검색 WHERE 절과 인덱스가 이것으로 일치해야 인덱스를 탄다.
 DISPLAY_EXPR = "building_display_nm(bld_nm, dong_nm)"
@@ -48,6 +53,11 @@ def schema_sql():
 @pytest.fixture(scope="module")
 def migration_sql():
     return read(MIGRATION)
+
+
+@pytest.fixture(scope="module")
+def revoke_migration_sql():
+    return read(REVOKE_MIGRATION)
 
 
 def extract_person_regexes(sql):
@@ -226,12 +236,43 @@ def test_helper_functions_are_immutable(schema_sql, migration_sql):
             )
 
 
-def test_helper_functions_are_not_granted_to_anon(schema_sql, migration_sql):
-    """새 함수는 기본적으로 anon 에게 열린다 — 명시적으로 회수해야 한다(알려진한계 §4)."""
-    for label, sql in (("schema.sql", schema_sql), ("migration", migration_sql)):
+def test_helper_functions_are_not_granted_to_anon(schema_sql, revoke_migration_sql):
+    """도우미 함수는 anon/authenticated 가 직접 EXECUTE 할 수 없어야 한다(알려진한계 §4).
+
+    왜 `from public` 만으로는 부족한가 (2026-08-10 라이브 실측 + 공식문서로 확정)
+    -------------------------------------------------------------------------
+    옛 버전은 `revoke all on function ... from public;` 문자열이 파일에 있는지만
+    글자로 확인했다. 그런데 그 문장 자체가 **무효**였다 — PUBLIC은 실제 롤이
+    아니라 "이 DB의 모든 롤"을 가리키는 가상 그룹이고, Supabase는 새 함수를
+    만들 때 anon·authenticated 에게 **직접(directly)** EXECUTE 를 GRANT한다.
+    PostgreSQL 공식 문서(sql-revoke.html)가 명시하듯 "revoking ... from PUBLIC
+    does not necessarily mean that all roles have lost ... privilege: those who
+    have it granted directly ... will still have it" — 즉 `from public` 회수는
+    가상 그룹 경로만 지우고 직접 부여분은 그대로 남긴다. 실제로 2026-08-10
+    라이브에서 이 문장이 이미 적용된 상태로 anon 공개키 RPC 호출이 둘 다
+    HTTP 200 이었다(문서 무결·데이터 오염과 무관하게 옛 테스트는 계속 초록불).
+    그래서 이 테스트는 **글자가 있는지가 아니라 회수 대상에 anon·authenticated
+    가 실제로 들어 있는지**를 파싱해서 확인한다 — `from public` 만 있고
+    `anon`/`authenticated` 가 빠지면 반드시 빨간불이어야 한다.
+    """
+    for label, sql in (("schema.sql", schema_sql), ("2026-08-10 migration", revoke_migration_sql)):
         for sig in ("mask_person_name(text)", "building_display_nm(text, text)"):
-            assert "revoke all on function {} from public".format(sig) in sql, (
-                "{}: {} 권한 회수가 없습니다 — anon 이 직접 부를 수 있습니다".format(
-                    label, sig
-                )
+            # 줄 맨 앞(들여쓰기 0)에서 시작하는 진짜 SQL 문장만 찾는다 — `-- ` 로
+            # 시작하는 설명 주석 안에 옛 형태(`from public;`)를 그대로 인용해 둔
+            # 줄과 혼동하면 안 된다(2026-08-10 마이그레이션 헤더 참고).
+            m = re.search(
+                r"(?m)^revoke all on function (?:public\.)?{}\s+from\s+([^;]+);".format(
+                    re.escape(sig)
+                ),
+                sql,
             )
+            assert m, "{}: {} revoke 문을 찾지 못했습니다".format(label, sig)
+            roles = m.group(1)
+            for role in ("anon", "authenticated"):
+                assert role in roles, (
+                    "{}: {} 의 revoke 대상에 {}이 없습니다 — `from public`만으로는 "
+                    "Supabase가 새 함수에 직접 건 GRANT가 회수되지 않아 anon RPC가 "
+                    "여전히 200을 반환합니다(2026-08-10 라이브 실측)".format(
+                        label, sig, role
+                    )
+                )
