@@ -1,0 +1,81 @@
+-- =====================================================================
+-- 마이그레이션 2026-08-10 — 도우미 함수 anon 직접 권한 회수 (보안 감사 후속)
+-- =====================================================================
+-- 어떻게 쓰나: Supabase 대시보드 → SQL Editor → New query → 이 파일 전체
+--             붙여넣기 → Run. 몇 번을 실행해도 안전하다(revoke는 멱등).
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- 왜 필요한가 — `from public`이 무효였다 (2026-08-10 라이브 실측 + 공식문서)
+-- ─────────────────────────────────────────────────────────────────────
+-- schema.sql:173-174 / migrations/2026-08-08e:117-118 에 이미
+--     revoke all on function mask_person_name(text) from public;
+--     revoke all on function building_display_nm(text, text) from public;
+-- 가 있었다. 의도는 맞았지만("도우미 함수는 anon에게 안 연다") 실제로는 아무
+-- 효과가 없었다.
+--
+-- ① 라이브 실측 (2026-08-10, anon 공개키로 POST /rest/v1/rpc/... 직접 호출):
+--      mask_person_name        → HTTP 200
+--      building_display_nm     → HTTP 200
+--    둘 다 위 회수 문장이 이미 적용된 라이브 DB에서 그대로 anon에게 실행됐다.
+--
+-- ② 원인 (PostgreSQL 공식 문서, sql-revoke.html):
+--      "revoking SELECT privilege from PUBLIC does not necessarily mean that
+--       all roles have lost SELECT privilege: those who have it granted
+--       directly or via another role will still have it."
+--      https://www.postgresql.org/docs/current/sql-revoke.html
+--    PUBLIC은 실제 롤이 아니라 "이 DB의 모든 롤"을 뜻하는 가상 그룹이다.
+--    Supabase는 public 스키마에 새 함수를 만들 때 anon·authenticated에게
+--    **직접(directly)** EXECUTE를 GRANT한다. `from public`은 그 가상 그룹
+--    경로의 권한만 회수할 뿐, anon·authenticated가 직접 받은 권한은 그대로
+--    남는다 — 문장은 에러 없이 통과했지만 실제로는 아무것도 안 닫힌 것이다.
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- 이걸 회수해도 안 깨지는 이유 (메인이 코드로 확인함 — 추측 아님)
+-- ─────────────────────────────────────────────────────────────────────
+-- 1) `search_buildings`가 `security definer` + `set search_path = public`
+--    (schema.sql의 search_buildings 정의부)라 **소유자(postgres) 권한**으로
+--    두 도우미 함수를 호출한다. anon이 이 함수를 직접 호출할 EXECUTE 권한이
+--    없어도, 소유자 권한으로 도는 `search_buildings` 안에서는 그대로 호출된다.
+-- 2) 프론트는 `src/components/BuildingSearch.tsx:53`에서 **오직
+--    `search_buildings`만** 호출한다 — 두 도우미 함수를 anon이 직접 부를
+--    경로가 코드에 없다.
+-- 3) 뷰 `v_floor_stack`·`v_coverage_stats`도 SECURITY DEFINER
+--    (`security_invoker = false`)라 마찬가지로 소유자 권한으로 도우미 함수를
+--    거쳐 building_display_nm() 결과를 내보낸다.
+-- ⇒ anon의 **직접** EXECUTE만 막고, 소유자 권한 경로(search_buildings·뷰)는
+--    그대로 두면 화면·검색 어느 것도 안 깨진다.
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- 재실행 안전성
+-- ─────────────────────────────────────────────────────────────────────
+-- REVOKE는 이미 없는 권한을 다시 회수해도 에러 없이 조용히 통과한다
+-- (대상 권한이 없으면 아무 일도 하지 않고 성공하는 Postgres 표준 동작).
+-- 이 마이그레이션은 몇 번을 실행해도, 이미 실행된 뒤 다시 실행해도 결과가
+-- 같다.
+-- =====================================================================
+
+revoke all on function public.mask_person_name(text) from anon, authenticated;
+revoke all on function public.building_display_nm(text, text) from anon, authenticated;
+
+-- =====================================================================
+-- 확인 (붙여넣고 Run 한 뒤 이 쿼리로 검산)
+-- =====================================================================
+-- 기대: 0행 (anon/authenticated에게 남은 직접 GRANT가 없어야 한다)
+--
+--   select routine_name, grantee, privilege_type
+--   from information_schema.routine_privileges
+--   where routine_schema = 'public'
+--     and routine_name in ('mask_person_name', 'building_display_nm')
+--     and grantee in ('anon', 'authenticated');
+--
+-- 기대: 검색·화면은 그대로 동작 (아래는 전부 정상값이 나와야 한다)
+--
+--   select bld_nm, total_cnt from search_buildings('노보텔', 25);
+--   select * from v_coverage_stats;
+--
+-- 기대: anon 공개키로 두 함수를 직접 RPC 호출하면 이제 401(permission denied)
+--       — 이 마이그레이션 전에는 200이었다.
+--
+--   POST /rest/v1/rpc/mask_person_name        body: {"nm": "테스트"}
+--   POST /rest/v1/rpc/building_display_nm     body: {"bld_nm": "a", "dong_nm": "b"}
+-- =====================================================================

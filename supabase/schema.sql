@@ -170,8 +170,16 @@ comment on function building_display_nm(text, text) is
   '검색과 표시가 이 함수 하나만 쓰므로 "보이는 것 = 검색되는 것"이 항상 일치한다';
 
 -- 도우미 함수는 공개 롤에게 열지 않는다 — 뷰·검색 함수가 소유자 권한으로 대신 부른다.
-revoke all on function mask_person_name(text) from public;
-revoke all on function building_display_nm(text, text) from public;
+-- ⚠️ `from public`만으로는 부족하다 — PUBLIC은 실제 롤이 아니라 가상 그룹이라,
+--    Supabase가 새 함수 생성 시 anon·authenticated에게 자동으로 거는 **직접
+--    GRANT**는 회수되지 않는다(PostgreSQL 공식 sql-revoke.html: "revoking ...
+--    from PUBLIC does not necessarily mean that all roles have lost ...
+--    privilege: those who have it granted directly ... will still have it").
+--    라이브 실측(2026-08-10): 이 줄만 있던 상태에서 anon 공개키로 두 함수를
+--    RPC 직접 호출하면 둘 다 HTTP 200이었다 — 반드시 anon·authenticated에서
+--    직접 회수해야 한다(2026-08-10_revoke_helper_fns_from_anon.sql 참조).
+revoke all on function mask_person_name(text) from public, anon, authenticated;
+revoke all on function building_display_nm(text, text) from public, anon, authenticated;
 
 -- 검색용 인덱스. WHERE 절과 **글자 하나까지 같은 식**이어야 인덱스를 탄다.
 -- 이름이 둘 다 없는 건물은 NULL 이라 색인되지 않는다 = 이름으로는 안 찾힌다(의도).
@@ -535,7 +543,9 @@ comment on view v_floor_stack is
   '§8.6 층별 스택 뷰. store_cnt/stores는 (PNU, 층) 매칭이라 bld_cnt_in_pnu>1이면 건물 간 중복 — D등급 표시 필수. '
   '★ 공개 접근: 이 뷰만 anon/authenticated에게 SELECT 허용된다(아래 "공개 접근 정책" 절). '
   '원본 표는 RLS 켬 + 정책 0개 + 권한 회수로 닫혀 있고, 이 뷰가 소유자 권한으로 대신 읽는다. '
-  '⚠️ bld_nm은 원본이 아니라 building_display_nm() 결과다(동명칭 폴백 + 개인 성명 가림, 2026-08-08e)';
+  '⚠️ bld_nm은 원본이 아니라 building_display_nm() 결과다(동명칭 폴백 + 개인 성명 가림, 2026-08-08e). '
+  'ℹ️ 린트 0010(security definer view) 의도적 예외 — security_invoker=true로 되돌리면 원본 표 401 + 상호명·성명 노출 확대. '
+  '재검토 방아쇠: 공개 배포일 / 지도·반경 검색(§6.4) 착수일';
 
 -- =====================================================================
 -- 뷰: v_coverage_stats — 스택 뷰 각주용 집계
@@ -562,7 +572,9 @@ group by ub.snapshot_ym;
 
 comment on view v_coverage_stats is
   '§8.6 스택 뷰 각주용 집계. v_floor_stack과 동일한 전역 최신 분기 기준 — 둘을 항상 함께 고칠 것. '
-  '★ 공개 접근: anon/authenticated에게 SELECT 허용(집계값만, 상호명 없음)';
+  '★ 공개 접근: anon/authenticated에게 SELECT 허용(집계값만, 상호명 없음). '
+  'ℹ️ 린트 0010(security definer view) 의도적 예외 — security_invoker=true로 되돌리면 원본 표(unit_business) 401. '
+  '재검토 방아쇠: 공개 배포일 / 지도·반경 검색(§6.4) 착수일';
 
 -- =====================================================================
 -- 함수: search_buildings — 건물 검색 (§8.1 진입점)
