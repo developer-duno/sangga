@@ -92,13 +92,15 @@ STATBL_IDS = {
 }
 METRICS = ("floor_util", "region_rent", "vacancy", "rent_price_index", "yield", "conversion")
 
-# 이 STATBL_ID 시리즈가 실제로 시작하는 분기. 그 이전 분기를 요청해도 에러가
-# 아니라 조용히 0건(quiet-zero)으로 온다 — collect_one이 안전하게 처리한다.
+# 이 STATBL_ID 시리즈가 실제로 시작하는 분기. ⚠️ 그 이전 분기는 quiet-zero가
+# 아니라 'CODE=INFO-200 해당하는 데이터가 없습니다' 에러로 온다(2026-08-09 본
+# 수집 288조합 실측) — 장부에 failed로 남지만 원천 무데이터라 재시도 무의미.
+# 예외: rent_price_index만 2024Q2부터 존재(지수는 전분기 대비라 한 분기 이름).
 SERIES_START_QID = "202403"
 # 파일럿 기본값: 2024Q3~현재(2026-08 기준 9분기)를 넉넉히 덮는 고정 상수.
-# 시리즈 시작 이전 분기까지 몇 개 더 물어도 quiet-zero라 해가 없다
-# (collect_transactions.py의 DEFAULT_MONTHS=240처럼 고정 파일럿 상수 — 매번
-# 동적으로 재계산하지 않는다).
+# 시리즈 시작 이전 분기까지 몇 개 더 물어도 INFO-200 failed 기록만 남고 해가
+# 없다 (collect_transactions.py의 DEFAULT_MONTHS=240처럼 고정 파일럿 상수 —
+# 매번 동적으로 재계산하지 않는다).
 DEFAULT_QUARTERS = 12
 
 # 공식 가이드에 일일 호출 한도가 명시돼 있지 않다(§1.2 — WebFetch로 부재 확인).
