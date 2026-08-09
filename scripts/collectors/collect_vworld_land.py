@@ -74,6 +74,13 @@ NUM_OF_ROWS = 100
 # 관측되지 않으면 이 상수만 올리면 된다(이어받기가 이미 있어 중단·재개가 안전하다).
 DEFAULT_DAILY_BUDGET = 5_000
 
+# 호출 수를 api_quota_log에 중간 기록하는 주기(콜 단위).
+# ⛔ 왜 필요한가: raw와 collect_progress는 필지마다 즉시 남는데 호출 수만 finally에서
+# 한 번 기록해서, 프로세스가 강제 종료되면(터미널 닫힘·kill) 그 세션 호출 수가 통째로
+# 증발했다(2026-08-09 실측: raw 10,000줄인데 장부는 6,952건 — 약 3,000건 유실).
+# 유실된 만큼 같은 날 재실행의 baseline이 낮게 읽혀 일 예산 캡이 뚫린다.
+QUOTA_FLUSH_EVERY = 100
+
 API_TIMEOUT_SEC = 30
 REST_TIMEOUT_SEC = 120
 
@@ -516,6 +523,28 @@ def flush_quota_log(base_url, headers, log_date, baseline, session_calls):
     }], "merge-duplicates")
 
 
+def maybe_flush_quota_log(base_url, headers, log_date, baseline, session_calls,
+                          last_flushed_calls, every=QUOTA_FLUSH_EVERY):
+    """호출 수를 주기적으로(기본 100콜마다) 장부에 미리 적는다. 새 '마지막 기록 시점'을 돌려준다.
+
+    upsert가 `call_count = baseline + session_calls`를 merge-duplicates로 덮어쓰므로
+    중간에 몇 번을 적어도 값은 단조 증가한다 — 같은 호출을 두 번 세지 않는다.
+
+    실패해도 수집을 죽이지 않는다. 기록은 안전장치일 뿐이라 그것 때문에 몇 시간짜리
+    수집이 멈추면 손해가 더 크다. 대신 **조용히 넘어가지 않는다** — 경고를 찍고
+    last_flushed_calls를 그대로 돌려줘 다음 주기에 다시 시도한다(PR #32의 교훈:
+    침묵하는 실패가 가장 위험하다).
+    """
+    if session_calls - last_flushed_calls < every:
+        return last_flushed_calls
+    try:
+        flush_quota_log(base_url, headers, log_date, baseline, session_calls)
+    except Exception as e:   # noqa: BLE001 — 어떤 이유든 수집은 계속돼야 한다
+        print("  [경고] 호출 수 중간 기록 실패 (수집은 계속합니다): {}".format(e), flush=True)
+        return last_flushed_calls
+    return session_calls
+
+
 # ── 보고 ─────────────────────────────────────────────────────────────────────
 
 
@@ -631,6 +660,7 @@ def main(argv=None):
     status_counter = Counter()
     progress_rows = []
     processed = row_total = 0
+    last_flushed_calls = 0   # 호출 수를 장부에 마지막으로 적은 시점(주기 flush용)
     stop_reason = "pending 소진"
     started = time.time()
 
@@ -658,6 +688,9 @@ def main(argv=None):
             if len(progress_rows) >= 200:
                 save_progress(base_url, headers, progress_rows)
                 progress_rows = []
+            last_flushed_calls = maybe_flush_quota_log(
+                base_url, headers, log_date, baseline,
+                call_counter["calls"], last_flushed_calls)
     finally:
         save_progress(base_url, headers, progress_rows)
         flush_quota_log(base_url, headers, log_date, baseline, call_counter["calls"])
