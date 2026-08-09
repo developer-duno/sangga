@@ -98,14 +98,22 @@ def build_parcel_update(pnu, row):
     }
 
 
-def read_raw_records(path):
+def read_raw_records(path, counter=None):
     """raw JSONL을 (pnu, rows) 튜플로 흘려준다. 깨진 줄은 건너뛴다.
 
     수집 중 강제 종료로 반 줄이 남을 수 있다(append_jsonl이 한 줄씩 통째로 쓰지만
     파일시스템 수준에서 잘릴 가능성은 남는다). 한 줄이 깨졌다고 전체 적재를 포기하지
     않고, 몇 줄이 깨졌는지 보고한다.
+
+    ⚠️ yield 되는 세 번째 값은 **그 줄까지의 누계**다. 마지막 정상 줄 뒤에 오는 깨진
+    줄은 yield 할 기회가 없어 호출부에 전달되지 않는다 — 그런데 강제 종료로 잘리는
+    것은 언제나 **마지막 줄**이라, 경고가 가장 필요한 상황에서 정확히 침묵했다
+    (2026-08-09 재현 확인). 총수가 필요하면 `counter`(dict)를 넘긴다. 파일을 끝까지
+    읽은 뒤 `counter["broken"]`에 총수가 들어간다.
     """
     broken = 0
+    if counter is not None:
+        counter["broken"] = 0
     with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -122,6 +130,8 @@ def read_raw_records(path):
                 broken += 1
                 continue
             yield pnu, rows, broken
+    if counter is not None:
+        counter["broken"] = broken
 
 
 def collapse_records(records):
@@ -234,9 +244,10 @@ def main(argv=None):
         return 1
 
     records = []
-    broken = 0
-    for pnu, rows, broken in read_raw_records(path):
+    counter = {"broken": 0}
+    for pnu, rows, _ in read_raw_records(path, counter):
         records.append((pnu, rows))
+    broken = counter["broken"]
     best = collapse_records(records)
 
     base_url, sb_key = get_supabase_config()

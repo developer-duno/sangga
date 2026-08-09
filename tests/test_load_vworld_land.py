@@ -117,6 +117,46 @@ def test_read_raw_records_깨진_줄은_건너뛰고_센다(tmp_path):
     assert out[-1][2] == 3                          # 깨진 줄 3개를 셌다
 
 
+def test_read_raw_records_마지막_줄이_잘려도_총수를_센다(tmp_path):
+    """강제 종료로 잘리는 건 언제나 '마지막 줄'이다.
+
+    yield 되는 누계는 그 줄까지라, 마지막 정상 줄 뒤의 깨진 줄은 전달되지 못했다
+    (2026-08-09 재현: 1줄이 깨졌는데 0으로 보고 → 경고 자체가 안 떴다).
+    counter 를 넘기면 파일을 끝까지 읽은 뒤 총수가 들어온다.
+    """
+    p = str(tmp_path / "land.jsonl")
+    _write(p, [json.dumps({"pnu": "A", "rows": [_ROW]}, ensure_ascii=False),
+               json.dumps({"pnu": "B", "rows": [_ROW]}, ensure_ascii=False),
+               '{"pnu": "C", "rows": ['])           # 잘린 마지막 줄
+    counter = {"broken": 0}
+    out = list(lvl.read_raw_records(p, counter))
+    assert [pnu for pnu, _, _ in out] == ["A", "B"]
+    assert out[-1][2] == 0                          # yield 시점엔 아직 0이 맞다
+    assert counter["broken"] == 1                   # 끝까지 읽은 뒤엔 1로 보인다
+
+
+def test_read_raw_records_전부_깨져도_총수를_센다(tmp_path):
+    """정상 줄이 하나도 없으면 yield 가 한 번도 안 일어난다 — 그래도 세야 한다."""
+    p = str(tmp_path / "land.jsonl")
+    _write(p, ['{"pnu": "A", "rows": [', "깨진 줄"])
+    counter = {"broken": 0}
+    assert list(lvl.read_raw_records(p, counter)) == []
+    assert counter["broken"] == 2
+
+
+def test_read_raw_records_counter_는_재사용해도_초기화된다(tmp_path):
+    """같은 dict 을 두 번 쓰면 앞 파일의 수가 남아 부풀지 않아야 한다."""
+    dirty = str(tmp_path / "dirty.jsonl")
+    _write(dirty, ['{"pnu": "A", "rows": ['])
+    clean = str(tmp_path / "clean.jsonl")
+    _write(clean, [json.dumps({"pnu": "A", "rows": []})])
+    counter = {"broken": 0}
+    list(lvl.read_raw_records(dirty, counter))
+    assert counter["broken"] == 1
+    list(lvl.read_raw_records(clean, counter))
+    assert counter["broken"] == 0
+
+
 def test_read_raw_records_빈_줄은_무시(tmp_path):
     p = str(tmp_path / "land.jsonl")
     _write(p, ["", json.dumps({"pnu": "A", "rows": []}), ""])
