@@ -1088,3 +1088,29 @@ def test_main_continues_and_warns_when_interim_flush_fails(monkeypatch, capsys):
     # 100에서 실패 → 기준점이 안 밀리므로 **다음 PNU(101콜)에서 곧바로 재시도**한다.
     # 값이 누적치라 한 번만 성공해도 그때까지의 호출이 전부 장부에 들어간다(손실 0).
     assert flushed == [101, 201, 250]
+
+
+def test_main_flushes_quota_even_when_loop_dies_unexpectedly(monkeypatch):
+    """★ 루프가 미분류 예외(OSError 등)로 죽어도 마지막 기록은 남아야 한다.
+
+    적대검증 발견(2026-08-09): 루프가 try/finally 밖에 있으면 루프 안에서 안 잡는
+    예외가 나는 순간 최종 flush_quota_log가 아예 실행되지 않아 그때까지의 호출이
+    통째로 증발한다 — 이 안전장치가 막으려던 바로 그 유형이다.
+    """
+    flushed = []
+    processed = _stub_flush_main_deps(monkeypatch, _flush_test_pnus(250), flushed)
+
+    def dying_collect_one_pnu(session, key, pnu, raw_dir, **kw):  # noqa: ARG001
+        if len(processed) >= 149:            # 149개까지는 정상, 150번째에서 터진다
+            raise OSError("disk full")
+        processed.append(pnu)
+        return {"status": "done", "row_count": 1, "error_msg": None,
+                "calls": target.Counter({target.ENDPOINT_TITLE: 1})}
+
+    monkeypatch.setattr(target, "collect_one_pnu", dying_collect_one_pnu)
+
+    with pytest.raises(OSError):             # 예외를 삼키지 않는다 — 그대로 전파돼야 한다
+        target.main()
+    assert len(processed) == 149
+    # 100에서 주기 기록 + finally에서 149 최종 기록. try/finally가 없으면 [100]만 남는다.
+    assert flushed == [100, 149]
