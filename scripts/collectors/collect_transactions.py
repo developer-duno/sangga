@@ -74,6 +74,14 @@ DEFAULT_MONTHS = 240               # §5.3 1단계 파일럿 = 1개 구 x 20년 
 # (건축HUB에서 9,208콜에 실제로 차단된 실측 근거 — §5.3 참조).
 DEFAULT_DAILY_BUDGET = 9_500
 
+# 호출 수를 api_quota_log에 중간 기록하는 주기(콜 단위).
+# ⛔ 왜 필요한가: raw와 collect_progress는 조합마다 즉시 남는데 호출 수만 finally에서
+# 한 번 기록해서, 프로세스가 강제 종료되면(터미널 닫힘·kill) 그 세션 호출 수가 통째로
+# 증발한다(2026-08-09 브이월드 실측: raw 10,000줄인데 장부는 6,952건 — 약 3,000건
+# 유실. 구조가 같은 이 수집기도 동일하게 뚫린다).
+# 유실된 만큼 같은 날 재실행의 baseline이 낮게 읽혀 일 예산 캡이 뚫린다.
+QUOTA_FLUSH_EVERY = 100
+
 RETRY_FAILED_MAX_ATTEMPTS = 5
 
 # 한 달치가 1,000건을 넘는 시군구는 거의 없다(강남 최다 월 81건 실측). 넉넉히 잡아
@@ -546,6 +554,28 @@ def flush_quota_log(base_url, headers, log_date, baseline, session_calls):
     }], "merge-duplicates")
 
 
+def maybe_flush_quota_log(base_url, headers, log_date, baseline, session_calls,
+                          last_flushed_calls, every=QUOTA_FLUSH_EVERY):
+    """호출 수를 주기적으로(기본 100콜마다) 장부에 미리 적는다. 새 '마지막 기록 시점'을 돌려준다.
+
+    upsert가 `call_count = baseline + session_calls`를 merge-duplicates로 덮어쓰므로
+    중간에 몇 번을 적어도 값은 단조 증가한다 — 같은 호출을 두 번 세지 않는다.
+
+    실패해도 수집을 죽이지 않는다. 기록은 안전장치일 뿐이라 그것 때문에 몇 시간짜리
+    수집이 멈추면 손해가 더 크다. 대신 **조용히 넘어가지 않는다** — 경고를 찍고
+    last_flushed_calls를 그대로 돌려줘 다음 주기에 다시 시도한다(PR #32의 교훈:
+    침묵하는 실패가 가장 위험하다).
+    """
+    if session_calls - last_flushed_calls < every:
+        return last_flushed_calls
+    try:
+        flush_quota_log(base_url, headers, log_date, baseline, session_calls)
+    except Exception as e:   # noqa: BLE001 — 어떤 이유든 수집은 계속돼야 한다
+        print("  [경고] 호출 수 중간 기록 실패 (수집은 계속합니다): {}".format(e), flush=True)
+        return last_flushed_calls
+    return session_calls
+
+
 # ── 보고 ─────────────────────────────────────────────────────────────────────
 
 
@@ -736,6 +766,7 @@ def main():
     rows_total = 0
     status_counter = Counter()
     stop_reason = "전량 완료"
+    last_flushed_calls = 0   # 호출 수를 장부에 마지막으로 적은 시점(주기 flush용)
 
     try:
         for idx, (deal_ym, attempts) in enumerate(pending, 1):
@@ -762,6 +793,8 @@ def main():
             rows_total += result.get("row_count") or 0
             status_counter[result["status"]] += 1
             save_progress(base_url, headers, sigungu, deal_ym, result, attempts)
+            last_flushed_calls = maybe_flush_quota_log(
+                base_url, headers, log_date, baseline, session_calls, last_flushed_calls)
 
             if idx % 20 == 0 or idx == len(pending):
                 print("  진행 {:,}/{:,} ({} / 거래 {:,}건 / 누적 호출 {:,})".format(

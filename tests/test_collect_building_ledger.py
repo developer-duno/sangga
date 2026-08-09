@@ -1004,3 +1004,87 @@ def test_main_returns_1_when_no_target_pnu(monkeypatch):
 def test_main_returns_2_on_bad_args(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["prog", "--limit", "-1"])
     assert target.main() == 2
+
+
+# ── 10. 호출 수 주기 기록 (강제 종료 시 유실 방지) ───────────────────────────
+
+
+def test_maybe_flush_does_not_write_before_interval(monkeypatch):
+    """PNU마다 DB를 두드리면 REST 왕복이 늘어난다 — 콜 총합이 주기에 닿았을 때만 적는다."""
+    called = []
+    monkeypatch.setattr(target, "flush_quota_log", lambda *a: called.append(a[-1]))
+    session_calls = target.Counter({target.ENDPOINT_TITLE: 99})
+    assert target.maybe_flush_quota_log("u", {}, "2026-08-09", {}, session_calls, 0) == 0
+    assert called == []
+
+
+def _stub_flush_main_deps(monkeypatch, pnus, flushed, flush_fail_first=0):
+    """main()의 DB·API를 전부 흉내낸다. flushed에 flush_quota_log 시점의 콜 총합을 쌓는다."""
+    state = {"fails": flush_fail_first}
+    processed = []
+
+    monkeypatch.setattr(target, "get_supabase_config", lambda: ("https://x.supabase.co", "k"))
+    monkeypatch.setattr(target, "get_api_key", lambda: "APIKEY")
+    monkeypatch.setattr(target, "fetch_target_pnus", lambda *a, **kw: pnus)
+    monkeypatch.setattr(target, "progress_status_counts",
+                        lambda *a, **kw: {"pending": len(pnus), "done": 0,
+                                          "failed": 0, "skipped": 0})
+    monkeypatch.setattr(target, "read_quota_baseline", lambda *a, **kw: {})
+    monkeypatch.setattr(target, "seed_progress", lambda *a, **kw: len(pnus))
+    monkeypatch.setattr(target, "fetch_pending", lambda *a, **kw: [(p, 0) for p in pnus])
+    monkeypatch.setattr(target, "save_progress", lambda *a, **kw: 1)
+    monkeypatch.setattr(target, "install_sigint_handler", lambda: None)
+
+    def fake_collect_one_pnu(session, key, pnu, raw_dir, **kw):  # noqa: ARG001
+        processed.append(pnu)
+        return {"status": "done", "row_count": 1, "error_msg": None,
+                "calls": target.Counter({target.ENDPOINT_TITLE: 1})}
+
+    def fake_flush(base_url, headers, log_date, baseline, session_calls):  # noqa: ARG001
+        if state["fails"] > 0:
+            state["fails"] -= 1
+            raise RuntimeError("api_quota_log 저장 실패 (HTTP 503)")
+        # session_calls는 가변 Counter라 그 자리에서 총합을 떠 둔다(나중에 보면 값이 변해 있다).
+        flushed.append(sum(session_calls.values()))
+
+    monkeypatch.setattr(target, "collect_one_pnu", fake_collect_one_pnu)
+    monkeypatch.setattr(target, "flush_quota_log", fake_flush)
+    monkeypatch.setattr(sys, "argv", ["prog"])
+    return processed
+
+
+def _flush_test_pnus(n):
+    return ["11680101001{:08d}".format(i) for i in range(n)]
+
+
+def test_main_flushes_quota_every_100_calls(monkeypatch):
+    """★ 주기가 PNU 단위면 유실 창의 크기가 보장되지 않는다 — 콜 총합으로 센다.
+
+    2026-08-09 브이월드 실측: raw 10,000줄인데 api_quota_log는 6,952건 — 약 3,000건
+    유실. 유실된 만큼 같은 날 재실행의 baseline이 낮게 읽혀 일 예산 캡이 뚫린다.
+    """
+    flushed = []
+    processed = _stub_flush_main_deps(monkeypatch, _flush_test_pnus(250), flushed)
+
+    assert target.main() == 0
+    assert len(processed) == 250
+    # 100·200에서 중간 기록 + 루프 뒤 마지막 기록. 값은 누적치라 단조 증가한다.
+    assert flushed == [100, 200, 250]
+
+
+def test_main_continues_and_warns_when_interim_flush_fails(monkeypatch, capsys):
+    """기록은 안전장치일 뿐이다 — 그것 때문에 수집이 죽으면 손해가 더 크다.
+
+    단 조용히 넘어가지도 않는다(PR #32: 침묵하는 실패가 가장 위험하다).
+    """
+    flushed = []
+    processed = _stub_flush_main_deps(monkeypatch, _flush_test_pnus(250), flushed,
+                                      flush_fail_first=1)
+
+    assert target.main() == 0
+    assert len(processed) == 250          # 250필지 전부 계속 처리됐다
+    out = capsys.readouterr().out
+    assert "[경고]" in out and "중간 기록 실패" in out
+    # 100에서 실패 → 기준점이 안 밀리므로 **다음 PNU(101콜)에서 곧바로 재시도**한다.
+    # 값이 누적치라 한 번만 성공해도 그때까지의 호출이 전부 장부에 들어간다(손실 0).
+    assert flushed == [101, 201, 250]

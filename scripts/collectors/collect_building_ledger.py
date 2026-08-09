@@ -138,9 +138,18 @@ PLAT_GB_CD_MAP = {
 BATCH_SIZE = 1000        # PostgREST upsert 배치 크기
 SELECT_PAGE_SIZE = 1000  # PostgREST select 페이지 크기
 
-# api_quota_log 를 몇 PNU마다 반영할지. 매 PNU마다 쓰면 REST 왕복이 3배로 늘고,
-# 너무 뜸하면 중단 시 최근 호출량이 유실된다. 중단·종료 시엔 항상 마지막에 한 번 더 쓴다.
-QUOTA_FLUSH_EVERY = 50
+# 호출 수를 api_quota_log에 중간 기록하는 주기(콜 단위 — PNU 단위가 아니다).
+# 이 수집기는 호출 수를 엔드포인트별 Counter로 다루므로 주기는 sum(session_calls.values())
+# 총합을 기준으로 센다. ⛔ 예전에는 "50 PNU마다"였는데, PNU 하나가 3~10콜+(전유공용은
+# 페이지네이션으로 가변)이라 유실 창의 크기가 전혀 보장되지 않았다 — 같은 50 PNU가
+# 150콜일 수도 500콜일 수도 있다. 콜 총합 기준으로 세야 "최대 100콜"이 실제로 지켜진다.
+# 강제 종료 시 호출 수가 통째로 증발한 실측이 근거다(2026-08-09 브이월드: raw 10,000줄인데
+# 장부는 6,952건 — 약 3,000건 유실). 유실된 만큼 같은 날 재실행의 baseline이 낮게 읽혀
+# 일 예산 캡이 뚫린다. 중단·종료 시엔 항상 마지막에 한 번 더 쓴다.
+QUOTA_FLUSH_EVERY = 100
+
+# 진행 상황을 몇 PNU마다 출력할지 (기존 동작 유지 — flush 주기와 분리한다).
+PROGRESS_EVERY = 50
 
 # 시간축은 KST 고정 (환경마다 로컬 시간대가 달라지는 것 방지 — 글로벌 룰
 # timezone-consistency). api_quota_log.log_date 서버 기본값(current_date, UTC)에
@@ -748,6 +757,30 @@ def flush_quota_log(base_url, headers, log_date, baseline, session_calls):
     return upsert_batch(base_url, headers, "api_quota_log", rows, "merge-duplicates")
 
 
+def maybe_flush_quota_log(base_url, headers, log_date, baseline, session_calls,
+                          last_flushed_calls, every=QUOTA_FLUSH_EVERY):
+    """호출 수를 주기적으로(기본 100콜마다) 장부에 미리 적는다. 새 '마지막 기록 시점'을 돌려준다.
+
+    session_calls는 엔드포인트별 Counter라 주기는 총합(sum)으로 센다. upsert가
+    엔드포인트마다 `call_count = baseline + 누적`을 merge-duplicates로 덮어쓰므로
+    중간에 몇 번을 적어도 값은 단조 증가한다 — 같은 호출을 두 번 세지 않는다.
+
+    실패해도 수집을 죽이지 않는다. 기록은 안전장치일 뿐이라 그것 때문에 몇 시간짜리
+    수집이 멈추면 손해가 더 크다. 대신 **조용히 넘어가지 않는다** — 경고를 찍고
+    last_flushed_calls를 그대로 돌려줘 다음 PNU에서 곧바로 다시 시도한다(PR #32의
+    교훈: 침묵하는 실패가 가장 위험하다). 그래서 유실 창은 최대 1 PNU다.
+    """
+    total = sum(session_calls.values())
+    if total - last_flushed_calls < every:
+        return last_flushed_calls
+    try:
+        flush_quota_log(base_url, headers, log_date, baseline, session_calls)
+    except Exception as e:   # noqa: BLE001 — 어떤 이유든 수집은 계속돼야 한다
+        print("  [경고] 호출 수 중간 기록 실패 (수집은 계속합니다): {}".format(e), flush=True)
+        return last_flushed_calls
+    return total
+
+
 # ── 보고 출력 ────────────────────────────────────────────────────────────────
 
 
@@ -988,6 +1021,7 @@ def main():
     processed = 0
     stop_reason = "전량 처리 완료"
     exit_code = 0
+    last_flushed_calls = 0   # 호출 수를 장부에 마지막으로 적은 시점(주기 flush용)
 
     for pnu, attempts in pending:
         if _SHUTDOWN["requested"]:
@@ -1026,19 +1060,17 @@ def main():
             exit_code = 1
             break
 
-        if processed % QUOTA_FLUSH_EVERY == 0:
-            try:
-                flush_quota_log(base_url, headers, log_date, baseline, session_calls)
-            except RuntimeError as e:
-                print("  [경고] api_quota_log 기록 실패(수집은 계속): {}".format(
-                    mask_secret(e, api_key)), flush=True)
+        last_flushed_calls = maybe_flush_quota_log(
+            base_url, headers, log_date, baseline, session_calls, last_flushed_calls)
+
+        if processed % PROGRESS_EVERY == 0:
             print("  진행 {:,}/{:,} (done {:,} / failed {:,} / skipped {:,}, 누적 호출 {:,}건)".format(
                 processed, len(pending), status_counter["done"], status_counter["failed"],
                 status_counter["skipped"], sum(calls_used.values())), flush=True)
 
     try:
         flush_quota_log(base_url, headers, log_date, baseline, session_calls)
-    except RuntimeError as e:
+    except Exception as e:   # noqa: BLE001 — 마지막 기록 실패로 보고까지 죽이지 않는다
         print("[경고] 종료 시 api_quota_log 기록 실패: {}".format(mask_secret(e, api_key)))
 
     print_run_report(processed, status_counter, session_calls, time.time() - started, stop_reason)
