@@ -339,6 +339,168 @@ def test_scan_and_build_no_duplicate_accumulation_on_mid_file_encoding_retry(tmp
     assert len(result["parcel_records"]) == 2
 
 
+# ── 6.5 전국 모드(--sigungu-code all) · 파일 단위 스트리밍 ──────────────────
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("all", True), ("ALL", True), (" all ", True),
+    ("11680", False), ("", False), (None, False),
+])
+def test_is_all_sigungu(raw, expected):
+    assert target.is_all_sigungu(raw) is expected
+
+
+def test_scan_and_build_all_mode_takes_every_sigungu(tmp_path):
+    rows = [
+        make_row(상가업소번호="A1", 시군구코드="11680", 지번코드="1168010100108230004"),
+        make_row(상가업소번호="B1", 시군구코드="11440", 지번코드="1144012300103580001"),
+        make_row(상가업소번호="C1", 시군구코드="41135", 지번코드="4113512300103580001"),
+    ]
+    write_csv(tmp_path, "소상공인시장진흥공단_상가(상권)정보_서울_202603.csv", rows)
+
+    result = target.scan_and_build(str(tmp_path), "all", "202603")
+
+    assert result["total_matched"] == 3          # 필터 없음 — 전부 통과
+    assert result["parcel_count"] == 3
+    assert result["unit_business_count"] == 3
+    assert result["ub_with_pnu_count"] == 3
+
+
+def test_scan_and_build_default_mode_still_filters(tmp_path):
+    """전국 모드를 넣었다고 기본(시군구 필터) 동작이 흔들리면 안 된다."""
+    rows = [
+        make_row(상가업소번호="A1", 시군구코드="11680", 지번코드="1168010100108230004"),
+        make_row(상가업소번호="B1", 시군구코드="11440", 지번코드="1144012300103580001"),
+    ]
+    write_csv(tmp_path, "소상공인시장진흥공단_상가(상권)정보_서울_202603.csv", rows)
+
+    result = target.scan_and_build(str(tmp_path), "11680", "202603")
+
+    assert result["total_matched"] == 1
+    assert result["parcel_count"] == 1
+    assert len(result["parcel_records"]) == 1     # 콜백 없으면 예전처럼 다 모아준다
+
+
+def test_scan_and_build_streams_per_file_and_dedupes_pnu_across_files(tmp_path):
+    """★ 파일 1개마다 콜백이 한 번씩 오고, 파일 사이에 겹치는 PNU는 parcel 1회만.
+
+    (parcel은 PNU가 기본키라 두 번 보내도 DB는 멀쩡하지만, would-upsert 수가
+    부풀어 마지막 REST 교차검증이 거짓 불일치를 낸다.)
+    """
+    same_pnu = "1168010100108230004"
+    write_csv(tmp_path, "소상공인시장진흥공단_상가(상권)정보_서울_202603.csv",
+              [make_row(상가업소번호="A1", 지번코드=same_pnu),
+               make_row(상가업소번호="A2", 지번코드="1168010100108230009")])
+    write_csv(tmp_path, "소상공인시장진흥공단_상가(상권)정보_경기_202603.csv",
+              [make_row(상가업소번호="B1", 지번코드=same_pnu),
+               make_row(상가업소번호="B2", 지번코드="1168010100108230011")])
+
+    calls = []
+
+    def sink(parcel_records, ub_records):
+        calls.append((len(parcel_records), len(ub_records)))
+
+    result = target.scan_and_build(str(tmp_path), "11680", "202603", on_file_done=sink)
+
+    assert len(calls) == 2                      # 파일(시도) 1개당 한 번
+    # 먼저 읽힌 파일이 2개(겹친 PNU 포함), 나중 파일은 겹친 것을 빼고 1개
+    assert [c[0] for c in calls] == [2, 1]
+    assert [c[1] for c in calls] == [2, 2]      # unit_business 는 행마다 그대로
+    assert result["parcel_count"] == 3          # 고유 PNU 3개 — 겹친 것은 한 번만
+    assert result["unit_business_count"] == 4
+    # 콜백에 넘긴 뒤 버퍼는 비운다 — 전국 적재 때 메모리가 터지지 않는 이유
+    assert result["parcel_records"] == []
+    assert result["unit_business_records"] == []
+
+
+def test_scan_and_build_ub_with_pnu_count_excludes_invalid(tmp_path):
+    write_csv(tmp_path, "소상공인시장진흥공단_상가(상권)정보_서울_202603.csv",
+              [make_row(상가업소번호="A1", 지번코드="1168010100108230004"),
+               make_row(상가업소번호="A2", 지번코드="")])
+    result = target.scan_and_build(str(tmp_path), "11680", "202603")
+    assert result["unit_business_count"] == 2
+    assert result["ub_with_pnu_count"] == 1
+
+
+def test_parse_args_all_mode_labels_gu_name_as_전국():
+    opts = target.parse_args(["--sigungu-code", "all"])
+    assert opts["gu_name"] == target.ALL_GU_NAME
+    # --gu-name 을 직접 준 경우엔 그 값을 존중한다
+    opts2 = target.parse_args(["--sigungu-code", "all", "--gu-name", "우리동네"])
+    assert opts2["gu_name"] == "우리동네"
+
+
+def test_main_all_mode_cross_check_query_has_no_sigungu_filter(tmp_path, monkeypatch):
+    write_csv(
+        tmp_path, "소상공인시장진흥공단_상가(상권)정보_서울_202603.csv",
+        [make_row(상가업소번호="M1", 시군구코드="41135", 지번코드="4113512300103580001"),
+         # PNU 무효 행 — 전국 모드 기준값이 unit_business_count(2)인지
+         # ub_with_pnu_count(1)인지를 실제로 가른다(라이브 격차 2,039건 대응)
+         make_row(상가업소번호="M2", 시군구코드="41135", 지번코드="")],
+    )
+    monkeypatch.setattr(sys, "argv", ["prog", "--dir", str(tmp_path), "--sigungu-code", "all"])
+    monkeypatch.setattr(target, "get_supabase_config", lambda: ("https://x.supabase.co", "key"))
+    monkeypatch.setattr(
+        target, "upsert_batch",
+        lambda base_url, headers, table, rows, batch_size=target.BATCH_SIZE: len(rows),
+    )
+
+    queries = {}
+
+    def fake_rest_count(base_url, headers, table, query):
+        queries[table] = query
+        return {"parcel": 1, "unit_business": 2}[table]   # parcel 고유 PNU 1 / ub 전체 2
+
+    monkeypatch.setattr(target, "rest_count", fake_rest_count)
+
+    assert target.main() == 0
+    # 전국 모드 기준값 = unit_business_count(무효 PNU 포함 2). ub_with_pnu_count(1)로
+    # 바꾸면 REST count 2와 어긋나 main() 이 1을 돌려주므로 위 assert 가 깨진다.
+    assert queries["parcel"] == "select=pnu"          # 시군구로 좁히지 않는다
+    assert "pnu=like" not in queries["unit_business"]
+    assert "snapshot_ym=eq.202603" in queries["unit_business"]
+
+
+def test_main_streams_upserts_per_file(tmp_path, monkeypatch):
+    """파일 2개면 parcel/unit_business 적재도 파일마다 나뉘어 나간다."""
+    write_csv(tmp_path, "소상공인시장진흥공단_상가(상권)정보_서울_202603.csv",
+              [make_row(상가업소번호="A1", 지번코드="1168010100108230004")])
+    write_csv(tmp_path, "소상공인시장진흥공단_상가(상권)정보_경기_202603.csv",
+              [make_row(상가업소번호="B1", 지번코드="1168010100108230009")])
+    monkeypatch.setattr(sys, "argv", ["prog", "--dir", str(tmp_path), "--sigungu-code", "11680"])
+    monkeypatch.setattr(target, "get_supabase_config", lambda: ("https://x.supabase.co", "key"))
+
+    calls = []
+
+    def fake_upsert(base_url, headers, table, rows, batch_size=target.BATCH_SIZE):
+        calls.append((table, len(rows)))
+        return len(rows)
+
+    monkeypatch.setattr(target, "upsert_batch", fake_upsert)
+    monkeypatch.setattr(target, "rest_count", lambda base_url, headers, table, query: 2)
+
+    assert target.main() == 0
+    assert calls == [("parcel", 1), ("unit_business", 1),
+                     ("parcel", 1), ("unit_business", 1)]
+
+
+def test_main_dry_run_never_upserts(tmp_path, monkeypatch):
+    write_csv(tmp_path, "소상공인시장진흥공단_상가(상권)정보_서울_202603.csv",
+              [make_row(상가업소번호="A1", 지번코드="1168010100108230004")])
+    monkeypatch.setattr(
+        sys, "argv", ["prog", "--dir", str(tmp_path), "--sigungu-code", "all", "--dry-run"])
+
+    def boom_config():
+        raise AssertionError("dry-run 은 Supabase 연결조차 하지 않아야 한다")
+
+    monkeypatch.setattr(target, "get_supabase_config", boom_config)
+    monkeypatch.setattr(
+        target, "upsert_batch",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("dry-run 이 DB에 썼다")),
+    )
+    assert target.main() == 0
+
+
 # ── 7. estimate_bldrgst_scale ────────────────────────────────────────────────
 
 
@@ -494,8 +656,14 @@ def test_main_invalid_snapshot_ym_returns_2(tmp_path, monkeypatch):
 def test_main_wraps_scan_and_build_runtime_error_returns_1(tmp_path, monkeypatch):
     write_csv(tmp_path, "소상공인시장진흥공단_상가(상권)정보_서울_202603.csv", [make_row()])
     monkeypatch.setattr(sys, "argv", ["prog", "--dir", str(tmp_path)])
+    # 연결 정보 확인이 스캔보다 앞으로 옮겨졌다(긴 스캔 뒤에 .env 없어 실패하는 낭비 방지)
+    # — 이 테스트가 실제 .env 를 읽지 않도록 흉내낸다.
+    monkeypatch.setattr(target, "get_supabase_config", lambda: ("https://x.supabase.co", "key"))
+    # parcel baseline 측정도 연결 확인 직후·스캔 전으로 옮겨졌다 — 실제 네트워크를
+    # 타지 않도록 흉내낸다(F1: 누적 parcel 테이블 baseline).
+    monkeypatch.setattr(target, "rest_count", lambda base_url, headers, table, query: 0)
 
-    def boom(data_dir, sigungu_code, snapshot_ym):
+    def boom(data_dir, sigungu_code, snapshot_ym, on_file_done=None):
         raise RuntimeError("스캔 실패 테스트")
 
     monkeypatch.setattr(target, "scan_and_build", boom)
@@ -529,3 +697,41 @@ def test_main_unit_business_cross_check_uses_sigungu_filter_and_returns_1_on_mis
     assert target.main() == 1
     assert "pnu=like.11680" in queries["unit_business"]
     assert "snapshot_ym=eq.202603" in queries["unit_business"]
+
+
+def test_main_parcel_cross_check_survives_prior_quarter_rows_in_cumulative_table(
+    tmp_path, monkeypatch,
+):
+    """★ F1 회귀 가드 — parcel은 분기 축 없는 누적 테이블(schema.sql: snapshot_ym
+    컬럼 없음)이라, 이전 분기·이전 시군구가 남긴 행 때문에 적재 후 총행수가
+    이번 스캔 고유 PNU 수보다 커지는 게 정상이다. 예전 코드
+    (parcel_count == result['parcel_count'] 단순 등호)는 이 상황에서 적재가
+    성공했는데도 거짓 불일치로 return 1을 냈다. 새 코드는 baseline(적재 전
+    카운트)을 미리 재서 증가분만 비교하므로 return 0이어야 한다.
+    """
+    write_csv(
+        tmp_path, "소상공인시장진흥공단_상가(상권)정보_서울_202603.csv",
+        [make_row(상가업소번호="M1", 시군구코드="11680", 지번코드="1168010100108230004")],
+    )
+    monkeypatch.setattr(sys, "argv", ["prog", "--dir", str(tmp_path), "--sigungu-code", "11680"])
+    monkeypatch.setattr(target, "get_supabase_config", lambda: ("https://x.supabase.co", "key"))
+    monkeypatch.setattr(
+        target, "upsert_batch",
+        lambda base_url, headers, table, rows, batch_size=target.BATCH_SIZE: len(rows),
+    )
+
+    # parcel 테이블에는 이전 분기(예: 201512 백필)가 남긴 행 5개가 이미 있다고
+    # 가정한다 — baseline(적재 전) 5, 적재 후 6(이번 스캔 신규 PNU 1개 추가).
+    # 옛 등호 비교라면 6 != result['parcel_count'](1)이라 불일치로 판정됐을 상황.
+    parcel_calls = []
+
+    def fake_rest_count(base_url, headers, table, query):
+        if table == "parcel":
+            parcel_calls.append(query)
+            return 5 if len(parcel_calls) == 1 else 6
+        return 1  # unit_business는 유효 PNU 1건과 일치
+
+    monkeypatch.setattr(target, "rest_count", fake_rest_count)
+
+    assert target.main() == 0
+    assert len(parcel_calls) == 2  # baseline 1회 + 적재 후 최종 교차검증 1회

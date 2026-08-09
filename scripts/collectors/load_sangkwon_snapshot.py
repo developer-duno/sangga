@@ -27,10 +27,17 @@ Phase 1 ③ 강남구 2026Q1 적재. `docs/상세계획.md` §5.6(품질 지표)
   unit_business는 append-only 불변식(schema.sql "절대 UPDATE/DELETE 하지 않는다")
   때문에 재실행해도 기존 분기 스냅샷 행을 덮어쓰지 않고 신규 행만 추가된다.
 
+메모리(2026-08-10 추가 — 전국 모드 대비):
+  시도 CSV 1개를 다 읽을 때마다 그 파일 몫만 적재하고 버퍼를 비운다. 전국은
+  parcel 약 110만·unit_business 약 270만 후보라 전부 모아두면 2GB를 넘는다
+  (실측: unit_business 1행당 614바이트, 가장 큰 경기 671,649행 = 약 413MB).
+  파일 단위로 끊으면 한 번에 들고 있는 것이 가장 큰 시도 1개분뿐이다.
+
 사용법:
   python scripts/collectors/load_sangkwon_snapshot.py --dry-run
   python scripts/collectors/load_sangkwon_snapshot.py
   python scripts/collectors/load_sangkwon_snapshot.py --sigungu-code 11440 --gu-name 마포구
+  python scripts/collectors/load_sangkwon_snapshot.py --sigungu-code all --dry-run
   python scripts/collectors/load_sangkwon_snapshot.py --dir data/raw/sangkwon_backfill/2015Q4 --snapshot-ym 201512
 """
 
@@ -63,6 +70,10 @@ DEFAULT_DATA_DIR = os.path.join(PROJECT_ROOT, "data", "raw", "sangkwon")
 
 DEFAULT_SIGUNGU_CODE = "11680"  # 강남구
 DEFAULT_GU_NAME = "강남구"
+
+# --sigungu-code 에 이 값을 주면 시군구 필터 없이 전국 전체 행을 적재한다.
+ALL_SIGUNGU = "all"
+ALL_GU_NAME = "전국"
 
 BATCH_SIZE = 1000
 TIMEOUT_SEC = 120
@@ -152,6 +163,11 @@ def detect_snapshot_ym(filenames):
             )
         )
     return next(iter(yms))
+
+
+def is_all_sigungu(sigungu_code):
+    """--sigungu-code 값이 '전국'을 뜻하는가 (대소문자·공백 무시)."""
+    return (sigungu_code or "").strip().lower() == ALL_SIGUNGU
 
 
 def _to_float(raw):
@@ -322,12 +338,13 @@ def _process_one_file(path, encoding, sigungu_code, snapshot_ym):
         idx = build_col_index(header, name)
         i_sgg = idx["시군구코드"]
         n_cols = len(header)
+        match_all = is_all_sigungu(sigungu_code)
 
         for row in reader:
             if len(row) != n_cols:
                 col_mismatch_skipped += 1  # 헤더와 칸 수 다른 비정상 행 — 리포트에 병기
                 continue
-            if row[i_sgg].strip() != sigungu_code:
+            if not match_all and row[i_sgg].strip() != sigungu_code:
                 continue
 
             matched += 1
@@ -356,14 +373,24 @@ def _process_one_file(path, encoding, sigungu_code, snapshot_ym):
     }
 
 
-def scan_and_build(data_dir, sigungu_code, snapshot_ym):
+def scan_and_build(data_dir, sigungu_code, snapshot_ym, on_file_done=None):
     """data_dir 이하 모든 CSV를 훑어 parcel/unit_business 적재 후보를 만든다.
+
+    on_file_done(parcel_records, unit_business_records) 를 넘기면 **파일 1개를
+    끝낼 때마다** 그 파일 몫을 넘겨주고 버퍼를 비운다(전국 모드 메모리 대책).
+    이때 반환값의 parcel_records·unit_business_records 는 비어 있고, 개수는
+    parcel_count·unit_business_count 로 본다. 안 넘기면 예전처럼 전부 모아 돌려준다.
+
+    ⚠️ 콜백은 파일 하나를 **성공적으로 다 읽은 뒤에만** 부른다 — 인코딩 재시도가
+    파일을 처음부터 다시 읽기 때문에, 읽는 도중에 내보내면 실패한 시도의 행이
+    이미 나가버린다(아래 _process_one_file 의 "성공 시에만 반환" 패턴과 한 쌍).
 
     반환 dict:
       per_file        [(파일명, 매치행수), ...]
       total_matched   대상 시군구 매치 총 행수
       parcel_records  list[dict]  (PNU 유효한 행만, PNU 기준 중복 제거)
       unit_business_records  list[dict]  (매치된 모든 행 — PNU 무효도 포함)
+      parcel_count / unit_business_count / ub_with_pnu_count  int (콜백 모드에서도 정확)
       floor_counter   Counter(원본 층정보 값 -> 건수)
       invalid_pnu_reasons  Counter(사유 -> 건수)
       col_mismatch_skipped  int(헤더와 칸 수 달라 스킵한 행 총합)
@@ -373,8 +400,12 @@ def scan_and_build(data_dir, sigungu_code, snapshot_ym):
     if not files:
         raise RuntimeError("CSV 파일이 없습니다: {}".format(data_dir))
 
-    parcel_by_pnu = {}
+    seen_pnu = set()          # 파일 사이 중복까지 막는다 — parcel은 PNU당 1행만
+    parcel_records = []
     unit_business_records = []
+    parcel_count = 0
+    unit_business_count = 0
+    ub_with_pnu_count = 0
     floor_counter = Counter()
     invalid_pnu_reasons = Counter()
     per_file = []
@@ -394,9 +425,20 @@ def scan_and_build(data_dir, sigungu_code, snapshot_ym):
                 # 여기서 합칠 게 없다(중복 축적 방지).
                 matched = file_result["matched"]
                 col_mismatch_skipped += file_result["col_mismatch_skipped"]
+                new_parcels = []
                 for pnu, rec in file_result["parcel_by_pnu"].items():
-                    parcel_by_pnu.setdefault(pnu, rec)
-                unit_business_records.extend(file_result["unit_business_records"])
+                    if pnu not in seen_pnu:
+                        seen_pnu.add(pnu)
+                        new_parcels.append(rec)
+                file_ub = file_result["unit_business_records"]
+                parcel_count += len(new_parcels)
+                unit_business_count += len(file_ub)
+                ub_with_pnu_count += sum(1 for r in file_ub if r["pnu"])
+                if on_file_done is None:
+                    parcel_records.extend(new_parcels)
+                    unit_business_records.extend(file_ub)
+                else:
+                    on_file_done(new_parcels, file_ub)   # 넘긴 뒤 버퍼는 여기서 버려진다
                 floor_counter.update(file_result["floor_counter"])
                 invalid_pnu_reasons.update(file_result["invalid_pnu_reasons"])
                 processed = True
@@ -422,8 +464,11 @@ def scan_and_build(data_dir, sigungu_code, snapshot_ym):
         "per_file": per_file,
         "skipped_files": skipped_files,
         "total_matched": sum(m for _n, m in per_file),
-        "parcel_records": list(parcel_by_pnu.values()),
+        "parcel_records": parcel_records,
         "unit_business_records": unit_business_records,
+        "parcel_count": parcel_count,
+        "unit_business_count": unit_business_count,
+        "ub_with_pnu_count": ub_with_pnu_count,
         "floor_counter": floor_counter,
         "invalid_pnu_reasons": invalid_pnu_reasons,
         "col_mismatch_skipped": col_mismatch_skipped,
@@ -519,15 +564,17 @@ def print_scan_report(result, sigungu_code, gu_name, snapshot_ym):
             result["col_mismatch_skipped"]))
 
     total = result["total_matched"]
-    unit_business_records = result["unit_business_records"]
-    parcel_records = result["parcel_records"]
+    # 개수는 records 길이가 아니라 카운터로 본다 — 파일 단위 스트리밍 적재에서는
+    # 버퍼를 이미 비웠기 때문에 records 가 비어 있다.
+    unit_business_count = result["unit_business_count"]
+    parcel_count = result["parcel_count"]
     invalid = sum(result["invalid_pnu_reasons"].values())
     valid = total - invalid
     rate = (valid * 100.0 / total) if total else 0.0
 
     print("")
-    print("[ 매치 행 수 (would-insert unit_business) ] {:,}행".format(len(unit_business_records)))
-    print("[ 고유 PNU 수 (would-upsert parcel) ]       {:,}행".format(len(parcel_records)))
+    print("[ 매치 행 수 (would-insert unit_business) ] {:,}행".format(unit_business_count))
+    print("[ 고유 PNU 수 (would-upsert parcel) ]       {:,}행".format(parcel_count))
 
     print("")
     print("[ §5.6 상권정보 → PNU 매칭률 ] 목표 {:.0f}%+".format(PNU_MATCH_RATE_TARGET))
@@ -544,7 +591,7 @@ def print_scan_report(result, sigungu_code, gu_name, snapshot_ym):
     for value, cnt in result["floor_counter"].most_common(15):
         print("    {:<10} {:>10,}건".format(value, cnt))
 
-    scale = estimate_bldrgst_scale(len(parcel_records))
+    scale = estimate_bldrgst_scale(parcel_count)
     print("")
     print("[ 다음 단계 규모 추정 — 건축물대장(건축HUB) API, 이 스크립트는 실행하지 않음 ]")
     print("  대상 PNU(고유 건물) 수 : {:,}개".format(scale["unique_pnu"]))
@@ -613,6 +660,10 @@ def parse_args(argv):
             if i + 1 >= len(argv):
                 raise ValueError("{} 뒤에 값이 필요합니다.".format(flag))
             opts[key] = argv[i + 1]
+    # 전국 모드인데 --gu-name 을 안 줬으면 라벨을 '전국'으로 (기본값 '강남구'가
+    # 그대로 찍히면 보고서가 거짓말을 한다).
+    if is_all_sigungu(opts["sigungu_code"]) and "--gu-name" not in argv:
+        opts["gu_name"] = ALL_GU_NAME
     return opts
 
 
@@ -649,10 +700,71 @@ def main():
             snapshot_ym))
         return 2
 
+    # 교차검증 쿼리는 적재 **전** baseline 측정에도 쓰므로 스캔 전에 만든다.
+    if is_all_sigungu(opts["sigungu_code"]):
+        parcel_query = "select=pnu"
+        ub_query = "select=biz_no&snapshot_ym=eq.{}".format(snapshot_ym)
+        ub_label = "would-insert(전체)"
+    else:
+        parcel_query = "select=pnu&sigungu_code=eq.{}".format(opts["sigungu_code"])
+        ub_query = "select=biz_no&snapshot_ym=eq.{}&pnu=like.{}*".format(
+            snapshot_ym, opts["sigungu_code"])
+        ub_label = "would-insert(유효 PNU만)"
+
+    # 연결 정보는 스캔 **전에** 확인한다 — 전국 스캔은 수십 분이 걸리는데
+    # 다 끝난 뒤에 .env가 없어 실패하면 그 시간이 통째로 날아간다.
+    base_url = headers = None
+    parcel_before = 0
+    if not opts["dry_run"]:
+        print("Supabase 연결 확인 중...", flush=True)
+        try:
+            base_url, key = get_supabase_config()
+        except RuntimeError as e:
+            print("[에러] {}".format(e))
+            return 1
+        headers = {"apikey": key, "Authorization": "Bearer {}".format(key)}
+
+        # parcel 은 분기 축이 없는 **누적** 테이블이다(schema.sql: snapshot_ym 컬럼
+        # 없음). 적재 후 총행수를 이번 스캔 고유 PNU 수와 등호로 비교하면 이전
+        # 분기·이전 시군구가 남긴 행 때문에 반드시 어긋난다 — 기준값을 미리 잰다.
+        #
+        # baseline 실패 시 return 1(하드 스톱)로 결정 — 완화(경고만 내고 옛 등호
+        # 비교로 진행)를 검토했으나 기각: ① 전국 규모(110만 행) count=exact가
+        # 진짜 불안정하다면 이 baseline 호출뿐 아니라 적재 뒤 최종 교차검증
+        # (parcel_count·ub_count, 기존에도 있던 호출)도 똑같이 위험하다 — 거기는
+        # 이미 실패 시 return 1이라 baseline만 봐주면 비대칭이고 문제도 안 풀린다.
+        # ② 완화(등호 비교로 폴백)는 지금 고치려는 바로 그 버그(누적 총행수를
+        # 단일 실행 스캔 수와 등호 비교)를 되살린다. ③ HTTP 500 관측은 미확정이라
+        # (원인 조사 없음) 확인되지 않은 위험에 별도 폴백 경로를 새로 얹는 것은
+        # 과설계 — 실제로 재현되면 그때 rest_count 자체(예: count=planned 전환)를
+        # 고치는 게 맞다.
+        try:
+            parcel_before = rest_count(base_url, headers, "parcel", parcel_query)
+        except RuntimeError as e:
+            print("[에러] parcel 기준값 조회 실패: {}".format(e))
+            return 1
+
+    sent = Counter()
+
+    def flush_file(parcel_records, unit_business_records):
+        """시도 파일 1개를 다 읽을 때마다 적재하고 버퍼를 비운다.
+
+        전국은 parcel 110만·unit_business 270만 후보라 전부 모아두면 메모리가
+        터진다. 적재 결과는 파일 순서와 무관하게 같다(둘 다 멱등 upsert).
+        """
+        if opts["dry_run"]:
+            return
+        if parcel_records:
+            sent["parcel"] += upsert_batch(base_url, headers, "parcel", parcel_records)
+        if unit_business_records:
+            sent["unit_business"] += upsert_batch(
+                base_url, headers, "unit_business", unit_business_records)
+
     print("스캔 시작: {} (시군구코드={}, 기준월={})".format(
         opts["dir"], opts["sigungu_code"], snapshot_ym), flush=True)
     try:
-        result = scan_and_build(opts["dir"], opts["sigungu_code"], snapshot_ym)
+        result = scan_and_build(
+            opts["dir"], opts["sigungu_code"], snapshot_ym, on_file_done=flush_file)
     except RuntimeError as e:
         print("[에러] {}".format(e))
         return 1
@@ -663,62 +775,48 @@ def main():
         print("--dry-run 지정 — DB 적재는 건너뜁니다.")
         return 0
 
-    if not result["parcel_records"] and not result["unit_business_records"]:
+    if not result["parcel_count"] and not result["unit_business_count"]:
         print("[에러] 적재할 행이 없습니다. --sigungu-code/--dir 를 확인하세요.")
         return 1
 
     print("")
-    print("Supabase 연결 확인 중...", flush=True)
-    try:
-        base_url, key = get_supabase_config()
-    except RuntimeError as e:
-        print("[에러] {}".format(e))
-        return 1
-    headers = {"apikey": key, "Authorization": "Bearer {}".format(key)}
-
-    print("적재 시작...", flush=True)
-    try:
-        parcel_sent = upsert_batch(base_url, headers, "parcel", result["parcel_records"])
-        ub_sent = upsert_batch(base_url, headers, "unit_business", result["unit_business_records"])
-    except RuntimeError as e:
-        print("[에러] {}".format(e))
-        return 1
-
-    print("")
     print("=" * 78)
-    print("적재 완료: parcel {:,}행 / unit_business {:,}행".format(parcel_sent, ub_sent))
+    print("적재 완료: parcel {:,}행 / unit_business {:,}행".format(
+        sent["parcel"], sent["unit_business"]))
     print("=" * 78)
 
     print("")
     print("REST 교차 확인 중...", flush=True)
+    # 시군구 모드에서는 pnu=like 로 이 시군구만 좁혀 센다(다른 시군구가 같은
+    # 테이블에 적재될 때 서로 섞여 오탐하는 것을 방지). 그래서 비교 대상도 유효
+    # PNU가 있는 행만으로 맞춘다 — PNU 무효 행(시군구 귀속 불가)까지 포함한 전체
+    # would-insert 건수는 위 스캔 보고서에 이미 나와 있다.
+    # 전국 모드에서는 좁힐 시군구가 없으므로 기준월 전체와 견준다(무효 PNU 행 포함).
+    ub_expected = (result["unit_business_count"] if is_all_sigungu(opts["sigungu_code"])
+                   else result["ub_with_pnu_count"])
+
     try:
-        parcel_count = rest_count(
-            base_url, headers, "parcel",
-            "select=pnu&sigungu_code=eq.{}".format(opts["sigungu_code"]),
-        )
-        ub_count = rest_count(
-            base_url, headers, "unit_business",
-            "select=biz_no&snapshot_ym=eq.{}&pnu=like.{}*".format(
-                snapshot_ym, opts["sigungu_code"]),
-        )
+        parcel_count = rest_count(base_url, headers, "parcel", parcel_query)
+        ub_count = rest_count(base_url, headers, "unit_business", ub_query)
     except RuntimeError as e:
         print("[에러] REST 교차 확인 실패: {}".format(e))
         return 1
 
-    # unit_business REST count는 pnu=like 로 이 시군구만 좁혀 세므로(향후 다른
-    # 시군구도 같은 테이블에 적재될 때 서로 섞여 오탐하는 것을 방지), 비교 대상도
-    # 유효 PNU가 있는 행만으로 맞춘다. PNU 무효 행(시군구 귀속 불가)까지 포함한
-    # 전체 would-insert 건수는 위 스캔 보고서에 이미 나와 있다.
-    ub_records_with_pnu = [r for r in result["unit_business_records"] if r["pnu"]]
+    # parcel은 누적 테이블이라 "총행수 == 이번 스캔 수"가 아니라 두 조건으로
+    # 판단한다: ① 스캔한 걸 빠짐없이 전송했나(정확한 등호) ② 적재 전후 증가분이
+    # 이번 스캔 범위를 벗어나지 않나(음수거나 스캔 수보다 커지면 이상 신호).
+    parcel_new = parcel_count - parcel_before
+    parcel_ok = (
+        sent["parcel"] == result["parcel_count"]          # 스캔한 것을 전부 보냈나 (정확)
+        and 0 <= parcel_new <= result["parcel_count"]     # 증가분이 이번 스캔 범위 안인가
+    )
+    ub_ok = ub_count == ub_expected
 
-    parcel_ok = parcel_count == len(result["parcel_records"])
-    ub_ok = ub_count == len(ub_records_with_pnu)
-
-    print("  parcel        would-upsert {:,} vs REST count {:,}  [{}]".format(
-        len(result["parcel_records"]), parcel_count,
+    print("  parcel        스캔 고유 PNU {:,} / 전송 {:,} / 신규 {:,} (적재 전 {:,} → 후 {:,})  [{}]".format(
+        result["parcel_count"], sent["parcel"], parcel_new, parcel_before, parcel_count,
         "일치" if parcel_ok else "불일치 — 확인 필요"))
-    print("  unit_business would-insert(유효 PNU만) {:,} vs REST count {:,}  [{}]".format(
-        len(ub_records_with_pnu), ub_count,
+    print("  unit_business {} {:,} vs REST count {:,}  [{}]".format(
+        ub_label, ub_expected, ub_count,
         "일치" if ub_ok else "불일치 — 확인 필요"))
 
     if not (parcel_ok and ub_ok):

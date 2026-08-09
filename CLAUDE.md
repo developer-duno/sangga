@@ -78,7 +78,7 @@ constants → scoring → theme → components → hooks → App   (단방향)
 | API | Vercel Serverless |
 | DB | Supabase PostgreSQL + PostGIS (**별도 프로젝트**) |
 | 수집 | ⬜ **여전히 로컬 수동 실행이다** — 받기·적재·백업 전부 사람 손. 다만 **놓치는 것만은 막아 뒀다**: `sangkwon-quarterly-watch.yml`이 매주 포털을 확인해 새 분기가 뜨면 이슈를 자동으로 연다(비밀값 0개). 적재 후 `scripts/check_new_sangkwon_quarter.py`의 `LATEST_KNOWN_QUARTER`를 **사람이 올려야** 다음 분기를 감지한다(절대 규칙 6) |
-| 테스트 | 파이썬 **pytest 610개** + 프론트 **vitest 51개**(jsdom + @testing-library/react). CI가 둘 다 돌린다. ⬜ **E2E(playwright)는 아직 없다** — 브라우저 클릭 검증은 사람이 한다 |
+| 테스트 | 파이썬 **pytest 862개** + 프론트 **vitest 51개**(jsdom + @testing-library/react) + **E2E playwright**(`e2e/floor-stack.spec.ts` — 검색→선택→층 스택). CI가 셋 다 돌린다(`pnpm test:e2e`, chromium) |
 
 **성능 원칙**: 상권(수천 개)은 사전계산 정적 JSON, 호실(수백만)은 Supabase 쿼리.
 정적 JSON 폴백을 호실에는 두지 않는다.
