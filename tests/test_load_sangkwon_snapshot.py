@@ -556,6 +556,79 @@ def test_upsert_batch_raises_on_http_error(monkeypatch):
         target.upsert_batch("https://x.supabase.co", {"apikey": "k"}, "parcel", [{"pnu": "1"}])
 
 
+# ── 8.1 재시도 (결함 1 — docs/decisions/0005 §[A] 결정 2) ────────────────────
+# ⚠️ 아래 테스트들은 고치기 전 코드(재시도 없이 즉시 예외)로 되돌리면 전부
+# 빨간불이 된다: 실패 응답이 1번만 오고(calls == 1) 재시도가 없으므로 성공
+# 케이스는 애초에 성공하지 못하고, "재시도 N회 소진" 문구도 없다.
+
+
+def test_upsert_batch_5xx는_재시도_후_성공한다(monkeypatch):
+    responses = [_FakeResponse(503, "unavailable"), _FakeResponse(201, "ok")]
+    calls = []
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        calls.append(url)
+        return responses.pop(0)
+
+    monkeypatch.setattr(target.requests, "post", fake_post)
+    sleeps = []
+    sent = target.upsert_batch(
+        "https://x.supabase.co", {"apikey": "k"}, "parcel", [{"pnu": "1"}],
+        sleep=sleeps.append,
+    )
+    assert sent == 1
+    assert len(calls) == 2                # 1회 실패 + 1회 성공
+    assert sleeps == [2]                  # 지수 백오프 밑값 2초(1회차 대기)
+
+
+def test_upsert_batch_네트워크_오류는_재시도_후_성공한다(monkeypatch):
+    state = {"n": 0}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        state["n"] += 1
+        if state["n"] == 1:
+            raise target.requests.exceptions.ConnectionError("boom")
+        return _FakeResponse(201, "ok")
+
+    monkeypatch.setattr(target.requests, "post", fake_post)
+    sent = target.upsert_batch(
+        "https://x.supabase.co", {"apikey": "k"}, "parcel", [{"pnu": "1"}],
+        sleep=lambda s: None,
+    )
+    assert sent == 1
+    assert state["n"] == 2
+
+
+def test_upsert_batch_5xx_재시도_소진하면_예외(monkeypatch):
+    monkeypatch.setattr(
+        target.requests, "post",
+        lambda url, json=None, headers=None, timeout=None: _FakeResponse(500, "boom"),
+    )
+    sleeps = []
+    with pytest.raises(RuntimeError, match="재시도 3회 소진"):
+        target.upsert_batch(
+            "https://x.supabase.co", {"apikey": "k"}, "parcel", [{"pnu": "1"}],
+            sleep=sleeps.append,
+        )
+    assert sleeps == [2, 4]               # 지수 백오프: 2초, 4초 (총 3회 시도)
+
+
+def test_upsert_batch_4xx는_재시도_없이_즉시_실패(monkeypatch):
+    calls = []
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        calls.append(url)
+        return _FakeResponse(400, "bad")
+
+    monkeypatch.setattr(target.requests, "post", fake_post)
+    with pytest.raises(RuntimeError, match="upsert 실패"):
+        target.upsert_batch(
+            "https://x.supabase.co", {"apikey": "k"}, "parcel", [{"pnu": "1"}],
+            sleep=lambda s: None,
+        )
+    assert len(calls) == 1                # 재시도 없음 — 요청 자체가 잘못된 것
+
+
 def test_upsert_batch_unit_business_uses_ignore_duplicates(monkeypatch):
     # unit_business는 append-only 불변식(schema.sql "절대 UPDATE/DELETE 하지
     # 않는다") — 재실행 시 기존 분기 스냅샷 행을 덮어쓰면 안 되므로

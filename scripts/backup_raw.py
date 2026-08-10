@@ -116,9 +116,16 @@ def parse_args(argv):
 
 
 def scan_source(source):
-    """원본의 파일 목록을 (상대경로, 바이트) 로 모은다. 상대경로는 항상 / 구분자."""
+    """원본의 파일 목록을 (상대경로, 바이트) 로 모은다. 상대경로는 항상 / 구분자.
+
+    점(.)으로 시작하는 디렉터리(예: .omc)는 훑지 않는다 — 다른 세션이 그
+    디렉터리를 cwd로 써서 남긴 도구 상태 파일이지 원본 데이터가 아니다. 이
+    함수가 매니페스트(build_manifest)·1차 대조(compare_counts) 양쪽의 대상
+    목록을 결정하므로, 여기서 빼면 해시 계산에서도 자동으로 빠진다.
+    """
     entries = []
-    for dirpath, _dirnames, filenames in os.walk(source):
+    for dirpath, dirnames, filenames in os.walk(source):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
         for name in sorted(filenames):
             full = os.path.join(dirpath, name)
             rel = os.path.relpath(full, source).replace("\\", "/")
@@ -184,6 +191,9 @@ def build_robocopy_command(source, dest, log_path):
     """robocopy 인자를 만든다.
 
     /E   하위 폴더 포함(빈 폴더도). **/MIR 이 아니다** — 위 설계 판단 1 참조.
+    /XD  점(.)으로 시작하는 디렉터리 제외(예: .omc) — 다른 세션이 그 디렉터리를
+         cwd로 써서 남긴 도구 상태 파일이지 원본 데이터가 아니다. robocopy는
+         디렉터리 이름에 MS-DOS 와일드카드(*)를 허용하므로 ".*"로 전부 잡는다.
     /R:2 /W:5   읽기 실패 시 2회만 재시도(기본값은 100만 회라 사실상 멈춘 것처럼 보인다)
     /NFL /NDL   파일·폴더 목록은 로그 파일에만, 화면에는 요약만
     /NP  퍼센트 표시 생략(로그가 제어문자로 더러워진다)
@@ -193,6 +203,7 @@ def build_robocopy_command(source, dest, log_path):
         source,
         dest,
         "/E",
+        "/XD", ".*",
         "/R:2",
         "/W:5",
         "/NFL",

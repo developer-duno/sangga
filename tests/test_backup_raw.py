@@ -73,6 +73,13 @@ class TestNoMirrorFlag:
         cmd = build_robocopy_command("src", "dst", r"C:\a\b.log")
         assert r"/LOG:C:\a\b.log" in cmd
 
+    def test_dot_directories_excluded(self):
+        """결함 4 — 다른 세션이 .omc를 cwd로 써서 남긴 도구 상태 파일이 원본
+        백업에 섞이면 안 된다. 되돌리면(/XD 제거) 이 테스트가 빨간불이 된다."""
+        cmd = build_robocopy_command("src", "dst", "log.txt")
+        assert "/XD" in cmd
+        assert cmd[cmd.index("/XD") + 1] == ".*"
+
 
 # ── 2. 인자 파싱 ────────────────────────────────────────────────────────────
 
@@ -145,6 +152,22 @@ class TestScanSource:
         for name in ("c.txt", "a.txt", "b.txt"):
             _write(str(tmp_path / name))
         assert [rel for rel, _ in scan_source(str(tmp_path))] == ["a.txt", "b.txt", "c.txt"]
+
+    def test_dot_directories_are_excluded(self, tmp_path):
+        """결함 4 — 다른 세션이 .omc를 cwd로 써서 남긴 도구 상태 파일이 원본
+        파일 목록(=매니페스트·1차 대조의 대상)에 섞이면 안 된다. 되돌리면
+        (dirnames 가지치기 제거) 이 테스트가 빨간불이 된다."""
+        _write(str(tmp_path / "a.txt"), b"real")
+        _write(str(tmp_path / ".omc" / "state" / "x.json"), b"tool state")
+        entries = scan_source(str(tmp_path))
+        assert entries == [("a.txt", 4)]
+
+    def test_dot_directory_at_top_level_is_pruned_before_descending(self, tmp_path):
+        """os.walk의 dirnames 가지치기가 실제로 하위 폴더까지 안 내려가게 하는지."""
+        _write(str(tmp_path / ".omc" / "state" / "deep" / "y.txt"), b"xx")
+        _write(str(tmp_path / "sub" / "b.txt"), b"y")
+        entries = scan_source(str(tmp_path))
+        assert entries == [("sub/b.txt", 1)]
 
 
 # ── 4. 크기 표기 ────────────────────────────────────────────────────────────

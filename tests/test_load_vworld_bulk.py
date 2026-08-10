@@ -284,6 +284,35 @@ def test_main_zip이_없으면_1(tmp_path, monkeypatch):
     assert calls == []
 
 
+def test_main_실적재인데_갱신대상_0건이면_1(tmp_path, monkeypatch, capsys):
+    """결함 3 — [A] 전국 시드 전에 실수로 이 스크립트를 먼저 돌리면 parcel에
+    PNU가 하나도 없어 전량이 '미보유'로 세어지는데, 이때 조용히 exit 0으로
+    끝나면 안 된다(형제 load_sangkwon_snapshot.py의 '적재할 행이 없습니다'
+    가드와 같은 취지). 되돌리면 이 테스트가 빨간불이 된다(return 0으로 통과).
+    """
+    make_zip(tmp_path, "AL_D195_11_20260519.zip", [make_row()])
+    calls = []
+    monkeypatch.setattr(target, "get_supabase_config", lambda: ("https://x.supabase.co", "k"))
+    monkeypatch.setattr(target, "fetch_existing_parcels", lambda base_url, headers: {})  # parcel 비어있음
+    monkeypatch.setattr(target, "upsert_batch", lambda *a, **kw: calls.append(1) or 0)
+
+    assert target.main(["--raw-dir", str(tmp_path)]) == 1
+    assert calls == []                       # 보낼 게 없으니 upsert 자체가 호출 안 됨
+    assert "전국 시드" in capsys.readouterr().out
+
+
+def test_main_dry_run은_갱신대상_0건이어도_0(tmp_path, monkeypatch):
+    """--dry-run은 '미리보기'이므로 결함 3의 가드 대상이 아니다 — 갱신 0건도 정상 종료."""
+    make_zip(tmp_path, "AL_D195_11_20260519.zip", [make_row()])
+    calls = []
+    monkeypatch.setattr(target, "get_supabase_config", lambda: ("https://x.supabase.co", "k"))
+    monkeypatch.setattr(target, "fetch_existing_parcels", lambda base_url, headers: {})
+    monkeypatch.setattr(target, "upsert_batch", lambda *a, **kw: calls.append(1) or 0)
+
+    assert target.main(["--raw-dir", str(tmp_path), "--dry-run"]) == 0
+    assert calls == []
+
+
 def test_parse_args_기본값():
     a = target.parse_args([])
     assert a.raw_dir is None and a.period_key is None and a.dry_run is False
