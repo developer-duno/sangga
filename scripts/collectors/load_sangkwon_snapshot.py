@@ -76,6 +76,17 @@ DEFAULT_GU_NAME = "강남구"
 ALL_SIGUNGU = "all"
 ALL_GU_NAME = "전국"
 
+# 시군구코드 앞 2자리 = 시도. 보고서 라벨에만 쓴다(필터는 코드로 한다 — 이름은
+# 바뀌어도 코드는 안 바뀐다. 예: 강원도 → 강원특별자치도).
+# 42·45는 특별자치도 개편 전 코드(강원도·전라북도)다. 옛 스냅샷을 백필할 때
+# 섞여 들어올 수 있어 함께 둔다.
+SIDO_NAMES = {
+    "11": "서울", "26": "부산", "27": "대구", "28": "인천", "29": "광주",
+    "30": "대전", "31": "울산", "36": "세종", "41": "경기", "42": "강원",
+    "43": "충북", "44": "충남", "45": "전북", "46": "전남", "47": "경북",
+    "48": "경남", "50": "제주", "51": "강원", "52": "전북",
+}
+
 BATCH_SIZE = 1000
 TIMEOUT_SEC = 120
 
@@ -176,6 +187,86 @@ def detect_snapshot_ym(filenames):
 def is_all_sigungu(sigungu_code):
     """--sigungu-code 값이 '전국'을 뜻하는가 (대소문자·공백 무시)."""
     return (sigungu_code or "").strip().lower() == ALL_SIGUNGU
+
+
+def parse_scope(sigungu_code):
+    """--sigungu-code 를 '앞자리 일치' 접두사 튜플로 바꾼다.
+
+    시군구코드는 5자리이고 **앞 2자리가 시도**다(11=서울, 30=대전, 41=경기 …).
+    그래서 접두사 일치 하나로 시군구·시도·여러 지역을 전부 표현할 수 있다:
+
+        "11680"  -> ("11680",)        강남구 하나 (5자리라 사실상 정확히 일치)
+        "11,30"  -> ("11", "30")      서울 + 대전
+        "11"     -> ("11",)           서울 전체
+        "all"    -> ()                전국 (필터 없음)
+
+    콤마 구분 목록을 쓰는 이유: 1단계 서비스 범위가 "서울+대전"처럼 **시도 여러 개**라
+    기존의 '시군구 1개 아니면 전국' 두 갈래로는 표현이 안 됐다(docs/decisions/0006).
+
+    반환이 빈 튜플이면 '전국'이다. 값이 비었거나 숫자가 아니면 ValueError.
+    """
+    if is_all_sigungu(sigungu_code):
+        return ()
+    parts = [p.strip() for p in (sigungu_code or "").split(",")]
+    parts = [p for p in parts if p]
+    if not parts:
+        raise ValueError("--sigungu-code 가 비었습니다.")
+    for p in parts:
+        if not p.isdigit() or not 2 <= len(p) <= 5:
+            raise ValueError(
+                "--sigungu-code 항목은 2~5자리 숫자여야 합니다(시도 2자리 또는 "
+                "시군구 5자리): {!r}".format(p))
+    # 중복·포함관계 정리 — "11,11680" 이면 "11" 하나로 충분하다(같은 행을 두 번 세지 않게).
+    #
+    # ⚠️ 정렬 키에 값(p)까지 넣어야 한다. key=len 만 주면 **길이가 같은 항목들의 순서가
+    #    set 순회 순서**로 정해지는데, 파이썬 문자열 해시는 실행마다 달라진다
+    #    (PYTHONHASHSEED). 그러면 "11,30"이 어떤 날은 ("11","30"), 어떤 날은
+    #    ("30","11")이 되어 범위 라벨("서울+대전"/"대전+서울")과 REST 쿼리 문자열이
+    #    같은 입력에도 흔들린다. 2026-08-11 회귀 테스트가 5회 중 3회 실패로 잡았다.
+    uniq = []
+    for p in sorted(set(parts), key=lambda s: (len(s), s)):
+        if not any(p.startswith(k) for k in uniq):
+            uniq.append(p)
+    return tuple(uniq)
+
+
+def scope_label(prefixes):
+    """보고서에 찍을 범위 이름. 빈 튜플이면 '전국'."""
+    if not prefixes:
+        return ALL_GU_NAME
+    names = []
+    for p in prefixes:
+        names.append(SIDO_NAMES[p] if len(p) == 2 and p in SIDO_NAMES else p)
+    return "+".join(names)
+
+
+def rest_scope_filter(column, prefixes, exact_len=None):
+    """PostgREST 필터 조각을 만든다 (교차검증 쿼리용).
+
+    exact_len 은 **그 칼럼 값의 전체 길이**다. 접두사가 그 길이와 같으면 `eq` 로
+    만들어 인덱스를 그대로 타게 한다. 넘기지 않으면 언제나 `like` 다.
+
+    ⛔ `pnu` 에 exact_len=5 를 주면 안 된다 — PNU는 19자리라 `pnu=eq.11680` 은
+    **아무 행도 안 맞는다**(2026-08-11 회귀 테스트가 이 실수를 잡았다).
+
+        rest_scope_filter("sigungu_code", ("11680",), exact_len=5)
+            -> "sigungu_code=eq.11680"
+        rest_scope_filter("pnu", ("11680",))
+            -> "pnu=like.11680*"
+        rest_scope_filter("pnu", ("11", "30"))
+            -> "or=(pnu.like.11*,pnu.like.30*)"
+
+    빈 튜플이면 빈 문자열(필터 없음).
+    """
+    if not prefixes:
+        return ""
+    if len(prefixes) == 1:
+        p = prefixes[0]
+        if exact_len is not None and len(p) == exact_len:
+            return "{}=eq.{}".format(column, p)
+        return "{}=like.{}*".format(column, p)
+    inner = ",".join("{}.like.{}*".format(column, p) for p in prefixes)
+    return "or=({})".format(inner)
 
 
 def _to_float(raw):
@@ -316,8 +407,10 @@ def estimate_bldrgst_scale(unique_pnu_count):
 # ── CSV 스캔 (파일 I/O — 네트워크·DB 없음) ─────────────────────────────────────
 
 
-def _process_one_file(path, encoding, sigungu_code, snapshot_ym):
-    """파일 하나를 스트리밍으로 읽어 대상 시군구 행만 반영한 결과를 돌려준다.
+def _process_one_file(path, encoding, prefixes, snapshot_ym):
+    """파일 하나를 스트리밍으로 읽어 대상 범위 행만 반영한 결과를 돌려준다.
+
+    prefixes 는 parse_scope()가 만든 시군구코드 접두사 튜플이다. 빈 튜플이면 전국.
 
     결과는 이 호출 안에서만 쓰이는 로컬 컨테이너에 모은다(공유 컨테이너에 바로
     누적하지 않음). 인코딩이 안 맞아 중간에 UnicodeDecodeError 로 끊기면 그때까지
@@ -346,13 +439,14 @@ def _process_one_file(path, encoding, sigungu_code, snapshot_ym):
         idx = build_col_index(header, name)
         i_sgg = idx["시군구코드"]
         n_cols = len(header)
-        match_all = is_all_sigungu(sigungu_code)
+        match_all = not prefixes
 
         for row in reader:
             if len(row) != n_cols:
                 col_mismatch_skipped += 1  # 헤더와 칸 수 다른 비정상 행 — 리포트에 병기
                 continue
-            if not match_all and row[i_sgg].strip() != sigungu_code:
+            # 접두사 일치 하나로 시군구(5자리)·시도(2자리)·복수 지역을 모두 처리한다.
+            if not match_all and not row[i_sgg].strip().startswith(prefixes):
                 continue
 
             matched += 1
@@ -409,6 +503,10 @@ def scan_and_build(data_dir, sigungu_code, snapshot_ym, on_file_done=None):
         raise RuntimeError("CSV 파일이 없습니다: {}".format(data_dir))
 
     seen_pnu = set()          # 파일 사이 중복까지 막는다 — parcel은 PNU당 1행만
+    # 문자열 범위("11680" / "11,30" / "all")를 접두사 튜플로 한 번만 바꾼다.
+    # 시그니처는 문자열 그대로 둔다 — 호출부와 기존 테스트가 전부 문자열을 넘긴다.
+    prefixes = parse_scope(sigungu_code)
+
     parcel_records = []
     unit_business_records = []
     parcel_count = 0
@@ -427,7 +525,7 @@ def scan_and_build(data_dir, sigungu_code, snapshot_ym, on_file_done=None):
         processed = False
         for encoding in ENCODING_CANDIDATES:
             try:
-                file_result = _process_one_file(path, encoding, sigungu_code, snapshot_ym)
+                file_result = _process_one_file(path, encoding, prefixes, snapshot_ym)
                 # 이 인코딩 시도가 끝까지 성공했을 때만 로컬 결과를 공유 컨테이너에
                 # 병합한다 — 실패한 시도의 부분 결과는 위에서 이미 버려졌으므로
                 # 여기서 합칠 게 없다(중복 축적 방지).
@@ -647,10 +745,16 @@ def print_scan_report(result, sigungu_code, gu_name, snapshot_ym):
     if scale["fits_in_one_day"]:
         print("  판정: 일 한도 이내 — collect_progress 이어받기로 바로 진행 가능")
     else:
-        print("  판정: 일 한도 초과 — 최소 {}일 분할 필요 (실행하지 않음, 분할 계획만 보고)".format(
+        print("  판정: 일 한도 초과 — API로 가면 최소 {}일 분할 필요".format(
             scale["days_needed"]))
         print("  분할 제안: PNU를 법정동코드 또는 앞자리 기준으로 나눠 하루 {:,}건씩 collect_progress 이어받기".format(
             scale["daily_limit"] // scale["calls_per_pnu"]))
+        # ★ 2026-08-11: 건축HUB가 같은 데이터를 **월 단위 전국 일괄 파일**로 준다.
+        #    표제부 zip 646MB(805만 행)를 35초에 받아 확인했다 — 위 '며칠'은
+        #    일괄 파일을 못 쓸 때의 대안일 뿐이다. 먼저 아래를 보라.
+        print("  ⭐ 그러나 API가 유일한 길이 아니다 — 건축HUB 일괄 파일이 더 빠르다:")
+        print("     python scripts/collectors/fetch_bldrgst_bulk.py --kind title --probe")
+        print("     (표제부 zip 646MB = 전국 누적분 805만 행. 상세: docs/decisions/0005)")
     print("=" * 78)
 
 
@@ -705,10 +809,13 @@ def parse_args(argv):
             if i + 1 >= len(argv):
                 raise ValueError("{} 뒤에 값이 필요합니다.".format(flag))
             opts[key] = argv[i + 1]
-    # 전국 모드인데 --gu-name 을 안 줬으면 라벨을 '전국'으로 (기본값 '강남구'가
-    # 그대로 찍히면 보고서가 거짓말을 한다).
-    if is_all_sigungu(opts["sigungu_code"]) and "--gu-name" not in argv:
-        opts["gu_name"] = ALL_GU_NAME
+    # --gu-name 을 안 줬으면 범위에서 라벨을 만든다. 기본값 '강남구'가 그대로 찍히면
+    # 보고서가 거짓말을 한다("서울+대전을 적재했다"인데 '강남구'라고 나오는 사고).
+    if "--gu-name" not in argv and opts["sigungu_code"] != DEFAULT_SIGUNGU_CODE:
+        try:
+            opts["gu_name"] = scope_label(parse_scope(opts["sigungu_code"]))
+        except ValueError:
+            pass  # 값이 잘못됐으면 아래 본 처리에서 제대로 된 에러를 낸다
     return opts
 
 
@@ -746,14 +853,18 @@ def main():
         return 2
 
     # 교차검증 쿼리는 적재 **전** baseline 측정에도 쓰므로 스캔 전에 만든다.
-    if is_all_sigungu(opts["sigungu_code"]):
+    scope = parse_scope(opts["sigungu_code"])
+    if not scope:
         parcel_query = "select=pnu"
         ub_query = "select=biz_no&snapshot_ym=eq.{}".format(snapshot_ym)
         ub_label = "would-insert(전체)"
     else:
-        parcel_query = "select=pnu&sigungu_code=eq.{}".format(opts["sigungu_code"])
-        ub_query = "select=biz_no&snapshot_ym=eq.{}&pnu=like.{}*".format(
-            snapshot_ym, opts["sigungu_code"])
+        # unit_business 에는 sigungu_code 칼럼이 없어 PNU 앞자리로 좁힌다
+        # (PNU 앞 5자리 = 시군구코드라 접두사가 그대로 통한다).
+        parcel_query = "select=pnu&" + rest_scope_filter(
+            "sigungu_code", scope, exact_len=5)
+        ub_query = "select=biz_no&snapshot_ym=eq.{}&{}".format(
+            snapshot_ym, rest_scope_filter("pnu", scope))
         ub_label = "would-insert(유효 PNU만)"
 
     # 연결 정보는 스캔 **전에** 확인한다 — 전국 스캔은 수십 분이 걸리는데
@@ -837,7 +948,7 @@ def main():
     # PNU가 있는 행만으로 맞춘다 — PNU 무효 행(시군구 귀속 불가)까지 포함한 전체
     # would-insert 건수는 위 스캔 보고서에 이미 나와 있다.
     # 전국 모드에서는 좁힐 시군구가 없으므로 기준월 전체와 견준다(무효 PNU 행 포함).
-    ub_expected = (result["unit_business_count"] if is_all_sigungu(opts["sigungu_code"])
+    ub_expected = (result["unit_business_count"] if not scope
                    else result["ub_with_pnu_count"])
 
     try:

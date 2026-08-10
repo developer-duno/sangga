@@ -54,6 +54,8 @@
 6. **조회형 먼저, 탐색형 나중** — 추정 검증 전 추천 금지
 7. **Supabase 별도 프로젝트** — 기존 mibunyang DB와 격리
 8. **토지·상권 원천 데이터는 한 서버, 서비스는 분리** — 회원·결제 등 서비스 고유 상태는 생기는 시점에 그 서비스 소유로 분리. 편입 기준 = "PNU 필지 마스터를 쓰는가"(mibunyang 격리 유지). `docs/decisions/0003-토지상권-한서버-서비스분리.md`
+9. **1단계 서비스 범위 = 서울 + 대전. 전국 프레임은 유지** — 범위를 좁히는 게 아니라 전국 구조 위에서 **열림/잠김만 가른다.** 나머지 15개 시도는 화면에 보이되 누르면 "준비 중" 안내. 열린 지역의 진실은 한 곳(`src/lib/regions.ts`)에만 둔다. 적재 범위는 `--sigungu-code 11,30`(접두사 = 시도 2자리). `docs/decisions/0006-1단계-서비스범위-서울대전.md`
+10. **건축물대장은 API가 아니라 건축HUB 일괄 파일로 받는다** — 전국 3종 4.4GB를 5분에 받는다(로그인 불필요, 월 갱신·누적분). API 전국 수집은 211일이라 대비책으로만 남긴다. `docs/decisions/0005`
 
 ## 데이터 소스 우선순위
 
@@ -127,6 +129,10 @@ python scripts/collectors/load_vworld_land.py --dry-run          # raw → parce
 python scripts/collectors/load_vworld_bulk.py --dry-run          # 전국 일괄 CSV(zip 17개) → parcel 미리보기(DB 쓰기 0)
 python scripts/collectors/load_vworld_bulk.py                    # 전국 일괄 CSV 적재 — ⚠️ parcel에 있는 PNU만 채운다
 python scripts/collectors/load_sangkwon_snapshot.py --sigungu-code all --dry-run   # 상권정보 전국 모드 미리보기
+python scripts/collectors/load_sangkwon_snapshot.py --sigungu-code 11,30 --dry-run # ★ 1단계 = 서울+대전 (결정 0006)
+python scripts/collectors/fetch_bldrgst_bulk.py --list             # 건축HUB 일괄 파일 목록 (다운로드 0)
+python scripts/collectors/fetch_bldrgst_bulk.py --kind title --probe  # 크기·형식만 확인 (저장 0)
+python scripts/collectors/fetch_bldrgst_bulk.py --kind title      # 표제부 zip 받기 (646MB, 로그인 불필요)
 python scripts/make_env_local.py                # .env → .env.local (브라우저용 공개키만)
 python scripts/backup_raw.py --dry-run          # 원본 백업 대상 확인 (쓰기 0)
 python scripts/backup_raw.py                    # data/raw → F:\sangga-raw-backup (외장 SSD 연결 필요)
