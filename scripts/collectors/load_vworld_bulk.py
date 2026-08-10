@@ -312,6 +312,20 @@ def main(argv=None):
                                  list(result["updates"].values()))
 
     print_report(args, raw_dir, zips, totals, filled, sample, sent)
+
+    # 실적재 모드(dry-run 아님)인데 갱신 대상이 0건이면 조용히 성공하지 않는다.
+    # [A] 전국 시드(load_sangkwon_snapshot.py) 전에 실수로 이 스크립트를 먼저
+    # 돌리면 parcel에 PNU가 하나도 없어 전량이 "미보유"로 세어지고 exit 0으로
+    # 끝난다 — 다음 사람이 원인을 모른 채 "성공했는데 왜 안 채워졌지" 헤맨다
+    # (docs/decisions/0005 §[A] 결정 2 결함 3, 형제 load_sangkwon_snapshot.py의
+    # "적재할 행이 없습니다" 가드와 같은 취지).
+    if not args.dry_run and not totals["matched"]:
+        print("")
+        print("[에러] 갱신 대상이 0건입니다 — parcel에 이 CSV들의 PNU가 하나도 없습니다.")
+        print("  [A] 전국 시드(load_sangkwon_snapshot.py)가 먼저 실행돼야 합니다"
+              " (docs/decisions/0005 실행 순서 참조).")
+        return 1
+
     return 0
 
 

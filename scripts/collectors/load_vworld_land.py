@@ -25,6 +25,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from collections import Counter
 
 import requests
@@ -45,6 +46,12 @@ from collect_vworld_land import (  # noqa: E402
 BATCH_SIZE = 500
 SELECT_PAGE_SIZE = 1000
 REST_TIMEOUT_SEC = 120
+
+# 전국 시드(docs/decisions/0005 §[A] 결정 2 결함 1)와 같은 근거로, 배치 전송을
+# collect_building_ledger.py의 fetch_page와 같은 패턴(RETRY_COUNT=3, 지수
+# 백오프 2초·4초)으로 재시도한다.
+RETRY_COUNT = 3
+RETRY_BACKOFF_BASE_SEC = 2
 
 
 # ── 순수 로직 (네트워크·DB 없음 — 테스트 대상) ─────────────────────────────────
@@ -164,47 +171,94 @@ def get_supabase_config():
     return url, key
 
 
-def rest_select(base_url, headers, table, query, page_size=SELECT_PAGE_SIZE, order="pnu"):
-    rows = []
-    offset = 0
-    while True:
-        url = "{}/rest/v1/{}?{}order={}&limit={}&offset={}".format(
-            base_url, table, (query + "&") if query else "", order, page_size, offset)
-        r = requests.get(url, headers=headers, timeout=REST_TIMEOUT_SEC)
-        if r.status_code >= 300:
-            raise RuntimeError("{} 조회 실패 (HTTP {}): {}".format(
-                table, r.status_code, r.text[:300]))
-        part = r.json()
-        rows.extend(part)
-        if len(part) < page_size:
-            return rows
-        offset += page_size
+def _post_batch_with_retry(base_url, table, headers, data, batch_no, total_batches,
+                           retry_count=RETRY_COUNT, backoff_base=RETRY_BACKOFF_BASE_SEC,
+                           sleep=time.sleep):
+    """배치 하나를 전송한다. 네트워크 오류·5xx는 지수 백오프로 재시도(최대
+    retry_count회 시도), 4xx는 즉시 실패시킨다 — 요청 자체가 잘못된 것이라
+    반복해도 같은 결과이기 때문이다(collect_building_ledger.py의 fetch_page와
+    같은 구분).
+    """
+    last_err = None
+    for attempt in range(1, retry_count + 1):
+        try:
+            r = requests.post(
+                "{}/rest/v1/{}".format(base_url, table),
+                headers=headers, data=data, timeout=REST_TIMEOUT_SEC,
+            )
+        except requests.RequestException as e:
+            last_err = "네트워크 오류: {}".format(e)
+        else:
+            if r.status_code >= 500:
+                last_err = "HTTP {}: {}".format(r.status_code, r.text[:300])
+            elif r.status_code >= 300:
+                raise RuntimeError("{} 저장 실패 (HTTP {}): {}".format(
+                    table, r.status_code, r.text[:300]))
+            else:
+                return r
+        if attempt < retry_count:
+            wait = backoff_base ** attempt
+            print("  [{}] 배치 {}/{} 전송 실패(시도 {}/{}) — {}초 뒤 재시도: {}".format(
+                table, batch_no, total_batches, attempt, retry_count, wait, last_err),
+                flush=True)
+            sleep(wait)
+    raise RuntimeError("{} 배치 {}/{} 저장 실패 — 재시도 {}회 소진: {}".format(
+        table, batch_no, total_batches, retry_count, last_err))
 
 
-def upsert_batch(base_url, headers, table, rows, batch_size=BATCH_SIZE):
+def upsert_batch(base_url, headers, table, rows, batch_size=BATCH_SIZE, sleep=time.sleep):
+    """rows를 batch_size 단위로 table에 upsert. 실제로 보낸 행 수를 돌려준다.
+
+    배치 전송은 _post_batch_with_retry가 재시도한다(네트워크 오류·5xx만 — 4xx는
+    즉시 실패). `sleep`은 테스트에서 실제로 기다리지 않도록 주입할 수 있다.
+    """
     sent = 0
+    total_batches = (len(rows) + batch_size - 1) // batch_size
     for i in range(0, len(rows), batch_size):
         part = rows[i:i + batch_size]
-        r = requests.post(
-            "{}/rest/v1/{}".format(base_url, table),
-            headers=dict(headers, **{
-                "Content-Type": "application/json",
-                "Prefer": "resolution=merge-duplicates,return=minimal",
-            }),
-            data=json.dumps(part, ensure_ascii=False).encode("utf-8"),
-            timeout=REST_TIMEOUT_SEC,
+        batch_no = i // batch_size + 1
+        req_headers = dict(headers, **{
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates,return=minimal",
+        })
+        data = json.dumps(part, ensure_ascii=False).encode("utf-8")
+        _post_batch_with_retry(
+            base_url, table, req_headers, data, batch_no, total_batches, sleep=sleep,
         )
-        if r.status_code >= 300:
-            raise RuntimeError("{} 저장 실패 (HTTP {}): {}".format(
-                table, r.status_code, r.text[:300]))
         sent += len(part)
     return sent
 
 
-def fetch_existing_parcels(base_url, headers):
-    """pnu -> (bjd_code, sigungu_code). upsert의 INSERT 경로가 NOT NULL을 요구한다."""
-    rows = rest_select(base_url, headers, "parcel", "select=pnu,bjd_code,sigungu_code")
-    return {r["pnu"]: (r["bjd_code"], r["sigungu_code"]) for r in rows}
+def fetch_existing_parcels(base_url, headers, page_size=SELECT_PAGE_SIZE):
+    """pnu -> (bjd_code, sigungu_code) 전량. upsert의 INSERT 경로가 NOT NULL을 요구한다.
+
+    ⚠️ limit/offset이 아니라 pnu 기준 **keyset** 페이지네이션을 쓴다
+    (`pnu=gt.<직전 페이지 마지막 pnu>`). parcel이 전국 규모(110만 행)가 되면
+    1,100페이지를 offset으로 넘기는 동안 다른 곳에서 INSERT가 일어날 수 있는데,
+    offset 방식은 그 사이 앞쪽에 새 행이 끼어들면 뒤 페이지 전체가 밀려 일부
+    행을 건너뛴다(docs/decisions/0005 §[A] 결정 2 결함 2). pnu는 PK(char(19))라
+    정렬이 유일하게 결정되므로 "직전 페이지 마지막 pnu보다 큰 것"으로 다음
+    페이지를 요청하면 밀림이 없다. 첫 페이지는 조건 없이 시작한다.
+    """
+    result = {}
+    last_pnu = None
+    while True:
+        cursor = "&pnu=gt.{}".format(last_pnu) if last_pnu is not None else ""
+        url = "{}/rest/v1/parcel?select=pnu,bjd_code,sigungu_code&order=pnu.asc&limit={}{}".format(
+            base_url, page_size, cursor)
+        r = requests.get(url, headers=headers, timeout=REST_TIMEOUT_SEC)
+        if r.status_code >= 300:
+            raise RuntimeError("parcel 조회 실패 (HTTP {}): {}".format(
+                r.status_code, r.text[:300]))
+        page = r.json()
+        if not page:
+            break
+        for row in page:
+            result[row["pnu"]] = (row["bjd_code"], row["sigungu_code"])
+        last_pnu = page[-1]["pnu"]
+        if len(page) < page_size:
+            break
+    return result
 
 
 # ── 메인 ─────────────────────────────────────────────────────────────────────

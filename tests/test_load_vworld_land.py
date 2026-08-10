@@ -195,3 +195,136 @@ def test_parse_args_기본값():
     assert a.raw_dir is None and a.period_key is None and a.dry_run is False
     b = lvl.parse_args(["--dry-run", "--period-key", "202608"])
     assert b.dry_run is True and b.period_key == "202608"
+
+
+# ── 5. upsert_batch 재시도 (결함 1 — docs/decisions/0005 §[A] 결정 2) ────────
+# ⚠️ 아래 테스트들은 고치기 전 코드(재시도 없이 즉시 예외)로 되돌리면 전부
+# 빨간불이 된다: 실패 응답이 1번만 오고(calls == 1) 재시도가 없어 성공 케이스는
+# 애초에 성공하지 못하고, "재시도 N회 소진" 문구도 없다.
+
+
+class _FakeResp:
+    def __init__(self, status_code=200, json_data=None, text=""):
+        self.status_code = status_code
+        self._json = json_data if json_data is not None else []
+        self.text = text
+
+    def json(self):
+        return self._json
+
+
+def test_upsert_batch_5xx는_재시도_후_성공한다(monkeypatch):
+    responses = [_FakeResp(503, text="unavailable"), _FakeResp(201, text="ok")]
+    calls = []
+
+    def fake_post(url, headers=None, data=None, timeout=None):
+        calls.append(url)
+        return responses.pop(0)
+
+    monkeypatch.setattr(lvl.requests, "post", fake_post)
+    sleeps = []
+    sent = lvl.upsert_batch(
+        "https://x.supabase.co", {"apikey": "k"}, "parcel", [{"pnu": "1"}],
+        sleep=sleeps.append,
+    )
+    assert sent == 1
+    assert len(calls) == 2
+    assert sleeps == [2]
+
+
+def test_upsert_batch_네트워크_오류는_재시도_후_성공한다(monkeypatch):
+    state = {"n": 0}
+
+    def fake_post(url, headers=None, data=None, timeout=None):
+        state["n"] += 1
+        if state["n"] == 1:
+            raise lvl.requests.exceptions.ConnectionError("boom")
+        return _FakeResp(201, text="ok")
+
+    monkeypatch.setattr(lvl.requests, "post", fake_post)
+    sent = lvl.upsert_batch(
+        "https://x.supabase.co", {"apikey": "k"}, "parcel", [{"pnu": "1"}],
+        sleep=lambda s: None,
+    )
+    assert sent == 1
+    assert state["n"] == 2
+
+
+def test_upsert_batch_5xx_재시도_소진하면_예외(monkeypatch):
+    monkeypatch.setattr(
+        lvl.requests, "post",
+        lambda url, headers=None, data=None, timeout=None: _FakeResp(500, text="boom"),
+    )
+    sleeps = []
+    with pytest.raises(RuntimeError, match="재시도 3회 소진"):
+        lvl.upsert_batch(
+            "https://x.supabase.co", {"apikey": "k"}, "parcel", [{"pnu": "1"}],
+            sleep=sleeps.append,
+        )
+    assert sleeps == [2, 4]
+
+
+def test_upsert_batch_4xx는_재시도_없이_즉시_실패(monkeypatch):
+    calls = []
+
+    def fake_post(url, headers=None, data=None, timeout=None):
+        calls.append(url)
+        return _FakeResp(400, text="bad")
+
+    monkeypatch.setattr(lvl.requests, "post", fake_post)
+    with pytest.raises(RuntimeError, match="저장 실패"):
+        lvl.upsert_batch(
+            "https://x.supabase.co", {"apikey": "k"}, "parcel", [{"pnu": "1"}],
+            sleep=lambda s: None,
+        )
+    assert len(calls) == 1
+
+
+# ── 6. fetch_existing_parcels keyset 페이지네이션 (결함 2) ───────────────────
+# ⚠️ 되돌리면(limit/offset) 빨간불: 요청 URL에 "pnu=gt."가 안 나오고 "offset="이
+# 나온다.
+
+
+def test_fetch_existing_parcels_페이지_경계에서_행이_누락되지_않는다(monkeypatch):
+    """2,500행을 1,000씩 3페이지로 주는 가짜 REST — 전량 수집 + 커서 기반 다음
+    페이지 요청을 함께 확인한다(과제가 요구한 회귀 가드)."""
+    all_pnus = ["{:019d}".format(i) for i in range(2500)]
+    requested_urls = []
+
+    def fake_get(url, headers=None, timeout=None):
+        requested_urls.append(url)
+        if "pnu=gt." not in url:
+            page = all_pnus[0:1000]
+        else:
+            cursor = url.split("pnu=gt.")[1].split("&")[0]
+            start = all_pnus.index(cursor) + 1
+            page = all_pnus[start:start + 1000]
+        rows = [{"pnu": p, "bjd_code": "B", "sigungu_code": "S"} for p in page]
+        return _FakeResp(200, rows)
+
+    monkeypatch.setattr(lvl.requests, "get", fake_get)
+    result = lvl.fetch_existing_parcels("https://x.supabase.co", {"apikey": "k"}, page_size=1000)
+
+    assert len(result) == 2500
+    assert set(result) == set(all_pnus)
+    assert result[all_pnus[0]] == ("B", "S")
+    assert len(requested_urls) == 3
+    assert "pnu=gt." not in requested_urls[0]           # 첫 페이지는 커서 없음
+    assert "pnu=gt.{}".format(all_pnus[999]) in requested_urls[1]
+    assert "pnu=gt.{}".format(all_pnus[1999]) in requested_urls[2]
+    assert "offset=" not in requested_urls[0] + requested_urls[1] + requested_urls[2]
+
+
+def test_fetch_existing_parcels_빈_결과는_빈_dict(monkeypatch):
+    monkeypatch.setattr(lvl.requests, "get",
+                        lambda url, headers=None, timeout=None: _FakeResp(200, []))
+    assert lvl.fetch_existing_parcels("https://x.supabase.co", {"apikey": "k"}) == {}
+
+
+def test_fetch_existing_parcels_HTTP_오류면_예외(monkeypatch):
+    monkeypatch.setattr(
+        lvl.requests, "get",
+        lambda url, headers=None, timeout=None: _FakeResp(500, [], text="boom"),
+    )
+    with pytest.raises(RuntimeError, match="parcel 조회 실패"):
+        lvl.fetch_existing_parcels("https://x.supabase.co", {"apikey": "k"})

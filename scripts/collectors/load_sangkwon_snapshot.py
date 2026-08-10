@@ -45,6 +45,7 @@ import csv
 import os
 import re
 import sys
+import time
 from collections import Counter
 
 import requests
@@ -77,6 +78,13 @@ ALL_GU_NAME = "전국"
 
 BATCH_SIZE = 1000
 TIMEOUT_SEC = 120
+
+# 전국 시드는 배치가 3,826회(parcel 1,100 + unit_business 2,726, docs/decisions/0005
+# §[A] 결정 2 결함 1 실측)라, 재시도가 없으면 한 번의 일시적 네트워크 오류로
+# 몇 시간짜리 작업이 통째로 날아간다. collect_building_ledger.py의 fetch_page와
+# 같은 패턴(RETRY_COUNT=3, 지수 백오프 2초·4초)을 재사용한다.
+RETRY_COUNT = 3
+RETRY_BACKOFF_BASE_SEC = 2
 
 # §5.6 목표선
 PNU_MATCH_RATE_TARGET = 95.0
@@ -490,11 +498,55 @@ def get_supabase_config():
     return url.rstrip("/"), key
 
 
-def upsert_batch(base_url, headers, table, rows, batch_size=BATCH_SIZE):
+def _post_batch_with_retry(base_url, table, batch, headers, batch_no, total_batches,
+                           retry_count=RETRY_COUNT, backoff_base=RETRY_BACKOFF_BASE_SEC,
+                           sleep=time.sleep):
+    """배치 하나를 전송한다. 네트워크 오류·5xx는 지수 백오프로 재시도(최대
+    retry_count회 시도), 4xx는 즉시 실패시킨다 — 요청 자체가 잘못된 것이라
+    반복해도 같은 결과이기 때문이다(collect_building_ledger.py의 fetch_page와
+    같은 구분).
+    """
+    last_err = None
+    for attempt in range(1, retry_count + 1):
+        try:
+            r = requests.post(
+                "{}/rest/v1/{}".format(base_url, table),
+                json=batch, headers=headers, timeout=TIMEOUT_SEC,
+            )
+        except requests.RequestException as e:
+            last_err = "네트워크 오류: {}".format(e)
+        else:
+            if r.status_code >= 500:
+                last_err = "HTTP {}: {}".format(r.status_code, r.text[:500])
+            elif r.status_code >= 300:
+                raise RuntimeError(
+                    "{} 배치 {}/{} upsert 실패 (HTTP {}): {}".format(
+                        table, batch_no, total_batches, r.status_code, r.text[:500]
+                    )
+                )
+            else:
+                return r
+        if attempt < retry_count:
+            wait = backoff_base ** attempt
+            print("  [{}] 배치 {}/{} 전송 실패(시도 {}/{}) — {}초 뒤 재시도: {}".format(
+                table, batch_no, total_batches, attempt, retry_count, wait, last_err),
+                flush=True)
+            sleep(wait)
+    raise RuntimeError(
+        "{} 배치 {}/{} upsert 실패 — 재시도 {}회 소진: {}".format(
+            table, batch_no, total_batches, retry_count, last_err
+        )
+    )
+
+
+def upsert_batch(base_url, headers, table, rows, batch_size=BATCH_SIZE, sleep=time.sleep):
     """rows를 batch_size 단위로 table에 upsert. 실제로 보낸 행 수를 돌려준다.
 
     충돌 해소 정책은 테이블마다 다르다 — TABLE_UPSERT_RESOLUTION 참조
     (parcel=merge-duplicates / unit_business=ignore-duplicates, append-only 불변식).
+
+    배치 전송은 _post_batch_with_retry가 재시도한다(네트워크 오류·5xx만 — 4xx는
+    즉시 실패). `sleep`은 테스트에서 실제로 기다리지 않도록 주입할 수 있다.
     """
     resolution = TABLE_UPSERT_RESOLUTION.get(table)
     if resolution is None:
@@ -511,16 +563,9 @@ def upsert_batch(base_url, headers, table, rows, batch_size=BATCH_SIZE):
     for i in range(0, len(rows), batch_size):
         batch = rows[i:i + batch_size]
         batch_no = i // batch_size + 1
-        r = requests.post(
-            "{}/rest/v1/{}".format(base_url, table),
-            json=batch, headers=upsert_headers, timeout=TIMEOUT_SEC,
+        _post_batch_with_retry(
+            base_url, table, batch, upsert_headers, batch_no, total_batches, sleep=sleep,
         )
-        if r.status_code >= 300:
-            raise RuntimeError(
-                "{} 배치 {}/{} upsert 실패 (HTTP {}): {}".format(
-                    table, batch_no, total_batches, r.status_code, r.text[:500]
-                )
-            )
         sent += len(batch)
         print("  [{}] {}/{} 배치 {}행 (누적 {:,}/{:,})".format(
             table, batch_no, total_batches, len(batch), sent, len(rows)), flush=True)
@@ -802,13 +847,23 @@ def main():
         print("[에러] REST 교차 확인 실패: {}".format(e))
         return 1
 
-    # parcel은 누적 테이블이라 "총행수 == 이번 스캔 수"가 아니라 두 조건으로
-    # 판단한다: ① 스캔한 걸 빠짐없이 전송했나(정확한 등호) ② 적재 전후 증가분이
-    # 이번 스캔 범위를 벗어나지 않나(음수거나 스캔 수보다 커지면 이상 신호).
+    # parcel은 누적 테이블이라 "총행수 == 이번 스캔 수"로는 판정할 수 없다
+    # (이전 분기·이전 시군구가 남긴 행 때문에 반드시 어긋난다).
+    #
+    # ⚠️ 정직하게 적어 둔다 — 아래 ①은 **현재 검출력이 0인 항등식**이다
+    # (적대검증 2026-08-10 지적). scan_and_build가 `parcel_count += len(new_parcels)`
+    # 한 직후 같은 리스트를 on_file_done으로 넘기고, flush_file은 upsert_batch가
+    # 돌려주는 len(rows)를 sent에 더하므로 두 값은 언제나 같다. 실패하면 예외가
+    # 나서 여기까지 오지도 않는다. 그러므로 **실질 판정은 ② 하나**다.
+    #   ①에 진짜 검출력을 주려면 upsert_batch가 PostgREST가 실제로 반영한 행 수를
+    #   돌려줘야 한다(Prefer: return=representation 또는 count 헤더). 지금은 그 값을
+    #   안 받으므로 ①은 "구조가 바뀌면 깨지는 가드" 정도의 의미만 갖는다.
+    # ② 적재 전후 증가분이 이번 스캔 범위를 벗어나지 않나 — 음수거나 스캔 수보다
+    #   커지면 이상 신호(다른 프로세스가 동시에 넣었거나 baseline이 잘못 잡힌 것).
     parcel_new = parcel_count - parcel_before
     parcel_ok = (
-        sent["parcel"] == result["parcel_count"]          # 스캔한 것을 전부 보냈나 (정확)
-        and 0 <= parcel_new <= result["parcel_count"]     # 증가분이 이번 스캔 범위 안인가
+        sent["parcel"] == result["parcel_count"]          # ① 항등식(위 주석 참조)
+        and 0 <= parcel_new <= result["parcel_count"]     # ② 실질 판정
     )
     ub_ok = ub_count == ub_expected
 
