@@ -322,6 +322,12 @@ create index if not exists idx_ub_pnu      on unit_business (pnu, snapshot_ym);
 create index if not exists idx_ub_name     on unit_business using gin (biz_name gin_trgm_ops);
 create index if not exists idx_ub_cat      on unit_business (cat_s_cd, snapshot_ym);
 create index if not exists idx_ub_geom     on unit_business using gist (geom);
+-- 각주 집계(v_coverage_stats) 전용 **커버링** 인덱스 — 뷰가 쓰는 두 컬럼이 다 들어
+-- 있어 힙에 안 간다(Index Only Scan). 없으면 pkey(snapshot_ym, biz_no)로 인덱스는
+-- 타지만 행마다 힙 페이지를 한 번씩 방문해(최신 스냅샷 63.5만 행 = 버퍼 63.6만 회)
+-- **캐시가 식은 첫 요청만 3초 제한을 넘겨 500**이 된다. 따뜻하면 200이라 재현이
+-- 어렵다. 실측(2026-08-11f): 버퍼 636,527 → 698, 힙 방문 0, 1,028ms → 131ms, 8.6MB.
+create index if not exists idx_ub_snapshot_floor on unit_business (snapshot_ym, floor_no);
 
 -- =====================================================================
 -- L3-b. transaction — 실거래 (매매만. 상가 임대는 데이터가 없음)
