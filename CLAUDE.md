@@ -12,6 +12,18 @@
 - **부동산 데이터 처리 규격** — `budongsan-data` 스킬 참조 (PNU 조립·층 정규화·API 카탈로그)
 - **현재 Phase** — Phase 1 진행 중 (PNU/층 정규화 + 건축물대장 조인). Phase 0(수집 준비)은 완료. `docs/PROGRESS.md` 참조
 
+### 🔴 운영 4계명 (매 세션 확인 — 어기면 복구 불가하거나 조용히 깨진다)
+
+| | 규칙 | 어기면 |
+|---|---|---|
+| 💾 | **백업은 자동이 아니다.** 새 분기 zip을 받았거나 대량 수집을 마쳤으면 `python scripts/backup_raw.py`를 **직접** 돌린다 | 포털에서 과거분이 내려가면 **재수집 불가**(절대 규칙 6). 건축HUB 일괄 파일도 **최근 3개월치만** 남는다 |
+| 📦 | **패키지 매니저는 `pnpm`.** `npm`으로 돌리지 않는다 (`pnpm-lock.yaml`·CI 기준) | 락파일이 갈라져 CI와 로컬이 다른 의존성을 쓴다 |
+| 🔑 | **키는 `.env`.** 브라우저용 공개키는 `.env.local` — 손으로 만들지 말고 `python scripts/make_env_local.py` | 손으로 만들다 **서비스키를 브라우저에 노출**하는 사고. 이 스크립트는 공개키만 골라 쓴다 |
+| 🐍 | **파이썬 명령은 프로젝트 루트에서.** `cd D:\sangga` 후 실행 | 상대경로(`data/raw/...`)가 어긋나 "파일 없음"으로 조용히 0건 처리된다 |
+
+> ⚙️ **수집·적재·점검 명령은 Claude가 직접 돌린다** (사장님께 넘기지 않는다). 사장님 손이
+> 꼭 필요한 것은 **Supabase 대시보드 SQL Editor**(마이그레이션·`ANALYZE`)와 **외부 계정 신청**뿐이다.
+
 ## 절대 규칙
 
 ### 1. 네이버·다음 부동산 크롤링 금지
@@ -80,7 +92,7 @@ constants → scoring → theme → components → hooks → App   (단방향)
 | API | Vercel Serverless |
 | DB | Supabase PostgreSQL + PostGIS (**별도 프로젝트**) |
 | 수집 | ⬜ **여전히 로컬 수동 실행이다** — 받기·적재·백업 전부 사람 손. 다만 **놓치는 것만은 막아 뒀다**: `sangkwon-quarterly-watch.yml`이 매주 포털을 확인해 새 분기가 뜨면 이슈를 자동으로 연다(비밀값 0개). 적재 후 `scripts/check_new_sangkwon_quarter.py`의 `LATEST_KNOWN_QUARTER`를 **사람이 올려야** 다음 분기를 감지한다(절대 규칙 6) |
-| 테스트 | 파이썬 **pytest 863개** + 프론트 **vitest 51개**(jsdom + @testing-library/react) + **E2E playwright**(`e2e/floor-stack.spec.ts` — 검색→선택→층 스택). CI가 셋 다 돌린다(`pnpm test:e2e`, chromium) |
+| 테스트 | 파이썬 **pytest 977개** + 프론트 **vitest 64개**(jsdom + @testing-library/react) + **E2E playwright**(`e2e/floor-stack.spec.ts` — 검색→선택→층 스택). CI가 셋 다 돌린다(`pnpm test:e2e`, chromium) |
 
 **성능 원칙**: 상권(수천 개)은 사전계산 정적 JSON, 호실(수백만)은 Supabase 쿼리.
 정적 JSON 폴백을 호실에는 두지 않는다.
@@ -117,7 +129,7 @@ pnpm exec oxlint                                # 프론트 린트
 ```
 
 ```bash
-python -m pytest tests/ -q                      # 파이썬 테스트 (863개)
+python -m pytest tests/ -q                      # 파이썬 테스트 (977개)
 python scripts/check_new_sangkwon_quarter.py    # 새 분기 스냅샷이 떴나 (읽기만, 키 불필요)
 python -m ruff check scripts/ tests/            # 파이썬 린트
 python scripts/collectors/collect_building_ledger.py --dry-run   # 수집 예산 확인(API 0콜)
@@ -133,6 +145,10 @@ python scripts/collectors/load_sangkwon_snapshot.py --sigungu-code 11,30 --dry-r
 python scripts/collectors/fetch_bldrgst_bulk.py --list             # 건축HUB 일괄 파일 목록 (다운로드 0)
 python scripts/collectors/fetch_bldrgst_bulk.py --kind title --probe  # 크기·형식만 확인 (저장 0)
 python scripts/collectors/fetch_bldrgst_bulk.py --kind title      # 표제부 zip 받기 (646MB, 로그인 불필요)
+python scripts/collectors/convert_bldrgst_bulk.py --dry-run       # zip → raw JSONL 변환 미리보기(쓰기 0)
+python scripts/collectors/convert_bldrgst_bulk.py                 # 변환 (기본 범위 11,30 = 서울+대전)
+# ↑ 변환 후에는 기존 적재기를 시군구 폴더마다 돌린다 (코드 수정 0):
+#   python scripts/collectors/load_building_ledger.py --raw-dir data/raw/bldrgst_bulk_converted/11680 --snapshot-ym 202606
 python scripts/make_env_local.py                # .env → .env.local (브라우저용 공개키만)
 python scripts/backup_raw.py --dry-run          # 원본 백업 대상 확인 (쓰기 0)
 python scripts/backup_raw.py                    # data/raw → F:\sangga-raw-backup (외장 SSD 연결 필요)

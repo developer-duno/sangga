@@ -2,7 +2,20 @@
 -- 상가 공간분석 플랫폼 — DB 스키마 v1.0
 -- 대상: Supabase (PostgreSQL 15+ / PostGIS)
 -- 사용법: Supabase 대시보드 → SQL Editor → 전체 붙여넣기 → Run
+--        (또는 `python scripts/dbx.py -f supabase/schema.sql` — .env 의
+--         SANGGA_DATABASE_URL 로 직접 실행한다)
 -- =====================================================================
+--
+-- ⚠️ **이 파일은 라이브보다 뒤처져 있다 (2026-08-11)**
+--   아래 마이그레이션이 라이브에 적용됐지만 이 파일에는 아직 안 반영됐다.
+--   새 환경을 만들 때는 이 파일을 돌린 뒤 **아래를 순서대로** 더 돌릴 것:
+--     supabase/migrations/2026-08-11d_widen_bcr.sql          (building.bcr 폭 확대)
+--     supabase/migrations/2026-08-11e_search_key_stored.sql  (검색 키 저장 컬럼 + 인덱스)
+--   ↑ 이 파일에는 `search_key(...)` **식 인덱스**가 적혀 있는데, 라이브는 그것을
+--     지우고 **저장 컬럼**(building.nm_key · parcel.road_addr_key ·
+--     parcel.jibun_addr_key) 위의 인덱스를 쓴다. 식 인덱스는 재확인 때 regexp 를
+--     19.7만 번 다시 돌려 검색이 3초를 넘겼다(EXPLAIN 실측).
+--   TODO: 다음 세션에 이 파일을 라이브와 맞춰 정리할 것.
 --
 -- 구조: 필지(parcel) → 건물(building) → 호실(unit) 3층
 --   아파트는 2층으로 충분했지만 상가는 호실 단위까지 내려가야 한다.
@@ -88,7 +101,10 @@ create table if not exists building (
   under_floors    smallint,
   approve_date    date,                             -- 사용승인일
   main_use        text,                             -- 주용도
-  bcr             numeric(6,2),                     -- 건폐율
+  -- ⚠️ numeric(6,2)(최대 9,999.99)였다가 2026-08-11 넓혔다. 원본에 건폐율이
+  --    79,095% 인 행이 있어(전체 24만 중 7행) 적재가 통째로 멈췄다.
+  --    집계에 쓸 때는 반드시 상한을 걸어 거를 것 — 한 행이 평균을 흔든다.
+  bcr             numeric(10,2),                    -- 건폐율 (소스 오류값 포함)
   far             numeric(7,2),                     -- 용적률
   parking_cnt     integer,
   is_jiphap       boolean default false,            -- 집합건물 여부
@@ -591,12 +607,40 @@ comment on view v_coverage_stats is
 -- ⚠️ security definer 인 이유: 원본 표가 anon에게 닫혀 있어(아래 공개 접근 정책)
 --    이 함수가 소유자 권한으로 대신 읽는다. search_path를 고정해 가로채기를 막고,
 --    입력은 파라미터로만 받아 문자열을 이어 붙이지 않는다(주입 4종 시험 통과).
+-- 지번(구주소) 한 줄. 실무에서 "역삼동 823-4"로 찾는 일이 많아 검색 대상에 넣었다.
+-- ⛔ concat_ws 는 IMMUTABLE 이 아니라 인덱스 식으로 못 쓴다 — text `||` 로 만든다.
+create or replace function parcel_jibun_addr(
+  sido text, sigungu text, emd text, jibun text
+) returns text
+language sql
+immutable
+parallel safe
+as $$
+  select nullif(btrim(
+           coalesce(sido, '')    || ' ' ||
+           coalesce(sigungu, '') || ' ' ||
+           coalesce(emd, '')     || ' ' ||
+           coalesce(jibun, '')
+         ), '')
+$$;
+
+comment on function parcel_jibun_addr(text, text, text, text) is
+  '지번(구주소) 한 줄. 예: 서울특별시 강남구 역삼동 823-4. '
+  'idx_parcel_jibun_addr 와 search_buildings 가 **글자 하나까지 같은 식**을 써야 인덱스를 탄다.';
+
+-- 부분 일치(ILIKE '%…%')라 gin_trgm_ops 가 필요하다. 없으면 parcel 전수 스캔.
+create index if not exists idx_parcel_jibun_addr
+  on parcel using gin (
+    parcel_jibun_addr(sido_nm, sigungu_nm, emd_nm, jibun) gin_trgm_ops
+  );
+
 create or replace function search_buildings(q text, lim int default 25)
 returns table (
   bld_id         text,
   pnu            char(19),
   bld_nm         text,
   road_addr      text,
+  jibun_addr     text,
   bld_cnt_in_pnu int,
   floor_cnt      int,
   min_floor      smallint,
@@ -615,12 +659,16 @@ as $$
     -- total_cnt=12,405). 화면은 빈 검색어를 막지만 RPC 직접 호출은 안 막힌다.
     -- LIKE 특수문자는 리터럴로. 역슬래시를 **먼저** 바꿔야 한다(나중에 바꾸면
     -- 방금 넣은 이스케이프까지 다시 이스케이프된다).
-    select case
-             when coalesce(btrim(q), '') = '' then null
-             else '%' ||
-                  replace(replace(replace(q, '\', '\\'), '%', '\%'), '_', '\_') ||
-                  '%'
-           end as p
+    -- p     : 부분 일치용 '%…%'  (검색 대상 범위를 정한다)
+    -- p_end : 끝 일치용   '%…'   (정렬에만 쓴다 — 범위를 좁히지 않는다)
+    select
+      case when coalesce(btrim(q), '') = '' then null
+           else '%' || esc.v || '%' end as p,
+      case when coalesce(btrim(q), '') = '' then null
+           else '%' || esc.v end        as p_end
+    from (
+      select replace(replace(replace(btrim(q), '\', '\\'), '%', '\%'), '_', '\_') as v
+    ) esc
   ),
   hit as (
     -- ⛔ OR 하나로 합치지 말 것 — `bld_nm ilike X OR road_addr ilike X` 처럼 **서로 다른
@@ -631,7 +679,8 @@ as $$
     --    ⛔ 이름 가지의 식은 idx_building_display_nm 과 **글자 하나까지 같아야** 한다.
     select b.bld_id, b.pnu,
            building_display_nm(b.bld_nm, b.dong_nm) as bld_nm,
-           pc.road_addr
+           pc.road_addr,
+           parcel_jibun_addr(pc.sido_nm, pc.sigungu_nm, pc.emd_nm, pc.jibun) as jibun_addr
       from building b
       join parcel pc on pc.pnu = b.pnu
       cross join pat
@@ -640,16 +689,34 @@ as $$
     union
     select b.bld_id, b.pnu,
            building_display_nm(b.bld_nm, b.dong_nm),
-           pc.road_addr
+           pc.road_addr,
+           parcel_jibun_addr(pc.sido_nm, pc.sigungu_nm, pc.emd_nm, pc.jibun)
       from building b
       join parcel pc on pc.pnu = b.pnu
       cross join pat
      where pat.p is not null
        and pc.road_addr ilike pat.p escape '\'
+    union
+    -- ★ 지번(구주소) 가지 — 2026-08-11 신설.
+    select b.bld_id, b.pnu,
+           building_display_nm(b.bld_nm, b.dong_nm),
+           pc.road_addr,
+           parcel_jibun_addr(pc.sido_nm, pc.sigungu_nm, pc.emd_nm, pc.jibun)
+      from building b
+      join parcel pc on pc.pnu = b.pnu
+      cross join pat
+     where pat.p is not null
+       and parcel_jibun_addr(pc.sido_nm, pc.sigungu_nm, pc.emd_nm, pc.jibun)
+           ilike pat.p escape '\'
   ),
   -- 그릴 층이 하나도 없는 건물은 목록에 올리지 않는다(눌러도 빈 화면).
+  -- ★ 지번이 검색어로 **끝나는가**를 한 번만 계산해 정렬 1순위로 쓴다.
+  --    '823-4'로 찾을 때 823-48이 먼저 나오면 안 된다(2026-08-11b 라이브에서 실제로 그랬다).
   eligible as (
-    select h.*, count(*) over () as total_cnt
+    select h.*,
+           count(*) over () as total_cnt,
+           coalesce(h.jibun_addr ilike (select p_end from pat) escape '\', false)
+             as jibun_hit
     from hit h
     where exists (
       select 1 from building_floor f
@@ -661,6 +728,7 @@ as $$
     select e.*
     from eligible e
     order by
+      e.jibun_hit                       desc,   -- ★ 지번 정확 일치가 1순위
       (lower(e.bld_nm) = lower(q))      desc nulls last,
       (e.bld_nm ilike q || '%')         desc nulls last,
       (e.bld_nm is null)                asc,
@@ -670,7 +738,7 @@ as $$
     limit greatest(1, least(coalesce(lim, 25), 100))
   )
   select
-    t.bld_id, t.pnu, t.bld_nm, t.road_addr,
+    t.bld_id, t.pnu, t.bld_nm, t.road_addr, t.jibun_addr,
     (select count(*)::int from building b2 where b2.pnu = t.pnu) as bld_cnt_in_pnu,
     fs.floor_cnt, fs.min_floor, fs.max_floor, fs.has_roof,
     t.total_cnt
@@ -686,6 +754,7 @@ as $$
     where s.bld_id = t.bld_id
   ) fs on true
   order by
+    t.jibun_hit                       desc,
     (lower(t.bld_nm) = lower(q))      desc nulls last,
     (t.bld_nm ilike q || '%')         desc nulls last,
     (t.bld_nm is null)                asc,

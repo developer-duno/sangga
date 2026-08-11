@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import type { SubmitEvent } from 'react';
 import { supabase } from '../lib/supabase';
 import { describeError, describeRange } from '../lib/format';
+import { openRegionLabel } from '../lib/regions';
 import type { BuildingHit } from '../types';
 
 /**
@@ -83,8 +84,8 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId }: Props
           className="search__input"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="건물명 또는 도로명주소 (예: 테헤란로 117, 미도맨션)"
-          aria-label="건물명 또는 도로명주소"
+          placeholder="건물명 · 도로명주소 · 지번 (예: 미도맨션, 테헤란로 117, 역삼동 823-4)"
+          aria-label="건물명 또는 주소"
         />
         <button className="search__btn" type="submit" disabled={loading || !query.trim()}>
           {loading ? '찾는 중…' : '검색'}
@@ -94,7 +95,9 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId }: Props
       {error && <p className="msg msg--error">{error}</p>}
 
       {searched && !loading && hits.length === 0 && !error && (
-        <p className="msg">결과가 없습니다. 지금 담긴 자료는 <strong>서울 강남구</strong>뿐입니다.</p>
+        <p className="msg">
+          결과가 없습니다. 지금 보실 수 있는 지역은 <strong>{openRegionLabel()}</strong>입니다.
+        </p>
       )}
 
       {hits.length > 0 && (
@@ -117,6 +120,8 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId }: Props
                 >
                   <span className="hit__name">{h.bld_nm || '(이름 없는 건물)'}</span>
                   <span className="hit__addr">{h.road_addr || '주소 없음'}</span>
+                  {/* 지번으로 찾은 사람이 "왜 이게 나왔나"를 알 수 있게 함께 보여준다. */}
+                  {h.jibun_addr && <span className="hit__jibun">지번 {h.jibun_addr}</span>}
                   <span className="hit__meta">
                     {describeRange(h)} · {h.floor_cnt}개 층
                     {h.bld_cnt_in_pnu > 1 && (

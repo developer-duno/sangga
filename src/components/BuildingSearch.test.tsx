@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { openRegionLabel } from '../lib/regions';
 import type { BuildingHit } from '../types';
 
 /**
@@ -54,7 +55,7 @@ describe('BuildingSearch — 화면 동작', () => {
         {...over}
       />,
     );
-    const input = screen.getByLabelText('건물명 또는 도로명주소') as HTMLInputElement;
+    const input = screen.getByLabelText('건물명 또는 주소') as HTMLInputElement;
     return { onSelect, onSearchStart, input };
   }
 
@@ -97,11 +98,13 @@ describe('BuildingSearch — 화면 동작', () => {
     expect(onSearchStart).not.toHaveBeenCalled();
   });
 
-  it('결과가 없으면 담긴 범위가 강남구뿐임을 알려준다', async () => {
+  it('결과가 없으면 지금 볼 수 있는 지역을 알려준다', async () => {
+    // ⛔ 지역명을 테스트에 박지 말 것 — regions.ts 에서 파생된 문구여야 한다.
+    //    (예전엔 '강남구'가 화면·테스트 양쪽에 박혀 있어 자료가 늘자 거짓말이 됐다.)
     const { input } = setup();
     search(input, '없는건물');
     await waitFor(() => expect(screen.getByText(/결과가 없습니다/)).toBeTruthy());
-    expect(screen.getByText(/강남구/)).toBeTruthy();
+    expect(screen.getByText(openRegionLabel())).toBeTruthy();
   });
 
   it('전체 건수는 목록 길이가 아니라 서버가 준 total_cnt를 쓴다', async () => {

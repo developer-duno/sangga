@@ -79,6 +79,16 @@ export type BuildingHit = {
    */
   bld_nm: string | null;
   road_addr: string | null;
+  /**
+   * 지번(구주소) 한 줄. 예: '서울특별시 강남구 역삼동 823-4'.
+   *
+   * 실무에서 지번으로 찾는 일이 많아 검색 대상에 넣었다(2026-08-11). 화면에도
+   * 같이 보여줘야 "823-4로 검색했는데 왜 이 건물이 나왔나"를 알 수 있다.
+   *
+   * ⚠️ 선택 필드다 — 마이그레이션(2026-08-11_search_by_jibun)이 라이브에 적용되기
+   *    전에는 서버가 이 칸을 안 준다. 없으면 그냥 안 보이면 된다(화면은 안 깨진다).
+   */
+  jibun_addr?: string | null;
   bld_cnt_in_pnu: number;
   /** 옥탑을 포함한 전체 층 수(뷰 한 행 = 한 층). */
   floor_cnt: number;
