@@ -49,7 +49,7 @@ async function mockFloorStack(page: Page) {
 }
 
 async function search(page: Page, text: string) {
-  await page.getByLabel('건물명 또는 도로명주소').fill(text);
+  await page.getByLabel('건물명 또는 주소').fill(text);
   await page.getByRole('button', { name: '검색' }).click();
 }
 
