@@ -6,16 +6,16 @@
 --         SANGGA_DATABASE_URL 로 직접 실행한다)
 -- =====================================================================
 --
--- ⚠️ **이 파일은 라이브보다 뒤처져 있다 (2026-08-11)**
---   아래 마이그레이션이 라이브에 적용됐지만 이 파일에는 아직 안 반영됐다.
---   새 환경을 만들 때는 이 파일을 돌린 뒤 **아래를 순서대로** 더 돌릴 것:
---     supabase/migrations/2026-08-11d_widen_bcr.sql          (building.bcr 폭 확대)
---     supabase/migrations/2026-08-11e_search_key_stored.sql  (검색 키 저장 컬럼 + 인덱스)
---   ↑ 이 파일에는 `search_key(...)` **식 인덱스**가 적혀 있는데, 라이브는 그것을
---     지우고 **저장 컬럼**(building.nm_key · parcel.road_addr_key ·
---     parcel.jibun_addr_key) 위의 인덱스를 쓴다. 식 인덱스는 재확인 때 regexp 를
---     19.7만 번 다시 돌려 검색이 3초를 넘겼다(EXPLAIN 실측).
---   TODO: 다음 세션에 이 파일을 라이브와 맞춰 정리할 것.
+-- ✅ **라이브와 일치한다 (2026-08-11 실측 대조)**
+--   `2026-08-11e` 까지의 마이그레이션을 이 파일에 모두 반영했다. 대조 방법은
+--   문서를 믿는 게 아니라 **라이브에서 직접 떠서 기계로 비교**했다:
+--     · 함수 5개 — pg_get_functiondef 본문을 문자 단위로 대조
+--     · 인덱스 24개 — pg_indexes 이름 집합을 대조 (죽은 식 인덱스 3개 제거)
+--     · 컬럼 144개 — information_schema.columns 로 저장 컬럼 3개 확인
+--   ⛔ 앞으로 마이그레이션을 라이브에 적용하면 **이 파일에도 같이 반영할 것.**
+--      어긋난 채로 두면 "새 환경 구축"이 조용히 다른 DB 를 만들어 낸다.
+--      (실제로 11c 의 `search_key` 가 빠진 걸 아무도 몰랐다 — 이 파일만 보면
+--       검색이 통째로 깨지는 DB 가 만들어졌을 것이다.)
 --
 -- 구조: 필지(parcel) → 건물(building) → 호실(unit) 3층
 --   아파트는 2층으로 충분했지만 상가는 호실 단위까지 내려가야 한다.
@@ -80,9 +80,10 @@ comment on column parcel.road_contact is '광대로한면/중로각지/세로한
 
 create index if not exists idx_parcel_sigungu on parcel (sigungu_code);
 create index if not exists idx_parcel_geom    on parcel using gist (geom);
--- 주소 검색용. building.bld_nm 과 대칭을 맞춘다 — 이게 없으면 search_buildings 의
--- 주소 가지가 parcel 전수 스캔이 된다(2026-08-08 실측: 같은 선택도에서 비용 8배·시간 28배).
-create index if not exists idx_parcel_road_addr on parcel using gin (road_addr gin_trgm_ops);
+-- 주소 검색용 인덱스는 여기 없다 — 아래 **§검색 키** 절에서 저장 컬럼
+-- (parcel.road_addr_key)에 건다. 이유는 그 절에 적었다.
+-- 이게 없으면 search_buildings 의 주소 가지가 parcel 전수 스캔이 된다
+-- (2026-08-08 실측: 같은 선택도에서 비용 8배·시간 28배).
 
 -- =====================================================================
 -- L2. building — 건물
@@ -112,6 +113,12 @@ create table if not exists building (
 );
 
 comment on column building.is_jiphap is '집합건물만 실거래가에 층이 나온다. 일반건축물(통건물)은 지번도 일부만 공개';
+
+comment on column building.bcr is
+  '건폐율 %. 정의상 0~100 이지만 원본에 소스 오류가 섞여 있다 '
+  '(2026-08-11 실측: 전체 24만 행 중 7행이 1만%를 넘고 최댓값 79,095%). '
+  '⚠️ 평균·분포 등 집계에 쓸 때는 반드시 상한을 걸어 거를 것 — 한 행이 통계를 통째로 흔든다. '
+  'numeric(6,2)였을 때 그 7행이 적재를 통째로 멈춰 23,351행이 유실됐다(2026-08-11d로 해소).';
 
 create index if not exists idx_building_pnu on building (pnu);
 create index if not exists idx_building_nm  on building using gin (bld_nm gin_trgm_ops);
@@ -197,10 +204,8 @@ comment on function building_display_nm(text, text) is
 revoke all on function mask_person_name(text) from public, anon, authenticated;
 revoke all on function building_display_nm(text, text) from public, anon, authenticated;
 
--- 검색용 인덱스. WHERE 절과 **글자 하나까지 같은 식**이어야 인덱스를 탄다.
+-- 검색용 인덱스는 여기 없다 — 아래 **§검색 키** 절에서 저장 컬럼(building.nm_key)에 건다.
 -- 이름이 둘 다 없는 건물은 NULL 이라 색인되지 않는다 = 이름으로는 안 찾힌다(의도).
-create index if not exists idx_building_display_nm
-  on building using gin ((building_display_nm(bld_nm, dong_nm)) gin_trgm_ops);
 
 -- =====================================================================
 -- L2-a. building_floor — 층별개요 ★ 층별 스택 뷰(§8.6)의 재료
@@ -626,13 +631,82 @@ $$;
 
 comment on function parcel_jibun_addr(text, text, text, text) is
   '지번(구주소) 한 줄. 예: 서울특별시 강남구 역삼동 823-4. '
-  'idx_parcel_jibun_addr 와 search_buildings 가 **글자 하나까지 같은 식**을 써야 인덱스를 탄다.';
+  'parcel.jibun_addr_key 가 이 값을 search_key() 로 정규화해 저장한다.';
 
--- 부분 일치(ILIKE '%…%')라 gin_trgm_ops 가 필요하다. 없으면 parcel 전수 스캔.
-create index if not exists idx_parcel_jibun_addr
-  on parcel using gin (
-    parcel_jibun_addr(sido_nm, sigungu_nm, emd_nm, jibun) gin_trgm_ops
-  );
+-- =====================================================================
+-- 검색 키 — 정규화 함수 + 저장 컬럼 + 인덱스 (2026-08-11c · 11e)
+-- =====================================================================
+-- ① 왜 정규화하나 — **띄어쓰기 하나에 결과가 사라졌다**(라이브에서 발견).
+--      '그랑프리빌딩'  → 1건 (찾힘)
+--      '그랑프리 빌딩' → 0건 (못 찾음)   ← 같은 건물인데
+--    실무에서 띄어쓰기는 사람마다 다르므로 이건 불편이 아니라 결함이다.
+--    그래서 비교 전에 양쪽 모두 **공백을 없애고 소문자로** 바꾼다.
+--    ⚠️ 어순을 바꾼 검색('빌딩 그랑프리')은 여전히 안 된다 — 흔한 문제는
+--       띄어쓰기이지 어순이 아니라서, 가지를 늘리지 않고 이 방법을 택했다
+--       (가지를 늘리면 '빌딩' 같은 흔한 단어가 더 느려진다. 알려진한계 참조).
+--
+-- ② 왜 식이 아니라 **컬럼에 저장**하나 — 식 인덱스는 흔한 검색어에서 3초 제한에
+--    걸려 500을 냈다. EXPLAIN(2026-08-11)이 원인을 짚었다:
+--      Bitmap Index Scan  → 후보 197,076건 (parcel 전체)
+--      Bitmap Heap Scan   Rows Removed by Index Recheck: 196,680 → 최종 396건
+--    2글자 검색어('명동')는 trigram 선별력이 없어 후보가 거의 전체가 되는데,
+--    인덱스가 '식'이면 **재확인 때마다 regexp_replace 를 다시 돌린다.**
+--    197,076번의 정규식이 진짜 시간 도둑이었다. 계산 결과를 컬럼에 담아 두면
+--    재확인이 단순 문자열 비교가 된다 — **결과를 자르지 않고** 빨라진다.
+--    ⛔ 그래서 식 인덱스(idx_building_display_nm · idx_parcel_road_addr ·
+--       idx_parcel_jibun_addr)는 라이브에서 지웠다. 되살리지 말 것.
+--
+-- ⚠️ generated ... stored 는 IMMUTABLE 함수만 쓸 수 있다. 아래 셋 다 IMMUTABLE 이다.
+create or replace function search_key(t text)
+returns text
+language sql
+immutable
+parallel safe
+as $$
+  select nullif(lower(regexp_replace(coalesce(t, ''), '\s+', '', 'g')), '')
+$$;
+
+comment on function search_key(text) is
+  '검색 비교용 정규화 키 — 공백 제거 + 소문자. 인덱스 식과 WHERE 식이 갈라지지 '
+  '않도록 전처리를 이 함수 하나로 묶었다(2026-08-11c).';
+
+-- 도우미 함수는 anon 에게 열지 않는다 — 화면은 search_buildings 하나만 부르고,
+-- 그 함수가 security definer 라 소유자 권한으로 이들을 대신 호출한다.
+-- ⛔ `from public` 만 쓰면 **아무것도 안 닫힌다** — PUBLIC 은 실제 롤이 아니라
+--    가상 그룹이라, anon·authenticated 가 **직접** 받은 GRANT 는 그대로 남는다
+--    (PostgreSQL 공식 sql-revoke.html + 2026-08-10 라이브 실측으로 확인).
+--    그래서 세 대상을 모두 적는다.
+revoke all on function search_key(text) from public, anon, authenticated;
+revoke all on function parcel_jibun_addr(text, text, text, text) from public, anon, authenticated;
+
+-- ── 저장 컬럼 ────────────────────────────────────────────────────────────────
+-- ⚠️ 테이블 정의부가 아니라 여기서 붙이는 이유: 저장 컬럼이 쓰는 함수
+--    (search_key · building_display_nm · parcel_jibun_addr)가 그 위에서 정의되므로,
+--    테이블을 만드는 시점에는 아직 함수가 없다.
+alter table building
+  add column if not exists nm_key text
+  generated always as (search_key(building_display_nm(bld_nm, dong_nm))) stored;
+
+comment on column building.nm_key is
+  '검색용 정규화 이름(공백 제거+소문자). search_buildings 와 idx_building_nm_key 가 이 컬럼을 쓴다. '
+  '식 인덱스였을 때는 후보 8만 건마다 regexp 를 다시 돌려 검색이 3초를 넘겼다(2026-08-11e).';
+
+alter table parcel
+  add column if not exists road_addr_key text
+  generated always as (search_key(road_addr)) stored;
+
+alter table parcel
+  add column if not exists jibun_addr_key text
+  generated always as (search_key(parcel_jibun_addr(sido_nm, sigungu_nm, emd_nm, jibun))) stored;
+
+comment on column parcel.jibun_addr_key is
+  '검색용 정규화 지번주소(공백 제거+소문자). 예: 서울특별시강남구역삼동823-4';
+
+-- ── 저장 컬럼 위의 인덱스 ────────────────────────────────────────────────────
+-- 부분 일치(LIKE '%…%')라 gin_trgm_ops 가 필요하다. 없으면 전수 스캔.
+create index if not exists idx_building_nm_key on building using gin (nm_key gin_trgm_ops);
+create index if not exists idx_parcel_road_key on parcel using gin (road_addr_key gin_trgm_ops);
+create index if not exists idx_parcel_jibun_key on parcel using gin (jibun_addr_key gin_trgm_ops);
 
 create or replace function search_buildings(q text, lim int default 25)
 returns table (
@@ -654,68 +728,53 @@ security definer
 set search_path = public
 as $$
   with pat as (
-    -- 빈 검색어(NULL·''·공백뿐)는 NULL 패턴으로 만들어 아래에서 0건이 되게 한다.
-    -- 안 그러면 패턴이 '%%'가 되어 **전 건물 목록 덤프**가 된다(2026-08-08 실측
-    -- total_cnt=12,405). 화면은 빈 검색어를 막지만 RPC 직접 호출은 안 막힌다.
-    -- LIKE 특수문자는 리터럴로. 역슬래시를 **먼저** 바꿔야 한다(나중에 바꾸면
-    -- 방금 넣은 이스케이프까지 다시 이스케이프된다).
-    -- p     : 부분 일치용 '%…%'  (검색 대상 범위를 정한다)
-    -- p_end : 끝 일치용   '%…'   (정렬에만 쓴다 — 범위를 좁히지 않는다)
     select
-      case when coalesce(btrim(q), '') = '' then null
-           else '%' || esc.v || '%' end as p,
-      case when coalesce(btrim(q), '') = '' then null
-           else '%' || esc.v end        as p_end
+      case when esc.v is null then null else '%' || esc.v || '%' end as p,
+      case when esc.v is null then null else '%' || esc.v      end as p_end,
+      esc.v as k
     from (
-      select replace(replace(replace(btrim(q), '\', '\\'), '%', '\%'), '_', '\_') as v
+      select case when search_key(q) is null then null
+                  else replace(replace(replace(search_key(q), '\', '\\'),
+                               '%', '\%'), '_', '\_')
+             end as v
     ) esc
   ),
   hit as (
-    -- ⛔ OR 하나로 합치지 말 것 — `bld_nm ilike X OR road_addr ilike X` 처럼 **서로 다른
-    --    두 조인 테이블에 걸친 OR** 은 어느 한쪽만으로 매칭을 못 정해서, Postgres 가
-    --    조인 전에 한 표만 거르지 못한다 → gin_trgm 인덱스가 통째로 무력화된다.
-    --    2026-08-08 EXPLAIN 실측: OR = Seq Scan 두 개 / UNION = Bitmap Index Scan 두 개.
-    --    UNION 은 각 가지가 표 하나만 거르므로 인덱스를 타고, 중복은 UNION 이 제거한다.
-    --    ⛔ 이름 가지의 식은 idx_building_display_nm 과 **글자 하나까지 같아야** 한다.
-    select b.bld_id, b.pnu,
+    -- ⛔ OR 하나로 합치지 말 것 — 서로 다른 두 표에 걸친 OR 은 조인 전에 한 표를
+    --    못 걸러 gin_trgm 인덱스가 통째로 무력화된다(2026-08-08 EXPLAIN 실측).
+    -- ⛔ WHERE 는 **저장 컬럼**(nm_key/road_addr_key/jibun_addr_key)을 써야 한다.
+    --    식으로 되돌리면 재확인 때 regexp 가 다시 돌아 3초를 넘긴다(2026-08-11e).
+    select b.bld_id, b.pnu, b.nm_key,
            building_display_nm(b.bld_nm, b.dong_nm) as bld_nm,
-           pc.road_addr,
+           pc.road_addr, pc.jibun_addr_key,
            parcel_jibun_addr(pc.sido_nm, pc.sigungu_nm, pc.emd_nm, pc.jibun) as jibun_addr
       from building b
       join parcel pc on pc.pnu = b.pnu
       cross join pat
-     where pat.p is not null
-       and building_display_nm(b.bld_nm, b.dong_nm) ilike pat.p escape '\'
+     where pat.p is not null and b.nm_key like pat.p escape '\'
     union
-    select b.bld_id, b.pnu,
+    select b.bld_id, b.pnu, b.nm_key,
            building_display_nm(b.bld_nm, b.dong_nm),
-           pc.road_addr,
+           pc.road_addr, pc.jibun_addr_key,
            parcel_jibun_addr(pc.sido_nm, pc.sigungu_nm, pc.emd_nm, pc.jibun)
       from building b
       join parcel pc on pc.pnu = b.pnu
       cross join pat
-     where pat.p is not null
-       and pc.road_addr ilike pat.p escape '\'
+     where pat.p is not null and pc.road_addr_key like pat.p escape '\'
     union
-    -- ★ 지번(구주소) 가지 — 2026-08-11 신설.
-    select b.bld_id, b.pnu,
+    select b.bld_id, b.pnu, b.nm_key,
            building_display_nm(b.bld_nm, b.dong_nm),
-           pc.road_addr,
+           pc.road_addr, pc.jibun_addr_key,
            parcel_jibun_addr(pc.sido_nm, pc.sigungu_nm, pc.emd_nm, pc.jibun)
       from building b
       join parcel pc on pc.pnu = b.pnu
       cross join pat
-     where pat.p is not null
-       and parcel_jibun_addr(pc.sido_nm, pc.sigungu_nm, pc.emd_nm, pc.jibun)
-           ilike pat.p escape '\'
+     where pat.p is not null and pc.jibun_addr_key like pat.p escape '\'
   ),
-  -- 그릴 층이 하나도 없는 건물은 목록에 올리지 않는다(눌러도 빈 화면).
-  -- ★ 지번이 검색어로 **끝나는가**를 한 번만 계산해 정렬 1순위로 쓴다.
-  --    '823-4'로 찾을 때 823-48이 먼저 나오면 안 된다(2026-08-11b 라이브에서 실제로 그랬다).
   eligible as (
     select h.*,
            count(*) over () as total_cnt,
-           coalesce(h.jibun_addr ilike (select p_end from pat) escape '\', false)
+           coalesce(h.jibun_addr_key like (select p_end from pat) escape '\', false)
              as jibun_hit
     from hit h
     where exists (
@@ -723,17 +782,17 @@ as $$
       where f.bld_id = h.bld_id and f.floor_no is not null
     )
   ),
-  -- 무거운 층 집계는 실제로 보여줄 몇 개에만 돌린다.
   top as (
     select e.*
     from eligible e
+    cross join pat
     order by
-      e.jibun_hit                       desc,   -- ★ 지번 정확 일치가 1순위
-      (lower(e.bld_nm) = lower(q))      desc nulls last,
-      (e.bld_nm ilike q || '%')         desc nulls last,
-      (e.bld_nm is null)                asc,
-      length(e.bld_nm)                  asc nulls last,
-      e.road_addr                       asc nulls last,
+      e.jibun_hit                    desc,
+      (e.nm_key = pat.k)             desc nulls last,   -- 저장 컬럼 비교 (regexp 없음)
+      (e.nm_key like pat.k || '%')   desc nulls last,
+      (e.bld_nm is null)             asc,
+      length(e.bld_nm)               asc nulls last,
+      e.road_addr                    asc nulls last,
       e.bld_id
     limit greatest(1, least(coalesce(lim, 25), 100))
   )
@@ -744,7 +803,6 @@ as $$
     t.total_cnt
   from top t
   join lateral (
-    -- 옥탑(99)은 범위에서 뺀다. 섞으면 최고층이 항상 99가 되어 지상 최고층이 사라진다.
     select
       count(*)::int                                    as floor_cnt,
       min(s.floor_no) filter (where s.floor_no <> 99)  as min_floor,
@@ -754,12 +812,12 @@ as $$
     where s.bld_id = t.bld_id
   ) fs on true
   order by
-    t.jibun_hit                       desc,
-    (lower(t.bld_nm) = lower(q))      desc nulls last,
-    (t.bld_nm ilike q || '%')         desc nulls last,
-    (t.bld_nm is null)                asc,
-    length(t.bld_nm)                  asc nulls last,
-    t.road_addr                       asc nulls last,
+    t.jibun_hit                     desc,
+    (t.nm_key = search_key(q))      desc nulls last,
+    (t.nm_key like search_key(q) || '%') desc nulls last,
+    (t.bld_nm is null)              asc,
+    length(t.bld_nm)                asc nulls last,
+    t.road_addr                     asc nulls last,
     t.bld_id;
 $$;
 

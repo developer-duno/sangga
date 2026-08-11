@@ -131,28 +131,84 @@ def test_generic_dong_regex_does_not_eat_real_names(schema_sql):
     assert not eaten, "진짜 이름인데 일반 라벨로 걸립니다: {}".format(eaten)
 
 
-def test_search_and_index_use_the_same_expression(schema_sql, migration_sql):
-    """검색 WHERE 절과 인덱스가 같은 식을 써야 gin 인덱스를 탄다.
+def test_2026_08_08e_migration_keeps_its_own_expression(migration_sql):
+    """2026-08-08e 마이그레이션은 **그 시점의 식**을 그대로 유지해야 한다.
 
-    한 글자만 달라도 인덱스를 안 타는데, 그건 에러가 아니라 **조용한 성능 저하**라
-    사람 눈으로는 안 잡힌다.
+    과거 마이그레이션 파일은 역사 기록이다 — 라이브에 이미 그 형태로 적용됐으므로
+    나중 설계(2026-08-11e 저장 컬럼)에 맞춰 소급해 고치지 않는다. 고치면 "라이브에
+    실제로 무엇이 실행됐는가"를 잃는다.
     """
-    for label, sql in (("schema.sql", schema_sql), ("migration", migration_sql)):
-        assert DISPLAY_EXPR in sql, (
-            "{}: 표시명 인덱스 식 `{}` 이 없습니다".format(label, DISPLAY_EXPR)
+    assert DISPLAY_EXPR in migration_sql, (
+        "2026-08-08e: 표시명 식 `{}` 이 사라졌습니다".format(DISPLAY_EXPR)
+    )
+    assert "idx_building_display_nm" in migration_sql, (
+        "2026-08-08e: 당시 만든 표시명 인덱스 기록이 사라졌습니다"
+    )
+    assert DISPLAY_EXPR_QUALIFIED + " ilike pat.p" in migration_sql, (
+        "2026-08-08e: 당시 검색 이름 가지 기록이 바뀌었습니다"
+    )
+
+
+def test_schema_search_uses_stored_key_columns(schema_sql):
+    """검색 WHERE 절은 **저장 컬럼**을 봐야 한다 (식으로 되돌아가면 3초를 넘긴다).
+
+    2026-08-11e 이전에는 "WHERE 와 인덱스가 **같은 식**인가"를 지켰다. 지금은 그
+    식의 결과를 컬럼(nm_key·road_addr_key·jibun_addr_key)에 저장하고 그 위에
+    인덱스를 건다. 그래서 지킬 것이 "식끼리 일치"에서 **"컬럼끼리 일치"**로 바뀌었다.
+
+    왜 그렇게 바꿨나 (EXPLAIN 실측 2026-08-11)
+    -----------------------------------------
+    '명동' 같은 2글자 검색어는 trigram 선별력이 없어 후보가 거의 전체가 된다.
+    인덱스가 '식'이면 **재확인 때마다 regexp_replace 를 다시 돌린다** —
+    후보 197,076건 × 정규식 = statement_timeout 3초 초과 → HTTP 500.
+    저장 컬럼이면 재확인이 단순 문자열 비교라 **결과를 자르지 않고** 빨라진다.
+
+    식으로 되돌리면 에러가 아니라 **흔한 검색어만 조용히 500**이 되므로,
+    사람 눈으로는 안 잡힌다 — 이 테스트가 가드다.
+    """
+    # 저장 컬럼이 표시명 식으로 만들어져야 한다
+    # (동명칭 404개 찾기·개인 성명 가림이 전부 이 식에 걸려 있다).
+    assert (
+        "generated always as (search_key({})) stored".format(DISPLAY_EXPR)
+        in schema_sql
+    ), "schema.sql: building.nm_key 가 표시명 식으로 만들어지지 않습니다"
+
+    # WHERE 가 저장 컬럼을 본다 (세 가지 = 이름·도로명·지번)
+    for where in (
+        "b.nm_key like pat.p",
+        "pc.road_addr_key like pat.p",
+        "pc.jibun_addr_key like pat.p",
+    ):
+        assert where in schema_sql, (
+            "schema.sql: 검색 WHERE 가 `{}` 를 안 씁니다 — 식으로 되돌아가면 "
+            "흔한 검색어가 3초를 넘겨 500이 됩니다".format(where)
         )
-        assert "idx_building_display_nm" in sql, (
-            "{}: 표시명 인덱스가 없습니다 — 검색이 전수 스캔이 됩니다".format(label)
+
+    # 그 컬럼 위에 인덱스가 있어야 한다 (없으면 전수 스캔)
+    for idx in ("idx_building_nm_key", "idx_parcel_road_key", "idx_parcel_jibun_key"):
+        assert idx in schema_sql, (
+            "schema.sql: {} 가 없습니다 — 검색이 전수 스캔이 됩니다".format(idx)
         )
-        assert DISPLAY_EXPR_QUALIFIED + " ilike pat.p" in sql, (
-            "{}: 검색 이름 가지가 표시명 식을 안 씁니다 — 동명칭 404개가 다시 "
-            "안 찾히게 됩니다".format(label)
+
+    # 죽은 식 인덱스를 되살리면 안 된다 (라이브에서 이미 지웠다)
+    for dead in (
+        "idx_building_display_nm",
+        "idx_parcel_road_addr",
+        "idx_parcel_jibun_addr",
+    ):
+        assert not re.search(
+            r"(?m)^create index if not exists {}\b".format(dead), schema_sql
+        ), (
+            "schema.sql: 죽은 식 인덱스 {} 가 되살아났습니다 — 라이브에는 없어서 "
+            "정본과 라이브가 갈라집니다(2026-08-11e)".format(dead)
         )
-        # 옛 방식(원본 bld_nm 직접 비교)으로 되돌아가면 성명이 다시 새고
-        # 동명칭도 다시 안 찾힌다.
-        assert "and b.bld_nm ilike pat.p" not in sql, (
-            "{}: 검색이 원본 bld_nm 을 직접 보고 있습니다 — 2026-08-08e 이전으로 "
-            "되돌아갔습니다".format(label)
+
+    # 옛 방식(원본 bld_nm 직접 비교)으로 되돌아가면 성명이 다시 새고
+    # 동명칭 404개도 다시 안 찾힌다.
+    for old in ("and b.bld_nm ilike pat.p", "and b.bld_nm like pat.p"):
+        assert old not in schema_sql, (
+            "schema.sql: 검색이 원본 bld_nm 을 직접 보고 있습니다 — "
+            "2026-08-08e 이전으로 되돌아갔습니다"
         )
 
 
