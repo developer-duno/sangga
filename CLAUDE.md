@@ -10,7 +10,7 @@
 - **상세 계획** — `docs/상세계획.md` (데이터 소스·분석 로직·검증 설계·로드맵 전부)
 - **DB 스키마** — `supabase/schema.sql`
 - **부동산 데이터 처리 규격** — `budongsan-data` 스킬 참조 (PNU 조립·층 정규화·API 카탈로그)
-- **현재 Phase** — **Phase 1 통과**(2026-08-09, 조인률 95.92%/96.86%) → 1단계 서비스범위(서울+대전) 확장 완료(결정 0006) → **Phase 2 진행 중**(층별 스택 화면, 눈 검증 2/10). `docs/PROGRESS.md` 참조
+- **현재 Phase** — **Phase 1 통과**(2026-08-09, 조인률 95.92%/96.86%) → 1단계 서비스범위(서울+대전) 확장 완료(결정 0006) → **Phase 2 진행 중**(층별 스택 화면, 눈 검증 2/10). 2026-08-14: `district`(상권 경계) **0행 → 서울 1,650개** 적재(결정 0008) — 단 **읽는 화면이 아직 없다**. `docs/PROGRESS.md` 참조
 
 ### 🔴 운영 5계명 (매 세션 확인 — 어기면 복구 불가하거나 조용히 깨진다)
 
@@ -92,8 +92,8 @@ constants → scoring → theme → components → hooks → App   (단방향)
 | 프론트 | React 19 + Vite, 카카오맵 + deck.gl |
 | API | Vercel Serverless |
 | DB | Supabase PostgreSQL + PostGIS (**별도 프로젝트**) |
-| 수집 | ⬜ **여전히 로컬 수동 실행이다** — 받기·적재·백업 전부 사람 손. 다만 **놓치는 것만은 막아 뒀다**: `sangkwon-quarterly-watch.yml`이 매주 포털을 확인해 새 분기가 뜨면 이슈를 자동으로 연다(비밀값 0개). 적재 후 `scripts/check_new_sangkwon_quarter.py`의 `LATEST_KNOWN_QUARTER`를 **사람이 올려야** 다음 분기를 감지한다(절대 규칙 6) |
-| 테스트 | 파이썬 **pytest 1,054개** + 프론트 **vitest 83개**(jsdom + @testing-library/react) + **E2E playwright 6개**(`e2e/floor-stack.spec.ts` — 검색→선택→층 스택, 너무 넓은 검색 안내창). CI가 셋 다 돌린다(`pnpm test:e2e`, chromium). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도 |
+| 수집 | ⬜ **여전히 로컬 수동 실행이다** — 받기·적재·백업 전부 사람 손. 다만 **놓치는 것만은 막아 뒀다**: `sangkwon-quarterly-watch.yml`이 매주 포털을 확인해 새 분기가 뜨면 이슈를 자동으로 연다(비밀값 0개). **감시가 실패해도 이슈를 연다**(2026-08-14 추가 — 08-10 에 죽은 걸 나흘 뒤에 알았다). 목록 조회는 30초 타임아웃으로 3번 재시도한다. 적재 후 `scripts/check_new_sangkwon_quarter.py`의 `LATEST_KNOWN_QUARTER`를 **사람이 올려야** 다음 분기를 감지한다(절대 규칙 6). ⚠️ **남은 구멍**: "돌았는데 실패"는 알리지만 **예약이 아예 안 도는 경우**(공개 레포는 60일 무활동 시 자동 중지, 부하 시 큐 드롭)는 여전히 조용하다 |
+| 테스트 | 파이썬 **pytest 1,109개** + 프론트 **vitest 83개**(jsdom + @testing-library/react) + **E2E playwright 6개**(`e2e/floor-stack.spec.ts` — 검색→선택→층 스택, 너무 넓은 검색 안내창). CI가 셋 다 돌린다(`pnpm test:e2e`, chromium). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도 |
 
 **성능 원칙**: 상권(수천 개)은 사전계산 정적 JSON, 호실(수백만)은 Supabase 쿼리.
 정적 JSON 폴백을 호실에는 두지 않는다.
@@ -131,7 +131,7 @@ pnpm exec oxlint                                # 프론트 린트
 ```
 
 ```bash
-python -m pytest tests/ -q                      # 파이썬 테스트 (1,054개)
+python -m pytest tests/ -q                      # 파이썬 테스트 (1,109개)
 python scripts/check_new_sangkwon_quarter.py    # 새 분기 스냅샷이 떴나 (읽기만, 키 불필요)
 python -m ruff check scripts/ tests/            # 파이썬 린트
 python scripts/collectors/collect_building_ledger.py --dry-run   # 수집 예산 확인(API 0콜)
@@ -151,6 +151,11 @@ python scripts/collectors/convert_bldrgst_bulk.py --dry-run       # zip → raw 
 python scripts/collectors/convert_bldrgst_bulk.py                 # 변환 (기본 범위 11,30 = 서울+대전)
 # ↑ 변환 후에는 기존 적재기를 시군구 폴더마다 돌린다 (코드 수정 0):
 #   python scripts/collectors/load_building_ledger.py --raw-dir data/raw/bldrgst_bulk_converted/11680 --snapshot-ym 202606
+python scripts/collectors/fetch_seoul_district.py --probe          # 서울 상권영역 크기·좌표계만 확인(저장 0)
+python scripts/collectors/fetch_seoul_district.py                  # 상권영역 zip 받기 (2.07MB, 로그인 불필요)
+python scripts/collectors/load_seoul_district.py --dry-run         # SHP → district 미리보기 (DB 쓰기 0)
+python scripts/collectors/load_seoul_district.py                   # 적재 (1,650개, 한 트랜잭션 — 실패 시 통째 롤백)
+# ↑ pyshp 필요: python -m pip install pyshp  (순수 파이썬, GDAL 불필요. CI 에는 안 깔려 있고 안 깔아도 된다)
 python scripts/dbx.py -c "refresh materialized view concurrently mv_search_parcel; analyze;"   # ★ 적재 후 필수
 python scripts/make_env_local.py                # .env → .env.local (브라우저용 공개키만)
 python scripts/backup_raw.py --dry-run          # 원본 백업 대상 확인 (쓰기 0)
