@@ -325,15 +325,45 @@ class TestCheckDestination:
         예전엔 os.name=='nt'가 아니면 통째로 스킵했다(CI에서 이 안전장치가 한 번도
         안 돎).
 
-        여기서는 os.path.splitdrive를 표준 라이브러리 ntpath(윈도우 경로 규칙)로
-        바꿔치기해, 실행 OS와 무관하게 '윈도우처럼 드라이브 문자를 해석했을 때
-        그 드라이브가 없으면 막는다'는 실제 로직을 그대로 실행시킨다. Q: 드라이브는
-        이 프로젝트가 실제로 쓰는 외장 SSD 문자(F:)와 다른, 존재할 리 없는 문자다.
+        여기서는 os.path를 표준 라이브러리 ntpath(윈도우 경로 규칙)로 통째로 바꿔치기해,
+        실행 OS와 무관하게 '윈도우처럼 경로를 해석했을 때 그 드라이브가 없으면 막는다'는
+        실제 로직을 그대로 실행시킨다. Q: 드라이브는 이 프로젝트가 실제로 쓰는 외장 SSD
+        문자(F:)와 다른, 존재할 리 없는 문자다.
+
+        ⛔ splitdrive 하나만 바꾸면 안 된다 — 2026-08-13에 그렇게 했다가 Windows에서만
+           통과하고 CI(Ubuntu)에서 터졌다. check_destination은 splitdrive **전에**
+           os.path.abspath를 부르는데, POSIX 규칙의 abspath는 'Q:\\...'를 상대경로로 보고
+           앞에 현재 폴더를 붙인다:
+               ntpath.abspath('Q:\\x')   -> 'Q:\\x'                (드라이브 Q:)
+               posixpath.abspath('Q:\\x') -> '/현재폴더/Q:\\x'      (드라이브 없음 → 통과)
+           경로 규칙은 **한 벌로** 바꿔야 흉내가 성립한다.
         """
-        monkeypatch.setattr(backup_raw.os.path, "splitdrive", ntpath.splitdrive)
+        monkeypatch.setattr(backup_raw.os, "path", ntpath)
         with pytest.raises(RuntimeError) as e:
             check_destination(r"Q:\sangga-raw-backup")
         assert "연결" in str(e.value)
+
+    def test_missing_drive_raises_with_posix_separator(self, monkeypatch):
+        """구분자가 '/'인 환경(=CI Ubuntu)에서도 막아야 한다.
+
+        위 테스트만으로는 **윈도우에서 개발하면 이 결함을 못 본다.** 실행 OS가 윈도우면
+        os.sep이 어차피 '\\'라 흉내가 저절로 맞아떨어지기 때문이다. 2026-08-13에 정확히
+        그렇게 로컬 984개가 전부 초록인 채 CI만 빨간불이 났다.
+
+        그래서 여기서는 os.sep까지 POSIX 쪽('/')으로 바꿔 CI 조건을 윈도우에서도
+        재현한다 — 이 테스트가 그 사각지대를 메우는 유일한 장치다.
+        """
+        monkeypatch.setattr(backup_raw.os, "path", ntpath)
+        monkeypatch.setattr(backup_raw.os, "sep", "/")
+        with pytest.raises(RuntimeError) as e:
+            check_destination(r"Q:\sangga-raw-backup")
+        assert "연결" in str(e.value)
+
+    def test_existing_drive_passes_under_windows_rules(self, monkeypatch):
+        """반대로 있는 드라이브를 막으면 안 된다 (과잉 차단 방지)."""
+        monkeypatch.setattr(backup_raw.os, "path", ntpath)
+        monkeypatch.setattr(ntpath, "isdir", lambda p: True)
+        check_destination(r"Q:\sangga-raw-backup")  # 예외가 없으면 통과
 
 
 class TestFreeSpace:

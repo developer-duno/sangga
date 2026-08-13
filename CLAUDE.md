@@ -92,7 +92,7 @@ constants → scoring → theme → components → hooks → App   (단방향)
 | API | Vercel Serverless |
 | DB | Supabase PostgreSQL + PostGIS (**별도 프로젝트**) |
 | 수집 | ⬜ **여전히 로컬 수동 실행이다** — 받기·적재·백업 전부 사람 손. 다만 **놓치는 것만은 막아 뒀다**: `sangkwon-quarterly-watch.yml`이 매주 포털을 확인해 새 분기가 뜨면 이슈를 자동으로 연다(비밀값 0개). 적재 후 `scripts/check_new_sangkwon_quarter.py`의 `LATEST_KNOWN_QUARTER`를 **사람이 올려야** 다음 분기를 감지한다(절대 규칙 6) |
-| 테스트 | 파이썬 **pytest 1,005개** + 프론트 **vitest 74개**(jsdom + @testing-library/react) + **E2E playwright 5개**(`e2e/floor-stack.spec.ts` — 검색→선택→층 스택, 너무 넓은 검색 안내창). CI가 셋 다 돌린다(`pnpm test:e2e`, chromium). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도 |
+| 테스트 | 파이썬 **pytest 1,007개** + 프론트 **vitest 74개**(jsdom + @testing-library/react) + **E2E playwright 5개**(`e2e/floor-stack.spec.ts` — 검색→선택→층 스택, 너무 넓은 검색 안내창). CI가 셋 다 돌린다(`pnpm test:e2e`, chromium). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도 |
 
 **성능 원칙**: 상권(수천 개)은 사전계산 정적 JSON, 호실(수백만)은 Supabase 쿼리.
 정적 JSON 폴백을 호실에는 두지 않는다.
@@ -130,7 +130,7 @@ pnpm exec oxlint                                # 프론트 린트
 ```
 
 ```bash
-python -m pytest tests/ -q                      # 파이썬 테스트 (1,005개)
+python -m pytest tests/ -q                      # 파이썬 테스트 (1,007개)
 python scripts/check_new_sangkwon_quarter.py    # 새 분기 스냅샷이 떴나 (읽기만, 키 불필요)
 python -m ruff check scripts/ tests/            # 파이썬 린트
 python scripts/collectors/collect_building_ledger.py --dry-run   # 수집 예산 확인(API 0콜)
@@ -158,6 +158,12 @@ python scripts/backup_raw.py --verify           # 백업본을 다시 읽어 SHA
 
 > 💾 **원본 백업은 자동이 아니다.** 새 분기 zip을 받았거나 대량 수집을 마쳤으면 `backup_raw.py`를
 > 직접 한 번 돌린다. 과거 분기 zip은 포털에서 내려가면 **재수집이 불가능**하다(절대 규칙 6).
+
+> ⚠️ **경로·드라이브·`os.sep`을 다루는 코드는 윈도우에서 초록이어도 CI(Ubuntu)에서 깨진다** (2026-08-13 사고).
+> `os.path`는 윈도우에선 `ntpath`, CI에선 `posixpath`라 **같은 문자열을 다르게 해석**한다 —
+> `abspath('Q:\\x')`가 윈도우에선 `Q:\x`(드라이브 Q:)지만 CI에선 `/현재폴더/Q:\x`(드라이브 없음)다.
+> 테스트에서 OS를 흉내 낼 때는 `os.path` 한 벌을 통째로 바꾼다(함수 하나만 바꾸면 반쪽 흉내가 된다).
+> **이 종류는 윈도우에서 원리적으로 못 잡는다 — CI가 유일한 방어선이니 CI 빨간불을 넘기지 말 것.**
 
 > ⚠️ **화면 문구를 바꿨으면 커밋 전에 `pnpm test:e2e`를 한 번 돌린다** (2026-08-11 사고).
 > 검색창 라벨을 `건물명 또는 도로명주소` → `건물명 또는 주소`로 줄였을 때 **pytest도
