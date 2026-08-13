@@ -53,6 +53,14 @@ TIMEOUT_SEC = 300  # zip이 수백 MB라 넉넉히
 RETRY_COUNT = 3  # 파일 1개당 최대 시도 횟수(최초 시도 포함)
 RETRY_BACKOFF_BASE_SEC = 2  # 지수 백오프 밑값(2, 4초 …)
 
+# 목록 조회(1단계)는 zip 다운로드와 성격이 다르다 — 응답이 HTML 조각 몇 KB뿐이다.
+# 그런데 TIMEOUT_SEC(300초)을 그대로 쓰면 연결이 막혔을 때 늦게야 알아챈다. 실제로
+# 2026-08-10 CI 는 파이썬 타임아웃이 아니라 **리눅스가 TCP 연결을 130초 만에 포기**해서
+# 죽었다(Errno 110). 짧게 끊고 여러 번 두드리는 편이 훨씬 빨리, 더 자주 성공한다.
+LIST_TIMEOUT_SEC = 30
+LIST_RETRY_COUNT = 3  # 최초 시도 포함
+LIST_RETRY_BACKOFF_SEC = 5  # 5초 → 10초 (2배씩)
+
 # 분기 스냅샷 파일명 패턴 (…_20251231 형태). "포천시 업소수" 같은 단발성 파일은 제외
 RE_QUARTERLY = re.compile(r"_20\d{6}$")
 
@@ -69,7 +77,7 @@ ZIP_MAGIC = b"PK\x03\x04"
 # ── 공통 HTTP 도우미 ──────────────────────────────────────────────────────────
 
 
-def _post(url: str, form: dict) -> bytes:
+def _post(url: str, form: dict, timeout: int = TIMEOUT_SEC) -> bytes:
     """POST 폼 요청 후 응답 바디를 그대로 돌려준다."""
     data = urllib.parse.urlencode(form, encoding="utf-8").encode("utf-8")
     req = urllib.request.Request(
@@ -82,8 +90,47 @@ def _post(url: str, form: dict) -> bytes:
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=TIMEOUT_SEC) as resp:
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read()
+
+
+def _post_with_retry(
+    url: str,
+    form: dict,
+    timeout: int = LIST_TIMEOUT_SEC,
+    attempts: int = LIST_RETRY_COUNT,
+    sleep=time.sleep,
+) -> bytes:
+    """작은 POST 요청을 짧은 타임아웃으로 여러 번 두드린다.
+
+    왜 재시도가 필요한가 (2026-08-10 실측)
+    --------------------------------------
+    CI 의 주간 감시가 `Errno 110 Connection timed out` 으로 죽었는데, **이틀 전 같은
+    러너가 같은 포털을 8초 만에 읽고 성공**했다. 즉 미국 러너에서 한국 포털이 영영
+    안 닿는 게 아니라 **간헐적으로 막힌다.** 한 번 실패했다고 포기하면 주 1회 감시가
+    일주일을 통째로 건너뛰고, 그 사이 새 분기가 올라왔다 내려가면 소급 불가다
+    (CLAUDE.md 절대 규칙 6).
+
+    파일 다운로드 쪽은 이미 `RETRY_COUNT` 루프가 감싸고 있다. 재시도가 하나도 없던
+    곳은 목록 조회뿐이었고, 그게 정확히 죽은 지점이다.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            return _post(url, form, timeout=timeout)
+        except Exception as e:
+            if attempt == attempts:
+                raise
+            wait = LIST_RETRY_BACKOFF_SEC * (2 ** (attempt - 1))
+            print(
+                "  포털 응답 없음 ({}/{}) — {}초 뒤 다시 시도합니다: {}".format(
+                    attempt, attempts, wait, e
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            sleep(wait)
+    # attempts >= 1 이면 위 루프에서 반드시 return 하거나 raise 한다.
+    raise RuntimeError("재시도 루프가 한 번도 실행되지 않았습니다 (attempts 확인 필요).")
 
 
 # ── 1단계: 과거 파일 목록 ─────────────────────────────────────────────────────
@@ -96,7 +143,7 @@ def fetch_history_list() -> tuple:
     돌려준다 — 실측 결과 포털 목록에 비분기 단발 파일이 섞여 있어(예: 2026-08-07
     기준 48건 중 7건), 사람이 그 이름을 보고 정말 제외해도 되는지 판정할 수 있어야 한다.
     """
-    body = _post(
+    body = _post_with_retry(
         URL_HIST_LIST,
         {"publicDataPk": PUBLIC_DATA_PK, "publicDataDetailPk": BASE_DETAIL_PK},
     )

@@ -152,6 +152,77 @@ def test_already_downloaded_true_for_valid_zip(tmp_path, monkeypatch):
     assert dsh.already_downloaded(str(path)) is True
 
 
+# ── 목록 조회 재시도 (2026-08-10 CI 실패 재발 방지) ──────────────────────────
+
+# 주간 감시가 `Errno 110 Connection timed out` 으로 죽었는데 이틀 전 같은 러너는 8초
+# 만에 성공했다 = 간헐적 실패다. 재시도가 하나도 없던 곳은 목록 조회뿐이었다.
+
+
+class _Flaky:
+    """지정한 횟수만큼 실패한 뒤 성공하는 가짜 _post. 넘어온 timeout 도 기록한다."""
+
+    def __init__(self, fail_times, payload=b"ok"):
+        self.fail_times = fail_times
+        self.payload = payload
+        self.calls = 0
+        self.timeouts = []
+
+    def __call__(self, url, form, timeout=None):
+        self.calls += 1
+        self.timeouts.append(timeout)
+        if self.calls <= self.fail_times:
+            raise OSError("[Errno 110] Connection timed out")
+        return self.payload
+
+
+def test_post_with_retry_succeeds_first_try_without_sleeping(monkeypatch):
+    fake = _Flaky(fail_times=0)
+    monkeypatch.setattr(dsh, "_post", fake)
+    waits = []
+    assert dsh._post_with_retry("u", {}, sleep=waits.append) == b"ok"
+    assert fake.calls == 1
+    assert waits == []  # 멀쩡할 때 괜히 기다리지 않는다
+
+
+def test_post_with_retry_recovers_after_transient_failure(monkeypatch):
+    """한 번 실패했다고 포기하면 주 1회 감시가 일주일을 통째로 건너뛴다."""
+    fake = _Flaky(fail_times=1)
+    monkeypatch.setattr(dsh, "_post", fake)
+    waits = []
+    assert dsh._post_with_retry("u", {}, sleep=waits.append) == b"ok"
+    assert fake.calls == 2
+    assert waits == [dsh.LIST_RETRY_BACKOFF_SEC]
+
+
+def test_post_with_retry_backoff_doubles(monkeypatch):
+    fake = _Flaky(fail_times=2)
+    monkeypatch.setattr(dsh, "_post", fake)
+    waits = []
+    dsh._post_with_retry("u", {}, attempts=3, sleep=waits.append)
+    assert waits == [dsh.LIST_RETRY_BACKOFF_SEC, dsh.LIST_RETRY_BACKOFF_SEC * 2]
+
+
+def test_post_with_retry_raises_after_all_attempts(monkeypatch):
+    """무한 재시도로 CI 를 붙잡아 두지 않는다 — 결국 실패해야 실패 알림이 열린다."""
+    fake = _Flaky(fail_times=99)
+    monkeypatch.setattr(dsh, "_post", fake)
+    waits = []
+    with pytest.raises(OSError):
+        dsh._post_with_retry("u", {}, attempts=3, sleep=waits.append)
+    assert fake.calls == 3
+    assert waits == [dsh.LIST_RETRY_BACKOFF_SEC, dsh.LIST_RETRY_BACKOFF_SEC * 2]
+
+
+def test_history_list_uses_short_timeout_not_download_timeout(monkeypatch):
+    """목록에 300초를 쓰면 리눅스가 130초에 먼저 연결을 포기해(Errno 110) 파이썬
+    타임아웃이 영영 안 울린다 — 그게 2026-08-10 실패의 실제 모양이었다."""
+    fake = _Flaky(fail_times=0, payload=b"")
+    monkeypatch.setattr(dsh, "_post", fake)
+    dsh.fetch_history_list()
+    assert fake.timeouts == [dsh.LIST_TIMEOUT_SEC]
+    assert dsh.LIST_TIMEOUT_SEC < dsh.TIMEOUT_SEC
+
+
 # ── fetch_history_list (탈락 항목 로그용 분리 검증) ───────────────────────────
 
 _SAMPLE_HTML = """
@@ -164,7 +235,10 @@ _SAMPLE_HTML = """
 
 
 def test_fetch_history_list_separates_quarterly_and_excluded(monkeypatch):
-    monkeypatch.setattr(dsh, "_post", lambda url, form: _SAMPLE_HTML.encode("utf-8"))
+    # 목록 조회는 _post_with_retry 를 거치므로 가짜도 timeout 인자를 받아야 한다.
+    monkeypatch.setattr(
+        dsh, "_post", lambda url, form, timeout=None: _SAMPLE_HTML.encode("utf-8")
+    )
     items, excluded = dsh.fetch_history_list()
 
     # uddi:q2가 두 번 나오지만 분기 항목은 dedup되어 1개만 남는다.
@@ -177,7 +251,7 @@ def test_fetch_history_list_separates_quarterly_and_excluded(monkeypatch):
 
 def test_fetch_history_list_all_quarterly_no_excluded(monkeypatch):
     html = '<a href="#" onclick="openFileDetailPopup(1)" data-public-pk="uddi:only">상가정보_20240101</a>'
-    monkeypatch.setattr(dsh, "_post", lambda url, form: html.encode("utf-8"))
+    monkeypatch.setattr(dsh, "_post", lambda url, form, timeout=None: html.encode("utf-8"))
     items, excluded = dsh.fetch_history_list()
     assert len(items) == 1
     assert excluded == []
