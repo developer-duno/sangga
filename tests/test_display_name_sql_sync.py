@@ -418,7 +418,7 @@ def test_search_scope_gate_exists(schema_sql):
         "schema.sql: search_scope_limit() 가 없습니다 — 상한이 코드 여기저기 흩어지면 "
         "서로 다른 값으로 갈라진다"
     )
-    assert "create or replace function search_scope(q text)" in schema_sql, (
+    assert "create or replace function search_scope(q text, sigungu text default null)" in schema_sql, (
         "schema.sql: search_scope() 가 없습니다 — 화면이 '결과 없음'과 '너무 넓음'을 "
         "구분하지 못하게 된다"
     )
@@ -497,8 +497,8 @@ def test_search_reads_the_searchable_parcel_summary(schema_sql):
     """검색은 parcel 이 아니라 mv_search_parcel 을 훑어야 한다."""
     flat = re.sub(r"\s+", " ", schema_sql)
     for fn, head in (
-        ("search_buildings", "create or replace function search_buildings(q text, lim int default 25)"),
-        ("search_scope", "create or replace function search_scope(q text)"),
+        ("search_buildings", "create or replace function search_buildings(q text, lim int default 25, sigungu text default null)"),
+        ("search_scope", "create or replace function search_scope(q text, sigungu text default null)"),
     ):
         i = schema_sql.index(head)
         j = schema_sql.index("$$;", schema_sql.index("as $$", i)) + 3
@@ -543,3 +543,66 @@ def test_search_summary_has_the_indexes_it_needs(schema_sql):
         assert "{} on mv_search_parcel using gin ({} gin_trgm_ops)".format(idx, col) in flat, (
             "schema.sql: {} 가 없습니다 — 3글자 이상 검색이 전수 스캔이 됩니다".format(idx)
         )
+
+
+# =====================================================================
+# 구 단위 검색 + 요약표 권한 (2026-08-13e · 13f)
+# =====================================================================
+
+
+def test_search_can_be_narrowed_to_one_sigungu(schema_sql):
+    """검색이 "고른 구 안에서만" 될 수 있어야 한다 (사장님 결정 2026-08-13).
+
+    같은 건물 이름이 여러 구에 겹치기 때문이다 — 이름 33,851종 중 2,443종(7.2%)이
+    2개 이상 구에 존재한다. 좁히는 길이 사라지면 그 중복이 그대로 화면에 나온다.
+    """
+    flat = re.sub(r"\s+", " ", schema_sql)
+    assert "sigungu_code" in flat, "schema.sql: 요약표에 시군구 칸이 없습니다"
+    assert "create index if not exists idx_msp_sigungu on mv_search_parcel (sigungu_code)" in flat, (
+        "schema.sql: 구로 좁히는 인덱스가 없습니다 — 좁혀도 전수 스캔이 됩니다"
+    )
+    # ⚠️ **정확히 4곳**이어야 한다 — search_scope 의 주소·이름 가지 2곳,
+    #    search_buildings 의 addr·nm 가지 2곳. `>= 2` 로 느슨하게 두면 절반을
+    #    지워도 초록이 된다(2026-08-13 주입 시험에서 실제로 그렇게 샜다).
+    assert flat.count("pat.gu is null or pc.sigungu_code = pat.gu") == 4, (
+        "schema.sql: 구 좁히기 조건이 4곳이 아닙니다({}곳) — 검색·범위판정 각각의 "
+        "주소·이름 두 가지 모두에 걸려 있어야 합니다".format(
+            flat.count("pat.gu is null or pc.sigungu_code = pat.gu"))
+    )
+
+
+def test_open_sigungu_list_comes_from_the_database(schema_sql):
+    """고를 수 있는 구 목록은 **자료가 있는 곳만** 나와야 한다.
+
+    프론트에 목록을 박아 두면 자료 없는 구를 고를 수 있게 되고, 고르면 아무것도
+    안 나와 "고장난 것"처럼 보인다.
+    """
+    flat = re.sub(r"\s+", " ", schema_sql)
+    assert "create materialized view if not exists mv_open_sigungu" in flat
+    assert "create or replace function list_open_sigungu()" in flat
+    assert "grant execute on function list_open_sigungu() to anon" in flat, (
+        "schema.sql: 화면이 구 목록을 못 읽습니다"
+    )
+
+
+def test_materialized_views_are_closed_to_anon(schema_sql):
+    """⛔ 요약표는 공개키에게 열면 안 된다.
+
+    2026-08-13 적대검증 실측: 만들어 두기만 했더니 `GET /rest/v1/mv_search_parcel`
+    가 **200** 이었고 188,442행 전체를 페이지네이션으로 내려받을 수 있었다 —
+    검색 상한 게이트를 통째로 건너뛰는 옆문이었다. 원인은 Supabase 가 스키마 public 에
+    걸어 둔 기본 권한이라, **새로 만드는 표마다 자동으로 열린다.**
+    """
+    flat = re.sub(r"\s+", " ", schema_sql)
+    for mv in ("mv_search_parcel", "mv_open_sigungu"):
+        m = re.search(r"revoke all on {}\s+from\s+([^;]+);".format(mv), flat)
+        assert m, "schema.sql: {} 의 권한 회수문이 없습니다".format(mv)
+        for role in ("anon", "authenticated"):
+            assert role in m.group(1), (
+                "schema.sql: {} 회수 대상에 {}이 없습니다 — `from public` 만으로는 "
+                "직접 받은 GRANT 가 안 빠집니다".format(mv, role)
+            )
+    assert "alter default privileges in schema public revoke all on tables from anon" in flat, (
+        "schema.sql: 기본 권한이 안전한 쪽으로 안 바뀌어 있습니다 — 다음에 표를 하나 "
+        "더 만들면 또 자동으로 열립니다(사람 기억에 의존하게 됩니다)"
+    )
