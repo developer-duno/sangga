@@ -24,14 +24,20 @@ function makeQuery(result: { data: unknown; error: unknown }) {
 const responses = {
   floors: { data: [] as unknown, error: null as unknown },
   stats: { data: [] as unknown, error: null as unknown },
+  /** 서버 함수 list_building_districts 의 응답. */
+  districts: { data: null as unknown, error: null as unknown },
 };
 
 vi.mock('../lib/supabase', () => ({
   FLOOR_STACK_VIEW: 'v_floor_stack',
   COVERAGE_STATS_VIEW: 'v_coverage_stats',
+  BUILDING_DISTRICTS_FN: 'list_building_districts',
   supabase: {
     from: (view: string) =>
       makeQuery(view === 'v_coverage_stats' ? responses.stats : responses.floors),
+    // 상권 줄이 이 rpc 를 부른다. 흉내에 rpc 가 없으면 화면이 통째로 죽으므로
+    // (undefined.then) 여기 없는 것 자체가 다른 테스트 전부를 빨갛게 만든다.
+    rpc: (_fn: string, _args?: unknown) => Promise.resolve(responses.districts),
   },
 }));
 
@@ -88,6 +94,7 @@ function stats(over: Partial<CoverageStats> = {}): CoverageStats {
 beforeEach(() => {
   responses.floors = { data: [floor()], error: null };
   responses.stats = { data: [stats()], error: null };
+  responses.districts = { data: { covered: true, districts: [] }, error: null };
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
@@ -193,5 +200,70 @@ describe('FloorStack — 본체', () => {
     // null 인 층에는 '—' 만 남고 "점포 0"이 또 나오면 안 된다(0과 null이 같아 보이면 실패).
     expect(screen.getAllByText('점포 0')).toHaveLength(1);
     expect(screen.getByText('—')).toBeTruthy();
+  });
+});
+
+describe('FloorStack — 속한 상권', () => {
+  /**
+   * 이 줄이 말해야 하는 상태가 셋이고, 셋을 섞으면 안 된다:
+   *   ① 상권 여럿에 걸침 → 전부 나열 (사장님 결정)
+   *   ② 자료는 있는데 어느 경계에도 안 듦 → "없음" (정상 상태)
+   *   ③ 그 지역에 상권 자료 자체가 없음 → "준비 중" (모른다는 뜻)
+   * ②를 ③처럼 말하면 "모르는 것"을 "없다"고 단정하게 된다.
+   */
+
+  it('여러 상권에 걸치면 하나만 고르지 않고 전부 나열한다', async () => {
+    responses.districts = {
+      data: {
+        covered: true,
+        districts: [
+          { name: '역삼역', type: '발달상권' },
+          { name: '선릉역', type: '발달상권' },
+        ],
+      },
+      error: null,
+    };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText(/역삼역\(발달상권\)/)).toBeTruthy());
+    expect(screen.getByText(/선릉역\(발달상권\)/)).toBeTruthy();
+    // 공공누리 1유형(출처표시) 의무 — 상권을 보여줄 때 항상 함께 나가야 한다.
+    expect(screen.getByText(/출처: 서울특별시 상권분석서비스/)).toBeTruthy();
+  });
+
+  it('자료는 있는데 경계 밖이면 "없음"이라고 말한다 (출처는 그대로 붙인다)', async () => {
+    // 경계 밖은 정상 상태다. 이 판정도 서울 자료를 읽어서 내린 것이므로 출처를 붙인다.
+    responses.districts = { data: { covered: true, districts: [] }, error: null };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText(/어느 상권 경계에도 들지 않는/)).toBeTruthy());
+    expect(screen.getByText(/출처: 서울특별시 상권분석서비스/)).toBeTruthy();
+    expect(screen.queryByText(/준비되지 않았습니다/)).toBeNull();
+  });
+
+  it('그 지역에 상권 자료가 없으면 "준비 중"이라고 말한다 (출처는 안 붙인다)', async () => {
+    responses.districts = { data: { covered: false, districts: [] }, error: null };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText(/아직 준비되지 않았습니다/)).toBeTruthy());
+    // 서울 자료로 내린 판정이 아니므로 출처를 붙이면 안 된다.
+    expect(screen.queryByText(/서울특별시 상권분석서비스/)).toBeNull();
+    // "없음"(경계 밖)과 같은 말로 뭉뚱그리면 안 된다.
+    expect(screen.queryByText(/어느 상권 경계에도 들지 않는/)).toBeNull();
+  });
+
+  it('조회에 실패하면 상권 줄을 아예 그리지 않는다 (본체는 정상)', async () => {
+    // 못 읽었을 때 "없음"이라고 적으면 모르는 것을 아는 것처럼 말하게 된다.
+    responses.districts = { data: null, error: { message: 'permission denied' } };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText('1층')).toBeTruthy());
+    expect(screen.queryByText(/속한 상권/)).toBeNull();
+    expect(screen.queryByText(/서울특별시 상권분석서비스/)).toBeNull();
+  });
+
+  it('이름이 없는 상권도 빠뜨리지 않고 세어 보여준다', async () => {
+    responses.districts = {
+      data: { covered: true, districts: [{ name: null, type: null }] },
+      error: null,
+    };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText(/\(이름 없음\)/)).toBeTruthy());
   });
 });

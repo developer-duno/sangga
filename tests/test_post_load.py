@@ -201,6 +201,7 @@ class TestAnonExposure:
         assert post_load.ANON_READABLE_ALLOWLIST == ("v_floor_stack", "v_coverage_stats")
         assert post_load.ANON_CALLABLE_ALLOWLIST == (
             "search_buildings", "search_scope", "list_open_sigungu",
+            "list_building_districts",
         )
 
 

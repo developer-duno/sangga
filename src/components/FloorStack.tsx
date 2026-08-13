@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react';
-import { supabase, FLOOR_STACK_VIEW, COVERAGE_STATS_VIEW } from '../lib/supabase';
-import type { BuildingHit, CoverageStats, FloorRow } from '../types';
+import {
+  supabase,
+  FLOOR_STACK_VIEW,
+  COVERAGE_STATS_VIEW,
+  BUILDING_DISTRICTS_FN,
+} from '../lib/supabase';
+import type { BuildingDistricts, BuildingHit, CoverageStats, FloorRow } from '../types';
 import { formatArea, formatApproveDate, formatFloor, formatQuarter, oneInEvery } from '../lib/format';
 
 /**
@@ -22,6 +27,8 @@ export function FloorStack({ building }: Props) {
   const [openFloor, setOpenFloor] = useState<number | null>(null);
   /** 각주에 쓸 집계. 건물과 무관하므로 처음 한 번만 읽는다. */
   const [stats, setStats] = useState<CoverageStats | null>(null);
+  /** 이 건물이 속한 상권. 못 읽으면 null로 남고, 그때는 그 줄을 아예 그리지 않는다. */
+  const [districts, setDistricts] = useState<BuildingDistricts | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,6 +83,28 @@ export function FloorStack({ building }: Props) {
     };
   }, [building.bld_id]);
 
+  useEffect(() => {
+    let cancelled = false;
+    // 건물이 바뀌는 순간 옛 상권을 지운다 — 안 지우면 새 건물 밑에 앞 건물의 상권이
+    // 잠깐 붙어 보인다(그 짧은 순간이 그대로 틀린 정보다).
+    setDistricts(null);
+
+    supabase.rpc(BUILDING_DISTRICTS_FN, { bld_id: building.bld_id }).then(({ data, error: err }) => {
+      if (cancelled) return;
+      if (err || !data) {
+        // 각주 집계와 같은 철학이다 — 이 줄이 없어도 화면 본체(층 목록)는 정상이다.
+        // 못 읽었을 때 "상권 없음"이라고 적으면, 모르는 것을 아는 것처럼 말하게 된다.
+        console.warn('상권 조회 실패 — 상권 줄 없이 표시합니다', err);
+        return;
+      }
+      setDistricts(data as BuildingDistricts);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [building.bld_id]);
+
   if (loading) return <p className="msg">층 정보를 불러오는 중…</p>;
   if (error) return <p className="msg msg--error">{error}</p>;
   if (floors.length === 0) return <p className="msg">이 건물에는 층 정보가 없습니다.</p>;
@@ -100,6 +129,7 @@ export function FloorStack({ building }: Props) {
       <header className="stack__head">
         <h2 className="stack__title">{head.bld_nm || '(이름 없는 건물)'}</h2>
         <p className="stack__addr">{head.road_addr || '주소 없음'}</p>
+        <DistrictLine info={districts} />
         <dl className="stack__facts">
           <div>
             <dt>사용승인</dt>
@@ -178,6 +208,57 @@ export function FloorStack({ building }: Props) {
         {basisPhrase}
       </p>
     </section>
+  );
+}
+
+/**
+ * "속한 상권" 한 줄.
+ *
+ * 말해야 하는 상태가 셋이고, 셋을 절대 같은 문장으로 뭉뚱그리지 않는다:
+ *  ① 상권 여럿에 걸침 → **전부** 나열한다(하나만 고르면 그 고르는 규칙이 숨은 판단이 된다)
+ *  ② 자료는 있는데 어느 경계에도 안 듦 → "없음". 서울에서도 흔한 **정상 상태**다
+ *     (비율 수치는 여기 적지 않는다 — 자료가 바뀌면 그 숫자만 낡는다)
+ *  ③ 그 지역에 상권 경계 자료 자체가 없음 → "준비 중". "상권 밖"이 아니라 "모른다"는 뜻이다
+ *
+ * 출처 표기는 공공누리 1유형(출처표시) 의무라 ①·②에 붙인다. ③은 서울 자료로 판정한
+ * 것이 아니므로 붙이지 않는다.
+ */
+function DistrictLine({ info }: { info: BuildingDistricts | null }) {
+  // 아직 안 왔거나 못 읽었으면 아무것도 안 그린다(위 useEffect에서 콘솔 경고만 남긴다).
+  if (!info) return null;
+
+  if (!info.covered) {
+    return (
+      <p className="stack__district">
+        <span className="stack__district-key">속한 상권:</span>
+        이 지역은 상권 경계 자료가 아직 준비되지 않았습니다.
+      </p>
+    );
+  }
+
+  if (info.districts.length === 0) {
+    return (
+      <p className="stack__district">
+        <span className="stack__district-key">속한 상권:</span>
+        없음 — 어느 상권 경계에도 들지 않는 위치입니다.
+        <span className="stack__district-src">출처: 서울특별시 상권분석서비스</span>
+      </p>
+    );
+  }
+
+  const names = info.districts
+    .map((d) => {
+      const name = d.name || '(이름 없음)';
+      return d.type ? `${name}(${d.type})` : name;
+    })
+    .join(' · ');
+
+  return (
+    <p className="stack__district">
+      <span className="stack__district-key">속한 상권:</span>
+      {names}
+      <span className="stack__district-src">출처: 서울특별시 상권분석서비스</span>
+    </p>
   );
 }
 

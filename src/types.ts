@@ -68,6 +68,28 @@ export type CoverageStats = {
   floor_missing_pct: number;
 };
 
+/** 건물이 들어가 있는 상권 하나. 이름·종류만 나온다(경계 좌표는 안 나간다). */
+export type DistrictHit = {
+  name: string | null;
+  /** '골목상권'·'발달상권'·'전통시장'·'관광특구' 4종(서울 상권분석서비스 원본 그대로). */
+  type: string | null;
+};
+
+/**
+ * 함수 `list_building_districts(bld_id)`의 응답.
+ *
+ * ⚠️ **두 가지 "상권 없음"을 구분해야 한다.**
+ *  · `covered: false` — 그 지역엔 상권 경계 자료 **자체가 아직 없다**(예: 대전).
+ *    상권 밖이라는 뜻이 아니라 "알 수 없다"는 뜻이다.
+ *  · `covered: true` + `districts: []` — 자료는 있는데 이 건물이 **어느 경계에도 안 든다**.
+ *    이건 정상 상태다(서울에도 이런 건물이 흔하다).
+ * 둘을 같은 문구로 말하면 "자료가 없는 것"을 "상권 밖"이라고 단정하게 된다.
+ */
+export type BuildingDistricts = {
+  covered: boolean;
+  districts: DistrictHit[];
+};
+
 /**
  * 지금 검색할 수 있는 시군구 하나(뷰 `list_open_sigungu()` 한 행).
  *

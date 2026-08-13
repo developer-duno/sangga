@@ -13,6 +13,7 @@ import { searchHit, floorRow, coverageStats } from './fixtures';
  *   POST /rest/v1/rpc/search_buildings   (검색)
  *   GET  /rest/v1/v_coverage_stats       (각주 집계)
  *   GET  /rest/v1/v_floor_stack          (층 목록)
+ *   POST /rest/v1/rpc/list_building_districts  (속한 상권 — FloorStack이 건물마다 부른다)
  * playwright.config.ts에서 VITE_SUPABASE_URL을 실존하지 않는 도메인으로 주입하므로
  * 브라우저 입장에서 전부 교차 출처(cross-origin) 요청이다 — preflight(OPTIONS)도 함께
  * 응답해야 실제 GET/POST가 나간다.
@@ -30,6 +31,10 @@ const SEARCH_PATTERN = '**/rest/v1/rpc/search_buildings*';
 const SCOPE_PATTERN = '**/rest/v1/rpc/search_scope*';
 const STATS_PATTERN = '**/rest/v1/v_coverage_stats*';
 const FLOOR_PATTERN = '**/rest/v1/v_floor_stack*';
+// ⚠️ 이 함수는 jsonb **스칼라**를 돌려준다 — PostgREST 가 그대로 JSON 으로 주므로
+//    응답이 행 배열이 아니라 **객체 하나**다. 배열로 흉내 내면 라이브와 모양이 달라져
+//    "테스트만 통과하는" 가짜 초록이 된다.
+const DISTRICT_PATTERN = '**/rest/v1/rpc/list_building_districts*';
 
 const CORS_HEADERS = {
   'access-control-allow-origin': '*',
@@ -56,6 +61,10 @@ async function mockJson(page: Page, pattern: string, body: unknown, delayMs = 0)
 async function mockFloorStack(page: Page) {
   await mockJson(page, STATS_PATTERN, [coverageStats()]);
   await mockJson(page, FLOOR_PATTERN, [floorRow()]);
+  await mockJson(page, DISTRICT_PATTERN, {
+    covered: true,
+    districts: [{ name: '역삼역', type: '발달상권' }],
+  });
 }
 
 /** 구 목록(RegionPicker가 마운트 시 부르는 것)을 가로챈다. 기본값은 강남구 하나. */
@@ -96,6 +105,10 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     const stack = page.locator('section.stack');
     await expect(stack.getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
     await expect(stack.getByText('서울 강남구 테헤란로 1')).toBeVisible();
+    // 속한 상권 한 줄(2026-08-14). 이 줄은 별도 RPC 응답에 달려 있어 다른 조각이 다
+    // 정상이어도 혼자 조용히 빠질 수 있다 — 그래서 여기서 눈으로 확인한다.
+    await expect(stack.getByText('속한 상권:')).toBeVisible();
+    await expect(stack.getByText(/역삼역\(발달상권\)/)).toBeVisible();
   });
 
   test('B. 새 검색을 제출하면 이전 층 스택이 즉시 사라진다', async ({ page }) => {
