@@ -10,7 +10,7 @@
 - **상세 계획** — `docs/상세계획.md` (데이터 소스·분석 로직·검증 설계·로드맵 전부)
 - **DB 스키마** — `supabase/schema.sql`
 - **부동산 데이터 처리 규격** — `budongsan-data` 스킬 참조 (PNU 조립·층 정규화·API 카탈로그)
-- **현재 Phase** — Phase 1 진행 중 (PNU/층 정규화 + 건축물대장 조인). Phase 0(수집 준비)은 완료. `docs/PROGRESS.md` 참조
+- **현재 Phase** — **Phase 1 통과**(2026-08-09, 조인률 95.92%/96.86%) → 1단계 서비스범위(서울+대전) 확장 완료(결정 0006) → **Phase 2 진행 중**(층별 스택 화면, 눈 검증 2/10). `docs/PROGRESS.md` 참조
 
 ### 🔴 운영 4계명 (매 세션 확인 — 어기면 복구 불가하거나 조용히 깨진다)
 
@@ -92,7 +92,7 @@ constants → scoring → theme → components → hooks → App   (단방향)
 | API | Vercel Serverless |
 | DB | Supabase PostgreSQL + PostGIS (**별도 프로젝트**) |
 | 수집 | ⬜ **여전히 로컬 수동 실행이다** — 받기·적재·백업 전부 사람 손. 다만 **놓치는 것만은 막아 뒀다**: `sangkwon-quarterly-watch.yml`이 매주 포털을 확인해 새 분기가 뜨면 이슈를 자동으로 연다(비밀값 0개). 적재 후 `scripts/check_new_sangkwon_quarter.py`의 `LATEST_KNOWN_QUARTER`를 **사람이 올려야** 다음 분기를 감지한다(절대 규칙 6) |
-| 테스트 | 파이썬 **pytest 984개** + 프론트 **vitest 65개**(jsdom + @testing-library/react) + **E2E playwright 3개**(`e2e/floor-stack.spec.ts` — 검색→선택→층 스택). CI가 셋 다 돌린다(`pnpm test:e2e`, chromium). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도 |
+| 테스트 | 파이썬 **pytest 1,005개** + 프론트 **vitest 74개**(jsdom + @testing-library/react) + **E2E playwright 5개**(`e2e/floor-stack.spec.ts` — 검색→선택→층 스택, 너무 넓은 검색 안내창). CI가 셋 다 돌린다(`pnpm test:e2e`, chromium). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도 |
 
 **성능 원칙**: 상권(수천 개)은 사전계산 정적 JSON, 호실(수백만)은 Supabase 쿼리.
 정적 JSON 폴백을 호실에는 두지 않는다.
@@ -124,13 +124,13 @@ constants → scoring → theme → components → hooks → App   (단방향)
 ```bash
 pnpm dev                                        # 개발 서버 (http://localhost:5173)
 pnpm build                                      # 타입 검사 + 빌드 (tsc -b && vite build)
-pnpm test                                       # 프론트 테스트 (vitest, 65개)
-pnpm test:e2e                                   # ★ 화면 E2E (playwright, 3개) — 아래 경고 참조
+pnpm test                                       # 프론트 테스트 (vitest, 74개)
+pnpm test:e2e                                   # ★ 화면 E2E (playwright, 5개) — 아래 경고 참조
 pnpm exec oxlint                                # 프론트 린트
 ```
 
 ```bash
-python -m pytest tests/ -q                      # 파이썬 테스트 (978개)
+python -m pytest tests/ -q                      # 파이썬 테스트 (1,005개)
 python scripts/check_new_sangkwon_quarter.py    # 새 분기 스냅샷이 떴나 (읽기만, 키 불필요)
 python -m ruff check scripts/ tests/            # 파이썬 린트
 python scripts/collectors/collect_building_ledger.py --dry-run   # 수집 예산 확인(API 0콜)

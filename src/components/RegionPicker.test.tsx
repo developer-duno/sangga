@@ -57,7 +57,22 @@ describe('RegionPicker', () => {
     render(<RegionPicker />);
     for (const s of SIDOS) {
       const btn = screen.getByRole('button', { name: new RegExp(s.name) });
-      expect(btn.getAttribute('aria-disabled')).toBe(isOpenSido(s.code) ? 'false' : 'true');
+      if (isOpenSido(s.code)) {
+        expect(btn.className).toContain('region__chip--on');
+      } else {
+        expect(btn.className).toContain('region__chip--off');
+        expect(btn.getAttribute('aria-label')).toMatch(/준비 중/);
+      }
+    }
+  });
+
+  it('잠긴 칩에는 aria-disabled 를 걸지 않는다 — 눌러야 안내에 닿을 수 있어서다', () => {
+    // aria-disabled=true 면 보조기술 사용자가 "비활성"으로 안내받아 클릭을 시도하지
+    // 않을 수 있다. 이 컴포넌트는 일부러 눌리게 설계됐다(상단 주석 4-9행).
+    render(<RegionPicker />);
+    for (const s of SIDOS) {
+      const btn = screen.getByRole('button', { name: new RegExp(s.name) });
+      expect(btn.getAttribute('aria-disabled')).toBeNull();
     }
   });
 

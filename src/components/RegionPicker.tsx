@@ -42,7 +42,7 @@ export function RegionPicker() {
               <button
                 type="button"
                 className={`region__chip${open ? ' region__chip--on' : ' region__chip--off'}`}
-                aria-disabled={!open}
+                aria-label={open ? undefined : `${s.name}(${s.fullName})은(는) 준비 중입니다. 누르면 안내를 볼 수 있어요.`}
                 onClick={() => setPicked(s)}
               >
                 {!open && <span aria-hidden="true">🔒 </span>}
