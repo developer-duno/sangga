@@ -785,16 +785,112 @@ create index if not exists idx_building_nm_key on building using gin (nm_key gin
 create index if not exists idx_parcel_road_key on parcel using gin (road_addr_key gin_trgm_ops);
 create index if not exists idx_parcel_jibun_key on parcel using gin (jibun_addr_key gin_trgm_ops);
 
+-- =====================================================================
+-- 검색 전용 요약표 — 찾힐 수 있는 필지만 (2026-08-13d)
+-- =====================================================================
+-- 전국 시드로 parcel 이 1,119,149행이 됐지만 건물은 서울·대전 242,631동뿐이다.
+-- 늘어난 93만 필지는 **검색 결과가 될 수 없는데도**(건물이 없어 조인에서 탈락)
+-- 검색할 때마다 훑혔다 — 2글자 검색어는 trigram 이 못 걸러 표를 통째로 훑기 때문이다.
+-- 실측(2026-08-13): '명동' 1,725ms -> 500. 게다가 범위 판정이 건물 없는 필지까지
+-- 세어 '명동'(전국 필지 약 10,036 > 상한 6,000)을 **막아 버렸다.**
+--
+-- 필터로는 안 고쳐진다(EXISTS 4,620ms / 건물에서 출발 2,401ms / 열린 지역만 1,417ms).
+-- 비용이 "무엇을 거르나"가 아니라 **"몇 행을 훑나"로 정해지기 때문**이다.
+-- => 훑을 표 자체를 작게 만든다: 188,442행(42MB), 같은 스캔 **109ms**(15.8배).
+--    ⚠️ 옛 주석의 '25MB'는 인덱스 없는 임시표를 잰 값이었다 — 실제는 42MB(총 63MB).
+--
+-- ⚠️ **자료를 새로 넣으면 반드시 갱신할 것** (ANALYZE 와 같은 성격의 적재 후 절차):
+--      refresh materialized view concurrently mv_search_parcel;
+--    안 하면 새로 넣은 건물이 **조용히 검색에서 빠진다**(에러가 아니다).
+
+create materialized view if not exists mv_search_parcel as
+select
+  pc.pnu,
+  substr(pc.pnu, 1, 5)::char(5) as sigungu_code,   -- 검색 범위를 좁히는 칸
+  pc.road_addr,
+  pc.road_addr_key,
+  pc.jibun_addr_key,
+  pc.sido_nm,
+  pc.sigungu_nm,
+  pc.emd_nm,
+  pc.jibun
+from parcel pc
+where exists (select 1 from building b where b.pnu = pc.pnu);
+
+comment on materialized view mv_search_parcel is
+  '§8.1 검색 전용 요약표 — **건물이 있는 필지만** 담는다(2026-08-13). 전국 시드로 parcel 이 '
+  '112만 행이 됐지만 건물은 서울·대전 24만 동뿐이라, 나머지 93만 필지는 검색 결과가 될 수 없는데도 '
+  '매번 훑혔다(명동 1,725ms → 500). 이 표는 188,442행(42MB, 인덱스 포함 63MB)이라 같은 스캔이 109ms 다. '
+  'sigungu_code 는 "고른 구 안에서만 검색"(2026-08-13e)에 쓴다. '
+  '⚠️ 자료를 새로 넣으면 `python scripts/post_load.py` 를 반드시 돌릴 것 — '
+  '안 하면 새 건물이 조용히 검색에서 빠진다(ANALYZE 와 같은 성격의 적재 후 필수 절차).';
+
+create unique index if not exists idx_msp_pnu        on mv_search_parcel (pnu);
+create index if not exists idx_msp_road_key          on mv_search_parcel using gin (road_addr_key gin_trgm_ops);
+create index if not exists idx_msp_jibun_key         on mv_search_parcel using gin (jibun_addr_key gin_trgm_ops);
+-- 구로 좁히는 것이 이제 기본 경로다 — 이 인덱스가 그 길을 연다.
+create index if not exists idx_msp_sigungu           on mv_search_parcel (sigungu_code);
+
+analyze mv_search_parcel;
+
+-- ── 2) 고를 수 있는 구 목록 ─────────────────────────────────────────────────
+-- ⚠️ **자료가 실제로 있는 구만** 낸다. 목록을 코드에 박아 두면 자료가 없는 구를
+--    고를 수 있게 되고, 고르면 아무것도 안 나와 "고장난 것"처럼 보인다.
+--    30행짜리라 물질화해 두고 요약표와 함께 갱신한다(매 화면 로드마다 24만 행을
+--    집계할 이유가 없다).
+create materialized view if not exists mv_open_sigungu as
+select
+  substr(pc.sigungu_code, 1, 2)::char(2) as sido_code,
+  max(pc.sido_nm)                        as sido_nm,
+  pc.sigungu_code,
+  max(pc.sigungu_nm)                     as sigungu_nm,
+  count(*)::int                          as building_cnt
+from mv_search_parcel pc
+join building b on b.pnu = pc.pnu
+group by pc.sigungu_code;
+
+comment on materialized view mv_open_sigungu is
+  '§8.1 지금 검색할 수 있는 시군구 목록(자료가 실제로 있는 곳만). 화면의 지역 고르기가 이걸 읽는다. '
+  '⚠️ 목록을 프론트에 박지 말 것 — 자료 없는 구를 고르면 "고장난 것"처럼 보인다. '
+  '`python scripts/post_load.py` 가 mv_search_parcel 과 함께 갱신한다.';
+
+create unique index if not exists idx_mos_sigungu on mv_open_sigungu (sigungu_code);
+analyze mv_open_sigungu;
+
+create or replace function list_open_sigungu()
+returns table (sido_code char(2), sido_nm text, sigungu_code char(5), sigungu_nm text, building_cnt int)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select m.sido_code, m.sido_nm, m.sigungu_code, m.sigungu_nm, m.building_cnt
+  from mv_open_sigungu m
+  order by m.sido_code, m.sigungu_nm;
+$$;
+
+comment on function list_open_sigungu() is
+  '§8.1 화면의 지역 고르기가 부르는 목록 — 자료가 실제로 있는 시군구만. security definer '
+  '(원본 표가 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. 나가는 것은 지역명·건물수뿐)';
+
+-- ── 3) 범위 판정 — 고른 구 안에서만 센다 ────────────────────────────────────
+
 -- ── 상한: 어디까지가 "한 곳을 짚는 검색"인가 ──────────────────────────────────
 -- 글자 수로 가르면 안 된다. '명동'은 2글자여도 동이 확정되지만 '강남'은 2글자에
 -- 구 조각이다. 그래서 **몇 곳이 걸리는가**로 가른다. 선은 실측으로 정했다:
 --
---   가장 큰 법정동   신림동 4,633필지  (전국 637개 동 중 최대, 2026-08-13 실측)
---   가장 작은 구 검색 '유성구' 11,248필지
+--   가장 큰 법정동   신림동 4,537필지   ← 검색이 실제로 세는 기준(mv_search_parcel)
+--   가장 작은 구 검색 '유성구' 7,159필지  ← 같은 기준
+--   ⚠️ 옛 주석은 '유성구 11,248'이라 적었는데 그건 parcel×building **조인 행수**였다
+--      (한 필지에 건물이 여럿이면 중복 집계). search_scope() 는 조인 없이 필지만 센다.
 --
 -- 6,000 은 그 사이다 ⇒ **어떤 동 이름도 통과하고, 시·구 이름은 걸린다.**
---   통과: 둔산동 701 · 명동 1,420 · 역삼동 2,849 · 신림동 4,633
---   차단: 유성구 11,248 · 강남 13,529 · 대전광역시 45,150 · 서울 163,487 · 동 193,090
+--   통과: 둔산동 701 · 명동 1,349 · 역삼동 2,819 · 신림동 4,537
+--   차단: 유성구 7,159 · 강남 12,961 · 서울·동 등 시도 단위
+--   ⛔ **"구 이름은 전부 차단된다"는 말은 사실이 아니다** — 30개 구 중 **13개**는
+--      상한 미만이라 통과한다(가장 작은 노원구 3,479 · 금천 3,492 · 도봉 3,710).
+--      이 게이트가 확실히 막는 것은 **시·도 단위**이고, 구는 큰 곳만 걸린다.
+--      2026-08-13e 부터는 화면이 구를 먼저 고르므로 이 게이트는 **안전망**이다.
 --
 -- ⚠️ 데이터가 전국으로 늘면 동 하나의 필지 수도 늘 수 있다. 그때는 위 두 수를
 --    다시 재고 이 값을 올려라(정본은 여기 한 곳뿐이다).
@@ -806,14 +902,17 @@ parallel safe
 as $$ select 6000 $$;
 
 comment on function search_scope_limit() is
-  '검색이 "한 곳을 짚는" 것으로 인정되는 상한(곳). 가장 큰 법정동(신림동 4,633)보다 크고 '
-  '가장 작은 구 단위 검색(유성구 11,248)보다 작게 잡았다 — 동 이름은 통과, 시·구 이름은 차단.';
+  '검색이 "한 곳을 짚는" 것으로 인정되는 상한(곳). 검색이 실제로 훑는 표(mv_search_parcel) 기준으로 '
+  '가장 큰 법정동(신림동 4,537)보다 크고 가장 작은 구 단위 검색(유성구 7,159)보다 작게 잡았다. '
+  '⚠️ "구 이름은 전부 차단된다"는 말은 사실이 아니다 — 30개 구 중 13개는 상한 미만이라 통과한다'
+  '(노원 3,479·금천 3,492·도봉 3,710). 확실히 막는 것은 시·도 단위이고, 2026-08-13e 부터는 '
+  '화면이 구를 먼저 고르므로 이 상한은 안전망이다.';
 
 -- ── 이 검색어가 몇 곳과 맞는가 ───────────────────────────────────────────────
 -- 세기만 하는 일이라 싸다(조인·정렬이 없다). 무거운 검색은 이걸로 먼저 걸러낸다.
 -- 주소(필지)와 건물이름은 세는 대상이 다르므로 **큰 쪽**으로 판정한다
 --   예: '빌딩' 은 주소 매칭 0곳이지만 건물이름 15,068곳 → 큰 쪽인 15,068 로 판정.
-create or replace function search_scope(q text)
+create or replace function search_scope(q text, sigungu text default null)
 returns table (too_broad boolean, match_cnt int)
 language sql
 stable
@@ -824,30 +923,35 @@ as $$
     select case when search_key(q) is null then null
                 else '%' || replace(replace(replace(search_key(q), '\', '\\'),
                                     '%', '\%'), '_', '\_') || '%'
-           end as p
+           end as p,
+           nullif(btrim(coalesce(sigungu, '')), '') as gu
   ),
   c as (
     select
-      (select count(*) from parcel pc cross join pat
+      (select count(*) from mv_search_parcel pc cross join pat
         where pat.p is not null
+          and (pat.gu is null or pc.sigungu_code = pat.gu)
           and (pc.road_addr_key  like pat.p escape '\'
             or pc.jibun_addr_key like pat.p escape '\')) as addr_cnt,
-      (select count(*) from building b cross join pat
+      (select count(*) from building b
+         join mv_search_parcel pc on pc.pnu = b.pnu
+         cross join pat
         where pat.p is not null
-          and b.nm_key like pat.p escape '\')             as nm_cnt
+          and (pat.gu is null or pc.sigungu_code = pat.gu)
+          and b.nm_key like pat.p escape '\')            as nm_cnt
   )
   select greatest(c.addr_cnt, c.nm_cnt) > search_scope_limit(),
          least(greatest(c.addr_cnt, c.nm_cnt), 2147483647)::int
   from c;
 $$;
 
-comment on function search_scope(text) is
-  '§8.1 검색어가 몇 곳과 맞는지 세어 "너무 넓은 검색"인지 알려준다. 화면은 결과가 0건일 때 '
-  '이걸 불러 "찾는 게 없음"과 "너무 넓음"을 구분한다. security definer — 원본 표가 anon 에게 '
-  '닫혀 있어 소유자 권한으로 대신 센다(돌려주는 것은 개수뿐이라 개인정보가 나가지 않는다).';
+comment on function search_scope(text, text) is
+  '§8.1 검색어가 몇 곳과 맞는지 세어 "너무 넓은 검색"인지 알려준다. sigungu 를 주면 그 구 안에서만 센다. '
+  '화면은 결과가 0건일 때 이걸 불러 "찾는 게 없음"과 "너무 넓음"을 구분한다. '
+  '**찾힐 수 있는 필지(mv_search_parcel)만** 센다 — 건물 없는 필지를 세면 판정이 실제보다 넓어진다.';
 
--- ── 검색 본체 ────────────────────────────────────────────────────────────────
-create or replace function search_buildings(q text, lim int default 25)
+-- ── 4) 검색 본체 — 고른 구 안에서만 ─────────────────────────────────────────
+create or replace function search_buildings(q text, lim int default 25, sigungu text default null)
 returns table (
   bld_id         text,
   pnu            char(19),
@@ -870,47 +974,41 @@ as $$
     select
       case when esc.v is null then null else '%' || esc.v || '%' end as p,
       case when esc.v is null then null else '%' || esc.v      end as p_end,
-      -- ⚠️ k 는 **이스케이프 전** 값이다. 정확일치·앞글자일치 정렬에 쓰는 값이라
-      --    이스케이프하면 안 된다(옛 코드는 여기에 이스케이프된 값을 넣어, 이름에
-      --    % 나 _ 가 든 건물에서 정확일치 가산점이 조용히 안 먹었다. 마지막
-      --    ORDER BY 는 반대로 이스케이프 안 한 값을 써서 두 정렬이 서로 어긋났다).
-      search_key(q) as k
+      -- ⚠️ k 는 **이스케이프 전** 값이다(정확일치·앞글자일치 정렬에 쓴다).
+      search_key(q) as k,
+      esc.gu
     from (
       select case when search_key(q) is null then null
                   else replace(replace(replace(search_key(q), '\', '\\'),
                                '%', '\%'), '_', '\_')
-             end as v
+             end as v,
+             nullif(btrim(coalesce(sigungu, '')), '') as gu
     ) esc
   ),
-  -- ① 주소 두 칸은 **같은 표**라 한 번만 훑는다 (조인 전 단일 표의 OR 은 안전하다)
-  --
-  -- ⭐ `limit 상한+1` 이 범위 게이트를 겸한다. 따로 세지 않는 이유: 세는 일을 별도
-  --    조회로 두면 좁은 검색어까지 표를 두 번 더 훑어 **오히려 느려진다**
-  --    (실측 2026-08-13: '명동' 796ms → 2,803ms). 여기서 상한+1 에서 멈추면
-  --      · 넘쳤다 = "한 곳을 짚는 검색이 아니다" → 아래에서 통째로 끊는다
-  --      · 안 넘쳤다 = 여기 모인 것이 **곧 전체**다(잘린 것이 없다 = total_cnt 정확)
-  --    넓은 검색어는 상한에서 바로 멈추므로 20만 건을 다 훑지 않는다.
+  -- ① 주소 두 칸은 같은 표라 한 번만 훑는다. 그 표는 **검색 전용 요약표**이고,
+  --    구를 골랐으면 그 구만 본다(이제 이게 기본 경로다 — idx_msp_sigungu).
+  --    `limit 상한+1` 이 범위 게이트를 겸한다(구를 안 고른 경로의 안전망).
   addr as materialized (
     select pc.pnu, pc.road_addr, pc.jibun_addr_key
-      from parcel pc
+      from mv_search_parcel pc
       cross join pat
      where pat.p is not null
+       and (pat.gu is null or pc.sigungu_code = pat.gu)
        and (pc.road_addr_key  like pat.p escape '\'
          or pc.jibun_addr_key like pat.p escape '\')
      limit search_scope_limit() + 1
   ),
-  -- ⛔ 주소 가지와 이름 가지를 OR 하나로 합치지 말 것 — 이쪽은 **서로 다른 두 표**라
-  --    조인 전에 한 표를 못 걸러 gin_trgm 인덱스가 통째로 무력화된다(2026-08-08 실측).
-  -- ⛔ WHERE 는 **저장 컬럼**(nm_key/road_addr_key/jibun_addr_key)을 써야 한다.
-  --    식으로 되돌리면 재확인 때 regexp 가 다시 돌아 3초를 넘긴다(2026-08-11e).
+  -- ⛔ 주소 가지와 이름 가지를 OR 하나로 합치지 말 것 — 서로 다른 두 표라 조인 전에
+  --    한 표를 못 걸러 gin_trgm 인덱스가 통째로 무력화된다(2026-08-08 실측).
   nm as materialized (
-    select b.bld_id, b.pnu, b.nm_key,
-           building_display_nm(b.bld_nm, b.dong_nm) as bld_nm,
+    select b.bld_id, b.pnu, b.nm_key, b.display_nm as bld_nm,
            pc.road_addr, pc.jibun_addr_key
       from building b
-      join parcel pc on pc.pnu = b.pnu
+      join mv_search_parcel pc on pc.pnu = b.pnu
       cross join pat
-     where pat.p is not null and b.nm_key like pat.p escape '\'
+     where pat.p is not null
+       and (pat.gu is null or pc.sigungu_code = pat.gu)
+       and b.nm_key like pat.p escape '\'
      limit search_scope_limit() + 1
   ),
   gate as (
@@ -918,8 +1016,7 @@ as $$
          or (select count(*) from nm)   > search_scope_limit()) as broad
   ),
   hit as (
-    select b.bld_id, b.pnu, b.nm_key,
-           building_display_nm(b.bld_nm, b.dong_nm) as bld_nm,
+    select b.bld_id, b.pnu, b.nm_key, b.display_nm as bld_nm,
            a.road_addr, a.jibun_addr_key
       from addr a
       join building b on b.pnu = a.pnu
@@ -956,7 +1053,6 @@ as $$
     limit greatest(1, least(coalesce(lim, 25), 100))
   )
   -- ② 지번주소 조립은 여기서 처음 한다 — 25행에만 필요하다.
-  --    pnu 는 parcel 의 기본키라 되짚어도 같은 한 행이다(값이 달라지지 않는다).
   select
     t.bld_id, t.pnu, t.bld_nm, t.road_addr,
     parcel_jibun_addr(pc.sido_nm, pc.sigungu_nm, pc.emd_nm, pc.jibun) as jibun_addr,
@@ -964,7 +1060,7 @@ as $$
     fs.floor_cnt, fs.min_floor, fs.max_floor, fs.has_roof,
     t.total_cnt
   from top t
-  join parcel pc on pc.pnu = t.pnu
+  join mv_search_parcel pc on pc.pnu = t.pnu
   join lateral (
     select
       count(*)::int                                    as floor_cnt,
@@ -984,14 +1080,45 @@ as $$
     t.bld_id;
 $$;
 
-comment on function search_buildings(text, int) is
+comment on function search_buildings(text, int, text) is
   '§8.1 건물 검색. 건물 1개 = 1행이며 total_cnt로 정확한 전체 건수를 함께 준다. '
+  'sigungu 를 주면 **그 구 안에서만** 찾는다(2026-08-13e, 사장님 결정) — 같은 건물 이름이 '
+  '여러 구에 겹치기 때문이다(이름 33,851종 중 2,443종이 2개 이상 구에 존재). '
   'security definer — 원본 표가 anon에게 닫혀 있어 소유자 권한으로 대신 읽는다. '
   '입력의 % _ \ 는 서버가 리터럴로 이스케이프하고, 빈 검색어는 0건으로 잘라낸다. '
-  '이름은 building_display_nm() 하나만 본다(동명칭 폴백 + 개인 성명 가림) — 보이는 것 = 검색되는 것. '
-  '너무 넓은 검색(search_scope_limit() 초과)은 무거운 일을 하기 전에 0건으로 끊는다 — 상권분석은 '
-  '건물 한 채 단위라 "서울" 같은 검색은 결과 25개를 보여줘도 의미가 없다(2026-08-13). '
+  '이름은 building.display_nm(동명칭 폴백 + 개인 성명 가림)만 본다 — 보이는 것 = 검색되는 것. '
+  '주소는 mv_search_parcel(건물이 있는 필지만)을 본다. ⚠️ 자료 적재 후 `python scripts/post_load.py` 필수. '
   '⛔ 주소 가지와 이름 가지를 OR로 합치지 말 것 — 두 조인 테이블에 걸친 OR은 gin_trgm 인덱스를 무력화한다';
+
+grant execute on function search_scope(text, text) to anon, authenticated;
+grant execute on function search_buildings(text, int, text) to anon, authenticated;
+grant execute on function list_open_sigungu() to anon, authenticated;
+revoke all on function search_scope_limit() from public, anon, authenticated;
+
+
+-- ── ⛔ 요약표는 공개키에게 열지 않는다 (2026-08-13f) ─────────────────────────
+-- Supabase 는 스키마 public 에 기본 권한을 걸어 두어 **새로 만드는 표·물질화뷰마다
+-- anon 에게 전체 권한을 자동으로 준다.** 2026-08-08 의 `revoke ... on all tables` 는
+-- 그 시점에 있던 것만 닫는 일회성 명령이라, 오늘 만든 이 둘이 그 사이로 열렸다.
+-- 실측(적대검증): `GET /rest/v1/mv_search_parcel?limit=3` 이 200 + 188,442행 카운트까지
+-- 가능했다 — 검색 상한 게이트를 REST 페이지네이션으로 통째로 건너뛸 수 있었다.
+-- ⚠️ 물질화뷰는 `enable row level security` 도 못 걸어(테이블 전용) 이중 방어가 없다.
+revoke all on mv_search_parcel from public, anon, authenticated;
+revoke all on mv_open_sigungu  from public, anon, authenticated;
+
+-- 그리고 **앞으로 만들 것도 자동으로 안 열리게** 기본값 자체를 바꾼다.
+-- 이게 없으면 다음에 표를 하나 더 만들 때 같은 일이 또 난다(사람 기억에 의존하게 된다).
+alter default privileges in schema public revoke all on tables from anon, authenticated;
+alter default privileges in schema public revoke all on sequences from anon, authenticated;
+-- ⚠️ **함수도 반드시 포함해야 한다.** 2026-08-13f 는 표·시퀀스만 닫아 반쪽이었고,
+--    라이브를 다시 보니 `pg_default_acl`(객체종류 f)이 여전히 anon 에게 EXECUTE 를
+--    자동으로 주고 있었다 — 새 함수를 만들 때마다 사람이 revoke 를 기억해야 하는 상태.
+--    실제로 트리거용 `unit_business_append_only` 가 그렇게 열려 있었다(2026-08-13g).
+alter default privileges in schema public revoke all on functions from anon, authenticated;
+
+-- 트리거가 부르는 함수는 사람이 직접 부를 일이 없다. 노출면은 "화면이 쓰는 것"만 남긴다.
+revoke all on function unit_business_append_only() from public, anon, authenticated;
+
 
 -- 상한 함수는 내부용이다. 화면은 search_scope() 가 돌려주는 판정만 쓴다.
 revoke all on function search_scope_limit() from public, anon, authenticated;

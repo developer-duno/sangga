@@ -418,7 +418,7 @@ def test_search_scope_gate_exists(schema_sql):
         "schema.sql: search_scope_limit() 가 없습니다 — 상한이 코드 여기저기 흩어지면 "
         "서로 다른 값으로 갈라진다"
     )
-    assert "create or replace function search_scope(q text)" in schema_sql, (
+    assert "create or replace function search_scope(q text, sigungu text default null)" in schema_sql, (
         "schema.sql: search_scope() 가 없습니다 — 화면이 '결과 없음'과 '너무 넓음'을 "
         "구분하지 못하게 된다"
     )
@@ -481,4 +481,128 @@ def test_search_scope_limit_matches_between_schema_and_migration():
     assert 4633 < found["schema.sql"] < 7399, (
         "상한 {}: 동 이름이 막히거나(4,633 이하) 구 이름이 통과(7,399 이상)합니다 — "
         "두 수를 다시 실측하고 값을 정하세요".format(found["schema.sql"])
+    )
+
+
+# =====================================================================
+# 검색 전용 요약표 — 찾힐 수 있는 필지만 훑는다 (2026-08-13d)
+# =====================================================================
+# 왜 가드가 필요한가: 되돌려도 **에러가 안 난다.** 결과도 같다. 다만 2글자 검색어가
+# 다시 3초를 넘겨 500이 되고(전국 시드로 parcel 이 112만 행), 범위 판정이 건물 없는
+# 필지까지 세어 '명동' 같은 정상 검색을 막는다. 라이브 실측(2026-08-13):
+#   parcel 을 훑으면 1,725ms / 요약표(188,442행)를 훑으면 109ms — 15.8배.
+
+
+def test_search_reads_the_searchable_parcel_summary(schema_sql):
+    """검색은 parcel 이 아니라 mv_search_parcel 을 훑어야 한다."""
+    flat = re.sub(r"\s+", " ", schema_sql)
+    for fn, head in (
+        ("search_buildings", "create or replace function search_buildings(q text, lim int default 25, sigungu text default null)"),
+        ("search_scope", "create or replace function search_scope(q text, sigungu text default null)"),
+    ):
+        i = schema_sql.index(head)
+        j = schema_sql.index("$$;", schema_sql.index("as $$", i)) + 3
+        body = re.sub(r"\s+", " ", schema_sql[i:j])
+        assert "from mv_search_parcel" in body, (
+            "schema.sql: {} 가 검색 전용 요약표를 안 씁니다 — 전국 시드 뒤 parcel 112만 행을 "
+            "훑느라 2글자 검색이 3초를 넘겨 500이 됩니다".format(fn)
+        )
+        assert "from parcel pc cross join pat" not in body, (
+            "schema.sql: {} 가 parcel 을 직접 훑습니다 — 건물 없는 93만 필지까지 훑게 "
+            "됩니다(2026-08-13 이전으로 되돌아갔습니다)".format(fn)
+        )
+    assert "create materialized view if not exists mv_search_parcel" in flat, (
+        "schema.sql: mv_search_parcel 정의가 없습니다"
+    )
+
+
+def test_search_summary_keeps_only_parcels_that_have_buildings(schema_sql):
+    """요약표는 **건물이 있는 필지만** 담아야 한다.
+
+    조건을 빼면 요약표가 parcel 전체 사본이 돼 크기 이점이 사라지고, 범위 판정도
+    다시 부풀려진다(= 이 표를 만든 이유가 통째로 없어진다).
+    """
+    i = schema_sql.index("create materialized view if not exists mv_search_parcel")
+    body = re.sub(r"\s+", " ", schema_sql[i : schema_sql.index(";", i)])
+    assert re.search(
+        r"where exists\s*\(\s*select 1 from building b where b\.pnu = pc\.pnu\s*\)", body
+    ), (
+        "schema.sql: mv_search_parcel 이 '건물이 있는 필지만' 조건을 안 씁니다 — "
+        "요약표가 parcel 전체 사본이 됩니다"
+    )
+
+
+def test_search_summary_has_the_indexes_it_needs(schema_sql):
+    """concurrently 갱신용 unique 인덱스 + 부분 일치용 gin 두 개."""
+    flat = re.sub(r"\s+", " ", schema_sql)
+    assert "create unique index if not exists idx_msp_pnu on mv_search_parcel (pnu)" in flat, (
+        "schema.sql: mv_search_parcel 의 unique 인덱스가 없습니다 — "
+        "`refresh materialized view concurrently` 가 동작하지 않아 갱신 중 검색이 잠깁니다"
+    )
+    for idx, col in (("idx_msp_road_key", "road_addr_key"), ("idx_msp_jibun_key", "jibun_addr_key")):
+        assert "{} on mv_search_parcel using gin ({} gin_trgm_ops)".format(idx, col) in flat, (
+            "schema.sql: {} 가 없습니다 — 3글자 이상 검색이 전수 스캔이 됩니다".format(idx)
+        )
+
+
+# =====================================================================
+# 구 단위 검색 + 요약표 권한 (2026-08-13e · 13f)
+# =====================================================================
+
+
+def test_search_can_be_narrowed_to_one_sigungu(schema_sql):
+    """검색이 "고른 구 안에서만" 될 수 있어야 한다 (사장님 결정 2026-08-13).
+
+    같은 건물 이름이 여러 구에 겹치기 때문이다 — 이름 33,851종 중 2,443종(7.2%)이
+    2개 이상 구에 존재한다. 좁히는 길이 사라지면 그 중복이 그대로 화면에 나온다.
+    """
+    flat = re.sub(r"\s+", " ", schema_sql)
+    assert "sigungu_code" in flat, "schema.sql: 요약표에 시군구 칸이 없습니다"
+    assert "create index if not exists idx_msp_sigungu on mv_search_parcel (sigungu_code)" in flat, (
+        "schema.sql: 구로 좁히는 인덱스가 없습니다 — 좁혀도 전수 스캔이 됩니다"
+    )
+    # ⚠️ **정확히 4곳**이어야 한다 — search_scope 의 주소·이름 가지 2곳,
+    #    search_buildings 의 addr·nm 가지 2곳. `>= 2` 로 느슨하게 두면 절반을
+    #    지워도 초록이 된다(2026-08-13 주입 시험에서 실제로 그렇게 샜다).
+    assert flat.count("pat.gu is null or pc.sigungu_code = pat.gu") == 4, (
+        "schema.sql: 구 좁히기 조건이 4곳이 아닙니다({}곳) — 검색·범위판정 각각의 "
+        "주소·이름 두 가지 모두에 걸려 있어야 합니다".format(
+            flat.count("pat.gu is null or pc.sigungu_code = pat.gu"))
+    )
+
+
+def test_open_sigungu_list_comes_from_the_database(schema_sql):
+    """고를 수 있는 구 목록은 **자료가 있는 곳만** 나와야 한다.
+
+    프론트에 목록을 박아 두면 자료 없는 구를 고를 수 있게 되고, 고르면 아무것도
+    안 나와 "고장난 것"처럼 보인다.
+    """
+    flat = re.sub(r"\s+", " ", schema_sql)
+    assert "create materialized view if not exists mv_open_sigungu" in flat
+    assert "create or replace function list_open_sigungu()" in flat
+    assert "grant execute on function list_open_sigungu() to anon" in flat, (
+        "schema.sql: 화면이 구 목록을 못 읽습니다"
+    )
+
+
+def test_materialized_views_are_closed_to_anon(schema_sql):
+    """⛔ 요약표는 공개키에게 열면 안 된다.
+
+    2026-08-13 적대검증 실측: 만들어 두기만 했더니 `GET /rest/v1/mv_search_parcel`
+    가 **200** 이었고 188,442행 전체를 페이지네이션으로 내려받을 수 있었다 —
+    검색 상한 게이트를 통째로 건너뛰는 옆문이었다. 원인은 Supabase 가 스키마 public 에
+    걸어 둔 기본 권한이라, **새로 만드는 표마다 자동으로 열린다.**
+    """
+    flat = re.sub(r"\s+", " ", schema_sql)
+    for mv in ("mv_search_parcel", "mv_open_sigungu"):
+        m = re.search(r"revoke all on {}\s+from\s+([^;]+);".format(mv), flat)
+        assert m, "schema.sql: {} 의 권한 회수문이 없습니다".format(mv)
+        for role in ("anon", "authenticated"):
+            assert role in m.group(1), (
+                "schema.sql: {} 회수 대상에 {}이 없습니다 — `from public` 만으로는 "
+                "직접 받은 GRANT 가 안 빠집니다".format(mv, role)
+            )
+    assert "alter default privileges in schema public revoke all on tables from anon" in flat, (
+        "schema.sql: 기본 권한이 안전한 쪽으로 안 바뀌어 있습니다 — 다음에 표를 하나 "
+        "더 만들면 또 자동으로 열립니다(사람 기억에 의존하게 됩니다)"
     )

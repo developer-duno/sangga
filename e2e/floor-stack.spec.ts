@@ -9,14 +9,20 @@ import { searchHit, floorRow, coverageStats } from './fixtures';
  *
  * 네트워크(Supabase REST)는 전부 page.route로 가로챈다 — 라이브 DB·비밀값 의존 0.
  * supabase-js가 부르는 실제 경로:
+ *   POST /rest/v1/rpc/list_open_sigungu  (구 목록 — RegionPicker가 마운트 시 부른다)
  *   POST /rest/v1/rpc/search_buildings   (검색)
  *   GET  /rest/v1/v_coverage_stats       (각주 집계)
  *   GET  /rest/v1/v_floor_stack          (층 목록)
  * playwright.config.ts에서 VITE_SUPABASE_URL을 실존하지 않는 도메인으로 주입하므로
  * 브라우저 입장에서 전부 교차 출처(cross-origin) 요청이다 — preflight(OPTIONS)도 함께
  * 응답해야 실제 GET/POST가 나간다.
+ *
+ * ⚠️ 2026-08-13부터 검색은 "구를 고른 뒤 그 안에서만" 한다(사장님 결정) — RegionPicker가
+ *    마운트되자마자 list_open_sigungu를 부르므로, 검색 전에 반드시 구를 하나 고르는
+ *    단계가 필요하다(pickGu 헬퍼). 안 그러면 "먼저 지역을 골라 주세요" 안내만 뜬다.
  */
 
+const SIGUNGU_PATTERN = '**/rest/v1/rpc/list_open_sigungu*';
 const SEARCH_PATTERN = '**/rest/v1/rpc/search_buildings*';
 // 결과가 0건이면 화면이 "정말 없음"인지 "검색어가 너무 넓음"인지 서버에 한 번 더 묻는다.
 // ⚠️ 이걸 안 막으면 그 요청이 **진짜 Supabase 로 나간다** — 테스트가 네트워크와 라이브
@@ -52,6 +58,22 @@ async function mockFloorStack(page: Page) {
   await mockJson(page, FLOOR_PATTERN, [floorRow()]);
 }
 
+/** 구 목록(RegionPicker가 마운트 시 부르는 것)을 가로챈다. 기본값은 강남구 하나. */
+async function mockOpenSigungu(
+  page: Page,
+  rows: unknown[] = [
+    { sido_code: '11', sido_nm: '서울', sigungu_code: '11680', sigungu_nm: '강남구', building_cnt: 14223 },
+  ],
+) {
+  await mockJson(page, SIGUNGU_PATTERN, rows);
+}
+
+/** 시도 칩을 눌러 구 목록을 펼치고, 그 안의 구 칩을 눌러 고른다. */
+async function pickGu(page: Page, sidoName: string, guName: string) {
+  await page.getByRole('button', { name: new RegExp(`^${sidoName}$`) }).click();
+  await page.getByRole('button', { name: guName }).click();
+}
+
 async function search(page: Page, text: string) {
   await page.getByLabel('건물명 또는 주소').fill(text);
   await page.getByRole('button', { name: '검색' }).click();
@@ -59,10 +81,12 @@ async function search(page: Page, text: string) {
 
 test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
   test('A. 검색 → 결과 클릭 → 층 스택 렌더', async ({ page }) => {
+    await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
     await mockFloorStack(page);
 
     await page.goto('/');
+    await pickGu(page, '서울', '강남구');
     await search(page, '테헤란로');
 
     const hitBtn = page.getByRole('button', { name: /테스트빌딩/ });
@@ -77,10 +101,12 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
   test('B. 새 검색을 제출하면 이전 층 스택이 즉시 사라진다', async ({ page }) => {
     // App.tsx onSearchStart 주석에 박제된 실제 라이브 회귀 재현: 두 번째 검색 응답을
     // 일부러 늦춰서, 응답을 기다리지 않고 선택이 먼저 비워지는지를 본다.
+    await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
     await mockFloorStack(page);
 
     await page.goto('/');
+    await pickGu(page, '서울', '강남구');
     await search(page, '테헤란로');
     await page.getByRole('button', { name: /테스트빌딩/ }).click();
     await expect(page.locator('section.stack')).toBeVisible();
@@ -95,10 +121,12 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
   });
 
   test('C. 검색 결과 0건일 때도 이전 층 스택이 사라진다', async ({ page }) => {
+    await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
     await mockFloorStack(page);
 
     await page.goto('/');
+    await pickGu(page, '서울', '강남구');
     await search(page, '테헤란로');
     await page.getByRole('button', { name: /테스트빌딩/ }).click();
     await expect(page.locator('section.stack')).toBeVisible();
@@ -109,7 +137,10 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
 
     await search(page, '없는건물');
 
-    await expect(page.getByText('결과가 없습니다')).toBeVisible();
+    // ⚠️ 구 단위 검색으로 바뀐 뒤 문구도 바뀌었다 — "지금 보실 수 있는 지역은 …"이 아니라
+    //    **고른 구 안에서** 못 찾았다고 말한다(2026-08-13 2차 검증에서 정리).
+    // ⚠️ '강남구'는 지역 칩에도 있으므로 **문구 안에서** 찾아야 한다(그냥 getByText 는 모호).
+    await expect(page.getByText(/강남구에서 찾지 못했습니다/)).toBeVisible();
     await expect(page.locator('section.stack')).toHaveCount(0);
   });
 
@@ -120,6 +151,7 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
 
   test('D. 한 글자로 검색하면 서버를 부르지 않고 바로 안내창이 뜬다', async ({ page }) => {
     let searchCalls = 0;
+    await mockOpenSigungu(page);
     await page.route(SEARCH_PATTERN, async (route) => {
       searchCalls += 1;
       await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
@@ -127,6 +159,7 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await mockFloorStack(page);
 
     await page.goto('/');
+    await pickGu(page, '서울', '강남구');
     await search(page, '동');
 
     await expect(page.getByRole('dialog')).toBeVisible();
@@ -135,11 +168,13 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
   });
 
   test('E. 너무 넓은 검색이면 걸린 곳 수와 무엇을 넣을지 알려준다', async ({ page }) => {
+    await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, []);
     await mockJson(page, SCOPE_PATTERN, [{ too_broad: true, match_cnt: 163487 }]);
     await mockFloorStack(page);
 
     await page.goto('/');
+    await pickGu(page, '서울', '강남구');
     await search(page, '서울');
 
     const dialog = page.getByRole('dialog');
@@ -151,5 +186,43 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
 
     await dialog.getByRole('button', { name: '닫기' }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
+  });
+
+  // ── 구를 고른 뒤에만 검색된다 (2026-08-13e) ──────────────────────────────
+  // 같은 건물 이름이 여러 구에 겹친다(이름 33,851종 중 2,443종이 2개 이상 구에 존재).
+  // 그래서 검색은 이제 "구를 고른 뒤 그 안에서만" 한다 — 사장님 결정.
+
+  test('F. 구를 고르지 않으면 검색을 막고, 구를 고르면 그 구에서 찾은 결과를 보여준다', async ({ page }) => {
+    let searchCalls = 0;
+    await mockOpenSigungu(page);
+    await page.route(SEARCH_PATTERN, async (route) => {
+      searchCalls += 1;
+      const url = route.request().postData() ?? '';
+      // 서버에 실제로 구 코드가 실려 가는지도 함께 확인한다.
+      expect(url).toContain('"sigungu":"11680"');
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([searchHit()]),
+      });
+    });
+    await mockFloorStack(page);
+
+    await page.goto('/');
+
+    // 구를 고르기 전에는 검색을 눌러도 서버를 안 부르고 안내만 뜬다.
+    await search(page, '테헤란로');
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.getByText('먼저 지역을 골라 주세요')).toBeVisible();
+    expect(searchCalls).toBe(0);
+    await page.getByRole('button', { name: '닫기' }).click();
+
+    // 구를 고르면 그제서야 검색이 되고, 어느 구에서 찾았는지가 결과에 드러난다.
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+
+    await expect(page.getByRole('button', { name: /테스트빌딩/ })).toBeVisible();
+    await expect(page.getByText(/강남구에서/)).toBeVisible();
+    expect(searchCalls).toBe(1);
   });
 });

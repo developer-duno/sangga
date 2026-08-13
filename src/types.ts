@@ -68,6 +68,20 @@ export type CoverageStats = {
   floor_missing_pct: number;
 };
 
+/**
+ * 지금 검색할 수 있는 시군구 하나(뷰 `list_open_sigungu()` 한 행).
+ *
+ * ⚠️ 이 목록은 서버에서만 받는다 — 프론트에 하드코딩하면 자료 없는 구를 고를 수 있게
+ * 되고, 고르면 아무것도 안 나와 "고장난 것"처럼 보인다.
+ */
+export type OpenSigungu = {
+  sido_code: string;
+  sido_nm: string;
+  sigungu_code: string;
+  sigungu_nm: string;
+  building_cnt: number;
+};
+
 /** 검색 결과 한 줄 = 건물 하나(층 여러 개를 접은 것). */
 export type BuildingHit = {
   bld_id: string;
