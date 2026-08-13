@@ -77,17 +77,20 @@ describe('BuildingSearch — 화면 동작', () => {
     // 파라미터로 넘겨야 서버가 리터럴로 이스케이프한다.
     const { input } = setup();
     search(input, '스타(별)빌딩 100%');
-    await waitFor(() => expect(rpc).toHaveBeenCalledTimes(1));
-    expect(rpc).toHaveBeenCalledWith('search_buildings', {
-      q: '스타(별)빌딩 100%',
-      lim: expect.any(Number),
-    });
+    // ⚠️ "몇 번 불렀나"로 재지 말 것 — 결과가 0건이면 화면이 이어서 search_scope 를
+    //    한 번 더 부른다("없음"인지 "너무 넓음"인지 가리려고). 여기서 지킬 것은
+    //    **첫 호출이 무엇을 어떻게 넘겼는가**다.
+    await waitFor(() => expect(rpc).toHaveBeenCalled());
+    expect(rpc.mock.calls[0]).toEqual([
+      'search_buildings',
+      { q: '스타(별)빌딩 100%', lim: expect.any(Number) },
+    ]);
   });
 
   it('앞뒤 공백은 떼고 보낸다', async () => {
     const { input } = setup();
     search(input, '  미도맨션  ');
-    await waitFor(() => expect(rpc).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(rpc).toHaveBeenCalled());
     expect(rpc.mock.calls[0][1]).toMatchObject({ q: '미도맨션' });
   });
 
@@ -163,5 +166,109 @@ describe('BuildingSearch — 화면 동작', () => {
     resolveFirst({ data: [hit({ bld_nm: '옛검색결과', total_cnt: 1 })], error: null });
     await waitFor(() => expect(screen.getByText('나중검색결과')).toBeTruthy());
     expect(screen.queryByText('옛검색결과')).toBeNull();
+  });
+});
+
+
+// ── 너무 넓은 검색 안내창 (2026-08-13) ──────────────────────────────────────
+//
+// 왜 이 화면이 필요한가: 이 서비스는 **건물 한 채·필지 한 곳**을 놓고 상권을 분석한다.
+// '서울'·'동' 처럼 어디를 볼지 정해지지 않는 검색은 결과 25개를 억지로 보여줘도 쓸모가
+// 없고, 서버에서는 20만 건과 맞아 3초를 넘겨 500이 됐다(라이브 실측 2026-08-13).
+// 그래서 "결과를 자르는" 대신 **왜 안 되는지와 무엇을 넣으면 되는지**를 말해 준다.
+
+describe('BuildingSearch — 너무 넓은 검색 안내', () => {
+  function setup() {
+    render(
+      <BuildingSearch onSelect={vi.fn()} onSearchStart={vi.fn()} selectedBldId={null} />,
+    );
+    return screen.getByLabelText('건물명 또는 주소') as HTMLInputElement;
+  }
+
+  function search(input: HTMLInputElement, text: string) {
+    fireEvent.change(input, { target: { value: text } });
+    fireEvent.submit(input.closest('form')!);
+  }
+
+  /** search_buildings 는 0건, search_scope 는 주어진 판정을 돌려주는 가짜 서버. */
+  function serverSays(tooBroad: boolean, matchCnt = 0) {
+    rpc.mockImplementation((fn: string) =>
+      fn === 'search_scope'
+        ? Promise.resolve({ data: [{ too_broad: tooBroad, match_cnt: matchCnt }], error: null })
+        : Promise.resolve({ data: [], error: null }),
+    );
+  }
+
+  it('한 글자로 검색하면 서버를 부르지 않고 바로 안내한다', () => {
+    // 한 글자는 어떤 글자든 수만 곳과 맞는다 — 물어볼 필요가 없다(왕복 낭비).
+    const input = setup();
+    search(input, '동');
+    expect(rpc).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    expect(screen.getByText(/한 글자로는 찾을 수 없어요/)).toBeTruthy();
+  });
+
+  it('띄어 쓴 두 글자는 막지 않는다 — 서버(search_key)와 같은 기준으로 잰다', async () => {
+    // 서버는 비교 전에 공백을 없앤다('그랑프리 빌딩' = '그랑프리빌딩'). 화면이 다른
+    // 기준으로 재면 두 판정이 갈려, 서버는 찾을 수 있는 검색어를 화면이 먼저 막는다.
+    //
+    // ⚠️ 반대 방향(공백 때문에 짧아지는 경우)은 이 최소 길이(2)에서는 만들 수 없다 —
+    //    앞뒤 공백은 trim 이 이미 떼므로 남는 글자가 2개면 정규화해도 2개다. 그래서
+    //    여기서는 "덜 막는가"만 검사한다. 최소 길이를 3 이상으로 올리면 그때 반대
+    //    방향 검사도 힘이 생기므로 함께 추가할 것.
+    serverSays(false, 2);
+    const input = setup();
+    search(input, ' 명 동 ');
+    await waitFor(() => expect(rpc).toHaveBeenCalled());
+    expect(rpc.mock.calls[0][0]).toBe('search_buildings');
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('두 글자여도 서버가 너무 넓다고 하면 안내하고, 걸린 곳 수를 알려준다', async () => {
+    // '강남'은 두 글자지만 구 조각이라 13,529곳과 맞는다. 반대로 '명동'은 두 글자여도
+    // 동이 확정된다 — **글자 수로는 안 갈린다.** 그래서 서버가 세어 판정한다.
+    serverSays(true, 13529);
+    const input = setup();
+    search(input, '강남');
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy());
+    expect(screen.getByText(/‘강남’/)).toBeTruthy();
+    expect(screen.getByText('13,529곳')).toBeTruthy();
+    // 결과 목록 쪽 "결과가 없습니다"와 겹쳐 뜨면 안 된다(두 말이 동시에 보인다).
+    expect(screen.queryByText(/결과가 없습니다/)).toBeNull();
+  });
+
+  it('무엇을 넣으면 되는지 알려준다 (동 이름·건물 이름·지번)', async () => {
+    serverSays(true, 163487);
+    const input = setup();
+    search(input, '서울');
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy());
+    for (const example of ['역삼동', '그랑프리빌딩', '역삼동 823-4']) {
+      expect(screen.getByText(example)).toBeTruthy();
+    }
+  });
+
+  it('넓지 않은데 0건이면 안내창이 아니라 "결과가 없습니다"', async () => {
+    // 정말 그런 건물이 없는 것과, 검색어가 넓어 끊긴 것은 다른 말이어야 한다.
+    serverSays(false, 3);
+    const input = setup();
+    search(input, '없는건물이름');
+    await waitFor(() => expect(screen.getByText(/결과가 없습니다/)).toBeTruthy());
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('Esc 로 안내창을 닫을 수 있다', async () => {
+    serverSays(true, 99999);
+    const input = setup();
+    search(input, '서울');
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy());
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('닫기 버튼으로도 닫힌다', () => {
+    const input = setup();
+    search(input, '1');
+    fireEvent.click(screen.getByRole('button', { name: '닫기' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 });

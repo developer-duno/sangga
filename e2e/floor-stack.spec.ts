@@ -18,6 +18,10 @@ import { searchHit, floorRow, coverageStats } from './fixtures';
  */
 
 const SEARCH_PATTERN = '**/rest/v1/rpc/search_buildings*';
+// 결과가 0건이면 화면이 "정말 없음"인지 "검색어가 너무 넓음"인지 서버에 한 번 더 묻는다.
+// ⚠️ 이걸 안 막으면 그 요청이 **진짜 Supabase 로 나간다** — 테스트가 네트워크와 라이브
+//    데이터에 좌우된다(2026-08-13 에 실제로 그런 상태였다).
+const SCOPE_PATTERN = '**/rest/v1/rpc/search_scope*';
 const STATS_PATTERN = '**/rest/v1/v_coverage_stats*';
 const FLOOR_PATTERN = '**/rest/v1/v_floor_stack*';
 
@@ -101,10 +105,51 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
 
     await page.unroute(SEARCH_PATTERN);
     await mockJson(page, SEARCH_PATTERN, []);
+    await mockJson(page, SCOPE_PATTERN, [{ too_broad: false, match_cnt: 0 }]);
 
     await search(page, '없는건물');
 
     await expect(page.getByText('결과가 없습니다')).toBeVisible();
     await expect(page.locator('section.stack')).toHaveCount(0);
+  });
+
+  // ── 너무 넓은 검색 안내창 (2026-08-13) ──────────────────────────────────
+  // 이 서비스는 건물 한 채·필지 한 곳을 놓고 상권을 분석한다. '서울'·'동'처럼 어디를
+  // 볼지 정해지지 않는 검색은 결과 25개를 억지로 보여줘도 쓸모가 없고, 서버에서는
+  // 20만 건과 맞아 3초를 넘겨 500이 됐다(라이브 실측). 그래서 안내로 바꿨다.
+
+  test('D. 한 글자로 검색하면 서버를 부르지 않고 바로 안내창이 뜬다', async ({ page }) => {
+    let searchCalls = 0;
+    await page.route(SEARCH_PATTERN, async (route) => {
+      searchCalls += 1;
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+    });
+    await mockFloorStack(page);
+
+    await page.goto('/');
+    await search(page, '동');
+
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.getByText('한 글자로는 찾을 수 없어요')).toBeVisible();
+    expect(searchCalls).toBe(0); // 물어볼 필요가 없는 질문은 아예 안 보낸다
+  });
+
+  test('E. 너무 넓은 검색이면 걸린 곳 수와 무엇을 넣을지 알려준다', async ({ page }) => {
+    await mockJson(page, SEARCH_PATTERN, []);
+    await mockJson(page, SCOPE_PATTERN, [{ too_broad: true, match_cnt: 163487 }]);
+    await mockFloorStack(page);
+
+    await page.goto('/');
+    await search(page, '서울');
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText('163,487곳')).toBeVisible();
+    await expect(dialog.getByText('역삼동 823-4')).toBeVisible();
+    // "결과가 없습니다"와 겹쳐 뜨면 두 말이 동시에 보인다.
+    await expect(page.getByText('결과가 없습니다')).toHaveCount(0);
+
+    await dialog.getByRole('button', { name: '닫기' }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
   });
 });
