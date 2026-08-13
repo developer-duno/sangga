@@ -236,12 +236,25 @@ def extract_floor_stack_view(sql):
 
 
 def test_floor_stack_view_masks_name(schema_sql, migration_sql):
-    """스택 뷰 제목도 같은 표시명을 써야 한다 (여기만 빠지면 성명이 화면에 남는다)."""
+    """스택 뷰 제목도 같은 표시명을 써야 한다 (여기만 빠지면 성명이 화면에 남는다).
+
+    2026-08-13 부터 정본은 함수를 직접 부르지 않고 **미리 계산해 둔 컬럼**(display_nm)을
+    읽는다. 값은 같고(라이브 실측 242,631행 0건 차이), 그래야 도우미 함수를 anon 에게서
+    닫을 수 있다 — 뷰 안에서 부르는 함수의 실행 권한은 뷰 소유자가 아니라 접속한 롤로
+    검사되기 때문이다(2026-08-10 에 함수를 닫자 이 화면이 401 로 죽었다).
+
+    그래서 여기서 지키는 것은 "함수를 부르는가"가 아니라 **"가려진 이름을 내보내는가"**다.
+    옛 마이그레이션 파일은 그 시점의 형태(함수 호출)를 그대로 유지한다 — 역사 기록이다.
+    """
+    masked_forms = (
+        DISPLAY_EXPR_QUALIFIED + " as bld_nm",  # 옛 형태: 함수를 직접 호출
+        "b.display_nm as bld_nm",                # 새 형태: 미리 계산해 둔 컬럼
+    )
     for label, sql in (("schema.sql", schema_sql), ("migration", migration_sql)):
         block = extract_floor_stack_view(sql)
         assert block, "{}: v_floor_stack 뷰 정의를 못 찾았습니다".format(label)
-        assert DISPLAY_EXPR_QUALIFIED + " as bld_nm" in block, (
-            "{}: v_floor_stack 이 원본 건물명을 그대로 내보냅니다 — "
+        assert any(f in block for f in masked_forms), (
+            "{}: v_floor_stack 이 가려진 이름을 안 내보냅니다 — "
             "스택 뷰 제목에 개인 성명이 남습니다".format(label)
         )
         # 원본 컬럼을 그대로 내보내던 옛 형태로 되돌아가면 안 된다.
@@ -249,6 +262,53 @@ def test_floor_stack_view_masks_name(schema_sql, migration_sql):
             "{}: v_floor_stack 이 b.bld_nm 을 그대로 내보냅니다 "
             "(2026-08-08e 이전으로 되돌아갔습니다)".format(label)
         )
+
+
+def extract_unit_current_view(sql):
+    """v_unit_current 뷰 정의 블록만 잘라낸다 (위 v_floor_stack 과 같은 이유로 좁힌다)."""
+    head = "create or replace view v_unit_current as"
+    i = sql.find(head)
+    if i < 0:
+        return None
+    j = sql.find("comment on view v_unit_current", i)
+    return sql[i : j if j > 0 else len(sql)]
+
+
+def test_unit_current_view_masks_name(schema_sql):
+    """호실 현황 뷰도 가려진 이름을 내보내야 한다.
+
+    2026-08-13 적대검증에서 **이 뷰만 원본 건물명을 그대로 싣고 있는 것**이 발견됐다.
+    지금 anon 에게 열려 있지 않아 새고 있진 않지만, "노출 안 돼서 안전한 것"은 안전한
+    게 아니라 아직 안 걸린 것이다 — 나중에 이 뷰를 열면 그 순간부터 샌다.
+
+    ⚠️ 이 가드 자체가 없어서 못 잡던 구멍이었다. v_floor_stack 쪽 가드에 주입 시험을
+       돌렸더니 엉뚱하게 이 뷰가 망가져도 전부 초록이었다(2026-08-13에 그렇게 발견).
+    """
+    block = extract_unit_current_view(schema_sql)
+    assert block, "schema.sql: v_unit_current 뷰 정의를 못 찾았습니다"
+    assert (
+        "b.display_nm as bld_nm" in block
+        or DISPLAY_EXPR_QUALIFIED + " as bld_nm" in block
+    ), "schema.sql: v_unit_current 가 가려진 이름을 안 내보냅니다 — 개인 성명이 그대로 나갑니다"
+    assert not re.search(r"^\s*b\.bld_nm\s*,\s*$", block, re.M), (
+        "schema.sql: v_unit_current 가 b.bld_nm 을 그대로 내보냅니다"
+    )
+
+
+def test_display_nm_column_is_defined_from_the_masking_function(schema_sql):
+    """display_nm 컬럼은 반드시 표시명 함수로 만들어져야 한다.
+
+    이 컬럼이 뷰가 읽는 유일한 출처가 됐으므로, 정의가 바뀌면 가림이 통째로 풀린다.
+    (예: 그냥 `bld_nm` 을 복사하도록 바꾸면 개인 성명이 다시 화면에 나온다.)
+    """
+    flat = re.sub(r"\s+", " ", schema_sql)
+    assert (
+        "add column if not exists display_nm text generated always as "
+        "(building_display_nm(bld_nm, dong_nm)) stored" in flat
+    ), (
+        "schema.sql: building.display_nm 이 표시명 함수로 만들어지지 않습니다 — "
+        "뷰가 이 컬럼을 읽으므로 개인 성명 가림이 풀립니다"
+    )
 
 
 def extract_display_nm_body(sql):

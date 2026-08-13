@@ -195,6 +195,27 @@ comment on function building_display_nm(text, text) is
   '§8.1 화면에 보일 건물 이름. 건물명(성명 가림) → 동명칭(일반 라벨 제외) → NULL. '
   '검색과 표시가 이 함수 하나만 쓰므로 "보이는 것 = 검색되는 것"이 항상 일치한다';
 
+-- ── 표시명 저장 컬럼 (2026-08-13) ───────────────────────────────────────────
+-- 뷰가 위 함수를 **직접 부르면 그 함수를 anon 에게 열어 둘 수밖에 없다** — 뷰 안에서
+-- 부르는 함수의 실행 권한은 뷰 소유자가 아니라 **접속한 롤**로 검사되기 때문이다.
+-- 실제로 2026-08-10 에 함수를 닫자 층별 스택 화면이 401 로 죽어 되돌려야 했다.
+-- 그래서 값을 미리 계산해 컬럼에 담고, 뷰는 컬럼만 읽는다 => 함수를 닫아도 화면이 산다.
+-- (덤으로 뷰가 행마다 정규식을 두 번씩 돌리지 않는다.)
+--
+-- 검색 함수(search_buildings)는 security definer 라 소유자 권한으로 돌므로 함수를 그대로
+-- 불러도 된다 — 그래서 거기까지 바꾸지는 않았다(고칠 이유가 없는 곳은 안 건드린다).
+--
+-- ⚠️ 테이블 정의부가 아니라 여기 있는 이유: 이 컬럼이 쓰는 함수가 바로 위에서 정의된다.
+-- ⚠️ generated ... stored 는 IMMUTABLE 함수만 쓸 수 있다 — 위 두 함수 다 IMMUTABLE 이다.
+alter table building
+  add column if not exists display_nm text
+  generated always as (building_display_nm(bld_nm, dong_nm)) stored;
+
+comment on column building.display_nm is
+  '화면에 보일 건물 이름 = building_display_nm(bld_nm, dong_nm) 을 미리 계산해 둔 값. '
+  '뷰가 함수를 직접 부르면 그 함수를 anon 에게 열어야 하므로, 값을 컬럼에 담아 함수를 닫는다(2026-08-13). '
+  '라이브 실측: 242,631행 전부에서 함수 결과와 0건 차이.';
+
 -- 도우미 함수는 공개 롤에게 열지 않는다 — 뷰·검색 함수가 소유자 권한으로 대신 부른다.
 -- ⚠️ `from public`만으로는 부족하다 — PUBLIC은 실제 롤이 아니라 가상 그룹이라,
 --    Supabase가 새 함수 생성 시 anon·authenticated에게 자동으로 거는 **직접
@@ -499,7 +520,7 @@ select
   u.excl_area_m2,
   -- ⚠️ 원본 b.bld_nm 이 아니다. 동명칭 폴백 + 개인 성명 가림을 거친 값이다
   --    (v_floor_stack 과 같은 규칙 — 뷰마다 어긋나게 두지 않는다, 2026-08-13).
-  building_display_nm(b.bld_nm, b.dong_nm) as bld_nm,
+  b.display_nm as bld_nm,   -- 함수를 부르지 않는다(위 §표시명 저장 컬럼 참조)
   b.approve_date,
   p.road_addr,
   p.road_contact,
@@ -590,7 +611,7 @@ select
   s.uses,
   -- ⚠️ 원본 건물명이 아니라 화면에 보일 이름이다(동명칭 폴백 + 개인 성명 가림).
   --    원본은 building.bld_nm 에 그대로 있고, 이 뷰는 내보낼 때만 가린다.
-  building_display_nm(b.bld_nm, b.dong_nm) as bld_nm,
+  b.display_nm as bld_nm,   -- 함수를 부르지 않는다(위 §표시명 저장 컬럼 참조)
   b.approve_date,
   b.is_jiphap,
   p.road_addr,
