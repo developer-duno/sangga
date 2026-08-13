@@ -785,6 +785,51 @@ create index if not exists idx_building_nm_key on building using gin (nm_key gin
 create index if not exists idx_parcel_road_key on parcel using gin (road_addr_key gin_trgm_ops);
 create index if not exists idx_parcel_jibun_key on parcel using gin (jibun_addr_key gin_trgm_ops);
 
+-- =====================================================================
+-- 검색 전용 요약표 — 찾힐 수 있는 필지만 (2026-08-13d)
+-- =====================================================================
+-- 전국 시드로 parcel 이 1,119,149행이 됐지만 건물은 서울·대전 242,631동뿐이다.
+-- 늘어난 93만 필지는 **검색 결과가 될 수 없는데도**(건물이 없어 조인에서 탈락)
+-- 검색할 때마다 훑혔다 — 2글자 검색어는 trigram 이 못 걸러 표를 통째로 훑기 때문이다.
+-- 실측(2026-08-13): '명동' 1,725ms -> 500. 게다가 범위 판정이 건물 없는 필지까지
+-- 세어 '명동'(전국 필지 약 10,036 > 상한 6,000)을 **막아 버렸다.**
+--
+-- 필터로는 안 고쳐진다(EXISTS 4,620ms / 건물에서 출발 2,401ms / 열린 지역만 1,417ms).
+-- 비용이 "무엇을 거르나"가 아니라 **"몇 행을 훑나"로 정해지기 때문**이다.
+-- => 훑을 표 자체를 작게 만든다: 188,442행 25MB, 같은 스캔 **109ms**(15.8배).
+--
+-- ⚠️ **자료를 새로 넣으면 반드시 갱신할 것** (ANALYZE 와 같은 성격의 적재 후 절차):
+--      refresh materialized view concurrently mv_search_parcel;
+--    안 하면 새로 넣은 건물이 **조용히 검색에서 빠진다**(에러가 아니다).
+
+create materialized view if not exists mv_search_parcel as
+select
+  pc.pnu,
+  pc.road_addr,
+  pc.road_addr_key,
+  pc.jibun_addr_key,
+  pc.sido_nm,
+  pc.sigungu_nm,
+  pc.emd_nm,
+  pc.jibun
+from parcel pc
+where exists (select 1 from building b where b.pnu = pc.pnu);
+
+comment on materialized view mv_search_parcel is
+  '§8.1 검색 전용 요약표 — **건물이 있는 필지만** 담는다(2026-08-13). 전국 시드로 parcel 이 '
+  '112만 행이 됐지만 건물은 서울·대전 24만 동뿐이라, 나머지 93만 필지는 검색 결과가 될 수 없는데도 '
+  '매번 훑혔다(명동 1,725ms → 500). 이 표는 188,442행 25MB 라 같은 스캔이 109ms 다. '
+  '⚠️ 자료를 새로 넣으면 `refresh materialized view concurrently mv_search_parcel;` 를 반드시 돌릴 것 — '
+  '안 하면 새 건물이 조용히 검색에서 빠진다(ANALYZE 와 같은 성격의 적재 후 필수 절차).';
+
+-- concurrently 갱신에 필수 + pnu 되짚기용
+create unique index if not exists idx_msp_pnu on mv_search_parcel (pnu);
+-- 부분 일치(LIKE '%…%')라 gin_trgm_ops 가 필요하다(3글자 이상에서만 선별력이 있다).
+create index if not exists idx_msp_road_key  on mv_search_parcel using gin (road_addr_key gin_trgm_ops);
+create index if not exists idx_msp_jibun_key on mv_search_parcel using gin (jibun_addr_key gin_trgm_ops);
+
+analyze mv_search_parcel;
+
 -- ── 상한: 어디까지가 "한 곳을 짚는 검색"인가 ──────────────────────────────────
 -- 글자 수로 가르면 안 된다. '명동'은 2글자여도 동이 확정되지만 '강남'은 2글자에
 -- 구 조각이다. 그래서 **몇 곳이 걸리는가**로 가른다. 선은 실측으로 정했다:
@@ -828,7 +873,9 @@ as $$
   ),
   c as (
     select
-      (select count(*) from parcel pc cross join pat
+      -- ⚠️ parcel 이 아니라 mv_search_parcel 이다 — 건물이 없는 필지를 세면 판정이
+      --    실제보다 넓어져 '명동' 같은 정상 검색이 막힌다(2026-08-13 실측).
+      (select count(*) from mv_search_parcel pc cross join pat
         where pat.p is not null
           and (pc.road_addr_key  like pat.p escape '\'
             or pc.jibun_addr_key like pat.p escape '\')) as addr_cnt,
@@ -843,7 +890,8 @@ $$;
 
 comment on function search_scope(text) is
   '§8.1 검색어가 몇 곳과 맞는지 세어 "너무 넓은 검색"인지 알려준다. 화면은 결과가 0건일 때 '
-  '이걸 불러 "찾는 게 없음"과 "너무 넓음"을 구분한다. security definer — 원본 표가 anon 에게 '
+  '이걸 불러 "찾는 게 없음"과 "너무 넓음"을 구분한다. **찾힐 수 있는 필지(mv_search_parcel)만** 센다 — '
+  '건물 없는 필지를 세면 판정이 실제보다 넓어진다. security definer — 원본 표가 anon 에게 '
   '닫혀 있어 소유자 권한으로 대신 센다(돌려주는 것은 개수뿐이라 개인정보가 나가지 않는다).';
 
 -- ── 검색 본체 ────────────────────────────────────────────────────────────────
@@ -870,10 +918,7 @@ as $$
     select
       case when esc.v is null then null else '%' || esc.v || '%' end as p,
       case when esc.v is null then null else '%' || esc.v      end as p_end,
-      -- ⚠️ k 는 **이스케이프 전** 값이다. 정확일치·앞글자일치 정렬에 쓰는 값이라
-      --    이스케이프하면 안 된다(옛 코드는 여기에 이스케이프된 값을 넣어, 이름에
-      --    % 나 _ 가 든 건물에서 정확일치 가산점이 조용히 안 먹었다. 마지막
-      --    ORDER BY 는 반대로 이스케이프 안 한 값을 써서 두 정렬이 서로 어긋났다).
+      -- ⚠️ k 는 **이스케이프 전** 값이다(정확일치·앞글자일치 정렬에 쓴다).
       search_key(q) as k
     from (
       select case when search_key(q) is null then null
@@ -882,33 +927,25 @@ as $$
              end as v
     ) esc
   ),
-  -- ① 주소 두 칸은 **같은 표**라 한 번만 훑는다 (조인 전 단일 표의 OR 은 안전하다)
-  --
-  -- ⭐ `limit 상한+1` 이 범위 게이트를 겸한다. 따로 세지 않는 이유: 세는 일을 별도
-  --    조회로 두면 좁은 검색어까지 표를 두 번 더 훑어 **오히려 느려진다**
-  --    (실측 2026-08-13: '명동' 796ms → 2,803ms). 여기서 상한+1 에서 멈추면
-  --      · 넘쳤다 = "한 곳을 짚는 검색이 아니다" → 아래에서 통째로 끊는다
-  --      · 안 넘쳤다 = 여기 모인 것이 **곧 전체**다(잘린 것이 없다 = total_cnt 정확)
-  --    넓은 검색어는 상한에서 바로 멈추므로 20만 건을 다 훑지 않는다.
+  -- ① 주소 두 칸은 같은 표라 한 번만 훑는다. 그리고 그 표는 **검색 전용 요약표**다
+  --    — 건물이 없는 필지는 어차피 아래 조인에서 전부 탈락하므로 훑을 이유가 없다.
+  --    `limit 상한+1` 이 범위 게이트를 겸한다(따로 세면 표를 두 번 더 훑는다).
   addr as materialized (
     select pc.pnu, pc.road_addr, pc.jibun_addr_key
-      from parcel pc
+      from mv_search_parcel pc
       cross join pat
      where pat.p is not null
        and (pc.road_addr_key  like pat.p escape '\'
          or pc.jibun_addr_key like pat.p escape '\')
      limit search_scope_limit() + 1
   ),
-  -- ⛔ 주소 가지와 이름 가지를 OR 하나로 합치지 말 것 — 이쪽은 **서로 다른 두 표**라
-  --    조인 전에 한 표를 못 걸러 gin_trgm 인덱스가 통째로 무력화된다(2026-08-08 실측).
-  -- ⛔ WHERE 는 **저장 컬럼**(nm_key/road_addr_key/jibun_addr_key)을 써야 한다.
-  --    식으로 되돌리면 재확인 때 regexp 가 다시 돌아 3초를 넘긴다(2026-08-11e).
+  -- ⛔ 주소 가지와 이름 가지를 OR 하나로 합치지 말 것 — 서로 다른 두 표라 조인 전에
+  --    한 표를 못 걸러 gin_trgm 인덱스가 통째로 무력화된다(2026-08-08 실측).
   nm as materialized (
-    select b.bld_id, b.pnu, b.nm_key,
-           building_display_nm(b.bld_nm, b.dong_nm) as bld_nm,
+    select b.bld_id, b.pnu, b.nm_key, b.display_nm as bld_nm,
            pc.road_addr, pc.jibun_addr_key
       from building b
-      join parcel pc on pc.pnu = b.pnu
+      join mv_search_parcel pc on pc.pnu = b.pnu
       cross join pat
      where pat.p is not null and b.nm_key like pat.p escape '\'
      limit search_scope_limit() + 1
@@ -918,8 +955,7 @@ as $$
          or (select count(*) from nm)   > search_scope_limit()) as broad
   ),
   hit as (
-    select b.bld_id, b.pnu, b.nm_key,
-           building_display_nm(b.bld_nm, b.dong_nm) as bld_nm,
+    select b.bld_id, b.pnu, b.nm_key, b.display_nm as bld_nm,
            a.road_addr, a.jibun_addr_key
       from addr a
       join building b on b.pnu = a.pnu
@@ -956,7 +992,6 @@ as $$
     limit greatest(1, least(coalesce(lim, 25), 100))
   )
   -- ② 지번주소 조립은 여기서 처음 한다 — 25행에만 필요하다.
-  --    pnu 는 parcel 의 기본키라 되짚어도 같은 한 행이다(값이 달라지지 않는다).
   select
     t.bld_id, t.pnu, t.bld_nm, t.road_addr,
     parcel_jibun_addr(pc.sido_nm, pc.sigungu_nm, pc.emd_nm, pc.jibun) as jibun_addr,
@@ -964,7 +999,7 @@ as $$
     fs.floor_cnt, fs.min_floor, fs.max_floor, fs.has_roof,
     t.total_cnt
   from top t
-  join parcel pc on pc.pnu = t.pnu
+  join mv_search_parcel pc on pc.pnu = t.pnu
   join lateral (
     select
       count(*)::int                                    as floor_cnt,
@@ -988,9 +1023,11 @@ comment on function search_buildings(text, int) is
   '§8.1 건물 검색. 건물 1개 = 1행이며 total_cnt로 정확한 전체 건수를 함께 준다. '
   'security definer — 원본 표가 anon에게 닫혀 있어 소유자 권한으로 대신 읽는다. '
   '입력의 % _ \ 는 서버가 리터럴로 이스케이프하고, 빈 검색어는 0건으로 잘라낸다. '
-  '이름은 building_display_nm() 하나만 본다(동명칭 폴백 + 개인 성명 가림) — 보이는 것 = 검색되는 것. '
+  '이름은 building.display_nm(동명칭 폴백 + 개인 성명 가림)만 본다 — 보이는 것 = 검색되는 것. '
+  '주소는 **mv_search_parcel**(건물이 있는 필지만)을 본다 — 전국 시드 뒤 parcel 112만 행을 훑느라 '
+  '2글자 검색이 3초를 넘겼다(2026-08-13). ⚠️ 자료 적재 후 그 요약표 갱신 필수. '
   '너무 넓은 검색(search_scope_limit() 초과)은 무거운 일을 하기 전에 0건으로 끊는다 — 상권분석은 '
-  '건물 한 채 단위라 "서울" 같은 검색은 결과 25개를 보여줘도 의미가 없다(2026-08-13). '
+  '건물 한 채 단위라 "서울" 같은 검색은 결과 25개를 보여줘도 의미가 없다. '
   '⛔ 주소 가지와 이름 가지를 OR로 합치지 말 것 — 두 조인 테이블에 걸친 OR은 gin_trgm 인덱스를 무력화한다';
 
 -- 상한 함수는 내부용이다. 화면은 search_scope() 가 돌려주는 판정만 쓴다.

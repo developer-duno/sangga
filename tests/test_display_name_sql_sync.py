@@ -482,3 +482,64 @@ def test_search_scope_limit_matches_between_schema_and_migration():
         "상한 {}: 동 이름이 막히거나(4,633 이하) 구 이름이 통과(7,399 이상)합니다 — "
         "두 수를 다시 실측하고 값을 정하세요".format(found["schema.sql"])
     )
+
+
+# =====================================================================
+# 검색 전용 요약표 — 찾힐 수 있는 필지만 훑는다 (2026-08-13d)
+# =====================================================================
+# 왜 가드가 필요한가: 되돌려도 **에러가 안 난다.** 결과도 같다. 다만 2글자 검색어가
+# 다시 3초를 넘겨 500이 되고(전국 시드로 parcel 이 112만 행), 범위 판정이 건물 없는
+# 필지까지 세어 '명동' 같은 정상 검색을 막는다. 라이브 실측(2026-08-13):
+#   parcel 을 훑으면 1,725ms / 요약표(188,442행)를 훑으면 109ms — 15.8배.
+
+
+def test_search_reads_the_searchable_parcel_summary(schema_sql):
+    """검색은 parcel 이 아니라 mv_search_parcel 을 훑어야 한다."""
+    flat = re.sub(r"\s+", " ", schema_sql)
+    for fn, head in (
+        ("search_buildings", "create or replace function search_buildings(q text, lim int default 25)"),
+        ("search_scope", "create or replace function search_scope(q text)"),
+    ):
+        i = schema_sql.index(head)
+        j = schema_sql.index("$$;", schema_sql.index("as $$", i)) + 3
+        body = re.sub(r"\s+", " ", schema_sql[i:j])
+        assert "from mv_search_parcel" in body, (
+            "schema.sql: {} 가 검색 전용 요약표를 안 씁니다 — 전국 시드 뒤 parcel 112만 행을 "
+            "훑느라 2글자 검색이 3초를 넘겨 500이 됩니다".format(fn)
+        )
+        assert "from parcel pc cross join pat" not in body, (
+            "schema.sql: {} 가 parcel 을 직접 훑습니다 — 건물 없는 93만 필지까지 훑게 "
+            "됩니다(2026-08-13 이전으로 되돌아갔습니다)".format(fn)
+        )
+    assert "create materialized view if not exists mv_search_parcel" in flat, (
+        "schema.sql: mv_search_parcel 정의가 없습니다"
+    )
+
+
+def test_search_summary_keeps_only_parcels_that_have_buildings(schema_sql):
+    """요약표는 **건물이 있는 필지만** 담아야 한다.
+
+    조건을 빼면 요약표가 parcel 전체 사본이 돼 크기 이점이 사라지고, 범위 판정도
+    다시 부풀려진다(= 이 표를 만든 이유가 통째로 없어진다).
+    """
+    i = schema_sql.index("create materialized view if not exists mv_search_parcel")
+    body = re.sub(r"\s+", " ", schema_sql[i : schema_sql.index(";", i)])
+    assert re.search(
+        r"where exists\s*\(\s*select 1 from building b where b\.pnu = pc\.pnu\s*\)", body
+    ), (
+        "schema.sql: mv_search_parcel 이 '건물이 있는 필지만' 조건을 안 씁니다 — "
+        "요약표가 parcel 전체 사본이 됩니다"
+    )
+
+
+def test_search_summary_has_the_indexes_it_needs(schema_sql):
+    """concurrently 갱신용 unique 인덱스 + 부분 일치용 gin 두 개."""
+    flat = re.sub(r"\s+", " ", schema_sql)
+    assert "create unique index if not exists idx_msp_pnu on mv_search_parcel (pnu)" in flat, (
+        "schema.sql: mv_search_parcel 의 unique 인덱스가 없습니다 — "
+        "`refresh materialized view concurrently` 가 동작하지 않아 갱신 중 검색이 잠깁니다"
+    )
+    for idx, col in (("idx_msp_road_key", "road_addr_key"), ("idx_msp_jibun_key", "jibun_addr_key")):
+        assert "{} on mv_search_parcel using gin ({} gin_trgm_ops)".format(idx, col) in flat, (
+            "schema.sql: {} 가 없습니다 — 3글자 이상 검색이 전수 스캔이 됩니다".format(idx)
+        )
