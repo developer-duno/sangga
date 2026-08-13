@@ -12,15 +12,20 @@ import { defineConfig, devices } from '@playwright/test';
  * 보므로 프로덕션 번들 차이가 무의미하고, CI web job의 기존 순서(lint→test→typecheck+build)
  * 를 건드리지 않아도 된다.
  */
+// 여러 프로젝트가 한 PC에서 동시에 도는 환경이라 5173이 남의 서버일 수 있다(2026-08-14
+// 실측 — reuseExistingServer가 다른 프로젝트 화면을 재사용해 6개 전부 타임아웃).
+// E2E_PORT로 비켜 가고, strictPort로 vite가 말없이 옆 포트로 옮겨 앉는 것도 막는다.
+const port = Number(process.env.E2E_PORT ?? 5173);
+
 export default defineConfig({
   testDir: './e2e',
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: `http://localhost:${port}`,
   },
   webServer: {
-    command: 'pnpm dev',
-    url: 'http://localhost:5173',
+    command: `pnpm dev --port ${port} --strictPort`,
+    url: `http://localhost:${port}`,
     reuseExistingServer: !process.env.CI,
     env: {
       // src/lib/supabase.ts는 이 값이 없으면 모듈 로드 시 throw한다. 값 자체는 어디에도

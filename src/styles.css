@@ -348,6 +348,25 @@ body {
   font-size: 14px;
 }
 
+/* 속한 상권 한 줄. 주소 바로 아래에 붙인다 — 주소의 아래 여백(줄이 없을 때의 간격)은
+   그대로 두고 이 줄만 끌어올린다. */
+.stack__district {
+  margin: -12px 0 16px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.stack__district-key {
+  margin-right: 6px;
+  font-weight: 600;
+}
+
+/* 공공누리 1유형(출처표시) 의무. 본문보다 작게 두되 지우지는 않는다. */
+.stack__district-src {
+  margin-left: 8px;
+  font-size: 11.5px;
+}
+
 .stack__facts {
   display: flex;
   flex-wrap: wrap;

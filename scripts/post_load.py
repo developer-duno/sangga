@@ -138,7 +138,9 @@ def report_freshness():
 ANON_READABLE_ALLOWLIST = ("v_floor_stack", "v_coverage_stats")
 
 # anon 이 **불러도 되는** 함수. 화면이 실제로 쓰는 것만.
-ANON_CALLABLE_ALLOWLIST = ("search_buildings", "search_scope", "list_open_sigungu")
+ANON_CALLABLE_ALLOWLIST = (
+    "search_buildings", "search_scope", "list_open_sigungu", "list_building_districts",
+)
 
 
 def build_anon_exposure_sql():

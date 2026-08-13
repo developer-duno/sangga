@@ -31,3 +31,13 @@ export const FLOOR_STACK_VIEW = 'v_floor_stack';
  * — 코드는 한 줄도 안 고쳤는데 거짓말이 시작되는 종류의 결함이다.
  */
 export const COVERAGE_STATS_VIEW = 'v_coverage_stats';
+
+/**
+ * 이 건물이 속한 상권을 묻는 서버 함수(`bld_id` 하나를 받는다).
+ *
+ * 돌려주는 것은 `{ covered, districts[] }` 두 칸뿐이다 — `covered` 는 "그 시·도에
+ * 상권 경계 자료가 아예 있는가"이고, `districts` 는 그 건물이 실제로 들어가는 상권들이다.
+ * 지역 이름을 화면에 박지 않으려고 `covered` 를 서버가 표에서 직접 센다(자료가 늘면
+ * 화면이 저절로 따라온다).
+ */
+export const BUILDING_DISTRICTS_FN = 'list_building_districts';

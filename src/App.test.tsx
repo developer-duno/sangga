@@ -24,6 +24,7 @@ function makeQuery(result: { data: unknown; error: unknown }) {
 vi.mock('./lib/supabase', () => ({
   FLOOR_STACK_VIEW: 'v_floor_stack',
   COVERAGE_STATS_VIEW: 'v_coverage_stats',
+  BUILDING_DISTRICTS_FN: 'list_building_districts',
   supabase: {
     rpc: (...args: unknown[]) => rpc(...args),
     from: (view: string) => from(view),
@@ -100,6 +101,10 @@ beforeEach(() => {
     }
     if (fn === 'search_buildings') {
       return Promise.resolve({ data: [hit()], error: null });
+    }
+    if (fn === 'list_building_districts') {
+      // 이 화면 테스트의 관심사가 아니다 — 상권 줄이 조용히 지나가게만 해 둔다.
+      return Promise.resolve({ data: { covered: true, districts: [] }, error: null });
     }
     return Promise.resolve({ data: [], error: null });
   });
