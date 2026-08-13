@@ -44,6 +44,8 @@ afterEach(() => cleanup());
 // ── 화면 동작 ────────────────────────────────────────────────────────────
 
 describe('BuildingSearch — 화면 동작', () => {
+  // 구를 이미 고른 상태가 기본값이다 — "구를 안 골랐을 때" 동작은 별도
+  // describe("BuildingSearch — 구 선택 연동")에서 따로 검사한다.
   function setup(over: Partial<Parameters<typeof BuildingSearch>[0]> = {}) {
     const onSelect = vi.fn();
     const onSearchStart = vi.fn();
@@ -52,6 +54,8 @@ describe('BuildingSearch — 화면 동작', () => {
         onSelect={onSelect}
         onSearchStart={onSearchStart}
         selectedBldId={null}
+        sigungu="11680"
+        sigunguName="강남구"
         {...over}
       />,
     );
@@ -83,7 +87,7 @@ describe('BuildingSearch — 화면 동작', () => {
     await waitFor(() => expect(rpc).toHaveBeenCalled());
     expect(rpc.mock.calls[0]).toEqual([
       'search_buildings',
-      { q: '스타(별)빌딩 100%', lim: expect.any(Number) },
+      { q: '스타(별)빌딩 100%', lim: expect.any(Number), sigungu: '11680' },
     ]);
   });
 
@@ -180,7 +184,13 @@ describe('BuildingSearch — 화면 동작', () => {
 describe('BuildingSearch — 너무 넓은 검색 안내', () => {
   function setup() {
     render(
-      <BuildingSearch onSelect={vi.fn()} onSearchStart={vi.fn()} selectedBldId={null} />,
+      <BuildingSearch
+        onSelect={vi.fn()}
+        onSearchStart={vi.fn()}
+        selectedBldId={null}
+        sigungu="11680"
+        sigunguName="강남구"
+      />,
     );
     return screen.getByLabelText('건물명 또는 주소') as HTMLInputElement;
   }
@@ -270,5 +280,74 @@ describe('BuildingSearch — 너무 넓은 검색 안내', () => {
     search(input, '1');
     fireEvent.click(screen.getByRole('button', { name: '닫기' }));
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+});
+
+// ── 구 선택 연동 (2026-08-13) ────────────────────────────────────────────
+//
+// 검색은 이제 고른 구 안에서만 한다(사장님 결정) — 같은 건물 이름이 여러 구에
+// 겹치기 때문이다(이름 33,851종 중 2,443종이 2개 이상 구에 존재).
+
+describe('BuildingSearch — 구 선택 연동', () => {
+  function setup(over: Partial<Parameters<typeof BuildingSearch>[0]> = {}) {
+    const onSelect = vi.fn();
+    const onSearchStart = vi.fn();
+    render(
+      <BuildingSearch
+        onSelect={onSelect}
+        onSearchStart={onSearchStart}
+        selectedBldId={null}
+        sigungu={null}
+        sigunguName={null}
+        {...over}
+      />,
+    );
+    const input = screen.getByLabelText('건물명 또는 주소') as HTMLInputElement;
+    return { onSelect, onSearchStart, input };
+  }
+
+  function search(input: HTMLInputElement, text: string) {
+    fireEvent.change(input, { target: { value: text } });
+    fireEvent.submit(input.closest('form')!);
+  }
+
+  it('구를 고르지 않고 검색하면 서버를 부르지 않고 지역을 먼저 고르라고 안내한다', () => {
+    const { input, onSearchStart } = setup();
+    search(input, '테헤란로');
+    expect(rpc).not.toHaveBeenCalled();
+    expect(onSearchStart).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    expect(screen.getByText('먼저 지역을 골라 주세요')).toBeTruthy();
+  });
+
+  it('구를 고르면 검색 요청에 그 구 코드가 실려 간다', async () => {
+    const { input } = setup({ sigungu: '11680', sigunguName: '강남구' });
+    search(input, '테헤란로');
+    await waitFor(() => expect(rpc).toHaveBeenCalled());
+    expect(rpc.mock.calls[0]).toEqual([
+      'search_buildings',
+      { q: '테헤란로', lim: expect.any(Number), sigungu: '11680' },
+    ]);
+  });
+
+  it('결과 문구에 어느 구에서 찾았는지 보여준다', async () => {
+    rpc.mockResolvedValue({ data: [hit({ total_cnt: 1706 })], error: null });
+    const { input } = setup({ sigungu: '11680', sigunguName: '강남구' });
+    search(input, '테헤란로');
+    await waitFor(() => expect(screen.getByText(/강남구에서/)).toBeTruthy());
+    expect(screen.getByText(/1,706개/)).toBeTruthy();
+  });
+
+  it('0건일 때 너무 넓은지 판정하는 요청에도 구 코드가 함께 실려 간다', async () => {
+    rpc.mockImplementation((fn: string) =>
+      fn === 'search_scope'
+        ? Promise.resolve({ data: [{ too_broad: false, match_cnt: 0 }], error: null })
+        : Promise.resolve({ data: [], error: null }),
+    );
+    const { input } = setup({ sigungu: '11680', sigunguName: '강남구' });
+    search(input, '없는건물');
+    await waitFor(() =>
+      expect(rpc).toHaveBeenCalledWith('search_scope', { q: '없는건물', sigungu: '11680' }),
+    );
   });
 });

@@ -84,7 +84,9 @@ body {
   border-color: var(--accent);
 }
 
-/* 열린 지역 — 색으로 "여기는 됩니다"를 먼저 알린다. */
+/* 지금 펼친 시도 — **한 번에 하나만** 칠한다.
+   ⚠️ 예전에는 이 클래스가 "열린 지역"을 뜻해 열린 시도가 전부 칠해졌다. 자료 있는
+      곳만 보여주게 되자 모든 칩이 선택된 것처럼 보이는 버그가 됐다(2026-08-13). */
 .region__chip--on {
   background: var(--accent-soft);
   border-color: var(--accent);
@@ -92,9 +94,79 @@ body {
   font-weight: 600;
 }
 
-/* 잠긴 지역 — 지우지 않고 흐리게. 목록에서 빼면 "우리 지역은 영영 안 되나"가 된다. */
-.region__chip--off {
-  opacity: 0.55;
+/* ── 구 고르기 (2026-08-13) ─────────────────────────────────────────── */
+
+.region__selected {
+  margin: 0 0 14px;
+  font-size: 13.5px;
+  color: var(--text);
+}
+
+.region__clear {
+  margin-left: 10px;
+  font: inherit;
+  font-size: 12.5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.region__clear:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.region__gus {
+  margin: 10px 0 20px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+}
+
+.region__gu-list {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+}
+
+.region__gu-chip {
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.region__gu-chip:hover {
+  border-color: var(--accent);
+}
+
+.region__gu-chip--on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.region__retry {
+  font: inherit;
+  font-size: 12.5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--muted);
+  cursor: pointer;
 }
 
 /* ── 안내 팝업 ──────────────────────────────────────────────────────── */

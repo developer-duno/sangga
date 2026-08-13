@@ -1,31 +1,79 @@
-import { useEffect, useRef, useState } from 'react';
-import { SIDOS, isOpenSido, openRegionLabel, type Sido } from '../lib/regions';
+import { useCallback, useEffect, useState } from 'react';
+import { supabase } from '../lib/supabase';
+import { SIDOS, openRegionLabel } from '../lib/regions';
+import type { OpenSigungu } from '../types';
 
 /**
- * 전국 17개 시도를 **전부** 보여주되, 자료가 들어온 곳만 열어 둔다 (결정 0006).
+ * 자료가 **실제로 있는 지역만** 보여준다 (사장님 결정 2026-08-13).
  *
- * 왜 잠긴 지역도 보여주나: 목록에서 아예 빼면 "우리 지역은 영영 안 되나?"가 되고,
- * 열린 지역만 두면 이 서비스가 전국을 향한다는 사실이 안 보인다. 보이되 눌렀을 때
- * **왜 아직 안 되는지·언제 되는지**를 말해 주는 쪽이 정직하다.
+ * ⛔ 결정 0006 은 원래 "전국 17개 시도를 다 보여주되 잠긴 곳은 🔒 로 표시"였다.
+ *    이유는 "목록에서 빼면 우리 지역은 영영 안 되나? 가 된다"였는데, 사장님이
+ *    바로잡으셨다 — **서비스하지 않는 도시를 굳이 보여줄 이유가 없다.**
+ *    "다른 지역은 준비 중이에요"라는 한 줄이 그 뜻을 이미 전달하므로,
+ *    누를 수 없는 칩 15개를 늘어놓을 필요가 없다.
  *
- * ⛔ 이 컴포넌트는 검색을 지역으로 **좁히지 않는다.** 지금 검색은 담긴 자료 전체에서
- *    이뤄지고, 여기서 지역을 고르는 것은 안내일 뿐이다(결정 0006 "서버는 안 건드린다").
- *    지역별 검색 한정은 여러 시도에 건물이 실제로 들어온 뒤에 붙인다.
+ * ⭐ 목록의 진실은 **서버(`list_open_sigungu()`)뿐**이다. 시도도 구도 그 응답에서
+ *    뽑는다 — 프론트에 하드코딩하면 ① 자료 없는 곳을 고를 수 있게 되고(고르면
+ *    아무것도 안 나와 "고장난 것"처럼 보인다) ② 지역이 늘 때마다 화면을 손으로
+ *    고쳐야 한다. 서버에서 뽑으면 자료가 들어오는 순간 화면이 저절로 따라온다.
+ *    `SIDOS` 는 짧은 이름(서울/대전)을 붙이는 데만 쓴다.
+ *
+ * 검색은 **고른 구 안에서만** 한다(2026-08-13e) — 같은 건물 이름이 여러 구에
+ * 겹치기 때문이다(이름 33,851종 중 2,443종). 그래서 시도를 누르면 그 시도의 구가 펼쳐진다.
  */
-export function RegionPicker() {
-  const [picked, setPicked] = useState<Sido | null>(null);
-  const closeRef = useRef<HTMLButtonElement>(null);
+type Props = {
+  /** 지금 고른 시군구 코드. 아무것도 안 골랐으면 null. 상태 소유는 App.tsx. */
+  selectedSigungu: string | null;
+  /** 구를 고르거나 해제할 때 부모에게 알린다. name은 화면 표시용(검색 결과 문구)이다. */
+  onSelectSigungu: (code: string | null, name?: string | null) => void;
+};
 
-  // Esc 로 닫기 — 팝업을 띄워 놓고 빠져나갈 길이 없으면 안 된다.
+/** 서버가 준 구 목록에서 시도를 뽑는다(중복 제거, 코드순). 짧은 이름은 SIDOS 에서. */
+function sidosFrom(guList: OpenSigungu[]) {
+  const seen = new Map<string, { code: string; name: string }>();
+  for (const g of guList) {
+    if (seen.has(g.sido_code)) continue;
+    const known = SIDOS.find((s) => s.code === g.sido_code);
+    seen.set(g.sido_code, { code: g.sido_code, name: known?.name ?? g.sido_nm });
+  }
+  return [...seen.values()].sort((a, b) => a.code.localeCompare(b.code));
+}
+
+export function RegionPicker({ selectedSigungu, onSelectSigungu }: Props) {
+  const [expandedSido, setExpandedSido] = useState<string | null>(null);
+  const [guList, setGuList] = useState<OpenSigungu[]>([]);
+  const [guLoading, setGuLoading] = useState(true);
+  const [guError, setGuError] = useState<string | null>(null);
+
+  const loadGuList = useCallback(async () => {
+    setGuLoading(true);
+    setGuError(null);
+    try {
+      const { data, error } = await supabase.rpc('list_open_sigungu');
+      if (error) throw error;
+      setGuList((data ?? []) as OpenSigungu[]);
+    } catch (ex) {
+      // 실패해도 화면 본체(검색 등)는 살아 있어야 한다 — 지역 고르기만 잠깐 못 쓸 뿐이다.
+      console.error('지역 목록 조회 실패', ex);
+      setGuError('지역 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.');
+      setGuList([]);
+    } finally {
+      setGuLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    if (!picked) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setPicked(null);
-    };
-    window.addEventListener('keydown', onKey);
-    closeRef.current?.focus();
-    return () => window.removeEventListener('keydown', onKey);
-  }, [picked]);
+    loadGuList();
+  }, [loadGuList]);
+
+  const sidos = sidosFrom(guList);
+  const selectedGu = guList.find((g) => g.sigungu_code === selectedSigungu) ?? null;
+  const gusInExpanded = expandedSido ? guList.filter((g) => g.sido_code === expandedSido) : [];
+
+  function pickGu(g: OpenSigungu) {
+    const already = g.sigungu_code === selectedSigungu;
+    onSelectSigungu(already ? null : g.sigungu_code, already ? null : g.sigungu_nm);
+  }
 
   return (
     <section className="region">
@@ -34,64 +82,82 @@ export function RegionPicker() {
         다른 지역은 준비 중이에요.
       </p>
 
-      <ul className="region__list">
-        {SIDOS.map((s) => {
-          const open = isOpenSido(s.code);
-          return (
-            <li key={s.code}>
-              <button
-                type="button"
-                className={`region__chip${open ? ' region__chip--on' : ' region__chip--off'}`}
-                aria-label={open ? undefined : `${s.name}(${s.fullName})은(는) 준비 중입니다. 누르면 안내를 볼 수 있어요.`}
-                onClick={() => setPicked(s)}
-              >
-                {!open && <span aria-hidden="true">🔒 </span>}
-                {s.name}
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-
-      {picked && (
-        <div
-          className="modal__back"
-          onClick={() => setPicked(null)}
-          role="presentation"
-        >
-          <div
-            className="modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="region-modal-title"
-            onClick={(e) => e.stopPropagation()}
+      {selectedGu && (
+        <p className="region__selected">
+          선택한 지역:{' '}
+          <strong>
+            {selectedGu.sido_nm} {selectedGu.sigungu_nm}
+          </strong>
+          <button
+            type="button"
+            className="region__clear"
+            onClick={() => onSelectSigungu(null, null)}
           >
-            <h2 className="modal__title" id="region-modal-title">
-              {isOpenSido(picked.code)
-                ? `${picked.fullName}은(는) 지금 보실 수 있어요`
-                : `${picked.fullName}은(는) 아직 준비 중입니다`}
-            </h2>
-            <p className="modal__body">
-              {isOpenSido(picked.code) ? (
-                <>
-                  위 검색창에 <strong>건물 이름</strong>이나 <strong>주소</strong>를 넣어 찾아보세요.
-                </>
-              ) : (
-                <>
-                  자료를 모으는 중입니다. 지금은 <strong>{openRegionLabel()}</strong>을(를)
-                  보실 수 있어요.
-                </>
-              )}
-            </p>
-            <button
-              type="button"
-              className="modal__close"
-              ref={closeRef}
-              onClick={() => setPicked(null)}
-            >
-              닫기
-            </button>
-          </div>
+            선택 해제
+          </button>
+        </p>
+      )}
+
+      {guLoading && <p className="msg">지역 목록을 불러오는 중…</p>}
+
+      {!guLoading && guError && (
+        <p className="msg msg--error">
+          {guError}{' '}
+          <button type="button" className="region__retry" onClick={loadGuList}>
+            다시 시도
+          </button>
+        </p>
+      )}
+
+      {!guLoading && !guError && sidos.length === 0 && (
+        <p className="msg">아직 볼 수 있는 지역이 없습니다.</p>
+      )}
+
+      {!guLoading && !guError && sidos.length > 0 && (
+        <ul className="region__list">
+          {/*
+            ⚠️ 강조는 **한 번에 하나**여야 한다. 예전에는 `--on` 이 "열린 지역"을 뜻해서
+               열린 시도가 전부 파랗게 칠해졌고, 자료 있는 곳만 보여주게 된 지금은
+               **모든 칩이 선택된 것처럼** 보였다(2026-08-13 사장님 발견).
+               이제 `--on` 은 "지금 펼친 시도" 하나만 가리킨다.
+          */}
+          {sidos.map((s) => {
+            const expanded = expandedSido === s.code;
+            return (
+              <li key={s.code}>
+                <button
+                  type="button"
+                  className={`region__chip${expanded ? ' region__chip--on' : ''}`}
+                  aria-expanded={expanded}
+                  onClick={() => setExpandedSido((cur) => (cur === s.code ? null : s.code))}
+                >
+                  {s.name}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {expandedSido && gusInExpanded.length > 0 && (
+        <div className="region__gus">
+          <ul className="region__gu-list">
+            {gusInExpanded.map((g) => {
+              const on = g.sigungu_code === selectedSigungu;
+              return (
+                <li key={g.sigungu_code}>
+                  <button
+                    type="button"
+                    className={`region__gu-chip${on ? ' region__gu-chip--on' : ''}`}
+                    aria-pressed={on}
+                    onClick={() => pickGu(g)}
+                  >
+                    {g.sigungu_nm}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
         </div>
       )}
     </section>

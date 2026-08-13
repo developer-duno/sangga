@@ -27,20 +27,23 @@ export type Sido = {
  *
  * ⚠️ 강원(51)·전북(52)은 특별자치도 전환 후 코드다. 옛 코드(42·45)는 과거 분기
  *    스냅샷에만 나오므로 화면 목록에는 넣지 않는다.
+ *
+ * ⚠️ 2026Q2부터 광주(29)·전남(46)이 폐지되고 `전남광주통합특별시`(코드 12)로
+ *    통합됐다(라이브 실측: `bjd_code`에서 12는 활성 3,204건, 29·46은 비활성).
+ *    옛 코드(29·46)는 과거 분기 스냅샷에만 나오므로 화면 목록에는 넣지 않는다.
  */
 export const SIDOS: readonly Sido[] = [
   { code: '11', name: '서울', fullName: '서울특별시' },
+  { code: '12', name: '전남광주', fullName: '전남광주통합특별시' },
   { code: '26', name: '부산', fullName: '부산광역시' },
   { code: '27', name: '대구', fullName: '대구광역시' },
   { code: '28', name: '인천', fullName: '인천광역시' },
-  { code: '29', name: '광주', fullName: '광주광역시' },
   { code: '30', name: '대전', fullName: '대전광역시' },
   { code: '31', name: '울산', fullName: '울산광역시' },
   { code: '36', name: '세종', fullName: '세종특별자치시' },
   { code: '41', name: '경기', fullName: '경기도' },
   { code: '43', name: '충북', fullName: '충청북도' },
   { code: '44', name: '충남', fullName: '충청남도' },
-  { code: '46', name: '전남', fullName: '전라남도' },
   { code: '47', name: '경북', fullName: '경상북도' },
   { code: '48', name: '경남', fullName: '경상남도' },
   { code: '50', name: '제주', fullName: '제주특별자치도' },

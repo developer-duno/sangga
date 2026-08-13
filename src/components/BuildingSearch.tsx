@@ -40,19 +40,26 @@ function normalizeQuery(q: string): string {
  * "이 검색어로는 분석할 곳이 안 정해진다"는 안내.
  *
  * `short`는 화면이 바로 판단하고, `broad`는 서버가 실제 매칭 수를 세어 알려준다.
+ * `no-region`은 구를 아직 안 고른 채 검색을 눌렀을 때다(2026-08-13 사장님 결정 —
+ * 검색은 이제 고른 구 안에서만 한다).
  */
 type ScopeNotice =
   | { kind: 'short' }
-  | { kind: 'broad'; word: string; count: number };
+  | { kind: 'broad'; word: string; count: number }
+  | { kind: 'no-region' };
 
 type Props = {
   onSelect: (hit: BuildingHit) => void;
   /** 새 검색이 시작될 때. 아래 스택뷰가 옛 건물을 계속 그리지 않도록 선택을 비운다. */
   onSearchStart: () => void;
   selectedBldId: string | null;
+  /** 지금 고른 시군구 코드. 없으면 검색을 막고 먼저 고르라고 안내한다. */
+  sigungu: string | null;
+  /** 고른 시군구 이름(화면 표시용). RPC에는 넘기지 않는다. */
+  sigunguName: string | null;
 };
 
-export function BuildingSearch({ onSelect, onSearchStart, selectedBldId }: Props) {
+export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu, sigunguName }: Props) {
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<BuildingHit[]>([]);
   /** 검색어에 걸린 전체 건물 수(보여주는 수가 아니다). */
@@ -88,6 +95,13 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId }: Props
       return;
     }
 
+    // 구를 안 골랐으면 서버를 부르지 않는다 — 같은 건물 이름이 여러 구에 겹치므로
+    // 어느 구인지 정해지지 않은 채로는 정확한 결과를 낼 수 없다(2026-08-13 사장님 결정).
+    if (!sigungu) {
+      setNotice({ kind: 'no-region' });
+      return;
+    }
+
     const runId = ++latestRun.current;
     setLoading(true);
     setError(null);
@@ -99,6 +113,7 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId }: Props
       const { data, error: err } = await supabase.rpc('search_buildings', {
         q,
         lim: MAX_BUILDINGS,
+        sigungu,
       });
 
       if (runId !== latestRun.current) return; // 그새 새 검색이 시작됐다
@@ -110,7 +125,7 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId }: Props
       // 서버는 ②일 때 무거운 일을 하기 전에 0건으로 돌려주므로, 여기서 한 번 더 물어
       // 어느 쪽인지 가린다(0건일 때만 물으므로 평소 검색은 느려지지 않는다).
       if (rows.length === 0) {
-        const scope = await supabase.rpc('search_scope', { q });
+        const scope = await supabase.rpc('search_scope', { q, sigungu });
         if (runId !== latestRun.current) return;
         const row = (scope.data ?? [])[0] as { too_broad?: boolean; match_cnt?: number } | undefined;
         if (row?.too_broad) {
@@ -165,7 +180,7 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId }: Props
       {hits.length > 0 && (
         <>
           <p className="search__count">
-            건물 {total.toLocaleString('ko-KR')}개
+            {sigunguName && `${sigunguName}에서 `}건물 {total.toLocaleString('ko-KR')}개
             {!shownAll && (
               <span className="search__hint">
                 {' '}
@@ -207,9 +222,9 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId }: Props
             onClick={(ev) => ev.stopPropagation()}
           >
             <h2 className="modal__title" id="scope-modal-title">
-              {notice.kind === 'short'
-                ? '한 글자로는 찾을 수 없어요'
-                : `‘${notice.word}’ — 너무 넓은 검색이에요`}
+              {notice.kind === 'short' && '한 글자로는 찾을 수 없어요'}
+              {notice.kind === 'no-region' && '먼저 지역을 골라 주세요'}
+              {notice.kind === 'broad' && `‘${notice.word}’ — 너무 넓은 검색이에요`}
             </h2>
             <p className="modal__body">
               {notice.kind === 'broad' && (
@@ -220,15 +235,26 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId }: Props
               {notice.kind === 'short' && (
                 <>한 글자는 거의 모든 주소에 들어 있어서 어디를 볼지 정해지지 않습니다. </>
               )}
-              이 서비스는 <strong>건물 한 채·필지 한 곳</strong>을 놓고 상권을 분석합니다. 어느
-              곳인지 정해지지 않으면 옆 동네와 비교할 수도, 층별로 볼 수도 없어요.
+              {notice.kind === 'no-region' ? (
+                <>
+                  위에서 <strong>시·도와 구</strong>를 먼저 골라 주세요. 같은 건물 이름이 여러
+                  구에 있을 수 있어서, 지역을 정해야 그 안에서만 정확하게 찾을 수 있습니다.
+                </>
+              ) : (
+                <>
+                  이 서비스는 <strong>건물 한 채·필지 한 곳</strong>을 놓고 상권을 분석합니다. 어느
+                  곳인지 정해지지 않으면 옆 동네와 비교할 수도, 층별로 볼 수도 없어요.
+                </>
+              )}
             </p>
-            <p className="modal__body">
-              아래 셋 중 하나를 넣어 주세요.
-              <br />· 동 이름 — <strong>역삼동</strong>, <strong>둔산동</strong>, <strong>명동</strong>
-              <br />· 건물 이름 — <strong>그랑프리빌딩</strong>
-              <br />· 지번·도로명 — <strong>역삼동 823-4</strong>, <strong>테헤란로 117</strong>
-            </p>
+            {notice.kind !== 'no-region' && (
+              <p className="modal__body">
+                아래 셋 중 하나를 넣어 주세요.
+                <br />· 동 이름 — <strong>역삼동</strong>, <strong>둔산동</strong>, <strong>명동</strong>
+                <br />· 건물 이름 — <strong>그랑프리빌딩</strong>
+                <br />· 지번·도로명 — <strong>역삼동 823-4</strong>, <strong>테헤란로 117</strong>
+              </p>
+            )}
             <button
               type="button"
               className="modal__close"
