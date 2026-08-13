@@ -10,7 +10,19 @@
 - **상세 계획** — `docs/상세계획.md` (데이터 소스·분석 로직·검증 설계·로드맵 전부)
 - **DB 스키마** — `supabase/schema.sql`
 - **부동산 데이터 처리 규격** — `budongsan-data` 스킬 참조 (PNU 조립·층 정규화·API 카탈로그)
-- **현재 Phase** — Phase 1 진행 중 (PNU/층 정규화 + 건축물대장 조인). Phase 0(수집 준비)은 완료. `docs/PROGRESS.md` 참조
+- **현재 Phase** — **Phase 1 통과**(2026-08-09, 조인률 95.92%/96.86%) → 1단계 서비스범위(서울+대전) 확장 완료(결정 0006) → **Phase 2 진행 중**(층별 스택 화면, 눈 검증 2/10). `docs/PROGRESS.md` 참조
+
+### 🔴 운영 4계명 (매 세션 확인 — 어기면 복구 불가하거나 조용히 깨진다)
+
+| | 규칙 | 어기면 |
+|---|---|---|
+| 💾 | **백업은 자동이 아니다.** 새 분기 zip을 받았거나 대량 수집을 마쳤으면 `python scripts/backup_raw.py`를 **직접** 돌린다 | 포털에서 과거분이 내려가면 **재수집 불가**(절대 규칙 6). 건축HUB 일괄 파일도 **최근 3개월치만** 남는다 |
+| 📦 | **패키지 매니저는 `pnpm`.** `npm`으로 돌리지 않는다 (`pnpm-lock.yaml`·CI 기준) | 락파일이 갈라져 CI와 로컬이 다른 의존성을 쓴다 |
+| 🔑 | **키는 `.env`.** 브라우저용 공개키는 `.env.local` — 손으로 만들지 말고 `python scripts/make_env_local.py` | 손으로 만들다 **서비스키를 브라우저에 노출**하는 사고. 이 스크립트는 공개키만 골라 쓴다 |
+| 🐍 | **파이썬 명령은 프로젝트 루트에서.** `cd D:\sangga` 후 실행 | 상대경로(`data/raw/...`)가 어긋나 "파일 없음"으로 조용히 0건 처리된다 |
+
+> ⚙️ **수집·적재·점검 명령은 Claude가 직접 돌린다** (사장님께 넘기지 않는다). 사장님 손이
+> 꼭 필요한 것은 **Supabase 대시보드 SQL Editor**(마이그레이션·`ANALYZE`)와 **외부 계정 신청**뿐이다.
 
 ## 절대 규칙
 
@@ -54,6 +66,8 @@
 6. **조회형 먼저, 탐색형 나중** — 추정 검증 전 추천 금지
 7. **Supabase 별도 프로젝트** — 기존 mibunyang DB와 격리
 8. **토지·상권 원천 데이터는 한 서버, 서비스는 분리** — 회원·결제 등 서비스 고유 상태는 생기는 시점에 그 서비스 소유로 분리. 편입 기준 = "PNU 필지 마스터를 쓰는가"(mibunyang 격리 유지). `docs/decisions/0003-토지상권-한서버-서비스분리.md`
+9. **1단계 서비스 범위 = 서울 + 대전. 전국 프레임은 유지** — 범위를 좁히는 게 아니라 전국 구조 위에서 **열림/잠김만 가른다.** 나머지 15개 시도는 화면에 보이되 누르면 "준비 중" 안내. 열린 지역의 진실은 한 곳(`src/lib/regions.ts`)에만 둔다. 적재 범위는 `--sigungu-code 11,30`(접두사 = 시도 2자리). `docs/decisions/0006-1단계-서비스범위-서울대전.md`
+10. **건축물대장은 API가 아니라 건축HUB 일괄 파일로 받는다** — 전국 3종 4.4GB를 5분에 받는다(로그인 불필요, 월 갱신·누적분). API 전국 수집은 211일이라 대비책으로만 남긴다. `docs/decisions/0005`
 
 ## 데이터 소스 우선순위
 
@@ -78,7 +92,7 @@ constants → scoring → theme → components → hooks → App   (단방향)
 | API | Vercel Serverless |
 | DB | Supabase PostgreSQL + PostGIS (**별도 프로젝트**) |
 | 수집 | ⬜ **여전히 로컬 수동 실행이다** — 받기·적재·백업 전부 사람 손. 다만 **놓치는 것만은 막아 뒀다**: `sangkwon-quarterly-watch.yml`이 매주 포털을 확인해 새 분기가 뜨면 이슈를 자동으로 연다(비밀값 0개). 적재 후 `scripts/check_new_sangkwon_quarter.py`의 `LATEST_KNOWN_QUARTER`를 **사람이 올려야** 다음 분기를 감지한다(절대 규칙 6) |
-| 테스트 | 파이썬 **pytest 863개** + 프론트 **vitest 51개**(jsdom + @testing-library/react) + **E2E playwright**(`e2e/floor-stack.spec.ts` — 검색→선택→층 스택). CI가 셋 다 돌린다(`pnpm test:e2e`, chromium) |
+| 테스트 | 파이썬 **pytest 1,009개** + 프론트 **vitest 74개**(jsdom + @testing-library/react) + **E2E playwright 5개**(`e2e/floor-stack.spec.ts` — 검색→선택→층 스택, 너무 넓은 검색 안내창). CI가 셋 다 돌린다(`pnpm test:e2e`, chromium). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도 |
 
 **성능 원칙**: 상권(수천 개)은 사전계산 정적 JSON, 호실(수백만)은 Supabase 쿼리.
 정적 JSON 폴백을 호실에는 두지 않는다.
@@ -110,12 +124,13 @@ constants → scoring → theme → components → hooks → App   (단방향)
 ```bash
 pnpm dev                                        # 개발 서버 (http://localhost:5173)
 pnpm build                                      # 타입 검사 + 빌드 (tsc -b && vite build)
-pnpm test                                       # 프론트 테스트 (vitest, 51개)
+pnpm test                                       # 프론트 테스트 (vitest, 74개)
+pnpm test:e2e                                   # ★ 화면 E2E (playwright, 5개) — 아래 경고 참조
 pnpm exec oxlint                                # 프론트 린트
 ```
 
 ```bash
-python -m pytest tests/ -q                      # 파이썬 테스트 (863개)
+python -m pytest tests/ -q                      # 파이썬 테스트 (1,009개)
 python scripts/check_new_sangkwon_quarter.py    # 새 분기 스냅샷이 떴나 (읽기만, 키 불필요)
 python -m ruff check scripts/ tests/            # 파이썬 린트
 python scripts/collectors/collect_building_ledger.py --dry-run   # 수집 예산 확인(API 0콜)
@@ -127,6 +142,14 @@ python scripts/collectors/load_vworld_land.py --dry-run          # raw → parce
 python scripts/collectors/load_vworld_bulk.py --dry-run          # 전국 일괄 CSV(zip 17개) → parcel 미리보기(DB 쓰기 0)
 python scripts/collectors/load_vworld_bulk.py                    # 전국 일괄 CSV 적재 — ⚠️ parcel에 있는 PNU만 채운다
 python scripts/collectors/load_sangkwon_snapshot.py --sigungu-code all --dry-run   # 상권정보 전국 모드 미리보기
+python scripts/collectors/load_sangkwon_snapshot.py --sigungu-code 11,30 --dry-run # ★ 1단계 = 서울+대전 (결정 0006)
+python scripts/collectors/fetch_bldrgst_bulk.py --list             # 건축HUB 일괄 파일 목록 (다운로드 0)
+python scripts/collectors/fetch_bldrgst_bulk.py --kind title --probe  # 크기·형식만 확인 (저장 0)
+python scripts/collectors/fetch_bldrgst_bulk.py --kind title      # 표제부 zip 받기 (646MB, 로그인 불필요)
+python scripts/collectors/convert_bldrgst_bulk.py --dry-run       # zip → raw JSONL 변환 미리보기(쓰기 0)
+python scripts/collectors/convert_bldrgst_bulk.py                 # 변환 (기본 범위 11,30 = 서울+대전)
+# ↑ 변환 후에는 기존 적재기를 시군구 폴더마다 돌린다 (코드 수정 0):
+#   python scripts/collectors/load_building_ledger.py --raw-dir data/raw/bldrgst_bulk_converted/11680 --snapshot-ym 202606
 python scripts/make_env_local.py                # .env → .env.local (브라우저용 공개키만)
 python scripts/backup_raw.py --dry-run          # 원본 백업 대상 확인 (쓰기 0)
 python scripts/backup_raw.py                    # data/raw → F:\sangga-raw-backup (외장 SSD 연결 필요)
@@ -136,5 +159,17 @@ python scripts/backup_raw.py --verify           # 백업본을 다시 읽어 SHA
 > 💾 **원본 백업은 자동이 아니다.** 새 분기 zip을 받았거나 대량 수집을 마쳤으면 `backup_raw.py`를
 > 직접 한 번 돌린다. 과거 분기 zip은 포털에서 내려가면 **재수집이 불가능**하다(절대 규칙 6).
 
-> ⚠️ **`npm run test`·`npm run collect`는 존재하지 않는다** (2026-08-08 실측 — `package.json`
-> scripts는 dev·build·lint·typecheck·preview 5개뿐). 예전 이 표가 없는 명령을 안내하고 있었다.
+> ⚠️ **경로·드라이브·`os.sep`을 다루는 코드는 윈도우에서 초록이어도 CI(Ubuntu)에서 깨진다** (2026-08-13 사고).
+> `os.path`는 윈도우에선 `ntpath`, CI에선 `posixpath`라 **같은 문자열을 다르게 해석**한다 —
+> `abspath('Q:\\x')`가 윈도우에선 `Q:\x`(드라이브 Q:)지만 CI에선 `/현재폴더/Q:\x`(드라이브 없음)다.
+> 테스트에서 OS를 흉내 낼 때는 `os.path` 한 벌을 통째로 바꾼다(함수 하나만 바꾸면 반쪽 흉내가 된다).
+> **이 종류는 윈도우에서 원리적으로 못 잡는다 — CI가 유일한 방어선이니 CI 빨간불을 넘기지 말 것.**
+
+> ⚠️ **화면 문구를 바꿨으면 커밋 전에 `pnpm test:e2e`를 한 번 돌린다** (2026-08-11 사고).
+> 검색창 라벨을 `건물명 또는 도로명주소` → `건물명 또는 주소`로 줄였을 때 **pytest도
+> vitest도 끝까지 초록**이었고 E2E만 CI에서 3건 터졌다. E2E는 그 둘에 안 들어 있어서
+> 로컬에선 신호가 아예 안 뜬다 — 라벨·버튼 이름·안내 문구를 건드리면 이 명령이 유일한 방어선이다.
+
+> ⚠️ **`npm run collect`는 존재하지 않는다.** 그리고 `npm`이 아니라 `pnpm`으로 돌린다.
+> (`package.json` scripts 실측 2026-08-11: dev·build·lint·typecheck·**test**·test:watch·
+> **test:e2e**·preview 8개. "test 계열이 없다"던 예전 서술은 그 뒤 도입돼 낡았다.)

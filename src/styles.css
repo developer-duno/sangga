@@ -48,6 +48,104 @@ body {
   color: var(--muted);
 }
 
+/* ── 지역 (전국 프레임 + 열림/잠김) ─────────────────────────────────── */
+
+.region {
+  margin: 0 0 24px;
+}
+
+.region__lead {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.region__list {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+}
+
+.region__chip {
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.region__chip:hover {
+  border-color: var(--accent);
+}
+
+/* 열린 지역 — 색으로 "여기는 됩니다"를 먼저 알린다. */
+.region__chip--on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* 잠긴 지역 — 지우지 않고 흐리게. 목록에서 빼면 "우리 지역은 영영 안 되나"가 된다. */
+.region__chip--off {
+  opacity: 0.55;
+}
+
+/* ── 안내 팝업 ──────────────────────────────────────────────────────── */
+
+.modal__back {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 21, 25, 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 50;
+}
+
+.modal {
+  background: var(--card);
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  padding: 22px 22px 18px;
+  max-width: 380px;
+  width: 100%;
+  box-shadow: 0 12px 32px rgba(20, 21, 25, 0.18);
+}
+
+.modal__title {
+  margin: 0 0 8px;
+  font-size: 17px;
+  letter-spacing: -0.01em;
+}
+
+.modal__body {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.modal__close {
+  font: inherit;
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+.modal__close:hover {
+  filter: brightness(1.08);
+}
+
 /* ── 검색 ───────────────────────────────────────────────────────────── */
 
 .search__form {
@@ -139,12 +237,19 @@ body {
 }
 
 .hit__addr,
-.hit__meta {
+.hit__meta,
+.hit__jibun {
   color: var(--muted);
   font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 지번은 보조 정보 — 도로명주소보다 한 단계 더 흐리게. */
+.hit__jibun {
+  font-size: 12px;
+  opacity: 0.8;
 }
 
 .hit__warn {

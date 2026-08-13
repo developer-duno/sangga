@@ -175,4 +175,23 @@ describe('FloorStack — 본체', () => {
     render(<FloorStack building={building()} />);
     await waitFor(() => expect(screen.getByText(/D등급 · 간접 추론/)).toBeTruthy());
   });
+
+  it('점포 0곳(확정)과 정보 없음(null)을 구분해 보여준다', async () => {
+    // JS truthy 검사(f.store_cnt ? … : '—')를 쓰면 0 과 null 이 똑같이 '—' 로
+    // 보인다. v_floor_stack 의 store_cnt 는 group by 없는 lateral count(*) 라
+    // 매칭 0건이어도 항상 확정된 0 을 돌려준다(절대 NULL 이 아니다) — 그러니
+    // 0 은 "점포 0"으로, null/undefined 만 '—'로 보여야 한다.
+    responses.floors = {
+      data: [
+        floor({ floor_no: 2, store_cnt: 0 }),
+        floor({ floor_no: 1, store_cnt: null }),
+      ],
+      error: null,
+    };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText('점포 0')).toBeTruthy());
+    // null 인 층에는 '—' 만 남고 "점포 0"이 또 나오면 안 된다(0과 null이 같아 보이면 실패).
+    expect(screen.getAllByText('점포 0')).toHaveLength(1);
+    expect(screen.getByText('—')).toBeTruthy();
+  });
 });

@@ -147,7 +147,7 @@ export function FloorStack({ building }: Props) {
                 <span className="floor__use">{f.main_use || '용도 미상'}</span>
                 <span className="floor__area">{formatArea(f.floor_area_m2)}</span>
                 <span className="floor__stores">
-                  {f.store_cnt ? `점포 ${f.store_cnt}` : '—'}
+                  {f.store_cnt != null ? `점포 ${f.store_cnt}` : '—'}
                 </span>
                 <span className="floor__caret">{isOpen ? '▲' : '▼'}</span>
               </button>

@@ -34,6 +34,10 @@ MIGRATION = os.path.join(
 REVOKE_MIGRATION = os.path.join(
     ROOT, "supabase", "migrations", "2026-08-10_revoke_helper_fns_from_anon.sql"
 )
+# 2026-08-13: 검색 범위 게이트("한 곳을 짚는 검색"만 받는다).
+SCOPE_GATE_MIGRATION = os.path.join(
+    ROOT, "supabase", "migrations", "2026-08-13_search_scope_gate.sql"
+)
 
 # 표시명 식 — 검색 WHERE 절과 인덱스가 이것으로 일치해야 인덱스를 탄다.
 DISPLAY_EXPR = "building_display_nm(bld_nm, dong_nm)"
@@ -131,28 +135,89 @@ def test_generic_dong_regex_does_not_eat_real_names(schema_sql):
     assert not eaten, "진짜 이름인데 일반 라벨로 걸립니다: {}".format(eaten)
 
 
-def test_search_and_index_use_the_same_expression(schema_sql, migration_sql):
-    """검색 WHERE 절과 인덱스가 같은 식을 써야 gin 인덱스를 탄다.
+def test_2026_08_08e_migration_keeps_its_own_expression(migration_sql):
+    """2026-08-08e 마이그레이션은 **그 시점의 식**을 그대로 유지해야 한다.
 
-    한 글자만 달라도 인덱스를 안 타는데, 그건 에러가 아니라 **조용한 성능 저하**라
-    사람 눈으로는 안 잡힌다.
+    과거 마이그레이션 파일은 역사 기록이다 — 라이브에 이미 그 형태로 적용됐으므로
+    나중 설계(2026-08-11e 저장 컬럼)에 맞춰 소급해 고치지 않는다. 고치면 "라이브에
+    실제로 무엇이 실행됐는가"를 잃는다.
     """
-    for label, sql in (("schema.sql", schema_sql), ("migration", migration_sql)):
-        assert DISPLAY_EXPR in sql, (
-            "{}: 표시명 인덱스 식 `{}` 이 없습니다".format(label, DISPLAY_EXPR)
+    assert DISPLAY_EXPR in migration_sql, (
+        "2026-08-08e: 표시명 식 `{}` 이 사라졌습니다".format(DISPLAY_EXPR)
+    )
+    assert "idx_building_display_nm" in migration_sql, (
+        "2026-08-08e: 당시 만든 표시명 인덱스 기록이 사라졌습니다"
+    )
+    assert DISPLAY_EXPR_QUALIFIED + " ilike pat.p" in migration_sql, (
+        "2026-08-08e: 당시 검색 이름 가지 기록이 바뀌었습니다"
+    )
+
+
+def test_schema_search_uses_stored_key_columns(schema_sql):
+    """검색 WHERE 절은 **저장 컬럼**을 봐야 한다 (식으로 되돌아가면 3초를 넘긴다).
+
+    2026-08-11e 이전에는 "WHERE 와 인덱스가 **같은 식**인가"를 지켰다. 지금은 그
+    식의 결과를 컬럼(nm_key·road_addr_key·jibun_addr_key)에 저장하고 그 위에
+    인덱스를 건다. 그래서 지킬 것이 "식끼리 일치"에서 **"컬럼끼리 일치"**로 바뀌었다.
+
+    왜 그렇게 바꿨나 (EXPLAIN 실측 2026-08-11)
+    -----------------------------------------
+    '명동' 같은 2글자 검색어는 trigram 선별력이 없어 후보가 거의 전체가 된다.
+    인덱스가 '식'이면 **재확인 때마다 regexp_replace 를 다시 돌린다** —
+    후보 197,076건 × 정규식 = statement_timeout 3초 초과 → HTTP 500.
+    저장 컬럼이면 재확인이 단순 문자열 비교라 **결과를 자르지 않고** 빨라진다.
+
+    식으로 되돌리면 에러가 아니라 **흔한 검색어만 조용히 500**이 되므로,
+    사람 눈으로는 안 잡힌다 — 이 테스트가 가드다.
+    """
+    # 저장 컬럼이 표시명 식으로 만들어져야 한다
+    # (동명칭 404개 찾기·개인 성명 가림이 전부 이 식에 걸려 있다).
+    assert (
+        "generated always as (search_key({})) stored".format(DISPLAY_EXPR)
+        in schema_sql
+    ), "schema.sql: building.nm_key 가 표시명 식으로 만들어지지 않습니다"
+
+    # WHERE 가 저장 컬럼을 본다 (세 가지 = 이름·도로명·지번)
+    #
+    # ⚠️ 공백 수에 흔들리지 않게 눌러서 비교한다. 2026-08-13 에 `pc.road_addr_key  like`
+    #    처럼 정렬용 공백을 두 칸 준 것만으로 이 가드가 빨간불이 됐다 — 지켜야 할 것은
+    #    "저장 컬럼을 본다"이지 "공백이 한 칸이다"가 아니다.
+    flat = re.sub(r"\s+", " ", schema_sql)
+    for where in (
+        "b.nm_key like pat.p",
+        "pc.road_addr_key like pat.p",
+        "pc.jibun_addr_key like pat.p",
+    ):
+        assert where in flat, (
+            "schema.sql: 검색 WHERE 가 `{}` 를 안 씁니다 — 식으로 되돌아가면 "
+            "흔한 검색어가 3초를 넘겨 500이 됩니다".format(where)
         )
-        assert "idx_building_display_nm" in sql, (
-            "{}: 표시명 인덱스가 없습니다 — 검색이 전수 스캔이 됩니다".format(label)
+
+    # 그 컬럼 위에 인덱스가 있어야 한다 (없으면 전수 스캔)
+    for idx in ("idx_building_nm_key", "idx_parcel_road_key", "idx_parcel_jibun_key"):
+        assert idx in schema_sql, (
+            "schema.sql: {} 가 없습니다 — 검색이 전수 스캔이 됩니다".format(idx)
         )
-        assert DISPLAY_EXPR_QUALIFIED + " ilike pat.p" in sql, (
-            "{}: 검색 이름 가지가 표시명 식을 안 씁니다 — 동명칭 404개가 다시 "
-            "안 찾히게 됩니다".format(label)
+
+    # 죽은 식 인덱스를 되살리면 안 된다 (라이브에서 이미 지웠다)
+    for dead in (
+        "idx_building_display_nm",
+        "idx_parcel_road_addr",
+        "idx_parcel_jibun_addr",
+    ):
+        assert not re.search(
+            r"(?m)^create index if not exists {}\b".format(dead), schema_sql
+        ), (
+            "schema.sql: 죽은 식 인덱스 {} 가 되살아났습니다 — 라이브에는 없어서 "
+            "정본과 라이브가 갈라집니다(2026-08-11e)".format(dead)
         )
-        # 옛 방식(원본 bld_nm 직접 비교)으로 되돌아가면 성명이 다시 새고
-        # 동명칭도 다시 안 찾힌다.
-        assert "and b.bld_nm ilike pat.p" not in sql, (
-            "{}: 검색이 원본 bld_nm 을 직접 보고 있습니다 — 2026-08-08e 이전으로 "
-            "되돌아갔습니다".format(label)
+
+    # 옛 방식(원본 bld_nm 직접 비교)으로 되돌아가면 성명이 다시 새고
+    # 동명칭 404개도 다시 안 찾힌다.
+    for old in ("and b.bld_nm ilike pat.p", "and b.bld_nm like pat.p"):
+        assert old not in schema_sql, (
+            "schema.sql: 검색이 원본 bld_nm 을 직접 보고 있습니다 — "
+            "2026-08-08e 이전으로 되돌아갔습니다"
         )
 
 
@@ -171,12 +236,25 @@ def extract_floor_stack_view(sql):
 
 
 def test_floor_stack_view_masks_name(schema_sql, migration_sql):
-    """스택 뷰 제목도 같은 표시명을 써야 한다 (여기만 빠지면 성명이 화면에 남는다)."""
+    """스택 뷰 제목도 같은 표시명을 써야 한다 (여기만 빠지면 성명이 화면에 남는다).
+
+    2026-08-13 부터 정본은 함수를 직접 부르지 않고 **미리 계산해 둔 컬럼**(display_nm)을
+    읽는다. 값은 같고(라이브 실측 242,631행 0건 차이), 그래야 도우미 함수를 anon 에게서
+    닫을 수 있다 — 뷰 안에서 부르는 함수의 실행 권한은 뷰 소유자가 아니라 접속한 롤로
+    검사되기 때문이다(2026-08-10 에 함수를 닫자 이 화면이 401 로 죽었다).
+
+    그래서 여기서 지키는 것은 "함수를 부르는가"가 아니라 **"가려진 이름을 내보내는가"**다.
+    옛 마이그레이션 파일은 그 시점의 형태(함수 호출)를 그대로 유지한다 — 역사 기록이다.
+    """
+    masked_forms = (
+        DISPLAY_EXPR_QUALIFIED + " as bld_nm",  # 옛 형태: 함수를 직접 호출
+        "b.display_nm as bld_nm",                # 새 형태: 미리 계산해 둔 컬럼
+    )
     for label, sql in (("schema.sql", schema_sql), ("migration", migration_sql)):
         block = extract_floor_stack_view(sql)
         assert block, "{}: v_floor_stack 뷰 정의를 못 찾았습니다".format(label)
-        assert DISPLAY_EXPR_QUALIFIED + " as bld_nm" in block, (
-            "{}: v_floor_stack 이 원본 건물명을 그대로 내보냅니다 — "
+        assert any(f in block for f in masked_forms), (
+            "{}: v_floor_stack 이 가려진 이름을 안 내보냅니다 — "
             "스택 뷰 제목에 개인 성명이 남습니다".format(label)
         )
         # 원본 컬럼을 그대로 내보내던 옛 형태로 되돌아가면 안 된다.
@@ -184,6 +262,53 @@ def test_floor_stack_view_masks_name(schema_sql, migration_sql):
             "{}: v_floor_stack 이 b.bld_nm 을 그대로 내보냅니다 "
             "(2026-08-08e 이전으로 되돌아갔습니다)".format(label)
         )
+
+
+def extract_unit_current_view(sql):
+    """v_unit_current 뷰 정의 블록만 잘라낸다 (위 v_floor_stack 과 같은 이유로 좁힌다)."""
+    head = "create or replace view v_unit_current as"
+    i = sql.find(head)
+    if i < 0:
+        return None
+    j = sql.find("comment on view v_unit_current", i)
+    return sql[i : j if j > 0 else len(sql)]
+
+
+def test_unit_current_view_masks_name(schema_sql):
+    """호실 현황 뷰도 가려진 이름을 내보내야 한다.
+
+    2026-08-13 적대검증에서 **이 뷰만 원본 건물명을 그대로 싣고 있는 것**이 발견됐다.
+    지금 anon 에게 열려 있지 않아 새고 있진 않지만, "노출 안 돼서 안전한 것"은 안전한
+    게 아니라 아직 안 걸린 것이다 — 나중에 이 뷰를 열면 그 순간부터 샌다.
+
+    ⚠️ 이 가드 자체가 없어서 못 잡던 구멍이었다. v_floor_stack 쪽 가드에 주입 시험을
+       돌렸더니 엉뚱하게 이 뷰가 망가져도 전부 초록이었다(2026-08-13에 그렇게 발견).
+    """
+    block = extract_unit_current_view(schema_sql)
+    assert block, "schema.sql: v_unit_current 뷰 정의를 못 찾았습니다"
+    assert (
+        "b.display_nm as bld_nm" in block
+        or DISPLAY_EXPR_QUALIFIED + " as bld_nm" in block
+    ), "schema.sql: v_unit_current 가 가려진 이름을 안 내보냅니다 — 개인 성명이 그대로 나갑니다"
+    assert not re.search(r"^\s*b\.bld_nm\s*,\s*$", block, re.M), (
+        "schema.sql: v_unit_current 가 b.bld_nm 을 그대로 내보냅니다"
+    )
+
+
+def test_display_nm_column_is_defined_from_the_masking_function(schema_sql):
+    """display_nm 컬럼은 반드시 표시명 함수로 만들어져야 한다.
+
+    이 컬럼이 뷰가 읽는 유일한 출처가 됐으므로, 정의가 바뀌면 가림이 통째로 풀린다.
+    (예: 그냥 `bld_nm` 을 복사하도록 바꾸면 개인 성명이 다시 화면에 나온다.)
+    """
+    flat = re.sub(r"\s+", " ", schema_sql)
+    assert (
+        "add column if not exists display_nm text generated always as "
+        "(building_display_nm(bld_nm, dong_nm)) stored" in flat
+    ), (
+        "schema.sql: building.display_nm 이 표시명 함수로 만들어지지 않습니다 — "
+        "뷰가 이 컬럼을 읽으므로 개인 성명 가림이 풀립니다"
+    )
 
 
 def extract_display_nm_body(sql):
@@ -276,3 +401,84 @@ def test_helper_functions_are_not_granted_to_anon(schema_sql, revoke_migration_s
                         label, sig, role
                     )
                 )
+
+
+# =====================================================================
+# 검색 범위 게이트 — "한 곳을 짚는 검색"만 받는다 (2026-08-13)
+# =====================================================================
+# 왜 가드가 필요한가: 게이트를 지우면 에러가 나지 않는다. `서울`·`동` 같은 흔한
+# 검색어만 조용히 3초를 넘겨 500이 되고, 나머지는 멀쩡해 보인다 — 사람 눈으로는
+# 안 잡히는 종류다. 라이브 실측(2026-08-13): 게이트 없이 '동'은 7,721ms,
+# 게이트를 붙이면 264ms 에 0건으로 끊긴다.
+
+
+def test_search_scope_gate_exists(schema_sql):
+    """범위 판정 함수 두 개가 정본에 있어야 한다."""
+    assert "create or replace function search_scope_limit()" in schema_sql, (
+        "schema.sql: search_scope_limit() 가 없습니다 — 상한이 코드 여기저기 흩어지면 "
+        "서로 다른 값으로 갈라진다"
+    )
+    assert "create or replace function search_scope(q text)" in schema_sql, (
+        "schema.sql: search_scope() 가 없습니다 — 화면이 '결과 없음'과 '너무 넓음'을 "
+        "구분하지 못하게 된다"
+    )
+
+
+def test_search_bounds_candidates_with_the_limit(schema_sql):
+    """후보 수집이 **상한+1 에서 멈춰야** 한다.
+
+    이게 게이트이자 성능 장치다. 상한을 지우면 '동'(필지의 98%와 매칭)이 20만 건을
+    전부 모으다 3초를 넘긴다. 따로 세는 조회를 두는 방식으로 되돌리면 좁은 검색어까지
+    표를 두 번 더 훑어 오히려 느려진다(실측: '명동' 796ms → 2,803ms).
+    """
+    flat = re.sub(r"\s+", " ", schema_sql)
+    assert flat.count("limit search_scope_limit() + 1") >= 2, (
+        "schema.sql: 후보 수집(주소·이름 두 가지)이 상한에서 멈추지 않습니다 — "
+        "흔한 검색어가 20만 건을 다 모으다 3초를 넘겨 500이 됩니다"
+    )
+    assert "not (select g.broad from gate g)" in flat, (
+        "schema.sql: 범위를 넘긴 검색을 끊는 게이트가 없습니다 — 결과 25개를 억지로 "
+        "보여주게 되는데, 상권분석은 건물 한 채 단위라 의미가 없습니다"
+    )
+
+
+def test_search_scope_is_open_to_anon_but_limit_is_not(schema_sql):
+    """화면은 판정(search_scope)만 부른다. 상한 함수는 내부용이라 닫아 둔다."""
+    flat = re.sub(r"\s+", " ", schema_sql)
+    assert "grant execute on function search_scope(text) to anon" in flat, (
+        "schema.sql: search_scope() 가 anon 에게 안 열려 있습니다 — 화면이 '너무 넓은 "
+        "검색'인지 물어볼 수 없게 됩니다"
+    )
+    m = re.search(
+        r"revoke all on function search_scope_limit\(\)\s+from\s+([^;]+);", flat
+    )
+    assert m, "schema.sql: search_scope_limit() revoke 문을 찾지 못했습니다"
+    for role in ("anon", "authenticated"):
+        assert role in m.group(1), (
+            "schema.sql: search_scope_limit() 의 revoke 대상에 {}이 없습니다".format(role)
+        )
+
+
+def test_search_scope_limit_matches_between_schema_and_migration():
+    """상한 값이 정본과 마이그레이션에서 갈라지면 안 된다."""
+    pat = re.compile(
+        r"create or replace function search_scope_limit\(\).*?select\s+(\d+)\s*\$\$",
+        re.S,
+    )
+    found = {}
+    for label, path in (
+        ("schema.sql", SCHEMA),
+        ("migration", SCOPE_GATE_MIGRATION),
+    ):
+        m = pat.search(read(path))
+        assert m, "{}: search_scope_limit() 본문에서 값을 못 읽었습니다".format(label)
+        found[label] = int(m.group(1))
+    assert found["schema.sql"] == found["migration"], (
+        "상한 값이 갈라졌습니다: {} — 한 곳만 고치면 새 환경과 라이브가 다르게 "
+        "동작한다".format(found)
+    )
+    # 근거(2026-08-13 실측): 가장 큰 법정동 신림동 4,633 < 상한 < 가장 작은 구 검색 7,399
+    assert 4633 < found["schema.sql"] < 7399, (
+        "상한 {}: 동 이름이 막히거나(4,633 이하) 구 이름이 통과(7,399 이상)합니다 — "
+        "두 수를 다시 실측하고 값을 정하세요".format(found["schema.sql"])
+    )

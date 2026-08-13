@@ -206,6 +206,15 @@ describe('describeError — 오류 안내', () => {
     expect(msg).toContain('search_buildings');
   });
 
+  it('타임아웃(57014)은 고장이 아니라 "검색어가 넓다"고 알려준다', () => {
+    // 2026-08-11 실측: '동'·'1'·'서울' 은 수십만 건과 맞아 3초를 넘긴다.
+    // "실패했습니다"로 뭉뚱그리면 사용자가 고장인 줄 알고 같은 검색을 반복한다.
+    const msg = describeError({ code: '57014', message: 'canceling statement due to statement timeout' });
+    expect(msg).toContain('너무 넓어');
+    expect(msg).not.toContain('실패했습니다');
+    expect(msg).not.toContain('statement');   // 내부 용어 노출 금지
+  });
+
   it('그 밖의 오류에는 내부 표 이름을 노출하지 않는다', () => {
     const msg = describeError({
       code: '42501',

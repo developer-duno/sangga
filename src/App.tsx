@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { BuildingSearch } from './components/BuildingSearch';
 import { FloorStack } from './components/FloorStack';
+import { RegionPicker } from './components/RegionPicker';
 import type { BuildingHit } from './types';
 
 export default function App() {
@@ -10,11 +11,17 @@ export default function App() {
     <div className="app">
       <header className="app__head">
         <h1 className="app__title">상가 층별 스택뷰</h1>
+        {/*
+          ⛔ 담긴 지역을 여기에 글자로 박지 말 것. 자료가 늘면 문구가 곧바로 거짓말이
+             된다(2026-08-11 실제로 그랬다 — 헤더는 '강남구'인데 각주는 서울·대전
+             전체 63만 곳을 말했다). 지역 안내는 RegionPicker 가 regions.ts 에서 만든다.
+        */}
         <p className="app__sub">
           건물을 찾으면 층마다 무슨 용도인지·얼마나 넓은지·어떤 점포가 있는지 쌓아서 보여줍니다.
-          지금 담긴 자료는 <strong>서울 강남구</strong>입니다.
         </p>
       </header>
+
+      <RegionPicker />
 
       {/*
         onSearchStart 로 선택을 비운다. 안 그러면 새 검색을 해도 아래 스택이 **이전에 고른

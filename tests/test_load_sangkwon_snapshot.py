@@ -381,6 +381,111 @@ def test_scan_and_build_default_mode_still_filters(tmp_path):
     assert len(result["parcel_records"]) == 1     # 콜백 없으면 예전처럼 다 모아준다
 
 
+# ── 6.6 범위 지정(시도·복수 지역) — parse_scope / rest_scope_filter ──────────
+#
+# 1단계 서비스 범위가 "서울+대전"이라 기존의 '시군구 1개 아니면 전국' 두 갈래로는
+# 표현이 안 됐다. 시군구코드 앞 2자리가 시도이므로 접두사 일치 하나로 통일한다.
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("11680", ("11680",)),            # 강남구 하나 (기존 동작)
+    ("11,30", ("11", "30")),          # 서울 + 대전
+    ("11", ("11",)),                  # 서울 전체
+    (" 11 , 30 ", ("11", "30")),      # 공백 허용
+    ("30,11", ("11", "30")),          # 순서 무관(정렬)
+    ("all", ()),                      # 전국 = 필터 없음
+    ("ALL", ()),
+])
+def test_parse_scope(raw, expected):
+    assert target.parse_scope(raw) == expected
+
+
+def test_parse_scope_drops_prefix_covered_entries():
+    """'11'이 이미 서울 전체라 '11680'을 따로 두면 같은 행을 두 번 세게 된다."""
+    assert target.parse_scope("11,11680") == ("11",)
+
+
+@pytest.mark.parametrize("raw", ["", "  ", ",", "1", "116801", "11a", "서울"])
+def test_parse_scope_rejects_bad_values(raw):
+    with pytest.raises(ValueError):
+        target.parse_scope(raw)
+
+
+@pytest.mark.parametrize("prefixes,expected", [
+    ((), "전국"),
+    (("11",), "서울"),
+    (("11", "30"), "서울+대전"),
+    (("11680",), "11680"),            # 시군구 5자리는 이름표가 없으니 코드 그대로
+])
+def test_scope_label(prefixes, expected):
+    assert target.scope_label(prefixes) == expected
+
+
+def test_rest_scope_filter_uses_eq_only_when_length_matches():
+    """★ pnu(19자리)에 5자리 eq를 쓰면 아무 행도 안 맞는다 — 그 실수를 막는 가드."""
+    # sigungu_code 는 값 전체가 5자리라 eq 가 맞다(인덱스를 그대로 탄다)
+    assert target.rest_scope_filter("sigungu_code", ("11680",), exact_len=5) == \
+        "sigungu_code=eq.11680"
+    # pnu 는 19자리다 — exact_len 을 안 주므로 like 여야 한다
+    assert target.rest_scope_filter("pnu", ("11680",)) == "pnu=like.11680*"
+    # 시도(2자리)는 5자리가 아니므로 eq 가 되면 안 된다
+    assert target.rest_scope_filter("sigungu_code", ("11",), exact_len=5) == \
+        "sigungu_code=like.11*"
+
+
+def test_rest_scope_filter_multi_uses_or():
+    assert target.rest_scope_filter("pnu", ("11", "30")) == \
+        "or=(pnu.like.11*,pnu.like.30*)"
+    assert target.rest_scope_filter("sigungu_code", ("11", "30"), exact_len=5) == \
+        "or=(sigungu_code.like.11*,sigungu_code.like.30*)"
+
+
+def test_rest_scope_filter_empty_scope_has_no_filter():
+    assert target.rest_scope_filter("pnu", ()) == ""
+
+
+def test_scan_and_build_two_sido_scope_takes_both(tmp_path):
+    """서울(11)+대전(30)만 걸리고 경기(41)는 빠진다."""
+    rows = [
+        make_row(상가업소번호="A1", 시군구코드="11680", 지번코드="1168010100108230004"),
+        make_row(상가업소번호="A2", 시군구코드="11440", 지번코드="1144012300103580001"),
+        make_row(상가업소번호="D1", 시군구코드="30170", 지번코드="3017010100108230004"),
+        make_row(상가업소번호="G1", 시군구코드="41135", 지번코드="4113512300103580001"),
+    ]
+    write_csv(tmp_path, "소상공인시장진흥공단_상가(상권)정보_서울_202603.csv", rows)
+
+    result = target.scan_and_build(str(tmp_path), "11,30", "202603")
+
+    assert result["total_matched"] == 3          # 서울 2 + 대전 1, 경기 제외
+    assert result["parcel_count"] == 3
+    assert result["ub_with_pnu_count"] == 3
+
+
+def test_scan_and_build_sido_scope_takes_whole_sido(tmp_path):
+    """'11'은 서울 안의 모든 구를 잡는다(강남만이 아니라)."""
+    rows = [
+        make_row(상가업소번호="A1", 시군구코드="11680", 지번코드="1168010100108230004"),
+        make_row(상가업소번호="A2", 시군구코드="11110", 지번코드="1111010100108230004"),
+        make_row(상가업소번호="G1", 시군구코드="41135", 지번코드="4113512300103580001"),
+    ]
+    write_csv(tmp_path, "소상공인시장진흥공단_상가(상권)정보_서울_202603.csv", rows)
+
+    result = target.scan_and_build(str(tmp_path), "11", "202603")
+
+    assert result["total_matched"] == 2
+
+
+def test_parse_args_labels_multi_sido_scope():
+    """보고서 라벨이 기본값 '강남구'로 남으면 거짓말이 된다."""
+    opts = target.parse_args(["--sigungu-code", "11,30"])
+    assert opts["gu_name"] == "서울+대전"
+    # --gu-name 을 직접 주면 그걸 존중한다
+    opts2 = target.parse_args(["--sigungu-code", "11,30", "--gu-name", "1단계"])
+    assert opts2["gu_name"] == "1단계"
+    # 기본값(강남구)은 그대로
+    assert target.parse_args([])["gu_name"] == target.DEFAULT_GU_NAME
+
+
 def test_scan_and_build_streams_per_file_and_dedupes_pnu_across_files(tmp_path):
     """★ 파일 1개마다 콜백이 한 번씩 오고, 파일 사이에 겹치는 PNU는 parcel 1회만.
 

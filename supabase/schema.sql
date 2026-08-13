@@ -2,7 +2,23 @@
 -- 상가 공간분석 플랫폼 — DB 스키마 v1.0
 -- 대상: Supabase (PostgreSQL 15+ / PostGIS)
 -- 사용법: Supabase 대시보드 → SQL Editor → 전체 붙여넣기 → Run
+--        (또는 `python scripts/dbx.py -f supabase/schema.sql` — .env 의
+--         SANGGA_DATABASE_URL 로 직접 실행한다)
 -- =====================================================================
+--
+-- ✅ **라이브와 일치한다 (2026-08-13 기준)**
+--   `2026-08-13_search_scope_gate` 까지의 마이그레이션을 이 파일에 모두 반영했다.
+--   2026-08-11 의 대조는 문서를 믿는 게 아니라 **라이브에서 직접 떠서 기계로 비교**했다:
+--     · 함수 — pg_get_functiondef 본문을 문자 단위로 대조
+--     · 인덱스 — pg_indexes 이름 집합을 대조 (죽은 식 인덱스 3개 제거)
+--     · 컬럼 — information_schema.columns 로 저장 컬럼 3개 확인
+--   ⛔ 앞으로 마이그레이션을 라이브에 적용하면 **이 파일에도 같이 반영할 것.**
+--      어긋난 채로 두면 "새 환경 구축"이 조용히 다른 DB 를 만들어 낸다.
+--      (실제로 11c 의 `search_key` 가 빠진 걸 아무도 몰랐다 — 이 파일만 보면
+--       검색이 통째로 깨지는 DB 가 만들어졌을 것이다.)
+--   ℹ️ 이제 사람이 안 세도 된다 — `tests/test_schema_migration_sync.py` 가 마이그레이션을
+--      날짜순으로 재생해 이 파일에 빠진 것·죽은 것이 있으면 빨간불을 낸다.
+--      개수를 여기 적어 두면 그 숫자가 먼저 낡으므로 일부러 적지 않는다.
 --
 -- 구조: 필지(parcel) → 건물(building) → 호실(unit) 3층
 --   아파트는 2층으로 충분했지만 상가는 호실 단위까지 내려가야 한다.
@@ -67,9 +83,10 @@ comment on column parcel.road_contact is '광대로한면/중로각지/세로한
 
 create index if not exists idx_parcel_sigungu on parcel (sigungu_code);
 create index if not exists idx_parcel_geom    on parcel using gist (geom);
--- 주소 검색용. building.bld_nm 과 대칭을 맞춘다 — 이게 없으면 search_buildings 의
--- 주소 가지가 parcel 전수 스캔이 된다(2026-08-08 실측: 같은 선택도에서 비용 8배·시간 28배).
-create index if not exists idx_parcel_road_addr on parcel using gin (road_addr gin_trgm_ops);
+-- 주소 검색용 인덱스는 여기 없다 — 아래 **§검색 키** 절에서 저장 컬럼
+-- (parcel.road_addr_key)에 건다. 이유는 그 절에 적었다.
+-- 이게 없으면 search_buildings 의 주소 가지가 parcel 전수 스캔이 된다
+-- (2026-08-08 실측: 같은 선택도에서 비용 8배·시간 28배).
 
 -- =====================================================================
 -- L2. building — 건물
@@ -88,7 +105,10 @@ create table if not exists building (
   under_floors    smallint,
   approve_date    date,                             -- 사용승인일
   main_use        text,                             -- 주용도
-  bcr             numeric(6,2),                     -- 건폐율
+  -- ⚠️ numeric(6,2)(최대 9,999.99)였다가 2026-08-11 넓혔다. 원본에 건폐율이
+  --    79,095% 인 행이 있어(전체 24만 중 7행) 적재가 통째로 멈췄다.
+  --    집계에 쓸 때는 반드시 상한을 걸어 거를 것 — 한 행이 평균을 흔든다.
+  bcr             numeric(10,2),                    -- 건폐율 (소스 오류값 포함)
   far             numeric(7,2),                     -- 용적률
   parking_cnt     integer,
   is_jiphap       boolean default false,            -- 집합건물 여부
@@ -96,6 +116,12 @@ create table if not exists building (
 );
 
 comment on column building.is_jiphap is '집합건물만 실거래가에 층이 나온다. 일반건축물(통건물)은 지번도 일부만 공개';
+
+comment on column building.bcr is
+  '건폐율 %. 정의상 0~100 이지만 원본에 소스 오류가 섞여 있다 '
+  '(2026-08-11 실측: 전체 24만 행 중 7행이 1만%를 넘고 최댓값 79,095%). '
+  '⚠️ 평균·분포 등 집계에 쓸 때는 반드시 상한을 걸어 거를 것 — 한 행이 통계를 통째로 흔든다. '
+  'numeric(6,2)였을 때 그 7행이 적재를 통째로 멈춰 23,351행이 유실됐다(2026-08-11d로 해소).';
 
 create index if not exists idx_building_pnu on building (pnu);
 create index if not exists idx_building_nm  on building using gin (bld_nm gin_trgm_ops);
@@ -169,6 +195,27 @@ comment on function building_display_nm(text, text) is
   '§8.1 화면에 보일 건물 이름. 건물명(성명 가림) → 동명칭(일반 라벨 제외) → NULL. '
   '검색과 표시가 이 함수 하나만 쓰므로 "보이는 것 = 검색되는 것"이 항상 일치한다';
 
+-- ── 표시명 저장 컬럼 (2026-08-13) ───────────────────────────────────────────
+-- 뷰가 위 함수를 **직접 부르면 그 함수를 anon 에게 열어 둘 수밖에 없다** — 뷰 안에서
+-- 부르는 함수의 실행 권한은 뷰 소유자가 아니라 **접속한 롤**로 검사되기 때문이다.
+-- 실제로 2026-08-10 에 함수를 닫자 층별 스택 화면이 401 로 죽어 되돌려야 했다.
+-- 그래서 값을 미리 계산해 컬럼에 담고, 뷰는 컬럼만 읽는다 => 함수를 닫아도 화면이 산다.
+-- (덤으로 뷰가 행마다 정규식을 두 번씩 돌리지 않는다.)
+--
+-- 검색 함수(search_buildings)는 security definer 라 소유자 권한으로 돌므로 함수를 그대로
+-- 불러도 된다 — 그래서 거기까지 바꾸지는 않았다(고칠 이유가 없는 곳은 안 건드린다).
+--
+-- ⚠️ 테이블 정의부가 아니라 여기 있는 이유: 이 컬럼이 쓰는 함수가 바로 위에서 정의된다.
+-- ⚠️ generated ... stored 는 IMMUTABLE 함수만 쓸 수 있다 — 위 두 함수 다 IMMUTABLE 이다.
+alter table building
+  add column if not exists display_nm text
+  generated always as (building_display_nm(bld_nm, dong_nm)) stored;
+
+comment on column building.display_nm is
+  '화면에 보일 건물 이름 = building_display_nm(bld_nm, dong_nm) 을 미리 계산해 둔 값. '
+  '뷰가 함수를 직접 부르면 그 함수를 anon 에게 열어야 하므로, 값을 컬럼에 담아 함수를 닫는다(2026-08-13). '
+  '라이브 실측: 242,631행 전부에서 함수 결과와 0건 차이.';
+
 -- 도우미 함수는 공개 롤에게 열지 않는다 — 뷰·검색 함수가 소유자 권한으로 대신 부른다.
 -- ⚠️ `from public`만으로는 부족하다 — PUBLIC은 실제 롤이 아니라 가상 그룹이라,
 --    Supabase가 새 함수 생성 시 anon·authenticated에게 자동으로 거는 **직접
@@ -181,10 +228,8 @@ comment on function building_display_nm(text, text) is
 revoke all on function mask_person_name(text) from public, anon, authenticated;
 revoke all on function building_display_nm(text, text) from public, anon, authenticated;
 
--- 검색용 인덱스. WHERE 절과 **글자 하나까지 같은 식**이어야 인덱스를 탄다.
+-- 검색용 인덱스는 여기 없다 — 아래 **§검색 키** 절에서 저장 컬럼(building.nm_key)에 건다.
 -- 이름이 둘 다 없는 건물은 NULL 이라 색인되지 않는다 = 이름으로는 안 찾힌다(의도).
-create index if not exists idx_building_display_nm
-  on building using gin ((building_display_nm(bld_nm, dong_nm)) gin_trgm_ops);
 
 -- =====================================================================
 -- L2-a. building_floor — 층별개요 ★ 층별 스택 뷰(§8.6)의 재료
@@ -301,6 +346,54 @@ create index if not exists idx_ub_pnu      on unit_business (pnu, snapshot_ym);
 create index if not exists idx_ub_name     on unit_business using gin (biz_name gin_trgm_ops);
 create index if not exists idx_ub_cat      on unit_business (cat_s_cd, snapshot_ym);
 create index if not exists idx_ub_geom     on unit_business using gist (geom);
+-- 각주 집계(v_coverage_stats) 전용 **커버링** 인덱스 — 뷰가 쓰는 두 컬럼이 다 들어
+-- 있어 힙에 안 간다(Index Only Scan). 없으면 pkey(snapshot_ym, biz_no)로 인덱스는
+-- 타지만 행마다 힙 페이지를 한 번씩 방문해(최신 스냅샷 63.5만 행 = 버퍼 63.6만 회)
+-- **캐시가 식은 첫 요청만 3초 제한을 넘겨 500**이 된다. 따뜻하면 200이라 재현이
+-- 어렵다. 실측(2026-08-11f): 버퍼 636,527 → 698, 힙 방문 0, 1,028ms → 131ms, 8.6MB.
+create index if not exists idx_ub_snapshot_floor on unit_business (snapshot_ym, floor_no);
+
+
+-- ── 3) unit_business 의 "절대 UPDATE/DELETE 금지"가 말로만 있었다 ───────────
+-- 분기 스냅샷은 포털에서 내려가면 **재수집이 불가능**하다(CLAUDE.md 절대 규칙 6).
+-- 그래서 이 표는 append-only 로 쓰기로 했고 적재기도 그렇게 동작한다
+-- (load_sangkwon_snapshot.py 는 ignore-duplicates 만 쓴다 — 2026-08-13 grep 확인:
+--  UPDATE·DELETE 를 하는 코드가 한 줄도 없다).
+-- 그런데 그 약속이 **주석에만** 있었다. 주석은 실수로 돌린 SQL 한 줄을 못 막는다.
+--
+-- ⚠️ 정당한 정비가 필요하면(예: 잘못 적재된 분기를 걷어내기) 잠깐 끄고 하면 된다:
+--      alter table unit_business disable trigger unit_business_append_only;
+--      ... 정비 ...
+--      alter table unit_business enable trigger unit_business_append_only;
+--    끄는 것 자체가 "지금 되돌릴 수 없는 일을 한다"는 신호가 되도록 일부러 한 단계 둔다.
+-- ⚠️ 문(statement) 단위 트리거다. 한 가지 함정을 알고 있어야 한다 — PostgreSQL 은
+--    `insert ... on conflict do update` 에서 **문 단위 UPDATE 트리거를 (한 행도 안 바뀌어도)
+--    발동**시킨다. 지금 적재기는 unit_business 에 `ignore-duplicates`(= do nothing) 만 쓰므로
+--    안 걸리지만(2026-08-13 확인: load_sangkwon_snapshot.py 141행 `"unit_business":
+--    "ignore-duplicates"`), 누군가 `merge-duplicates` 로 바꾸면 적재가 통째로 막힌다.
+--    그건 사고가 아니라 **의도한 경보**다 — append-only 를 깨는 변경이기 때문이다.
+create or replace function unit_business_append_only()
+returns trigger
+language plpgsql
+as $$
+begin
+  raise exception
+    'unit_business 는 append-only 입니다 (시도: %). 분기 스냅샷은 포털에서 내려가면 '
+    '재수집이 불가능합니다(절대 규칙 6). 정말 필요하면 트리거를 잠깐 끄고 하세요: '
+    'alter table unit_business disable trigger unit_business_append_only;', tg_op
+    using errcode = 'restrict_violation';
+end
+$$;
+
+drop trigger if exists unit_business_append_only on unit_business;
+create trigger unit_business_append_only
+  before update or delete on unit_business
+  for each statement
+  execute function unit_business_append_only();
+
+comment on function unit_business_append_only() is
+  'unit_business 의 append-only 불변식을 DB 에서 강제한다. 주석으로만 있던 약속을 '
+  '실제 방어로 바꾼 것(2026-08-13). 적재기는 ignore-duplicates 만 쓰므로 영향이 없다';
 
 -- =====================================================================
 -- L3-b. transaction — 실거래 (매매만. 상가 임대는 데이터가 없음)
@@ -329,7 +422,9 @@ create table if not exists transaction (
   constraint chk_tx_floor check (floor_no is null or floor_no <> 0)
 );
 
-create index if not exists idx_tx_pnu    on transaction (pnu, contract_ym);
+-- pnu 가 채워진 행은 7.8%뿐이다(2026-08-13 실측: 22,662행 중 1,757행). 조회는 항상 값이
+-- 있는 pnu 를 찾으므로 NULL 을 뺀 부분 인덱스로 충분하다(idx_unit_floor 와 같은 방식).
+create index if not exists idx_tx_pnu    on transaction (pnu, contract_ym) where pnu is not null;
 create index if not exists idx_tx_region on transaction (sigungu_code, contract_ym);
 create index if not exists idx_tx_floor  on transaction (sigungu_code, floor_no, contract_ym);
 
@@ -423,7 +518,9 @@ select
   u.floor_no,
   u.ho,
   u.excl_area_m2,
-  b.bld_nm,
+  -- ⚠️ 원본 b.bld_nm 이 아니다. 동명칭 폴백 + 개인 성명 가림을 거친 값이다
+  --    (v_floor_stack 과 같은 규칙 — 뷰마다 어긋나게 두지 않는다, 2026-08-13).
+  b.display_nm as bld_nm,   -- 함수를 부르지 않는다(위 §표시명 저장 컬럼 참조)
   b.approve_date,
   p.road_addr,
   p.road_contact,
@@ -446,6 +543,7 @@ left join lateral (
 
 comment on view v_unit_current is
   '최신 스냅샷 기준. is_vacant는 D등급(간접 추론) 지표이므로 화면에서 구분 표시할 것. '
+  '⚠️ bld_nm은 원본이 아니라 building_display_nm() 결과다(동명칭 폴백 + 개인 성명 가림, 2026-08-13). '
   '⛔ §8.6 층별 스택 뷰에는 쓰지 말 것 — unit_business.unit_id가 라이브 전 행 NULL(상권정보에 호정보가 '
   '없다)이라 이 뷰는 호실 63,717행 100%를 공실로 판정한다(2026-08-07 실측). 스택 뷰는 v_floor_stack을 쓴다';
 
@@ -513,7 +611,7 @@ select
   s.uses,
   -- ⚠️ 원본 건물명이 아니라 화면에 보일 이름이다(동명칭 폴백 + 개인 성명 가림).
   --    원본은 building.bld_nm 에 그대로 있고, 이 뷰는 내보낼 때만 가린다.
-  building_display_nm(b.bld_nm, b.dong_nm) as bld_nm,
+  b.display_nm as bld_nm,   -- 함수를 부르지 않는다(위 §표시명 저장 컬럼 참조)
   b.approve_date,
   b.is_jiphap,
   p.road_addr,
@@ -591,12 +689,171 @@ comment on view v_coverage_stats is
 -- ⚠️ security definer 인 이유: 원본 표가 anon에게 닫혀 있어(아래 공개 접근 정책)
 --    이 함수가 소유자 권한으로 대신 읽는다. search_path를 고정해 가로채기를 막고,
 --    입력은 파라미터로만 받아 문자열을 이어 붙이지 않는다(주입 4종 시험 통과).
+-- 지번(구주소) 한 줄. 실무에서 "역삼동 823-4"로 찾는 일이 많아 검색 대상에 넣었다.
+-- ⛔ concat_ws 는 IMMUTABLE 이 아니라 인덱스 식으로 못 쓴다 — text `||` 로 만든다.
+create or replace function parcel_jibun_addr(
+  sido text, sigungu text, emd text, jibun text
+) returns text
+language sql
+immutable
+parallel safe
+as $$
+  select nullif(btrim(
+           coalesce(sido, '')    || ' ' ||
+           coalesce(sigungu, '') || ' ' ||
+           coalesce(emd, '')     || ' ' ||
+           coalesce(jibun, '')
+         ), '')
+$$;
+
+comment on function parcel_jibun_addr(text, text, text, text) is
+  '지번(구주소) 한 줄. 예: 서울특별시 강남구 역삼동 823-4. '
+  'parcel.jibun_addr_key 가 이 값을 search_key() 로 정규화해 저장한다.';
+
+-- =====================================================================
+-- 검색 키 — 정규화 함수 + 저장 컬럼 + 인덱스 (2026-08-11c · 11e)
+-- =====================================================================
+-- ① 왜 정규화하나 — **띄어쓰기 하나에 결과가 사라졌다**(라이브에서 발견).
+--      '그랑프리빌딩'  → 1건 (찾힘)
+--      '그랑프리 빌딩' → 0건 (못 찾음)   ← 같은 건물인데
+--    실무에서 띄어쓰기는 사람마다 다르므로 이건 불편이 아니라 결함이다.
+--    그래서 비교 전에 양쪽 모두 **공백을 없애고 소문자로** 바꾼다.
+--    ⚠️ 어순을 바꾼 검색('빌딩 그랑프리')은 여전히 안 된다 — 흔한 문제는
+--       띄어쓰기이지 어순이 아니라서, 가지를 늘리지 않고 이 방법을 택했다
+--       (가지를 늘리면 '빌딩' 같은 흔한 단어가 더 느려진다. 알려진한계 참조).
+--
+-- ② 왜 식이 아니라 **컬럼에 저장**하나 — 식 인덱스는 흔한 검색어에서 3초 제한에
+--    걸려 500을 냈다. EXPLAIN(2026-08-11)이 원인을 짚었다:
+--      Bitmap Index Scan  → 후보 197,076건 (parcel 전체)
+--      Bitmap Heap Scan   Rows Removed by Index Recheck: 196,680 → 최종 396건
+--    2글자 검색어('명동')는 trigram 선별력이 없어 후보가 거의 전체가 되는데,
+--    인덱스가 '식'이면 **재확인 때마다 regexp_replace 를 다시 돌린다.**
+--    197,076번의 정규식이 진짜 시간 도둑이었다. 계산 결과를 컬럼에 담아 두면
+--    재확인이 단순 문자열 비교가 된다 — **결과를 자르지 않고** 빨라진다.
+--    ⛔ 그래서 식 인덱스(idx_building_display_nm · idx_parcel_road_addr ·
+--       idx_parcel_jibun_addr)는 라이브에서 지웠다. 되살리지 말 것.
+--
+-- ⚠️ generated ... stored 는 IMMUTABLE 함수만 쓸 수 있다. 아래 셋 다 IMMUTABLE 이다.
+create or replace function search_key(t text)
+returns text
+language sql
+immutable
+parallel safe
+as $$
+  select nullif(lower(regexp_replace(coalesce(t, ''), '\s+', '', 'g')), '')
+$$;
+
+comment on function search_key(text) is
+  '검색 비교용 정규화 키 — 공백 제거 + 소문자. 인덱스 식과 WHERE 식이 갈라지지 '
+  '않도록 전처리를 이 함수 하나로 묶었다(2026-08-11c).';
+
+-- 도우미 함수는 anon 에게 열지 않는다 — 화면은 search_buildings 하나만 부르고,
+-- 그 함수가 security definer 라 소유자 권한으로 이들을 대신 호출한다.
+-- ⛔ `from public` 만 쓰면 **아무것도 안 닫힌다** — PUBLIC 은 실제 롤이 아니라
+--    가상 그룹이라, anon·authenticated 가 **직접** 받은 GRANT 는 그대로 남는다
+--    (PostgreSQL 공식 sql-revoke.html + 2026-08-10 라이브 실측으로 확인).
+--    그래서 세 대상을 모두 적는다.
+revoke all on function search_key(text) from public, anon, authenticated;
+revoke all on function parcel_jibun_addr(text, text, text, text) from public, anon, authenticated;
+
+-- ── 저장 컬럼 ────────────────────────────────────────────────────────────────
+-- ⚠️ 테이블 정의부가 아니라 여기서 붙이는 이유: 저장 컬럼이 쓰는 함수
+--    (search_key · building_display_nm · parcel_jibun_addr)가 그 위에서 정의되므로,
+--    테이블을 만드는 시점에는 아직 함수가 없다.
+alter table building
+  add column if not exists nm_key text
+  generated always as (search_key(building_display_nm(bld_nm, dong_nm))) stored;
+
+comment on column building.nm_key is
+  '검색용 정규화 이름(공백 제거+소문자). search_buildings 와 idx_building_nm_key 가 이 컬럼을 쓴다. '
+  '식 인덱스였을 때는 후보 8만 건마다 regexp 를 다시 돌려 검색이 3초를 넘겼다(2026-08-11e).';
+
+alter table parcel
+  add column if not exists road_addr_key text
+  generated always as (search_key(road_addr)) stored;
+
+alter table parcel
+  add column if not exists jibun_addr_key text
+  generated always as (search_key(parcel_jibun_addr(sido_nm, sigungu_nm, emd_nm, jibun))) stored;
+
+comment on column parcel.jibun_addr_key is
+  '검색용 정규화 지번주소(공백 제거+소문자). 예: 서울특별시강남구역삼동823-4';
+
+-- ── 저장 컬럼 위의 인덱스 ────────────────────────────────────────────────────
+-- 부분 일치(LIKE '%…%')라 gin_trgm_ops 가 필요하다. 없으면 전수 스캔.
+create index if not exists idx_building_nm_key on building using gin (nm_key gin_trgm_ops);
+create index if not exists idx_parcel_road_key on parcel using gin (road_addr_key gin_trgm_ops);
+create index if not exists idx_parcel_jibun_key on parcel using gin (jibun_addr_key gin_trgm_ops);
+
+-- ── 상한: 어디까지가 "한 곳을 짚는 검색"인가 ──────────────────────────────────
+-- 글자 수로 가르면 안 된다. '명동'은 2글자여도 동이 확정되지만 '강남'은 2글자에
+-- 구 조각이다. 그래서 **몇 곳이 걸리는가**로 가른다. 선은 실측으로 정했다:
+--
+--   가장 큰 법정동   신림동 4,633필지  (전국 637개 동 중 최대, 2026-08-13 실측)
+--   가장 작은 구 검색 '유성구' 11,248필지
+--
+-- 6,000 은 그 사이다 ⇒ **어떤 동 이름도 통과하고, 시·구 이름은 걸린다.**
+--   통과: 둔산동 701 · 명동 1,420 · 역삼동 2,849 · 신림동 4,633
+--   차단: 유성구 11,248 · 강남 13,529 · 대전광역시 45,150 · 서울 163,487 · 동 193,090
+--
+-- ⚠️ 데이터가 전국으로 늘면 동 하나의 필지 수도 늘 수 있다. 그때는 위 두 수를
+--    다시 재고 이 값을 올려라(정본은 여기 한 곳뿐이다).
+create or replace function search_scope_limit()
+returns int
+language sql
+immutable
+parallel safe
+as $$ select 6000 $$;
+
+comment on function search_scope_limit() is
+  '검색이 "한 곳을 짚는" 것으로 인정되는 상한(곳). 가장 큰 법정동(신림동 4,633)보다 크고 '
+  '가장 작은 구 단위 검색(유성구 11,248)보다 작게 잡았다 — 동 이름은 통과, 시·구 이름은 차단.';
+
+-- ── 이 검색어가 몇 곳과 맞는가 ───────────────────────────────────────────────
+-- 세기만 하는 일이라 싸다(조인·정렬이 없다). 무거운 검색은 이걸로 먼저 걸러낸다.
+-- 주소(필지)와 건물이름은 세는 대상이 다르므로 **큰 쪽**으로 판정한다
+--   예: '빌딩' 은 주소 매칭 0곳이지만 건물이름 15,068곳 → 큰 쪽인 15,068 로 판정.
+create or replace function search_scope(q text)
+returns table (too_broad boolean, match_cnt int)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with pat as (
+    select case when search_key(q) is null then null
+                else '%' || replace(replace(replace(search_key(q), '\', '\\'),
+                                    '%', '\%'), '_', '\_') || '%'
+           end as p
+  ),
+  c as (
+    select
+      (select count(*) from parcel pc cross join pat
+        where pat.p is not null
+          and (pc.road_addr_key  like pat.p escape '\'
+            or pc.jibun_addr_key like pat.p escape '\')) as addr_cnt,
+      (select count(*) from building b cross join pat
+        where pat.p is not null
+          and b.nm_key like pat.p escape '\')             as nm_cnt
+  )
+  select greatest(c.addr_cnt, c.nm_cnt) > search_scope_limit(),
+         least(greatest(c.addr_cnt, c.nm_cnt), 2147483647)::int
+  from c;
+$$;
+
+comment on function search_scope(text) is
+  '§8.1 검색어가 몇 곳과 맞는지 세어 "너무 넓은 검색"인지 알려준다. 화면은 결과가 0건일 때 '
+  '이걸 불러 "찾는 게 없음"과 "너무 넓음"을 구분한다. security definer — 원본 표가 anon 에게 '
+  '닫혀 있어 소유자 권한으로 대신 센다(돌려주는 것은 개수뿐이라 개인정보가 나가지 않는다).';
+
+-- ── 검색 본체 ────────────────────────────────────────────────────────────────
 create or replace function search_buildings(q text, lim int default 25)
 returns table (
   bld_id         text,
   pnu            char(19),
   bld_nm         text,
   road_addr      text,
+  jibun_addr     text,
   bld_cnt_in_pnu int,
   floor_cnt      int,
   min_floor      smallint,
@@ -610,73 +867,105 @@ security definer
 set search_path = public
 as $$
   with pat as (
-    -- 빈 검색어(NULL·''·공백뿐)는 NULL 패턴으로 만들어 아래에서 0건이 되게 한다.
-    -- 안 그러면 패턴이 '%%'가 되어 **전 건물 목록 덤프**가 된다(2026-08-08 실측
-    -- total_cnt=12,405). 화면은 빈 검색어를 막지만 RPC 직접 호출은 안 막힌다.
-    -- LIKE 특수문자는 리터럴로. 역슬래시를 **먼저** 바꿔야 한다(나중에 바꾸면
-    -- 방금 넣은 이스케이프까지 다시 이스케이프된다).
-    select case
-             when coalesce(btrim(q), '') = '' then null
-             else '%' ||
-                  replace(replace(replace(q, '\', '\\'), '%', '\%'), '_', '\_') ||
-                  '%'
-           end as p
+    select
+      case when esc.v is null then null else '%' || esc.v || '%' end as p,
+      case when esc.v is null then null else '%' || esc.v      end as p_end,
+      -- ⚠️ k 는 **이스케이프 전** 값이다. 정확일치·앞글자일치 정렬에 쓰는 값이라
+      --    이스케이프하면 안 된다(옛 코드는 여기에 이스케이프된 값을 넣어, 이름에
+      --    % 나 _ 가 든 건물에서 정확일치 가산점이 조용히 안 먹었다. 마지막
+      --    ORDER BY 는 반대로 이스케이프 안 한 값을 써서 두 정렬이 서로 어긋났다).
+      search_key(q) as k
+    from (
+      select case when search_key(q) is null then null
+                  else replace(replace(replace(search_key(q), '\', '\\'),
+                               '%', '\%'), '_', '\_')
+             end as v
+    ) esc
+  ),
+  -- ① 주소 두 칸은 **같은 표**라 한 번만 훑는다 (조인 전 단일 표의 OR 은 안전하다)
+  --
+  -- ⭐ `limit 상한+1` 이 범위 게이트를 겸한다. 따로 세지 않는 이유: 세는 일을 별도
+  --    조회로 두면 좁은 검색어까지 표를 두 번 더 훑어 **오히려 느려진다**
+  --    (실측 2026-08-13: '명동' 796ms → 2,803ms). 여기서 상한+1 에서 멈추면
+  --      · 넘쳤다 = "한 곳을 짚는 검색이 아니다" → 아래에서 통째로 끊는다
+  --      · 안 넘쳤다 = 여기 모인 것이 **곧 전체**다(잘린 것이 없다 = total_cnt 정확)
+  --    넓은 검색어는 상한에서 바로 멈추므로 20만 건을 다 훑지 않는다.
+  addr as materialized (
+    select pc.pnu, pc.road_addr, pc.jibun_addr_key
+      from parcel pc
+      cross join pat
+     where pat.p is not null
+       and (pc.road_addr_key  like pat.p escape '\'
+         or pc.jibun_addr_key like pat.p escape '\')
+     limit search_scope_limit() + 1
+  ),
+  -- ⛔ 주소 가지와 이름 가지를 OR 하나로 합치지 말 것 — 이쪽은 **서로 다른 두 표**라
+  --    조인 전에 한 표를 못 걸러 gin_trgm 인덱스가 통째로 무력화된다(2026-08-08 실측).
+  -- ⛔ WHERE 는 **저장 컬럼**(nm_key/road_addr_key/jibun_addr_key)을 써야 한다.
+  --    식으로 되돌리면 재확인 때 regexp 가 다시 돌아 3초를 넘긴다(2026-08-11e).
+  nm as materialized (
+    select b.bld_id, b.pnu, b.nm_key,
+           building_display_nm(b.bld_nm, b.dong_nm) as bld_nm,
+           pc.road_addr, pc.jibun_addr_key
+      from building b
+      join parcel pc on pc.pnu = b.pnu
+      cross join pat
+     where pat.p is not null and b.nm_key like pat.p escape '\'
+     limit search_scope_limit() + 1
+  ),
+  gate as (
+    select ((select count(*) from addr) > search_scope_limit()
+         or (select count(*) from nm)   > search_scope_limit()) as broad
   ),
   hit as (
-    -- ⛔ OR 하나로 합치지 말 것 — `bld_nm ilike X OR road_addr ilike X` 처럼 **서로 다른
-    --    두 조인 테이블에 걸친 OR** 은 어느 한쪽만으로 매칭을 못 정해서, Postgres 가
-    --    조인 전에 한 표만 거르지 못한다 → gin_trgm 인덱스가 통째로 무력화된다.
-    --    2026-08-08 EXPLAIN 실측: OR = Seq Scan 두 개 / UNION = Bitmap Index Scan 두 개.
-    --    UNION 은 각 가지가 표 하나만 거르므로 인덱스를 타고, 중복은 UNION 이 제거한다.
-    --    ⛔ 이름 가지의 식은 idx_building_display_nm 과 **글자 하나까지 같아야** 한다.
-    select b.bld_id, b.pnu,
+    select b.bld_id, b.pnu, b.nm_key,
            building_display_nm(b.bld_nm, b.dong_nm) as bld_nm,
-           pc.road_addr
-      from building b
-      join parcel pc on pc.pnu = b.pnu
-      cross join pat
-     where pat.p is not null
-       and building_display_nm(b.bld_nm, b.dong_nm) ilike pat.p escape '\'
+           a.road_addr, a.jibun_addr_key
+      from addr a
+      join building b on b.pnu = a.pnu
+     where not (select g.broad from gate g)
     union
-    select b.bld_id, b.pnu,
-           building_display_nm(b.bld_nm, b.dong_nm),
-           pc.road_addr
-      from building b
-      join parcel pc on pc.pnu = b.pnu
-      cross join pat
-     where pat.p is not null
-       and pc.road_addr ilike pat.p escape '\'
+    select n.bld_id, n.pnu, n.nm_key, n.bld_nm, n.road_addr, n.jibun_addr_key
+      from nm n
+     where not (select g.broad from gate g)
   ),
-  -- 그릴 층이 하나도 없는 건물은 목록에 올리지 않는다(눌러도 빈 화면).
   eligible as (
-    select h.*, count(*) over () as total_cnt
+    select h.*,
+           count(*) over () as total_cnt,
+           coalesce(h.jibun_addr_key like (select p_end from pat) escape '\', false)
+             as jibun_hit
     from hit h
+    -- 층 자료가 아예 없는 건물은 빈 스택이 되므로 뺀다(2026-08-13 실측: 242,631 중 239개).
     where exists (
       select 1 from building_floor f
       where f.bld_id = h.bld_id and f.floor_no is not null
     )
   ),
-  -- 무거운 층 집계는 실제로 보여줄 몇 개에만 돌린다.
   top as (
     select e.*
     from eligible e
+    cross join pat
     order by
-      (lower(e.bld_nm) = lower(q))      desc nulls last,
-      (e.bld_nm ilike q || '%')         desc nulls last,
-      (e.bld_nm is null)                asc,
-      length(e.bld_nm)                  asc nulls last,
-      e.road_addr                       asc nulls last,
+      e.jibun_hit                    desc,
+      (e.nm_key = pat.k)             desc nulls last,
+      (e.nm_key like pat.k || '%')   desc nulls last,
+      (e.bld_nm is null)             asc,
+      length(e.bld_nm)               asc nulls last,
+      e.road_addr                    asc nulls last,
       e.bld_id
     limit greatest(1, least(coalesce(lim, 25), 100))
   )
+  -- ② 지번주소 조립은 여기서 처음 한다 — 25행에만 필요하다.
+  --    pnu 는 parcel 의 기본키라 되짚어도 같은 한 행이다(값이 달라지지 않는다).
   select
     t.bld_id, t.pnu, t.bld_nm, t.road_addr,
+    parcel_jibun_addr(pc.sido_nm, pc.sigungu_nm, pc.emd_nm, pc.jibun) as jibun_addr,
     (select count(*)::int from building b2 where b2.pnu = t.pnu) as bld_cnt_in_pnu,
     fs.floor_cnt, fs.min_floor, fs.max_floor, fs.has_roof,
     t.total_cnt
   from top t
+  join parcel pc on pc.pnu = t.pnu
   join lateral (
-    -- 옥탑(99)은 범위에서 뺀다. 섞으면 최고층이 항상 99가 되어 지상 최고층이 사라진다.
     select
       count(*)::int                                    as floor_cnt,
       min(s.floor_no) filter (where s.floor_no <> 99)  as min_floor,
@@ -686,11 +975,12 @@ as $$
     where s.bld_id = t.bld_id
   ) fs on true
   order by
-    (lower(t.bld_nm) = lower(q))      desc nulls last,
-    (t.bld_nm ilike q || '%')         desc nulls last,
-    (t.bld_nm is null)                asc,
-    length(t.bld_nm)                  asc nulls last,
-    t.road_addr                       asc nulls last,
+    t.jibun_hit                     desc,
+    (t.nm_key = search_key(q))      desc nulls last,
+    (t.nm_key like search_key(q) || '%') desc nulls last,
+    (t.bld_nm is null)              asc,
+    length(t.bld_nm)                asc nulls last,
+    t.road_addr                     asc nulls last,
     t.bld_id;
 $$;
 
@@ -699,7 +989,13 @@ comment on function search_buildings(text, int) is
   'security definer — 원본 표가 anon에게 닫혀 있어 소유자 권한으로 대신 읽는다. '
   '입력의 % _ \ 는 서버가 리터럴로 이스케이프하고, 빈 검색어는 0건으로 잘라낸다. '
   '이름은 building_display_nm() 하나만 본다(동명칭 폴백 + 개인 성명 가림) — 보이는 것 = 검색되는 것. '
-  '⛔ WHERE를 OR로 되돌리지 말 것 — 두 조인 테이블에 걸친 OR은 gin_trgm 인덱스를 무력화한다';
+  '너무 넓은 검색(search_scope_limit() 초과)은 무거운 일을 하기 전에 0건으로 끊는다 — 상권분석은 '
+  '건물 한 채 단위라 "서울" 같은 검색은 결과 25개를 보여줘도 의미가 없다(2026-08-13). '
+  '⛔ 주소 가지와 이름 가지를 OR로 합치지 말 것 — 두 조인 테이블에 걸친 OR은 gin_trgm 인덱스를 무력화한다';
+
+-- 상한 함수는 내부용이다. 화면은 search_scope() 가 돌려주는 판정만 쓴다.
+revoke all on function search_scope_limit() from public, anon, authenticated;
+grant execute on function search_scope(text) to anon, authenticated;
 
 -- =====================================================================
 -- 공개 접근 정책 — RLS + 최소 권한 (2026-08-08 추가)
