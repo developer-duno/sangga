@@ -7,6 +7,7 @@ scripts/backup_raw.py 1:1 단위 테스트.
 """
 
 import json
+import ntpath
 import os
 import sys
 
@@ -16,6 +17,7 @@ SCRIPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
+import backup_raw  # noqa: E402
 from backup_raw import (  # noqa: E402
     MANIFEST_NAME,
     build_manifest,
@@ -314,9 +316,21 @@ class TestCheckDestination:
     def test_existing_path_passes(self, tmp_path):
         check_destination(str(tmp_path / "not-created-yet"))  # 예외가 없으면 통과
 
-    @pytest.mark.skipif(os.name != "nt", reason="드라이브 문자는 Windows 개념")
-    def test_missing_drive_raises(self):
-        """외장 드라이브를 안 꽂은 채 실행하면 조용히 성공해선 안 된다."""
+    def test_missing_drive_raises(self, monkeypatch):
+        """외장 드라이브를 안 꽂은 채 실행하면 조용히 성공해선 안 된다.
+
+        check_destination은 os.path.splitdrive로 드라이브 문자를 뽑아 그 드라이브가
+        마운트돼 있는지 본다. POSIX(CI=Ubuntu)에는 드라이브 개념이 없어 splitdrive가
+        항상 빈 문자열을 돌려주고, 그러면 검사 자체가 조용히 no-op된다 — 그래서
+        예전엔 os.name=='nt'가 아니면 통째로 스킵했다(CI에서 이 안전장치가 한 번도
+        안 돎).
+
+        여기서는 os.path.splitdrive를 표준 라이브러리 ntpath(윈도우 경로 규칙)로
+        바꿔치기해, 실행 OS와 무관하게 '윈도우처럼 드라이브 문자를 해석했을 때
+        그 드라이브가 없으면 막는다'는 실제 로직을 그대로 실행시킨다. Q: 드라이브는
+        이 프로젝트가 실제로 쓰는 외장 SSD 문자(F:)와 다른, 존재할 리 없는 문자다.
+        """
+        monkeypatch.setattr(backup_raw.os.path, "splitdrive", ntpath.splitdrive)
         with pytest.raises(RuntimeError) as e:
             check_destination(r"Q:\sangga-raw-backup")
         assert "연결" in str(e.value)

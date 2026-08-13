@@ -290,6 +290,13 @@ def test_latest_batch_keeps_all_rows_of_same_batch():
     assert len(target.latest_batch([a, b])) == 2
 
 
+def test_count_raw_rows_by_ym_counts_only_that_sigungu():
+    rows = [raw(ITEM, deal_ym="202605"), raw(ITEM, deal_ym="202605"),
+            raw(ITEM, deal_ym="202606"),
+            dict(raw(ITEM, deal_ym="202605"), sigungu_code="11440")]
+    assert target.count_raw_rows_by_ym(rows, "11680") == {"202605": 2, "202606": 1}
+
+
 def test_latest_batch_is_per_month():
     """달이 다르면 서로 영향을 주지 않는다."""
     a = raw(ITEM, deal_ym="202605", fetched_at="2026-08-01T00:00:00+09:00")
@@ -415,3 +422,212 @@ def test_parse_args_rejects_typo_does_not_silently_set_dry_run():
     """--dryrun(오타)이 --dry-run으로 조용히 넘어가면 실제 실행이 되어버린다."""
     with pytest.raises(ValueError, match="알 수 없는 인자"):
         target.parse_args(["--dryrun"])
+
+
+# ── 10. 그룹 내부 seq 안정화 (_stable_group_order) ────────────────────────────
+#
+# make_tx_id의 seq는 build_transactions가 그룹 안 항목에 매기는 "몇 번째인가"다.
+# 예전엔 raw 파일에 실린 순서(=API 응답 배열 순서, 재수집마다 달라질 수 있다)를
+# 그대로 썼다. 지금은 그룹핑에 안 쓰인 나머지 필드값으로 결정적 정렬을 한다 —
+# 같은 항목 집합이면 raw 물리적 순서가 바뀌어도 항상 같은 tx_id가 나와야 한다.
+
+
+def test_build_transactions_group_seq_is_order_independent_when_member_missing():
+    """그룹 멤버 하나가 빠진(해제 등) 뒤에도, 남은 항목의 tx_id는 raw 물리적
+    순서가 아니라 내용으로만 결정된다 — 재수집 때 API가 배열 순서를 바꿔 줘도
+    같은 결과가 나와야 재적재가 안전하다."""
+    a = dict(ITEM, buildYear=1990)   # 그룹핑 10필드는 같고, 그룹핑에 안 쓰인
+    c = dict(ITEM, buildYear=2000)   # buildYear만 다르다 (B가 빠진 뒤의 A·C 상황)
+
+    order1 = target.build_transactions([raw(a), raw(c)], EMD)[0]
+    order2 = target.build_transactions([raw(c), raw(a)], EMD)[0]
+
+    id_by_year1 = {r["build_year"]: r["tx_id"] for r in order1}
+    id_by_year2 = {r["build_year"]: r["tx_id"] for r in order2}
+    assert id_by_year1 == id_by_year2
+
+
+def test_stable_group_order_sorts_by_remaining_fields():
+    a = dict(ITEM, buildYear=2000)
+    b = dict(ITEM, buildYear=1990)
+    ordered = target._stable_group_order([a, b])
+    assert [item["buildYear"] for item in ordered] == [1990, 2000]
+
+
+# ── 11. delete_stale_transactions (해제로 그룹 멤버가 빠지면 옛 tx_id가 DB에
+#         영구히 남는다 — 이게 이 세션이 고치는 결함의 핵심) ─────────────────
+
+SGG = "11680"
+YM = "202606"
+
+
+class _FakeResponse:
+    def __init__(self, status_code, text=""):
+        self.status_code = status_code
+        self.text = text
+
+
+def _progress_says_complete(monkeypatch, counts):
+    """collect_progress가 "이 계약월들은 done이고 row_count가 이렇다"고 답하게 만든다."""
+    monkeypatch.setattr(target, "fetch_done_row_counts", lambda *a, **kw: dict(counts))
+
+
+def _fake_delete(sink, status=204):
+    def _delete(url, params=None, headers=None, timeout=None):
+        sink.append(params)
+        return _FakeResponse(status, text="err")
+    return _delete
+
+
+def _call(records, raw_counts, sigungu=SGG, **kw):
+    return target.delete_stale_transactions(
+        "https://x.supabase.co", {}, records, sigungu, raw_counts, **kw)
+
+
+def test_delete_stale_transactions_deletes_only_ids_missing_from_new_set(monkeypatch):
+    """해제로 B가 빠져 C의 seq가 밀리면(A-0,C-1), 옛 A-0/B-1/C-2 중 C가 쓰던
+    A-0(계속 유지)·B-1(자연 소멸)은 그대로고, 원래 C의 옛 tx_id(...-2)만 지운다."""
+    _progress_says_complete(monkeypatch, {YM: 2})
+    monkeypatch.setattr(target, "rest_select", lambda *a, **kw: [
+        {"tx_id": "keep-0"}, {"tx_id": "keep-1"}, {"tx_id": "orphan-2"},
+    ])
+    sent = []
+    monkeypatch.setattr(target.requests, "delete", _fake_delete(sent))
+
+    records = [{"tx_id": "keep-0"}, {"tx_id": "keep-1"}]
+    assert _call(records, {YM: 2}) == 1
+    assert sent[0]["tx_id"] == 'in.("orphan-2")'
+
+
+def test_delete_stale_transactions_scopes_query_to_sigungu_and_verified_yms(monkeypatch):
+    """조회 자체를 그 시군구·검증된 계약월로 좁힌다 — 범위 밖은 SELECT도 안 한다."""
+    _progress_says_complete(monkeypatch, {YM: 1})
+    queries = []
+
+    def fake_select(base_url, headers, table, query, **kw):
+        queries.append((table, query))
+        return []
+
+    monkeypatch.setattr(target, "rest_select", fake_select)
+    assert _call([{"tx_id": "keep-0"}], {YM: 1}) == 0
+    table, query = queries[0]
+    assert table == "transaction"
+    assert "sigungu_code=eq.{}".format(SGG) in query
+    assert "contract_ym=in.({})".format(YM) in query
+
+
+def test_delete_stale_transactions_sends_nothing_when_all_rows_still_exist(monkeypatch):
+    _progress_says_complete(monkeypatch, {YM: 1})
+    monkeypatch.setattr(target, "rest_select", lambda *a, **kw: [{"tx_id": "keep-0"}])
+
+    def boom(*a, **kw):
+        raise AssertionError("지울 행이 없으면 DELETE를 보내면 안 된다")
+
+    monkeypatch.setattr(target.requests, "delete", boom)
+    assert _call([{"tx_id": "keep-0"}], {YM: 1}) == 0
+
+
+def test_delete_stale_transactions_empty_records_touches_no_network(monkeypatch):
+    def boom(*a, **kw):
+        raise AssertionError("빈 입력에 네트워크를 건드리면 안 된다")
+
+    monkeypatch.setattr(target, "fetch_done_row_counts", boom)
+    monkeypatch.setattr(target, "rest_select", boom)
+    monkeypatch.setattr(target.requests, "delete", boom)
+    assert _call([], {}) == 0
+
+
+def test_delete_stale_transactions_chunks_deletes(monkeypatch):
+    _progress_says_complete(monkeypatch, {YM: 1})
+    monkeypatch.setattr(target, "rest_select",
+                        lambda *a, **kw: [{"tx_id": "OLD{}".format(i)} for i in range(5)])
+    sent = []
+    monkeypatch.setattr(target.requests, "delete", _fake_delete(sent))
+
+    assert _call([{"tx_id": "NEW"}], {YM: 1}, delete_chunk=2) == 5
+    assert len(sent) == 3          # 2 + 2 + 1
+
+
+def test_delete_stale_transactions_wraps_network_error(monkeypatch):
+    _progress_says_complete(monkeypatch, {YM: 1})
+    monkeypatch.setattr(target, "rest_select", lambda *a, **kw: [{"tx_id": "OLD"}])
+
+    def boom(url, params=None, headers=None, timeout=None):
+        raise target.requests.exceptions.ConnectionError("연결 끊김")
+
+    monkeypatch.setattr(target.requests, "delete", boom)
+    with pytest.raises(RuntimeError, match="다시 실행하면"):
+        _call([{"tx_id": "NEW"}], {YM: 1})
+
+
+def test_delete_stale_transactions_raises_on_bad_status(monkeypatch):
+    _progress_says_complete(monkeypatch, {YM: 1})
+    monkeypatch.setattr(target, "rest_select", lambda *a, **kw: [{"tx_id": "OLD"}])
+    monkeypatch.setattr(target.requests, "delete", _fake_delete([], status=400))
+    with pytest.raises(RuntimeError, match="옛 행 삭제"):
+        _call([{"tx_id": "NEW"}], {YM: 1})
+
+
+# ── 11-1. dry-run 미리보기 (SELECT는 하되 DELETE는 0 — 사장님 요구사항) ────────
+
+
+def test_delete_stale_transactions_dry_run_previews_without_deleting(monkeypatch, capsys):
+    _progress_says_complete(monkeypatch, {YM: 2})
+    monkeypatch.setattr(target, "rest_select", lambda *a, **kw: [
+        {"tx_id": "keep-0"}, {"tx_id": "orphan-1"},
+    ])
+
+    def boom(*a, **kw):
+        raise AssertionError("dry-run은 실제 DELETE를 보내면 안 된다")
+
+    monkeypatch.setattr(target.requests, "delete", boom)
+    deleted = _call([{"tx_id": "keep-0"}], {YM: 2}, dry_run=True)
+    assert deleted == 0
+    assert "정리 대상" in capsys.readouterr().out
+
+
+# ── 11-2. 범위 밖은 절대 안 지워진다 (가장 중요한 안전장치) ───────────────────
+
+
+def test_delete_stale_transactions_skips_ym_when_raw_row_count_mismatches(monkeypatch):
+    """raw가 잘렸거나 일부 손상돼 이번에 센 행수가 done_counts와 다르면, 그
+    계약월은 손대지 않는다(원본이 불완전한데 지우면 멀쩡한 행이 사라진다)."""
+    _progress_says_complete(monkeypatch, {YM: 10})   # 수집 당시 10행
+    monkeypatch.setattr(target, "rest_select", lambda *a, **kw: [{"tx_id": "OLD"}])
+
+    def boom(*a, **kw):
+        raise AssertionError("원본이 불완전하면 그 계약월은 SELECT도 하면 안 된다")
+
+    monkeypatch.setattr(target, "rest_select", boom)
+    monkeypatch.setattr(target.requests, "delete", boom)
+    assert _call([{"tx_id": "NEW"}], {YM: 7}) == 0   # 지금 raw엔 7행뿐
+
+
+def test_delete_stale_transactions_skips_ym_not_marked_done(monkeypatch):
+    """collect_progress에 done으로 안 찍힌 계약월은 삭제 범위에서 뺀다."""
+    _progress_says_complete(monkeypatch, {})   # done 목록이 비어 있음
+
+    def boom(*a, **kw):
+        raise AssertionError("done이 아닌 계약월을 지우면 안 된다")
+
+    monkeypatch.setattr(target, "rest_select", boom)
+    monkeypatch.setattr(target.requests, "delete", boom)
+    assert _call([{"tx_id": "NEW"}], {YM: 3}) == 0
+
+
+def test_delete_stale_transactions_never_touches_other_sigungu_or_ym(monkeypatch):
+    """다른 시군구·검증 안 된 계약월의 옛 행은 이 함수의 SELECT 조회 문자열에
+    조차 나타나지 않는다 — 대형 데이터 사고(범위 밖 삭제)의 1차 방어선."""
+    _progress_says_complete(monkeypatch, {YM: 1, "202607": 999})  # 202607은 raw_row_counts에 없음
+    queries = []
+
+    def fake_select(base_url, headers, table, query, **kw):
+        queries.append(query)
+        return [{"tx_id": "keep-0"}]
+
+    monkeypatch.setattr(target, "rest_select", fake_select)
+    assert _call([{"tx_id": "keep-0"}], {YM: 1}, sigungu="11680") == 0
+    query = queries[0]
+    assert "sigungu_code=eq.11680" in query
+    assert "202607" not in query
+    assert "11440" not in query

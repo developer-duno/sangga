@@ -78,6 +78,27 @@ def test_flr_and_expos_have_floor_fields():
     assert "hoNm" in target.COLS["expos_area"]              # unit_id 생성
 
 
+_FIXTURE_FIELD_NAMES_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "fixtures", "bldrgst_bulk",
+    "api_field_names.json",
+)
+
+
+@pytest.mark.parametrize("kind", sorted(EXPECTED_LEN))
+def test_columns_match_official_field_names(kind):
+    """★ 항상 도는 기본 검증 — 레포에 박아 둔 작은 픽스처(필드 이름만, 개인정보·대용량
+    없음)와 대조한다. 2026-08-11 강남 API raw 표본에서 필드 *이름만* 추출해 만들었다
+    (`tests/fixtures/bldrgst_bulk/api_field_names.json`).
+
+    아래 `test_columns_match_live_api_fields`는 대용량 원본이 로컬에 있을 때만 도는
+    '추가' 검증이라 CI(Ubuntu, 파일 없음)에서는 항상 스킵됐다 — 이 테스트가 그 자리를
+    메워 CI에서도 매핑이 실제 API 필드 집합과 같은지 항상 확인한다.
+    """
+    with io.open(_FIXTURE_FIELD_NAMES_PATH, encoding="utf-8") as f:
+        fixture = json.load(f)
+    assert set(target.COLS[kind]) == set(fixture[kind])
+
+
 @pytest.mark.skipif(
     not os.path.exists(os.path.join(_SCRIPTS_DIR, "..", "data", "raw", "bldrgst",
                                     "202608", "title.jsonl")),
@@ -85,7 +106,8 @@ def test_flr_and_expos_have_floor_fields():
 )
 @pytest.mark.parametrize("kind", sorted(EXPECTED_LEN))
 def test_columns_match_live_api_fields(kind):
-    """★ 있으면 가장 강한 검증 — API 응답 필드 집합과 정확히 같은가.
+    """추가 검증 — 대용량 원본이 로컬에 있을 때만. 픽스처가 stale해지지 않았는지
+    라이브 원본으로 재확인한다(기본 검증은 위 test_columns_match_official_field_names).
 
     API 는 페이지 번호 rnum 을 하나 더 주는데 파일엔 없다. 그것만 빼면 같아야 한다.
     """

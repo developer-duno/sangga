@@ -80,6 +80,12 @@ TABLE_UPSERT_RESOLUTION = {
     "transaction": "merge-duplicates",
 }
 
+# delete_stale_transactions가 옛 tx_id를 정리할 때 쓰는 청크 크기.
+# load_building_ledger.py의 STALE_PNU_CHUNK/STALE_DELETE_CHUNK와 같은 관례
+# (URL 길이·요청 크기를 적당히 쪼갠다).
+STALE_YM_CHUNK = 200
+STALE_DELETE_CHUNK = 100
+
 # collect_transactions.py의 COLLECTOR와 반드시 같은 문자열이어야 한다 — 두
 # 스크립트는 서로 import하지 않는 관례라 상수를 각자 갖되 값을 맞춘다
 # (load_building_ledger.py의 BLDRGST_COLLECTOR와 같은 관례).
@@ -205,10 +211,16 @@ def make_tx_id(item, seq):
     날 같은 값으로 32건이 팔린 사례가 실재한다: 분양·일괄매각). 그래서 **그 조합
     안에서 몇 번째인가**(seq)를 뒤에 붙인다.
 
-    ⚠️ 한계: 나중에 같은 조합의 거래가 하나 더 늘면 seq가 밀려 새 tx_id가 생기고
-    옛 행이 남는다. 실거래는 과거가 바뀌지 않아 위험이 낮지만, 해제(cdealType)로
-    빠지는 경우는 있으므로 재적재 시에는 그 시군구·그 계약년월 범위를 통째로
-    다시 계산해 넣는 것을 전제로 한다.
+    ⚠️ 한계 (실측으로 정정 — 예전 문서는 틀렸었다): seq는 `build_transactions`가
+    같은 그룹(조합) 안의 항목을 **내용으로 결정적 정렬**(`_stable_group_order`)한
+    뒤 매긴다 — 이건 "raw 줄 순서가 재수집마다 달라져도 같은 결과가 나오게"만
+    해줄 뿐, **그룹 멤버 수 자체가 바뀌면(해제로 하나 빠지는 등) seq는 여전히
+    0..N-1로 재압축된다.** 즉 그룹이 3개(A,B,C)에서 2개(A,C)로 줄면 C는
+    seq=2였다가 seq=1이 되어 **새 tx_id를 받는다** — 이건 정렬 방식과 무관하게
+    "몇 번째"라는 정의 자체의 구조적 한계라 막을 수 없다. 그 결과 옛 tx_id(예:
+    A-2)는 DB에 아무도 갱신 안 한 채 영구히 남을 수 있다 — 이 문제는 여기서
+    막지 않고, `delete_stale_transactions`가 upsert 뒤에 "이번 빌드에 없는 옛
+    tx_id"를 (시군구, 검증된 계약월) 범위 안에서 지워 해소한다.
     """
     key = "|".join(s(item.get(f)) for f in (
         "sggCd", "umdNm", "jibun", "dealYear", "dealMonth", "dealDay",
@@ -216,6 +228,26 @@ def make_tx_id(item, seq):
     ))
     digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:20]
     return "{}-{}".format(digest, seq)
+
+
+def _stable_group_order(items):
+    """같은 조합(그룹) 안 항목들에 결정적 순서를 매긴다 (make_tx_id의 seq 근거).
+
+    그룹핑 키(sggCd·umdNm·jibun·dealYear/Month/Day·dealAmount·buildingAr·floor·
+    buildingType 10개)는 그룹 안 전원이 이미 동일하므로, 그룹핑에 **쓰이지 않은
+    나머지 필드값 전부**를 정렬 키로 삼는다. raw 줄이 API 응답 배열의 물리적
+    순서(재수집 때 달라질 수 있다)를 그대로 따르던 예전 방식과 달리, 항목
+    자신의 내용만으로 순서가 정해지므로 같은 항목 집합이면 raw 파일 순서가
+    바뀌어도 같은 seq가 나온다.
+
+    남은 필드값까지 전부 같은 완전 동일 항목끼리는 tie — Python sort는 안정
+    정렬이라 원래 리스트 순서로 묶인다. 이 경우는 무해하다: 두 항목이 tx_id를
+    빼면 완전히 같은 내용이라 어느 쪽이 어느 seq를 받아도 결과 레코드는 같다.
+    """
+    return sorted(
+        items,
+        key=lambda item: tuple("{}={}".format(k, s(item.get(k))) for k in sorted(item.keys())),
+    )
 
 
 def is_canceled(item):
@@ -355,11 +387,31 @@ def verified_latest_batch(rows, done_counts):
                 (r.get("sigungu_code"), r.get("deal_ym")))]
 
 
+def count_raw_rows_by_ym(raw_rows, sigungu_code):
+    """이번 raw(검증된 배치 — verified_latest_batch를 거친 뒤)에서, 그 시군구의
+    계약월(deal_ym)별 실제 행수.
+
+    delete_stale_transactions가 `fetch_done_row_counts`(collect_progress가 기록한
+    "수집 완료 시점 행수")와 대조해 "이번 실행이 그 계약월을 온전히 다시
+    계산했는지" 판정하는 근거로 쓴다(load_building_ledger.py의
+    count_raw_rows_by_pnu와 같은 역할 — 범위 단위만 PNU 대신 계약월).
+    """
+    counts = Counter()
+    for r in raw_rows:
+        if s(r.get("sigungu_code")) == s(sigungu_code):
+            counts[s(r.get("deal_ym"))] += 1
+    return dict(counts)
+
+
 def build_transactions(raw_rows, emd_lookup, include_canceled=False):
     """raw 행 목록 -> (transaction dict 목록, 통계).
 
-    같은 (조합) 안에서의 일련번호는 **정렬된 순서**로 매긴다 — raw 줄 순서에
-    의존하면 재수집 때 순서가 달라져 같은 거래에 다른 tx_id가 붙는다.
+    그룹(조합) **사이**의 순서는 `sorted(grouped)`로, 그룹 **안**의 일련번호는
+    `_stable_group_order`로 매긴다 — 어느 쪽도 raw 줄의 물리적(삽입) 순서에
+    기대지 않는다. 단, 이건 "같은 항목 집합이면 항상 같은 tx_id가 나온다"만
+    보장할 뿐 "항목이 하나 빠져도(해제 등) 옛 tx_id가 유지된다"는 보장은 아니다
+    — 그건 seq 재압축이라는 구조적 한계라 여기서 못 막는다(make_tx_id 참조).
+    실제로 남는 옛 행은 `delete_stale_transactions`가 정리한다.
     """
     stats = Counter()
     reasons = Counter()
@@ -378,7 +430,7 @@ def build_transactions(raw_rows, emd_lookup, include_canceled=False):
 
     records = []
     for key in sorted(grouped):
-        for seq, item in enumerate(grouped[key]):
+        for seq, item in enumerate(_stable_group_order(grouped[key])):
             rec, why = build_transaction(item, emd_lookup, seq)
             reasons[why] += 1
             if rec is None:
@@ -448,6 +500,18 @@ def rest_select(base_url, headers, table, query, page_size=SELECT_PAGE_SIZE, ord
         offset += page_size
 
 
+def _pgrst_in_list(values):
+    """PostgREST in.(...) 필터 문자열을 만든다. 각 값을 큰따옴표로 감싼다.
+
+    tx_id는 해시+seq라 콤마·따옴표를 가질 일이 없지만, load_building_ledger.py의
+    같은 이름 헬퍼와 관례를 맞춰 항상 감싼다(방어적 습관 — 언젠가 식별자 규칙이
+    바뀌어도 안전하게).
+    """
+    quoted = ['"{}"'.format(str(v).replace("\\", "\\\\").replace('"', '\\"'))
+              for v in values]
+    return "in.({})".format(",".join(quoted))
+
+
 def upsert_batch(base_url, headers, table, rows, batch_size=BATCH_SIZE):
     resolution = TABLE_UPSERT_RESOLUTION.get(table)
     if resolution is None:
@@ -497,6 +561,105 @@ def fetch_done_row_counts(base_url, headers, sigungu_code):
         for r in rows
         if r.get("period_key") and r.get("row_count") is not None
     }
+
+
+def delete_stale_transactions(base_url, headers, records, sigungu_code, raw_row_counts,
+                              dry_run=False, ym_chunk=STALE_YM_CHUNK,
+                              delete_chunk=STALE_DELETE_CHUNK):
+    """이번 빌드에 없는 옛 transaction 행을 지운다 (make_tx_id의 seq 재압축 결함 처방).
+
+    ⚠️ 삭제 범위 = **정확히 이 실행의 시군구(sigungu_code) × "이번 raw가 온전히
+    대표한다고 확인된" 계약월(contract_ym)만**이다. 다른 시군구나, 확인 안 된
+    계약월의 행은 SELECT 조회 대상에도 안 들어가므로 절대 지워지지 않는다
+    (load_building_ledger.py의 delete_stale_units/_delete_stale_rows와 완전히
+    같은 원칙 — PNU 범위 한정 대신 시군구·계약월 범위 한정).
+
+    "확인됨"의 기준: raw_row_counts(이번 raw에서 실제로 센 계약월별 행수 —
+    count_raw_rows_by_ym 참조)가 collect_progress에 저장된 "수집 완료 시점
+    행수"(fetch_done_row_counts)와 **정확히 일치**하는 계약월만 후보로 삼는다.
+    일치 안 하거나 done 기록이 아예 없으면(원본이 일부 손상됐거나 raw_dir가
+    부분집합일 수 있다) 그 계약월은 통째로 정리 대상에서 뺀다 — 모르면
+    지우지 않는다.
+
+    keep = 이번 빌드로 만든 전체 tx_id 집합. 해제(cdealType='O')로 빠진 거래는
+    build_transactions가 애초에 레코드를 만들지 않으므로 keep에 안 들어가고,
+    그래서 그 거래가 갖고 있던 옛 tx_id가 정리 대상에 잡힌다 — 이게 바로 이
+    함수가 고치는 결함(재적재 때 표본 수가 조용히 부풀려지는 문제)의 해소책이다.
+
+    호출 순서 전제 — 반드시 upsert 뒤에 부른다. 먼저 지우고 적재하다 중간에
+    죽으면 데이터가 사라지지만, 적재 후 지우면 최악의 경우 중복이 잠깐 남을
+    뿐이라 다시 실행하면 정리된다.
+
+    dry_run=True면 지울 행 수를 세어(SELECT까지는 수행) 미리 보여주기만 하고
+    실제 DELETE 요청은 보내지 않는다 — 반환값도 0이다(쓰기 0 보장).
+
+    반환: 실제로 지운 행 수(dry_run=True면 항상 0).
+    """
+    if not records:
+        return 0
+
+    keep = {r["tx_id"] for r in records}
+    done_counts = fetch_done_row_counts(base_url, headers, sigungu_code)
+    yms = sorted(
+        ym for ym, cnt in raw_row_counts.items()
+        if done_counts.get(ym) == cnt
+    )
+    skipped = len(raw_row_counts) - len(yms)
+    if skipped:
+        print("  [transaction] 원본 완전성 미확인 계약월 {:,}개는 정리 대상에서 제외 "
+              "(collect_progress done + row_count 일치인 계약월만 정리)".format(skipped),
+              flush=True)
+    if not yms:
+        print("  [transaction] 정리 가능한 계약월 없음 — 옛 행 정리를 건너뜁니다", flush=True)
+        return 0
+
+    stale = []
+    for i in range(0, len(yms), ym_chunk):
+        part = yms[i:i + ym_chunk]
+        rows = rest_select(
+            base_url, headers, "transaction",
+            "select=tx_id&sigungu_code=eq.{}&contract_ym=in.({})".format(
+                sigungu_code, ",".join(part)),
+            order="tx_id",
+        )
+        stale.extend(r["tx_id"] for r in rows if r["tx_id"] not in keep)
+
+    if not stale:
+        print("  [transaction] 정리할 옛 행 없음", flush=True)
+        return 0
+
+    if dry_run:
+        print("  [transaction] --dry-run — 정리 대상 {:,}행 (실제 삭제는 하지 않습니다)".format(
+            len(stale)), flush=True)
+        return 0
+
+    deleted = 0
+    total_batches = (len(stale) + delete_chunk - 1) // delete_chunk
+    for i in range(0, len(stale), delete_chunk):
+        part = stale[i:i + delete_chunk]
+        batch_no = i // delete_chunk + 1
+        try:
+            r = requests.delete(
+                "{}/rest/v1/transaction".format(base_url),
+                params={"tx_id": _pgrst_in_list(part)},
+                headers=headers, timeout=TIMEOUT_SEC,
+            )
+        except requests.RequestException as e:
+            raise RuntimeError(
+                "transaction 옛 행 삭제 {}/{} 중 네트워크 오류: {}. 적재 자체는 끝났으므로 "
+                "같은 명령을 다시 실행하면 남은 옛 행부터 정리합니다.".format(
+                    batch_no, total_batches, e)
+            )
+        if r.status_code >= 300:
+            raise RuntimeError(
+                "transaction 옛 행 삭제 {}/{} 실패 (HTTP {}): {}. 적재 자체는 끝났으므로 "
+                "같은 명령을 다시 실행하면 남은 옛 행부터 정리합니다.".format(
+                    batch_no, total_batches, r.status_code, r.text[:300])
+            )
+        deleted += len(part)
+        print("  [transaction] 옛 행 정리 {}/{} 배치 {}행 (누적 {:,}/{:,})".format(
+            batch_no, total_batches, len(part), deleted, len(stale)), flush=True)
+    return deleted
 
 
 def assert_table_exists(base_url, headers, table):
@@ -685,7 +848,18 @@ def main():
 
     print_transform_report(path, broken, stats, len(records), records)
 
+    # delete_stale_transactions의 삭제 범위(시군구 × 검증된 계약월)를 정하는
+    # 근거 — verified_latest_batch를 거친 이번 raw_rows에서 실제로 센 값이다.
+    raw_row_counts = count_raw_rows_by_ym(raw_rows, sigungu)
+
     if opts["dry_run"]:
+        print("")
+        try:
+            delete_stale_transactions(
+                base_url, headers, records, sigungu, raw_row_counts, dry_run=True)
+        except RuntimeError as e:
+            print("[에러] 정리 대상 미리보기 실패: {}".format(e))
+            return 1
         print("")
         print("--dry-run 지정 — DB 적재를 건너뜁니다.")
         return 0
@@ -695,13 +869,19 @@ def main():
         print("")
         print("적재 시작...", flush=True)
         sent = upsert_batch(base_url, headers, "transaction", records)
+        # 적재 뒤에 정리한다 — 해제 등으로 그룹 멤버가 줄면 seq가 재압축돼 옛
+        # tx_id가 남는다(make_tx_id 참조). 먼저 지우면 도중에 실패했을 때
+        # 데이터가 사라지지만, 적재 후 지우면 최악의 경우 중복이 잠깐 남을
+        # 뿐이라 재실행으로 정리된다.
+        deleted = delete_stale_transactions(
+            base_url, headers, records, sigungu, raw_row_counts)
     except RuntimeError as e:
         print("[에러] {}".format(e))
         return 1
 
     print("")
     print("=" * 78)
-    print("적재 완료: transaction {:,}행".format(sent))
+    print("적재 완료: transaction {:,}행 (옛 행 정리 {:,}행)".format(sent, deleted))
     print("=" * 78)
 
     try:
