@@ -67,16 +67,25 @@ def migration_files():
 
 
 def replay(create_re, drop_re):
-    """마이그레이션을 순서대로 재생해 **지금 살아 있어야 할 이름**과 **지운 이름**을 낸다."""
+    """마이그레이션을 순서대로 재생해 **지금 살아 있어야 할 이름**과 **지운 이름**을 낸다.
+
+    ⚠️ 한 파일 **안에서도 적힌 순서대로** 처리해야 한다. 만든 것을 먼저 다 훑고 지운 것을
+       나중에 훑으면, `drop index ...;` 다음 줄에서 같은 이름을 다시 만드는 흔한 패턴
+       (인덱스 정의만 바꾸기)이 "지워진 것"으로 잘못 기록된다 — 2026-08-13 에 실제로
+       idx_tx_pnu 를 부분 인덱스로 바꾸다가 이 가드가 헛경보를 냈다.
+    """
     alive, dropped = set(), set()
     for path in migration_files():
         sql = read(path)
-        for name in create_re.findall(sql):
-            alive.add(name)
-            dropped.discard(name)
-        for name in drop_re.findall(sql):
-            alive.discard(name)
-            dropped.add(name)
+        events = [(m.start(), True, m.group(1)) for m in create_re.finditer(sql)]
+        events += [(m.start(), False, m.group(1)) for m in drop_re.finditer(sql)]
+        for _, is_create, name in sorted(events, key=lambda e: e[0]):
+            if is_create:
+                alive.add(name)
+                dropped.discard(name)
+            else:
+                alive.discard(name)
+                dropped.add(name)
     return alive, dropped
 
 

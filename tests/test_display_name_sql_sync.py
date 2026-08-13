@@ -34,6 +34,10 @@ MIGRATION = os.path.join(
 REVOKE_MIGRATION = os.path.join(
     ROOT, "supabase", "migrations", "2026-08-10_revoke_helper_fns_from_anon.sql"
 )
+# 2026-08-13: 검색 범위 게이트("한 곳을 짚는 검색"만 받는다).
+SCOPE_GATE_MIGRATION = os.path.join(
+    ROOT, "supabase", "migrations", "2026-08-13_search_scope_gate.sql"
+)
 
 # 표시명 식 — 검색 WHERE 절과 인덱스가 이것으로 일치해야 인덱스를 탄다.
 DISPLAY_EXPR = "building_display_nm(bld_nm, dong_nm)"
@@ -174,12 +178,17 @@ def test_schema_search_uses_stored_key_columns(schema_sql):
     ), "schema.sql: building.nm_key 가 표시명 식으로 만들어지지 않습니다"
 
     # WHERE 가 저장 컬럼을 본다 (세 가지 = 이름·도로명·지번)
+    #
+    # ⚠️ 공백 수에 흔들리지 않게 눌러서 비교한다. 2026-08-13 에 `pc.road_addr_key  like`
+    #    처럼 정렬용 공백을 두 칸 준 것만으로 이 가드가 빨간불이 됐다 — 지켜야 할 것은
+    #    "저장 컬럼을 본다"이지 "공백이 한 칸이다"가 아니다.
+    flat = re.sub(r"\s+", " ", schema_sql)
     for where in (
         "b.nm_key like pat.p",
         "pc.road_addr_key like pat.p",
         "pc.jibun_addr_key like pat.p",
     ):
-        assert where in schema_sql, (
+        assert where in flat, (
             "schema.sql: 검색 WHERE 가 `{}` 를 안 씁니다 — 식으로 되돌아가면 "
             "흔한 검색어가 3초를 넘겨 500이 됩니다".format(where)
         )
@@ -332,3 +341,84 @@ def test_helper_functions_are_not_granted_to_anon(schema_sql, revoke_migration_s
                         label, sig, role
                     )
                 )
+
+
+# =====================================================================
+# 검색 범위 게이트 — "한 곳을 짚는 검색"만 받는다 (2026-08-13)
+# =====================================================================
+# 왜 가드가 필요한가: 게이트를 지우면 에러가 나지 않는다. `서울`·`동` 같은 흔한
+# 검색어만 조용히 3초를 넘겨 500이 되고, 나머지는 멀쩡해 보인다 — 사람 눈으로는
+# 안 잡히는 종류다. 라이브 실측(2026-08-13): 게이트 없이 '동'은 7,721ms,
+# 게이트를 붙이면 264ms 에 0건으로 끊긴다.
+
+
+def test_search_scope_gate_exists(schema_sql):
+    """범위 판정 함수 두 개가 정본에 있어야 한다."""
+    assert "create or replace function search_scope_limit()" in schema_sql, (
+        "schema.sql: search_scope_limit() 가 없습니다 — 상한이 코드 여기저기 흩어지면 "
+        "서로 다른 값으로 갈라진다"
+    )
+    assert "create or replace function search_scope(q text)" in schema_sql, (
+        "schema.sql: search_scope() 가 없습니다 — 화면이 '결과 없음'과 '너무 넓음'을 "
+        "구분하지 못하게 된다"
+    )
+
+
+def test_search_bounds_candidates_with_the_limit(schema_sql):
+    """후보 수집이 **상한+1 에서 멈춰야** 한다.
+
+    이게 게이트이자 성능 장치다. 상한을 지우면 '동'(필지의 98%와 매칭)이 20만 건을
+    전부 모으다 3초를 넘긴다. 따로 세는 조회를 두는 방식으로 되돌리면 좁은 검색어까지
+    표를 두 번 더 훑어 오히려 느려진다(실측: '명동' 796ms → 2,803ms).
+    """
+    flat = re.sub(r"\s+", " ", schema_sql)
+    assert flat.count("limit search_scope_limit() + 1") >= 2, (
+        "schema.sql: 후보 수집(주소·이름 두 가지)이 상한에서 멈추지 않습니다 — "
+        "흔한 검색어가 20만 건을 다 모으다 3초를 넘겨 500이 됩니다"
+    )
+    assert "not (select g.broad from gate g)" in flat, (
+        "schema.sql: 범위를 넘긴 검색을 끊는 게이트가 없습니다 — 결과 25개를 억지로 "
+        "보여주게 되는데, 상권분석은 건물 한 채 단위라 의미가 없습니다"
+    )
+
+
+def test_search_scope_is_open_to_anon_but_limit_is_not(schema_sql):
+    """화면은 판정(search_scope)만 부른다. 상한 함수는 내부용이라 닫아 둔다."""
+    flat = re.sub(r"\s+", " ", schema_sql)
+    assert "grant execute on function search_scope(text) to anon" in flat, (
+        "schema.sql: search_scope() 가 anon 에게 안 열려 있습니다 — 화면이 '너무 넓은 "
+        "검색'인지 물어볼 수 없게 됩니다"
+    )
+    m = re.search(
+        r"revoke all on function search_scope_limit\(\)\s+from\s+([^;]+);", flat
+    )
+    assert m, "schema.sql: search_scope_limit() revoke 문을 찾지 못했습니다"
+    for role in ("anon", "authenticated"):
+        assert role in m.group(1), (
+            "schema.sql: search_scope_limit() 의 revoke 대상에 {}이 없습니다".format(role)
+        )
+
+
+def test_search_scope_limit_matches_between_schema_and_migration():
+    """상한 값이 정본과 마이그레이션에서 갈라지면 안 된다."""
+    pat = re.compile(
+        r"create or replace function search_scope_limit\(\).*?select\s+(\d+)\s*\$\$",
+        re.S,
+    )
+    found = {}
+    for label, path in (
+        ("schema.sql", SCHEMA),
+        ("migration", SCOPE_GATE_MIGRATION),
+    ):
+        m = pat.search(read(path))
+        assert m, "{}: search_scope_limit() 본문에서 값을 못 읽었습니다".format(label)
+        found[label] = int(m.group(1))
+    assert found["schema.sql"] == found["migration"], (
+        "상한 값이 갈라졌습니다: {} — 한 곳만 고치면 새 환경과 라이브가 다르게 "
+        "동작한다".format(found)
+    )
+    # 근거(2026-08-13 실측): 가장 큰 법정동 신림동 4,633 < 상한 < 가장 작은 구 검색 7,399
+    assert 4633 < found["schema.sql"] < 7399, (
+        "상한 {}: 동 이름이 막히거나(4,633 이하) 구 이름이 통과(7,399 이상)합니다 — "
+        "두 수를 다시 실측하고 값을 정하세요".format(found["schema.sql"])
+    )
