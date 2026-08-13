@@ -31,10 +31,20 @@ import load_seoul_district as L  # noqa: E402
 
 # ── 1. 좌표계 관문 (이 프로젝트에서 가장 비싼 실수를 막는 자리) ───────────────
 
-_PRJ_5181 = ('PROJCS["Korea_2000_Korea_Central_Belt",'
-             'PARAMETER["False_Easting",200000.0],'
-             'PARAMETER["False_Northing",500000.0]]')
-_PRJ_5186 = _PRJ_5181.replace("500000.0", "600000.0")
+# 2026-08-14 에 실제로 받은 파일의 .prj 원문 그대로 (지어낸 문자열이 아니다).
+_PRJ_5181 = (
+    'PROJCS["Korea_2000_Korea_Central_Belt",GEOGCS["GCS_Korea_2000",'
+    'DATUM["D_Korea_2000",SPHEROID["GRS_1980",6378137.0,298.257222101]],'
+    'PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]],'
+    'PROJECTION["Transverse_Mercator"],PARAMETER["False_Easting",200000.0],'
+    'PARAMETER["False_Northing",500000.0],PARAMETER["Central_Meridian",127.0],'
+    'PARAMETER["Scale_Factor",1.0],PARAMETER["Latitude_Of_Origin",38.0],'
+    'UNIT["Meter",1.0]]'
+)
+# 헷갈리는 이웃 3종. 셋 다 "겉보기엔 비슷한" 한국 좌표계다.
+_PRJ_5186 = _PRJ_5181.replace('"False_Northing",500000.0', '"False_Northing",600000.0')
+_PRJ_5174 = _PRJ_5181.replace("GRS_1980", "Bessel_1841").replace("Korea_2000", "Korean_1985")
+_PRJ_5180 = _PRJ_5181.replace('"Central_Meridian",127.0', '"Central_Meridian",125.0')
 
 
 def test_projection_accepts_5181():
@@ -46,6 +56,25 @@ def test_projection_rejects_5186():
     with pytest.raises(ValueError) as e:
         L.assert_projection(_PRJ_5186)
     assert "100km" in str(e.value)
+
+
+def test_projection_rejects_5174_different_datum():
+    """★ 2026-08-14 적대검증이 잡은 구멍.
+
+    라이브 spatial_ref_sys 실측: **5174·5180·5181 이 전부 y_0=500000** 이다.
+    False Northing 만 보던 예전 관문은 5174 를 그대로 통과시켰다 — 측지계가
+    Bessel 1841 이라 약 300m 어긋난 지도가 **조용히** 만들어졌을 것이다.
+    """
+    with pytest.raises(ValueError) as e:
+        L.assert_projection(_PRJ_5174)
+    assert "SPHEROID" in str(e.value)
+
+
+def test_projection_rejects_5180_west_belt():
+    """서부원점(5180)은 경도가 125 다. 이것도 y_0=500000 이라 예전 관문을 통과했다."""
+    with pytest.raises(ValueError) as e:
+        L.assert_projection(_PRJ_5180)
+    assert "Central_Meridian" in str(e.value)
 
 
 def test_projection_rejects_missing():
@@ -195,6 +224,16 @@ def test_build_sql_batches_rows():
             for i in range(250)]
     sql = L.build_sql(rows, batch_rows=100)
     assert sql.count("insert into district") == 3   # 100 + 100 + 50
+
+
+def test_build_sql_counts_ghost_districts():
+    """소스에서 사라진 상권은 upsert 로 안 지워진다 — 행 수도 비슷해 눈치채기 어렵다.
+    지우지는 않되 **반드시 세어서 보여줘야** 조용히 지나가지 않는다(2026-08-14 지적)."""
+    sql = L.build_sql([_row()])
+    assert "유령 의심" in sql
+    assert "computed_at < (select max(computed_at) from district)" in sql
+    # 세는 것은 commit 앞이어야 같은 트랜잭션 안에서 이번 판 기준으로 센다
+    assert sql.index("유령 의심") < sql.rindex("commit;")
 
 
 def test_build_sql_refuses_empty():

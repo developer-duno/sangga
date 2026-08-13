@@ -179,6 +179,27 @@ def main(argv=None):
     out_dir = os.path.join(a.out_dir, a.ym)
     os.makedirs(out_dir, exist_ok=True)
     dest = os.path.join(out_dir, "seoul_district_area.zip")
+
+    # ⛔ raw 는 절대 덮어쓰지 않는다 (CLAUDE.md 절대 규칙 6 — 원본은 복구 불가).
+    #    갱신이 "비정기"라 같은 달에 두 판이 올라올 수 있다. 그냥 열어 쓰면 먼저 받은
+    #    판이 말없이 사라진다 — 그게 이 프로젝트에서 가장 되돌릴 수 없는 사고다.
+    #    (2026-08-14 적대검증에서 잡혔다. 처음 판에는 이 관문이 없었다.)
+    if os.path.exists(dest):
+        with open(dest, "rb") as f:
+            existing = f.read()
+        if existing == content:
+            print()
+            print("  이미 같은 내용의 원본이 있습니다 — 그대로 둡니다: {}".format(dest))
+            return 0
+        print(
+            "같은 자리에 **내용이 다른** 원본이 이미 있습니다: {}\n"
+            "  raw 는 덮어쓰지 않습니다(절대 규칙 6 — 복구 불가).\n"
+            "  기존 {:,} B / 새로 받은 {:,} B\n"
+            "  --ym 으로 다른 폴더를 지정하거나, 기존 파일을 손으로 옮긴 뒤 다시 받으세요.".format(
+                dest, len(existing), len(content)),
+            file=sys.stderr)
+        return 1
+
     with open(dest, "wb") as f:
         f.write(content)
     print()

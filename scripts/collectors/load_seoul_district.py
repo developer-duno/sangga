@@ -45,7 +45,23 @@ DEFAULT_RAW_DIR = os.path.join(PROJECT_ROOT, "data", "raw", "seoul_district")
 
 SOURCE_SRID = 5181            # .prj 실측값. 아래 assert_projection() 이 매번 재확인한다
 TARGET_SRID = 4326            # district.geom 의 좌표계
-EXPECTED_FALSE_NORTHING = "500000"   # 5181 의 표식. 600000 이면 5186 이라 100km 밀린다
+
+# .prj 가 정말 EPSG:5181 인지 가리는 지문.
+#
+# ⚠️ **False Northing 하나만 보면 안 된다** (2026-08-14 적대검증에서 잡힌 구멍).
+#    라이브 spatial_ref_sys 실측: 5174·5180·5181 이 **전부** y_0=500000 이다.
+#    하나만 보면 아래 둘이 그대로 통과해 조용히 어긋난 지도가 된다.
+#      · EPSG:5174 — 측지계가 Bessel 1841(구 지적계). 약 300m 어긋난다.
+#                    구분하는 유일한 지문이 **SPHEROID** 다.
+#      · EPSG:5180 — 서부원점. Central_Meridian 이 125 다(5181 은 127).
+#    5186 은 y_0=600000 이라 False Northing 으로 갈린다(100km).
+PRJ_SIGNATURE = (
+    ("False_Northing", 500000.0, "600000 이면 EPSG:5186 — 100km 밀린다"),
+    ("False_Easting", 200000.0, ""),
+    ("Central_Meridian", 127.0, "125 면 서부원점(EPSG:5180) — 경도가 통째로 다르다"),
+    ("Latitude_Of_Origin", 38.0, ""),
+)
+EXPECTED_SPHEROID = "GRS_1980"   # 5174(Bessel_1841)와 가르는 유일한 지문
 
 # 소스가 쓰는 상권 종류 4종을 **그대로** 넣는다 (2026-08-14 결정).
 # 우리 스키마 주석의 5종(역세권/근린/대학가/오피스/관광)은 자료를 보기 전 추측이었고,
@@ -64,14 +80,31 @@ COORD_FMT = "{:.3f}"          # 5181 은 미터 단위 — mm 자리까지면 �
 
 
 def assert_projection(prj_text):
-    """.prj 가 정말 5181(False Northing 500000)인지 확인한다. 아니면 멈춘다."""
-    m = re.search(r'False_Northing",\s*([0-9]+)', prj_text or "")
-    got = m.group(1) if m else None
-    if got != EXPECTED_FALSE_NORTHING:
+    """.prj 가 정말 EPSG:5181 인지 확인한다. 하나라도 어긋나면 멈춘다.
+
+    지문 4개 + 측지계(SPHEROID)를 **함께** 본다 — 왜 그래야 하는지는 위 PRJ_SIGNATURE
+    주석 참조. 어긋난 좌표계는 에러를 내지 않고 **조용히 밀린 지도**를 만들기 때문에,
+    적재 전 이 관문이 유일한 방어선이다.
+    """
+    text = prj_text or ""
+    problems = []
+    for name, expected, hint in PRJ_SIGNATURE:
+        m = re.search(re.escape(name) + r'",\s*(-?[0-9]+(?:\.[0-9]+)?)', text)
+        if m is None:
+            problems.append("{} 를 못 찾음".format(name))
+            continue
+        got = float(m.group(1))
+        if got != expected:
+            problems.append("{}={:g} (기대 {:g}){}".format(
+                name, got, expected, (" — " + hint) if hint else ""))
+    if EXPECTED_SPHEROID not in text:
+        problems.append(
+            "SPHEROID 에 {} 가 없음 — 측지계가 다르다"
+            "(EPSG:5174 는 Bessel_1841 이고 약 300m 어긋난다)".format(EXPECTED_SPHEROID))
+    if problems:
         raise ValueError(
-            "좌표계가 예상과 다릅니다: False_Northing={} (기대 {}). "
-            "600000 이면 EPSG:5186 이라 그대로 넣으면 지도가 100km 밀립니다. "
-            "사람이 .prj 를 확인해야 합니다.".format(got, EXPECTED_FALSE_NORTHING))
+            "좌표계가 EPSG:{} 가 아닙니다 — {}. 그대로 넣으면 지도가 조용히 밀립니다. "
+            "사람이 .prj 를 확인해야 합니다.".format(SOURCE_SRID, " / ".join(problems)))
     return True
 
 
@@ -193,6 +226,14 @@ def build_sql(rows, batch_rows=BATCH_ROWS):
               "center_lng = excluded.center_lng, "
               "area_m2 = excluded.area_m2, "
               "computed_at = excluded.computed_at;")
+    # 소스에서 **사라진** 상권은 upsert 로는 안 지워진다 — 옛 경계·옛 이름 그대로 남는데
+    # 행 수는 비슷해서 아무도 눈치채지 못한다(2026-08-14 적대검증 지적).
+    # 이번 판이 건드린 행은 전부 같은 now() 를 갖는다 → 그보다 오래된 computed_at 이
+    # 곧 "이번 소스에 없던 상권"이다. **지우지는 않는다**(삭제 정책 미정 — 통폐합인지
+    # 일시 누락인지 사람이 봐야 한다). 대신 조용히 지나가지 않게 세어서 보여준다.
+    out.append(
+        'select count(*) as "이번 판에 없던 상권(유령 의심 — 0 이어야 정상)" '
+        "from district where computed_at < (select max(computed_at) from district);")
     out.append("commit;")
     return "\n".join(out) + "\n"
 
