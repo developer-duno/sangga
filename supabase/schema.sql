@@ -435,7 +435,11 @@ create index if not exists idx_tx_floor  on transaction (sigungu_code, floor_no,
 create table if not exists district (
   district_id     text primary key,
   district_nm     text,
-  district_type   text,                             -- 역세권/근린/대학가/오피스/관광
+  -- 소스(서울 상권분석서비스)가 쓰는 4종을 **그대로** 넣는다:
+  --   골목상권 / 발달상권 / 전통시장 / 관광특구   (2026-08-14 적재 실측 1,650개)
+  -- 예전 주석은 '역세권/근린/대학가/오피스/관광' 이었는데, 자료를 보기 전에 적어 둔
+  -- 추측이었다. 억지로 매핑하면 '전통시장' 처럼 갈 곳 없는 종류가 생겨 정보가 날아간다.
+  district_type   text,
   sigungu_code    char(5),
   geom            geometry(MultiPolygon, 4326),
   center_lat      double precision,
