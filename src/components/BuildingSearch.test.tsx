@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
-import { openRegionLabel } from '../lib/regions';
 import type { BuildingHit } from '../types';
 
 /**
@@ -105,13 +104,13 @@ describe('BuildingSearch — 화면 동작', () => {
     expect(onSearchStart).not.toHaveBeenCalled();
   });
 
-  it('결과가 없으면 지금 볼 수 있는 지역을 알려준다', async () => {
-    // ⛔ 지역명을 테스트에 박지 말 것 — regions.ts 에서 파생된 문구여야 한다.
-    //    (예전엔 '강남구'가 화면·테스트 양쪽에 박혀 있어 자료가 늘자 거짓말이 됐다.)
+  it('결과가 없으면 **고른 구 기준으로** 알려준다', async () => {
+    // ⚠️ 구 단위 검색으로 바뀐 뒤 "지금 보실 수 있는 지역은 서울·대전입니다"를 그대로
+    //    두면 엉뚱하다 — 사용자는 이미 한 구를 골랐고, 없는 것은 그 구 안에서 없는 것이다.
     const { input } = setup();
     search(input, '없는건물');
-    await waitFor(() => expect(screen.getByText(/결과가 없습니다/)).toBeTruthy());
-    expect(screen.getByText(openRegionLabel())).toBeTruthy();
+    await waitFor(() => expect(screen.getByText(/찾지 못했습니다/)).toBeTruthy());
+    expect(screen.getByText('강남구')).toBeTruthy();
   });
 
   it('전체 건수는 목록 길이가 아니라 서버가 준 total_cnt를 쓴다', async () => {
@@ -257,12 +256,12 @@ describe('BuildingSearch — 너무 넓은 검색 안내', () => {
     }
   });
 
-  it('넓지 않은데 0건이면 안내창이 아니라 "결과가 없습니다"', async () => {
+  it('넓지 않은데 0건이면 안내창이 아니라 "찾지 못했습니다"', async () => {
     // 정말 그런 건물이 없는 것과, 검색어가 넓어 끊긴 것은 다른 말이어야 한다.
     serverSays(false, 3);
     const input = setup();
     search(input, '없는건물이름');
-    await waitFor(() => expect(screen.getByText(/결과가 없습니다/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/찾지 못했습니다/)).toBeTruthy());
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 

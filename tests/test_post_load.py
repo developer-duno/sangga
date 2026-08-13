@@ -65,7 +65,8 @@ class TestBuildRefreshSql:
         assert "concurrently" in post_load.build_refresh_sql()
 
     def test_targets_the_search_summary(self):
-        assert post_load.build_refresh_sql().endswith("mv_search_parcel;")
+        # 검색 요약표는 반드시 대상에 있어야 한다(순서·다른 표는 아래 전용 검사에서 본다).
+        assert "concurrently mv_search_parcel;" in post_load.build_refresh_sql()
 
     def test_custom_target(self):
         assert post_load.build_refresh_sql("x") == "refresh materialized view concurrently x;"
@@ -194,20 +195,14 @@ class TestAnonExposure:
     def test_allowlist_is_only_what_the_screen_reads(self):
         """허용 목록이 늘어나면 노출면이 늘어난 것이다 — 눈에 띄게 해 둔다.
 
-        우리 자료는 화면이 읽는 뷰 2개뿐이고, 나머지 3개는 PostGIS 확장이 스스로
-        만드는 좌표계 정의표·메타데이터라 우리 데이터가 아니다(닫으면 PostGIS 가 깨진다).
+        확장(PostGIS·pg_trgm)이 만든 것은 SQL 단계에서 제외하므로, 여기 남는 것은
+        **전부 우리가 만든 것**이다. 그래서 목록이 짧고, 늘면 바로 눈에 띈다.
         """
-        assert post_load.ANON_READABLE_ALLOWLIST == (
-            "v_floor_stack",
-            "v_coverage_stats",
-            "spatial_ref_sys",
-            "geography_columns",
-            "geometry_columns",
+        assert post_load.ANON_READABLE_ALLOWLIST == ("v_floor_stack", "v_coverage_stats")
+        assert post_load.ANON_CALLABLE_ALLOWLIST == (
+            "search_buildings", "search_scope", "list_open_sigungu",
         )
-        ours = [n for n in post_load.ANON_READABLE_ALLOWLIST if n.startswith("v_")]
-        assert ours == ["v_floor_stack", "v_coverage_stats"], (
-            "우리 자료 중 공개된 것이 늘었습니다 — 정말 화면이 읽는 것인지 확인하세요"
-        )
+
 
     def test_flags_anything_outside_the_allowlist(self):
         got = post_load.unexpected_anon_readables(
@@ -243,3 +238,71 @@ class TestAnonExposure:
                             lambda sql: "200|200" if "count(" in sql
                             else "v_floor_stack\nv_coverage_stats")
         assert post_load.main(["--check"]) == 0
+
+
+# ── 7. 요약표를 **둘 다** 갱신하는가 (2026-08-13 2차 검증에서 잡힌 결함) ──────
+
+
+class TestRefreshCoversBothSummaries:
+    """⛔ mv_open_sigungu 가 빠져 있었다.
+
+    그러면 새 구에 건물이 들어와도 **화면의 지역 목록에 안 나타나** 고를 수도, 검색할
+    수도 없다. 에러가 안 나므로 아무도 모른다 — 그 지역이 원래 없는 것처럼 보인다.
+    """
+
+    def test_refreshes_both_matviews(self):
+        sql = post_load.build_refresh_sql()
+        for mv in ("mv_search_parcel", "mv_open_sigungu"):
+            assert "refresh materialized view concurrently {};".format(mv) in sql, (
+                "{} 가 갱신 대상에서 빠졌습니다".format(mv)
+            )
+
+    def test_order_matters_search_parcel_first(self):
+        """mv_open_sigungu 는 mv_search_parcel 에서 만들어진다 — 순서가 바뀌면 한 박자 늦는다."""
+        sql = post_load.build_refresh_sql()
+        assert sql.index("mv_search_parcel") < sql.index("mv_open_sigungu")
+
+    def test_all_are_concurrently(self):
+        for line in post_load.build_refresh_sql().splitlines():
+            assert line.startswith("refresh materialized view concurrently"), line
+
+
+class TestAnonExposureCoversFunctions:
+    """표·뷰만 보면 **함수가 열린 것을 놓친다**(2026-08-13: unit_business_append_only)."""
+
+    def test_sql_asks_about_functions_too(self):
+        sql = post_load.build_anon_exposure_sql()
+        assert "has_function_privilege('anon'" in sql
+        assert "pg_proc" in sql
+        # ⚠️ **글자가 있는 것만으로는 부족하다.** 앞의 `union all` 을 `--` 로 바꾸면
+        #    함수 절이 통째로 주석이 되는데 위 두 검사는 그대로 통과한다
+        #    (2026-08-13 주입 시험에서 실제로 그렇게 샜다). 실제로 **합쳐지는지**를 본다.
+        assert " union all " in sql, "표 절과 함수 절이 실제로 합쳐져야 합니다"
+        assert "--" not in sql, "SQL 안에 주석이 있으면 그 뒤가 통째로 죽는다"
+
+    def test_sql_excludes_extension_objects(self):
+        """⛔ 확장이 만든 함수를 세면 PostGIS 수백 개가 "사고"로 잡혀 진짜 사고가 묻힌다.
+
+        2026-08-13 실측: 제외 필터 없이 돌렸더니 경고 한 줄이 화면을 가득 채웠다.
+        `pg_depend.deptype='e'` = "이 객체는 확장의 일부" — 그것만 빼면 우리 것만 남는다.
+        """
+        sql = post_load.build_anon_exposure_sql()
+        assert sql.count("pg_depend") == 2, "표·함수 양쪽 모두에서 확장을 걸러야 합니다"
+        assert "deptype = 'e'" in sql
+
+    def test_screen_rpcs_are_allowed(self):
+        assert post_load.unexpected_anon_readables(
+            ["search_buildings", "search_scope", "list_open_sigungu", "v_floor_stack"]
+        ) == []
+
+    def test_flags_a_function_that_the_screen_never_calls(self):
+        assert post_load.unexpected_anon_readables(["unit_business_append_only"]) == [
+            "unit_business_append_only"
+        ]
+
+    def test_flags_helper_functions_if_they_reopen(self):
+        """도우미 함수는 뷰가 저장 컬럼을 읽게 만들어 닫아 뒀다 — 다시 열리면 사고다."""
+        assert post_load.unexpected_anon_readables(["building_display_nm", "mask_person_name"]) == [
+            "building_display_nm",
+            "mask_person_name",
+        ]

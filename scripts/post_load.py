@@ -52,7 +52,13 @@ ANALYZE_TABLES = (
     "transaction",
 )
 
-SEARCH_MV = "mv_search_parcel"
+# ⚠️ **순서가 중요하다.** mv_open_sigungu 는 mv_search_parcel 에서 만들어지므로
+#    반드시 그 뒤에 갱신해야 한다. 순서를 바꾸면 새 구가 목록에 한 박자 늦게 나타난다.
+# ⛔ 2026-08-13 2차 적대검증에서 **mv_open_sigungu 가 통째로 빠져 있던 것**을 잡았다.
+#    그러면 새 구에 건물이 들어와도 화면의 지역 목록에 안 나타나 **고를 수도, 검색할
+#    수도 없다**(에러는 안 난다 — 그냥 그 지역이 없는 것처럼 보인다).
+REFRESH_MVS = ("mv_search_parcel", "mv_open_sigungu")
+SEARCH_MV = REFRESH_MVS[0]
 
 
 def build_analyze_sql(tables=ANALYZE_TABLES):
@@ -70,13 +76,15 @@ def build_analyze_sql(tables=ANALYZE_TABLES):
     return "\n".join("vacuum (analyze) {};".format(t) for t in tables)
 
 
-def build_refresh_sql(mv=SEARCH_MV):
-    """요약표 갱신문.
+def build_refresh_sql(mvs=REFRESH_MVS):
+    """요약표 갱신문 (여러 개를 **적힌 순서대로**).
 
     ⚠️ `concurrently` 가 핵심이다. 없으면 갱신이 끝날 때까지 **그 표를 읽는 검색이 통째로
-       잠긴다**. 대신 대상에 unique 인덱스가 있어야 한다(idx_msp_pnu).
+       잠긴다**. 대신 대상마다 unique 인덱스가 있어야 한다(idx_msp_pnu · idx_mos_sigungu).
     """
-    return "refresh materialized view concurrently {};".format(mv)
+    if isinstance(mvs, str):
+        mvs = (mvs,)
+    return "\n".join("refresh materialized view concurrently {};".format(m) for m in mvs)
 
 
 def build_freshness_sql(mv=SEARCH_MV):
@@ -127,38 +135,51 @@ def report_freshness():
 #    200 + 188,442행 카운트까지 가능 — 검색 상한 게이트를 페이지네이션으로 통째로
 #    건너뛸 수 있었다. **정적 검사(schema.sql 에 revoke 가 적혀 있나)로는 이걸 못 잡는다**
 #    — 라이브에 실제로 뭐가 열려 있는지 물어봐야 한다.
-ANON_READABLE_ALLOWLIST = (
-    # 화면이 실제로 읽는 것 — 이 둘만 우리 자료다.
-    "v_floor_stack",
-    "v_coverage_stats",
-    # 아래 셋은 PostGIS 확장이 스스로 만드는 것으로 **우리 자료가 아니다.**
-    # 좌표계 정의표(spatial_ref_sys)와 그 메타데이터 뷰라 어느 프로젝트에나 있고,
-    # 닫으면 PostGIS 함수가 깨진다. 숨기지 않고 여기 적어 둔다 — 목록에 없으면
-    # 매번 "사고"로 잡혀 진짜 사고를 못 알아보게 된다(경보 피로).
-    "spatial_ref_sys",
-    "geography_columns",
-    "geometry_columns",
-)
+ANON_READABLE_ALLOWLIST = ("v_floor_stack", "v_coverage_stats")
+
+# anon 이 **불러도 되는** 함수. 화면이 실제로 쓰는 것만.
+ANON_CALLABLE_ALLOWLIST = ("search_buildings", "search_scope", "list_open_sigungu")
 
 
 def build_anon_exposure_sql():
-    """anon 이 SELECT 할 수 있는 public 객체를 전부 나열한다."""
+    """anon 이 읽거나 부를 수 있는 **우리 것**을 나열한다.
+
+    ⚠️ 표·뷰만 보면 안 된다 — **함수도 자동으로 열린다.** 2026-08-13 2차 검증에서
+       `unit_business_append_only`(트리거용)가 anon 에게 열려 있는 것을 그렇게 찾았다.
+
+    ⛔ 그런데 함수를 그냥 다 세면 **PostGIS·pg_trgm 이 딸고 오는 수백 개**가 전부 걸려
+       "사고" 목록이 스크롤을 채운다. 그러면 진짜 사고가 그 안에 묻힌다(경보 피로).
+       그래서 **확장(extension)이 만든 것은 제외**한다 — `pg_depend.deptype='e'` 가
+       "이 객체는 확장의 일부"라는 뜻이다. 남는 것이 곧 **우리가 만든 것**이다.
+    """
+    not_from_extension = (
+        "not exists (select 1 from pg_depend d "
+        "where d.objid = {oid} and d.deptype = 'e')"
+    )
     return (
         "select c.relname from pg_class c "
         "join pg_namespace n on n.oid = c.relnamespace "
         "where n.nspname = 'public' and c.relkind in ('r','v','m','p') "
         "and has_table_privilege('anon', c.oid, 'SELECT') "
-        "order by c.relname;"
+        "and " + not_from_extension.format(oid="c.oid") + " "
+        "union all "
+        "select p.proname from pg_proc p "
+        "join pg_namespace n2 on n2.oid = p.pronamespace "
+        "where n2.nspname = 'public' "
+        "and has_function_privilege('anon', p.oid, 'EXECUTE') "
+        "and " + not_from_extension.format(oid="p.oid") + ";"
     )
 
 
-def unexpected_anon_readables(names, allowlist=ANON_READABLE_ALLOWLIST):
+def unexpected_anon_readables(names, allowlist=None):
     """허용 목록에 없는데 열려 있는 것 (순수 함수 — 테스트가 여기만 보면 된다).
 
     ⚠️ psql 출력에는 빈 줄·공백 줄이 섞인다. `if n` 만으로는 공백 줄(' ')이 통과해
        이름인 척하므로 반드시 strip 후 판정한다.
     """
-    return sorted({n.strip() for n in names if n and n.strip() and n.strip() not in allowlist})
+    allowed = set(allowlist if allowlist is not None
+                  else ANON_READABLE_ALLOWLIST + ANON_CALLABLE_ALLOWLIST)
+    return sorted({n.strip() for n in names if n and n.strip() and n.strip() not in allowed})
 
 
 def report_anon_exposure():
@@ -167,11 +188,11 @@ def report_anon_exposure():
     names = [ln.strip() for ln in raw.splitlines() if ln.strip()]
     bad = unexpected_anon_readables(names)
     if bad:
-        print("[사고] 공개키로 읽히면 안 되는 것이 열려 있습니다: {}".format(", ".join(bad)))
+        print("[사고] 공개키에게 열리면 안 되는 것이 열려 있습니다: {}".format(", ".join(bad)))
         print("       → revoke all on <이름> from public, anon, authenticated; 를 적용하고")
         print("         supabase/schema.sql 에도 같이 반영하세요.")
     else:
-        print("[정상] 공개키가 읽는 것은 허용된 {}개뿐입니다.".format(len(names)))
+        print("[정상] 공개키가 읽거나 부를 수 있는 것은 허용된 {}개뿐입니다.".format(len(names)))
     return names, bad
 
 
@@ -199,7 +220,7 @@ def main(argv=None):
         print("[실패] VACUUM ANALYZE 가 실패했습니다.")
         return rc
 
-    print("검색 요약표를 갱신합니다…")
+    print("검색 요약표를 갱신합니다 ({}개)…".format(len(REFRESH_MVS)))
     rc = dbx.run_sql("set statement_timeout = '600s';\n" + build_refresh_sql(), quiet=True)
     if rc != 0:
         print("[실패] 요약표 갱신이 실패했습니다.")

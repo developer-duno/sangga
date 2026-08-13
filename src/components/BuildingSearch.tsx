@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import type { SubmitEvent } from 'react';
 import { supabase } from '../lib/supabase';
 import { describeError, describeRange } from '../lib/format';
-import { openRegionLabel } from '../lib/regions';
 import type { BuildingHit } from '../types';
 
 /**
@@ -173,7 +172,10 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu
 
       {searched && !loading && hits.length === 0 && !error && (
         <p className="msg">
-          결과가 없습니다. 지금 보실 수 있는 지역은 <strong>{openRegionLabel()}</strong>입니다.
+          {/* ⚠️ 구 단위 검색으로 바뀐 뒤에도 "전체 열린 지역"을 안내하면 엉뚱하다 —
+              사용자는 이미 한 구를 골랐고, 없는 것은 **그 구 안에서** 없는 것이다. */}
+          <strong>{sigunguName ?? '고른 지역'}</strong>에서 찾지 못했습니다. 건물 이름이나
+          지번을 다시 확인해 주시거나, 위에서 다른 구를 골라 보세요.
         </p>
       )}
 

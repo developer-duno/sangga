@@ -902,8 +902,11 @@ parallel safe
 as $$ select 6000 $$;
 
 comment on function search_scope_limit() is
-  '검색이 "한 곳을 짚는" 것으로 인정되는 상한(곳). 가장 큰 법정동(신림동 4,633)보다 크고 '
-  '가장 작은 구 단위 검색(유성구 11,248)보다 작게 잡았다 — 동 이름은 통과, 시·구 이름은 차단.';
+  '검색이 "한 곳을 짚는" 것으로 인정되는 상한(곳). 검색이 실제로 훑는 표(mv_search_parcel) 기준으로 '
+  '가장 큰 법정동(신림동 4,537)보다 크고 가장 작은 구 단위 검색(유성구 7,159)보다 작게 잡았다. '
+  '⚠️ "구 이름은 전부 차단된다"는 말은 사실이 아니다 — 30개 구 중 13개는 상한 미만이라 통과한다'
+  '(노원 3,479·금천 3,492·도봉 3,710). 확실히 막는 것은 시·도 단위이고, 2026-08-13e 부터는 '
+  '화면이 구를 먼저 고르므로 이 상한은 안전망이다.';
 
 -- ── 이 검색어가 몇 곳과 맞는가 ───────────────────────────────────────────────
 -- 세기만 하는 일이라 싸다(조인·정렬이 없다). 무거운 검색은 이걸로 먼저 걸러낸다.
@@ -1107,6 +1110,14 @@ revoke all on mv_open_sigungu  from public, anon, authenticated;
 -- 이게 없으면 다음에 표를 하나 더 만들 때 같은 일이 또 난다(사람 기억에 의존하게 된다).
 alter default privileges in schema public revoke all on tables from anon, authenticated;
 alter default privileges in schema public revoke all on sequences from anon, authenticated;
+-- ⚠️ **함수도 반드시 포함해야 한다.** 2026-08-13f 는 표·시퀀스만 닫아 반쪽이었고,
+--    라이브를 다시 보니 `pg_default_acl`(객체종류 f)이 여전히 anon 에게 EXECUTE 를
+--    자동으로 주고 있었다 — 새 함수를 만들 때마다 사람이 revoke 를 기억해야 하는 상태.
+--    실제로 트리거용 `unit_business_append_only` 가 그렇게 열려 있었다(2026-08-13g).
+alter default privileges in schema public revoke all on functions from anon, authenticated;
+
+-- 트리거가 부르는 함수는 사람이 직접 부를 일이 없다. 노출면은 "화면이 쓰는 것"만 남긴다.
+revoke all on function unit_business_append_only() from public, anon, authenticated;
 
 
 -- 상한 함수는 내부용이다. 화면은 search_scope() 가 돌려주는 판정만 쓴다.

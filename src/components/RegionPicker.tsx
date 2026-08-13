@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { SIDOS, openRegionLabel } from '../lib/regions';
+import { SIDOS } from '../lib/regions';
 import type { OpenSigungu } from '../types';
 
 /**
@@ -77,9 +77,21 @@ export function RegionPicker({ selectedSigungu, onSelectSigungu }: Props) {
 
   return (
     <section className="region">
+      {/*
+        ⚠️ 안내 문구도 **서버 목록에서 만든다.** 예전에는 `openRegionLabel()`(코드에 박힌
+           ['11','30'])을 썼는데, 칩 목록은 서버에서 오므로 **부산 자료가 들어오면 칩은
+           뜨는데 문구는 "서울·대전"으로 남는** 드리프트가 생긴다(2026-08-13 2차 검증).
+           진실을 한 곳(서버)으로 모으면 그런 어긋남이 아예 불가능해진다.
+      */}
       <p className="region__lead">
-        지금 보실 수 있는 지역은 <strong>{openRegionLabel()}</strong>입니다.
-        다른 지역은 준비 중이에요.
+        {sidos.length > 0 ? (
+          <>
+            지금 보실 수 있는 지역은 <strong>{sidos.map((s) => s.name).join('·')}</strong>입니다.
+            다른 지역은 준비 중이에요.
+          </>
+        ) : (
+          <>볼 수 있는 지역을 불러오는 중이에요.</>
+        )}
       </p>
 
       {selectedGu && (

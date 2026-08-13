@@ -137,7 +137,10 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
 
     await search(page, '없는건물');
 
-    await expect(page.getByText('결과가 없습니다')).toBeVisible();
+    // ⚠️ 구 단위 검색으로 바뀐 뒤 문구도 바뀌었다 — "지금 보실 수 있는 지역은 …"이 아니라
+    //    **고른 구 안에서** 못 찾았다고 말한다(2026-08-13 2차 검증에서 정리).
+    // ⚠️ '강남구'는 지역 칩에도 있으므로 **문구 안에서** 찾아야 한다(그냥 getByText 는 모호).
+    await expect(page.getByText(/강남구에서 찾지 못했습니다/)).toBeVisible();
     await expect(page.locator('section.stack')).toHaveCount(0);
   });
 

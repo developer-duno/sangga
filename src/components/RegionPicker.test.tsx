@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
-import { SIDOS, OPEN_SIDO_CODES, isOpenSido, openRegionLabel, isOpenPnu } from '../lib/regions';
+import { SIDOS, OPEN_SIDO_CODES, openRegionLabel, isOpenPnu } from '../lib/regions';
 import type { OpenSigungu } from '../types';
 
 /**
@@ -63,11 +63,23 @@ describe('regions.ts', () => {
     for (const c of OPEN_SIDO_CODES) expect(known.has(c)).toBe(true);
   });
 
-  it('openRegionLabel 은 열린 시도 이름을 이어 붙인다', () => {
-    const expected = SIDOS.filter((s) => isOpenSido(s.code))
-      .map((s) => s.name)
-      .join('·');
-    expect(openRegionLabel()).toBe(expected);
+  it('openRegionLabel 은 코드에 박힌 목록을 쓴다 — 화면 문구에는 쓰지 않는다', () => {
+    // ⚠️ 이 함수는 이제 **화면이 쓰지 않는다.** 예전에는 안내 문구를 여기서 만들었는데,
+    //    칩 목록은 서버에서 오므로 자료가 늘면 문구만 낡는 드리프트가 났다(2026-08-13).
+    //    지금 화면 문구는 서버 응답에서 만든다. 이 함수는 PNU 판정(isOpenPnu)의 짝으로만 남는다.
+    // ⛔ 예전 테스트는 `SIDOS.filter(isOpenSido).map(name).join('·')` 를 다시 계산해
+    //    함수와 비교했다 — **같은 식을 두 번 쓴 동어반복**이라 무엇을 바꿔도 통과했다.
+    //    그래서 지금은 **값 자체**를 못박는다.
+    expect(OPEN_SIDO_CODES).toEqual(['11', '30']);
+    expect(openRegionLabel()).toBe('서울·대전');
+  });
+
+  it('화면 문구는 이 함수를 쓰지 않는다 — 진실은 서버 목록 하나뿐이다', async () => {
+    // 서버가 서울만 준 상황: 문구도 "서울"이어야 한다. 하드코딩을 쓰면 "서울·대전"이 나온다.
+    rpc.mockResolvedValue({ data: [gu()], error: null });
+    render(<RegionPicker selectedSigungu={null} onSelectSigungu={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: '서울' })).toBeTruthy());
+    expect(screen.queryByText(/서울·대전/)).toBeNull();
   });
 
   it('isOpenPnu 는 PNU 앞 2자리로 판정한다', () => {
@@ -239,7 +251,7 @@ describe('RegionPicker — 구 목록', () => {
     setup();
     await waitFor(() => expect(screen.getByText(/불러오지 못했습니다/)).toBeTruthy());
     expect(screen.getByRole('button', { name: '다시 시도' })).toBeTruthy();
-    // 안내 문장(본체)은 그대로 살아 있어야 한다.
-    expect(screen.getByText(/준비 중/)).toBeTruthy();
+    // 목록을 못 받으면 "지금 볼 수 있는 지역"을 말할 수 없다 — 불러오는 중이라고 알린다.
+    expect(screen.getByText(/불러오는 중/)).toBeTruthy();
   });
 });
