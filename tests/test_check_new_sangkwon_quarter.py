@@ -200,6 +200,37 @@ def test_main_json_output(monkeypatch, capsys, tmp_path):
     assert data["excluded"] == 1
 
 
+# ── 감시 워크플로우 자체 점검 (조용한 실패 방지) ─────────────────────────────
+
+# 이 감시의 진짜 실패 모드는 "새 분기를 못 알아보는 것"이 아니라 **감시가 죽었는데
+# 아무도 모르는 것**이다. 2026-08-10 예약 실행이 죽은 걸 나흘 뒤에야 알았다.
+# 아래 두 가지가 사라지면 알림 경로가 통째로 조용해지므로 여기서 붙잡는다.
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+WORKFLOW_PATH = os.path.join(REPO_ROOT, ".github", "workflows", "sangkwon-quarterly-watch.yml")
+FAILURE_BODY_PATH = os.path.join(REPO_ROOT, ".github", "watch-failure-issue.md")
+
+
+def _read_text(path):
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
+def test_workflow_opens_an_issue_when_the_watch_itself_fails():
+    wf = _read_text(WORKFLOW_PATH)
+    assert "if: failure()" in wf, "실패해도 조용하면 새 분기를 통째로 놓친다"
+    # 실패 알림도 결국 이슈로 나가야 사람 눈에 띈다
+    assert wf.count("gh issue create") >= 2, "새 분기 알림 + 실패 알림 두 갈래여야 한다"
+
+
+def test_failure_issue_body_file_exists_and_tells_the_human_what_to_do():
+    """워크플로우가 이 파일을 그대로 읽어 이슈 본문으로 쓴다 — 사라지면 알림이 실패한다."""
+    assert ".github/watch-failure-issue.md" in _read_text(WORKFLOW_PATH)
+    body = _read_text(FAILURE_BODY_PATH)
+    assert "check_new_sangkwon_quarter.py" in body, "내 PC에서 확인할 명령이 있어야 한다"
+    assert "LATEST_KNOWN_QUARTER" in body, "기준선 올리는 걸 잊으면 다음 분기를 못 본다"
+
+
 # ── 기준선 자체 점검 ──────────────────────────────────────────────────────────
 
 
