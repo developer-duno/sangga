@@ -67,7 +67,7 @@
 6. **조회형 먼저, 탐색형 나중** — 추정 검증 전 추천 금지
 7. **Supabase 별도 프로젝트** — 기존 mibunyang DB와 격리
 8. **토지·상권 원천 데이터는 한 서버, 서비스는 분리** — 회원·결제 등 서비스 고유 상태는 생기는 시점에 그 서비스 소유로 분리. 편입 기준 = "PNU 필지 마스터를 쓰는가"(mibunyang 격리 유지). `docs/decisions/0003-토지상권-한서버-서비스분리.md`
-9. **1단계 서비스 범위 = 서울 + 대전. 전국 프레임은 유지** — 범위를 좁히는 게 아니라 전국 구조 위에서 **열림/잠김만 가른다.** 나머지 15개 시도는 화면에 보이되 누르면 "준비 중" 안내. 열린 지역의 진실은 한 곳(`src/lib/regions.ts`)에만 둔다. 적재 범위는 `--sigungu-code 11,30`(접두사 = 시도 2자리). `docs/decisions/0006-1단계-서비스범위-서울대전.md`
+9. **필지·점포는 전국, 건물·화면 오픈은 서울+대전 — 서로 다른 두 축이다** — 결정 0005의 `[A]`(parcel·상권정보 전국 시드)와 결정 0006(사용자가 실제로 볼 수 있는 지역)은 **별개 축**이라 헷갈리면 안 된다. `[A]`는 2026-08-13 전국 완주(`parcel` 1,119,149행·`unit_business` 2,772,484행) — 이건 "데이터가 어디까지 들어왔나"다. 0006은 "건물·화면을 여는 지역은 서울+대전뿐"이다 — 이건 "사용자가 어디를 볼 수 있나"다(건물은 아직 서울·대전 30개 구 242,631동뿐, 전국 필지 위에 얹힌 상태). 나머지 15개 시도는 화면에 보이되 누르면 "준비 중" 안내. 열린 지역의 진실은 한 곳(`src/lib/regions.ts`)에만 둔다. 검색은 고른 구 안에서만 한다(동까지는 안 좁힘 — 상권이 행정동 경계를 넘어 걸치므로). `docs/decisions/0005-전국확장-실행순서와-선행조건.md`·`docs/decisions/0006-1단계-서비스범위-서울대전.md`
 10. **건축물대장은 API가 아니라 건축HUB 일괄 파일로 받는다** — 전국 3종 4.4GB를 5분에 받는다(로그인 불필요, 월 갱신·누적분). API 전국 수집은 211일이라 대비책으로만 남긴다. `docs/decisions/0005`
 
 ## 데이터 소스 우선순위
@@ -93,7 +93,7 @@ constants → scoring → theme → components → hooks → App   (단방향)
 | API | Vercel Serverless |
 | DB | Supabase PostgreSQL + PostGIS (**별도 프로젝트**) |
 | 수집 | ⬜ **여전히 로컬 수동 실행이다** — 받기·적재·백업 전부 사람 손. 다만 **놓치는 것만은 막아 뒀다**: `sangkwon-quarterly-watch.yml`이 매주 포털을 확인해 새 분기가 뜨면 이슈를 자동으로 연다(비밀값 0개). 적재 후 `scripts/check_new_sangkwon_quarter.py`의 `LATEST_KNOWN_QUARTER`를 **사람이 올려야** 다음 분기를 감지한다(절대 규칙 6) |
-| 테스트 | 파이썬 **pytest 1,012개** + 프론트 **vitest 74개**(jsdom + @testing-library/react) + **E2E playwright 5개**(`e2e/floor-stack.spec.ts` — 검색→선택→층 스택, 너무 넓은 검색 안내창). CI가 셋 다 돌린다(`pnpm test:e2e`, chromium). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도 |
+| 테스트 | 파이썬 **pytest 1,046개** + 프론트 **vitest 82개**(jsdom + @testing-library/react) + **E2E playwright 6개**(`e2e/floor-stack.spec.ts` — 검색→선택→층 스택, 너무 넓은 검색 안내창). CI가 셋 다 돌린다(`pnpm test:e2e`, chromium). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도 |
 
 **성능 원칙**: 상권(수천 개)은 사전계산 정적 JSON, 호실(수백만)은 Supabase 쿼리.
 정적 JSON 폴백을 호실에는 두지 않는다.
@@ -125,13 +125,13 @@ constants → scoring → theme → components → hooks → App   (단방향)
 ```bash
 pnpm dev                                        # 개발 서버 (http://localhost:5173)
 pnpm build                                      # 타입 검사 + 빌드 (tsc -b && vite build)
-pnpm test                                       # 프론트 테스트 (vitest, 74개)
-pnpm test:e2e                                   # ★ 화면 E2E (playwright, 5개) — 아래 경고 참조
+pnpm test                                       # 프론트 테스트 (vitest, 82개)
+pnpm test:e2e                                   # ★ 화면 E2E (playwright, 6개) — 아래 경고 참조
 pnpm exec oxlint                                # 프론트 린트
 ```
 
 ```bash
-python -m pytest tests/ -q                      # 파이썬 테스트 (1,012개)
+python -m pytest tests/ -q                      # 파이썬 테스트 (1,046개)
 python scripts/check_new_sangkwon_quarter.py    # 새 분기 스냅샷이 떴나 (읽기만, 키 불필요)
 python -m ruff check scripts/ tests/            # 파이썬 린트
 python scripts/collectors/collect_building_ledger.py --dry-run   # 수집 예산 확인(API 0콜)
