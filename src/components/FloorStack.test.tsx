@@ -251,6 +251,26 @@ describe('FloorStack — 속한 상권', () => {
     ).toBeTruthy();
   });
 
+  it('소스가 둘인 지역이어도 실제로 쓴 자료의 출처만 적는다', async () => {
+    // 2026-08-14d 로 고친 구조 결함의 화면 쪽 몫이다. 서버가 "이 건물은 서울시 자료의
+    // 상권 하나에 있다"고 답하면, 그 지역에 소진공 자료가 함께 있더라도 출처는 서울시
+    // 하나여야 한다 — 안 쓴 자료를 덧붙이면 그건 출처표시가 아니라 지어낸 출처다.
+    // (어느 출처가 나갈지 정하는 것은 서버 몫이고, 화면은 받은 것만 적는다는 계약을
+    //  여기서 못 박는다. 화면이 목록을 늘리거나 줄이면 그 순간 이 테스트가 빨개진다.)
+    responses.districts = {
+      data: {
+        covered: true,
+        districts: [{ name: '역삼역', type: '발달상권' }],
+        sources: ['서울특별시 상권분석서비스'],
+      },
+      error: null,
+    };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText(/역삼역\(발달상권\)/)).toBeTruthy());
+    expect(screen.getByText('출처: 서울특별시 상권분석서비스')).toBeTruthy();
+    expect(screen.queryByText(/소상공인시장진흥공단/)).toBeNull();
+  });
+
   it('출처 목록이 안 오면 출처 줄만 조용히 생략한다 (상권 이름은 그대로 보인다)', async () => {
     // 마이그레이션 전 라이브는 sources 키를 안 준다. 그때 '서울특별시…'를 지어내면
     // 대전 상권에까지 서울 출처가 붙는다 — 없으면 없는 대로 두는 게 맞다.

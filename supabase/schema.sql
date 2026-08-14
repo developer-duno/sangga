@@ -804,25 +804,36 @@ as $$
     -- st_contains 가 NULL→거짓으로 흘러 "어느 경계에도 안 든다"는 **단정**이 되어 버린다.
     where b.bld_id = list_building_districts.bld_id
       and p.geom is not null
+  ),
+  -- 실제로 이 건물을 담고 있는 상권. districts 와 sources 가 **같은 집합**을 보게
+  -- 한 번만 정의한다(따로 쓰면 오늘 고친 이 어긋남이 다시 생긴다).
+  hit as (
+    select d.district_id, d.district_nm, d.district_type, d.source_nm, d.area_m2
+    from district d cross join me
+    where st_contains(d.geom, me.geom)
   )
   select jsonb_build_object(
     'covered', exists (select 1 from district d cross join me
                        where left(d.sigungu_code, 2) = me.sido),
     'districts', coalesce((
-      select jsonb_agg(jsonb_build_object('name', d.district_nm, 'type', d.district_type)
-                       order by d.area_m2 asc, d.district_id)
-      from district d cross join me
-      where st_contains(d.geom, me.geom)
+      select jsonb_agg(jsonb_build_object('name', h.district_nm, 'type', h.district_type)
+                       order by h.area_m2 asc, h.district_id)
+      from hit h
     ), '[]'::jsonb),
-    -- 출처는 화면이 지어내지 않고 **자료에서 읽는다**. 범위를 covered 와 똑같이(그 시·도)
-    -- 잡는 이유: "어느 경계에도 안 듦"이라는 판정도 그 시·도 자료를 읽어서 내린 것이라
-    -- 출처를 함께 밝혀야 한다. 한 시·도에 소스가 둘이면 둘 다 나간다.
     'sources', coalesce((
       select jsonb_agg(s.source_nm order by s.source_nm)
-      from (select distinct d.source_nm
-            from district d cross join me
-            where left(d.sigungu_code, 2) = me.sido
-              and d.source_nm is not null) s
+      from (
+        select distinct d.source_nm
+        from district d cross join me
+        where d.source_nm is not null
+          -- ★ 두 상태가 갈리는 유일한 지점 (위 주석 ①·② 참조)
+          --   상권이 잡혔으면 → 그 상권들의 출처만 ("이 건물은 여기 있다"의 근거)
+          --   하나도 안 잡혔으면 → 시·도 전체의 출처 ("어디에도 없다"는 판정의 근거)
+          and case when exists (select 1 from hit)
+                   then d.district_id in (select h.district_id from hit h)
+                   else left(d.sigungu_code, 2) = me.sido
+              end
+      ) s
     ), '[]'::jsonb)
   );
 $$;
@@ -831,7 +842,9 @@ comment on function list_building_districts(text) is
   '§8.6 이 건물이 속한 상권 목록. 겹치면 전부 준다(좁은 상권 먼저). '
   'covered=false 는 "그 시·도에 상권 경계 자료가 아직 없다"는 뜻이라 빈 목록(경계 밖)과 다르다 — '
   '지역명을 화면에 박지 않으려고 표에서 직접 센다(자료가 늘면 화면이 저절로 따라온다). '
-  'sources 는 그 시·도 자료의 출처 목록(district.source_nm) — 화면 출처 문구가 소스마다 따라간다. '
+  'sources 는 화면이 밝힐 출처(district.source_nm)이며 **두 상태에서 의미가 다르다**: '
+  '상권이 나열되면 그 상권들의 출처만(안 쓴 자료를 덧붙이면 지어낸 출처가 된다), '
+  '"없음" 판정이면 그 시·도 전체의 출처(그 자료 전부를 뒤져서 내린 판정이라 전부가 근거다). '
   'security definer (district·building·parcel 이 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. '
   '나가는 것은 상권 이름·종류·출처뿐)';
 

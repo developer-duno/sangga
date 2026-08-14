@@ -488,6 +488,16 @@ def newest_csv(raw_dir):
 
 
 def main(argv=None):
+    # cp949 콘솔에서 한글·특수문자(—) 출력이 UnicodeEncodeError 로 죽지 않게 —
+    # 형제 스크립트들(backup_raw.py 등)과 같은 처방(2026-08-14 사실검증에서 누락 발견).
+    try:
+        if sys.stdout.isatty():
+            sys.stdout.reconfigure(errors="replace")
+        else:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
     p = argparse.ArgumentParser(description="소진공 주요상권현황 CSV → district 적재")
     p.add_argument("--raw-dir", default=DEFAULT_RAW_DIR)
     p.add_argument("--csv", help="특정 CSV 를 직접 지정")
