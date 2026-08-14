@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { BuildingSearch } from './components/BuildingSearch';
+import { DistrictMap } from './components/DistrictMap';
 import { FloorStack } from './components/FloorStack';
 import { RegionPicker } from './components/RegionPicker';
 import type { BuildingHit } from './types';
@@ -51,6 +52,13 @@ export default function App() {
         sigungu={sigungu}
         sigunguName={sigunguName}
       />
+
+      {/*
+        상권 지도(결정 0010). 구를 고르면 **건물을 안 골랐어도** 보인다 — 지도는 이 서비스의
+        첫인상이라 탭이나 건물 선택 뒤에 숨기면 있는 줄도 모른다. 구를 안 골랐을 때는
+        컴포넌트가 스스로 아무것도 그리지 않는다(그릴 범위가 정해지지 않았으므로).
+      */}
+      <DistrictMap sigungu={sigungu} sigunguName={sigunguName} selected={selected} />
 
       {selected ? (
         <FloorStack building={selected} />

@@ -32,6 +32,11 @@ export default defineConfig({
       // 실제로 접속하지 않는다 — 모든 요청을 e2e/floor-stack.spec.ts가 가로챈다.
       VITE_SUPABASE_URL: 'https://e2e-test.supabase.co',
       VITE_SUPABASE_ANON_KEY: 'e2e-test-anon-key',
+      // ⚠️ 지도 키는 **일부러 비운다.** 개발자 PC에는 `.env.local`에 진짜 키가 있어서
+      //    비우지 않으면 E2E가 dapi.kakao.com에 실제로 접속한다(CI에는 그 파일이 없어
+      //    내 PC에서만 다르게 도는, 가장 늦게 발견되는 종류의 차이가 된다).
+      //    빈 값이면 DistrictMap이 스크립트를 아예 안 부르고 안내 카드만 그린다.
+      VITE_KAKAO_JS_KEY: '',
     },
   },
 });

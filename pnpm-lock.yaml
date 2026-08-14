@@ -17,6 +17,9 @@ importers:
       react-dom:
         specifier: ^19.2.8
         version: 19.2.8(react@19.2.8)
+      react-kakao-maps-sdk:
+        specifier: ^1.2.2
+        version: 1.2.2(kakao.maps.d.ts@0.1.40)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
     devDependencies:
       '@playwright/test':
         specifier: ^1.62.1
@@ -39,6 +42,9 @@ importers:
       jsdom:
         specifier: ^30.0.1
         version: 30.0.1
+      kakao.maps.d.ts:
+        specifier: ^0.1.40
+        version: 0.1.40
       oxlint:
         specifier: ^1.75.0
         version: 1.77.0
@@ -574,6 +580,9 @@ packages:
       canvas:
         optional: true
 
+  kakao.maps.d.ts@0.1.40:
+    resolution: {integrity: sha512-nX69MB1ok04epe3OqS+/tEeWBbU31GSQbvDPJmQRRltzzqn6t4jBsO5v1nzalUjCKzwcH2CptOc767NZ7Hbu3g==}
+
   lightningcss-android-arm64@1.33.0:
     resolution: {integrity: sha512-gEpRTalKdosp4Bb8qWtc2iOgE5SeIHlpS1up9bFq2wAyYhl1UdTObYiHe98zEM9SQvSoqQZ1IQD0JNpg3Ml5pg==}
     engines: {node: '>= 12.0.0'}
@@ -727,6 +736,13 @@ packages:
   react-is@17.0.2:
     resolution: {integrity: sha512-w2GsyukL62IJnlaff/nRegPQR94C/XXamvMWmSHRJ4y7Ts/4ocGRmTHvOs8PSE6pB3dWOrD/nueuU5sduBsQ4w==}
 
+  react-kakao-maps-sdk@1.2.2:
+    resolution: {integrity: sha512-UBSUKsq7Ju3pYKlm3NuzyredY5Ww2UCGnXzI0DsiWOan0w/ErJdOruSHm8BCSmw1/3T0PpnvJv6XL3wM3X7crg==}
+    peerDependencies:
+      kakao.maps.d.ts: ^0.1.40
+      react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
+      react-dom: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
+
   react@19.2.8:
     resolution: {integrity: sha512-PWaYA1L/q9u2u7xYQi+Y3L3Yfnie7XyLeaJICV1MGD6LprsBxcAqGjYyr0eY3p+QdsA+x/Irkt4Qif8D63+Sbw==}
     engines: {node: '>=0.10.0'}
@@ -807,6 +823,11 @@ packages:
   undici@8.10.0:
     resolution: {integrity: sha512-HvltHd7avK13QIw/oLe4qoOLyoVSoafqJ2jYOrtMRBkbYT31eiBQ8O0ehRKZiEZCMEyLFQNIADpgCWC5fALvYQ==}
     engines: {node: '>=22.19.0'}
+
+  use-sync-external-store@1.6.0:
+    resolution: {integrity: sha512-Pp6GSwGP/NrPIrxVFAIkOQeyw8lFenOHijQWkUTrDvrF4ALqylP2C/KCkeS9dpUM3KvYRQhna5vt7IL95+ZQ9w==}
+    peerDependencies:
+      react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
 
   vite@8.2.1:
     resolution: {integrity: sha512-EU/eS7BH3XROHh2YnBefjM6DBKA6ZeMZEYQbj7NLWg5wHYlhB8B/Mayd5XsgWq+NFYccDOTemRpdETWR6Ka/lw==}
@@ -1312,6 +1333,8 @@ snapshots:
     transitivePeerDependencies:
       - '@noble/hashes'
 
+  kakao.maps.d.ts@0.1.40: {}
+
   lightningcss-android-arm64@1.33.0:
     optional: true
 
@@ -1436,6 +1459,14 @@ snapshots:
 
   react-is@17.0.2: {}
 
+  react-kakao-maps-sdk@1.2.2(kakao.maps.d.ts@0.1.40)(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
+    dependencies:
+      '@babel/runtime': 7.29.7
+      kakao.maps.d.ts: 0.1.40
+      react: 19.2.8
+      react-dom: 19.2.8(react@19.2.8)
+      use-sync-external-store: 1.6.0(react@19.2.8)
+
   react@19.2.8: {}
 
   require-from-string@2.0.2: {}
@@ -1508,6 +1539,10 @@ snapshots:
   undici-types@7.18.2: {}
 
   undici@8.10.0: {}
+
+  use-sync-external-store@1.6.0(react@19.2.8):
+    dependencies:
+      react: 19.2.8
 
   vite@8.2.1(@types/node@24.13.3):
     dependencies:

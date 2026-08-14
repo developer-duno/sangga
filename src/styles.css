@@ -328,6 +328,123 @@ body {
   color: var(--under);
 }
 
+/* ── 상권 지도 (결정 0010) ───────────────────────────────────────────── */
+
+.dmap {
+  margin: 22px 0 0;
+  padding: 18px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.dmap__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dmap__title {
+  margin: 0;
+  font-size: 16px;
+}
+
+.dmap__toggle {
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  font: inherit;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.dmap__folded {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* 지도는 부모 높이를 채운다 — 카카오 지도는 컨테이너 높이가 0이면 아무것도 안 보인다. */
+.dmap__canvas {
+  height: 420px;
+  margin: 14px 0 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.dmap__legend {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 12px 0 0;
+  padding: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.dmap__legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dmap__swatch {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  opacity: 0.75;
+}
+
+.dmap__picked {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  background: var(--bg);
+  border-radius: 8px;
+  font-size: 13.5px;
+}
+
+.dmap__picked--idle {
+  color: var(--muted);
+}
+
+.dmap__picked-key {
+  margin-right: 8px;
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 12.5px;
+}
+
+.dmap__picked-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.dmap__picked-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dmap__picked-ty {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.dmap__src {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 /* ── 스택 ───────────────────────────────────────────────────────────── */
 
 .stack {
@@ -582,5 +699,9 @@ body {
 
   .floor__bar {
     display: none;
+  }
+
+  .dmap__canvas {
+    height: 300px;
   }
 }

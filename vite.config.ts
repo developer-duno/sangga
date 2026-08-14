@@ -10,5 +10,10 @@ export default defineConfig({
     // 컴포넌트 렌더링 테스트에 DOM이 필요하다.
     environment: 'jsdom',
     include: ['src/**/*.test.{ts,tsx}'],
+    // ⚠️ 지도 키는 테스트에서 **항상 비운다.** vitest도 vite라 `.env.local`을 읽는데,
+    //    그 파일은 개발자 PC에만 있고 CI에는 없다 — 비워 두지 않으면 내 PC에서만
+    //    카카오 스크립트를 실제로 내려받으려 들어 결과가 환경마다 달라진다.
+    //    키가 있는 상태가 필요한 테스트는 vi.stubEnv로 그 테스트 안에서만 켠다.
+    env: { VITE_KAKAO_JS_KEY: '' },
   },
 })
