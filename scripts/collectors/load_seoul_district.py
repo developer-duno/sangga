@@ -46,6 +46,12 @@ DEFAULT_RAW_DIR = os.path.join(PROJECT_ROOT, "data", "raw", "seoul_district")
 SOURCE_SRID = 5181            # .prj 실측값. 아래 assert_projection() 이 매번 재확인한다
 TARGET_SRID = 4326            # district.geom 의 좌표계
 
+# 화면이 그대로 보여줄 출처 문구(공공누리 1유형 = 출처표시 의무).
+# 2026-08-14 마이그레이션이 기존 1,650행을 백필했지만 그건 **1회성**이다 — 나중에 서울
+# 자료가 갱신돼 새 상권이 INSERT 되면 그 행만 출처가 비어 화면에서 출처 줄이 사라진다.
+# 그래서 적재기가 행마다 값을 갖게 한다.
+SOURCE_NM = "서울특별시 상권분석서비스"
+
 # .prj 가 정말 EPSG:5181 인지 가리는 지문.
 #
 # ⚠️ **False Northing 하나만 보면 안 된다** (2026-08-14 적대검증에서 잡힌 구멍).
@@ -193,12 +199,12 @@ def row_to_values_sql(row):
         "({id}, {nm}, {ty}, {gu}, "
         "st_multi(st_collectionextract("
         "st_makevalid(st_transform(st_geomfromtext({wkt}, {src}), {dst})), 3)), "
-        "st_y({wgs}), st_x({wgs}), {area}, now())"
+        "st_y({wgs}), st_x({wgs}), {area}, {source}, now())"
     ).format(
         id=sql_str(row["district_id"]), nm=sql_str(row["district_nm"]),
         ty=sql_str(row["district_type"]), gu=sql_str(row["sigungu_code"]),
         wkt=sql_str(row["wkt"]), src=SOURCE_SRID, dst=TARGET_SRID,
-        wgs=wgs, area=sql_num(row["area_m2"]))
+        wgs=wgs, area=sql_num(row["area_m2"]), source=sql_str(SOURCE_NM))
 
 
 def build_sql(rows, batch_rows=BATCH_ROWS):
@@ -215,7 +221,7 @@ def build_sql(rows, batch_rows=BATCH_ROWS):
         out.append(
             "insert into district "
             "(district_id, district_nm, district_type, sigungu_code, geom, "
-            "center_lat, center_lng, area_m2, computed_at) values\n"
+            "center_lat, center_lng, area_m2, source_nm, computed_at) values\n"
             + ",\n".join(row_to_values_sql(r) for r in chunk)
             + "\non conflict (district_id) do update set "
               "district_nm = excluded.district_nm, "
@@ -225,6 +231,7 @@ def build_sql(rows, batch_rows=BATCH_ROWS):
               "center_lat = excluded.center_lat, "
               "center_lng = excluded.center_lng, "
               "area_m2 = excluded.area_m2, "
+              "source_nm = excluded.source_nm, "
               "computed_at = excluded.computed_at;")
     # 소스에서 **사라진** 상권은 upsert 로는 안 지워진다 — 옛 경계·옛 이름 그대로 남는데
     # 행 수는 비슷해서 아무도 눈치채지 못한다(2026-08-14 적대검증 지적).

@@ -64,6 +64,8 @@ async function mockFloorStack(page: Page) {
   await mockJson(page, DISTRICT_PATTERN, {
     covered: true,
     districts: [{ name: '역삼역', type: '발달상권' }],
+    // 출처는 화면에 박힌 글자가 아니라 서버가 자료에서 읽어 주는 값이다(2026-08-14).
+    sources: ['서울특별시 상권분석서비스'],
   });
 }
 
@@ -109,6 +111,8 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     // 정상이어도 혼자 조용히 빠질 수 있다 — 그래서 여기서 눈으로 확인한다.
     await expect(stack.getByText('속한 상권:')).toBeVisible();
     await expect(stack.getByText(/역삼역\(발달상권\)/)).toBeVisible();
+    // 출처표시는 공공누리 1유형 의무다 — 상권 이름이 보이는데 출처만 빠지는 것도 결함이다.
+    await expect(stack.getByText(/출처: 서울특별시 상권분석서비스/)).toBeVisible();
   });
 
   test('B. 새 검색을 제출하면 이전 층 스택이 즉시 사라진다', async ({ page }) => {

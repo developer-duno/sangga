@@ -220,8 +220,12 @@ export function FloorStack({ building }: Props) {
  *     (비율 수치는 여기 적지 않는다 — 자료가 바뀌면 그 숫자만 낡는다)
  *  ③ 그 지역에 상권 경계 자료 자체가 없음 → "준비 중". "상권 밖"이 아니라 "모른다"는 뜻이다
  *
- * 출처 표기는 공공누리 1유형(출처표시) 의무라 ①·②에 붙인다. ③은 서울 자료로 판정한
+ * 출처 표기는 공공누리 1유형(출처표시) 의무라 ①·②에 붙인다. ③은 어떤 자료로 판정한
  * 것이 아니므로 붙이지 않는다.
+ *
+ * ⚠️ 출처 문구를 여기 글자로 박지 않는다. 소스가 둘이 되는 날(서울시 + 소상공인시장
+ * 진흥공단) 코드를 한 줄도 안 고쳤는데 화면이 틀린 말을 하기 때문이다 — 서버가 자료에서
+ * 읽어 준 `sources` 를 그대로 보여준다.
  */
 function DistrictLine({ info }: { info: BuildingDistricts | null }) {
   // 아직 안 왔거나 못 읽었으면 아무것도 안 그린다(위 useEffect에서 콘솔 경고만 남긴다).
@@ -241,7 +245,7 @@ function DistrictLine({ info }: { info: BuildingDistricts | null }) {
       <p className="stack__district">
         <span className="stack__district-key">속한 상권:</span>
         없음 — 어느 상권 경계에도 들지 않는 위치입니다.
-        <span className="stack__district-src">출처: 서울특별시 상권분석서비스</span>
+        <DistrictSource sources={info.sources} />
       </p>
     );
   }
@@ -257,9 +261,18 @@ function DistrictLine({ info }: { info: BuildingDistricts | null }) {
     <p className="stack__district">
       <span className="stack__district-key">속한 상권:</span>
       {names}
-      <span className="stack__district-src">출처: 서울특별시 상권분석서비스</span>
+      <DistrictSource sources={info.sources} />
     </p>
   );
+}
+
+/**
+ * 출처 한 조각. 서버가 준 목록을 그대로 잇는다(한 지역에 소스가 둘이면 둘 다 적는다).
+ * 목록이 없거나 비면 아무것도 그리지 않는다 — 모르는 출처를 지어내지 않기 위해서다.
+ */
+function DistrictSource({ sources }: { sources?: string[] }) {
+  if (!sources || sources.length === 0) return null;
+  return <span className="stack__district-src">출처: {sources.join(' · ')}</span>;
 }
 
 function FloorDetail({ floor }: { floor: FloorRow }) {

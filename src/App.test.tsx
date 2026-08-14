@@ -104,7 +104,11 @@ beforeEach(() => {
     }
     if (fn === 'list_building_districts') {
       // 이 화면 테스트의 관심사가 아니다 — 상권 줄이 조용히 지나가게만 해 둔다.
-      return Promise.resolve({ data: { covered: true, districts: [] }, error: null });
+      // sources 는 서버가 자료에서 읽어 주는 출처 목록(2026-08-14). 실제 응답 모양 그대로 흉내 낸다.
+      return Promise.resolve({
+        data: { covered: true, districts: [], sources: ['서울특별시 상권분석서비스'] },
+        error: null,
+      });
     }
     return Promise.resolve({ data: [], error: null });
   });
