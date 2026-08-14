@@ -477,6 +477,68 @@ comment on column district.source_nm is
 create index if not exists idx_district_geom on district using gist (geom);
 create index if not exists idx_district_type on district (district_type);
 
+-- ── district_rone_map — 상권 ↔ 부동산원 임대통계 이름 잇기 (2026-08-14) ────────
+-- 상가 임대료 실거래는 존재하지 않으므로(절대 규칙 5) rent_stat 으로 역산하는 것이
+-- 유일한 경로인데, 두 자료가 상권을 부르는 이름이 서로 다르다. 그 대응을 사람이 한 번
+-- 정해 두는 표다.
+--
+-- 왜 region_code 가 아니라 **이름 경로**인가: rent_stat 의 키는
+-- (quarter, region_code, bld_type) 인데 **같은 상권 이름이 bld_type 4종마다 다른
+-- region_code** 를 갖는다(대전은 이름 12개 vs 코드 28개, 2026-08-14 실측). 코드 하나를
+-- 박으면 그 종류의 통계만 읽히고 나머지 3종이 조용히 사라진다.
+--
+-- 왜 미매핑 상권에는 **행이 아예 없나**: "모른다"를 NULL·빈 값으로 적으면 조인이 조용히
+-- 성립해 엉뚱한 상권의 임대료가 붙는다. 행이 없으면 조인이 안 되고 화면은 상위 근사
+-- (권역)나 "표본 없음"으로 자연히 내려간다. 없는 매핑을 지어내지 않는 것이 안전장치다.
+--
+-- ★ PK 가 (district_id, rone_region_nm) 복합인 이유 — 한 상권이 경로 **둘**일 수 있다.
+-- 부동산원이 통계 종류(bld_type)마다 서울 권역을 다르게 나눈다(라이브 실측 2026-08-14):
+--   · 오피스                 → 서울>여의도마포>{공덕역·당산역·여의도} · 서울>기타>홍대/합정
+--   · 소규모·중대형·집합상가 → 서울>영등포신촌>{공덕역·당산역·여의도·홍대/합정}
+-- 하나만 고르면 나머지 종류의 통계가 통째로 사라진다. 조회가 (이름 경로, bld_type)으로
+-- rent_stat 을 찾을 때 존재하는 쪽이 자연히 골라지므로 bld_type 칸은 두지 않는다.
+create table if not exists district_rone_map (
+  district_id     text not null references district(district_id),
+  rone_region_nm  text not null,          -- rent_stat.region_nm 전체 경로 ("대전>둔산")
+  match_method    text not null,          -- 'exact' | 'normalized' | 'token' | 'manual'
+  note            text,
+  created_at      timestamptz default now(),
+  primary key (district_id, rone_region_nm)
+);
+
+comment on table district_rone_map is
+  'district(상권 경계) → rent_stat(부동산원 임대동향) 상권 이름 잇기. '
+  'R-ONE 상권 하나에 district 여럿이 붙고, district 하나도 경로를 **둘까지** 가질 수 있다 '
+  '(PK 가 복합인 이유). 부동산원이 bld_type 마다 서울 권역 분할을 달리해 같은 상권이 '
+  '오피스는 여의도마포·기타, 상가는 영등포신촌으로 갈리기 때문이다 — 라이브 실측 2026-08-14, '
+  '이중 경로 잎 = 공덕역·당산역·여의도·홍대/합정. '
+  '⚠️ 이 표에 **없는** district 는 "아직 이을 근거가 없다"는 뜻이며, 그 상태가 정상이다 — '
+  '없는 매핑을 지어내면 임대료 추정이 통째로 틀어진다(내부용 표, 화면에 직접 안 나간다).';
+
+comment on column district_rone_map.rone_region_nm is
+  'rent_stat.region_nm 의 **전체 경로**를 그대로 적는다. region_code 가 아닌 이유: '
+  '같은 상권이라도 bld_type(오피스/중대형상가/소규모상가/집합상가)마다 코드가 달라 '
+  '코드로 박으면 나머지 종류의 통계가 조용히 안 읽힌다(2026-08-14 실측).';
+
+comment on column district_rone_map.match_method is
+  '어떻게 이었나 — exact(이름 그대로) / normalized(꼬리 시설어를 떼고 같음) / '
+  'token(앞말 겹침, 기계 판단) / manual(사람이 지리 지식으로 정함). '
+  '나중에 "이 매핑을 얼마나 믿을 수 있나"를 되물을 때의 유일한 근거다.';
+
+comment on column district_rone_map.note is
+  'manual 이면 **왜 그렇게 판단했는지**를 적는다(예: 동춘당이 송촌동 소재). '
+  '근거 없는 manual 은 다음 사람이 검증할 수 없다.';
+
+-- 역방향 조회용: "이 R-ONE 상권에 붙은 district 가 몇 개인가"(1:N 의 N 쪽).
+create index if not exists idx_district_rone_map_region
+  on district_rone_map (rone_region_nm);
+
+-- ⛔ 만든 자리에서 바로 닫는다. 아래쪽 `revoke ... on all tables` 에만 기대면 방어가
+--    한 겹이고, 그 문장은 **돌리는 그 순간의 표만** 닫는 일회성이다(Supabase 는 새로
+--    생기는 표를 anon 에 자동으로 연다 — pg_default_acl). 마이그레이션
+--    2026-08-14c 와 **같은 문장**을 여기에도 둬 정본↔라이브가 눈으로도 대조되게 한다.
+revoke all on district_rone_map from public, anon, authenticated;
+
 -- =====================================================================
 -- L5. rent_stat — 한국부동산원 임대동향조사
 -- =====================================================================
@@ -1250,6 +1312,11 @@ alter table unit             enable row level security;
 alter table unit_business    enable row level security;
 alter table transaction      enable row level security;
 alter table district         enable row level security;
+-- 내부용 매핑표. 화면은 이 표를 직접 읽지 않는다(함수를 거친다).
+-- ⛔ Supabase 는 **새로 생기는 표를 anon 에 자동으로 연다**(pg_default_acl) — 아래
+--    `revoke ... on all tables` 는 이 파일을 돌리는 그 순간의 표만 닫는 일회성 명령이다.
+--    그래서 마이그레이션(2026-08-14c)에서는 만든 자리에서 따로 한 번 더 닫는다.
+alter table district_rone_map enable row level security;
 alter table rent_stat        enable row level security;
 alter table collect_progress enable row level security;
 alter table api_quota_log    enable row level security;
