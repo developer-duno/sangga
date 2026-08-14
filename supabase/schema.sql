@@ -453,8 +453,26 @@ create table if not exists district (
   computed_at     timestamptz
 );
 
+-- ── 출처 컬럼 (2026-08-14) ──────────────────────────────────────────────────
+-- ⚠️ 테이블 정의부 안이 아니라 여기 있는 이유: 마이그레이션과 **같은 문장**이라야
+--    정본↔마이그레이션 대조가 눈으로도, 드리프트 가드(tests/test_schema_migration_sync.py)
+--    로도 된다. 가드는 `add column <이름>` 형태만 알아본다.
+alter table district
+  add column if not exists source_nm text;
+
+-- 출처 없는 행이 생기는 순간 화면의 출처 줄이 **소리 없이** 사라진다(공공누리 1유형은
+-- 출처표시가 의무다). 에러가 아니라 "한 줄이 안 보일" 뿐이라 아무도 눈치채지 못하므로
+-- DB 가 막게 한다. 쓰는 경로는 적재기 둘뿐이고 둘 다 값을 담는다(2026-08-14 실측).
+alter table district
+  alter column source_nm set not null;
+
 comment on column district.metrics is '정규화 점수. 화면 순위용';
 comment on column district.raw_metrics is '원본값. 주석에 출처·기준시점과 함께 노출';
+comment on column district.source_nm is
+  '이 상권 경계를 어디서 받았나 — **화면에 그대로 보여줄 문구**로 넣는다 '
+  '(공공누리 1유형은 출처표시가 의무라 화면에서 지울 수 없다). '
+  '소스가 둘 이상이 된 순간(서울시 + 소상공인시장진흥공단) 화면에 박아 둔 고정 문구는 '
+  '거짓말이 되므로, 문구를 코드가 아니라 자료가 들고 있게 한다.';
 
 create index if not exists idx_district_geom on district using gist (geom);
 create index if not exists idx_district_type on district (district_type);
@@ -733,6 +751,16 @@ as $$
                        order by d.area_m2 asc, d.district_id)
       from district d cross join me
       where st_contains(d.geom, me.geom)
+    ), '[]'::jsonb),
+    -- 출처는 화면이 지어내지 않고 **자료에서 읽는다**. 범위를 covered 와 똑같이(그 시·도)
+    -- 잡는 이유: "어느 경계에도 안 듦"이라는 판정도 그 시·도 자료를 읽어서 내린 것이라
+    -- 출처를 함께 밝혀야 한다. 한 시·도에 소스가 둘이면 둘 다 나간다.
+    'sources', coalesce((
+      select jsonb_agg(s.source_nm order by s.source_nm)
+      from (select distinct d.source_nm
+            from district d cross join me
+            where left(d.sigungu_code, 2) = me.sido
+              and d.source_nm is not null) s
     ), '[]'::jsonb)
   );
 $$;
@@ -741,8 +769,9 @@ comment on function list_building_districts(text) is
   '§8.6 이 건물이 속한 상권 목록. 겹치면 전부 준다(좁은 상권 먼저). '
   'covered=false 는 "그 시·도에 상권 경계 자료가 아직 없다"는 뜻이라 빈 목록(경계 밖)과 다르다 — '
   '지역명을 화면에 박지 않으려고 표에서 직접 센다(자료가 늘면 화면이 저절로 따라온다). '
+  'sources 는 그 시·도 자료의 출처 목록(district.source_nm) — 화면 출처 문구가 소스마다 따라간다. '
   'security definer (district·building·parcel 이 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. '
-  '나가는 것은 상권 이름·종류뿐)';
+  '나가는 것은 상권 이름·종류·출처뿐)';
 
 -- =====================================================================
 -- 함수: search_buildings — 건물 검색 (§8.1 진입점)

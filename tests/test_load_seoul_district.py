@@ -219,6 +219,14 @@ def test_build_sql_upserts_not_duplicates():
     assert "on conflict (district_id) do update set" in sql
 
 
+def test_values_sql_stamps_the_source():
+    """출처(공공누리 1유형 의무)를 행마다 담는다. 2026-08-14 백필은 1회성이라,
+    나중에 갱신으로 새 상권이 들어오면 그 행만 출처가 비어 화면에서 줄이 사라진다."""
+    sql = L.row_to_values_sql(_row())
+    assert "'서울특별시 상권분석서비스'" in sql
+    assert "source_nm = excluded.source_nm" in L.build_sql([_row()])
+
+
 def test_build_sql_batches_rows():
     rows = [L.record_to_row(dict(_REC, TRDAR_CD=str(i)), "MULTIPOLYGON(((0 0,0 1,1 1,0 0)))")
             for i in range(250)]

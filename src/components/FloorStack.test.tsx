@@ -94,7 +94,10 @@ function stats(over: Partial<CoverageStats> = {}): CoverageStats {
 beforeEach(() => {
   responses.floors = { data: [floor()], error: null };
   responses.stats = { data: [stats()], error: null };
-  responses.districts = { data: { covered: true, districts: [] }, error: null };
+  responses.districts = {
+    data: { covered: true, districts: [], sources: ['서울특별시 상권분석서비스'] },
+    error: null,
+  };
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
@@ -220,6 +223,7 @@ describe('FloorStack — 속한 상권', () => {
           { name: '역삼역', type: '발달상권' },
           { name: '선릉역', type: '발달상권' },
         ],
+        sources: ['서울특별시 상권분석서비스'],
       },
       error: null,
     };
@@ -230,13 +234,54 @@ describe('FloorStack — 속한 상권', () => {
     expect(screen.getByText(/출처: 서울특별시 상권분석서비스/)).toBeTruthy();
   });
 
+  it('출처는 화면이 지어내지 않고 서버가 준 목록을 그대로 적는다', async () => {
+    // 소스가 둘인 지역(서울시 + 소진공)에서도 화면이 저절로 따라와야 한다.
+    responses.districts = {
+      data: {
+        covered: true,
+        districts: [{ name: '은행동', type: '주요상권' }],
+        sources: ['서울특별시 상권분석서비스', '소상공인시장진흥공단'],
+      },
+      error: null,
+    };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText(/은행동\(주요상권\)/)).toBeTruthy());
+    expect(
+      screen.getByText(/출처: 서울특별시 상권분석서비스 · 소상공인시장진흥공단/),
+    ).toBeTruthy();
+  });
+
+  it('출처 목록이 안 오면 출처 줄만 조용히 생략한다 (상권 이름은 그대로 보인다)', async () => {
+    // 마이그레이션 전 라이브는 sources 키를 안 준다. 그때 '서울특별시…'를 지어내면
+    // 대전 상권에까지 서울 출처가 붙는다 — 없으면 없는 대로 두는 게 맞다.
+    responses.districts = {
+      data: { covered: true, districts: [{ name: '역삼역', type: '발달상권' }] },
+      error: null,
+    };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText(/역삼역\(발달상권\)/)).toBeTruthy());
+    expect(screen.queryByText(/출처:/)).toBeNull();
+  });
+
   it('자료는 있는데 경계 밖이면 "없음"이라고 말한다 (출처는 그대로 붙인다)', async () => {
     // 경계 밖은 정상 상태다. 이 판정도 서울 자료를 읽어서 내린 것이므로 출처를 붙인다.
-    responses.districts = { data: { covered: true, districts: [] }, error: null };
+    responses.districts = {
+      data: { covered: true, districts: [], sources: ['서울특별시 상권분석서비스'] },
+      error: null,
+    };
     render(<FloorStack building={building()} />);
     await waitFor(() => expect(screen.getByText(/어느 상권 경계에도 들지 않는/)).toBeTruthy());
     expect(screen.getByText(/출처: 서울특별시 상권분석서비스/)).toBeTruthy();
     expect(screen.queryByText(/준비되지 않았습니다/)).toBeNull();
+  });
+
+  it('경계 밖인데 출처 목록도 안 오면 "없음"만 말하고 출처는 지어내지 않는다', async () => {
+    // 마이그레이션 전 라이브는 sources 키를 안 준다. 그때 '서울특별시…'를 채워 넣으면
+    // 대전 건물에까지 서울 출처가 붙는다 — 판정("없음")은 그대로 말하되 출처는 비운다.
+    responses.districts = { data: { covered: true, districts: [] }, error: null };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText(/어느 상권 경계에도 들지 않는/)).toBeTruthy());
+    expect(screen.queryByText(/출처:/)).toBeNull();
   });
 
   it('그 지역에 상권 자료가 없으면 "준비 중"이라고 말한다 (출처는 안 붙인다)', async () => {
