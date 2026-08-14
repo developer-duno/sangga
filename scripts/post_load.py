@@ -17,6 +17,10 @@
     결정 0005 가 "공식이 강력 권장하는데 우리 적재기에 없다"고 이미 지적해 둔 구멍이다.
   · 요약표 갱신을 빼먹으면 → **새로 넣은 건물이 검색에 안 나온다.**
     화면엔 "결과가 없습니다"만 뜨고 아무도 원인을 모른다(2026-08-13 신설).
+  · 지도용 상권 파일 굽기를 빼먹으면 → **지도만 옛날 상권을 보여준다.**
+    지도는 DB 가 아니라 구워 둔 정적 파일을 읽기 때문이다(2026-08-14 신설, 결정 0010).
+    ⚠️ 굽는 것까지 대신 해 주지는 않는다 — 그 파일은 git 에 커밋하는 자산이라
+    사람이 보고 커밋해야 한다. 여기서는 "낡았다"고 알리고 명령을 안내한다.
 
 그래서 "적재 후 이거 하나만 돌리면 된다"를 한 곳으로 모은다.
 
@@ -40,6 +44,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import build_district_geojson  # noqa: E402  (지도 파일의 형식·SQL 은 굽는 쪽이 주인이다)
 import dbx  # noqa: E402  (같은 폴더의 접속 정보 해석기를 그대로 쓴다)
 
 # 대량 적재의 영향을 받는 표만 고른다. 전부 다 돌리면 느리기만 하고 얻는 게 없다.
@@ -123,6 +128,56 @@ def report_freshness():
     else:
         print("[신선] 검색 요약표 {}행 = 건물의 고유 필지 수 {}행.".format(mv_rows, expected))
     return mv_rows, expected, stale
+
+
+# ── 지도 상권 파일 신선도 (2026-08-14 신설 — 결정 0010) ─────────────────────
+#
+# 지도에 그리는 상권 면은 DB 가 아니라 **구워 둔 정적 파일**(public/districts.geojson)
+# 에서 읽는다(CLAUDE.md 성능 원칙). 그래서 상권을 새로 적재하고 파일 굽기를 잊으면
+# **지도만 옛날 상권을 계속 보여준다** — 에러는 안 난다. 여기서도 등식으로 잡는다:
+# 파일 meta 의 (행수 · 자료 시각) == 라이브 district 의 (count · max(computed_at)).
+#
+# ⚠️ 이 스크립트는 파일을 **자동으로 굽지 않는다.** 그 파일은 git 에 커밋하는 자산이라
+#    사람이 보고 커밋해야 한다 — 여기서는 "낡았다"고 알리고 명령을 안내만 한다.
+
+
+def is_map_stale(meta, live_cnt, live_max):
+    """지도 파일이 낡았는가 (순수 함수 — 테스트가 여기만 보면 된다).
+
+    파일이 아예 없으면(meta=None) **낡음**으로 본다. "없으니 검사할 게 없다"고 넘어가면
+    지도가 통째로 비어 있는 상태를 정상이라고 보고하게 된다.
+    """
+    if not meta:
+        return True
+    try:
+        cnt = int(meta.get("district_cnt"))
+    except (TypeError, ValueError):
+        return True          # 형식이 깨졌으면 믿을 수 없으니 낡은 것으로 친다
+    if cnt != int(live_cnt):
+        return True
+    return str(meta.get("max_computed_at") or "") != str(live_max or "")
+
+
+def report_map_freshness():
+    """지도 파일과 라이브를 대조해 (meta, 낡음여부) 를 돌려주고 사람 말로 찍는다."""
+    meta = build_district_geojson.read_meta()
+    live_cnt, live_max = build_district_geojson.parse_meta_row(
+        query_one(build_district_geojson.build_meta_sql()))
+    stale = is_map_stale(meta, live_cnt, live_max)
+    if stale:
+        if meta is None:
+            print("[낡음] 지도 상권 파일이 없습니다 — 라이브 상권은 {}개입니다."
+                  .format(live_cnt))
+        else:
+            print("[낡음] 지도 상권 파일 {}개(자료 시각 {}) / 라이브 {}개({}) — 다릅니다."
+                  .format(meta.get("district_cnt"), meta.get("max_computed_at"),
+                          live_cnt, live_max))
+        print("       이대로 두면 지도가 옛날 상권을 계속 보여줍니다(에러는 안 납니다).")
+        print("       python scripts/build_district_geojson.py 를 실행한 뒤 커밋하세요.")
+    else:
+        print("[신선] 지도 상권 파일 {}개 = 라이브 상권 {}개.".format(
+            meta.get("district_cnt"), live_cnt))
+    return meta, stale
 
 
 # ── 공개키(anon)가 읽어도 되는 것 ──────────────────────────────────────────
@@ -213,8 +268,9 @@ def main(argv=None):
 
     if opts["check"]:
         _, _, stale = report_freshness()
+        _, map_stale = report_map_freshness()
         _, exposed = report_anon_exposure()
-        return 1 if (stale or exposed) else 0
+        return 1 if (stale or map_stale or exposed) else 0
 
     print("통계·가시성 지도를 갱신합니다 (VACUUM ANALYZE {}개 표)…".format(len(ANALYZE_TABLES)))
     rc = dbx.run_sql("set statement_timeout = '600s';\n" + build_analyze_sql(), quiet=True)
@@ -230,7 +286,11 @@ def main(argv=None):
 
     # 했다고 믿지 않고 다시 잰다.
     _, _, stale = report_freshness()
-    return 1 if stale else 0
+
+    # 지도 파일은 **여기서 굽지 않는다** — 커밋이 필요한 자산이라 사람이 봐야 한다.
+    # 낡았으면 알리고 명령만 안내한다.
+    _, map_stale = report_map_freshness()
+    return 1 if (stale or map_stale) else 0
 
 
 if __name__ == "__main__":

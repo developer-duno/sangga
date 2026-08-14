@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """scripts/post_load.py 1:1 단위 테스트.
 
-여기서 지키는 것은 "적재 후 마무리가 조용히 반쪽이 되는 것"이다. 세 가지 모두
+여기서 지키는 것은 "적재 후 마무리가 조용히 반쪽이 되는 것"이다. 넷 다
 **에러 없이** 틀리는 종류라 사람 눈으로는 안 잡힌다:
   1) ANALYZE 대상에서 큰 표가 빠짐 → 통계가 낡아 화면이 느려진다
   2) `concurrently` 가 빠짐 → 갱신 중 검색이 통째로 잠긴다
   3) 신선도 판정이 헐거워짐 → 낡은 요약표를 "신선"이라 보고한다
+  4) 지도 상권 파일 검사가 빠짐 → 지도만 옛날 상권을 계속 보여준다(2026-08-14 신설)
 
 공용 설정 파일(conftest.py) 없이 이 파일 안에서 import 경로를 직접 해결한다
 (tests/test_backup_raw.py 와 동일한 방식).
@@ -23,6 +24,18 @@ if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
 import post_load  # noqa: E402
+
+
+@pytest.fixture
+def map_is_fresh(monkeypatch):
+    """지도 파일 검사만 빼고 본다.
+
+    ⚠️ 이 stub 이 없으면 `main()` 이 **레포에 실제로 있는** public/districts.geojson 을
+       읽어 라이브(가짜 mock 값)와 대조하게 돼, 이 반의 관심사와 상관없이 결과가 흔들린다.
+       지도 검사 자체는 아래 TestMapFreshness 가 따로 본다.
+    """
+    monkeypatch.setattr(post_load, "report_map_freshness",
+                        lambda: ({"district_cnt": 0, "max_computed_at": ""}, False))
 
 
 # ── 1. ANALYZE 대상 ─────────────────────────────────────────────────────────
@@ -134,18 +147,18 @@ class TestParseArgs:
 
 
 class TestMainFlow:
-    def test_check_returns_1_when_stale(self, monkeypatch):
+    def test_check_returns_1_when_stale(self, monkeypatch, map_is_fresh):
         """CI·다른 스크립트가 종료 코드로 받아 쓸 수 있어야 한다."""
         monkeypatch.setattr(post_load, "query_one", lambda sql: "100|200")
         assert post_load.main(["--check"]) == 1
 
-    def test_check_returns_0_when_fresh(self, monkeypatch):
-        # --check 는 두 가지를 묻는다(신선도 · 공개키 노출) — mock 도 갈라 답해야 한다.
+    def test_check_returns_0_when_fresh(self, monkeypatch, map_is_fresh):
+        # --check 는 세 가지를 묻는다(신선도 · 지도 파일 · 공개키 노출) — mock 도 갈라 답해야 한다.
         monkeypatch.setattr(post_load, "query_one",
                             lambda sql: "200|200" if "count(" in sql else "v_floor_stack")
         assert post_load.main(["--check"]) == 0
 
-    def test_check_never_writes(self, monkeypatch):
+    def test_check_never_writes(self, monkeypatch, map_is_fresh):
         """--check 는 읽기만 해야 한다 — 실수로 갱신을 돌리면 안 된다."""
         calls = []
         monkeypatch.setattr(post_load, "query_one",
@@ -155,7 +168,7 @@ class TestMainFlow:
         post_load.main(["--check"])
         assert calls == []
 
-    def test_apply_runs_analyze_then_refresh_then_rechecks(self, monkeypatch):
+    def test_apply_runs_analyze_then_refresh_then_rechecks(self, monkeypatch, map_is_fresh):
         """했다고 믿지 않고 **다시 재는지**까지 확인한다."""
         ran = []
         monkeypatch.setattr(post_load.dbx, "run_sql",
@@ -174,7 +187,7 @@ class TestMainFlow:
                             lambda sql: pytest.fail("실패했는데 신선도를 재면 안 됩니다"))
         assert post_load.main([]) == 2
 
-    def test_apply_reports_failure_when_still_stale_after_refresh(self, monkeypatch):
+    def test_apply_reports_failure_when_still_stale_after_refresh(self, monkeypatch, map_is_fresh):
         """갱신을 돌렸는데도 안 맞으면 성공으로 끝내면 안 된다."""
         monkeypatch.setattr(post_load.dbx, "run_sql", lambda sql, **k: 0)
         monkeypatch.setattr(post_load, "query_one", lambda sql: "100|200")
@@ -228,13 +241,13 @@ class TestAnonExposure:
         # 물질화뷰('m')가 빠지면 2026-08-13 사고를 그대로 놓친다.
         assert "'m'" in sql
 
-    def test_check_returns_1_when_something_is_exposed(self, monkeypatch):
+    def test_check_returns_1_when_something_is_exposed(self, monkeypatch, map_is_fresh):
         monkeypatch.setattr(post_load, "query_one",
                             lambda sql: "200|200" if "count(" in sql
                             else "v_floor_stack\nmv_search_parcel")
         assert post_load.main(["--check"]) == 1
 
-    def test_check_returns_0_when_clean(self, monkeypatch):
+    def test_check_returns_0_when_clean(self, monkeypatch, map_is_fresh):
         monkeypatch.setattr(post_load, "query_one",
                             lambda sql: "200|200" if "count(" in sql
                             else "v_floor_stack\nv_coverage_stats")
@@ -307,3 +320,88 @@ class TestAnonExposureCoversFunctions:
             "building_display_nm",
             "mask_person_name",
         ]
+
+
+# ── 8. 지도 상권 파일 신선도 (2026-08-14 신설 — 결정 0010) ──────────────────
+
+
+class TestMapFreshness:
+    """지도의 상권 면은 DB 가 아니라 **구워 둔 정적 파일**에서 읽는다.
+
+    그래서 상권을 새로 적재하고 파일 굽기를 잊으면 **지도만** 옛날 상권을 계속 보여준다 —
+    검색도 층별 화면도 멀쩡하고 에러도 안 나서, 이 검사가 없으면 아무도 모른다.
+    """
+
+    FIXED = "2020-01-01T00:00:00.000000Z"      # 의미 없는 고정 과거값(날짜 하드코딩 함정 회피)
+
+    def test_matching_count_and_time_is_fresh(self):
+        meta = {"district_cnt": 1687, "max_computed_at": self.FIXED}
+        assert post_load.is_map_stale(meta, 1687, self.FIXED) is False
+
+    def test_new_districts_loaded_but_file_not_rebaked(self):
+        meta = {"district_cnt": 1650, "max_computed_at": self.FIXED}
+        assert post_load.is_map_stale(meta, 1687, self.FIXED) is True
+
+    def test_same_count_but_geometry_recomputed(self):
+        """행수는 그대로인데 경계만 다시 계산된 경우 — 개수만 보면 못 잡는다."""
+        meta = {"district_cnt": 1687, "max_computed_at": self.FIXED}
+        assert post_load.is_map_stale(meta, 1687, "2021-06-01T00:00:00.000000Z") is True
+
+    def test_missing_file_is_stale_not_ok(self):
+        """"파일이 없으니 검사할 게 없다"고 넘어가면 텅 빈 지도를 정상이라 보고하게 된다."""
+        assert post_load.is_map_stale(None, 1687, self.FIXED) is True
+
+    def test_broken_meta_is_stale(self):
+        assert post_load.is_map_stale({"district_cnt": "어쩌구"}, 1687, self.FIXED) is True
+        assert post_load.is_map_stale({}, 1687, self.FIXED) is True
+
+    def test_accepts_strings_from_psql(self):
+        """psql -tA 는 문자열을 준다 — '1687' 과 1687 을 다르다고 하면 안 된다."""
+        meta = {"district_cnt": 1687, "max_computed_at": self.FIXED}
+        assert post_load.is_map_stale(meta, "1687", self.FIXED) is False
+
+    def test_uses_the_bakers_own_sql_so_the_two_sides_cannot_drift(self):
+        """등식의 양쪽(굽는 쪽·검사하는 쪽)이 **같은 SQL** 을 써야 한다.
+
+        따로 적어 두면 한쪽만 고쳤을 때 자료가 그대로인데도 영영 "낡음"이 뜬다.
+        """
+        assert (post_load.build_district_geojson.build_meta_sql()
+                == post_load.build_district_geojson.build_meta_sql())
+        assert "at time zone 'UTC'" in post_load.build_district_geojson.build_meta_sql()
+
+    def test_check_returns_1_when_the_map_file_is_stale(self, monkeypatch):
+        """요약표·권한이 다 정상이어도 지도가 낡았으면 종료 코드 1 이어야 한다."""
+        monkeypatch.setattr(post_load, "query_one",
+                            lambda sql: "200|200" if "count(" in sql else "v_floor_stack")
+        monkeypatch.setattr(post_load.build_district_geojson, "read_meta",
+                            lambda *a, **k: {"district_cnt": 1, "max_computed_at": "옛날"})
+        assert post_load.main(["--check"]) == 1
+
+    def test_check_returns_0_when_the_map_file_matches(self, monkeypatch):
+        monkeypatch.setattr(post_load, "query_one",
+                            lambda sql: "200|200" if "count(" in sql else "v_floor_stack")
+        monkeypatch.setattr(post_load.build_district_geojson, "read_meta",
+                            lambda *a, **k: {"district_cnt": 200, "max_computed_at": "200"})
+        assert post_load.main(["--check"]) == 0
+
+    def test_apply_checks_the_map_but_never_bakes_it(self, monkeypatch):
+        """⚠️ 굽기까지 대신 하면 안 된다 — git 에 커밋하는 자산이라 사람이 봐야 한다.
+
+        본 실행이 조용히 파일을 새로 쓰면, 커밋 안 된 생성물이 워킹트리에 쌓인다.
+        """
+        monkeypatch.setattr(post_load.dbx, "run_sql", lambda sql, **k: 0)
+        monkeypatch.setattr(post_load, "query_one", lambda sql: "200|200")
+        monkeypatch.setattr(post_load.build_district_geojson, "read_meta",
+                            lambda *a, **k: {"district_cnt": 200, "max_computed_at": "200"})
+        monkeypatch.setattr(post_load.build_district_geojson, "main",
+                            lambda *a, **k: pytest.fail("post_load 가 지도 파일을 구우면 안 됩니다"))
+        assert post_load.main([]) == 0
+
+    def test_apply_returns_1_when_the_map_is_left_stale(self, monkeypatch, capsys):
+        """낡은 채로 끝났으면 성공으로 보고하면 안 된다 — 명령을 안내해야 한다."""
+        monkeypatch.setattr(post_load.dbx, "run_sql", lambda sql, **k: 0)
+        monkeypatch.setattr(post_load, "query_one", lambda sql: "200|200")
+        monkeypatch.setattr(post_load.build_district_geojson, "read_meta",
+                            lambda *a, **k: None)
+        assert post_load.main([]) == 1
+        assert "build_district_geojson.py" in capsys.readouterr().out
