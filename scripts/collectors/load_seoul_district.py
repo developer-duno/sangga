@@ -316,6 +316,17 @@ def newest_zip(raw_dir):
 
 
 def main(argv=None):
+    # cp949 콘솔에서 한글·특수문자(—) 출력이 UnicodeEncodeError 로 죽지 않게 —
+    # 형제 스크립트들(backup_raw.py 등)과 같은 처방(2026-08-14 사실검증이 실제
+    # 트레이스백을 재현해 발견 — 미리보기를 다 찍고 끝에서 죽어 "고장"으로 오독된다).
+    try:
+        if sys.stdout.isatty():
+            sys.stdout.reconfigure(errors="replace")
+        else:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
     p = argparse.ArgumentParser(description="서울 상권영역 SHP → district 적재")
     p.add_argument("--raw-dir", default=DEFAULT_RAW_DIR)
     p.add_argument("--zip", help="특정 zip 을 직접 지정")
