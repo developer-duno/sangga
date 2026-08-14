@@ -20,6 +20,9 @@ import sys
 EXPORT = {
     "SANGGA_SUPABASE_URL": "VITE_SUPABASE_URL",
     "SANGGA_SUPABASE_ANON_KEY": "VITE_SUPABASE_ANON_KEY",
+    # 카카오맵 JavaScript 키(결정 0010). 이 키는 원래 브라우저에 실려 나가는 공개키이고,
+    # 카카오 콘솔에 등록한 도메인에서만 동작한다 — 남이 가져가도 자기 사이트에서는 안 쓰인다.
+    "SANGGA_KAKAO_JS_KEY": "VITE_KAKAO_JS_KEY",
 }
 
 # 실수로라도 내보내면 안 되는 것 (이름에 이게 들어가면 즉시 중단).
@@ -42,6 +45,18 @@ def read_env(path):
 
 
 def main():
+    # cp949 콘솔에서 한글·특수문자(—) 출력이 UnicodeEncodeError 로 죽지 않게 —
+    # 형제 스크립트들(backup_raw.py·build_district_geojson.py)과 같은 처방.
+    # ⚠️ 이 스크립트는 마지막 줄에서 죽어도 .env.local 은 이미 써진 상태라 더 헷갈린다
+    #    (파일은 멀쩡한데 종료 코드만 1). 2026-08-14 실측으로 발견.
+    try:
+        if sys.stdout.isatty():
+            sys.stdout.reconfigure(errors="replace")
+        else:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
     src = os.path.join(ROOT, ".env")
     dst = os.path.join(ROOT, ".env.local")
 

@@ -114,6 +114,53 @@ export type OpenSigungu = {
   building_cnt: number;
 };
 
+// ── 지도에 그리는 상권 면 (정적 파일 public/districts.geojson) ──────────────
+//
+// 경계는 DB에서 조회하지 않고 미리 구워 둔 파일에서 읽는다(결정 0010 §3). 상권은
+// 1,687개뿐이고 거의 안 변하는데, 지도를 열 때마다 도형을 뽑으면 느리기만 하다.
+
+/** GeoJSON 좌표 한 점. ⚠️ **[경도, 위도] 순서**다 — 카카오맵의 {lat, lng}과 반대다. */
+export type Position = [number, number];
+
+/** 폴리곤의 고리 하나. 첫 고리가 바깥 테두리이고, 뒤따르는 고리는 구멍이다. */
+export type Ring = Position[];
+
+export type DistrictGeometry =
+  | { type: 'Polygon'; coordinates: Ring[] }
+  | { type: 'MultiPolygon'; coordinates: Ring[][] };
+
+/** 상권 면 하나의 속성. 굽는 스크립트(scripts/build_district_geojson.py)가 넣는 칸 그대로. */
+export type DistrictProps = {
+  district_id: string;
+  district_nm: string | null;
+  district_type: string | null;
+  /**
+   * 출처 문구(예: '서울특별시 상권분석서비스'). 공공누리 1유형(출처표시) 의무라
+   * 지도에 함께 나가야 한다 — ⛔ 화면에 글자로 박지 말 것. 소스가 둘이 된 순간
+   * (서울시 + 소상공인시장진흥공단) 코드를 안 고쳤는데 한쪽에 거짓말이 된다.
+   */
+  source_nm: string;
+  sigungu_code: string;
+  area_m2: number | null;
+};
+
+export type DistrictFeature = {
+  type: 'Feature';
+  properties: DistrictProps;
+  geometry: DistrictGeometry;
+};
+
+export type DistrictGeoJson = {
+  type: 'FeatureCollection';
+  /** 굽던 시점의 라이브 상태. `post_load.py --check`가 이 값으로 파일이 낡았는지 잡는다. */
+  meta: { district_cnt: number; max_computed_at: string };
+  /**
+   * ⚠️ **면적 내림차순**으로 구워져 있고, 이 순서가 곧 그리는 순서다(결정 0010 §5).
+   * 뒤집으면 좁은 골목상권이 넓은 발달상권에 덮여 보이지 않는다. 정렬하지 말 것.
+   */
+  features: DistrictFeature[];
+};
+
 /** 검색 결과 한 줄 = 건물 하나(층 여러 개를 접은 것). */
 export type BuildingHit = {
   bld_id: string;
@@ -135,6 +182,17 @@ export type BuildingHit = {
    *    전에는 서버가 이 칸을 안 준다. 없으면 그냥 안 보이면 된다(화면은 안 깨진다).
    */
   jibun_addr?: string | null;
+  /**
+   * 이 건물이 선 필지의 좌표(`parcel.geom`에서 뽑은 것). 지도에 마커를 찍는 데만 쓴다.
+   *
+   * ⚠️ 선택 필드다 — `jibun_addr`와 같은 이유다. 이 칸을 주는 마이그레이션
+   *    (2026-08-14e_search_with_coords)이 라이브에 적용되기 전에는 서버가 안 보낸다.
+   *    없으면 마커만 안 찍히면 된다(지도도 화면도 안 깨진다).
+   *
+   * ⚠️ 건물이 아니라 **필지** 좌표다. 한 땅에 여러 동이 있으면 같은 점을 가리킨다.
+   */
+  lat?: number | null;
+  lng?: number | null;
   bld_cnt_in_pnu: number;
   /** 옥탑을 포함한 전체 층 수(뷰 한 행 = 한 층). */
   floor_cnt: number;

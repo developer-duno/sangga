@@ -1132,6 +1132,11 @@ returns table (
   bld_nm         text,
   road_addr      text,
   jibun_addr     text,
+  -- 상권 지도의 마커 자리(2026-08-14e). **필지(parcel.geom)** 좌표라 한 땅에 여러 동이면
+  -- 같은 점이고, 상권 판정(list_building_districts)과 같은 칸을 본다 — 마커와 글자가
+  -- 서로 다른 칸을 보면 "지도는 상권 밖, 글자는 상권 안"이 된다.
+  lat            double precision,
+  lng            double precision,
   bld_cnt_in_pnu int,
   floor_cnt      int,
   min_floor      smallint,
@@ -1226,15 +1231,20 @@ as $$
       e.bld_id
     limit greatest(1, least(coalesce(lim, 25), 100))
   )
-  -- ② 지번주소 조립은 여기서 처음 한다 — 25행에만 필요하다.
+  -- ② 지번주소 조립·좌표 뽑기는 여기서 처음 한다 — 25행에만 필요하다.
+  --    parcel 은 pnu 가 기본키라 이 조인은 25번의 색인 조회다(요약표에 geom 을 넣어
+  --    표를 키우는 것보다 싸다 — 요약표는 188,442행이고 검색마다 통째로 훑힌다).
   select
     t.bld_id, t.pnu, t.bld_nm, t.road_addr,
     parcel_jibun_addr(pc.sido_nm, pc.sigungu_nm, pc.emd_nm, pc.jibun) as jibun_addr,
+    st_y(p.geom)::double precision as lat,
+    st_x(p.geom)::double precision as lng,
     (select count(*)::int from building b2 where b2.pnu = t.pnu) as bld_cnt_in_pnu,
     fs.floor_cnt, fs.min_floor, fs.max_floor, fs.has_roof,
     t.total_cnt
   from top t
   join mv_search_parcel pc on pc.pnu = t.pnu
+  join parcel p on p.pnu = t.pnu
   join lateral (
     select
       count(*)::int                                    as floor_cnt,
@@ -1258,6 +1268,8 @@ comment on function search_buildings(text, int, text) is
   '§8.1 건물 검색. 건물 1개 = 1행이며 total_cnt로 정확한 전체 건수를 함께 준다. '
   'sigungu 를 주면 **그 구 안에서만** 찾는다(2026-08-13e, 사장님 결정) — 같은 건물 이름이 '
   '여러 구에 겹치기 때문이다(이름 33,851종 중 2,443종이 2개 이상 구에 존재). '
+  'lat·lng 는 상권 지도의 마커 자리다(2026-08-14e) — **필지(parcel.geom) 좌표**라 한 땅에 '
+  '여러 동이면 같은 점이고, 상권 판정(list_building_districts)과 같은 칸을 본다. '
   'security definer — 원본 표가 anon에게 닫혀 있어 소유자 권한으로 대신 읽는다. '
   '입력의 % _ \ 는 서버가 리터럴로 이스케이프하고, 빈 검색어는 0건으로 잘라낸다. '
   '이름은 building.display_nm(동명칭 폴백 + 개인 성명 가림)만 본다 — 보이는 것 = 검색되는 것. '

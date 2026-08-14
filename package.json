@@ -16,7 +16,8 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.95.1",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "react-kakao-maps-sdk": "^1.2.2"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
@@ -26,6 +27,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.4",
     "jsdom": "^30.0.1",
+    "kakao.maps.d.ts": "^0.1.40",
     "oxlint": "^1.75.0",
     "typescript": "~6.0.2",
     "vite": "^8.2.0",
