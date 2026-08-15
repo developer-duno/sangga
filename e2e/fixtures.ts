@@ -1,4 +1,10 @@
-import type { BuildingHit, CoverageStats, FloorRow } from '../src/types';
+import type {
+  BuildingHit,
+  CoverageStats,
+  FloorRow,
+  ParcelTransaction,
+  SigunguTxStat,
+} from '../src/types';
 
 /**
  * E2E 픽스처 빌더.
@@ -45,6 +51,39 @@ export function floorRow(over: Partial<FloorRow> = {}): FloorRow {
     stores: [],
     ...over,
   };
+}
+
+/** 이 땅에서 신고된 거래 하나(함수 list_parcel_transactions 한 행). */
+export function parcelTx(over: Partial<ParcelTransaction> = {}): ParcelTransaction {
+  return {
+    floor_no: 1,
+    contract_ym: '202605',
+    contract_day: 12,
+    bld_area_m2: 84.3,
+    price_won: 320_000_000,
+    unit_price: 3_800_000,
+    tx_type: '집합',
+    ...over,
+  };
+}
+
+/**
+ * 구 층대별 단가 5칸(함수 get_sigungu_tx_stats). 서버는 **표본이 0인 층대도** 준다 —
+ * 칸이 빠지면 화면에서 그 층이 사라져 "아예 안 판다"처럼 읽힌다.
+ */
+export function sigunguTxStats(counts: Record<string, number> = { '1층': 213 }): SigunguTxStat[] {
+  return ['지하', '1층', '2층', '3층이상', '층미상'].map((band) => {
+    const n = counts[band] ?? 0;
+    return {
+      floor_band: band,
+      n,
+      median_unit_price: n > 0 ? 22_500_000 : null,
+      p25_unit_price: n > 0 ? 13_800_000 : null,
+      p75_unit_price: n > 0 ? 37_300_000 : null,
+      window_from: '202408',
+      sigungu_nm: '강남구',
+    };
+  });
 }
 
 export function coverageStats(over: Partial<CoverageStats> = {}): CoverageStats {

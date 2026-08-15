@@ -5,7 +5,10 @@ import {
   formatArea,
   formatApproveDate,
   formatFloor,
+  formatManWon,
   formatQuarter,
+  formatWon,
+  formatYearMonth,
   floorSortKey,
   oneInEvery,
 } from './format';
@@ -228,5 +231,69 @@ describe('describeError — 오류 안내', () => {
     expect(typeof describeError('그냥 문자열')).toBe('string');
     expect(typeof describeError(null)).toBe('string');
     expect(typeof describeError(undefined)).toBe('string');
+  });
+});
+
+describe('formatWon — 실거래 금액 (Stage A · 결정 0012)', () => {
+  it('억·만으로 끊어 읽게 만든다', () => {
+    expect(formatWon(320_000_000)).toBe('3억 2,000만');
+    expect(formatWon(1_250_000_000)).toBe('12억 5,000만');
+  });
+
+  it('억만 있거나 만만 있으면 그 조각만 쓴다', () => {
+    expect(formatWon(200_000_000)).toBe('2억');
+    expect(formatWon(85_000_000)).toBe('8,500만');
+  });
+
+  it('만원 미만은 버리지 않고 원으로 적는다', () => {
+    // 빈 문자열이 나오면 "금액 없음"처럼 보인다 — 소액이어도 금액은 금액이다.
+    expect(formatWon(7_000)).toBe('7,000원');
+    expect(formatWon(0)).toBe('0원');
+  });
+
+  it('값이 없으면 —', () => {
+    expect(formatWon(null)).toBe('—');
+    expect(formatWon(undefined)).toBe('—');
+    expect(formatWon(Number.NaN)).toBe('—');
+  });
+});
+
+describe('formatManWon — ㎡당 단가', () => {
+  it('만원 단위로 반올림한다', () => {
+    expect(formatManWon(3_800_000)).toBe('380만');
+    expect(formatManWon(22_500_000)).toBe('2,250만');
+    expect(formatManWon(13_827_838.83)).toBe('1,383만');
+  });
+
+  it('1만원 미만은 "0만"이 아니라 원으로 적는다', () => {
+    // 반올림이 0을 만들면 값이 없는 것처럼 보인다.
+    expect(formatManWon(4_200)).toBe('4,200원');
+  });
+
+  it('값이 없으면 —', () => {
+    expect(formatManWon(null)).toBe('—');
+    expect(formatManWon(undefined)).toBe('—');
+  });
+});
+
+describe('formatYearMonth — 계약 시점', () => {
+  it('202605 를 2026-05 로 편다', () => {
+    expect(formatYearMonth('202605')).toBe('2026-05');
+    expect(formatYearMonth('202412')).toBe('2024-12');
+  });
+
+  it('분기로 뭉치지 않는다 (계약이 일어난 그 달이 사실이다)', () => {
+    expect(formatYearMonth('202605')).not.toContain('분기');
+  });
+
+  it('형식이 다르면 억지로 해석하지 않고 원본을 준다', () => {
+    expect(formatYearMonth('2026-05')).toBe('2026-05');
+    expect(formatYearMonth('202613')).toBe('202613');
+    expect(formatYearMonth('어쩌구')).toBe('어쩌구');
+  });
+
+  it('값이 없으면 —', () => {
+    expect(formatYearMonth(null)).toBe('—');
+    expect(formatYearMonth('')).toBe('—');
   });
 });

@@ -523,7 +523,9 @@ body {
 .floor__row {
   width: 100%;
   display: grid;
-  grid-template-columns: 74px minmax(80px, 1fr) 118px 168px 62px 20px;
+  /* 마지막에서 두 번째 칸(66px)은 실거래 뱃지 자리다. 거래가 없는 층에서는 비어 있지만
+     칸은 남겨 둔다 — 있는 층에서만 칸이 생기면 줄마다 다른 자리에서 글자가 흔들린다. */
+  grid-template-columns: 74px minmax(80px, 1fr) 118px 168px 62px 66px 20px;
   gap: 12px;
   align-items: center;
   padding: 9px 10px;
@@ -582,9 +584,123 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* 실거래 뱃지 — 점포 수와 구분되게 조금 진하게. */
+.floor__tx {
+  color: var(--under);
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 .floor__caret {
   color: var(--muted);
   font-size: 10px;
+}
+
+/* ── 실거래 기록 (Stage A · 결정 0012) ───────────────────────────────── */
+/* ⛔ 이 블록에 추정값을 그리지 말 것. 신고된 거래와 그것을 센 값만 나온다. */
+
+.tx {
+  margin: 22px 0 0;
+  padding: 16px 16px 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fafbfd;
+}
+
+.tx__h {
+  margin: 0 0 12px;
+  font-size: 15px;
+}
+
+.tx__block + .tx__block {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.tx__sub {
+  margin: 0 0 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.tx__cap {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.tx__list,
+.tx__bands {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.tx__list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--line);
+  font-size: 13px;
+}
+
+.tx__list li:last-child {
+  border-bottom: none;
+}
+
+.tx__floor {
+  min-width: 62px;
+  font-weight: 600;
+}
+
+.tx__when,
+.tx__area,
+.tx__unit,
+.tx__kind {
+  color: var(--muted);
+}
+
+.tx__price {
+  font-weight: 600;
+}
+
+.tx__bands li {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 0;
+  font-size: 13px;
+}
+
+.tx__band {
+  font-weight: 600;
+}
+
+.tx__spread {
+  color: var(--muted);
+}
+
+/* 표본이 모자라 수치를 적지 않는 층대. 숨기는 것이 아니라 "왜 없는지"를 말하는 자리다. */
+.tx__val--none {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.tx__n {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.tx__note,
+.tx__src {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 /* ── 층 펼침 ─────────────────────────────────────────────────────────── */

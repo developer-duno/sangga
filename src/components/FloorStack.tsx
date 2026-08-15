@@ -4,9 +4,35 @@ import {
   FLOOR_STACK_VIEW,
   COVERAGE_STATS_VIEW,
   BUILDING_DISTRICTS_FN,
+  PARCEL_TX_FN,
+  SIGUNGU_TX_STATS_FN,
 } from '../lib/supabase';
-import type { BuildingDistricts, BuildingHit, CoverageStats, FloorRow } from '../types';
-import { formatArea, formatApproveDate, formatFloor, formatQuarter, oneInEvery } from '../lib/format';
+import type {
+  BuildingDistricts,
+  BuildingHit,
+  CoverageStats,
+  FloorRow,
+  ParcelTransaction,
+  SigunguTxStat,
+} from '../types';
+import {
+  formatArea,
+  formatApproveDate,
+  formatFloor,
+  formatManWon,
+  formatQuarter,
+  formatWon,
+  formatYearMonth,
+  oneInEvery,
+} from '../lib/format';
+
+/**
+ * 구 단가에서 수치를 보여줄 최소 표본 수(결정 0012).
+ *
+ * 이보다 적으면 중앙값·사분위를 **적지 않는다.** 3건으로 낸 중앙값은 숫자 모양만
+ * 통계일 뿐이고, 화면에 적히는 순간 사람은 그걸 근거로 쓴다 — 검증 규칙의 미표시 원칙이다.
+ */
+const MIN_SAMPLE = 5;
 
 /**
  * 층별 스택 뷰 — 이 서비스의 시그니처 화면(§8.6).
@@ -29,6 +55,10 @@ export function FloorStack({ building }: Props) {
   const [stats, setStats] = useState<CoverageStats | null>(null);
   /** 이 건물이 속한 상권. 못 읽으면 null로 남고, 그때는 그 줄을 아예 그리지 않는다. */
   const [districts, setDistricts] = useState<BuildingDistricts | null>(null);
+  /** 이 땅에서 신고된 실거래(Stage A). 대부분의 건물에서 빈 배열이 정상이다. */
+  const [txs, setTxs] = useState<ParcelTransaction[] | null>(null);
+  /** 이 구의 층대별 단가 분포(Stage A). 못 읽으면 null로 남고 그 블록만 안 그린다. */
+  const [txStats, setTxStats] = useState<SigunguTxStat[] | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -105,6 +135,46 @@ export function FloorStack({ building }: Props) {
     };
   }, [building.bld_id]);
 
+  // ── 실거래 사실 표시 (Stage A · 결정 0012) ────────────────────────────────
+  //
+  // 두 질문을 따로 던진다. 하나는 "이 땅에서 무슨 거래가 있었나"(대부분 빈 배열이 정답),
+  // 다른 하나는 "이 구의 층대별 단가는 어디쯤인가"(항상 답이 있다). 하나가 실패해도
+  // 다른 하나는 보여야 하므로 상태도 따로 둔다.
+  //
+  // ⚠️ 구 코드는 pnu 앞 5자리다 — 화면이 고른 구를 따로 받아 오지 않는다. 건물은
+  //    반드시 자기 필지 위에 있으므로 이 값은 어긋날 수가 없고, prop 으로 받으면
+  //    "고른 구"와 "건물이 선 구"가 갈라지는 상태를 하나 더 만들게 된다.
+  useEffect(() => {
+    let cancelled = false;
+    setTxs(null);
+    setTxStats(null);
+
+    supabase.rpc(PARCEL_TX_FN, { pnu: building.pnu }).then(({ data, error: err }) => {
+      if (cancelled) return;
+      if (err || !data) {
+        // 못 읽었으면 "거래 없음"이라고 적지 않는다 — 없는 것과 모르는 것은 다르다.
+        console.warn('실거래 이력 조회 실패 — 이력 없이 표시합니다', err);
+        return;
+      }
+      setTxs(data as ParcelTransaction[]);
+    });
+
+    supabase
+      .rpc(SIGUNGU_TX_STATS_FN, { sigungu: building.pnu.slice(0, 5) })
+      .then(({ data, error: err }) => {
+        if (cancelled) return;
+        if (err || !data) {
+          console.warn('구 실거래 단가 조회 실패 — 그 블록 없이 표시합니다', err);
+          return;
+        }
+        setTxStats(data as SigunguTxStat[]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [building.pnu]);
+
   if (loading) return <p className="msg">층 정보를 불러오는 중…</p>;
   if (error) return <p className="msg msg--error">{error}</p>;
   if (floors.length === 0) return <p className="msg">이 건물에는 층 정보가 없습니다.</p>;
@@ -112,6 +182,15 @@ export function FloorStack({ building }: Props) {
   const head = floors[0];
   const maxArea = Math.max(...floors.map((f) => f.floor_area_m2 ?? 0), 1);
   const totalStores = floors.reduce((sum, f) => sum + (f.store_cnt ?? 0), 0);
+
+  // 층 뱃지용 — 어느 층에서 몇 건이 신고됐나. 층이 없는 거래(2017년부터 흔하다)는 어느
+  // 층에도 붙일 수 없으니 여기서 세지 않는다. 대신 아래 목록에 "층 미상"으로 그대로 남는다
+  // — 세지 못한 것을 목록에서까지 지우면 건수가 조용히 줄어든다.
+  const txCountByFloor = new Map<number, number>();
+  for (const t of txs ?? []) {
+    if (t.floor_no === null) continue;
+    txCountByFloor.set(t.floor_no, (txCountByFloor.get(t.floor_no) ?? 0) + 1);
+  }
 
   // 각주 숫자는 DB에서 계산해 온다. 못 불러왔으면 숫자를 빼고 경고만 남긴다
   // — 옛 숫자로 되돌리면 이 코드가 고치려던 문제(화면만 틀려지는 것)가 그대로 살아난다.
@@ -165,6 +244,7 @@ export function FloorStack({ building }: Props) {
           const hasArea = f.floor_area_m2 != null;
           const ratio = hasArea ? f.floor_area_m2! / maxArea : 0;
           const isOpen = openFloor === f.floor_no;
+          const txCount = txCountByFloor.get(f.floor_no) ?? 0;
           return (
             <li key={f.floor_no} className={`floor${f.floor_no < 0 ? ' floor--under' : ''}`}>
               <button className="floor__row" onClick={() => setOpenFloor(isOpen ? null : f.floor_no)}>
@@ -179,6 +259,12 @@ export function FloorStack({ building }: Props) {
                 <span className="floor__stores">
                   {f.store_cnt != null ? `점포 ${f.store_cnt}` : '—'}
                 </span>
+                {/*
+                  거래가 있는 층에만 뱃지를 단다. 0건일 때 "거래 0건"이라고 적으면
+                  "이 층은 안 팔린다"는 단정이 되는데, 실제로는 지번이 가려진 거래·층이
+                  빠진 거래가 그 밑에 깔려 있다(칸은 비워 두되 자리는 남긴다).
+                */}
+                <span className="floor__tx">{txCount > 0 ? `거래 ${txCount}건` : ''}</span>
                 <span className="floor__caret">{isOpen ? '▲' : '▼'}</span>
               </button>
 
@@ -187,6 +273,8 @@ export function FloorStack({ building }: Props) {
           );
         })}
       </ol>
+
+      <TransactionSection txs={txs} stats={txStats} />
 
       <p className="grade">
         <span className="grade__badge">D등급 · 간접 추론</span>
@@ -273,6 +361,129 @@ function DistrictLine({ info }: { info: BuildingDistricts | null }) {
 function DistrictSource({ sources }: { sources?: string[] }) {
   if (!sources || sources.length === 0) return null;
   return <span className="stack__district-src">출처: {sources.join(' · ')}</span>;
+}
+
+/**
+ * "실거래" 섹션 — Stage A(결정 0012).
+ *
+ * ⛔ 여기에 **추정값을 넣지 말 것.** Stage A 는 신고된 거래를 그대로 보여주거나 세는
+ *    것만 한다. 추정 밴드(Stage B)는 서울 전역+대전 백테스트 성적표가 나온 뒤에 따로
+ *    결재한다 — 성적표 없이 낸 밴드는 근거가 아니라 그럴듯한 숫자일 뿐이다.
+ *
+ * 두 블록이 하는 말이 다르다:
+ *  ① 이 땅의 이력 — 있는 건물에만 나온다(자기 거래가 있는 필지는 서울 1.8% 뿐이다).
+ *  ② 구의 단가 분포 — 항상 나온다. ①이 비어 있어도 "이 동네가 어디쯤인지"는 말할 수 있다.
+ */
+function TransactionSection({
+  txs,
+  stats,
+}: {
+  txs: ParcelTransaction[] | null;
+  stats: SigunguTxStat[] | null;
+}) {
+  // 둘 다 아직 안 왔거나 못 읽었으면 섹션 자체를 그리지 않는다(빈 제목만 남기지 않는다).
+  const hasHistory = txs !== null && txs.length > 0;
+  const hasStats = stats !== null && stats.length > 0;
+  if (!hasHistory && !hasStats) return null;
+
+  return (
+    <section className="tx">
+      <h3 className="tx__h">실거래 기록</h3>
+      {hasHistory && <ParcelTxList txs={txs!} />}
+      {hasStats && <SigunguTxBands stats={stats!} />}
+    </section>
+  );
+}
+
+/** ① 이 땅에서 신고된 거래 목록. */
+function ParcelTxList({ txs }: { txs: ParcelTransaction[] }) {
+  return (
+    <div className="tx__block">
+      <h4 className="tx__sub">
+        이 땅에서 신고된 거래 {txs.length.toLocaleString('ko-KR')}건
+        {/* 서버가 100건에서 끊는다(한 필지에 852건인 곳이 실재한다). 잘렸으면 잘렸다고 말한다. */}
+        {txs.length >= 100 && <span className="tx__cap"> (최근 100건까지)</span>}
+      </h4>
+      <ul className="tx__list">
+        {txs.map((t, i) => (
+          <li key={i}>
+            <span className="tx__floor">
+              {t.floor_no === null ? '층 미상' : formatFloor(t.floor_no, null)}
+            </span>
+            <span className="tx__when">{formatYearMonth(t.contract_ym)}</span>
+            <span className="tx__area">{formatArea(t.bld_area_m2)}</span>
+            <span className="tx__price">{formatWon(t.price_won)}</span>
+            <span className="tx__unit">
+              {t.unit_price === null ? '㎡당 —' : `㎡당 ${formatManWon(t.unit_price)}`}
+            </span>
+            <span className="tx__kind">{t.tx_type || '거래유형 미상'}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="tx__note">
+        <strong>2024년 1월 이후 계약분만 보입니다.</strong> 그 전 거래는 지번이 가려져 이 땅에
+        붙일 수 없고, 건물 한 채를 통째로 사고파는 거래도 같은 이유로 빠집니다. 2017년부터는
+        층이 빈 값으로 오는 거래가 많아 <strong>층 미상</strong>으로 남습니다.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * ② 구의 층대별 단가 분포.
+ *
+ * 표본이 MIN_SAMPLE 건 미만인 층대는 수치를 적지 않는다 — 칸을 지우지는 않는다.
+ * 칸이 사라지면 "그 층은 아예 안 판다"처럼 읽히지만, 실제로는 "셀 만큼 없다"가 사실이다.
+ */
+function SigunguTxBands({ stats }: { stats: SigunguTxStat[] }) {
+  // 구 이름·집계 시작 달은 서버가 준 값을 그대로 쓴다 — 화면에 박으면 자료가 바뀌는 날
+  // 코드를 한 줄도 안 고쳤는데 문구만 틀려진다(상권 출처 줄과 같은 원칙).
+  const guName = stats.find((s) => s.sigungu_nm)?.sigungu_nm ?? null;
+  const from = stats.find((s) => s.window_from)?.window_from ?? null;
+  const total = stats.reduce((sum, s) => sum + (s.n ?? 0), 0);
+
+  return (
+    <div className="tx__block">
+      <h4 className="tx__sub">{guName ? `${guName} 층대별 거래 단가` : '층대별 거래 단가'}</h4>
+      <ul className="tx__bands">
+        {stats.map((s) => {
+          const enough = s.n >= MIN_SAMPLE;
+          return (
+            <li key={s.floor_band}>
+              <span className="tx__band">{s.floor_band}</span>
+              <span className={`tx__val${enough ? '' : ' tx__val--none'}`}>
+                {enough ? (
+                  <>
+                    중앙값 ㎡당 {formatManWon(s.median_unit_price)}
+                    <span className="tx__spread">
+                      {' '}
+                      (가운데 절반 {formatManWon(s.p25_unit_price)}~
+                      {formatManWon(s.p75_unit_price)})
+                    </span>
+                  </>
+                ) : (
+                  '표본 부족'
+                )}
+              </span>
+              <span className="tx__n">표본 {s.n.toLocaleString('ko-KR')}건</span>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="grade">
+        <span className="grade__badge">A등급 · 실거래</span>
+        추정한 값이 아니라 <strong>신고된 거래를 그대로 센 값</strong>입니다. 표본이{' '}
+        {MIN_SAMPLE}건 미만인 층대는 수치를 적지 않습니다 — 몇 건으로 낸 가운데값은 숫자
+        모양만 통계이기 때문입니다.
+      </p>
+      <p className="tx__src">
+        출처: 국토교통부 상업업무용 부동산 매매 실거래가 ·{' '}
+        {guName ? `${guName} ` : ''}집합(구분소유) 거래 최근 24개월
+        {from ? `(${formatYearMonth(from)} 이후 계약분)` : ''} 집계 · 전체 표본{' '}
+        {total.toLocaleString('ko-KR')}건.
+      </p>
+    </div>
+  );
 }
 
 function FloorDetail({ floor }: { floor: FloorRow }) {

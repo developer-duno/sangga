@@ -1283,6 +1283,158 @@ grant execute on function list_building_districts(text) to anon, authenticated;
 revoke all on function search_scope_limit() from public, anon, authenticated;
 
 
+-- =====================================================================
+-- Stage A — 층별 화면의 실거래 "사실 표시" (2026-08-15, 결정 0012)
+-- =====================================================================
+-- 결정 0012 는 시세 표시를 두 단계로 갈랐고, 여기 있는 것은 **Stage A** 뿐이다 —
+-- 추정이 한 톨도 없고, 신고된 거래를 그대로 보여주거나 세어서 중앙값·사분위를 낼 뿐이다.
+-- (추정 밴드 = Stage B 는 백테스트 성적표가 나온 뒤 따로 결재한다.)
+--
+-- 왜 둘인가: 자기 실거래가 있는 필지는 **서울 1.8% · 대전 1.4%** 뿐이라(2026-08-15 실측)
+-- 이력만 붙이면 98% 건물이 빈칸이다. 그래서 구 단위 분포를 함께 낸다(항상 보여줄 수 있다).
+-- 왜 구인가: 실거래의 동은 **문자**(emd_nm), 건물의 법정동은 **코드**라 이름 대조가 조용히
+-- 어긋난다. 구는 pnu 앞 5자리로 확정된다. 법정동은 매핑 검증 후의 경로다(결정 0012 §4).
+
+-- ── ① 이 필지의 실거래 이력 ─────────────────────────────────────────────────
+-- 202401 부터인 이유: 실거래 지번은 **2024-01 부터만 공개**된다(그 전은 100% 마스킹 —
+--   알려진한계). 구간을 명시해 "이 목록이 무엇의 전부인지"를 함수가 스스로 말하게 한다.
+-- 100행 상한인 이유: 한 필지에 거래가 **852건**인 곳이 실재한다(라이브 실측 2026-08-15).
+-- ⚠️ 파라미터 `pnu` 가 `transaction.pnu` 와 겹친다 — 함수명으로 한정하지 않으면 컬럼이
+--    이겨 `where t.pnu = t.pnu`(= 전 국토 거래)가 된다(list_building_districts 와 같은 함정).
+create or replace function list_parcel_transactions(pnu text)
+returns table (
+  floor_no     smallint,
+  contract_ym  text,
+  contract_day smallint,
+  bld_area_m2  numeric,
+  price_won    bigint,
+  unit_price   numeric,
+  tx_type      text
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select t.floor_no,
+         t.contract_ym::text,
+         t.contract_day,
+         t.bld_area_m2,
+         t.price_won,
+         t.unit_price,
+         t.tx_type
+  from transaction t
+  where t.pnu = list_parcel_transactions.pnu
+    and t.contract_ym >= '202401'
+  -- 계약일이 없는 행이 최신인 척 위로 올라오면 안 된다 → nulls last.
+  -- tx_id 는 같은 날 여러 건일 때 순서가 호출마다 흔들리지 않게 하는 못이다.
+  order by t.contract_ym desc, t.contract_day desc nulls last, t.tx_id
+  limit 100;
+$$;
+
+comment on function list_parcel_transactions(text) is
+  'Stage A(결정 0012) 이 필지의 실거래 이력 — 추정이 아니라 신고된 거래 그대로. '
+  '지번이 공개된 구간(202401 이후)만 나온다: 그 전은 지번이 100% 마스킹돼 필지에 붙지 않는다. '
+  '최신순 100행 상한(한 필지 852건인 곳이 실재한다). 없는 pnu 는 빈 결과(에러가 아니다). '
+  'security definer — transaction 이 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. '
+  '나가는 것은 층·계약시점·면적·금액·단가·거래유형뿐(상호명·개인정보 없음)';
+
+-- ── ② 구 × 층대 단가 분포 (사전계산) ────────────────────────────────────────
+-- 왜 집합만: 통건물(일반)은 지번이 100% 마스킹되고 건물 한 채 값이라 ㎡당 단가의 성격이
+--   다르다. 섞으면 분포가 오염된다.
+-- 왜 window_from 을 굳혀 두나: 물질화뷰는 갱신 시점에 계산돼 그대로 굳는다. 화면이
+--   "최근 24개월"이라고만 적으면 갱신을 미룬 날 그 문구만 조용히 거짓말이 된다.
+--   시각은 KST 고정 — now() 는 UTC 라 월말·월초에 한 달이 어긋난다(timezone 룰).
+-- 왜 unit_price 가 있는 행만 세나: n 은 화면에 "표본 N건"으로 나가고 중앙값은 unit_price
+--   로 낸다. 단가가 없는 행을 n 에 세면 근거로 쓴 것보다 표본이 많다고 말하게 된다.
+-- ⚠️ '지하'는 지금 **항상 0건**이다 — 2017년부터 국토부가 상업업무용 실거래의 floor 를
+--    빈 값으로 준다(알려진한계). 지하는 '층미상'에 흡수돼 있다. 칸을 남겨 두는 이유는
+--    자료가 돌아오는 날 화면이 저절로 따라오게 하기 위해서다.
+-- ⚠️ 옥탑(99)은 '3층이상'에 들어간다(결정 0012 의 층대 정의가 ">=3").
+create materialized view if not exists mv_sigungu_tx_stats as
+with win as (
+  select to_char((now() at time zone 'Asia/Seoul') - interval '24 months', 'YYYYMM') as from_ym
+)
+select
+  t.sigungu_code,
+  case
+    when t.floor_no is null then '층미상'
+    when t.floor_no < 0    then '지하'
+    when t.floor_no = 1    then '1층'
+    when t.floor_no = 2    then '2층'
+    else                        '3층이상'
+  end                                                              as floor_band,
+  min(w.from_ym)                                                   as window_from,
+  count(*)::int                                                    as n,
+  percentile_cont(0.5)  within group (order by t.unit_price)       as median_unit_price,
+  percentile_cont(0.25) within group (order by t.unit_price)       as p25_unit_price,
+  percentile_cont(0.75) within group (order by t.unit_price)       as p75_unit_price
+from transaction t
+cross join win w
+where t.tx_type = '집합'
+  and t.unit_price is not null
+  and t.contract_ym >= w.from_ym
+group by t.sigungu_code, 2;
+
+comment on materialized view mv_sigungu_tx_stats is
+  'Stage A(결정 0012) 구×층대 실거래 단가 분포 — 집합(구분소유) 거래만, 갱신 시점 기준 24개월. '
+  'window_from 은 그 창의 시작 달을 굳혀 둔 것이다(화면이 "최근 24개월"만 적으면 갱신을 미룬 날 '
+  '그 문구가 조용히 거짓말이 된다). n 은 단가를 낼 수 있었던 행 수 = 중앙값의 실제 근거 수다. '
+  '⚠️ 자료를 새로 넣으면 `python scripts/post_load.py` 로 갱신할 것. '
+  '⛔ anon 에게 열지 않는다 — 화면은 get_sigungu_tx_stats() 로만 읽는다.';
+
+-- `concurrently` 갱신의 전제 조건(없으면 갱신 중 이 표를 읽는 화면이 통째로 잠긴다).
+create unique index if not exists idx_msts_key on mv_sigungu_tx_stats (sigungu_code, floor_band);
+
+analyze mv_sigungu_tx_stats;
+
+-- 층대 5칸을 **항상 같은 순서로** 내보낸다. 표본 0 인 층대는 물질화뷰에 행 자체가 없어,
+-- 그대로 내면 그 칸이 화면에서 사라져 "지하는 아예 안 판다"처럼 읽힌다.
+-- 구 이름도 서버가 준다 — 화면에 지역명을 글자로 박으면 자료가 늘 때 화면만 낡는다
+-- (list_open_sigungu·list_building_districts 와 같은 원칙).
+create or replace function get_sigungu_tx_stats(sigungu text)
+returns table (
+  floor_band        text,
+  n                 int,
+  median_unit_price numeric,
+  p25_unit_price    numeric,
+  p75_unit_price    numeric,
+  window_from       text,
+  sigungu_nm        text
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select b.band,
+         coalesce(s.n, 0),
+         s.median_unit_price,
+         s.p25_unit_price,
+         s.p75_unit_price,
+         -- 창은 갱신할 때 한 번 정해져 표 전체가 같은 값을 가진다. 그 구에 거래가 한 건도
+         -- 없어도 "언제부터 세었는지"는 말할 수 있어야 하므로 전체에서 읽는다.
+         (select max(m.window_from) from mv_sigungu_tx_stats m),
+         (select o.sigungu_nm from mv_open_sigungu o
+           where o.sigungu_code = get_sigungu_tx_stats.sigungu)
+  from (values ('지하', 1), ('1층', 2), ('2층', 3), ('3층이상', 4), ('층미상', 5)) as b(band, ord)
+  left join mv_sigungu_tx_stats s
+    on s.sigungu_code = get_sigungu_tx_stats.sigungu
+   and s.floor_band  = b.band
+  order by b.ord;
+$$;
+
+comment on function get_sigungu_tx_stats(text) is
+  'Stage A(결정 0012) 구 실거래 단가 분포 — 층대 5칸을 **항상 같은 순서로** 돌려준다. '
+  '표본이 없는 층대는 물질화뷰에 행이 없으므로 여기서 n=0 으로 채운다(칸이 사라지면 '
+  '"그 층은 아예 안 판다"처럼 읽힌다). 화면은 n<5 면 수치를 감추고 "표본 부족"만 적는다. '
+  'window_from 은 집계한 창의 시작 달, sigungu_nm 은 구 이름(화면에 지역명을 박지 않기 위해 '
+  '서버가 준다). security definer — 물질화뷰가 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다';
+
+grant execute on function list_parcel_transactions(text) to anon, authenticated;
+grant execute on function get_sigungu_tx_stats(text) to anon, authenticated;
+
+
 -- ── ⛔ 요약표는 공개키에게 열지 않는다 (2026-08-13f) ─────────────────────────
 -- Supabase 는 스키마 public 에 기본 권한을 걸어 두어 **새로 만드는 표·물질화뷰마다
 -- anon 에게 전체 권한을 자동으로 준다.** 2026-08-08 의 `revoke ... on all tables` 는
@@ -1292,6 +1444,7 @@ revoke all on function search_scope_limit() from public, anon, authenticated;
 -- ⚠️ 물질화뷰는 `enable row level security` 도 못 걸어(테이블 전용) 이중 방어가 없다.
 revoke all on mv_search_parcel from public, anon, authenticated;
 revoke all on mv_open_sigungu  from public, anon, authenticated;
+revoke all on mv_sigungu_tx_stats from public, anon, authenticated;
 
 -- 그리고 **앞으로 만들 것도 자동으로 안 열리게** 기본값 자체를 바꾼다.
 -- 이게 없으면 다음에 표를 하나 더 만들 때 같은 일이 또 난다(사람 기억에 의존하게 된다).

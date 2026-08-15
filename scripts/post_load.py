@@ -41,6 +41,8 @@
 import os
 import subprocess
 import sys
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -62,7 +64,10 @@ ANALYZE_TABLES = (
 # ⛔ 2026-08-13 2차 적대검증에서 **mv_open_sigungu 가 통째로 빠져 있던 것**을 잡았다.
 #    그러면 새 구에 건물이 들어와도 화면의 지역 목록에 안 나타나 **고를 수도, 검색할
 #    수도 없다**(에러는 안 난다 — 그냥 그 지역이 없는 것처럼 보인다).
-REFRESH_MVS = ("mv_search_parcel", "mv_open_sigungu")
+# ⚠️ mv_sigungu_tx_stats(Stage A · 결정 0012)는 앞의 둘과 의존관계가 없지만, **창(24개월)이
+#    갱신하는 순간에 정해져 굳는다.** 안 돌리면 화면의 구 단가가 옛 창을 계속 말한다
+#    (에러는 안 난다 — 새 거래를 넣어도 숫자가 그대로다).
+REFRESH_MVS = ("mv_search_parcel", "mv_open_sigungu", "mv_sigungu_tx_stats")
 SEARCH_MV = REFRESH_MVS[0]
 
 
@@ -180,6 +185,63 @@ def report_map_freshness():
     return meta, stale
 
 
+# ── 실거래 단가 창 신선도 (2026-08-15 신설 — 결정 0012 Stage A) ─────────────
+#
+# mv_sigungu_tx_stats 의 "최근 24개월" 창은 **갱신하는 순간** 계산돼 그대로 굳는다.
+# 자료가 안 들어와 이 스크립트를 오래 안 돌리면, 화면 문구의 "최근 24개월" 쪽만
+# 조용히 낡는다(뒤에 붙는 실제 시작 달은 window_from 이 말해 줘 항상 사실이다).
+# 독립 리뷰(2026-08-15)가 잡은 구멍 — 여기서도 등식으로 잡는다:
+# 표에 굳은 window_from == 오늘(KST) 기준 기대 시작 달 (경계 1개월 오차는 정상).
+
+KST = ZoneInfo("Asia/Seoul")
+TX_WINDOW_MONTHS = 24
+
+
+def expected_tx_window_from(now=None):
+    """오늘(KST) 기준 창 시작 달(YYYYMM). matview 가 재는 것과 같은 자다."""
+    now = now or datetime.now(KST)
+    idx = now.year * 12 + (now.month - 1) - TX_WINDOW_MONTHS
+    return "{:04d}{:02d}".format(idx // 12, idx % 12 + 1)
+
+
+def is_tx_window_stale(window_from, expected):
+    """창이 낡았는가 (순수 함수 — 테스트가 여기만 보면 된다).
+
+    빈 표(window_from 없음)·형식 깨짐은 낡음이다. 갱신 직후에도 달이 바뀌면 1개월
+    차이가 날 수 있어 **1개월까지는 신선**으로 본다(월말·월초 경계의 정상 오차).
+    연 경계(202412↔202501)를 문자열 뺄셈으로 재면 오판하므로 달 인덱스로 잰다.
+    """
+    s = str(window_from or "").strip()
+    if len(s) != 6 or not s.isdigit():
+        return True
+
+    def _idx(ym):
+        return int(ym[:4]) * 12 + int(ym[4:]) - 1
+
+    try:
+        return abs(_idx(s) - _idx(str(expected))) > 1
+    except (TypeError, ValueError):
+        return True
+
+
+def report_tx_window_freshness():
+    """실거래 단가 표의 창을 오늘과 대조해 (창, 기대, 낡음여부) 를 돌려주고 사람 말로 찍는다."""
+    got = query_one("select coalesce(max(window_from), '') from mv_sigungu_tx_stats;")
+    expected = expected_tx_window_from()
+    stale = is_tx_window_stale(got, expected)
+    if stale:
+        if not got:
+            print("[낡음] 실거래 단가 표가 비어 있습니다 — 갱신이 필요합니다.")
+        else:
+            print("[낡음] 실거래 단가 창 {} / 오늘 기준 기대 {} — 오래 갱신하지 않았습니다."
+                  .format(got, expected))
+        print("       이대로 두면 화면의 \"최근 24개월\" 문구만 조용히 낡습니다(에러는 안 납니다).")
+        print("       python scripts/post_load.py 를 실행하면 창이 오늘 기준으로 다시 잡힙니다.")
+    else:
+        print("[신선] 실거래 단가 창 {} = 오늘 기준 {}개월.".format(got, TX_WINDOW_MONTHS))
+    return got, expected, stale
+
+
 # ── 공개키(anon)가 읽어도 되는 것 ──────────────────────────────────────────
 # 화면이 실제로 읽는 것만 적는다. 이 목록에 없는 것이 열려 있으면 사고다.
 #
@@ -195,6 +257,9 @@ ANON_READABLE_ALLOWLIST = ("v_floor_stack", "v_coverage_stats")
 # anon 이 **불러도 되는** 함수. 화면이 실제로 쓰는 것만.
 ANON_CALLABLE_ALLOWLIST = (
     "search_buildings", "search_scope", "list_open_sigungu", "list_building_districts",
+    # Stage A 실거래 표시(결정 0012). 물질화뷰 mv_sigungu_tx_stats 는 **여기 없다** —
+    # 화면은 함수로만 읽고, 표 자체가 열리면 그건 사고다.
+    "list_parcel_transactions", "get_sigungu_tx_stats",
 )
 
 
@@ -269,8 +334,9 @@ def main(argv=None):
     if opts["check"]:
         _, _, stale = report_freshness()
         _, map_stale = report_map_freshness()
+        _, _, tx_stale = report_tx_window_freshness()
         _, exposed = report_anon_exposure()
-        return 1 if (stale or map_stale or exposed) else 0
+        return 1 if (stale or map_stale or tx_stale or exposed) else 0
 
     print("통계·가시성 지도를 갱신합니다 (VACUUM ANALYZE {}개 표)…".format(len(ANALYZE_TABLES)))
     rc = dbx.run_sql("set statement_timeout = '600s';\n" + build_analyze_sql(), quiet=True)
@@ -290,7 +356,9 @@ def main(argv=None):
     # 지도 파일은 **여기서 굽지 않는다** — 커밋이 필요한 자산이라 사람이 봐야 한다.
     # 낡았으면 알리고 명령만 안내한다.
     _, map_stale = report_map_freshness()
-    return 1 if (stale or map_stale) else 0
+    # 방금 갱신했으니 창도 오늘 기준이어야 한다 — 했다고 믿지 않고 다시 잰다.
+    _, _, tx_stale = report_tx_window_freshness()
+    return 1 if (stale or map_stale or tx_stale) else 0
 
 
 if __name__ == "__main__":

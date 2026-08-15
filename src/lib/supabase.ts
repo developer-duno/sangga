@@ -41,3 +41,19 @@ export const COVERAGE_STATS_VIEW = 'v_coverage_stats';
  * 화면이 저절로 따라온다).
  */
 export const BUILDING_DISTRICTS_FN = 'list_building_districts';
+
+/**
+ * 이 필지에서 일어난 실거래 이력(`pnu` 하나를 받는다). Stage A — 결정 0012.
+ *
+ * 지번이 공개된 구간(2024-01 이후)만 나온다. 자기 실거래가 있는 필지는 서울 1.8% ·
+ * 대전 1.4% 뿐이라 **대부분의 건물에서 빈 배열**이 정상이다.
+ */
+export const PARCEL_TX_FN = 'list_parcel_transactions';
+
+/**
+ * 구(시군구) 실거래 단가 분포(`sigungu` 5자리를 받는다). Stage A — 결정 0012.
+ *
+ * 층대 5칸이 항상 같은 순서로 온다. 구 이름·집계 창도 서버가 함께 주므로 화면에
+ * 지역명이나 "최근 24개월" 같은 기간을 글자로 박지 않는다.
+ */
+export const SIGUNGU_TX_STATS_FN = 'get_sigungu_tx_stats';

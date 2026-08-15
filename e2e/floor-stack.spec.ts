@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { searchHit, floorRow, coverageStats } from './fixtures';
+import { searchHit, floorRow, coverageStats, parcelTx, sigunguTxStats } from './fixtures';
 
 /**
  * "여러 조각이 실제로 이어 붙는가"만 본다 — App.tsx가 실제로 BuildingSearch·FloorStack을
@@ -35,6 +35,10 @@ const FLOOR_PATTERN = '**/rest/v1/v_floor_stack*';
 //    응답이 행 배열이 아니라 **객체 하나**다. 배열로 흉내 내면 라이브와 모양이 달라져
 //    "테스트만 통과하는" 가짜 초록이 된다.
 const DISTRICT_PATTERN = '**/rest/v1/rpc/list_building_districts*';
+// 실거래 사실 표시(Stage A · 결정 0012). 층 스택이 건물마다 이 둘을 더 부른다 —
+// 막지 않으면 실존하지 않는 도메인으로 요청이 나가 테스트가 네트워크에 좌우된다.
+const PARCEL_TX_PATTERN = '**/rest/v1/rpc/list_parcel_transactions*';
+const TX_STATS_PATTERN = '**/rest/v1/rpc/get_sigungu_tx_stats*';
 
 const CORS_HEADERS = {
   'access-control-allow-origin': '*',
@@ -58,9 +62,11 @@ async function mockJson(page: Page, pattern: string, body: unknown, delayMs = 0)
   });
 }
 
-async function mockFloorStack(page: Page) {
+async function mockFloorStack(page: Page, txs: unknown[] = []) {
   await mockJson(page, STATS_PATTERN, [coverageStats()]);
   await mockJson(page, FLOOR_PATTERN, [floorRow()]);
+  await mockJson(page, PARCEL_TX_PATTERN, txs);
+  await mockJson(page, TX_STATS_PATTERN, sigunguTxStats());
   await mockJson(page, DISTRICT_PATTERN, {
     covered: true,
     districts: [{ name: '역삼역', type: '발달상권' }],
@@ -241,5 +247,38 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await expect(page.getByRole('button', { name: /테스트빌딩/ })).toBeVisible();
     await expect(page.getByText(/강남구에서/)).toBeVisible();
     expect(searchCalls).toBe(1);
+  });
+
+  // ── 실거래 사실 표시 (Stage A · 결정 0012) ───────────────────────────────
+  // 이 섹션은 별도 RPC 둘에 달려 있어, 다른 조각이 다 정상이어도 혼자 조용히 빠질 수 있다
+  // (상권 줄과 같은 종류의 위험). 그래서 여기서 눈으로 확인한다.
+
+  test('G. 층 스택에 실거래 이력·구 단가·층 뱃지가 함께 뜬다', async ({ page }) => {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page, [parcelTx()]);
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+
+    const stack = page.locator('section.stack');
+    await expect(stack.getByText('실거래 기록')).toBeVisible();
+    // ① 이 땅의 이력 — 금액·단가를 사람이 읽는 단위로.
+    await expect(stack.getByText(/이 땅에서 신고된 거래 1건/)).toBeVisible();
+    await expect(stack.getByText('3억 2,000만')).toBeVisible();
+    // 층 스택의 그 층에도 건수 뱃지가 붙는다(픽스처의 층·거래 층이 모두 1층).
+    await expect(stack.locator('.floor__tx')).toHaveText('거래 1건');
+    // ② 구 단가 — 표본이 충분한 층대만 수치가 나오고, 모자란 층대는 그렇다고 말한다.
+    await expect(stack.getByText(/강남구 층대별 거래 단가/)).toBeVisible();
+    await expect(stack.getByText(/중앙값 ㎡당 2,250만/)).toBeVisible();
+    await expect(stack.getByText('표본 부족').first()).toBeVisible();
+    // 출처표시 의무 + 절대 규칙 3(근거 레벨·표본 수 병기).
+    await expect(stack.getByText(/국토교통부 상업업무용 부동산 매매 실거래가/)).toBeVisible();
+    await expect(stack.getByText(/A등급 · 실거래/)).toBeVisible();
+    // 절대 규칙 2 — "적정가격" 계열은 물론 "시세"라는 말도 Stage A 에는 없다.
+    await expect(stack).not.toContainText('시세');
+    await expect(stack).not.toContainText('적정가');
   });
 });
