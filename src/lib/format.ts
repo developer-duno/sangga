@@ -56,6 +56,52 @@ export function oneInEvery(pct: number | null | undefined): number | null {
   return Math.round(100 / pct);
 }
 
+/**
+ * 금액(원)을 "3억 2,000만"으로. 값이 없으면 '—'.
+ *
+ * 실거래 금액은 억 단위가 흔해서 `320000000원`으로 찍으면 자릿수를 세게 된다.
+ * 만원 미만은 버리지 않고 그대로 '원'으로 적는다 — 억·만이 모두 0인 소액 거래에서
+ * 빈 문자열이 나오면 "금액 없음"처럼 보이기 때문이다.
+ */
+export function formatWon(won: number | null | undefined): string {
+  if (won === null || won === undefined || !Number.isFinite(won)) return '—';
+  const eok = Math.floor(won / 100_000_000);
+  const man = Math.floor((won % 100_000_000) / 10_000);
+  const parts: string[] = [];
+  if (eok > 0) parts.push(`${eok.toLocaleString('ko-KR')}억`);
+  if (man > 0) parts.push(`${man.toLocaleString('ko-KR')}만`);
+  if (parts.length === 0) return `${Math.round(won).toLocaleString('ko-KR')}원`;
+  return parts.join(' ');
+}
+
+/**
+ * 단가(원)를 만원 단위로 반올림해 "380만"으로. 값이 없으면 '—'.
+ *
+ * ㎡당 단가는 백만 원대라 원 단위까지 적으면 읽히지 않는다. 1만 원 미만이면 반올림이
+ * "0만"이 되어 값이 없는 것처럼 보이므로 그때만 원 단위로 적는다.
+ */
+export function formatManWon(won: number | null | undefined): string {
+  if (won === null || won === undefined || !Number.isFinite(won)) return '—';
+  if (Math.abs(won) < 10_000) return `${Math.round(won).toLocaleString('ko-KR')}원`;
+  return `${Math.round(won / 10_000).toLocaleString('ko-KR')}만`;
+}
+
+/**
+ * 계약 시점 '202605' → '2026-05'. 형식이 다르면 원본을 그대로 준다.
+ *
+ * `formatQuarter`와 달리 분기로 뭉치지 않는다 — 실거래는 계약이 일어난 **그 달**이
+ * 사실이고, 분기로 바꾸면 없는 정보를 더하거나(분기 경계) 있는 정보를 지운다.
+ */
+export function formatYearMonth(ym: string | null | undefined): string {
+  if (!ym) return '—';
+  const s = ym.trim();
+  const m = /^(\d{4})(\d{2})$/.exec(s);
+  if (!m) return s;
+  const month = Number(m[2]);
+  if (month < 1 || month > 12) return s;
+  return `${m[1]}-${m[2]}`;
+}
+
 /** 사용승인일 '2003-05-14' → '2003년 5월'. 없으면 '—'. */
 export function formatApproveDate(date: string | null): string {
   if (!date) return '—';

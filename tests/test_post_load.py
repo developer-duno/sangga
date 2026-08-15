@@ -14,6 +14,7 @@
 
 import os
 import sys
+from datetime import datetime
 
 import pytest
 
@@ -36,6 +37,18 @@ def map_is_fresh(monkeypatch):
     """
     monkeypatch.setattr(post_load, "report_map_freshness",
                         lambda: ({"district_cnt": 0, "max_computed_at": ""}, False))
+
+
+@pytest.fixture
+def tx_window_is_fresh(monkeypatch):
+    """실거래 단가 창 검사만 빼고 본다 (map_is_fresh 와 같은 이유 — 관심사 분리).
+
+    이 stub 이 없으면 `main()` 이 라이브 mv_sigungu_tx_stats 를 물으러 가거나,
+    mock 된 query_one 의 엉뚱한 답을 창으로 오해해 이 반의 관심사와 상관없이 흔들린다.
+    창 판정 자체는 아래 TestTxWindowStale 이 따로 본다.
+    """
+    monkeypatch.setattr(post_load, "report_tx_window_freshness",
+                        lambda: ("202408", "202408", False))
 
 
 # ── 1. ANALYZE 대상 ─────────────────────────────────────────────────────────
@@ -147,18 +160,18 @@ class TestParseArgs:
 
 
 class TestMainFlow:
-    def test_check_returns_1_when_stale(self, monkeypatch, map_is_fresh):
+    def test_check_returns_1_when_stale(self, monkeypatch, map_is_fresh, tx_window_is_fresh):
         """CI·다른 스크립트가 종료 코드로 받아 쓸 수 있어야 한다."""
         monkeypatch.setattr(post_load, "query_one", lambda sql: "100|200")
         assert post_load.main(["--check"]) == 1
 
-    def test_check_returns_0_when_fresh(self, monkeypatch, map_is_fresh):
+    def test_check_returns_0_when_fresh(self, monkeypatch, map_is_fresh, tx_window_is_fresh):
         # --check 는 세 가지를 묻는다(신선도 · 지도 파일 · 공개키 노출) — mock 도 갈라 답해야 한다.
         monkeypatch.setattr(post_load, "query_one",
                             lambda sql: "200|200" if "count(" in sql else "v_floor_stack")
         assert post_load.main(["--check"]) == 0
 
-    def test_check_never_writes(self, monkeypatch, map_is_fresh):
+    def test_check_never_writes(self, monkeypatch, map_is_fresh, tx_window_is_fresh):
         """--check 는 읽기만 해야 한다 — 실수로 갱신을 돌리면 안 된다."""
         calls = []
         monkeypatch.setattr(post_load, "query_one",
@@ -168,7 +181,7 @@ class TestMainFlow:
         post_load.main(["--check"])
         assert calls == []
 
-    def test_apply_runs_analyze_then_refresh_then_rechecks(self, monkeypatch, map_is_fresh):
+    def test_apply_runs_analyze_then_refresh_then_rechecks(self, monkeypatch, map_is_fresh, tx_window_is_fresh):
         """했다고 믿지 않고 **다시 재는지**까지 확인한다."""
         ran = []
         monkeypatch.setattr(post_load.dbx, "run_sql",
@@ -187,11 +200,56 @@ class TestMainFlow:
                             lambda sql: pytest.fail("실패했는데 신선도를 재면 안 됩니다"))
         assert post_load.main([]) == 2
 
-    def test_apply_reports_failure_when_still_stale_after_refresh(self, monkeypatch, map_is_fresh):
+    def test_apply_reports_failure_when_still_stale_after_refresh(self, monkeypatch, map_is_fresh, tx_window_is_fresh):
         """갱신을 돌렸는데도 안 맞으면 성공으로 끝내면 안 된다."""
         monkeypatch.setattr(post_load.dbx, "run_sql", lambda sql, **k: 0)
         monkeypatch.setattr(post_load, "query_one", lambda sql: "100|200")
         assert post_load.main([]) == 1
+
+
+# ── 5-b. 실거래 단가 창 신선도 (2026-08-15 신설 — 결정 0012 Stage A) ────────
+
+
+class TestTxWindowStale:
+    """창은 갱신하는 순간 굳는다 — 오래 안 돌리면 "최근 24개월" 문구만 조용히 낡는다.
+
+    독립 리뷰(2026-08-15)가 잡은 구멍: window_from 은 화면에서 항상 사실을 말하지만,
+    "최근 24개월"이라는 앞 문구는 갱신을 미루면 거짓이 된다. 그래서 --check 가 잰다.
+    """
+
+    def test_same_month_is_fresh(self):
+        assert post_load.is_tx_window_stale("202408", "202408") is False
+
+    def test_one_month_drift_is_normal(self):
+        """갱신 직후에도 달이 바뀌면 1개월 차이가 난다 — 경계 오차는 낡음이 아니다."""
+        assert post_load.is_tx_window_stale("202408", "202409") is False
+        assert post_load.is_tx_window_stale("202409", "202408") is False
+
+    def test_two_months_drift_is_stale(self):
+        assert post_load.is_tx_window_stale("202408", "202410") is True
+
+    def test_year_boundary_is_one_month_not_eightynine(self):
+        """202412↔202501 은 1개월 차이다 — 문자열 뺄셈이면 89 로 오판한다."""
+        assert post_load.is_tx_window_stale("202412", "202501") is False
+
+    def test_empty_table_is_stale(self):
+        """행이 0개면 창 자체가 없다 — '검사할 게 없다'고 넘어가면 빈 표가 정상이 된다."""
+        assert post_load.is_tx_window_stale("", "202408") is True
+        assert post_load.is_tx_window_stale(None, "202408") is True
+
+    def test_garbage_is_stale(self):
+        assert post_load.is_tx_window_stale("24개월", "202408") is True
+
+
+class TestExpectedTxWindowFrom:
+    def test_subtracts_24_months(self):
+        assert post_load.expected_tx_window_from(datetime(2026, 8, 15)) == "202408"
+
+    def test_january_rolls_into_previous_year(self):
+        assert post_load.expected_tx_window_from(datetime(2026, 1, 3)) == "202401"
+
+    def test_december(self):
+        assert post_load.expected_tx_window_from(datetime(2026, 12, 31)) == "202412"
 
 
 # ── 6. 공개키 노출 점검 (2026-08-13 실제 사고에서 신설) ─────────────────────
@@ -215,7 +273,20 @@ class TestAnonExposure:
         assert post_load.ANON_CALLABLE_ALLOWLIST == (
             "search_buildings", "search_scope", "list_open_sigungu",
             "list_building_districts",
+            "list_parcel_transactions", "get_sigungu_tx_stats",
         )
+
+    def test_the_tx_matview_is_never_allowed(self):
+        """⛔ Stage A 의 물질화뷰가 허용 목록에 들어가면 안 된다(결정 0012).
+
+        화면은 함수 둘로만 읽는다. 표가 열리면 REST 페이지네이션으로 구 전체 분포를
+        통째로 긁어갈 수 있고, 그건 2026-08-13 사고(mv_search_parcel 200)와 같은 형태다.
+        """
+        assert "mv_sigungu_tx_stats" not in post_load.ANON_READABLE_ALLOWLIST
+        assert "mv_sigungu_tx_stats" not in post_load.ANON_CALLABLE_ALLOWLIST
+        assert post_load.unexpected_anon_readables(["mv_sigungu_tx_stats"]) == [
+            "mv_sigungu_tx_stats"
+        ]
 
 
     def test_flags_anything_outside_the_allowlist(self):
@@ -241,13 +312,13 @@ class TestAnonExposure:
         # 물질화뷰('m')가 빠지면 2026-08-13 사고를 그대로 놓친다.
         assert "'m'" in sql
 
-    def test_check_returns_1_when_something_is_exposed(self, monkeypatch, map_is_fresh):
+    def test_check_returns_1_when_something_is_exposed(self, monkeypatch, map_is_fresh, tx_window_is_fresh):
         monkeypatch.setattr(post_load, "query_one",
                             lambda sql: "200|200" if "count(" in sql
                             else "v_floor_stack\nmv_search_parcel")
         assert post_load.main(["--check"]) == 1
 
-    def test_check_returns_0_when_clean(self, monkeypatch, map_is_fresh):
+    def test_check_returns_0_when_clean(self, monkeypatch, map_is_fresh, tx_window_is_fresh):
         monkeypatch.setattr(post_load, "query_one",
                             lambda sql: "200|200" if "count(" in sql
                             else "v_floor_stack\nv_coverage_stats")
@@ -270,6 +341,15 @@ class TestRefreshCoversBothSummaries:
             assert "refresh materialized view concurrently {};".format(mv) in sql, (
                 "{} 가 갱신 대상에서 빠졌습니다".format(mv)
             )
+
+    def test_refreshes_the_transaction_stats(self):
+        """⛔ Stage A 의 구 단가 표(결정 0012)가 빠지면 **창(24개월)이 옛날에 굳은 채** 남는다.
+
+        이것도 에러가 안 난다 — 새 실거래를 넣어도 화면 숫자가 그대로다.
+        """
+        assert "refresh materialized view concurrently mv_sigungu_tx_stats;" in (
+            post_load.build_refresh_sql()
+        )
 
     def test_order_matters_search_parcel_first(self):
         """mv_open_sigungu 는 mv_search_parcel 에서 만들어진다 — 순서가 바뀌면 한 박자 늦는다."""
@@ -369,7 +449,7 @@ class TestMapFreshness:
                 == post_load.build_district_geojson.build_meta_sql())
         assert "at time zone 'UTC'" in post_load.build_district_geojson.build_meta_sql()
 
-    def test_check_returns_1_when_the_map_file_is_stale(self, monkeypatch):
+    def test_check_returns_1_when_the_map_file_is_stale(self, monkeypatch, tx_window_is_fresh):
         """요약표·권한이 다 정상이어도 지도가 낡았으면 종료 코드 1 이어야 한다."""
         monkeypatch.setattr(post_load, "query_one",
                             lambda sql: "200|200" if "count(" in sql else "v_floor_stack")
@@ -377,14 +457,14 @@ class TestMapFreshness:
                             lambda *a, **k: {"district_cnt": 1, "max_computed_at": "옛날"})
         assert post_load.main(["--check"]) == 1
 
-    def test_check_returns_0_when_the_map_file_matches(self, monkeypatch):
+    def test_check_returns_0_when_the_map_file_matches(self, monkeypatch, tx_window_is_fresh):
         monkeypatch.setattr(post_load, "query_one",
                             lambda sql: "200|200" if "count(" in sql else "v_floor_stack")
         monkeypatch.setattr(post_load.build_district_geojson, "read_meta",
                             lambda *a, **k: {"district_cnt": 200, "max_computed_at": "200"})
         assert post_load.main(["--check"]) == 0
 
-    def test_apply_checks_the_map_but_never_bakes_it(self, monkeypatch):
+    def test_apply_checks_the_map_but_never_bakes_it(self, monkeypatch, tx_window_is_fresh):
         """⚠️ 굽기까지 대신 하면 안 된다 — git 에 커밋하는 자산이라 사람이 봐야 한다.
 
         본 실행이 조용히 파일을 새로 쓰면, 커밋 안 된 생성물이 워킹트리에 쌓인다.
@@ -397,7 +477,7 @@ class TestMapFreshness:
                             lambda *a, **k: pytest.fail("post_load 가 지도 파일을 구우면 안 됩니다"))
         assert post_load.main([]) == 0
 
-    def test_apply_returns_1_when_the_map_is_left_stale(self, monkeypatch, capsys):
+    def test_apply_returns_1_when_the_map_is_left_stale(self, monkeypatch, capsys, tx_window_is_fresh):
         """낡은 채로 끝났으면 성공으로 보고하면 안 된다 — 명령을 안내해야 한다."""
         monkeypatch.setattr(post_load.dbx, "run_sql", lambda sql, **k: 0)
         monkeypatch.setattr(post_load, "query_one", lambda sql: "200|200")

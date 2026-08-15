@@ -100,6 +100,50 @@ export type BuildingDistricts = {
   sources?: string[];
 };
 
+// ── 실거래 사실 표시 (Stage A · 결정 0012) ──────────────────────────────────
+//
+// ⚠️ 여기 오는 값은 **추정이 아니다.** 신고된 거래 그대로이거나 그것을 센 값이다.
+//    추정 밴드(Stage B)는 백테스트 성적표가 나온 뒤에 따로 결재한다 — 그 전에는
+//    어떤 추정값도 화면에 내지 않는다.
+
+/** 함수 `list_parcel_transactions(pnu)` 한 행 = 그 필지에서 일어난 거래 하나. */
+export type ParcelTransaction = {
+  /** 지상 n=n / 지하 n=-n / 옥탑=99. ⚠️ 2017년부터 국토부가 층을 빈 값으로 줘 null 이 흔하다. */
+  floor_no: number | null;
+  /** 계약 년월 '202605'. */
+  contract_ym: string;
+  contract_day: number | null;
+  /** 전용면적(㎡). */
+  bld_area_m2: number | null;
+  price_won: number;
+  /** 원/㎡ (DB 생성 컬럼). 면적이 없으면 null. */
+  unit_price: number | null;
+  /** '집합'(구분소유) / '일반'(통건물). 통건물은 지번이 마스킹돼 여기 거의 안 온다. */
+  tx_type: string | null;
+};
+
+/**
+ * 함수 `get_sigungu_tx_stats(sigungu)` 한 행 = 그 구의 층대 하나.
+ *
+ * 다섯 칸(지하·1층·2층·3층이상·층미상)이 **항상 같은 순서로** 온다. 표본이 없으면
+ * `n: 0` 으로 오지 그 칸이 빠지지는 않는다 — 칸이 사라지면 "그 층은 아예 안 판다"처럼 읽힌다.
+ */
+export type SigunguTxStat = {
+  floor_band: string;
+  /** 중앙값을 낸 실제 표본 수. 화면은 5건 미만이면 수치를 감춘다(검증 규칙의 미표시 원칙). */
+  n: number;
+  median_unit_price: number | null;
+  p25_unit_price: number | null;
+  p75_unit_price: number | null;
+  /**
+   * 집계한 창의 시작 달('202408'). 화면이 "최근 24개월"이라고만 적으면 갱신을 미룬 날
+   * 그 문구만 조용히 거짓말이 되므로, 실제로 어느 달부터인지를 서버가 준다.
+   */
+  window_from: string | null;
+  /** 구 이름. 화면에 지역명을 글자로 박지 않기 위해 서버가 준다. */
+  sigungu_nm: string | null;
+};
+
 /**
  * 지금 검색할 수 있는 시군구 하나(뷰 `list_open_sigungu()` 한 행).
  *

@@ -10,7 +10,7 @@
 - **상세 계획** — `docs/상세계획.md` (데이터 소스·분석 로직·검증 설계·로드맵 전부)
 - **DB 스키마** — `supabase/schema.sql`
 - **부동산 데이터 처리 규격** — `budongsan-data` 스킬 참조 (PNU 조립·층 정규화·API 카탈로그)
-- **현재 Phase** — **Phase 1 통과**(2026-08-09, 조인률 95.92%/96.86%) → 1단계 서비스범위(서울+대전) 확장 완료(결정 0006) → **Phase 2 진행 중**(층별 스택 화면, 눈 검증 2/10). 2026-08-14: `district`(상권 경계) **0행 → 서울 1,650개** 적재(결정 0008) → 같은 날 층별 화면에 **"속한 상권" 한 줄 연결**(함수 `list_building_districts` — 겹치면 전부 나열·경계 밖="없음"(정상)·자료 없는 지역="준비 중"). 대전도 **소진공 주요상권현황 37개 적재 완료**(결정 0009 — district 총 **1,687개**, 출처 칸 `source_nm` 신설로 화면 출처가 상권별 데이터). `docs/PROGRESS.md` 참조
+- **현재 Phase** — **Phase 1 통과**(2026-08-09, 조인률 95.92%/96.86%) → 1단계 서비스범위(서울+대전) 확장 완료(결정 0006) → **Phase 2 진행 중**(층별 스택 화면, 눈 검증 2/10). 2026-08-14: `district`(상권 경계) **0행 → 서울 1,650개** 적재(결정 0008) → 같은 날 층별 화면에 **"속한 상권" 한 줄 연결**(함수 `list_building_districts` — 겹치면 전부 나열·경계 밖="없음"(정상)·자료 없는 지역="준비 중"). 대전도 **소진공 주요상권현황 37개 적재 완료**(결정 0009 — district 총 **1,687개**, 출처 칸 `source_nm` 신설로 화면 출처가 상권별 데이터). 2026-08-15: 실거래 **서울+대전 24개월 44,052건** 적재(나머지 지역은 서울·대전 전부 활성화 후 — 사장님 방침) → 층별 화면에 **"실거래 기록" 섹션**(이 필지 이력 + 구 층대별 단가, 추정 0 — 결정 0011·0012 Stage A. 추정 밴드는 Stage B 백테스트 후 재결재). `docs/PROGRESS.md` 참조
 
 ### 🔴 운영 5계명 (매 세션 확인 — 어기면 복구 불가하거나 조용히 깨진다)
 
@@ -93,7 +93,7 @@ constants → scoring → theme → components → hooks → App   (단방향)
 | API | Vercel Serverless |
 | DB | Supabase PostgreSQL + PostGIS (**별도 프로젝트**) |
 | 수집 | ⬜ **여전히 로컬 수동 실행이다** — 받기·적재·백업 전부 사람 손. 다만 **놓치는 것만은 막아 뒀다**: `sangkwon-quarterly-watch.yml`이 매주 포털을 확인해 새 분기가 뜨면 이슈를 자동으로 연다(비밀값 0개). **감시가 실패해도 이슈를 연다**(2026-08-14 추가 — 08-10 에 죽은 걸 나흘 뒤에 알았다). 목록 조회는 30초 타임아웃으로 3번 재시도한다. 적재 후 `scripts/check_new_sangkwon_quarter.py`의 `LATEST_KNOWN_QUARTER`를 **사람이 올려야** 다음 분기를 감지한다(절대 규칙 6). 상권 원천(서울 OA-15560·소진공 15090955)은 갱신이 비정기라 `district-source-watch.yml`이 매주 상세 페이지의 수정일 칸 변동을 확인해 이슈를 연다(2026-08-15 추가) — 반영 후 `check_district_source_update.py`의 기준선 상수도 **사람이 올린다**. ⚠️ **남은 구멍**: "돌았는데 실패"는 알리지만 **예약이 아예 안 도는 경우**(공개 레포는 60일 무활동 시 자동 중지, 부하 시 큐 드롭)는 여전히 조용하다 |
-| 테스트 | 파이썬 **pytest 1,345개** + 프론트 **vitest 122개**(jsdom + @testing-library/react) + **E2E playwright 6개**(`e2e/floor-stack.spec.ts` — 검색→선택→층 스택(속한 상권 포함), 너무 넓은 검색 안내창). CI가 셋 다 돌린다(`pnpm test:e2e`, chromium). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도 |
+| 테스트 | 파이썬 **pytest 1,356개** + 프론트 **vitest 145개**(jsdom + @testing-library/react) + **E2E playwright 7개**(`e2e/floor-stack.spec.ts` — 검색→선택→층 스택(속한 상권·실거래 기록 포함), 너무 넓은 검색 안내창). CI가 셋 다 돌린다(`pnpm test:e2e`, chromium). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도 |
 
 **성능 원칙**: 상권(수천 개)은 사전계산 정적 JSON, 호실(수백만)은 Supabase 쿼리.
 정적 JSON 폴백을 호실에는 두지 않는다.
@@ -131,7 +131,7 @@ pnpm exec oxlint                                # 프론트 린트
 ```
 
 ```bash
-python -m pytest tests/ -q                      # 파이썬 테스트 (1,345개)
+python -m pytest tests/ -q                      # 파이썬 테스트 (1,356개)
 python scripts/check_new_sangkwon_quarter.py    # 새 분기 스냅샷이 떴나 (읽기만, 키 불필요)
 python scripts/check_district_source_update.py  # 상권 원천(서울·소진공) 수정일이 바뀌었나 (읽기만, 키 불필요)
 python -m ruff check scripts/ tests/            # 파이썬 린트
