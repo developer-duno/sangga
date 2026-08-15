@@ -1,0 +1,90 @@
+# 상권(district) 원천 갱신 감시 — 서울시 상권영역 / 소진공 주요상권현황
+#
+# 왜: 이 두 원천은 **갱신 주기가 비정기**라 분기 감시 크론으로는 못 잡는다
+#     (결정 0008 §8 · 0009 §6 의 미해결 항목). 원천이 바뀌어도 아무 신호가 없으면
+#     화면의 "속한 상권"은 옛 경계를 계속 보여준다 — 에러가 아니라서 아무도 모른다.
+#
+# 무엇을 하나: 매주 두 상세 페이지의 "수정일 / 데이터 갱신일" 칸을 읽어 기준선과
+#     **다르면 이슈를 연다.** 그게 전부다. 받는 것·적재·백업은 사람이 로컬에서 한다 —
+#       ① 원본 백업이 어차피 외장 SSD(F:)라 사람 손이 필요하고,
+#       ② 적재하려면 DB 서비스키를 GitHub 에 올려야 하는데 알림만 하면 비밀값이 0개다.
+#     즉 이 워크플로우는 **비밀값을 하나도 쓰지 않는다**(기본 GITHUB_TOKEN 만).
+#
+# ⚠️ GitHub 는 저장소에 60일간 활동이 없으면 예약 실행을 자동으로 멈춘다.
+#    오래 쉬었다가 돌아왔다면 Actions 탭에서 이 워크플로우가 살아 있는지 한 번 본다.
+name: 상권 원천 갱신 감시
+
+on:
+  schedule:
+    # 매주 월요일 00:30 UTC = 09:30 KST. 형제 감시(분기 스냅샷)가 09:00 라
+    # 30분 비켜 간다 — 같은 시각에 몰리면 큐가 밀릴 때 함께 드롭된다.
+    - cron: "30 0 * * 1"
+  # 손으로 즉시 돌려보고 싶을 때 (Actions 탭 → Run workflow)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Seoul # 로컬(KST)과 시간축 통일
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # 스크립트는 표준 라이브러리만 쓴다 — 설치 단계가 없다.
+      - name: 원천 갱신일이 바뀌었는지 확인
+        id: check
+        run: python scripts/check_district_source_update.py
+
+      # 같은 갱신으로 이슈가 매주 다시 열리면 알림이 소음이 된다.
+      # 제목에 새 갱신일이 박혀 있으므로, 열린·닫힌 이슈를 통틀어 같은 제목이
+      # 있으면 건너뛴다 → 한 번 닫으면 그 갱신으로는 다시 안 열린다.
+      - name: 갱신됐으면 이슈를 연다
+        if: steps.check.outputs.found == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ steps.check.outputs.title }}
+        run: |
+          set -euo pipefail
+          if gh issue list --state all --limit 200 --json title \
+               --jq '.[].title' | grep -Fxq "$TITLE"; then
+            echo "같은 제목의 이슈가 이미 있습니다 — 건너뜁니다: $TITLE"
+            exit 0
+          fi
+          gh issue create \
+            --title "$TITLE" \
+            --body-file district_source_update_issue.md
+          echo "이슈를 열었습니다: $TITLE"
+
+      # 감시가 **실패하면 이슈가 안 열린다.** 그런데 아무도 Actions 탭을 들여다보지
+      # 않으므로, 원천이 갱신돼도 아무 신호가 없다 — 조용한 실패가 화면을 낡게 하는
+      # 두 번째 경로다. 실제로 2026-08-10 형제 감시의 예약 실행이 죽은 걸 나흘 뒤에야
+      # 알았다. 그래서 실패 자체도 이슈로 시끄럽게 만든다.
+      - name: 감시가 실패하면 그 사실을 이슈로 알린다
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          TITLE="상권 원천 감시가 실패했습니다 — 사람이 직접 확인해 주세요"
+          # 매주 같은 이슈가 쌓이면 알림이 소음이 되고, 소음은 무시된다.
+          # **열려 있는** 같은 제목이 있으면 건너뛴다 → 닫아야 다음 실패를 다시 알린다.
+          if gh issue list --state open --limit 100 --json title \
+               --jq '.[].title' | grep -Fxq "$TITLE"; then
+            echo "이미 열린 실패 이슈가 있습니다 — 건너뜁니다: $TITLE"
+            exit 0
+          fi
+          {
+            cat .github/district-watch-failure-issue.md
+            echo
+            echo "실패한 실행: $RUN_URL"
+          } > district_watch_failure_issue.md
+          gh issue create --title "$TITLE" --body-file district_watch_failure_issue.md
+          echo "실패 알림 이슈를 열었습니다: $TITLE"
