@@ -274,7 +274,19 @@ class TestAnonExposure:
             "search_buildings", "search_scope", "list_open_sigungu",
             "list_building_districts",
             "list_parcel_transactions", "get_sigungu_tx_stats",
+            "list_price_bands",
         )
+
+    def test_stage_b_internals_are_never_allowed(self):
+        """⛔ Stage B(결정 0013)에서 화면이 부르는 것은 list_price_bands 하나뿐이다.
+
+        게이트 표가 열리면 "어느 구가 켜져 있나"를 통째로 긁어갈 수 있고, 층대 도우미가
+        열리면 노출면만 늘 뿐 화면에 쓸모가 없다. 둘 다 열려 있으면 사고다.
+        """
+        for name in ("price_gate_sigungu", "price_floor_band"):
+            assert name not in post_load.ANON_READABLE_ALLOWLIST
+            assert name not in post_load.ANON_CALLABLE_ALLOWLIST
+            assert post_load.unexpected_anon_readables([name]) == [name]
 
     def test_the_tx_matview_is_never_allowed(self):
         """⛔ Stage A 의 물질화뷰가 허용 목록에 들어가면 안 된다(결정 0012).

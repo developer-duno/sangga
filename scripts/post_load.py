@@ -260,6 +260,9 @@ ANON_CALLABLE_ALLOWLIST = (
     # Stage A 실거래 표시(결정 0012). 물질화뷰 mv_sigungu_tx_stats 는 **여기 없다** —
     # 화면은 함수로만 읽고, 표 자체가 열리면 그건 사고다.
     "list_parcel_transactions", "get_sigungu_tx_stats",
+    # Stage B 참고 시세 밴드(결정 0013). 게이트 표 price_gate_sigungu 와 층대 도우미
+    # price_floor_band 는 **여기 없다** — 화면은 이 함수 하나로만 읽는다.
+    "list_price_bands",
 )
 
 
