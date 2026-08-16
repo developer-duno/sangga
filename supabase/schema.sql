@@ -1622,6 +1622,15 @@ security definer
 set search_path = public
 as $$
 declare
+  -- ⛔ **파라미터를 그대로 쓰지 말 것.** 서명은 text 인데 pnu 컬럼은 세 표(parcel·
+  --    building_floor·transaction) 모두 char(19) 다. `char컬럼 = text파라미터` 는 컬럼 쪽이
+  --    text 로 캐스트돼 인덱스가 통째로 무력해진다(2026-08-16b 라이브 실측):
+  --      · building_floor 층 목록: text 비교 cost 31,239 · 459.8ms ↔ char 비교 cost 2.07 · 0.796ms
+  --      · 함수 전체:              707~733ms          ↔ char(19) 파라미터 복제본 73~101ms
+  --    L4 주석의 배열 이야기와 **같은 병의 스칼라판**이다 — 파라미터와 컬럼의 타입을 맞춘다.
+  -- ⓘ text→char(19) 캐스트는 19자를 넘는 입력을 자르지만, pnu 는 19자 고정이라 무해하다
+  --    (더 긴 입력은 애초에 pnu 가 아니고, 잘려도 없는 필지라 빈 결과다).
+  v_pnu      char(19) := p_pnu;
   v_from     text;
   v_gate     boolean;
   v_geog     geography;
@@ -1642,7 +1651,7 @@ begin
 
   select g.gate_pass into v_gate
     from price_gate_sigungu g
-   where g.sigungu_code = substr(p_pnu, 1, 5);
+   where g.sigungu_code = substr(v_pnu, 1, 5);
 
   -- 아직 판정이 없는 구(표에 줄이 없음)도 '아니오'다 — 모르면 안 낸다.
   if v_gate is not true then
@@ -1651,7 +1660,7 @@ begin
     return;
   end if;
 
-  select p.geom::geography into v_geog from parcel p where p.pnu = p_pnu;
+  select p.geom::geography into v_geog from parcel p where p.pnu = v_pnu;
 
   -- 500m 안을 한 번만 훑고 100m 는 거기서 걸러 쓴다(백테스트 neighbors_within 과 같은 방식).
   -- 좌표가 없으면 두 배열이 비고, 반경 단계는 후보 0건이 되어 저절로 건너뛴다
@@ -1673,7 +1682,7 @@ begin
 
   for v_floor in
     select distinct bf.floor_no from building_floor bf
-     where bf.pnu = p_pnu
+     where bf.pnu = v_pnu
      order by 1
   loop
     -- 1층은 값이 자리(코너·전면·골목)로 갈리는데 그 자리가 공공데이터에 없다.
@@ -1718,7 +1727,7 @@ begin
               from transaction t
              where t.tx_type = '집합' and t.unit_price is not null
                and t.contract_ym >= v_from
-               and t.pnu = p_pnu and t.floor_no = v_floor
+               and t.pnu = v_pnu and t.floor_no = v_floor
             union all
             -- L4 — 반경 100m 같은 층
             -- ⚠️ 배열의 타입이 성능을 가른다(2026-08-16 라이브 EXPLAIN 실측, 이웃 839필지):
@@ -1750,7 +1759,7 @@ begin
              where t.tx_type = '집합' and t.unit_price is not null
                and t.contract_ym >= v_from
                and t.pnu is not null
-               and substr(t.pnu, 1, 10) = substr(p_pnu, 1, 10)
+               and substr(t.pnu, 1, 10) = substr(v_pnu, 1, 10)
                and price_floor_band(t.floor_no) = v_band
           ) c
          group by c.lvl
