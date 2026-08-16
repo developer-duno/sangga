@@ -46,6 +46,9 @@ CLAUDE.md 검증 규칙: "미래로 과거를 맞히면 성적이 부풀려진�
 - `단계별지표.csv`          — 단계 × 축(전체/시도/구/층대) 지표
 - `운영모드지표.csv`        — 사다리 걷기 결과(채택 단계 분포·축별 성적)
 - `검증거래별원자료.csv`    — 검증 거래 한 건마다 모든 단계의 추정·표본수·오차
+- `통과구.csv`              — 구별 출시 기준선 판정(결정 0013). `scripts/load_price_gate.py`
+                              가 이 파일을 읽어 DB 에 넣는다 — 통과 구 목록의 정본은
+                              **이 계산의 결과뿐**이고, 손으로 구를 넣고 빼지 않는다.
 
 쓰는 법
 -------
@@ -89,6 +92,10 @@ RADIUS_M = {"L4": 100.0, "L5": 500.0}
 # 채점
 HIT_BAND = 0.20          # ±20% 적중률
 SUPPRESS_BELOW = 5       # md 표에서 이 미만이면 수치 대신 "표본 부족(n)"
+
+# 출시 기준선 — 결정 0013 §2 (사장님 재결재로 확정). 여기 있는 것이 그 기준의 정본이고,
+# 통과 구 목록은 **이 계산의 결과로만** 갱신한다(손으로 구를 넣고 빼지 않는다 — 결정 0013 §4).
+GATE_MAX_MDAPE = 0.30
 
 # 성능 — 좌표 격자 한 칸의 크기(도). 0.005도 ≒ 위도 556m / 경도 442m(북위 37.5도)
 GRID_CELL_DEG = 0.005
@@ -384,6 +391,32 @@ def paired_metrics(rows, pick_a, pick_b):
     }
 
 
+def pick_ladder_ape(row):
+    """운영 모드(사다리)의 오차. 4-1 표와 통과 구 판정이 **같은 것**을 보게 묶어 둔다."""
+    return row["ladder_ape"]
+
+
+def pick_base_ape(row):
+    """대조군(구 평균)의 오차. 위와 같은 이유로 여기 한 곳에만 적는다."""
+    return row["stage_ape"].get("BASE")
+
+
+def gate_pass(ladder_mdape, base_mdape, max_mdape=GATE_MAX_MDAPE):
+    """결정 0013 §2 — 이 구에서 참고 시세를 화면에 내도 되는가.
+
+    둘을 **모두** 만족해야 한다:
+      ① 사다리 MdAPE ≤ 30%
+      ② 같은 구에서 사다리가 BASE(구 평균)를 이긴다
+
+    ②가 있는 이유: 금천구는 ①을 통과하지만(26.0%) 구 평균이 더 정확하다(17.6%).
+    이미 화면에 있는 구 평균보다 못한 값을 "추정"이라며 얹으면 후퇴다.
+    한쪽이라도 잴 수 없으면(짝지은 거래 0건 등) 통과가 아니다 — 모르면 안 낸다.
+    """
+    if ladder_mdape is None or base_mdape is None:
+        return False
+    return ladder_mdape <= max_mdape and ladder_mdape < base_mdape
+
+
 def group_by(rows, key_fn):
     """축 하나로 검증 거래를 묶는다(정렬된 (키, 목록) 목록)."""
     buckets = defaultdict(list)
@@ -619,6 +652,42 @@ def write_operating_csv(path, scored, sigungu_names):
                ["구분", "축값", "축값이름", "검증거래수", "추정성립수",
                 "커버리지", "MdAPE", "MAPE", "적중률20"],
                rows_out)
+
+
+def gate_rows(scored, sigungu_names):
+    """구별 통과 판정 — 4-1 표(짝지은 비교)와 **같은 계산·같은 집합**을 쓴다.
+
+    ⚠️ 여기서 짝짓기를 새로 구현하면 안 된다. 표의 숫자와 화면에 열리는 구 목록이
+    서로 다른 계산에서 나오면, 둘이 갈라져도 아무 데서도 에러가 안 난다.
+    """
+    out = []
+    for code, bucket in group_by(scored, lambda r: r.get("sigungu_code") or "?"):
+        p = paired_metrics(bucket, pick_ladder_ape, pick_base_ape)
+        out.append({
+            "sigungu_code": code,
+            "sigungu_nm": sigungu_names.get(code, ""),
+            "n_paired": p["n_pair"],
+            "ladder_mdape": p["a_mdape"],
+            "base_mdape": p["b_mdape"],
+            "gate_pass": gate_pass(p["a_mdape"], p["b_mdape"]),
+        })
+    return out
+
+
+def write_gate_csv(path, scored, sigungu_names):
+    """통과 구 목록 — `scripts/load_price_gate.py` 가 읽어 DB 에 넣는 **기계용** 산출물.
+
+    사람이 읽는 다른 CSV 와 달리 머리글이 영문인 이유가 그것이다(적재기가 칸 이름으로
+    읽는다). 참·거짓은 SQL 리터럴 그대로 'true'/'false' 로 적는다.
+    """
+    rows = gate_rows(scored, sigungu_names)
+    _write_csv(path,
+               ["sigungu_code", "sigungu_nm", "n_paired",
+                "ladder_mdape", "base_mdape", "gate_pass"],
+               [[r["sigungu_code"], r["sigungu_nm"], r["n_paired"],
+                 _csv_ratio(r["ladder_mdape"]), _csv_ratio(r["base_mdape"]),
+                 "true" if r["gate_pass"] else "false"] for r in rows])
+    return rows
 
 
 def write_raw_csv(path, scored, sigungu_names):
@@ -912,8 +981,10 @@ def build_markdown(ctx):
         "한쪽만 성립한 거래를 섞으면 \"쉬운 거래만 맞힌 쪽\"이 유리해져 비교가 무의미해진다. "
         "그래서 아래 표의 n 은 각 방법의 커버리지와 다르다(둘의 교집합이다).")
     add("")
+    # ⚠️ 4-1 의 두 pick 은 통과 구 판정(gate_rows)이 쓰는 것과 **같은 함수**다. 표의
+    #    숫자와 화면에 열리는 구 목록이 다른 계산에서 나오면 갈라져도 에러가 안 난다.
     for title, pick_a, label_a in (
-        ("4-1. 운영 모드(사다리) vs BASE", lambda r: r["ladder_ape"], "운영 모드"),
+        ("4-1. 운영 모드(사다리) vs BASE", pick_ladder_ape, "운영 모드"),
         ("4-2. L5(반경 500m 동일층) vs BASE", lambda r: r["stage_ape"].get("L5"), "L5"),
     ):
         add("### {}".format(title))
@@ -921,10 +992,10 @@ def build_markdown(ctx):
         add("| 구분 | 짝지은 거래 | {} MdAPE | BASE MdAPE | {} ±20% | BASE ±20% |"
             .format(label_a, label_a))
         add("|---|---|---|---|---|---|")
-        pairs_all = paired_metrics(scored, pick_a, lambda r: r["stage_ape"].get("BASE"))
+        pairs_all = paired_metrics(scored, pick_a, pick_base_ape)
         add(_paired_row("전체", pairs_all))
         for value, bucket in group_by(scored, lambda r: r.get("sigungu_code") or "?"):
-            p = paired_metrics(bucket, pick_a, lambda r: r["stage_ape"].get("BASE"))
+            p = paired_metrics(bucket, pick_a, pick_base_ape)
             add(_paired_row("{} ({})".format(names.get(value, value), value), p))
         add("")
 
@@ -1031,11 +1102,13 @@ def run(args):
     stage_csv = os.path.join(args.out_dir, "단계별지표.csv")
     op_csv = os.path.join(args.out_dir, "운영모드지표.csv")
     raw_csv = os.path.join(args.out_dir, "검증거래별원자료.csv")
+    gate_csv = os.path.join(args.out_dir, "통과구.csv")
     md_path = os.path.join(args.out_dir, "성적표-v1.md")
 
     write_stage_csv(stage_csv, scored, sigungu_names)
     write_operating_csv(op_csv, scored, sigungu_names)
     write_raw_csv(raw_csv, scored, sigungu_names)
+    gate_list = write_gate_csv(gate_csv, scored, sigungu_names)
 
     ctx = {
         "scored": scored,
@@ -1073,8 +1146,13 @@ def run(args):
         fmt_metric(paired["n_pair"], paired["b_mdape"])))
     log("채택 단계 분포      : {}".format(
         " · ".join("{} {:,}".format(k, v) for k, v in sorted(dist.items()))))
+    passed = [g for g in gate_list if g["gate_pass"]]
+    log("출시 기준선 통과 구 : {}/{}개 (결정 0013 — MdAPE {:.0f}% 이하 + BASE 를 이길 것)"
+        .format(len(passed), len(gate_list), GATE_MAX_MDAPE * 100))
+    log("  {}".format(" · ".join("{}({})".format(g["sigungu_nm"] or "?", g["sigungu_code"])
+                                 for g in passed) or "(없음)"))
     log("")
-    for path in (md_path, stage_csv, op_csv, raw_csv):
+    for path in (md_path, stage_csv, op_csv, raw_csv, gate_csv):
         log("생성: {}".format(path))
     return 0
 

@@ -415,6 +415,94 @@ def test_price_distribution_0이하도_보고만():
     assert d["n"] == 2                # 버리지 않는다
 
 
+# ── 출시 기준선 (결정 0013) ──────────────────────────────────────────────────
+
+
+def test_기준선_상수는_30퍼센트():
+    """결정 0013 §2 의 기준선. 바꾸는 것은 사장님 재결재 사항이라 값을 못 박아 둔다."""
+    assert bt.GATE_MAX_MDAPE == 0.30
+
+
+def test_오차가_30퍼센트를_넘으면_탈락():
+    """조건 ① 위반 — BASE 를 크게 이겨도 통과가 아니다(예: 구로구 58.7% vs 70.5%)."""
+    assert bt.gate_pass(0.587, 0.705) is False
+    assert bt.gate_pass(0.3001, 0.9) is False
+
+
+def test_금천구_케이스_BASE에_지면_탈락():
+    """★ 조건 ② — 금천구(11545)는 26.0% 로 ①을 통과하지만 구 평균이 17.6% 로 더 정확하다.
+
+    이미 화면에 있는 구 평균보다 못한 값을 "추정"이라며 얹으면 후퇴다(결정 0013 §2).
+    이 한 건이 조건 ②가 존재하는 유일한 이유이므로, 여기서 못을 박아 둔다.
+    """
+    assert bt.gate_pass(0.259708, 0.175917) is False
+
+
+def test_둘다_만족하면_통과():
+    """중구(11140) 13.7% vs 54.3% · 강서구(11500) 18.0% vs 19.0%(아슬아슬하게 이김)."""
+    assert bt.gate_pass(0.136618, 0.542567) is True
+    assert bt.gate_pass(0.179945, 0.189993) is True
+    assert bt.gate_pass(0.30, 0.31) is True          # 경계 30% 는 "이하"라 통과
+
+
+def test_비긴_경우는_통과가_아니다():
+    """같으면 새 방식을 얹을 이유가 없다 — '이긴다'는 엄격한 부등호다."""
+    assert bt.gate_pass(0.25, 0.25) is False
+
+
+def test_잴_수_없으면_통과가_아니다():
+    """짝지은 거래가 0건이면 두 값이 None 이다. 모르면 안 낸다."""
+    assert bt.gate_pass(None, 0.2) is False
+    assert bt.gate_pass(0.2, None) is False
+    assert bt.gate_pass(None, None) is False
+
+
+def _gate_scored(sigungu_code, ladder_ape, base_ape):
+    return {"sigungu_code": sigungu_code, "ladder_ape": ladder_ape,
+            "stage_ape": {"BASE": base_ape}}
+
+
+def test_gate_rows_는_4_1표와_같은_짝짓기를_쓴다():
+    """★ 한쪽만 성립한 거래는 짝에서 빠진다 — 표의 n 과 판정의 n 이 같아야 한다."""
+    scored = [
+        _gate_scored("11680", 0.10, 0.40),
+        _gate_scored("11680", 0.20, 0.50),
+        _gate_scored("11680", 0.01, None),   # BASE 미성립 → 짝에서 빠진다
+        _gate_scored("11545", 0.30, 0.10),
+    ]
+    rows = bt.gate_rows(scored, {"11680": "강남구"})
+    by_code = {r["sigungu_code"]: r for r in rows}
+    assert by_code["11680"]["n_paired"] == 2
+    assert by_code["11680"]["ladder_mdape"] == pytest.approx(0.15)
+    assert by_code["11680"]["base_mdape"] == pytest.approx(0.45)
+    assert by_code["11680"]["gate_pass"] is True
+    assert by_code["11680"]["sigungu_nm"] == "강남구"
+    # 이름표를 못 읽어도 판정은 그대로 나온다(이름은 사람이 읽는 칸일 뿐이다).
+    assert by_code["11545"]["sigungu_nm"] == ""
+    assert by_code["11545"]["gate_pass"] is False
+
+
+def test_통과구_CSV_구조(tmp_path):
+    path = str(tmp_path / "통과구.csv")
+    bt.write_gate_csv(path, [_gate_scored("11680", 0.10, 0.40)], {"11680": "강남구"})
+    with open(path, encoding="utf-8-sig") as f:
+        lines = [ln.strip() for ln in f if ln.strip()]
+    assert lines[0] == ("sigungu_code,sigungu_nm,n_paired,"
+                        "ladder_mdape,base_mdape,gate_pass")
+    assert lines[1].startswith("11680,강남구,1,")
+    # 참·거짓은 SQL 리터럴 그대로 적는다(적재기가 그대로 읽는다).
+    assert lines[1].endswith(",true")
+
+
+def test_통과구_CSV_는_판정없는_구도_적는다(tmp_path):
+    """탈락 구를 빼 버리면 "왜 안 나오나"를 다음 사람이 성적표를 다시 뽑아야 안다."""
+    path = str(tmp_path / "통과구.csv")
+    bt.write_gate_csv(path, [_gate_scored("11110", None, None)], {})
+    with open(path, encoding="utf-8-sig") as f:
+        body = f.read()
+    assert "11110,,0,,,false" in body
+
+
 # ── 금지 표현 (절대 규칙 2) ──────────────────────────────────────────────────
 
 
