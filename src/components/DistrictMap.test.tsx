@@ -19,11 +19,12 @@ const kakao = vi.hoisted(() => ({
   mapProps: null as { onClick?: (m: unknown, e: unknown) => void } | null,
   setBounds: vi.fn(),
   panTo: vi.fn(),
+  setLevel: vi.fn(),
 }));
 
 vi.mock('react-kakao-maps-sdk', () => ({
   useKakaoLoader: () => [false, undefined],
-  useMap: () => ({ setBounds: kakao.setBounds, panTo: kakao.panTo }),
+  useMap: () => ({ setBounds: kakao.setBounds, panTo: kakao.panTo, setLevel: kakao.setLevel }),
   Map: (props: { children?: React.ReactNode; onClick?: (m: unknown, e: unknown) => void }) => {
     kakao.mapProps = props;
     return <div data-testid="map">{props.children}</div>;
@@ -154,6 +155,7 @@ beforeEach(() => {
   kakao.mapProps = null;
   kakao.setBounds.mockReset();
   kakao.panTo.mockReset();
+  kakao.setLevel.mockReset();
   fetchMock.mockReset();
   fetchMock.mockImplementation(() => okJson(geojson()));
   vi.stubGlobal('fetch', fetchMock);
@@ -299,6 +301,25 @@ describe('DistrictMap — 건물 마커', () => {
     await waitFor(() => expect(screen.getByTestId('marker')).toBeTruthy());
     expect(screen.getByTestId('marker').getAttribute('data-lat')).toBe('37.55');
     expect(kakao.panTo).toHaveBeenCalled();
+  });
+
+  it('건물을 고르면 그 주변이 보이게 확대한다 — 구 전체 배율로 두지 않는다', async () => {
+    // 2026-08-17 사장님 지적: 종로구에서 건물을 골랐는데 축척 2km(서울 절반)로 남아
+    // 건물이 점으로만 보였다. setBounds 가 구의 상권 전체를 담느라 넓게 잡아 둔 배율을
+    // 그대로 쓰고 위치만 옮겼기 때문이다.
+    await renderMap({ selected: building({ lat: 37.55, lng: 127.05 }) });
+    await waitFor(() => expect(kakao.setLevel).toHaveBeenCalled());
+    const level = kakao.setLevel.mock.calls[0]?.[0];
+    // 카카오 ROADMAP 은 숫자가 작을수록 확대다. 6 이상이면 건물이 다시 점이 된다.
+    expect(typeof level).toBe('number');
+    expect(level).toBeLessThanOrEqual(5);
+    expect(level).toBeGreaterThanOrEqual(1);
+  });
+
+  it('좌표가 없으면 배율도 건드리지 않는다 — 옮길 곳이 없으면 화면을 흔들지 않는다', async () => {
+    await renderMap({ selected: building() });
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    expect(kakao.setLevel).not.toHaveBeenCalled();
   });
 
   it('좌표가 없으면 마커를 안 찍는다 — 없는 좌표를 0,0 으로 채우지 않는다', async () => {
