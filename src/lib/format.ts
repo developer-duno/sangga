@@ -86,6 +86,84 @@ export function formatManWon(won: number | null | undefined): string {
   return `${Math.round(won / 10_000).toLocaleString('ko-KR')}만`;
 }
 
+// ── 추정 밴드의 금액 표기 (Stage B · 결정 0013) ─────────────────────────────
+//
+// `formatWon`(사실 표기)과 일부러 다른 자를 쓴다. 신고된 거래는 '2억 4,486만'처럼
+// 적힌 그대로가 사실이지만, 추정값은 30% 언저리로 빗나가는 값이라 만원 자리까지 적으면
+// 없는 정밀도를 주장하게 된다. 그래서 억은 소수 한 자리(1천만원 눈금)까지만 적는다.
+
+const EOK = 100_000_000;
+
+/** 1천만원 미만은 만원 눈금 그대로, 그 위는 백만원 눈금으로 뭉갠다. */
+function manText(won: number): string {
+  if (Math.abs(won) < 10_000_000) return formatManWon(won);
+  return `${(Math.round(won / 1_000_000) * 100).toLocaleString('ko-KR')}만`;
+}
+
+/**
+ * 억 단위 표기. 100억 이상은 소수를 떼고 적는다(그 자리에서 1천만원은 의미가 없다).
+ *
+ * ⛔ `toFixed()` 를 쓰지 않는다 — 천 단위 구분이 안 붙고 반올림 규칙도 다르다
+ *    (`(1.005).toFixed(2) === '1.00'`). 이 파일의 다른 함수와 같이 toLocaleString 을 쓴다.
+ */
+function eokText(won: number): string {
+  const e = won / EOK;
+  return Math.abs(e) >= 100
+    ? `${Math.round(e).toLocaleString('ko-KR')}억`
+    : `${e.toLocaleString('ko-KR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}억`;
+}
+
+/**
+ * 억으로 적을 크기인가.
+ *
+ * ⚠️ 단위는 **백만원으로 반올림한 뒤에** 정한다. 99,999,999원을 "억이 아니다"라고 보고
+ *    만 단위로 뭉개면 `'10,000만'` 이라는 아무도 안 쓰는 표기가 나온다.
+ */
+function isEokScale(won: number): boolean {
+  return Math.round(Math.abs(won) / 1_000_000) >= 100;
+}
+
+/** 추정 총액을 '2.4억' / '8,500만'으로. 값이 없으면 '—'. */
+export function formatEok(won: number | null | undefined): string {
+  if (won === null || won === undefined || !Number.isFinite(won)) return '—';
+  if (won === 0) return '0원';
+  return isEokScale(won) ? eokText(won) : manText(won);
+}
+
+/**
+ * 추정 총액의 폭을 '2.4억~6.2억'으로. 한쪽이라도 없으면 '—'(반쪽 밴드를 내지 않는다).
+ *
+ * ⚠️ 단위는 **큰 쪽이 정하고 두 끝에 똑같이** 적용한다. '9,800만~1.2억'처럼 섞으면
+ *    눈으로 견줄 수가 없고, 표에서 `tabular-nums` 로도 세로줄이 안 맞는다.
+ */
+export function formatEokBand(
+  low: number | null | undefined,
+  high: number | null | undefined,
+): string {
+  if (low === null || low === undefined || !Number.isFinite(low)) return '—';
+  if (high === null || high === undefined || !Number.isFinite(high)) return '—';
+  const lo = Math.min(low, high);
+  const hi = Math.max(low, high);
+  const render = isEokScale(hi) ? eokText : manText;
+  const a = render(lo);
+  const b = render(hi);
+  // 반올림하고 나면 두 끝이 같아지는 일이 흔하다(폭이 1천만원 안쪽). '2.4억~2.4억'은
+  // 사람이 "아주 정확하다"로 읽으므로 그렇게 적지 않는다.
+  return a === b ? `${a} 안팎` : `${a}~${b}`;
+}
+
+/** ㎡당 단가의 폭을 '747만~1,905만'으로. 한쪽이라도 없으면 '—'. */
+export function formatManWonBand(
+  low: number | null | undefined,
+  high: number | null | undefined,
+): string {
+  if (low === null || low === undefined || !Number.isFinite(low)) return '—';
+  if (high === null || high === undefined || !Number.isFinite(high)) return '—';
+  const a = formatManWon(Math.min(low, high));
+  const b = formatManWon(Math.max(low, high));
+  return a === b ? `${a} 안팎` : `${a}~${b}`;
+}
+
 /**
  * 계약 시점 '202605' → '2026-05'. 형식이 다르면 원본을 그대로 준다.
  *

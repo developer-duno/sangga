@@ -27,6 +27,7 @@ vi.mock('./lib/supabase', () => ({
   BUILDING_DISTRICTS_FN: 'list_building_districts',
   PARCEL_TX_FN: 'list_parcel_transactions',
   SIGUNGU_TX_STATS_FN: 'get_sigungu_tx_stats',
+  PRICE_BANDS_FN: 'list_price_bands',
   supabase: {
     rpc: (...args: unknown[]) => rpc(...args),
     from: (view: string) => from(view),

@@ -6,6 +6,7 @@ import {
   BUILDING_DISTRICTS_FN,
   PARCEL_TX_FN,
   SIGUNGU_TX_STATS_FN,
+  PRICE_BANDS_FN,
 } from '../lib/supabase';
 import type {
   BuildingDistricts,
@@ -13,6 +14,7 @@ import type {
   CoverageStats,
   FloorRow,
   ParcelTransaction,
+  PriceBand,
   SigunguTxStat,
 } from '../types';
 import {
@@ -25,6 +27,8 @@ import {
   formatYearMonth,
   oneInEvery,
 } from '../lib/format';
+import { KNOWN_BAND_STATUS } from '../lib/priceBand';
+import { PriceBandSection } from './PriceBandSection';
 
 /**
  * 구 단가에서 수치를 보여줄 최소 표본 수(결정 0012).
@@ -39,9 +43,10 @@ const MIN_SAMPLE = 5;
  *
  * 위가 고층, 아래가 지하로 쌓는다. 막대 길이는 그 층의 임대 가능 면적에 비례한다.
  *
- * ⚠️ 지금 채울 수 있는 칸은 층·용도·면적·점포 4개뿐이다. 추정 시세는 Phase 3,
- *    공실 이력은 Phase 5 산출물이라 여기서는 그리지 않는다(빈칸을 그럴듯하게
- *    채우면 없는 근거를 있는 것처럼 보이게 만든다).
+ * ⚠️ 층 행에 채우는 칸은 층·용도·면적·점포 4개뿐이다 — 여기에는 여전히 **사실만** 그린다.
+ *    추정은 아래 참고 시세 섹션(`PriceBandSection`)이 카드를 갈라 따로 낸다. 공실 이력은
+ *    Phase 5 산출물이라 아직 없다(빈칸을 그럴듯하게 채우면 없는 근거를 있는 것처럼
+ *    보이게 만든다).
  */
 
 type Props = { building: BuildingHit };
@@ -59,6 +64,10 @@ export function FloorStack({ building }: Props) {
   const [txs, setTxs] = useState<ParcelTransaction[] | null>(null);
   /** 이 구의 층대별 단가 분포(Stage A). 못 읽으면 null로 남고 그 블록만 안 그린다. */
   const [txStats, setTxStats] = useState<SigunguTxStat[] | null>(null);
+  /** 이 필지의 층별 참고 시세(Stage B · 결정 0013). null = 아직 안 옴. */
+  const [bands, setBands] = useState<PriceBand[] | null>(null);
+  /** 못 읽었나. 못 읽었으면 그 섹션을 아예 안 그린다(모르는 것을 없다고 말하지 않는다). */
+  const [bandsFailed, setBandsFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -148,6 +157,8 @@ export function FloorStack({ building }: Props) {
     let cancelled = false;
     setTxs(null);
     setTxStats(null);
+    setBands(null);
+    setBandsFailed(false);
 
     supabase.rpc(PARCEL_TX_FN, { pnu: building.pnu }).then(({ data, error: err }) => {
       if (cancelled) return;
@@ -169,6 +180,30 @@ export function FloorStack({ building }: Props) {
         }
         setTxStats(data as SigunguTxStat[]);
       });
+
+    // ── 참고 매매 시세 밴드 (Stage B · 결정 0013) ──────────────────────────
+    //
+    // ⚠️ 인자 이름이 이 함수만 `p_pnu` 다(형제 셋은 bld_id·pnu·sigungu). 습관대로
+    //    `{ pnu: … }` 로 부르면 목(mock)은 인자 이름을 안 보므로 vitest·E2E 가 전부
+    //    초록인 채 **라이브에서만** PGRST202 가 난다.
+    supabase.rpc(PRICE_BANDS_FN, { p_pnu: building.pnu }).then(({ data, error: err }) => {
+      if (cancelled) return;
+      if (err || !data) {
+        // 못 읽었으면 "참고 시세 없음"이라고 적지 않는다 — 없는 것과 모르는 것은 다르다.
+        console.warn('참고 시세 조회 실패 — 그 섹션 없이 표시합니다', err);
+        setBandsFailed(true);
+        return;
+      }
+      const rows = data as PriceBand[];
+      // 서버가 여섯 번째 status 를 늘리면 화면은 그 층을 조용히 안 그린다(뜻을 지어내지
+      // 않는다). 눈에 안 띄므로 콘솔에는 반드시 남긴다 — status 를 늘리는 날 화면도 같은
+      // 커밋에서 고쳐야 한다는 신호다.
+      const unknown = [...new Set(rows.map((b) => b.status))].filter(
+        (s) => !KNOWN_BAND_STATUS.has(s),
+      );
+      if (unknown.length > 0) console.warn('모르는 status 라 그 층은 그리지 않습니다', unknown);
+      setBands(rows);
+    });
 
     return () => {
       cancelled = true;
@@ -246,7 +281,15 @@ export function FloorStack({ building }: Props) {
           const isOpen = openFloor === f.floor_no;
           const txCount = txCountByFloor.get(f.floor_no) ?? 0;
           return (
-            <li key={f.floor_no} className={`floor${f.floor_no < 0 ? ' floor--under' : ''}`}>
+            // 옥탑도 지하와 같은 "근거 없는 층"이라 색으로 갈라 둔다(결정 0001 가드 4).
+            // id 는 참고 시세 줄에서 이 층으로 스크롤할 때 쓴다.
+            <li
+              key={f.floor_no}
+              id={`floor-${f.floor_no}`}
+              className={`floor${
+                f.floor_no < 0 ? ' floor--under' : f.floor_no === 99 ? ' floor--roof' : ''
+              }`}
+            >
               <button className="floor__row" onClick={() => setOpenFloor(isOpen ? null : f.floor_no)}>
                 <span className="floor__label">{formatFloor(f.floor_no, f.floor_label)}</span>
                 <span className="floor__bar">
@@ -275,6 +318,21 @@ export function FloorStack({ building }: Props) {
       </ol>
 
       <TransactionSection txs={txs} stats={txStats} />
+
+      <PriceBandSection
+        bands={bands}
+        failed={bandsFailed}
+        floors={floors}
+        hasTxStats={txStats !== null && txStats.length > 0}
+        openFloor={openFloor}
+        onPickFloor={(no) => {
+          setOpenFloor(no);
+          // ⚠️ getElementById 로 찾는다 — 지하 층의 id 는 "floor--1" 이라
+          //    querySelector('#floor--1') 는 잘못된 선택자로 예외가 난다.
+          //    jsdom 에는 scrollIntoView 가 없어 `?.` 를 반드시 붙인다.
+          document.getElementById(`floor-${no}`)?.scrollIntoView?.({ block: 'nearest' });
+        }}
+      />
 
       <p className="grade">
         <span className="grade__badge">D등급 · 간접 추론</span>
@@ -367,8 +425,9 @@ function DistrictSource({ sources }: { sources?: string[] }) {
  * "실거래" 섹션 — Stage A(결정 0012).
  *
  * ⛔ 여기에 **추정값을 넣지 말 것.** Stage A 는 신고된 거래를 그대로 보여주거나 세는
- *    것만 한다. 추정 밴드(Stage B)는 서울 전역+대전 백테스트 성적표가 나온 뒤에 따로
- *    결재한다 — 성적표 없이 낸 밴드는 근거가 아니라 그럴듯한 숫자일 뿐이다.
+ *    것만 한다. 추정 밴드(Stage B)는 결정 0013 으로 결재됐고, 기준을 넘은 구 × 2층·3층+
+ *    에서만 아래 `PriceBandSection` 이 카드를 갈라 낸다 — **이 블록에는 여전히 넣지 않는다.**
+ *    사실과 추정을 가르는 것이 이 화면의 신뢰이기 때문이다.
  *
  * 두 블록이 하는 말이 다르다:
  *  ① 이 땅의 이력 — 있는 건물에만 나온다(자기 거래가 있는 필지는 서울 1.8% 뿐이다).

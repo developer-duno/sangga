@@ -3,6 +3,7 @@ import type {
   CoverageStats,
   FloorRow,
   ParcelTransaction,
+  PriceBand,
   SigunguTxStat,
 } from '../src/types';
 
@@ -84,6 +85,52 @@ export function sigunguTxStats(counts: Record<string, number> = { '1층': 213 })
       sigungu_nm: '강남구',
     };
   });
+}
+
+/**
+ * 층별 참고 매매 시세 한 줄(함수 list_price_bands). Stage B — 결정 0013.
+ * 필드·기본값은 단위 테스트(src/components/FloorStack.test.tsx 의 priceBand())와 같다.
+ */
+export function priceBand(over: Partial<PriceBand> = {}): PriceBand {
+  return {
+    floor_no: 2,
+    status: 'ok',
+    stage: 'L5',
+    n: 15,
+    p25: 7_465_269.63,
+    median: 16_265_452.18,
+    p75: 19_045_698.84,
+    median_area_m2: 32.8,
+    window_from: '202408',
+    ...over,
+  };
+}
+
+/** 값을 못 내는 줄은 사분위·근거가 전부 비어서 온다. */
+const NO_VALUE = {
+  stage: null,
+  n: null,
+  p25: null,
+  median: null,
+  p75: null,
+  median_area_m2: null,
+} as const;
+
+/**
+ * 서버가 주는 한 벌 — **오름차순**이다(화면이 뒤집는지 보려면 이 순서 그대로 줘야 한다).
+ * 지하1층 no_evidence · 1층 floor_1f · 2층 ok.
+ */
+export function priceBands(): PriceBand[] {
+  return [
+    priceBand({ floor_no: -1, status: 'no_evidence', ...NO_VALUE }),
+    priceBand({ floor_no: 1, status: 'floor_1f', ...NO_VALUE }),
+    priceBand({ floor_no: 2 }),
+  ];
+}
+
+/** 기준선을 못 넘은 구 — floor_no 가 null 인 **한 줄**로만 온다(층 목록이 아예 없다). */
+export function priceBandGate(): PriceBand[] {
+  return [priceBand({ floor_no: null, status: 'gate_fail', ...NO_VALUE })];
 }
 
 export function coverageStats(over: Partial<CoverageStats> = {}): CoverageStats {
