@@ -1,5 +1,13 @@
 import { test, expect, type Page } from '@playwright/test';
-import { searchHit, floorRow, coverageStats, parcelTx, sigunguTxStats } from './fixtures';
+import {
+  searchHit,
+  floorRow,
+  coverageStats,
+  parcelTx,
+  sigunguTxStats,
+  priceBands,
+  priceBandGate,
+} from './fixtures';
 
 /**
  * "여러 조각이 실제로 이어 붙는가"만 본다 — App.tsx가 실제로 BuildingSearch·FloorStack을
@@ -39,6 +47,9 @@ const DISTRICT_PATTERN = '**/rest/v1/rpc/list_building_districts*';
 // 막지 않으면 실존하지 않는 도메인으로 요청이 나가 테스트가 네트워크에 좌우된다.
 const PARCEL_TX_PATTERN = '**/rest/v1/rpc/list_parcel_transactions*';
 const TX_STATS_PATTERN = '**/rest/v1/rpc/get_sigungu_tx_stats*';
+// 참고 매매 시세 밴드(Stage B · 결정 0013). 이것도 안 막으면 실존하지 않는 도메인으로
+// 요청이 나간다 — 기본값은 빈 배열이라 섹션이 아예 안 뜬다(기존 테스트에 영향 0).
+const PRICE_BAND_PATTERN = '**/rest/v1/rpc/list_price_bands*';
 
 const CORS_HEADERS = {
   'access-control-allow-origin': '*',
@@ -62,9 +73,15 @@ async function mockJson(page: Page, pattern: string, body: unknown, delayMs = 0)
   });
 }
 
-async function mockFloorStack(page: Page, txs: unknown[] = []) {
+async function mockFloorStack(
+  page: Page,
+  txs: unknown[] = [],
+  bands: unknown[] = [],
+  floors?: unknown[],
+) {
   await mockJson(page, STATS_PATTERN, [coverageStats()]);
-  await mockJson(page, FLOOR_PATTERN, [floorRow()]);
+  await mockJson(page, FLOOR_PATTERN, floors ?? [floorRow()]);
+  await mockJson(page, PRICE_BAND_PATTERN, bands);
   await mockJson(page, PARCEL_TX_PATTERN, txs);
   await mockJson(page, TX_STATS_PATTERN, sigunguTxStats());
   await mockJson(page, DISTRICT_PATTERN, {
@@ -100,7 +117,8 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
   test('A. 검색 → 결과 클릭 → 층 스택 렌더', async ({ page }) => {
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
-    await mockFloorStack(page);
+    // 참고 시세 섹션(Stage B)까지 한 벌로 태운다 — "섹션이 통째로 안 뜨는 회귀"를 잡는 자리다.
+    await mockFloorStack(page, [], priceBands(), [floorRow({ floor_no: 2 }), floorRow()]);
 
     await page.goto('/');
     await pickGu(page, '서울', '강남구');
@@ -119,6 +137,9 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await expect(stack.getByText(/역삼역\(발달상권\)/)).toBeVisible();
     // 출처표시는 공공누리 1유형 의무다 — 상권 이름이 보이는데 출처만 빠지는 것도 결함이다.
     await expect(stack.getByText(/출처: 서울특별시 상권분석서비스/)).toBeVisible();
+    // 참고 시세 섹션도 같은 종류의 위험을 진다(별도 RPC 하나에 통째로 달려 있다).
+    await expect(stack.locator('section.band')).toBeVisible();
+    await expect(stack.getByText(/C등급 · 파생 추정/)).toBeVisible();
   });
 
   test('B. 새 검색을 제출하면 이전 층 스택이 즉시 사라진다', async ({ page }) => {
@@ -277,8 +298,84 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     // 출처표시 의무 + 절대 규칙 3(근거 레벨·표본 수 병기).
     await expect(stack.getByText(/국토교통부 상업업무용 부동산 매매 실거래가/)).toBeVisible();
     await expect(stack.getByText(/A등급 · 실거래/)).toBeVisible();
-    // 절대 규칙 2 — "적정가격" 계열은 물론 "시세"라는 말도 Stage A 에는 없다.
-    await expect(stack).not.toContainText('시세');
+    // 절대 규칙 2 — 금칙어 5종은 화면 어디에도 없다.
+    // ⚠️ '참고 매매 시세'는 절대 규칙 2 가 정한 **허용 대체어**라 Stage B 섹션이 쓴다.
+    //    그래서 '시세' 금지는 화면 전체가 아니라 **Stage A 블록 안**으로 좁힌다 —
+    //    "사실을 말하는 블록은 그 말조차 쓰지 않는다"는 원래 뜻은 그대로 지킨다.
+    await expect(stack.locator('section.tx')).not.toContainText('시세');
     await expect(stack).not.toContainText('적정가');
+    await expect(stack).not.toContainText('평가액');
+    await expect(stack).not.toContainText('감정가');
+    await expect(stack).not.toContainText('가치평가');
+  });
+
+  // ── 참고 매매 시세 밴드 (Stage B · 결정 0013) ─────────────────────────────
+  // 이 화면에서 **추정값이 나오는 유일한 자리**다. 값과 근거가 한 몸으로 나가는지,
+  // 안 내는 이유 넷을 각각 다른 말로 하는지를 눈으로 확인한다.
+
+  test('H. 참고 시세 밴드가 근거·표본·등급과 함께 뜨고, 값을 안 내는 층은 이유가 다르게 적힌다', async ({
+    page,
+  }) => {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page, [parcelTx()], priceBands(), [
+      floorRow({ floor_no: 2 }),
+      floorRow(),
+      floorRow({ floor_no: -1 }),
+    ]);
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+
+    const band = page.locator('section.band');
+    await expect(band).toBeVisible();
+    // 매매인지 임대인지를 화면이 먼저 말한다(절대 규칙 5 — 임대 실거래는 존재하지 않는다).
+    await expect(band.getByText(/사고파는 값이고 월세·보증금이 아닙니다/)).toBeVisible();
+    // 값 + 근거 단계 + 표본 수가 한 줄에 함께 나온다(절대 규칙 3).
+    await expect(
+      band.getByText('비슷한 호실 한 칸 32.8㎡ (10평) 기준 2.4억~6.2억'),
+    ).toBeVisible();
+    await expect(band.getByText(/500m 안 같은 층/)).toBeVisible();
+    await expect(band.getByText(/거래 15건/)).toBeVisible();
+    await expect(band.getByText(/먼 근거/).first()).toBeVisible();
+    await expect(band.getByText(/C등급 · 파생 추정/)).toBeVisible();
+    // 1층은 자리를 몰라서, 지하는 검증한 적이 없어서 — 서로 다른 말로 적는다.
+    await expect(band.getByText(/1층은 내지 않습니다/)).toBeVisible();
+    await expect(band.getByText(/참고 시세를 내지 않은 층: 지하 1층/)).toBeVisible();
+    // 지하는 줄로 반복하지 않는다 — 값 있는 2층 + 1층 두 줄뿐이다.
+    await expect(band.locator('.band__row')).toHaveCount(2);
+
+    // 밴드 줄을 누르면 위쪽 층 목록의 그 층이 펼쳐진다(두 목록이 서로를 가리킨다).
+    await band.locator('.band__hit').first().click();
+    await expect(page.locator('.detail')).toBeVisible();
+    await expect(band.locator('.band__row--on')).toHaveCount(1);
+
+    // Stage A 의 사실 표시는 그대로 남아 있다(추정이 사실을 밀어내지 않는다).
+    // ⚠️ 거래가 없는 층의 뱃지 칸은 **빈 span** 이라 hidden 이다 — 자리는 남기되 0건이라
+    //    적지 않기 때문이다. 그래서 글자로 찾는다(1층에 거래 1건이 붙는다).
+    await expect(page.locator('.floor__tx', { hasText: '거래 1건' })).toBeVisible();
+  });
+
+  test('I. 기준선을 못 넘은 구에서는 층별 밴드 없이 한 문단만 나온다', async ({ page }) => {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page, [parcelTx()], priceBandGate());
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+
+    const band = page.locator('section.band');
+    await expect(band).toBeVisible();
+    await expect(band.locator('.band__row')).toHaveCount(0);
+    await expect(band.getByText(/구 전체는 아직 참고 시세를 내지 않습니다/)).toBeVisible();
+    // 오차율·구 개수는 서버가 정본이라 화면에 복사하지 않는다(결정 0013 §4).
+    await expect(band.locator('.band__gate')).not.toContainText('%');
+    // 층 목록과 실거래 기록은 그대로 나온다 — 밴드만 없는 것이다.
+    await expect(page.locator('.floors .floor')).toHaveCount(1);
+    await expect(page.getByText('실거래 기록')).toBeVisible();
   });
 });

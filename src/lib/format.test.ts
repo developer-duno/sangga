@@ -4,8 +4,11 @@ import {
   describeRange,
   formatArea,
   formatApproveDate,
+  formatEok,
+  formatEokBand,
   formatFloor,
   formatManWon,
+  formatManWonBand,
   formatQuarter,
   formatWon,
   formatYearMonth,
@@ -295,5 +298,97 @@ describe('formatYearMonth — 계약 시점', () => {
   it('값이 없으면 —', () => {
     expect(formatYearMonth(null)).toBe('—');
     expect(formatYearMonth('')).toBe('—');
+  });
+});
+
+// ── 추정 밴드의 금액 표기 (Stage B · 결정 0013) ─────────────────────────────
+
+describe('formatEok — 추정 총액', () => {
+  it('억 단위는 소수 한 자리(1천만원 눈금)까지만 적는다', () => {
+    // 30% 언저리로 빗나가는 값에 만원 자리를 적으면 없는 정밀도를 주장하게 된다.
+    expect(formatEok(244_860_844)).toBe('2.4억');
+    expect(formatEok(624_698_922)).toBe('6.2억');
+  });
+
+  it('1억이 안 되면 억이라고 말하지 않는다', () => {
+    expect(formatEok(85_000_000)).toBe('8,500만');
+    expect(formatEok(98_500_000)).toBe('9,900만');
+  });
+
+  it('자릿올림이 단위를 넘으면 단위도 따라 올라간다', () => {
+    // 99,999,999 를 만 단위로 뭉개면 '10,000만' 이라는 아무도 안 쓰는 표기가 나온다.
+    expect(formatEok(99_999_999)).toBe('1.0억');
+  });
+
+  it('100억 이상은 소수를 떼고 적는다', () => {
+    // 그 자리에서 1천만원은 눈에 들어오지도 않는다.
+    expect(formatEok(12_345_678_901)).toBe('123억');
+  });
+
+  it('1천만원 미만은 만원 눈금 그대로 적는다', () => {
+    expect(formatEok(850_000)).toBe('85만');
+  });
+
+  it('0은 "—"가 아니라 0원이다', () => {
+    // 값이 없는 것과 0인 것은 다르다.
+    expect(formatEok(0)).toBe('0원');
+  });
+
+  it('값이 없으면 —', () => {
+    expect(formatEok(null)).toBe('—');
+    expect(formatEok(undefined)).toBe('—');
+    expect(formatEok(NaN)).toBe('—');
+  });
+});
+
+describe('formatEokBand — 추정 총액의 폭', () => {
+  it('두 끝을 물결로 잇고 앞뒤에 공백을 두지 않는다', () => {
+    expect(formatEokBand(244_860_844, 624_698_922)).toBe('2.4억~6.2억');
+  });
+
+  it('단위는 큰 쪽이 정하고 두 끝에 똑같이 적용한다', () => {
+    // '9,800만~1.2억'처럼 섞으면 눈으로 견줄 수가 없다.
+    expect(formatEokBand(98_000_000, 120_000_000)).toBe('1.0억~1.2억');
+  });
+
+  it('폭이 0이면 "안팎"으로 적는다 (같은 값을 두 번 적지 않는다)', () => {
+    expect(formatEokBand(244_860_844, 244_860_844)).toBe('2.4억 안팎');
+  });
+
+  it('반올림하고 나서 같아져도 "안팎"이다', () => {
+    // '2.4억~2.4억'은 사람이 "아주 정확하다"로 읽는데 사실은 정반대다.
+    expect(formatEokBand(244_000_000, 244_900_000)).toBe('2.4억 안팎');
+  });
+
+  it('한쪽이라도 없으면 반쪽 밴드를 내지 않고 —', () => {
+    expect(formatEokBand(244_860_844, null)).toBe('—');
+    expect(formatEokBand(null, 624_698_922)).toBe('—');
+  });
+
+  it('뒤집힌 입력이 와도 작은 값이 앞에 온다', () => {
+    expect(formatEokBand(624_698_922, 244_860_844)).toBe('2.4억~6.2억');
+  });
+});
+
+describe('formatManWonBand — ㎡당 단가의 폭', () => {
+  it('만원 눈금으로 두 끝을 잇는다', () => {
+    expect(formatManWonBand(7_465_269.63, 19_045_698.84)).toBe('747만~1,905만');
+  });
+
+  it('두 끝이 같으면 "안팎"으로 적는다', () => {
+    expect(formatManWonBand(16_265_452.18, 16_265_452.18)).toBe('1,627만 안팎');
+  });
+
+  it('한쪽이라도 없으면 —', () => {
+    expect(formatManWonBand(7_465_269, null)).toBe('—');
+    expect(formatManWonBand(null, null)).toBe('—');
+  });
+
+  it('1만원 미만은 "0만"이 아니라 원으로 적는다', () => {
+    expect(formatManWonBand(4_200, 9_100)).toBe('4,200원~9,100원');
+  });
+
+  it('뒤집힌 입력이 와도 작은 값이 앞에 온다', () => {
+    expect(formatManWonBand(19_045_698.84, 7_465_269.63)).toBe('747만~1,905만');
   });
 });

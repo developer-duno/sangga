@@ -93,7 +93,7 @@ constants → scoring → theme → components → hooks → App   (단방향)
 | API | Vercel Serverless |
 | DB | Supabase PostgreSQL + PostGIS (**별도 프로젝트**) |
 | 수집 | ⬜ **여전히 로컬 수동 실행이다** — 받기·적재·백업 전부 사람 손. 다만 **놓치는 것만은 막아 뒀다**: `sangkwon-quarterly-watch.yml`이 매주 포털을 확인해 새 분기가 뜨면 이슈를 자동으로 연다(비밀값 0개). **감시가 실패해도 이슈를 연다**(2026-08-14 추가 — 08-10 에 죽은 걸 나흘 뒤에 알았다). 목록 조회는 30초 타임아웃으로 3번 재시도한다. 적재 후 `scripts/check_new_sangkwon_quarter.py`의 `LATEST_KNOWN_QUARTER`를 **사람이 올려야** 다음 분기를 감지한다(절대 규칙 6). 상권 원천(서울 OA-15560·소진공 15090955)은 갱신이 비정기라 `district-source-watch.yml`이 매주 상세 페이지의 수정일 칸 변동을 확인해 이슈를 연다(2026-08-15 추가) — 반영 후 `check_district_source_update.py`의 기준선 상수도 **사람이 올린다**. ⚠️ **남은 구멍**: "돌았는데 실패"는 알리지만 **예약이 아예 안 도는 경우**(공개 레포는 60일 무활동 시 자동 중지, 부하 시 큐 드롭)는 여전히 조용하다 |
-| 테스트 | 파이썬 **pytest 1,463개** + 프론트 **vitest 145개**(jsdom + @testing-library/react) + **E2E playwright 7개**(`e2e/floor-stack.spec.ts` — 검색→선택→층 스택(속한 상권·실거래 기록 포함), 너무 넓은 검색 안내창). CI가 셋 다 돌린다(`pnpm test:e2e`, chromium). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도 |
+| 테스트 | 파이썬 **pytest 1,463개** + 프론트 **vitest 215개**(jsdom + @testing-library/react) + **E2E playwright 9개**(`e2e/floor-stack.spec.ts` — 검색→선택→층 스택(속한 상권·실거래 기록·참고 매매 시세 밴드 포함), 너무 넓은 검색 안내창). CI가 셋 다 돌린다(`pnpm test:e2e`, chromium). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도 |
 
 **성능 원칙**: 상권(수천 개)은 사전계산 정적 JSON, 호실(수백만)은 Supabase 쿼리.
 정적 JSON 폴백을 호실에는 두지 않는다.
@@ -125,8 +125,8 @@ constants → scoring → theme → components → hooks → App   (단방향)
 ```bash
 pnpm dev                                        # 개발 서버 (http://localhost:5173)
 pnpm build                                      # 타입 검사 + 빌드 (tsc -b && vite build)
-pnpm test                                       # 프론트 테스트 (vitest, 92개)
-pnpm test:e2e                                   # ★ 화면 E2E (playwright, 6개) — 아래 경고 참조
+pnpm test                                       # 프론트 테스트 (vitest, 215개)
+pnpm test:e2e                                   # ★ 화면 E2E (playwright, 9개) — 아래 경고 참조
 pnpm exec oxlint                                # 프론트 린트
 ```
 

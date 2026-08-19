@@ -14,6 +14,12 @@
   --warn-line: #e2c68a;
   --err: #b3261e;
 
+  /* 추정(C등급) 전용 톤. 사실 쪽(.tx = #fafbfd, 배지 = 호박)과 눈으로 갈라 보이게 한다. */
+  --est-bg: #f6f7fa;
+  --est-line: #c5cbd9;
+  --est-chip: #e7eaf2;
+  --est-ink: #3d4560;
+
   color-scheme: light;
 }
 
@@ -598,7 +604,8 @@ body {
 }
 
 /* ── 실거래 기록 (Stage A · 결정 0012) ───────────────────────────────── */
-/* ⛔ 이 블록에 추정값을 그리지 말 것. 신고된 거래와 그것을 센 값만 나온다. */
+/* ⛔ 이 블록에 추정값을 그리지 말 것. 신고된 거래와 그것을 센 값만 나온다.
+   추정은 아래 .band 블록으로 간다. */
 
 .tx {
   margin: 22px 0 0;
@@ -703,6 +710,138 @@ body {
   line-height: 1.6;
 }
 
+/* ── 참고 매매 시세 밴드 (Stage B · 결정 0013) ─────────────────────────── */
+/* ⚠️ 이 화면에서 **추정값이 나오는 유일한 자리**다. 위 .tx(실선 · 신고된 사실)와 카드를
+   갈라 두는 것이 사실과 추정을 가르는 장치다 — 점선 테두리도 "확정된 사실이 아니다"라는
+   뜻이다. 두 블록을 합치지 말 것. */
+
+.band {
+  margin: 22px 0 0;
+  padding: 16px 16px 8px;
+  border: 1px dashed var(--est-line);
+  border-radius: 8px;
+  background: var(--est-bg);
+}
+
+.band__h {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.band__lead {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.band__gate {
+  margin: 0 0 4px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.band__rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.band__row {
+  border-bottom: 1px dashed var(--est-line);
+}
+
+.band__row:last-child {
+  border-bottom: none;
+}
+
+/* 지금 펼쳐진 층의 밴드 줄. 위아래 두 목록이 서로를 가리키게 하는 유일한 표시다. */
+.band__row--on {
+  background: #eceff6;
+  border-radius: 6px;
+}
+
+.band__hit {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr); /* 층 범위('3층~17층')가 들어갈 폭 */
+  gap: 2px 10px;
+  width: 100%;
+  padding: 8px 6px;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.band__hit:hover {
+  background: #eceff6;
+  border-radius: 6px;
+}
+
+.band__floor {
+  grid-row: 1 / span 2;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.band__val {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.band__sub {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* 값을 못 내는 층. 사실 쪽 .tx__val--none 과 같은 어휘(회색 이탤릭)로 "왜 없는지"를 말한다. */
+.band__none {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-style: italic;
+  line-height: 1.6;
+}
+
+.band__none-note,
+.band__src,
+.band__alt {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.band__why {
+  margin: 6px 0 0;
+  padding: 0 0 0 16px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.band__why li + li {
+  margin-top: 4px;
+}
+
+/* 아직 안 온 상태. 자리를 미리 잡아 두면 나중에 페이지가 밀리지 않는다. */
+.band--wait {
+  min-height: 92px;
+}
+
+/* 옥탑도 지하와 같은 "근거 없는 층"이다(결정 0001 가드 4). */
+.floor--roof .floor__label {
+  color: var(--under);
+}
+
+.floor--roof .floor__fill {
+  background: var(--under);
+}
+
 /* ── 층 펼침 ─────────────────────────────────────────────────────────── */
 
 .detail {
@@ -792,6 +931,14 @@ body {
   font-size: 11.5px;
 }
 
+/* 사실(A·D = 호박)과 추정(C = 차가운 회청)을 색으로 가른다 — 상세계획 §7.4
+   "C·D는 화면에서 시각적으로 구분한다". A와 C가 같은 모양이면 같은 무게로 읽힌다. */
+.grade__badge--est {
+  background: var(--est-chip);
+  border-color: var(--est-line);
+  color: var(--est-ink);
+}
+
 .msg {
   color: var(--muted);
   padding: 14px 2px;
@@ -811,6 +958,19 @@ body {
   .floor__row,
   .detail {
     grid-template-columns: 1fr;
+  }
+
+  .band__hit {
+    grid-template-columns: 1fr;
+  }
+
+  /* 한 칸으로 접히면 "2번째 칸"이 없다 — 그대로 두면 빈 칸이 하나 생긴다. */
+  .band__floor {
+    grid-row: auto;
+  }
+
+  .band__none {
+    grid-column: 1;
   }
 
   .floor__bar {
