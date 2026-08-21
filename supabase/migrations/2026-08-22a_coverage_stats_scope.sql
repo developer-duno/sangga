@@ -4,7 +4,12 @@
 -- 실행법 ⚠️ **대시보드 SQL Editor 로 돌린다.**
 --   여기엔 `create index concurrently` 가 없다(아래 "왜 concurrently 가 아닌가" 참조).
 --   → Supabase 대시보드 → SQL Editor 에 이 파일을 통째로 붙여 실행.
---   → 그 다음 `python scripts/post_load.py --check` 로 공개 노출을 확인한다.
+--   → 그 다음 `python scripts/post_load.py` (플래그 없이 — vacuum(analyze)·요약표 갱신·
+--     공개 노출 점검이 다 들어 있다. `--check` 만 돌리면 가시성 지도를 안 손봐서
+--     Index Only Scan 이 힙을 되짚는 상태가 그대로 남는다).
+--   ⓘ SQL Editor 가 타임아웃을 내면 **그냥 다시 돌리면 된다.** 첫 오류에서 통째로
+--     멈추므로(한 트랜잭션) 아직 아무것도 안 지워졌고, 문장마다 if not exists / or replace /
+--     if exists 라 두 번 돌아도 안전하다.
 --
 -- ─────────────────────────────────────────────────────────────────────
 -- 무엇이 문제였나 (2026-08-22 라이브 실측)
@@ -63,7 +68,13 @@
 --   select * from v_coverage_stats;
 --     → store_cnt 가 277만대에서 63만대로, floor_missing_pct 가 50.3 에서 35.0 으로.
 
--- ── 1) 커버링 인덱스 교체 (뷰보다 먼저 — 새 뷰가 첫 조회부터 인덱스를 타게) ──
+-- ── 1) 새 커버링 인덱스부터 만든다 ─────────────────────────────────────────
+-- ⚠️ **문장 순서가 안전장치다.** create(새 인덱스) → replace(뷰) → drop(옛 인덱스) 순으로
+--    둔다. 어떤 이유로든 중간에서 멈춰도(SQL Editor 타임아웃 등) 남는 상태가 항상 안전하다:
+--      · 1)까지만 돌면  → 인덱스만 하나 더 있는 상태(뷰는 옛 전국 집계 + 옛 인덱스 그대로)
+--      · 2)까지 돌면    → 새 뷰 + 새 인덱스(옛 인덱스는 중복으로 남아 있을 뿐)
+--    반대로 drop 을 먼저 두면 "새 where 절을 쓰는 뷰가 커버링 인덱스 없이 사는 구간"이
+--    생기는데, 그게 바로 이 마이그레이션이 막으려는 그 500 이다.
 create index if not exists idx_ub_snapshot_floor_pnu
   on unit_business (snapshot_ym, floor_no, pnu);
 
@@ -72,8 +83,6 @@ comment on index idx_ub_snapshot_floor_pnu is
   '힙에 안 간다(Index Only Scan). pnu 가 빠지면 최신 스냅샷 277만 행마다 힙 페이지를 '
   '방문해 캐시가 식은 첫 요청이 3초 제한을 넘겨 500 이 된다(2026-08-11f 실측: '
   '버퍼 636,527 → 698, 1,028ms → 131ms). 옛 idx_ub_snapshot_floor 를 대체한다.';
-
-drop index if exists idx_ub_snapshot_floor;
 
 -- ── 2) 뷰를 열린 지역 기준으로 (컬럼 목록 불변 = replace 성립) ───────────────
 create or replace view v_coverage_stats as
@@ -100,7 +109,11 @@ comment on view v_coverage_stats is
   'ℹ️ 린트 0010(security definer view) 의도적 예외 — security_invoker=true로 되돌리면 원본 표(unit_business) 401. '
   '재검토 방아쇠: 공개 배포일 / 지도·반경 검색(§6.4) 착수일';
 
--- 표현식 없는 새 인덱스라도 통계는 새로 떠야 플래너가 고른다.
+-- ── 3) 옛 인덱스는 **맨 마지막에** 지운다 (위 1) 주석의 순서 이유 참조) ──────
+-- 새 인덱스의 앞부분(prefix)이라 남겨 둘 이유가 없다(같은 조회를 두 번 색인하는 셈).
+drop index if exists idx_ub_snapshot_floor;
+
+-- 인덱스를 갈았으니 통계도 새로 떠야 플래너가 새 것을 고른다.
 analyze unit_business;
 
 -- ─────────────────────────────────────────────────────────────────────
