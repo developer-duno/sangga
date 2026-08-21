@@ -50,11 +50,28 @@ CLAUDE.md 검증 규칙: "미래로 과거를 맞히면 성적이 부풀려진�
                               가 이 파일을 읽어 DB 에 넣는다 — 통과 구 목록의 정본은
                               **이 계산의 결과뿐**이고, 손으로 구를 넣고 빼지 않는다.
 
+유형축(L7) 검증 모드 — `--place-axis` (2026-08-19 추가)
+------------------------------------------------------
+1층이 왜 안 맞나(v1 MdAPE 45.2%)에 대한 답을 재는 별도 모드다. 사장님 지적 —
+**"1층 상권은 도로변 상권과 상권 밀집지역이 다르다. 차나 사람이 많이 다니는 곳에 돈이
+흐른다"** — 를 우리가 이미 가진 두 칸으로 근사한다: 도로접면(`parcel.road_contact`)과
+상권 소속(`district` 포함 여부·종류). 둘을 곱한 9칸이 유형(place_type)이고, 새 단계 **L7
+= 같은 시군구 + 같은 유형 + 같은 층대(최소 5건)** 을 L5 뒤·L6 앞에 끼운다.
+
+⚠️ 이 모드는 **새 파일 2개만** 쓴다(`1층-유형축-검증.md`·`1층유형별지표.csv`).
+   `성적표-v1.md`·`통과구.csv` 등 기존 4종은 건드리지 않는다 — 결정 0013 의 통과 구
+   목록은 기본 모드의 계산에서만 나오고, 검토용 실험이 그것을 덮어쓰면 화면에 열리는
+   구가 소리 없이 바뀐다.
+
+⚠️ 이 모드만 **psql**(`SANGGA_DATABASE_URL`)을 쓴다. 상권 소속은 `st_contains` 공간
+   조인이라 PostgREST 로는 읽을 수 없기 때문이다. 그래도 **읽기 전용**이다.
+
 쓰는 법
 -------
     python scripts/backtest_price.py
     python scripts/backtest_price.py --train-until 202506 --test-from 202507
     python scripts/backtest_price.py --out-dir docs/backtest
+    python scripts/backtest_price.py --place-axis            # 유형축(L7) 검증
 
 ⛔ 절대 규칙 2 — 감정평가사 독점 업무를 연상시키는 표현(CLAUDE.md 금지 목록)은 이 파일
    어디에도 쓰지 않는다. 쓰는 말은 "추정·오차율·참고"뿐이다. 이 금지는 테스트
@@ -63,10 +80,14 @@ CLAUDE.md 검증 규칙: "미래로 과거를 맞히면 성적이 부풀려진�
 
 import argparse
 import csv
+import io
 import math
 import os
+import re
 import statistics
+import subprocess
 import sys
+import tempfile
 from collections import Counter, defaultdict
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -86,8 +107,37 @@ TEST_FROM = "202601"
 # 사다리
 LADDER = ("L2", "L4", "L5", "L6")
 ALL_STAGES = ("L2", "L4", "L5", "L6", "BASE")
-MIN_SAMPLES = {"L2": 1, "L4": 3, "L5": 5, "L6": 1, "BASE": 1}
+MIN_SAMPLES = {"L2": 1, "L4": 3, "L5": 5, "L6": 1, "L7": 5, "BASE": 1}
 RADIUS_M = {"L4": 100.0, "L5": 500.0}
+
+# ── "돈이 흐르는 곳" 축 (L7) — `--place-axis` 모드에서만 쓴다 ────────────────
+#
+# 왜 만들었나: 1층은 거리로 좁혀도 잘 안 맞는다(성적표 v1 에서 MdAPE 45.2%). 사장님
+# 지적 — "1층 상권은 도로변 상권과 상권 밀집지역이 다르다. 차나 사람이 많이 다니는
+# 곳에 돈이 흐른다". 그 '흐름'을 우리가 이미 가진 두 칸으로 근사한다:
+#   ① 도로접면(`parcel.road_contact`) — 큰길/중간/골목길
+#   ② 상권 소속(`district` 안에 드는가, 든다면 밀집형인가)
+# 거리로 더 좁히면 1층 표본이 말라 죽는다(같은 층·같은 도로등급 5건 이상이 15%뿐).
+# 그래서 **거리 대신 유형**으로 좁힌다 — 유형 칸마다 수백 건씩 있다.
+LADDER_PLACE = ("L2", "L4", "L5", "L7", "L6")
+ALL_STAGES_PLACE = ("L2", "L4", "L5", "L7", "L6", "BASE")
+
+# 밀집으로 볼 상권 종류. district_type 은 소스가 쓰는 말을 그대로 담고 있다
+# (골목상권/발달상권/전통시장/관광특구 + 소진공 '주요상권').
+DENSE_DISTRICT_TYPES = ("발달상권", "관광특구", "전통시장")
+ROAD_GRADES = ("큰길", "중간", "골목길")
+DISTRICT_CLASSES = ("밀집", "일반상권", "상권밖")
+PLACE_SEP = "·"
+PLACE_TYPES = tuple("{}{}{}".format(g, PLACE_SEP, c)
+                    for g in ROAD_GRADES for c in DISTRICT_CLASSES)
+
+# 유형을 못 매긴 거래(도로접면이 없거나 맹지, 필지가 parcel 에 없음)를 표본 부족과
+# 구분해서 센다 — 좌표 없음(coords_missing)과 같은 이유다.
+ST_PLACE_MISSING = "place_missing"
+
+# PNU 는 숫자 19자리다. SQL 문자열에 넣기 전에 이 모양이 아닌 값은 통째로 버린다.
+PNU_RE = re.compile(r"^\d{19}$")
+PLACE_SQL_BATCH = 2000
 
 # 채점
 HIT_BAND = 0.20          # ±20% 적중률
@@ -147,6 +197,66 @@ def floor_band(floor_no):
     if floor_no == 99:
         return "옥탑"
     return "3층+"
+
+
+def road_grade(road_contact):
+    """도로접면 문자열 → 큰길 / 중간 / 골목길 / None(모름).
+
+    `parcel.road_contact` 의 실제 값(2026-08-19 라이브 실측, 채점 대상 필지 기준):
+      광대로한면·광대소각·광대세각              → **큰길**
+      중로한면·중로각지·소로한면·소로각지        → **중간**
+      세로한면(가)·세로한면(불)·세로각지(가/불)  → **골목길**
+      맹지·지정되지않음·빈값                     → **None**
+
+    맹지를 '골목길'로 밀어 넣지 않는다 — 차도 사람도 안 다니는 자리라 성격이 다르고,
+    억지로 한 칸에 넣으면 그 칸의 성적이 오염된다. 모르는 것은 모른다고 둔다.
+    """
+    if not road_contact:
+        return None
+    s = road_contact.strip()
+    if s.startswith("광대"):
+        return "큰길"
+    if s.startswith("중로") or s.startswith("소로"):
+        return "중간"
+    if s.startswith("세로"):
+        return "골목길"
+    return None
+
+
+def district_class(district_type):
+    """상권 종류 → 밀집 / 일반상권 / 상권밖.
+
+    상권에 **안 든 것**(district_type 이 없음)만 '상권밖'이다. 처음 보는 종류 이름은
+    '일반상권'으로 둔다 — 어쨌든 어느 상권 경계 안에 있다는 사실은 참이기 때문이다
+    (소스가 새 종류를 추가해도 '상권밖'으로 잘못 떨어지지 않게).
+    """
+    if not district_type:
+        return "상권밖"
+    if district_type in DENSE_DISTRICT_TYPES:
+        return "밀집"
+    return "일반상권"
+
+
+def pick_district_type(district_types):
+    """한 필지가 여러 상권에 겹칠 때 어느 종류로 볼지 하나를 고른다.
+
+    겹침은 실재한다(관광특구가 발달상권을 덮는 조합 — 결정 0011 §겹침 규칙).
+    밀집형이 하나라도 있으면 밀집형을 고른다(더 강한 신호가 이긴다). 밀집형이 없으면
+    이름 순으로 하나 — 어느 쪽을 골라도 '일반상권' 한 칸으로 들어가므로 결과가 같다.
+    """
+    dense = [t for t in district_types if t in DENSE_DISTRICT_TYPES]
+    if dense:
+        return sorted(dense, key=DENSE_DISTRICT_TYPES.index)[0]
+    others = sorted(t for t in district_types if t)
+    return others[0] if others else None
+
+
+def place_type(road_contact, district_type):
+    """두 축을 합친 9칸 중 하나 → '큰길·밀집' 등. 도로등급을 모르면 None."""
+    grade = road_grade(road_contact)
+    if grade is None:
+        return None
+    return "{}{}{}".format(grade, PLACE_SEP, district_class(district_type))
 
 
 def haversine_m(lat1, lng1, lat2, lng2):
@@ -269,6 +379,7 @@ def build_train_index(train_rows):
         "pnu_floor": defaultdict(list),
         "dong_band": defaultdict(list),
         "sigungu_band": defaultdict(list),
+        "sigungu_place_band": defaultdict(list),
         "floor_grid": defaultdict(lambda: defaultdict(list)),
     }
     for row in train_rows:
@@ -279,6 +390,10 @@ def build_train_index(train_rows):
         index["pnu_floor"][(pnu, floor_no)].append(price)
         index["dong_band"][(pnu[:10], band)].append(price)
         index["sigungu_band"][(row.get("sigungu_code"), band)].append(price)
+        # 유형을 모르는 학습 거래는 L7 후보에서만 빠진다(나머지 색인에는 그대로 있다).
+        if row.get("place_type"):
+            index["sigungu_place_band"][
+                (row.get("sigungu_code"), row["place_type"], band)].append(price)
         lat, lng = row.get("lat"), row.get("lng")
         if lat is not None and lng is not None:
             index["floor_grid"][floor_no][grid_key(lat, lng)].append((lat, lng, price))
@@ -314,6 +429,11 @@ def coords_missing_result():
     return {"status": ST_COORDS_MISSING, "estimate": None, "n": 0}
 
 
+def place_missing_result():
+    """L7 인데 이 거래의 유형을 못 매길 때(도로접면 없음·맹지·필지 자료 없음)."""
+    return {"status": ST_PLACE_MISSING, "estimate": None, "n": 0}
+
+
 def stage_results_for(row, index):
     """검증 거래 한 건에 대해 다섯 단계를 각각 독립 계산한다."""
     pnu = row["pnu"]
@@ -327,6 +447,14 @@ def stage_results_for(row, index):
         "BASE": estimate_from(
             index["sigungu_band"].get((row.get("sigungu_code"), band), []), MIN_SAMPLES["BASE"]),
     }
+
+    # L7 — 같은 구 + 같은 유형 + 같은 층대. 유형 자료를 안 붙이고 돌리면(기본 모드)
+    # 이 칸은 항상 place_missing 이라 기존 사다리(L2→L4→L5→L6)에 아무 영향이 없다.
+    pt = row.get("place_type")
+    results["L7"] = (
+        estimate_from(index["sigungu_place_band"].get((row.get("sigungu_code"), pt, band), []),
+                      MIN_SAMPLES["L7"])
+        if pt else place_missing_result())
 
     if lat is None or lng is None:
         results["L4"] = coords_missing_result()
@@ -399,6 +527,16 @@ def pick_ladder_ape(row):
 def pick_base_ape(row):
     """대조군(구 평균)의 오차. 위와 같은 이유로 여기 한 곳에만 적는다."""
     return row["stage_ape"].get("BASE")
+
+
+def pick_place_ape(row):
+    """새 사다리(L7 를 낀 것)의 오차."""
+    return row.get("place_ape")
+
+
+def pick_l7_ape(row):
+    """L7 단독 오차 — 사다리와 상관없이 이 단계 하나만 봤을 때."""
+    return row["stage_ape"].get("L7")
 
 
 def gate_pass(ladder_mdape, base_mdape, max_mdape=GATE_MAX_MDAPE):
@@ -507,6 +645,89 @@ def fetch_parcel_coords(base_url, headers, pnus):
     return coords
 
 
+def place_context_sql(pnus):
+    """PNU 목록 → 도로접면·소속 상권 종류를 한 번에 읽는 SQL (읽기 전용).
+
+    ⚠️ PostgREST 로는 이걸 못 한다 — 상권 소속은 `st_contains(d.geom, p.geom)` 공간
+       조인이고, REST 에는 그 함수를 태울 자리가 없다. 그래서 이 한 가지만 psql 로 읽는다
+       (새 함수를 DB 에 만드는 것은 쓰기라 금지).
+
+    ⚠️ `p.pnu = want.pnu::char(19)` 로 **문자 리터럴 쪽을 캐스트**한다. 반대로 두면
+       char(19) 인 컬럼이 text 로 캐스트돼 기본키 인덱스가 죽는다(메모리:
+       char19-param-index-trap — 459.8ms ↔ 0.060ms).
+
+    ⚠️ `left join district` 다 — 상권에 안 든 필지도 '상권밖'이라는 **정보**라서
+       버리면 안 된다(그 칸이 표본의 절반이다).
+    """
+    values = ",".join("('{}')".format(p) for p in pnus)
+    return (
+        "with want(pnu) as (values {})\n"
+        "select p.pnu,\n"
+        "       coalesce(p.road_contact, ''),\n"
+        "       coalesce(string_agg(distinct d.district_type, '|'), '')\n"
+        "  from want\n"
+        "  join parcel p on p.pnu = want.pnu::char(19)\n"
+        "  left join district d on st_contains(d.geom, p.geom)\n"
+        " group by p.pnu, p.road_contact\n"
+        " order by p.pnu;\n".format(values))
+
+
+def parse_place_rows(rows):
+    """psql 출력 줄 → {pnu: {"road_contact":…, "district_types":[…]}}."""
+    out = {}
+    for cells in rows:
+        if len(cells) < 3:
+            continue
+        pnu = cells[0].strip()
+        road = cells[1].strip()
+        types = [t for t in cells[2].split("|") if t.strip()]
+        out[pnu] = {"road_contact": road or None, "district_types": sorted(types)}
+    return out
+
+
+def _psql_query(sql):
+    """SELECT 하나를 psql 로 돌려 [[칸,…]] 로 돌려준다. **읽기 전용**.
+
+    한글 SQL 을 `-c` 로 넘기면 Windows 콘솔 코드페이지로 인코딩돼 죽는다(2026-08-11
+    실측) — `scripts/dbx.py` 와 같은 처방으로 UTF-8 임시 파일 경유다.
+    """
+    import dbx  # 같은 폴더의 기존 도구. 접속 문자열 해석·비밀번호 취급을 재사용한다.
+
+    args, password = dbx.parts()
+    env = dict(os.environ)
+    env["PGPASSWORD"] = password           # ⚠️ 명령줄이 아니라 환경변수로
+    env["PGCLIENTENCODING"] = "UTF8"
+    fd, path = tempfile.mkstemp(suffix=".sql", prefix="backtest_place_")
+    os.close(fd)
+    try:
+        with io.open(path, "w", encoding="utf-8") as f:
+            f.write(sql)
+        cmd = ["psql"] + args + ["-X", "-q", "-A", "-t", "-F", "\t",
+                                 "-v", "ON_ERROR_STOP=1", "-f", path]
+        proc = subprocess.run(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if proc.returncode != 0:
+            raise RuntimeError("psql 조회 실패: {}".format(
+                proc.stderr.decode("utf-8", "replace")[:500]))
+        out = proc.stdout.decode("utf-8", "replace")
+    finally:
+        os.unlink(path)
+    return [line.split("\t") for line in out.splitlines() if line.strip()]
+
+
+def fetch_place_context(pnus):
+    """채점에 쓰이는 필지들의 도로접면·상권 소속을 읽는다 → {pnu: {...}}."""
+    clean = sorted({p for p in pnus if p and PNU_RE.match(p)})
+    skipped = len(set(p for p in pnus if p)) - len(clean)
+    if skipped:
+        log("      ⚠️ PNU 모양이 19자리 숫자가 아닌 것 {:,}개는 조회에서 뺐다".format(skipped))
+    context = {}
+    batches = chunked(clean, PLACE_SQL_BATCH)
+    for i, batch in enumerate(batches, 1):
+        context.update(parse_place_rows(_psql_query(place_context_sql(batch))))
+        log("      배치 {}/{} … 필지 {:,}개".format(i, len(batches), len(context)))
+    return context
+
+
 def fetch_sigungu_names(base_url, headers, codes):
     """구 이름표 — 코드 하나에 한 번씩 **단발 조회**한다(읽기 실패해도 코드로 계속 간다).
 
@@ -533,11 +754,20 @@ def fetch_sigungu_names(base_url, headers, codes):
 # ── 실행 본체 ────────────────────────────────────────────────────────────────
 
 
-def normalize_rows(raw_rows, coords):
-    """REST 응답을 채점이 쓰는 모양으로 — 숫자 변환 + 좌표 부착."""
+def normalize_rows(raw_rows, coords, place_context=None):
+    """REST 응답을 채점이 쓰는 모양으로 — 숫자 변환 + 좌표(+유형) 부착.
+
+    `place_context` 를 안 주면 유형 칸이 전부 None 이라 L7 은 성립하지 않는다
+    (기본 모드의 성적이 이 변경 때문에 달라지지 않게 하는 장치다).
+    """
+    place_context = place_context or {}
     rows = []
     for r in raw_rows:
         pnu = r.get("pnu")
+        ctx = place_context.get(pnu) or {}
+        road_contact = ctx.get("road_contact")
+        types = ctx.get("district_types") or []
+        dtype = pick_district_type(types)
         rows.append({
             "tx_id": r.get("tx_id"),
             "pnu": pnu,
@@ -547,6 +777,12 @@ def normalize_rows(raw_rows, coords):
             "contract_ym": r.get("contract_ym"),
             "lat": coords.get(pnu, (None, None))[0],
             "lng": coords.get(pnu, (None, None))[1],
+            "road_contact": road_contact,
+            "district_types": types,
+            "district_type": dtype,
+            "road_grade": road_grade(road_contact),
+            "district_class": district_class(dtype) if pnu in place_context else None,
+            "place_type": place_type(road_contact, dtype),
         })
     return rows
 
@@ -569,6 +805,22 @@ def score_test_rows(test_rows, index):
         record["ladder_n"] = n
         record["ladder_ape"] = ape(estimate, actual) if code != NO_ESTIMATE else None
         scored.append(record)
+    return scored
+
+
+def add_place_ladder(scored):
+    """이미 채점된 거래에 **새 사다리**(L2→L4→L5→L7→L6) 결과를 덧붙인다.
+
+    단계별 계산은 건드리지 않는다 — 같은 `stages` 를 순서만 달리 걸어가므로, 두 사다리
+    비교가 "같은 재료를 어떻게 고르느냐"의 차이만 남는다.
+    """
+    for record in scored:
+        code, estimate, n = walk_ladder(record["stages"], LADDER_PLACE)
+        record["place_stage"] = code
+        record["place_estimate"] = estimate
+        record["place_n"] = n
+        record["place_ape"] = (ape(estimate, record["unit_price"])
+                               if code != NO_ESTIMATE else None)
     return scored
 
 
@@ -1062,6 +1314,515 @@ def _paired_row(name, p):
         fmt_metric(p["n_pair"], p["a_hit20"]), fmt_metric(p["n_pair"], p["b_hit20"]))
 
 
+# ── 유형축(L7) 검증 — 별도 산출물 ────────────────────────────────────────────
+#
+# ⚠️ 이 아래 코드는 `성적표-v1.md`·기존 CSV 4종을 **쓰지 않는다**. 결정 0013 의 통과 구
+#    목록은 그 계산에서만 나오므로, 검토용 실험이 그 파일을 덮어쓰면 화면에 열리는 구가
+#    조용히 바뀔 수 있다. 그래서 파일 이름도 경로도 겹치지 않게 새로 만든다.
+
+PLACE_BANDS = ("1층", "2층", "3층+")
+PLACE_NONE_LABEL = "(유형 없음)"
+
+
+def place_key(row):
+    """검증 거래의 유형 칸 이름(못 매긴 것은 한 칸으로 모은다)."""
+    return row.get("place_type") or PLACE_NONE_LABEL
+
+
+def place_cell(rows):
+    """한 칸(층대 × 유형)의 모든 지표를 한 번에. 표·CSV 가 같은 계산을 보게 묶어 둔다."""
+    old = cell_metrics(rows, pick_ladder_ape)
+    new = cell_metrics(rows, pick_place_ape)
+    l7 = cell_metrics(rows, pick_l7_ape)
+    base = cell_metrics(rows, pick_base_ape)
+    return {
+        "n_total": len(rows),
+        "old": old,
+        "new": new,
+        "l7": l7,
+        "base": base,
+        "pair_old": paired_metrics(rows, pick_place_ape, pick_ladder_ape),
+        "pair_base": paired_metrics(rows, pick_place_ape, pick_base_ape),
+    }
+
+
+def place_rows_for(scored, band=None, key=None):
+    """층대·유형으로 검증 거래를 고른다(둘 다 None 이면 전부)."""
+    out = scored
+    if band is not None:
+        out = [r for r in out if floor_band(r["floor_no"]) == band]
+    if key is not None:
+        out = [r for r in out if place_key(r) == key]
+    return out
+
+
+def place_context_stats(rows):
+    """유형을 못 매긴 이유를 갈라 센다 — '얼마나 못 썼나'가 아니라 '왜 못 썼나'."""
+    no_parcel = sum(1 for r in rows if not r.get("district_types") and r.get("road_contact") is None
+                    and r.get("district_class") is None)
+    no_road = sum(1 for r in rows
+                  if r.get("district_class") is not None and r.get("road_grade") is None)
+    return {
+        "n": len(rows),
+        "typed": sum(1 for r in rows if r.get("place_type")),
+        "no_parcel": no_parcel,
+        "no_road": no_road,
+    }
+
+
+PLACE_CSV_HEADER = [
+    "층대", "유형", "도로등급", "상권등급", "검증거래수",
+    "L7성립수", "L7커버리지", "L7_MdAPE", "L7_적중률20",
+    "새사다리성립수", "새사다리커버리지", "새사다리_MdAPE", "새사다리_적중률20",
+    "기존사다리성립수", "기존사다리커버리지", "기존사다리_MdAPE", "기존사다리_적중률20",
+    "짝_새vs기존_거래수", "짝_새_MdAPE", "짝_기존_MdAPE",
+    "짝_새vsBASE_거래수", "짝_새_MdAPE2", "짝_BASE_MdAPE",
+]
+
+
+def place_csv_row(band_label, key, cell):
+    # 9칸만 두 축으로 쪼갠다. '합계'·'(유형 없음)' 은 축 칸을 비워 둔다 —
+    # 거기에 이름을 그대로 흘리면 엑셀에서 도로등급으로 필터할 때 섞여 들어온다.
+    grade, klass = key.split(PLACE_SEP) if key in PLACE_TYPES else ("", "")
+    c = cell
+    return [
+        band_label, key, grade, klass, c["n_total"],
+        c["l7"]["n_est"], _csv_ratio(c["l7"]["coverage"]),
+        _csv_ratio(c["l7"]["mdape"]), _csv_ratio(c["l7"]["hit20"]),
+        c["new"]["n_est"], _csv_ratio(c["new"]["coverage"]),
+        _csv_ratio(c["new"]["mdape"]), _csv_ratio(c["new"]["hit20"]),
+        c["old"]["n_est"], _csv_ratio(c["old"]["coverage"]),
+        _csv_ratio(c["old"]["mdape"]), _csv_ratio(c["old"]["hit20"]),
+        c["pair_old"]["n_pair"], _csv_ratio(c["pair_old"]["a_mdape"]),
+        _csv_ratio(c["pair_old"]["b_mdape"]),
+        c["pair_base"]["n_pair"], _csv_ratio(c["pair_base"]["a_mdape"]),
+        _csv_ratio(c["pair_base"]["b_mdape"]),
+    ]
+
+
+def write_place_csv(path, scored):
+    """층대 × 유형 지표 전부. md 가 감춘 얇은 칸도 여기에는 그대로 있다."""
+    keys = list(PLACE_TYPES) + [PLACE_NONE_LABEL]
+    rows_out = []
+    for band_label, band in [("전체", None)] + [(b, b) for b in PLACE_BANDS]:
+        bucket = place_rows_for(scored, band=band)
+        rows_out.append(place_csv_row(band_label, "합계", place_cell(bucket)))
+        for key in keys:
+            cell = place_cell([r for r in bucket if place_key(r) == key])
+            if cell["n_total"]:
+                rows_out.append(place_csv_row(band_label, key, cell))
+    _write_csv(path, PLACE_CSV_HEADER, rows_out)
+    return rows_out
+
+
+def _place_compare_row(label, cell):
+    c = cell
+    return "| {} | {:,} | {} | {} | {} | {} | {} | {} |".format(
+        label, c["n_total"],
+        fmt_pct(c["old"]["coverage"]), fmt_metric(c["old"]["n_est"], c["old"]["mdape"]),
+        fmt_metric(c["old"]["n_est"], c["old"]["hit20"]),
+        fmt_pct(c["new"]["coverage"]), fmt_metric(c["new"]["n_est"], c["new"]["mdape"]),
+        fmt_metric(c["new"]["n_est"], c["new"]["hit20"]))
+
+
+PLACE_COMPARE_HEADER = (
+    "| 구분 | 검증 거래 | 기존 커버리지 | 기존 MdAPE | 기존 ±20% | "
+    "새 커버리지 | 새 MdAPE | 새 ±20% |\n|---|---|---|---|---|---|---|---|")
+
+
+def build_place_markdown(ctx):
+    """유형축 검증 문서를 문자열로 만든다(파일 쓰기는 호출부)."""
+    scored = ctx["scored"]
+    lines = []
+    add = lines.append
+
+    all_cell = place_cell(scored)
+    f1 = place_cell(place_rows_for(scored, band="1층"))
+    f2 = place_cell(place_rows_for(scored, band="2층"))
+    f3 = place_cell(place_rows_for(scored, band="3층+"))
+    stats = ctx["stats"]
+
+    def pct(x):
+        return round((x or 0.0) * 100)
+
+    add("# 1층 유형축(L7) 검증 — \"돈이 흐르는 곳\"으로 좁히면 나아지나")
+    add("")
+    add("> 생성: {} (KST) · 스크립트: `python scripts/backtest_price.py --place-axis` · "
+        "DB 읽기 전용".format(ctx["generated_at"]))
+    add("> **기존 성적표(`성적표-v1.md`)와 통과 구 목록(`통과구.csv`)은 이 실행이 "
+        "건드리지 않는다.** 결정 0013 의 게이트는 그 계산에서만 나온다.")
+    add("> 이 문서도 **사실만 적는다.** 1층을 열지 말지는 사장님 결재 사항이다.")
+    add("")
+
+    # 0. 쉬운 설명
+    add("## 0. 쉬운 설명 (여기까지만 읽으셔도 됩니다)")
+    add("")
+    add("**왜 다시 재나.** 지난 성적표에서 **1층이 제일 안 맞았습니다**(오차 ±{}%). "
+        "그때 이유를 \"코너냐 골목이냐가 자료에 없어서\"라고 적었는데, 그게 틀렸습니다. "
+        "도로에 얼마나 접했는지(`도로접면`)는 **화면에 나오는 필지의 거의 전부에 이미 "
+        "들어 있고**, 상권 경계 안인지도 압니다.".format(pct(f1["old"]["mdape"])))
+    add("")
+    add("**무엇을 바꿨나.** 값을 어림할 때 \"몇 미터 안\"으로만 찾던 것을, 1층 같은 자리가 "
+        "부족하면 **같은 구에서 \"성격이 같은 자리\"**를 찾아 쓰게 했습니다. 성격은 두 가지로 봅니다:")
+    add("")
+    add("1. **길** — 큰길가냐(광대로), 보통 길이냐(중로·소로), 골목이냐(세로)")
+    add("2. **상권** — 사람이 몰리는 상권 안이냐(발달상권·관광특구·전통시장), 그냥 상권이냐, "
+        "상권 밖이냐")
+    add("")
+    add("둘을 곱하면 9칸이 나옵니다(예: \"큰길·밀집\"). 같은 구·같은 층대·같은 칸의 거래 "
+        "**5건 이상**이 모이면 그 중간값을 씁니다.")
+    add("")
+    add("**결과 — 세 줄.**")
+    add("")
+    add("- **1층 오차: ±{}% → ±{}%.** {}"
+        .format(pct(f1["old"]["mdape"]), pct(f1["new"]["mdape"]),
+                "좋아졌습니다." if (f1["new"]["mdape"] or 9) < (f1["old"]["mdape"] or 0)
+                else "나아지지 않았습니다."))
+    add("- **1층에서 값이 나오는 비율(커버리지): {} → {}.**"
+        .format(fmt_pct(f1["old"]["coverage"]), fmt_pct(f1["new"]["coverage"])))
+    worse = [band for band, cell in (("2층", f2), ("3층+", f3))
+             if (cell["pair_old"]["a_mdape"] or 0) > (cell["pair_old"]["b_mdape"] or 0)]
+    add("- **2층 {} → {} · 3층+ {} → {}** — 이미 잘 맞던 층은 {}."
+        .format(fmt_metric(f2["old"]["n_est"], f2["old"]["mdape"]),
+                fmt_metric(f2["new"]["n_est"], f2["new"]["mdape"]),
+                fmt_metric(f3["old"]["n_est"], f3["old"]["mdape"]),
+                fmt_metric(f3["new"]["n_est"], f3["new"]["mdape"]),
+                "{} 쪽이 오히려 조금 나빠졌습니다(같은 거래로 견줬을 때)".format(
+                    "·".join(worse)) if worse else "거의 그대로입니다"))
+    add("")
+    add("**한 줄 요약.** {}"
+        .format(ctx["one_line"]))
+    add("")
+
+    # 1. 정의
+    add("## 1. 새로 넣은 것 — 유형 축과 L7")
+    add("")
+    add("### 1-1. 두 축의 정의")
+    add("")
+    add("| 축 | 자료 | 값 |")
+    add("|---|---|---|")
+    add("| 도로등급 | `parcel.road_contact` | **큰길**=광대로한면·광대소각·광대세각 / "
+        "**중간**=중로한면·중로각지·소로한면·소로각지 / **골목길**=세로한면(가·불)·세로각지(가·불) / "
+        "**모름**=맹지·지정되지않음·빈값 |")
+    add("| 상권등급 | `district` 안에 드는가(`st_contains`) | **밀집**=발달상권·관광특구·전통시장 / "
+        "**일반상권**=그 밖의 상권(골목상권·주요상권) / **상권밖**=어느 경계에도 안 듦 |")
+    add("")
+    add("- 맹지를 골목길에 넣지 않는다 — 차도 사람도 안 다니는 자리라 성격이 다르다. "
+        "모르는 것은 모른다고 두고 L7 을 안 쓴다(`place_missing`).")
+    add("- 한 필지가 여러 상권에 겹치면(관광특구가 발달상권을 덮는 조합이 실재한다) "
+        "**밀집 쪽을 고른다** — 더 강한 신호가 이긴다.")
+    add("- \"상권밖\"은 결측이 아니라 **정보**다. 검증 거래의 절반 가까이가 이 칸이다.")
+    add("")
+    add("### 1-2. L7 정의와 사다리에서의 자리")
+    add("")
+    add("| 코드 | 후보 조건 | 최소 표본 |")
+    add("|---|---|---|")
+    add("| **L7** | **같은 시군구 + 같은 유형(9칸 중 하나) + 같은 층대** | **5** |")
+    add("")
+    add("- 기존 사다리: L2 → L4 → L5 → L6")
+    add("- **새 사다리: L2 → L4 → L5 → L7 → L6** (가까운 근거가 먼저, 동네 평균보다는 앞)")
+    add("- 즉 새 사다리는 \"반경 500m 안에 같은 층 5건이 없어서 **동네 평균으로 내려가던 거래**\"만 "
+        "바꾼다. 그 앞 단계가 성립한 거래는 기존과 값이 같다.")
+    add("")
+    add("### 1-3. 왜 거리 대신 유형인가")
+    add("")
+    add("1층 200표본 실측(2026-08-19): 지금 방식(500m·같은 층)은 후보가 평균 6건이고 5건 이상 "
+        "확보가 44%다. 여기에 **도로등급까지 맞추면** 평균 2건·5건 이상 **15%**로 떨어진다. "
+        "거리로 더 좁히면 1층 표본이 말라 죽는다. 그래서 거리를 풀고(구 단위) 유형으로 좁혔다 — "
+        "유형 칸마다 수백 건씩 있다.")
+    add("")
+
+    # 2. 커버리지
+    add("## 2. 유형 자료가 얼마나 붙었나 (검증 거래 {:,}건)".format(stats["n"]))
+    add("")
+    add("| 구분 | 건수 | 비중 |")
+    add("|---|---|---|")
+    add("| 유형을 매긴 거래 | {:,} | {} |".format(
+        stats["typed"], fmt_pct(stats["typed"] / stats["n"] if stats["n"] else None)))
+    add("| 필지 자료 자체가 없음(`parcel` 미매칭) | {:,} | {} |".format(
+        stats["no_parcel"], fmt_pct(stats["no_parcel"] / stats["n"] if stats["n"] else None)))
+    add("| 필지는 있는데 도로접면이 없음·맹지 | {:,} | {} |".format(
+        stats["no_road"], fmt_pct(stats["no_road"] / stats["n"] if stats["n"] else None)))
+    add("")
+    add("**검증 거래의 유형 분포**")
+    add("")
+    add("| 유형 | 전체 | 1층 | 2층 | 3층+ |")
+    add("|---|---|---|---|---|")
+    for key in list(PLACE_TYPES) + [PLACE_NONE_LABEL]:
+        counts = [len(place_rows_for(scored, band=b, key=key)) for b in (None,) + PLACE_BANDS]
+        if counts[0]:
+            add("| {} | {:,} | {:,} | {:,} | {:,} |".format(key, *counts))
+    add("")
+
+    # 3. 층대별 비교
+    add("## 3. 층대별 — 기존 사다리 vs 새 사다리")
+    add("")
+    add(PLACE_COMPARE_HEADER)
+    add(_place_compare_row("전체", all_cell))
+    for band in PLACE_BANDS:
+        add(_place_compare_row(band, place_cell(place_rows_for(scored, band=band))))
+    add("")
+    add("**짝지은 비교** — 두 사다리가 **모두 값을 낸 거래만** 남겨 같은 집합에서 겨룬다.")
+    add("")
+    add("| 구분 | 짝지은 거래 | 새 MdAPE | 기존 MdAPE | 새 ±20% | 기존 ±20% |")
+    add("|---|---|---|---|---|---|")
+    add(_paired_row("전체", all_cell["pair_old"]))
+    for band in PLACE_BANDS:
+        add(_paired_row(band, place_cell(place_rows_for(scored, band=band))["pair_old"]))
+    add("")
+
+    # 4. 1층 집중
+    add("## 4. 1층만 따로")
+    add("")
+    add("### 4-1. 단계별 (1층 검증 거래 {:,}건)".format(f1["n_total"]))
+    add("")
+    add(METRIC_HEADER)
+    band_rows = place_rows_for(scored, band="1층")
+    for stage in ALL_STAGES_PLACE:
+        add(_metric_row(stage, cell_metrics(band_rows, lambda r, s=stage: r["stage_ape"].get(s))))
+    add(_metric_row("**기존 사다리**", f1["old"]))
+    add(_metric_row("**새 사다리(L7 포함)**", f1["new"]))
+    add("")
+    add("### 4-2. 채택 단계 분포 (1층)")
+    add("")
+    add("| 채택 단계 | 기존 사다리 | 새 사다리 |")
+    add("|---|---|---|")
+    old_dist = Counter(r["ladder_stage"] for r in band_rows)
+    new_dist = Counter(r["place_stage"] for r in band_rows)
+    for code in list(LADDER_PLACE) + [NO_ESTIMATE]:
+        if old_dist.get(code) or new_dist.get(code):
+            add("| {} | {:,} | {:,} |".format(code, old_dist.get(code, 0), new_dist.get(code, 0)))
+    add("")
+    add("L7 이 실제로 가로챈 거래 수 = 새 사다리의 L7 칸 **{:,}건**. 그만큼이 기존에는 "
+        "L6(동네 평균)이나 `no_estimate` 였다.".format(new_dist.get("L7", 0)))
+    add("")
+
+    # 5. 유형 칸별
+    add("## 5. 유형 9칸별 1층 성적")
+    add("")
+    add("표본이 {}건 미만인 칸은 수치 대신 `표본 부족(n)` 으로 적는다(CSV 에는 그대로 있다)."
+        .format(SUPPRESS_BELOW))
+    add("")
+    add("| 유형 | 1층 검증 거래 | L7 성립 | L7 MdAPE | 새 사다리 MdAPE | 기존 사다리 MdAPE | "
+        "짝(새 vs BASE) | 새 MdAPE | BASE MdAPE |")
+    add("|---|---|---|---|---|---|---|---|---|")
+    for key in list(PLACE_TYPES) + [PLACE_NONE_LABEL]:
+        cell = place_cell(place_rows_for(scored, band="1층", key=key))
+        if not cell["n_total"]:
+            continue
+        add("| {} | {:,} | {:,} | {} | {} | {} | {:,} | {} | {} |".format(
+            key, cell["n_total"], cell["l7"]["n_est"],
+            fmt_metric(cell["l7"]["n_est"], cell["l7"]["mdape"]),
+            fmt_metric(cell["new"]["n_est"], cell["new"]["mdape"]),
+            fmt_metric(cell["old"]["n_est"], cell["old"]["mdape"]),
+            cell["pair_base"]["n_pair"],
+            fmt_metric(cell["pair_base"]["n_pair"], cell["pair_base"]["a_mdape"]),
+            fmt_metric(cell["pair_base"]["n_pair"], cell["pair_base"]["b_mdape"])))
+    add("")
+    add("**결정 0013 의 기준선을 이 칸들에 그대로 대 보면** (① MdAPE ≤ {:.0f}% ② 같은 집합에서 "
+        "BASE(구 평균)를 이길 것):".format(GATE_MAX_MDAPE * 100))
+    add("")
+    add("| 유형 | 짝지은 거래 | 새 사다리 MdAPE | BASE MdAPE | 기준선 |")
+    add("|---|---|---|---|---|")
+    for key in list(PLACE_TYPES) + [PLACE_NONE_LABEL]:
+        cell = place_cell(place_rows_for(scored, band="1층", key=key))
+        p = cell["pair_base"]
+        if not cell["n_total"]:
+            continue
+        ok = gate_pass(p["a_mdape"], p["b_mdape"])
+        verdict = ("판정 불가(표본 {})".format(p["n_pair"]) if p["n_pair"] < SUPPRESS_BELOW
+                   else ("통과" if ok else "미달"))
+        add("| {} | {:,} | {} | {} | {} |".format(
+            key, p["n_pair"], fmt_metric(p["n_pair"], p["a_mdape"]),
+            fmt_metric(p["n_pair"], p["b_mdape"]), verdict))
+    add("")
+    add("⚠️ 이 표는 **기준을 대 본 계산 결과**일 뿐 결재가 아니다. 결정 0013 은 구 단위 게이트를 "
+        "정했고, 유형 단위로 열지 말지는 정해 둔 바가 없다.")
+    add("")
+
+    # 6. 판단 재료
+    add("## 6. 판단 재료 (사실만)")
+    add("")
+    for line in ctx["facts"]:
+        add("- {}".format(line))
+    add("")
+    add("## 7. 이 검증의 한계")
+    add("")
+    add("- **집합(구분상가) 매매에 한정**된 성적이다(일반 거래는 지번이 마스킹돼 PNU 가 없다).")
+    add("- **지하·옥탑은 아무 말도 하지 않는다** — 2017년부터 실거래 원본에 지하층 표기가 오지 않는다.")
+    add("- 유형은 **필지 단위**다. 같은 필지 안에서 코너 점포와 안쪽 점포가 갈리는 차이는 "
+        "여전히 잡지 못한다(도로접면은 필지가 어느 길에 접했나이지, 점포가 그 길에 붙었나가 아니다).")
+    add("- `district` 경계는 **서울 1,650 + 대전 37**뿐이다. 대전은 소진공 주요상권만이라 "
+        "'상권밖'이 실제보다 넓게 잡힐 수 있다.")
+    add("- 검증 구간이 {}~ 로 짧아 구·유형으로 쪼개면 칸이 금세 얇아진다. 얇은 칸의 수치는 "
+        "우연이다.".format(ctx["test_from"]))
+    add("")
+    add("---")
+    add("")
+    add("생성 파일: `1층유형별지표.csv` (층대 × 유형 전 지표 — 감춘 칸까지 그대로).")
+    add("")
+    return "\n".join(lines)
+
+
+def build_place_facts(scored):
+    """§6 판단 재료 — 문장을 손으로 베끼지 않고 같은 계산에서 뽑는다."""
+    facts = []
+    all_cell = place_cell(scored)
+    f1 = place_cell(place_rows_for(scored, band="1층"))
+    facts.append("검증 거래 **{:,}건** 중 1층 **{:,}건**.".format(
+        len(scored), f1["n_total"]))
+    facts.append("1층 MdAPE: 기존 사다리 **{}** → 새 사다리 **{}** "
+                 "(짝지은 {:,}건에서는 기존 {} vs 새 {}).".format(
+                     fmt_metric(f1["old"]["n_est"], f1["old"]["mdape"]),
+                     fmt_metric(f1["new"]["n_est"], f1["new"]["mdape"]),
+                     f1["pair_old"]["n_pair"],
+                     fmt_metric(f1["pair_old"]["n_pair"], f1["pair_old"]["b_mdape"]),
+                     fmt_metric(f1["pair_old"]["n_pair"], f1["pair_old"]["a_mdape"])))
+    facts.append("1층 커버리지: 기존 {} → 새 {}.".format(
+        fmt_pct(f1["old"]["coverage"]), fmt_pct(f1["new"]["coverage"])))
+    facts.append("1층에서 L7 단독 성적: 성립 {:,}건 · MdAPE {} · ±20% {}.".format(
+        f1["l7"]["n_est"], fmt_metric(f1["l7"]["n_est"], f1["l7"]["mdape"]),
+        fmt_metric(f1["l7"]["n_est"], f1["l7"]["hit20"])))
+    band1 = place_rows_for(scored, band="1층")
+    l5_1 = cell_metrics(band1, lambda r: r["stage_ape"].get("L5"))
+    facts.append("1층에서 **L7 단독이 L5(반경 500m·동일층) 단독과 비슷한 정확도인데 "
+                 "커버리지는 두 배쯤 넓다**: L5 {} ({}) vs L7 {} ({}).".format(
+                     fmt_metric(l5_1["n_est"], l5_1["mdape"]), fmt_pct(l5_1["coverage"]),
+                     fmt_metric(f1["l7"]["n_est"], f1["l7"]["mdape"]),
+                     fmt_pct(f1["l7"]["coverage"])))
+    facts.append("1층에서 새 사다리 vs BASE(구 평균) — 짝지은 {:,}건에서 새 {} vs BASE {}. "
+                 "**1층은 구 평균 자체가 만만치 않은 상대다.**".format(
+                     f1["pair_base"]["n_pair"],
+                     fmt_metric(f1["pair_base"]["n_pair"], f1["pair_base"]["a_mdape"]),
+                     fmt_metric(f1["pair_base"]["n_pair"], f1["pair_base"]["b_mdape"])))
+    gate = place_gate_summary(scored)
+    facts.append("유형 9칸에 결정 0013 기준선(MdAPE {:.0f}% 이하 + BASE 를 이길 것)을 대 보면 "
+                 "통과 **{}칸** / 판정 가능 {}칸 / 전체 {}칸.".format(
+                     GATE_MAX_MDAPE * 100, gate["passed"], gate["judged"], gate["total"]))
+    facts.append("전체(층대 무관) MdAPE: 기존 {} → 새 {} · 커버리지 {} → {}.".format(
+        fmt_metric(all_cell["old"]["n_est"], all_cell["old"]["mdape"]),
+        fmt_metric(all_cell["new"]["n_est"], all_cell["new"]["mdape"]),
+        fmt_pct(all_cell["old"]["coverage"]), fmt_pct(all_cell["new"]["coverage"])))
+    for band in PLACE_BANDS[1:]:
+        cell = place_cell(place_rows_for(scored, band=band))
+        facts.append("{} MdAPE: 기존 {} → 새 {} (검증 {:,}건).".format(
+            band, fmt_metric(cell["old"]["n_est"], cell["old"]["mdape"]),
+            fmt_metric(cell["new"]["n_est"], cell["new"]["mdape"]), cell["n_total"]))
+    return facts
+
+
+def place_gate_summary(scored, band="1층"):
+    """유형 9칸에 결정 0013 기준선을 대 본 결과 — 통과 / 판정 가능 / 전체 칸 수."""
+    passed, judged = 0, 0
+    for key in PLACE_TYPES:
+        p = place_cell(place_rows_for(scored, band=band, key=key))["pair_base"]
+        if p["n_pair"] < SUPPRESS_BELOW:
+            continue
+        judged += 1
+        if gate_pass(p["a_mdape"], p["b_mdape"]):
+            passed += 1
+    return {"passed": passed, "judged": judged, "total": len(PLACE_TYPES)}
+
+
+def place_one_line(scored):
+    """§0 마지막 한 줄 — 좋아졌다/아니다를 **계산 결과로만** 말한다.
+
+    "좋아졌다"만 말하고 끝내면 안 된다. 1층은 애초에 기준선(MdAPE 30% 이하) 때문에
+    닫힌 것이므로, 좋아졌더라도 그 선을 넘었는지까지 같이 말해야 결재 재료가 된다.
+    """
+    f1 = place_cell(place_rows_for(scored, band="1층"))
+    pair = f1["pair_old"]
+    old, new = pair["b_mdape"], pair["a_mdape"]
+    if old is None or new is None or pair["n_pair"] < SUPPRESS_BELOW:
+        return ("1층에서 두 방식이 모두 값을 낸 거래가 {}건뿐이라 아직 견줄 수 없습니다."
+                .format(pair["n_pair"]))
+    gate = place_gate_summary(scored)
+    direction = ("조금 작습니다" if new < old else
+                 "작지 않습니다" if new > old else "같습니다")
+    return ("같은 1층 거래 {:,}건에서 새 방식의 오차는 ±{}%, 기존은 ±{}% — {}. "
+            "다만 출시 기준선(오차 ±{:.0f}% 이하 + 구 평균보다 정확할 것)에는 {}. "
+            "9칸 중 그 기준을 넘긴 칸은 **{}칸**입니다(판정할 만큼 표본이 있는 칸 {}개 기준). "
+            "방향은 맞지만 이것만으로 1층을 열 수 있는 수준은 아닙니다.".format(
+                pair["n_pair"], round(new * 100), round(old * 100), direction,
+                GATE_MAX_MDAPE * 100,
+                "**여전히 한참 못 미칩니다**" if new > GATE_MAX_MDAPE
+                else "**겨우 닿았습니다**",
+                gate["passed"], gate["judged"]))
+
+
+def run_place(args):
+    """유형축(L7) 검증 — 기존 산출물은 건드리지 않고 새 파일 2개만 쓴다."""
+    base_url, key = get_supabase_config()
+    headers = {"apikey": key, "Authorization": "Bearer {}".format(key)}
+
+    log("[1/6] 실거래(집합·PNU·층·단가 보유) 읽는 중 …")
+    raw = fetch_transactions(base_url, headers)
+    log("      {:,}건".format(len(raw)))
+
+    pnus = [r["pnu"] for r in raw if r.get("pnu")]
+
+    log("[2/6] 필지 좌표 읽는 중 (100개씩) …")
+    coords = fetch_parcel_coords(base_url, headers, pnus)
+
+    log("[3/6] 도로접면·상권 소속 읽는 중 (psql·st_contains) …")
+    context = fetch_place_context(pnus)
+    log("      고유 PNU {:,}개 중 필지 자료 {:,}개".format(len(set(pnus)), len(context)))
+
+    rows = normalize_rows(raw, coords, context)
+    typed = sum(1 for r in rows if r["place_type"])
+    log("      유형이 매겨진 거래 {:,}건 ({})".format(
+        typed, fmt_pct(typed / len(rows) if rows else None)))
+
+    log("[4/6] 시간 분할 …")
+    train, test, outside = split_by_period(rows, args.train_until, args.test_from)
+    log("      학습 {:,} + 검증 {:,} + 범위밖 {:,} = {:,} (전체 {:,}) → 등식 {}".format(
+        len(train), len(test), len(outside),
+        len(train) + len(test) + len(outside), len(rows),
+        "성립" if len(train) + len(test) + len(outside) == len(rows) else "⛔ 불일치"))
+    if not test:
+        raise RuntimeError("검증 거래가 0건입니다 — 분할 기준을 확인하세요.")
+
+    log("[5/6] 학습 색인 + 채점 …")
+    index = build_train_index(train)
+    scored = add_place_ladder(score_test_rows(test, index))
+
+    log("[6/6] 산출물 쓰는 중 …")
+    os.makedirs(args.out_dir, exist_ok=True)
+    csv_path = os.path.join(args.out_dir, "1층유형별지표.csv")
+    md_path = os.path.join(args.out_dir, "1층-유형축-검증.md")
+    write_place_csv(csv_path, scored)
+
+    ctx = {
+        "scored": scored,
+        "stats": place_context_stats(test),
+        "facts": build_place_facts(scored),
+        "one_line": place_one_line(scored),
+        "train_until": args.train_until,
+        "test_from": args.test_from,
+        "generated_at": datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M"),
+    }
+    with open(md_path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(build_place_markdown(ctx))
+
+    f1 = place_cell(place_rows_for(scored, band="1층"))
+    log("")
+    log("── 요약 (유형축) ────────────────────────────────────")
+    log("1층 검증 거래   : {:,}건".format(f1["n_total"]))
+    log("1층 MdAPE       : 기존 {} → 새 {}".format(
+        fmt_metric(f1["old"]["n_est"], f1["old"]["mdape"]),
+        fmt_metric(f1["new"]["n_est"], f1["new"]["mdape"])))
+    log("1층 커버리지    : 기존 {} → 새 {}".format(
+        fmt_pct(f1["old"]["coverage"]), fmt_pct(f1["new"]["coverage"])))
+    log("1층 짝지은 비교 : {:,}건에서 기존 {} vs 새 {}".format(
+        f1["pair_old"]["n_pair"],
+        fmt_metric(f1["pair_old"]["n_pair"], f1["pair_old"]["b_mdape"]),
+        fmt_metric(f1["pair_old"]["n_pair"], f1["pair_old"]["a_mdape"])))
+    log("")
+    for path in (md_path, csv_path):
+        log("생성: {}".format(path))
+    return 0
+
+
 def run(args):
     base_url, key = get_supabase_config()
     headers = {"apikey": key, "Authorization": "Bearer {}".format(key)}
@@ -1176,8 +1937,11 @@ def main(argv=None):
                     help="검증 구간 첫 계약년월 YYYYMM (기본 {})".format(TEST_FROM))
     ap.add_argument("--out-dir", default=DEFAULT_OUT_DIR,
                     help="산출물 폴더 (기본 docs/backtest)")
+    ap.add_argument("--place-axis", action="store_true",
+                    help="유형축(L7) 검증 모드 — `1층-유형축-검증.md`·`1층유형별지표.csv` 만 쓴다. "
+                         "기존 성적표·통과구.csv 는 건드리지 않는다.")
     args = ap.parse_args(argv)
-    return run(args)
+    return run_place(args) if args.place_axis else run(args)
 
 
 if __name__ == "__main__":
