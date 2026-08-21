@@ -111,6 +111,13 @@ declare
 begin
   v_from := to_char((now() at time zone 'Asia/Seoul') - interval '24 months', 'YYYYMM');
 
+  -- ⓘ 여기만 `::char(5)` 가 없는 것은 실수가 아니다(2026-08-22 라이브 실측).
+  --    price_gate_sigungu.sigungu_code 는 **text** 다(mv_open_sigungu·parcel·transaction
+  --    쪽 sigungu_code 가 char(5) 인 것과 다르다). substr() 의 결과도 text 라 지금이
+  --    이미 타입이 맞은 상태다 — 여기에 ::char(5) 를 붙이면 text→char(5)→text 로
+  --    되돌아가는 군더더기 캐스트가 생기고, 덤으로 bpchar 의 뒤 공백 무시 규칙까지
+  --    끌어들인다. 타입을 맞추라는 규칙(2026-08-16b)은 **상대 컬럼의 타입**을 보라는
+  --    뜻이지 char 로 통일하라는 뜻이 아니다.
   select g.gate_pass into v_gate
     from price_gate_sigungu g
    where g.sigungu_code = substr(v_pnu, 1, 5);
