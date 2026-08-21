@@ -79,10 +79,10 @@ describe('RegionPicker — 시도 목록', () => {
   ) {
     rpc.mockResolvedValue({ data: list, error: null });
     const onSelectSigungu = vi.fn();
-    render(
+    const rendered = render(
       <RegionPicker selectedSigungu={null} onSelectSigungu={onSelectSigungu} {...over} />,
     );
-    return { onSelectSigungu };
+    return { onSelectSigungu, ...rendered };
   }
 
   it('자료가 없는 지역은 아예 보여주지 않는다', async () => {
@@ -146,9 +146,13 @@ describe('RegionPicker — 시도 목록', () => {
   });
 
   it('"다른 지역은 준비 중" 안내는 남긴다 — 목록에서 뺐다고 영영 안 된다는 뜻은 아니다', async () => {
-    setup();
+    const { container } = setup();
     await waitFor(() => expect(screen.getByRole('button', { name: '서울' })).toBeTruthy());
     expect(screen.getByText(/준비 중/)).toBeTruthy();
+    // 안내 문구가 실제로 지역 이름을 적는지도 함께 본다 — "준비 중"만 검사하면 이름이
+    // 통째로 빠져도 초록이다. ⛔ 이 '서울·대전'은 **서버가 준 목록**에서 나온 값이다
+    // (setup 기본 응답이 두 시도를 준다). 코드에 박힌 목록으로 되돌리지 말 것.
+    expect(container.querySelector('.region__lead')?.textContent ?? '').toContain('서울·대전');
   });
 });
 

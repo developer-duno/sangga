@@ -475,6 +475,18 @@ describe('FloorStack — 실거래 기록 (Stage A · 결정 0012)', () => {
     expect(screen.getByText('집합')).toBeTruthy();
   });
 
+  it('서버 상한만큼 왔으면 "잘렸다"고 고지하고, 언제부터 보이는지도 함께 적는다', async () => {
+    // ⚠️ 두 문구의 숫자는 **서버가 정본**이다(schema.sql 의 `limit 100` · `contract_ym >= '202401'`).
+    //    화면은 supabase.ts 의 짝 상수를 쓰는데, 그 모듈은 이 파일이 통째로 흉내 낸다 —
+    //    흉내에서 상수가 빠지면 `undefined` 가 되어 **잘림 고지가 조용히 사라진다**(조건이
+    //    `txs.length >= undefined` 라 항상 거짓). 그 구멍을 여기서 막는다.
+    responses.txs = { data: Array.from({ length: 100 }, () => tx()), error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelector('.tx__cap')).toBeTruthy());
+    expect(container.querySelector('.tx__cap')?.textContent ?? '').toContain('100');
+    expect(container.querySelector('.tx__note')?.textContent ?? '').toContain('2024년 1월');
+  });
+
   it('거래가 있는 층에만 "거래 N건" 뱃지를 단다 (없는 층에 0건이라 적지 않는다)', async () => {
     // "거래 0건"이라고 적으면 "이 층은 안 팔린다"는 단정이 된다 — 실제로는 지번이 가려진
     // 거래·층이 빠진 거래가 그 밑에 깔려 있다.
