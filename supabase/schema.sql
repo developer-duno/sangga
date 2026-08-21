@@ -358,9 +358,12 @@ create index if not exists idx_ub_geom     on unit_business using gist (geom);
 -- 타지만 행마다 힙 페이지를 한 번씩 방문해(최신 스냅샷 63.5만 행 = 버퍼 63.6만 회)
 -- **캐시가 식은 첫 요청만 3초 제한을 넘겨 500**이 된다. 따뜻하면 200이라 재현이
 -- 어렵다. 실측(2026-08-11f): 버퍼 636,527 → 698, 힙 방문 0, 1,028ms → 131ms, 8.6MB.
--- ⚠️ pnu 가 세 번째로 들어간 이유(2026-08-22a): 뷰가 "서비스 지역만" 세게 되면서
+-- ⚠️ pnu 가 세 번째로 들어간 이유(2026-08-22a): 집계가 "서비스 지역만" 세게 되면서
 --    where 절이 pnu 를 읽는다. 빼면 그 순간 위 500 이 그대로 재발한다.
 --    (옛 2-컬럼 인덱스는 이것의 앞부분이라 중복 — 2026-08-22a 에서 지웠다.)
+-- ℹ️ 2026-08-22d 부터 이 집계를 미리 계산해 두므로(mv_coverage_stats) 이 인덱스가
+--    받쳐 주는 것은 **화면 요청이 아니라 post_load 의 갱신**이다. 여전히 필요하다 —
+--    빠지면 갱신이 277만 행의 힙을 되짚어 적재 마무리가 길어진다.
 create index if not exists idx_ub_snapshot_floor_pnu on unit_business (snapshot_ym, floor_no, pnu);
 
 
@@ -1020,22 +1023,21 @@ create unique index if not exists idx_mos_sigungu on mv_open_sigungu (sigungu_co
 analyze mv_open_sigungu;
 
 -- =====================================================================
--- 뷰: v_coverage_stats — 스택 뷰 각주용 집계
+-- 요약표: mv_coverage_stats — 각주 집계를 **미리 계산해 둔 한 줄** (2026-08-22d)
 -- =====================================================================
--- 화면 각주("점포 N곳 중 층이 없는 것이 M%")의 숫자를 런타임에 계산하기 위한 뷰.
--- 예전에는 이 숫자가 FloorStack.tsx에 문자열로 박혀 있었는데, 점포 데이터는
--- 아래 where 절대로 **최신 분기를 자동으로 따라가므로** 새 분기를 적재하는 순간
--- 코드 변경 0인 채로 각주만 옛 숫자를 말하게 된다.
+-- 왜 미리 계산하나: 실시간 집계는 최신 스냅샷 **277만 행마다** substr 을 잘라 열린 구
+-- 목록과 대조하느라 순수 실행 **~2,100ms** 였다(2026-08-22 실측, 3회 반복).
+-- 커버링 인덱스로 힙에는 안 가는데(Heap Fetches 0) 대조 자체가 남는다. anon 공개 호출의
+-- statement timeout 은 3초라 그 문턱에 붙어 있었다 — 넘으면 화면은 각주를 null 로 조용히
+-- 강등해 **에러 없이 각주만 사라진다.**
+-- 이 값은 **적재할 때만** 바뀐다(점포 표는 분기 append-only, 열린 구 목록은 post_load 에서만
+-- 갱신). 그러니 화면을 열 때마다 다시 셀 이유가 없다 — 바뀌는 순간에 한 번 세어 굳힌다.
 --
--- ⚠️ v_floor_stack과 **똑같은** 분기 기준을 쓴다("분기" = snapshot_ym 스냅샷 분기).
---    한쪽만 바꾸면 화면의 점포 목록과 각주가 서로 다른 분기를 말하게 되므로 항상 함께 고칠 것.
---    2026-08-22a 에서 **지역** 조건이 붙었지만 그 약속은 그대로다 — 바뀐 것은 "어느 지역을
---    세느냐"뿐이고 "어느 분기를 세느냐"는 손대지 않았다.
--- ⚠️ 내보내는 것은 집계값뿐이다 — 상호명·좌표·주소는 넣지 않는다(노출면 최소 원칙).
--- ⛔ **drop 하고 다시 만들지 말 것.** anon SELECT 가 같이 날아가는데
---    `scripts/post_load.py --check` 는 "열려 있으면 안 되는데 열린 것"만 잡지
---    "열려 있어야 하는데 닫힌 것"은 못 잡는다 → 경보 없이 각주만 조용히 사라진다.
-create or replace view v_coverage_stats as
+-- ⛔ 화면은 이 표를 **직접 읽지 않는다.** 아래 v_coverage_stats 뷰만 anon 에게 열려 있다
+--    (요약표는 공개키에 안 연다 — 2026-08-13f 정책. 회수는 파일 아래 revoke 절에 있다).
+-- ⚠️ select 본문은 아래 뷰가 예전에 갖고 있던 것과 동일하다 — 범위(서비스 지역)나 분기
+--    기준을 고칠 때는 supabase/migrations 의 해당 파일과 여기를 함께 고칠 것.
+create materialized view if not exists mv_coverage_stats as
 select
   ub.snapshot_ym,
   count(*)                                                    as store_cnt,
@@ -1053,16 +1055,57 @@ where ub.snapshot_ym = (select max(snapshot_ym) from unit_business)
   -- ℹ️ pnu 가 NULL 인 행(실측 1,819)은 지역 특정 불가라 분모에서 빠진다.
   and substr(ub.pnu, 1, 5)::char(5) in (select sigungu_code from mv_open_sigungu)
 group by ub.snapshot_ym;
--- group by라 행이 있을 때만 결과가 나온다 = 0으로 나누는 경우가 없다.
+-- group by 라 행이 있을 때만 결과가 나온다 = 0으로 나누는 경우가 없다.
+
+comment on materialized view mv_coverage_stats is
+  '§8.6 스택 뷰 각주 집계를 **미리 계산해 둔 한 줄**(2026-08-22d). 화면은 이 표를 직접 '
+  '읽지 않고 v_coverage_stats 뷰를 거친다 — 표 자체는 anon 에게 닫혀 있다. '
+  '왜 사전계산인가: 실시간 집계는 최신 스냅샷 277만 행마다 substr 을 잘라 열린 구 목록과 '
+  '대조하느라 순수 실행 2.1~4.9초였고(2026-08-22 실측, 부하에 따라 흔들린다), anon 의 '
+  '3초 제한을 넘나들었다. 집계값은 **적재 시점에만** 바뀌므로 그때 한 번 세면 된다. '
+  '신선도 = python scripts/post_load.py 를 돌린 시점(적재와 한 세트다 — 그 스크립트의 '
+  '--check 가 원본 최신 분기와 대조해 낡음을 잡는다). '
+  '⚠️ 본문은 2026-08-22a 의 v_coverage_stats select 와 동일하다 — 범위(서비스 지역)나 '
+  '분기 기준을 고칠 때는 여기와 supabase/schema.sql 을 함께 고칠 것.';
+
+-- `refresh ... concurrently` 의 필수 조건(post_load 는 전부 concurrently 로 돈다).
+-- 행이 한 줄뿐이라 조회 이득은 없다 — 순전히 자격 요건이다.
+create unique index if not exists idx_mcs_snapshot_ym on mv_coverage_stats (snapshot_ym);
+analyze mv_coverage_stats;
+
+-- =====================================================================
+-- 뷰: v_coverage_stats — 스택 뷰 각주용 집계
+-- =====================================================================
+-- 화면 각주("점포 N곳 중 층이 없는 것이 M%")의 숫자를 담는 뷰. 예전에는 이 숫자가
+-- FloorStack.tsx에 문자열로 박혀 있었는데, 점포 데이터는 위 요약표의 where 절대로
+-- **최신 분기를 자동으로 따라가므로** 새 분기를 적재하는 순간 코드 변경 0인 채로
+-- 각주만 옛 숫자를 말하게 된다.
+--
+-- ⚠️ **계산은 여기서 안 한다.** 2026-08-22d 부터 미리 계산해 둔 mv_coverage_stats 한 줄을
+--    그대로 내보낸다(실시간 집계는 ~2,100ms 로 anon 3초 제한에 붙어 있었다 — 위 요약표
+--    주석 참조). 화면이 읽는 이름·컬럼은 그대로라 프론트는 이 변경을 모른다.
+-- ⚠️ v_floor_stack과 **똑같은** 분기 기준을 쓴다("분기" = snapshot_ym 스냅샷 분기).
+--    한쪽만 바꾸면 화면의 점포 목록과 각주가 서로 다른 분기를 말하게 되므로 항상 함께 고칠 것.
+--    2026-08-22a 에서 **지역** 조건이 붙었지만 그 약속은 그대로다 — 바뀐 것은 "어느 지역을
+--    세느냐"뿐이고 "어느 분기를 세느냐"는 손대지 않았다.
+-- ⚠️ 내보내는 것은 집계값뿐이다 — 상호명·좌표·주소는 넣지 않는다(노출면 최소 원칙).
+-- ⛔ **drop 하고 다시 만들지 말 것.** anon SELECT 가 같이 날아가는데
+--    `scripts/post_load.py --check` 는 "열려 있으면 안 되는데 열린 것"만 잡지
+--    "열려 있어야 하는데 닫힌 것"은 못 잡는다 → 경보 없이 각주만 조용히 사라진다.
+create or replace view v_coverage_stats as
+select * from mv_coverage_stats;
 
 comment on view v_coverage_stats is
-  '§8.6 스택 뷰 각주용 집계. v_floor_stack과 동일한 전역 최신 분기 기준 — 둘을 항상 함께 고칠 것. '
+  '§8.6 스택 뷰 각주용 집계. **미리 계산해 둔 mv_coverage_stats 한 줄을 그대로 내보낸다** '
+  '(2026-08-22d — 실시간 집계는 2.1~4.9초로 anon 3초 제한을 넘나들었다). '
   '★ 범위는 **서비스 지역(mv_open_sigungu = 화면에서 고를 수 있는 구)** 뿐이다(2026-08-22a). '
-  '전국을 세면 결측률이 15.3%p 과장된다(50.3% vs 35.0%). '
+  '전국을 세면 화면이 보여주지도 않는 지역까지 섞여 결측률이 15.3%p 과장된다(50.3% vs 35.0%). '
+  '분기 기준은 v_floor_stack 과 동일한 전역 최신 snapshot_ym — 둘을 항상 함께 고칠 것. '
   'ℹ️ pnu 가 NULL 인 행(실측 1,819)은 지역 특정 불가라 분모에서 빠진다. '
-  '★ 공개 접근: anon/authenticated에게 SELECT 허용(집계값만, 상호명 없음). '
+  'ℹ️ 신선도 = python scripts/post_load.py 시점 — 그 스크립트의 --check 가 낡음을 잡는다. '
+  '★ 공개 접근: anon/authenticated에게 SELECT **만** 허용(집계값만, 상호명 없음). '
   '⛔ drop 하지 말 것 — GRANT 가 날아가는데 post_load --check 는 "닫힌 것"을 못 잡는다. '
-  'ℹ️ 린트 0010(security definer view) 의도적 예외 — security_invoker=true로 되돌리면 원본 표(unit_business) 401. '
+  'ℹ️ 린트 0010(security definer view) 의도적 예외 — security_invoker=true로 되돌리면 원본 표 401. '
   '재검토 방아쇠: 공개 배포일 / 지도·반경 검색(§6.4) 착수일';
 
 create or replace function list_open_sigungu()
@@ -2098,7 +2141,11 @@ grant execute on function list_industry_detail(text, text) to anon, authenticate
 revoke all on mv_search_parcel from public, anon, authenticated;
 revoke all on mv_open_sigungu  from public, anon, authenticated;
 revoke all on mv_sigungu_tx_stats from public, anon, authenticated;
--- 상호명은 안 나가더라도 이 표가 열리면 **전국 상권의 업종 구성이 통째로** 긁힌다.
+-- 각주 집계를 미리 계산해 둔 표(2026-08-22d). 값은 집계 4개뿐이라 새어도 큰일은
+-- 아니지만, "새 요약표는 닫는다"에 예외를 만들면 다음번엔 위험한 표가 같은 논리로 열린다.
+-- 화면은 v_coverage_stats 뷰로만 읽는다.
+revoke all on mv_coverage_stats from public, anon, authenticated;
+-- 상호명은 안 나가더라도 이 표가 열리면 **전국 상권의 업종 구성이 통째로** 긁힌다(2026-08-22c).
 revoke all on mv_district_industry_mix from public, anon, authenticated;
 
 -- 그리고 **앞으로 만들 것도 자동으로 안 열리게** 기본값 자체를 바꾼다.
@@ -2169,6 +2216,18 @@ revoke all on all tables in schema public from anon, authenticated;
 -- 조용히 빈 목록으로 바뀌는 사고를 막는다. 둘 다 읽기 전용이다.
 grant select on v_floor_stack to anon, authenticated;
 -- 각주 숫자용 집계 뷰(집계값 4개뿐 — 상호명·좌표 없음).
+-- ⛔ **먼저 회수하고 준다.** 라이브 실측(2026-08-22)에서 이 뷰만 anon·authenticated 에게
+--    INSERT·UPDATE·DELETE·TRUNCATE·REFERENCES·TRIGGER 까지 열려 있었다(v_floor_stack 은
+--    SELECT 하나뿐 — 둘이 어긋나 있었다). 출처는 Supabase 기본 권한(pg_default_acl) 이고,
+--    `grant select` 는 **더하기라** 그걸 못 걷어낸다.
+-- ℹ️ **이 파일로 만드는 새 환경에서는 위 `revoke all on all tables` 스윕이 두 뷰를 모두
+--    덮으므로 원래도 SELECT 만이다.** 어긋난 것은 라이브뿐이었다 — 그 스윕은 *돌린 그 시점의*
+--    객체만 닫는 일회성 명령이라, 그 뒤에 만들어진(또는 대시보드로 다시 만들어진) 뷰에는
+--    안 걸린다. 그래서 정본에도 짝을 남겨 **어느 경로로 만들어져도 같은 상태**가 되게 한다.
+--    (같은 이유로 v_floor_stack 은 건드리지 않는다 — 라이브·새 환경 둘 다 이미 SELECT 만이다.)
+-- ⚠️ 뷰 아래가 물질화뷰라 실제 쓰기는 어차피 실패한다 — 그래도 선언은 최소 권한이어야
+--    한다. 나중에 속이 쓰기 가능한 것으로 바뀌면 그 순간 경보 없이 진짜로 열린다.
+revoke all on v_coverage_stats from public, anon, authenticated;
 grant select on v_coverage_stats to anon, authenticated;
 
 -- 검색 함수도 명시적으로만 연다. Postgres는 새 함수의 EXECUTE를 PUBLIC에게 기본

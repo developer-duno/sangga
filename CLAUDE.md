@@ -10,14 +10,14 @@
 - **상세 계획** — `docs/상세계획.md` (데이터 소스·분석 로직·검증 설계·로드맵 전부)
 - **DB 스키마** — `supabase/schema.sql`
 - **부동산 데이터 처리 규격** — `budongsan-data` 스킬 참조 (PNU 조립·층 정규화·API 카탈로그)
-- **현재 Phase** — **Phase 1 통과**(2026-08-09, 조인률 95.92%/96.86%) → 1단계 서비스범위(서울+대전) 확장 완료(결정 0006) → **Phase 2 진행 중**(층별 스택 화면, 눈 검증 2/10). 2026-08-14: `district`(상권 경계) **0행 → 서울 1,650개** 적재(결정 0008) → 같은 날 층별 화면에 **"속한 상권" 한 줄 연결**(함수 `list_building_districts` — 겹치면 전부 나열·경계 밖="없음"(정상)·자료 없는 지역="준비 중"). 대전도 **소진공 주요상권현황 37개 적재 완료**(결정 0009 — district 총 **1,687개**, 출처 칸 `source_nm` 신설로 화면 출처가 상권별 데이터). 2026-08-15: 실거래 **서울+대전 24개월 44,052건** 적재(나머지 지역은 서울·대전 전부 활성화 후 — 사장님 방침) → 층별 화면에 **"실거래 기록" 섹션**(이 필지 이력 + 구 층대별 단가, 추정 0 — 결정 0011·0012 Stage A. 추정 밴드는 Stage B 백테스트 후 재결재) → 같은 날 밤 **Stage B 백테스트 성적표 v1 완성**(`docs/backtest/성적표-v1.md` — 사다리 MdAPE 29.1% vs 구평균 38.3%, 채택의 53%는 법정동 폴백) → 2026-08-16 **사장님 재결재 확정(결정 0013)**: 출시 기준선 = MdAPE 30% 이하 + 사다리가 구평균을 이기는 구만(**14개 구** 통과 — 서울 10·대전 4, 금천은 30% 이하지만 구평균에 져서 제외) · 표시 범위 = **좁게 GO**(통과 구 × 2층·3층+만, 1층(±45%)·지하·옥탑 미제공). Stage B 구현은 조사→플랜→승인 후 착수. `docs/PROGRESS.md` 참조
+- **현재 Phase** — **Phase 1 통과**(2026-08-09, 조인률 95.92%/96.86%) → 1단계 서비스범위(서울+대전) 확장 완료(결정 0006) → **Phase 2 진행 중**(층별 스택 화면, 눈 검증 2/10). 2026-08-14: `district`(상권 경계) **0행 → 서울 1,650개** 적재(결정 0008) → 같은 날 층별 화면에 **"속한 상권" 한 줄 연결**(함수 `list_building_districts` — 겹치면 전부 나열·경계 밖="없음"(정상)·자료 없는 지역="준비 중"). 대전도 **소진공 주요상권현황 37개 적재 완료**(결정 0009 — district 총 **1,687개**, 출처 칸 `source_nm` 신설로 화면 출처가 상권별 데이터). 2026-08-15: 실거래 **서울+대전 24개월 44,052건** 적재(나머지 지역은 서울·대전 전부 활성화 후 — 사장님 방침) → 층별 화면에 **"실거래 기록" 섹션**(이 필지 이력 + 구 층대별 단가, 추정 0 — 결정 0011·0012 Stage A. 추정 밴드는 Stage B 백테스트 후 재결재) → 같은 날 밤 **Stage B 백테스트 성적표 v1 완성**(`docs/backtest/성적표-v1.md` — 사다리 MdAPE 29.1% vs 구평균 38.3%, 채택의 53%는 법정동 폴백) → 2026-08-16 **사장님 재결재 확정(결정 0013)**: 출시 기준선 = MdAPE 30% 이하 + 사다리가 구평균을 이기는 구만(**14개 구** 통과 — 서울 10·대전 4, 금천은 30% 이하지만 구평균에 져서 제외) · 표시 범위 = **좁게 GO**(통과 구 × 2층·3층+만, 1층(±45%)·지하·옥탑 미제공). Stage B 구현은 조사→플랜→승인 후 착수. 2026-08-22: 층별 화면에 **"둘레의 업종 분포" 섹션**(결정 0014 상권 지표 1단계 — 속한 상권 안 + 반경 500m 를 업종 대분류로 세고, 대분류를 고르면 중분류와 "같은 업종 N곳" 경쟁 카운트). ⚠️ 이 숫자는 **이 건물 점포가 아니라 둘레의 남의 가게까지** 센 것이라 층 목록의 점포 칸과 세는 대상이 다르다. 상권 스코프는 `mv_district_industry_mix` 로 미리 굽고(살아있는 쿼리는 찬 캐시에서 12.5초), 반경은 이웃 필지 PNU 배열 + 커버링 인덱스로 잰다(1,583ms→23ms). **상권끼리 더하면 안 된다** — 겹치는 자리의 점포가 양쪽에 세어진다(실측 3.9%). `docs/PROGRESS.md` 참조
 
 ### 🔴 운영 5계명 (매 세션 확인 — 어기면 복구 불가하거나 조용히 깨진다)
 
 | | 규칙 | 어기면 |
 |---|---|---|
 | 💾 | **백업은 자동이 아니다.** 새 분기 zip을 받았거나 대량 수집을 마쳤으면 `python scripts/backup_raw.py`를 **직접** 돌린다 | 포털에서 과거분이 내려가면 **재수집 불가**(절대 규칙 6). 건축HUB 일괄 파일도 **최근 3개월치만** 남는다 |
-| 🔎 | **자료를 적재했으면 검색 요약표를 갱신한다.** `python scripts/dbx.py -c "refresh materialized view concurrently mv_search_parcel;"` + `analyze` | 새로 넣은 건물이 **검색에 안 나온다**. 에러가 아니라 조용한 누락이라 아무도 모른다 |
+| 🔎 | **자료를 적재했으면 `python scripts/post_load.py` 한 번.** 이 하나에 vacuum(analyze)·요약표 4개 갱신·공개키 노출 점검이 다 들어 있다(요약표만 손으로 갱신하면 나머지가 조용히 빠진다) | 새로 넣은 건물이 **검색에 안 나온다**. 지도·구 단가·각주 결측률도 옛 자료를 계속 말한다. 전부 에러가 아니라 조용한 누락이라 아무도 모른다 |
 | 📦 | **패키지 매니저는 `pnpm`.** `npm`으로 돌리지 않는다 (`pnpm-lock.yaml`·CI 기준) | 락파일이 갈라져 CI와 로컬이 다른 의존성을 쓴다 |
 | 🔑 | **키는 `.env`.** 브라우저용 공개키는 `.env.local` — 손으로 만들지 말고 `python scripts/make_env_local.py` | 손으로 만들다 **서비스키를 브라우저에 노출**하는 사고. 이 스크립트는 공개키만 골라 쓴다 |
 | 🐍 | **파이썬 명령은 프로젝트 루트에서.** `cd D:\sangga` 후 실행 | 상대경로(`data/raw/...`)가 어긋나 "파일 없음"으로 조용히 0건 처리된다 |
@@ -93,7 +93,7 @@ constants → scoring → theme → components → hooks → App   (단방향)
 | API | Vercel Serverless |
 | DB | Supabase PostgreSQL + PostGIS (**별도 프로젝트**) |
 | 수집 | ⬜ **여전히 로컬 수동 실행이다** — 받기·적재·백업 전부 사람 손. 다만 **놓치는 것만은 막아 뒀다**: `sangkwon-quarterly-watch.yml`이 매주 포털을 확인해 새 분기가 뜨면 이슈를 자동으로 연다(비밀값 0개). **감시가 실패해도 이슈를 연다**(2026-08-14 추가 — 08-10 에 죽은 걸 나흘 뒤에 알았다). 목록 조회는 30초 타임아웃으로 3번 재시도한다. 적재 후 `scripts/check_new_sangkwon_quarter.py`의 `LATEST_KNOWN_QUARTER`를 **사람이 올려야** 다음 분기를 감지한다(절대 규칙 6). 상권 원천(서울 OA-15560·소진공 15090955)은 갱신이 비정기라 `district-source-watch.yml`이 매주 상세 페이지의 수정일 칸 변동을 확인해 이슈를 연다(2026-08-15 추가) — 반영 후 `check_district_source_update.py`의 기준선 상수도 **사람이 올린다**. ✅ **예약이 아예 안 도는 경우**(공개 레포는 60일 무활동 시 자동 중지, 부하 시 큐 드롭)도 **2026-08-22 부터 잡는다** — 감시 둘이 **서로를 본다**(`check_watch_heartbeat.py`가 상대의 마지막 성공 시각을 GitHub API 로 읽어 8일 넘으면 이슈를 연다). 한쪽 예약이 살아 있는 한 다른 쪽의 죽음이 일주일 안에 뜨고, **둘 다 죽는 경우**는 사람이 `python scripts/check_watch_heartbeat.py`를 직접 돌려 잡는다 |
-| 테스트 | 파이썬 **pytest 1,599개** + 프론트 **vitest 213개**(jsdom + @testing-library/react) + **E2E playwright 9개**(`e2e/floor-stack.spec.ts` — 검색→선택→층 스택(속한 상권·실거래 기록·참고 매매 시세 밴드 포함), 너무 넓은 검색 안내창). CI가 셋 다 돌린다(`pnpm test:e2e`, chromium). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도 |
+| 테스트 | 파이썬 **pytest 1,619개** + 프론트 **vitest 246개**(jsdom + @testing-library/react) + **E2E playwright 9개**(`e2e/floor-stack.spec.ts` — 검색→선택→층 스택(속한 상권·실거래 기록·참고 매매 시세 밴드 포함), 너무 넓은 검색 안내창). CI가 셋 다 돌린다(`pnpm test:e2e`, chromium). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도 |
 
 **성능 원칙**: 상권(수천 개)은 사전계산 정적 JSON, 호실(수백만)은 Supabase 쿼리.
 정적 JSON 폴백을 호실에는 두지 않는다.
@@ -131,7 +131,7 @@ pnpm exec oxlint                                # 프론트 린트
 ```
 
 ```bash
-python -m pytest tests/ -q                      # 파이썬 테스트 (1,599개)
+python -m pytest tests/ -q                      # 파이썬 테스트 (1,608개)
 python scripts/check_new_sangkwon_quarter.py    # 새 분기 스냅샷이 떴나 (읽기만, 키 불필요)
 python scripts/check_district_source_update.py  # 상권 원천(서울·소진공) 수정일이 바뀌었나 (읽기만, 키 불필요)
 python scripts/check_watch_heartbeat.py         # 감시 2종이 아직 돌고 있나 (읽기만, 키 불필요 — 8일 넘으면 exit 1)
@@ -171,7 +171,8 @@ python scripts/load_rone_map.py --dry-run                          # seed → di
 python scripts/load_rone_map.py                                    # 매핑 적재 (검증 관문 3종 내장 — 걸리면 통째 롤백)
 python scripts/build_district_geojson.py --dry-run                  # 지도용 상권 파일 미리보기(행수·크기만, 파일 안 씀)
 python scripts/build_district_geojson.py                           # ★ district 를 적재했으면 → public/districts.geojson 굽고 **커밋**
-python scripts/dbx.py -c "refresh materialized view concurrently mv_search_parcel; analyze;"   # ★ 적재 후 필수
+python scripts/post_load.py                     # ★ 적재 후 필수 — vacuum(analyze) + 요약표 4개 갱신 + 노출 점검
+python scripts/post_load.py --check              # 갱신이 필요한 상태인지만 본다 (DB 쓰기 0, 낡았으면 exit 1)
 python scripts/make_env_local.py                # .env → .env.local (브라우저용 공개키만)
 python scripts/backup_raw.py --dry-run          # 원본 백업 대상 확인 (쓰기 0)
 python scripts/backup_raw.py                    # data/raw → F:\sangga-raw-backup (외장 SSD 연결 필요)
