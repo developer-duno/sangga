@@ -82,10 +82,11 @@ group by ub.snapshot_ym;
 comment on materialized view mv_coverage_stats is
   '§8.6 스택 뷰 각주 집계를 **미리 계산해 둔 한 줄**(2026-08-22d). 화면은 이 표를 직접 '
   '읽지 않고 v_coverage_stats 뷰를 거친다 — 표 자체는 anon 에게 닫혀 있다. '
-  '왜 사전계산인가: 실시간 집계는 최신 스냅샷 277만 행마다 substr 을 잘라 대조하느라 '
-  '순수 실행 ~2,100ms 였고(2026-08-22 실측, 3회 반복), anon 의 3초 제한에 붙어 있었다. '
-  '집계값은 **적재 시점에만** 바뀌므로 그때 한 번 세면 된다. '
-  '신선도 = python scripts/post_load.py 를 돌린 시점(적재와 한 세트다). '
+  '왜 사전계산인가: 실시간 집계는 최신 스냅샷 277만 행마다 substr 을 잘라 열린 구 목록과 '
+  '대조하느라 순수 실행 2.1~4.9초였고(2026-08-22 실측, 부하에 따라 흔들린다), anon 의 '
+  '3초 제한을 넘나들었다. 집계값은 **적재 시점에만** 바뀌므로 그때 한 번 세면 된다. '
+  '신선도 = python scripts/post_load.py 를 돌린 시점(적재와 한 세트다 — 그 스크립트의 '
+  '--check 가 원본 최신 분기와 대조해 낡음을 잡는다). '
   '⚠️ 본문은 2026-08-22a 의 v_coverage_stats select 와 동일하다 — 범위(서비스 지역)나 '
   '분기 기준을 고칠 때는 여기와 supabase/schema.sql 을 함께 고칠 것.';
 
@@ -109,14 +110,14 @@ create or replace view v_coverage_stats as
 select * from mv_coverage_stats;
 
 comment on view v_coverage_stats is
-  '§8.6 스택 뷰 각주용 집계. **미리 계산해 둔 mv_coverage_stats 한 줄을 그대로 내보낸다**'
-  '(2026-08-22d — 실시간 집계는 ~2,100ms 로 anon 3초 제한에 붙어 있었다). '
+  '§8.6 스택 뷰 각주용 집계. **미리 계산해 둔 mv_coverage_stats 한 줄을 그대로 내보낸다** '
+  '(2026-08-22d — 실시간 집계는 2.1~4.9초로 anon 3초 제한을 넘나들었다). '
   '★ 범위는 **서비스 지역(mv_open_sigungu = 화면에서 고를 수 있는 구)** 뿐이다(2026-08-22a). '
   '전국을 세면 화면이 보여주지도 않는 지역까지 섞여 결측률이 15.3%p 과장된다(50.3% vs 35.0%). '
   '분기 기준은 v_floor_stack 과 동일한 전역 최신 snapshot_ym — 둘을 항상 함께 고칠 것. '
   'ℹ️ pnu 가 NULL 인 행(실측 1,819)은 지역 특정 불가라 분모에서 빠진다. '
-  'ℹ️ 신선도 = python scripts/post_load.py 시점(집계값도 적재 때만 바뀐다). '
-  '★ 공개 접근: anon/authenticated에게 SELECT 허용(집계값만, 상호명 없음). '
+  'ℹ️ 신선도 = python scripts/post_load.py 시점 — 그 스크립트의 --check 가 낡음을 잡는다. '
+  '★ 공개 접근: anon/authenticated에게 SELECT **만** 허용(집계값만, 상호명 없음). '
   '⛔ drop 하지 말 것 — GRANT 가 날아가는데 post_load --check 는 "닫힌 것"을 못 잡는다. '
   'ℹ️ 린트 0010(security definer view) 의도적 예외 — security_invoker=true로 되돌리면 원본 표 401. '
   '재검토 방아쇠: 공개 배포일 / 지도·반경 검색(§6.4) 착수일';
@@ -138,6 +139,14 @@ alter view v_coverage_stats set (security_invoker = false);
 -- ⚠️ **"어차피 못 쓴다"가 이유가 되지 않는다.** 뷰 아래가 물질화뷰라 실제 쓰기는
 --    어차피 실패한다. 그래도 선언은 최소 권한이어야 한다 — 나중에 이 뷰의 속이
 --    쓰기 가능한 것으로 바뀌면 그 순간 아무 경보 없이 진짜로 열린다.
+--
+-- ℹ️ **v_floor_stack 은 안 건드린다** — 독립 리뷰는 "같은 시기에 만들어졌으니 같은 문제일
+--    것"이라 추정했지만 **라이브 실측(2026-08-22)에서는 이미 SELECT 하나뿐이었다**
+--    (2026-08-13f 정리 때 조여진 것으로 보인다). 이 문장을 적용한 뒤 다시 재니
+--    **둘 다 SELECT 만**이다.
+-- ℹ️ 새 환경(supabase/schema.sql)에서는 파일 아래쪽 `revoke all on all tables in schema
+--    public` 스윕이 두 뷰를 모두 덮으므로 원래도 SELECT 만이었다. 어긋난 것은 **라이브뿐**이다
+--    — 그 스윕은 *돌린 그 시점의* 객체만 닫는 일회성 명령이라, 그 뒤에 만들어진 뷰에는 안 걸린다.
 --
 -- 순서가 중요하다: **먼저 전부 회수하고** 필요한 것만 다시 준다(`grant` 는 더하기라
 -- 회수를 건너뛰면 아무것도 안 줄어든다). 둘 다 멱등이라 몇 번 돌아도 결과가 같다.

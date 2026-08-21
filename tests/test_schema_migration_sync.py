@@ -52,6 +52,15 @@ RE_DROP_FN = re.compile(r"(?im)^drop\s+function\s+(?:if\s+exists\s+)?(?:public\.
 # ⚠️ 물질화 뷰(create materialized view)는 `or replace` 가 없어 이 정규식에 안 걸린다.
 RE_CREATE_VIEW = re.compile(r"(?im)^create\s+or\s+replace\s+view\s+(?:public\.)?(\w+)")
 RE_DROP_VIEW = re.compile(r"(?im)^drop\s+view\s+(?:if\s+exists\s+)?(?:public\.)?(\w+)")
+# 물질화 뷰는 위 정규식에 안 걸린다(`or replace` 라는 형태가 없다). 그래서 따로 본다 —
+# 2026-08-22d 가 mv_coverage_stats 를 만들 때 이 구멍이 드러났다: 새 요약표를 정본에
+# 안 옮겨도 아무 테스트가 안 울렸고, 그 파일로 새 환경을 만들면 각주가 통째로 깨진다.
+RE_CREATE_MATVIEW = re.compile(
+    r"(?im)^create\s+materialized\s+view\s+(?:if\s+not\s+exists\s+)?(?:public\.)?(\w+)"
+)
+RE_DROP_MATVIEW = re.compile(
+    r"(?im)^drop\s+materialized\s+view\s+(?:if\s+exists\s+)?(?:public\.)?(\w+)"
+)
 RE_ADD_COLUMN = re.compile(r"(?im)^\s*add\s+column\s+(?:if\s+not\s+exists\s+)?(\w+)")
 RE_DROP_COLUMN = re.compile(r"(?im)^\s*drop\s+column\s+(?:if\s+exists\s+)?(\w+)")
 
@@ -181,6 +190,30 @@ def test_live_views_are_in_schema(schema_sql):
     )
 
 
+def schema_has_matview(schema, name):
+    return re.search(
+        r"(?im)^create\s+materialized\s+view\s+(?:if\s+not\s+exists\s+)?"
+        r"(?:public\.)?{}\b".format(re.escape(name)),
+        schema,
+    )
+
+
+def test_live_matviews_are_in_schema(schema_sql):
+    """마이그레이션으로 만든 물질화뷰는 정본에도 있어야 한다.
+
+    일반 뷰와 달리 `create or replace` 가 없어 위 뷰 가드가 못 본다. 빠지면 이 파일로
+    만든 새 환경에서 그 요약표가 아예 없어 검색·지역목록·각주가 통째로 깨진다.
+    """
+    alive, _ = replay(RE_CREATE_MATVIEW, RE_DROP_MATVIEW)
+    missing = sorted(n for n in alive if not schema_has_matview(schema_sql, n))
+    assert not missing, (
+        "마이그레이션에는 있는데 schema.sql 에 없는 물질화뷰: {}\n"
+        "→ 이 파일로 새 환경을 만들면 그 요약표가 없어 검색·각주가 통째로 깨집니다.".format(
+            missing
+        )
+    )
+
+
 def test_dropped_views_are_gone_from_schema(schema_sql):
     """마이그레이션에서 지운 뷰가 정본에 남아 있으면 안 된다."""
     _, dropped = replay(RE_CREATE_VIEW, RE_DROP_VIEW)
@@ -236,3 +269,9 @@ def test_replay_actually_sees_the_2026_08_11e_swap():
 
     views, _ = replay(RE_CREATE_VIEW, RE_DROP_VIEW)
     assert "v_coverage_stats" in views, "재생이 뷰(v_coverage_stats)를 못 봤습니다"
+
+    # 물질화뷰 정규식도 헛돌면 안 된다 — 지금까지 만든 4개가 전부 잡혀야 한다.
+    mvs, _ = replay(RE_CREATE_MATVIEW, RE_DROP_MATVIEW)
+    for name in ("mv_search_parcel", "mv_open_sigungu", "mv_sigungu_tx_stats",
+                 "mv_coverage_stats"):
+        assert name in mvs, "재생이 물질화뷰 {} 를 못 봤습니다".format(name)

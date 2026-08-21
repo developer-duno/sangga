@@ -1051,9 +1051,15 @@ group by ub.snapshot_ym;
 -- group by 라 행이 있을 때만 결과가 나온다 = 0으로 나누는 경우가 없다.
 
 comment on materialized view mv_coverage_stats is
-  '§8.6 스택 뷰 각주 집계를 미리 계산해 둔 한 줄(2026-08-22d). 실시간 집계는 277만 행 대조로 '
-  '~2,100ms 라 anon 3초 제한에 붙어 있었다. 집계값은 적재 시점에만 바뀐다. '
-  '신선도 = python scripts/post_load.py 시점. 화면은 v_coverage_stats 뷰로만 읽는다.';
+  '§8.6 스택 뷰 각주 집계를 **미리 계산해 둔 한 줄**(2026-08-22d). 화면은 이 표를 직접 '
+  '읽지 않고 v_coverage_stats 뷰를 거친다 — 표 자체는 anon 에게 닫혀 있다. '
+  '왜 사전계산인가: 실시간 집계는 최신 스냅샷 277만 행마다 substr 을 잘라 열린 구 목록과 '
+  '대조하느라 순수 실행 2.1~4.9초였고(2026-08-22 실측, 부하에 따라 흔들린다), anon 의 '
+  '3초 제한을 넘나들었다. 집계값은 **적재 시점에만** 바뀌므로 그때 한 번 세면 된다. '
+  '신선도 = python scripts/post_load.py 를 돌린 시점(적재와 한 세트다 — 그 스크립트의 '
+  '--check 가 원본 최신 분기와 대조해 낡음을 잡는다). '
+  '⚠️ 본문은 2026-08-22a 의 v_coverage_stats select 와 동일하다 — 범위(서비스 지역)나 '
+  '분기 기준을 고칠 때는 여기와 supabase/schema.sql 을 함께 고칠 것.';
 
 -- `refresh ... concurrently` 의 필수 조건(post_load 는 전부 concurrently 로 돈다).
 -- 행이 한 줄뿐이라 조회 이득은 없다 — 순전히 자격 요건이다.
@@ -1083,14 +1089,14 @@ create or replace view v_coverage_stats as
 select * from mv_coverage_stats;
 
 comment on view v_coverage_stats is
-  '§8.6 스택 뷰 각주용 집계. **미리 계산해 둔 mv_coverage_stats 한 줄을 그대로 내보낸다**'
-  '(2026-08-22d — 실시간 집계는 ~2,100ms 로 anon 3초 제한에 붙어 있었다). '
+  '§8.6 스택 뷰 각주용 집계. **미리 계산해 둔 mv_coverage_stats 한 줄을 그대로 내보낸다** '
+  '(2026-08-22d — 실시간 집계는 2.1~4.9초로 anon 3초 제한을 넘나들었다). '
   '★ 범위는 **서비스 지역(mv_open_sigungu = 화면에서 고를 수 있는 구)** 뿐이다(2026-08-22a). '
-  '전국을 세면 결측률이 15.3%p 과장된다(50.3% vs 35.0%). '
+  '전국을 세면 화면이 보여주지도 않는 지역까지 섞여 결측률이 15.3%p 과장된다(50.3% vs 35.0%). '
   '분기 기준은 v_floor_stack 과 동일한 전역 최신 snapshot_ym — 둘을 항상 함께 고칠 것. '
   'ℹ️ pnu 가 NULL 인 행(실측 1,819)은 지역 특정 불가라 분모에서 빠진다. '
-  'ℹ️ 신선도 = python scripts/post_load.py 시점(집계값도 적재 때만 바뀐다). '
-  '★ 공개 접근: anon/authenticated에게 SELECT 허용(집계값만, 상호명 없음). '
+  'ℹ️ 신선도 = python scripts/post_load.py 시점 — 그 스크립트의 --check 가 낡음을 잡는다. '
+  '★ 공개 접근: anon/authenticated에게 SELECT **만** 허용(집계값만, 상호명 없음). '
   '⛔ drop 하지 말 것 — GRANT 가 날아가는데 post_load --check 는 "닫힌 것"을 못 잡는다. '
   'ℹ️ 린트 0010(security definer view) 의도적 예외 — security_invoker=true로 되돌리면 원본 표 401. '
   '재검토 방아쇠: 공개 배포일 / 지도·반경 검색(§6.4) 착수일';
@@ -1957,9 +1963,13 @@ grant select on v_floor_stack to anon, authenticated;
 -- 각주 숫자용 집계 뷰(집계값 4개뿐 — 상호명·좌표 없음).
 -- ⛔ **먼저 회수하고 준다.** 라이브 실측(2026-08-22)에서 이 뷰만 anon·authenticated 에게
 --    INSERT·UPDATE·DELETE·TRUNCATE·REFERENCES·TRIGGER 까지 열려 있었다(v_floor_stack 은
---    SELECT 하나뿐 — 둘이 어긋나 있었다). 출처는 Supabase 기본 권한(pg_default_acl)이고,
---    `grant select` 는 **더하기라** 그걸 못 걷어낸다. 위 `revoke all on all tables` 뒤에
---    새로 만들어지는 뷰에는 그 revoke 가 안 걸리므로 여기서 짝으로 못 박는다.
+--    SELECT 하나뿐 — 둘이 어긋나 있었다). 출처는 Supabase 기본 권한(pg_default_acl) 이고,
+--    `grant select` 는 **더하기라** 그걸 못 걷어낸다.
+-- ℹ️ **이 파일로 만드는 새 환경에서는 위 `revoke all on all tables` 스윕이 두 뷰를 모두
+--    덮으므로 원래도 SELECT 만이다.** 어긋난 것은 라이브뿐이었다 — 그 스윕은 *돌린 그 시점의*
+--    객체만 닫는 일회성 명령이라, 그 뒤에 만들어진(또는 대시보드로 다시 만들어진) 뷰에는
+--    안 걸린다. 그래서 정본에도 짝을 남겨 **어느 경로로 만들어져도 같은 상태**가 되게 한다.
+--    (같은 이유로 v_floor_stack 은 건드리지 않는다 — 라이브·새 환경 둘 다 이미 SELECT 만이다.)
 -- ⚠️ 뷰 아래가 물질화뷰라 실제 쓰기는 어차피 실패한다 — 그래도 선언은 최소 권한이어야
 --    한다. 나중에 속이 쓰기 가능한 것으로 바뀌면 그 순간 경보 없이 진짜로 열린다.
 revoke all on v_coverage_stats from public, anon, authenticated;
