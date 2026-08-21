@@ -425,6 +425,13 @@ create table if not exists transaction (
 -- pnu 가 채워진 행은 7.8%뿐이다(2026-08-13 실측: 22,662행 중 1,757행). 조회는 항상 값이
 -- 있는 pnu 를 찾으므로 NULL 을 뺀 부분 인덱스로 충분하다(idx_unit_floor 와 같은 방식).
 create index if not exists idx_tx_pnu    on transaction (pnu, contract_ym) where pnu is not null;
+-- 사다리 L6(같은 법정동 = PNU 앞 10자리) 전용 **표현식** 인덱스 (2026-08-22b).
+-- L6 조건은 `substr(t.pnu,1,10) = …` 라 위 idx_tx_pnu 로는 못 탄다(인덱스는 pnu 원본
+-- 순서인데 조건은 자른 값이다). 성적표 §1 기준 채택의 53%가 L6 이고 이 조회는
+-- **층 수 × 호출**만큼 도니, 거래가 쌓일수록 그대로 느려진다.
+-- 부분 조건을 idx_tx_pnu 와 같게 맞춘 이유: substr(NULL) 은 어차피 `=` 로 안 걸린다
+-- (뜻은 같고 인덱스만 작아진다 — 실거래에는 PNU 없는 행이 많다).
+create index if not exists idx_tx_pnu10_ym on transaction (substr(pnu, 1, 10), contract_ym) where pnu is not null;
 create index if not exists idx_tx_region on transaction (sigungu_code, contract_ym);
 create index if not exists idx_tx_floor  on transaction (sigungu_code, floor_no, contract_ym);
 
@@ -1631,7 +1638,11 @@ declare
   -- ⓘ text→char(19) 캐스트는 19자를 넘는 입력을 자르지만, pnu 는 19자 고정이라 무해하다
   --    (더 긴 입력은 애초에 pnu 가 아니고, 잘려도 없는 필지라 빈 결과다).
   v_pnu      char(19) := p_pnu;
-  v_from     text;
+  -- ⚠️ **char(6) 이다.** contract_ym 컬럼이 char(6) 인데 여기를 text 로 두면
+  --    `char컬럼 >= text변수` 비교에서 컬럼이 text 로 캐스트돼 인덱스 조건으로
+  --    못 들어간다(2026-08-16b 가 pnu 에서 겪은 것과 **같은 병**). 나갈 때만
+  --    `::text` 로 되돌린다 — window_from 은 text 로 약속돼 있다.
+  v_from     char(6);
   v_gate     boolean;
   v_geog     geography;
   -- ⚠️ text[] 가 아니라 char(19)[] 인 이유: transaction.pnu 가 char(19) 라 text 와 견주면
@@ -1656,7 +1667,7 @@ begin
   -- 아직 판정이 없는 구(표에 줄이 없음)도 '아니오'다 — 모르면 안 낸다.
   if v_gate is not true then
     return query select null::smallint, 'gate_fail'::text, null::text, null::int,
-                        null::numeric, null::numeric, null::numeric, null::numeric, v_from;
+                        null::numeric, null::numeric, null::numeric, null::numeric, v_from::text;
     return;
   end if;
 
@@ -1689,7 +1700,7 @@ begin
     -- 백테스트 MdAPE 45.2% — 다른 층대의 두 배다. 그래서 "모른다"고 말한다(결정 0013 §3).
     if v_floor = 1 then
       return query select v_floor, 'floor_1f'::text, null::text, null::int,
-                          null::numeric, null::numeric, null::numeric, null::numeric, v_from;
+                          null::numeric, null::numeric, null::numeric, null::numeric, v_from::text;
       continue;
     end if;
 
@@ -1697,7 +1708,7 @@ begin
     -- 지하층 표기가 오지 않는다 — 알려진한계). 검증된 적 없는 층에는 값을 내지 않는다.
     if v_floor is null or v_floor < 0 or v_floor = 99 then
       return query select v_floor, 'no_evidence'::text, null::text, null::int,
-                          null::numeric, null::numeric, null::numeric, null::numeric, v_from;
+                          null::numeric, null::numeric, null::numeric, null::numeric, v_from::text;
       continue;
     end if;
 
@@ -1773,10 +1784,10 @@ begin
 
     if v_stage is null then
       return query select v_floor, 'no_estimate'::text, null::text, null::int,
-                          null::numeric, null::numeric, null::numeric, null::numeric, v_from;
+                          null::numeric, null::numeric, null::numeric, null::numeric, v_from::text;
     else
       return query select v_floor, 'ok'::text, v_stage, v_n,
-                          v_p25, v_med, v_p75, v_area, v_from;
+                          v_p25, v_med, v_p75, v_area, v_from::text;
     end if;
   end loop;
   return;
