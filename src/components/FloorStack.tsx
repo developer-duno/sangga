@@ -32,6 +32,7 @@ import {
 } from '../lib/format';
 import { KNOWN_BAND_STATUS } from '../lib/priceBand';
 import { PriceBandSection } from './PriceBandSection';
+import { IndustryMixSection } from './IndustryMixSection';
 
 /**
  * 구 단가에서 수치를 보여줄 최소 표본 수(결정 0012).
@@ -321,6 +322,14 @@ export function FloorStack({ building }: Props) {
           );
         })}
       </ol>
+
+      {/*
+        둘레의 업종 분포(결정 0014). 자기가 알아서 묻고, 못 읽으면 스스로 사라진다
+        — 마이그레이션 적용 전 라이브에서는 함수가 없어(PGRST202) 그 상태가 된다.
+        ⚠️ 여기 숫자는 **이 건물의 점포가 아니다**(둘레의 남의 가게까지 센다). 위 층 목록의
+           점포 칸과 세는 대상이 달라, 두 블록을 붙여 놓고 견주게 만들지 않는다.
+      */}
+      <IndustryMixSection pnu={building.pnu} />
 
       <TransactionSection txs={txs} stats={txStats} />
 

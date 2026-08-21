@@ -51,6 +51,18 @@ def tx_window_is_fresh(monkeypatch):
                         lambda: ("202408", "202408", False))
 
 
+@pytest.fixture
+def industry_mix_is_fresh(monkeypatch):
+    """업종 분포 표 검사만 빼고 본다 (위 둘과 같은 이유 — 관심사 분리).
+
+    이 stub 이 없으면 `main()` 이 mock 된 query_one 의 엉뚱한 답("v_floor_stack" 등)을
+    분기로 오해해 이 반의 관심사와 상관없이 흔들린다. 판정 자체는 아래
+    TestIndustryMixStale 이 따로 본다.
+    """
+    monkeypatch.setattr(post_load, "report_industry_mix_freshness",
+                        lambda: ("202606", "202606", False))
+
+
 # ── 1. ANALYZE 대상 ─────────────────────────────────────────────────────────
 
 
@@ -160,18 +172,24 @@ class TestParseArgs:
 
 
 class TestMainFlow:
-    def test_check_returns_1_when_stale(self, monkeypatch, map_is_fresh, tx_window_is_fresh):
+    def test_check_returns_1_when_stale(
+        self, monkeypatch, map_is_fresh, tx_window_is_fresh, industry_mix_is_fresh
+    ):
         """CI·다른 스크립트가 종료 코드로 받아 쓸 수 있어야 한다."""
         monkeypatch.setattr(post_load, "query_one", lambda sql: "100|200")
         assert post_load.main(["--check"]) == 1
 
-    def test_check_returns_0_when_fresh(self, monkeypatch, map_is_fresh, tx_window_is_fresh):
+    def test_check_returns_0_when_fresh(
+        self, monkeypatch, map_is_fresh, tx_window_is_fresh, industry_mix_is_fresh
+    ):
         # --check 는 세 가지를 묻는다(신선도 · 지도 파일 · 공개키 노출) — mock 도 갈라 답해야 한다.
         monkeypatch.setattr(post_load, "query_one",
                             lambda sql: "200|200" if "count(" in sql else "v_floor_stack")
         assert post_load.main(["--check"]) == 0
 
-    def test_check_never_writes(self, monkeypatch, map_is_fresh, tx_window_is_fresh):
+    def test_check_never_writes(
+        self, monkeypatch, map_is_fresh, tx_window_is_fresh, industry_mix_is_fresh
+    ):
         """--check 는 읽기만 해야 한다 — 실수로 갱신을 돌리면 안 된다."""
         calls = []
         monkeypatch.setattr(post_load, "query_one",
@@ -181,7 +199,9 @@ class TestMainFlow:
         post_load.main(["--check"])
         assert calls == []
 
-    def test_apply_runs_analyze_then_refresh_then_rechecks(self, monkeypatch, map_is_fresh, tx_window_is_fresh):
+    def test_apply_runs_analyze_then_refresh_then_rechecks(
+        self, monkeypatch, map_is_fresh, tx_window_is_fresh, industry_mix_is_fresh
+    ):
         """했다고 믿지 않고 **다시 재는지**까지 확인한다."""
         ran = []
         monkeypatch.setattr(post_load.dbx, "run_sql",
@@ -200,7 +220,9 @@ class TestMainFlow:
                             lambda sql: pytest.fail("실패했는데 신선도를 재면 안 됩니다"))
         assert post_load.main([]) == 2
 
-    def test_apply_reports_failure_when_still_stale_after_refresh(self, monkeypatch, map_is_fresh, tx_window_is_fresh):
+    def test_apply_reports_failure_when_still_stale_after_refresh(
+        self, monkeypatch, map_is_fresh, tx_window_is_fresh, industry_mix_is_fresh
+    ):
         """갱신을 돌렸는데도 안 맞으면 성공으로 끝내면 안 된다."""
         monkeypatch.setattr(post_load.dbx, "run_sql", lambda sql, **k: 0)
         monkeypatch.setattr(post_load, "query_one", lambda sql: "100|200")
@@ -252,6 +274,38 @@ class TestExpectedTxWindowFrom:
         assert post_load.expected_tx_window_from(datetime(2026, 12, 31)) == "202412"
 
 
+# ── 5-c. 업종 분포 표 신선도 (2026-08-22 신설 — 결정 0014) ─────────────────
+
+
+class TestIndustryMixStale:
+    """이 표는 "최신 분기"를 담는데, 어느 분기가 최신인지는 **구울 때** 굳는다.
+
+    갱신을 빼먹으면 층별 화면의 업종 분포만 옛 분기를 말한다. 더 고약한 것은 화면에
+    적히는 "○○년 ○분기 기준" 문구도 그 옛 분기를 **정직히** 말한다는 점이다 — 화면만
+    보면 아무 이상이 없어 보인다. 그래서 표와 원본을 등식으로 견준다.
+    """
+
+    def test_same_quarter_is_fresh(self):
+        assert post_load.is_industry_mix_stale("202606", "202606") is False
+
+    def test_older_quarter_is_stale(self):
+        assert post_load.is_industry_mix_stale("202603", "202606") is True
+
+    def test_empty_table_is_stale(self):
+        """굽지 않았으면 화면에서 섹션이 통째로 사라진다 — 조용한 실종이라 잡아야 한다."""
+        assert post_load.is_industry_mix_stale("", "202606") is True
+        assert post_load.is_industry_mix_stale(None, "202606") is True
+
+    def test_no_store_data_is_not_stale(self):
+        """점포 자료가 아예 없는 새 환경에서 헛경보를 내지 않는다 — 견줄 것이 없다."""
+        assert post_load.is_industry_mix_stale("", "") is False
+        assert post_load.is_industry_mix_stale(None, None) is False
+
+    def test_whitespace_is_trimmed_not_treated_as_drift(self):
+        """char(6) 컬럼이라 psql 이 공백을 붙여 줄 수 있다 — 그걸 낡음으로 오판하면 안 된다."""
+        assert post_load.is_industry_mix_stale(" 202606 ", "202606") is False
+
+
 # ── 6. 공개키 노출 점검 (2026-08-13 실제 사고에서 신설) ─────────────────────
 
 
@@ -275,7 +329,21 @@ class TestAnonExposure:
             "list_building_districts",
             "list_parcel_transactions", "get_sigungu_tx_stats",
             "list_price_bands",
+            "list_industry_mix", "list_industry_detail",
         )
+
+    def test_the_industry_matview_is_never_allowed(self):
+        """⛔ 업종 분포의 사전계산표가 허용 목록에 들어가면 안 된다(결정 0014).
+
+        화면은 함수 둘로만 읽는다. 표가 열리면 상호명은 안 나가더라도 **전국 상권의
+        업종 구성이 통째로** REST 페이지네이션으로 긁힌다 — 2026-08-13 사고
+        (mv_search_parcel 200)와 같은 형태다.
+        """
+        assert "mv_district_industry_mix" not in post_load.ANON_READABLE_ALLOWLIST
+        assert "mv_district_industry_mix" not in post_load.ANON_CALLABLE_ALLOWLIST
+        assert post_load.unexpected_anon_readables(["mv_district_industry_mix"]) == [
+            "mv_district_industry_mix"
+        ]
 
     def test_stage_b_internals_are_never_allowed(self):
         """⛔ Stage B(결정 0013)에서 화면이 부르는 것은 list_price_bands 하나뿐이다.
@@ -324,13 +392,17 @@ class TestAnonExposure:
         # 물질화뷰('m')가 빠지면 2026-08-13 사고를 그대로 놓친다.
         assert "'m'" in sql
 
-    def test_check_returns_1_when_something_is_exposed(self, monkeypatch, map_is_fresh, tx_window_is_fresh):
+    def test_check_returns_1_when_something_is_exposed(
+        self, monkeypatch, map_is_fresh, tx_window_is_fresh, industry_mix_is_fresh
+    ):
         monkeypatch.setattr(post_load, "query_one",
                             lambda sql: "200|200" if "count(" in sql
                             else "v_floor_stack\nmv_search_parcel")
         assert post_load.main(["--check"]) == 1
 
-    def test_check_returns_0_when_clean(self, monkeypatch, map_is_fresh, tx_window_is_fresh):
+    def test_check_returns_0_when_clean(
+        self, monkeypatch, map_is_fresh, tx_window_is_fresh, industry_mix_is_fresh
+    ):
         monkeypatch.setattr(post_load, "query_one",
                             lambda sql: "200|200" if "count(" in sql
                             else "v_floor_stack\nv_coverage_stats")
@@ -360,6 +432,17 @@ class TestRefreshCoversBothSummaries:
         이것도 에러가 안 난다 — 새 실거래를 넣어도 화면 숫자가 그대로다.
         """
         assert "refresh materialized view concurrently mv_sigungu_tx_stats;" in (
+            post_load.build_refresh_sql()
+        )
+
+    def test_refreshes_the_industry_mix(self):
+        """⛔ 업종 분포 표(결정 0014)가 빠지면 **분기가 옛날에 굳은 채** 남는다.
+
+        이 표는 "최신 분기"를 담는데 그 분기가 무엇인지는 구울 때 정해진다. 안 돌리면
+        새 분기를 적재해도 층별 화면의 업종 분포만 옛 분기를 말한다 — 게다가 화면의
+        "○○년 ○분기 기준" 문구도 그 옛 분기를 정직히 말하므로 아무도 눈치채지 못한다.
+        """
+        assert "refresh materialized view concurrently mv_district_industry_mix;" in (
             post_load.build_refresh_sql()
         )
 
@@ -461,7 +544,9 @@ class TestMapFreshness:
                 == post_load.build_district_geojson.build_meta_sql())
         assert "at time zone 'UTC'" in post_load.build_district_geojson.build_meta_sql()
 
-    def test_check_returns_1_when_the_map_file_is_stale(self, monkeypatch, tx_window_is_fresh):
+    def test_check_returns_1_when_the_map_file_is_stale(
+        self, monkeypatch, tx_window_is_fresh, industry_mix_is_fresh
+    ):
         """요약표·권한이 다 정상이어도 지도가 낡았으면 종료 코드 1 이어야 한다."""
         monkeypatch.setattr(post_load, "query_one",
                             lambda sql: "200|200" if "count(" in sql else "v_floor_stack")
@@ -469,7 +554,9 @@ class TestMapFreshness:
                             lambda *a, **k: {"district_cnt": 1, "max_computed_at": "옛날"})
         assert post_load.main(["--check"]) == 1
 
-    def test_check_returns_0_when_the_map_file_matches(self, monkeypatch, tx_window_is_fresh):
+    def test_check_returns_0_when_the_map_file_matches(
+        self, monkeypatch, tx_window_is_fresh, industry_mix_is_fresh
+    ):
         monkeypatch.setattr(post_load, "query_one",
                             lambda sql: "200|200" if "count(" in sql else "v_floor_stack")
         monkeypatch.setattr(post_load.build_district_geojson, "read_meta",
