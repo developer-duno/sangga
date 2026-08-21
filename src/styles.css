@@ -973,8 +973,10 @@ body {
     grid-column: 1;
   }
 
+  /* 한 칸으로 접히면 막대가 라벨 아래 한 줄을 통째로 쓴다 — 층마다 세로로 부담되지
+     않게 낮추기만 한다. 숨기면 "층별 규모"라는 이 화면의 본론이 모바일에서만 사라진다. */
   .floor__bar {
-    display: none;
+    height: 10px;
   }
 
   .dmap__canvas {

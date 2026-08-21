@@ -51,6 +51,33 @@ export const BUILDING_DISTRICTS_FN = 'list_building_districts';
 export const PARCEL_TX_FN = 'list_parcel_transactions';
 
 /**
+ * 이 필지 거래 목록을 서버가 끊는 건수. **서버가 정본**이다
+ * (`supabase/schema.sql` 의 `list_parcel_transactions` → `limit 100`).
+ *
+ * 한 필지에 852건인 곳이 실재해서 서버가 끊는다. 화면은 "잘렸다"고 말해야 하는데,
+ * 그 숫자를 따로 박아 두면 서버가 200으로 늘리는 날 화면만 100이라 말한다.
+ * ⚠️ 서버 쪽 `limit` 을 고치면 이 값도 같은 커밋에서 함께 고친다.
+ */
+export const TX_LIST_CAP = 100;
+
+/**
+ * 이 필지 거래 목록이 시작되는 달. **서버가 정본**이다
+ * (`supabase/schema.sql` 의 `list_parcel_transactions` → `contract_ym >= '202401'`).
+ *
+ * 그 전 계약분은 지번이 가려져 필지에 붙일 수 없다. 위와 같은 이유로 짝을 맞춰 둔다.
+ */
+export const TX_OPEN_SINCE_LABEL = '2024년 1월';
+
+/**
+ * 실거래 자료에서 층 표기가 빈 값으로 오기 시작한 해.
+ *
+ * 우리 파싱 문제가 아니라 국토부가 그렇게 준다(원본 전수 재계수로 확인). 층 미상이
+ * 왜 이렇게 많은지, 지하는 왜 참고 시세를 못 내는지 두 화면이 같은 사실을 말하므로
+ * 숫자를 한 곳에 둔다.
+ */
+export const TX_BASEMENT_MISSING_SINCE = 2017;
+
+/**
  * 구(시군구) 실거래 단가 분포(`sigungu` 5자리를 받는다). Stage A — 결정 0012.
  *
  * 층대 5칸이 항상 같은 순서로 온다. 구 이름·집계 창도 서버가 함께 주므로 화면에

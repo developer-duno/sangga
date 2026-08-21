@@ -1,15 +1,13 @@
 /**
- * 시도 목록과 "지금 열려 있는 지역".
+ * 시도 코드 → 이름 표기 전용 표.
  *
- * 결정 0006: **데이터·코드·화면은 전국을 전제로 짜되, 실제로 여는 지역만 가른다.**
- * 범위를 좁히는 게 아니라 전국 프레임 위에서 열림/잠김만 나눈다 — 나중에 지역을
- * 열 때 화면을 다시 설계하지 않기 위해서다.
+ * ⭐ **열린 지역의 진실은 서버 `list_open_sigungu()` 하나뿐이다.** 이 파일은 서버가
+ *    준 코드에 짧은 이름(서울/대전)을 붙이는 데만 쓴다 — 화면 문구·칩 목록·안내는
+ *    전부 서버 응답에서 만든다.
  *
- * ⭐ **열린 지역의 진실은 이 파일 하나뿐이다.** 지역을 열려면 OPEN_SIDO_CODES 에
- *    코드를 더하면 된다. 화면 문구·잠금 표시·안내 팝업이 전부 여기서 파생된다.
- *
- * ⛔ 데이터가 실제로 들어오기 **전에** 코드를 더하면 화면이 거짓말을 한다
- *    (그 지역을 검색해도 아무것도 안 나온다). 적재 완료를 확인한 뒤에 연다.
+ * ⛔ 열린 지역 목록을 여기에 다시 두지 말 것. 예전에는 이 파일에 박아 뒀는데,
+ *    자료가 늘면 칩은 서버 따라 늘고 문구만 옛 목록으로 남는 드리프트가 실제로 났다
+ *    (2026-08-13 2차 검증). 진실이 한 곳이면 그런 어긋남이 아예 불가능하다.
  */
 
 /** 시도 하나. code = 시군구코드·PNU 앞 2자리 (이름은 바뀌어도 코드는 안 바뀐다). */
@@ -50,30 +48,3 @@ export const SIDOS: readonly Sido[] = [
   { code: '51', name: '강원', fullName: '강원특별자치도' },
   { code: '52', name: '전북', fullName: '전북특별자치도' },
 ] as const;
-
-/**
- * 지금 자료가 들어와 있어 **실제로 볼 수 있는** 시도.
- *
- * 여기 코드를 더하기 전에 반드시 확인할 것:
- *   1) `parcel`·`unit_business` 에 그 지역 행이 있는가 (필지·점포)
- *   2) `building`·`building_floor` 에 그 지역 행이 있는가 (건물 — 이게 없으면 검색해도 안 나온다)
- */
-export const OPEN_SIDO_CODES: readonly string[] = ['11', '30'];
-
-const OPEN = new Set(OPEN_SIDO_CODES);
-
-export function isOpenSido(code: string): boolean {
-  return OPEN.has(code);
-}
-
-export const OPEN_SIDOS: readonly Sido[] = SIDOS.filter((s) => isOpenSido(s.code));
-
-/** '서울·대전' — 안내 문구에 그대로 넣는다. 하드코딩 금지(여기서 만든다). */
-export function openRegionLabel(): string {
-  return OPEN_SIDOS.map((s) => s.name).join('·');
-}
-
-/** PNU·시군구코드 앞 2자리로 그 지역이 열려 있는지. */
-export function isOpenPnu(pnu: string | null | undefined): boolean {
-  return !!pnu && isOpenSido(pnu.slice(0, 2));
-}
