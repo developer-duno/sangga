@@ -167,10 +167,10 @@ describe('IndustryMixSection — 두 스코프', () => {
     expect(await screen.findByText(/서로 더하면 안 됩니다/)).toBeTruthy();
   });
 
-  it('이 건물이 아니라 둘레라고 먼저 말한다', async () => {
+  it('이 건물만이 아니라 둘레라고 먼저 말한다', async () => {
     // 층 목록의 점포 칸과 세는 대상이 달라, 안 갈라 말하면 두 숫자를 견주게 된다.
     render(<IndustryMixSection pnu="1168010100100010000" />);
-    expect(await screen.findByText(/이 건물이 아니라 이 땅 둘레의 가게들입니다/)).toBeTruthy();
+    expect(await screen.findByText(/이 건물만이 아니라 이 땅 둘레의 가게들입니다/)).toBeTruthy();
   });
 });
 
@@ -230,14 +230,43 @@ describe('IndustryMixSection — 업종 골라보기', () => {
     expect(await screen.findByText(/소매 상세를 불러오는 중/)).toBeTruthy();
   });
 
-  it('상세를 못 읽어도 위쪽 분포는 그대로 남는다', async () => {
+  it('상세를 못 읽으면 못 읽었다고 말한다 — 물레방아를 영원히 돌리지 않는다', async () => {
+    // ⛔ 회귀 방지: 실패 시 상태를 안 바꾸면 detail 이 null 로 남아 "불러오는 중…"이
+    //    영영 돌아간다. 사용자는 느린 것으로 알고 계속 기다린다.
     responses.detail = { data: null, error: { message: 'boom' } };
     render(<IndustryMixSection pnu="1168010100100010000" />);
     const select = await screen.findByLabelText('업종 골라보기');
     fireEvent.change(select, { target: { value: 'I2' } });
 
-    await waitFor(() => expect(rpcCalls.some((c) => c.fn === 'list_industry_detail')).toBe(true));
+    expect(await screen.findByText('음식 상세를 불러오지 못했습니다.')).toBeTruthy();
+    expect(screen.queryByText(/음식 상세를 불러오는 중/)).toBeNull();
+    // "0곳"이라고 적지도 않는다 — 모르는 것을 없는 것이라 말하게 된다.
+    expect(screen.queryByText('음식 0곳')).toBeNull();
+    // 위쪽 분포는 그대로 남는다(상세만 접는다).
     expect(screen.getByText(/강남역\(발달상권\) 안/)).toBeTruthy();
+  });
+
+  it('상세 모양이 뜻밖이어도 못 읽었다고 말한다 (오류 객체가 200 으로 올 때)', async () => {
+    responses.detail = { data: { code: 'PGRST202' }, error: null };
+    render(<IndustryMixSection pnu="1168010100100010000" />);
+    const select = await screen.findByLabelText('업종 골라보기');
+    fireEvent.change(select, { target: { value: 'I2' } });
+
+    expect(await screen.findByText('음식 상세를 불러오지 못했습니다.')).toBeTruthy();
+    expect(screen.getByText(/강남역\(발달상권\) 안/)).toBeTruthy();
+  });
+
+  it('다른 업종을 다시 고르면 실패 표시가 사라진다', async () => {
+    // 실패 상태가 눌어붙으면, 다음에 고른 업종이 정상이어도 "못 읽었다"가 남는다.
+    responses.detail = { data: null, error: { message: 'boom' } };
+    render(<IndustryMixSection pnu="1168010100100010000" />);
+    const select = await screen.findByLabelText('업종 골라보기');
+    fireEvent.change(select, { target: { value: 'I2' } });
+    await screen.findByText('음식 상세를 불러오지 못했습니다.');
+
+    responses.detail = { data: detail({ cat_l_cd: 'G2' }), error: null };
+    fireEvent.change(select, { target: { value: 'G2' } });
+    await waitFor(() => expect(screen.queryByText(/불러오지 못했습니다/)).toBeNull());
   });
 
   it('같은 업종이 많다고 나쁜 자리는 아니라고 덧붙인다', async () => {

@@ -1,6 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import type { IndustryDistrict, IndustryMix, IndustryScope } from '../types';
-import { catOptions, districtLabel, districtSources, scopeTotal, toBars } from './industryMix';
+import {
+  catOptions,
+  districtLabel,
+  districtSources,
+  isCat,
+  isDistrict,
+  isIndustryDetail,
+  isIndustryMix,
+  isScope,
+  toBars,
+} from './industryMix';
 
 function scope(over: Partial<IndustryScope> = {}): IndustryScope {
   return {
@@ -101,17 +111,6 @@ describe('catOptions — 셀렉트 목록', () => {
   });
 });
 
-describe('scopeTotal — 모름과 0곳을 가른다', () => {
-  it('스코프가 없으면 null(모름)이다', () => {
-    expect(scopeTotal(null)).toBeNull();
-    expect(scopeTotal(undefined)).toBeNull();
-  });
-
-  it('0곳은 0으로 준다 — null 로 뭉개지 않는다', () => {
-    expect(scopeTotal({ total: 0, cats: [] })).toBe(0);
-  });
-});
-
 describe('districtLabel', () => {
   it('이름과 종류를 잇는다', () => {
     expect(districtLabel(district())).toBe('강남역(발달상권)');
@@ -139,5 +138,74 @@ describe('districtSources — 출처는 자료에서 온다', () => {
   it('출처가 없으면 빈 목록이다 — 지어내지 않는다', () => {
     expect(districtSources([district({ source_nm: null })])).toEqual([]);
     expect(districtSources([])).toEqual([]);
+  });
+});
+
+describe('모양 검사 — 화이트스크린 막는 유일한 방어선', () => {
+  // 이 레포에는 ErrorBoundary 가 하나도 없다. 곁다리 섹션이 렌더 중에 터지면 층별 화면
+  // 전체가 하얗게 죽으므로, 서버 응답을 믿기 전에 모양을 본다.
+
+  it('제대로 된 스코프를 통과시킨다', () => {
+    expect(isScope(scope())).toBe(true);
+    expect(isScope({ total: 0, cats: [] })).toBe(true);
+  });
+
+  it('객체가 아니면 막는다', () => {
+    for (const bad of [null, undefined, 'x', 3, []]) expect(isScope(bad)).toBe(false);
+  });
+
+  it('total 이 숫자가 아니면 막는다 — toLocaleString 에서 터진다', () => {
+    expect(isScope({ total: '10', cats: [] })).toBe(false);
+    expect(isScope({ cats: [] })).toBe(false);
+  });
+
+  it('cats 가 배열이 아니면 막는다 — map 에서 터진다', () => {
+    expect(isScope({ total: 1, cats: null })).toBe(false);
+    expect(isScope({ total: 1 })).toBe(false);
+  });
+
+  it('칸 하나가 망가져도 막는다 — n.toLocaleString() 이 곧 화이트스크린이다', () => {
+    expect(isScope({ total: 1, cats: [{ cd: 'I2', nm: '음식', n: '5' }] })).toBe(false);
+    expect(isScope({ total: 1, cats: [{ nm: '음식', n: 5 }] })).toBe(false);
+  });
+
+  it('칸의 이름은 없어도 된다 — 화면이 코드로 대신 적는다', () => {
+    expect(isCat({ cd: 'I2', nm: null, n: 5 })).toBe(true);
+    expect(isCat({ cd: 'I2', n: 5 })).toBe(true);
+  });
+
+  it('상권 묶음은 district_id 까지 있어야 한다 — 화면이 key 로 쓴다', () => {
+    expect(isDistrict(district())).toBe(true);
+    expect(isDistrict(scope())).toBe(false);
+  });
+
+  it('제대로 된 응답을 통과시킨다', () => {
+    expect(isIndustryMix(mix())).toBe(true);
+    expect(isIndustryDetail({ ...mix(), cat_l_cd: 'I2' })).toBe(true);
+  });
+
+  it('radius 가 null 인 것은 **정상**이다 — 못 쟀다는 뜻이라 빈 집계와 다르다', () => {
+    expect(isIndustryMix(mix({ radius: null }))).toBe(true);
+  });
+
+  it('radius_m 이 없으면 막는다 — 화면이 반경 길이를 서버에서 받는다', () => {
+    const bad = { ...mix() } as Record<string, unknown>;
+    delete bad.radius_m;
+    expect(isIndustryMix(bad)).toBe(false);
+  });
+
+  it('PostgREST 오류 객체를 막는다 (마이그레이션 적용 전 라이브)', () => {
+    expect(isIndustryMix({ code: 'PGRST202', message: 'function does not exist' })).toBe(false);
+  });
+
+  it('다른 함수의 응답을 막는다 (상권 줄 응답이 흘러드는 경우)', () => {
+    // 목이 함수 이름으로 갈라 답하지 않으면 실제로 이런 일이 난다.
+    expect(isIndustryMix({ covered: true, districts: [{ name: '역삼역', type: '발달상권' }] })).toBe(
+      false,
+    );
+  });
+
+  it('상세는 cat_l_cd 가 없으면 막는다 — 늦게 온 답을 버리는 유일한 근거다', () => {
+    expect(isIndustryDetail(mix())).toBe(false);
   });
 });

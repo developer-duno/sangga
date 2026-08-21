@@ -6,6 +6,8 @@ import {
   catOptions,
   districtLabel,
   districtSources,
+  isIndustryDetail,
+  isIndustryMix,
   toBars,
   type MixBar,
 } from '../lib/industryMix';
@@ -13,9 +15,10 @@ import {
 /**
  * "둘레의 업종 분포" 섹션 — 결정 0014(상권 지표 계산) 1단계.
  *
- * ⚠️ **이 건물의 점포가 아니다.** 층별 스택의 점포 칸은 (땅 + 층)으로 붙인 이 건물 것이고,
- *    여기 숫자는 이 땅 **둘레**(속한 상권 · 반경 500m)에 있는 남의 가게까지 전부 센 것이다.
- *    세는 대상이 아예 다르므로 두 숫자를 견주면 안 된다 — 그래서 제목부터 "둘레"라 적는다.
+ * ⚠️ **이 건물만의 점포가 아니다.** 층별 스택의 점포 칸은 (땅 + 층)으로 붙인 이 건물 것이고,
+ *    여기 숫자는 이 땅 **둘레**(속한 상권 · 반경 500m)에 있는 이웃 가게까지 전부 센 것이다
+ *    — 이 건물 것도 그 안에 **포함**된다(빼지 않는다). 세는 대상이 다르므로 두 숫자를
+ *    견주면 안 된다. 그래서 제목부터 "둘레"라 적는다.
  *
  * ⛔ 여기에 값(원·시세)을 넣지 말 것. 이 섹션은 **개수만** 말한다. 서버도 개수만 주고
  *    상호명은 한 글자도 보내지 않는다(security definer 함수의 노출면).
@@ -39,6 +42,13 @@ export function IndustryMixSection({ pnu }: Props) {
   /** 고른 대분류 코드. null = 아직 아무것도 안 골랐다(첫 화면). */
   const [pickedCat, setPickedCat] = useState<string | null>(null);
   const [detail, setDetail] = useState<IndustryDetail | null>(null);
+  /**
+   * 상세를 못 읽었나.
+   *
+   * ⛔ 이 상태가 없으면 실패했을 때 detail 이 null 로 남아 **"불러오는 중…"이 영원히**
+   *    돌아간다 — 사용자는 느린 것으로 알고 계속 기다린다. 실패는 실패라고 말한다.
+   */
+  const [detailFailed, setDetailFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -48,20 +58,21 @@ export function IndustryMixSection({ pnu }: Props) {
     setFailed(false);
     setPickedCat(null);
     setDetail(null);
+    setDetailFailed(false);
 
     supabase.rpc(INDUSTRY_MIX_FN, { p_pnu: pnu }).then(({ data, error }) => {
       if (cancelled) return;
-      // ⚠️ 모양까지 본다. `districts` 가 배열이 아닌 답(옛 함수·다른 함수의 응답·PostgREST
-      //    오류 객체)이 들어오면 아래에서 `.length` 를 읽다 터지는데, 이 컴포넌트가 터지면
+      // ⚠️ 모양까지 본다(isIndustryMix — 스코프·칸 하나하나까지). 뜻밖의 답이 들어오면
+      //    렌더 도중에 터지는데, 이 레포에는 ErrorBoundary 가 하나도 없어 그 순간
       //    **층별 화면 전체가 하얗게 죽는다.** 곁다리 섹션 하나 때문에 본체를 잃지 않는다.
-      if (error || !data || !Array.isArray((data as IndustryMix).districts)) {
+      if (error || !isIndustryMix(data)) {
         // 못 읽었으면 "업종 없음"이라고 적지 않는다 — 없는 것과 모르는 것은 다르다.
         // 마이그레이션 적용 전에는 함수가 아예 없어(PGRST202) 여기로 온다.
         console.warn('업종 분포 조회 실패 — 그 섹션 없이 표시합니다', error);
         setFailed(true);
         return;
       }
-      setMix(data as IndustryMix);
+      setMix(data);
     });
 
     return () => {
@@ -72,31 +83,33 @@ export function IndustryMixSection({ pnu }: Props) {
   useEffect(() => {
     if (pickedCat === null) {
       setDetail(null);
+      setDetailFailed(false);
       return;
     }
     let cancelled = false;
     setDetail(null);
+    setDetailFailed(false);
 
     supabase
       .rpc(INDUSTRY_DETAIL_FN, { p_pnu: pnu, p_cat: pickedCat })
       .then(({ data, error }) => {
         if (cancelled) return;
-        if (error || !data) {
-          console.warn('업종 상세 조회 실패 — 상세 없이 표시합니다', error);
-          return;
-        }
-        const got = data as IndustryDetail;
-        // 위와 같은 이유의 모양 검사 — 상세가 이상하면 상세만 접는다(위쪽 분포는 남는다).
-        if (!Array.isArray(got.districts)) {
-          console.warn('업종 상세의 모양이 뜻밖입니다 — 상세 없이 표시합니다', got);
+        // ⛔ 실패했으면 **반드시 상태를 바꾼다.** 그냥 돌아가면 detail 이 null 로 남아
+        //    "불러오는 중…"이 영영 돌아간다(사용자는 느린 것으로 알고 계속 기다린다).
+        //    모양 검사도 여기서 함께 한다 — 위쪽 분포는 살리고 상세만 접는다.
+        if (error || !isIndustryDetail(data)) {
+          console.warn('업종 상세 조회 실패 — 상세 없이 표시합니다', error ?? data);
+          setDetailFailed(true);
           return;
         }
         // ⚠️ 늦게 도착한 답은 버린다. 사용자가 그 사이 다른 업종을 골랐으면 이 답은
         //    엉뚱한 업종의 목록이고, 그대로 그리면 제목과 내용이 어긋난다.
         //    (cancelled 만으로는 못 막는다 — 같은 pnu 안에서 업종만 바뀌면 effect 가
         //     정리되지 않고 이어지는 경우가 있다.)
-        if (got.cat_l_cd !== pickedCat) return;
-        setDetail(got);
+        //    ⓘ 여기서는 detailFailed 를 켜지 않는다 — 실패가 아니라 **철 지난 답**이고,
+        //      지금 고른 업종의 답은 아직 오는 중이다.
+        if (data.cat_l_cd !== pickedCat) return;
+        setDetail(data);
       });
 
     return () => {
@@ -128,7 +141,7 @@ export function IndustryMixSection({ pnu }: Props) {
     <section className="mix">
       <h3 className="mix__h">{TITLE}</h3>
       <p className="mix__lead">
-        <strong>이 건물이 아니라 이 땅 둘레의 가게들입니다.</strong> 무슨 장사가 몇 곳 있는지
+        <strong>이 건물만이 아니라 이 땅 둘레의 가게들입니다.</strong> 무슨 장사가 몇 곳 있는지
         세어 본 것이고, 값이나 매출은 아닙니다.
       </p>
 
@@ -174,7 +187,13 @@ export function IndustryMixSection({ pnu }: Props) {
       )}
 
       {pickedCat !== null && (
-        <DetailBlocks mix={mix} detail={detail} pickedCat={pickedCat} pickedNm={pickedNm} />
+        <DetailBlocks
+          mix={mix}
+          detail={detail}
+          failed={detailFailed}
+          pickedCat={pickedCat}
+          pickedNm={pickedNm}
+        />
       )}
 
       <p className="grade">
@@ -260,15 +279,29 @@ function MixBarRow({ bar }: { bar: MixBar }) {
 function DetailBlocks({
   mix,
   detail,
+  failed,
   pickedCat,
   pickedNm,
 }: {
   mix: IndustryMix;
   detail: IndustryDetail | null;
+  /** true = 못 읽음. "불러오는 중"과 **반드시** 갈라 말한다(아래 ⛔ 참조). */
+  failed: boolean;
   pickedCat: string;
   pickedNm: string | null;
 }) {
   const label = pickedNm || pickedCat;
+
+  // ⛔ 실패를 "불러오는 중"으로 두면 영영 도는 물레방아가 된다 — 사용자는 느린 것으로
+  //    알고 계속 기다린다. 그렇다고 "0곳"이라 적어서도 안 된다(모르는 것을 없는 것이라
+  //    말하게 된다). 못 읽었다고 그대로 말하는 것이 유일하게 정직한 답이다.
+  if (failed) {
+    return (
+      <div className="mix__detail">
+        <p className="mix__none">{label} 상세를 불러오지 못했습니다.</p>
+      </div>
+    );
+  }
 
   if (detail === null) {
     return (

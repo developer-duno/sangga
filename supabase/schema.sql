@@ -345,9 +345,14 @@ create index if not exists idx_ub_unit     on unit_business (unit_id, snapshot_y
 -- ⚠️ 옛 `idx_ub_pnu (pnu, snapshot_ym)` 자리다(2026-08-22c 에서 지웠다). 앞 두 칸이 같고
 --    업종 네 칸이 include 로 더 붙어 있어 **완전한 대체**다 — 옛것을 되살리면 105MB 를
 --    그냥 두 번 쓰게 된다(2026-08-22a 가 idx_ub_snapshot_floor 에 한 정리와 같다).
--- ⛔ include 네 칸을 지우지 말 것. 반경 업종 집계가 이 칸들 때문에 힙에 안 간다
---    (라이브 실측 2026-08-22, 강남 845필지·4,659점포: 1,583ms → 23ms · Heap Fetches 0).
+-- ⛔ include 네 칸을 지우지 말 것. 반경 업종 집계가 이 칸들 때문에 힙에 안 간다.
+--    최악 표본(중구 `1114013400101890026` — 이웃 1,414필지·점포 4,433곳)에서 **찬 캐시**
+--    2,383ms → Heap Fetches 0. ⚠️ 더운 캐시로는 차이가 안 보인다(옛 인덱스로도 23ms) —
+--    이 인덱스가 지키는 것은 **첫 방문자**다.
 --    지워도 **에러는 안 나고 느려지기만 한다** — 가장 늦게 발견되는 종류의 회귀다.
+-- ⓘ 이 파일에서는 문장 순서가 상관없다. 마이그레이션(2026-08-22c)에서는 옛 idx_ub_pnu 를
+--    지우는 문장을 **맨 끝**에 둔다 — drop index 의 ACCESS EXCLUSIVE 락이 커밋까지 유지돼
+--    앞에 두면 물질화뷰 굽는 27초 내내 unit_business 읽기가 줄을 서기 때문이다.
 create index if not exists idx_ub_pnu_cat  on unit_business (pnu, snapshot_ym)
   include (cat_l_cd, cat_l_nm, cat_m_cd, cat_m_nm);
 create index if not exists idx_ub_name     on unit_business using gin (biz_name gin_trgm_ops);

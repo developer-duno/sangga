@@ -1,4 +1,10 @@
-import type { IndustryCat, IndustryDistrict, IndustryMix, IndustryScope } from '../types';
+import type {
+  IndustryCat,
+  IndustryDetail,
+  IndustryDistrict,
+  IndustryMix,
+  IndustryScope,
+} from '../types';
 
 /**
  * 업종 분포 화면의 순수 계산만 모은다(결정 0014).
@@ -62,14 +68,63 @@ export function catOptions(mix: IndustryMix): Array<{ cd: string; nm: string | n
 }
 
 /**
- * 한 스코프에서 고른 업종이 몇 곳인가 — "경쟁 카운트".
+ * 서버 응답의 **모양**을 확인한다.
  *
- * ⚠️ 못 찾으면 0 이 아니라 **null** 이다. 아직 답이 안 왔을 때(로딩)와 정말 0곳일 때를
- *    화면이 갈라 말해야 하는데, 0 으로 뭉개면 "없다"고 단정하게 된다.
+ * ⛔ 이 레포에는 ErrorBoundary 가 하나도 없다. 그래서 곁다리 섹션 하나가 렌더 중에 터지면
+ *    **층별 화면 전체가 하얗게 죽는다.** 타입 단언(`as IndustryMix`)은 컴파일 때만 사는
+ *    약속이라 런타임에는 아무것도 막아 주지 않는다 — 실제로 막는 것은 이 검사뿐이다.
+ *
+ * 무엇이 들어올 수 있나: 마이그레이션 적용 전 라이브의 오류 객체, 옛 판 함수의 응답,
+ * 다른 함수의 응답(목이 갈라 답하지 않으면 실제로 이런 일이 난다).
+ *
+ * ⚠️ 칸(cats) 하나하나까지 본다. `n` 이 숫자가 아니면 `n.toLocaleString()` 에서 터지고,
+ *    그건 곧 화이트스크린이다.
  */
-export function scopeTotal(scope: IndustryScope | null | undefined): number | null {
-  if (!scope) return null;
-  return scope.total;
+export function isCat(x: unknown): x is IndustryCat {
+  if (typeof x !== 'object' || x === null) return false;
+  const c = x as Record<string, unknown>;
+  return (
+    typeof c.cd === 'string' &&
+    typeof c.n === 'number' &&
+    (c.nm === null || c.nm === undefined || typeof c.nm === 'string')
+  );
+}
+
+export function isScope(x: unknown): x is IndustryScope {
+  if (typeof x !== 'object' || x === null) return false;
+  const s = x as Record<string, unknown>;
+  return typeof s.total === 'number' && Array.isArray(s.cats) && s.cats.every(isCat);
+}
+
+/**
+ * 상권 한 묶음. 스코프에 이름표가 붙은 것이라 스코프 조건을 그대로 물려받는다.
+ * `district_id` 는 화면이 key 로 쓰므로 문자열이라야 한다.
+ */
+export function isDistrict(x: unknown): x is IndustryDistrict {
+  if (!isScope(x)) return false;
+  return typeof (x as unknown as Record<string, unknown>).district_id === 'string';
+}
+
+/**
+ * ⚠️ `radius` 는 **null 이어도 정상**이다 — "필지 좌표가 없어 못 쟀다"는 뜻이라 빈 집계와
+ *    구분해야 한다. 여기서 null 을 거르면 그 뜻이 통째로 사라진다.
+ */
+function hasCommonShape(x: unknown): boolean {
+  if (typeof x !== 'object' || x === null) return false;
+  const m = x as Record<string, unknown>;
+  if (typeof m.radius_m !== 'number') return false;
+  if (!Array.isArray(m.districts) || !m.districts.every(isDistrict)) return false;
+  return m.radius === null || isScope(m.radius);
+}
+
+export function isIndustryMix(x: unknown): x is IndustryMix {
+  return hasCommonShape(x);
+}
+
+/** 상세는 위에 더해 `cat_l_cd` 가 있어야 한다 — 늦게 온 답을 버리는 유일한 근거다. */
+export function isIndustryDetail(x: unknown): x is IndustryDetail {
+  if (!hasCommonShape(x)) return false;
+  return typeof (x as Record<string, unknown>).cat_l_cd === 'string';
 }
 
 /**

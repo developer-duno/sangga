@@ -273,8 +273,17 @@ def report_tx_window_freshness():
 def is_industry_mix_stale(mix_ym, latest_ym):
     """업종 분포 표가 낡았는가 (순수 함수 — 테스트가 여기만 보면 된다).
 
-    빈 표(굽지 않음)는 낡음이다. 점포 자료가 아예 없으면(latest_ym 도 빔) 견줄 것이
-    없으므로 낡지 않은 것으로 본다 — 자료가 없는 새 환경에서 헛경보를 내지 않는다.
+    빈 표(굽지 않음)는 낡음이다 — 화면에서 섹션이 통째로 사라지는데, 그건 정상이 아니다.
+
+    ⚠️ **원본이 빈 경우의 판정이 형제(is_coverage_stale)와 일부러 반대다.** 여기서는
+       '낡지 않음', 저기서는 '낡음'이다. 까닭은 두 표가 없을 때 화면이 겪는 일이 다르기
+       때문이다:
+         · 각주 집계 — 점포 자료가 없으면 각주 숫자 자체를 못 만든다. 화면이 기대하는
+           값이 비는 것이라 알려야 한다.
+         · 업종 분포 — 점포 자료가 없으면 **애초에 셀 것이 없다.** 이 섹션은 자기가 알아서
+           사라지도록 만들어져 있고(그게 설계된 정상 동작이다), 그 상태로 경보를 내면
+           자료를 아직 안 넣은 새 환경에서 --check 가 영원히 1 을 돌려준다.
+       즉 "견줄 기준이 없을 때 무엇이 정상인가"가 두 표에서 다르다. 통일하지 말 것.
     """
     mix = str(mix_ym or "").strip()
     latest = str(latest_ym or "").strip()
@@ -289,7 +298,10 @@ def report_industry_mix_freshness():
         "select coalesce((select max(snapshot_ym) from mv_district_industry_mix), '')"
         " || '|' || coalesce((select max(snapshot_ym) from unit_business), '');"
     )
-    mix_ym, latest_ym = raw.split("|")
+    # partition 을 쓴다 — split 은 값에 '|' 가 섞이면 "unpack 3 into 2" 로 죽는다
+    # (형제 report_coverage_freshness 와 같은 방식으로 맞춘다).
+    mix_ym, _, latest_ym = raw.partition("|")
+    mix_ym, latest_ym = mix_ym.strip(), latest_ym.strip()
     stale = is_industry_mix_stale(mix_ym, latest_ym)
     if stale:
         if not mix_ym:
