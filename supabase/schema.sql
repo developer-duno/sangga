@@ -346,12 +346,15 @@ create index if not exists idx_ub_pnu      on unit_business (pnu, snapshot_ym);
 create index if not exists idx_ub_name     on unit_business using gin (biz_name gin_trgm_ops);
 create index if not exists idx_ub_cat      on unit_business (cat_s_cd, snapshot_ym);
 create index if not exists idx_ub_geom     on unit_business using gist (geom);
--- 각주 집계(v_coverage_stats) 전용 **커버링** 인덱스 — 뷰가 쓰는 두 컬럼이 다 들어
+-- 각주 집계(v_coverage_stats) 전용 **커버링** 인덱스 — 뷰가 쓰는 세 컬럼이 다 들어
 -- 있어 힙에 안 간다(Index Only Scan). 없으면 pkey(snapshot_ym, biz_no)로 인덱스는
 -- 타지만 행마다 힙 페이지를 한 번씩 방문해(최신 스냅샷 63.5만 행 = 버퍼 63.6만 회)
 -- **캐시가 식은 첫 요청만 3초 제한을 넘겨 500**이 된다. 따뜻하면 200이라 재현이
 -- 어렵다. 실측(2026-08-11f): 버퍼 636,527 → 698, 힙 방문 0, 1,028ms → 131ms, 8.6MB.
-create index if not exists idx_ub_snapshot_floor on unit_business (snapshot_ym, floor_no);
+-- ⚠️ pnu 가 세 번째로 들어간 이유(2026-08-22a): 뷰가 "서비스 지역만" 세게 되면서
+--    where 절이 pnu 를 읽는다. 빼면 그 순간 위 500 이 그대로 재발한다.
+--    (옛 2-컬럼 인덱스는 이것의 앞부분이라 중복 — 2026-08-22a 에서 지웠다.)
+create index if not exists idx_ub_snapshot_floor_pnu on unit_business (snapshot_ym, floor_no, pnu);
 
 
 -- ── 3) unit_business 의 "절대 UPDATE/DELETE 금지"가 말로만 있었다 ───────────
@@ -737,35 +740,6 @@ comment on view v_floor_stack is
   '재검토 방아쇠: 공개 배포일 / 지도·반경 검색(§6.4) 착수일';
 
 -- =====================================================================
--- 뷰: v_coverage_stats — 스택 뷰 각주용 집계
--- =====================================================================
--- 화면 각주("점포 N곳 중 층이 없는 것이 M%")의 숫자를 런타임에 계산하기 위한 뷰.
--- 예전에는 이 숫자가 FloorStack.tsx에 문자열로 박혀 있었는데, 점포 데이터는
--- 아래 where 절대로 **최신 분기를 자동으로 따라가므로** 새 분기를 적재하는 순간
--- 코드 변경 0인 채로 각주만 옛 숫자를 말하게 된다.
---
--- ⚠️ v_floor_stack과 **똑같은** 분기 기준을 쓴다. 한쪽만 바꾸면 화면의 점포 목록과
---    각주가 서로 다른 분기를 말하게 되므로 항상 함께 고칠 것.
--- ⚠️ 내보내는 것은 집계값뿐이다 — 상호명·좌표·주소는 넣지 않는다(노출면 최소 원칙).
-create or replace view v_coverage_stats as
-select
-  ub.snapshot_ym,
-  count(*)                                                    as store_cnt,
-  count(*) filter (where ub.floor_no is null)                 as floor_missing_cnt,
-  round(100.0 * count(*) filter (where ub.floor_no is null)
-        / count(*), 1)                                        as floor_missing_pct
-from unit_business ub
-where ub.snapshot_ym = (select max(snapshot_ym) from unit_business)
-group by ub.snapshot_ym;
--- group by라 행이 있을 때만 결과가 나온다 = 0으로 나누는 경우가 없다.
-
-comment on view v_coverage_stats is
-  '§8.6 스택 뷰 각주용 집계. v_floor_stack과 동일한 전역 최신 분기 기준 — 둘을 항상 함께 고칠 것. '
-  '★ 공개 접근: anon/authenticated에게 SELECT 허용(집계값만, 상호명 없음). '
-  'ℹ️ 린트 0010(security definer view) 의도적 예외 — security_invoker=true로 되돌리면 원본 표(unit_business) 401. '
-  '재검토 방아쇠: 공개 배포일 / 지도·반경 검색(§6.4) 착수일';
-
--- =====================================================================
 -- 함수: list_building_districts — 이 건물이 속한 상권 (§8.6 한 줄)
 -- =====================================================================
 -- district 표는 2026-08-14 에 서울 1,650개로 찼는데(결정 0008) **읽는 코드가 0줄**이었다.
@@ -1037,6 +1011,52 @@ comment on materialized view mv_open_sigungu is
 
 create unique index if not exists idx_mos_sigungu on mv_open_sigungu (sigungu_code);
 analyze mv_open_sigungu;
+
+-- =====================================================================
+-- 뷰: v_coverage_stats — 스택 뷰 각주용 집계
+-- =====================================================================
+-- 화면 각주("점포 N곳 중 층이 없는 것이 M%")의 숫자를 런타임에 계산하기 위한 뷰.
+-- 예전에는 이 숫자가 FloorStack.tsx에 문자열로 박혀 있었는데, 점포 데이터는
+-- 아래 where 절대로 **최신 분기를 자동으로 따라가므로** 새 분기를 적재하는 순간
+-- 코드 변경 0인 채로 각주만 옛 숫자를 말하게 된다.
+--
+-- ⚠️ v_floor_stack과 **똑같은** 분기 기준을 쓴다("분기" = snapshot_ym 스냅샷 분기).
+--    한쪽만 바꾸면 화면의 점포 목록과 각주가 서로 다른 분기를 말하게 되므로 항상 함께 고칠 것.
+--    2026-08-22a 에서 **지역** 조건이 붙었지만 그 약속은 그대로다 — 바뀐 것은 "어느 지역을
+--    세느냐"뿐이고 "어느 분기를 세느냐"는 손대지 않았다.
+-- ⚠️ 내보내는 것은 집계값뿐이다 — 상호명·좌표·주소는 넣지 않는다(노출면 최소 원칙).
+-- ⛔ **drop 하고 다시 만들지 말 것.** anon SELECT 가 같이 날아가는데
+--    `scripts/post_load.py --check` 는 "열려 있으면 안 되는데 열린 것"만 잡지
+--    "열려 있어야 하는데 닫힌 것"은 못 잡는다 → 경보 없이 각주만 조용히 사라진다.
+create or replace view v_coverage_stats as
+select
+  ub.snapshot_ym,
+  count(*)                                                    as store_cnt,
+  count(*) filter (where ub.floor_no is null)                 as floor_missing_cnt,
+  round(100.0 * count(*) filter (where ub.floor_no is null)
+        / count(*), 1)                                        as floor_missing_pct
+from unit_business ub
+where ub.snapshot_ym = (select max(snapshot_ym) from unit_business)
+  -- 서비스 지역(화면에서 고를 수 있는 구)만 센다 — 전국을 세면 화면이 보여주지도 않는
+  -- 지역까지 섞여 결측률이 15.3%p 과장된다(2026-08-22 실측 50.3% vs 35.0%).
+  -- 목록을 여기 베껴 적지 않고 mv_open_sigungu 를 그대로 읽는 이유: 자료가 늘 때
+  -- 각주만 낡는 드리프트를 막으려고(확정설계 9 — 열린 지역의 진실은 서버 한 곳).
+  -- ⚠️ `::char(5)` 로 타입을 맞춘다. substr(char) 의 결과는 text 인데 sigungu_code 는
+  --    char(5) 라, 안 맞추면 비교마다 캐스트가 낀다(2026-08-16b 와 같은 병).
+  -- ℹ️ pnu 가 NULL 인 행(실측 1,819)은 지역 특정 불가라 분모에서 빠진다.
+  and substr(ub.pnu, 1, 5)::char(5) in (select sigungu_code from mv_open_sigungu)
+group by ub.snapshot_ym;
+-- group by라 행이 있을 때만 결과가 나온다 = 0으로 나누는 경우가 없다.
+
+comment on view v_coverage_stats is
+  '§8.6 스택 뷰 각주용 집계. v_floor_stack과 동일한 전역 최신 분기 기준 — 둘을 항상 함께 고칠 것. '
+  '★ 범위는 **서비스 지역(mv_open_sigungu = 화면에서 고를 수 있는 구)** 뿐이다(2026-08-22a). '
+  '전국을 세면 결측률이 15.3%p 과장된다(50.3% vs 35.0%). '
+  'ℹ️ pnu 가 NULL 인 행(실측 1,819)은 지역 특정 불가라 분모에서 빠진다. '
+  '★ 공개 접근: anon/authenticated에게 SELECT 허용(집계값만, 상호명 없음). '
+  '⛔ drop 하지 말 것 — GRANT 가 날아가는데 post_load --check 는 "닫힌 것"을 못 잡는다. '
+  'ℹ️ 린트 0010(security definer view) 의도적 예외 — security_invoker=true로 되돌리면 원본 표(unit_business) 401. '
+  '재검토 방아쇠: 공개 배포일 / 지도·반경 검색(§6.4) 착수일';
 
 create or replace function list_open_sigungu()
 returns table (sido_code char(2), sido_nm text, sigungu_code char(5), sigungu_nm text, building_cnt int)

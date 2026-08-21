@@ -53,6 +53,11 @@ vi.mock('../lib/supabase', () => ({
   PARCEL_TX_FN: 'list_parcel_transactions',
   SIGUNGU_TX_STATS_FN: 'get_sigungu_tx_stats',
   PRICE_BANDS_FN: 'list_price_bands',
+  // ⚠️ 이 흉내는 모듈을 **통째로** 갈아끼운다 — 진짜 파일에만 상수를 더하면 화면은
+  //    undefined 를 그린다. 서버 짝 상수를 추가할 때 여기도 같이 더할 것.
+  TX_LIST_CAP: 100,
+  TX_OPEN_SINCE_LABEL: '2024년 1월',
+  TX_BASEMENT_MISSING_SINCE: 2017,
   supabase: {
     from: (view: string) =>
       makeQuery(view === 'v_coverage_stats' ? responses.stats : responses.floors),
@@ -225,6 +230,9 @@ describe('FloorStack — 각주 숫자', () => {
     render(<FloorStack building={building()} />);
     await waitFor(() => expect(screen.getByText(/2026년 1분기/)).toBeTruthy());
     expect(screen.getByText(/64,239곳/)).toBeTruthy();
+    // 이 숫자가 **어느 범위**를 센 것인지 밝혀야 한다(2026-08-22a). 뷰가 세는 곳은
+    // 화면에서 고를 수 있는 구뿐인데, 그 말이 없으면 사람은 전국 숫자로 읽는다.
+    expect(screen.getByText(/서비스 지역/)).toBeTruthy();
   });
 
   it('DB 값이 바뀌면 각주도 따라 바뀐다 (손으로 박힌 값이 아니다)', async () => {
@@ -470,6 +478,18 @@ describe('FloorStack — 실거래 기록 (Stage A · 결정 0012)', () => {
     expect(screen.getByText('집합')).toBeTruthy();
   });
 
+  it('서버 상한만큼 왔으면 "잘렸다"고 고지하고, 언제부터 보이는지도 함께 적는다', async () => {
+    // ⚠️ 두 문구의 숫자는 **서버가 정본**이다(schema.sql 의 `limit 100` · `contract_ym >= '202401'`).
+    //    화면은 supabase.ts 의 짝 상수를 쓰는데, 그 모듈은 이 파일이 통째로 흉내 낸다 —
+    //    흉내에서 상수가 빠지면 `undefined` 가 되어 **잘림 고지가 조용히 사라진다**(조건이
+    //    `txs.length >= undefined` 라 항상 거짓). 그 구멍을 여기서 막는다.
+    responses.txs = { data: Array.from({ length: 100 }, () => tx()), error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelector('.tx__cap')).toBeTruthy());
+    expect(container.querySelector('.tx__cap')?.textContent ?? '').toContain('100');
+    expect(container.querySelector('.tx__note')?.textContent ?? '').toContain('2024년 1월');
+  });
+
   it('거래가 있는 층에만 "거래 N건" 뱃지를 단다 (없는 층에 0건이라 적지 않는다)', async () => {
     // "거래 0건"이라고 적으면 "이 층은 안 팔린다"는 단정이 된다 — 실제로는 지번이 가려진
     // 거래·층이 빠진 거래가 그 밑에 깔려 있다.
@@ -548,6 +568,8 @@ describe('FloorStack — 실거래 기록 (Stage A · 결정 0012)', () => {
     expect(screen.getByText(/2025-01 이후 계약분/)).toBeTruthy();
     // ⚠️ '강남구'는 이 건물 주소에도 들어 있다 — 실거래 블록 안만 본다.
     expect(container.querySelector('.tx')?.textContent).not.toContain('강남구');
+    // 기간을 글자로 박으면 창이 바뀌는 날 문구만 조용히 거짓말이 된다(밴드 출처 줄과 같은 가드).
+    expect(container.querySelector('.tx__src')?.textContent ?? '').not.toContain('24개월');
   });
 
   it('구 코드는 pnu 앞 5자리로 서버에 보낸다', async () => {

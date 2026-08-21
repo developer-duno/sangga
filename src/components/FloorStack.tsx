@@ -7,6 +7,9 @@ import {
   PARCEL_TX_FN,
   SIGUNGU_TX_STATS_FN,
   PRICE_BANDS_FN,
+  TX_LIST_CAP,
+  TX_OPEN_SINCE_LABEL,
+  TX_BASEMENT_MISSING_SINCE,
 } from '../lib/supabase';
 import type {
   BuildingDistricts,
@@ -234,9 +237,11 @@ export function FloorStack({ building }: Props) {
     stats && missingEvery
       ? `약 ${missingEvery}곳 중 1곳(${stats.floor_missing_pct}%)`
       : '적지 않은 수';
+  // "서비스 지역"을 밝히는 이유: 뷰가 세는 범위가 **지금 볼 수 있는 구**뿐이다(2026-08-22a).
+  // 예전에는 전국을 세서, 화면이 보여주지도 않는 지역까지 섞인 숫자를 각주가 말했다.
   const basisPhrase = stats
-    ? `근거: ${formatQuarter(stats.snapshot_ym)} 상권정보 ${stats.store_cnt.toLocaleString('ko-KR')}곳 기준.`
-    : '근거: 상권정보 최신 분기 기준.';
+    ? `근거: ${formatQuarter(stats.snapshot_ym)} 상권정보 중 서비스 지역(지금 볼 수 있는 구) ${stats.store_cnt.toLocaleString('ko-KR')}곳 기준.`
+    : '근거: 서비스 지역(지금 볼 수 있는 구)의 상권정보 최신 분기 기준.';
 
   return (
     <section className="stack">
@@ -460,8 +465,11 @@ function ParcelTxList({ txs }: { txs: ParcelTransaction[] }) {
     <div className="tx__block">
       <h4 className="tx__sub">
         이 땅에서 신고된 거래 {txs.length.toLocaleString('ko-KR')}건
-        {/* 서버가 100건에서 끊는다(한 필지에 852건인 곳이 실재한다). 잘렸으면 잘렸다고 말한다. */}
-        {txs.length >= 100 && <span className="tx__cap"> (최근 100건까지)</span>}
+        {/* 서버가 끊는 건수다(한 필지에 852건인 곳이 실재한다). 잘렸으면 잘렸다고 말한다.
+            숫자는 서버 짝(TX_LIST_CAP)에서 온다 — 화면에 따로 박으면 서버만 늘어난 날 거짓말이 된다. */}
+        {txs.length >= TX_LIST_CAP && (
+          <span className="tx__cap"> (최근 {TX_LIST_CAP}건까지)</span>
+        )}
       </h4>
       <ul className="tx__list">
         {txs.map((t, i) => (
@@ -480,9 +488,10 @@ function ParcelTxList({ txs }: { txs: ParcelTransaction[] }) {
         ))}
       </ul>
       <p className="tx__note">
-        <strong>2024년 1월 이후 계약분만 보입니다.</strong> 그 전 거래는 지번이 가려져 이 땅에
-        붙일 수 없고, 건물 한 채를 통째로 사고파는 거래도 같은 이유로 빠집니다. 2017년부터는
-        층이 빈 값으로 오는 거래가 많아 <strong>층 미상</strong>으로 남습니다.
+        <strong>{TX_OPEN_SINCE_LABEL} 이후 계약분만 보입니다.</strong> 그 전 거래는 지번이
+        가려져 이 땅에 붙일 수 없고, 건물 한 채를 통째로 사고파는 거래도 같은 이유로 빠집니다.{' '}
+        {TX_BASEMENT_MISSING_SINCE}년부터는 층이 빈 값으로 오는 거래가 많아{' '}
+        <strong>층 미상</strong>으로 남습니다.
       </p>
     </div>
   );
@@ -537,8 +546,8 @@ function SigunguTxBands({ stats }: { stats: SigunguTxStat[] }) {
       </p>
       <p className="tx__src">
         출처: 국토교통부 상업업무용 부동산 매매 실거래가 ·{' '}
-        {guName ? `${guName} ` : ''}집합(구분소유) 거래 최근 24개월
-        {from ? `(${formatYearMonth(from)} 이후 계약분)` : ''} 집계 · 전체 표본{' '}
+        {guName ? `${guName} ` : ''}집합(구분소유) 거래
+        {from ? ` ${formatYearMonth(from)} 이후 계약분` : ''} 집계 · 전체 표본{' '}
         {total.toLocaleString('ko-KR')}건.
       </p>
     </div>
