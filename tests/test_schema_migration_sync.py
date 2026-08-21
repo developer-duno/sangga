@@ -19,7 +19,7 @@
 
 무엇을 지키나
 -------------
-마이그레이션을 **날짜순으로 재생**해 "지금 살아 있어야 할" 인덱스·함수·저장 컬럼을
+마이그레이션을 **날짜순으로 재생**해 "지금 살아 있어야 할" 인덱스·함수·뷰·저장 컬럼을
 계산하고, 그것이 정본에 있는지 본다. 중간에 만들었다 지운 것(식 인덱스 3개)은
 살아 있지 않으므로 정본에 **없어야** 한다.
 
@@ -47,6 +47,11 @@ RE_CREATE_INDEX = re.compile(
 RE_DROP_INDEX = re.compile(r"(?im)^drop\s+index\s+(?:if\s+exists\s+)?(\w+)")
 RE_CREATE_FN = re.compile(r"(?im)^create\s+or\s+replace\s+function\s+(?:public\.)?(\w+)")
 RE_DROP_FN = re.compile(r"(?im)^drop\s+function\s+(?:if\s+exists\s+)?(?:public\.)?(\w+)")
+# 뷰도 같은 병을 앓는다 — 2026-08-22a 가 v_coverage_stats 의 where 절을 고칠 때
+# 정본에 옮겨 적는 것을 잊으면 새 환경만 전국을 세게 된다(에러 0, 조용한 드리프트).
+# ⚠️ 물질화 뷰(create materialized view)는 `or replace` 가 없어 이 정규식에 안 걸린다.
+RE_CREATE_VIEW = re.compile(r"(?im)^create\s+or\s+replace\s+view\s+(?:public\.)?(\w+)")
+RE_DROP_VIEW = re.compile(r"(?im)^drop\s+view\s+(?:if\s+exists\s+)?(?:public\.)?(\w+)")
 RE_ADD_COLUMN = re.compile(r"(?im)^\s*add\s+column\s+(?:if\s+not\s+exists\s+)?(\w+)")
 RE_DROP_COLUMN = re.compile(r"(?im)^\s*drop\s+column\s+(?:if\s+exists\s+)?(\w+)")
 
@@ -152,6 +157,48 @@ def test_live_functions_are_in_schema(schema_sql):
     )
 
 
+def test_live_views_are_in_schema(schema_sql):
+    """마이그레이션으로 만든/고친 뷰는 정본에도 있어야 한다.
+
+    ⚠️ 이름만 본다 — 본문(where 절 등)까지는 대조하지 못한다. 2026-08-22a 처럼
+       기존 뷰의 where 절만 바꾸는 변경은 이 가드로 못 잡으니 사람이 맞춰야 한다.
+       그래도 "새 뷰를 만들고 정본에 안 옮긴 것"은 여기서 걸린다.
+    """
+    alive, _ = replay(RE_CREATE_VIEW, RE_DROP_VIEW)
+    missing = sorted(
+        n
+        for n in alive
+        if not re.search(
+            r"(?im)^create\s+or\s+replace\s+view\s+(?:public\.)?{}\b".format(
+                re.escape(n)
+            ),
+            schema_sql,
+        )
+    )
+    assert not missing, (
+        "마이그레이션에는 있는데 schema.sql 에 없는 뷰: {}\n"
+        "→ 이 파일로 새 환경을 만들면 그 뷰가 없어 화면이 401/빈칸이 됩니다.".format(missing)
+    )
+
+
+def test_dropped_views_are_gone_from_schema(schema_sql):
+    """마이그레이션에서 지운 뷰가 정본에 남아 있으면 안 된다."""
+    _, dropped = replay(RE_CREATE_VIEW, RE_DROP_VIEW)
+    zombies = sorted(
+        n
+        for n in dropped
+        if re.search(
+            r"(?im)^create\s+or\s+replace\s+view\s+(?:public\.)?{}\b".format(
+                re.escape(n)
+            ),
+            schema_sql,
+        )
+    )
+    assert not zombies, (
+        "라이브에서 지운 뷰가 schema.sql 에 남아 있습니다: {}".format(zombies)
+    )
+
+
 def test_live_generated_columns_are_in_schema(schema_sql):
     """마이그레이션으로 붙인 저장 컬럼은 정본에도 있어야 한다."""
     alive, _ = replay(RE_ADD_COLUMN, RE_DROP_COLUMN)
@@ -186,3 +233,6 @@ def test_replay_actually_sees_the_2026_08_11e_swap():
 
     fns, _ = replay(RE_CREATE_FN, RE_DROP_FN)
     assert "search_key" in fns, "재생이 11c 의 search_key 를 못 봤습니다"
+
+    views, _ = replay(RE_CREATE_VIEW, RE_DROP_VIEW)
+    assert "v_coverage_stats" in views, "재생이 뷰(v_coverage_stats)를 못 봤습니다"

@@ -225,6 +225,9 @@ describe('FloorStack — 각주 숫자', () => {
     render(<FloorStack building={building()} />);
     await waitFor(() => expect(screen.getByText(/2026년 1분기/)).toBeTruthy());
     expect(screen.getByText(/64,239곳/)).toBeTruthy();
+    // 이 숫자가 **어느 범위**를 센 것인지 밝혀야 한다(2026-08-22a). 뷰가 세는 곳은
+    // 화면에서 고를 수 있는 구뿐인데, 그 말이 없으면 사람은 전국 숫자로 읽는다.
+    expect(screen.getByText(/서비스 지역/)).toBeTruthy();
   });
 
   it('DB 값이 바뀌면 각주도 따라 바뀐다 (손으로 박힌 값이 아니다)', async () => {
