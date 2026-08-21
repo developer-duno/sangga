@@ -190,8 +190,11 @@ def test_grid_span_500m는_두칸_이상_훑는다():
 
 
 def test_최소표본_상수가_설계대로():
-    assert bt.MIN_SAMPLES == {"L2": 1, "L4": 3, "L5": 5, "L6": 1, "BASE": 1}
-    assert bt.LADDER == ("L2", "L4", "L5", "L6")     # BASE 는 사다리에 없다
+    assert bt.MIN_SAMPLES == {"L2": 1, "L4": 3, "L5": 5, "L6": 1, "L7": 5, "BASE": 1}
+    assert bt.LADDER == ("L2", "L4", "L5", "L6")     # BASE 도 L7 도 기본 사다리엔 없다
+    # 유형축 모드의 사다리 — L7 은 L5 뒤·L6 앞이다(가까운 근거 먼저, 동네 평균보다는 앞)
+    assert bt.LADDER_PLACE == ("L2", "L4", "L5", "L7", "L6")
+    assert bt.ALL_STAGES == ("L2", "L4", "L5", "L6", "BASE")   # v1 산출물 칸은 그대로다
 
 
 @pytest.mark.parametrize("stage,n_ok,n_bad", [("L2", 1, 0), ("L4", 3, 2), ("L5", 5, 4),
@@ -512,3 +515,329 @@ def test_스크립트에_금지표현이_없다():
         body = f.read()
     for banned in ("적정가격", "적정가", "평가액", "감정가", "가치평가"):
         assert banned not in body, "금지 표현 발견: {}".format(banned)
+
+
+# ── 유형축(L7) — 도로등급 · 상권등급 · 9칸 ──────────────────────────────────
+
+
+@pytest.mark.parametrize("value,expected", [
+    # 라이브 실측(2026-08-19) 채점 대상 필지에 실제로 있는 12종
+    ("광대로한면", "큰길"),
+    ("광대소각", "큰길"),
+    ("광대세각", "큰길"),
+    ("중로한면", "중간"),
+    ("중로각지", "중간"),
+    ("소로한면", "중간"),
+    ("소로각지", "중간"),
+    ("세로한면(가)", "골목길"),
+    ("세로한면(불)", "골목길"),
+    ("세로각지(가)", "골목길"),
+    ("세로각지(불)", "골목길"),
+    # 모름으로 두는 것들 — 맹지를 골목길에 밀어 넣으면 그 칸의 성적이 오염된다
+    ("맹지", None),
+    ("지정되지않음", None),
+    ("", None),
+    (None, None),
+    ("  광대소각  ", "큰길"),      # 앞뒤 공백은 다듬는다
+])
+def test_road_grade_실제값_전부(value, expected):
+    assert bt.road_grade(value) == expected
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("발달상권", "밀집"),
+    ("관광특구", "밀집"),
+    ("전통시장", "밀집"),
+    ("골목상권", "일반상권"),
+    ("주요상권", "일반상권"),
+    ("역세권", "일반상권"),        # 처음 보는 종류라도 '상권 안'인 것은 참이다
+    (None, "상권밖"),
+    ("", "상권밖"),
+])
+def test_district_class_경계(value, expected):
+    assert bt.district_class(value) == expected
+
+
+def test_pick_district_type_겹치면_밀집이_이긴다():
+    """관광특구가 발달상권을 덮는 조합은 실재한다 — 더 강한 신호를 고른다."""
+    assert bt.pick_district_type(["골목상권", "관광특구"]) == "관광특구"
+    assert bt.pick_district_type(["발달상권", "관광특구"]) == "발달상권"   # 순서 고정
+    assert bt.pick_district_type(["골목상권", "주요상권"]) == "골목상권"   # 이름 순
+    assert bt.pick_district_type([]) is None
+    assert bt.pick_district_type(["", None]) is None
+
+
+@pytest.mark.parametrize("road,dtype,expected", [
+    ("광대소각", "발달상권", "큰길·밀집"),
+    ("광대소각", "골목상권", "큰길·일반상권"),
+    ("광대소각", None, "큰길·상권밖"),
+    ("중로각지", "전통시장", "중간·밀집"),
+    ("세로한면(가)", None, "골목길·상권밖"),
+    ("맹지", "발달상권", None),          # 도로등급을 모르면 칸을 못 정한다
+    (None, "발달상권", None),
+])
+def test_place_type_9칸(road, dtype, expected):
+    assert bt.place_type(road, dtype) == expected
+
+
+def test_place_types_상수는_9칸이고_중복이_없다():
+    assert len(bt.PLACE_TYPES) == 9
+    assert len(set(bt.PLACE_TYPES)) == 9
+    assert bt.PLACE_TYPES[0] == "큰길·밀집"
+    assert bt.PLACE_TYPES[-1] == "골목길·상권밖"
+
+
+# ── 유형축 — 색인·단계·사다리 ───────────────────────────────────────────────
+
+
+def _ptx(tx_id, ym, pnu, floor_no, price, sigungu, place):
+    row = _tx(tx_id, ym, pnu, floor_no, price, sigungu)
+    row["place_type"] = place
+    return row
+
+
+def test_L7_색인은_유형없는_학습거래를_뺀다():
+    rows = [
+        _ptx("t1", "202501", PNU_A, 1, 1000.0, "11680", "큰길·밀집"),
+        _ptx("t2", "202502", PNU_B, 1, 2000.0, "11680", "큰길·밀집"),
+        _ptx("t3", "202503", PNU_C, 1, 3000.0, "11680", None),      # 유형 모름
+    ]
+    index = bt.build_train_index(rows)
+    assert index["sigungu_place_band"][("11680", "큰길·밀집", "1층")] == [1000.0, 2000.0]
+    # 유형을 모르는 거래도 나머지 색인에는 그대로 있다
+    assert len(index["sigungu_band"][("11680", "1층")]) == 3
+
+
+def _l7_train(n, place="큰길·밀집", price=1000.0, band_floor=1):
+    return [_ptx("t{}".format(i), "20250{}".format(i % 9 + 1), PNU_A, band_floor,
+                 price + i, "11680", place) for i in range(n)]
+
+
+def test_L7_최소표본_5건_경계():
+    row = _ptx("x", "202601", PNU_C, 1, 9999.0, "11680", "큰길·밀집")
+    res4 = bt.stage_results_for(row, bt.build_train_index(_l7_train(4)))
+    res5 = bt.stage_results_for(row, bt.build_train_index(_l7_train(5)))
+    assert res4["L7"]["status"] == bt.ST_INSUFFICIENT and res4["L7"]["n"] == 4
+    assert res5["L7"]["status"] == bt.ST_OK and res5["L7"]["n"] == 5
+    assert res5["L7"]["estimate"] == 1002.0        # 1000~1004 중앙값
+
+
+def test_L7_유형을_모르면_place_missing():
+    row = _ptx("x", "202601", PNU_C, 1, 9999.0, "11680", None)
+    res = bt.stage_results_for(row, bt.build_train_index(_l7_train(5)))
+    assert res["L7"]["status"] == bt.ST_PLACE_MISSING
+    assert res["L7"]["estimate"] is None and res["L7"]["n"] == 0
+
+
+def test_L7_다른_유형_다른_층대는_후보가_아니다():
+    index = bt.build_train_index(_l7_train(5))
+    다른유형 = bt.stage_results_for(
+        _ptx("x", "202601", PNU_C, 1, 9999.0, "11680", "골목길·상권밖"), index)
+    다른층대 = bt.stage_results_for(
+        _ptx("y", "202601", PNU_C, 3, 9999.0, "11680", "큰길·밀집"), index)
+    다른구 = bt.stage_results_for(
+        _ptx("z", "202601", PNU_C, 1, 9999.0, "11545", "큰길·밀집"), index)
+    for res in (다른유형, 다른층대, 다른구):
+        assert res["L7"]["status"] == bt.ST_INSUFFICIENT and res["L7"]["n"] == 0
+
+
+def test_유형_자료를_안_주면_L7은_성립하지_않는다():
+    """기본 모드(v1)의 성적이 이 변경 때문에 달라지지 않는다는 보장."""
+    raw = [{"tx_id": "a", "contract_ym": "202501", "pnu": PNU_A, "floor_no": 1,
+            "unit_price": 1000.0, "sigungu_code": "11680"}]
+    rows = bt.normalize_rows(raw, {})
+    assert rows[0]["place_type"] is None
+    assert rows[0]["road_grade"] is None
+    index = bt.build_train_index(rows * 6)
+    assert index["sigungu_place_band"] == {}
+    res = bt.stage_results_for(rows[0], index)
+    assert res["L7"]["status"] == bt.ST_PLACE_MISSING
+    assert bt.walk_ladder(res, bt.LADDER_PLACE)[0] == bt.walk_ladder(res, bt.LADDER)[0]
+
+
+def test_새_사다리는_L5가_되면_L7을_안_쓴다():
+    res = {"L2": _bad(), "L4": _bad(), "L5": _ok(30.0, 7), "L7": _ok(70.0, 9), "L6": _ok(40.0)}
+    assert bt.walk_ladder(res, bt.LADDER_PLACE) == ("L5", 30.0, 7)
+
+
+def test_새_사다리는_L5가_안되면_L7을_L6보다_먼저_쓴다():
+    res = {"L2": _bad(), "L4": _bad(), "L5": _bad(3), "L7": _ok(70.0, 9), "L6": _ok(40.0)}
+    assert bt.walk_ladder(res, bt.LADDER_PLACE) == ("L7", 70.0, 9)
+    # 기존 사다리는 같은 재료에서 L6 를 쓴다 — 두 사다리가 갈리는 지점이 여기뿐이다
+    assert bt.walk_ladder(res, bt.LADDER) == ("L6", 40.0, 1)
+
+
+def test_새_사다리도_L7이_안되면_L6으로_내려간다():
+    res = {"L2": _bad(), "L4": _bad(), "L5": _bad(), "L7": _bad(2), "L6": _ok(40.0, 3)}
+    assert bt.walk_ladder(res, bt.LADDER_PLACE) == ("L6", 40.0, 3)
+
+
+def test_add_place_ladder_가_두번째_사다리를_붙인다():
+    scored = [{
+        "unit_price": 100.0, "floor_no": 1,
+        "stages": {"L2": _bad(), "L4": _bad(), "L5": _bad(),
+                   "L7": _ok(120.0, 6), "L6": _ok(200.0, 3)},
+    }]
+    bt.add_place_ladder(scored)
+    assert scored[0]["place_stage"] == "L7"
+    assert scored[0]["place_estimate"] == 120.0 and scored[0]["place_n"] == 6
+    assert scored[0]["place_ape"] == pytest.approx(0.20)
+
+
+def test_add_place_ladder_전부_미성립이면_APE는_None():
+    scored = [{"unit_price": 100.0, "floor_no": 1,
+               "stages": {"L2": _bad(), "L4": _bad(), "L5": _bad(),
+                          "L7": bt.place_missing_result(), "L6": _bad()}}]
+    bt.add_place_ladder(scored)
+    assert scored[0]["place_stage"] == bt.NO_ESTIMATE
+    assert scored[0]["place_estimate"] is None and scored[0]["place_ape"] is None
+
+
+# ── 유형축 — DB 읽기용 순수 함수 (네트워크 없음) ────────────────────────────
+
+
+def test_place_context_sql_모양():
+    sql = bt.place_context_sql([PNU_A, PNU_B])
+    assert "('{}')".format(PNU_A) in sql and "('{}')".format(PNU_B) in sql
+    # ⚠️ 캐스트 방향 — 문자 리터럴을 char(19) 로 올려야 기본키 인덱스가 산다
+    assert "p.pnu = want.pnu::char(19)" in sql
+    # 상권에 안 든 필지도 '상권밖'이라는 정보라 left join 이어야 한다
+    assert "left join district" in sql
+    assert "st_contains(d.geom, p.geom)" in sql
+    assert sql.strip().lower().startswith("with want")
+
+
+def test_PNU_모양_검사는_19자리_숫자만():
+    assert bt.PNU_RE.match(PNU_A)
+    assert not bt.PNU_RE.match("111101110010001000")        # 18자리
+    assert not bt.PNU_RE.match("1168010100100010000-")      # 기호 섞임
+    assert not bt.PNU_RE.match("116801010010001000x")
+
+
+def test_parse_place_rows_기본():
+    got = bt.parse_place_rows([
+        [PNU_A, "광대소각", "발달상권|관광특구"],
+        [PNU_B, "", ""],
+        ["짧은줄"],                                          # 칸이 모자라면 버린다
+    ])
+    assert got[PNU_A] == {"road_contact": "광대소각",
+                          "district_types": ["관광특구", "발달상권"]}
+    assert got[PNU_B] == {"road_contact": None, "district_types": []}
+    assert len(got) == 2
+
+
+def test_normalize_rows_유형을_붙인다():
+    raw = [{"tx_id": "a", "contract_ym": "202601", "pnu": PNU_A, "floor_no": 1,
+            "unit_price": 1000.0, "sigungu_code": "11680"}]
+    ctx = {PNU_A: {"road_contact": "광대소각", "district_types": ["골목상권", "관광특구"]}}
+    row = bt.normalize_rows(raw, {PNU_A: (37.5, 127.0)}, ctx)[0]
+    assert row["road_grade"] == "큰길"
+    assert row["district_type"] == "관광특구"      # 겹치면 밀집이 이긴다
+    assert row["district_class"] == "밀집"
+    assert row["place_type"] == "큰길·밀집"
+    assert row["lat"] == 37.5
+
+
+# ── 유형축 — 집계·산출물 ────────────────────────────────────────────────────
+
+
+def _scored_place(band_floor, ladder_ape, place_ape, l7_ape=None, base_ape=None,
+                  place="큰길·밀집"):
+    return {
+        "floor_no": band_floor, "unit_price": 100.0,
+        "place_type": place, "road_grade": "큰길", "district_class": "밀집",
+        "district_types": ["발달상권"], "road_contact": "광대소각",
+        "ladder_ape": ladder_ape, "place_ape": place_ape,
+        "stage_ape": {"L7": l7_ape, "BASE": base_ape},
+        "ladder_stage": "L6", "place_stage": "L7",
+    }
+
+
+def test_place_cell_빈_목록도_죽지_않는다():
+    cell = bt.place_cell([])
+    assert cell["n_total"] == 0
+    assert cell["old"]["mdape"] is None and cell["new"]["mdape"] is None
+    assert cell["pair_old"]["n_pair"] == 0
+
+
+def test_place_cell_기존과_새를_같은_행에서_잰다():
+    rows = [_scored_place(1, 0.50, 0.20, l7_ape=0.20, base_ape=0.40),
+            _scored_place(1, 0.30, 0.10, l7_ape=0.10, base_ape=0.20),
+            _scored_place(1, None, 0.60, l7_ape=0.60, base_ape=None)]
+    cell = bt.place_cell(rows)
+    assert cell["n_total"] == 3
+    assert cell["old"]["n_est"] == 2 and cell["old"]["mdape"] == pytest.approx(0.40)
+    assert cell["new"]["n_est"] == 3 and cell["new"]["mdape"] == pytest.approx(0.20)
+    # 짝지은 비교는 둘 다 성립한 2건만 본다
+    assert cell["pair_old"]["n_pair"] == 2
+    assert cell["pair_old"]["a_mdape"] == pytest.approx(0.15)   # 새
+    assert cell["pair_old"]["b_mdape"] == pytest.approx(0.40)   # 기존
+    assert cell["pair_base"]["n_pair"] == 2
+
+
+def test_place_key_유형없으면_한_칸으로_모은다():
+    assert bt.place_key({"place_type": "큰길·밀집"}) == "큰길·밀집"
+    assert bt.place_key({"place_type": None}) == bt.PLACE_NONE_LABEL
+    assert bt.place_key({}) == bt.PLACE_NONE_LABEL
+
+
+def test_place_rows_for_층대와_유형으로_고른다():
+    rows = [_scored_place(1, 0.1, 0.1), _scored_place(3, 0.1, 0.1),
+            _scored_place(1, 0.1, 0.1, place=None)]
+    assert len(bt.place_rows_for(rows, band="1층")) == 2
+    assert len(bt.place_rows_for(rows, band="1층", key="큰길·밀집")) == 1
+    assert len(bt.place_rows_for(rows, band="1층", key=bt.PLACE_NONE_LABEL)) == 1
+    assert len(bt.place_rows_for(rows)) == 3
+
+
+def test_place_context_stats_이유별로_가른다():
+    rows = [
+        _scored_place(1, 0.1, 0.1),                                   # 유형 있음
+        dict(_scored_place(1, 0.1, 0.1), place_type=None, road_grade=None,
+             road_contact="맹지", district_class="상권밖"),           # 필지는 있는데 도로 모름
+        dict(_scored_place(1, 0.1, 0.1), place_type=None, road_grade=None,
+             road_contact=None, district_class=None, district_types=[]),  # 필지 자체가 없음
+    ]
+    stats = bt.place_context_stats(rows)
+    assert stats == {"n": 3, "typed": 1, "no_parcel": 1, "no_road": 1}
+
+
+def test_유형별_CSV_구조(tmp_path):
+    path = str(tmp_path / "1층유형별지표.csv")
+    rows = [_scored_place(1, 0.50, 0.20, l7_ape=0.20, base_ape=0.40)] * 2
+    bt.write_place_csv(path, rows)
+    with open(path, encoding="utf-8-sig") as f:
+        lines = [ln.strip() for ln in f if ln.strip()]
+    assert lines[0].split(",")[:5] == ["층대", "유형", "도로등급", "상권등급", "검증거래수"]
+    assert any(ln.startswith("1층,큰길·밀집,큰길,밀집,2,") for ln in lines)
+    # 합계 줄은 축 칸을 비워 둔다(엑셀에서 도로등급으로 거를 때 섞이면 안 된다)
+    assert any(ln.startswith("전체,합계,,,2,") for ln in lines)
+
+
+def test_유형축_문서가_렌더된다():
+    """서식 문자열이 깨지지 않는지 — 작은 표본으로 한 번 돌려 본다."""
+    raw = [{"tx_id": "t{}".format(i), "contract_ym": "202505", "pnu": PNU_A,
+            "floor_no": 1, "unit_price": 1000.0 + i, "sigungu_code": "11680"}
+           for i in range(6)]
+    raw.append({"tx_id": "x", "contract_ym": "202601", "pnu": PNU_C, "floor_no": 1,
+                "unit_price": 1500.0, "sigungu_code": "11680"})
+    ctx_place = {PNU_A: {"road_contact": "광대소각", "district_types": ["발달상권"]},
+                 PNU_C: {"road_contact": "광대소각", "district_types": ["발달상권"]}}
+    rows = bt.normalize_rows(raw, {}, ctx_place)
+    train, test, _ = bt.split_by_period(rows, "202512", "202601")
+    scored = bt.add_place_ladder(
+        bt.score_test_rows(test, bt.build_train_index(train)))
+    md = bt.build_place_markdown({
+        "scored": scored,
+        "stats": bt.place_context_stats(test),
+        "facts": bt.build_place_facts(scored),
+        "one_line": bt.place_one_line(scored),
+        "train_until": "202512", "test_from": "202601",
+        "generated_at": "2026-08-19 12:00",
+    })
+    assert "L7" in md and "큰길·밀집" in md
+    assert "1층" in md and "판단 재료" in md
+    # 채택 단계가 L7 이어야 한다(같은 필지가 아니고 좌표가 없어 L2·L4·L5 가 다 미성립).
+    # 법정동까지 다르므로 L6 도 안 되던 거래다 — 기존 사다리는 값을 아예 못 냈다.
+    assert scored[0]["place_stage"] == "L7"
+    assert scored[0]["ladder_stage"] == bt.NO_ESTIMATE
