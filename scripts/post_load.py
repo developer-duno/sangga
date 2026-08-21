@@ -17,6 +17,10 @@
     결정 0005 가 "공식이 강력 권장하는데 우리 적재기에 없다"고 이미 지적해 둔 구멍이다.
   · 요약표 갱신을 빼먹으면 → **새로 넣은 건물이 검색에 안 나온다.**
     화면엔 "결과가 없습니다"만 뜨고 아무도 원인을 모른다(2026-08-13 신설).
+  · 각주 집계(mv_coverage_stats) 갱신을 빼먹으면 → **화면 각주만 옛 분기의 결측률을
+    계속 말한다.** 2026-08-22d 부터 그 값을 미리 계산해 두기 때문이다(실시간 집계는
+    277만 행 대조로 2~5초가 걸려 공개 호출의 3초 제한을 넘나들었다). 미리 계산해 두는
+    대가는 정확히 이것 하나뿐이라, 아래 report_coverage_freshness() 가 등식으로 잡는다.
   · 지도용 상권 파일 굽기를 빼먹으면 → **지도만 옛날 상권을 보여준다.**
     지도는 DB 가 아니라 구워 둔 정적 파일을 읽기 때문이다(2026-08-14 신설, 결정 0010).
     ⚠️ 굽는 것까지 대신 해 주지는 않는다 — 그 파일은 git 에 커밋하는 자산이라
@@ -67,7 +71,15 @@ ANALYZE_TABLES = (
 # ⚠️ mv_sigungu_tx_stats(Stage A · 결정 0012)는 앞의 둘과 의존관계가 없지만, **창(24개월)이
 #    갱신하는 순간에 정해져 굳는다.** 안 돌리면 화면의 구 단가가 옛 창을 계속 말한다
 #    (에러는 안 난다 — 새 거래를 넣어도 숫자가 그대로다).
-REFRESH_MVS = ("mv_search_parcel", "mv_open_sigungu", "mv_sigungu_tx_stats")
+# ⚠️ mv_coverage_stats(각주 집계 사전계산 · 2026-08-22d)는 **mv_open_sigungu 를 읽는다**
+#    ("서비스 지역만 센다") — 반드시 그 뒤에 와야 한다. 앞에 두면 구가 늘어난 날 각주만
+#    한 박자 낡은 범위를 센다. 안 돌리면 각주 숫자가 옛 적재 때 값에 굳는다(에러 0).
+REFRESH_MVS = (
+    "mv_search_parcel",
+    "mv_open_sigungu",
+    "mv_sigungu_tx_stats",
+    "mv_coverage_stats",
+)
 SEARCH_MV = REFRESH_MVS[0]
 
 
@@ -242,6 +254,60 @@ def report_tx_window_freshness():
     return got, expected, stale
 
 
+# ── 각주 집계 신선도 (2026-08-22d 신설 — 사전계산의 유일한 대가) ─────────────
+#
+# mv_coverage_stats 는 **갱신하는 순간 계산돼 그대로 굳는다.** 미리 계산해 두는 값이
+# 치르는 대가는 정확히 하나 — 갱신을 잊으면 조용히 낡는다. 새 분기를 적재하고 이
+# 스크립트를 안 돌리면 화면 각주만 옛 분기의 결측률을 계속 말한다(에러는 안 난다).
+# 그러니 등식으로 잡는다: 표에 굳은 snapshot_ym == unit_business 의 최신 snapshot_ym.
+#
+# ⚠️ **이 검사가 못 보는 것** — 같은 분기 안에서 행이 늘거나 열린 구가 늘어난 경우.
+#    그걸 정확히 재려면 결국 우리가 없앤 그 무거운 집계(~2~5초)를 다시 돌려야 한다.
+#    갱신이 필요해지는 사유의 대부분이 "새 분기"라, 싸고 확실한 쪽만 본다.
+#    (열린 구가 느는 경로는 적재 → post_load 한 세트라 어차피 여기서 같이 갱신된다.)
+
+
+def build_coverage_freshness_sql():
+    """표에 굳은 분기와 원본의 최신 분기를 한 줄로 뽑는다."""
+    return (
+        "select coalesce((select max(snapshot_ym) from mv_coverage_stats), '') || '|' || "
+        "coalesce((select max(snapshot_ym) from unit_business), '');"
+    )
+
+
+def is_coverage_stale(mv_ym, live_ym):
+    """각주 집계가 낡았는가 (순수 함수 — 테스트가 여기만 보면 된다).
+
+    빈 표(mv_ym 없음)는 낡음이다. "없으니 검사할 게 없다"고 넘어가면 각주가 통째로
+    비어 있는 상태를 정상이라고 보고하게 된다(is_map_stale 과 같은 판단).
+    원본이 비어 있는 경우(live_ym 없음)도 낡음으로 본다 — 대조할 기준이 없으면
+    "신선하다"고 말할 근거도 없다.
+    """
+    got = str(mv_ym or "").strip()
+    live = str(live_ym or "").strip()
+    if not got or not live:
+        return True
+    return got != live
+
+
+def report_coverage_freshness():
+    """각주 집계 표를 원본과 대조해 (표분기, 원본분기, 낡음여부) 를 돌려주고 사람 말로 찍는다."""
+    mv_ym, _, live_ym = query_one(build_coverage_freshness_sql()).partition("|")
+    mv_ym, live_ym = mv_ym.strip(), live_ym.strip()
+    stale = is_coverage_stale(mv_ym, live_ym)
+    if stale:
+        if not mv_ym:
+            print("[낡음] 각주 집계 표가 비어 있습니다 — 갱신이 필요합니다.")
+        else:
+            print("[낡음] 각주 집계 분기 {} / 점포 원본 최신 분기 {} — 다릅니다."
+                  .format(mv_ym, live_ym or "(없음)"))
+        print("       이대로 두면 화면 각주가 옛 분기의 결측률을 계속 말합니다(에러는 안 납니다).")
+        print("       python scripts/post_load.py 를 실행하면 오늘 자료 기준으로 다시 잡힙니다.")
+    else:
+        print("[신선] 각주 집계 분기 {} = 점포 원본 최신 분기.".format(mv_ym))
+    return mv_ym, live_ym, stale
+
+
 # ── 공개키(anon)가 읽어도 되는 것 ──────────────────────────────────────────
 # 화면이 실제로 읽는 것만 적는다. 이 목록에 없는 것이 열려 있으면 사고다.
 #
@@ -338,8 +404,9 @@ def main(argv=None):
         _, _, stale = report_freshness()
         _, map_stale = report_map_freshness()
         _, _, tx_stale = report_tx_window_freshness()
+        _, _, cov_stale = report_coverage_freshness()
         _, exposed = report_anon_exposure()
-        return 1 if (stale or map_stale or tx_stale or exposed) else 0
+        return 1 if (stale or map_stale or tx_stale or cov_stale or exposed) else 0
 
     print("통계·가시성 지도를 갱신합니다 (VACUUM ANALYZE {}개 표)…".format(len(ANALYZE_TABLES)))
     rc = dbx.run_sql("set statement_timeout = '600s';\n" + build_analyze_sql(), quiet=True)
@@ -361,7 +428,9 @@ def main(argv=None):
     _, map_stale = report_map_freshness()
     # 방금 갱신했으니 창도 오늘 기준이어야 한다 — 했다고 믿지 않고 다시 잰다.
     _, _, tx_stale = report_tx_window_freshness()
-    return 1 if (stale or map_stale or tx_stale) else 0
+    # 각주 집계도 마찬가지 — 갱신했다고 믿지 않고 원본 최신 분기와 대조한다.
+    _, _, cov_stale = report_coverage_freshness()
+    return 1 if (stale or map_stale or tx_stale or cov_stale) else 0
 
 
 if __name__ == "__main__":

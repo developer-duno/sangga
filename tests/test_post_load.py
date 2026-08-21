@@ -13,6 +13,7 @@
 """
 
 import os
+import re
 import sys
 from datetime import datetime
 
@@ -49,6 +50,17 @@ def tx_window_is_fresh(monkeypatch):
     """
     monkeypatch.setattr(post_load, "report_tx_window_freshness",
                         lambda: ("202408", "202408", False))
+
+
+@pytest.fixture
+def coverage_is_fresh(monkeypatch):
+    """각주 집계 검사만 빼고 본다 (위 둘과 같은 이유 — 관심사 분리).
+
+    이 stub 이 없으면 `main()` 이 라이브 mv_coverage_stats 를 물으러 가거나, mock 된
+    query_one 의 엉뚱한 답을 분기로 오해한다. 판정 자체는 TestCoverageStale 이 따로 본다.
+    """
+    monkeypatch.setattr(post_load, "report_coverage_freshness",
+                        lambda: ("202606", "202606", False))
 
 
 # ── 1. ANALYZE 대상 ─────────────────────────────────────────────────────────
@@ -160,18 +172,26 @@ class TestParseArgs:
 
 
 class TestMainFlow:
-    def test_check_returns_1_when_stale(self, monkeypatch, map_is_fresh, tx_window_is_fresh):
+    def test_check_returns_1_when_stale(
+        self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh
+    ):
         """CI·다른 스크립트가 종료 코드로 받아 쓸 수 있어야 한다."""
         monkeypatch.setattr(post_load, "query_one", lambda sql: "100|200")
         assert post_load.main(["--check"]) == 1
 
-    def test_check_returns_0_when_fresh(self, monkeypatch, map_is_fresh, tx_window_is_fresh):
-        # --check 는 세 가지를 묻는다(신선도 · 지도 파일 · 공개키 노출) — mock 도 갈라 답해야 한다.
+    def test_check_returns_0_when_fresh(
+        self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh
+    ):
+        # --check 는 다섯 가지를 묻는다(요약표 신선도 · 지도 파일 · 실거래 창 ·
+        # 각주 집계 · 공개키 노출) — mock 도 갈라 답해야 한다. 여기 관심사는 앞의 하나뿐이라
+        # 나머지는 fixture 로 빼 둔다.
         monkeypatch.setattr(post_load, "query_one",
                             lambda sql: "200|200" if "count(" in sql else "v_floor_stack")
         assert post_load.main(["--check"]) == 0
 
-    def test_check_never_writes(self, monkeypatch, map_is_fresh, tx_window_is_fresh):
+    def test_check_never_writes(
+        self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh
+    ):
         """--check 는 읽기만 해야 한다 — 실수로 갱신을 돌리면 안 된다."""
         calls = []
         monkeypatch.setattr(post_load, "query_one",
@@ -181,7 +201,9 @@ class TestMainFlow:
         post_load.main(["--check"])
         assert calls == []
 
-    def test_apply_runs_analyze_then_refresh_then_rechecks(self, monkeypatch, map_is_fresh, tx_window_is_fresh):
+    def test_apply_runs_analyze_then_refresh_then_rechecks(
+        self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh
+    ):
         """했다고 믿지 않고 **다시 재는지**까지 확인한다."""
         ran = []
         monkeypatch.setattr(post_load.dbx, "run_sql",
@@ -200,7 +222,9 @@ class TestMainFlow:
                             lambda sql: pytest.fail("실패했는데 신선도를 재면 안 됩니다"))
         assert post_load.main([]) == 2
 
-    def test_apply_reports_failure_when_still_stale_after_refresh(self, monkeypatch, map_is_fresh, tx_window_is_fresh):
+    def test_apply_reports_failure_when_still_stale_after_refresh(
+        self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh
+    ):
         """갱신을 돌렸는데도 안 맞으면 성공으로 끝내면 안 된다."""
         monkeypatch.setattr(post_load.dbx, "run_sql", lambda sql, **k: 0)
         monkeypatch.setattr(post_load, "query_one", lambda sql: "100|200")
@@ -252,6 +276,58 @@ class TestExpectedTxWindowFrom:
         assert post_load.expected_tx_window_from(datetime(2026, 12, 31)) == "202412"
 
 
+# ── 5-c. 각주 집계 신선도 (2026-08-22d 신설 — 사전계산의 유일한 대가) ────────
+
+
+class TestCoverageStale:
+    """각주 집계는 갱신하는 순간 계산돼 굳는다.
+
+    2026-08-22d 부터 이 값을 미리 계산해 둔다(실시간 집계는 277만 행 대조로 2~5초라
+    공개 호출의 3초 제한을 넘나들었다). 미리 계산해 두는 값이 치르는 대가는 정확히
+    하나 — **갱신을 잊으면 조용히 낡는다.** 그 하나를 여기서 등식으로 잡는다.
+    """
+
+    def test_same_quarter_is_fresh(self):
+        assert post_load.is_coverage_stale("202606", "202606") is False
+
+    def test_different_quarter_is_stale(self):
+        """새 분기를 적재하고 post_load 를 안 돌린 상태 — 각주만 옛 결측률을 말한다."""
+        assert post_load.is_coverage_stale("202603", "202606") is True
+
+    def test_empty_table_is_stale(self):
+        """표가 비어 있으면 각주가 통째로 사라진다 — '검사할 게 없다'로 넘기면 안 된다."""
+        assert post_load.is_coverage_stale("", "202606") is True
+        assert post_load.is_coverage_stale(None, "202606") is True
+
+    def test_missing_source_is_stale(self):
+        """대조할 기준이 없으면 '신선하다'고 말할 근거도 없다."""
+        assert post_load.is_coverage_stale("202606", "") is True
+
+    def test_whitespace_is_trimmed(self):
+        """psql 출력에는 공백이 섞인다 — 안 다듬으면 같은 분기를 다르다고 본다."""
+        assert post_load.is_coverage_stale(" 202606 ", "202606") is False
+
+    def test_sql_compares_the_matview_against_the_source(self):
+        """엉뚱한 표를 물으면 판정이 통째로 헛돈다."""
+        sql = post_load.build_coverage_freshness_sql()
+        assert "mv_coverage_stats" in sql
+        assert "unit_business" in sql
+
+    def test_check_returns_1_when_coverage_is_stale(
+        self, monkeypatch, map_is_fresh, tx_window_is_fresh
+    ):
+        """⛔ 각주만 낡아도 --check 는 1 이어야 한다.
+
+        이 배선이 빠지면 판정 함수가 아무리 정확해도 아무도 안 물어본다 — 2026-08-22
+        독립 리뷰가 잡은 구멍이 정확히 그 형태였다(사전계산으로 바꿔 놓고 낡음 검사는 안 붙임).
+        """
+        monkeypatch.setattr(
+            post_load, "query_one",
+            lambda sql: ("202603|202606" if "mv_coverage_stats" in sql
+                         else ("200|200" if "count(" in sql else "v_floor_stack")))
+        assert post_load.main(["--check"]) == 1
+
+
 # ── 6. 공개키 노출 점검 (2026-08-13 실제 사고에서 신설) ─────────────────────
 
 
@@ -300,6 +376,18 @@ class TestAnonExposure:
             "mv_sigungu_tx_stats"
         ]
 
+    def test_the_coverage_matview_is_never_allowed(self):
+        """⛔ 각주 집계를 미리 계산해 둔 표(2026-08-22d)도 허용 목록에 들어가면 안 된다.
+
+        화면이 읽는 것은 **v_coverage_stats 뷰 하나**다. 표 이름이 허용 목록에 슬쩍
+        들어가면 "뷰만 연다"는 설계가 무너지고, 다음 요약표도 같은 논리로 열린다.
+        """
+        assert "mv_coverage_stats" not in post_load.ANON_READABLE_ALLOWLIST
+        assert "mv_coverage_stats" not in post_load.ANON_CALLABLE_ALLOWLIST
+        assert post_load.unexpected_anon_readables(["mv_coverage_stats"]) == [
+            "mv_coverage_stats"
+        ]
+
 
     def test_flags_anything_outside_the_allowlist(self):
         got = post_load.unexpected_anon_readables(
@@ -324,13 +412,17 @@ class TestAnonExposure:
         # 물질화뷰('m')가 빠지면 2026-08-13 사고를 그대로 놓친다.
         assert "'m'" in sql
 
-    def test_check_returns_1_when_something_is_exposed(self, monkeypatch, map_is_fresh, tx_window_is_fresh):
+    def test_check_returns_1_when_something_is_exposed(
+        self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh
+    ):
         monkeypatch.setattr(post_load, "query_one",
                             lambda sql: "200|200" if "count(" in sql
                             else "v_floor_stack\nmv_search_parcel")
         assert post_load.main(["--check"]) == 1
 
-    def test_check_returns_0_when_clean(self, monkeypatch, map_is_fresh, tx_window_is_fresh):
+    def test_check_returns_0_when_clean(
+        self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh
+    ):
         monkeypatch.setattr(post_load, "query_one",
                             lambda sql: "200|200" if "count(" in sql
                             else "v_floor_stack\nv_coverage_stats")
@@ -368,9 +460,51 @@ class TestRefreshCoversBothSummaries:
         sql = post_load.build_refresh_sql()
         assert sql.index("mv_search_parcel") < sql.index("mv_open_sigungu")
 
+    def test_refreshes_the_coverage_stats(self):
+        """⛔ 각주 집계 사전계산(2026-08-22d)이 빠지면 각주가 **옛 적재 때 값에 굳는다**.
+
+        이것도 에러가 안 난다 — 새 분기를 넣어도 화면 각주만 옛 숫자를 계속 말한다.
+        (미리 계산해 두는 대가는 정확히 이것뿐이라, 갱신 목록에 있는지를 기계가 지킨다.)
+        """
+        assert "refresh materialized view concurrently mv_coverage_stats;" in (
+            post_load.build_refresh_sql()
+        )
+
+    def test_coverage_stats_comes_after_open_sigungu(self):
+        """mv_coverage_stats 는 mv_open_sigungu 를 읽는다("서비스 지역만 센다").
+
+        앞에 두면 구가 늘어난 날 각주만 한 박자 낡은 범위를 센다.
+        """
+        sql = post_load.build_refresh_sql()
+        assert sql.index("mv_open_sigungu") < sql.index("mv_coverage_stats")
+
     def test_all_are_concurrently(self):
         for line in post_load.build_refresh_sql().splitlines():
             assert line.startswith("refresh materialized view concurrently"), line
+
+    def test_every_refreshed_matview_has_a_unique_index(self):
+        """⛔ `concurrently` 는 **unique 인덱스가 있어야만** 돈다.
+
+        없으면 갱신이 `ERROR: cannot refresh materialized view ... concurrently` 로
+        실패한다 — 적재 마무리가 통째로 멈춘다. 위 test_all_are_concurrently 가
+        "concurrently 로 부르는지"를 지키니, 여기서는 **그게 성립할 조건**을 지킨다.
+        둘이 짝이라 한쪽만 있으면 목록에 새 요약표를 더할 때 조용히 깨진다.
+        """
+        schema_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "supabase", "schema.sql",
+        )
+        with open(schema_path, encoding="utf-8") as f:
+            schema = f.read()
+        for mv in post_load.REFRESH_MVS:
+            pattern = (
+                r"(?im)^create\s+unique\s+index\s+(?:concurrently\s+)?"
+                r"(?:if\s+not\s+exists\s+)?\w+\s+on\s+{}\b".format(re.escape(mv))
+            )
+            assert re.search(pattern, schema), (
+                "{} 에 unique 인덱스가 schema.sql 에 없습니다 — "
+                "concurrently 갱신이 실패합니다.".format(mv)
+            )
 
 
 class TestAnonExposureCoversFunctions:
@@ -469,7 +603,9 @@ class TestMapFreshness:
                             lambda *a, **k: {"district_cnt": 1, "max_computed_at": "옛날"})
         assert post_load.main(["--check"]) == 1
 
-    def test_check_returns_0_when_the_map_file_matches(self, monkeypatch, tx_window_is_fresh):
+    def test_check_returns_0_when_the_map_file_matches(
+        self, monkeypatch, tx_window_is_fresh, coverage_is_fresh
+    ):
         monkeypatch.setattr(post_load, "query_one",
                             lambda sql: "200|200" if "count(" in sql else "v_floor_stack")
         monkeypatch.setattr(post_load.build_district_geojson, "read_meta",

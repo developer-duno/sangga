@@ -17,7 +17,7 @@
 | | 규칙 | 어기면 |
 |---|---|---|
 | 💾 | **백업은 자동이 아니다.** 새 분기 zip을 받았거나 대량 수집을 마쳤으면 `python scripts/backup_raw.py`를 **직접** 돌린다 | 포털에서 과거분이 내려가면 **재수집 불가**(절대 규칙 6). 건축HUB 일괄 파일도 **최근 3개월치만** 남는다 |
-| 🔎 | **자료를 적재했으면 검색 요약표를 갱신한다.** `python scripts/dbx.py -c "refresh materialized view concurrently mv_search_parcel;"` + `analyze` | 새로 넣은 건물이 **검색에 안 나온다**. 에러가 아니라 조용한 누락이라 아무도 모른다 |
+| 🔎 | **자료를 적재했으면 `python scripts/post_load.py` 한 번.** 이 하나에 vacuum(analyze)·요약표 4개 갱신·공개키 노출 점검이 다 들어 있다(요약표만 손으로 갱신하면 나머지가 조용히 빠진다) | 새로 넣은 건물이 **검색에 안 나온다**. 지도·구 단가·각주 결측률도 옛 자료를 계속 말한다. 전부 에러가 아니라 조용한 누락이라 아무도 모른다 |
 | 📦 | **패키지 매니저는 `pnpm`.** `npm`으로 돌리지 않는다 (`pnpm-lock.yaml`·CI 기준) | 락파일이 갈라져 CI와 로컬이 다른 의존성을 쓴다 |
 | 🔑 | **키는 `.env`.** 브라우저용 공개키는 `.env.local` — 손으로 만들지 말고 `python scripts/make_env_local.py` | 손으로 만들다 **서비스키를 브라우저에 노출**하는 사고. 이 스크립트는 공개키만 골라 쓴다 |
 | 🐍 | **파이썬 명령은 프로젝트 루트에서.** `cd D:\sangga` 후 실행 | 상대경로(`data/raw/...`)가 어긋나 "파일 없음"으로 조용히 0건 처리된다 |
@@ -93,7 +93,7 @@ constants → scoring → theme → components → hooks → App   (단방향)
 | API | Vercel Serverless |
 | DB | Supabase PostgreSQL + PostGIS (**별도 프로젝트**) |
 | 수집 | ⬜ **여전히 로컬 수동 실행이다** — 받기·적재·백업 전부 사람 손. 다만 **놓치는 것만은 막아 뒀다**: `sangkwon-quarterly-watch.yml`이 매주 포털을 확인해 새 분기가 뜨면 이슈를 자동으로 연다(비밀값 0개). **감시가 실패해도 이슈를 연다**(2026-08-14 추가 — 08-10 에 죽은 걸 나흘 뒤에 알았다). 목록 조회는 30초 타임아웃으로 3번 재시도한다. 적재 후 `scripts/check_new_sangkwon_quarter.py`의 `LATEST_KNOWN_QUARTER`를 **사람이 올려야** 다음 분기를 감지한다(절대 규칙 6). 상권 원천(서울 OA-15560·소진공 15090955)은 갱신이 비정기라 `district-source-watch.yml`이 매주 상세 페이지의 수정일 칸 변동을 확인해 이슈를 연다(2026-08-15 추가) — 반영 후 `check_district_source_update.py`의 기준선 상수도 **사람이 올린다**. ✅ **예약이 아예 안 도는 경우**(공개 레포는 60일 무활동 시 자동 중지, 부하 시 큐 드롭)도 **2026-08-22 부터 잡는다** — 감시 둘이 **서로를 본다**(`check_watch_heartbeat.py`가 상대의 마지막 성공 시각을 GitHub API 로 읽어 8일 넘으면 이슈를 연다). 한쪽 예약이 살아 있는 한 다른 쪽의 죽음이 일주일 안에 뜨고, **둘 다 죽는 경우**는 사람이 `python scripts/check_watch_heartbeat.py`를 직접 돌려 잡는다 |
-| 테스트 | 파이썬 **pytest 1,599개** + 프론트 **vitest 213개**(jsdom + @testing-library/react) + **E2E playwright 9개**(`e2e/floor-stack.spec.ts` — 검색→선택→층 스택(속한 상권·실거래 기록·참고 매매 시세 밴드 포함), 너무 넓은 검색 안내창). CI가 셋 다 돌린다(`pnpm test:e2e`, chromium). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도 |
+| 테스트 | 파이썬 **pytest 1,608개** + 프론트 **vitest 213개**(jsdom + @testing-library/react) + **E2E playwright 9개**(`e2e/floor-stack.spec.ts` — 검색→선택→층 스택(속한 상권·실거래 기록·참고 매매 시세 밴드 포함), 너무 넓은 검색 안내창). CI가 셋 다 돌린다(`pnpm test:e2e`, chromium). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도 |
 
 **성능 원칙**: 상권(수천 개)은 사전계산 정적 JSON, 호실(수백만)은 Supabase 쿼리.
 정적 JSON 폴백을 호실에는 두지 않는다.
@@ -131,7 +131,7 @@ pnpm exec oxlint                                # 프론트 린트
 ```
 
 ```bash
-python -m pytest tests/ -q                      # 파이썬 테스트 (1,599개)
+python -m pytest tests/ -q                      # 파이썬 테스트 (1,608개)
 python scripts/check_new_sangkwon_quarter.py    # 새 분기 스냅샷이 떴나 (읽기만, 키 불필요)
 python scripts/check_district_source_update.py  # 상권 원천(서울·소진공) 수정일이 바뀌었나 (읽기만, 키 불필요)
 python scripts/check_watch_heartbeat.py         # 감시 2종이 아직 돌고 있나 (읽기만, 키 불필요 — 8일 넘으면 exit 1)
@@ -171,7 +171,8 @@ python scripts/load_rone_map.py --dry-run                          # seed → di
 python scripts/load_rone_map.py                                    # 매핑 적재 (검증 관문 3종 내장 — 걸리면 통째 롤백)
 python scripts/build_district_geojson.py --dry-run                  # 지도용 상권 파일 미리보기(행수·크기만, 파일 안 씀)
 python scripts/build_district_geojson.py                           # ★ district 를 적재했으면 → public/districts.geojson 굽고 **커밋**
-python scripts/dbx.py -c "refresh materialized view concurrently mv_search_parcel; analyze;"   # ★ 적재 후 필수
+python scripts/post_load.py                     # ★ 적재 후 필수 — vacuum(analyze) + 요약표 4개 갱신 + 노출 점검
+python scripts/post_load.py --check              # 갱신이 필요한 상태인지만 본다 (DB 쓰기 0, 낡았으면 exit 1)
 python scripts/make_env_local.py                # .env → .env.local (브라우저용 공개키만)
 python scripts/backup_raw.py --dry-run          # 원본 백업 대상 확인 (쓰기 0)
 python scripts/backup_raw.py                    # data/raw → F:\sangga-raw-backup (외장 SSD 연결 필요)
