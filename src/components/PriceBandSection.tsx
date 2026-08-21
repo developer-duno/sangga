@@ -1,3 +1,4 @@
+import { TX_BASEMENT_MISSING_SINCE } from '../lib/supabase';
 import type { FloorRow, PriceBand } from '../types';
 import {
   formatArea,
@@ -44,6 +45,18 @@ type Props = {
 };
 
 const TITLE = '참고 매매 시세 (추정값)';
+
+/**
+ * 이보다 적은 곁 거래로 낸 폭에는 '표본 적음' 표식을 붙인다.
+ *
+ * ⚠️ 아래 각주의 한글 문구("곁 거래가 **다섯 건**이 안 된다는 뜻입니다")와 짝이다 —
+ *    바꿀 땐 두 곳을 함께 고친다(숫자만 고치면 표식과 설명이 어긋난다).
+ * ⛔ 이름이 비슷한 이웃 둘과 **뜻이 다르다. 합치지 말 것**:
+ *    · `FloorStack` 의 `MIN_SAMPLE` — 구 층대별 단가에서 수치를 아예 안 적는 임계
+ *    · 서버 L5 의 `min_n`(`supabase/schema.sql`) — 그 근거 단계를 채택할지 정하는 임계
+ *    여기 것은 "값은 내되 못 미덥다고 표시할" 임계다.
+ */
+const THIN_SAMPLE = 5;
 
 export function PriceBandSection({
   bands,
@@ -95,7 +108,7 @@ export function PriceBandSection({
   const hasFar = okGroups.some((g) => isFarStage(g.band.stage));
   // '표본 적음' 각주는 그 표식이 실제로 붙은 줄이 있을 때만 낸다. 배제 조건이 `isSinglePoint`
   // (= 폭 0)이면 n=2~4 동률 줄에서 표식은 붙는데 각주만 사라진다 — 배제는 n=1 하나뿐이다.
-  const hasThin = okGroups.some((g) => g.band.n !== 1 && (g.band.n ?? 0) < 5);
+  const hasThin = okGroups.some((g) => g.band.n !== 1 && (g.band.n ?? 0) < THIN_SAMPLE);
   const noEvidenceNames = silent.map((f) => formatFloor(f.floor_no, f.floor_label));
   const hasUnderground = silent.some((f) => f.floor_no < 0);
   // 기간은 화면에 글자로 박지 않는다 — 서버가 준 창의 시작 달을 그대로 쓴다.
@@ -137,7 +150,13 @@ export function PriceBandSection({
           <strong>참고 시세를 내지 않은 층: {noEvidenceNames.join(' · ')}</strong> — 맞혀 보는
           시험에 쓸 거래가 한 건도 없어 <strong>검증한 적이 없습니다</strong>. 거래가 쌓이면
           나오는 것이 아니라 원래 자료에 없는 것입니다.
-          {hasUnderground && <> (지하는 2017년부터 실거래 자료에 층 표기가 아예 오지 않습니다.)</>}
+          {hasUnderground && (
+            <>
+              {' '}
+              (지하는 {TX_BASEMENT_MISSING_SINCE}년부터 실거래 자료에 층 표기가 아예 오지
+              않습니다.)
+            </>
+          )}
         </p>
       )}
 
@@ -229,7 +248,7 @@ function BandBody({ group }: { group: BandGroup }) {
     const pointMarks = [
       isFarStage(band.stage) ? '먼 근거' : null,
       // n=1 은 헤드라인이 이미 "1건뿐"이라 말한다 — 표식을 겹쳐 붙이지 않는다.
-      band.n > 1 && band.n < 5 ? '표본 적음' : null,
+      band.n > 1 && band.n < THIN_SAMPLE ? '표본 적음' : null,
     ].filter((m): m is string => m !== null);
     return (
       <>
@@ -257,7 +276,7 @@ function BandBody({ group }: { group: BandGroup }) {
   const perBand = formatManWonBand(band.p25, band.p75);
   const marks = [
     isFarStage(band.stage) ? '먼 근거' : null,
-    band.n < 5 ? '표본 적음' : null,
+    band.n < THIN_SAMPLE ? '표본 적음' : null,
   ].filter((m): m is string => m !== null);
 
   return (
