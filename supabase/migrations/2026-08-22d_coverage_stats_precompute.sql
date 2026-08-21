@@ -127,8 +127,21 @@ comment on view v_coverage_stats is
 --    mv_coverage_stats 를 못 읽어 각주가 401 이 된다.
 alter view v_coverage_stats set (security_invoker = false);
 
--- 대조용 — replace 는 GRANT 를 보존하므로 이미 열려 있다. 무해하지만, 혹시라도 닫혀 있으면
--- 아무 경보 없이 각주만 사라지는 자리(위 ⛔ 참조)라 여기서 한 번 더 못 박는다.
+-- ── 5) 권한을 **SELECT 하나로 깎는다** (적대검증 실측, 2026-08-22) ─────────────
+-- ⛔ 이 뷰는 anon·authenticated 에게 **전체 권한**이 열려 있었다:
+--      INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, SELECT
+--    같은 계열인 v_floor_stack 은 `r`(SELECT) 하나뿐이라 둘이 어긋나 있었다.
+--    출처는 Supabase 기본 권한(pg_default_acl) — 이 뷰가 만들어진 시점에 자동으로
+--    전체가 붙었고, 그 뒤의 `grant select ...` 들은 **더하기만 해서** 못 걷어냈다.
+--    (이 파일 초안도 `grant select` 만 있어서 같은 이유로 못 고쳤다.)
+--
+-- ⚠️ **"어차피 못 쓴다"가 이유가 되지 않는다.** 뷰 아래가 물질화뷰라 실제 쓰기는
+--    어차피 실패한다. 그래도 선언은 최소 권한이어야 한다 — 나중에 이 뷰의 속이
+--    쓰기 가능한 것으로 바뀌면 그 순간 아무 경보 없이 진짜로 열린다.
+--
+-- 순서가 중요하다: **먼저 전부 회수하고** 필요한 것만 다시 준다(`grant` 는 더하기라
+-- 회수를 건너뛰면 아무것도 안 줄어든다). 둘 다 멱등이라 몇 번 돌아도 결과가 같다.
+revoke all on v_coverage_stats from public, anon, authenticated;
 grant select on v_coverage_stats to anon, authenticated;
 
 -- ─────────────────────────────────────────────────────────────────────

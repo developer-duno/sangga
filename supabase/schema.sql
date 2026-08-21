@@ -1955,6 +1955,14 @@ revoke all on all tables in schema public from anon, authenticated;
 -- 조용히 빈 목록으로 바뀌는 사고를 막는다. 둘 다 읽기 전용이다.
 grant select on v_floor_stack to anon, authenticated;
 -- 각주 숫자용 집계 뷰(집계값 4개뿐 — 상호명·좌표 없음).
+-- ⛔ **먼저 회수하고 준다.** 라이브 실측(2026-08-22)에서 이 뷰만 anon·authenticated 에게
+--    INSERT·UPDATE·DELETE·TRUNCATE·REFERENCES·TRIGGER 까지 열려 있었다(v_floor_stack 은
+--    SELECT 하나뿐 — 둘이 어긋나 있었다). 출처는 Supabase 기본 권한(pg_default_acl)이고,
+--    `grant select` 는 **더하기라** 그걸 못 걷어낸다. 위 `revoke all on all tables` 뒤에
+--    새로 만들어지는 뷰에는 그 revoke 가 안 걸리므로 여기서 짝으로 못 박는다.
+-- ⚠️ 뷰 아래가 물질화뷰라 실제 쓰기는 어차피 실패한다 — 그래도 선언은 최소 권한이어야
+--    한다. 나중에 속이 쓰기 가능한 것으로 바뀌면 그 순간 경보 없이 진짜로 열린다.
+revoke all on v_coverage_stats from public, anon, authenticated;
 grant select on v_coverage_stats to anon, authenticated;
 
 -- 검색 함수도 명시적으로만 연다. Postgres는 새 함수의 EXECUTE를 PUBLIC에게 기본
