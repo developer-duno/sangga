@@ -53,6 +53,11 @@ vi.mock('../lib/supabase', () => ({
   PARCEL_TX_FN: 'list_parcel_transactions',
   SIGUNGU_TX_STATS_FN: 'get_sigungu_tx_stats',
   PRICE_BANDS_FN: 'list_price_bands',
+  // ⚠️ 이 흉내는 모듈을 **통째로** 갈아끼운다 — 진짜 파일에만 상수를 더하면 화면은
+  //    undefined 를 그린다. 서버 짝 상수를 추가할 때 여기도 같이 더할 것.
+  TX_LIST_CAP: 100,
+  TX_OPEN_SINCE_LABEL: '2024년 1월',
+  TX_BASEMENT_MISSING_SINCE: 2017,
   supabase: {
     from: (view: string) =>
       makeQuery(view === 'v_coverage_stats' ? responses.stats : responses.floors),
@@ -548,6 +553,8 @@ describe('FloorStack — 실거래 기록 (Stage A · 결정 0012)', () => {
     expect(screen.getByText(/2025-01 이후 계약분/)).toBeTruthy();
     // ⚠️ '강남구'는 이 건물 주소에도 들어 있다 — 실거래 블록 안만 본다.
     expect(container.querySelector('.tx')?.textContent).not.toContain('강남구');
+    // 기간을 글자로 박으면 창이 바뀌는 날 문구만 조용히 거짓말이 된다(밴드 출처 줄과 같은 가드).
+    expect(container.querySelector('.tx__src')?.textContent ?? '').not.toContain('24개월');
   });
 
   it('구 코드는 pnu 앞 5자리로 서버에 보낸다', async () => {

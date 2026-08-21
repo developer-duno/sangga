@@ -19,7 +19,7 @@ src/                     # 프론트 (라우터·상태관리 라이브러리 �
 │   └── FloorStack.tsx       # 시그니처 화면: 5개 질의를 독립 상태로 (하나 실패해도 나머지 렌더)
 └── lib/                 # 부수효과·순수함수 계층 (components 를 절대 import 안 함)
     ├── supabase.ts      # 클라이언트 1개 + 뷰/RPC 이름 상수 (사실상 constants 레이어)
-    ├── regions.ts       # 시도 16개 정적 표 + OPEN_SIDO_CODES=['11','30'] (이름표용 — 열림 진실은 서버)
+    ├── regions.ts       # 시도 16개 정적 표 — 코드→이름표기 전용 (열림 진실은 서버 list_open_sigungu())
     ├── districts.ts     # districts.geojson 1회 fetch + 프라미스 캐시 (실패는 캐시 안 함)
     ├── geo.ts           # 순수 기하: ray casting 점포함·bounds·GeoJSON↔카카오 좌표 뒤집기
     └── format.ts        # 순수 표시 변환 (층·면적·금액·오류 문구)

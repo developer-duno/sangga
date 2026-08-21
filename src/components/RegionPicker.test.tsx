@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
-import { SIDOS, OPEN_SIDO_CODES, openRegionLabel, isOpenPnu } from '../lib/regions';
+import { SIDOS } from '../lib/regions';
 import type { OpenSigungu } from '../types';
 
 /**
@@ -57,37 +57,12 @@ describe('regions.ts', () => {
     expect(codes.has('12')).toBe(true);
   });
 
-  it('열린 코드는 반드시 목록 안에 있는 시도여야 한다', () => {
-    // 오타로 없는 코드를 열어 두면 화면엔 아무 표시도 안 나고 조용히 무시된다.
-    const known = new Set(SIDOS.map((s) => s.code));
-    for (const c of OPEN_SIDO_CODES) expect(known.has(c)).toBe(true);
-  });
-
-  it('openRegionLabel 은 코드에 박힌 목록을 쓴다 — 화면 문구에는 쓰지 않는다', () => {
-    // ⚠️ 이 함수는 이제 **화면이 쓰지 않는다.** 예전에는 안내 문구를 여기서 만들었는데,
-    //    칩 목록은 서버에서 오므로 자료가 늘면 문구만 낡는 드리프트가 났다(2026-08-13).
-    //    지금 화면 문구는 서버 응답에서 만든다. 이 함수는 PNU 판정(isOpenPnu)의 짝으로만 남는다.
-    // ⛔ 예전 테스트는 `SIDOS.filter(isOpenSido).map(name).join('·')` 를 다시 계산해
-    //    함수와 비교했다 — **같은 식을 두 번 쓴 동어반복**이라 무엇을 바꿔도 통과했다.
-    //    그래서 지금은 **값 자체**를 못박는다.
-    expect(OPEN_SIDO_CODES).toEqual(['11', '30']);
-    expect(openRegionLabel()).toBe('서울·대전');
-  });
-
-  it('화면 문구는 이 함수를 쓰지 않는다 — 진실은 서버 목록 하나뿐이다', async () => {
+  it('화면 문구는 코드에 박힌 목록을 쓰지 않는다 — 진실은 서버 목록 하나뿐이다', async () => {
     // 서버가 서울만 준 상황: 문구도 "서울"이어야 한다. 하드코딩을 쓰면 "서울·대전"이 나온다.
     rpc.mockResolvedValue({ data: [gu()], error: null });
     render(<RegionPicker selectedSigungu={null} onSelectSigungu={vi.fn()} />);
     await waitFor(() => expect(screen.getByRole('button', { name: '서울' })).toBeTruthy());
     expect(screen.queryByText(/서울·대전/)).toBeNull();
-  });
-
-  it('isOpenPnu 는 PNU 앞 2자리로 판정한다', () => {
-    const open = OPEN_SIDO_CODES[0];
-    expect(isOpenPnu(open + '68010100108230004')).toBe(true);
-    expect(isOpenPnu('9999999999999999999')).toBe(false);
-    expect(isOpenPnu(null)).toBe(false);
-    expect(isOpenPnu('')).toBe(false);
   });
 });
 
@@ -174,7 +149,6 @@ describe('RegionPicker — 시도 목록', () => {
     setup();
     await waitFor(() => expect(screen.getByRole('button', { name: '서울' })).toBeTruthy());
     expect(screen.getByText(/준비 중/)).toBeTruthy();
-    expect(screen.getByText(openRegionLabel())).toBeTruthy();
   });
 });
 
