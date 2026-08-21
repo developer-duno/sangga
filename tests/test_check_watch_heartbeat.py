@@ -10,6 +10,7 @@ import datetime
 import json
 import os
 import sys
+import urllib.error
 
 import pytest
 
@@ -222,6 +223,68 @@ def test_runs_url_asks_for_one_successful_run():
     assert "per_page=1" in url
 
 
+# ── 재시도 ────────────────────────────────────────────────────────────────────
+
+
+def _http_error(code):
+    return urllib.error.HTTPError("https://api.github.com/x", code, "테스트", {}, None)
+
+
+def _counting_retry(monkeypatch, raiser):
+    """호출 횟수와 기다린 시간을 세면서 _get_json_with_retry 를 돌린다."""
+    calls = []
+    waits = []
+
+    def fake_get(url, timeout=None):
+        calls.append(url)
+        raise raiser(len(calls))
+
+    monkeypatch.setattr(chk, "_get_json", fake_get)
+    with pytest.raises(Exception) as e:
+        chk._get_json_with_retry("https://api.github.com/x", sleep=waits.append)
+    return calls, waits, e.value
+
+
+@pytest.mark.parametrize("code", sorted(chk.NO_RETRY_HTTP_CODES))
+def test_retry_gives_up_at_once_on_codes_a_human_must_fix(monkeypatch, code):
+    """404(파일명 드리프트)·403(권한 회수) 등은 15초를 더 기다려도 같은 답이 온다."""
+    calls, waits, err = _counting_retry(monkeypatch, lambda _n: _http_error(code))
+    assert len(calls) == 1, "재시도하면 시간만 버린다"
+    assert waits == [], "기다리지도 말아야 한다"
+    assert isinstance(err, urllib.error.HTTPError) and err.code == code
+
+
+@pytest.mark.parametrize("code", [500, 502, 503, 429])
+def test_retry_keeps_trying_on_codes_that_may_clear(monkeypatch, code):
+    """5xx·429 는 다음 시도에 풀릴 수 있다 — 한 번에 포기하면 감시가 일주일을 건너뛴다."""
+    calls, waits, _ = _counting_retry(monkeypatch, lambda _n: _http_error(code))
+    assert len(calls) == chk.RETRY_COUNT
+    assert waits == [5, 10], "5초 → 10초 백오프"
+
+
+def test_retry_keeps_trying_on_timeout(monkeypatch):
+    """간헐적 연결 끊김이 재시도가 존재하는 원래 이유다."""
+    calls, waits, _ = _counting_retry(monkeypatch, lambda _n: TimeoutError("연결 끊김"))
+    assert len(calls) == chk.RETRY_COUNT
+    assert waits == [5, 10]
+
+
+def test_retry_returns_the_first_success(monkeypatch):
+    """두 번째 시도에서 풀리면 그 값을 그대로 쓴다."""
+    calls = []
+
+    def flaky(url, timeout=None):
+        calls.append(url)
+        if len(calls) == 1:
+            raise TimeoutError("연결 끊김")
+        return {"workflow_runs": []}
+
+    monkeypatch.setattr(chk, "_get_json", flaky)
+    got = chk._get_json_with_retry("https://api.github.com/x", sleep=lambda _s: None)
+    assert got == {"workflow_runs": []}
+    assert len(calls) == 2
+
+
 # ── GITHUB_OUTPUT ────────────────────────────────────────────────────────────
 
 
@@ -385,6 +448,24 @@ def test_heartbeat_step_cannot_fail_the_job(name):
     """하트비트가 job 을 실패시키면 failure() 가 **엉뚱한** 실패 이슈를 연다."""
     wf = _read_text(os.path.join(WORKFLOW_DIR, name))
     assert "continue-on-error: true" in wf
+
+
+@pytest.mark.parametrize("name", [chk.QUARTERLY_WATCH, chk.DISTRICT_WATCH])
+def test_heartbeat_still_runs_when_my_own_watch_failed(name):
+    """내가 아픈 주야말로 상대까지 조용해지면 안 되는 주다.
+
+    앞 단계가 실패하면 job status 가 failure 라 뒤 단계가 통째로 건너뛰어진다 —
+    08-10 사고("예약은 도는데 실패")가 정확히 그 상태였다.
+    """
+    wf = _read_text(os.path.join(WORKFLOW_DIR, name))
+    assert "if: ${{ !cancelled() }}" in wf
+
+
+@pytest.mark.parametrize("name", [chk.QUARTERLY_WATCH, chk.DISTRICT_WATCH])
+def test_heartbeat_issue_step_also_survives_a_failed_watch(name):
+    """판정 단계만 살리고 알림 단계를 놔두면 암묵적 success() 에서 다시 막힌다."""
+    wf = _read_text(os.path.join(WORKFLOW_DIR, name))
+    assert "if: ${{ !cancelled() && steps.heartbeat.outputs.stale == 'true' }}" in wf
 
 
 @pytest.mark.parametrize("name", [chk.QUARTERLY_WATCH, chk.DISTRICT_WATCH])

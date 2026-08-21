@@ -72,8 +72,14 @@ jobs:
       # continue-on-error 인 이유: 이 점검이 못 돌았다고 job 을 실패시키면 아래
       # failure() 가 "분기 감시가 실패했습니다"라는 **엉뚱한 이슈**를 연다.
       # 조회 자체가 실패하면(종료코드 2) 로그에만 남기고 다음 주에 다시 본다.
+      #
+      # `if: !cancelled()` 가 없으면 **내 본연의 감시가 실패한 주에는 상대를 안 본다** —
+      # 앞 단계가 실패하면 job status 가 failure 라 뒤 단계가 통째로 건너뛰어지기
+      # 때문이다. 그런데 08-10 사고가 정확히 그 상태("예약은 도는데 실패")였다.
+      # 내가 아픈 주야말로 상대까지 조용해지면 안 되는 주다.
       - name: 상대 감시(상권 원천)가 아직 도는지 확인
         id: heartbeat
+        if: ${{ !cancelled() }}
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -81,8 +87,10 @@ jobs:
 
       # 제목에 날짜가 없으므로 **열려 있는** 같은 제목만 건너뛴다 →
       # 사람이 닫아야 다음 사고를 다시 알린다.
+      # 여기도 `!cancelled()` 를 붙인다 — if 를 안 쓰면 암묵적으로 success() 가 걸려
+      # 위 단계만 살려 놔도 이 단계에서 다시 막힌다(그러면 판정만 하고 안 알린다).
       - name: 상대 감시가 멈췄으면 이슈를 연다
-        if: steps.heartbeat.outputs.stale == 'true'
+        if: ${{ !cancelled() && steps.heartbeat.outputs.stale == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           TITLE: ${{ steps.heartbeat.outputs.title }}

@@ -62,6 +62,7 @@ import json
 import os
 import sys
 import time
+import urllib.error
 import urllib.request
 
 # ── 대상 ──────────────────────────────────────────────────────────────────────
@@ -94,6 +95,12 @@ USER_AGENT = "sangga-watch-heartbeat"
 TIMEOUT_SEC = 30
 RETRY_COUNT = 3  # 최초 시도 포함
 RETRY_BACKOFF_SEC = 5  # 5초 → 10초 (2배씩)
+
+# 다시 물어봐도 답이 같은 실패 — 재시도는 15초를 버리기만 한다.
+#   401 인증 실패 · 403 권한 회수(actions: read 누락) · 404 워크플로우 파일명 드리프트 ·
+#   422 요청이 틀림. 전부 **사람이 고쳐야** 풀리는 것들이다.
+# 반대로 타임아웃·연결 끊김·5xx 는 다음 시도에 풀릴 수 있으므로 재시도한다.
+NO_RETRY_HTTP_CODES = frozenset({401, 403, 404, 422})
 
 UTC = datetime.timezone.utc
 
@@ -282,10 +289,28 @@ def _get_json_with_retry(url, timeout=TIMEOUT_SEC, attempts=RETRY_COUNT, sleep=t
     """짧은 타임아웃으로 여러 번 두드린다 (형제 감시와 같은 처방).
 
     한 번 실패했다고 포기하면 주 1회 감시가 일주일을 통째로 건너뛴다.
+
+    단 **다시 물어봐야 답이 달라질 수 있는 실패만** 재시도한다(타임아웃·5xx·연결 끊김).
+    404(파일명이 바뀜)·403(권한 회수)·401·422 는 15초를 더 기다려도 같은 답이 오므로
+    즉시 포기하고 사람이 읽을 오류를 낸다.
     """
     for attempt in range(1, attempts + 1):
         try:
             return _get_json(url, timeout=timeout)
+        except urllib.error.HTTPError as e:
+            if e.code in NO_RETRY_HTTP_CODES:
+                raise
+            if attempt == attempts:
+                raise
+            wait = RETRY_BACKOFF_SEC * (2 ** (attempt - 1))
+            print(
+                "  GitHub 응답 없음 ({}/{}) — {}초 뒤 다시 시도합니다: {}".format(
+                    attempt, attempts, wait, e
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            sleep(wait)
         except Exception as e:
             if attempt == attempts:
                 raise
