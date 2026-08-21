@@ -237,9 +237,11 @@ export function FloorStack({ building }: Props) {
     stats && missingEvery
       ? `약 ${missingEvery}곳 중 1곳(${stats.floor_missing_pct}%)`
       : '적지 않은 수';
+  // "서비스 지역"을 밝히는 이유: 뷰가 세는 범위가 **지금 볼 수 있는 구**뿐이다(2026-08-22a).
+  // 예전에는 전국을 세서, 화면이 보여주지도 않는 지역까지 섞인 숫자를 각주가 말했다.
   const basisPhrase = stats
-    ? `근거: ${formatQuarter(stats.snapshot_ym)} 상권정보 ${stats.store_cnt.toLocaleString('ko-KR')}곳 기준.`
-    : '근거: 상권정보 최신 분기 기준.';
+    ? `근거: ${formatQuarter(stats.snapshot_ym)} 상권정보 중 서비스 지역(지금 볼 수 있는 구) ${stats.store_cnt.toLocaleString('ko-KR')}곳 기준.`
+    : '근거: 서비스 지역(지금 볼 수 있는 구)의 상권정보 최신 분기 기준.';
 
   return (
     <section className="stack">
