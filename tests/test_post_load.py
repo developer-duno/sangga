@@ -300,6 +300,18 @@ class TestAnonExposure:
             "mv_sigungu_tx_stats"
         ]
 
+    def test_the_coverage_matview_is_never_allowed(self):
+        """⛔ 각주 집계를 미리 계산해 둔 표(2026-08-22d)도 허용 목록에 들어가면 안 된다.
+
+        화면이 읽는 것은 **v_coverage_stats 뷰 하나**다. 표 이름이 허용 목록에 슬쩍
+        들어가면 "뷰만 연다"는 설계가 무너지고, 다음 요약표도 같은 논리로 열린다.
+        """
+        assert "mv_coverage_stats" not in post_load.ANON_READABLE_ALLOWLIST
+        assert "mv_coverage_stats" not in post_load.ANON_CALLABLE_ALLOWLIST
+        assert post_load.unexpected_anon_readables(["mv_coverage_stats"]) == [
+            "mv_coverage_stats"
+        ]
+
 
     def test_flags_anything_outside_the_allowlist(self):
         got = post_load.unexpected_anon_readables(
@@ -367,6 +379,24 @@ class TestRefreshCoversBothSummaries:
         """mv_open_sigungu 는 mv_search_parcel 에서 만들어진다 — 순서가 바뀌면 한 박자 늦는다."""
         sql = post_load.build_refresh_sql()
         assert sql.index("mv_search_parcel") < sql.index("mv_open_sigungu")
+
+    def test_refreshes_the_coverage_stats(self):
+        """⛔ 각주 집계 사전계산(2026-08-22d)이 빠지면 각주가 **옛 적재 때 값에 굳는다**.
+
+        이것도 에러가 안 난다 — 새 분기를 넣어도 화면 각주만 옛 숫자를 계속 말한다.
+        (미리 계산해 두는 대가는 정확히 이것뿐이라, 갱신 목록에 있는지를 기계가 지킨다.)
+        """
+        assert "refresh materialized view concurrently mv_coverage_stats;" in (
+            post_load.build_refresh_sql()
+        )
+
+    def test_coverage_stats_comes_after_open_sigungu(self):
+        """mv_coverage_stats 는 mv_open_sigungu 를 읽는다("서비스 지역만 센다").
+
+        앞에 두면 구가 늘어난 날 각주만 한 박자 낡은 범위를 센다.
+        """
+        sql = post_load.build_refresh_sql()
+        assert sql.index("mv_open_sigungu") < sql.index("mv_coverage_stats")
 
     def test_all_are_concurrently(self):
         for line in post_load.build_refresh_sql().splitlines():

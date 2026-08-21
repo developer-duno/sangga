@@ -67,7 +67,15 @@ ANALYZE_TABLES = (
 # ⚠️ mv_sigungu_tx_stats(Stage A · 결정 0012)는 앞의 둘과 의존관계가 없지만, **창(24개월)이
 #    갱신하는 순간에 정해져 굳는다.** 안 돌리면 화면의 구 단가가 옛 창을 계속 말한다
 #    (에러는 안 난다 — 새 거래를 넣어도 숫자가 그대로다).
-REFRESH_MVS = ("mv_search_parcel", "mv_open_sigungu", "mv_sigungu_tx_stats")
+# ⚠️ mv_coverage_stats(각주 집계 사전계산 · 2026-08-22d)는 **mv_open_sigungu 를 읽는다**
+#    ("서비스 지역만 센다") — 반드시 그 뒤에 와야 한다. 앞에 두면 구가 늘어난 날 각주만
+#    한 박자 낡은 범위를 센다. 안 돌리면 각주 숫자가 옛 적재 때 값에 굳는다(에러 0).
+REFRESH_MVS = (
+    "mv_search_parcel",
+    "mv_open_sigungu",
+    "mv_sigungu_tx_stats",
+    "mv_coverage_stats",
+)
 SEARCH_MV = REFRESH_MVS[0]
 
 
