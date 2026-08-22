@@ -32,6 +32,7 @@ import {
 } from '../lib/format';
 import { KNOWN_BAND_STATUS } from '../lib/priceBand';
 import { PriceBandSection } from './PriceBandSection';
+import { IndustryMixSection } from './IndustryMixSection';
 
 /**
  * 구 단가에서 수치를 보여줄 최소 표본 수(결정 0012).
@@ -321,6 +322,19 @@ export function FloorStack({ building }: Props) {
           );
         })}
       </ol>
+
+      {/*
+        둘레의 업종 분포(결정 0014). 자기가 알아서 묻고, 못 읽으면 스스로 사라진다
+        — 마이그레이션 적용 전 라이브에서는 함수가 없어(PGRST202) 그 상태가 된다.
+
+        ⚠️ 여기 숫자는 **이 건물만의 점포가 아니다** — 이 땅 둘레(속한 상권 · 반경 500m)의
+           이웃 가게까지 센 것이고 이 건물 것도 그 안에 포함된다. 바로 위 층 목록의 점포
+           칸과 세는 대상이 다르므로 두 숫자를 견주면 안 된다.
+        ⓘ 실제로 층 목록 **바로 아래**에 붙어 있어 눈으로는 이어져 보인다. 그래서 갈라
+           놓는 일은 자리가 아니라 **말**이 한다 — 섹션 제목("둘레의")과 첫 줄("이 건물만이
+           아니라…")이 그 장치다. 자리를 옮겨 해결한 것이 아니니 그 문구를 지우지 말 것.
+      */}
+      <IndustryMixSection pnu={building.pnu} />
 
       <TransactionSection txs={txs} stats={txStats} />
 

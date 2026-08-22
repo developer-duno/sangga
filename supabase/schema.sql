@@ -342,7 +342,20 @@ comment on table unit_business is '분기 스냅샷. append only. 이전 분기�
 comment on column unit_business.biz_no is '업종분류 개편(837→247) 시 번호가 새로 생성되어 과거와 연계 불가. 주소+상호명 재매칭 필요';
 
 create index if not exists idx_ub_unit     on unit_business (unit_id, snapshot_ym);
-create index if not exists idx_ub_pnu      on unit_business (pnu, snapshot_ym);
+-- ⚠️ 옛 `idx_ub_pnu (pnu, snapshot_ym)` 자리다(2026-08-22c 에서 지웠다). 앞 두 칸이 같고
+--    업종 네 칸이 include 로 더 붙어 있어 **완전한 대체**다 — 옛것을 되살리면 105MB 를
+--    그냥 두 번 쓰게 된다(2026-08-22a 가 idx_ub_snapshot_floor 에 한 정리와 같다).
+-- ⛔ include 네 칸을 지우지 말 것. 반경 업종 집계가 이 칸들 때문에 힙에 안 간다.
+--    최악 표본(중구 `1114013400101890026` — 이웃 1,414필지·점포 4,433곳)에서 **찬 캐시**
+--    2,383ms → 적용 직후 `list_industry_mix()` 전체 **44.5ms**(반경 집계만 14.7ms ·
+--    **Heap Fetches 0** · Index Only Scan, 2026-08-22 라이브 실측).
+--    ⚠️ 더운 캐시로는 차이가 안 보인다(옛 인덱스로도 23ms) — 지키는 것은 **첫 방문자**다.
+--    지워도 **에러는 안 나고 느려지기만 한다** — 가장 늦게 발견되는 종류의 회귀다.
+-- ⓘ 이 파일에서는 문장 순서가 상관없다. 마이그레이션(2026-08-22c)에서는 옛 idx_ub_pnu 를
+--    지우는 문장을 **맨 끝**에 둔다 — drop index 의 ACCESS EXCLUSIVE 락이 커밋까지 유지돼
+--    앞에 두면 물질화뷰 굽는 27초 내내 unit_business 읽기가 줄을 서기 때문이다.
+create index if not exists idx_ub_pnu_cat  on unit_business (pnu, snapshot_ym)
+  include (cat_l_cd, cat_l_nm, cat_m_cd, cat_m_nm);
 create index if not exists idx_ub_name     on unit_business using gin (biz_name gin_trgm_ops);
 create index if not exists idx_ub_cat      on unit_business (cat_s_cd, snapshot_ym);
 create index if not exists idx_ub_geom     on unit_business using gist (geom);
@@ -1878,6 +1891,252 @@ comment on function list_price_bands(text) is
 grant execute on function list_price_bands(text) to anon, authenticated;
 
 
+-- =====================================================================
+-- 둘레의 업종 분포 (결정 0014 · 마이그레이션 2026-08-22c)
+-- =====================================================================
+-- 층별 화면에 "이 동네에 무슨 장사가 몇 곳 있나"를 두 자로 보여준다:
+--   ① 상권 스코프 — 이 땅이 속한 상권(들) 안. 겹치면 전부(결정 0011 과 같은 규칙)
+--   ② 반경 스코프 — 이 땅에서 500m 안
+--
+-- ## 왜 ①만 미리 계산하나 (2026-08-22 라이브 실측이 정했다)
+--
+--   ① 그때그때 세기                    → 12,512ms(찬 캐시) / 56ms(더운 캐시)
+--   ② 반경, geom::geography 로 바로     → 47,756ms  ← 캐스트가 gist 인덱스를 죽인다
+--   ③ 반경, bbox 선거름 + geography     →  2,976ms  ← 3초 제한 코앞
+--   ④ 반경, 이웃 필지 PNU 배열 경유     →    469ms  ← 채택
+--
+-- ①이 더울 때 56ms 인데 찰 때 12.5초인 것이 핵심이다 — 2026-08-11 v_coverage_stats 500
+-- 사고와 같은 병이라, 더운 캐시로 재고 "빠르다"고 하면 첫 방문자만 죽는다. 상권 안 점포
+-- 수는 (상권, 분기)만으로 정해지고 필지와 무관하므로 미리 계산할 수 있다(굽기 26.7초 ·
+-- 62,457행 · 5.6MB · 읽기 0.32ms). ⚠️ 반대로 반경은 답이 필지마다 달라 미리 못 굽는다.
+--
+-- ## 왜 반경을 이웃 필지로 재나
+--
+-- list_price_bands 가 같은 화면에서 이미 "반경 500m"를 이웃 필지로 정의해 쓴다. 두 블록이
+-- 서로 다른 자로 500m 를 재면 비교가 거짓말이 된다. 두 자의 답을 8곳에서 대조해 최대
+-- 차이 1.4% 임을 확인했다(unit_business.pnu 채움률 99.94%).
+create materialized view if not exists mv_district_industry_mix as
+select d.district_id,
+       ub.snapshot_ym,
+       ub.cat_l_cd, ub.cat_l_nm,
+       ub.cat_m_cd, ub.cat_m_nm,
+       count(*)::int as n
+from district d
+join unit_business ub
+  on ub.geom is not null
+ and st_contains(d.geom, ub.geom)
+where ub.snapshot_ym = (select max(u.snapshot_ym) from unit_business u)
+group by 1, 2, 3, 4, 5, 6;
+
+comment on materialized view mv_district_industry_mix is
+  '상권 × 업종(중분류) 점포 수 — 최신 분기 한 개만. 살아있는 쿼리는 찬 캐시에서 12.5초라 '
+  '미리 굽는다(라이브 실측, 굽기 26.7초 · 읽기 0.32ms). 대분류는 이 표를 합쳐서 낸다. '
+  '⚠️ 상권이 겹치는 자리의 점포는 **양쪽에 모두** 세어진다(2026-08-22 실측: 상권 안 462,858곳 중 '
+  '17,946곳 = 3.9% 가 두 상권에 겹침, 3겹은 0건). 상권끼리 더하면 그만큼 부풀려진다. '
+  '⚠️ 어느 분기가 최신인지는 **구울 때** 굳는다 — 새 분기를 적재하면 `python scripts/post_load.py`. '
+  '⛔ anon 에게 열지 않는다 — 화면은 list_industry_mix 함수로만 읽는다.';
+
+-- `concurrently` 갱신의 전제 조건. 조회(상권 몇 개 + 분기 하나)도 이 인덱스로 탄다(0.32ms).
+create unique index if not exists mv_district_industry_mix_key
+  on mv_district_industry_mix (district_id, snapshot_ym, cat_m_cd);
+
+analyze mv_district_industry_mix;
+
+-- ⚠️ 파라미터를 `p_` 로 시작하는 이유: `pnu` 는 컬럼 이름과 겹친다. 겹치면 PostgreSQL 이
+--    컬럼을 우선 집어 `where p.pnu = p.pnu`(= 전 국토)가 된다.
+-- ⛔ `p_pnu::char(19)` 캐스트를 지우지 말 것 — 컬럼이 char(19) 라 text 와 견주면 **컬럼 쪽**이
+--    캐스트돼 인덱스가 통째로 죽는다(2026-08-16b 실측 459.8ms↔0.796ms).
+create or replace function list_industry_mix(p_pnu text)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with snap as (
+    -- 두 블록이 반드시 **같은 분기**를 말하게 한다. 정본은 사전계산표 쪽이다 —
+    -- 표가 낡으면 두 블록이 **함께** 낡을 뿐, 서로 다른 분기를 말하지는 않는다
+    -- (한 화면에서 두 숫자가 다른 기간을 말하는 것이 가장 나쁜 상태다).
+    select coalesce(
+             (select max(m.snapshot_ym) from mv_district_industry_mix m),
+             (select max(u.snapshot_ym) from unit_business u)) as ym
+  ),
+  me as (
+    -- 좌표가 없으면 아예 답하지 않는다. 여기를 열어 두면 반경 0곳이 "이 동네엔 가게가
+    -- 없다"는 **단정**으로 새어 나간다(list_building_districts 와 같은 원칙).
+    select p.geom as g, p.geom::geography as gg
+    from parcel p
+    where p.pnu = p_pnu::char(19) and p.geom is not null
+  ),
+  hit as (
+    -- 술어를 st_contains 로 맞춘다 — 결정 0008·0011 의 실측이 이 술어로 나온 숫자다.
+    select d.district_id, d.district_nm, d.district_type, d.source_nm, d.area_m2
+    from district d cross join me
+    where st_contains(d.geom, me.g)
+  ),
+  near as (
+    -- ⚠️ char(19)[] 이라야 한다. text[] 로 두면 배열 조건이 인덱스 안으로 못 들어가
+    --    힙 필터로 밀린다(list_price_bands L4 주석의 실측과 같은 병).
+    -- 마지막 인자 false = 구면으로 잰다. list_price_bands 와 같은 자를 쓴다.
+    select coalesce(array_agg(p.pnu), '{}'::char(19)[]) as pnus
+    from parcel p cross join me
+    where p.geom is not null
+      and st_dwithin(p.geom::geography, me.gg, 500, false)
+  ),
+  dcat as (
+    select h.district_id, m.cat_l_cd, m.cat_l_nm, sum(m.n)::int as n
+    from hit h
+    join mv_district_industry_mix m
+      on m.district_id = h.district_id
+     and m.snapshot_ym = (select ym from snap)
+    group by 1, 2, 3
+  ),
+  rcat as (
+    select ub.cat_l_cd, ub.cat_l_nm, count(*)::int as n
+    from unit_business ub cross join near
+    where ub.snapshot_ym = (select ym from snap)
+      and ub.pnu = any(near.pnus)
+    group by 1, 2
+  ),
+  dj as (
+    select h.area_m2, h.district_id,
+           jsonb_build_object(
+             'district_id', h.district_id,
+             'name', h.district_nm,
+             'type', h.district_type,
+             'source_nm', h.source_nm,
+             'total', coalesce((select sum(c.n) from dcat c
+                                 where c.district_id = h.district_id), 0)::int,
+             'cats', coalesce((select jsonb_agg(
+                                        jsonb_build_object('cd', c.cat_l_cd,
+                                                           'nm', c.cat_l_nm,
+                                                           'n',  c.n)
+                                        order by c.n desc, c.cat_l_cd)
+                                 from dcat c where c.district_id = h.district_id),
+                              '[]'::jsonb)
+           ) as j
+    from hit h
+  )
+  select jsonb_build_object(
+    'snapshot_ym', (select ym from snap),
+    'radius_m', 500,
+    -- 좁은 상권이 더 구체적인 설명이라 먼저 온다(list_building_districts 와 같은 정렬).
+    'districts', coalesce((select jsonb_agg(dj.j order by dj.area_m2 asc, dj.district_id)
+                            from dj), '[]'::jsonb),
+    -- 좌표가 없으면 null 이다. **빈 집계가 아니라 "모른다"** 라서 화면이 그 블록을 감춘다.
+    'radius', case when exists (select 1 from me) then jsonb_build_object(
+        'total', coalesce((select sum(r.n) from rcat r), 0)::int,
+        'cats',  coalesce((select jsonb_agg(
+                                    jsonb_build_object('cd', r.cat_l_cd,
+                                                       'nm', r.cat_l_nm,
+                                                       'n',  r.n)
+                                    order by r.n desc, r.cat_l_cd)
+                            from rcat r), '[]'::jsonb)
+      ) else null end
+  );
+$$;
+
+comment on function list_industry_mix(text) is
+  '결정 0014 이 필지 둘레의 업종 분포(대분류). districts = 속한 상권마다 한 묶음(겹치면 전부, '
+  '좁은 상권 먼저) · radius = 반경 500m. radius 가 null 이면 필지 좌표가 없어 **모른다**는 뜻이고 '
+  '빈 집계와 다르다. snapshot_ym 은 두 블록이 함께 쓰는 분기다(사전계산표가 정본). '
+  '⚠️ 상권끼리 더하지 말 것 — 겹치는 자리의 점포는 양쪽에 세어진다(실측 3.9%). '
+  'security definer — unit_business·parcel·district 가 anon 에게 닫혀 있어 소유자 권한으로 '
+  '대신 읽는다. **나가는 것은 업종별 개수뿐이다 — 상호명은 한 글자도 나가지 않는다.**';
+
+-- 대분류를 누를 때만 부른다(첫 화면에서 75종을 다 내려보내지 않는다).
+-- ⛔ `p_cat::char(2)` 캐스트도 같은 이유다 — cat_l_cd 가 char(2) 다.
+create or replace function list_industry_detail(p_pnu text, p_cat text)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with snap as (
+    select coalesce(
+             (select max(m.snapshot_ym) from mv_district_industry_mix m),
+             (select max(u.snapshot_ym) from unit_business u)) as ym
+  ),
+  me as (
+    select p.geom as g, p.geom::geography as gg
+    from parcel p
+    where p.pnu = p_pnu::char(19) and p.geom is not null
+  ),
+  hit as (
+    select d.district_id, d.district_nm, d.area_m2
+    from district d cross join me
+    where st_contains(d.geom, me.g)
+  ),
+  near as (
+    select coalesce(array_agg(p.pnu), '{}'::char(19)[]) as pnus
+    from parcel p cross join me
+    where p.geom is not null
+      and st_dwithin(p.geom::geography, me.gg, 500, false)
+  ),
+  dsub as (
+    select h.district_id, m.cat_m_cd, m.cat_m_nm, sum(m.n)::int as n
+    from hit h
+    join mv_district_industry_mix m
+      on m.district_id = h.district_id
+     and m.snapshot_ym = (select ym from snap)
+     and m.cat_l_cd = p_cat::char(2)
+    group by 1, 2, 3
+  ),
+  rsub as (
+    select ub.cat_m_cd, ub.cat_m_nm, count(*)::int as n
+    from unit_business ub cross join near
+    where ub.snapshot_ym = (select ym from snap)
+      and ub.pnu = any(near.pnus)
+      and ub.cat_l_cd = p_cat::char(2)
+    group by 1, 2
+  ),
+  dj as (
+    select h.area_m2, h.district_id,
+           jsonb_build_object(
+             'district_id', h.district_id,
+             'name', h.district_nm,
+             'total', coalesce((select sum(s.n) from dsub s
+                                 where s.district_id = h.district_id), 0)::int,
+             'cats', coalesce((select jsonb_agg(
+                                        jsonb_build_object('cd', s.cat_m_cd,
+                                                           'nm', s.cat_m_nm,
+                                                           'n',  s.n)
+                                        order by s.n desc, s.cat_m_cd)
+                                 from dsub s where s.district_id = h.district_id),
+                              '[]'::jsonb)
+           ) as j
+    from hit h
+  )
+  select jsonb_build_object(
+    'snapshot_ym', (select ym from snap),
+    'radius_m', 500,
+    -- 물어본 업종을 그대로 돌려준다 — 화면이 늦게 도착한 답(그 사이 다른 업종을 고른
+    -- 경우)을 버릴 수 있어야 한다. 이게 없으면 목록이 조용히 뒤바뀐다.
+    'cat_l_cd', p_cat,
+    'districts', coalesce((select jsonb_agg(dj.j order by dj.area_m2 asc, dj.district_id)
+                            from dj), '[]'::jsonb),
+    'radius', case when exists (select 1 from me) then jsonb_build_object(
+        'total', coalesce((select sum(s.n) from rsub s), 0)::int,
+        'cats',  coalesce((select jsonb_agg(
+                                    jsonb_build_object('cd', s.cat_m_cd,
+                                                       'nm', s.cat_m_nm,
+                                                       'n',  s.n)
+                                    order by s.n desc, s.cat_m_cd)
+                            from rsub s), '[]'::jsonb)
+      ) else null end
+  );
+$$;
+
+comment on function list_industry_detail(text, text) is
+  '결정 0014 고른 대분류 안의 중분류 분포. 반환 구조는 list_industry_mix 와 같고 cat_l_cd 를 '
+  '그대로 되돌려 준다(늦게 도착한 답을 화면이 버릴 수 있게). '
+  'security definer — **나가는 것은 업종별 개수뿐이다(상호명 없음).**';
+
+grant execute on function list_industry_mix(text) to anon, authenticated;
+grant execute on function list_industry_detail(text, text) to anon, authenticated;
+
+
 -- ── ⛔ 요약표는 공개키에게 열지 않는다 (2026-08-13f) ─────────────────────────
 -- Supabase 는 스키마 public 에 기본 권한을 걸어 두어 **새로 만드는 표·물질화뷰마다
 -- anon 에게 전체 권한을 자동으로 준다.** 2026-08-08 의 `revoke ... on all tables` 는
@@ -1892,6 +2151,8 @@ revoke all on mv_sigungu_tx_stats from public, anon, authenticated;
 -- 아니지만, "새 요약표는 닫는다"에 예외를 만들면 다음번엔 위험한 표가 같은 논리로 열린다.
 -- 화면은 v_coverage_stats 뷰로만 읽는다.
 revoke all on mv_coverage_stats from public, anon, authenticated;
+-- 상호명은 안 나가더라도 이 표가 열리면 **전국 상권의 업종 구성이 통째로** 긁힌다(2026-08-22c).
+revoke all on mv_district_industry_mix from public, anon, authenticated;
 
 -- 그리고 **앞으로 만들 것도 자동으로 안 열리게** 기본값 자체를 바꾼다.
 -- 이게 없으면 다음에 표를 하나 더 만들 때 같은 일이 또 난다(사람 기억에 의존하게 된다).

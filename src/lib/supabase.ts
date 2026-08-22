@@ -102,3 +102,23 @@ export const SIGUNGU_TX_STATS_FN = 'get_sigungu_tx_stats';
  *    다른 뜻이다 — 화면이 하나로 뭉뚱그리면 "모르는 것"을 "없는 것"이라 말하게 된다.
  */
 export const PRICE_BANDS_FN = 'list_price_bands';
+
+/**
+ * 이 필지 둘레의 업종 분포(대분류). 결정 0014 — 상권 지표 1단계.
+ *
+ * ⚠️ **인자 이름이 `p_pnu` 다**(`list_price_bands` 와 같은 이유 — 컬럼명 `pnu` 와 겹친다).
+ *    목(mock)은 인자 이름을 안 보므로 `{ pnu: … }` 로 잘못 불러도 vitest·E2E 는 전부
+ *    초록이고 **라이브에서만** PGRST202 가 난다.
+ *
+ * 돌려주는 것은 두 스코프다 — 속한 상권마다 한 묶음(겹치면 전부) + 반경 하나.
+ * 기준 분기·반경 길이도 함께 오므로 화면에 '2026년 6월'·'500m'를 글자로 박지 않는다.
+ */
+export const INDUSTRY_MIX_FN = 'list_industry_mix';
+
+/**
+ * 고른 대분류 안의 중분류 분포. 대분류를 누를 때만 부른다.
+ *
+ * ⚠️ 인자가 **둘**이다 — `{ p_pnu, p_cat }`. 응답의 `cat_l_cd` 는 물어본 값을 그대로
+ *    되돌려 준 것이라, 그 사이 다른 업종을 고른 경우 늦게 온 답을 버리는 데 쓴다.
+ */
+export const INDUSTRY_DETAIL_FN = 'list_industry_detail';

@@ -74,11 +74,17 @@ ANALYZE_TABLES = (
 # ⚠️ mv_coverage_stats(각주 집계 사전계산 · 2026-08-22d)는 **mv_open_sigungu 를 읽는다**
 #    ("서비스 지역만 센다") — 반드시 그 뒤에 와야 한다. 앞에 두면 구가 늘어난 날 각주만
 #    한 박자 낡은 범위를 센다. 안 돌리면 각주 숫자가 옛 적재 때 값에 굳는다(에러 0).
+# ⚠️ mv_district_industry_mix(둘레의 업종 분포 · 결정 0014)도 갱신이 **유일한** 최신화
+#    수단이다. 이 표는 "최신 분기"를 담는데, 그 분기가 무엇인지는 **구울 때** 정해져
+#    굳는다. 새 분기를 적재하고 이걸 안 돌리면 업종 분포만 옛 분기를 계속 말한다(에러 0).
+#    아래 report_industry_mix_freshness() 가 그 어긋남을 등식으로 잡는다.
+#    (앞의 것들과 의존관계는 없다 — 순서는 "먼저 만들어진 것부터"일 뿐이다.)
 REFRESH_MVS = (
     "mv_search_parcel",
     "mv_open_sigungu",
     "mv_sigungu_tx_stats",
     "mv_coverage_stats",
+    "mv_district_industry_mix",
 )
 SEARCH_MV = REFRESH_MVS[0]
 
@@ -254,6 +260,62 @@ def report_tx_window_freshness():
     return got, expected, stale
 
 
+# ── 업종 분포 표 신선도 (2026-08-22 신설 — 결정 0014) ──────────────────────
+#
+# mv_district_industry_mix 는 "최신 분기"를 담는데, **어느 분기가 최신인지는 구울 때
+# 정해져 굳는다.** 새 분기를 적재하고 갱신을 안 하면 층별 화면의 업종 분포만 옛 분기를
+# 계속 말한다 — 에러는 안 나고, 화면에 적히는 "2026년 2분기 기준"도 그 옛 분기를 정직히
+# 말하므로 **아무도 눈치채지 못한다**(다른 블록은 최신 분기를 쓰는데 여기만 뒤처진다).
+#
+# 앞의 두 점검과 같은 방식이다 — 표에 굳은 값 == 지금 있어야 할 값.
+
+
+def is_industry_mix_stale(mix_ym, latest_ym):
+    """업종 분포 표가 낡았는가 (순수 함수 — 테스트가 여기만 보면 된다).
+
+    빈 표(굽지 않음)는 낡음이다 — 화면에서 섹션이 통째로 사라지는데, 그건 정상이 아니다.
+
+    ⚠️ **원본이 빈 경우의 판정이 형제(is_coverage_stale)와 일부러 반대다.** 여기서는
+       '낡지 않음', 저기서는 '낡음'이다. 까닭은 두 표가 없을 때 화면이 겪는 일이 다르기
+       때문이다:
+         · 각주 집계 — 점포 자료가 없으면 각주 숫자 자체를 못 만든다. 화면이 기대하는
+           값이 비는 것이라 알려야 한다.
+         · 업종 분포 — 점포 자료가 없으면 **애초에 셀 것이 없다.** 이 섹션은 자기가 알아서
+           사라지도록 만들어져 있고(그게 설계된 정상 동작이다), 그 상태로 경보를 내면
+           자료를 아직 안 넣은 새 환경에서 --check 가 영원히 1 을 돌려준다.
+       즉 "견줄 기준이 없을 때 무엇이 정상인가"가 두 표에서 다르다. 통일하지 말 것.
+    """
+    mix = str(mix_ym or "").strip()
+    latest = str(latest_ym or "").strip()
+    if not latest:
+        return False
+    return mix != latest
+
+
+def report_industry_mix_freshness():
+    """업종 분포 표의 분기를 점포 자료의 최신 분기와 대조한다."""
+    raw = query_one(
+        "select coalesce((select max(snapshot_ym) from mv_district_industry_mix), '')"
+        " || '|' || coalesce((select max(snapshot_ym) from unit_business), '');"
+    )
+    # partition 을 쓴다 — split 은 값에 '|' 가 섞이면 "unpack 3 into 2" 로 죽는다
+    # (형제 report_coverage_freshness 와 같은 방식으로 맞춘다).
+    mix_ym, _, latest_ym = raw.partition("|")
+    mix_ym, latest_ym = mix_ym.strip(), latest_ym.strip()
+    stale = is_industry_mix_stale(mix_ym, latest_ym)
+    if stale:
+        if not mix_ym:
+            print("[낡음] 업종 분포 표가 비어 있습니다 — 갱신이 필요합니다.")
+        else:
+            print("[낡음] 업종 분포 표 {} / 점포 자료 최신 {} — 갱신이 필요합니다."
+                  .format(mix_ym, latest_ym))
+        print("       이대로 두면 층별 화면의 업종 분포만 옛 분기를 말합니다(에러는 안 납니다).")
+        print("       python scripts/post_load.py 를 실행하면 최신 분기로 다시 굽습니다.")
+    else:
+        print("[신선] 업종 분포 표 {} = 점포 자료 최신 분기.".format(mix_ym or "(자료 없음)"))
+    return mix_ym, latest_ym, stale
+
+
 # ── 각주 집계 신선도 (2026-08-22d 신설 — 사전계산의 유일한 대가) ─────────────
 #
 # mv_coverage_stats 는 **갱신하는 순간 계산돼 그대로 굳는다.** 미리 계산해 두는 값이
@@ -329,6 +391,9 @@ ANON_CALLABLE_ALLOWLIST = (
     # Stage B 참고 시세 밴드(결정 0013). 게이트 표 price_gate_sigungu 와 층대 도우미
     # price_floor_band 는 **여기 없다** — 화면은 이 함수 하나로만 읽는다.
     "list_price_bands",
+    # 둘레의 업종 분포(결정 0014). 사전계산표 mv_district_industry_mix 는 **여기 없다** —
+    # 그 표가 열리면 상호명은 안 나가더라도 상권별 점포 구성이 통째로 긁힌다.
+    "list_industry_mix", "list_industry_detail",
 )
 
 
@@ -405,8 +470,10 @@ def main(argv=None):
         _, map_stale = report_map_freshness()
         _, _, tx_stale = report_tx_window_freshness()
         _, _, cov_stale = report_coverage_freshness()
+        _, _, mix_stale = report_industry_mix_freshness()
         _, exposed = report_anon_exposure()
-        return 1 if (stale or map_stale or tx_stale or cov_stale or exposed) else 0
+        return 1 if (stale or map_stale or tx_stale or cov_stale or mix_stale
+                     or exposed) else 0
 
     print("통계·가시성 지도를 갱신합니다 (VACUUM ANALYZE {}개 표)…".format(len(ANALYZE_TABLES)))
     rc = dbx.run_sql("set statement_timeout = '600s';\n" + build_analyze_sql(), quiet=True)
@@ -430,7 +497,9 @@ def main(argv=None):
     _, _, tx_stale = report_tx_window_freshness()
     # 각주 집계도 마찬가지 — 갱신했다고 믿지 않고 원본 최신 분기와 대조한다.
     _, _, cov_stale = report_coverage_freshness()
-    return 1 if (stale or map_stale or tx_stale or cov_stale) else 0
+    # 업종 분포 표도 방금 다시 구웠으니 최신 분기여야 한다 — 역시 다시 잰다.
+    _, _, mix_stale = report_industry_mix_freshness()
+    return 1 if (stale or map_stale or tx_stale or cov_stale or mix_stale) else 0
 
 
 if __name__ == "__main__":

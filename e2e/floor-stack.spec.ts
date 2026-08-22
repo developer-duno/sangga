@@ -50,6 +50,12 @@ const TX_STATS_PATTERN = '**/rest/v1/rpc/get_sigungu_tx_stats*';
 // 참고 매매 시세 밴드(Stage B · 결정 0013). 이것도 안 막으면 실존하지 않는 도메인으로
 // 요청이 나간다 — 기본값은 빈 배열이라 섹션이 아예 안 뜬다(기존 테스트에 영향 0).
 const PRICE_BAND_PATTERN = '**/rest/v1/rpc/list_price_bands*';
+// 둘레의 업종 분포(결정 0014). 층 스택이 건물마다 이 둘을 더 부른다.
+// ⚠️ **일부러 404(PGRST202)로 답한다** — 마이그레이션을 적용하기 전 라이브가 바로 그
+//    상태이고, 그때 이 섹션이 **조용히 사라지는지**가 여기서 확인하려는 것이다.
+//    (안 막으면 실존하지 않는 도메인으로 요청이 나가 테스트가 DNS 에 좌우된다.)
+const INDUSTRY_MIX_PATTERN = '**/rest/v1/rpc/list_industry_mix*';
+const INDUSTRY_DETAIL_PATTERN = '**/rest/v1/rpc/list_industry_detail*';
 
 const CORS_HEADERS = {
   'access-control-allow-origin': '*',
@@ -89,6 +95,30 @@ async function mockFloorStack(
     districts: [{ name: '역삼역', type: '발달상권' }],
     // 출처는 화면에 박힌 글자가 아니라 서버가 자료에서 읽어 주는 값이다(2026-08-14).
     sources: ['서울특별시 상권분석서비스'],
+  });
+  // 업종 분포는 **함수가 없는 상태**로 답한다(위 상수 주석 참조).
+  await mockMissingFunction(page, INDUSTRY_MIX_PATTERN);
+  await mockMissingFunction(page, INDUSTRY_DETAIL_PATTERN);
+}
+
+/**
+ * 아직 라이브에 없는 서버 함수를 흉내 낸다 — PostgREST 가 실제로 내는 404/PGRST202.
+ *
+ * 빈 배열이나 200 으로 답하면 "적용 전 라이브"가 아니라 "자료가 없는 라이브"를 흉내 내게
+ * 되는데, 그 둘은 화면이 갈라 대해야 하는 서로 다른 상태다.
+ */
+async function mockMissingFunction(page: Page, pattern: string) {
+  await page.route(pattern, async (route) => {
+    if (route.request().method() === 'OPTIONS') {
+      await route.fulfill({ status: 204, headers: CORS_HEADERS });
+      return;
+    }
+    await route.fulfill({
+      status: 404,
+      contentType: 'application/json',
+      headers: CORS_HEADERS,
+      body: JSON.stringify({ code: 'PGRST202', message: 'function does not exist' }),
+    });
   });
 }
 
@@ -140,6 +170,11 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     // 참고 시세 섹션도 같은 종류의 위험을 진다(별도 RPC 하나에 통째로 달려 있다).
     await expect(stack.locator('section.band')).toBeVisible();
     await expect(stack.getByText(/C등급 · 파생 추정/)).toBeVisible();
+    // 업종 분포(결정 0014)는 **서버에 함수가 아직 없는 상태**로 흉내 냈다(mockFloorStack).
+    // 그때 이 섹션은 아무 말도 없이 사라져야 한다 — "업종 없음" 같은 문구를 남기면
+    // 모르는 것을 없는 것이라 말하게 되고, 터지면 층 스택 전체가 같이 죽는다.
+    await expect(stack.locator('section.mix')).toHaveCount(0);
+    await expect(stack.getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
   });
 
   test('B. 새 검색을 제출하면 이전 층 스택이 즉시 사라진다', async ({ page }) => {

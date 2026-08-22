@@ -41,6 +41,14 @@ const responses = {
   bands: { data: [] as unknown, error: null as unknown },
   /** true 면 밴드 응답을 영영 돌려주지 않는다 — "아직 안 옴" 상태를 보려고 둔 스위치다. */
   bandsPending: false,
+  /**
+   * 서버 함수 list_industry_mix 의 응답(둘레의 업종 분포 · 결정 0014).
+   *
+   * 기본값을 **오류**로 둔다 — 이 파일은 층 스택을 보는 곳이고, 업종 섹션은
+   * `IndustryMixSection.test.tsx` 가 따로 본다. 오류면 섹션이 스스로 사라지므로
+   * 여기 있는 다른 시험들의 화면이 그대로 유지된다(마이그레이션 적용 전 라이브와 같은 상태).
+   */
+  industryMix: { data: null as unknown, error: { message: 'not applied' } as unknown },
 };
 
 /** 마지막 rpc 호출의 인자. "구 코드를 pnu 에서 뽑아 보내는가"를 여기서 확인한다. */
@@ -53,6 +61,8 @@ vi.mock('../lib/supabase', () => ({
   PARCEL_TX_FN: 'list_parcel_transactions',
   SIGUNGU_TX_STATS_FN: 'get_sigungu_tx_stats',
   PRICE_BANDS_FN: 'list_price_bands',
+  INDUSTRY_MIX_FN: 'list_industry_mix',
+  INDUSTRY_DETAIL_FN: 'list_industry_detail',
   // ⚠️ 이 흉내는 모듈을 **통째로** 갈아끼운다 — 진짜 파일에만 상수를 더하면 화면은
   //    undefined 를 그린다. 서버 짝 상수를 추가할 때 여기도 같이 더할 것.
   TX_LIST_CAP: 100,
@@ -73,6 +83,11 @@ vi.mock('../lib/supabase', () => ({
       if (fn === 'get_sigungu_tx_stats') return Promise.resolve(responses.txStats);
       if (fn === 'list_price_bands') {
         return responses.bandsPending ? new Promise(() => {}) : Promise.resolve(responses.bands);
+      }
+      // 둘레의 업종 분포. 갈라 답하지 않으면 상권 응답(객체)이 흘러들어 업종 목록을
+      // 도는 코드가 죽는다 — 이 파일의 다른 시험까지 통째로 빨개진다.
+      if (fn === 'list_industry_mix' || fn === 'list_industry_detail') {
+        return Promise.resolve(responses.industryMix);
       }
       return Promise.resolve(responses.districts);
     },
@@ -216,6 +231,9 @@ beforeEach(() => {
   // 기본은 빈 배열 = 참고 시세 섹션 미표시. 이 파일의 다른 테스트는 영향을 안 받는다.
   responses.bands = { data: [], error: null };
   responses.bandsPending = false;
+  // 기본은 오류 = 업종 섹션 미표시(마이그레이션 적용 전 라이브와 같은 상태).
+  // 그 섹션 자체는 IndustryMixSection.test.tsx 가 따로 본다.
+  responses.industryMix = { data: null, error: { message: 'not applied' } };
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });

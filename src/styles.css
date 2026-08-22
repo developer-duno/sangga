@@ -901,6 +901,148 @@ body {
   font-size: 12.5px;
 }
 
+/* ── 둘레의 업종 분포 (결정 0014) ─────────────────────────────────────── */
+/*
+   ⚠️ `.tx`(사실)·`.band`(추정)와 **또 다른 카드**로 둔다. 여기 숫자는 추정이 아니지만
+      "이 건물의 점포"도 아니라서(둘레의 남의 가게까지 센다) 층 목록에 붙여 놓으면
+      같은 것을 세는 두 숫자처럼 읽힌다. 테두리를 실선으로 두되 배경을 달리해 가른다.
+*/
+.mix {
+  margin: 22px 0 0;
+  padding: 16px 16px 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7f9fc;
+}
+
+.mix__h {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.mix__lead {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.mix__block + .mix__block {
+  margin-top: 18px;
+}
+
+.mix__sub {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+/* 총수는 제목 옆에 붙는다 — 몫(%)만 있으면 60%가 6곳인지 6,000곳인지 알 수 없다. */
+.mix__total {
+  color: var(--muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 고른 업종의 "같은 업종 N곳" — 이 섹션에서 가장 먼저 눈에 들어와야 하는 수치다. */
+.mix__rival {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.mix__bars {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.mix__bars li {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr) 64px 52px;
+  gap: 10px;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+.mix__cat {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 층 스택의 `.floor__bar`와 같은 방식 — 순수 CSS 비율 막대다(그리기 라이브러리 없음). */
+.mix__bar {
+  display: block;
+  height: 14px;
+  background: #e7eaf1;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.mix__fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 4px;
+}
+
+.mix__n {
+  text-align: right;
+}
+
+.mix__pct {
+  text-align: right;
+  color: var(--muted);
+}
+
+.mix__pick {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.mix__pick-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mix__select {
+  flex: 1 1 220px;
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  font: inherit;
+  font-size: 13px;
+}
+
+.mix__detail {
+  margin-top: 16px;
+}
+
+.mix__none,
+.mix__note,
+.mix__src {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.mix__why {
+  margin: 8px 0 0;
+  padding: 0 0 0 18px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
 /* ── 신뢰도 배지 · 메시지 ─────────────────────────────────────────────── */
 
 .grade {

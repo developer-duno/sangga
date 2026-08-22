@@ -198,6 +198,74 @@ export type PriceBand = {
   window_from: string | null;
 };
 
+// ── 업종 분포 (결정 0014 "상권 지표 계산" 1단계) ────────────────────────────
+//
+// ⚠️ 여기 오는 값은 **추정이 아니다.** 상권정보에 등록된 점포를 그대로 센 개수다.
+//    다만 "이 건물만의 점포"가 **아니라** 이 땅 둘레(상권·반경)의 점포다 — 이 건물 것도
+//    그 안에 포함되고 이웃 가게까지 함께 센다. 층별 스택의 점포 칸과 세는 대상 자체가
+//    다르므로 두 숫자를 견주면 안 된다.
+// ⛔ 상호명은 한 글자도 오지 않는다(서버가 개수만 낸다). 그 상태를 유지할 것.
+
+/** 업종 한 칸. 대분류(`list_industry_mix`)와 중분류(`list_industry_detail`)가 같은 모양이다. */
+export type IndustryCat = {
+  /** 대분류는 2자리('I2'), 중분류는 4자리('I201'). */
+  cd: string;
+  nm: string | null;
+  n: number;
+};
+
+/** 한 스코프(상권 하나 또는 반경)의 집계. */
+export type IndustryScope = {
+  /** 이 스코프의 점포 총수. `cats` 의 합과 같다. */
+  total: number;
+  /** 많은 순으로 온다. 같으면 코드순이라 순서가 흔들리지 않는다. */
+  cats: IndustryCat[];
+};
+
+/** 상권 하나의 집계 — 위 `IndustryScope` 에 상권 이름표가 붙은 것. */
+export type IndustryDistrict = IndustryScope & {
+  district_id: string;
+  name: string | null;
+  /** `list_industry_detail` 에는 안 온다(대분류 응답에만 있다). */
+  type?: string | null;
+  /** 공공누리 1유형(출처표시) 의무. ⛔ 화면에 글자로 박지 말 것. */
+  source_nm?: string | null;
+};
+
+/**
+ * 함수 `list_industry_mix(p_pnu)` 의 응답(대분류).
+ *
+ * ⚠️ **`radius` 가 null 인 것과 `total: 0` 인 것은 다른 말이다.**
+ *  · `null`   — 필지 좌표가 없어 **잴 수가 없었다**(모른다). 화면은 그 블록을 감춘다.
+ *  · `total:0` — 재 봤더니 반경 안에 점포가 없었다(사실).
+ * 둘을 같이 다루면 "모르는 것"을 "없는 것"이라 말하게 된다.
+ *
+ * ⚠️ `districts` 를 **더하지 말 것.** 상권이 겹치는 자리의 점포는 양쪽에 세어진다
+ *    (2026-08-22 라이브 실측: 상권 안 462,858곳 중 17,946곳 = 3.9%). 합계는 부풀려진다.
+ */
+export type IndustryMix = {
+  /** 두 블록이 함께 쓰는 분기('202606'). 화면이 기준 시점을 글자로 박지 않게 서버가 준다. */
+  snapshot_ym: string | null;
+  /** 반경 몇 m 로 쟀나. 화면에 '500m'를 박으면 서버가 바꾸는 날 거짓말이 된다. */
+  radius_m: number;
+  districts: IndustryDistrict[];
+  radius: IndustryScope | null;
+};
+
+/**
+ * 함수 `list_industry_detail(p_pnu, p_cat)` 의 응답(고른 대분류 안의 중분류).
+ *
+ * ⚠️ `cat_l_cd` 는 **물어본 값을 그대로 되돌려 준 것**이다. 사용자가 그 사이 다른 업종을
+ *    고르면 늦게 도착한 답을 버려야 하는데, 이 칸이 없으면 목록이 조용히 뒤바뀐다.
+ */
+export type IndustryDetail = {
+  snapshot_ym: string | null;
+  radius_m: number;
+  cat_l_cd: string;
+  districts: IndustryDistrict[];
+  radius: IndustryScope | null;
+};
+
 /**
  * 지금 검색할 수 있는 시군구 하나(뷰 `list_open_sigungu()` 한 행).
  *

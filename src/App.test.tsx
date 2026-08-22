@@ -28,6 +28,8 @@ vi.mock('./lib/supabase', () => ({
   PARCEL_TX_FN: 'list_parcel_transactions',
   SIGUNGU_TX_STATS_FN: 'get_sigungu_tx_stats',
   PRICE_BANDS_FN: 'list_price_bands',
+  INDUSTRY_MIX_FN: 'list_industry_mix',
+  INDUSTRY_DETAIL_FN: 'list_industry_detail',
   supabase: {
     rpc: (...args: unknown[]) => rpc(...args),
     from: (view: string) => from(view),
