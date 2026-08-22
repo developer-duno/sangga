@@ -482,10 +482,15 @@ class TestAnonExposure:
     def test_ignores_blank_lines_from_psql(self):
         assert post_load.unexpected_anon_readables(["", "  ", "v_floor_stack"]) == []
 
-    def test_sql_asks_about_anon_and_public_schema(self):
+    def test_sql_asks_about_anon_and_both_schemas(self):
         sql = post_load.build_anon_exposure_sql()
         assert "has_table_privilege('anon'" in sql
-        assert "nspname = 'public'" in sql
+        # ⚠️ 2026-08-22e 부터 노출면이 public 에서 api 로 옮겨 간다. 한쪽만 물으면
+        #    전환 전(api 만 봄) 또는 전환 후(public 만 봄) 중 하나를 통째로 못 본다.
+        # 표 절·함수 절 **양쪽 모두** 두 스키마를 물어야 한다(한쪽만 고치면 반쪽이 된다).
+        assert sql.count("nspname in ('public','api')") == 2
+        assert "n.nspname in ('public','api')" in sql
+        assert "n2.nspname in ('public','api')" in sql
         # 물질화뷰('m')가 빠지면 2026-08-13 사고를 그대로 놓친다.
         assert "'m'" in sql
 
@@ -497,6 +502,21 @@ class TestAnonExposure:
                             lambda sql: "200|200" if "count(" in sql
                             else "v_floor_stack\nmv_search_parcel")
         assert post_load.main(["--check"]) == 1
+
+    def test_the_same_name_in_both_schemas_is_counted_once(self, monkeypatch, capsys):
+        """api 뷰·래퍼는 public 과 **같은 이름**이다 — 두 번 세면 안 된다(2026-08-22e).
+
+        그대로 세면 "허용된 11개"가 22개로 보여, 숫자가 늘어난 것이 사고인지 이사인지
+        구분이 안 된다. 판정(bad)은 이름 기준이라 어차피 같으므로 세는 쪽만 맞춘다.
+        """
+        monkeypatch.setattr(
+            post_load, "query_one",
+            lambda sql: "v_floor_stack\nv_coverage_stats\nv_floor_stack\nv_coverage_stats",
+        )
+        names, bad = post_load.report_anon_exposure()
+        assert names == ["v_coverage_stats", "v_floor_stack"]
+        assert bad == []
+        assert "허용된 2개" in capsys.readouterr().out
 
     def test_check_returns_0_when_clean(
         self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh,

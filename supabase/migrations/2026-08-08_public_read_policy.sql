@@ -164,6 +164,12 @@ comment on view v_floor_stack is
 --           resolution=merge-duplicates` 업서트가 뷰에서도 PK를 찾아내는지는 미검증.
 --           안 되면 수집기를 직접 Postgres 연결로 바꾸는 큰 작업이 된다.
 --
+--   ✅ 2026-08-22 실측 완결 — **두 전제 다 가능**했다(일회용 도커 재현). 전제1 은
+--      `PGRST_DB_SCHEMAS="api"` 단독 기동 + public 접근 PGRST106/406 차단으로, 전제2 는
+--      단일·복합 PK 양쪽에서 merge-duplicates·ignore-duplicates 업서트 성공으로 확인.
+--      ⇒ 수집기 코드 변경 0. 상세·적용 순서·드리프트 복구 SQL 은
+--      supabase/migrations/2026-08-22e_api_schema.sql 헤더 참조.
+--
 -- 만약 그 전에 실제로 훼손되면 (복구 절차):
 --   spatial_ref_sys는 표준 참조 데이터라 같은 PostGIS 버전 컨테이너에서 덤프해 복원한다.
 --     docker run -d --name pgtmp public.ecr.aws/supabase/postgres:17.6.1.127 ...
