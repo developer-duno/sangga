@@ -345,6 +345,114 @@ describe('FloorStack — 본체', () => {
   });
 });
 
+describe('FloorStack — 도로접면 (로드맵 Wave 2 PR-A)', () => {
+  it('토지특성 원문을 그대로 적는다 — 말을 옮기지 않는다', async () => {
+    // ⛔ '큰길'·'골목' 같은 재해석은 금지다. 시세 사다리가 쓰는 등급(road_grade)과
+    //    화면이 서로 다른 말을 하기 시작하면 같은 땅에 기준이 둘 생긴다.
+    // 픽스처 값은 실측 어휘 그대로 쓴다(backtest_price.py 의 2026-08-19 목록 —
+    // '광대한면' 같은 비슷한-듯-다른 값으로 증명하면 "원문 그대로"의 증거가 아니다).
+    responses.floors = { data: [floor({ road_contact: '광대로한면' })], error: null };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText('도로접면')).toBeTruthy());
+    expect(screen.getByText('광대로한면')).toBeTruthy();
+    // 재해석 가드는 실제로 쓰일 법한 말(road_grade 어휘)로 걸어야 잡는다 —
+    // 화면에 존재한 적 없는 한 단어만 걸면 영구 공허 참이 된다.
+    for (const w of ['큰길', '중간', '골목길']) {
+      expect(screen.queryByText(new RegExp(w))).toBeNull();
+    }
+  });
+
+  it("'맹지'·'지정되지않음'·빈 값이면 칸 자체를 안 만든다", async () => {
+    for (const v of ['맹지', '지정되지않음', '', '   ', null]) {
+      responses.floors = { data: [floor({ road_contact: v })], error: null };
+      render(<FloorStack building={building()} />);
+      await waitFor(() => expect(screen.getByText('테스트빌딩')).toBeTruthy());
+      expect(screen.queryByText('도로접면')).toBeNull();
+      cleanup();
+    }
+  });
+
+  it('앞뒤 공백은 떼고 적는다', async () => {
+    responses.floors = { data: [floor({ road_contact: ' 세로한면(가) ' })], error: null };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText('도로접면')).toBeTruthy());
+    expect(screen.getByText('세로한면(가)')).toBeTruthy();
+  });
+});
+
+describe('FloorStack — 업종 요약 (로드맵 Wave 2 PR-A)', () => {
+  /** 층 하나에 업종 이름만 갈아 끼운 점포를 붙인다. */
+  function withStores(...cats: Array<string | null>): FloorRow {
+    return floor({ stores: cats.map((cat) => ({ name: null, cat })) });
+  }
+
+  it('많은 업종 셋을 세어 적고, 나머지는 "외 N종"으로만 센다', async () => {
+    responses.floors = {
+      data: [withStores('한식', '한식', '커피', '부동산중개', '세탁', '편의점')],
+      error: null,
+    };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText(/많은 업종/)).toBeTruthy());
+    const line = document.querySelector('.stack__biz')?.textContent ?? '';
+    expect(line).toContain('한식 2곳');
+    // 수가 같으면 이름순이다 — 그래야 새로 고칠 때마다 순서가 흔들리지 않는다
+    // (부동산중개 < 세탁 < 커피 < 편의점).
+    expect(line).toContain('부동산중개 1곳');
+    expect(line).toContain('세탁 1곳');
+    expect(line).not.toContain('편의점');
+    expect(line).toContain('외 2종');
+    // 이 줄의 새 문구에 '시세'가 섞이면 안 된다(절대 규칙 2 결 — 시세는 아래
+    // 참고 시세 섹션의 말이고, 사실만 세는 이 줄에 들어오는 순간 성격이 섞인다).
+    expect(line).not.toContain('시세');
+  });
+
+  it('층이 여럿이면 전부 합쳐 센다', async () => {
+    responses.floors = {
+      data: [
+        floor({ floor_no: 2, stores: [{ name: null, cat: '한식' }] }),
+        floor({ floor_no: 1, stores: [{ name: null, cat: '한식' }] }),
+      ],
+      error: null,
+    };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText(/많은 업종/)).toBeTruthy());
+    expect(document.querySelector('.stack__biz')?.textContent).toContain('한식 2곳');
+  });
+
+  it('업종 이름이 빈 점포는 순위에 넣지 않는다', async () => {
+    // 세는 대상이 "업종"인데 모르는 것을 한 칸으로 만들면, 모르는 것이 업종 하나처럼 보인다.
+    responses.floors = { data: [withStores(null, '', '한식')], error: null };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText(/많은 업종/)).toBeTruthy());
+    const line = document.querySelector('.stack__biz')?.textContent ?? '';
+    expect(line).toContain('한식 1곳');
+    expect(line).not.toContain('외 ');
+  });
+
+  it('셀 업종이 하나도 없으면 줄을 아예 안 그린다', async () => {
+    responses.floors = { data: [floor({ stores: [] })], error: null };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText('테스트빌딩')).toBeTruthy());
+    expect(document.querySelector('.stack__biz')).toBeNull();
+  });
+
+  it('동 중복 경고가 요약보다 **위**에 온다', async () => {
+    // 이 숫자는 "땅 + 층"으로 붙여 센 것이라 옆 동 점포가 섞여 있다. 요약을 먼저 읽고
+    // 나중에 경고를 만나면 이미 읽은 숫자가 안 고쳐진다 — 순서 자체가 규칙이다.
+    responses.floors = {
+      data: [floor({ bld_cnt_in_pnu: 3, stores: [{ name: null, cat: '한식' }] })],
+      error: null,
+    };
+    render(<FloorStack building={building({ bld_cnt_in_pnu: 3 })} />);
+    await waitFor(() => expect(screen.getByText(/많은 업종/)).toBeTruthy());
+
+    const warn = document.querySelector('.warn')!;
+    const biz = document.querySelector('.stack__biz')!;
+    // DOCUMENT_POSITION_FOLLOWING = 경고 다음에 요약이 온다.
+    expect(warn.compareDocumentPosition(biz) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
 describe('FloorStack — 속한 상권', () => {
   /**
    * 이 줄이 말해야 하는 상태가 셋이고, 셋을 섞으면 안 된다:

@@ -413,4 +413,54 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await expect(page.locator('.floors .floor')).toHaveCount(1);
     await expect(page.getByText('실거래 기록')).toBeVisible();
   });
+
+  // ── 화면 공짜 3종 (로드맵 Wave 2 PR-A) ────────────────────────────────────
+  // 서버에서 이미 오는데 화면이 안 쓰던 값 셋이다. 셋 다 "서버 응답 한 칸이 조용히
+  // 빠지면 화면에서도 조용히 사라지는" 종류라 여기서 눈으로 확인한다.
+
+  test('J. 구 칩 건물 수 · 도로접면 · 업종 요약이 함께 뜬다', async ({ page }) => {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page, [], [], [
+      floorRow({
+        floor_no: 2,
+        road_contact: '광대로한면',
+        stores: [
+          { name: null, cat: '한식' },
+          { name: null, cat: '커피' },
+        ],
+      }),
+      floorRow({ road_contact: '광대로한면', stores: [{ name: null, cat: '한식' }] }),
+    ]);
+
+    await page.goto('/');
+
+    // ① 구 칩에 그 구의 건물 수가 함께 적힌다(mockOpenSigungu 기본값 14,223동).
+    await page.getByRole('button', { name: /^서울$/ }).click();
+    const guChip = page.getByRole('button', { name: /^강남구/ });
+    await expect(guChip).toContainText('14,223동');
+    // 칩의 숫자 칸에도 '시세'가 못 들어온다(예: "시세 등급" 배지 같은 훗날의 유혹).
+    await expect(page.locator('.region__gu-cnt').first()).not.toContainText('시세');
+    await guChip.click();
+
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+
+    const stack = page.locator('section.stack');
+    // ② 도로접면은 토지특성 **원문 그대로** 나온다(재해석 금지 — 시세 사다리의 등급과
+    //    화면이 다른 말을 하기 시작하면 같은 땅에 기준이 둘 생긴다).
+    await expect(stack.getByText('도로접면')).toBeVisible();
+    await expect(stack.getByText('광대로한면')).toBeVisible();
+    // ③ 업종 요약은 층을 안 펼쳐도 보이고, 층 여럿을 합쳐 센다(2층 한식 + 1층 한식 = 2곳).
+    await expect(stack.locator('.stack__biz')).toContainText('한식 2곳');
+    await expect(stack.locator('.stack__biz')).toContainText('커피 1곳');
+    // 새로 늘어난 문구에도 금칙어(절대 규칙 2)는 없다. '시세'는 참고 시세 섹션에
+    // 정당하게 있으므로 stack 통째가 아니라 **새 문구의 스코프**(.stack__biz)로 좁혀 단언한다
+    // (같은 방식의 선례: 실거래 섹션의 not.toContainText('시세')).
+    await expect(stack).not.toContainText('적정가');
+    await expect(stack).not.toContainText('평가액');
+    await expect(stack).not.toContainText('감정가');
+    await expect(stack).not.toContainText('가치평가');
+    await expect(stack.locator('.stack__biz')).not.toContainText('시세');
+  });
 });

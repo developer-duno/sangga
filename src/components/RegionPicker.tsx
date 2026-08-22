@@ -165,6 +165,20 @@ export function RegionPicker({ selectedSigungu, onSelectSigungu }: Props) {
                     onClick={() => pickGu(g)}
                   >
                     {g.sigungu_nm}
+                    {/*
+                      그 구에 자료가 들어와 있는 건물 수. 서버(`list_open_sigungu`)가 이미
+                      주는 값이라 더 묻지 않는다 — 고르기 전에 "여기는 볼 게 얼마나 있나"를
+                      알 수 있다. 0이면 안 적는다("0동"은 고장처럼 보인다).
+                      앞의 공백은 span **안**에 둔다 — 밖에 두면 0일 때도 공백이 남아
+                      textContent 단언이 흔들리고, 안에 둬야 스크린리더도 "강남구 14,223동"으로
+                      띄어 읽는다(공백 없이 붙이면 접근성 이름이 한 덩어리가 된다).
+                    */}
+                    {g.building_cnt > 0 && (
+                      <span className="region__gu-cnt">
+                        {' '}
+                        {g.building_cnt.toLocaleString('ko-KR')}동
+                      </span>
+                    )}
                   </button>
                 </li>
               );

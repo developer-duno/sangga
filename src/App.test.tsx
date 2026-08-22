@@ -126,7 +126,9 @@ async function pickGu(sidoName: string, guName: string) {
   //    지역만 보여주기로 하면서(2026-08-13 사장님 결정) 목록이 서버에서 오게 됐다.
   const sidoBtn = await screen.findByRole('button', { name: new RegExp(`^${sidoName}$`) });
   fireEvent.click(sidoBtn);
-  const guBtn = await screen.findByRole('button', { name: guName });
+  // ⚠️ 구 칩에는 이름 뒤에 건물 수("강남구 14,223동")가 함께 붙는다 — 이름 전체가 아니라
+  //    **앞부분**으로 찾아야 한다(정확히 일치로 찾으면 칩이 멀쩡히 있는데도 못 찾는다).
+  const guBtn = await screen.findByRole('button', { name: new RegExp(`^${guName}`) });
   fireEvent.click(guBtn);
 }
 

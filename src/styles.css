@@ -157,6 +157,21 @@ body {
   border-color: var(--accent);
 }
 
+/* 구 칩에 붙는 건물 수. 색을 따로 주지 않고 흐리게만 해 둔다 — 고른 칩(--on)에서도
+   글자색이 그대로 따라오게 하기 위해서다. 간격의 나머지 절반은 마크업 안의 공백이 만든다
+   (접근성 이름 띄어읽기용 — RegionPicker.tsx 주석 참조). */
+.region__gu-cnt {
+  margin-left: 2px;
+  font-size: 11.5px;
+  opacity: 0.65;
+}
+
+/* 고른 칩은 배경이 밝아 0.65 로는 대비가 4.5:1(WCAG AA)에 못 미친다(실측 2.54:1) —
+   방금 고른 구의 건물 수가 가장 안 보이면 이 칸의 목적이 뒤집힌다. */
+.region__gu-chip--on .region__gu-cnt {
+  opacity: 0.85;
+}
+
 .region__gu-chip--on {
   background: var(--accent-soft);
   border-color: var(--accent);
@@ -507,6 +522,23 @@ body {
 .stack__facts dd {
   margin: 2px 0 0;
   font-weight: 600;
+}
+
+/* "많은 업종" 한 줄. 층 목록 바로 위에 붙되, 위의 동 중복 경고보다는 반드시 아래다
+   (FloorStack.tsx 의 그 자리 주석 참조). */
+.stack__biz {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.stack__biz-key {
+  margin-right: 6px;
+  font-weight: 600;
+}
+
+.stack__biz-etc {
+  font-size: 11.5px;
 }
 
 .warn {
