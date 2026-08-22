@@ -128,11 +128,11 @@ describe('RegionPicker — 시도 목록', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: '서울' })).toBeTruthy());
 
     fireEvent.click(screen.getByRole('button', { name: '서울' }));
-    expect(screen.getByRole('button', { name: '강남구' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: '유성구' })).toBeNull();
+    expect(screen.getByRole('button', { name: /^강남구/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^유성구/ })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: '서울' }));
-    expect(screen.queryByRole('button', { name: '강남구' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^강남구/ })).toBeNull();
   });
 
   it('다른 시도를 누르면 그쪽 구로 갈아탄다', async () => {
@@ -141,8 +141,8 @@ describe('RegionPicker — 시도 목록', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '서울' }));
     fireEvent.click(screen.getByRole('button', { name: '대전' }));
-    expect(screen.getByRole('button', { name: '유성구' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: '강남구' })).toBeNull();
+    expect(screen.getByRole('button', { name: /^유성구/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^강남구/ })).toBeNull();
   });
 
   it('"다른 지역은 준비 중" 안내는 남긴다 — 목록에서 뺐다고 영영 안 된다는 뜻은 아니다', async () => {
@@ -179,9 +179,37 @@ describe('RegionPicker — 구 목록', () => {
     await waitFor(() => expect(rpc).toHaveBeenCalledWith('list_open_sigungu'));
 
     fireEvent.click(screen.getByRole('button', { name: /^서울$/ }));
-    await waitFor(() => expect(screen.getByRole('button', { name: '강남구' })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole('button', { name: /^강남구/ })).toBeTruthy());
     // 대전 구는 서울을 펼쳤을 때 안 섞여 나온다.
-    expect(screen.queryByRole('button', { name: '서구' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^서구/ })).toBeNull();
+  });
+
+  it('구 칩에 그 구의 건물 수를 함께 적는다 — 서버가 이미 주는 값이다', async () => {
+    // 고르기 전에 "여기는 볼 게 얼마나 있나"를 알 수 있게 한다(로드맵 Wave 2 PR-A).
+    // ⚠️ 숫자를 화면에 박지 않는다 — 자료가 늘면 서버 값이 저절로 따라와야 한다.
+    rpc.mockResolvedValue({
+      data: [gu({ sigungu_code: '11680', sigungu_nm: '강남구', building_cnt: 14223 })],
+      error: null,
+    });
+    setup();
+    await waitFor(() => expect(screen.getByRole('button', { name: /^서울$/ })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /^서울$/ }));
+
+    const chip = screen.getByRole('button', { name: /^강남구/ });
+    expect(chip.textContent).toContain('14,223동');
+  });
+
+  it('건물 수가 0이면 그 칸을 아예 안 적는다 — "0동"은 고장난 것처럼 보인다', async () => {
+    rpc.mockResolvedValue({
+      data: [gu({ sigungu_code: '11680', sigungu_nm: '강남구', building_cnt: 0 })],
+      error: null,
+    });
+    setup();
+    await waitFor(() => expect(screen.getByRole('button', { name: /^서울$/ })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /^서울$/ }));
+
+    const chip = screen.getByRole('button', { name: /^강남구/ });
+    expect(chip.textContent).toBe('강남구');
   });
 
   it('구를 고르면 코드와 이름을 부모에게 알린다', async () => {
@@ -193,7 +221,7 @@ describe('RegionPicker — 구 목록', () => {
     // ⚠️ 시도 칩도 서버 응답(list_open_sigungu)을 받은 뒤에 그려진다 — 기다렸다 누른다.
     await waitFor(() => expect(screen.getByRole('button', { name: /^서울$/ })).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: /^서울$/ }));
-    fireEvent.click(screen.getByRole('button', { name: '강남구' }));
+    fireEvent.click(screen.getByRole('button', { name: /^강남구/ }));
     expect(onSelectSigungu).toHaveBeenCalledWith('11680', '강남구');
   });
 
@@ -205,7 +233,7 @@ describe('RegionPicker — 구 목록', () => {
     const { onSelectSigungu } = setup({ selectedSigungu: '11680' });
     await waitFor(() => expect(screen.getByRole('button', { name: /^서울$/ })).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: /^서울$/ }));
-    fireEvent.click(screen.getByRole('button', { name: '강남구' }));
+    fireEvent.click(screen.getByRole('button', { name: /^강남구/ }));
     expect(onSelectSigungu).toHaveBeenCalledWith(null, null);
   });
 

@@ -43,6 +43,59 @@ import { IndustryMixSection } from './IndustryMixSection';
 const MIN_SAMPLE = 5;
 
 /**
+ * 도로접면을 **적지 않는** 값(로드맵 Wave 2 PR-A).
+ *
+ * '맹지'는 "접한 길이 없다", '지정되지않음'은 "조사가 안 됐다"에 가까운데 둘 다 칸을
+ * 만들어 두면 사람은 그중 한쪽으로 단정해 읽는다. 모르는 것을 아는 것처럼 말하지
+ * 않으려면 칸 자체를 안 만드는 편이 맞다.
+ */
+const ROAD_CONTACT_HIDDEN = new Set(['맹지', '지정되지않음']);
+
+/**
+ * 헤더에 이름을 적는 업종 수. 나머지는 "외 N종"으로 세기만 한다.
+ * 셋을 넘기면 요약이 아니라 목록이 되고, 그건 층을 펼쳤을 때 보는 것과 같아진다.
+ */
+const BIZ_TOP_N = 3;
+
+/**
+ * 도로접면 한 조각. **원문 그대로** 내보낸다.
+ *
+ * ⛔ '큰길'·'골목' 같은 말로 옮겨 적지 않는다. 시세 사다리가 쓰는 등급(road_grade)과
+ *    화면이 서로 다른 말을 하기 시작하면 같은 땅에 기준이 둘 생긴다 — 나중에 어느 쪽이
+ *    맞는지 아무도 못 가린다.
+ */
+function displayRoadContact(raw: string | null): string | null {
+  const v = (raw ?? '').trim();
+  if (v === '' || ROAD_CONTACT_HIDDEN.has(v)) return null;
+  return v;
+}
+
+/**
+ * 이 건물 층들에 붙은 점포를 업종 이름으로 센다. 많은 순, 같으면 이름순이라
+ * 순서가 흔들리지 않는다.
+ *
+ * ⚠️ 여기 `cat` 은 상권정보의 **소분류 이름**이다(서버 `cat_s_nm`). 대분류가 아니므로
+ *    "대분류"라고 적으면 거짓말이 되고, 아래 `IndustryMixSection`(대분류로 세는 곳)의
+ *    숫자와 견줘도 안 된다 — 세는 단위부터 다르다.
+ * ⚠️ 업종 이름이 빈 점포는 순위에서 뺀다. 세는 대상이 "업종"인데 업종을 모르는 것을
+ *    한 칸으로 만들면, 모르는 것이 업종 하나인 것처럼 보인다.
+ */
+function topCategories(floors: FloorRow[]) {
+  const counts = new Map<string, number>();
+  for (const f of floors) {
+    for (const s of f.stores ?? []) {
+      const cat = (s.cat ?? '').trim();
+      if (cat === '') continue;
+      counts.set(cat, (counts.get(cat) ?? 0) + 1);
+    }
+  }
+  const sorted = [...counts.entries()].sort(
+    (a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'ko-KR'),
+  );
+  return { top: sorted.slice(0, BIZ_TOP_N), etc: Math.max(sorted.length - BIZ_TOP_N, 0) };
+}
+
+/**
  * 층별 스택 뷰 — 이 서비스의 시그니처 화면(§8.6).
  *
  * 위가 고층, 아래가 지하로 쌓는다. 막대 길이는 그 층의 임대 가능 면적에 비례한다.
@@ -219,6 +272,7 @@ export function FloorStack({ building }: Props) {
   if (floors.length === 0) return <p className="msg">이 건물에는 층 정보가 없습니다.</p>;
 
   const head = floors[0];
+  const roadContact = displayRoadContact(head.road_contact);
   const maxArea = Math.max(...floors.map((f) => f.floor_area_m2 ?? 0), 1);
   const totalStores = floors.reduce((sum, f) => sum + (f.store_cnt ?? 0), 0);
 
@@ -267,6 +321,17 @@ export function FloorStack({ building }: Props) {
             <dt>점포(참고)</dt>
             <dd>{totalStores.toLocaleString('ko-KR')}곳</dd>
           </div>
+          {/*
+            도로접면은 토지특성 원문 그대로다(displayRoadContact 주석 참조). 값이 없거나
+            '맹지'·'지정되지않음'이면 이 칸 자체가 안 생긴다 — 빈 칸을 남기면 "조사했는데
+            아무것도 아니었다"처럼 읽힌다.
+          */}
+          {roadContact && (
+            <div>
+              <dt>도로접면</dt>
+              <dd>{roadContact}</dd>
+            </div>
+          )}
         </dl>
       </header>
 
@@ -277,6 +342,14 @@ export function FloorStack({ building }: Props) {
           점포가 섞여 보일 수 있습니다.
         </p>
       )}
+
+      {/*
+        업종 요약. 헤더에 붙는 말이지만 자리는 **위 경고 아래**여야 한다 — 이 숫자는
+        점포를 "땅 + 층"으로 붙여 센 것이라 옆 동 점포가 그대로 섞여 있다. 요약을 경고보다
+        위에 두면 사람이 먼저 숫자를 읽고 그다음에야 "섞여 있다"는 말을 만나게 되는데,
+        그 순서로는 이미 읽은 숫자가 안 고쳐진다. 자리를 바꾸지 말 것.
+      */}
+      <BizSummary floors={floors} />
 
       <ol className="floors">
         {floors.map((f) => {
@@ -438,6 +511,30 @@ function DistrictLine({ info }: { info: BuildingDistricts | null }) {
 function DistrictSource({ sources }: { sources?: string[] }) {
   if (!sources || sources.length === 0) return null;
   return <span className="stack__district-src">출처: {sources.join(' · ')}</span>;
+}
+
+/**
+ * "많은 업종" 한 줄 — 층을 하나씩 펼치지 않아도 이 건물이 무슨 가게로 채워져 있는지
+ * 한눈에 보이게 한다. 이미 받아 온 점포 목록을 세기만 하므로 서버에 더 묻지 않는다.
+ *
+ * 셀 업종이 하나도 없으면(점포가 없거나 업종이 전부 비어 있으면) 아무것도 안 그린다
+ * — "업종 없음"이라고 적으면 모르는 것을 없는 것이라 말하게 된다.
+ *
+ * 라벨에 "층이 적힌 점포 기준"을 박는 이유: 층이 안 적힌 점포(약 3곳 중 1곳)는 이 집계에
+ * 아예 안 들어오는데, 그 사실을 말하는 각주는 화면 맨 아래라 요약을 먼저 읽은 사람은
+ * 모수를 완전한 숫자로 믿게 된다 — 한정어가 그 오독을 그 자리에서 막는다(절대 규칙 3 결).
+ */
+function BizSummary({ floors }: { floors: FloorRow[] }) {
+  const { top, etc } = topCategories(floors);
+  if (top.length === 0) return null;
+
+  return (
+    <p className="stack__biz">
+      <span className="stack__biz-key">많은 업종(층이 적힌 점포 기준):</span>
+      {top.map(([cat, n]) => `${cat} ${n.toLocaleString('ko-KR')}곳`).join(' · ')}
+      {etc > 0 && <span className="stack__biz-etc"> 외 {etc}종</span>}
+    </p>
+  );
 }
 
 /**
