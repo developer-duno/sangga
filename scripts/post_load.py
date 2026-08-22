@@ -407,6 +407,10 @@ def build_anon_exposure_sql():
        "사고" 목록이 스크롤을 채운다. 그러면 진짜 사고가 그 안에 묻힌다(경보 피로).
        그래서 **확장(extension)이 만든 것은 제외**한다 — `pg_depend.deptype='e'` 가
        "이 객체는 확장의 일부"라는 뜻이다. 남는 것이 곧 **우리가 만든 것**이다.
+
+    ⚠️ 스키마가 **둘**이다(2026-08-22e). REST 노출면이 public 에서 api 로 옮겨 가는데,
+       api 만 보면 전환 전 상태를 못 보고 public 만 보면 전환 후 상태를 못 본다.
+       둘 다 물어야 **어느 시점에 돌려도** 같은 답을 준다.
     """
     not_from_extension = (
         "not exists (select 1 from pg_depend d "
@@ -415,13 +419,13 @@ def build_anon_exposure_sql():
     return (
         "select c.relname from pg_class c "
         "join pg_namespace n on n.oid = c.relnamespace "
-        "where n.nspname = 'public' and c.relkind in ('r','v','m','p') "
+        "where n.nspname in ('public','api') and c.relkind in ('r','v','m','p') "
         "and has_table_privilege('anon', c.oid, 'SELECT') "
         "and " + not_from_extension.format(oid="c.oid") + " "
         "union all "
         "select p.proname from pg_proc p "
         "join pg_namespace n2 on n2.oid = p.pronamespace "
-        "where n2.nspname = 'public' "
+        "where n2.nspname in ('public','api') "
         "and has_function_privilege('anon', p.oid, 'EXECUTE') "
         "and " + not_from_extension.format(oid="p.oid") + ";"
     )
@@ -439,9 +443,15 @@ def unexpected_anon_readables(names, allowlist=None):
 
 
 def report_anon_exposure():
-    """공개키가 읽을 수 있는 것을 실제로 물어보고 사람 말로 찍는다."""
+    """공개키가 읽을 수 있는 것을 실제로 물어보고 사람 말로 찍는다.
+
+    ⓘ **이름 기준으로 한 번만 센다.** 2026-08-22e 부터 같은 이름이 public·api 두 스키마에
+      나란히 있다(api 쪽은 public 을 그대로 통과시키는 뷰·래퍼다). 그대로 세면 허용된
+      11개가 22개로 보여, 숫자가 늘어난 것이 사고인지 이사인지 구분이 안 된다.
+      허용 목록도 이름 기준이라 판정 결과는 달라지지 않는다.
+    """
     raw = query_one(build_anon_exposure_sql())
-    names = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+    names = sorted({ln.strip() for ln in raw.splitlines() if ln.strip()})
     bad = unexpected_anon_readables(names)
     if bad:
         print("[사고] 공개키에게 열리면 안 되는 것이 열려 있습니다: {}".format(", ".join(bad)))

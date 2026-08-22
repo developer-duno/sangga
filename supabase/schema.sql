@@ -2268,7 +2268,237 @@ alter view v_coverage_stats        set (security_invoker = false);
 --          변경 → public 자체가 REST에서 사라진다. 단 service_role로 public 표에
 --          REST 쓰기를 하는 수집·적재기의 경로를 함께 조정해야 한다.
 --      (B) Supabase 지원팀에 권한 회수 요청.
---    지금 당장 급하지 않은 이유: 앱이 아직 배포 전이라 anon 키가 공개되지 않았다.
+--    ✅ 2026-08-22e 에서 (A)를 채택해 아래 "API 스키마" 절로 구현했다.
+
+
+-- =====================================================================
+-- API 스키마 — PostgREST 가 보는 곳을 public 밖으로 옮긴다 (2026-08-22e 추가)
+-- =====================================================================
+-- 위 "남은 구멍"의 해결이다. PostGIS 가 public 에 설치돼 `spatial_ref_sys` 같은
+-- 시스템 표가 REST 로 노출되는데 소유자가 supabase_admin 이라 **우리 권한으로는 회수가
+-- 안 된다.** 그래서 회수 대신 **이사**한다 — PostgREST 가 보는 스키마 목록에서 public 을
+-- 빼면 public 안의 모든 것이 REST 에서 사라진다.
+--
+-- 2026-08-08 이 "미검증"으로 미뤄 둔 전제 2개는 2026-08-22 도커 실측으로 둘 다 통과했다:
+--   (전제1) 노출 목록에서 public 제거 가능 → ✅ 되고, public 접근은 PGRST106/406 으로 막힌다.
+--   (전제2) pass-through 뷰로 업서트 가능 → ✅ PK 자동 감지가 뷰를 관통한다(단일·복합 PK 모두).
+--           ⇒ 수집·적재기는 코드 변경 0(REST 경로도 표 이름도 그대로).
+-- 상세·적용 순서·드리프트 복구 SQL 은 supabase/migrations/2026-08-22e_api_schema.sql 헤더.
+--
+-- ⚠️ 노출 목록의 **순서가 `api, public`** 이라야 한다. profile 헤더를 안 보내는 클라이언트
+--    (파이썬 수집기)는 "첫 스키마"를 타기 때문이다. 화면(supabase-js)은 기본으로
+--    `accept-profile: public` 을 보내므로 `db: { schema: 'api' }` 가 필수다.
+
+create schema if not exists api;
+
+-- 스키마를 여는 것과 그 안을 읽는 것은 별개다. usage 가 없으면 PostgREST 가 못 연다.
+grant usage on schema api to anon, authenticated, service_role;
+
+-- ⛔ 기본값부터 닫는다 — Supabase 는 새 객체마다 anon 에 권한을 자동으로 준다
+--    (pg_default_acl). public 에서 2026-08-13f·13g 가 겪은 함정을 새 스키마에서
+--    반복하지 않는다. ⚠️ 이 문장은 **실행한 롤이 만드는 것**에만 걸리므로, 아래에서
+--    객체마다 revoke 를 한 번 더 명시한다(최종 방어선은 post_load.py --check).
+alter default privileges in schema api revoke all on tables from anon, authenticated;
+alter default privileges in schema api revoke all on sequences from anon, authenticated;
+alter default privileges in schema api revoke all on functions from anon, authenticated;
+
+-- ── 화면이 읽는 뷰 2개 ───────────────────────────────────────────────────────
+-- 원본을 옮기지 않고 **덧붙인다** — 옮기면 public 을 읽는 다른 뷰·함수가 전부 깨진다.
+-- 뷰의 기본값 `security_invoker = false` 덕에 소유자(postgres) 권한으로 읽으므로,
+-- 나중에 public 쪽 anon 권한을 전부 회수해도 이 뷰는 그대로 돈다(자립).
+create or replace view api.v_floor_stack as select * from public.v_floor_stack;
+create or replace view api.v_coverage_stats as select * from public.v_coverage_stats;
+
+-- 먼저 회수하고 준다(grant 는 더하기라 자동으로 붙은 쓰기 권한을 못 걷어낸다).
+revoke all on api.v_floor_stack     from public, anon, authenticated;
+revoke all on api.v_coverage_stats  from public, anon, authenticated;
+grant select on api.v_floor_stack     to anon, authenticated;
+grant select on api.v_coverage_stats  to anon, authenticated;
+
+-- ── 화면이 부르는 함수 9개 — 같은 서명으로 감싼다 ────────────────────────────
+-- ⚠️ 서명(파라미터 이름·타입·기본값)과 돌려주는 칸 이름을 원본과 한 글자도 다르지 않게
+--    적는다. PostgREST 는 JSON 키 이름으로 인자를 찾으므로 하나만 달라도 PGRST202 다.
+-- ⚠️ `set search_path = ''` 라 본문의 이름은 전부 `public.` 으로 완전수식한다 —
+--    누가 검색경로를 갈아끼워도 다른 함수가 대신 불릴 수 없다(security definer 표준 방어).
+-- ⓘ volatility 는 원본과 맞춘다(전부 stable).
+create or replace function api.search_buildings(q text, lim int default 25, sigungu text default null)
+returns table (
+  bld_id         text,
+  pnu            char(19),
+  bld_nm         text,
+  road_addr      text,
+  jibun_addr     text,
+  lat            double precision,
+  lng            double precision,
+  bld_cnt_in_pnu int,
+  floor_cnt      int,
+  min_floor      smallint,
+  max_floor      smallint,
+  has_roof       boolean,
+  total_cnt      bigint
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$ select * from public.search_buildings(q, lim, sigungu) $$;
+
+create or replace function api.search_scope(q text, sigungu text default null)
+returns table (too_broad boolean, match_cnt int)
+language sql
+stable
+security definer
+set search_path = ''
+as $$ select * from public.search_scope(q, sigungu) $$;
+
+create or replace function api.list_open_sigungu()
+returns table (sido_code char(2), sido_nm text, sigungu_code char(5), sigungu_nm text, building_cnt int)
+language sql
+stable
+security definer
+set search_path = ''
+as $$ select * from public.list_open_sigungu() $$;
+
+create or replace function api.list_building_districts(bld_id text)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$ select public.list_building_districts(bld_id) $$;
+
+create or replace function api.list_parcel_transactions(pnu text)
+returns table (
+  floor_no     smallint,
+  contract_ym  text,
+  contract_day smallint,
+  bld_area_m2  numeric,
+  price_won    bigint,
+  unit_price   numeric,
+  tx_type      text
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$ select * from public.list_parcel_transactions(pnu) $$;
+
+create or replace function api.get_sigungu_tx_stats(sigungu text)
+returns table (
+  floor_band        text,
+  n                 int,
+  median_unit_price numeric,
+  p25_unit_price    numeric,
+  p75_unit_price    numeric,
+  window_from       text,
+  sigungu_nm        text
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$ select * from public.get_sigungu_tx_stats(sigungu) $$;
+
+create or replace function api.list_price_bands(p_pnu text)
+returns table (
+  floor_no        smallint,
+  status          text,
+  stage           text,
+  n               int,
+  p25             numeric,
+  median          numeric,
+  p75             numeric,
+  median_area_m2  numeric,
+  window_from     text
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$ select * from public.list_price_bands(p_pnu) $$;
+
+create or replace function api.list_industry_mix(p_pnu text)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$ select public.list_industry_mix(p_pnu) $$;
+
+create or replace function api.list_industry_detail(p_pnu text, p_cat text)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$ select public.list_industry_detail(p_pnu, p_cat) $$;
+
+-- Postgres 는 새 함수의 EXECUTE 를 PUBLIC(모든 롤)에게 기본으로 준다. 위 기본값 변경은
+-- anon·authenticated 만 다루므로 PUBLIC 경로가 남는다 — 먼저 회수하고 필요한 롤에만 준다.
+revoke all on function api.search_buildings(text, int, text)  from public, anon, authenticated;
+revoke all on function api.search_scope(text, text)           from public, anon, authenticated;
+revoke all on function api.list_open_sigungu()                from public, anon, authenticated;
+revoke all on function api.list_building_districts(text)      from public, anon, authenticated;
+revoke all on function api.list_parcel_transactions(text)     from public, anon, authenticated;
+revoke all on function api.get_sigungu_tx_stats(text)         from public, anon, authenticated;
+revoke all on function api.list_price_bands(text)             from public, anon, authenticated;
+revoke all on function api.list_industry_mix(text)            from public, anon, authenticated;
+revoke all on function api.list_industry_detail(text, text)   from public, anon, authenticated;
+
+grant execute on function api.search_buildings(text, int, text)  to anon, authenticated;
+grant execute on function api.search_scope(text, text)           to anon, authenticated;
+grant execute on function api.list_open_sigungu()                to anon, authenticated;
+grant execute on function api.list_building_districts(text)      to anon, authenticated;
+grant execute on function api.list_parcel_transactions(text)     to anon, authenticated;
+grant execute on function api.get_sigungu_tx_stats(text)         to anon, authenticated;
+grant execute on function api.list_price_bands(text)             to anon, authenticated;
+grant execute on function api.list_industry_mix(text)            to anon, authenticated;
+grant execute on function api.list_industry_detail(text, text)   to anon, authenticated;
+
+-- ── 수집·적재기가 REST 로 쓰는 표 — pass-through 뷰 ──────────────────────────
+-- 이 목록은 스크립트를 훑어 뽑은 것이다(`/rest/v1/` 와 upsert 대상). 여기 **없는 것**은
+-- 일부러 없다 — district·district_rone_map·price_gate_sigungu·물질화뷰들은 psql(dbx.py)
+-- 로만 다루므로 REST 경로가 필요 없고, 안 만드는 것이 곧 노출면을 줄이는 일이다.
+--
+-- ⚠️ **뷰는 RLS 를 우회한다.** 아래 표는 전부 RLS 가 켜져 있지만 이 뷰는 소유자 권한으로
+--    읽으므로 RLS 가 안 걸린다 — **권한만이 방어선**이다. anon 에게 하나라도 새면
+--    상호명(unit_business)·실거래(transaction)가 통째로 나간다. 그래서 표마다 revoke 를
+--    명시한다(자동 개방이 없기를 믿고 넘어가지 않는다).
+create or replace view api.parcel           as select * from public.parcel;
+create or replace view api.building         as select * from public.building;
+create or replace view api.unit             as select * from public.unit;
+create or replace view api.building_floor   as select * from public.building_floor;
+create or replace view api.unit_business    as select * from public.unit_business;
+create or replace view api.transaction      as select * from public.transaction;
+create or replace view api.rent_stat        as select * from public.rent_stat;
+create or replace view api.collect_progress as select * from public.collect_progress;
+create or replace view api.api_quota_log    as select * from public.api_quota_log;
+create or replace view api.bjd_code         as select * from public.bjd_code;
+
+revoke all on api.parcel           from public, anon, authenticated;
+revoke all on api.building         from public, anon, authenticated;
+revoke all on api.unit             from public, anon, authenticated;
+revoke all on api.building_floor   from public, anon, authenticated;
+revoke all on api.unit_business    from public, anon, authenticated;
+revoke all on api.transaction      from public, anon, authenticated;
+revoke all on api.rent_stat        from public, anon, authenticated;
+revoke all on api.collect_progress from public, anon, authenticated;
+revoke all on api.api_quota_log    from public, anon, authenticated;
+revoke all on api.bjd_code         from public, anon, authenticated;
+
+grant select, insert, update, delete on api.parcel           to service_role;
+grant select, insert, update, delete on api.building         to service_role;
+grant select, insert, update, delete on api.unit             to service_role;
+grant select, insert, update, delete on api.building_floor   to service_role;
+grant select, insert, update, delete on api.unit_business    to service_role;
+grant select, insert, update, delete on api.transaction      to service_role;
+grant select, insert, update, delete on api.rent_stat        to service_role;
+grant select, insert, update, delete on api.collect_progress to service_role;
+grant select, insert, update, delete on api.api_quota_log    to service_role;
+grant select, insert, update, delete on api.bjd_code         to service_role;
+
+-- 안 알리면 새 스키마 캐시가 다음 재시작까지 안 잡혀 404 가 난다.
+notify pgrst, 'reload schema';
 
 -- =====================================================================
 -- 완료

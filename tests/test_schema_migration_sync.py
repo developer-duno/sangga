@@ -38,28 +38,37 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
 MIG_DIR = os.path.join(ROOT, "supabase", "migrations")
 
+# 이름 앞에 붙을 수 있는 스키마 접두.
+# ⚠️ `api\.` 를 빼면 안 된다 — 2026-08-22e 가 `create or replace view api.parcel` 처럼
+#    스키마를 붙여 쓰기 시작했고, 접두를 모르는 정규식은 `api.parcel` 에서 이름을
+#    **"api"** 로 잡는다. 그러면 새 객체 12개가 전부 "api" 라는 한 이름으로 뭉개져
+#    가드가 조용히 헛돈다(빠진 것을 못 잡는다).
+SCHEMA_PREFIX = r"(?:public\.|api\.)?"
+
 # 줄 맨 앞(들여쓰기 0)에서 시작하는 진짜 SQL 문장만 본다.
 # 설명 주석(`-- create index …`) 안에 옛 형태를 인용해 둔 줄과 섞이면 안 된다.
+# ⓘ `create index` 만은 접두를 안 붙인다 — 거기 오는 이름은 대상 표가 아니라 **인덱스
+#    이름**이라 스키마로 한정할 수 없다(문법상 불가). `drop index` 는 한정할 수 있어 붙인다.
 RE_CREATE_INDEX = re.compile(
     r"(?im)^create\s+(?:unique\s+)?index\s+(?:concurrently\s+)?"
     r"(?:if\s+not\s+exists\s+)?(\w+)"
 )
-RE_DROP_INDEX = re.compile(r"(?im)^drop\s+index\s+(?:if\s+exists\s+)?(\w+)")
-RE_CREATE_FN = re.compile(r"(?im)^create\s+or\s+replace\s+function\s+(?:public\.)?(\w+)")
-RE_DROP_FN = re.compile(r"(?im)^drop\s+function\s+(?:if\s+exists\s+)?(?:public\.)?(\w+)")
+RE_DROP_INDEX = re.compile(r"(?im)^drop\s+index\s+(?:if\s+exists\s+)?" + SCHEMA_PREFIX + r"(\w+)")
+RE_CREATE_FN = re.compile(r"(?im)^create\s+or\s+replace\s+function\s+" + SCHEMA_PREFIX + r"(\w+)")
+RE_DROP_FN = re.compile(r"(?im)^drop\s+function\s+(?:if\s+exists\s+)?" + SCHEMA_PREFIX + r"(\w+)")
 # 뷰도 같은 병을 앓는다 — 2026-08-22a 가 v_coverage_stats 의 where 절을 고칠 때
 # 정본에 옮겨 적는 것을 잊으면 새 환경만 전국을 세게 된다(에러 0, 조용한 드리프트).
 # ⚠️ 물질화 뷰(create materialized view)는 `or replace` 가 없어 이 정규식에 안 걸린다.
-RE_CREATE_VIEW = re.compile(r"(?im)^create\s+or\s+replace\s+view\s+(?:public\.)?(\w+)")
-RE_DROP_VIEW = re.compile(r"(?im)^drop\s+view\s+(?:if\s+exists\s+)?(?:public\.)?(\w+)")
+RE_CREATE_VIEW = re.compile(r"(?im)^create\s+or\s+replace\s+view\s+" + SCHEMA_PREFIX + r"(\w+)")
+RE_DROP_VIEW = re.compile(r"(?im)^drop\s+view\s+(?:if\s+exists\s+)?" + SCHEMA_PREFIX + r"(\w+)")
 # 물질화 뷰는 위 정규식에 안 걸린다(`or replace` 라는 형태가 없다). 그래서 따로 본다 —
 # 2026-08-22d 가 mv_coverage_stats 를 만들 때 이 구멍이 드러났다: 새 요약표를 정본에
 # 안 옮겨도 아무 테스트가 안 울렸고, 그 파일로 새 환경을 만들면 각주가 통째로 깨진다.
 RE_CREATE_MATVIEW = re.compile(
-    r"(?im)^create\s+materialized\s+view\s+(?:if\s+not\s+exists\s+)?(?:public\.)?(\w+)"
+    r"(?im)^create\s+materialized\s+view\s+(?:if\s+not\s+exists\s+)?" + SCHEMA_PREFIX + r"(\w+)"
 )
 RE_DROP_MATVIEW = re.compile(
-    r"(?im)^drop\s+materialized\s+view\s+(?:if\s+exists\s+)?(?:public\.)?(\w+)"
+    r"(?im)^drop\s+materialized\s+view\s+(?:if\s+exists\s+)?" + SCHEMA_PREFIX + r"(\w+)"
 )
 RE_ADD_COLUMN = re.compile(r"(?im)^\s*add\s+column\s+(?:if\s+not\s+exists\s+)?(\w+)")
 RE_DROP_COLUMN = re.compile(r"(?im)^\s*drop\s+column\s+(?:if\s+exists\s+)?(\w+)")
@@ -153,8 +162,8 @@ def test_live_functions_are_in_schema(schema_sql):
         n
         for n in alive
         if not re.search(
-            r"(?im)^create\s+or\s+replace\s+function\s+(?:public\.)?{}\s*\(".format(
-                re.escape(n)
+            r"(?im)^create\s+or\s+replace\s+function\s+{}{}\s*\(".format(
+                SCHEMA_PREFIX, re.escape(n)
             ),
             schema_sql,
         )
@@ -178,8 +187,8 @@ def test_live_views_are_in_schema(schema_sql):
         n
         for n in alive
         if not re.search(
-            r"(?im)^create\s+or\s+replace\s+view\s+(?:public\.)?{}\b".format(
-                re.escape(n)
+            r"(?im)^create\s+or\s+replace\s+view\s+{}{}\b".format(
+                SCHEMA_PREFIX, re.escape(n)
             ),
             schema_sql,
         )
@@ -193,7 +202,7 @@ def test_live_views_are_in_schema(schema_sql):
 def schema_has_matview(schema, name):
     return re.search(
         r"(?im)^create\s+materialized\s+view\s+(?:if\s+not\s+exists\s+)?"
-        r"(?:public\.)?{}\b".format(re.escape(name)),
+        r"{}{}\b".format(SCHEMA_PREFIX, re.escape(name)),
         schema,
     )
 
@@ -221,8 +230,8 @@ def test_dropped_views_are_gone_from_schema(schema_sql):
         n
         for n in dropped
         if re.search(
-            r"(?im)^create\s+or\s+replace\s+view\s+(?:public\.)?{}\b".format(
-                re.escape(n)
+            r"(?im)^create\s+or\s+replace\s+view\s+{}{}\b".format(
+                SCHEMA_PREFIX, re.escape(n)
             ),
             schema_sql,
         )
@@ -275,3 +284,23 @@ def test_replay_actually_sees_the_2026_08_11e_swap():
     for name in ("mv_search_parcel", "mv_open_sigungu", "mv_sigungu_tx_stats",
                  "mv_coverage_stats"):
         assert name in mvs, "재생이 물질화뷰 {} 를 못 봤습니다".format(name)
+
+
+def test_replay_reads_schema_qualified_names():
+    """`api.` 접두가 붙은 객체의 **이름**을 제대로 읽어내는가 (2026-08-22e).
+
+    접두를 모르는 정규식은 `create or replace view api.parcel` 에서 이름을 **"api"** 로
+    잡는다. 그러면 22e 가 만든 12개 뷰·9개 함수가 전부 "api" 한 이름으로 뭉개져,
+    정본에서 빠진 것이 있어도 가드가 조용히 통과한다. 그 상태를 직접 막는다.
+    """
+    views, _ = replay(RE_CREATE_VIEW, RE_DROP_VIEW)
+    assert "api" not in views, (
+        "정규식이 스키마 접두를 이름으로 잘못 잡고 있습니다 — SCHEMA_PREFIX 를 확인하세요"
+    )
+    for name in ("parcel", "unit_business", "transaction", "bjd_code"):
+        assert name in views, "재생이 22e 의 pass-through 뷰 {} 를 못 봤습니다".format(name)
+
+    fns, _ = replay(RE_CREATE_FN, RE_DROP_FN)
+    assert "api" not in fns, (
+        "정규식이 스키마 접두를 이름으로 잘못 잡고 있습니다 — SCHEMA_PREFIX 를 확인하세요"
+    )
