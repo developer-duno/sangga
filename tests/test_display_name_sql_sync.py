@@ -445,7 +445,7 @@ def test_search_bounds_candidates_with_the_limit(schema_sql):
 def test_search_scope_is_open_to_anon_but_limit_is_not(schema_sql):
     """화면은 판정(search_scope)만 부른다. 상한 함수는 내부용이라 닫아 둔다."""
     flat = re.sub(r"\s+", " ", schema_sql)
-    assert "grant execute on function search_scope(text) to anon" in flat, (
+    assert "grant execute on function search_scope(text, text) to anon" in flat, (
         "schema.sql: search_scope() 가 anon 에게 안 열려 있습니다 — 화면이 '너무 넓은 "
         "검색'인지 물어볼 수 없게 됩니다"
     )

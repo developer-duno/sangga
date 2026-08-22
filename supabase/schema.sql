@@ -2170,7 +2170,7 @@ revoke all on function unit_business_append_only() from public, anon, authentica
 
 -- 상한 함수는 내부용이다. 화면은 search_scope() 가 돌려주는 판정만 쓴다.
 revoke all on function search_scope_limit() from public, anon, authenticated;
-grant execute on function search_scope(text) to anon, authenticated;
+grant execute on function search_scope(text, text) to anon, authenticated;
 
 -- =====================================================================
 -- 공개 접근 정책 — RLS + 최소 권한 (2026-08-08 추가)
@@ -2238,8 +2238,8 @@ grant select on v_coverage_stats to anon, authenticated;
 
 -- 검색 함수도 명시적으로만 연다. Postgres는 새 함수의 EXECUTE를 PUBLIC에게 기본
 -- 부여하므로 **먼저 회수하고** 정확히 필요한 롤에만 준다.
-revoke all on function search_buildings(text, int) from public;
-grant execute on function search_buildings(text, int) to anon, authenticated;
+revoke all on function search_buildings(text, int, text) from public;
+grant execute on function search_buildings(text, int, text) to anon, authenticated;
 
 -- 뷰가 RLS를 우회하는 것이 사고가 아니라 선택임을 코드에 남긴다(기본값이지만 명시).
 alter view v_floor_stack           set (security_invoker = false);
