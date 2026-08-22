@@ -1359,6 +1359,8 @@ comment on function search_buildings(text, int, text) is
   '주소는 mv_search_parcel(건물이 있는 필지만)을 본다. ⚠️ 자료 적재 후 `python scripts/post_load.py` 필수. '
   '⛔ 주소 가지와 이름 가지를 OR로 합치지 말 것 — 두 조인 테이블에 걸친 OR은 gin_trgm 인덱스를 무력화한다';
 
+-- ⚠️ 먼저 회수하고 준다 — Postgres 는 새 함수의 EXECUTE 를 PUBLIC 에 기본 부여한다.
+revoke all on function search_scope(text, text) from public;
 grant execute on function search_scope(text, text) to anon, authenticated;
 grant execute on function search_buildings(text, int, text) to anon, authenticated;
 grant execute on function list_open_sigungu() to anon, authenticated;
@@ -2169,8 +2171,9 @@ revoke all on function unit_business_append_only() from public, anon, authentica
 
 
 -- 상한 함수는 내부용이다. 화면은 search_scope() 가 돌려주는 판정만 쓴다.
+-- (search_scope() 자체의 revoke·grant 는 그 함수를 만드는 자리에 한 벌만 둔다 —
+--  같은 grant 를 두 곳에 적어 두면 한쪽 서명이 낡아도 다른 쪽이 가려 준다.)
 revoke all on function search_scope_limit() from public, anon, authenticated;
-grant execute on function search_scope(text) to anon, authenticated;
 
 -- =====================================================================
 -- 공개 접근 정책 — RLS + 최소 권한 (2026-08-08 추가)
@@ -2238,8 +2241,8 @@ grant select on v_coverage_stats to anon, authenticated;
 
 -- 검색 함수도 명시적으로만 연다. Postgres는 새 함수의 EXECUTE를 PUBLIC에게 기본
 -- 부여하므로 **먼저 회수하고** 정확히 필요한 롤에만 준다.
-revoke all on function search_buildings(text, int) from public;
-grant execute on function search_buildings(text, int) to anon, authenticated;
+revoke all on function search_buildings(text, int, text) from public;
+grant execute on function search_buildings(text, int, text) to anon, authenticated;
 
 -- 뷰가 RLS를 우회하는 것이 사고가 아니라 선택임을 코드에 남긴다(기본값이지만 명시).
 alter view v_floor_stack           set (security_invoker = false);
