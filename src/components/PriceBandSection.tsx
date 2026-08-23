@@ -1,4 +1,6 @@
 import { TX_BASEMENT_MISSING_SINCE } from '../lib/appConstants';
+import { SECTION_PLAN } from '../lib/sectionCards';
+import { SectionCard } from './SectionCard';
 import type { FloorRow, PriceBand } from '../types';
 import {
   formatArea,
@@ -44,7 +46,8 @@ type Props = {
   onPickFloor: (floorNo: number) => void;
 };
 
-const TITLE = '참고 매매 시세 (추정값)';
+// 제목은 `SECTION_PLAN.band.title` 하나뿐이다(카드 머리에 적힌다) — 여기 또 적으면
+// 카드 머리와 본문이 서로 다른 이름을 말하는 날이 온다.
 
 /**
  * 이보다 적은 곁 거래로 낸 폭에는 '표본 적음' 표식을 붙인다.
@@ -74,10 +77,7 @@ export function PriceBandSection({
   // 같아 보인다.
   if (bands === null) {
     return (
-      <section className="band band--wait">
-        <h3 className="band__h">{TITLE}</h3>
-        <p className="band__lead">불러오는 중…</p>
-      </section>
+      <SectionCard plan={SECTION_PLAN.band} className="band band--wait" summary="불러오는 중…" />
     );
   }
   if (bands.length === 0) return null;
@@ -86,8 +86,13 @@ export function PriceBandSection({
   //    그래서 짝짓기보다 **먼저** 가른다.
   if (bands.some((b) => b.status === 'gate_fail')) {
     return (
-      <section className="band">
-        <h3 className="band__h">{TITLE}</h3>
+      <SectionCard
+        plan={SECTION_PLAN.band}
+        className="band"
+        // 접혀 있어도 이 한 줄은 보인다 — 아래 본문과 **같은 글자를 쓰지 않는다**(같은 말이
+        // 화면에 둘이면 이름으로 찾는 시험이 어느 쪽을 잡았는지 모르게 된다).
+        summary="아직 참고 시세를 내지 않는 구입니다"
+      >
         <p className="band__gate">
           <strong>이 건물이 속한 구 전체는 아직 참고 시세를 내지 않습니다.</strong> 지난 거래로
           미리 맞혀 보는 시험에서 기준을 넘은 지역에서만 냅니다 — 아직 시험을 보지 않았거나,
@@ -96,7 +101,7 @@ export function PriceBandSection({
             <> 『층대별 거래 단가』는 신고된 거래를 그대로 센 값이라 그대로 보실 수 있습니다.</>
           )}
         </p>
-      </section>
+      </SectionCard>
     );
   }
 
@@ -114,9 +119,15 @@ export function PriceBandSection({
   // 기간은 화면에 글자로 박지 않는다 — 서버가 준 창의 시작 달을 그대로 쓴다.
   const from = bands.find((b) => b.window_from)?.window_from ?? null;
 
+  // 접혀 있어도 보이는 한 줄 — 값을 낸 층이 몇 개인지.
+  // ⛔ 여기에 **숫자(값)를 적지 않는다.** 요약 줄에는 근거 단계·표본 수를 함께 실을 자리가
+  //    없는데, 값만 떼어 내보내는 것은 절대 규칙 3 위반이다(값과 근거는 한 몸이다).
+  const okFloorCnt = okGroups.reduce((sum, g) => sum + g.floors.length, 0);
+  const summary =
+    okFloorCnt > 0 ? `값을 낸 층 ${okFloorCnt}개` : '이 건물에서는 값을 낸 층이 없습니다';
+
   return (
-    <section className="band">
-      <h3 className="band__h">{TITLE}</h3>
+    <SectionCard plan={SECTION_PLAN.band} className="band" summary={summary}>
       <p className="band__lead">
         곁에서 실제로 팔린 값으로 어림한 폭입니다.{' '}
         <strong>사고파는 값이고 월세·보증금이 아닙니다.</strong>
@@ -205,7 +216,7 @@ export function PriceBandSection({
           <strong>신고된 거래를 그대로 센 값</strong>은 보실 수 있습니다.
         </p>
       )}
-    </section>
+    </SectionCard>
   );
 }
 

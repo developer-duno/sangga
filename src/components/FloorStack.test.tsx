@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { SECTION_EXPAND_BUDGET, SECTION_PLAN } from '../lib/sectionCards';
 import type {
   BuildingHit,
   CoverageStats,
@@ -867,9 +868,26 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
     return { data: floorNos.map((no) => floor({ floor_no: no })), error: null };
   }
 
+  /**
+   * 렌더한 뒤 참고 시세 카드를 **한 번 펼친다.**
+   *
+   * 이 카드는 첫 화면에서 접혀 있다(`SECTION_PLAN.band.defaultOpen === false` —
+   * 로드맵 Wave 2 『펼침 상한 4장』). 여기 시험들은 카드 **안**의 값·문구를 보는 곳이라
+   * 펼치는 것이 전제다. "기본이 접힘인가"는 `SectionCard.test.tsx` 가 따로 지킨다.
+   *
+   * ⚠️ 카드가 아예 안 그려지는 경우(조회 실패·빈 응답·아직 안 옴)는 이 헬퍼를 쓰지 않는다
+   *    — 그 상태 자체가 시험 대상이라 `render` 를 그대로 쓴다.
+   */
+  async function renderBand(b = building()) {
+    const result = render(<FloorStack building={b} />);
+    const toggle = await screen.findByRole('button', { name: /참고 매매 시세/ });
+    if (toggle.getAttribute('aria-expanded') === 'false') fireEvent.click(toggle);
+    return result;
+  }
+
   it('구가 기준선을 못 넘으면 층 나열 없이 한 문단만 낸다', async () => {
     responses.bands = { data: priceBandGate(), error: null };
-    const { container } = render(<FloorStack building={building()} />);
+    const { container } = await renderBand();
     await waitFor(() =>
       expect(screen.getByText(/구 전체는 아직 참고 시세를 내지 않습니다/)).toBeTruthy(),
     );
@@ -881,7 +899,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
     // 낙방으로 단정하면 사실이 아닌 말을 하게 된다. 통과 구 목록·수치는 서버가 정본이라
     // 화면에 복사하지 않는다(결정 0013 §4).
     responses.bands = { data: priceBandGate(), error: null };
-    const { container } = render(<FloorStack building={building()} />);
+    const { container } = await renderBand();
     await waitFor(() => expect(container.querySelector('.band__gate')).toBeTruthy());
     const text = container.querySelector('.band__gate')?.textContent ?? '';
     expect(text).toContain('아직 시험을 보지 않았거나');
@@ -891,7 +909,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
 
   it('기준선 안내에는 C등급 배지도 출처도 붙이지 않는다 (계산한 것이 없다)', async () => {
     responses.bands = { data: priceBandGate(), error: null };
-    const { container } = render(<FloorStack building={building()} />);
+    const { container } = await renderBand();
     await waitFor(() => expect(container.querySelector('.band__gate')).toBeTruthy());
     const band = container.querySelector('.band');
     expect(band?.textContent).not.toContain('C등급');
@@ -902,7 +920,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
     // 절대 규칙 3 — 근거 레벨 + 표본 수 병기. 숫자만 떼어 내보내지 않는다.
     responses.floors = floorsDesc(2);
     responses.bands = { data: [priceBand({ floor_no: 2 })], error: null };
-    const { container } = render(<FloorStack building={building()} />);
+    const { container } = await renderBand();
     await waitFor(() => expect(container.querySelector('.band__val')).toBeTruthy());
     expect(container.querySelector('.band__val')?.textContent).toBe(
       '비슷한 호실 한 칸 32.8㎡ (10평) 기준 2.4억~6.2억',
@@ -919,7 +937,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
     // 300㎡(층 전체 연면적)와 나란히 두면 9배 오독이 난다.
     responses.floors = floorsDesc(2);
     responses.bands = { data: [priceBand({ floor_no: 2 })], error: null };
-    const { container } = render(<FloorStack building={building()} />);
+    const { container } = await renderBand();
     await waitFor(() => expect(container.querySelector('.band__val')).toBeTruthy());
     expect(container.querySelector('.band__val')?.textContent).toContain('비슷한 호실 한 칸');
     expect(container.textContent ?? '').not.toContain('이 층 32.8');
@@ -928,7 +946,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
   it('환산할 면적이 없으면 총액을 지어내지 않고 ㎡당만 낸다', async () => {
     responses.floors = floorsDesc(2);
     responses.bands = { data: [priceBand({ floor_no: 2, median_area_m2: null })], error: null };
-    const { container } = render(<FloorStack building={building()} />);
+    const { container } = await renderBand();
     await waitFor(() => expect(container.querySelector('.band__val')).toBeTruthy());
     const val = container.querySelector('.band__val')?.textContent ?? '';
     expect(val).toBe('㎡당 747만~1,905만');
@@ -952,7 +970,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
       ],
       error: null,
     };
-    const { container } = render(<FloorStack building={building()} />);
+    const { container } = await renderBand();
     await waitFor(() => expect(container.querySelector('.band__val')).toBeTruthy());
     const val = container.querySelector('.band__val')?.textContent ?? '';
     expect(val).toContain('곁의 거래 1건뿐');
@@ -977,7 +995,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
       ],
       error: null,
     };
-    const { container } = render(<FloorStack building={building()} />);
+    const { container } = await renderBand();
     await waitFor(() => expect(container.querySelector('.band__val')).toBeTruthy());
     const val = container.querySelector('.band__val')?.textContent ?? '';
     expect(val).not.toContain('1건뿐');
@@ -996,7 +1014,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
     // 사다리의 마지막 칸은 층이 아니라 **층대**로 잰 값이다 — 라벨만 읽고도 알아야 한다.
     responses.floors = floorsDesc(5);
     responses.bands = { data: [priceBand({ floor_no: 5, stage: 'L6' })], error: null };
-    const { container } = render(<FloorStack building={building()} />);
+    const { container } = await renderBand();
     await waitFor(() => expect(container.querySelector('.band__sub')).toBeTruthy());
     const sub = container.querySelector('.band__sub')?.textContent ?? '';
     expect(sub).toContain('이 동네(법정동) 3층 이상 평균');
@@ -1006,7 +1024,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
   it('먼 근거(L5·L6)에는 표식과 그 뜻을 설명하는 각주가 함께 나온다', async () => {
     responses.floors = floorsDesc(2);
     responses.bands = { data: [priceBand({ floor_no: 2, stage: 'L5' })], error: null };
-    const { container } = render(<FloorStack building={building()} />);
+    const { container } = await renderBand();
     await waitFor(() => expect(container.querySelector('.band__sub')).toBeTruthy());
     expect(container.querySelector('.band__sub')?.textContent).toContain('먼 근거');
     expect(container.querySelector('.band__why')?.textContent).toContain(
@@ -1017,7 +1035,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
   it('가까운 근거(L2·L4)에는 "먼 근거" 표식을 붙이지 않는다', async () => {
     responses.floors = floorsDesc(2);
     responses.bands = { data: [priceBand({ floor_no: 2, stage: 'L2', n: 6 })], error: null };
-    const { container } = render(<FloorStack building={building()} />);
+    const { container } = await renderBand();
     await waitFor(() => expect(container.querySelector('.band__sub')).toBeTruthy());
     expect(container.querySelector('.band')?.textContent).not.toContain('먼 근거');
     expect(container.querySelector('.band__sub')?.textContent).toContain('이 땅 같은 층');
@@ -1032,7 +1050,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
       ],
       error: null,
     };
-    const { container } = render(<FloorStack building={building()} />);
+    const { container } = await renderBand();
     await waitFor(() => expect(container.querySelectorAll('.band__sub')).toHaveLength(2));
     const subs = [...container.querySelectorAll('.band__sub')].map((el) => el.textContent ?? '');
     expect(subs[0]).toContain('표본 적음'); // 4건 (위가 4층)
@@ -1045,7 +1063,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
   it('모르는 근거 단계면 값을 내지 않는다 (근거를 못 적으면 값도 못 낸다)', async () => {
     responses.floors = floorsDesc(2);
     responses.bands = { data: [priceBand({ floor_no: 2, stage: 'L9' })], error: null };
-    const { container } = render(<FloorStack building={building()} />);
+    const { container } = await renderBand();
     await waitFor(() => expect(container.querySelector('.band__none')).toBeTruthy());
     expect(container.querySelector('.band__none')?.textContent).toContain('근거를 표시할 수 없어');
     expect(container.querySelector('.band__val')).toBeNull();
@@ -1058,7 +1076,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
       data: [priceBand({ floor_no: 1, status: 'floor_1f', ...NO_VALUE })],
       error: null,
     };
-    const { container } = render(<FloorStack building={building()} />);
+    const { container } = await renderBand();
     await waitFor(() => expect(container.querySelector('.band__none')).toBeTruthy());
     const none = container.querySelector('.band__none')?.textContent ?? '';
     expect(none).toContain('1층은 내지 않습니다');
@@ -1075,7 +1093,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
       ],
       error: null,
     };
-    const { container } = render(<FloorStack building={building()} />);
+    const { container } = await renderBand();
     await waitFor(() => expect(container.querySelector('.band__none-note')).toBeTruthy());
     expect(container.querySelectorAll('.band__none-note')).toHaveLength(1);
     expect(container.querySelectorAll('.band__row')).toHaveLength(1); // 값이 있는 2층 하나뿐
@@ -1091,7 +1109,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
       data: [priceBand({ floor_no: -1, status: 'no_evidence', ...NO_VALUE })],
       error: null,
     };
-    const { container } = render(<FloorStack building={building()} />);
+    const { container } = await renderBand();
     await waitFor(() => expect(container.querySelector('.band__none-note')).toBeTruthy());
     const note = container.querySelector('.band__none-note')?.textContent ?? '';
     expect(note).toContain('검증한 적이 없습니다');
@@ -1107,7 +1125,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
       data: [priceBand({ floor_no: 3, status: 'no_estimate', ...NO_VALUE })],
       error: null,
     };
-    const { container } = render(<FloorStack building={building()} />);
+    const { container } = await renderBand();
     await waitFor(() => expect(container.querySelector('.band__none')).toBeTruthy());
     const none = container.querySelector('.band__none')?.textContent ?? '';
     expect(none).toContain('표본 부족');
@@ -1119,7 +1137,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
     // 보지 못하므로 클래스 유무로 못 박는다.
     responses.floors = floorsDesc(2);
     responses.bands = { data: [priceBand({ floor_no: 2 })], error: null };
-    const { container } = render(<FloorStack building={building()} />);
+    const { container } = await renderBand();
     await waitFor(() => expect(screen.getByText(/C등급 · 파생 추정/)).toBeTruthy());
     const badge = container.querySelector('.band .grade__badge');
     expect(badge?.className).toContain('grade__badge--est');
@@ -1128,7 +1146,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
   it('출처와 집계 시작 달은 화면이 지어내지 않고 서버가 준 값을 쓴다', async () => {
     responses.floors = floorsDesc(2);
     responses.bands = { data: [priceBand({ floor_no: 2, window_from: '202501' })], error: null };
-    const { container } = render(<FloorStack building={building()} />);
+    const { container } = await renderBand();
     await waitFor(() => expect(container.querySelector('.band__src')).toBeTruthy());
     const src = container.querySelector('.band__src')?.textContent ?? '';
     expect(src).toContain('국토교통부 상업업무용 부동산 매매 실거래가');
@@ -1158,7 +1176,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
       ],
       error: null,
     };
-    const { container } = render(<FloorStack building={building()} />);
+    const { container } = await renderBand();
     await waitFor(() => expect(container.querySelectorAll('.band__row')).toHaveLength(2));
     const labels = [...container.querySelectorAll('.band__floor')].map((el) => el.textContent);
     expect(labels).toEqual(['3층', '2층']);
@@ -1178,7 +1196,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
       ],
       error: null,
     };
-    const { container } = render(<FloorStack building={building()} />);
+    const { container } = await renderBand();
     await waitFor(() => expect(container.querySelectorAll('.band__row')).toHaveLength(2));
     const labels = [...container.querySelectorAll('.band__floor')].map((el) => el.textContent);
     expect(labels).toEqual(['3층~5층', '2층']);
@@ -1187,7 +1205,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
   it('밴드 줄을 누르면 그 층이 펼쳐지고 줄에 표시가 붙는다', async () => {
     responses.floors = floorsDesc(2);
     responses.bands = { data: [priceBand({ floor_no: 2 })], error: null };
-    const { container } = render(<FloorStack building={building()} />);
+    const { container } = await renderBand();
     await waitFor(() => expect(container.querySelector('.band__hit')).toBeTruthy());
     expect(container.querySelector('.detail')).toBeNull();
 
@@ -1200,6 +1218,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
   it('조회에 실패하면 섹션을 아예 그리지 않는다 (본체는 정상)', async () => {
     // 못 읽었을 때 "참고 시세 없음"이라고 적으면 모르는 것을 아는 것처럼 말하게 된다.
     responses.bands = { data: null, error: { message: 'permission denied' } };
+    // ⚠️ 카드 자체가 없어야 하는 시험이라 펼치는 헬퍼를 쓰지 않는다.
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => expect(screen.getByText(/층대별 거래 단가/)).toBeTruthy());
     expect(container.querySelector('.band')).toBeNull();
@@ -1208,6 +1227,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
 
   it('아직 안 왔으면 자리를 잡아 두고 "불러오는 중"이라고 말한다 (모름 ≠ 없음)', async () => {
     responses.bandsPending = true;
+    // 접힌 채로도 "불러오는 중"이 보여야 한다 — 그래서 일부러 안 펼친다(접힘 ≠ 숨김).
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => expect(screen.getByText(/층대별 거래 단가/)).toBeTruthy());
     expect(container.querySelector('.band--wait')).toBeTruthy();
@@ -1216,6 +1236,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
 
   it('옥탑 층에도 지하와 같은 표시를 붙인다 (근거 없는 층이라는 뜻)', async () => {
     responses.floors = floorsDesc(99, 1, -1);
+    // 밴드 응답이 빈 배열이라 카드가 아예 없다 — 펼칠 것도 없다.
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => expect(container.querySelectorAll('.floor')).toHaveLength(3));
     expect(container.querySelector('.floor--roof')).toBeTruthy();
@@ -1226,7 +1247,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
     responses.floors = floorsDesc(99, 3, 2, 1, -1);
     responses.txs = { data: [tx()], error: null };
     responses.bands = { data: priceBands(), error: null };
-    const { container } = render(<FloorStack building={building()} />);
+    const { container } = await renderBand();
     await waitFor(() => expect(container.querySelector('.band__val')).toBeTruthy());
     const text = container.textContent ?? '';
     for (const banned of ['적정가격', '적정가', '평가액', '감정가', '가치평가']) {
@@ -1239,10 +1260,294 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
     // 가리키게 된다.
     responses.floors = floorsDesc(3, 2, 1);
     responses.bands = { data: priceBands(), error: null };
-    const { container } = render(<FloorStack building={building()} />);
+    const { container } = await renderBand();
     await waitFor(() => expect(container.querySelector('.band__alt')).toBeTruthy());
     const alt = container.querySelector('.band__alt')?.textContent ?? '';
     expect(alt).toContain('층대별 거래 단가');
     expect(alt).not.toContain('아래');
+  });
+});
+
+describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () => {
+  /**
+   * 화면 위에서 **실제로** 배치표(`SECTION_PLAN`)대로 그려지는지 본다.
+   *
+   * `sectionCards.test.ts` 는 표 자체를 세고, `SectionCard.test.tsx` 는 틀 하나의 동작을
+   * 본다. 둘 다 초록인데 화면에서는 카드가 안 감싸져 있거나 순서가 뒤바뀌어 있을 수
+   * 있어서, "다섯 장이 이 순서로, 이 역할로, 이 상태로 있다"는 여기서만 잡힌다.
+   */
+
+  /** 업종 분포 응답 한 벌(모양 검사를 통과하는 최소 형태). */
+  const MIX = {
+    snapshot_ym: '202606',
+    radius_m: 500,
+    districts: [
+      {
+        district_id: '3120189',
+        name: '역삼역',
+        type: '발달상권',
+        source_nm: '서울특별시 상권분석서비스',
+        total: 100,
+        cats: [{ cd: 'I2', nm: '음식', n: 60 }],
+      },
+    ],
+    radius: { total: 402, cats: [{ cd: 'I2', nm: '음식', n: 200 }] },
+  };
+
+  /** 화면에 그려진 카드들을 **위에서 아래 순서 그대로** 읽어 온다. */
+  function readCards(container: HTMLElement) {
+    return [...container.querySelectorAll('.card')].map((el) => ({
+      title: el.querySelector('.card__title')?.textContent ?? '',
+      role: el.querySelector('.card__role')?.textContent ?? '',
+      open: el.querySelector('.card__toggle')?.getAttribute('aria-expanded') === 'true',
+      summary: el.querySelector('.card__summary')?.textContent ?? '',
+    }));
+  }
+
+  beforeEach(() => {
+    // 다섯 장이 **전부** 나오는 상태를 만든다 — 어느 하나라도 응답이 비면 그 카드는
+    // 스스로 사라지므로(모름 ≠ 없음), 상한을 세는 시험이 헐거워진다.
+    responses.floors = { data: [floor({ floor_no: 2 }), floor()], error: null };
+    responses.districts = {
+      data: {
+        covered: true,
+        districts: [{ name: '역삼역', type: '발달상권' }],
+        sources: ['서울특별시 상권분석서비스'],
+      },
+      error: null,
+    };
+    responses.industryMix = { data: MIX, error: null };
+    responses.txs = { data: [tx()], error: null };
+    responses.bands = { data: priceBands(), error: null };
+  });
+
+  it('다섯 장이 배치표가 정한 순서·제목·역할·기본 상태로 그려진다', async () => {
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => {
+      expect(container.querySelectorAll('.card')).toHaveLength(5);
+      // 로딩 카드도 한 장으로 세어지므로 장수만 기다리면 경주가 남는다 — 응답이
+      // 전부 자리 잡은 뒤에만 배치·상태·요약을 읽는다(본문 없는 카드는 버튼이 없어
+      // aria-expanded 판독이 false 로 읽히는 것이 이 경주의 증상이었다).
+      expect(container.textContent).not.toContain('불러오는 중');
+    });
+
+    const cards = readCards(container);
+    expect(cards.map((c) => c.title)).toEqual([
+      '속한 상권',
+      '층 목록',
+      '둘레의 업종 분포',
+      '실거래 기록',
+      '참고 매매 시세 (추정값)',
+    ]);
+    expect(cards.map((c) => c.role)).toEqual(['공통', '공통', '창업자', '투자자', '투자자']);
+    // 공통 둘 + 역할마다 하나씩 = 넷을 펼치고, 투자자의 두 번째(추정값)를 접는다.
+    expect(cards.map((c) => c.open)).toEqual([true, true, true, true, false]);
+  });
+
+  it('첫 화면에 펼쳐진 카드가 상한(4장)을 넘지 않는다', async () => {
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => {
+      expect(container.querySelectorAll('.card')).toHaveLength(5);
+      // 로딩 카드도 한 장으로 세어지므로 장수만 기다리면 경주가 남는다 — 응답이
+      // 전부 자리 잡은 뒤에만 배치·상태·요약을 읽는다(본문 없는 카드는 버튼이 없어
+      // aria-expanded 판독이 false 로 읽히는 것이 이 경주의 증상이었다).
+      expect(container.textContent).not.toContain('불러오는 중');
+    });
+    expect(readCards(container).filter((c) => c.open)).toHaveLength(SECTION_EXPAND_BUDGET);
+  });
+
+  it('접힌 카드도 제목과 핵심 한 줄은 보인다 (접힘 ≠ 숨김)', async () => {
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => {
+      expect(container.querySelectorAll('.card')).toHaveLength(5);
+      // 로딩 카드도 한 장으로 세어지므로 장수만 기다리면 경주가 남는다 — 응답이
+      // 전부 자리 잡은 뒤에만 배치·상태·요약을 읽는다(본문 없는 카드는 버튼이 없어
+      // aria-expanded 판독이 false 로 읽히는 것이 이 경주의 증상이었다).
+      expect(container.textContent).not.toContain('불러오는 중');
+    });
+
+    const band = container.querySelector('.band')!;
+    // 본문(값·근거·출처)은 아직 없다…
+    expect(band.querySelector('.card__body')).toBeNull();
+    expect(band.querySelector('.band__val')).toBeNull();
+    // …그래도 "무엇이 몇 개 있는지"는 접은 채로 읽힌다.
+    expect(band.querySelector('.card__summary')?.textContent).toBe('값을 낸 층 1개');
+  });
+
+  it('접힌 카드를 누르면 그 자리에서 내용이 펼쳐진다', async () => {
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => {
+      expect(container.querySelectorAll('.card')).toHaveLength(5);
+      // 로딩 카드도 한 장으로 세어지므로 장수만 기다리면 경주가 남는다 — 응답이
+      // 전부 자리 잡은 뒤에만 배치·상태·요약을 읽는다(본문 없는 카드는 버튼이 없어
+      // aria-expanded 판독이 false 로 읽히는 것이 이 경주의 증상이었다).
+      expect(container.textContent).not.toContain('불러오는 중');
+    });
+
+    fireEvent.click(container.querySelector('.band .card__toggle')!);
+    expect(container.querySelector('.band .band__val')).toBeTruthy();
+    expect(screen.getByText(/C등급 · 파생 추정/)).toBeTruthy();
+  });
+
+  it('펼쳐진 카드를 누르면 접히고, 요약만 남는다', async () => {
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => {
+      expect(container.querySelectorAll('.card')).toHaveLength(5);
+      // 로딩 카드도 한 장으로 세어지므로 장수만 기다리면 경주가 남는다 — 응답이
+      // 전부 자리 잡은 뒤에만 배치·상태·요약을 읽는다(본문 없는 카드는 버튼이 없어
+      // aria-expanded 판독이 false 로 읽히는 것이 이 경주의 증상이었다).
+      expect(container.textContent).not.toContain('불러오는 중');
+    });
+
+    const floorsCard = container.querySelector('.card--floors')!;
+    expect(floorsCard.querySelectorAll('.floor')).toHaveLength(2);
+
+    fireEvent.click(floorsCard.querySelector('.card__toggle')!);
+    expect(floorsCard.querySelectorAll('.floor')).toHaveLength(0);
+    expect(floorsCard.querySelector('.card__summary')?.textContent).toBe('층 2개 · 점포 4곳');
+  });
+
+  it('카드 머리·요약에는 금칙어(절대 규칙 2)가 한 글자도 없다', async () => {
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => {
+      expect(container.querySelectorAll('.card')).toHaveLength(5);
+      // 로딩 카드도 한 장으로 세어지므로 장수만 기다리면 경주가 남는다 — 응답이
+      // 전부 자리 잡은 뒤에만 배치·상태·요약을 읽는다(본문 없는 카드는 버튼이 없어
+      // aria-expanded 판독이 false 로 읽히는 것이 이 경주의 증상이었다).
+      expect(container.textContent).not.toContain('불러오는 중');
+    });
+
+    const heads = readCards(container)
+      .map((c) => `${c.title} ${c.role} ${c.summary}`)
+      .join(' ');
+    for (const banned of ['적정가격', '적정가', '평가액', '감정가', '가치평가']) {
+      expect(heads.includes(banned)).toBe(false);
+    }
+  });
+
+  it('요약 줄에는 추정 **값**을 적지 않는다 (값과 근거는 한 몸이다 — 절대 규칙 3)', async () => {
+    // 요약 한 줄에는 근거 단계·표본 수를 함께 실을 자리가 없다. 그래서 여기에는
+    // "몇 개인지"만 적고 금액·단가는 본문에서만 낸다.
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => {
+      expect(container.querySelectorAll('.card')).toHaveLength(5);
+      // 로딩 카드도 한 장으로 세어지므로 장수만 기다리면 경주가 남는다 — 응답이
+      // 전부 자리 잡은 뒤에만 배치·상태·요약을 읽는다(본문 없는 카드는 버튼이 없어
+      // aria-expanded 판독이 false 로 읽히는 것이 이 경주의 증상이었다).
+      expect(container.textContent).not.toContain('불러오는 중');
+    });
+
+    const summary = container.querySelector('.band .card__summary')?.textContent ?? '';
+    expect(summary).not.toContain('억');
+    expect(summary).not.toContain('㎡당');
+  });
+
+  it('요약 다섯 칸이 저마다 제 값을 말한다', async () => {
+    // 요약은 접었을 때 남는 유일한 정보다. 한 칸이 조용히 빈 문자열이 되어도 화면은
+    // 멀쩡해 보이므로(줄만 비어 보인다) 다섯 칸을 통째로 못 박는다.
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => {
+      expect(container.querySelectorAll('.card')).toHaveLength(5);
+      // 로딩 카드도 한 장으로 세어지므로 장수만 기다리면 경주가 남는다 — 응답이
+      // 전부 자리 잡은 뒤에만 배치·상태·요약을 읽는다(본문 없는 카드는 버튼이 없어
+      // aria-expanded 판독이 false 로 읽히는 것이 이 경주의 증상이었다).
+      expect(container.textContent).not.toContain('불러오는 중');
+    });
+
+    expect(readCards(container).map((c) => c.summary)).toEqual([
+      '역삼역(발달상권)출처: 서울특별시 상권분석서비스',
+      '층 2개 · 점포 4곳',
+      '속한 상권 1개 · 반경 500m 이내 402곳',
+      '이 땅 거래 1건 · 강남구 층대별 단가',
+      '값을 낸 층 1개',
+    ]);
+  });
+
+  it('구 이름을 모르면 그 조각을 빼고 적는다 ("null 층대별 단가"가 되지 않게)', async () => {
+    // 구 이름은 서버가 준 값이고, 안 올 수도 있다. 그때 이름 자리를 빈 채로 이어 붙이면
+    // 화면에 'null' 이나 'undefined' 가 그대로 찍힌다.
+    responses.txStats = {
+      data: bands({ '1층': 213 }).map((b) => ({ ...b, sigungu_nm: null })),
+      error: null,
+    };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => {
+      expect(container.querySelectorAll('.card')).toHaveLength(5);
+      // 로딩 카드도 한 장으로 세어지므로 장수만 기다리면 경주가 남는다 — 응답이
+      // 전부 자리 잡은 뒤에만 배치·상태·요약을 읽는다(본문 없는 카드는 버튼이 없어
+      // aria-expanded 판독이 false 로 읽히는 것이 이 경주의 증상이었다).
+      expect(container.textContent).not.toContain('불러오는 중');
+    });
+
+    const summary = container.querySelector('.tx .card__summary')?.textContent ?? '';
+    expect(summary).toBe('이 땅 거래 1건 · 층대별 단가');
+    expect(summary).not.toContain('null');
+    expect(summary).not.toContain('undefined');
+  });
+
+  it('층 스택의 섹션은 전부 카드다 (틀을 안 쓰고 새 섹션을 끼워 넣지 못하게)', async () => {
+    // `.card` 만 세면 "카드 class 를 안 붙인 섹션"이 조용히 늘어난다 — 그 섹션은 제목도
+    // 역할 태그도 접기도 없이 화면에 붙는다. 겉의 section 수와 배치표 칸 수를 맞춰 막는다.
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => {
+      expect(container.querySelectorAll('.card')).toHaveLength(5);
+      // 로딩 카드도 한 장으로 세어지므로 장수만 기다리면 경주가 남는다 — 응답이
+      // 전부 자리 잡은 뒤에만 배치·상태·요약을 읽는다(본문 없는 카드는 버튼이 없어
+      // aria-expanded 판독이 false 로 읽히는 것이 이 경주의 증상이었다).
+      expect(container.textContent).not.toContain('불러오는 중');
+    });
+
+    const sections = container.querySelectorAll('.stack > section');
+    expect(sections).toHaveLength(Object.keys(SECTION_PLAN).length);
+    for (const el of sections) expect(el.classList.contains('card')).toBe(true);
+  });
+
+  it('층 목록을 접어 둔 채로 시세 줄을 눌러도 그 층이 보인다', async () => {
+    // ⛔ 이게 없으면 눌러도 **화면이 안 변한다** — 층은 펼쳐졌는데 그 층이 접힌 카드
+    //    안에 있기 때문이다. 사람은 그걸 고장으로 읽는다.
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => {
+      expect(container.querySelectorAll('.card')).toHaveLength(5);
+      // 로딩 카드도 한 장으로 세어지므로 장수만 기다리면 경주가 남는다 — 응답이
+      // 전부 자리 잡은 뒤에만 배치·상태·요약을 읽는다(본문 없는 카드는 버튼이 없어
+      // aria-expanded 판독이 false 로 읽히는 것이 이 경주의 증상이었다).
+      expect(container.textContent).not.toContain('불러오는 중');
+    });
+
+    // 시세 카드를 펼치고, 층 목록은 접는다.
+    fireEvent.click(container.querySelector('.band .card__toggle')!);
+    fireEvent.click(container.querySelector('.card--floors .card__toggle')!);
+    expect(container.querySelectorAll('.floor')).toHaveLength(0);
+    // 층 목록이 접혀 있는 동안에는 "펼쳐진 층"도 없다고 말한다(거짓말 금지).
+    expect(container.querySelector('.band__row--on')).toBeNull();
+
+    fireEvent.click(container.querySelector('.band__hit')!);
+
+    // 층 목록이 저절로 다시 펼쳐지고, 그 층이 열려 있다.
+    expect(container.querySelector('.card--floors .card__toggle')?.getAttribute('aria-expanded')).toBe(
+      'true',
+    );
+    expect(container.querySelector('.detail')).toBeTruthy();
+    expect(container.querySelector('.band__row--on')).toBeTruthy();
+  });
+
+  it('상권 카드는 답과 출처를 요약에 두고, 읽는 법만 본문에 둔다', async () => {
+    // 출처표시(공공누리 1유형)는 접었을 때 사라지면 안 된다.
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => {
+      expect(container.querySelectorAll('.card')).toHaveLength(5);
+      // 로딩 카드도 한 장으로 세어지므로 장수만 기다리면 경주가 남는다 — 응답이
+      // 전부 자리 잡은 뒤에만 배치·상태·요약을 읽는다(본문 없는 카드는 버튼이 없어
+      // aria-expanded 판독이 false 로 읽히는 것이 이 경주의 증상이었다).
+      expect(container.textContent).not.toContain('불러오는 중');
+    });
+
+    const dist = container.querySelector('.card--district')!;
+    const summary = dist.querySelector('.card__summary')?.textContent ?? '';
+    expect(summary).toContain('역삼역(발달상권)');
+    expect(summary).toContain('출처: 서울특별시 상권분석서비스');
+
+    fireEvent.click(dist.querySelector('.card__toggle')!);
+    expect(dist.querySelector('.card__summary')?.textContent).toContain('출처: 서울특별시');
   });
 });

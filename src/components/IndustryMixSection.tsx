@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { INDUSTRY_MIX_FN, INDUSTRY_DETAIL_FN } from '../lib/appConstants';
+import { SECTION_PLAN } from '../lib/sectionCards';
+import { SectionCard } from './SectionCard';
 import type { IndustryDetail, IndustryMix, IndustryScope } from '../types';
 import { formatQuarter } from '../lib/format';
 import {
@@ -34,7 +36,8 @@ type Props = {
   pnu: string;
 };
 
-const TITLE = '둘레의 업종 분포';
+// 제목은 `SECTION_PLAN.industry.title` 하나뿐이다 — 여기 또 적으면 카드 머리와 본문이
+// 서로 다른 이름을 말하는 날이 온다.
 
 export function IndustryMixSection({ pnu }: Props) {
   const [mix, setMix] = useState<IndustryMix | null>(null);
@@ -122,10 +125,7 @@ export function IndustryMixSection({ pnu }: Props) {
 
   if (mix === null) {
     return (
-      <section className="mix mix--wait">
-        <h3 className="mix__h">{TITLE}</h3>
-        <p className="mix__lead">불러오는 중…</p>
-      </section>
+      <SectionCard plan={SECTION_PLAN.industry} className="mix mix--wait" summary="불러오는 중…" />
     );
   }
 
@@ -138,9 +138,22 @@ export function IndustryMixSection({ pnu }: Props) {
   const sources = districtSources(mix.districts);
   const pickedNm = options.find((o) => o.cd === pickedCat)?.nm ?? null;
 
+  // 접혀 있어도 보이는 한 줄 — 몇 곳을 센 것인지.
+  // ⚠️ 상권끼리 **더하지 않는다**(겹치는 자리의 가게가 양쪽에 들어간다). 그래서 상권은
+  //    가게 수가 아니라 **몇 개 상권에 걸쳤는지**만 적는다.
+  // ⚠️ 아래 블록 제목("… 안 200곳")과 같은 글자를 쓰지 않는다 — 같은 말이 화면에 둘이면
+  //    이름으로 찾는 시험이 어느 쪽을 잡았는지 모르게 된다. 그래서 "안"이 아니라 "이내"다.
+  const summary = [
+    hasDistricts ? `속한 상권 ${mix.districts.length.toLocaleString('ko-KR')}개` : null,
+    mix.radius
+      ? `반경 ${mix.radius_m.toLocaleString('ko-KR')}m 이내 ${mix.radius.total.toLocaleString('ko-KR')}곳`
+      : null,
+  ]
+    .filter((s): s is string => s !== null)
+    .join(' · ');
+
   return (
-    <section className="mix">
-      <h3 className="mix__h">{TITLE}</h3>
+    <SectionCard plan={SECTION_PLAN.industry} className="mix" summary={summary}>
       <p className="mix__lead">
         <strong>이 건물만이 아니라 이 땅 둘레의 가게들입니다.</strong> 무슨 장사가 몇 곳 있는지
         세어 본 것이고, 값이나 매출은 아닙니다.
@@ -217,7 +230,7 @@ export function IndustryMixSection({ pnu }: Props) {
         {mix.snapshot_ym ? ` ${formatQuarter(mix.snapshot_ym)} 기준` : ''}
         {sources.length > 0 && <> · 상권 경계 {sources.join(' · ')}</>}.
       </p>
-    </section>
+    </SectionCard>
   );
 }
 
