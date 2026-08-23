@@ -54,20 +54,11 @@ const responses = {
 /** 마지막 rpc 호출의 인자. "구 코드를 pnu 에서 뽑아 보내는가"를 여기서 확인한다. */
 const rpcCalls: Array<{ fn: string; args: unknown }> = [];
 
+// 흉내 낼 것은 **키를 요구하는 클라이언트 하나뿐**이다. 표·함수 이름과 짝수(數)는
+// 아무 일도 안 하는 `lib/appConstants.ts` 에 있어 화면이 진짜 값을 그대로 쓴다 —
+// 그래서 상수를 더해도 여기를 같이 고칠 일이 없다(예전에는 흉내가 모듈을 통째로
+// 갈아끼워서, 여기 안 적은 상수는 화면이 undefined 로 그렸다).
 vi.mock('../lib/supabase', () => ({
-  FLOOR_STACK_VIEW: 'v_floor_stack',
-  COVERAGE_STATS_VIEW: 'v_coverage_stats',
-  BUILDING_DISTRICTS_FN: 'list_building_districts',
-  PARCEL_TX_FN: 'list_parcel_transactions',
-  SIGUNGU_TX_STATS_FN: 'get_sigungu_tx_stats',
-  PRICE_BANDS_FN: 'list_price_bands',
-  INDUSTRY_MIX_FN: 'list_industry_mix',
-  INDUSTRY_DETAIL_FN: 'list_industry_detail',
-  // ⚠️ 이 흉내는 모듈을 **통째로** 갈아끼운다 — 진짜 파일에만 상수를 더하면 화면은
-  //    undefined 를 그린다. 서버 짝 상수를 추가할 때 여기도 같이 더할 것.
-  TX_LIST_CAP: 100,
-  TX_OPEN_SINCE_LABEL: '2024년 1월',
-  TX_BASEMENT_MISSING_SINCE: 2017,
   supabase: {
     from: (view: string) =>
       makeQuery(view === 'v_coverage_stats' ? responses.stats : responses.floors),

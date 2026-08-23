@@ -13,7 +13,6 @@ import type { BuildingHit } from '../types';
 const rpc = vi.fn();
 vi.mock('../lib/supabase', () => ({
   supabase: { rpc: (...args: unknown[]) => rpc(...args) },
-  FLOOR_STACK_VIEW: 'v_floor_stack',
 }));
 
 const { BuildingSearch } = await import('./BuildingSearch');

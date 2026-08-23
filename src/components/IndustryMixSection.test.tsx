@@ -25,8 +25,6 @@ const responses = {
 const rpcCalls: Array<{ fn: string; args: unknown }> = [];
 
 vi.mock('../lib/supabase', () => ({
-  INDUSTRY_MIX_FN: 'list_industry_mix',
-  INDUSTRY_DETAIL_FN: 'list_industry_detail',
   supabase: {
     rpc: (fn: string, args?: unknown) => {
       rpcCalls.push({ fn, args });

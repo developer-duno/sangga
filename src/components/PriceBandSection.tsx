@@ -1,4 +1,4 @@
-import { TX_BASEMENT_MISSING_SINCE } from '../lib/supabase';
+import { TX_BASEMENT_MISSING_SINCE } from '../lib/appConstants';
 import type { FloorRow, PriceBand } from '../types';
 import {
   formatArea,

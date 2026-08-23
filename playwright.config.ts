@@ -19,7 +19,19 @@ const port = Number(process.env.E2E_PORT ?? 5173);
 
 export default defineConfig({
   testDir: './e2e',
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  // 같은 시험을 **두 폭에서** 돌린다.
+  //
+  // 상가를 보러 오는 사람은 현장에서 휴대폰으로 보는 쪽이 오히려 흔한데, 좁은 폭은
+  // `styles.css` 의 `@media (max-width: 720px)` 가 판을 다시 짜는 자리라 넓은 화면만
+  // 보면 못 잡는 결함이 생긴다(2026-08-22 — 층별 막대를 모바일에서 `display: none` 으로
+  // 숨겨 이 화면의 본론이 휴대폰에서만 사라진 적이 있다. 그때 E2E 는 전부 초록이었다).
+  //
+  // Pixel 7 프리셋은 폭 412px 에 **터치 전용**(isMobile·hasTouch)이라, 좁은 폭뿐 아니라
+  // "마우스가 없는 기기에서도 눌리는가"까지 같이 본다.
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'mobile', use: { ...devices['Pixel 7'] } },
+  ],
   use: {
     baseURL: `http://localhost:${port}`,
   },

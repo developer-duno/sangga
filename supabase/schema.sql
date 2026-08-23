@@ -2220,7 +2220,7 @@ alter table api_quota_log    enable row level security;
 -- (PostGIS 시스템 객체 관련 WARNING 몇 줄이 나오는 것은 정상 — 아래 주석 참조)
 revoke all on all tables in schema public from anon, authenticated;
 
--- 화면이 실제로 읽는 뷰 하나만 연다(src/lib/supabase.ts의 FLOOR_STACK_VIEW).
+-- 화면이 실제로 읽는 뷰 하나만 연다(src/lib/appConstants.ts의 FLOOR_STACK_VIEW).
 -- authenticated에도 주는 이유: 지금은 로그인이 없지만 나중에 붙였을 때 화면이
 -- 조용히 빈 목록으로 바뀌는 사고를 막는다. 둘 다 읽기 전용이다.
 grant select on v_floor_stack to anon, authenticated;

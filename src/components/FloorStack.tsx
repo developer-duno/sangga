@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
+import { supabase } from '../lib/supabase';
 import {
-  supabase,
   FLOOR_STACK_VIEW,
   COVERAGE_STATS_VIEW,
   BUILDING_DISTRICTS_FN,
@@ -10,7 +10,7 @@ import {
   TX_LIST_CAP,
   TX_OPEN_SINCE_LABEL,
   TX_BASEMENT_MISSING_SINCE,
-} from '../lib/supabase';
+} from '../lib/appConstants';
 import type {
   BuildingDistricts,
   BuildingHit,
