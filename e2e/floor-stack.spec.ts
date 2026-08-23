@@ -189,6 +189,13 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     // 그때 이 섹션은 아무 말도 없이 사라져야 한다 — "업종 없음" 같은 문구를 남기면
     // 모르는 것을 없는 것이라 말하게 되고, 터지면 층 스택 전체가 같이 죽는다.
     await expect(stack.locator('section.mix')).toHaveCount(0);
+    // 층별 규모를 보여주는 막대. 글자가 아니라 **그림**이라 아무 단언에도 안 걸려 있었고,
+    // 그래서 2026-08-22 에 좁은 폭에서만 `display: none` 으로 숨겼을 때 E2E 가 전부
+    // 초록이었다. 이 줄은 모바일 프로젝트에서 그 회귀를 잡으라고 있는 자리다.
+    await expect(stack.locator('.floor__bar').first()).toBeVisible();
+    // 바탕(track)만 보면 안 된다 — 크기를 말하는 건 안의 색칠(fill)이다. fill 만
+    // 숨기는 회귀(width:0·display:none)는 위 줄이 초록인 채 정보만 사라진다.
+    await expect(stack.locator('.floor__fill').first()).toBeVisible();
     await expect(stack.getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
   });
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { supabase, INDUSTRY_MIX_FN, INDUSTRY_DETAIL_FN } from '../lib/supabase';
+import { supabase } from '../lib/supabase';
+import { INDUSTRY_MIX_FN, INDUSTRY_DETAIL_FN } from '../lib/appConstants';
 import type { IndustryDetail, IndustryMix, IndustryScope } from '../types';
 import { formatQuarter } from '../lib/format';
 import {

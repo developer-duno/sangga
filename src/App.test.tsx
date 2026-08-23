@@ -21,15 +21,10 @@ function makeQuery(result: { data: unknown; error: unknown }) {
   return q;
 }
 
+// 흉내 낼 것은 **키를 요구하는 클라이언트 하나뿐**이다. 표·함수 이름 같은 상수는
+// 아무 일도 안 하는 `lib/appConstants.ts` 에 있어 화면이 진짜 값을 그대로 쓴다
+// (예전에는 여기 상수를 거울처럼 다시 적어 두어, 진짜 값이 바뀌어도 테스트만 초록이었다).
 vi.mock('./lib/supabase', () => ({
-  FLOOR_STACK_VIEW: 'v_floor_stack',
-  COVERAGE_STATS_VIEW: 'v_coverage_stats',
-  BUILDING_DISTRICTS_FN: 'list_building_districts',
-  PARCEL_TX_FN: 'list_parcel_transactions',
-  SIGUNGU_TX_STATS_FN: 'get_sigungu_tx_stats',
-  PRICE_BANDS_FN: 'list_price_bands',
-  INDUSTRY_MIX_FN: 'list_industry_mix',
-  INDUSTRY_DETAIL_FN: 'list_industry_detail',
   supabase: {
     rpc: (...args: unknown[]) => rpc(...args),
     from: (view: string) => from(view),
