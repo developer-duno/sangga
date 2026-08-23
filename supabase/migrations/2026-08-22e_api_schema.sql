@@ -60,10 +60,22 @@
 --    계속 도는 경우가 보고돼 있다. 증상은 "④를 했는데 public 이 그대로 열려 있다" 또는
 --    반대로 "②를 했는데 api 가 404". 복구는 설정을 롤에 직접 박고 리로드를 시키는 것이다:
 --
---      alter role authenticator set pgrst.db_schemas = 'api';
+--      alter role authenticator set pgrst.db_schemas = 'api, graphql_public';
 --      notify pgrst, 'reload config';
+--      notify pgrst, 'reload schema';
 --
---    (되돌리려면 `alter role authenticator reset pgrst.db_schemas;` + 같은 notify.)
+--    ⛔ `graphql_public` 을 빼지 말 것 — 이 줄에 적는 목록이 곧 노출 전체를 덮어쓴다.
+--       'api' 만 적으면 GraphQL 엔드포인트가 함께 죽는다.
+--    ⛔ 리로드는 **두 번**이다(config + schema). config 만 보내면 그 다음 호출이 404 로
+--       온다(2026-08-22 실측).
+--
+--    (되돌리려면 `alter role authenticator set pgrst.db_schemas = 'api, public, graphql_public';`
+--     + 같은 notify 두 줄. `reset` 은 Supabase 기본값으로 돌아가므로 public 이 다시 열린다.)
+--
+-- ✅ 2026-08-24 실행 완료 — 위 ④(public 빼기)를 라이브에 적용했다. 대시보드가 아니라
+--    **롤에 직접** 박는 경로를 썼다(값: 'api, graphql_public'). 검증: Accept-Profile: public
+--    요청이 PGRST106 으로 거절 · 화면이 쓰는 함수 9개·뷰 2개는 api 스키마에서 정상.
+--    되돌아갔는지는 `python scripts/post_load.py --check` 가 매번 본다(public_rest_exposed).
 --
 -- ─────────────────────────────────────────────────────────────────────
 -- 되돌리기
