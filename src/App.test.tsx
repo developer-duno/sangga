@@ -79,6 +79,11 @@ function floorRow(over: Partial<FloorRow> = {}): FloorRow {
     bld_cnt_in_pnu: 1,
     store_cnt: 1,
     stores: [],
+    // 건물 스펙 4칸(2026-08-24a) — 이 파일은 배선만 보므로 값은 정상값 하나면 된다.
+    total_area_m2: 1234.5,
+    far: 350.5,
+    bcr: 59.9,
+    parking_cnt: 12,
     ...over,
   };
 }

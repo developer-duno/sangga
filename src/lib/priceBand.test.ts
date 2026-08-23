@@ -53,6 +53,11 @@ function floor(floorNo: number, over: Partial<FloorRow> = {}): FloorRow {
     bld_cnt_in_pnu: 1,
     store_cnt: 2,
     stores: [],
+    // 건물 스펙 4칸(2026-08-24a) — 밴드 묶기는 이 넷을 안 보지만 타입이 요구한다.
+    total_area_m2: 1234.5,
+    far: 350.5,
+    bcr: 59.9,
+    parking_cnt: 12,
     ...over,
   };
 }

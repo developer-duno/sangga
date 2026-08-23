@@ -117,6 +117,12 @@ create table if not exists building (
 
 comment on column building.is_jiphap is '집합건물만 실거래가에 층이 나온다. 일반건축물(통건물)은 지번도 일부만 공개';
 
+comment on column building.total_area_m2 is
+  '연면적 ㎡. 원본에 오기입이 섞여 있다 '
+  '(2026-08-24 라이브 실측: 24만 동 중 100만㎡ 초과 6동, 그 급에서만 오기입 확률이 높다). '
+  '화면은 100만㎡ 초과를 미상 처리한다(FloorStack MAX_TOTAL_AREA_M2) — 걸리는 수가 눈에 띄게 '
+  '늘면 상한이 아니라 원본 적재를 의심할 것. 미기재는 0으로 온다(0 = 미상, 같은 날 실측 1,204동).';
+
 comment on column building.bcr is
   '건폐율 %. 정의상 0~100 이지만 원본에 소스 오류가 섞여 있다 '
   '(2026-08-11 실측: 전체 24만 행 중 7행이 1만%를 넘고 최댓값 79,095%). '
@@ -728,7 +734,21 @@ select
   p.road_contact,
   pb.bld_cnt_in_pnu,
   st.store_cnt,
-  st.stores
+  st.stores,
+  -- ── 건물 스펙 4칸 (2026-08-24a · 로드맵 Wave 2 PR-B) ──────────────────────
+  -- 층이 아니라 **건물 한 채**의 값이라 같은 건물의 모든 층 행에 같은 값이 실린다
+  -- (화면은 head 행 하나만 읽는다). 원본을 그대로 낸다 — 0 을 NULL 로 바꾸는 것도
+  -- 상한을 거는 것도 여기서 하지 않는다. 서버가 뜻을 지어내면 나중에 그 판단을 누가
+  -- 어디서 했는지 못 찾는다(집계·백테스트는 원본이 필요하다).
+  -- ⛔ 0 은 "0" 이 아니라 **대장 미기재**다 — 롯데월드타워가 주차 0·건폐율 0 으로
+  --    들어와 있어 값으로는 둘을 못 가른다. "NULL 이 0행" 은 현재 적재분(서울·대전
+  --    30개 구)의 관찰값이지 구조적 보장이 아니다(적재기는 결측을 NULL 로 쓴다 —
+  --    load_building_ledger.py 의 _to_float·sum_parking). [C] 전국 적재 후 다시 셀 것.
+  --    뜻풀이(0·NULL 둘 다 "미상")는 화면 한 곳에서만 한다.
+  b.total_area_m2,          -- 연면적 ㎡ (0 = 미기재)
+  b.far,                    -- 용적률 % (0 = 미기재)
+  b.bcr,                    -- 건폐율 % (0 = 미기재, 소스 오류로 100 초과 실재)
+  b.parking_cnt             -- 주차 4종(옥내외 × 자주/기계) 합 (0 = 미기재, 일부만 적힌 대장이면 부분합)
 from v_building_floor_stack s
 join building b on b.bld_id = s.bld_id
 join parcel   p on p.pnu    = s.pnu
@@ -752,6 +772,11 @@ comment on view v_floor_stack is
   '★ 공개 접근: 이 뷰만 anon/authenticated에게 SELECT 허용된다(아래 "공개 접근 정책" 절). '
   '원본 표는 RLS 켬 + 정책 0개 + 권한 회수로 닫혀 있고, 이 뷰가 소유자 권한으로 대신 읽는다. '
   '⚠️ bld_nm은 원본이 아니라 building_display_nm() 결과다(동명칭 폴백 + 개인 성명 가림, 2026-08-08e). '
+  '⚠️ total_area_m2·far·bcr·parking_cnt 는 **건물 한 채**의 값이라 층마다 되풀이된다. '
+  '0 은 "0" 이 아니라 "대장 미기재"다(NULL 은 현재 적재분 30개 구에서 0행 — 관찰값이지 보장이 아니다. '
+  '적재기는 결측을 NULL 로 쓴다: load_building_ledger.py 의 _to_float·sum_parking. 전국 적재 후 다시 셀 것). '
+  'bcr 은 소스 오류로 100 을 넘는 행이 있고, parking_cnt 는 주차 4종(옥내외 × 자주/기계) 합이라 '
+  '일부만 적힌 대장이면 부분합이다 — 뜻풀이·상한은 화면이 한 곳에서 한다(2026-08-24a). '
   'ℹ️ 린트 0010(security definer view) 의도적 예외 — security_invoker=true로 되돌리면 원본 표 401 + 상호명·성명 노출 확대. '
   '재검토 방아쇠: 공개 배포일 / 지도·반경 검색(§6.4) 착수일';
 
@@ -2309,6 +2334,10 @@ alter default privileges in schema api revoke all on functions from anon, authen
 -- 원본을 옮기지 않고 **덧붙인다** — 옮기면 public 을 읽는 다른 뷰·함수가 전부 깨진다.
 -- 뷰의 기본값 `security_invoker = false` 덕에 소유자(postgres) 권한으로 읽으므로,
 -- 나중에 public 쪽 anon 권한을 전부 회수해도 이 뷰는 그대로 돈다(자립).
+-- ⚠️ **`select *` 는 만들 때의 칼럼 목록으로 굳는다.** public 쪽 뷰에 칼럼을 덧붙여도
+--    이 쌍둥이는 옛 칼럼만 낸다 — 에러가 아니라 조용한 누락이라 아무도 모른다.
+--    그러니 public 뷰의 칼럼을 바꾸는 마이그레이션은 **반드시** 이 두 줄을 다시 실행하고
+--    `notify pgrst, 'reload schema';` 까지 해야 한다(2026-08-24a 가 그 형태의 첫 사례).
 create or replace view api.v_floor_stack as select * from public.v_floor_stack;
 create or replace view api.v_coverage_stats as select * from public.v_coverage_stats;
 

@@ -440,13 +440,17 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
   // 서버에서 이미 오는데 화면이 안 쓰던 값 셋이다. 셋 다 "서버 응답 한 칸이 조용히
   // 빠지면 화면에서도 조용히 사라지는" 종류라 여기서 눈으로 확인한다.
 
-  test('J. 구 칩 건물 수 · 도로접면 · 업종 요약이 함께 뜬다', async ({ page }) => {
+  test('J. 구 칩 건물 수 · 도로접면 · 업종 요약 · 건물 스펙 4칸이 함께 뜬다', async ({ page }) => {
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
     await mockFloorStack(page, [], [], [
       floorRow({
         floor_no: 2,
         road_contact: '광대로한면',
+        // 건물 스펙 4칸(로드맵 Wave 2 PR-B). 주차만 0 으로 둔다 — 대장이 미기재를 0 으로
+        // 주는 실제 모양이다(롯데월드타워가 그렇게 들어와 있다). 값과 "미상"이 한 화면에
+        // 같이 있어야 "둘을 갈라 적는가"를 볼 수 있다.
+        parking_cnt: 0,
         stores: [
           { name: null, cat: '한식' },
           { name: null, cat: '커피' },
@@ -473,6 +477,14 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     //    화면이 다른 말을 하기 시작하면 같은 땅에 기준이 둘 생긴다).
     await expect(stack.getByText('도로접면')).toBeVisible();
     await expect(stack.getByText('광대로한면')).toBeVisible();
+    // ②-b 건물 스펙 4칸(로드맵 Wave 2 PR-B). 값이 오면 그대로 적고, 0(=대장 미기재)은
+    //      값이 아니라 "미상"이라고 적는다 — 0 을 값으로 적으면 없는 사실이 생긴다.
+    //      ⚠️ 칸끼리 안 섞이게 **그 칸(div)** 으로 좁혀 본다.
+    const facts = stack.locator('.stack__facts div');
+    await expect(facts.filter({ hasText: '연면적' })).toContainText('1,234.5㎡ (373평)');
+    await expect(facts.filter({ hasText: '용적률' })).toContainText('350.5%');
+    await expect(facts.filter({ hasText: '건폐율' })).toContainText('59.9%');
+    await expect(facts.filter({ hasText: '주차' })).toContainText('미상');
     // ③ 업종 요약은 층을 안 펼쳐도 보이고, 층 여럿을 합쳐 센다(2층 한식 + 1층 한식 = 2곳).
     await expect(stack.locator('.stack__biz')).toContainText('한식 2곳');
     await expect(stack.locator('.stack__biz')).toContainText('커피 1곳');
