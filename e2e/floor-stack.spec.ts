@@ -153,6 +153,17 @@ async function pickGu(page: Page, sidoName: string, guName: string) {
   await page.getByRole('button', { name: guName }).click();
 }
 
+/**
+ * 접힌 카드를 펼친다(로드맵 Wave 2 『한 장 요약 접힘 틀』).
+ *
+ * 첫 화면에 펼쳐 두는 카드는 넷뿐이라 『참고 매매 시세』는 접힌 채로 시작한다 —
+ * 그 안의 값·근거를 보려면 한 번 눌러야 한다. 이미 펼쳐져 있으면 아무 일도 안 한다.
+ */
+async function openCard(page: Page, title: RegExp) {
+  const toggle = page.getByRole('button', { name: title });
+  if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
+}
+
 async function search(page: Page, text: string) {
   await page.getByLabel('건물명 또는 주소').fill(text);
   await page.getByRole('button', { name: '검색' }).click();
@@ -178,12 +189,15 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await expect(stack.getByText('서울 강남구 테헤란로 1')).toBeVisible();
     // 속한 상권 한 줄(2026-08-14). 이 줄은 별도 RPC 응답에 달려 있어 다른 조각이 다
     // 정상이어도 혼자 조용히 빠질 수 있다 — 그래서 여기서 눈으로 확인한다.
-    await expect(stack.getByText('속한 상권:')).toBeVisible();
+    await expect(stack.locator('.card--district .card__title')).toHaveText('속한 상권');
     await expect(stack.getByText(/역삼역\(발달상권\)/)).toBeVisible();
     // 출처표시는 공공누리 1유형 의무다 — 상권 이름이 보이는데 출처만 빠지는 것도 결함이다.
     await expect(stack.getByText(/출처: 서울특별시 상권분석서비스/)).toBeVisible();
     // 참고 시세 섹션도 같은 종류의 위험을 진다(별도 RPC 하나에 통째로 달려 있다).
+    // ⚠️ 이 카드는 첫 화면에서 **접혀 있다**(펼침 상한 4장) — 카드 자체는 보이지만
+    //    값·근거는 펼쳐야 나온다.
     await expect(stack.locator('section.band')).toBeVisible();
+    await openCard(page, /참고 매매 시세/);
     await expect(stack.getByText(/C등급 · 파생 추정/)).toBeVisible();
     // 업종 분포(결정 0014)는 **서버에 함수가 아직 없는 상태**로 흉내 냈다(mockFloorStack).
     // 그때 이 섹션은 아무 말도 없이 사라져야 한다 — "업종 없음" 같은 문구를 남기면
@@ -388,6 +402,7 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
 
     const band = page.locator('section.band');
     await expect(band).toBeVisible();
+    await openCard(page, /참고 매매 시세/);
     // 매매인지 임대인지를 화면이 먼저 말한다(절대 규칙 5 — 임대 실거래는 존재하지 않는다).
     await expect(band.getByText(/사고파는 값이고 월세·보증금이 아닙니다/)).toBeVisible();
     // 값 + 근거 단계 + 표본 수가 한 줄에 함께 나온다(절대 규칙 3).
@@ -427,6 +442,7 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
 
     const band = page.locator('section.band');
     await expect(band).toBeVisible();
+    await openCard(page, /참고 매매 시세/);
     await expect(band.locator('.band__row')).toHaveCount(0);
     await expect(band.getByText(/구 전체는 아직 참고 시세를 내지 않습니다/)).toBeVisible();
     // 오차율·구 개수는 서버가 정본이라 화면에 복사하지 않는다(결정 0013 §4).
@@ -514,7 +530,9 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await page.getByRole('button', { name: /테스트빌딩/ }).click();
 
     const mix = page.locator('section.mix');
-    await expect(mix.getByRole('heading', { name: '둘레의 업종 분포' })).toBeVisible();
+    // ⚠️ 카드 머리에는 제목 옆에 역할 태그가 붙는다 — 이름이 딱 맞아떨어지지 않으므로
+    //    정확히 같은지가 아니라 **들어 있는지**로 본다.
+    await expect(mix.getByRole('heading', { name: /둘레의 업종 분포/ })).toBeVisible();
     // 이 건물 점포와 세는 대상이 다르다는 말이 먼저 나온다(층 목록의 업종 요약과 혼동 금지).
     await expect(mix.getByText(/이 건물만이 아니라 이 땅 둘레의 가게들입니다/)).toBeVisible();
 
@@ -543,5 +561,59 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     // ⛔ 이 섹션은 **개수만** 말한다. 값·시세가 새어 들어오면 성격이 통째로 바뀐다.
     await expect(mix).not.toContainText('시세');
     await expect(mix).not.toContainText('적정가');
+  });
+
+  // ── 한 장 요약 접힘 틀 (로드맵 Wave 2) ───────────────────────────────────
+  // 첫 화면에 펼쳐 두는 카드는 **넷**뿐이고, 다섯 번째(참고 매매 시세 = 이 화면에서
+  // 추정값이 나오는 유일한 자리)는 접힌 채로 시작한다. 다만 접힘은 **숨김이 아니다** —
+  // 접힌 카드도 제목과 핵심 한 줄은 그대로 보여야 한다. 이 배치는 CSS·상태가 얽혀 있어
+  // 단위 시험만으로는 "화면에서 정말 그런가"를 못 본다.
+
+  test('L. 카드 넷만 펼쳐져 있고, 접힌 카드는 눌러야 내용이 나온다', async ({ page }) => {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(
+      page,
+      [parcelTx()],
+      priceBands(),
+      [floorRow({ floor_no: 2 }), floorRow()],
+      industryMix(),
+    );
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+
+    const stack = page.locator('section.stack');
+    await expect(stack.locator('.card')).toHaveCount(5);
+    await expect(stack.locator('.card__toggle[aria-expanded="true"]')).toHaveCount(4);
+
+    const band = stack.locator('section.band');
+    // 접힌 채로도 제목과 핵심 한 줄은 읽힌다 — 본문(값)만 없다.
+    await expect(band.locator('.card__title')).toHaveText('참고 매매 시세 (추정값)');
+    await expect(band.locator('.card__summary')).toHaveText('값을 낸 층 1개');
+    await expect(band.locator('.band__val')).toHaveCount(0);
+
+    // 누르면 그 자리에서 값·근거가 함께 나온다(절대 규칙 3 — 값과 근거는 한 몸이다).
+    await openCard(page, /참고 매매 시세/);
+    await expect(band.locator('.band__val').first()).toBeVisible();
+    await expect(band.getByText(/C등급 · 파생 추정/)).toBeVisible();
+
+    // 펼쳐진 카드도 접을 수 있다 — 접으면 본문만 사라지고 요약은 남는다.
+    const floorsCard = stack.locator('.card--floors');
+    await expect(floorsCard.locator('.floor')).toHaveCount(2);
+    await floorsCard.locator('.card__toggle').click();
+    await expect(floorsCard.locator('.floor')).toHaveCount(0);
+    await expect(floorsCard.locator('.card__summary')).toHaveText('층 2개 · 점포 4곳');
+
+    // ⛔ 층 목록을 접어 둔 채로 시세 줄을 눌러도 그 층이 보여야 한다. 안 그러면 눌렀는데
+    //    화면이 그대로라, 사람은 고장 났다고 읽는다. (진짜 브라우저에서만 도는 길이다 —
+    //    스크롤을 다음 그림으로 미루는 requestAnimationFrame 이 여기서 실제로 돈다.)
+    await expect(band.locator('.band__row--on')).toHaveCount(0);
+    await band.locator('.band__hit').first().click();
+    await expect(floorsCard.locator('.card__toggle')).toHaveAttribute('aria-expanded', 'true');
+    await expect(stack.locator('.detail')).toBeVisible();
+    await expect(band.locator('.band__row--on')).toHaveCount(1);
   });
 });

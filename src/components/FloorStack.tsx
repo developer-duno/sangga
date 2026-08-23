@@ -31,8 +31,10 @@ import {
   oneInEvery,
 } from '../lib/format';
 import { KNOWN_BAND_STATUS } from '../lib/priceBand';
+import { SECTION_PLAN } from '../lib/sectionCards';
 import { PriceBandSection } from './PriceBandSection';
 import { IndustryMixSection } from './IndustryMixSection';
+import { SectionCard } from './SectionCard';
 
 /**
  * 구 단가에서 수치를 보여줄 최소 표본 수(결정 0012).
@@ -188,6 +190,24 @@ export function FloorStack({ building }: Props) {
   const [bands, setBands] = useState<PriceBand[] | null>(null);
   /** 못 읽었나. 못 읽었으면 그 섹션을 아예 안 그린다(모르는 것을 없다고 말하지 않는다). */
   const [bandsFailed, setBandsFailed] = useState(false);
+  /**
+   * 층 목록 카드를 **펼치라고 부르는 신호**. 참고 시세 줄을 누를 때마다 1씩 올린다.
+   *
+   * ⛔ 이게 없으면 사용자가 층 목록을 접어 둔 상태에서 시세 줄을 눌렀을 때 **아무 일도
+   *    안 일어난다** — 층은 펼쳐졌는데 그 층이 접힌 카드 안에 있기 때문이다. 눌렀는데
+   *    화면이 안 변하면 사람은 고장 났다고 읽는다.
+   */
+  const [floorsOpenSignal, setFloorsOpenSignal] = useState(0);
+  /**
+   * 층 목록 카드가 지금 펼쳐져 있나(카드가 알려 준다).
+   *
+   * 참고 시세 줄이 `aria-expanded` 로 "그 층이 펼쳐져 있다"고 말하는데, 정작 층 목록이
+   * 접혀 있으면 그 말이 거짓이 된다 — 그래서 접혀 있는 동안에는 시세 쪽에 "펼쳐진 층
+   * 없음"으로 넘긴다. 카드의 상태를 위로 끌어올린 것이 아니라 **알림만** 받는다.
+   */
+  // ⚠️ `<boolean>` 을 명시한다. `SECTION_PLAN` 이 `as const` 라 `defaultOpen` 의 타입이
+  //    `true`(값 하나짜리 타입)라서, 안 적으면 "true 만 담는 상태"가 되어 접힐 수가 없다.
+  const [floorsCardOpen, setFloorsCardOpen] = useState<boolean>(SECTION_PLAN.floors.defaultOpen);
 
   useEffect(() => {
     let cancelled = false;
@@ -366,7 +386,6 @@ export function FloorStack({ building }: Props) {
       <header className="stack__head">
         <h2 className="stack__title">{head.bld_nm || '(이름 없는 건물)'}</h2>
         <p className="stack__addr">{head.road_addr || '주소 없음'}</p>
-        <DistrictLine info={districts} />
         <dl className="stack__facts">
           <div>
             <dt>사용승인</dt>
@@ -421,66 +440,88 @@ export function FloorStack({ building }: Props) {
         </dl>
       </header>
 
-      {head.bld_cnt_in_pnu > 1 && (
-        <p className="warn">
-          <strong>이 땅에 건물이 {head.bld_cnt_in_pnu}동 있습니다.</strong> 점포는 호수가 아니라
-          “땅 + 층”으로만 붙일 수 있어서(상권정보에 호 정보가 없음), 아래 점포 목록에 옆 동
-          점포가 섞여 보일 수 있습니다.
-        </p>
-      )}
-
       {/*
-        업종 요약. 헤더에 붙는 말이지만 자리는 **위 경고 아래**여야 한다 — 이 숫자는
-        점포를 "땅 + 층"으로 붙여 센 것이라 옆 동 점포가 그대로 섞여 있다. 요약을 경고보다
-        위에 두면 사람이 먼저 숫자를 읽고 그다음에야 "섞여 있다"는 말을 만나게 되는데,
-        그 순서로는 이미 읽은 숫자가 안 고쳐진다. 자리를 바꾸지 말 것.
+        여기부터 아래가 **카드 다섯 장**이다(로드맵 Wave 2 『한 장 요약 접힘 틀』).
+        제목·역할 태그·기본 펼침은 전부 `SECTION_PLAN` 한 표에서 온다 — 카드마다 따로
+        정하면 "첫 화면에 몇 장이 펼쳐져 있나"를 아무 데서도 셀 수 없어 상한(4장)이
+        조용히 깨진다.
       */}
-      <BizSummary floors={floors} />
+      <DistrictCard info={districts} />
 
-      <ol className="floors">
-        {floors.map((f) => {
-          // 면적이 아예 없는 층(그 층이 전부 연면적 제외분 — 전체의 약 3%)에는 막대를
-          // 그리지 않는다. 최소 폭 2%를 강제하면 "면적 미상"이 "아주 좁은 층"처럼 보인다.
-          const hasArea = f.floor_area_m2 != null;
-          const ratio = hasArea ? f.floor_area_m2! / maxArea : 0;
-          const isOpen = openFloor === f.floor_no;
-          const txCount = txCountByFloor.get(f.floor_no) ?? 0;
-          return (
-            // 옥탑도 지하와 같은 "근거 없는 층"이라 색으로 갈라 둔다(결정 0001 가드 4).
-            // id 는 참고 시세 줄에서 이 층으로 스크롤할 때 쓴다.
-            <li
-              key={f.floor_no}
-              id={`floor-${f.floor_no}`}
-              className={`floor${
-                f.floor_no < 0 ? ' floor--under' : f.floor_no === 99 ? ' floor--roof' : ''
-              }`}
-            >
-              <button className="floor__row" onClick={() => setOpenFloor(isOpen ? null : f.floor_no)}>
-                <span className="floor__label">{formatFloor(f.floor_no, f.floor_label)}</span>
-                <span className="floor__bar">
-                  {hasArea && (
-                    <span className="floor__fill" style={{ width: `${Math.max(ratio * 100, 2)}%` }} />
-                  )}
-                </span>
-                <span className="floor__use">{f.main_use || '용도 미상'}</span>
-                <span className="floor__area">{formatArea(f.floor_area_m2)}</span>
-                <span className="floor__stores">
-                  {f.store_cnt != null ? `점포 ${f.store_cnt}` : '—'}
-                </span>
-                {/*
-                  거래가 있는 층에만 뱃지를 단다. 0건일 때 "거래 0건"이라고 적으면
-                  "이 층은 안 팔린다"는 단정이 되는데, 실제로는 지번이 가려진 거래·층이
-                  빠진 거래가 그 밑에 깔려 있다(칸은 비워 두되 자리는 남긴다).
-                */}
-                <span className="floor__tx">{txCount > 0 ? `거래 ${txCount}건` : ''}</span>
-                <span className="floor__caret">{isOpen ? '▲' : '▼'}</span>
-              </button>
+      <SectionCard
+        plan={SECTION_PLAN.floors}
+        className="card--floors"
+        summary={`층 ${floors.length}개 · 점포 ${totalStores.toLocaleString('ko-KR')}곳`}
+        openSignal={floorsOpenSignal}
+        onToggle={setFloorsCardOpen}
+      >
+        {head.bld_cnt_in_pnu > 1 && (
+          <p className="warn">
+            <strong>이 땅에 건물이 {head.bld_cnt_in_pnu}동 있습니다.</strong> 점포는 호수가
+            아니라 “땅 + 층”으로만 붙일 수 있어서(상권정보에 호 정보가 없음), 아래 점포 목록에
+            옆 동 점포가 섞여 보일 수 있습니다.
+          </p>
+        )}
 
-              {isOpen && <FloorDetail floor={f} />}
-            </li>
-          );
-        })}
-      </ol>
+        {/*
+          업종 요약. 헤더에 붙는 말이지만 자리는 **위 경고 아래**여야 한다 — 이 숫자는
+          점포를 "땅 + 층"으로 붙여 센 것이라 옆 동 점포가 그대로 섞여 있다. 요약을 경고보다
+          위에 두면 사람이 먼저 숫자를 읽고 그다음에야 "섞여 있다"는 말을 만나게 되는데,
+          그 순서로는 이미 읽은 숫자가 안 고쳐진다. 자리를 바꾸지 말 것.
+        */}
+        <BizSummary floors={floors} />
+
+        <ol className="floors">
+          {floors.map((f) => {
+            // 면적이 아예 없는 층(그 층이 전부 연면적 제외분 — 전체의 약 3%)에는 막대를
+            // 그리지 않는다. 최소 폭 2%를 강제하면 "면적 미상"이 "아주 좁은 층"처럼 보인다.
+            const hasArea = f.floor_area_m2 != null;
+            const ratio = hasArea ? f.floor_area_m2! / maxArea : 0;
+            const isOpen = openFloor === f.floor_no;
+            const txCount = txCountByFloor.get(f.floor_no) ?? 0;
+            return (
+              // 옥탑도 지하와 같은 "근거 없는 층"이라 색으로 갈라 둔다(결정 0001 가드 4).
+              // id 는 참고 시세 줄에서 이 층으로 스크롤할 때 쓴다.
+              <li
+                key={f.floor_no}
+                id={`floor-${f.floor_no}`}
+                className={`floor${
+                  f.floor_no < 0 ? ' floor--under' : f.floor_no === 99 ? ' floor--roof' : ''
+                }`}
+              >
+                <button
+                  className="floor__row"
+                  onClick={() => setOpenFloor(isOpen ? null : f.floor_no)}
+                >
+                  <span className="floor__label">{formatFloor(f.floor_no, f.floor_label)}</span>
+                  <span className="floor__bar">
+                    {hasArea && (
+                      <span
+                        className="floor__fill"
+                        style={{ width: `${Math.max(ratio * 100, 2)}%` }}
+                      />
+                    )}
+                  </span>
+                  <span className="floor__use">{f.main_use || '용도 미상'}</span>
+                  <span className="floor__area">{formatArea(f.floor_area_m2)}</span>
+                  <span className="floor__stores">
+                    {f.store_cnt != null ? `점포 ${f.store_cnt}` : '—'}
+                  </span>
+                  {/*
+                    거래가 있는 층에만 뱃지를 단다. 0건일 때 "거래 0건"이라고 적으면
+                    "이 층은 안 팔린다"는 단정이 되는데, 실제로는 지번이 가려진 거래·층이
+                    빠진 거래가 그 밑에 깔려 있다(칸은 비워 두되 자리는 남긴다).
+                  */}
+                  <span className="floor__tx">{txCount > 0 ? `거래 ${txCount}건` : ''}</span>
+                  <span className="floor__caret">{isOpen ? '▲' : '▼'}</span>
+                </button>
+
+                {isOpen && <FloorDetail floor={f} />}
+              </li>
+            );
+          })}
+        </ol>
+      </SectionCard>
 
       {/*
         둘레의 업종 분포(결정 0014). 자기가 알아서 묻고, 못 읽으면 스스로 사라진다
@@ -502,13 +543,25 @@ export function FloorStack({ building }: Props) {
         failed={bandsFailed}
         floors={floors}
         hasTxStats={txStats !== null && txStats.length > 0}
-        openFloor={openFloor}
+        // 층 목록이 접혀 있으면 "펼쳐진 층"이 없는 것이다 — 접힌 카드 속의 층을 두고
+        // 시세 줄이 "펼쳐져 있음"이라 말하면 그 말이 그대로 거짓이 된다.
+        openFloor={floorsCardOpen ? openFloor : null}
         onPickFloor={(no) => {
           setOpenFloor(no);
+          // 층 목록을 접어 뒀더라도 다시 펼친다 — 안 그러면 눌러도 화면이 안 변한다.
+          setFloorsOpenSignal((n) => n + 1);
+          // ⚠️ 스크롤은 **다음 그림이 그려진 뒤**로 미룬다. 카드가 접혀 있었다면 이 순간
+          //    그 층은 아직 화면에 없어서, 지금 찾으면 못 찾는다.
           // ⚠️ getElementById 로 찾는다 — 지하 층의 id 는 "floor--1" 이라
           //    querySelector('#floor--1') 는 잘못된 선택자로 예외가 난다.
           //    jsdom 에는 scrollIntoView 가 없어 `?.` 를 반드시 붙인다.
-          document.getElementById(`floor-${no}`)?.scrollIntoView?.({ block: 'nearest' });
+          const paint =
+            typeof requestAnimationFrame === 'function'
+              ? requestAnimationFrame
+              : (cb: () => void) => setTimeout(cb, 0);
+          paint(() => {
+            document.getElementById(`floor-${no}`)?.scrollIntoView?.({ block: 'nearest' });
+          });
         }}
       />
 
@@ -538,7 +591,7 @@ export function FloorStack({ building }: Props) {
 }
 
 /**
- * "속한 상권" 한 줄.
+ * "속한 상권" 카드.
  *
  * 말해야 하는 상태가 셋이고, 셋을 절대 같은 문장으로 뭉뚱그리지 않는다:
  *  ① 상권 여럿에 걸침 → **전부** 나열한다(하나만 고르면 그 고르는 규칙이 숨은 판단이 된다)
@@ -546,33 +599,40 @@ export function FloorStack({ building }: Props) {
  *     (비율 수치는 여기 적지 않는다 — 자료가 바뀌면 그 숫자만 낡는다)
  *  ③ 그 지역에 상권 경계 자료 자체가 없음 → "준비 중". "상권 밖"이 아니라 "모른다"는 뜻이다
  *
- * 출처 표기는 공공누리 1유형(출처표시) 의무라 ①·②에 붙인다. ③은 어떤 자료로 판정한
- * 것이 아니므로 붙이지 않는다.
- *
+ * ⚠️ 답(상권 이름·없음·준비 중)과 **출처는 요약 줄에 둔다** — 접었을 때 사라지면 안 되기
+ *    때문이다. 출처 표기는 공공누리 1유형(출처표시) 의무이고, 접힘은 숨김이 아니다.
+ *    펼쳤을 때 나오는 본문은 그 답을 **어떻게 읽어야 하는지**(겹침·경계 밖·자료 없음)만 말한다.
  * ⚠️ 출처 문구를 여기 글자로 박지 않는다. 소스가 둘이 되는 날(서울시 + 소상공인시장
- * 진흥공단) 코드를 한 줄도 안 고쳤는데 화면이 틀린 말을 하기 때문이다 — 서버가 자료에서
- * 읽어 준 `sources` 를 그대로 보여준다.
+ *    진흥공단) 코드를 한 줄도 안 고쳤는데 화면이 틀린 말을 하기 때문이다 — 서버가 자료에서
+ *    읽어 준 `sources` 를 그대로 보여준다.
  */
-function DistrictLine({ info }: { info: BuildingDistricts | null }) {
-  // 아직 안 왔거나 못 읽었으면 아무것도 안 그린다(위 useEffect에서 콘솔 경고만 남긴다).
+function DistrictCard({ info }: { info: BuildingDistricts | null }) {
+  // 아직 안 왔거나 못 읽었으면 카드 자체를 안 그린다(위 useEffect에서 콘솔 경고만 남긴다).
   if (!info) return null;
 
-  if (!info.covered) {
-    return (
-      <p className="stack__district">
-        <span className="stack__district-key">속한 상권:</span>
-        이 지역은 상권 경계 자료가 아직 준비되지 않았습니다.
+  return (
+    <SectionCard
+      plan={SECTION_PLAN.district}
+      className="card--district"
+      summary={<DistrictAnswer info={info} />}
+    >
+      <p className="card__note">
+        <DistrictNote info={info} />
       </p>
-    );
-  }
+    </SectionCard>
+  );
+}
+
+/** 답 한 줄 — 접혀 있어도 항상 보이는 부분. */
+function DistrictAnswer({ info }: { info: BuildingDistricts }) {
+  if (!info.covered) return <>이 지역은 상권 경계 자료가 아직 준비되지 않았습니다.</>;
 
   if (info.districts.length === 0) {
     return (
-      <p className="stack__district">
-        <span className="stack__district-key">속한 상권:</span>
+      <>
         없음 — 어느 상권 경계에도 들지 않는 위치입니다.
         <DistrictSource sources={info.sources} />
-      </p>
+      </>
     );
   }
 
@@ -584,11 +644,43 @@ function DistrictLine({ info }: { info: BuildingDistricts | null }) {
     .join(' · ');
 
   return (
-    <p className="stack__district">
-      <span className="stack__district-key">속한 상권:</span>
+    <>
       {names}
       <DistrictSource sources={info.sources} />
-    </p>
+    </>
+  );
+}
+
+/**
+ * 그 답을 어떻게 읽어야 하나 — 상태 셋이 각각 다른 말을 한다.
+ *
+ * ⛔ "준비 중"(③)을 "상권 밖"(②)처럼 말하지 말 것. ②는 자료를 읽고 내린 판정이고
+ *    ③은 읽을 자료가 없다는 뜻이라, 같은 말로 적으면 모르는 것을 아는 것처럼 말하게 된다.
+ */
+function DistrictNote({ info }: { info: BuildingDistricts }) {
+  if (!info.covered) {
+    return (
+      <>
+        이 지역의 상권 경계 자료가 들어오면 이 자리에 상권 이름이 나옵니다.{' '}
+        <strong>상권 밖이라는 뜻이 아닙니다</strong> — 아직 모른다는 뜻입니다.
+      </>
+    );
+  }
+
+  if (info.districts.length === 0) {
+    return (
+      <>
+        경계 밖도 <strong>정상입니다.</strong> 장사가 안 되는 자리라는 뜻이 아니라, 이 지역의
+        상권 경계로 묶이지 않은 위치라는 뜻입니다.
+      </>
+    );
+  }
+
+  return (
+    <>
+      경계가 겹치는 자리는 걸친 곳을 하나만 고르지 않고 <strong>전부</strong> 적습니다. 하나만
+      고르면 그 고르는 규칙이 숨은 판단이 되기 때문입니다.
+    </>
   );
 }
 
@@ -649,12 +741,23 @@ function TransactionSection({
   const hasStats = stats !== null && stats.length > 0;
   if (!hasHistory && !hasStats) return null;
 
+  // 접혀 있어도 보이는 한 줄 — **몇 건인지**와 **무엇이 들어 있는지**만 말한다.
+  // ⚠️ 아래 블록 제목("이 땅에서 신고된 거래 N건" · "○○구 층대별 거래 단가")과 **같은
+  //    글자를 쓰지 않는다.** 같은 말이 화면에 둘이 되면 사람은 두 번 세고, 이름으로 찾는
+  //    시험은 어느 쪽을 잡았는지 모르게 된다.
+  const guName = stats?.find((s) => s.sigungu_nm)?.sigungu_nm ?? null;
+  const summary = [
+    hasHistory ? `이 땅 거래 ${txs!.length.toLocaleString('ko-KR')}건` : null,
+    hasStats ? `${guName ? `${guName} ` : ''}층대별 단가` : null,
+  ]
+    .filter((s): s is string => s !== null)
+    .join(' · ');
+
   return (
-    <section className="tx">
-      <h3 className="tx__h">실거래 기록</h3>
+    <SectionCard plan={SECTION_PLAN.tx} className="tx" summary={summary}>
       {hasHistory && <ParcelTxList txs={txs!} />}
       {hasStats && <SigunguTxBands stats={stats!} />}
-    </section>
+    </SectionCard>
   );
 }
 
@@ -760,7 +863,7 @@ function FloorDetail({ floor }: { floor: FloorRow }) {
   return (
     <div className="detail">
       <div className="detail__col">
-        <h3 className="detail__h">용도별 구획 {uses.length > 0 && `(${uses.length})`}</h3>
+        <h4 className="detail__h">용도별 구획 {uses.length > 0 && `(${uses.length})`}</h4>
         {uses.length === 0 ? (
           <p className="detail__none">구획 정보 없음</p>
         ) : (
@@ -781,7 +884,7 @@ function FloorDetail({ floor }: { floor: FloorRow }) {
       </div>
 
       <div className="detail__col">
-        <h3 className="detail__h">점포 {stores.length > 0 && `(${stores.length})`}</h3>
+        <h4 className="detail__h">점포 {stores.length > 0 && `(${stores.length})`}</h4>
         {stores.length === 0 ? (
           <p className="detail__none">이 층에 등록된 점포가 없습니다</p>
         ) : (
