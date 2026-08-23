@@ -24,7 +24,7 @@
 | 항목 | 선행조건 | 내용 |
 |---|---|---|
 | PostgREST public→api 전환 | 없음 (조사는 2026-08-08 완료 — 재조사 금지) | ✅ **전제 2개 실행 확인 완료(2026-08-22, 도커 실측)** — 노출 목록에서 public 제거 가능(PGRST106/406 차단) · pass-through 뷰 업서트 가능(PK 자동 감지가 뷰 관통, 수집기 코드 변경 0). 마이그레이션 `2026-08-22e_api_schema.sql` + 화면 `db:{schema:'api'}`. ✅ **라이브 전환까지 완료(2026-08-22 실측)** — 대시보드 노출 = `api, public, graphql_public`. 남은 꼬리는 **배포 후 노출에서 public 제거**뿐 |
-| 배포 설정 + 첫 배포 | 위 항목 | Vercel(레포 표준) 설정 · 배포 도메인 생기면 카카오 콘솔 등록(👤) |
+| 배포 설정 + 첫 배포 | 위 항목 | ✅ **완료 (2026-08-24)** — 라이브 **https://sangga-one.vercel.app** (`sangga.vercel.app` 은 선점돼 -one 배정). Vercel 프로젝트 `sangga` = GitHub `developer-duno/sangga` 연결이라 **main push 가 곧 배포**. env 는 문서의 "2개"가 아니라 **3개**(`VITE_SUPABASE_URL`·`VITE_SUPABASE_ANON_KEY`·**`VITE_KAKAO_JS_KEY`** — 빠지면 지도만 빈 화면) × 운영·미리보기. 라이브 실측: 검색→층 스택→카드 5장(펼침 4)·콘솔 0. ⚠️ CLI(v50.41.0)의 미리보기 env 등록은 버그라 REST API 로 넣었다. 남은 꼬리 둘: ①카카오 콘솔에 `sangga-one.vercel.app` 등록(👤 — 그때까지 지도 카드만 "불러오지 못했습니다") ②노출에서 public 제거 결재 |
 
 ## Wave 1 — 진행 중 (2026-08-22 당일)
 
