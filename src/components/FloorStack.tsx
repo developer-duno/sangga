@@ -58,6 +58,69 @@ const ROAD_CONTACT_HIDDEN = new Set(['맹지', '지정되지않음']);
 const BIZ_TOP_N = 3;
 
 /**
+ * 건물 스펙 4칸(연면적·용적률·건폐율·주차)에서 **값 대신 적는 말**.
+ *
+ * ⛔ 여기서 "0" 을 그대로 적으면 안 된다. 건축물대장은 안 적은 칸을 '0' 으로 준다 —
+ *    롯데월드타워가 주차 0·건폐율 0 으로 들어와 있어 "정말 0" 과 "안 적힘" 을 값으로는
+ *    갈라낼 수 없다. 갈라낼 수 없으면 둘 중 하나로 단정하지 않는 것이 맞다
+ *    (로드맵 Wave 2 PR-B).
+ * ⓘ "NULL 은 0행" 은 **현재 적재분(서울·대전 30개 구)의 관찰값**이지 구조적 보장이
+ *    아니다 — 적재기는 결측을 NULL 로 쓴다(load_building_ledger.py 의 `_to_float`·
+ *    `sum_parking`). [C] 전국 적재 뒤에는 다시 세어 볼 것. `describeSpec` 은 0 과 null 을
+ *    **같은 말**로 돌려주므로, 어느 쪽이 오더라도 이 화면은 그대로 맞다.
+ */
+const UNKNOWN_SPEC = '미상';
+
+/**
+ * 건폐율을 값으로 적는 상한(%).
+ *
+ * 정의상 0~100 인데 원본에 소스 오류가 섞여 있다 — 2026-08-11 실측으로 24만 행 중
+ * 7행이 1만%를 넘고 최댓값이 79,095% 다(`building.bcr` 컬럼 주석). 넘는 값은 값이
+ * 아니라 오류이므로 "미상"으로 적는다. 숫자 모양으로 적히는 순간 사람은 그걸 근거로 쓴다.
+ */
+const MAX_BCR_PCT = 100;
+
+/**
+ * 연면적을 값으로 적는 상한(㎡).
+ *
+ * 우리 자료의 최댓값이 861만㎡ 인데(로드맵 Wave 2 PR-B 실측), 한 동의 연면적이라기보다
+ * 단지 전체를 한 행에 몰아 적은 오기입에 가깝다. 100만㎡ 는 "이보다 큰 건물은 없다"는
+ * 뜻이 아니라 **넘으면 오기입일 확률이 훨씬 높다**는 판단이다.
+ *
+ * ⚠️ 이 상한은 오류를 거르는 용도지 큰 건물을 감추는 용도가 아니다. 걸리는 건물이
+ *    눈에 띄게 늘면 상한을 올릴 게 아니라 **원본 적재**를 먼저 의심할 것.
+ */
+const MAX_TOTAL_AREA_M2 = 1_000_000;
+
+/** 용적률·건폐율 표기. 대장은 소수 둘째 자리까지 주지만 화면에서는 뜻이 없어 첫째 자리로. */
+function formatPercent(n: number): string {
+  return `${n.toLocaleString('ko-KR', { maximumFractionDigits: 1 })}%`;
+}
+
+/** 주차 표기. */
+function formatParking(n: number): string {
+  return `${n.toLocaleString('ko-KR')}대`;
+}
+
+/**
+ * 건물 스펙 한 칸을 사람이 읽는 말로. 값이 아니면 무조건 "미상"이다.
+ *
+ * "값이 아닌 것" 셋을 **같은 말로** 돌려준다 — 없음(null)·미기재(0 이하)·오류(상한 초과).
+ * 셋을 갈라 적으면 화면이 우리도 모르는 것을 아는 척하게 된다(예: 상한을 넘은 79,095%를
+ * "이상값"이라 적으면, 그 건물의 건폐율이 아주 크다는 뜻으로 읽힌다).
+ */
+function describeSpec(
+  value: number | null | undefined,
+  format: (n: number) => string,
+  max?: number,
+): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return UNKNOWN_SPEC;
+  if (value <= 0) return UNKNOWN_SPEC;
+  if (max !== undefined && value > max) return UNKNOWN_SPEC;
+  return format(value);
+}
+
+/**
  * 도로접면 한 조각. **원문 그대로** 내보낸다.
  *
  * ⛔ '큰길'·'골목' 같은 말로 옮겨 적지 않는다. 시세 사다리가 쓰는 등급(road_grade)과
@@ -332,6 +395,29 @@ export function FloorStack({ building }: Props) {
               <dd>{roadContact}</dd>
             </div>
           )}
+          {/*
+            건물 스펙 4칸(로드맵 Wave 2 PR-B). 도로접면과 달리 **값이 없어도 칸을 지우지
+            않는다** — 이 넷은 건물을 볼 때 으레 찾는 항목이라, 칸이 없으면 사람은
+            "안 나온다"가 아니라 "이 화면은 그걸 안 보여준다"로 읽고 다른 데를 찾아간다.
+            "미상"이라고 적어 두면 그게 우리가 아는 전부라는 사실 자체가 정보가 된다.
+            ⛔ 0 을 값으로 적지 않는 이유는 UNKNOWN_SPEC 주석 참조(0 = 대장 미기재).
+          */}
+          <div>
+            <dt>연면적</dt>
+            <dd>{describeSpec(head.total_area_m2, formatArea, MAX_TOTAL_AREA_M2)}</dd>
+          </div>
+          <div>
+            <dt>용적률</dt>
+            <dd>{describeSpec(head.far, formatPercent)}</dd>
+          </div>
+          <div>
+            <dt>건폐율</dt>
+            <dd>{describeSpec(head.bcr, formatPercent, MAX_BCR_PCT)}</dd>
+          </div>
+          <div>
+            <dt>주차</dt>
+            <dd>{describeSpec(head.parking_cnt, formatParking)}</dd>
+          </div>
         </dl>
       </header>
 
@@ -429,7 +515,9 @@ export function FloorStack({ building }: Props) {
       <p className="grade">
         <span className="grade__badge">D등급 · 간접 추론</span>
         점포 목록은 호수가 아니라 <strong>“땅 + 층”</strong>으로 맞춘 값입니다. 어느 호실인지까지는
-        알 수 없습니다. 면적·용도는 건축물대장 <strong>실측(A등급)</strong>입니다.
+        알 수 없습니다. 면적·용도와 위 건물 스펙(연면적·용적률·건폐율·주차)은 건축물대장{' '}
+        <strong>실측(A등급)</strong>입니다. 대장에 안 적힌 칸은 “미상”으로 둡니다 — 원본이
+        미기재를 <strong>0</strong>으로 주기 때문에 0을 값으로 적으면 없는 사실이 생깁니다.
       </p>
       <p className="grade grade--sub">
         <strong>점포 수는 실제와 다를 수 있습니다.</strong> ① <strong>빠짐</strong> — 상권정보에 층이

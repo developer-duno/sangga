@@ -51,6 +51,12 @@ export function floorRow(over: Partial<FloorRow> = {}): FloorRow {
     bld_cnt_in_pnu: 1,
     store_cnt: 2,
     stores: [],
+    // 건물 스펙 4칸(2026-08-24a). 기본값은 **넷 다 값이 있는** 정상 건물이다 —
+    // 0(=대장 미기재)·상한 초과는 그것을 보려는 시험에서만 덮어쓴다.
+    total_area_m2: 1234.5,
+    far: 350.5,
+    bcr: 59.9,
+    parking_cnt: 12,
     ...over,
   };
 }

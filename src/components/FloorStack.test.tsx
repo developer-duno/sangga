@@ -121,6 +121,12 @@ function floor(over: Partial<FloorRow> = {}): FloorRow {
     bld_cnt_in_pnu: 1,
     store_cnt: 2,
     stores: [],
+    // 건물 스펙 4칸(2026-08-24a). 기본값은 넷 다 값이 있는 정상 건물 —
+    // 0(=대장 미기재)·상한 초과는 그것을 보려는 시험에서만 덮어쓴다.
+    total_area_m2: 1234.5,
+    far: 350.5,
+    bcr: 59.9,
+    parking_cnt: 12,
     ...over,
   };
 }
@@ -368,6 +374,116 @@ describe('FloorStack — 도로접면 (로드맵 Wave 2 PR-A)', () => {
     render(<FloorStack building={building()} />);
     await waitFor(() => expect(screen.getByText('도로접면')).toBeTruthy());
     expect(screen.getByText('세로한면(가)')).toBeTruthy();
+  });
+});
+
+describe('FloorStack — 건물 스펙 4칸 (로드맵 Wave 2 PR-B)', () => {
+  /** 스펙 칸 하나의 값 글자. `dt` 를 찾아 바로 옆 `dd` 를 읽는다(칸끼리 안 섞이게). */
+  function specValue(label: string): string | null {
+    const dt = screen.queryByText(label);
+    if (!dt) return null;
+    return dt.parentElement?.querySelector('dd')?.textContent ?? null;
+  }
+
+  it('값이 있으면 연면적·용적률·건폐율·주차를 그대로 적는다', async () => {
+    responses.floors = {
+      data: [floor({ total_area_m2: 1234.5, far: 350.5, bcr: 59.9, parking_cnt: 12 })],
+      error: null,
+    };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText('연면적')).toBeTruthy());
+    // 연면적은 다른 면적 표기와 같은 규칙(㎡ + 평 병기)을 쓴다 — 같은 화면에서 면적을
+    // 두 가지 방식으로 적으면 사람이 둘을 견주지 못한다.
+    expect(specValue('연면적')).toBe('1,234.5㎡ (373평)');
+    expect(specValue('용적률')).toBe('350.5%');
+    expect(specValue('건폐율')).toBe('59.9%');
+    expect(specValue('주차')).toBe('12대');
+  });
+
+  it('⛔ 0 은 값이 아니라 "미상"이다 (대장이 미기재를 0 으로 준다)', async () => {
+    // 롯데월드타워가 실제로 주차 0·건폐율 0 으로 들어와 있다. 네 칸 모두 NULL 이 0행이라
+    // "정말 0" 과 "안 적힘"을 갈라낼 방법이 없다 — 그래서 0 을 값으로 적지 않는다.
+    responses.floors = {
+      data: [floor({ total_area_m2: 0, far: 0, bcr: 0, parking_cnt: 0 })],
+      error: null,
+    };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText('주차')).toBeTruthy());
+    for (const label of ['연면적', '용적률', '건폐율', '주차']) {
+      expect(specValue(label)).toBe('미상');
+    }
+    // "0대"·"0%"·"0㎡" 가 한 글자도 남으면 안 된다 — 그게 이 시험의 본론이다.
+    // ⚠️ 화면 전체가 아니라 **스펙 칸 안**에서 본다. 층 목록의 면적("300㎡ (91평)")에도
+    //    '0㎡' 라는 글자가 들어 있어서, 넓게 걸면 늘 빨간 헛경보가 난다.
+    const facts = document.querySelector('.stack__facts')?.textContent ?? '';
+    for (const bad of ['0대', '0%', '0㎡']) {
+      expect(facts).not.toContain(bad);
+    }
+  });
+
+  it('값이 아예 없어도(null) 칸은 남기고 "미상"이라 적는다', async () => {
+    responses.floors = {
+      data: [floor({ total_area_m2: null, far: null, bcr: null, parking_cnt: null })],
+      error: null,
+    };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText('주차')).toBeTruthy());
+    for (const label of ['연면적', '용적률', '건폐율', '주차']) {
+      expect(specValue(label)).toBe('미상');
+    }
+  });
+
+  it('건폐율이 100%를 넘으면 소스 오류라 보고 적지 않는다', async () => {
+    // 2026-08-11 실측: 24만 행 중 7행이 1만%를 넘고 최댓값이 79,095% 다.
+    // 한 행이 통계를 흔드는 것과 같은 이유로, 화면에서도 그건 값이 아니다.
+    for (const v of [100.01, 79095]) {
+      responses.floors = { data: [floor({ bcr: v })], error: null };
+      render(<FloorStack building={building()} />);
+      await waitFor(() => expect(screen.getByText('건폐율')).toBeTruthy());
+      expect(specValue('건폐율')).toBe('미상');
+      cleanup();
+    }
+  });
+
+  it('건폐율 100%(정의상 최댓값)는 그대로 적는다 — 상한을 한 칸 잘못 잡으면 정상값이 사라진다', async () => {
+    responses.floors = { data: [floor({ bcr: 100 })], error: null };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText('건폐율')).toBeTruthy());
+    expect(specValue('건폐율')).toBe('100%');
+  });
+
+  it('연면적이 상한(100만㎡)을 넘으면 적지 않는다 (861만㎡ 같은 오기입)', async () => {
+    responses.floors = { data: [floor({ total_area_m2: 8_610_000 })], error: null };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText('연면적')).toBeTruthy());
+    expect(specValue('연면적')).toBe('미상');
+  });
+
+  it('상한 바로 아래(100만㎡)는 정상값으로 적는다', async () => {
+    responses.floors = { data: [floor({ total_area_m2: 1_000_000 })], error: null };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText('연면적')).toBeTruthy());
+    expect(specValue('연면적')).toBe('1,000,000㎡ (302,500평)');
+  });
+
+  it('용적률은 100%를 넘어도 정상값이다 (건폐율 상한을 여기 잘못 옮겨 붙이면 안 된다)', async () => {
+    // 용적률은 정의상 100%를 훌쩍 넘는다(층을 쌓을수록 커진다). 두 칸의 상한을
+    // 같이 두면 고층 건물의 용적률이 통째로 사라진다.
+    responses.floors = { data: [floor({ far: 1234.56 })], error: null };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText('용적률')).toBeTruthy());
+    expect(specValue('용적률')).toBe('1,234.6%');
+  });
+
+  it('스펙 칸에는 금칙어(절대 규칙 2)가 한 글자도 없다', async () => {
+    responses.floors = { data: [floor()], error: null };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText('연면적')).toBeTruthy());
+    const facts = document.querySelector('.stack__facts')?.textContent ?? '';
+    expect(facts).not.toBe('');
+    for (const w of ['적정가', '평가액', '감정가', '가치평가', '시세']) {
+      expect(facts).not.toContain(w);
+    }
   });
 });
 
