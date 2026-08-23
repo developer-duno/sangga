@@ -412,23 +412,112 @@ def build_anon_exposure_sql():
        api 만 보면 전환 전 상태를 못 보고 public 만 보면 전환 후 상태를 못 본다.
        둘 다 물어야 **어느 시점에 돌려도** 같은 답을 준다.
     """
+    # ⚠️ classid 를 함께 한정한다. oid 는 카탈로그마다 따로 매겨지므로, 한정하지 않으면
+    #    **번호가 우연히 같은 남의 카탈로그 항목**(예: 어떤 확장의 연산자)이 우리 표를
+    #    "확장이 만든 것"으로 만들어 점검에서 통째로 빼 버릴 수 있다.
     not_from_extension = (
         "not exists (select 1 from pg_depend d "
-        "where d.objid = {oid} and d.deptype = 'e')"
+        "where d.classid = '{cat}'::regclass and d.objid = {oid} and d.deptype = 'e')"
     )
     return (
         "select c.relname from pg_class c "
         "join pg_namespace n on n.oid = c.relnamespace "
         "where n.nspname in ('public','api') and c.relkind in ('r','v','m','p') "
         "and has_table_privilege('anon', c.oid, 'SELECT') "
-        "and " + not_from_extension.format(oid="c.oid") + " "
+        "and " + not_from_extension.format(cat="pg_class", oid="c.oid") + " "
         "union all "
         "select p.proname from pg_proc p "
         "join pg_namespace n2 on n2.oid = p.pronamespace "
         "where n2.nspname in ('public','api') "
         "and has_function_privilege('anon', p.oid, 'EXECUTE') "
-        "and " + not_from_extension.format(oid="p.oid") + ";"
+        "and " + not_from_extension.format(cat="pg_proc", oid="p.oid") + ";"
     )
+
+
+# ── 공개 롤이 **고칠 수 있는** 것 (2026-08-22 독립 리뷰 B-2) ────────────────
+#
+# 위 읽기 점검은 허용 목록으로 판정한다. 그래서 `v_floor_stack` 처럼 목록에 있는 이름에
+# INSERT·UPDATE·DELETE 가 붙어도 조용히 통과했다 — 읽혀도 되는 것과 공개키로 고쳐도
+# 되는 것은 전혀 다른 이야기인데, 그 차이를 아무도 안 물어보고 있었다.
+
+# 밖에서 키만 있으면 되는 롤 **둘 다** 본다. anon 만 재면 로그인 사용자에게만 열린
+# 쓰기를 통째로 놓친다(이 앱에는 아직 로그인이 없지만, 생기는 날 조용히 새는 자리다).
+WRITE_ROLES = ("anon", "authenticated")
+WRITE_PRIVS = ("INSERT", "UPDATE", "DELETE")
+
+# 이미 알고 있고 **우리 권한으로는 못 고치는** 노출. PostGIS 가 extensions 가 아니라
+# public 스키마에 설치돼 REST 에 그대로 딸려 나온다.
+#
+# ⛔ revoke 를 시도하지 말 것 — 소유자가 `supabase_admin` 이라 postgres 롤의 revoke 가
+#    통하지 않는다("WARNING: no privileges could be revoked" 만 나온다). postgres 는
+#    슈퍼유저가 아니고 `set role supabase_admin` 도 거부된다(2026-08-08 컨테이너 실측 —
+#    근거·피해 범위·복구 절차는 supabase/migrations/2026-08-08_public_read_policy.sql §5).
+#    근본 처방은 **REST 노출 스키마에서 public 을 빼는 것**이다(2026-08-22e 로 api 스키마를
+#    만들어 뒀고, 노출 목록에서 public 을 내리는 것이 그 마지막 단계다).
+#
+# 그래서 이 셋은 종료 코드를 1 로 만들지 않는다. 대신 **매번 [주의]로 적는다** — 조용히
+# 넘기면 "public 을 내리는 일"이 끝났는지 아무도 안 묻게 된다.
+WRITE_KNOWN_POSTGIS = ("spatial_ref_sys", "geometry_columns", "geography_columns")
+
+
+def build_write_exposure_sql(roles=WRITE_ROLES, privs=WRITE_PRIVS):
+    """공개 롤이 쓸 수 있는 표·뷰를 나열한다.
+
+    ⚠️ **여기에는 확장 제외 필터(deptype='e')가 없다.** 읽기 점검에는 있는데 여기만
+       없는 것이 실수처럼 보이지만 정반대다 — 걸러지는 그 집합이 **정확히 실제 사고
+       지점**이다(PostGIS 가 public 에 설치돼 딸려 온 spatial_ref_sys 등 셋). 읽기 쪽은
+       확장 함수 수백 개가 걸려 경보 피로가 나지만, 쓰기 쪽은 라이브 실측 결과 **상수 셋**
+       뿐이라 그 논리가 성립하지 않는다. 대신 위 WRITE_KNOWN_POSTGIS 로 이름을 갈라
+       "알고 있는 것"과 "새로 생긴 것"을 구분한다.
+
+    스코프의 나머지는 읽기 점검과 같다(public·api 두 스키마, 표·뷰·물질화뷰). 함수는
+    EXECUTE 하나뿐이라 여기 해당이 없다.
+    """
+    tests = " or ".join(
+        "has_table_privilege('{}', c.oid, '{}')".format(r, p) for r in roles for p in privs
+    )
+    return (
+        "select c.relname from pg_class c "
+        "join pg_namespace n on n.oid = c.relnamespace "
+        "where n.nspname in ('public','api') and c.relkind in ('r','v','m','p') "
+        "and (" + tests + ");"
+    )
+
+
+def split_writables(names, known=WRITE_KNOWN_POSTGIS):
+    """(알려진 것, 처음 보는 것) 으로 가른다 (순수 함수 — 테스트가 여기만 보면 된다).
+
+    빈 줄·공백 줄은 버린다(unexpected_anon_readables 와 같은 이유 — psql 출력에는
+    공백 줄이 섞인다). 알려진 것은 [주의], 처음 보는 것은 [사고]다.
+    """
+    seen = sorted({n.strip() for n in names if n and n.strip()})
+    return ([n for n in seen if n in known], [n for n in seen if n not in known])
+
+
+def report_write_exposure():
+    """공개 롤이 고칠 수 있는 것을 실제로 물어보고 사람 말로 찍는다.
+
+    돌려주는 것은 **처음 보는 것만**이다 — 알려진 셋은 우리 손으로 못 고치므로 종료
+    코드를 1 로 만들지 않는다(매번 1 이면 --check 가 쓸모없어진다). 다만 [주의]로는
+    반드시 적는다.
+    """
+    known, bad = split_writables(query_one(build_write_exposure_sql()).splitlines())
+    if bad:
+        print("[사고] 공개 롤({})이 **고칠 수 있는** 것이 있습니다: {}".format(
+            "·".join(WRITE_ROLES), ", ".join(bad)))
+        print("       읽기 허용과 쓰기 허용은 다릅니다 — 읽기 허용 목록에 있는 이름이라도 사고입니다.")
+        print("       → revoke insert, update, delete on <이름> from public, anon, authenticated;")
+        print("         supabase/schema.sql 에도 같이 반영하세요.")
+    else:
+        # ⚠️ 그냥 "없습니다"라고 하면 아래 [주의] 셋과 앞뒤가 안 맞는다 — 범위를 밝힌다.
+        print("[정상] 공개 롤이 고칠 수 있는 것은 **우리가 만든 것 중에는** 없습니다.")
+    if known:
+        print("[주의] PostGIS 가 public 에 설치돼 딸려 온 {}개가 열려 있습니다: {}".format(
+            len(known), ", ".join(known)))
+        print("       소유자가 supabase_admin 이라 **우리 권한으로는 회수할 수 없습니다**")
+        print("       (2026-08-08 실측 — revoke 는 무효로 끝납니다. 시도하지 마세요).")
+        print("       근본 처방은 REST 노출 스키마에서 public 을 빼는 것입니다(Wave 0 마지막 단계).")
+    return bad
 
 
 def unexpected_anon_readables(names, allowlist=None):
@@ -473,6 +562,20 @@ def parse_args(argv):
 
 
 def main(argv=None):
+    # cp949 콘솔에서 한글·특수문자(—) 출력이 UnicodeEncodeError 로 죽지 않게 —
+    # 형제 스크립트들(build_district_geojson.py·backup_raw.py 등)과 같은 처방.
+    # ⛔ 이 블록이 **없어서 실제로 죽었다**(2026-08-22 실측): 콘솔에 바로 찍을 때는
+    #    멀쩡하다가 `> 파일` 로 넘기는 순간(파이프·CI 로그도 같다) 파이썬이 cp949 로
+    #    인코딩해 em dash 한 글자에서 통째로 터졌다 — 그것도 점검을 다 마치고
+    #    **결과를 찍는 도중**이라, 종료 코드만 보면 "점검 실패"로 오해하게 된다.
+    try:
+        if sys.stdout.isatty():
+            sys.stdout.reconfigure(errors="replace")
+        else:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
     opts = parse_args(list(sys.argv[1:] if argv is None else argv))
 
     if opts["check"]:
@@ -482,8 +585,10 @@ def main(argv=None):
         _, _, cov_stale = report_coverage_freshness()
         _, _, mix_stale = report_industry_mix_freshness()
         _, exposed = report_anon_exposure()
+        # 읽기와 쓰기는 따로 묻는다 — 허용 목록에 있는 이름이라도 쓰기가 붙어 있으면 사고다.
+        writable = report_write_exposure()
         return 1 if (stale or map_stale or tx_stale or cov_stale or mix_stale
-                     or exposed) else 0
+                     or exposed or writable) else 0
 
     print("통계·가시성 지도를 갱신합니다 (VACUUM ANALYZE {}개 표)…".format(len(ANALYZE_TABLES)))
     rc = dbx.run_sql("set statement_timeout = '600s';\n" + build_analyze_sql(), quiet=True)

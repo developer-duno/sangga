@@ -200,6 +200,14 @@ def test_issue_body_shows_the_stale_workflow_and_how_to_revive_it():
     assert "check_watch_heartbeat.py" in body, "내 PC에서 확인할 명령이 있어야 한다"
 
 
+def test_issue_body_commands_run_in_powershell():
+    """사장님 터미널은 PowerShell 이다 — `cd /d/sangga` 는 거기서 안 된다(2026-08-22)."""
+    body = chk.build_issue_body(chk.judge([(chk.DISTRICT_WATCH, _dt(70))], 8, NOW))
+    assert r"cd D:\sangga" in body
+    assert "/d/sangga" not in body
+    assert "```bash" not in body
+
+
 def test_issue_body_shows_never_ran_without_a_fake_date():
     stale = chk.judge([(chk.QUARTERLY_WATCH, None)], 8, NOW)
     body = chk.build_issue_body(stale)

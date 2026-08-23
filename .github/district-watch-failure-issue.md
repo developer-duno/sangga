@@ -6,15 +6,15 @@
 
 ## 지금 할 일 (내 PC에서 — 한국에서는 포털이 잘 열립니다)
 
-```bash
-cd /d/sangga
+```powershell
+cd D:\sangga
 python scripts/check_district_source_update.py
 ```
 
 - **"변경: 없음"** 이면 놓친 것이 없습니다. 이 이슈를 닫으세요.
 - **갱신이 보이면** 지금 받으세요:
 
-```bash
+```powershell
 # 서울시 상권영역 (1,650개)
 python scripts/collectors/fetch_seoul_district.py --probe
 python scripts/collectors/fetch_seoul_district.py

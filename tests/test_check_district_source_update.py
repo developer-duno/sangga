@@ -175,6 +175,19 @@ def test_issue_body_has_common_followup_steps():
     assert "SEOUL_KNOWN_UPDATE" in body
 
 
+def test_issue_body_commands_run_in_powershell():
+    """사장님 터미널은 PowerShell 이다 — `cd /d/sangga` 는 거기서 안 된다(2026-08-22).
+
+    코드펜스 라벨도 함께 맞춘다. 나머지 줄은 전부 `python …` 호출이라 PowerShell 에서
+    그대로 돈다(bash 전용 문법은 이 본문에 없다).
+    """
+    changes = chk.find_changes({"sbiz": "2026-01-15", "seoul": "2026-07-01"}, KNOWN)
+    body = chk.build_issue_body(changes)
+    assert r"cd D:\sangga" in body
+    assert "/d/sangga" not in body
+    assert "```bash" not in body
+
+
 def test_issue_body_shows_old_and_new_dates():
     changes = chk.find_changes({"sbiz": "2026-01-15", "seoul": "2026-06-11"}, KNOWN)
     body = chk.build_issue_body(changes)

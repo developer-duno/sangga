@@ -48,7 +48,7 @@ supabase/
 └── migrations/          # 날짜 파일명 26개, 라이브 적용 순서 그대로
 
 tests/                   # pytest 29파일 1,356개 — collector/스크립트 1:1 + 드리프트 가드
-e2e/                     # playwright 7개 (Supabase 전량 가로채기, E2E_PORT 로 포트 회피)
+e2e/                     # playwright 11개 (Supabase 전량 가로채기, E2E_PORT 로 포트 회피)
 .github/workflows/       # ci.yml (test+web 2 job) + 감시 2종 (월 09:00/09:30 KST, 실패해도 이슈)
 docs/                    # 상세계획·알려진한계(조사 전 필독)·PROGRESS + decisions/0001~0012
 ```

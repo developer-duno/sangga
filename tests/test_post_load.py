@@ -75,6 +75,17 @@ def industry_mix_is_fresh(monkeypatch):
                         lambda: ("202606", "202606", False))
 
 
+@pytest.fixture
+def no_anon_writes(monkeypatch):
+    """공개 롤 쓰기권한 점검만 빼고 본다 (위 넷과 같은 이유 — 관심사 분리).
+
+    이 stub 이 없으면 `main()` 이 mock 된 query_one 의 엉뚱한 답("v_floor_stack" 등)을
+    **쓸 수 있는 표 이름**으로 오해해 이 반의 관심사와 상관없이 결과가 흔들린다.
+    판정 자체는 아래 TestWriteExposure 가 따로 본다.
+    """
+    monkeypatch.setattr(post_load, "report_write_exposure", lambda: [])
+
+
 # ── 1. ANALYZE 대상 ─────────────────────────────────────────────────────────
 
 
@@ -186,7 +197,7 @@ class TestParseArgs:
 class TestMainFlow:
     def test_check_returns_1_when_stale(
         self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh,
-        industry_mix_is_fresh
+        industry_mix_is_fresh, no_anon_writes
     ):
         """CI·다른 스크립트가 종료 코드로 받아 쓸 수 있어야 한다."""
         monkeypatch.setattr(post_load, "query_one", lambda sql: "100|200")
@@ -194,18 +205,18 @@ class TestMainFlow:
 
     def test_check_returns_0_when_fresh(
         self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh,
-        industry_mix_is_fresh
+        industry_mix_is_fresh, no_anon_writes
     ):
-        # --check 는 여섯 가지를 묻는다(요약표 신선도 · 지도 파일 · 실거래 창 ·
-        # 각주 집계 · 업종 분포 · 공개키 노출) — mock 도 갈라 답해야 한다. 여기 관심사는
-        # 앞의 하나뿐이라 나머지는 fixture 로 빼 둔다.
+        # --check 는 일곱 가지를 묻는다(요약표 신선도 · 지도 파일 · 실거래 창 ·
+        # 각주 집계 · 업종 분포 · 공개키 읽기 · 공개키 쓰기) — mock 도 갈라 답해야 한다.
+        # 여기 관심사는 앞의 하나뿐이라 나머지는 fixture 로 빼 둔다.
         monkeypatch.setattr(post_load, "query_one",
                             lambda sql: "200|200" if "count(" in sql else "v_floor_stack")
         assert post_load.main(["--check"]) == 0
 
     def test_check_never_writes(
         self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh,
-        industry_mix_is_fresh
+        industry_mix_is_fresh, no_anon_writes
     ):
         """--check 는 읽기만 해야 한다 — 실수로 갱신을 돌리면 안 된다."""
         calls = []
@@ -230,6 +241,40 @@ class TestMainFlow:
         assert post_load.main([]) == 0
         assert len(ran) == 2 and "vacuum (analyze)" in ran[0] and "refresh" in ran[1]
         assert len(checked) == 1
+
+    def test_output_survives_being_piped_to_a_file(
+        self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh,
+        industry_mix_is_fresh, no_anon_writes
+    ):
+        """⛔ 리다이렉트(`> 파일`)·파이프·CI 로그에서 죽지 않아야 한다 (2026-08-22 실측).
+
+        콘솔에 바로 찍을 때는 멀쩡하던 것이 `> 파일` 로 넘기는 순간 파이썬이 cp949 로
+        인코딩해 **em dash(—) 한 글자에서 통째로 터졌다.** 그것도 점검을 다 마치고
+        결과를 찍는 도중이라, 종료 코드만 보면 "점검 실패"로 오해하게 된다.
+        형제 스크립트들(build_district_geojson.py 등)이 쓰는 처방을 여기도 건다.
+        """
+        calls = []
+
+        class FakeStdout:
+            def isatty(self):
+                return False
+
+            def reconfigure(self, **kw):
+                calls.append(kw)
+
+            def write(self, s):
+                return len(s)
+
+            def flush(self):
+                pass
+
+        monkeypatch.setattr(sys, "stdout", FakeStdout())
+        monkeypatch.setattr(post_load, "query_one",
+                            lambda sql: "200|200" if "count(" in sql else "v_floor_stack")
+        post_load.main(["--check"])
+        assert calls == [{"encoding": "utf-8", "errors": "replace"}], (
+            "파이프로 넘길 때 stdout 을 UTF-8 로 다시 잡지 않으면 한글 출력이 죽는다"
+        )
 
     def test_apply_stops_when_analyze_fails(self, monkeypatch):
         """앞이 실패했는데 뒤를 계속 돌면 '성공했다'는 착각이 남는다."""
@@ -325,7 +370,8 @@ class TestIndustryMixStale:
         assert post_load.is_industry_mix_stale(" 202606 ", "202606") is False
 
     def test_check_returns_1_when_industry_mix_is_stale(
-        self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh
+        self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh,
+        no_anon_writes
     ):
         """⛔ 업종 분포만 낡아도 --check 는 1 이어야 한다.
 
@@ -377,7 +423,8 @@ class TestCoverageStale:
         assert "unit_business" in sql
 
     def test_check_returns_1_when_coverage_is_stale(
-        self, monkeypatch, map_is_fresh, tx_window_is_fresh, industry_mix_is_fresh
+        self, monkeypatch, map_is_fresh, tx_window_is_fresh, industry_mix_is_fresh,
+        no_anon_writes
     ):
         """⛔ 각주만 낡아도 --check 는 1 이어야 한다.
 
@@ -496,7 +543,7 @@ class TestAnonExposure:
 
     def test_check_returns_1_when_something_is_exposed(
         self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh,
-        industry_mix_is_fresh
+        industry_mix_is_fresh, no_anon_writes
     ):
         monkeypatch.setattr(post_load, "query_one",
                             lambda sql: "200|200" if "count(" in sql
@@ -520,7 +567,7 @@ class TestAnonExposure:
 
     def test_check_returns_0_when_clean(
         self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh,
-        industry_mix_is_fresh
+        industry_mix_is_fresh, no_anon_writes
     ):
         monkeypatch.setattr(post_load, "query_one",
                             lambda sql: "200|200" if "count(" in sql
@@ -639,6 +686,10 @@ class TestAnonExposureCoversFunctions:
         sql = post_load.build_anon_exposure_sql()
         assert sql.count("pg_depend") == 2, "표·함수 양쪽 모두에서 확장을 걸러야 합니다"
         assert "deptype = 'e'" in sql
+        # ⚠️ classid 한정이 빠지면 oid 가 우연히 같은 **남의 카탈로그 항목** 때문에 우리
+        #    표·함수가 "확장이 만든 것"으로 오인돼 점검에서 통째로 빠질 수 있다.
+        assert "d.classid = 'pg_class'::regclass" in sql
+        assert "d.classid = 'pg_proc'::regclass" in sql
 
     def test_screen_rpcs_are_allowed(self):
         assert post_load.unexpected_anon_readables(
@@ -656,6 +707,152 @@ class TestAnonExposureCoversFunctions:
             "building_display_nm",
             "mask_person_name",
         ]
+
+
+class TestWriteExposure:
+    """⛔ 읽기 허용과 쓰기 허용은 다르다 (2026-08-22 독립 리뷰 B-2).
+
+    위 읽기 점검은 **허용 목록**으로 판정한다. 그래서 `v_floor_stack` 처럼 목록에 있는
+    이름에 INSERT·UPDATE·DELETE 가 붙어도 조용히 통과한다 — 읽혀도 되는 것과 공개키로
+    고쳐도 되는 것은 전혀 다른 이야기인데, 그 차이를 아무도 안 물어보고 있었다.
+
+    ⚠️ 이 점검에는 **확장 제외 필터가 없다.** 읽기 쪽에서 걸러 내던 그 집합이 여기서는
+       정확히 실제 노출이기 때문이다 — PostGIS 가 public 스키마에 설치돼 spatial_ref_sys
+       등 셋이 REST 로 그대로 딸려 나온다(라이브 실측). 대신 이름으로 갈라, 그 셋만
+       나오면 [주의]로 적고 종료 코드는 0 을 지킨다(우리 권한으로 못 고치는 것이라
+       매번 1 이면 --check 가 쓸모없어진다). 목록 밖이면 [사고] + 1 이다.
+    """
+
+    def test_sql_asks_both_public_roles_about_all_three_privileges(self):
+        """anon 만 재면 로그인 사용자에게만 열린 쓰기를 통째로 놓친다."""
+        sql = post_load.build_write_exposure_sql()
+        for role in ("anon", "authenticated"):
+            for priv in ("INSERT", "UPDATE", "DELETE"):
+                assert "has_table_privilege('{}', c.oid, '{}')".format(role, priv) in sql, (
+                    "{} 의 {} 를 안 물으면 그 조합만 열린 상태를 놓칩니다".format(role, priv)
+                )
+        # 여섯 중 **하나라도** 있으면 걸려야 한다 — and 로 묶으면 전부 열린 경우만 잡는다.
+        assert " and has_table_privilege" not in sql
+        assert sql.count(" or has_table_privilege") == 5
+
+    def test_sql_scope_matches_the_read_check(self):
+        """스코프가 갈라지면 한쪽만 보는 반쪽 점검이 된다 — 같은 자를 쓴다."""
+        sql = post_load.build_write_exposure_sql()
+        assert "nspname in ('public','api')" in sql
+        assert "c.relkind in ('r','v','m','p')" in sql
+        assert "--" not in sql, "SQL 안에 주석이 있으면 그 뒤가 통째로 죽는다"
+
+    def test_sql_does_not_filter_out_extension_objects(self):
+        """⛔ 여기서 확장을 제외하면 **진짜 노출을 걸러 낸다**(2026-08-22 리뷰 HIGH).
+
+        라이브 실측: spatial_ref_sys(표)·geometry_columns·geography_columns(뷰) 셋에
+        쓰기가 붙어 있고 REST 로 닿는다. 셋 다 PostGIS 산출물이라 `deptype='e'` 필터를
+        그대로 옮겨 왔다면 점검이 **영원히 조용한** 상태가 됐을 것이다.
+        """
+        assert "deptype" not in post_load.build_write_exposure_sql()
+
+    def test_nothing_open_is_quiet(self):
+        assert post_load.split_writables([]) == ([], [])
+        assert post_load.split_writables(["", "  "]) == ([], [])
+
+    def test_even_an_allowlisted_name_is_an_accident(self):
+        """⛔ 이 점검의 핵심 — 읽기 허용 목록에 있는 이름이라도 쓰기가 붙으면 사고다."""
+        assert "v_floor_stack" in post_load.ANON_READABLE_ALLOWLIST
+        assert post_load.split_writables(["v_floor_stack"]) == ([], ["v_floor_stack"])
+
+    def test_flags_raw_tables(self):
+        assert post_load.split_writables(["unit_business", "parcel"]) == (
+            [], ["parcel", "unit_business"]
+        )
+
+    def test_known_postgis_names_are_not_counted_as_accidents(self):
+        """우리 권한으로 못 고치는 셋은 [주의]지 [사고]가 아니다."""
+        known, bad = post_load.split_writables(list(post_load.WRITE_KNOWN_POSTGIS))
+        assert bad == []
+        assert set(known) == set(post_load.WRITE_KNOWN_POSTGIS)
+
+    def test_report_says_accident_and_returns_only_unknown_names(self, monkeypatch, capsys):
+        monkeypatch.setattr(post_load, "query_one",
+                            lambda sql: "parcel\nspatial_ref_sys\nv_floor_stack")
+        bad = post_load.report_write_exposure()
+        assert bad == ["parcel", "v_floor_stack"], "알려진 셋은 종료 코드를 흔들지 않는다"
+        out = capsys.readouterr().out
+        assert "[사고]" in out
+        assert "revoke insert, update, delete" in out
+        # 알려진 것도 같은 실행에서 함께 적힌다 — 사고에 묻혀 사라지면 안 된다.
+        assert "[주의]" in out and "spatial_ref_sys" in out
+
+    def test_report_warns_about_the_known_three_and_never_says_just_none(
+        self, monkeypatch, capsys
+    ):
+        """알려진 셋만 열려 있을 때: 종료 코드는 0, 그러나 **말은 한다**."""
+        monkeypatch.setattr(post_load, "query_one",
+                            lambda sql: "\n".join(post_load.WRITE_KNOWN_POSTGIS))
+        assert post_load.report_write_exposure() == []
+        out = capsys.readouterr().out
+        assert "[사고]" not in out
+        assert "우리가 만든 것 중에는" in out, "범위를 안 밝힌 '없습니다'는 [주의] 셋과 앞뒤가 안 맞는다"
+        assert "[주의]" in out
+        for name in post_load.WRITE_KNOWN_POSTGIS:
+            assert name in out
+        # 못 고치는 이유와 근본 처방이 함께 적혀야 사람이 헛되이 revoke 를 시도하지 않는다.
+        assert "supabase_admin" in out
+        assert "2026-08-08" in out
+        assert "public" in out
+
+    def test_report_is_quiet_when_nothing_at_all_is_writable(self, monkeypatch, capsys):
+        """열린 것이 하나도 없으면 [주의]도 안 찍는다 — 없는 경고는 하지 않는다."""
+        monkeypatch.setattr(post_load, "query_one", lambda sql: "")
+        assert post_load.report_write_exposure() == []
+        out = capsys.readouterr().out
+        assert "[정상]" in out
+        assert "[주의]" not in out
+
+    def test_check_returns_0_when_only_the_known_three_are_writable(
+        self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh,
+        industry_mix_is_fresh
+    ):
+        """알려진 셋 때문에 --check 가 매번 1 이면 아무도 안 보게 된다."""
+        monkeypatch.setattr(
+            post_load, "query_one",
+            lambda sql: ("\n".join(post_load.WRITE_KNOWN_POSTGIS) if "INSERT" in sql
+                         else ("200|200" if "count(" in sql else "v_floor_stack")))
+        assert post_load.main(["--check"]) == 0
+
+    def test_check_returns_1_when_something_new_is_writable(
+        self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh,
+        industry_mix_is_fresh
+    ):
+        """⛔ 판정이 아무리 정확해도 --check 에 배선이 안 되면 아무도 안 물어본다.
+
+        읽기 쪽은 **허용된 것만** 열린 상태로 두고(그래서 읽기 점검은 조용하다), 쓰기만
+        열린 상태를 흉내 낸다 — 그 하나로 종료 코드가 1 이 되어야 한다.
+        """
+        monkeypatch.setattr(
+            post_load, "query_one",
+            lambda sql: ("v_floor_stack" if "INSERT" in sql
+                         else ("200|200" if "count(" in sql else "v_floor_stack")))
+        assert post_load.main(["--check"]) == 1
+
+    def test_apply_does_not_ask_about_permissions(self, monkeypatch):
+        """`--check` 없이 돌릴 때는 권한을 안 묻는다 — 읽기 점검과 같은 자리다.
+
+        (적재 마무리는 갱신이 일이고, 권한 점검은 --check 의 일이다. 여기서 물으면
+        갱신 경로에 라이브 조회가 하나 더 붙는다.)
+        """
+        monkeypatch.setattr(post_load.dbx, "run_sql", lambda sql, **k: 0)
+        asked = []
+        monkeypatch.setattr(post_load, "query_one",
+                            lambda sql: asked.append(sql) or "200|200")
+        monkeypatch.setattr(post_load, "report_map_freshness", lambda: ({}, False))
+        monkeypatch.setattr(post_load, "report_tx_window_freshness",
+                            lambda: ("202408", "202408", False))
+        monkeypatch.setattr(post_load, "report_coverage_freshness",
+                            lambda: ("202606", "202606", False))
+        monkeypatch.setattr(post_load, "report_industry_mix_freshness",
+                            lambda: ("202606", "202606", False))
+        post_load.main([])
+        assert not any("has_table_privilege" in s for s in asked)
 
 
 # ── 8. 지도 상권 파일 신선도 (2026-08-14 신설 — 결정 0010) ──────────────────
@@ -716,7 +913,8 @@ class TestMapFreshness:
         assert post_load.main(["--check"]) == 1
 
     def test_check_returns_0_when_the_map_file_matches(
-        self, monkeypatch, tx_window_is_fresh, coverage_is_fresh, industry_mix_is_fresh
+        self, monkeypatch, tx_window_is_fresh, coverage_is_fresh, industry_mix_is_fresh,
+        no_anon_writes
     ):
         monkeypatch.setattr(post_load, "query_one",
                             lambda sql: "200|200" if "count(" in sql else "v_floor_stack")
