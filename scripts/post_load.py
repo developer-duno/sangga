@@ -459,6 +459,31 @@ WRITE_PRIVS = ("INSERT", "UPDATE", "DELETE")
 # 넘기면 "public 을 내리는 일"이 끝났는지 아무도 안 묻게 된다.
 WRITE_KNOWN_POSTGIS = ("spatial_ref_sys", "geometry_columns", "geography_columns")
 
+# REST 가 어느 스키마를 노출하는지의 진실은 authenticator 롤 설정이다(대시보드 화면엔
+# 안 보인다 — 2026-08-22 실측). 2026-08-24 에 노출에서 public 을 뺐다(옛 문 닫기) —
+# 그 뒤로 위 셋은 권한이 열린 채여도 인터넷에서 닿지 않는다. 아래 점검은 그 조치가
+# 유지되는지도 함께 본다: 누가 노출에 public 을 되돌리면 [주의]가 다시 살아난다.
+AUTHENTICATOR_CONFIG_SQL = (
+    "select coalesce((select array_to_string(rolconfig, chr(10)) from pg_roles "
+    "where rolname = 'authenticator'), '');"
+)
+
+
+def public_rest_exposed(rolconfig_text):
+    """REST 노출 목록에 public 이 있는가 (순수 함수 — 테스트가 여기만 보면 된다).
+
+    ⚠️ 'graphql_public' 안에도 'public' 이 글자로 들어 있다 — 부분 문자열로 찾으면
+       오판하므로 쉼표로 갈라 항목 단위로 비교한다.
+    설정 줄(pgrst.db_schemas=...)이 아예 없으면 **노출로 간주**한다 — Supabase 기본값이
+    public 을 포함하므로, 모르는 상태를 안전하다고 말하면 안 된다.
+    """
+    for line in str(rolconfig_text or "").splitlines():
+        line = line.strip()
+        if line.startswith("pgrst.db_schemas="):
+            schemas = [s.strip() for s in line.split("=", 1)[1].split(",")]
+            return "public" in schemas
+    return True
+
 
 def build_write_exposure_sql(roles=WRITE_ROLES, privs=WRITE_PRIVS):
     """공개 롤이 쓸 수 있는 표·뷰를 나열한다.
@@ -512,11 +537,17 @@ def report_write_exposure():
         # ⚠️ 그냥 "없습니다"라고 하면 아래 [주의] 셋과 앞뒤가 안 맞는다 — 범위를 밝힌다.
         print("[정상] 공개 롤이 고칠 수 있는 것은 **우리가 만든 것 중에는** 없습니다.")
     if known:
-        print("[주의] PostGIS 가 public 에 설치돼 딸려 온 {}개가 열려 있습니다: {}".format(
-            len(known), ", ".join(known)))
-        print("       소유자가 supabase_admin 이라 **우리 권한으로는 회수할 수 없습니다**")
-        print("       (2026-08-08 실측 — revoke 는 무효로 끝납니다. 시도하지 마세요).")
-        print("       근본 처방은 REST 노출 스키마에서 public 을 빼는 것입니다(Wave 0 마지막 단계).")
+        if public_rest_exposed(query_one(AUTHENTICATOR_CONFIG_SQL)):
+            print("[주의] PostGIS 가 public 에 설치돼 딸려 온 {}개가 열려 있습니다: {}".format(
+                len(known), ", ".join(known)))
+            print("       소유자가 supabase_admin 이라 **우리 권한으로는 회수할 수 없습니다**")
+            print("       (2026-08-08 실측 — revoke 는 무효로 끝납니다. 시도하지 마세요).")
+            print("       근본 처방은 REST 노출 스키마에서 public 을 빼는 것입니다 —")
+            print("       2026-08-24 에 한 번 뺐으므로, 이 줄이 보인다면 누군가 되돌린 것입니다.")
+        else:
+            print("[정상] PostGIS 딸림 {}개({})는 권한이 열린 채지만(회수 불가 — 2026-08-08 실측),".format(
+                len(known), ", ".join(known)))
+            print("       REST 노출에서 public 을 빼 둬서(2026-08-24 옛 문 닫기) 인터넷에서는 닿지 않습니다.")
     return bad
 
 

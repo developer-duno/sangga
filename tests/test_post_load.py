@@ -800,6 +800,48 @@ class TestWriteExposure:
         assert "2026-08-08" in out
         assert "public" in out
 
+    def test_public_rest_exposed_pure_function(self):
+        """옛 문(public) 노출 판정 — 항목 단위 비교여야 한다.
+
+        ⚠️ 'graphql_public' 안에도 'public' 이 글자로 들어 있다 — 부분 문자열 판정이면
+           문을 닫고도 계속 [주의]가 찍히는 가짜 경고가 된다.
+        """
+        assert post_load.public_rest_exposed("pgrst.db_schemas=api, public, graphql_public") is True
+        assert post_load.public_rest_exposed("pgrst.db_schemas=api, graphql_public") is False
+        assert post_load.public_rest_exposed("pgrst.db_schemas=graphql_public") is False
+        # 설정 줄이 아예 없으면(빈 값 포함) 노출로 간주 — 모르는 상태는 안전이 아니다.
+        assert post_load.public_rest_exposed("statement_timeout=8s") is True
+        assert post_load.public_rest_exposed("") is True
+        assert post_load.public_rest_exposed(None) is True
+
+    def test_report_downgrades_to_normal_when_public_door_is_closed(
+        self, monkeypatch, capsys
+    ):
+        """옛 문을 닫았으면(2026-08-24) 알려진 셋은 [주의]가 아니라 [정상]으로 적는다."""
+        def fake_query(sql):
+            if "rolconfig" in sql:
+                return "pgrst.db_schemas=api, graphql_public"
+            return "\n".join(post_load.WRITE_KNOWN_POSTGIS)
+        monkeypatch.setattr(post_load, "query_one", fake_query)
+        assert post_load.report_write_exposure() == []
+        out = capsys.readouterr().out
+        assert "[주의]" not in out
+        assert "인터넷에서는 닿지 않습니다" in out
+        for name in post_load.WRITE_KNOWN_POSTGIS:
+            assert name in out, "닫혔어도 이름은 계속 보인다 — 조용해지면 아무도 안 묻게 된다"
+
+    def test_report_warns_again_if_public_door_is_reopened(self, monkeypatch, capsys):
+        """역회귀 가드 — 누가 노출에 public 을 되돌리면 [주의]가 다시 살아난다."""
+        def fake_query(sql):
+            if "rolconfig" in sql:
+                return "pgrst.db_schemas=api, public, graphql_public"
+            return "\n".join(post_load.WRITE_KNOWN_POSTGIS)
+        monkeypatch.setattr(post_load, "query_one", fake_query)
+        post_load.report_write_exposure()
+        out = capsys.readouterr().out
+        assert "[주의]" in out
+        assert "되돌린 것" in out
+
     def test_report_is_quiet_when_nothing_at_all_is_writable(self, monkeypatch, capsys):
         """열린 것이 하나도 없으면 [주의]도 안 찍는다 — 없는 경고는 하지 않는다."""
         monkeypatch.setattr(post_load, "query_one", lambda sql: "")
