@@ -168,7 +168,7 @@ def _sbiz_steps():
     return [
         "### 소진공 주요상권현황 (대전 37개)",
         "",
-        "```bash",
+        "```powershell",
         "python scripts/collectors/fetch_sbiz_district.py --probe   # 크기·형식만 확인",
         "python scripts/collectors/fetch_sbiz_district.py           # 본 다운로드",
         "python scripts/collectors/load_sbiz_district.py --dry-run  # DB 쓰기 0",
@@ -184,7 +184,7 @@ def _seoul_steps():
     return [
         "### 서울시 상권영역 (1,650개)",
         "",
-        "```bash",
+        "```powershell",
         "python scripts/collectors/fetch_seoul_district.py --probe   # 크기·좌표계만 확인",
         "python scripts/collectors/fetch_seoul_district.py           # 본 다운로드",
         "python scripts/collectors/load_seoul_district.py --dry-run  # DB 쓰기 0",
@@ -212,8 +212,8 @@ def build_issue_body(changes):
         "",
         "## 할 일 (내 PC에서)",
         "",
-        "```bash",
-        "cd /d/sangga",
+        "```powershell",
+        r"cd D:\sangga",
         "```",
         "",
     ]
@@ -227,7 +227,7 @@ def build_issue_body(changes):
         "상권 이름이나 구성이 바뀌었으면 임대통계 매핑표가 어긋납니다 — 관문을 한 번 돌려",
         "확인하고, 어긋났으면 `scripts/seeds/district_rone_map.csv` 를 고칩니다.",
         "",
-        "```bash",
+        "```powershell",
         "python scripts/build_rone_map.py --seed scripts/seeds/district_rone_map.csv   # exit 0 이어야 한다",
         "python scripts/build_district_geojson.py    # 지도용 파일을 다시 굽고 **커밋**한다",
         "python scripts/post_load.py                 # vacuum + 검색 요약표 갱신 + 노출 점검",

@@ -7,6 +7,7 @@ import {
   sigunguTxStats,
   priceBands,
   priceBandGate,
+  industryMix,
 } from './fixtures';
 
 /**
@@ -79,11 +80,19 @@ async function mockJson(page: Page, pattern: string, body: unknown, delayMs = 0)
   });
 }
 
+/**
+ * 층 스택이 부르는 REST 를 한 벌로 막는다.
+ *
+ * `mix` 를 안 주면 업종 분포 함수 둘을 **없는 것으로** 답한다(마이그레이션 적용 전 라이브).
+ * 그게 기본값인 이유는, 그 상태에서 섹션이 조용히 사라지는지가 테스트 A 의 관심사이기
+ * 때문이다 — 정상 응답을 보고 싶으면 그때만 넘긴다(테스트 K).
+ */
 async function mockFloorStack(
   page: Page,
   txs: unknown[] = [],
   bands: unknown[] = [],
   floors?: unknown[],
+  mix?: unknown,
 ) {
   await mockJson(page, STATS_PATTERN, [coverageStats()]);
   await mockJson(page, FLOOR_PATTERN, floors ?? [floorRow()]);
@@ -96,8 +105,14 @@ async function mockFloorStack(
     // 출처는 화면에 박힌 글자가 아니라 서버가 자료에서 읽어 주는 값이다(2026-08-14).
     sources: ['서울특별시 상권분석서비스'],
   });
-  // 업종 분포는 **함수가 없는 상태**로 답한다(위 상수 주석 참조).
-  await mockMissingFunction(page, INDUSTRY_MIX_PATTERN);
+  // 업종 분포는 기본이 **함수가 없는 상태**다(위 상수 주석 참조).
+  if (mix === undefined) {
+    await mockMissingFunction(page, INDUSTRY_MIX_PATTERN);
+  } else {
+    await mockJson(page, INDUSTRY_MIX_PATTERN, mix);
+  }
+  // 상세는 대분류를 고를 때만 부른다 — 여기서는 늘 없는 상태로 둔다(고르는 흐름은
+  // src/components/IndustryMixSection.test.tsx 가 이미 촘촘히 덮는다).
   await mockMissingFunction(page, INDUSTRY_DETAIL_PATTERN);
 }
 
@@ -462,5 +477,52 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await expect(stack).not.toContainText('감정가');
     await expect(stack).not.toContainText('가치평가');
     await expect(stack.locator('.stack__biz')).not.toContainText('시세');
+  });
+
+  // ── 둘레의 업종 분포 (결정 0014) ─────────────────────────────────────────
+  // A 는 **함수가 없는 라이브**에서 이 섹션이 조용히 사라지는지를 본다. 그 반대편,
+  // 곧 "서버가 제대로 답했을 때 실제로 그려지는가"는 여태 아무 데서도 안 봤다
+  // (PR #77 의 기록 공백). 두 상태를 다 봐야 "언제나 안 뜨는" 회귀를 잡을 수 있다.
+
+  test('K. 서버가 답하면 둘레의 업종 분포가 상권·반경 두 묶음으로 그려진다', async ({ page }) => {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page, [], [], undefined, industryMix());
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+
+    const mix = page.locator('section.mix');
+    await expect(mix.getByRole('heading', { name: '둘레의 업종 분포' })).toBeVisible();
+    // 이 건물 점포와 세는 대상이 다르다는 말이 먼저 나온다(층 목록의 업종 요약과 혼동 금지).
+    await expect(mix.getByText(/이 건물만이 아니라 이 땅 둘레의 가게들입니다/)).toBeVisible();
+
+    // ① 상권 묶음 — 이름·종류·총수. ② 반경 묶음 — 길이는 서버가 준 값으로 적는다.
+    await expect(mix.getByRole('heading', { name: /강남역\(발달상권\) 안/ })).toBeVisible();
+    // 반경 묶음은 총수까지 함께 본다 — 제목만 보면 상권 묶음의 숫자를 그대로 베껴
+    // 그리는 회귀(두 스코프가 같은 값을 말하는 상태)를 못 잡는다.
+    await expect(mix.getByRole('heading', { name: /반경 500m 안 200곳/ })).toBeVisible();
+    // 대분류 행: 이름·개수·몫이 한 줄에 함께 나온다(총수 없이 %만 있으면 못 읽는다).
+    // ① 상권 묶음(100곳 중 음식 60곳)
+    const districtBar = mix.locator('.mix__block').first().locator('.mix__bars li').first();
+    await expect(districtBar.locator('.mix__cat')).toHaveText('음식');
+    await expect(districtBar.locator('.mix__n')).toHaveText('60곳');
+    await expect(districtBar.locator('.mix__pct')).toHaveText('60.0%');
+    // ② 반경 묶음(200곳 중 음식 150곳 = 75.0%) — 스코프마다 제 값으로 센다.
+    const radiusBar = mix.locator('.mix__block').nth(1).locator('.mix__bars li').first();
+    await expect(radiusBar.locator('.mix__n')).toHaveText('150곳');
+    await expect(radiusBar.locator('.mix__pct')).toHaveText('75.0%');
+    // 대분류를 고를 수 있는 자리(중분류로 나뉘는 입구).
+    await expect(mix.getByLabel('업종 골라보기')).toBeVisible();
+    // 기준 분기·출처는 서버가 준 값이다 — 화면에 글자로 박으면 자료가 바뀌는 날 거짓말이 된다.
+    await expect(mix.getByText(/2026년 2분기 기준/)).toBeVisible();
+    await expect(mix.getByText(/소상공인시장진흥공단 상가\(상권\)정보/)).toBeVisible();
+    // 절대 규칙 3 — 근거 등급을 함께 적는다. 이 섹션은 어림이 아니라 실측 집계다.
+    await expect(mix.getByText(/A등급 · 실측 집계/)).toBeVisible();
+    // ⛔ 이 섹션은 **개수만** 말한다. 값·시세가 새어 들어오면 성격이 통째로 바뀐다.
+    await expect(mix).not.toContainText('시세');
+    await expect(mix).not.toContainText('적정가');
   });
 });

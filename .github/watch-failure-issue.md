@@ -6,15 +6,15 @@
 
 ## 지금 할 일 (내 PC에서 — 한국에서는 포털이 잘 열립니다)
 
-```bash
-cd /d/sangga
+```powershell
+cd D:\sangga
 python scripts/check_new_sangkwon_quarter.py
 ```
 
 - **"새 분기: 없음"** 이면 놓친 것이 없습니다. 이 이슈를 닫으세요.
 - **새 분기가 보이면** 지금 받으세요:
 
-```bash
+```powershell
 python scripts/download_sangkwon_history.py    # 새 분기만 이어받는다
 python scripts/collectors/load_sangkwon_snapshot.py
 python scripts/backup_raw.py                   # 외장 SSD(F:) 연결 필요

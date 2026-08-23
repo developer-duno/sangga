@@ -2,6 +2,7 @@ import type {
   BuildingHit,
   CoverageStats,
   FloorRow,
+  IndustryMix,
   ParcelTransaction,
   PriceBand,
   SigunguTxStat,
@@ -131,6 +132,41 @@ export function priceBands(): PriceBand[] {
 /** 기준선을 못 넘은 구 — floor_no 가 null 인 **한 줄**로만 온다(층 목록이 아예 없다). */
 export function priceBandGate(): PriceBand[] {
   return [priceBand({ floor_no: null, status: 'gate_fail', ...NO_VALUE })];
+}
+
+/**
+ * 둘레의 업종 분포(함수 list_industry_mix). 결정 0014.
+ *
+ * 필드·기본값은 단위 테스트(src/components/IndustryMixSection.test.tsx 의 mix())와 같다 —
+ * 여기서 새 응답 모양을 발명하지 않는다. 스코프는 **속한 상권 묶음들 + 반경 하나**이고,
+ * 기준 분기·반경 길이가 함께 온다(화면이 '500m'·'2026년 2분기'를 글자로 박지 않으므로).
+ */
+export function industryMix(over: Partial<IndustryMix> = {}): IndustryMix {
+  return {
+    snapshot_ym: '202606',
+    radius_m: 500,
+    districts: [
+      {
+        district_id: '3120189',
+        name: '강남역',
+        type: '발달상권',
+        source_nm: '서울특별시 상권분석서비스',
+        total: 100,
+        cats: [
+          { cd: 'I2', nm: '음식', n: 60 },
+          { cd: 'G2', nm: '소매', n: 40 },
+        ],
+      },
+    ],
+    radius: {
+      total: 200,
+      cats: [
+        { cd: 'I2', nm: '음식', n: 150 },
+        { cd: 'G2', nm: '소매', n: 50 },
+      ],
+    },
+    ...over,
+  };
 }
 
 export function coverageStats(over: Partial<CoverageStats> = {}): CoverageStats {

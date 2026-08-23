@@ -115,6 +115,18 @@ def test_issue_body_lists_every_new_quarter():
     assert "20261231" in body.split("LATEST_KNOWN_QUARTER")[1]
 
 
+def test_issue_body_commands_run_in_powershell():
+    """사장님 터미널은 PowerShell 이다 — `cd /d/sangga` 는 거기서 안 된다(2026-08-22).
+
+    이슈 본문의 명령은 그대로 붙여 넣어 돌리라고 있는 것이라, 첫 줄부터 실패하면
+    나머지 안내가 통째로 무용지물이 된다.
+    """
+    body = chk.build_issue_body([("20260930", "자료_20260930")])
+    assert r"cd D:\sangga" in body
+    assert "/d/sangga" not in body
+    assert "```bash" not in body
+
+
 def test_issue_body_warns_irreversible():
     """소급 불가라는 경고가 빠지면 이슈를 미루게 된다 — 이게 이 알림의 핵심이다."""
     body = chk.build_issue_body([("20260930", "자료_20260930")])
