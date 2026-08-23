@@ -3,7 +3,7 @@
 > 이 문서는 "지금 어디까지 왔나"를 한눈에 보여준다. 데이터 소스·분석 로직 등 설계 전부는 `docs/상세계획.md`가 정본이다. 이 문서는 그 문서의 §10 로드맵·§11 체크리스트를 요약한 진행표다.
 
 ```
-최종갱신   2026-08-24 (첫 배포 — https://sangga-one.vercel.app 라이브, main push = 자동 배포. 카카오 지도만 콘솔 등록 대기 👤)
+최종갱신   2026-08-24 (첫 배포 + 지도 등록 + 옛 문(public) 닫기까지 — https://sangga-one.vercel.app 라이브, main push = 자동 배포)
 현재 Phase Phase 1 ✅ 통과 (2026-08-09 확정 — 수집 100%·조인률 95.92%/96.86%)
            1단계 서비스범위(서울+대전, 결정 0006) 데이터·화면 게이트 ✅ 완료 (2026-08-11)
            parcel·unit_business 전국 시드([A], 결정 0005) ✅ 완료 (2026-08-13) — building은 아직 서울+대전뿐
@@ -869,6 +869,88 @@ L3 은 보류(임대 계수의 매매 적용 미검증 — 사장님 승인). �
 - **[개선안]** 검색을 **건물 단위 뷰**로 바꾸면 "건물 N개"를 표본이 아니라 정확한 수로 말할 수 있다. 지금은 "건물 × 층" 600줄을 받아 접는 구조라 원리적으로 표본이다(그래서 잘렸을 때 "N개 이상"으로 표기하도록 고쳤다). 뷰 신설 + 마이그레이션이 필요해 별도 PR로 분리
 - **[사소]** 공개 함수 8개(`search_scope`·`list_open_sigungu`·`list_building_districts`·`list_parcel_transactions`·`get_sigungu_tx_stats`·`list_price_bands`·`list_industry_mix`·`list_industry_detail`)에 **PUBLIC EXECUTE 잔존** — `search_buildings`·api 래퍼 9개는 `revoke ... from public` 이 걸려 있는데 이 8개만 비대칭(2026-08-22 도커 ACL 실측). 지금은 anon 이 어차피 받는 권한이라 실피해 0이지만 **새 롤이 생기면 자동 상속**된다. 정리 시 정본과 라이브를 같은 마이그레이션으로
 - **[사소]** schema.sql 에 `grant usage on schema public` 부재 — Supabase 는 기본 제공이라 실사용 무해하나, 맨 Postgres 재생 시 anon 이 public 스키마를 못 연다(도커 실측). api 스키마는 2295행 근방에서 usage 를 주는 것과 비대칭
+
+## 2026-08-24 — 첫 배포: 서비스가 인터넷에 나갔고, 옛 문을 닫았다
+
+Wave 0(배포 트랙)이 통째로 끝났다. 순서는 **api 전환(8-22) → 배포 → 옛 문 닫기**였고, 마지막
+두 단계를 이날 했다. 배포가 먼저인 이유는 "새 문만으로 실제 사용자 흐름이 도는가"를 라이브에서
+확인한 뒤에 옛 문을 닫아야 하기 때문이다 — 순서를 뒤집으면 무엇이 깨졌는지 가릴 수가 없다.
+
+### 1) 첫 배포 (Vercel)
+
+- 라이브 **https://sangga-one.vercel.app** (`sangga.vercel.app` 은 남이 선점 → `-one` 자동 배정).
+- Vercel 프로젝트 `sangga` ↔ GitHub `developer-duno/sangga` 연결 → **main push 가 곧 배포**.
+  이날 문서 커밋(32712b4)을 올리자 자동 배포가 스스로 돌아 READY 가 되는 것까지 확인했다.
+- env 는 계획서의 "2개"가 아니라 **3개**였다 — `VITE_SUPABASE_URL`·`VITE_SUPABASE_ANON_KEY` +
+  **`VITE_KAKAO_JS_KEY`**(`DistrictMap.tsx:67` 이 읽는다). 빠지면 빌드는 초록인데 지도만 빈 화면이
+  된다. 운영·미리보기 양쪽에 등록.
+- ⛔ **함정 2개**: ①`vercel deploy`(로컬 업로드)는 `data/` 의 3.06GiB 파일에 걸려 "2 GiB 초과"로
+  실패한다 — 배포는 **git push(자동)** 또는 REST `POST /v13/deployments` + `gitSource` 로.
+  ②CLI v50.41.0 의 미리보기 env 등록은 안내문대로 `--value … --yes` 를 줘도 `git_branch_required`
+  를 무한 반복한다(더미 변수로 CLI 버그 확정) — REST `POST /v10/projects/{id}/env` 로 우회.
+
+### 2) 카카오 지도 도메인 등록
+
+- 미분양아파트 앱(1398824) JS 키의 **JavaScript SDK 도메인**에 배포 주소 추가 → 재배포 없이 즉시
+  지도가 살아났다(축척·범례·상권 면 렌더 실측).
+- ⛔ **새 콘솔은 도메인을 "플랫폼 > Web"이 아니라 "플랫폼 키 > JS 키 수정"에서 관리**한다
+  (옛 경로 `/config/platform` 은 `/config` 로 리다이렉트된다).
+- ⛔ **카카오맵 무료 쿼터는 옛 앱들만 갖고 있다** — 이 계정 10개 중 6개만 배지 보유. 이날 새로 만든
+  "상가분석" 앱(1545321)은 무료 몫이 0이라 켜려면 월렛(결제) 연결 + 사용량 과금이다. 그래서
+  **미분양 앱 키 공유를 유지**하기로 결정(비용 0). 비즈 앱 여부는 지도와 무관했다 — 관문은 과금뿐.
+
+### 3) 옛 문(public) 닫기 — REST 노출에서 public 제거
+
+`alter role authenticator set pgrst.db_schemas = 'api, graphql_public';` + `notify pgrst, 'reload config'`
+/ `'reload schema'`. 이전 값은 `api, public, graphql_public`.
+
+- **왜**: public 방에는 PostGIS 가 딸고 온 3개(`spatial_ref_sys`·`geometry_columns`·`geography_columns`)가
+  있는데 소유자가 `supabase_admin` 이라 **우리 권한으로는 권한 회수가 불가능**하다(2026-08-08 실측).
+  그중엔 쓰기까지 열린 것이 있어, 좌표계 기준표가 오염되면 지도·상권 판정이 조용히 틀어진다.
+  물건을 잠글 수 없으니 **방으로 들어오는 문을 닫는 것**이 유일한 처방이었다.
+- **검증 3종**: ①`Accept-Profile: public` → **PGRST106 "Invalid schema: public"** 으로 거절
+  ②새 문 RPC(`list_open_sigungu`) 200 ③라이브 화면에서 구 칩 25개 → 검색 → 층 27개 → 카드 5장까지
+  정상, 콘솔 오류 0.
+- **되돌리기**: 같은 명령에 `'api, public, graphql_public'` — 몇 초. 데이터는 건드리지 않는다.
+
+### 4) 되돌림 감지 가드 (post_load.py)
+
+노출 스키마의 **진실은 authenticator 롤 설정**인데 이건 대시보드 화면에 안 보인다. 즉 누가
+되돌려도 아무도 모른다. 그래서 `--check` 에 넣었다:
+
+- `public_rest_exposed()` 순수 함수 — 노출 목록에 public 이 있는지 **항목 단위**로 판정한다.
+  ⚠️ `graphql_public` 안에도 'public' 이 글자로 들어 있어 부분 문자열 판정이면 문을 닫고도 계속
+  경고가 뜬다(가짜 경고). 설정 줄이 아예 없으면 **노출로 간주** — Supabase 기본값이 public 을
+  포함하므로, 모르는 상태를 안전하다고 말하면 안 된다.
+- 이제 PostGIS 3개는 문이 닫혀 있으면 `[정상]`(권한은 열렸지만 인터넷에서 닿지 않음), 누가
+  되돌리면 `[주의]` 로 되살아난다. **조용해지지는 않는다** — 이름은 계속 적는다.
+- 돌연변이 검증: `in schemas` 를 `in line`(옛날식 버그)으로 되돌리니 새 테스트 2개가 정확히
+  빨간불 → 되돌리니 초록. 가드가 진짜 잡는다.
+
+### 5) 배포 설정 보강 (같은 날 적대검증이 잡은 것)
+
+배포 당일 5관점 병렬 조사 → 각 발견을 반박 검증한 결과 17건 중 13건이 살아남았다.
+그중 즉시 고친 것:
+
+- **자산 캐시 없음** — `curl -sI /assets/index-*.js` → `max-age=0, must-revalidate` 실측.
+  Vite 는 파일명에 내용 해시를 박으므로 불변인데 매 방문 304 왕복이 강제됐다.
+  `vercel.json` 신설 → `/assets/(.*)` 에 `max-age=31536000, immutable`.
+  ⛔ **`districts.geojson`(1.19MB)에는 일부러 안 건다** — 파일명은 고정인데 내용은
+  다시 구울 때 바뀌므로 재검증이 정확히 맞다. 테스트가 정규식으로 그 경로가 장기 캐시에
+  **안 걸리는지** 판정한다(규칙을 `/(.*)` 로 넓히는 돌연변이를 넣으면 빨간불 확인).
+- **보안 헤더 0개** → 전 경로에 nosniff · X-Frame-Options DENY · Referrer-Policy.
+- ⛔ **SPA rewrite 는 안 넣었다** — 아직 라우터가 없다. 로드맵 "공유 링크"가 주소로 건물을
+  여는 순간 같은 PR 에서 넣어야 한다(없으면 공유받은 링크가 404).
+- **문서 모순 3건**(카카오 등록·public 제거를 아직 "대기"로 적고 있었다) 정정.
+
+⛔ **이날 만든 사고 하나 박제**: 파이썬 스크립트가 **출력 단계에서 죽어도 파일 쓰기는 이미
+끝나 있다**. `print` 의 유니코드 대시가 cp949 로 죽는 것을 보고 "실패했으니 다시"라며
+재실행했다가 같은 섹션이 두 번 들어갔다. **재실행 전에 파일 상태부터 본다.**
+
+### 회귀 (전부 초록)
+
+pytest **1,739**(+9: 옛 문 가드 3 · vercel 설정 6) · vitest **313** · E2E **24**(12×2) ·
+ruff/oxlint/build 통과.
 
 ---
 
