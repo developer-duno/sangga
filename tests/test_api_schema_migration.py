@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""마이그레이션 2026-08-22e(api 스키마)의 불변식을 지킨다.
+"""api 스키마 마이그레이션들의 불변식을 지킨다(뿌리는 2026-08-22e).
+
+⚠️ 보는 대상은 22e 하나가 아니라 **api 에 무언가를 만드는 마이그레이션 전부**다
+   (api_migration_files 참조). 새 공개 함수는 새 파일에 생기는데, 이미 라이브에
+   적용된 22e 를 고쳐 넣는 것은 역사 조작이기 때문이다.
 
 여기서 막는 것은 **"라이브에 붙여 넣기 전에는 아무도 모르는" 종류의 실수**다. 이 파일은
 DB 없이 SQL 글자만 본다(CI 에는 DB 가 없다) — 대신 아래 넷은 글자만으로 확실히 잡힌다:
@@ -33,7 +37,8 @@ if SCRIPTS_DIR not in sys.path:
 
 import post_load  # noqa: E402
 
-# 화면이 부르는 함수 9개·읽는 뷰 2개 = post_load 의 anon 허용 목록 **그 자체**.
+# 화면이 부르는 함수·읽는 뷰 = post_load 의 anon 허용 목록 **그 자체**.
+# ⚠️ 개수를 글자로 적지 않는다 — 공개 함수가 하나 늘 때마다 주석만 거짓말이 된다.
 # 손으로 다시 적으면 화면 함수가 하나 늘 때 두 목록이 갈라지고, 실패 메시지가
 # 진짜 원인(허용 목록 드리프트)을 가리키지 않는다 — 그래서 import 로 한 곳만 진실.
 SCREEN_FNS = post_load.ANON_CALLABLE_ALLOWLIST
@@ -62,9 +67,35 @@ def read(path):
         return f.read()
 
 
+MIGRATION_DIR = os.path.dirname(MIGRATION)
+RE_MAKES_API_OBJECT = re.compile(r"(?im)^create\s+or\s+replace\s+(function|view)\s+api\.")
+
+
+def api_migration_files():
+    """api 스키마에 무언가를 만드는 마이그레이션을 이름(=날짜)순으로 모은다.
+
+    ⚠️ **22e 하나만 보면 안 된다.** 새 공개 함수는 새 마이그레이션에 생기는데, 이미
+       라이브에 적용된 22e 를 고쳐 넣는 것은 역사 조작이다. 파일이 하나뿐이라고 가정하면
+       공개 함수가 하나 늘 때마다 이 검사가 **"22e 에 없다"는 엉뚱한 이유로** 실패한다
+       (2026-08-24b 의견함을 넣을 때 실제로 그랬다).
+
+    이렇게 넓히면 검사가 약해지는 것이 아니라 **강해진다** — 어느 마이그레이션에서 만든
+    api 객체든 security definer·빈 search_path·완전수식·revoke 를 똑같이 요구받는다.
+    """
+    out = []
+    for name in sorted(os.listdir(MIGRATION_DIR)):
+        if not name.endswith(".sql"):
+            continue
+        path = os.path.join(MIGRATION_DIR, name)
+        if RE_MAKES_API_OBJECT.search(read(path)):
+            out.append(path)
+    return out
+
+
 @pytest.fixture(scope="module")
 def migration():
-    return read(MIGRATION)
+    """api 를 다루는 마이그레이션을 날짜순으로 이어 붙인 한 덩어리."""
+    return "\n".join(read(p) for p in api_migration_files())
 
 
 @pytest.fixture(scope="module")
@@ -87,15 +118,15 @@ def function_bodies(sql):
 
 @pytest.fixture(scope="module")
 def parsed_fns(migration):
-    """파싱은 한 번만 — 파라미터라이즈드 테스트 9개×2종이 같은 텍스트를 재파싱하지 않게."""
+    """파싱은 한 번만 — 함수마다 도는 검사들이 같은 텍스트를 거듭 파싱하지 않게."""
     return function_bodies(migration)
 
 
 class TestScreenFunctions:
-    def test_all_nine_screen_functions_are_wrapped(self, migration):
+    def test_every_screen_function_is_wrapped(self, migration):
         got = set(RE_API_FN.findall(migration))
         assert got == set(SCREEN_FNS), (
-            "api 래퍼 함수 목록이 화면이 부르는 9개와 다릅니다: {}".format(sorted(got))
+            "api 래퍼 함수 목록이 화면이 부르는 것과 다릅니다: {}".format(sorted(got))
         )
 
     @pytest.mark.parametrize("name", SCREEN_FNS)
@@ -175,6 +206,16 @@ class TestViews:
 
 
 class TestMigrationShape:
+    def test_the_root_migration_is_actually_included(self):
+        """⛔ 파일을 못 찾으면 위 검사들이 **빈 텍스트를 보며 조용히 지나갈** 수 있다.
+
+        지금은 함수 목록 비교가 먼저 깨지지만, 그건 우연히 그런 것이다. 뿌리 파일이
+        목록에 있다는 사실 자체를 못 박아 둔다.
+        """
+        assert MIGRATION in api_migration_files(), (
+            "api 스키마의 뿌리 마이그레이션(2026-08-22e)이 목록에서 빠졌습니다"
+        )
+
     def test_creates_schema_and_usage(self, migration):
         assert re.search(r"create\s+schema\s+if\s+not\s+exists\s+api", migration, re.I)
         assert re.search(

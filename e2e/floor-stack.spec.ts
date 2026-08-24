@@ -57,6 +57,8 @@ const PRICE_BAND_PATTERN = '**/rest/v1/rpc/list_price_bands*';
 //    (안 막으면 실존하지 않는 도메인으로 요청이 나가 테스트가 DNS 에 좌우된다.)
 const INDUSTRY_MIX_PATTERN = '**/rest/v1/rpc/list_industry_mix*';
 const INDUSTRY_DETAIL_PATTERN = '**/rest/v1/rpc/list_industry_detail*';
+// 의견함(2026-08-24b). 화면에서 창고로 **나가는** 유일한 길이라, 여기만 방향이 반대다.
+const FEEDBACK_PATTERN = '**/rest/v1/rpc/submit_feedback*';
 
 const CORS_HEADERS = {
   'access-control-allow-origin': '*',
@@ -615,5 +617,77 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await expect(floorsCard.locator('.card__toggle')).toHaveAttribute('aria-expanded', 'true');
     await expect(stack.locator('.detail')).toBeVisible();
     await expect(band.locator('.band__row--on')).toHaveCount(1);
+  });
+});
+
+test.describe('화면 아래 — 어디까지 믿을지와 한마디 남기는 자리', () => {
+  /**
+   * 왜 E2E 로도 보나 — 이 자리는 **화면에서 창고로 나가는 유일한 길**이다. 나머지는 전부
+   * 읽기라 방향이 반대고, 그래서 여기만 실제 브라우저에서 요청이 나가는지 눈으로 확인해
+   * 둘 값어치가 있다(그 요청이 안 나가면 사람은 "보냈다"고 믿고 우리는 아무것도 못 받는다).
+   */
+  test('M. 아래 안내가 보이고, 의견을 보내면 보던 지역이 함께 간다', async ({ page }) => {
+    await mockOpenSigungu(page);
+
+    // 실제로 나간 요청을 붙잡는다 — 인자 이름까지 눈으로 본다.
+    const sent: Array<Record<string, unknown>> = [];
+    await page.route(FEEDBACK_PATTERN, async (route) => {
+      if (route.request().method() === 'OPTIONS') {
+        await route.fulfill({ status: 204, headers: CORS_HEADERS });
+        return;
+      }
+      sent.push(route.request().postDataJSON() as Record<string, unknown>);
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: CORS_HEADERS,
+        // ⚠️ boolean 을 돌려주는 함수라 PostgREST 응답이 배열이 아니라 **스칼라 true** 다.
+        //    배열로 흉내 내면 라이브와 모양이 달라져 "테스트만 통과하는" 가짜 초록이 된다.
+        body: JSON.stringify(true),
+      });
+    });
+
+    await page.goto('/');
+
+    // 건물을 고르지 않아도 아래 안내는 늘 보인다 — 다 보고 난 사람이 찾는 자리다.
+    const foot = page.locator('footer.foot');
+    await expect(foot.getByText(/감정평가가 아니며/)).toBeVisible();
+    await expect(foot.getByText(/"미상"/)).toBeVisible();
+
+    // 보던 지역이 함께 실리는지 보려고 구를 하나 고른다.
+    await pickGu(page, '서울', '강남구');
+
+    await foot.getByRole('button', { name: '의견 보내기' }).click();
+    // 답장을 못 한다는 사실을 **미리** 말한다 — 기다리게 해 놓고 안 하는 것이 가장 나쁘다.
+    await expect(foot.getByText(/답장을 드릴 수 없습니다/)).toBeVisible();
+
+    await foot.getByRole('textbox').fill('3층 정보가 안 보여요');
+    await foot.getByRole('button', { name: '보내기' }).click();
+
+    await expect(foot.getByText(/고맙습니다/)).toBeVisible();
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].p_kind).toBe('opinion');
+    expect(sent[0].p_body).toBe('3층 정보가 안 보여요');
+    // ⛔ 여기가 이 의견함의 값어치 전부다 — 사람이 손으로 안 적어도 어디를 보던 중이었는지가
+    //    함께 간다. 이 줄이 깨지면 남는 것은 맥락 없는 한 줄짜리 불평뿐이다.
+    expect((sent[0].p_context as Record<string, unknown>).sigungu).toBe('11680');
+  });
+
+  test('N. 못 보냈으면 못 보냈다고 말한다 — 거짓 안심을 만들지 않는다', async ({ page }) => {
+    await mockOpenSigungu(page);
+    // 마이그레이션 적용 전 라이브가 정확히 이 상태다(함수가 아직 없다).
+    await mockMissingFunction(page, FEEDBACK_PATTERN);
+
+    await page.goto('/');
+    const foot = page.locator('footer.foot');
+    await foot.getByRole('button', { name: '의견 보내기' }).click();
+    await foot.getByRole('textbox').fill('한마디');
+    await foot.getByRole('button', { name: '보내기' }).click();
+
+    await expect(foot.getByText(/보내지 못했습니다/)).toBeVisible();
+    await expect(foot.getByText(/고맙습니다/)).toHaveCount(0);
+    // 적은 글은 남아 있어야 한다 — 다시 쓰게 만들면 대부분 그냥 떠난다.
+    await expect(foot.getByRole('textbox')).toHaveValue('한마디');
   });
 });

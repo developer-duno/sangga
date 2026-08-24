@@ -462,7 +462,24 @@ class TestAnonExposure:
             "list_parcel_transactions", "get_sigungu_tx_stats",
             "list_price_bands",
             "list_industry_mix", "list_industry_detail",
+            # ⚠️ 이 목록에서 **유일하게 쓰는** 함수다(2026-08-24b 의견함·오류 기록).
+            #    나머지 아홉은 전부 읽기라, 여기가 늘 때는 "무엇이 들어오나"를 한 번 더
+            #    본다 — 표가 아니라 함수인지, 넣기만 하는지, 읽는 길은 없는지.
+            "submit_feedback",
         )
+
+    def test_the_feedback_table_is_never_allowed(self):
+        """⛔ 의견함의 **표**가 허용 목록에 들어가면 안 된다(2026-08-24b).
+
+        화면은 넣기 전용 함수 하나로만 쓴다. 표가 열리면 두 가지가 한꺼번에 무너진다:
+          · select 가 열리면 **남이 남긴 글을 아무나 읽는다**(본문에 연락처를 적어 넣은
+            사람이 있을 수 있다 — 우리가 요구하지 않았을 뿐 막을 수는 없다).
+          · insert 가 열리면 함수 안의 상한·모양 검사를 통째로 건너뛴다.
+        2026-08-13 사고(mv_search_parcel 200)와 같은 형태이므로 형제들과 같은 방식으로 막는다.
+        """
+        assert "app_feedback" not in post_load.ANON_READABLE_ALLOWLIST
+        assert "app_feedback" not in post_load.ANON_CALLABLE_ALLOWLIST
+        assert post_load.unexpected_anon_readables(["app_feedback"]) == ["app_feedback"]
 
     def test_the_industry_matview_is_never_allowed(self):
         """⛔ 업종 분포의 사전계산표가 허용 목록에 들어가면 안 된다(결정 0014).

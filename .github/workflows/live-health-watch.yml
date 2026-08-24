@@ -1,0 +1,80 @@
+# 라이브 사이트 생존 감시 — sangga-one.vercel.app
+#
+# 왜: 2026-08-24 첫 배포로 이 서비스는 남이 볼 수 있는 곳이 됐는데, **죽어도 우리가 알
+#     방법이 0** 이었다. 이 앱에는 서버가 없어(순수 화면 + Supabase 직결) 로그가 남는 곳이
+#     어디에도 없고, main 에 push 하면 그대로 배포되므로 잘못 나간 것을 막아 줄 것도 없다.
+#     특히 무서운 것은 **반쪽 배포**다 — 첫 화면은 200 인데 자바스크립트 묶음이 404 면
+#     보는 사람은 하얀 화면만 본다. 에러 페이지조차 안 뜨므로 아무 신호가 없다.
+#
+# 무엇을 하나: 6시간마다 밖에서 세 가지를 두드려 보고, 하나라도 안 되면 **이슈를 연다.**
+#     그게 전부다. 형제 감시 둘(분기 스냅샷·상권 원천)과 같은 철학으로
+#     **비밀값을 하나도 쓰지 않는다**(기본 GITHUB_TOKEN 만).
+#
+# ⚠️ 이 감시가 **못 잡는 것**
+#     · 창고(Supabase)가 죽은 경우 — 화면은 뜨고 검색만 안 된다. 확인하려면 공개키를
+#       올려야 하는데 비밀값 0 원칙을 깨는 값이 아니라고 보기 어려워 지금은 안 한다.
+#     · 배포 **직후** 반쪽 배포 — 최대 6시간 늦게 안다. 배포 완료를 기다렸다 두드리는
+#       구조가 필요한데, 그건 이 감시가 아니라 배포 쪽 일이다.
+#     · 이 예약 자체가 안 도는 경우 — GitHub 은 60일 무활동 시 예약을 멈춘다. 형제 감시
+#       둘은 서로를 보고 있지만(check_watch_heartbeat.py) 이 감시는 아직 그 그물 밖이다.
+name: 라이브 생존 감시
+
+on:
+  schedule:
+    # 6시간마다(00·06·12·18 UTC = 09·15·21·03 KST). 형제 감시들이 매주 월요일
+    # 00:00·00:30 UTC 라 정각을 피해 10분 비켜 간다 — 같은 시각에 몰리면 큐가 밀릴 때
+    # 함께 드롭된다.
+    - cron: "10 */6 * * *"
+  # 손으로 즉시 돌려보고 싶을 때 (Actions 탭 → Run workflow)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Seoul # 로컬(KST)과 시간축 통일
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # 스크립트는 표준 라이브러리만 쓴다 — 설치 단계가 없다.
+      - name: 라이브가 서 있는지 확인
+        id: check
+        run: python scripts/check_live_health.py
+
+      # 매번 같은 이슈가 쌓이면 알림이 소음이 되고, 소음은 무시된다.
+      # **열려 있는** 같은 제목이 있으면 건너뛴다 → 사람이 닫아야 다음 사고를 다시 알린다.
+      - name: 라이브가 죽었으면 이슈를 연다
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REASON: ${{ steps.check.outputs.reason }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          TITLE="라이브 사이트가 정상이 아닙니다 — 확인이 필요합니다"
+          if gh issue list --state open --limit 100 --json title \
+               --jq '.[].title' | grep -Fxq "$TITLE"; then
+            echo "이미 열린 같은 이슈가 있습니다 — 건너뜁니다: $TITLE"
+            exit 0
+          fi
+          {
+            cat .github/live-health-failure-issue.md
+            echo
+            echo "## 이번에 걸린 것"
+            echo
+            echo '```'
+            # 확인 단계 자체가 못 돌았으면(설치 실패 등) reason 이 비어 있다.
+            echo "${REASON:-(확인 단계가 아예 못 돌았습니다 — 아래 실행 기록을 보세요)}"
+            echo '```'
+            echo
+            echo "실패한 실행: $RUN_URL"
+          } > live_health_issue.md
+          gh issue create --title "$TITLE" --body-file live_health_issue.md
+          echo "이슈를 열었습니다: $TITLE"

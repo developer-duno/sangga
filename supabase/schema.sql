@@ -2529,6 +2529,123 @@ grant select, insert, update, delete on api.collect_progress to service_role;
 grant select, insert, update, delete on api.api_quota_log    to service_role;
 grant select, insert, update, delete on api.bjd_code         to service_role;
 
+-- =====================================================================
+-- 우편함 — 화면에서 들어오는 짧은 글 한 통 (2026-08-24b)
+-- =====================================================================
+-- 사람이 쓴 의견(kind=opinion)과 화면이 죽으며 자동으로 남긴 것(kind=error)을 한 표로
+-- 받는다. 둘은 다른 문제로 보이지만 필요한 길이 같아서("밖에서 안으로 짧은 글 넣기")
+-- 길을 두 번 뚫지 않는다.
+--
+-- ⛔ 이것은 "쓰기 권한을 여는 일"이 아니다 — 표는 밖에서 통째로 잠겨 있고, **정해진 모양의
+--    편지만 넣는 함수** 하나만 열린다(이 파일의 다른 공개 기능과 같은 구조). 넣은 사람도
+--    자기 편지를 다시 못 읽는다. 읽기는 service_role 만 한다.
+-- ⛔ 개인정보 칸이 없다 — 이름·연락처·이메일을 받지 않는다. 받는 순간 처리방침·보관기간·
+--    파기절차가 따라붙는데, 아직 아무도 모르는 서비스가 오지도 않은 문의를 위해 법적 의무를
+--    먼저 지는 것은 순서가 거꾸로다. 필요해지면 그때 칸을 붙인다.
+create table if not exists app_feedback (
+  id          bigserial primary key,
+  kind        text not null check (kind in ('opinion', 'error')),
+  -- 상한은 함수가 자르지만, 함수를 우회하는 길이 생겨도 표가 스스로 지키게 제약을 둔다.
+  body        text not null check (char_length(body) between 1 and 2000),
+  -- 무엇을 보던 중이었나(건물·구·화면). 오류면 브라우저 종류까지.
+  -- ⚠️ 모양을 강제하지 않는다 — 담을 칸이 늘 때마다 마이그레이션을 해야 하면 "그냥 안 담는"
+  --    선택을 하게 된다. 읽는 쪽에서 없는 칸을 견디게 쓴다.
+  context     jsonb,
+  created_at  timestamptz not null default now()
+);
+
+comment on table app_feedback is
+  '화면에서 들어온 짧은 글 한 통. kind=opinion 은 사람이 쓴 의견, kind=error 는 '
+  '화면이 죽으며 자동으로 남긴 것. ★ anon 에게 통째로 닫혀 있고 api.submit_feedback() '
+  '함수로만 들어온다(넣기 전용 — 넣은 사람도 못 읽는다). 개인정보 칸 없음(2026-08-24b).';
+
+-- 분당 상한을 재는 쿼리가 매번 전수를 훑지 않게 한다.
+create index if not exists idx_app_feedback_created on app_feedback (created_at desc);
+
+-- RLS 를 켜되 정책은 하나도 만들지 않는다 = 전부 거부(다른 표와 같은 방식).
+alter table app_feedback enable row level security;
+
+-- ⛔ RLS 만 믿지 않는다 — security definer 경로는 RLS 를 우회하므로 권한이 방어선이다.
+--    ⚠️ 위쪽 `revoke all on all tables in schema public` 은 그 줄을 지날 때의 표만 닫는
+--       일회성 명령이라 여기서 만든 표에는 안 걸린다. 만든 자리에서 다시 닫는다.
+revoke all on app_feedback from public, anon, authenticated;
+-- bigserial 이 함께 만드는 시퀀스도 닫는다(표만 닫으면 "닫았다"가 반쪽이 된다).
+revoke all on sequence app_feedback_id_seq from public, anon, authenticated;
+
+-- 반환값이 boolean 인 이유: void 면 화면이 성공·실패를 모른 채 "보냈습니다"를 띄우게 된다.
+create or replace function submit_feedback(
+  p_kind    text,
+  p_body    text,
+  p_context jsonb default null
+)
+returns boolean
+language plpgsql
+volatile
+security definer
+set search_path = public
+as $$
+declare
+  v_kind text := lower(btrim(coalesce(p_kind, '')));
+  v_body text := btrim(coalesce(p_body, ''));
+  v_ctx  jsonb := p_context;
+begin
+  -- 예외를 던지지 않고 거짓을 돌려준다 — 오류 기록 경로에서 예외가 나면
+  -- **오류를 알리다 오류가 나는** 꼴이 된다.
+  if v_kind not in ('opinion', 'error') then
+    return false;
+  end if;
+  if v_body = '' then
+    return false;
+  end if;
+
+  -- 거절이 아니라 자르기 — 긴 의견을 통째로 버리는 것이 더 나쁘다.
+  v_body := left(v_body, 2000);
+
+  -- 곁다리가 너무 크면 곁다리만 버린다. 본문은 살린다.
+  if v_ctx is not null and char_length(v_ctx::text) > 4000 then
+    v_ctx := null;
+  end if;
+
+  -- ⛔ 인터넷에 열린 구멍은 언젠가 봇이 찾는다. "아직 아무도 모른다"는 방어가 아니다.
+  --    IP 를 모르므로(PostgREST 뒤라 client_addr 이 프록시다) 전역 분당 상한으로 막는다.
+  --    ⚠️ 전역이라 봇 하나가 그 순간 다른 사람의 의견도 막는다 — IP 없이 할 수 있는
+  --       최선이고, 둘 중에는 창고를 지키는 쪽이 낫다는 판단이다.
+  if (select count(*) from app_feedback where created_at > now() - interval '1 minute') >= 60 then
+    return false;
+  end if;
+
+  insert into app_feedback (kind, body, context) values (v_kind, v_body, v_ctx);
+  return true;
+end;
+$$;
+
+comment on function submit_feedback(text, text, jsonb) is
+  '화면에서 온 짧은 글 한 통을 app_feedback 에 넣는다. 넣었으면 true, 모양이 아니거나 '
+  '분당 상한(60)에 걸리면 false — 예외를 던지지 않는다(오류를 알리다 오류가 나면 안 된다). '
+  'security definer: 표가 anon 에게 통째로 닫혀 있어 소유자 권한으로 대신 넣는다.';
+
+revoke all on function submit_feedback(text, text, jsonb) from public, anon, authenticated;
+
+-- 화면이 실제로 부르는 것. public 은 REST 노출에서 빠져 있어(2026-08-24 옛 문 닫기)
+-- api 쪽에 통과 함수가 없으면 화면에서 못 부른다.
+create or replace function api.submit_feedback(
+  p_kind    text,
+  p_body    text,
+  p_context jsonb default null
+)
+returns boolean
+language sql
+volatile
+security definer
+set search_path = ''
+as $$ select public.submit_feedback(p_kind, p_body, p_context) $$;
+
+revoke all on function api.submit_feedback(text, text, jsonb) from public, anon, authenticated;
+grant execute on function api.submit_feedback(text, text, jsonb) to anon, authenticated;
+
+-- ⛔ public.submit_feedback 은 끝까지 닫아 둔다 — 통과 함수가 security definer 라
+--    소유자 권한으로 부르므로 anon 에게 열 필요가 없다.
+
 -- 안 알리면 새 스키마 캐시가 다음 재시작까지 안 잡혀 404 가 난다.
 notify pgrst, 'reload schema';
 
