@@ -46,7 +46,7 @@ function gu(over: Partial<OpenSigungu> = {}): OpenSigungu {
 
 function hit(over: Partial<BuildingHit> = {}): BuildingHit {
   return {
-    bld_id: '1168010100-1',
+    bld_id: '1168010100100010000_1024110',
     pnu: '1168010100100010000',
     bld_nm: '테스트빌딩',
     road_addr: '서울 강남구 테헤란로 1',
@@ -62,7 +62,7 @@ function hit(over: Partial<BuildingHit> = {}): BuildingHit {
 
 function floorRow(over: Partial<FloorRow> = {}): FloorRow {
   return {
-    bld_id: '1168010100-1',
+    bld_id: '1168010100100010000_1024110',
     pnu: '1168010100100010000',
     floor_no: 1,
     floor_label: null,
@@ -121,6 +121,18 @@ beforeEach(() => {
 
 afterEach(() => cleanup());
 
+/** 주소를 첫 화면으로 되돌린다. App 은 **첫 그림 한 번만** 주소를 읽으므로
+ *  render() 앞에서 정해 두어야 한다. */
+function openWith(search: string) {
+  window.history.replaceState(null, '', `/${search}`);
+}
+
+/** 지금 주소의 물음표 뒷부분. */
+function currentSearch() {
+  return window.location.search;
+}
+
+
 async function pickGu(sidoName: string, guName: string) {
   // ⚠️ 시도 칩도 서버 응답(list_open_sigungu)을 받은 뒤에 그려진다 — 자료가 있는
   //    지역만 보여주기로 하면서(2026-08-13 사장님 결정) 목록이 서버에서 오게 됐다.
@@ -154,5 +166,135 @@ describe('App — 구를 바꾸면 이전 결과가 사라진다', () => {
     expect(screen.queryByText(/강남구에서/)).toBeNull();
     expect(screen.getByText('위에서 건물을 검색해 선택해 주세요.')).toBeTruthy();
     expect((screen.getByLabelText('건물명 또는 주소') as HTMLInputElement).value).toBe('');
+  });
+});
+
+/**
+ * 주소로 들고 다니기 (공유 링크 · 새로고침 복원).
+ *
+ * 여기서 특히 지키는 것
+ * ---------------------
+ * **되살리는 중에 주소가 스스로 지워지지 않는 것.** 되살리는 동안 선택 건물은 아직
+ * 비어 있어서, 그 사이 "지금 보고 있는 것"을 주소에 적으면 **링크를 열자마자 그
+ * 링크가 사라진다.** 에러가 안 나고 화면도 멀쩡해 보여서, 사용자가 새로고침해 보기
+ * 전까지는 아무도 모른다 — 이 기능 전체에서 가장 조용히 깨지는 자리다.
+ */
+const LINK_BLD = '1168010100100010000_1024110';
+
+describe('App — 주소로 들고 다니기', () => {
+  it('링크로 들어오면 검색을 거치지 않고 그 건물이 살아난다', async () => {
+    openWith(`?sgg=11680&bld=${LINK_BLD}`);
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: '테스트빌딩' })).toBeTruthy();
+    // 검색을 부르지 않았다 — 층 목록만으로 되살렸다는 뜻이다.
+    expect(rpc.mock.calls.filter(([fn]) => fn === 'search_buildings')).toHaveLength(0);
+  });
+
+  it('링크로 들어오면 구 이름까지 살아난다', async () => {
+    // 주소에는 코드(11680)만 있다. 이름을 주소에 담으면 구 이름이 바뀌는 날 옛 링크가
+    // 옛 이름을 말하므로, 이름은 늘 서버 목록에서 얻는다.
+    openWith(`?sgg=11680&bld=${LINK_BLD}`);
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: /강남구 상권 지도/ })).toBeTruthy();
+  });
+
+  it('★ 되살리는 중에 주소가 지워지지 않는다', async () => {
+    // 층 목록 응답을 일부러 붙잡아 둔 채 "되살리는 중" 상태를 만든다.
+    let release: ((r: { data: unknown; error: unknown }) => void) | null = null;
+    const pending = new Promise<{ data: unknown; error: unknown }>((r) => {
+      release = r;
+    });
+    from.mockImplementation((view: string) => {
+      if (view === 'v_coverage_stats') return makeQuery({ data: [], error: null });
+      const q: Record<string, unknown> = {};
+      for (const m of ['select', 'eq', 'order', 'limit']) q[m] = () => q;
+      q.then = (cb: (r: unknown) => unknown) => pending.then(cb);
+      return q;
+    });
+
+    openWith(`?sgg=11680&bld=${LINK_BLD}`);
+    render(<App />);
+
+    expect(await screen.findByText('링크에 담긴 건물을 불러오는 중입니다…')).toBeTruthy();
+    // 아직 되살리는 중인데 주소에서 건물이 빠져 있으면, 새로고침하는 순간 링크가 죽는다.
+    expect(currentSearch()).toContain(`bld=${LINK_BLD}`);
+
+    release!({ data: [floorRow()], error: null });
+    expect(await screen.findByRole('heading', { name: '테스트빌딩' })).toBeTruthy();
+    expect(currentSearch()).toContain(`bld=${LINK_BLD}`);
+  });
+
+  it('층 자료가 없는 건물이면 빈 화면 대신 정직하게 안내한다', async () => {
+    // 층이 한 줄도 없는 건물이 239동 실재한다.
+    from.mockImplementation(() => makeQuery({ data: [], error: null }));
+
+    openWith(`?sgg=11680&bld=${LINK_BLD}`);
+    render(<App />);
+
+    expect(
+      await screen.findByText('링크에 담긴 건물을 찾지 못했습니다. 위에서 건물을 검색해 선택해 주세요.'),
+    ).toBeTruthy();
+  });
+
+  it('되살리기에 실패해도 주소를 지우지 않는다 (새로고침으로 다시 해 볼 수 있게)', async () => {
+    from.mockImplementation(() => makeQuery({ data: null, error: { message: '잠깐 흔들림' } }));
+
+    openWith(`?sgg=11680&bld=${LINK_BLD}`);
+    render(<App />);
+
+    await screen.findByText(/찾지 못했습니다/);
+    expect(currentSearch()).toContain(`bld=${LINK_BLD}`);
+  });
+
+  it('건물을 고르면 주소에 적힌다', async () => {
+    openWith('');
+    render(<App />);
+
+    await pickGu('서울', '강남구');
+    await waitFor(() => expect(currentSearch()).toContain('sgg=11680'));
+
+    const input = screen.getByLabelText('건물명 또는 주소');
+    fireEvent.change(input, { target: { value: '테헤란로' } });
+    fireEvent.submit(input.closest('form')!);
+    fireEvent.click(await screen.findByRole('button', { name: /테스트빌딩/ }));
+
+    await waitFor(() => expect(currentSearch()).toContain(`bld=${LINK_BLD}`));
+  });
+
+  it('구를 바꾸면 주소에서 이전 건물이 빠진다', async () => {
+    openWith(`?sgg=11680&bld=${LINK_BLD}`);
+    render(<App />);
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+
+    await pickGu('대전', '서구');
+
+    await waitFor(() => expect(currentSearch()).not.toContain('bld='));
+    expect(currentSearch()).toContain('sgg=30170');
+  });
+
+  it('아무것도 안 고른 상태에서는 주소가 깨끗하다', async () => {
+    openWith('');
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+
+    // '?' 만 남은 주소를 만들지 않는다.
+    expect(currentSearch()).toBe('');
+  });
+
+  it('건물을 고른 뒤에만 링크 복사 버튼이 보인다', async () => {
+    openWith('');
+    render(<App />);
+    await pickGu('서울', '강남구');
+
+    expect(screen.queryByRole('button', { name: '링크 복사' })).toBeNull();
+
+    const input = screen.getByLabelText('건물명 또는 주소');
+    fireEvent.change(input, { target: { value: '테헤란로' } });
+    fireEvent.submit(input.closest('form')!);
+    fireEvent.click(await screen.findByRole('button', { name: /테스트빌딩/ }));
+
+    expect(await screen.findByRole('button', { name: '링크 복사' })).toBeTruthy();
   });
 });

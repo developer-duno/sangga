@@ -26,6 +26,18 @@ type Props = {
   selectedSigungu: string | null;
   /** 구를 고르거나 해제할 때 부모에게 알린다. name은 화면 표시용(검색 결과 문구)이다. */
   onSelectSigungu: (code: string | null, name?: string | null) => void;
+  /**
+   * 지금 고른 구의 **이름**을 알려 준다(고르는 행위와 무관하게).
+   *
+   * 링크로 들어온 사람은 주소에서 구 **코드**만 받아 이름을 모른다. 이름이 없어도
+   * 화면은 안 깨지지만 "고른 지역 상권 지도"라고 적혀 링크를 받은 사람이 보는 첫
+   * 화면이 아쉬워진다. 이 컴포넌트는 서버 목록을 이미 갖고 있어 이름을 아는 유일한
+   * 자리라, 목록이 도착해 짝이 맞는 순간 부모에게 건넨다.
+   *
+   * ⓘ 이름을 주소에 담지 않는 이유 — 담으면 구 이름이 바뀌는 날 옛 링크가 옛 이름을
+   *    말한다. 코드만 담고 이름은 늘 서버 목록에서 얻으면 그 어긋남이 없다.
+   */
+  onSigunguNameResolved?: (name: string) => void;
 };
 
 /** 서버가 준 구 목록에서 시도를 뽑는다(중복 제거, 코드순). 짧은 이름은 SIDOS 에서. */
@@ -39,7 +51,11 @@ function sidosFrom(guList: OpenSigungu[]) {
   return [...seen.values()].sort((a, b) => a.code.localeCompare(b.code));
 }
 
-export function RegionPicker({ selectedSigungu, onSelectSigungu }: Props) {
+export function RegionPicker({
+  selectedSigungu,
+  onSelectSigungu,
+  onSigunguNameResolved,
+}: Props) {
   const [expandedSido, setExpandedSido] = useState<string | null>(null);
   const [guList, setGuList] = useState<OpenSigungu[]>([]);
   const [guLoading, setGuLoading] = useState(true);
@@ -68,6 +84,13 @@ export function RegionPicker({ selectedSigungu, onSelectSigungu }: Props) {
 
   const sidos = sidosFrom(guList);
   const selectedGu = guList.find((g) => g.sigungu_code === selectedSigungu) ?? null;
+
+  // 목록이 도착해 지금 고른 구의 이름을 알게 되면 부모에게 건넨다.
+  // (직접 눌러서 고른 경우엔 부모가 이미 이름을 알고 있어 아무 일도 일어나지 않는다 —
+  //  받는 쪽이 "이미 알면 무시"하도록 되어 있다.)
+  useEffect(() => {
+    if (selectedGu) onSigunguNameResolved?.(selectedGu.sigungu_nm);
+  }, [selectedGu, onSigunguNameResolved]);
   const gusInExpanded = expandedSido ? guList.filter((g) => g.sido_code === expandedSido) : [];
 
   function pickGu(g: OpenSigungu) {

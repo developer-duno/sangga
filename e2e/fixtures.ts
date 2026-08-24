@@ -18,7 +18,7 @@ import type {
 
 export function searchHit(over: Partial<BuildingHit> = {}): BuildingHit {
   return {
-    bld_id: '1168010100-1',
+    bld_id: '1168010100100010000_1024110',
     pnu: '1168010100100010000',
     bld_nm: '테스트빌딩',
     road_addr: '서울 강남구 테헤란로 1',
@@ -34,7 +34,7 @@ export function searchHit(over: Partial<BuildingHit> = {}): BuildingHit {
 
 export function floorRow(over: Partial<FloorRow> = {}): FloorRow {
   return {
-    bld_id: '1168010100-1',
+    bld_id: '1168010100100010000_1024110',
     pnu: '1168010100100010000',
     floor_no: 1,
     floor_label: null,
