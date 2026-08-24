@@ -462,11 +462,28 @@ class TestAnonExposure:
             "list_parcel_transactions", "get_sigungu_tx_stats",
             "list_price_bands",
             "list_industry_mix", "list_industry_detail",
-            # ⚠️ 이 목록에서 **유일하게 쓰는** 함수다(2026-08-24b 의견함·오류 기록).
-            #    나머지 아홉은 전부 읽기라, 여기가 늘 때는 "무엇이 들어오나"를 한 번 더
-            #    본다 — 표가 아니라 함수인지, 넣기만 하는지, 읽는 길은 없는지.
+            # ⚠️ 유일한 **쓰기** 함수다(2026-08-24b 의견함·오류 기록). 나머지는 전부 읽기.
             "submit_feedback",
+            # 의견함 주간 알림(2026-08-24c). GitHub Actions 주간 워크플로가 공개키로
+            # 부른다 — 숫자만 준다(건수·총량·가장 오래된 글의 나이).
+            "get_feedback_stats",
         )
+
+    def test_the_purge_function_is_never_exposed(self):
+        """⛔ 지우는 함수는 밖에서 부를 수 있으면 안 된다(2026-08-24c).
+
+        지금 모양(인자 없음·90일 상수)으로는 밖에 열어도 사실상 무해하다. 그런데 바로
+        그 "무해함"이 함정이다 — 언젠가 "기한을 바꿀 수 있게 인자를 붙이자"는 편의
+        요구가 오면, 그 순간 인터넷에 열린 **데이터 파괴 창구**가 된다. 이 레포는 이미
+        같은 형태(정규식 구멍·허용 목록 드리프트)로 여러 번 데였다.
+
+        그래서 치우기는 편지가 들어올 때 submit_feedback 이 소유자 권한으로 대신 한다.
+        """
+        assert "purge_old_feedback" not in post_load.ANON_READABLE_ALLOWLIST
+        assert "purge_old_feedback" not in post_load.ANON_CALLABLE_ALLOWLIST
+        assert post_load.unexpected_anon_readables(["purge_old_feedback"]) == [
+            "purge_old_feedback"
+        ]
 
     def test_the_feedback_table_is_never_allowed(self):
         """⛔ 의견함의 **표**가 허용 목록에 들어가면 안 된다(2026-08-24b).
