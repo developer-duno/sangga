@@ -4,6 +4,8 @@ import { BuildingSearch } from './components/BuildingSearch';
 import { DistrictMap } from './components/DistrictMap';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { FloorStack } from './components/FloorStack';
+import { PrintButton } from './components/PrintButton';
+import { PrintHeader } from './components/PrintHeader';
 import { RegionPicker } from './components/RegionPicker';
 import { ShareButton } from './components/ShareButton';
 import { FLOOR_STACK_VIEW } from './lib/appConstants';
@@ -107,8 +109,27 @@ export default function App() {
     window.history.replaceState(null, '', `${window.location.pathname}${buildAppSearch(next)}`);
   }, [sigungu, selected, restoring, restoreFailed]);
 
+  /*
+    지금 화면의 온전한 주소. **링크 복사 버튼과 종이 머리글이 같은 값을 쓴다** — 두 곳에서
+    따로 만들면 언젠가 한쪽만 고쳐져 "복사한 주소"와 "종이에 적힌 주소"가 갈린다.
+    건물을 안 골랐으면 첫 화면 주소가 되는데, 쓰는 자리가 둘 다 `selected` 안이라 무해하다.
+  */
+  const shareUrl = buildShareUrl(window.location.origin, window.location.pathname, {
+    sigungu,
+    bldId: selected?.bld_id ?? null,
+  });
+
   return (
     <div className="app">
+      {/*
+        종이에만 나오는 머리글(결정 0020). 화면에서는 보이지 않는다 — 맨 위에 두는 이유는
+        인쇄물의 첫 줄이 "무슨 서류인가"여야 하기 때문이다. 지도가 그 아래에 오므로, 여기에
+        이름이 없으면 종이를 받은 사람이 지도부터 보게 된다.
+      */}
+      {selected && (
+        <PrintHeader name={selected.bld_nm} address={selected.road_addr} url={shareUrl} />
+      )}
+
       <header className="app__head">
         <h1 className="app__title">상가 층별 스택뷰</h1>
         {/*
@@ -171,14 +192,14 @@ export default function App() {
           {/*
             보고 있는 화면을 가지고 나가는 자리. 건물을 고른 뒤에만 보인다 — 고르기
             전에는 담아 갈 것이 없다.
+
+            링크와 종이를 **한 줄에 둔다.** 둘 다 "다 보고 나서 남기는 방법"이라, 떨어뜨려
+            놓으면 하나만 있는 줄 안다(결정 0020).
           */}
-          <ShareButton
-            url={buildShareUrl(window.location.origin, window.location.pathname, {
-              sigungu,
-              bldId: selected.bld_id,
-            })}
-            label={selected.bld_nm}
-          />
+          <div className="takeout">
+            <ShareButton url={shareUrl} label={selected.bld_nm} />
+            <PrintButton />
+          </div>
 
           {/*
             층별 화면은 이 앱에서 가장 크고(카드 다섯 장) 바깥 자료를 가장 많이 다루는

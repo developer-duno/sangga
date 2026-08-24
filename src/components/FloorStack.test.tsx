@@ -1367,9 +1367,11 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     });
 
     const band = container.querySelector('.band')!;
-    // 본문(값·근거·출처)은 아직 없다…
-    expect(band.querySelector('.card__body')).toBeNull();
-    expect(band.querySelector('.band__val')).toBeNull();
+    // 본문(값·근거·출처)은 아직 **안 보인다**…
+    //
+    // ⚠️ "DOM 에 없다"가 아니라 "감춰져 있다"를 본다. 접힌 본문은 자리에 남겨 둔다 —
+    //    안 그러면 종이로 뽑을 때 이 카드가 통째로 빠진다(결정 0020).
+    expect(band.querySelector('.card__body')?.hasAttribute('hidden')).toBe(true);
     // …그래도 "무엇이 몇 개 있는지"는 접은 채로 읽힌다.
     expect(band.querySelector('.card__summary')?.textContent).toBe('값을 낸 층 1개');
   });
@@ -1403,7 +1405,8 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     expect(floorsCard.querySelectorAll('.floor')).toHaveLength(2);
 
     fireEvent.click(floorsCard.querySelector('.card__toggle')!);
-    expect(floorsCard.querySelectorAll('.floor')).toHaveLength(0);
+    // 층 줄은 자리에 남되 **감춰진다**(결정 0020 — 종이로 뽑을 때 되살려야 한다).
+    expect(floorsCard.querySelector('.card__body')?.hasAttribute('hidden')).toBe(true);
     expect(floorsCard.querySelector('.card__summary')?.textContent).toBe('층 2개 · 점포 4곳');
   });
 
@@ -1517,7 +1520,9 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     // 시세 카드를 펼치고, 층 목록은 접는다.
     fireEvent.click(container.querySelector('.band .card__toggle')!);
     fireEvent.click(container.querySelector('.card--floors .card__toggle')!);
-    expect(container.querySelectorAll('.floor')).toHaveLength(0);
+    expect(
+      container.querySelector('.card--floors .card__body')?.hasAttribute('hidden'),
+    ).toBe(true);
     // 층 목록이 접혀 있는 동안에는 "펼쳐진 층"도 없다고 말한다(거짓말 금지).
     expect(container.querySelector('.band__row--on')).toBeNull();
 
