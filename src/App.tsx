@@ -1,6 +1,8 @@
 import { useState } from 'react';
+import { AppFooter } from './components/AppFooter';
 import { BuildingSearch } from './components/BuildingSearch';
 import { DistrictMap } from './components/DistrictMap';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { FloorStack } from './components/FloorStack';
 import { RegionPicker } from './components/RegionPicker';
 import type { BuildingHit } from './types';
@@ -59,13 +61,45 @@ export default function App() {
         첫인상이라 탭이나 건물 선택 뒤에 숨기면 있는 줄도 모른다. 구를 안 골랐을 때는
         컴포넌트가 스스로 아무것도 그리지 않는다(그릴 범위가 정해지지 않았으므로).
       */}
-      <DistrictMap sigungu={sigungu} sigunguName={sigunguName} selected={selected} />
+      {/*
+        ⚠️ key 를 구 코드로 주는 이유 — 그물(ErrorBoundary)은 한 번 오류를 받으면 스스로
+           풀리지 않는다. key 가 없으면 A구 지도에서 한 번 터진 뒤 B구로 옮겨도 **계속**
+           오류 안내만 보인다. 구가 바뀌면 그물을 새로 쳐서 다시 그려 보게 한다.
+        지도는 바깥 지도 SDK 를 태우는 자리라 우리 코드만으로는 터질 자리를 다 못 셈한다.
+      */}
+      <ErrorBoundary
+        key={`map:${sigungu ?? '__none__'}`}
+        area="상권 지도"
+        context={{ sigungu, sigungu_nm: sigunguName }}
+      >
+        <DistrictMap sigungu={sigungu} sigunguName={sigunguName} selected={selected} />
+      </ErrorBoundary>
 
       {selected ? (
-        <FloorStack building={selected} />
+        // 층별 화면은 이 앱에서 가장 크고(카드 다섯 장) 바깥 자료를 가장 많이 다루는
+        // 자리다. 여기가 죽어도 위쪽 검색은 살아 있어야 다른 건물로 옮겨 갈 수 있다.
+        <ErrorBoundary
+          key={`stack:${selected.bld_id}`}
+          area="층별 화면"
+          context={{ bld_id: selected.bld_id, sigungu }}
+        >
+          <FloorStack building={selected} />
+        </ErrorBoundary>
       ) : (
         <p className="msg msg--idle">위에서 건물을 검색해 선택해 주세요.</p>
       )}
+
+      {/*
+        무엇을 보던 중이었는지를 의견함이 함께 실어 보낸다 — 사람이 손으로 적지 않아도
+        "어디를 보다 무엇이 아쉬웠나"가 남는다. 개인을 가리키는 값은 담지 않는다.
+      */}
+      <AppFooter
+        feedbackContext={{
+          bld_id: selected?.bld_id ?? null,
+          sigungu,
+          sigungu_nm: sigunguName,
+        }}
+      />
     </div>
   );
 }

@@ -1198,6 +1198,193 @@ body {
   color: var(--err);
 }
 
+/* ── 오류 안내 상자 (ErrorBoundary) ────────────────────────────────────────
+   ⚠️ 눈에 띄되 겁주지 않는 톤. 경고(--warn-*)를 쓰고 오류색(--err)은 제목에만 —
+      바탕 전체를 빨갛게 하면 "자료가 잘못됐다"로 읽히는데 사실은 화면 문제다. */
+.errbox {
+  margin: 20px 0;
+  padding: 18px 20px;
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-line);
+  border-radius: 10px;
+}
+
+.errbox__title {
+  margin: 0 0 6px;
+  font-weight: 700;
+  color: var(--err);
+}
+
+.errbox__body {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.errbox__acts {
+  display: flex;
+  gap: 8px;
+}
+
+.errbox__btn {
+  padding: 8px 16px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.errbox__btn--ghost {
+  background: transparent;
+  color: var(--accent);
+}
+
+.errbox__btn:hover {
+  opacity: 0.88;
+}
+
+/* ── 화면 아래 안내 + 의견함 ──────────────────────────────────────────────── */
+.foot {
+  margin-top: 48px;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+}
+
+.foot__notice {
+  padding: 16px 18px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.foot__lead {
+  margin: 0 0 8px;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.foot__list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.foot__list li + li {
+  margin-top: 4px;
+}
+
+.fb {
+  margin-top: 16px;
+}
+
+.fb__open {
+  padding: 8px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.fb__open:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.fb__label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.fb__guide {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.fb__input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.fb__input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+
+.fb__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.fb__count {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.fb__acts {
+  display: flex;
+  gap: 8px;
+}
+
+.fb__btn {
+  padding: 8px 18px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.fb__btn--ghost {
+  background: transparent;
+  color: var(--accent);
+}
+
+.fb__btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* 빈 안내는 자리를 안 먹는다 — 늘 비어 있는 한 줄이 버튼 아래에 떠 있으면 어색하다.
+   (:empty 라 글이 들어오는 순간에만 여백이 생긴다.) */
+.fb__note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.fb__note:empty {
+  margin: 0;
+}
+
+.fb__note--ok {
+  color: var(--accent);
+}
+
 @media (max-width: 720px) {
   .hit,
   .floor__row,

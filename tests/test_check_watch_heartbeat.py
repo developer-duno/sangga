@@ -25,8 +25,20 @@ NOW = datetime.datetime(2026, 8, 22, 12, 0, 0, tzinfo=UTC)
 
 
 def _dt(days_ago):
-    """NOW 기준 며칠 전 시각."""
+    """NOW 기준 며칠 전 시각. **judge() 처럼 now 를 주입받는 함수에만** 쓴다."""
     return NOW - datetime.timedelta(days=days_ago)
+
+
+def _recent(hours_ago):
+    """**지금(실제 시각)** 기준 몇 시간 전.
+
+    ⛔ `main()` 은 now 를 주입받지 않고 실제 시각을 쓴다. 그래서 main 테스트에 고정 상수
+       NOW 기준 값을 주면 **날이 갈수록 나이가 벌어져 언젠가 저절로 깨진다** — 코드는 한
+       줄도 안 고쳤는데 어느 날 빨간불이 되는 시한폭탄이다(2026-08-24 라이브 감시 기준을
+       1일로 조인 순간 실제로 터졌다. 그 전에는 8일 기준이라 안 보였을 뿐이다).
+       ⇒ main 을 부르는 테스트는 반드시 이 상대값을 쓴다.
+    """
+    return datetime.datetime.now(UTC) - datetime.timedelta(hours=hours_ago)
 
 
 # ── 시각 읽기 ─────────────────────────────────────────────────────────────────
@@ -331,7 +343,9 @@ def _patch_fetch(monkeypatch, mapping):
 def test_main_returns_zero_when_everything_is_fresh(monkeypatch, capsys, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
-    _patch_fetch(monkeypatch, {chk.QUARTERLY_WATCH: _dt(2), chk.DISTRICT_WATCH: _dt(2)})
+    _patch_fetch(monkeypatch, {chk.QUARTERLY_WATCH: _recent(48), chk.DISTRICT_WATCH: _recent(48),
+                           # 라이브 감시는 6시간마다 돌므로 기준이 1일이다 — 이틀 전이면 이미 멈춘 것.
+                           chk.LIVE_HEALTH_WATCH: _recent(3)})
     assert chk.main([]) == 0
     assert "멈춘 감시           : 없음" in capsys.readouterr().out
     # 멈춘 게 없으면 이슈 본문 파일을 만들지 않는다
@@ -341,7 +355,8 @@ def test_main_returns_zero_when_everything_is_fresh(monkeypatch, capsys, tmp_pat
 def test_main_returns_one_and_writes_issue_body_when_stale(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
-    _patch_fetch(monkeypatch, {chk.QUARTERLY_WATCH: _dt(2), chk.DISTRICT_WATCH: _dt(70)})
+    _patch_fetch(monkeypatch, {chk.QUARTERLY_WATCH: _recent(48), chk.DISTRICT_WATCH: _recent(70 * 24),
+                           chk.LIVE_HEALTH_WATCH: _recent(3)})
     assert chk.main([]) == 1
     body = (tmp_path / chk.ISSUE_BODY_FILE).read_text(encoding="utf-8")
     assert "상권 원천 감시" in body
@@ -367,7 +382,7 @@ def test_main_checks_only_the_workflow_asked_for(monkeypatch, tmp_path):
 def test_main_honors_max_age_days(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
-    _patch_fetch(monkeypatch, {chk.DISTRICT_WATCH: _dt(20)})
+    _patch_fetch(monkeypatch, {chk.DISTRICT_WATCH: _recent(20 * 24)})
     assert chk.main(["--workflow", chk.DISTRICT_WATCH]) == 1
     assert chk.main(["--workflow", chk.DISTRICT_WATCH, "--max-age-days", "30"]) == 0
 
@@ -389,7 +404,7 @@ def test_main_writes_github_output_for_the_next_step(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     out = tmp_path / "out.txt"
     monkeypatch.setenv("GITHUB_OUTPUT", str(out))
-    _patch_fetch(monkeypatch, {chk.DISTRICT_WATCH: _dt(70)})
+    _patch_fetch(monkeypatch, {chk.DISTRICT_WATCH: _recent(70 * 24)})
     assert chk.main(["--workflow", chk.DISTRICT_WATCH]) == 1
     assert "stale=true" in out.read_text(encoding="utf-8")
 
@@ -397,7 +412,8 @@ def test_main_writes_github_output_for_the_next_step(monkeypatch, tmp_path):
 def test_main_json_output(monkeypatch, capsys, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
-    _patch_fetch(monkeypatch, {chk.QUARTERLY_WATCH: _dt(2), chk.DISTRICT_WATCH: None})
+    _patch_fetch(monkeypatch, {chk.QUARTERLY_WATCH: _recent(48), chk.DISTRICT_WATCH: None,
+                           chk.LIVE_HEALTH_WATCH: _recent(3)})
     assert chk.main(["--json"]) == 1
     data = json.loads(capsys.readouterr().out)
     assert data["max_age_days"] == chk.DEFAULT_MAX_AGE_DAYS
@@ -414,7 +430,8 @@ def test_main_does_not_touch_network(monkeypatch, tmp_path):
         raise AssertionError("테스트가 네트워크를 탔습니다")
 
     monkeypatch.setattr(chk.urllib.request, "urlopen", forbidden)
-    _patch_fetch(monkeypatch, {chk.QUARTERLY_WATCH: _dt(1), chk.DISTRICT_WATCH: _dt(1)})
+    _patch_fetch(monkeypatch, {chk.QUARTERLY_WATCH: _recent(24), chk.DISTRICT_WATCH: _recent(24),
+                           chk.LIVE_HEALTH_WATCH: _recent(3)})
     assert chk.main([]) == 0
 
 
@@ -429,36 +446,48 @@ def _read_text(path):
         return f.read()
 
 
-@pytest.mark.parametrize("name", [chk.QUARTERLY_WATCH, chk.DISTRICT_WATCH])
+@pytest.mark.parametrize("name", chk.DEFAULT_WORKFLOWS)
 def test_watched_workflow_files_actually_exist(name):
     """파일명을 바꾸고 이 상수를 안 고치면 조회가 404 로 계속 실패한다."""
     assert os.path.exists(os.path.join(WORKFLOW_DIR, name)), name
 
 
-@pytest.mark.parametrize(
-    "mine,other",
-    [(chk.QUARTERLY_WATCH, chk.DISTRICT_WATCH), (chk.DISTRICT_WATCH, chk.QUARTERLY_WATCH)],
-)
-def test_each_watch_checks_the_other_one(mine, other):
-    """서로를 봐야 한쪽이 죽어도 다른 쪽이 알린다. 자기 자신을 보면 아무 의미가 없다."""
+@pytest.mark.parametrize("mine", chk.DEFAULT_WORKFLOWS)
+def test_each_watch_checks_all_the_others(mine):
+    """⛔ 감시마다 **나머지 전부**를 봐야 한다.
+
+    둘일 때는 "서로 본다"로 충분했지만 셋이 되면 그 표현이 구멍을 남긴다 — A가 B만 보고
+    C를 아무도 안 보면, C가 죽어도 영영 모른다(2026-08-24 라이브 감시를 넣을 때 실제로
+    그 상태였다). 그래서 "나머지 전부"로 못을 박는다.
+    """
     wf = _read_text(os.path.join(WORKFLOW_DIR, mine))
-    assert "check_watch_heartbeat.py --workflow {}".format(other) in wf
+    for other in chk.DEFAULT_WORKFLOWS:
+        if other == mine:
+            continue
+        assert "--workflow {}".format(other) in wf, "{} 가 {} 를 안 본다".format(mine, other)
 
 
-@pytest.mark.parametrize("name", [chk.QUARTERLY_WATCH, chk.DISTRICT_WATCH])
+@pytest.mark.parametrize("mine", chk.DEFAULT_WORKFLOWS)
+def test_no_watch_checks_itself(mine):
+    """자기 자신을 보는 것은 아무 뜻이 없다 — 지금 도는 중이니 늘 '정상'이다."""
+    wf = _read_text(os.path.join(WORKFLOW_DIR, mine))
+    assert "--workflow {}".format(mine) not in wf
+
+
+@pytest.mark.parametrize("name", chk.DEFAULT_WORKFLOWS)
 def test_each_watch_can_read_run_history(name):
     """actions: read 가 없으면 실행 기록 조회가 403 으로 막힌다."""
     assert "actions: read" in _read_text(os.path.join(WORKFLOW_DIR, name))
 
 
-@pytest.mark.parametrize("name", [chk.QUARTERLY_WATCH, chk.DISTRICT_WATCH])
+@pytest.mark.parametrize("name", chk.DEFAULT_WORKFLOWS)
 def test_heartbeat_step_cannot_fail_the_job(name):
     """하트비트가 job 을 실패시키면 failure() 가 **엉뚱한** 실패 이슈를 연다."""
     wf = _read_text(os.path.join(WORKFLOW_DIR, name))
     assert "continue-on-error: true" in wf
 
 
-@pytest.mark.parametrize("name", [chk.QUARTERLY_WATCH, chk.DISTRICT_WATCH])
+@pytest.mark.parametrize("name", chk.DEFAULT_WORKFLOWS)
 def test_heartbeat_still_runs_when_my_own_watch_failed(name):
     """내가 아픈 주야말로 상대까지 조용해지면 안 되는 주다.
 
@@ -502,3 +531,44 @@ def test_default_max_age_covers_one_missed_weekly_run():
 def test_default_max_age_is_shorter_than_github_auto_disable():
     """60일 자동중지가 실제로 걸리기 훨씬 전에 알아야 손 쓸 시간이 있다."""
     assert chk.DEFAULT_MAX_AGE_DAYS < 60
+
+
+# ── 워크플로우마다 다른 기준 (2026-08-24 적대검증 반영) ─────────────────────────
+
+
+def test_live_health_watch_has_a_tighter_threshold():
+    """⛔ 6시간마다 도는 감시에 8일 기준을 쓰면, 그것이 죽어 라이브가 무너져도 일주일을 모른다.
+
+    감시의 감시가 감시보다 굼뜨면 있으나 마나다.
+    """
+    assert chk.max_age_for(chk.LIVE_HEALTH_WATCH) == 1.0
+    assert chk.max_age_for(chk.QUARTERLY_WATCH) == chk.DEFAULT_MAX_AGE_DAYS
+    assert chk.max_age_for(chk.DISTRICT_WATCH) == chk.DEFAULT_MAX_AGE_DAYS
+
+
+def test_user_can_tighten_but_not_loosen_the_tight_one():
+    """사람이 더 짧게 주면 따르고, 더 길게 줘도 짧은 기준은 지킨다(놓치는 것보다 시끄러운 게 낫다)."""
+    assert chk.max_age_for(chk.LIVE_HEALTH_WATCH, 0.5) == 0.5
+    assert chk.max_age_for(chk.LIVE_HEALTH_WATCH, 30) == 1.0
+    assert chk.max_age_for(chk.QUARTERLY_WATCH, 30) == 30
+
+
+def test_live_health_watch_stale_after_a_day():
+    """하루 넘게 성공 기록이 없으면 멈춘 것으로 본다."""
+    stale = chk.judge([(chk.LIVE_HEALTH_WATCH, _dt(1.5))], now=NOW)
+    assert len(stale) == 1
+    assert stale[0]["label"] == "라이브 생존 감시"
+
+    # 반나절이면 정상 (6시간 주기라 한두 번 걸러도 여유가 있다)
+    assert chk.judge([(chk.LIVE_HEALTH_WATCH, _dt(0.4))], now=NOW) == []
+
+
+def test_default_workflows_covers_all_three_watches():
+    """감시를 새로 만들고 여기 안 넣으면, 그 감시가 죽어도 아무도 모른다."""
+    assert set(chk.DEFAULT_WORKFLOWS) == {
+        chk.QUARTERLY_WATCH,
+        chk.DISTRICT_WATCH,
+        chk.LIVE_HEALTH_WATCH,
+    }
+    for wf in chk.DEFAULT_WORKFLOWS:
+        assert wf in chk.WORKFLOW_LABELS

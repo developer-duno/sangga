@@ -110,3 +110,28 @@ export const INDUSTRY_MIX_FN = 'list_industry_mix';
  *    되돌려 준 것이라, 그 사이 다른 업종을 고른 경우 늦게 온 답을 버리는 데 쓴다.
  */
 export const INDUSTRY_DETAIL_FN = 'list_industry_detail';
+
+/**
+ * 화면에서 온 짧은 글 한 통을 창고에 넣는 서버 함수. 2026-08-24b.
+ *
+ * ⚠️ **인자 이름이 `p_kind`·`p_body`·`p_context` 다**(`list_price_bands` 와 같은 이유 —
+ *    `kind`·`body` 는 흔한 컬럼명이라 접두사를 붙였다). 목(mock)은 인자 **이름**을 안 보므로
+ *    `{ kind: … }` 로 잘못 불러도 vitest 는 초록이고 **라이브에서만** PGRST202 가 난다.
+ *
+ * 돌려주는 것은 `true`(넣었다) 또는 `false`(모양이 아니거나 분당 상한에 걸렸다) 하나뿐이다.
+ * 예외를 던지지 않는 이유는 이 길로 **오류 보고도 지나가기** 때문이다 — 오류를 알리다
+ * 오류가 나면 안 된다.
+ *
+ * ⛔ 읽는 함수는 없다. 넣은 사람도 자기 글을 다시 못 본다(표가 anon 에게 통째로 닫혀 있다).
+ */
+export const SUBMIT_FEEDBACK_FN = 'submit_feedback';
+
+/**
+ * 의견 본문 글자 수 상한. **서버가 정본**이다
+ * (`supabase/schema.sql` 의 `submit_feedback` → `left(v_body, 2000)` + 표 CHECK 제약).
+ *
+ * 서버는 넘치면 **자른다**(거절이 아니라 — 긴 의견을 통째로 버리는 것이 더 나쁘다).
+ * 화면이 미리 막아 주는 편이 친절하므로 같은 값을 쓰되, 서버 쪽을 고치면 이 값도
+ * 같은 커밋에서 함께 고친다.
+ */
+export const FEEDBACK_MAX_LEN = 2000;

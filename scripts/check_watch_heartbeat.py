@@ -71,19 +71,38 @@ import urllib.request
 #    (테스트가 파일 존재 여부로 붙잡는다).
 QUARTERLY_WATCH = "sangkwon-quarterly-watch.yml"
 DISTRICT_WATCH = "district-source-watch.yml"
+LIVE_HEALTH_WATCH = "live-health-watch.yml"
 
-# 아무것도 안 주면 감시 2종을 다 본다(사람이 내 PC 에서 돌릴 때의 기본값).
-DEFAULT_WORKFLOWS = (QUARTERLY_WATCH, DISTRICT_WATCH)
+# 아무것도 안 주면 감시 3종을 다 본다(사람이 내 PC 에서 돌릴 때의 기본값).
+DEFAULT_WORKFLOWS = (QUARTERLY_WATCH, DISTRICT_WATCH, LIVE_HEALTH_WATCH)
 
 # 화면·이슈 제목에 쓸 짧은 이름표
 WORKFLOW_LABELS = {
     QUARTERLY_WATCH: "분기 스냅샷 감시",
     DISTRICT_WATCH: "상권 원천 감시",
+    LIVE_HEALTH_WATCH: "라이브 생존 감시",
 }
 
-# 감시 2종은 **주 1회**(월요일) 예약이다. 8일이면 한 번을 통째로 걸러야 걸린다 —
+# 분기·상권 감시는 **주 1회**(월요일) 예약이다. 8일이면 한 번을 통째로 걸러야 걸린다 —
 # 하루치 여유는 큐가 조금 밀리는 정상 상황을 헛알림으로 만들지 않기 위한 것이다.
 DEFAULT_MAX_AGE_DAYS = 8
+
+# ⛔ **주기가 다른 감시는 기준도 달라야 한다.** 라이브 생존 감시는 6시간마다 도는데
+#    거기에 8일 기준을 쓰면, 그것이 죽어 **라이브가 무너져도 일주일을 모른다** — 감시의
+#    감시가 감시보다 굼떠서 아무 뜻이 없어지는 상태다(2026-08-24 적대검증 지적).
+#    하루면 정상 실행 네 번을 통째로 걸러야 걸리므로 큐가 밀리는 정도로는 안 울린다.
+WORKFLOW_MAX_AGE_DAYS = {
+    LIVE_HEALTH_WATCH: 1.0,
+}
+
+
+def max_age_for(workflow_file, fallback=DEFAULT_MAX_AGE_DAYS):
+    """이 워크플로우에 적용할 기준(일).
+
+    ⚠️ 사람이 `--max-age-days` 로 더 **짧게** 주면 그것을 따르고, 더 **길게** 줘도 여기
+       적힌 짧은 기준은 그대로 지킨다(min). 놓치는 쪽보다 시끄러운 쪽이 낫다.
+    """
+    return min(fallback, WORKFLOW_MAX_AGE_DAYS.get(workflow_file, fallback))
 
 REPO = "developer-duno/sangga"
 API_BASE = "https://api.github.com"
@@ -184,7 +203,8 @@ def judge(results, max_age_days=DEFAULT_MAX_AGE_DAYS, now=None):
             })
             continue
         age = age_days(last_success, now)
-        if age > max_age_days:
+        # 워크플로우마다 예약 주기가 다르므로 기준도 다르다(max_age_for 참조).
+        if age > max_age_for(workflow_file, max_age_days):
             stale.append({
                 "workflow": workflow_file,
                 "label": label_of(workflow_file),

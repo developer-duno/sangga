@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""마이그레이션 2026-08-22e(api 스키마)의 불변식을 지킨다.
+"""api 스키마 마이그레이션들의 불변식을 지킨다(뿌리는 2026-08-22e).
+
+⚠️ 보는 대상은 22e 하나가 아니라 **api 에 무언가를 만드는 마이그레이션 전부**다
+   (api_migration_files 참조). 새 공개 함수는 새 파일에 생기는데, 이미 라이브에
+   적용된 22e 를 고쳐 넣는 것은 역사 조작이기 때문이다.
 
 여기서 막는 것은 **"라이브에 붙여 넣기 전에는 아무도 모르는" 종류의 실수**다. 이 파일은
 DB 없이 SQL 글자만 본다(CI 에는 DB 가 없다) — 대신 아래 넷은 글자만으로 확실히 잡힌다:
@@ -33,7 +37,8 @@ if SCRIPTS_DIR not in sys.path:
 
 import post_load  # noqa: E402
 
-# 화면이 부르는 함수 9개·읽는 뷰 2개 = post_load 의 anon 허용 목록 **그 자체**.
+# 화면이 부르는 함수·읽는 뷰 = post_load 의 anon 허용 목록 **그 자체**.
+# ⚠️ 개수를 글자로 적지 않는다 — 공개 함수가 하나 늘 때마다 주석만 거짓말이 된다.
 # 손으로 다시 적으면 화면 함수가 하나 늘 때 두 목록이 갈라지고, 실패 메시지가
 # 진짜 원인(허용 목록 드리프트)을 가리키지 않는다 — 그래서 import 로 한 곳만 진실.
 SCREEN_FNS = post_load.ANON_CALLABLE_ALLOWLIST
@@ -53,8 +58,11 @@ COLLECTOR_VIEWS = (
     "bjd_code",
 )
 
-RE_API_FN = re.compile(r"(?im)^create\s+or\s+replace\s+function\s+api\.(\w+)")
-RE_API_VIEW = re.compile(r"(?im)^create\s+or\s+replace\s+view\s+api\.(\w+)")
+# ⚠️ `or replace` 를 **선택**으로 둔다. 필수로 두면 `create function api.xxx` 로 쓴
+#    마이그레이션 하나가 이 보안 검사를 **통째로 빠져나간다** — 지금까지 레포 관습이
+#    한결같았을 뿐, 문법상 언제든 쓸 수 있는 형태다(2026-08-24 적대검증 지적).
+RE_API_FN = re.compile(r"(?im)^create\s+(?:or\s+replace\s+)?function\s+api\.(\w+)")
+RE_API_VIEW = re.compile(r"(?im)^create\s+(?:or\s+replace\s+)?view\s+api\.(\w+)")
 
 
 def read(path):
@@ -62,9 +70,35 @@ def read(path):
         return f.read()
 
 
+MIGRATION_DIR = os.path.dirname(MIGRATION)
+RE_MAKES_API_OBJECT = re.compile(r"(?im)^create\s+(?:or\s+replace\s+)?(function|view)\s+api\.")
+
+
+def api_migration_files():
+    """api 스키마에 무언가를 만드는 마이그레이션을 이름(=날짜)순으로 모은다.
+
+    ⚠️ **22e 하나만 보면 안 된다.** 새 공개 함수는 새 마이그레이션에 생기는데, 이미
+       라이브에 적용된 22e 를 고쳐 넣는 것은 역사 조작이다. 파일이 하나뿐이라고 가정하면
+       공개 함수가 하나 늘 때마다 이 검사가 **"22e 에 없다"는 엉뚱한 이유로** 실패한다
+       (2026-08-24b 의견함을 넣을 때 실제로 그랬다).
+
+    이렇게 넓히면 검사가 약해지는 것이 아니라 **강해진다** — 어느 마이그레이션에서 만든
+    api 객체든 security definer·빈 search_path·완전수식·revoke 를 똑같이 요구받는다.
+    """
+    out = []
+    for name in sorted(os.listdir(MIGRATION_DIR)):
+        if not name.endswith(".sql"):
+            continue
+        path = os.path.join(MIGRATION_DIR, name)
+        if RE_MAKES_API_OBJECT.search(read(path)):
+            out.append(path)
+    return out
+
+
 @pytest.fixture(scope="module")
 def migration():
-    return read(MIGRATION)
+    """api 를 다루는 마이그레이션을 날짜순으로 이어 붙인 한 덩어리."""
+    return "\n".join(read(p) for p in api_migration_files())
 
 
 @pytest.fixture(scope="module")
@@ -76,7 +110,7 @@ def function_bodies(sql):
     """`create or replace function api.X ... as $$ ... $$;` 를 이름→(머리, 본문)으로."""
     out = {}
     for m in re.finditer(
-        r"(?is)^create\s+or\s+replace\s+function\s+api\.(\w+)\s*\((.*?)\)\s*"
+        r"(?is)^create\s+(?:or\s+replace\s+)?function\s+api\.(\w+)\s*\((.*?)\)\s*"
         r"(.*?)as\s*\$\$(.*?)\$\$\s*;",
         sql,
         re.MULTILINE,
@@ -87,15 +121,15 @@ def function_bodies(sql):
 
 @pytest.fixture(scope="module")
 def parsed_fns(migration):
-    """파싱은 한 번만 — 파라미터라이즈드 테스트 9개×2종이 같은 텍스트를 재파싱하지 않게."""
+    """파싱은 한 번만 — 함수마다 도는 검사들이 같은 텍스트를 거듭 파싱하지 않게."""
     return function_bodies(migration)
 
 
 class TestScreenFunctions:
-    def test_all_nine_screen_functions_are_wrapped(self, migration):
+    def test_every_screen_function_is_wrapped(self, migration):
         got = set(RE_API_FN.findall(migration))
         assert got == set(SCREEN_FNS), (
-            "api 래퍼 함수 목록이 화면이 부르는 9개와 다릅니다: {}".format(sorted(got))
+            "api 래퍼 함수 목록이 화면이 부르는 것과 다릅니다: {}".format(sorted(got))
         )
 
     @pytest.mark.parametrize("name", SCREEN_FNS)
@@ -175,6 +209,16 @@ class TestViews:
 
 
 class TestMigrationShape:
+    def test_the_root_migration_is_actually_included(self):
+        """⛔ 파일을 못 찾으면 위 검사들이 **빈 텍스트를 보며 조용히 지나갈** 수 있다.
+
+        지금은 함수 목록 비교가 먼저 깨지지만, 그건 우연히 그런 것이다. 뿌리 파일이
+        목록에 있다는 사실 자체를 못 박아 둔다.
+        """
+        assert MIGRATION in api_migration_files(), (
+            "api 스키마의 뿌리 마이그레이션(2026-08-22e)이 목록에서 빠졌습니다"
+        )
+
     def test_creates_schema_and_usage(self, migration):
         assert re.search(r"create\s+schema\s+if\s+not\s+exists\s+api", migration, re.I)
         assert re.search(
@@ -209,3 +253,28 @@ class TestSchemaSqlHasTheSameThing:
         assert got == set(SCREEN_VIEWS) | set(COLLECTOR_VIEWS), (
             "정본의 api 뷰 목록이 다릅니다: {}".format(sorted(got))
         )
+
+
+class TestGuardRegexHasNoHole:
+    """이 파일의 검사는 정규식이 잡아낸 것에만 걸린다 — 정규식이 놓치면 검사도 없는 것과 같다."""
+
+    def test_plain_create_function_is_still_caught(self):
+        """⛔ `or replace` 없이 쓴 것도 잡아야 한다.
+
+        지금까지 레포 관습이 한결같았을 뿐, 문법상 언제든 쓸 수 있는 형태다. 놓치면 그
+        마이그레이션 하나가 security definer·search_path·revoke 검사를 통째로 빠져나간다
+        (2026-08-24 적대검증 지적).
+        """
+        assert RE_API_FN.findall("create function api.sneaky(x text)") == ["sneaky"]
+        assert RE_API_VIEW.findall("create view api.sneaky as select 1") == ["sneaky"]
+        assert RE_MAKES_API_OBJECT.search("create function api.sneaky(x text)")
+
+    def test_or_replace_form_still_works(self):
+        """넓혔다고 원래 잡던 것을 놓치면 안 된다."""
+        assert RE_API_FN.findall("create or replace function api.normal(x text)") == ["normal"]
+        assert RE_MAKES_API_OBJECT.search("create or replace view api.normal as select 1")
+
+    def test_other_schemas_are_not_caught(self):
+        """api 스키마만 본다 — public 함수까지 걸리면 검사가 엉뚱한 것을 요구한다."""
+        assert RE_API_FN.findall("create function public.normal(x text)") == []
+        assert not RE_MAKES_API_OBJECT.search("create or replace function public.normal(x text)")
