@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import secrets
 import sys
 import urllib.error
 import urllib.request
@@ -143,13 +144,21 @@ def main() -> int:
 
 
 def _emit_output(key: str, value: str) -> None:
-    """GitHub Actions 에 값을 넘긴다. 로컬에서 돌리면 아무 일도 안 한다."""
+    """GitHub Actions 에 값을 넘긴다. 로컬에서 돌리면 아무 일도 안 한다.
+
+    ⚠️ 구분자를 **실행마다 다르게** 만든다. 고정 문자열을 쓰면, 값 안에 그 문자열과 똑같은
+       줄이 들어오는 순간 거기서 값이 끊기고 **그 뒤가 새 key=value 로 읽힌다**(GitHub 이
+       랜덤 구분자를 권하는 이유). 지금 이 자리에 들어오는 값은 우리가 만든 문구뿐이라
+       실제 위험은 낮지만, 값의 출처가 늘어나는 날 이 한 줄이 방어선이 된다.
+       (2026-08-24 적대적 보안 검토 지적.)
+    """
     path = os.environ.get("GITHUB_OUTPUT")
     if not path:
         return
     # 여러 줄이 올 수 있으므로 구분자 형식을 쓴다(한 줄 형식은 줄바꿈에서 깨진다).
+    delim = "SANGGA_EOF_" + secrets.token_hex(8)
     with open(path, "a", encoding="utf-8") as fh:
-        fh.write(f"{key}<<__SANGGA_EOF__\n{value}\n__SANGGA_EOF__\n")
+        fh.write(f"{key}<<{delim}\n{value}\n{delim}\n")
 
 
 if __name__ == "__main__":

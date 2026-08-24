@@ -15,8 +15,9 @@
 #       올려야 하는데 비밀값 0 원칙을 깨는 값이 아니라고 보기 어려워 지금은 안 한다.
 #     · 배포 **직후** 반쪽 배포 — 최대 6시간 늦게 안다. 배포 완료를 기다렸다 두드리는
 #       구조가 필요한데, 그건 이 감시가 아니라 배포 쪽 일이다.
-#     · 이 예약 자체가 안 도는 경우 — GitHub 은 60일 무활동 시 예약을 멈춘다. 형제 감시
-#       둘은 서로를 보고 있지만(check_watch_heartbeat.py) 이 감시는 아직 그 그물 밖이다.
+#     · 이 예약 자체가 안 도는 경우는 **스스로** 못 알린다 — 그래서 형제 감시 둘이 매주
+#       이 감시를 본다(check_watch_heartbeat.py). 반대로 이 감시는 6시간마다 도니까
+#       **형제 둘을 가장 빨리 발견해 주는 쪽**이 된다(주 1회 → 6시간).
 name: 라이브 생존 감시
 
 on:
@@ -31,6 +32,8 @@ on:
 permissions:
   contents: read
   issues: write
+  # 형제 감시의 **실행 기록**을 읽어야 그쪽 예약이 살아 있는지 볼 수 있다.
+  actions: read
 
 jobs:
   health:
@@ -77,4 +80,38 @@ jobs:
             echo "실패한 실행: $RUN_URL"
           } > live_health_issue.md
           gh issue create --title "$TITLE" --body-file live_health_issue.md
+          echo "이슈를 열었습니다: $TITLE"
+
+      # ── 상호 감시 ────────────────────────────────────────────────────────
+      # 여기까지 왔다는 건 **내 예약은 살아 있다**는 뜻이다. 그 김에 형제 감시 둘이 아직
+      # 도는지 본다 — 예약이 아예 안 도는 경우(60일 무활동 자동중지·큐 드롭)는 실패조차
+      # 없어서 그쪽 워크플로우 스스로는 절대 알릴 수 없기 때문이다.
+      # ⭐ 이 감시는 **6시간마다** 도니까, 주 1회 도는 형제들보다 훨씬 빨리 발견해 준다.
+      #
+      # continue-on-error 인 이유: 이 점검이 못 돌았다고 job 을 실패시키면 위 failure() 가
+      # "라이브가 죽었다"는 **엉뚱한 이슈**를 연다.
+      # `if: !cancelled()` 가 없으면 **라이브가 죽은 날에는 형제를 안 본다** — 앞 단계가
+      # 실패하면 job status 가 failure 라 뒤 단계가 통째로 건너뛰어지기 때문이다.
+      - name: 형제 감시들이 아직 도는지 확인
+        id: heartbeat
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/check_watch_heartbeat.py --workflow sangkwon-quarterly-watch.yml --workflow district-source-watch.yml
+
+      # 제목에 날짜가 없으므로 **열려 있는** 같은 제목만 건너뛴다 →
+      # 사람이 닫아야 다음 사고를 다시 알린다.
+      - name: 형제 감시가 멈췄으면 이슈를 연다
+        if: ${{ !cancelled() && steps.heartbeat.outputs.stale == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ steps.heartbeat.outputs.title }}
+        run: |
+          set -euo pipefail
+          if gh issue list --state open --limit 100 --json title --jq '.[].title' | grep -Fxq "$TITLE"; then
+            echo "이미 열린 같은 이슈가 있습니다 — 건너뜁니다: $TITLE"
+            exit 0
+          fi
+          gh issue create --title "$TITLE" --body-file watch_heartbeat_issue.md
           echo "이슈를 열었습니다: $TITLE"

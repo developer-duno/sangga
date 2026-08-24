@@ -215,8 +215,30 @@ def test_emit_output_uses_multiline_delimiter(monkeypatch, tmp_path):
     chk._emit_output("reason", "첫 줄\n둘째 줄")
 
     text = out.read_text(encoding="utf-8")
-    assert "reason<<__SANGGA_EOF__" in text
+    assert text.startswith("reason<<SANGGA_EOF_")
     assert "첫 줄\n둘째 줄" in text
+    # 여는 구분자와 닫는 구분자가 같아야 GitHub 이 값을 제대로 끊어 읽는다.
+    delim = text.split("<<", 1)[1].split("\n", 1)[0]
+    assert text.rstrip("\n").endswith(delim)
+
+
+def test_emit_output_delimiter_differs_every_run(monkeypatch, tmp_path):
+    """⛔ 고정 구분자면 값 안에 같은 줄이 들어오는 순간 거기서 값이 끊긴다.
+
+    그 뒤는 **새 key=value 로 읽힌다**(2026-08-24 적대적 보안 검토 지적).
+    """
+    out = tmp_path / "gh_output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    chk._emit_output("reason", "가")
+    chk._emit_output("reason", "나")
+
+    delims = [
+        line.split("<<", 1)[1]
+        for line in out.read_text(encoding="utf-8").splitlines()
+        if line.startswith("reason<<")
+    ]
+    assert len(delims) == 2
+    assert delims[0] != delims[1]
 
 
 def test_emit_output_is_noop_outside_actions(monkeypatch):

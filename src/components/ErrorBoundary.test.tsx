@@ -114,4 +114,30 @@ describe('ErrorBoundary', () => {
     );
     expect(screen.getByRole('button', { name: '새로고침' })).toBeTruthy();
   });
+
+  it('⛔ 맨 바깥 그물은 "다시 시도"를 권하지 않는다 — 같은 자리를 다시 그려도 똑같이 터진다', () => {
+    // 2026-08-24 적대검증 지적. 바깥 그물이 뜬 상황은 검색창까지 통째로 죽은 것이라
+    // 안쪽처럼 "다른 건물을 골라 본다"는 빠져나갈 길이 없다. 될 리 없는 일을 시키지 않는다.
+    render(
+      <ErrorBoundary area="앱 전체" outermost>
+        <Boom explode />
+      </ErrorBoundary>,
+    );
+
+    const box = screen.getByRole('alert');
+    expect(screen.queryByRole('button', { name: '다시 시도' })).toBeNull();
+    expect(screen.getByRole('button', { name: '새로고침' })).toBeTruthy();
+    // 기대치를 정직하게 맞춰 준다 — "고쳐질 것"처럼 말하지 않는다.
+    expect(box.textContent).toContain('저희 쪽 문제');
+    expect(box.textContent).toContain('잠시 뒤 다시');
+  });
+
+  it('안쪽 그물은 빠져나갈 길(다른 건물)을 알려 준다', () => {
+    render(
+      <ErrorBoundary area="층별 화면">
+        <Boom explode />
+      </ErrorBoundary>,
+    );
+    expect(screen.getByRole('alert').textContent).toContain('다른 건물을 골라');
+  });
 });

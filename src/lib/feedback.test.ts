@@ -91,23 +91,68 @@ describe('submitFeedback', () => {
 });
 
 describe('reportClientError', () => {
-  it('한 방문에 한 번만 보낸다 — 되풀이되는 렌더 오류가 창고를 채우지 않게', async () => {
+  it('같은 오류가 되풀이되면 한 번만 보낸다 — 렌더 오류가 창고를 채우지 않게', async () => {
     const { reportClientError } = await import('./feedback');
 
-    await expect(reportClientError(new Error('첫 번째'))).resolves.toBe(true);
-    await expect(reportClientError(new Error('두 번째'))).resolves.toBe(false);
-    await expect(reportClientError(new Error('세 번째'))).resolves.toBe(false);
+    await expect(reportClientError(new Error('같은 오류'), { area: '층별 화면' })).resolves.toBe(
+      true,
+    );
+    await expect(reportClientError(new Error('같은 오류'), { area: '층별 화면' })).resolves.toBe(
+      false,
+    );
+    await expect(reportClientError(new Error('같은 오류'), { area: '층별 화면' })).resolves.toBe(
+      false,
+    );
 
     expect(rpcCalls).toHaveLength(1);
   });
 
-  it('보내기가 실패해도 빗장은 걸린 채다 — 실패가 되풀이되면 그것대로 폭주한다', async () => {
+  it('⛔ 서로 다른 오류는 각각 보낸다 — 여기가 막히면 이 길이 있는 이유가 사라진다', async () => {
+    // 처음에는 "방문당 한 통"으로 만들었다가 적대검증에서 잡힌 자리다(2026-08-24).
+    // 지도에서 한 번 삐끗한 뒤 층별 화면에서 터진 **완전히 다른 오류**를 영영 못 받았다.
+    const { reportClientError } = await import('./feedback');
+
+    await expect(reportClientError(new Error('지도가 터짐'), { area: '상권 지도' })).resolves.toBe(
+      true,
+    );
+    await expect(
+      reportClientError(new Error('층 목록이 터짐'), { area: '층별 화면' }),
+    ).resolves.toBe(true);
+
+    expect(rpcCalls).toHaveLength(2);
+  });
+
+  it('같은 오류라도 구역이 다르면 따로 센다 — 어디서 나는지가 곧 단서다', async () => {
+    const { reportClientError } = await import('./feedback');
+
+    await reportClientError(new Error('같은 메시지'), { area: '상권 지도' });
+    await reportClientError(new Error('같은 메시지'), { area: '층별 화면' });
+
+    expect(rpcCalls).toHaveLength(2);
+  });
+
+  it('⛔ 한 방문에 다섯 통까지만 — 메시지가 매번 달라지는 오류가 창고를 채우지 못하게', async () => {
+    // 좌표·시각·임의 id 가 섞인 메시지는 지문이 계속 달라져 위 빗장을 그대로 통과한다.
+    const { reportClientError } = await import('./feedback');
+
+    for (let i = 0; i < 10; i++) {
+      await reportClientError(new Error(`매번 다른 오류 ${i}`), { area: '층별 화면' });
+    }
+
+    expect(rpcCalls).toHaveLength(5);
+  });
+
+  it('보내기가 실패해도 그 지문의 빗장은 걸린 채다 — 실패가 되풀이되면 그것대로 폭주한다', async () => {
     const { reportClientError } = await import('./feedback');
     rpcThrows = true;
 
-    await expect(reportClientError(new Error('첫 번째'))).resolves.toBe(false);
+    await expect(reportClientError(new Error('같은 오류'), { area: '층별 화면' })).resolves.toBe(
+      false,
+    );
     rpcThrows = false;
-    await expect(reportClientError(new Error('두 번째'))).resolves.toBe(false);
+    await expect(reportClientError(new Error('같은 오류'), { area: '층별 화면' })).resolves.toBe(
+      false,
+    );
 
     // 두 번째는 아예 보내지도 않았다.
     expect(rpcCalls).toHaveLength(1);
@@ -169,5 +214,27 @@ describe('describeError', () => {
   it('undefined 도 무언가는 남긴다', async () => {
     const { describeError } = await import('./feedback');
     expect(describeError(undefined)).toEqual(expect.any(String));
+  });
+});
+
+describe('errorFingerprint', () => {
+  it('첫 줄만 본다 — 스택까지 넣으면 같은 오류인데도 줄 번호 때문에 지문이 갈린다', async () => {
+    const { errorFingerprint } = await import('./feedback');
+    const a = errorFingerprint('TypeError: x\n  at foo (a.js:1:1)', { area: '층별 화면' });
+    const b = errorFingerprint('TypeError: x\n  at foo (a.js:9:9)', { area: '층별 화면' });
+    expect(a).toBe(b);
+  });
+
+  it('구역이 다르면 지문이 다르다', async () => {
+    const { errorFingerprint } = await import('./feedback');
+    expect(errorFingerprint('TypeError: x', { area: '상권 지도' })).not.toBe(
+      errorFingerprint('TypeError: x', { area: '층별 화면' }),
+    );
+  });
+
+  it('구역이 없어도(문자열이 아니어도) 터지지 않는다', async () => {
+    const { errorFingerprint } = await import('./feedback');
+    expect(() => errorFingerprint('TypeError: x')).not.toThrow();
+    expect(() => errorFingerprint('TypeError: x', { area: 123 })).not.toThrow();
   });
 });

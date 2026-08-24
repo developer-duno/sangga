@@ -50,16 +50,31 @@ export async function submitFeedback(
 }
 
 /**
- * 한 번 열어 둔 화면에서 오류 보고를 이미 보냈나.
+ * 이 방문에서 이미 보낸 오류의 지문(fingerprint) 모음.
  *
- * ⛔ 이 빗장이 없으면 **오류가 창고를 채운다.** 렌더 중에 터지는 오류는 리액트가 다시
- *    그리려 할 때마다 되풀이되므로, 한 번의 사고가 초당 수십 통이 된다. 서버에도 분당
- *    상한이 있지만 그건 마지막 방어선이고, 애초에 안 보내는 것이 맞다.
+ * ⛔ 빗장이 없으면 **오류가 창고를 채운다.** 렌더 중에 터지는 오류는 리액트가 다시
+ *    그리려 할 때마다 되풀이되므로, 한 번의 사고가 초당 수십 통이 된다.
  *
- * ⚠️ 모듈 수준 변수라 새로고침하면 풀린다 — 그것이 의도다("한 방문에 한 번").
+ * ⛔ **그런데 빗장을 "방문당 한 통"으로 걸면 안 된다** — 그러면 지도에서 한 번 삐끗한 뒤
+ *    층별 화면에서 터진 **완전히 다른 오류**를 영영 못 받는다. 막으려던 것은 *같은 오류의
+ *    되풀이*인데 *서로 다른 오류*까지 막아, 이 길이 존재하는 이유("우리가 알 수 있는 유일한
+ *    길")를 스스로 무너뜨린다. 처음에 그렇게 만들었다가 적대검증에서 잡혔다(2026-08-24).
+ *    ⇒ 지문(어느 구역 + 무슨 오류)으로 가른다. 같은 것은 한 번, 다른 것은 각각 한 번.
+ *
+ * ⚠️ 모듈 수준이라 새로고침하면 풀린다 — 그것이 의도다("한 방문 기준").
  *    테스트에서 되돌리려면 `vi.resetModules()` 로 모듈을 다시 읽는다.
  */
-let errorAlreadyReported = false;
+const reportedFingerprints = new Set<string>();
+
+/**
+ * 한 방문에서 보낼 수 있는 오류 보고의 총량.
+ *
+ * ⛔ 지문만으로는 부족하다 — 메시지에 매번 다른 값이 섞이는 오류(좌표·시각·임의 id)는
+ *    지문이 계속 달라져 빗장을 그대로 통과한다. 그런 한 건이 창고를 채우는 것을 막는
+ *    마지막 선이다. 서버에도 상한이 있지만 그건 남의 방문까지 함께 막으므로, 여기서
+ *    먼저 멈추는 편이 낫다.
+ */
+const MAX_ERROR_REPORTS_PER_VISIT = 5;
 
 /**
  * 화면이 죽었다는 사실을 창고에 남긴다. 한 방문에 **한 번만** 보낸다.
@@ -70,8 +85,6 @@ export async function reportClientError(
   error: unknown,
   context?: FeedbackContext,
 ): Promise<boolean> {
-  if (errorAlreadyReported) return false;
-
   try {
     // ⚠️ 빗장보다 **먼저** 본문을 만든다. 순서가 반대면, 남길 것이 없는 오류(빈 문자열
     //    하나가 던져진 경우) 하나가 빗장만 걸어 놓고 물러나 **그 뒤의 진짜 오류를 영영
@@ -79,9 +92,13 @@ export async function reportClientError(
     const body = describeError(error);
     if (!body) return false;
 
+    const fingerprint = errorFingerprint(body, context);
+    if (reportedFingerprints.has(fingerprint)) return false;
+    if (reportedFingerprints.size >= MAX_ERROR_REPORTS_PER_VISIT) return false;
+
     // 보내기 **전에** 빗장을 건다. 보낸 뒤에 걸면 답을 기다리는 사이 되풀이된 오류가
     // 전부 빠져나간다(await 한 번이면 렌더가 여러 번 돈다).
-    errorAlreadyReported = true;
+    reportedFingerprints.add(fingerprint);
 
     return await submitFeedback('error', body, {
       ...context,
@@ -95,6 +112,22 @@ export async function reportClientError(
   } catch {
     return false;
   }
+}
+
+/**
+ * "같은 오류"를 가르는 지문.
+ *
+ * 어느 구역에서(area) 무슨 오류가(본문 **첫 줄** = `이름: 메시지`) 났는지로만 만든다.
+ * 스택 전체를 쓰면 같은 오류인데도 줄 번호가 조금 달라 지문이 갈리고, 그러면 빗장이
+ * 사실상 없는 것과 같아진다.
+ *
+ * ⚠️ 이 함수는 export 한다 — 테스트가 **동작을 통해서만** 확인하면 "같은 오류인데 왜 두 번
+ *    갔나"를 짚을 수가 없다.
+ */
+export function errorFingerprint(body: string, context?: FeedbackContext): string {
+  const area = typeof context?.area === 'string' ? context.area : '';
+  const firstLine = body.split('\n', 1)[0];
+  return `${area}::${firstLine}`;
 }
 
 /**

@@ -15,7 +15,7 @@ createRoot(root).render(
       ⚠️ 여기가 발동하면 화면 전체가 안내로 바뀐다. 그래도 아무 말 없는 흰 화면보다 낫고,
          무엇보다 **그런 일이 있었다는 사실이 창고에 남는다**(서버가 없어 다른 길이 없다).
     */}
-    <ErrorBoundary area="앱 전체">
+    <ErrorBoundary area="앱 전체" outermost>
       <App />
     </ErrorBoundary>
   </StrictMode>,

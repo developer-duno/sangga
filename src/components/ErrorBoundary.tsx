@@ -33,6 +33,15 @@ interface Props {
    * ⚠️ 개인을 가리키는 값을 넣지 말 것 — 이 표는 개인정보를 안 받는다는 전제로 만들었다.
    */
   context?: Record<string, unknown>;
+  /**
+   * 이 그물이 **화면 전체**를 감싸고 있나(main.tsx 의 마지막 그물).
+   *
+   * ⛔ 안내 문구가 달라져야 한다. 안쪽 그물은 "다시 시도"가 뜻이 있다 — 다른 건물·다른 구를
+   *    고르면 `key` 로 새로 그려지므로 빠져나갈 길이 실제로 있다. 그러나 바깥 그물이 뜬
+   *    상황은 검색창까지 통째로 죽은 것이라, 같은 자리를 다시 그려 봐야 **똑같이 터진다.**
+   *    거기서 "다시 시도"를 권하는 것은 될 리 없는 일을 시키는 것이다(2026-08-24 적대검증).
+   */
+  outermost?: boolean;
 }
 
 interface State {
@@ -67,13 +76,34 @@ export class ErrorBoundary extends Component<Props, State> {
   render(): ReactNode {
     if (!this.state.hasError) return this.props.children;
 
+    // 바깥 그물은 "다시 시도"를 권하지 않는다 — 같은 자리를 다시 그려 봐야 똑같이 터진다.
+    // 될 리 없는 일을 시키느니, 무엇이 실제로 도움이 되는지를 말한다.
+    if (this.props.outermost) {
+      return (
+        <div className="errbox" role="alert">
+          <p className="errbox__title">화면을 여는 중에 문제가 생겼습니다.</p>
+          <p className="errbox__body">
+            보시려던 자료에 문제가 있는 것이 아니라 화면이 잘못 동작한 것입니다. 한 번
+            새로고침해 보시고, <strong>그래도 같으면 저희 쪽 문제</strong>이니 잠시 뒤 다시
+            들러 주세요.
+          </p>
+          <div className="errbox__acts">
+            <button type="button" className="errbox__btn" onClick={() => location.reload()}>
+              새로고침
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     return (
       // role="alert" — 화면을 읽어 주는 기기에 "지금 뭔가 달라졌다"를 알린다.
       <div className="errbox" role="alert">
         <p className="errbox__title">이 부분을 보여주다 문제가 생겼습니다.</p>
         <p className="errbox__body">
-          자료가 없어서가 아니라 화면이 잘못 동작한 것입니다. 다시 시도해도 같으면 아래
-          의견함으로 알려 주시면 고치겠습니다.
+          자료가 없어서가 아니라 화면이 잘못 동작한 것입니다. 다시 시도해도 같으면{' '}
+          <strong>다른 건물을 골라 보시고</strong>, 그래도 같으면 아래 의견함으로 알려 주시면
+          고치겠습니다.
         </p>
         <div className="errbox__acts">
           <button type="button" className="errbox__btn" onClick={this.handleRetry}>

@@ -58,8 +58,11 @@ COLLECTOR_VIEWS = (
     "bjd_code",
 )
 
-RE_API_FN = re.compile(r"(?im)^create\s+or\s+replace\s+function\s+api\.(\w+)")
-RE_API_VIEW = re.compile(r"(?im)^create\s+or\s+replace\s+view\s+api\.(\w+)")
+# ⚠️ `or replace` 를 **선택**으로 둔다. 필수로 두면 `create function api.xxx` 로 쓴
+#    마이그레이션 하나가 이 보안 검사를 **통째로 빠져나간다** — 지금까지 레포 관습이
+#    한결같았을 뿐, 문법상 언제든 쓸 수 있는 형태다(2026-08-24 적대검증 지적).
+RE_API_FN = re.compile(r"(?im)^create\s+(?:or\s+replace\s+)?function\s+api\.(\w+)")
+RE_API_VIEW = re.compile(r"(?im)^create\s+(?:or\s+replace\s+)?view\s+api\.(\w+)")
 
 
 def read(path):
@@ -68,7 +71,7 @@ def read(path):
 
 
 MIGRATION_DIR = os.path.dirname(MIGRATION)
-RE_MAKES_API_OBJECT = re.compile(r"(?im)^create\s+or\s+replace\s+(function|view)\s+api\.")
+RE_MAKES_API_OBJECT = re.compile(r"(?im)^create\s+(?:or\s+replace\s+)?(function|view)\s+api\.")
 
 
 def api_migration_files():
@@ -107,7 +110,7 @@ def function_bodies(sql):
     """`create or replace function api.X ... as $$ ... $$;` 를 이름→(머리, 본문)으로."""
     out = {}
     for m in re.finditer(
-        r"(?is)^create\s+or\s+replace\s+function\s+api\.(\w+)\s*\((.*?)\)\s*"
+        r"(?is)^create\s+(?:or\s+replace\s+)?function\s+api\.(\w+)\s*\((.*?)\)\s*"
         r"(.*?)as\s*\$\$(.*?)\$\$\s*;",
         sql,
         re.MULTILINE,
@@ -250,3 +253,28 @@ class TestSchemaSqlHasTheSameThing:
         assert got == set(SCREEN_VIEWS) | set(COLLECTOR_VIEWS), (
             "정본의 api 뷰 목록이 다릅니다: {}".format(sorted(got))
         )
+
+
+class TestGuardRegexHasNoHole:
+    """이 파일의 검사는 정규식이 잡아낸 것에만 걸린다 — 정규식이 놓치면 검사도 없는 것과 같다."""
+
+    def test_plain_create_function_is_still_caught(self):
+        """⛔ `or replace` 없이 쓴 것도 잡아야 한다.
+
+        지금까지 레포 관습이 한결같았을 뿐, 문법상 언제든 쓸 수 있는 형태다. 놓치면 그
+        마이그레이션 하나가 security definer·search_path·revoke 검사를 통째로 빠져나간다
+        (2026-08-24 적대검증 지적).
+        """
+        assert RE_API_FN.findall("create function api.sneaky(x text)") == ["sneaky"]
+        assert RE_API_VIEW.findall("create view api.sneaky as select 1") == ["sneaky"]
+        assert RE_MAKES_API_OBJECT.search("create function api.sneaky(x text)")
+
+    def test_or_replace_form_still_works(self):
+        """넓혔다고 원래 잡던 것을 놓치면 안 된다."""
+        assert RE_API_FN.findall("create or replace function api.normal(x text)") == ["normal"]
+        assert RE_MAKES_API_OBJECT.search("create or replace view api.normal as select 1")
+
+    def test_other_schemas_are_not_caught(self):
+        """api 스키마만 본다 — public 함수까지 걸리면 검사가 엉뚱한 것을 요구한다."""
+        assert RE_API_FN.findall("create function public.normal(x text)") == []
+        assert not RE_MAKES_API_OBJECT.search("create or replace function public.normal(x text)")
