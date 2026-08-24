@@ -1415,3 +1415,65 @@ body {
     height: 300px;
   }
 }
+
+/* ── 가지고 나가기(링크 복사) ──────────────────────────────────────────────
+   층별 화면 바로 위 한 줄. 주된 행동이 아니라 테두리만 있는 가벼운 버튼이다 —
+   여기서 눈에 띄는 색을 쓰면 "이걸 먼저 눌러야 하나" 싶어 본 내용에서 눈이 흩어진다. */
+.share {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0 0;
+}
+
+.share__btn {
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--accent);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.share__btn:hover {
+  border-color: var(--accent);
+}
+
+.share__msg {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.share__label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* 복사가 막힌 자리에서만 나온다. 길게 눌러 고를 수 있어야 하므로 넉넉히 편다. */
+.share__url {
+  flex: 1 1 260px;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+}
+
+/* 좁은 화면에서는 안내가 버튼 옆에 끼어 한 글자씩 끊긴다 — 줄을 바꿔 준다. */
+@media (max-width: 720px) {
+  .share {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .share__url {
+    width: 100%;
+    flex-basis: auto;
+  }
+}

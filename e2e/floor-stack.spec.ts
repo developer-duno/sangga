@@ -691,3 +691,71 @@ test.describe('화면 아래 — 어디까지 믿을지와 한마디 남기는 �
     await expect(foot.getByRole('textbox')).toHaveValue('한마디');
   });
 });
+
+/**
+ * 주소로 들고 다니기 — 공유 링크 · 새로고침 복원.
+ *
+ * 여기서만 잡히는 것
+ * ------------------
+ * 이 흐름의 값어치는 **검색을 한 번도 거치지 않는 것**이다. 단위 테스트는 그 사실을
+ * 흉내로만 확인하지만, 여기서는 진짜 브라우저가 진짜 주소로 들어와 화면이 서는지 본다.
+ * 주소를 읽는 시점(첫 그림 한 번)과 서버 응답이 오는 시점이 어긋나면 여기서 드러난다.
+ */
+const LINK_BLD = '1168010100100010000_1024110';
+
+test.describe('층별 스택뷰 — 주소로 들고 다니기', () => {
+  test('O. 링크로 바로 들어오면 검색 없이 그 건물이 열린다', async ({ page }) => {
+    await mockOpenSigungu(page);
+    await mockFloorStack(page, [], [], [floorRow({ floor_no: 2 }), floorRow()]);
+    // 검색은 **안 불려야** 정상이다. 그래도 막아 둔다 — 안 막으면 혹시 불렸을 때
+    // 실존하지 않는 도메인으로 요청이 나가 실패 원인이 흐려진다.
+    let searched = 0;
+    await page.route(SEARCH_PATTERN, async (route) => {
+      searched += 1;
+      await route.fulfill({ status: 200, body: '[]' });
+    });
+
+    await page.goto(`/?sgg=11680&bld=${LINK_BLD}`);
+
+    const stack = page.locator('section.stack');
+    await expect(stack.getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
+    // 구 이름도 살아난다 — 주소에는 코드(11680)만 담겨 있고 이름은 서버 목록에서 얻는다.
+    await expect(page.getByRole('heading', { name: /강남구 상권 지도/ })).toBeVisible();
+    // 가지고 나가는 버튼도 함께 선다.
+    await expect(page.getByRole('button', { name: '링크 복사' })).toBeVisible();
+    // ★ 열자마자 주소가 스스로 지워지지 않는다(그러면 새로고침하는 순간 링크가 죽는다).
+    expect(new URL(page.url()).search).toContain(`bld=${LINK_BLD}`);
+    expect(searched).toBe(0);
+  });
+
+  test('P. 층 자료가 없는 건물 링크면 빈 화면 대신 안내가 뜬다', async ({ page }) => {
+    await mockOpenSigungu(page);
+    // 층이 한 줄도 없는 건물이 239동 실재한다.
+    await mockFloorStack(page, [], [], []);
+
+    await page.goto(`/?sgg=11680&bld=${LINK_BLD}`);
+
+    await expect(page.getByText(/링크에 담긴 건물을 찾지 못했습니다/)).toBeVisible();
+    await expect(page.locator('section.stack')).toHaveCount(0);
+    // 실패해도 주소는 남긴다 — 서버가 잠깐 흔들린 것일 수 있어 새로고침으로 다시 해 본다.
+    expect(new URL(page.url()).search).toContain(`bld=${LINK_BLD}`);
+  });
+
+  test('Q. 검색으로 건물을 고르면 주소에 그 건물이 적힌다', async ({ page }) => {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page);
+
+    await page.goto('/');
+    // 아무것도 안 고른 첫 화면은 주소가 깨끗하다('?'만 남기지 않는다).
+    expect(new URL(page.url()).search).toBe('');
+
+    await pickGu(page, '서울', '강남구');
+    await expect.poll(() => new URL(page.url()).search).toContain('sgg=11680');
+
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+
+    await expect.poll(() => new URL(page.url()).search).toContain(`bld=${LINK_BLD}`);
+  });
+});

@@ -748,7 +748,16 @@ select
   b.total_area_m2,          -- 연면적 ㎡ (0 = 미기재)
   b.far,                    -- 용적률 % (0 = 미기재)
   b.bcr,                    -- 건폐율 % (0 = 미기재, 소스 오류로 100 초과 실재)
-  b.parking_cnt             -- 주차 4종(옥내외 × 자주/기계) 합 (0 = 미기재, 일부만 적힌 대장이면 부분합)
+  b.parking_cnt,            -- 주차 4종(옥내외 × 자주/기계) 합 (0 = 미기재, 일부만 적힌 대장이면 부분합)
+  -- ── 2026-08-25a 가 더한 좌표 2칸 (링크로 들어온 사람의 건물 되살리기) ──────
+  -- ⛔ parcel.lat/lng **칸이 아니라** geom 에서 뽑는다. 검색(search_buildings)과 상권
+  --    판정(list_building_districts)이 전부 geom 을 보므로 같은 칸을 봐야 한다. 칸을
+  --    섞으면 같은 건물인데 **들어온 길에 따라 마커 자리가 갈리고**, 에러가 안 나서
+  --    못 찾는다("지도 마커는 상권 밖인데 글자는 상권 안") — 2026-08-14e 가 정한 규칙.
+  -- ⓘ 필지 도형의 대표 좌표라 한 땅에 건물이 여럿이면 같은 자리에 찍힌다(검색도 동일).
+  --    좌표 없는 필지는 NULL 이고 화면은 마커를 생략한다(0,0 으로 채우지 않는다).
+  st_y(p.geom)::double precision as lat,
+  st_x(p.geom)::double precision as lng
 from v_building_floor_stack s
 join building b on b.bld_id = s.bld_id
 join parcel   p on p.pnu    = s.pnu
@@ -777,6 +786,9 @@ comment on view v_floor_stack is
   '적재기는 결측을 NULL 로 쓴다: load_building_ledger.py 의 _to_float·sum_parking. 전국 적재 후 다시 셀 것). '
   'bcr 은 소스 오류로 100 을 넘는 행이 있고, parking_cnt 는 주차 4종(옥내외 × 자주/기계) 합이라 '
   '일부만 적힌 대장이면 부분합이다 — 뜻풀이·상한은 화면이 한 곳에서 한다(2026-08-24a). '
+  '⚠️ lat·lng 는 **parcel.geom 에서 뽑은** 필지 대표 좌표다(2026-08-25a). parcel 에 있는 lat/lng '
+  '칸과는 다른 칸이며, 그 칸을 쓰면 검색·상권판정과 자리가 갈린다(2026-08-14e 규칙). '
+  '한 땅에 건물이 여럿이면 같은 자리에 찍힌다 — 검색도 같은 한계다. 좌표 없는 필지는 NULL(마커 생략). '
   'ℹ️ 린트 0010(security definer view) 의도적 예외 — security_invoker=true로 되돌리면 원본 표 401 + 상호명·성명 노출 확대. '
   '재검토 방아쇠: 공개 배포일 / 지도·반경 검색(§6.4) 착수일';
 

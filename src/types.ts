@@ -75,6 +75,19 @@ export type FloorRow = {
    * 있다(load_building_ledger.py 의 `sum_parking`).
    */
   parking_cnt: number | null;
+  /**
+   * 이 건물이 선 **필지의 대표 좌표**(2026-08-25a). 지도 마커 자리이자, 링크로 들어온
+   * 사람의 건물을 되살릴 때 쓰는 값이다.
+   *
+   * ⛔ 서버는 `parcel.lat/lng` **칸이 아니라** `parcel.geom` 에서 뽑는다. 검색
+   *    (`search_buildings`)과 상권 판정(`list_building_districts`)이 전부 geom 을 보므로,
+   *    칸을 섞으면 같은 건물인데 **들어온 길에 따라 마커 자리가 갈린다**(2026-08-14e).
+   * ⓘ 한 땅에 건물이 여럿이면 그 건물들이 **같은 자리**에 찍힌다(검색도 같은 한계다).
+   * ⚠️ 선택 필드다 — 마이그레이션(2026-08-25a)이 적용되기 전 서버는 이 칸을 안 준다.
+   *    없으면 마커만 안 찍히고 화면은 안 깨진다.
+   */
+  lat?: number | null;
+  lng?: number | null;
 };
 
 /**
