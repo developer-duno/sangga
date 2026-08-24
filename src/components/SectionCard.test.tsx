@@ -7,11 +7,21 @@ import type { SectionPlan } from '../lib/sectionCards';
 /**
  * 공통 카드 틀 — 로드맵 Wave 2 『한 장 요약 접힘 틀』.
  *
- * 여기서 지키는 것은 셋이다:
+ * 여기서 지키는 것은 넷이다:
  *   ① 기본 펼침/접힘이 배치표(`SECTION_PLAN`)가 시킨 대로 나온다
  *   ② 눌러서 접고 펼칠 수 있고, 그 상태를 읽어 주는 기기도 안다(`aria-expanded`)
  *   ③ **접혀 있어도 제목과 핵심 한 줄은 보인다** — 접힘이 숨김이 되면 안 된다
+ *   ④ **접힌 본문은 자리에 남는다** — 감출 뿐 지우지 않는다(결정 0020)
+ *
+ * ⚠️ ④ 때문에 "DOM 에 없다"로 접힘을 확인하면 안 된다. 그건 이제 거짓이고, 사용자가 실제로
+ *    겪는 것은 **"안 보인다"**다. 종이로 뽑을 때 인쇄 규칙이 되살려야 하므로 본문은 남는다 —
+ *    그렇게 안 하면 접힌 카드가 종이에서 통째로 빠진다(2026-08-25 실측).
  */
+
+/** 접힌 본문 — **자리에는 있고 안 보인다.** `hidden` 은 읽어 주는 기기에서도 감춘다. */
+function bodyOf(container: HTMLElement) {
+  return container.querySelector('.card__body');
+}
 
 const OPEN: SectionPlan = { title: '층 목록', role: '공통', defaultOpen: true };
 const CLOSED: SectionPlan = { title: '참고 매매 시세 (추정값)', role: '투자자', defaultOpen: false };
@@ -29,13 +39,16 @@ describe('SectionCard — 기본 상태', () => {
     expect(screen.getByRole('button').getAttribute('aria-expanded')).toBe('true');
   });
 
-  it('defaultOpen 이 거짓이면 본문을 안 그린다', () => {
-    render(
+  it('defaultOpen 이 거짓이면 본문을 감춘다 — 지우지는 않는다 (종이로 뽑을 때 되살린다)', () => {
+    const { container } = render(
       <SectionCard plan={CLOSED} className="band" summary="값을 낸 층 2개">
         <p>본문입니다</p>
       </SectionCard>,
     );
-    expect(screen.queryByText('본문입니다')).toBeNull();
+    // 자리에는 있다 — 인쇄 규칙(CSS)은 화면에 아예 없는 것을 되살릴 수 없기 때문이다.
+    expect(bodyOf(container)?.textContent).toBe('본문입니다');
+    // 그러나 사용자에게는 안 보인다 — `hidden` 은 읽어 주는 기기에서도 감춘다.
+    expect(bodyOf(container)?.hasAttribute('hidden')).toBe(true);
     expect(screen.getByRole('button').getAttribute('aria-expanded')).toBe('false');
   });
 
@@ -59,7 +72,7 @@ describe('SectionCard — 기본 상태', () => {
 
 describe('SectionCard — 접고 펼치기', () => {
   it('누르면 펼쳐지고 다시 누르면 접힌다', () => {
-    render(
+    const { container } = render(
       <SectionCard plan={CLOSED} className="band" summary="값을 낸 층 2개">
         <p>본문입니다</p>
       </SectionCard>,
@@ -67,22 +80,22 @@ describe('SectionCard — 접고 펼치기', () => {
     const toggle = screen.getByRole('button');
 
     fireEvent.click(toggle);
-    expect(screen.getByText('본문입니다')).toBeTruthy();
+    expect(bodyOf(container)?.hasAttribute('hidden')).toBe(false);
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
 
     fireEvent.click(toggle);
-    expect(screen.queryByText('본문입니다')).toBeNull();
+    expect(bodyOf(container)?.hasAttribute('hidden')).toBe(true);
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
   });
 
-  it('접으면 요약은 남고 본문만 사라진다', () => {
+  it('접으면 요약은 남고 본문만 감춰진다', () => {
     const { container } = render(
       <SectionCard plan={OPEN} className="card--floors" summary="층 3개 · 점포 12곳">
         <p>본문입니다</p>
       </SectionCard>,
     );
     fireEvent.click(screen.getByRole('button'));
-    expect(container.querySelector('.card__body')).toBeNull();
+    expect(bodyOf(container)?.hasAttribute('hidden')).toBe(true);
     expect(container.querySelector('.card__summary')?.textContent).toBe('층 3개 · 점포 12곳');
   });
 
@@ -152,16 +165,20 @@ describe('SectionCard — 겉모양 계약', () => {
     );
     const controls = screen.getByRole('button').getAttribute('aria-controls');
     expect(controls).toBeTruthy();
-    expect(container.querySelector('.card__body')?.id).toBe(controls);
+    expect(bodyOf(container)?.id).toBe(controls);
   });
 
-  it('접혀 있으면 가리킬 본문이 없으므로 aria-controls 도 안 붙인다', () => {
-    render(
+  it('접혀 있어도 본문을 가리킨다 — 본문이 자리에 있으므로 (아코디언 표준형)', () => {
+    const { container } = render(
       <SectionCard plan={CLOSED} className="band" summary="값을 낸 층 2개">
         <p>본문입니다</p>
       </SectionCard>,
     );
-    expect(screen.getByRole('button').getAttribute('aria-controls')).toBeNull();
+    const controls = screen.getByRole('button').getAttribute('aria-controls');
+    expect(controls).toBeTruthy();
+    expect(bodyOf(container)?.id).toBe(controls);
+    // 가리키기는 하되 감춰져 있다 — 읽어 주는 기기는 `hidden` 때문에 안 읽는다.
+    expect(bodyOf(container)?.hasAttribute('hidden')).toBe(true);
   });
 
   it('요약이 없으면 요약 줄 자체를 안 그린다', () => {
@@ -209,14 +226,14 @@ describe('SectionCard — 밖에서 부르는 신호', () => {
         </>
       );
     }
-    render(<Host />);
+    const { container } = render(<Host />);
     const card = screen.getByRole('button', { name: /층 목록/ });
 
     fireEvent.click(card); // 사용자가 접는다
-    expect(screen.queryByText('본문입니다')).toBeNull();
+    expect(bodyOf(container)?.hasAttribute('hidden')).toBe(true);
 
     fireEvent.click(screen.getByRole('button', { name: '밖에서 펼치기' }));
-    expect(screen.getByText('본문입니다')).toBeTruthy();
+    expect(bodyOf(container)?.hasAttribute('hidden')).toBe(false);
     expect(card.getAttribute('aria-expanded')).toBe('true');
   });
 

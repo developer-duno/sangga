@@ -88,9 +88,9 @@ export function SectionCard({
             type="button"
             className="card__toggle"
             aria-expanded={open}
-            // 접혀 있을 때는 본문 자체를 안 그리므로 가리킬 곳이 없다 — 없는 id 를
-            // 가리키면 읽어 주는 기기가 빈 곳을 찾아간다.
-            aria-controls={open ? bodyId : undefined}
+            // 본문은 접혀 있어도 자리에 있으므로(아래 주석) 늘 그것을 가리킨다 — WAI-ARIA
+            // 아코디언 표준형이다. 버튼 자체가 `hasBody` 일 때만 생기니 가리킬 곳은 항상 있다.
+            aria-controls={bodyId}
             onClick={() => setOpen((v) => !v)}
           >
             <span className="card__title">{plan.title}</span>
@@ -111,8 +111,24 @@ export function SectionCard({
 
       {summary !== null && summary !== undefined && <p className="card__summary">{summary}</p>}
 
-      {open && hasBody && (
-        <div className="card__body" id={bodyId}>
+      {/*
+        ⛔ 접혀 있어도 **본문을 그려 둔다** — 감추기만 한다(예전에는 아예 안 그렸다).
+
+        왜 바꿨나 — 그러지 않으면 **종이로 뽑을 때 그 카드가 통째로 빠진다.** 인쇄 규칙(CSS)은
+        보이는 것을 바꿀 뿐, 화면에 아예 없는 것을 되살릴 수는 없다. 2026-08-25 실측에서 접힌
+        『참고 매매 시세』가 제목만 남고 값이 전부 사라진 종이가 나왔다(결정 0020).
+
+        그려 두고 감추면 인쇄 규칙 한 줄로 되살아나고, 무엇보다 사용자가 **Ctrl+P 를 직접
+        누르거나 브라우저 메뉴로 인쇄해도** 똑같은 종이가 나온다 — "인쇄 버튼을 눌렀을 때만
+        펼치는" 방식은 그 길들을 막지 못한다.
+
+        ⓘ `hidden` 은 눈에서만 감추는 것이 아니라 **읽어 주는 기기에서도 감춘다**(UA 가
+          `display:none` 을 준다). 접힘의 뜻은 그대로 지켜진다.
+        ⚠️ 그래서 시험은 "DOM 에 없다"가 아니라 **"안 보인다"**를 봐야 한다 — 앞의 것은 이제
+          거짓이고, 사용자가 실제로 겪는 것은 뒤의 것이다.
+      */}
+      {hasBody && (
+        <div className="card__body" id={bodyId} hidden={!open}>
           {children}
         </div>
       )}

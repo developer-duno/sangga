@@ -595,7 +595,9 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     // 접힌 채로도 제목과 핵심 한 줄은 읽힌다 — 본문(값)만 없다.
     await expect(band.locator('.card__title')).toHaveText('참고 매매 시세 (추정값)');
     await expect(band.locator('.card__summary')).toHaveText('값을 낸 층 1개');
-    await expect(band.locator('.band__val')).toHaveCount(0);
+    // ⚠️ "DOM 에 없다"가 아니라 **"안 보인다"**를 본다. 접힌 본문은 자리에 남겨 둔다 —
+    //    안 그러면 종이로 뽑을 때 이 카드가 통째로 빠진다(결정 0020, 시험 R·S).
+    await expect(band.locator('.card__body')).toBeHidden();
 
     // 누르면 그 자리에서 값·근거가 함께 나온다(절대 규칙 3 — 값과 근거는 한 몸이다).
     await openCard(page, /참고 매매 시세/);
@@ -606,7 +608,7 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     const floorsCard = stack.locator('.card--floors');
     await expect(floorsCard.locator('.floor')).toHaveCount(2);
     await floorsCard.locator('.card__toggle').click();
-    await expect(floorsCard.locator('.floor')).toHaveCount(0);
+    await expect(floorsCard.locator('.card__body')).toBeHidden();
     await expect(floorsCard.locator('.card__summary')).toHaveText('층 2개 · 점포 4곳');
 
     // ⛔ 층 목록을 접어 둔 채로 시세 줄을 눌러도 그 층이 보여야 한다. 안 그러면 눌렀는데
@@ -757,5 +759,106 @@ test.describe('층별 스택뷰 — 주소로 들고 다니기', () => {
     await page.getByRole('button', { name: /테스트빌딩/ }).click();
 
     await expect.poll(() => new URL(page.url()).search).toContain(`bld=${LINK_BLD}`);
+  });
+});
+
+test.describe('층별 스택뷰 — 종이로 뽑기', () => {
+  /**
+   * 왜 E2E 로 보나 — 이 기능은 **거의 전부가 CSS** 다(결정 0020). 화면 시험(jsdom)은
+   * 스타일시트를 읽지 않아 "종이에서 무엇이 보이나"를 원리적으로 못 본다. 인쇄 매체를
+   * 흉내 낼 수 있는 곳은 여기뿐이다.
+   *
+   * ⚠️ `emulateMedia` 는 그 페이지에 계속 남는다 — 시험이 끝나면 되돌린다(다음 시험이
+   *    같은 페이지를 쓰지는 않지만, 남겨 두면 실패했을 때 원인을 찾기 어렵다).
+   */
+  async function openBuilding(page: Page) {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(
+      page,
+      [parcelTx()],
+      priceBands(),
+      [floorRow({ floor_no: 2 }), floorRow()],
+      industryMix(),
+    );
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+    await expect(page.locator('section.stack')).toBeVisible();
+  }
+
+  test('R. 종이에서는 조종 장치가 빠지고 머리글이 붙는다', async ({ page }) => {
+    await openBuilding(page);
+
+    // 화면에서는 — 버튼이 있고 머리글은 없다.
+    await expect(page.getByRole('button', { name: '인쇄 · PDF로 저장' })).toBeVisible();
+    await expect(page.locator('.printmeta')).toBeHidden();
+
+    await page.emulateMedia({ media: 'print' });
+
+    // ① 종이에서 누를 수 없는 것은 종이에 없다.
+    //    (규칙 없이 뽑으면 첫 장 위 절반이 검색창·구 칩·버튼이었다 — 2026-08-25 실측)
+    await expect(page.locator('.region')).toBeHidden();
+    await expect(page.locator('.search')).toBeHidden();
+    await expect(page.locator('.takeout')).toBeHidden();
+    await expect(page.locator('.fb')).toBeHidden();
+    await expect(page.locator('.dmap__toggle')).toBeHidden();
+    await expect(page.locator('.card__caret').first()).toBeHidden();
+
+    // ② 이 종이가 무슨 건물이고 언제 것이며 원본이 어디인지.
+    const meta = page.locator('.printmeta');
+    await expect(meta).toBeVisible();
+    await expect(meta.locator('.printmeta__title')).toHaveText('테스트빌딩');
+    await expect(meta.locator('.printmeta__addr')).toHaveText('서울 강남구 테헤란로 1');
+    await expect(meta.locator('.printmeta__app')).toHaveText('상가 층별 스택뷰');
+    // ⚠️ 시각을 값으로 박지 않는다 — 돌리는 날·시간대에 따라 달라진다. 모양만 본다.
+    await expect(meta.locator('.printmeta__when')).toHaveText(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2} 뽑음$/);
+    // 원본 주소는 링크 복사 버튼이 주는 것과 같은 값이다.
+    await expect(meta.locator('.printmeta__url')).toHaveText(new RegExp(`bld=${LINK_BLD}`));
+
+    // ③ 본론과 근거·출처·면책은 그대로 남는다 — 뺀 것은 조종 장치뿐이다.
+    await expect(page.locator('.stack__title')).toBeVisible();
+    await expect(page.locator('.card--floors .floor').first()).toBeVisible();
+    await expect(page.locator('.foot__notice')).toBeVisible();
+    await expect(page.locator('.tx__src')).toBeVisible();
+
+    await page.emulateMedia({ media: null });
+  });
+
+  test('S. 접어 둔 카드도 종이에는 나오고, 막대 색이 지워지지 않는다', async ({ page }) => {
+    await openBuilding(page);
+
+    const band = page.locator('section.band');
+    const floorsCard = page.locator('.card--floors');
+
+    // 사용자가 층 목록까지 접어 둔 채로 인쇄하는 상황을 만든다.
+    // (『참고 매매 시세』는 원래 접힌 채로 시작한다 — 첫 화면 펼침 상한이 넷이라서.)
+    await floorsCard.locator('.card__toggle').click();
+    await expect(floorsCard.locator('.card__body')).toBeHidden();
+    await expect(band.locator('.card__body')).toBeHidden();
+
+    await page.emulateMedia({ media: 'print' });
+
+    // ⛔ 화면에서 접는 것은 "지금은 안 볼래"이지 "종이에서도 빼라"가 아니다.
+    //    이게 깨지면 종이에서 카드가 **제목만 남고 통째로 사라진다**(2026-08-25 실측).
+    await expect(floorsCard.locator('.card__body')).toBeVisible();
+    await expect(band.locator('.card__body')).toBeVisible();
+    await expect(band.locator('.band__val').first()).toBeVisible();
+    // 값과 근거는 한 몸이다(절대 규칙 3) — 종이에서도 함께 나와야 한다.
+    await expect(band.getByText(/C등급 · 파생 추정/)).toBeVisible();
+
+    // ⛔ 브라우저는 잉크를 아끼려고 배경색을 안 찍는다. 그런데 이 화면에서 막대는
+    //    **본론**이라, 이 설정이 빠지면 층별 스택이 종이에서 백지가 된다(2026-08-25 실측).
+    await expect(page.locator('.floor__fill').first()).toHaveCSS('print-color-adjust', 'exact');
+
+    // ⛔ 줄 하나가 두 장에 걸쳐 반으로 잘리지 않게 한다. 긴 목록 카드는 이어지도록 **일부러**
+    //    두었으므로(카드에 걸면 3장이 4장이 되고 흰 자리가 크게 남는다 — 2026-08-25 실측),
+    //    잘림을 막는 최후의 방어선이 줄 단위의 이 설정이다.
+    await expect(page.locator('.floor').first()).toHaveCSS('break-inside', 'avoid');
+    // 산문이 든 짧은 카드는 반대로 통째로 유지한다 — 문장이 두 장에 걸리면 흐름이 끊긴다.
+    await expect(page.locator('.card--district')).toHaveCSS('break-inside', 'avoid');
+
+    await page.emulateMedia({ media: null });
   });
 });
