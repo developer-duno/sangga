@@ -345,7 +345,9 @@ def test_main_returns_zero_when_everything_is_fresh(monkeypatch, capsys, tmp_pat
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
     _patch_fetch(monkeypatch, {chk.QUARTERLY_WATCH: _recent(48), chk.DISTRICT_WATCH: _recent(48),
                            # 라이브 감시는 6시간마다 돌므로 기준이 1일이다 — 이틀 전이면 이미 멈춘 것.
-                           chk.LIVE_HEALTH_WATCH: _recent(3)})
+                           chk.LIVE_HEALTH_WATCH: _recent(3),
+                           # 주간 알림도 예약이라 같은 그물 안에 있다(2026-08-24c).
+                           chk.FEEDBACK_DIGEST: _recent(48)})
     assert chk.main([]) == 0
     assert "멈춘 감시           : 없음" in capsys.readouterr().out
     # 멈춘 게 없으면 이슈 본문 파일을 만들지 않는다
@@ -356,7 +358,9 @@ def test_main_returns_one_and_writes_issue_body_when_stale(monkeypatch, tmp_path
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
     _patch_fetch(monkeypatch, {chk.QUARTERLY_WATCH: _recent(48), chk.DISTRICT_WATCH: _recent(70 * 24),
-                           chk.LIVE_HEALTH_WATCH: _recent(3)})
+                           chk.LIVE_HEALTH_WATCH: _recent(3),
+                           # 주간 알림도 예약이라 같은 그물 안에 있다(2026-08-24c).
+                           chk.FEEDBACK_DIGEST: _recent(48)})
     assert chk.main([]) == 1
     body = (tmp_path / chk.ISSUE_BODY_FILE).read_text(encoding="utf-8")
     assert "상권 원천 감시" in body
@@ -413,7 +417,9 @@ def test_main_json_output(monkeypatch, capsys, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
     _patch_fetch(monkeypatch, {chk.QUARTERLY_WATCH: _recent(48), chk.DISTRICT_WATCH: None,
-                           chk.LIVE_HEALTH_WATCH: _recent(3)})
+                           chk.LIVE_HEALTH_WATCH: _recent(3),
+                           # 주간 알림도 예약이라 같은 그물 안에 있다(2026-08-24c).
+                           chk.FEEDBACK_DIGEST: _recent(48)})
     assert chk.main(["--json"]) == 1
     data = json.loads(capsys.readouterr().out)
     assert data["max_age_days"] == chk.DEFAULT_MAX_AGE_DAYS
@@ -431,7 +437,9 @@ def test_main_does_not_touch_network(monkeypatch, tmp_path):
 
     monkeypatch.setattr(chk.urllib.request, "urlopen", forbidden)
     _patch_fetch(monkeypatch, {chk.QUARTERLY_WATCH: _recent(24), chk.DISTRICT_WATCH: _recent(24),
-                           chk.LIVE_HEALTH_WATCH: _recent(3)})
+                           chk.LIVE_HEALTH_WATCH: _recent(3),
+                           # 주간 알림도 예약이라 같은 그물 안에 있다(2026-08-24c).
+                           chk.FEEDBACK_DIGEST: _recent(48)})
     assert chk.main([]) == 0
 
 
@@ -563,12 +571,67 @@ def test_live_health_watch_stale_after_a_day():
     assert chk.judge([(chk.LIVE_HEALTH_WATCH, _dt(0.4))], now=NOW) == []
 
 
-def test_default_workflows_covers_all_three_watches():
-    """감시를 새로 만들고 여기 안 넣으면, 그 감시가 죽어도 아무도 모른다."""
+def test_default_workflows_covers_every_scheduled_workflow():
+    """예약을 새로 만들고 여기 안 넣으면, 그것이 죽어도 아무도 모른다.
+
+    ⚠️ 대상은 "감시"만이 아니다 — **예약으로 도는 것 전부**다. 의견함 주간 알림
+    (2026-08-24c)은 감시가 아니라 알림이지만, 죽으면 우편함을 다시 아무도 안 읽게 되므로
+    똑같이 지켜져야 한다. 그래서 이름을 '감시 3종'에서 '예약 전부'로 넓혔다.
+    """
     assert set(chk.DEFAULT_WORKFLOWS) == {
         chk.QUARTERLY_WATCH,
         chk.DISTRICT_WATCH,
         chk.LIVE_HEALTH_WATCH,
+        chk.FEEDBACK_DIGEST,
     }
     for wf in chk.DEFAULT_WORKFLOWS:
         assert wf in chk.WORKFLOW_LABELS
+
+
+def _workflow_files():
+    return [
+        n for n in sorted(os.listdir(WORKFLOW_DIR)) if n.endswith((".yml", ".yaml"))
+    ]
+
+
+@pytest.mark.parametrize("name", _workflow_files())
+def test_workflow_yaml_actually_parses(name):
+    """⛔ 깨진 워크플로는 에러가 아니라 **그냥 안 도는 것**으로 끝난다.
+
+    GitHub 은 문법이 깨진 워크플로를 조용히 실행하지 않는다 — Actions 탭 어딘가에 표시는
+    되지만 아무도 그걸 매일 보지 않는다. 이 레포가 가장 여러 번 데인 형태(조용한 누락)다.
+    실제로 2026-08-24c 에서 이슈 본문을 워크플로 안에 직접 써 넣다 들여쓰기가 깨져
+    **파일 전체가 안 읽히는 상태**를 만들었고, 손으로 파싱해 보고서야 알았다.
+
+    ⓘ pyyaml 은 CI 설치 목록에 있다(ci.yml). 안 깔린 환경에서는 건너뛰므로, 이 검사가
+      실제로 강제되는 곳은 CI 다 — pyshp 와 같은 방식.
+    """
+    yaml = pytest.importorskip("yaml")
+    with open(os.path.join(WORKFLOW_DIR, name), encoding="utf-8") as f:
+        doc = yaml.safe_load(f)
+    assert isinstance(doc, dict), "{}: 최상위가 매핑이 아닙니다".format(name)
+    # YAML 은 `on:` 을 참(True)으로 읽는다(이른바 Norway 문제) — 둘 다 본다.
+    assert "jobs" in doc and ("on" in doc or True in doc), (
+        "{}: jobs/on 이 없습니다 — 워크플로로 인식되지 않습니다".format(name)
+    )
+
+
+def test_every_scheduled_workflow_file_is_in_the_net():
+    """⛔ 거꾸로도 막는다 — .github/workflows 에 예약(schedule)이 있는데 그물 밖이면 사고다.
+
+    위 테스트는 "상수에 적힌 것"만 본다. 그래서 새 예약 워크플로 파일을 만들고 상수를
+    안 고치면 **양쪽 다 초록인 채로** 그물 밖에 남는다. 파일 쪽에서 한 번 더 센다.
+    (CI 는 예약이 아니라 push 로 도는 것이라 대상이 아니다.)
+    """
+    scheduled = []
+    for name in sorted(os.listdir(WORKFLOW_DIR)):
+        if not name.endswith((".yml", ".yaml")):
+            continue
+        if "schedule:" in _read_text(os.path.join(WORKFLOW_DIR, name)):
+            scheduled.append(name)
+
+    missing = [n for n in scheduled if n not in chk.DEFAULT_WORKFLOWS]
+    assert not missing, (
+        "예약으로 도는데 상호 감시 그물 밖입니다: {} — check_watch_heartbeat.py 의 "
+        "DEFAULT_WORKFLOWS 와 형제 워크플로의 --workflow 인자에 넣으세요.".format(missing)
+    )

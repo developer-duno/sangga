@@ -1,0 +1,156 @@
+# 의견함 주간 알림 — 우편함을 **읽을 계기**를 만드는 장치
+#
+# 왜: 2026-08-24 익명 의견함(app_feedback)을 만들었지만 **읽을 계기가 어디에도 없었다.**
+#     넣는 길만 열렸을 뿐, 쌓인 것을 사람이 정기적으로 열어 볼 장치가 없으면 "나중에
+#     읽겠다"는 영영 지켜지지 않는다. 이 레포는 이미 그 일을 겪었다 — 감시가 죽은 걸
+#     나흘 뒤에야 알았고, 그래서 감시들이 서로를 보게 만들었다.
+#     읽히지 않는 의견함은 값어치가 0인데 보안·CI 부담만 진다.
+#
+# 무엇을 하나: 매주 한 번 **숫자만** 받아 와서, 알릴 일이 있으면 이슈를 연다. 둘 중
+#     하나라도 걸리면 알린다 —
+#       ① 최근 이레 동안 새 글(의견·오류 기록)이 하나라도 왔다
+#       ② 보관 기한(90일)을 넘긴 글이 남아 있다
+#          ⓘ 치우기는 편지가 들어올 때 창고가 스스로 한다(2026-08-24c). 그래서 조용한
+#            기간에는 안 돈다 — 그 빈틈을 여기서 지켜본다. 이 줄이 없으면 "90일 보관"은
+#            말만 정책이고 실제로는 안 지켜질 수 있다.
+#     둘 다 아니면 **아무것도 안 한다.** "이번 주도 0건입니다"가 매주 쌓이면 알림이
+#     소음이 되고, 소음은 결국 무시된다.
+#
+# ⛔ 이 워크플로는 **내용을 못 본다.** 서버 함수(api.get_feedback_stats)가 건수만
+#    돌려주기 때문이다 — 무엇이 적혔는지는 사람이 dbx.py 로만 읽는다(이슈 본문이 안내).
+#
+# ⓘ 비밀값(Secrets)은 여전히 **0개**다. 여기 쓰는 URL·공개키는 이미 배포된 화면의
+#    자바스크립트 묶음에 그대로 실려 있어 누구나 라이브에서 읽을 수 있는 값이라,
+#    저장소 **변수(Variables)** 로 둔다. 없으면 이 워크플로만 조용히 건너뛴다(아래 참조).
+#
+# ⚠️ GitHub 는 저장소에 60일간 활동이 없으면 예약 실행을 자동으로 멈춘다.
+#    그 경우는 스스로 못 알리므로 형제 감시들이 이 워크플로를 대신 지켜본다.
+name: 의견함 주간 알림
+
+on:
+  schedule:
+    # 매주 월요일 01:00 UTC = 10:00 KST. 형제 감시들이 00:00·00:30 UTC 라 한 시간 비켜
+    # 간다 — 같은 시각에 몰리면 큐가 밀릴 때 함께 드롭된다.
+    - cron: "0 1 * * 1"
+  # 손으로 즉시 돌려보고 싶을 때 (Actions 탭 → Run workflow)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  # 형제 감시의 **실행 기록**을 읽어야 그쪽 예약이 살아 있는지 볼 수 있다.
+  actions: read
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Seoul # 로컬(KST)과 시간축 통일
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # ⚠️ 변수가 없으면 job 을 **실패시키지는 않는다.** 여기서 죽이면 아래 상호 감시
+      #    단계가 통째로 안 돌아, 형제 감시가 죽어도 이 워크플로가 못 알린다
+      #    (2026-08-10 사고가 정확히 그 형태였다 — 앞 단계 실패가 뒤 단계를 삼켰다).
+      #
+      # ⛔ **그렇다고 조용히 넘어가서도 안 된다.** 건너뛰어도 job 은 '성공'으로 기록되므로,
+      #    형제 감시들 눈에는 멀쩡해 보이는 채로 **의견을 영영 안 읽는 상태**가 계속된다.
+      #    이 레포가 가장 여러 번 데인 형태(조용한 누락)라, 다음 단계에서 이슈를 연다.
+      - name: 창고 주소·공개키가 있나
+        id: creds
+        env:
+          SUPA_URL: ${{ vars.SANGGA_SUPABASE_URL }}
+          SUPA_KEY: ${{ vars.SANGGA_SUPABASE_ANON_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SUPA_URL:-}" ] || [ -z "${SUPA_KEY:-}" ]; then
+            echo "저장소 변수 SANGGA_SUPABASE_URL / SANGGA_SUPABASE_ANON_KEY 가 없습니다."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 열려 있는 같은 제목이 있으면 건너뛴다 → 사람이 변수를 넣고 닫으면 끝난다.
+      - name: 변수가 없으면 그 사실을 알린다
+        if: steps.creds.outputs.ready == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TITLE="의견함 주간 알림이 꺼져 있습니다 — 저장소 변수 두 개가 필요합니다"
+          if gh issue list --state open --limit 100 --json title --jq '.[].title' | grep -Fxq "$TITLE"; then
+            echo "이미 열린 같은 이슈가 있습니다 — 건너뜁니다."
+            exit 0
+          fi
+          gh issue create --title "$TITLE" --body-file .github/feedback-digest-setup-issue.md
+          echo "이슈를 열었습니다: $TITLE"
+
+      # 스크립트는 표준 라이브러리만 쓴다 — 설치 단계가 없다.
+      - name: 의견함 숫자 세기
+        id: digest
+        if: steps.creds.outputs.ready == 'true'
+        env:
+          SANGGA_SUPABASE_URL: ${{ vars.SANGGA_SUPABASE_URL }}
+          SANGGA_SUPABASE_ANON_KEY: ${{ vars.SANGGA_SUPABASE_ANON_KEY }}
+        run: python scripts/feedback_digest.py
+
+      # 제목에 **주차 날짜**를 박는다 — 지난주 이슈를 아직 안 닫았어도 이번 주 것이
+      # 새로 열린다(감시 이슈들과 반대 방향의 선택이다. 감시는 "같은 사고를 두 번 알리지
+      # 말라"가 맞지만, 의견은 **주마다 다른 내용**이라 묶으면 지난주 것에 묻힌다).
+      - name: 알릴 일이 있으면 이슈를 연다
+        if: steps.digest.outputs.should_report == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BODY: ${{ steps.digest.outputs.body }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          TITLE="의견함에 읽을 것이 있습니다 ($(date +%Y-%m-%d) 기준)"
+          if gh issue list --state all --limit 100 --json title \
+               --jq '.[].title' | grep -Fxq "$TITLE"; then
+            echo "같은 주차 이슈가 이미 있습니다 — 건너뜁니다: $TITLE"
+            exit 0
+          fi
+          {
+            printf '%s\n' "$BODY"
+            echo
+            echo "이 알림을 만든 실행: $RUN_URL"
+          } > feedback_digest_issue.md
+          gh issue create --title "$TITLE" --body-file feedback_digest_issue.md
+          echo "이슈를 열었습니다: $TITLE"
+
+      # ── 상호 감시 ────────────────────────────────────────────────────────
+      # 여기까지 왔다는 건 **내 예약은 살아 있다**는 뜻이다. 그 김에 형제 감시들이 아직
+      # 도는지 본다 — 예약이 아예 안 도는 경우(60일 무활동 자동중지·큐 드롭)는 실패조차
+      # 없어서 그쪽 워크플로우 스스로는 절대 알릴 수 없기 때문이다.
+      #
+      # continue-on-error 인 이유: 이 점검이 못 돌았다고 job 을 실패시키면 "의견함 알림이
+      # 실패했다"는 엉뚱한 신호가 된다.
+      # `if: !cancelled()` 가 없으면 **내 본연의 일이 실패한 주에는 형제를 안 본다** —
+      # 앞 단계가 실패하면 job status 가 failure 라 뒤 단계가 통째로 건너뛰어진다.
+      - name: 형제 감시들이 아직 도는지 확인
+        id: heartbeat
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/check_watch_heartbeat.py --workflow sangkwon-quarterly-watch.yml --workflow district-source-watch.yml --workflow live-health-watch.yml
+
+      # 제목에 날짜가 없으므로 **열려 있는** 같은 제목만 건너뛴다 →
+      # 사람이 닫아야 다음 사고를 다시 알린다.
+      - name: 형제 감시가 멈췄으면 이슈를 연다
+        if: ${{ !cancelled() && steps.heartbeat.outputs.stale == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ steps.heartbeat.outputs.title }}
+        run: |
+          set -euo pipefail
+          if gh issue list --state open --limit 100 --json title --jq '.[].title' | grep -Fxq "$TITLE"; then
+            echo "이미 열린 같은 이슈가 있습니다 — 건너뜁니다: $TITLE"
+            exit 0
+          fi
+          gh issue create --title "$TITLE" --body-file watch_heartbeat_issue.md
+          echo "이슈를 열었습니다: $TITLE"

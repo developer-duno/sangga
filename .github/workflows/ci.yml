@@ -17,7 +17,9 @@ jobs:
           python-version: "3.12"
       - name: Install deps
         # ruff는 로컬과 동일 버전 고정 — 버전 차이로 규칙 셋이 달라져 로컬 통과·CI 실패가 갈리는 것 방지
-        run: pip install pytest==9.1.1 ruff==0.15.9 requests python-dotenv
+        # pyyaml: 워크플로 파일 자체의 문법을 테스트가 읽어 본다(2026-08-24c). 깨진 워크플로는
+        #   에러가 아니라 **그냥 안 도는 것**으로 끝나서, 없으면 아무도 모른다.
+        run: pip install pytest==9.1.1 ruff==0.15.9 requests python-dotenv pyyaml
       - name: Lint
         run: python -m ruff check scripts/ tests/
       - name: Test

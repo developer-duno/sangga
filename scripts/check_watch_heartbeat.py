@@ -72,15 +72,17 @@ import urllib.request
 QUARTERLY_WATCH = "sangkwon-quarterly-watch.yml"
 DISTRICT_WATCH = "district-source-watch.yml"
 LIVE_HEALTH_WATCH = "live-health-watch.yml"
+FEEDBACK_DIGEST = "feedback-digest.yml"
 
-# 아무것도 안 주면 감시 3종을 다 본다(사람이 내 PC 에서 돌릴 때의 기본값).
-DEFAULT_WORKFLOWS = (QUARTERLY_WATCH, DISTRICT_WATCH, LIVE_HEALTH_WATCH)
+# 아무것도 안 주면 예약 4종을 다 본다(사람이 내 PC 에서 돌릴 때의 기본값).
+DEFAULT_WORKFLOWS = (QUARTERLY_WATCH, DISTRICT_WATCH, LIVE_HEALTH_WATCH, FEEDBACK_DIGEST)
 
 # 화면·이슈 제목에 쓸 짧은 이름표
 WORKFLOW_LABELS = {
     QUARTERLY_WATCH: "분기 스냅샷 감시",
     DISTRICT_WATCH: "상권 원천 감시",
     LIVE_HEALTH_WATCH: "라이브 생존 감시",
+    FEEDBACK_DIGEST: "의견함 주간 알림",
 }
 
 # 분기·상권 감시는 **주 1회**(월요일) 예약이다. 8일이면 한 번을 통째로 걸러야 걸린다 —
