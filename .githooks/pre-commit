@@ -1,0 +1,52 @@
+#!/bin/sh
+# main 가지에 직접 커밋하는 것을 막는다.
+#
+# 왜 이게 필요한가
+# ----------------
+# GitHub 쪽 잠금(저장소 규칙 "main 보호")은 **밀어넣을 때** 막는다. 그때는 이미 커밋을
+# 다 만든 뒤라, 가지를 새로 파고 커밋을 옮기는 뒷수습이 남는다. 이 훅은 그보다 한 발
+# 앞인 **커밋 직전**에 잡아서 그 뒷수습 자체를 없앤다.
+#
+#   로컬 훅  = 빨리 알려주는 알람 (편하지만, 끄면 그만이라 그것만 믿으면 안 된다)
+#   GitHub 규칙 = 최후의 방어선 (확실하다 — 이쪽이 진짜 잠금이다)
+#
+# 이 저장소는 여러 프로젝트 창을 한 PC 에서 동시에 여는 환경이라, "지금 어느 가지에
+# 있는지" 착각이 실제로 사고를 냈다(전역 규칙 multi-repo-one-machine).
+#
+# 빠져나가는 길
+# -------------
+#   SANGGA_ALLOW_MAIN=1 git commit ...
+# 정말로 main 에 직접 커밋해야 할 때(잠금을 잠시 풀고 되돌리는 등)만 쓴다.
+
+if [ "$SANGGA_ALLOW_MAIN" = "1" ]; then
+    exit 0
+fi
+
+branch=$(git symbolic-ref --short HEAD 2>/dev/null)
+
+# 가지 이름이 없는 상태(rebase 중 detached HEAD 등)는 막지 않는다 —
+# 그 상황에서 막으면 rebase 를 끝낼 수가 없다.
+if [ -z "$branch" ]; then
+    exit 0
+fi
+
+if [ "$branch" = "main" ]; then
+    echo "" >&2
+    echo "  [멈춤] main 가지에는 직접 커밋하지 않습니다." >&2
+    echo "" >&2
+    echo "  이 저장소의 main 은 GitHub 쪽에서도 잠겨 있어(저장소 규칙 'main 보호')" >&2
+    echo "  여기서 커밋해도 어차피 밀어넣을 때 거부됩니다. 지금 막는 이유는" >&2
+    echo "  그 뒷수습(가지 파서 커밋 옮기기)을 미리 없애기 위해서입니다." >&2
+    echo "" >&2
+    echo "  이렇게 하세요 — 새 가지를 파고 그 위에서 커밋합니다:" >&2
+    echo "" >&2
+    echo "      git switch -c 작업이름" >&2
+    echo "" >&2
+    echo "  정말로 main 에 직접 커밋해야 한다면:" >&2
+    echo "" >&2
+    echo "      SANGGA_ALLOW_MAIN=1 git commit ..." >&2
+    echo "" >&2
+    exit 1
+fi
+
+exit 0
