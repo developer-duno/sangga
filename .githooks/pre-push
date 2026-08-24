@@ -1,0 +1,57 @@
+#!/bin/sh
+# main 가지로 직접 밀어넣는 것을 막는다.
+#
+# 왜 이게 필요한가
+# ----------------
+# pre-commit 이 놓치는 길이 있다. 다른 가지에서 커밋해 놓고
+#
+#     git push origin HEAD:main
+#
+# 처럼 **가지를 바꿔치기해서 밀어넣는** 경우다. 커밋 시점에는 main 이 아니었으므로
+# pre-commit 은 아무 말도 하지 않는다. 그래서 밀어넣는 단계에도 한 번 더 본다.
+#
+# 표준 입력으로 다음 모양의 줄들이 들어온다(git 규격):
+#
+#     <보내는 ref> <보내는 sha> <받는 ref> <받는 sha>
+#
+# 우리가 보는 것은 **받는 쪽**(remote ref)이다 — 보내는 쪽 이름이 무엇이든
+# 도착지가 refs/heads/main 이면 막는다.
+#
+# 빠져나가는 길
+# -------------
+#   SANGGA_ALLOW_MAIN=1 git push ...
+
+if [ "$SANGGA_ALLOW_MAIN" = "1" ]; then
+    exit 0
+fi
+
+blocked=0
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    # 빈 줄(밀어넣을 것이 없음)은 건너뛴다.
+    [ -z "$remote_ref" ] && continue
+    if [ "$remote_ref" = "refs/heads/main" ]; then
+        blocked=1
+    fi
+done
+
+if [ "$blocked" = "1" ]; then
+    echo "" >&2
+    echo "  [멈춤] main 가지로 직접 밀어넣지 않습니다." >&2
+    echo "" >&2
+    echo "  GitHub 쪽에서도 거부됩니다(저장소 규칙 'main 보호' — 검사 2개 통과 +" >&2
+    echo "  PR 경유가 조건). 여기서 먼저 막는 것은 헛걸음을 줄이기 위해서입니다." >&2
+    echo "" >&2
+    echo "  이렇게 하세요 — 지금 가지를 그대로 올리고 PR 로 합칩니다:" >&2
+    echo "" >&2
+    echo "      git push -u origin HEAD" >&2
+    echo "      gh pr create" >&2
+    echo "" >&2
+    echo "  정말로 main 에 직접 밀어넣어야 한다면(잠금도 함께 풀어야 합니다):" >&2
+    echo "" >&2
+    echo "      SANGGA_ALLOW_MAIN=1 git push ..." >&2
+    echo "" >&2
+    exit 1
+fi
+
+exit 0
