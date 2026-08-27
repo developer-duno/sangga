@@ -7,11 +7,13 @@ import {
   PARCEL_TX_FN,
   SIGUNGU_TX_STATS_FN,
   PRICE_BANDS_FN,
+  BASE_PRICES_FN,
   TX_LIST_CAP,
   TX_OPEN_SINCE_LABEL,
   TX_BASEMENT_MISSING_SINCE,
 } from '../lib/appConstants';
 import type {
+  BasePrice,
   BuildingDistricts,
   BuildingHit,
   CoverageStats,
@@ -191,6 +193,13 @@ export function FloorStack({ building }: Props) {
   /** 못 읽었나. 못 읽었으면 그 섹션을 아예 안 그린다(모르는 것을 없다고 말하지 않는다). */
   const [bandsFailed, setBandsFailed] = useState(false);
   /**
+   * 이 필지의 층별 국세청 기준시가. null = 아직 안 왔거나 못 읽음.
+   *
+   * ⓘ 밴드와 달리 "못 읽음"을 따로 두지 않는다 — 둘 다 **그 줄을 안 그리는 것**으로 끝나기
+   *   때문이다(카드 자체는 밴드가 정한다). 상태를 하나 더 만들면 쓰는 곳 없이 갈래만 는다.
+   */
+  const [basePrices, setBasePrices] = useState<BasePrice[] | null>(null);
+  /**
    * 층 목록 카드를 **펼치라고 부르는 신호**. 참고 시세 줄을 누를 때마다 1씩 올린다.
    *
    * ⛔ 이게 없으면 사용자가 층 목록을 접어 둔 상태에서 시세 줄을 눌렀을 때 **아무 일도
@@ -299,6 +308,7 @@ export function FloorStack({ building }: Props) {
     setTxStats(null);
     setBands(null);
     setBandsFailed(false);
+    setBasePrices(null);
 
     supabase.rpc(PARCEL_TX_FN, { pnu: building.pnu }).then(({ data, error: err }) => {
       if (cancelled) return;
@@ -343,6 +353,22 @@ export function FloorStack({ building }: Props) {
       );
       if (unknown.length > 0) console.warn('모르는 status 라 그 층은 그리지 않습니다', unknown);
       setBands(rows);
+    });
+
+    // ── 국세청 기준시가 ────────────────────────────────────────────────────
+    //
+    // ⚠️ 인자 이름이 여기도 `p_pnu` 다(위 밴드와 같은 이유 — 컬럼명 `pnu` 와 겹친다).
+    //    목은 인자 이름을 안 보므로 습관대로 `{ pnu: … }` 로 부르면 테스트는 전부 초록인 채
+    //    **라이브에서만** PGRST202 가 난다.
+    // ⓘ 못 읽었으면 그 줄만 조용히 뺀다 — 마이그레이션 적용 전 라이브가 바로 그 상태다
+    //   (업종 분포와 같은 관행). 카드 자체는 밴드가 정하므로 여기서 손대지 않는다.
+    supabase.rpc(BASE_PRICES_FN, { p_pnu: building.pnu }).then(({ data, error: err }) => {
+      if (cancelled) return;
+      if (err || !Array.isArray(data)) {
+        console.warn('기준시가 조회 실패 — 그 줄 없이 표시합니다', err);
+        return;
+      }
+      setBasePrices(data as BasePrice[]);
     });
 
     return () => {
@@ -540,6 +566,7 @@ export function FloorStack({ building }: Props) {
 
       <PriceBandSection
         bands={bands}
+        basePrices={basePrices}
         failed={bandsFailed}
         floors={floors}
         hasTxStats={txStats !== null && txStats.length > 0}

@@ -1,4 +1,5 @@
 import type {
+  BasePrice,
   BuildingHit,
   CoverageStats,
   FloorRow,
@@ -138,6 +139,28 @@ export function priceBands(): PriceBand[] {
 /** 기준선을 못 넘은 구 — floor_no 가 null 인 **한 줄**로만 온다(층 목록이 아예 없다). */
 export function priceBandGate(): PriceBand[] {
   return [priceBand({ floor_no: null, status: 'gate_fail', ...NO_VALUE })];
+}
+
+/**
+ * 국세청 기준시가 한 줄(함수 list_base_prices).
+ *
+ * ⛔ **시세가 아니라 세무 기준가격**이다 — 위 `priceBand`(추정)와 다른 자로 잰 다른 값이라
+ *    화면에서도 카드 맨 끝에 갈라 그린다. 필드·기본값은 단위 테스트
+ *    (src/components/FloorStack.test.tsx 의 basePrice())와 같다.
+ */
+export function basePrice(over: Partial<BasePrice> = {}): BasePrice {
+  return {
+    floor_no: 2,
+    median_price_per_m2: 3_000_000,
+    ho_cnt: 12,
+    notice_date: '2026-01-01',
+    ...over,
+  };
+}
+
+/** 이 필지의 층별 기준시가 한 벌. 서버는 **필지 전체**를 오름차순으로 준다. */
+export function basePrices(): BasePrice[] {
+  return [basePrice({ floor_no: 1, median_price_per_m2: 4_100_000 }), basePrice({ floor_no: 2 })];
 }
 
 /**

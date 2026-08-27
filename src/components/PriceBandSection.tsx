@@ -1,7 +1,8 @@
 import { TX_BASEMENT_MISSING_SINCE } from '../lib/appConstants';
 import { SECTION_PLAN } from '../lib/sectionCards';
 import { SectionCard } from './SectionCard';
-import type { FloorRow, PriceBand } from '../types';
+import type { BasePrice, FloorRow, PriceBand } from '../types';
+import { pairBasePrices, type BasePriceRow } from '../lib/basePrice';
 import {
   formatArea,
   formatEokBand,
@@ -36,6 +37,14 @@ import {
 type Props = {
   /** null = 아직 안 옴(자리만 잡아 둔다). */
   bands: PriceBand[] | null;
+  /**
+   * 이 필지의 층별 국세청 기준시가. **추정이 아니라 고시된 값**이라 카드 맨 끝에 따로 적는다.
+   *
+   * null = 아직 안 왔거나 못 읽음(마이그레이션 적용 전 라이브가 그 상태다). 둘 다 **줄을
+   * 안 그리는 것**으로 끝난다 — 곁다리 한 줄 때문에 자리를 잡아 두거나 "없음"이라 적으면,
+   * 모르는 것을 아는 것처럼 말하게 된다.
+   */
+  basePrices: BasePrice[] | null;
   /** true = 못 읽음 → 아무 말도 하지 않는다(없는 것과 모르는 것은 다르다). */
   failed: boolean;
   /** 이 **건물**의 층. 서버는 필지 전체를 주므로 여기서 걸러진다. */
@@ -63,6 +72,7 @@ const THIN_SAMPLE = 5;
 
 export function PriceBandSection({
   bands,
+  basePrices,
   failed,
   floors,
   hasTxStats,
@@ -107,6 +117,10 @@ export function PriceBandSection({
 
   const { listed, silent } = groupBands(bands, floors);
   if (listed.length === 0 && silent.length === 0) return null;
+
+  // 고시가격은 밴드와 **다른 자료**다 — 밴드가 없어도 있을 수 있고, 있어도 없을 수 있다.
+  // 그래서 짝짓기도 따로 한다(밴드 목록에 끼워 넣으면 두 값이 한 줄에서 섞인다).
+  const baseRows = pairBasePrices(basePrices, floors);
 
   const okGroups = listed.filter((g) => g.band.status === 'ok');
   const hasOk = okGroups.length > 0;
@@ -216,7 +230,65 @@ export function PriceBandSection({
           <strong>신고된 거래를 그대로 센 값</strong>은 보실 수 있습니다.
         </p>
       )}
+
+      <BasePriceBlock rows={baseRows} />
     </SectionCard>
+  );
+}
+
+/**
+ * 국세청 기준시가 — 이 카드에서 **유일하게 추정이 아닌 값**이다.
+ *
+ * ⛔ 위 밴드와 **같은 줄에 섞지 않는다.** 사람은 나란히 놓인 두 숫자를 자동으로 "같은 것의
+ *    두 가지 측정"으로 읽는데, 이 둘은 다른 자로 잰 다른 값이다(세금 매기는 기준 vs 곁
+ *    거래로 어림한 값). 그래서 자리도 맨 끝이고, 배지도 색이 다르고(사실 = 호박), 첫 문장이
+ *    "시세가 아니다"라고 못 박는다.
+ * ⛔ 두 값을 빼거나 나눠 "몇 배"를 적지 말 것 — 그건 우리가 만든 새 추정이고, 결재받은
+ *    적이 없다.
+ * ⛔ **총액(억)으로 환산하지 말 것.** 서버가 면적을 안 준다. 바로 위 `BandBody` 의
+ *    `toTotalWon(band.median, area)` 를 베껴 오고 싶어지는 자리인데, 그 면적은 **곁 거래들의
+ *    전용면적 중앙값**이라 이 값과 아무 상관이 없고(남의 면적), 애초에 고시가격의 총액은
+ *    전용이 아니라 (전용 + 공유)를 곱해야 한다. 그래서 여기는 ㎡당만 적는다.
+ * ⓘ 부기는 **카드 안에서 한 번만** 한다(줄마다 반복하면 목록이 안 읽힌다).
+ */
+function BasePriceBlock({ rows }: { rows: BasePriceRow[] }) {
+  // 자료가 없거나 못 읽었으면 아무것도 안 그린다 — "기준시가 없음"이라고 적지 않는다
+  // (이 카드의 다른 블록들과 같은 원칙: 없는 것과 모르는 것은 다르다).
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="band__base">
+      <h4 className="band__base-h">국세청 기준시가</h4>
+      <ul className="band__base-rows">
+        {rows.map((r) => (
+          <li key={r.key}>
+            <span className="band__base-floor">{r.label}</span>
+            {/*
+              ⛔ 뒤에 '원'을 덧붙이지 않는다. `formatManWon` 은 1만 원 미만이면 **원 단위로**
+                 적는데(그래야 '0만'으로 사라지지 않는다), 기준시가 원본 최저값이 5,000원/㎡ 라
+                 그 층이 실제로 있다 — 덧붙이면 그 줄만 '㎡당 5,000원 원'이 된다.
+                 화면의 다른 단가 표기('㎡당 380만')와도 이 형태가 같다.
+            */}
+            <span className="band__base-val">㎡당 {formatManWon(r.base.median_price_per_m2)}</span>
+            {/*
+              표본(호 수)을 값과 **한 몸으로** 적는다 — 이 값은 층 하나의 고시가격이 아니라
+              그 층 호실들의 가운데값이다(절대 규칙 3). 고시일도 서버가 준 글자를 그대로
+              쓴다: 해가 바뀌면 자료만 갈아 끼워도 화면이 저절로 따라온다.
+            */}
+            <span className="band__base-sub">
+              호 {r.base.ho_cnt.toLocaleString('ko-KR')}개 가운데값
+              {r.base.notice_date ? ` · ${r.base.notice_date} 고시` : ''}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="grade">
+        <span className="grade__badge">A등급 · 공식 고시</span>
+        국세청이 해마다 고시하는 <strong>세금 매길 때 쓰는 기준가격</strong>입니다 —{' '}
+        <strong>시세가 아닙니다.</strong> 우리가 어림한 값이 아니라 고시된 값 그대로이고, 위
+        참고 폭과는 다른 자로 잰 값이라 서로 견주기 어렵습니다.
+      </p>
+    </div>
   );
 }
 

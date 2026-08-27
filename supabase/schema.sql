@@ -2800,6 +2800,168 @@ grant execute on function api.get_feedback_stats(integer) to anon, authenticated
 notify pgrst, 'reload schema';
 
 -- =====================================================================
+-- 국세청 기준시가 — 상업용건물·오피스텔 호실 단위 (2026-08-27a)
+-- =====================================================================
+-- 국세청이 해마다 1월 1일자로 고시하는 **㎡당 기준시가**를 호실 하나에 한 줄씩 담는다
+-- (2026년 판 실측 2,490,451행 · 전국 17개 시도, 포털 3036455). 상세한 실측 근거·버린
+-- 선택지는 supabase/migrations/2026-08-27a_nts_base_price.sql 머리말 참조.
+--
+-- ⛔ **세금을 매길 때 쓰는 과세표준이지, 시장에서 사고파는 값이 아니다** — 화면에서도
+--    "국세청 고시 기준시가"라는 이름 그대로 쓴다(절대 규칙 2).
+-- ⭐ 층·호실 단위로 값이 매겨진 **유일한 전국 공공자료**다. 실거래가 없는 곳에서도
+--    "이 건물 3층은 1층의 몇 할인가"를 말할 수 있는 재료다.
+-- ⚠️ 고시가격은 **㎡당 단가**다 — 전 행 분포로 확정했다(중앙값 189만원/㎡. 총액이라면
+--    상가 한 칸이 189만원이라는 뜻이 되어 말이 안 된다).
+-- ⚠️ **공유면적을 함께 담는다.** 안 담으면 누군가 `고시가격 × 전용면적`으로 총액을 재고
+--    공용부만큼 조용히 적게 나온다.
+-- ⚠️ 층 구분은 실측 3종(지상층·지하층·**옥탑층 14행**)이다. 옥탑이 14행뿐이라 "둘뿐"으로
+--    넘겨짚기 딱 좋은 자리 — 적재기는 모르는 구분값에서 **통째로 멈춘다**.
+create table if not exists nts_base_price (
+  id              bigserial primary key,
+  -- 조립 실패('가,확정예정지번' 11,008행)를 **버리지 않고** 담기 위해 NULL 을 허용한다.
+  pnu             char(19),
+  -- 원본이 적어 준 법정동코드 그대로(광주 29·전남 46 포함). pnu 는 통합코드 12 로 재코딩된
+  -- 값이라, 원본을 잃으면 "우리가 바꾼 것"과 "원래 그랬던 것"을 다시 못 가린다.
+  bjd_code_orig   char(10)  not null,
+  special_cd      text      not null,   -- '일반지번' / '산' / '가,확정예정지번' (원문 보존)
+  bld_nm          text,                 -- 상가건물블록주소 (= 건물 이름)
+  dong_nm         text,                 -- 상가건물동주소   (예: '1(단일)')
+  floor_no        smallint,             -- 지상 n / 지하 -n / 옥탑 99 / 불명 NULL
+  ho              text,                 -- 상가건물호주소 (22행은 비어 있다 → NULL)
+  area_m2         numeric(12,2),        -- 전용면적
+  common_area_m2  numeric(12,2),        -- 공유면적 (총액을 재려면 전용+공유가 필요하다)
+  price_per_m2    numeric(14,2),        -- 고시가격 = ㎡당
+  kind            text      not null,   -- 상가종류코드: '상가' / '오피스텔'
+  notice_date     date      not null,   -- 고시일자 (2026년 판은 전 행 2026-01-01)
+  created_at      timestamptz default now(),
+  constraint chk_nts_floor check (floor_no is null or floor_no <> 0)
+);
+
+comment on table nts_base_price is
+  '국세청 상업용건물·오피스텔 기준시가(호실 단위, 연 1회 고시). 고시가격은 **㎡당 단가**다 '
+  '(전 행 분포로 확정 — 중앙값 189만원/㎡). ⛔ 과세표준이지 시세가 아니다. '
+  '⛔ anon 에게 통째로 닫혀 있고 list_base_prices() 로만 읽는다. 원본 zip = '
+  'data/raw/nts_base_price/ (포털 3036455).';
+comment on column nts_base_price.pnu is
+  '필지고유번호 19자리. 특수지코드가 ''가,확정예정지번''이면 조립 불가라 NULL(행은 보존).';
+comment on column nts_base_price.bjd_code_orig is
+  '원본 법정동코드. 광주 29·전남 46 은 우리 DB 통합코드 12 로 재코딩해 pnu 를 만들지만 '
+  '이 칸은 원본 그대로 둔다.';
+comment on column nts_base_price.floor_no is
+  '지상n=n / 지하n=-n / 옥탑=99 / 불명=NULL. ⛔ 0 은 CHECK 로 막는다 — 지하와 결측이 '
+  '섞이면 층별 집계가 조용히 오염된다(절대 규칙 4).';
+comment on column nts_base_price.price_per_m2 is
+  '고시가격(원/㎡). 총액을 재려면 (전용면적 + 공유면적)을 곱해야 한다 — 전용면적만 '
+  '곱하면 공용부만큼 적게 나온다.';
+
+-- 화면이 보는 길은 "이 필지의 층별"뿐이다. 필지 하나당 수십~수백 행이라 pnu 만으로 충분하다.
+create index if not exists idx_nts_pnu on nts_base_price (pnu);
+-- 같은 고시연도를 다시 넣을 때(재적재) 지우는 자리. 249만 행을 전수 훑지 않게 한다.
+create index if not exists idx_nts_notice on nts_base_price (notice_date);
+
+-- RLS 를 켜되 정책은 하나도 만들지 않는다 = 전부 거부(다른 표와 같은 방식).
+alter table nts_base_price enable row level security;
+
+-- ⛔ RLS 만 믿지 않는다 — security definer 경로는 RLS 를 우회하므로 권한이 방어선이다.
+--    ⚠️ 위쪽 `revoke all on all tables in schema public` 은 그 줄을 지날 때의 표만 닫는
+--       일회성 명령이라 여기서 만든 표에는 안 걸린다. 만든 자리에서 다시 닫는다.
+revoke all on nts_base_price from public, anon, authenticated;
+-- bigserial 이 함께 만드는 시퀀스도 닫는다(표만 닫으면 "닫았다"가 반쪽이 된다).
+revoke all on sequence nts_base_price_id_seq from public, anon, authenticated;
+
+-- ⛔ api 쪽 pass-through 뷰를 **일부러 안 만든다** — 적재기는 psql(dbx.py)로만 다루므로
+--    REST 경로가 필요 없고, 안 만드는 것이 곧 노출면을 줄이는 일이다.
+
+-- ── list_base_prices — 이 필지의 층별 기준시가 ────────────────────────────────
+-- 층 하나에 한 줄. 값이 없으면 **줄이 아예 없다**(0 을 만들어 내지 않는다).
+--
+-- ⛔ **'상가' 종류만 센다.** 같은 건물에 오피스텔(1,331,606행)과 상가(1,158,845행)가 섞여
+--    있는데, 오피스텔은 주거 가격이라 함께 중앙값을 내면 상가 값이 통째로 끌려간다.
+--    실측 예: 신부파스칼텔 1층 상가 290만원/㎡ ↔ 2층 오피스텔 184만원/㎡.
+-- ⛔ **여러 해가 쌓여도 한 해만 본다.** 필터 없이 묶으면 2026년과 2027년 값의 중앙값이라는
+--    뜻 없는 숫자가 나온다. 그 필지에 있는 **가장 최근 고시일자**만 골라 그 안에서 센다.
+-- ⚠️ 파라미터를 p_ 로 시작하는 이유: `pnu` 는 컬럼 이름과 겹친다. 겹치면 PostgreSQL 이
+--    컬럼을 우선 집어 `where n.pnu = n.pnu`(= 전 국토)가 된다(list_price_bands 와 같은 함정).
+create or replace function list_base_prices(p_pnu text)
+returns table (
+  floor_no             smallint,
+  median_price_per_m2  numeric,
+  ho_cnt               int,
+  notice_date          date
+)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  -- ⛔ **파라미터를 그대로 쓰지 말 것.** 서명은 text 인데 pnu 컬럼은 char(19) 다.
+  --    `char컬럼 = text파라미터` 는 컬럼 쪽이 text 로 캐스트돼 **인덱스가 통째로 무력해진다**
+  --    (2026-08-16b 라이브 실측: 459.8ms ↔ 0.796ms).
+  v_pnu  char(19) := p_pnu;
+  v_date date;
+begin
+  select max(n.notice_date) into v_date
+    from nts_base_price n
+   where n.pnu = v_pnu and n.kind = '상가';
+
+  -- 이 필지에 상가 기준시가가 없다 = 줄 0개. 빈 목록과 "0원"은 다른 말이다.
+  if v_date is null then
+    return;
+  end if;
+
+  return query
+    select n.floor_no,
+           -- percentile_cont 는 numeric 을 double precision 으로 받아 계산한다. 고시가격은
+           -- 원 단위 정수이므로 소수점을 남길 이유가 없어 되돌릴 때 반올림한다.
+           round(percentile_cont(0.5) within group (order by n.price_per_m2)::numeric, 0),
+           count(*)::int,
+           v_date
+      from nts_base_price n
+     where n.pnu = v_pnu
+       and n.kind = '상가'
+       and n.notice_date = v_date
+       and n.price_per_m2 is not null
+     group by n.floor_no
+     -- 위층이 먼저 — 층별 스택 화면과 같은 순서(높은 층이 위).
+     order by n.floor_no desc nulls last;
+end;
+$$;
+
+comment on function list_base_prices(text) is
+  '이 필지의 층별 국세청 기준시가 — 층, ㎡당 고시가격 중앙값, 호실 수, 고시일자. '
+  '⛔ 종류가 ''상가''인 호실만 센다(오피스텔은 주거 가격이라 섞으면 상가 값이 끌려간다). '
+  '⛔ 그 필지의 가장 최근 고시일자 한 해만 본다. 값이 없으면 줄이 없다(0 을 만들지 않는다).';
+
+-- ⚠️ create or replace 는 권한을 유지하지만, 대시보드가 같은 함수를 다시 만들면
+--    Supabase 기본 권한이 anon 을 자동으로 붙인다. 만든 자리에서 다시 닫는다.
+revoke all on function list_base_prices(text) from public, anon, authenticated;
+
+-- 화면이 실제로 부르는 것. public 은 REST 노출에서 빠져 있어(2026-08-24 옛 문 닫기)
+-- api 쪽에 통과 함수가 없으면 화면에서 못 부른다.
+create or replace function api.list_base_prices(p_pnu text)
+returns table (
+  floor_no             smallint,
+  median_price_per_m2  numeric,
+  ho_cnt               int,
+  notice_date          date
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$ select * from public.list_base_prices(p_pnu) $$;
+
+revoke all on function api.list_base_prices(text) from public, anon, authenticated;
+grant execute on function api.list_base_prices(text) to anon, authenticated;
+
+-- ⛔ public.list_base_prices 는 끝까지 닫아 둔다 — 통과 함수가 security definer 라
+--    소유자 권한으로 부르므로 anon 에게 열 필요가 없다.
+
+-- 안 알리면 새 스키마 캐시가 다음 재시작까지 안 잡혀 404 가 난다.
+notify pgrst, 'reload schema';
+
+-- =====================================================================
 -- 완료
 -- =====================================================================
 -- 다음 단계:

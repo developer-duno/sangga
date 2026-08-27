@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { SECTION_EXPAND_BUDGET, SECTION_PLAN } from '../lib/sectionCards';
 import type {
+  BasePrice,
   BuildingHit,
   CoverageStats,
   FloorRow,
@@ -43,6 +44,12 @@ const responses = {
   /** true 면 밴드 응답을 영영 돌려주지 않는다 — "아직 안 옴" 상태를 보려고 둔 스위치다. */
   bandsPending: false,
   /**
+   * 서버 함수 list_base_prices 의 응답(층별 국세청 기준시가).
+   *
+   * 기본값은 **빈 배열** = 그 줄 미표시라 이 파일의 다른 시험들이 영향을 안 받는다.
+   */
+  basePrices: { data: [] as unknown, error: null as unknown },
+  /**
    * 서버 함수 list_industry_mix 의 응답(둘레의 업종 분포 · 결정 0014).
    *
    * 기본값을 **오류**로 둔다 — 이 파일은 층 스택을 보는 곳이고, 업종 섹션은
@@ -76,6 +83,9 @@ vi.mock('../lib/supabase', () => ({
       if (fn === 'list_price_bands') {
         return responses.bandsPending ? new Promise(() => {}) : Promise.resolve(responses.bands);
       }
+      // 국세청 기준시가. 갈라 답하지 않으면 상권 응답(객체)이 흘러들어 "배열인가" 검사에
+      // 걸려 늘 미표시가 된다 — 그러면 이 아래 시험들이 통째로 헛돈다.
+      if (fn === 'list_base_prices') return Promise.resolve(responses.basePrices);
       // 둘레의 업종 분포. 갈라 답하지 않으면 상권 응답(객체)이 흘러들어 업종 목록을
       // 도는 코드가 죽는다 — 이 파일의 다른 시험까지 통째로 빨개진다.
       if (fn === 'list_industry_mix' || fn === 'list_industry_detail') {
@@ -211,6 +221,17 @@ function priceBands(): PriceBand[] {
   ];
 }
 
+/** 국세청 기준시가 한 줄(함수 list_base_prices). */
+function basePrice(over: Partial<BasePrice> = {}): BasePrice {
+  return {
+    floor_no: 2,
+    median_price_per_m2: 3_000_000,
+    ho_cnt: 12,
+    notice_date: '2026-01-01',
+    ...over,
+  };
+}
+
 /** 기준선을 못 넘은 구 — floor_no 가 null 인 **한 줄**로만 온다. */
 function priceBandGate(): PriceBand[] {
   return [priceBand({ floor_no: null, status: 'gate_fail', ...NO_VALUE })];
@@ -229,6 +250,8 @@ beforeEach(() => {
   // 기본은 빈 배열 = 참고 시세 섹션 미표시. 이 파일의 다른 테스트는 영향을 안 받는다.
   responses.bands = { data: [], error: null };
   responses.bandsPending = false;
+  // 기본은 빈 배열 = 기준시가 줄 미표시. 이 파일의 다른 테스트는 영향을 안 받는다.
+  responses.basePrices = { data: [], error: null };
   // 기본은 오류 = 업종 섹션 미표시(마이그레이션 적용 전 라이브와 같은 상태).
   // 그 섹션 자체는 IndustryMixSection.test.tsx 가 따로 본다.
   responses.industryMix = { data: null, error: { message: 'not applied' } };
@@ -1265,6 +1288,188 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
     const alt = container.querySelector('.band__alt')?.textContent ?? '';
     expect(alt).toContain('층대별 거래 단가');
     expect(alt).not.toContain('아래');
+  });
+
+  describe('국세청 기준시가 (같은 카드 안, 다른 자료)', () => {
+    /**
+     * 이 줄은 **추정이 아니다.** 그래서 지키는 것이 넷이다:
+     *   ① 값과 표본(호 수)·고시일을 한 줄에 함께 낸다 (절대 규칙 3)
+     *   ② 위 추정 밴드와 **섞이지 않는다** — 숫자도, 어휘도, 배지 모양도 갈라 둔다
+     *   ③ 없거나 못 읽으면 **그 줄만 조용히 빠진다** (카드의 나머지는 그대로다)
+     *   ④ 부기("시세가 아니다")는 카드 안에서 **한 번만** 한다
+     */
+
+    it('층마다 값·호 수·고시일을 한 줄에 함께 적는다', async () => {
+      responses.floors = floorsDesc(2);
+      responses.bands = { data: [priceBand({ floor_no: 2 })], error: null };
+      responses.basePrices = { data: [basePrice({ floor_no: 2 })], error: null };
+      const { container } = await renderBand();
+      await waitFor(() => expect(container.querySelector('.band__base')).toBeTruthy());
+
+      const block = container.querySelector('.band__base')!;
+      expect(block.querySelector('.band__base-h')?.textContent).toBe('국세청 기준시가');
+      expect(block.querySelector('.band__base-floor')?.textContent).toBe('2층');
+      expect(block.querySelector('.band__base-val')?.textContent).toBe('㎡당 300만');
+      // 값만 떼어 내보내지 않는다 — 이 값은 그 층 호실들의 가운데값이다.
+      const sub = block.querySelector('.band__base-sub')?.textContent ?? '';
+      expect(sub).toContain('호 12개 가운데값');
+      expect(sub).toContain('2026-01-01 고시');
+    });
+
+    it('아주 싼 층(1만 원 미만)도 단위가 겹치지 않게 적는다', async () => {
+      // 원본 최저값이 5,000원/㎡ 라 이 층이 실제로 있다(2026-08-27 적재 담당 실측).
+      // 값 뒤에 '원'을 덧붙이는 순간 그 줄만 '㎡당 5,000원 원'이 된다.
+      responses.floors = floorsDesc(2);
+      responses.bands = { data: [priceBand({ floor_no: 2 })], error: null };
+      responses.basePrices = {
+        data: [basePrice({ floor_no: 2, median_price_per_m2: 5_000 })],
+        error: null,
+      };
+      const { container } = await renderBand();
+      await waitFor(() => expect(container.querySelector('.band__base')).toBeTruthy());
+      expect(container.querySelector('.band__base-val')?.textContent).toBe('㎡당 5,000원');
+    });
+
+    it('세무 기준가격이라는 사실과 A등급 배지를 함께 적는다 (C등급과 다른 모양)', async () => {
+      // 사실(호박)과 추정(회청)을 색으로 가르는 규칙 그대로다 — 같은 모양이면 같은
+      // 무게로 읽힌다(상세계획 §7.4).
+      responses.floors = floorsDesc(2);
+      responses.bands = { data: [priceBand({ floor_no: 2 })], error: null };
+      responses.basePrices = { data: [basePrice({ floor_no: 2 })], error: null };
+      const { container } = await renderBand();
+      await waitFor(() => expect(container.querySelector('.band__base')).toBeTruthy());
+
+      const block = container.querySelector('.band__base')!;
+      expect(block.textContent).toContain('시세가 아닙니다');
+      expect(block.textContent).toContain('세금 매길 때 쓰는 기준가격');
+      const badge = block.querySelector('.grade__badge')!;
+      expect(badge.textContent).toContain('A등급 · 공식 고시');
+      expect(badge.className).not.toContain('grade__badge--est');
+    });
+
+    it('부기는 카드 안에서 한 번만 한다 (줄마다 반복하지 않는다)', async () => {
+      responses.floors = floorsDesc(3, 2);
+      responses.bands = {
+        data: [priceBand({ floor_no: 2 }), priceBand({ floor_no: 3, stage: 'L4', n: 6 })],
+        error: null,
+      };
+      responses.basePrices = {
+        data: [basePrice({ floor_no: 2 }), basePrice({ floor_no: 3, median_price_per_m2: 4_100_000 })],
+        error: null,
+      };
+      const { container } = await renderBand();
+      await waitFor(() => expect(container.querySelectorAll('.band__base-rows li')).toHaveLength(2));
+      const text = container.querySelector('.band')?.textContent ?? '';
+      expect(text.split('시세가 아닙니다')).toHaveLength(2); // = 딱 한 번 나온다
+    });
+
+    it('추정 밴드와 숫자도 어휘도 섞이지 않는다', async () => {
+      // 사람은 나란히 놓인 두 숫자를 자동으로 "같은 것의 두 측정"으로 읽는다. 두 값은
+      // 다른 자로 잰 다른 값이라, 한 줄에 섞이면 그 순간 화면이 거짓말을 시작한다.
+      responses.floors = floorsDesc(2);
+      responses.bands = { data: [priceBand({ floor_no: 2 })], error: null };
+      responses.basePrices = { data: [basePrice({ floor_no: 2 })], error: null };
+      const { container } = await renderBand();
+      await waitFor(() => expect(container.querySelector('.band__base')).toBeTruthy());
+
+      // 밴드 줄에는 고시가격도 '고시'라는 말도 없다.
+      const row = container.querySelector('.band__row')?.textContent ?? '';
+      expect(row).toContain('1,627만'); // 추정 가운데값은 그대로 있고…
+      expect(row).not.toContain('300만'); // …고시가격은 흘러들지 않았다
+      expect(row).not.toContain('고시');
+      // 기준시가 줄에는 추정 어휘(근거 단계·표본 건수)가 없다.
+      const block = container.querySelector('.band__base')?.textContent ?? '';
+      expect(block).not.toContain('1,627만');
+      expect(block).not.toContain('근거:');
+      expect(block).not.toContain('거래 15건');
+      // 두 값을 견준 새 숫자(몇 배·차이)를 만들지 않는다 — 결재받은 적 없는 추정이다.
+      expect(block).not.toContain('배');
+    });
+
+    it('총액(억)으로 환산하지 않는다 — 서버가 면적을 안 준다', async () => {
+      // ⛔ 바로 위 밴드 줄에는 `비슷한 호실 한 칸 … 2.4억~6.2억`이 있어 베껴 오기 딱 좋다.
+      //    그런데 그 면적은 **곁 거래들의** 전용면적 중앙값이라 고시가격과 아무 상관이 없고,
+      //    고시가격의 총액은 애초에 (전용 + 공유)를 곱해야 한다(2026-08-27 적재 담당 확인).
+      //    없는 면적으로 만든 총액은 그럴듯해서 더 위험하다.
+      responses.floors = floorsDesc(2);
+      responses.bands = { data: [priceBand({ floor_no: 2 })], error: null };
+      responses.basePrices = { data: [basePrice({ floor_no: 2 })], error: null };
+      const { container } = await renderBand();
+      await waitFor(() => expect(container.querySelector('.band__base')).toBeTruthy());
+
+      // ⚠️ "'억'이라는 글자가 없다"로는 못 잡는다 — 총액이 만원대면(9,840만) 그 검사를
+      //    그대로 빠져나간다. 그래서 **값 칸의 모양 자체**를 못 박는다: ㎡당 하나뿐이다.
+      const vals = [...container.querySelectorAll('.band__base-val')].map(
+        (el) => el.textContent ?? '',
+      );
+      expect(vals).toHaveLength(1);
+      for (const v of vals) expect(v).toMatch(/^㎡당 [\d,]+(만|원)$/);
+      // 면적·평 같은 환산 재료도 이 블록에 없다(있으면 다음 사람이 곱하기 시작한다).
+      const block = container.querySelector('.band__base')?.textContent ?? '';
+      expect(block).not.toContain('평');
+      expect(block).not.toContain('㎡ ('); // '32.8㎡ (10평)' 꼴의 면적 표기
+    });
+
+    it('값을 못 내는 층에도 기준시가는 그린다 (서로 다른 자료다)', async () => {
+      // 1층은 방침상 추정을 안 내지만, 고시가격은 국세청이 낸 값이라 그것과 무관하다.
+      responses.floors = floorsDesc(1);
+      responses.bands = {
+        data: [priceBand({ floor_no: 1, status: 'floor_1f', ...NO_VALUE })],
+        error: null,
+      };
+      responses.basePrices = { data: [basePrice({ floor_no: 1 })], error: null };
+      const { container } = await renderBand();
+      await waitFor(() => expect(container.querySelector('.band__base')).toBeTruthy());
+      expect(container.querySelector('.band__base-floor')?.textContent).toBe('1층');
+      // 추정 쪽 문구는 그대로 남는다(하나가 다른 하나를 밀어내지 않는다).
+      expect(container.querySelector('.band__none')?.textContent).toContain('1층은 내지 않습니다');
+    });
+
+    it('자료가 없으면(빈 배열) 그 줄만 빠지고 카드는 그대로다', async () => {
+      responses.floors = floorsDesc(2);
+      responses.bands = { data: [priceBand({ floor_no: 2 })], error: null };
+      responses.basePrices = { data: [], error: null };
+      const { container } = await renderBand();
+      await waitFor(() => expect(container.querySelector('.band__val')).toBeTruthy());
+      expect(container.querySelector('.band__base')).toBeNull();
+      // "기준시가 없음"이라고 적지 않는다 — 없는 것과 모르는 것은 다르다.
+      expect(container.querySelector('.band')?.textContent).not.toContain('기준시가');
+    });
+
+    it('서버에 함수가 아직 없어도(PGRST202) 카드의 나머지는 정상이다', async () => {
+      // 마이그레이션 적용 전 라이브가 바로 이 상태다 — 업종 분포와 같은 관행으로
+      // 그 줄만 조용히 뺀다(카드도 값도 그대로 나와야 한다).
+      responses.basePrices = {
+        data: null,
+        error: { code: 'PGRST202', message: 'function does not exist' },
+      };
+      responses.floors = floorsDesc(2);
+      responses.bands = { data: [priceBand({ floor_no: 2 })], error: null };
+      const { container } = await renderBand();
+      await waitFor(() => expect(container.querySelector('.band__val')).toBeTruthy());
+      expect(container.querySelector('.band__base')).toBeNull();
+      expect(container.querySelector('.band__val')?.textContent).toContain('2.4억~6.2억');
+      expect(container.textContent ?? '').not.toContain('PGRST202');
+    });
+
+    it('구가 기준선을 못 넘으면 기준시가도 안 낸다 (카드 노출 규칙을 따른다)', async () => {
+      // v1 의 의도된 한계다 — 게이트에 걸린 구에서는 이 카드가 한 문단만 내므로,
+      // 그 안에 다른 자료를 몰래 끼워 넣지 않는다.
+      responses.bands = { data: priceBandGate(), error: null };
+      responses.basePrices = { data: [basePrice({ floor_no: 1 })], error: null };
+      const { container } = await renderBand();
+      await waitFor(() => expect(container.querySelector('.band__gate')).toBeTruthy());
+      expect(container.querySelector('.band__base')).toBeNull();
+    });
+
+    it('pnu 를 p_pnu 라는 이름으로 보낸다 (라이브 전용 오류를 막는 유일한 가드)', async () => {
+      // 목은 인자 **이름**을 안 보므로, 여기서 안 잡으면 테스트는 전부 초록인 채
+      // 라이브에서만 PGRST202 가 난다(형제 함수 셋은 bld_id·pnu·sigungu 다).
+      render(<FloorStack building={building({ pnu: '3020010600100010000' })} />);
+      await waitFor(() => expect(screen.getByText(/층대별 거래 단가/)).toBeTruthy());
+      const call = rpcCalls.find((c) => c.fn === 'list_base_prices');
+      expect(call?.args).toEqual({ p_pnu: '3020010600100010000' });
+    });
   });
 });
 
