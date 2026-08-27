@@ -67,10 +67,13 @@ export function parseAppUrl(search: string): AppUrlState {
   const sigungu = clean(params.get(SIGUNGU_PARAM), SIGUNGU_RE);
   const bldId = clean(params.get(BLD_PARAM), BLD_RE);
 
-  // 구가 형식에 안 맞는데 건물만 성한 경우가 있다(주소를 손으로 잘못 고친 때).
-  // 건물 번호 앞 5자리가 곧 시군구 코드라 거기서 되찾는다 — 링크 하나가 통째로
-  // 버려지는 것보다 낫다.
-  if (bldId && !sigungu) {
+  // 구가 형식에 안 맞거나(주소를 손으로 잘못 고친 때), **형식은 멀쩡한데 건물과
+  // 서로 다른 구를 가리키는 경우**(복원 도중 사용자가 구를 바꾸면 만들어질 수 있다 —
+  // src/App.tsx의 경쟁 상태 처방 참조)가 있다. 두 경우 다 건물 번호 앞 5자리가 곧
+  // 시군구 코드이므로 그쪽을 진실로 삼는다 — 더 구체적인 정보(건물 하나)가 더 성긴
+  // 정보(구 하나)를 이긴다. 이러면 지도 제목은 서초인데 층별 화면은 강남 건물을 보여주는
+  // 모순이 애초에 주소에 남지 않는다.
+  if (bldId && (!sigungu || sigungu !== bldId.slice(0, 5))) {
     return { sigungu: bldId.slice(0, 5), bldId };
   }
   return { sigungu, bldId };

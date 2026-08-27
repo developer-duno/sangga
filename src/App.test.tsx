@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
 import type { BuildingHit, FloorRow, OpenSigungu } from './types';
 
 /**
@@ -224,6 +224,92 @@ describe('App — 주소로 들고 다니기', () => {
     release!({ data: [floorRow()], error: null });
     expect(await screen.findByRole('heading', { name: '테스트빌딩' })).toBeTruthy();
     expect(currentSearch()).toContain(`bld=${LINK_BLD}`);
+  });
+
+  it('★ 되살리는 중에 사용자가 다른 건물을 고르면, 뒤늦게 도착한 복원 결과가 그 선택을 덮어쓰지 않는다', async () => {
+    // 링크가 가리키는 건물(LINK_BLD)의 층 목록 조회만 붙잡아 둔다. 사용자가 검색으로
+    // 고를 다른 건물은 즉시 응답하게 해, "먼저 응답한 쪽"이 아니라 "사용자가 실제로
+    // 고른 쪽"이 이기는지를 본다.
+    let releaseRestore: ((r: { data: unknown; error: unknown }) => void) | null = null;
+    const restorePending = new Promise<{ data: unknown; error: unknown }>((r) => {
+      releaseRestore = r;
+    });
+
+    const otherHit = hit({
+      bld_id: '1168010100200020000_2024110',
+      pnu: '1168010100200020000',
+      bld_nm: '사용자선택빌딩',
+      road_addr: '서울 강남구 테헤란로 2',
+    });
+    const otherFloorRow = floorRow({
+      bld_id: otherHit.bld_id,
+      pnu: otherHit.pnu,
+      bld_nm: otherHit.bld_nm,
+      road_addr: otherHit.road_addr,
+    });
+
+    // ⚠️ **호출 순번이 아니라 "누구를 물었는가"로** 나눈다. 순번으로 나누면(첫 번째만
+    //    붙잡고 두 번째부터 '사용자선택빌딩'을 주기), 덮어쓰기가 실제로 일어나 화면이
+    //    링크 건물로 되돌아가도 **다시 그려진 층 목록이 여전히 '사용자선택빌딩'**이라
+    //    제목이 안 바뀐다 — 버그가 있어도 초록인 눈먼 시험이 된다(제목은 building 이
+    //    아니라 **받아 온 층 자료**의 이름을 그린다: FloorStack 의 `head = floors[0]`).
+    from.mockImplementation((view: string) => {
+      if (view === 'v_coverage_stats') return makeQuery({ data: [], error: null });
+      let askedBldId: string | null = null;
+      const q: Record<string, unknown> = {};
+      for (const m of ['select', 'order', 'limit']) q[m] = () => q;
+      q.eq = (col: string, val: string) => {
+        if (col === 'bld_id') askedBldId = val;
+        return q;
+      };
+      q.then = (cb: (r: unknown) => unknown) =>
+        (askedBldId === LINK_BLD
+          ? restorePending
+          : Promise.resolve({ data: [otherFloorRow], error: null })
+        ).then(cb);
+      return q;
+    });
+    rpc.mockImplementation((fn: string) => {
+      if (fn === 'list_open_sigungu') {
+        return Promise.resolve({
+          data: [gu({ sigungu_code: '11680', sido_code: '11', sido_nm: '서울', sigungu_nm: '강남구' })],
+          error: null,
+        });
+      }
+      if (fn === 'search_buildings') return Promise.resolve({ data: [otherHit], error: null });
+      if (fn === 'list_building_districts') {
+        return Promise.resolve({ data: { covered: true, districts: [], sources: [] }, error: null });
+      }
+      return Promise.resolve({ data: [], error: null });
+    });
+
+    openWith(`?sgg=11680&bld=${LINK_BLD}`);
+    render(<App />);
+
+    expect(await screen.findByText('링크에 담긴 건물을 불러오는 중입니다…')).toBeTruthy();
+
+    // 그 사이 사용자가 검색으로 다른 건물을 고른다.
+    const input = screen.getByLabelText('건물명 또는 주소');
+    fireEvent.change(input, { target: { value: '테헤란로' } });
+    fireEvent.submit(input.closest('form')!);
+    fireEvent.click(await screen.findByRole('button', { name: /사용자선택빌딩/ }));
+
+    expect(await screen.findByRole('heading', { name: '사용자선택빌딩' })).toBeTruthy();
+
+    // 뒤늦게 링크 복원 응답(LINK_BLD, '테스트빌딩')이 도착한다 — 사용자의 선택을
+    // 덮어쓰면 안 된다.
+    await act(async () => {
+      releaseRestore!({ data: [floorRow()], error: null });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole('heading', { name: '사용자선택빌딩' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: '테스트빌딩' })).toBeNull();
+    // 주소도 사용자가 고른 건물을 가리켜야 한다 — 덮어쓰이면 주소 쓰기 useEffect 가
+    // 링크 건물을 다시 적어, 그 상태로 새로고침하면 고른 건물이 통째로 사라진다.
+    expect(currentSearch()).toContain(`bld=${otherHit.bld_id}`);
+    expect(currentSearch()).not.toContain(`bld=${LINK_BLD}`);
   });
 
   it('층 자료가 없는 건물이면 빈 화면 대신 정직하게 안내한다', async () => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppFooter } from './components/AppFooter';
 import { BuildingSearch } from './components/BuildingSearch';
 import { DistrictMap } from './components/DistrictMap';
@@ -29,9 +29,23 @@ export default function App() {
   const [restoring, setRestoring] = useState(openedWith.bldId !== null);
   const [restoreFailed, setRestoreFailed] = useState(false);
 
+  /*
+    링크 복원(아래)이 끝나기 전에 사용자가 직접 무언가를 골랐는지 표시하는 깃발.
+    ⚠️ `useState` 가 아니라 `useRef` 인 이유 — 이 값이 바뀐다고 화면을 다시 그릴 필요는
+       없고, 복원 `.then` 콜백이 (리렌더 사이에도) **가장 최신 값**을 즉시 읽어야 한다.
+
+    ⛔ **이 깃발을 세우는 곳은 아래 세 곳뿐이다** — "사용자가 실제로 고른 행동"만 해당한다.
+       `handleSigunguNameResolved`(RegionPicker 가 서버 목록에서 구 이름을 알려주는 자동
+       흐름)에는 절대 세우지 않는다 — 거긴 사용자 행동이 아니라 링크를 열자마자 저절로
+       일어나는 일이라, 거기서 세우면 복원 자체가 "사용자가 이미 뭔가 했다"고 오판해
+       통째로 죽는다.
+  */
+  const userActedRef = useRef(false);
+
   // 구가 바뀌면 이전 구의 선택 건물은 더는 맞지 않는다(스택이 다른 구 건물을 계속
   // 그리면 안 된다). 검색어·검색 결과는 BuildingSearch 쪽 key로 함께 비운다(아래).
   function handleSelectSigungu(code: string | null, name?: string | null) {
+    userActedRef.current = true;
     setRestoreFailed(false);
     setSigungu(code);
     setSigunguName(code ? (name ?? null) : null);
@@ -40,6 +54,7 @@ export default function App() {
 
   // 검색으로 건물을 고르면 "링크로 들어왔다가 실패한 상태"는 끝난 것이다.
   const handleSelectBuilding = useCallback((hit: BuildingHit) => {
+    userActedRef.current = true;
     setRestoreFailed(false);
     setSelected(hit);
   }, []);
@@ -74,6 +89,17 @@ export default function App() {
       .eq('bld_id', bldId)
       .then(({ data, error }) => {
         if (cancelled) return;
+        // ⛔ 이 사이 사용자가 검색으로 다른 건물을 고르거나 구를 바꿨으면, 뒤늦게 도착한
+        //    복원 결과로 그 선택을 덮어쓰면 안 된다(`cancelled` 로는 못 막는다 — `openedWith`
+        //    가 첫 그림 뒤 절대 안 바뀌어 이 useEffect 의 cleanup 은 언마운트에만 돈다).
+        //    받아 온 것은 통째로 버린다 — 되살리기가 성공했든 실패했든 사용자가 지금 보고
+        //    있는 화면과는 아무 상관이 없다(실패 안내를 띄우면 오히려 남의 화면을 덮는다).
+        //    다만 `setRestoring(false)` 만은 꼭 해 준다 — 빠뜨리면 "불러오는 중" 안내가
+        //    남거나(사용자는 이미 다른 걸 보고 있는데) 주소 쓰기 useEffect 가 계속 막힌다.
+        if (userActedRef.current) {
+          setRestoring(false);
+          return;
+        }
         if (error) {
           console.error('링크의 건물 조회 실패', error);
         }
@@ -162,7 +188,10 @@ export default function App() {
       <BuildingSearch
         key={sigungu ?? '__no_region__'}
         onSelect={handleSelectBuilding}
-        onSearchStart={() => setSelected(null)}
+        onSearchStart={() => {
+          userActedRef.current = true;
+          setSelected(null);
+        }}
         selectedBldId={selected?.bld_id ?? null}
         sigungu={sigungu}
         sigunguName={sigunguName}

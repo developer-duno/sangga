@@ -350,7 +350,7 @@ export function FloorStack({ building }: Props) {
     };
   }, [building.pnu]);
 
-  if (loading) return <p className="msg">층 정보를 불러오는 중…</p>;
+  if (loading) return <p className="msg msg--loading">층 정보를 불러오는 중…</p>;
   if (error) return <p className="msg msg--error">{error}</p>;
   if (floors.length === 0) return <p className="msg">이 건물에는 층 정보가 없습니다.</p>;
 
