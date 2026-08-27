@@ -4,7 +4,7 @@
 
 왜 이게 필요한가
 ----------------
-감시 2종(`sangkwon-quarterly-watch.yml` · `district-source-watch.yml`)은 "돌았는데
+예약 4종(분기 스냅샷·상권 원천·라이브 생존·의견함 주간 알림)은 "돌았는데
 실패"는 이슈로 시끄럽게 알린다. 그런데 **예약이 아예 안 도는 경우**는 실패조차 없다 —
 실행이 없으니 알릴 것도 없다. 그 경로가 둘이다.
 
@@ -26,9 +26,9 @@ GitHub REST API 로 그 워크플로우의 **가장 최근 성공 실행 시각*
 
 이 판정을 누가 쓰나 (상호 감시)
 -------------------------------
-감시 둘이 **서로를 본다.** 자기 일이 끝난 뒤 상대의 마지막 성공 나이를 재고, 오래됐으면
-이슈를 연다. 한쪽 예약이 살아 있는 한 다른 쪽의 죽음은 일주일 안에 이슈로 뜬다.
-둘 다 죽는 경우만 남는데, 그건 사람이 내 PC 에서 이 명령을 직접 돌려 잡는다:
+예약들이 **서로를 본다.** 자기 일이 끝난 뒤 나머지의 마지막 성공 나이를 재고, 오래됐으면
+이슈를 연다. 하나라도 예약이 살아 있는 한 다른 것의 죽음은 그 주기 안에 이슈로 뜬다.
+전부 죽는 경우만 남는데, 그건 사람이 내 PC 에서 이 명령을 직접 돌려 잡는다:
 
     python scripts/check_watch_heartbeat.py
 
@@ -47,7 +47,7 @@ requests 가 없으므로 표준 라이브러리(urllib)만 쓴다.
 
 쓰는 법
 -------
-    python scripts/check_watch_heartbeat.py                              # 감시 2종 전부
+    python scripts/check_watch_heartbeat.py                              # 예약 4종 전부
     python scripts/check_watch_heartbeat.py --workflow district-source-watch.yml
     python scripts/check_watch_heartbeat.py --max-age-days 15 --json
 
@@ -276,7 +276,7 @@ def build_issue_body(stale, max_age_days=DEFAULT_MAX_AGE_DAYS):
         "",
         "```powershell",
         r"cd D:\sangga",
-        "python scripts/check_watch_heartbeat.py          # 감시 2종이 최근에 돌았나",
+        "python scripts/check_watch_heartbeat.py          # 예약 4종이 최근에 돌았나",
         "python scripts/check_new_sangkwon_quarter.py     # 새 분기가 떴나",
         "python scripts/check_district_source_update.py   # 상권 원천이 갱신됐나",
         "```",
@@ -398,7 +398,7 @@ def main(argv=None):
         "--workflow",
         action="append",
         metavar="파일명",
-        help="확인할 워크플로우 파일명 (여러 번 쓸 수 있음). 기본 = 감시 2종 전부",
+        help="확인할 워크플로우 파일명 (여러 번 쓸 수 있음). 기본 = 예약 4종 전부",
     )
     ap.add_argument(
         "--max-age-days",
