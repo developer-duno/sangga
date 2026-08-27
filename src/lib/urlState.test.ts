@@ -58,6 +58,18 @@ describe('parseAppUrl — 주소에서 읽기', () => {
     expect(parseAppUrl(`?sgg=xx&bld=${BLD}`)).toEqual({ sigungu: SGG, bldId: BLD });
     expect(parseAppUrl(`?bld=${BLD}`)).toEqual({ sigungu: SGG, bldId: BLD });
   });
+
+  it('구와 건물이 서로 다른 구를 가리키면 건물 쪽이 이긴다', () => {
+    // 둘 다 형식은 멀쩡하지만(5자리 숫자 구 / 19자리 PNU 건물) 서로 다른 구를
+    // 가리키는 모순 주소다 — 복원 도중 구를 바꾸면 이런 조합이 만들어질 수 있다
+    // (App.tsx의 경쟁 상태). 건물 번호가 더 구체적인 정보이므로 그쪽을 믿는다.
+    const otherSgg = '11650'; // 서초구 — BLD(강남구, 11680) 와 다른 구
+    expect(parseAppUrl(`?sgg=${otherSgg}&bld=${BLD}`)).toEqual({ sigungu: SGG, bldId: BLD });
+  });
+
+  it('구와 건물이 같은 구를 가리키면 그대로 통과한다 (회귀 방지)', () => {
+    expect(parseAppUrl(`?sgg=${SGG}&bld=${BLD}`)).toEqual({ sigungu: SGG, bldId: BLD });
+  });
 });
 
 describe('buildAppSearch — 주소로 쓰기', () => {

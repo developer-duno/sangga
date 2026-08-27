@@ -861,4 +861,52 @@ test.describe('층별 스택뷰 — 종이로 뽑기', () => {
 
     await page.emulateMedia({ media: null });
   });
+
+  test('T. 자료가 오기 전에 뽑으면 종이가 스스로 고백한다', async ({ page }) => {
+    // ⚠️ jsdom(vitest)은 CSS 를 안 읽어 `::after` 를 원리적으로 못 본다 — 여기가 유일한
+    //    방어선이다(B3). 층 목록만 일부러 늦춰, "불러오는 중" 문구가 뜬 채로 인쇄 매체로
+    //    바꿔도 안전한지를 본다.
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockJson(page, STATS_PATTERN, [coverageStats()]);
+    await mockJson(page, FLOOR_PATTERN, [floorRow()], 5000);
+    await mockJson(page, PRICE_BAND_PATTERN, []);
+    await mockJson(page, PARCEL_TX_PATTERN, []);
+    await mockJson(page, TX_STATS_PATTERN, sigunguTxStats());
+    await mockJson(page, DISTRICT_PATTERN, { covered: true, districts: [], sources: [] });
+    await mockMissingFunction(page, INDUSTRY_MIX_PATTERN);
+    await mockMissingFunction(page, INDUSTRY_DETAIL_PATTERN);
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+
+    // 아직 층 목록이 오지 않은 상태("불러오는 중")를 붙잡는다.
+    const loadingMsg = page.locator('.msg--loading');
+    await expect(loadingMsg).toBeVisible();
+
+    // ⛔ 버튼을 잠그는 방식이 아니라 CSS 로만 막으므로, 인쇄 매체로 바꾸기 전에도
+    //    `PrintButton` 은 멀쩡히 눌린다(사용자가 다른 길로 인쇄할 수도 있으니 버튼을
+    //    없애거나 막지 않는다) — `.takeout` 자체는 인쇄 매체에서 빠지는 게 정상이라
+    //    (테스트 R) 그건 여기서 화면 모드일 때만 확인한다.
+    await expect(page.getByRole('button', { name: '인쇄 · PDF로 저장' })).toBeVisible();
+
+    await page.emulateMedia({ media: 'print' });
+
+    // ⚠️ Playwright 의 텍스트 매칭(getByText 등)은 DOM 텍스트 노드만 본다 — `::after` 로
+    //    덧붙인 CSS 생성 콘텐츠는 텍스트 노드가 아니라서 안 잡힌다. 그래서 브라우저가
+    //    실제로 계산한 값(getComputedStyle)을 직접 읽는다 — 이게 "정말로 그 글자가
+    //    종이에 그려지는가"를 보는 유일하고 확실한 방법이다.
+    // ⚠️ 이 파일의 타입 검사(tsconfig.e2e.json)는 브라우저 타입(DOM)을 안 켠다 — 이 코드는
+    //    브라우저 안에서 도는데 검사만 Node 쪽에서 하기 때문이다. 그래서 `window`·
+    //    `getComputedStyle` 같은 전역 이름을 곧이곧대로 쓰면 "그런 이름 없다"고 빨간불이
+    //    난다. 지금 보고 있는 그 요소가 속한 창을 타고 들어가면 같은 일을 하면서 검사도 통과한다.
+    const afterContent = await loadingMsg.evaluate(
+      (el) => el.ownerDocument.defaultView!.getComputedStyle(el, '::after').content,
+    );
+    expect(afterContent).toContain('아직 자료를 받는 중에 뽑힌 종이라');
+
+    await page.emulateMedia({ media: null });
+  });
 });
