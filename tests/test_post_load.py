@@ -467,6 +467,10 @@ class TestAnonExposure:
             # 의견함 주간 알림(2026-08-24c). GitHub Actions 주간 워크플로가 공개키로
             # 부른다 — 숫자만 준다(건수·총량·가장 오래된 글의 나이).
             "get_feedback_stats",
+            # 국세청 층별 기준시가(2026-08-27a). 표 nts_base_price 는 **여기 없다** —
+            # 열리면 전국 249만 호실의 건물명·호수가 그대로 긁힌다. 이 함수는 층별
+            # 중앙값까지만 내보낸다(호실별 값은 안 나간다).
+            "list_base_prices",
         )
 
     def test_the_purge_function_is_never_exposed(self):

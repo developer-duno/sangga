@@ -92,6 +92,20 @@ export const SIGUNGU_TX_STATS_FN = 'get_sigungu_tx_stats';
 export const PRICE_BANDS_FN = 'list_price_bands';
 
 /**
+ * 이 필지의 층별 국세청 기준시가(㎡당 고시가격의 가운데값).
+ *
+ * ⚠️ **인자 이름이 `p_pnu` 다**(`list_price_bands` 와 같은 이유 — 컬럼명 `pnu` 와 겹친다).
+ *    목(mock)은 인자 **이름**을 안 보므로 `{ pnu: … }` 로 잘못 불러도 vitest·E2E 는 전부
+ *    초록이고 **라이브에서만** PGRST202 가 난다.
+ *
+ * ⛔ 돌려주는 것은 **시세가 아니라 세무 기준가격**이다 — 참고 시세 밴드와 다른 자로 잰
+ *    다른 값이라, 화면에서 한 줄에 섞거나 서로 견주는 문구를 쓰지 않는다(`types.ts` 의
+ *    `BasePrice` 주석과 한 쌍이다). 서버가 '상가' 종류만 모아 층마다 가운데값을 낸다.
+ * ⓘ 자료가 없는 필지는 **빈 배열**이 정상이고, 그때 화면은 그 줄만 조용히 생략한다.
+ */
+export const BASE_PRICES_FN = 'list_base_prices';
+
+/**
  * 이 필지 둘레의 업종 분포(대분류). 결정 0014 — 상권 지표 1단계.
  *
  * ⚠️ **인자 이름이 `p_pnu` 다**(`list_price_bands` 와 같은 이유 — 컬럼명 `pnu` 와 겹친다).

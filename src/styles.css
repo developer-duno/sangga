@@ -926,6 +926,51 @@ body {
   margin-top: 4px;
 }
 
+/* ── 국세청 기준시가 ───────────────────────────────────────────────────────
+   이 카드에서 **유일하게 추정이 아닌 값**이다. 그래서 위 밴드 목록과 실선 하나로 갈라 둔다
+   — 이어 붙이면 같은 자로 잰 값처럼 읽힌다(⛔ 이 구분선을 지우지 말 것). 배지도 사실 쪽
+   색(호박)을 쓰고, 첫 문장이 "시세가 아니다"라고 못 박는다. */
+.band__base {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.band__base-h {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.band__base-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.band__base-rows li {
+  display: grid;
+  grid-template-columns: 96px minmax(0, auto) minmax(0, 1fr); /* 층 폭은 밴드 줄과 맞춘다 */
+  gap: 4px 10px;
+  align-items: baseline;
+  padding: 5px 0;
+  font-size: 13px;
+}
+
+.band__base-floor {
+  font-weight: 600;
+}
+
+.band__base-val {
+  font-weight: 600;
+}
+
+.band__base-sub {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 /* 아직 안 온 상태. 자리를 미리 잡아 두면 나중에 페이지가 밀리지 않는다. */
 .band--wait {
   min-height: 92px;
@@ -1405,6 +1450,13 @@ body {
     grid-column: 1;
   }
 
+  /* 기준시가 줄도 좁은 폭에서는 한 칸으로 접는다 — 세 칸을 유지하면 '㎡당 300만 원'이
+     줄바꿈으로 쪼개져 숫자가 두 줄에 걸린다. */
+  .band__base-rows li {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+
   /* 한 칸으로 접히면 막대가 라벨 아래 한 줄을 통째로 쓴다 — 층마다 세로로 부담되지
      않게 낮추기만 한다. 숨기면 "층별 규모"라는 이 화면의 본론이 모바일에서만 사라진다. */
   .floor__bar {
@@ -1665,6 +1717,7 @@ body {
   .tx__bands li,
   .mix__bars li,
   .band__row,
+  .band__base-rows li,
   .grade,
   .stack__facts,
   .dmap__canvas,
@@ -1676,7 +1729,8 @@ body {
   /* 제목만 페이지 끝에 혼자 남는 것을 막는다. */
   .card__h,
   .tx__sub,
-  .mix__sub {
+  .mix__sub,
+  .band__base-h {
     break-after: avoid;
   }
 

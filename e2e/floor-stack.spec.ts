@@ -8,6 +8,7 @@ import {
   priceBands,
   priceBandGate,
   industryMix,
+  basePrices,
 } from './fixtures';
 
 /**
@@ -51,6 +52,11 @@ const TX_STATS_PATTERN = '**/rest/v1/rpc/get_sigungu_tx_stats*';
 // 참고 매매 시세 밴드(Stage B · 결정 0013). 이것도 안 막으면 실존하지 않는 도메인으로
 // 요청이 나간다 — 기본값은 빈 배열이라 섹션이 아예 안 뜬다(기존 테스트에 영향 0).
 const PRICE_BAND_PATTERN = '**/rest/v1/rpc/list_price_bands*';
+// 국세청 기준시가. 참고 시세 카드 **안**에 한 줄로 붙지만 자료는 완전히 다른 것이다.
+// ⚠️ 기본값은 **함수가 없는 상태**(404/PGRST202)다 — 마이그레이션 적용 전 라이브가 바로
+//    그 상태이고, 그때 이 줄이 조용히 빠지는지가 테스트 V 의 관심사다. 안 막으면 실존하지
+//    않는 도메인으로 요청이 나가 테스트가 DNS 에 좌우된다.
+const BASE_PRICE_PATTERN = '**/rest/v1/rpc/list_base_prices*';
 // 둘레의 업종 분포(결정 0014). 층 스택이 건물마다 이 둘을 더 부른다.
 // ⚠️ **일부러 404(PGRST202)로 답한다** — 마이그레이션을 적용하기 전 라이브가 바로 그
 //    상태이고, 그때 이 섹션이 **조용히 사라지는지**가 여기서 확인하려는 것이다.
@@ -95,6 +101,7 @@ async function mockFloorStack(
   bands: unknown[] = [],
   floors?: unknown[],
   mix?: unknown,
+  bases?: unknown[],
 ) {
   await mockJson(page, STATS_PATTERN, [coverageStats()]);
   await mockJson(page, FLOOR_PATTERN, floors ?? [floorRow()]);
@@ -116,6 +123,12 @@ async function mockFloorStack(
   // 상세는 대분류를 고를 때만 부른다 — 여기서는 늘 없는 상태로 둔다(고르는 흐름은
   // src/components/IndustryMixSection.test.tsx 가 이미 촘촘히 덮는다).
   await mockMissingFunction(page, INDUSTRY_DETAIL_PATTERN);
+  // 기준시가도 기본이 **함수가 없는 상태**다(위 상수 주석 참조).
+  if (bases === undefined) {
+    await mockMissingFunction(page, BASE_PRICE_PATTERN);
+  } else {
+    await mockJson(page, BASE_PRICE_PATTERN, bases);
+  }
 }
 
 /**
@@ -876,6 +889,7 @@ test.describe('층별 스택뷰 — 종이로 뽑기', () => {
     await mockJson(page, DISTRICT_PATTERN, { covered: true, districts: [], sources: [] });
     await mockMissingFunction(page, INDUSTRY_MIX_PATTERN);
     await mockMissingFunction(page, INDUSTRY_DETAIL_PATTERN);
+    await mockMissingFunction(page, BASE_PRICE_PATTERN);
 
     await page.goto('/');
     await pickGu(page, '서울', '강남구');
@@ -908,5 +922,66 @@ test.describe('층별 스택뷰 — 종이로 뽑기', () => {
     expect(afterContent).toContain('아직 자료를 받는 중에 뽑힌 종이라');
 
     await page.emulateMedia({ media: null });
+  });
+});
+
+test.describe('층별 스택뷰 — 국세청 기준시가', () => {
+  /**
+   * 참고 시세 카드 **안**에 붙지만 자료는 완전히 다른 것이다 — 추정이 아니라 고시된 값.
+   * 그래서 여기서 눈으로 보는 것은 둘이다:
+   *   ① 값·호 수·고시일이 한 줄에 함께 나오고, "시세가 아니다"라고 못 박는다
+   *   ② 서버에 함수가 아직 없으면 **그 줄만** 빠지고 카드의 나머지는 멀쩡하다
+   * (거르기·짝짓기 같은 순수 규칙은 src/lib/basePrice.test.ts 가 촘촘히 덮는다.)
+   */
+
+  /** 층 목록·밴드는 같게 두고 기준시가만 갈아 끼운다. `bases` 를 안 주면 함수가 없는 상태다. */
+  async function openBuilding(page: Page, bases?: unknown[]) {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(
+      page,
+      [],
+      priceBands(),
+      [floorRow({ floor_no: 2 }), floorRow()],
+      undefined,
+      bases,
+    );
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+    await openCard(page, /참고 매매 시세/);
+  }
+
+  test('U. 기준시가가 층마다 값·호 수·고시일과 함께 뜨고, 추정과 섞이지 않는다', async ({
+    page,
+  }) => {
+    await openBuilding(page, basePrices());
+
+    const band = page.locator('section.band');
+    const rows = band.locator('.band__base-rows li');
+    await expect(rows).toHaveCount(2);
+    // 값만 떼어 내보내지 않는다 — 이 값은 그 층 호실들의 가운데값이다(절대 규칙 3).
+    await expect(rows.first()).toContainText('2층');
+    await expect(rows.first()).toContainText('㎡당 300만');
+    await expect(rows.first()).toContainText('호 12개 가운데값 · 2026-01-01 고시');
+    // 세무 기준가격이라는 사실을 카드 안에서 한 번 못 박는다.
+    await expect(band.getByText(/시세가 아닙니다/)).toBeVisible();
+    await expect(band.getByText(/A등급 · 공식 고시/)).toBeVisible();
+
+    // 추정 밴드는 그대로 남고(하나가 다른 하나를 밀어내지 않는다), 두 값이 한 줄에서 섞이지도 않는다.
+    await expect(band.getByText('비슷한 호실 한 칸 32.8㎡ (10평) 기준 2.4억~6.2억')).toBeVisible();
+    await expect(band.locator('.band__row').first()).not.toContainText('고시');
+  });
+
+  test('V. 서버에 함수가 아직 없으면 그 줄만 조용히 빠진다', async ({ page }) => {
+    // 마이그레이션을 적용하기 전 라이브가 바로 이 상태다(404/PGRST202).
+    await openBuilding(page);
+
+    const band = page.locator('section.band');
+    await expect(band.locator('.band__base')).toHaveCount(0);
+    // 카드도 값도 그대로다 — "기준시가 없음"이라고 적지도 않는다.
+    await expect(band.locator('.band__val').first()).toBeVisible();
+    await expect(band).not.toContainText('기준시가');
   });
 });
