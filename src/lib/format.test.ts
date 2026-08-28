@@ -9,6 +9,7 @@ import {
   formatFloor,
   formatManWon,
   formatManWonBand,
+  formatMonthKo,
   formatQuarter,
   formatWon,
   formatYearMonth,
@@ -141,6 +142,27 @@ describe('oneInEvery — "N곳 중 1곳"의 N', () => {
     expect(oneInEvery(null)).toBeNull();
     expect(oneInEvery(undefined)).toBeNull();
     expect(oneInEvery(NaN)).toBeNull();
+  });
+});
+
+describe('formatMonthKo — 기준월', () => {
+  it('사람이 읽는 연·월로 바꾼다', () => {
+    expect(formatMonthKo('202607')).toBe('2026년 7월');
+  });
+
+  it('한 자리 월의 앞 0을 뗀다', () => {
+    expect(formatMonthKo('202601')).toBe('2026년 1월');
+  });
+
+  it('읽을 수 없으면 null — 부르는 쪽이 그 문구를 아예 안 만들 수 있게', () => {
+    // '—'나 원본을 돌려주면 "(— 인허가 기준)"·"(202613 인허가 기준)"처럼 아무 뜻도 없는
+    // 문장이 화면에 남는다.
+    expect(formatMonthKo(null)).toBeNull();
+    expect(formatMonthKo(undefined)).toBeNull();
+    expect(formatMonthKo('')).toBeNull();
+    expect(formatMonthKo('2026-07')).toBeNull();
+    expect(formatMonthKo('202600')).toBeNull();
+    expect(formatMonthKo('202613')).toBeNull();
   });
 });
 

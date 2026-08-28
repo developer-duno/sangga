@@ -110,7 +110,9 @@ class TestNeverDeletes:
         # 있는 delete 로 헛경보를 내면 이 가드가 곧 무시된다.
         if path == SCHEMA:
             raw = raw[raw.index("create table if not exists lh_notice"):]
-            raw = raw[:raw.index("-- 완료")]
+            # ⚠️ 끝을 `-- 완료` 로 잡으면 **그 뒤에 새 구간이 끼는 날** 남의 SQL 까지 훑는다
+            #    (2026-08-28b arch_permit 이 실제로 그 사이에 들어왔다). 다음 큰 구분선까지만 본다.
+            raw = raw[:raw.index("\n-- =====")]
         text = statements(raw).lower()
         assert "delete from lh_notice" not in text
         assert "truncate" not in text

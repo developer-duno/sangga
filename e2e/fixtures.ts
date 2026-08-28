@@ -5,6 +5,7 @@ import type {
   FloorRow,
   IndustryMix,
   LhNotice,
+  NearbyPermits,
   ParcelTransaction,
   PriceBand,
   SigunguTxStat,
@@ -197,6 +198,19 @@ export function industryMix(over: Partial<IndustryMix> = {}): IndustryMix {
     },
     ...over,
   };
+}
+
+/**
+ * 둘레에 새로 올라오는 상가 건물(함수 count_nearby_permits) — 업종 분포 카드 안의 한 줄.
+ *
+ * ⚠️ **한 행짜리 목록**으로 흉내 낸다. 서버 함수가 `returns table` 이면 PostgREST 가 이렇게
+ *    싸서 주고, 그 껍데기 차이는 라이브에서만 드러나는 종류다(목은 우리가 적어 준 모양을
+ *    그대로 돌려주므로 어느 쪽으로 틀려도 조용하다). 화면이 둘 다 받는지는 단위 시험
+ *    (src/lib/nearbyPermits.test.ts)이 함께 본다.
+ * ⓘ 3동 중 2동 착공 = 허가만 1동. 셋이 서로 맞물려 있어 산수가 틀리면 바로 드러난다.
+ */
+export function nearbyPermits(over: Partial<NearbyPermits> = {}): NearbyPermits[] {
+  return [{ total_cnt: 3, started_cnt: 2, base_ym: '202607', ...over }];
 }
 
 /**

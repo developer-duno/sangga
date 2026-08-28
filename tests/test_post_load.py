@@ -474,6 +474,9 @@ class TestAnonExposure:
             # LH 상가 공고 알림판(2026-08-28a). 표 lh_notice 는 **여기 없다** — 함수가
             # 마감 지난 공고를 빼 주는데 표가 열리면 그 규칙이 통째로 우회된다.
             "list_lh_notices",
+            # 곧 올라오는 상가 건물(2026-08-28b). 표 arch_permit 은 **여기 없다** —
+            # 이 함수는 개수와 기준월만 내보낸다(허가 주소·건물 규모는 안 나간다).
+            "count_nearby_permits",
         )
 
     def test_the_purge_function_is_never_exposed(self):

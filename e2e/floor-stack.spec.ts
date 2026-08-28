@@ -8,6 +8,7 @@ import {
   priceBands,
   priceBandGate,
   industryMix,
+  nearbyPermits,
   basePrices,
   lhNotice,
 } from './fixtures';
@@ -64,6 +65,11 @@ const BASE_PRICE_PATTERN = '**/rest/v1/rpc/list_base_prices*';
 //    (안 막으면 실존하지 않는 도메인으로 요청이 나가 테스트가 DNS 에 좌우된다.)
 const INDUSTRY_MIX_PATTERN = '**/rest/v1/rpc/list_industry_mix*';
 const INDUSTRY_DETAIL_PATTERN = '**/rest/v1/rpc/list_industry_detail*';
+// 둘레에 새로 올라오는 상가 건물(건축 인허가). 업종 분포 카드 **안**에 한 줄로 붙지만
+// 자료는 완전히 다른 것이다(장사 중인 가게 수 ↔ 아직 안 지어진 건물 수).
+// ⚠️ 기본값은 역시 **함수가 없는 상태**다 — 안 막으면 실존하지 않는 도메인으로 요청이
+//    나가 테스트가 DNS 에 좌우된다.
+const NEARBY_PERMITS_PATTERN = '**/rest/v1/rpc/count_nearby_permits*';
 // 의견함(2026-08-24b). 화면에서 창고로 **나가는** 유일한 길이라, 여기만 방향이 반대다.
 const FEEDBACK_PATTERN = '**/rest/v1/rpc/submit_feedback*';
 // LH 상가 분양·입점 공고 — 유일하게 **입구**(건물을 고르기 전)에서 나가는 요청이다.
@@ -107,6 +113,7 @@ async function mockFloorStack(
   floors?: unknown[],
   mix?: unknown,
   bases?: unknown[],
+  permits?: unknown,
 ) {
   await mockJson(page, STATS_PATTERN, [coverageStats()]);
   await mockJson(page, FLOOR_PATTERN, floors ?? [floorRow()]);
@@ -133,6 +140,12 @@ async function mockFloorStack(
     await mockMissingFunction(page, BASE_PRICE_PATTERN);
   } else {
     await mockJson(page, BASE_PRICE_PATTERN, bases);
+  }
+  // 둘레의 인허가 한 줄도 기본이 **함수가 없는 상태**다(위 상수 주석 참조).
+  if (permits === undefined) {
+    await mockMissingFunction(page, NEARBY_PERMITS_PATTERN);
+  } else {
+    await mockJson(page, NEARBY_PERMITS_PATTERN, permits);
   }
 }
 
@@ -590,6 +603,9 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     // ⛔ 이 섹션은 **개수만** 말한다. 값·시세가 새어 들어오면 성격이 통째로 바뀐다.
     await expect(mix).not.toContainText('시세');
     await expect(mix).not.toContainText('적정가');
+    // 둘레의 인허가 함수는 여기서 **없는 상태**다(mockFloorStack 기본값) — 그 줄만 빠지고
+    // 카드의 나머지는 위처럼 그대로 선다.
+    await expect(mix.locator('.mix__permits')).toHaveCount(0);
   });
 
   // ── 한 장 요약 접힘 틀 (로드맵 Wave 2) ───────────────────────────────────
@@ -1078,5 +1094,39 @@ test.describe('입구 — LH 상가 분양·입점 공고', () => {
     await expect(page.locator('section.lh')).toHaveCount(0);
     // "공고 없음" 같은 말도 남기지 않는다 — 모르는 것을 없는 것이라 말하지 않는다.
     await expect(page.locator('.app')).not.toContainText('LH 상가 분양·입점 공고');
+  });
+});
+
+// ── 둘레에 새로 올라오는 상가 건물 (건축 인허가) ───────────────────────────
+// 업종 분포 카드 **안**에 붙는 한 줄이라, 카드가 서는 것과 이 줄이 서는 것은 별개다.
+// 단위 시험은 두 조건을 따로 흉내 내지만 "정말 그 카드 안에 그려지나"는 여기서만 본다.
+// (그 줄이 없는 경우는 위 테스트 K 가 같은 자리에서 함께 본다.)
+
+test.describe('층별 스택뷰 — 둘레에 새로 올라오는 건물', () => {
+  test('Y. 서버가 답하면 업종 분포 카드 안에 동수·허가만·착공·기준월이 한 줄로 뜬다', async ({
+    page,
+  }) => {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    // 업종 분포가 있어야 카드가 선다 — 이 줄은 그 카드 안에 산다.
+    await mockFloorStack(page, [], [], undefined, industryMix(), undefined, nearbyPermits());
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+
+    const permits = page.locator('section.mix .mix__permits');
+    await expect(permits).toBeVisible();
+    // 3동 중 2동 착공 = 허가만 1동. 셋이 서로 맞물려 있어 산수가 틀리면 여기서 드러난다.
+    await expect(permits).toContainText('새로 올라오는 상가 건물 3동');
+    await expect(permits).toContainText('허가만 1동 · 착공 2동');
+    // 기준월은 서버가 준 값이다 — 화면에 글자로 박으면 자료가 바뀌는 날 거짓말이 된다.
+    await expect(permits).toContainText('(2026년 7월 인허가 기준)');
+    // ⛔ 앞일을 단정하지 않는다 — 허가를 받고도 안 짓거나 용도가 바뀌는 일이 흔하다.
+    await expect(permits).toContainText('허가를 받았다고 모두 지어지는 것은 아닙니다');
+    await expect(permits).not.toContainText('예정');
+    // ⛔ 이 카드는 값을 말하지 않는다. 인허가 줄이 들어와도 그 성격은 그대로다.
+    await expect(page.locator('section.mix')).not.toContainText('시세');
   });
 });
