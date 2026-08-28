@@ -19,6 +19,13 @@ const responses = {
   detail: { data: null as unknown, error: null as unknown },
   /** true 면 상세 응답을 영영 안 준다 — "아직 안 옴" 상태를 보려고 둔 스위치다. */
   detailPending: false,
+  /**
+   * 서버 함수 count_nearby_permits 의 응답(둘레에 새로 올라오는 상가 건물).
+   *
+   * 기본값을 **함수 없음**으로 둔다 — 마이그레이션 적용 전 라이브가 그 상태이고, 그러면
+   * 이 파일의 다른 시험들이 보는 화면이 그대로 유지된다(그 줄만 없다).
+   */
+  permits: { data: null as unknown, error: { message: 'PGRST202' } as unknown },
 };
 
 /** 마지막 rpc 호출들. "인자 이름을 p_pnu·p_cat 으로 보내는가"를 여기서 확인한다. */
@@ -33,6 +40,9 @@ vi.mock('../lib/supabase', () => ({
           ? new Promise(() => {})
           : Promise.resolve(responses.detail);
       }
+      // ⚠️ 갈라 답해야 한다. 안 그러면 분포 응답(업종 객체)이 인허가 줄로 흘러들어
+      //    "늘 미표시"가 되고, 그 상태로도 아래 시험 대부분이 초록이라 아무도 모른다.
+      if (fn === 'count_nearby_permits') return Promise.resolve(responses.permits);
       return Promise.resolve(responses.mix);
     },
   },
@@ -94,6 +104,7 @@ beforeEach(() => {
   responses.mix = { data: mix(), error: null };
   responses.detail = { data: detail(), error: null };
   responses.detailPending = false;
+  responses.permits = { data: null, error: { message: 'PGRST202' } };
   vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
 
@@ -272,6 +283,78 @@ describe('IndustryMixSection — 업종 골라보기', () => {
     const select = await screen.findByLabelText('업종 골라보기');
     fireEvent.change(select, { target: { value: 'I2' } });
     expect(await screen.findByText(/같은 업종이 많다고 나쁜 자리는 아닙니다/)).toBeTruthy();
+  });
+});
+
+describe('IndustryMixSection — 둘레에 새로 올라오는 건물', () => {
+  /** 서버가 주는 한 행. 기본은 3동 중 2동 착공 = 허가만 1동. */
+  function permits(over: Record<string, unknown> = {}) {
+    return { data: { total_cnt: 3, started_cnt: 2, base_ym: '202607', ...over }, error: null };
+  }
+
+  it('동수·허가만·착공·기준월을 한 줄로 낸다', async () => {
+    responses.permits = permits();
+    render(<IndustryMixSection pnu="1168010100100010000" />);
+
+    expect(await screen.findByText('새로 올라오는 상가 건물 3동')).toBeTruthy();
+    // 기준월은 서버가 준 값이다 — 화면에 글자로 박으면 자료가 바뀌는 날 거짓말이 된다.
+    expect(screen.getByText(/허가만 1동 · 착공 2동 \(2026년 7월 인허가 기준\)/)).toBeTruthy();
+    // ⛔ 앞일을 단정하지 않는다. 허가는 받고도 안 짓는 일이 흔하다.
+    expect(screen.getByText(/허가를 받았다고 모두 지어지는 것은 아닙니다/)).toBeTruthy();
+    const text = document.body.textContent ?? '';
+    for (const banned of ['예정', '곧 완공', '들어설']) expect(text).not.toContain(banned);
+  });
+
+  it("'허가만'은 전체에서 착공을 뺀 값이다", async () => {
+    // ⛔ 회귀 방지: 이 뺄셈이 틀리면 화면의 두 수를 더해도 전체가 안 나오는데, 사람은
+    //    그걸 "이 서비스 자료가 이상하다"로 읽는다.
+    responses.permits = permits({ total_cnt: 7, started_cnt: 2 });
+    render(<IndustryMixSection pnu="1168010100100010000" />);
+
+    expect(await screen.findByText('새로 올라오는 상가 건물 7동')).toBeTruthy();
+    expect(screen.getByText(/허가만 5동 · 착공 2동/)).toBeTruthy();
+  });
+
+  it('0동이면 그 줄만 조용히 빠진다 (카드는 그대로 선다)', async () => {
+    responses.permits = permits({ total_cnt: 0, started_cnt: 0 });
+    render(<IndustryMixSection pnu="1168010100100010000" />);
+
+    await screen.findByText(/강남역\(발달상권\) 안/);
+    await waitFor(() => expect(screen.queryByText(/새로 올라오는 상가 건물/)).toBeNull());
+    // "0동"이나 "새로 짓는 건물 없음"이라 적지 않는다 — 모르는 것과 없는 것이 뒤섞인다.
+    expect(screen.queryByText(/인허가 기준/)).toBeNull();
+  });
+
+  it('함수가 아직 없어도(PGRST202) 카드의 나머지는 그대로다', async () => {
+    responses.permits = { data: null, error: { message: 'PGRST202' } };
+    const { container } = render(<IndustryMixSection pnu="1168010100100010000" />);
+
+    expect(await screen.findByText(/강남역\(발달상권\) 안/)).toBeTruthy();
+    expect(screen.getByText(/반경 500m 안/)).toBeTruthy();
+    expect(screen.getByLabelText('업종 골라보기')).toBeTruthy();
+    expect(container.querySelector('.mix__permits')).toBeNull();
+  });
+
+  it('인자를 p_pnu 이름으로 보낸다', async () => {
+    // 목(mock)은 인자 이름을 안 보므로, 틀려도 테스트는 초록이고 라이브에서만 PGRST202 가
+    // 난다 — 그래서 이름 자체를 시험한다.
+    responses.permits = permits();
+    render(<IndustryMixSection pnu="1168010100100010000" />);
+    await waitFor(() => expect(rpcCalls.some((c) => c.fn === 'count_nearby_permits')).toBe(true));
+    expect(rpcCalls.find((c) => c.fn === 'count_nearby_permits')!.args).toEqual({
+      p_pnu: '1168010100100010000',
+    });
+  });
+
+  it('필지가 바뀌면 앞 건물의 인허가 수를 지운다', async () => {
+    responses.permits = permits();
+    const { rerender } = render(<IndustryMixSection pnu="1168010100100010000" />);
+    await screen.findByText('새로 올라오는 상가 건물 3동');
+
+    responses.permits = { data: null, error: { message: 'PGRST202' } };
+    rerender(<IndustryMixSection pnu="1111010100100010000" />);
+    // 앞 건물의 수가 새 건물 밑에 잠깐이라도 붙어 있으면 그 순간이 그대로 틀린 정보다.
+    await waitFor(() => expect(screen.queryByText(/새로 올라오는 상가 건물/)).toBeNull());
   });
 });
 

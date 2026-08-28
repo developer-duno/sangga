@@ -91,6 +91,12 @@ vi.mock('../lib/supabase', () => ({
       if (fn === 'list_industry_mix' || fn === 'list_industry_detail') {
         return Promise.resolve(responses.industryMix);
       }
+      // 둘레의 인허가 한 줄(업종 분포 카드 안). 이 파일에서는 그 카드 자체가 사라진
+      // 상태를 보므로 늘 **함수 없음**으로 답한다 — 갈라 답하지 않으면 상권 응답(객체)이
+      // 흘러들어, 그 줄이 왜 안 뜨는지가 흐려진다.
+      if (fn === 'count_nearby_permits') {
+        return Promise.resolve({ data: null, error: { message: 'not applied' } });
+      }
       return Promise.resolve(responses.districts);
     },
   },

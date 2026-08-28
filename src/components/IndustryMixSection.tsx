@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { INDUSTRY_MIX_FN, INDUSTRY_DETAIL_FN } from '../lib/appConstants';
+import { INDUSTRY_MIX_FN, INDUSTRY_DETAIL_FN, NEARBY_PERMITS_FN } from '../lib/appConstants';
 import { SECTION_PLAN } from '../lib/sectionCards';
 import { SectionCard } from './SectionCard';
 import type { IndustryDetail, IndustryMix, IndustryScope } from '../types';
@@ -14,6 +14,7 @@ import {
   toBars,
   type MixBar,
 } from '../lib/industryMix';
+import { toPermitLine, type NearbyPermitLine } from '../lib/nearbyPermits';
 
 /**
  * "둘레의 업종 분포" 섹션 — 결정 0014(상권 지표 계산) 1단계.
@@ -53,6 +54,17 @@ export function IndustryMixSection({ pnu }: Props) {
    *    돌아간다 — 사용자는 느린 것으로 알고 계속 기다린다. 실패는 실패라고 말한다.
    */
   const [detailFailed, setDetailFailed] = useState(false);
+  /**
+   * 둘레의 미준공 상업 인허가 한 줄. **null 이면 그 줄만 없다** — 아직 안 왔을 때·0동일
+   * 때·함수가 아직 없을 때가 모두 같은 null 이다.
+   *
+   * ⓘ 업종 상세(`detailFailed`)와 달리 실패를 따로 담아 두지 않는다. 거기서는 기다리는
+   *   동안 "불러오는 중…"을 그리므로 실패와 갈라야 물레방아가 안 돌지만, 여기서는 기다리는
+   *   동안에도 아무것도 안 그려서 두 상태의 결과가 같다(LH 공고 카드와 같은 판단).
+   *   ⛔ 그렇다고 "0동"이나 "새로 짓는 건물 없음"이라 적지 않는다 — 모르는 것을 없는 것이라
+   *     말하게 된다(이 카드의 다른 자리와 같은 규칙).
+   */
+  const [permits, setPermits] = useState<NearbyPermitLine | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -77,6 +89,36 @@ export function IndustryMixSection({ pnu }: Props) {
         return;
       }
       setMix(data);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pnu]);
+
+  /*
+    둘레에 새로 올라오는 건물 — **따로 묻는다.**
+
+    업종 분포와 한 카드에 서지만 자료가 달라(장사 중인 가게 수 ↔ 아직 안 지어진 건물 수)
+    서버 함수도 다르다. 한 effect 에 묶으면 둘 중 하나가 느리거나 없을 때 나머지까지
+    같이 늦거나 사라진다 — 곁다리 한 줄 때문에 카드 본문을 잃지 않는다.
+  */
+  useEffect(() => {
+    let cancelled = false;
+    // 앞 건물의 인허가 수가 새 건물 밑에 잠깐이라도 붙어 있으면 그 순간이 그대로 틀린
+    // 정보다(위 분포와 같은 원칙).
+    setPermits(null);
+
+    supabase.rpc(NEARBY_PERMITS_FN, { p_pnu: pnu }).then(({ data, error }) => {
+      if (cancelled) return;
+      if (error) {
+        // 마이그레이션 적용 전 라이브가 이 상태다(PGRST202). 줄만 빠지고 카드는 선다.
+        console.warn('둘레 인허가 조회 실패 — 그 줄 없이 표시합니다', error);
+        return;
+      }
+      // 모양 검사·0동 거르기·산수는 전부 `toPermitLine` 안에 있다 — 못 적을 값이면 null 이
+      // 오고, 그때 화면은 그 줄을 아예 안 그린다.
+      setPermits(toPermitLine(data));
     });
 
     return () => {
@@ -179,6 +221,8 @@ export function IndustryMixSection({ pnu }: Props) {
         />
       )}
 
+      {permits && <PermitLine line={permits} />}
+
       {options.length > 0 && (
         <div className="mix__pick">
           <label className="mix__pick-label" htmlFor="mix-cat">
@@ -231,6 +275,32 @@ export function IndustryMixSection({ pnu }: Props) {
         {sources.length > 0 && <> · 상권 경계 {sources.join(' · ')}</>}.
       </p>
     </SectionCard>
+  );
+}
+
+/**
+ * "둘레에 새로 올라오는 상가 건물" 한 줄.
+ *
+ * 왜 이 카드 안에 두나 — 묻는 것이 같은 자리(이 땅 둘레)이고, 창업·투자를 재는 사람에게
+ * 지금 몇 곳이 있는지와 앞으로 몇 동이 더 서는지는 **한 호흡에 읽어야 뜻이 생기는 한 쌍**이기
+ * 때문이다. 카드를 새로 만들면 첫 화면 펼침 상한(`SECTION_EXPAND_BUDGET`)이 흔들린다.
+ *
+ * ⛔ **앞일을 단정하지 않는다.** '예정'·'곧 완공'·'들어설 것'은 쓰지 않는다 — 허가를 받고도
+ *    안 짓거나 용도가 바뀌는 일이 흔해서, 우리가 아는 사실은 "그 달 기준 이런 허가가 살아
+ *    있다"까지다. 그래서 문장이 인허가 기준월로 끝나고, 바로 뒤에 그 한계를 덧붙인다.
+ * ⛔ 이 숫자를 위 점포 수와 **더하거나 견주지 않는다.** 가게(개)와 건물(동)은 단위부터 다르다.
+ */
+function PermitLine({ line }: { line: NearbyPermitLine }) {
+  const n = (v: number) => v.toLocaleString('ko-KR');
+  return (
+    <p className="mix__permits">
+      둘레에{' '}
+      {/* 한 덩어리 글자로 낸다 — 조각으로 쪼개면 화면에는 같아 보여도 한 낱말로 찾는
+          시험이 못 찾는다(`.mix__rival` 과 같은 이유). */}
+      <strong className="mix__permits-n">{`새로 올라오는 상가 건물 ${n(line.total)}동`}</strong>
+      {` — 허가만 ${n(line.permitOnly)}동 · 착공 ${n(line.started)}동 (${line.baseLabel} 인허가 기준).`}
+      <span className="mix__permits-note">허가를 받았다고 모두 지어지는 것은 아닙니다.</span>
+    </p>
   );
 }
 

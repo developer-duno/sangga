@@ -180,6 +180,23 @@ export function formatYearMonth(ym: string | null | undefined): string {
   return `${m[1]}-${m[2]}`;
 }
 
+/**
+ * 기준월 '202607' → '2026년 7월'. **읽을 수 없으면 null** 이다.
+ *
+ * ⚠️ 이 파일의 형제들(`formatQuarter`·`formatYearMonth`)과 달리 '—'나 원본을 되돌려 주지
+ *    않는다. 이 값은 "언제 것인가"를 말하는 자리에만 쓰이는데, 그 자리에 '—'나 '202607'이
+ *    박히면 문장이 "(— 인허가 기준)"이 되어 **읽는 사람에게 아무 뜻도 못 준다**. 부르는
+ *    쪽이 null 을 보고 그 문구 자체를 안 만들 수 있게 갈라 준다(`oneInEvery` 와 같은 결).
+ */
+export function formatMonthKo(ym: string | null | undefined): string | null {
+  if (!ym) return null;
+  const m = /^(\d{4})(\d{2})$/.exec(ym.trim());
+  if (!m) return null;
+  const month = Number(m[2]);
+  if (month < 1 || month > 12) return null;
+  return `${m[1]}년 ${month}월`;
+}
+
 /** 사용승인일 '2003-05-14' → '2003년 5월'. 없으면 '—'. */
 export function formatApproveDate(date: string | null): string {
   if (!date) return '—';

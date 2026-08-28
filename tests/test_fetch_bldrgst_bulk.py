@@ -208,7 +208,37 @@ def test_download_raises_on_http_error(tmp_path):
 
 def test_kinds_cover_the_three_we_use():
     """표제부·층별개요·전유공용면적 3종이 우리가 API로 받던 것과 짝이다."""
-    assert set(target.KINDS) == {"title", "flr_ouln", "expos_area"}
+    assert set(target.KINDS) == {"title", "flr_ouln", "expos_area", "permit-basis"}
     assert target.KINDS["title"][0] == "0303"
     assert target.KINDS["flr_ouln"][0] == "0304"
     assert target.KINDS["expos_area"][0] == "0306"
+    # 인허가 기본개요 — 대장(03)이 아니라 **분류 01** 이다(2026-08-28 실측).
+    assert target.KINDS["permit-basis"][0] == "0101"
+
+
+# ── 8. 분류·저장 폴더 ─────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("kind,expected", [
+    ("title", "03"), ("flr_ouln", "03"), ("expos_area", "03"), ("permit-basis", "01"),
+])
+def test_task_se_is_derived_from_the_task_code(kind, expected):
+    """분류는 opnTaskCd 앞 두 글자다 — 따로 적어 두면 언젠가 한쪽만 고쳐진다.
+
+    ⛔ 분류가 틀리면 **목록이 통째로 다른 페이지**라, 원하는 항목이 '없다'고 나온다
+       (에러가 아니라 빈손이라 원인 찾기가 어렵다).
+    """
+    assert target.task_se_of(kind) == expected
+
+
+def test_permit_files_go_to_their_own_folder():
+    """인허가 zip 을 대장 폴더에 섞으면 `convert_bldrgst_bulk.find_zip` 이 이름으로
+    고르는 규칙과 부딪힌다."""
+    assert target.out_dir_for("permit-basis", None).endswith(
+        os.path.join("data", "raw", "arch_permit"))
+    assert target.out_dir_for("title", None).endswith(
+        os.path.join("data", "raw", "bldrgst_bulk"))
+
+
+def test_explicit_out_dir_wins():
+    assert target.out_dir_for("permit-basis", "/tmp/x") == "/tmp/x"

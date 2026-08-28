@@ -3092,6 +3092,172 @@ grant execute on function api.list_lh_notices(text) to anon, authenticated;
 notify pgrst, 'reload schema';
 
 -- =====================================================================
+-- 건축인허가 — 곧 올라오는 건물 (2026-08-28b)
+-- =====================================================================
+-- 건축 허가를 받았지만 **아직 사용승인이 안 난** 건물이다(건축HUB 분류 01·opnTaskCd 0101,
+-- 전국·월간). 한 줄에 허가일·착공일·사용승인일이 같이 있어서 **사용승인일이 빈 칸이면
+-- 아직 안 지어진 건물**이라는 뜻이 된다. 2026-07 판 실측: 원본 6,498,901행 → 적재 대상
+-- 556,527행(그중 착공 61,332). 실측 근거·버린 선택지는
+-- supabase/migrations/2026-08-28b_arch_permit.sql 머리말 참조.
+--
+-- ⚠️ **월 1회 수동 갱신**이고, 원본은 건축HUB 에 최근 3개월치만 남는다 — 받은 zip 은
+--    `python scripts/backup_raw.py` 로 백업할 것(절대 규칙 6 과 같은 이유).
+-- ⛔ **PK 가 두 칸인 이유**: 같은 허가건이 달마다 다시 나오므로, 한 칸짜리 PK 로 두면
+--    다음 달 적재가 PK 충돌로 통째로 실패한다. 읽는 함수는 가장 최근 기준월만 본다.
+-- ⛔ **mgm_pmsrgst_pk 는 text 다** — 22자리 값이 있어 bigint 를 넘친다(원본도 VARCHAR(33)).
+-- ⛔ 용도로 거르지 않고 다 담는다 — 무엇을 상가로 볼지는 읽는 함수 한 곳에서만 정한다.
+create table if not exists arch_permit (
+  -- 관리_허가대장_PK. **숫자로 담지 않는다** — 22자리가 있어 bigint 를 넘는다.
+  mgm_pmsrgst_pk  text      not null,
+  -- 기준월(YYYYMM). 달마다 한 벌이 쌓이고, 읽는 함수는 가장 최근 한 벌만 본다.
+  loaded_ym       char(6)   not null,
+  -- 조립 실패(블록·특수지번 등)를 **버리지 않고** 담기 위해 NULL 을 허용한다.
+  pnu             char(19),
+  sigungu_cd      char(5),
+  plat_plc        text,                   -- 대지 위치(지번 주소 원문)
+  arch_gb_nm      text,                   -- 신축·증축·개축 …
+  main_purps_cd   text,                   -- 주용도 코드(5자리). 앞 두 글자가 대분류다
+  main_purps_nm   text,
+  tot_area        numeric(19,9),          -- 연면적(㎡)
+  arch_pms_day    date      not null,     -- 필터가 유효한 최근 날짜만 통과시킨다
+  real_stcns_day  date,                   -- 실제 착공일. 있으면 **땅을 파기 시작한 것**
+  -- 담는 행은 전부 NULL 이다(그것이 곧 '미준공'이다). 적재 SQL 이 다시 확인한다.
+  use_apr_day     date,
+  crtn_day        date,                   -- 원본 생성일자
+  created_at      timestamptz default now(),
+  primary key (mgm_pmsrgst_pk, loaded_ym)
+);
+
+comment on table arch_permit is
+  '건축인허가 기본개요 중 **아직 사용승인이 안 난 최근 허가분**(건축HUB 분류 01·0101, 전국 월간). '
+  '2026-07 판 실측 556,527행(원본 6,498,901행에서). 달마다 한 벌이 쌓이며 읽는 함수는 가장 '
+  '최근 기준월만 본다. ⛔ anon 에게 통째로 닫혀 있고 count_nearby_permits() 로만 읽는다 — '
+  '그것도 개수만 나간다(건물 주소·이름은 한 글자도 안 나간다). '
+  '⚠️ 원본은 건축HUB 에 최근 3개월치만 남는다 — 받은 zip 은 backup_raw.py 로 백업할 것.';
+comment on column arch_permit.mgm_pmsrgst_pk is
+  '관리 허가대장 PK. **text 다** — 22자리 값이 있어 bigint 를 넘친다(원본도 VARCHAR(33)).';
+comment on column arch_permit.loaded_ym is
+  '원본 파일의 기준월(YYYYMM). 같은 허가건이 달마다 다시 나오므로 PK 의 한 칸이다 — '
+  '한 칸짜리 PK 로 두면 다음 달 적재가 PK 충돌로 통째로 실패한다.';
+comment on column arch_permit.use_apr_day is
+  '사용승인일. 이 표에서는 **항상 NULL** 이다(그것이 곧 미준공이라는 뜻) — 값이 생기면 '
+  '적재 관문이 통째로 되돌린다.';
+comment on column arch_permit.real_stcns_day is
+  '실제 착공일. 있으면 이미 공사가 시작된 것이라 "곧"이 더 가깝다는 뜻이다.';
+
+-- 읽는 길은 "이 필지들 중 상가 미준공 몇 곳"뿐이다. 그래서 pnu 로 찾고, 세는 데 필요한
+-- 칸을 **include 로 함께 실어** 힙에 안 가게 한다(idx_ub_pnu_cat 과 같은 처방).
+-- ⛔ include 네 칸을 지우지 말 것 — 지워도 **에러는 안 나고 느려지기만 한다**.
+create index if not exists idx_arch_permit_pnu on arch_permit (pnu)
+  include (loaded_ym, use_apr_day, main_purps_cd, real_stcns_day);
+
+-- 같은 기준월을 다시 넣을 때(월 1회 갱신) 지우는 자리. 55만 행을 전수 훑지 않게 한다.
+create index if not exists idx_arch_permit_ym on arch_permit (loaded_ym);
+
+alter table arch_permit enable row level security;
+
+-- ⛔ 위쪽의 `revoke all on all tables in schema public` 은 그 줄을 지날 때의 표만 닫는
+--    일회성 명령이라 여기서 만든 표에는 안 걸린다. 만든 자리에서 다시 닫는다.
+revoke all on arch_permit from public, anon, authenticated;
+
+-- ── count_nearby_permits — 둘레에 곧 올라올 상가 건물이 몇 곳인가 ─────────────
+-- 한 줄만 돌려준다: 전체 곳수 · 그중 이미 착공한 곳수 · 어느 달 자료인가.
+--
+-- 무엇을 '상가'로 보나 (2026-07 판 적재 대상 556,527행 실측 분포가 근거다):
+--   03 제1종근린생활 24,952 · 04 제2종근린생활 39,882 · 07 판매 1,617 · 14 업무 5,967
+--   = 72,419곳(적재 대상의 13.0%). 앞 두 글자로 보므로 `04005 제조업소` 같은 하위 코드도
+--   저절로 따라온다.
+-- 일부러 뺀 것: 15 숙박·16 위락·27 관광휴게(상가 축이 아니다) · 17 공장·18 창고(산업물류) ·
+--   01·02 주택(주거) · **주용도가 빈 값 389,822행(70%)**(모르는 것을 상가라고 부르지 않는다 —
+--   세면 화면 숫자가 대여섯 배로 부푼다).
+--
+-- ⛔ 좌표가 없으면 **줄을 아예 안 돌려준다**. 0 을 돌려주면 "둘레에 아무것도 안 생긴다"는
+--    단정이 되는데 사실은 모르는 것이다(list_industry_mix 와 같은 원칙).
+create or replace function count_nearby_permits(p_pnu text)
+returns table (
+  total_cnt    int,
+  started_cnt  int,
+  base_ym      text
+)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  -- ⛔ 파라미터를 그대로 쓰지 않는다 — 서명은 text 인데 컬럼은 char(19) 라, 그대로 비교하면
+  --    컬럼 쪽이 캐스트돼 인덱스가 무력해진다(2026-08-16b 라이브 실측 459.8ms ↔ 0.796ms).
+  v_pnu char(19) := p_pnu;
+  v_ym  char(6);
+begin
+  select max(a.loaded_ym) into v_ym from arch_permit a;
+  -- 아직 한 번도 안 담았다 = 줄 0개. "0곳"과 "모른다"는 다른 말이다.
+  if v_ym is null then
+    return;
+  end if;
+
+  return query
+    with me as (
+      select p.geom::geography as gg
+        from parcel p
+       where p.pnu = v_pnu and p.geom is not null
+    ),
+    near as (
+      -- ⚠️ char(19)[] 이라야 한다. text[] 로 두면 배열 조건이 인덱스 안으로 못 들어간다.
+      -- 마지막 인자 false = 구면으로 잰다. 형제 함수들과 같은 자를 쓴다.
+      select coalesce(array_agg(p.pnu), '{}'::char(19)[]) as pnus
+        from parcel p cross join me
+       where p.geom is not null
+         and st_dwithin(p.geom::geography, me.gg, 500, false)
+    ),
+    hit as (
+      select a.real_stcns_day
+        from arch_permit a cross join near
+       where a.pnu = any(near.pnus)
+         and a.loaded_ym = v_ym
+         -- 표에는 미준공만 담기지만 규칙을 한 군데에만 두지 않는다.
+         and a.use_apr_day is null
+         and left(a.main_purps_cd, 2) = any(array['03', '04', '07', '14'])
+    )
+    select (select count(*) from hit)::int,
+           (select count(*) from hit where hit.real_stcns_day is not null)::int,
+           v_ym::text
+     where exists (select 1 from me);
+end;
+$$;
+
+comment on function count_nearby_permits(text) is
+  '이 필지에서 반경 500m 안에 **곧 올라올 상가 건물**이 몇 곳인가 — 전체 곳수, 그중 이미 '
+  '착공한 곳수, 자료의 기준월. 대상은 사용승인이 안 난 최근(2023-01-01 이후) 허가분 중 '
+  '주용도 대분류가 03(1종근생)·04(2종근생)·07(판매)·14(업무)인 것뿐이다. '
+  '⛔ 주용도가 빈 값인 허가는 세지 않는다(모르는 것을 상가라고 부르지 않는다). '
+  '⛔ 필지 좌표가 없으면 줄을 아예 안 돌려준다 — 0 곳과 "모른다"는 다른 말이다. '
+  'security definer — arch_permit·parcel 이 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. '
+  '**나가는 것은 개수와 기준월뿐이다 — 건물 주소·이름은 한 글자도 안 나간다.**';
+
+revoke all on function count_nearby_permits(text) from public, anon, authenticated;
+
+create or replace function api.count_nearby_permits(p_pnu text)
+returns table (
+  total_cnt    int,
+  started_cnt  int,
+  base_ym      text
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$ select * from public.count_nearby_permits(p_pnu) $$;
+
+revoke all on function api.count_nearby_permits(text) from public, anon, authenticated;
+grant execute on function api.count_nearby_permits(text) to anon, authenticated;
+
+-- ⛔ public.count_nearby_permits 는 끝까지 닫아 둔다 — 통과 함수가 security definer 다.
+
+-- 안 알리면 새 스키마 캐시가 다음 재시작까지 안 잡혀 404 가 난다.
+notify pgrst, 'reload schema';
+
+-- =====================================================================
 -- 완료
 -- =====================================================================
 -- 다음 단계:

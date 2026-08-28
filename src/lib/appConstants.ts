@@ -126,6 +126,21 @@ export const INDUSTRY_MIX_FN = 'list_industry_mix';
 export const INDUSTRY_DETAIL_FN = 'list_industry_detail';
 
 /**
+ * 이 필지 둘레의 **미준공 상업 계열 건축 인허가** 건물 수. 업종 분포 카드 안의 한 줄.
+ *
+ * ⚠️ **인자 이름이 `p_pnu` 다**(`list_price_bands` 와 같은 이유 — 컬럼명 `pnu` 와 겹친다).
+ *    목(mock)은 인자 이름을 안 보므로 `{ pnu: … }` 로 잘못 불러도 vitest·E2E 는 전부
+ *    초록이고 **라이브에서만** PGRST202 가 난다.
+ *
+ * ⓘ 둘레의 범위는 **업종 분포와 같은 기준**이라 화면이 다시 정하지 않는다. 돌려주는 것은
+ *   `{ total_cnt, started_cnt, base_ym }` **한 행**이고, 기준월도 함께 오므로 화면에
+ *   '2026년 7월'을 글자로 박지 않는다.
+ * ⓘ 자료가 없거나(`total_cnt: 0`) 함수가 아직 없으면(PGRST202) 화면은 **그 줄만** 생략한다
+ *   — 카드의 나머지는 그대로 선다(업종 분포와 같은 규칙).
+ */
+export const NEARBY_PERMITS_FN = 'count_nearby_permits';
+
+/**
  * 이 시·도에서 지금 열려 있는 LH 상가 분양·임대 공고.
  *
  * ⚠️ **인자 이름이 `p_sido` 이고, 값은 시군구 코드가 아니라 시도 코드 2자리다**

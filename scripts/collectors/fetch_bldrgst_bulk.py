@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""건축HUB 대용량 건축물대장 파일 1종을 받는다 (표제부/층별개요/전유공용면적).
+"""건축HUB 대용량 파일 1종을 받는다 (건축물대장 3종 · 인허가 기본개요).
 
 배경
 ----
@@ -7,6 +7,13 @@
 같은 데이터를 **대용량 파일**로 월 단위 제공하므로 그쪽이 압도적으로 빠르다.
 목록·컬럼 정의는 비로그인으로 열리며, 3종 모두 PNU 19자리를 조립할 수 있는
 `시군구_코드·법정동_코드·대지_구분_코드·번·지`를 갖고 있다(2026-08-10 실측).
+
+인허가(분류 01)도 같은 창구다
+------------------------------
+2026-08-28 실측: 같은 목록 페이지를 `opnLgcptTaskSeCd=01` 로 열면 인허가 17종
+(0101 기본개요 … 0117 주택유형)이 같은 형태로 나온다. 그중 **기본개요(0101)** 하나가
+"곧 올라오는 건물"을 아는 자료다 — 허가일·착공일·**사용승인일**이 한 줄에 들어 있어
+사용승인일이 빈 행이 곧 **아직 안 지어진 건물**이다(결정 0022 계열).
 
 동작
 ----
@@ -21,8 +28,12 @@
     python scripts/collectors/fetch_bldrgst_bulk.py --probe          # 크기만 확인(저장 0)
     python scripts/collectors/fetch_bldrgst_bulk.py --kind title     # 표제부 받기
     python scripts/collectors/fetch_bldrgst_bulk.py --kind flr_ouln --max-gb 20
+    python scripts/collectors/fetch_bldrgst_bulk.py --kind permit-basis --list   # 인허가 목록
+    python scripts/collectors/fetch_bldrgst_bulk.py --kind permit-basis         # 인허가 기본개요
 
 ⚠️ 파일 ID는 매월 바뀐다. `--list`로 현재 목록을 다시 읽어 확인할 것.
+⚠️ `--list`는 **--kind 가 속한 분류**만 보여 준다(대장 03 ↔ 인허가 01). 분류가 다르면
+   같은 페이지라도 목록이 통째로 다르다.
 """
 from __future__ import print_function
 
@@ -44,12 +55,21 @@ DOWN_URL = BASE + "/cmm/fms/fileOpnDown.do"
 
 TASK_SE_CD = "03"  # 건축물대장
 
-# 우리가 쓰는 3종. opnTaskCd 는 고정, 파일 ID(srvrFileNm)는 매월 바뀐다.
+# 우리가 쓰는 것들. opnTaskCd 는 고정, 파일 ID(srvrFileNm)는 매월 바뀐다.
+# ⭐ opnTaskCd 앞 두 글자가 곧 분류(opnLgcptTaskSeCd)다 — 0303→03(대장), 0101→01(인허가).
+#    2026-08-28 실측으로 확인했고, 그래서 분류를 따로 적어 두지 않는다(두 벌이면 어긋난다).
 KINDS = {
     "title": ("0303", "표제부"),
     "flr_ouln": ("0304", "층별개요"),
     "expos_area": ("0306", "전유공용면적"),
+    # 인허가 기본개요 — 허가일·착공일·사용승인일이 한 줄에 있다(전국 월간, 438MB 실측).
+    "permit-basis": ("0101", "기본개요"),
 }
+
+# 종류별 저장 폴더 이름. 인허가는 대장이 아니므로 섞어 두지 않는다 —
+# 한 폴더에 섞이면 `convert_bldrgst_bulk.find_zip` 이 이름으로 고르는 규칙과 부딪힌다.
+KIND_DIRNAME = {"permit-basis": "arch_permit"}
+DEFAULT_DIRNAME = "bldrgst_bulk"
 
 # 이용목적 코드 — 사이트 팝업의 라디오 값. 3 = 참고자료.
 PRPS_CD = "3"
@@ -109,6 +129,19 @@ def pick(entries, task_cd):
         if e["opnTaskCd"] == task_cd:
             return e
     raise BulkError("opnTaskCd={} 항목이 목록에 없다".format(task_cd))
+
+
+def task_se_of(kind):
+    """그 종류가 속한 분류 코드. opnTaskCd 앞 두 글자다 (0303→'03' · 0101→'01')."""
+    return KINDS[kind][0][:2]
+
+
+def out_dir_for(kind, base_dir):
+    """저장 폴더. `--out-dir` 를 직접 준 경우엔 그대로 쓴다."""
+    if base_dir is not None:
+        return base_dir
+    return os.path.join(PROJECT_ROOT, "data", "raw",
+                        KIND_DIRNAME.get(kind, DEFAULT_DIRNAME))
 
 
 def insert_history(session, entry, csrf_name, csrf_token):
@@ -221,16 +254,16 @@ def main(argv=None):
                    help="현재 목록만 출력하고 끝낸다")
     p.add_argument("--max-gb", type=float, default=DEFAULT_MAX_GB,
                    help="이 크기를 넘으면 중단 (기본 {:.0f})".format(DEFAULT_MAX_GB))
-    p.add_argument("--out-dir",
-                   default=os.path.join(PROJECT_ROOT, "data", "raw", "bldrgst_bulk"),
-                   help="저장 폴더")
+    p.add_argument("--out-dir", default=None,
+                   help="저장 폴더 (생략하면 종류에 맞는 data/raw/… 아래)")
     a = p.parse_args(argv)
 
+    task_se = task_se_of(a.kind)
     s = new_session()
-    print("목록 조회 …")
-    html, csrf_name, csrf_token = open_list(s)
+    print("목록 조회 … (분류 {})".format(task_se))
+    html, csrf_name, csrf_token = open_list(s, task_se_cd=task_se)
     entries = parse_entries(html)
-    print("  건축물대장 항목 {}건 · CSRF 파라미터 '{}'".format(len(entries), csrf_name))
+    print("  항목 {}건 · CSRF 파라미터 '{}'".format(len(entries), csrf_name))
 
     if a.list:
         for e in entries:
@@ -246,7 +279,7 @@ def main(argv=None):
     code = insert_history(s, entry, csrf_name, csrf_token)
     print("  이용이력 : HTTP {}".format(code))
 
-    out_dir = a.out_dir
+    out_dir = out_dir_for(a.kind, a.out_dir)
     m = re.search(r"(\d{4})\s*년\s*(\d{2})\s*월", entry["srvcNm"] or "")
     if m:
         out_dir = os.path.join(out_dir, m.group(1) + m.group(2))
