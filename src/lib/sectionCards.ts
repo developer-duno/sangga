@@ -55,6 +55,29 @@ export const SECTION_PLAN = {
   band: { title: '참고 매매 시세 (추정값)', role: '투자자', defaultOpen: false },
 } as const satisfies Record<string, SectionPlan>;
 
+/**
+ * **입구 화면**(구는 골랐고 건물은 아직 안 고른 상태)의 카드.
+ *
+ * ⚠️ 위 `SECTION_PLAN` 과 **일부러 갈라 둔다.** 저 표의 펼침 상한 4장은 "층별 화면 한
+ *    벌을 스크롤할 때 몇 개가 펼쳐져 있는가"라는 예산이다. 다른 화면의 카드를 그 표에
+ *    끼워 넣으면 한 예산이 두 화면에 걸쳐 나뉘어, 층별 화면에 카드를 하나 더 붙일 자리가
+ *    이유 없이 줄어든다(그리고 그 줄어듦은 아무 시험도 안 깬 채 조용히 일어난다).
+ *
+ * ⛔ 입구 카드는 **접힌 채로 시작한다.** 입구에서 사람이 하려는 일은 건물을 찾는 것이라,
+ *    그 앞을 목록으로 가로막지 않는다 — 제목과 한 줄 요약으로 "있다"만 알린다.
+ *    (`entry-section-plan.test` 성격의 가드가 `sectionCards.test.ts` 에 있다.)
+ */
+export const ENTRY_SECTION_PLAN = {
+  /**
+   * LH 상가 분양·입점 공고.
+   *
+   * 역할을 `공통` 으로 둔 이유 — 분양 입찰은 투자자, 임대 추첨·입찰은 창업자가 보는
+   * 것이라 한쪽으로 못 정한다. 역할 태그는 하나만 붙일 수 있으므로, 반쪽만 부르는
+   * 대신 아무도 안 내치는 쪽을 골랐다.
+   */
+  lhNotice: { title: 'LH 상가 분양·입점 공고', role: '공통', defaultOpen: false },
+} as const satisfies Record<string, SectionPlan>;
+
 /** 첫 화면에 펼쳐지는 카드 수. 상한을 지키는지 세는 데 쓴다. */
 export function countDefaultOpen(
   plan: Readonly<Record<string, SectionPlan>> = SECTION_PLAN,

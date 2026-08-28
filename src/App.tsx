@@ -4,6 +4,7 @@ import { BuildingSearch } from './components/BuildingSearch';
 import { DistrictMap } from './components/DistrictMap';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { FloorStack } from './components/FloorStack';
+import { LhNoticeSection } from './components/LhNoticeSection';
 import { PrintButton } from './components/PrintButton';
 import { PrintHeader } from './components/PrintHeader';
 import { RegionPicker } from './components/RegionPicker';
@@ -215,6 +216,18 @@ export default function App() {
       >
         <DistrictMap sigungu={sigungu} sigunguName={sigunguName} selected={selected} />
       </ErrorBoundary>
+
+      {/*
+        입구에서만 서는 카드 — LH 상가 분양·입점 공고.
+
+        ⛔ 조건 셋을 모두 만족할 때만 그린다: **구를 골랐고**(물을 곳이 정해졌다),
+           **건물을 아직 안 골랐고**(고르면 화면의 주제가 그 건물이라 분석을 어지럽히지
+           않는다), **링크로 되살리는 중도 아니다**(곧 건물이 서는데 카드를 먼저 그리면
+           나타났다 사라진다). 건물 선택을 풀면 다시 보인다.
+        ⓘ `key` 를 일부러 안 준다 — 같은 시도 안에서 구만 바꾸면(강남구 → 서초구) 답이
+          같으므로 다시 묻지 않는 것이 맞다. 카드가 시도 코드에만 매여 있다.
+      */}
+      {sigungu !== null && selected === null && !restoring && <LhNoticeSection sigungu={sigungu} />}
 
       {selected ? (
         <>

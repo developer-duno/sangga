@@ -347,7 +347,9 @@ def test_main_returns_zero_when_everything_is_fresh(monkeypatch, capsys, tmp_pat
                            # 라이브 감시는 6시간마다 돌므로 기준이 1일이다 — 이틀 전이면 이미 멈춘 것.
                            chk.LIVE_HEALTH_WATCH: _recent(3),
                            # 주간 알림도 예약이라 같은 그물 안에 있다(2026-08-24c).
-                           chk.FEEDBACK_DIGEST: _recent(48)})
+                           chk.FEEDBACK_DIGEST: _recent(48),
+                           # LH 공고 감시도 주 1회 예약이다(2026-08-28a).
+                           chk.LH_NOTICE_WATCH: _recent(48)})
     assert chk.main([]) == 0
     assert "멈춘 감시           : 없음" in capsys.readouterr().out
     # 멈춘 게 없으면 이슈 본문 파일을 만들지 않는다
@@ -360,7 +362,9 @@ def test_main_returns_one_and_writes_issue_body_when_stale(monkeypatch, tmp_path
     _patch_fetch(monkeypatch, {chk.QUARTERLY_WATCH: _recent(48), chk.DISTRICT_WATCH: _recent(70 * 24),
                            chk.LIVE_HEALTH_WATCH: _recent(3),
                            # 주간 알림도 예약이라 같은 그물 안에 있다(2026-08-24c).
-                           chk.FEEDBACK_DIGEST: _recent(48)})
+                           chk.FEEDBACK_DIGEST: _recent(48),
+                           # LH 공고 감시도 주 1회 예약이다(2026-08-28a).
+                           chk.LH_NOTICE_WATCH: _recent(48)})
     assert chk.main([]) == 1
     body = (tmp_path / chk.ISSUE_BODY_FILE).read_text(encoding="utf-8")
     assert "상권 원천 감시" in body
@@ -419,7 +423,9 @@ def test_main_json_output(monkeypatch, capsys, tmp_path):
     _patch_fetch(monkeypatch, {chk.QUARTERLY_WATCH: _recent(48), chk.DISTRICT_WATCH: None,
                            chk.LIVE_HEALTH_WATCH: _recent(3),
                            # 주간 알림도 예약이라 같은 그물 안에 있다(2026-08-24c).
-                           chk.FEEDBACK_DIGEST: _recent(48)})
+                           chk.FEEDBACK_DIGEST: _recent(48),
+                           # LH 공고 감시도 주 1회 예약이다(2026-08-28a).
+                           chk.LH_NOTICE_WATCH: _recent(48)})
     assert chk.main(["--json"]) == 1
     data = json.loads(capsys.readouterr().out)
     assert data["max_age_days"] == chk.DEFAULT_MAX_AGE_DAYS
@@ -439,7 +445,9 @@ def test_main_does_not_touch_network(monkeypatch, tmp_path):
     _patch_fetch(monkeypatch, {chk.QUARTERLY_WATCH: _recent(24), chk.DISTRICT_WATCH: _recent(24),
                            chk.LIVE_HEALTH_WATCH: _recent(3),
                            # 주간 알림도 예약이라 같은 그물 안에 있다(2026-08-24c).
-                           chk.FEEDBACK_DIGEST: _recent(48)})
+                           chk.FEEDBACK_DIGEST: _recent(48),
+                           # LH 공고 감시도 주 1회 예약이다(2026-08-28a).
+                           chk.LH_NOTICE_WATCH: _recent(48)})
     assert chk.main([]) == 0
 
 
@@ -583,6 +591,7 @@ def test_default_workflows_covers_every_scheduled_workflow():
         chk.DISTRICT_WATCH,
         chk.LIVE_HEALTH_WATCH,
         chk.FEEDBACK_DIGEST,
+        chk.LH_NOTICE_WATCH,
     }
     for wf in chk.DEFAULT_WORKFLOWS:
         assert wf in chk.WORKFLOW_LABELS

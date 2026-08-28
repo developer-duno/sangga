@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  ENTRY_SECTION_PLAN,
   SECTION_EXPAND_BUDGET,
   SECTION_PLAN,
   countDefaultOpen,
@@ -43,6 +44,42 @@ describe('SECTION_PLAN — 첫 화면 펼침 상한', () => {
   it('제목에는 절대 규칙 2 의 금칙어가 없다', () => {
     // '참고 매매 시세'는 허용 대체어라 금칙어 목록에 넣지 않는다(절대 규칙 2 의 표).
     for (const plan of Object.values(SECTION_PLAN)) {
+      for (const banned of ['적정가격', '적정가', '평가액', '감정가', '가치평가']) {
+        expect(plan.title.includes(banned)).toBe(false);
+      }
+    }
+  });
+});
+
+/**
+ * 입구 화면의 배치표.
+ *
+ * 층별 화면 표와 **갈라 둔 것 자체**가 여기서 지키는 것이다 — 한 표에 섞으면 층별 화면의
+ * 펼침 예산(4장)이 두 화면에 걸쳐 나뉘어, 층별 카드를 하나 더 붙일 자리가 이유 없이
+ * 줄어든다. 그 줄어듦은 화면도 멀쩡하고 아무 시험도 안 깨진 채 조용히 일어난다.
+ */
+describe('ENTRY_SECTION_PLAN — 입구 카드', () => {
+  it('입구 카드는 전부 접힌 채로 시작한다 (건물 찾는 길을 가로막지 않는다)', () => {
+    expect(countDefaultOpen(ENTRY_SECTION_PLAN)).toBe(0);
+  });
+
+  it('★ 층별 화면 표와 섞여 있지 않다 (펼침 예산이 두 화면에 걸쳐 나뉘지 않게)', () => {
+    for (const key of Object.keys(ENTRY_SECTION_PLAN)) {
+      expect(Object.keys(SECTION_PLAN)).not.toContain(key);
+    }
+    // 층별 화면의 예산은 입구 카드가 늘어도 그대로다.
+    expect(countDefaultOpen(SECTION_PLAN)).toBeLessThanOrEqual(SECTION_EXPAND_BUDGET);
+  });
+
+  it('역할 태그는 정해진 넷 중 하나다 (즉석에서 새 말을 지어내지 않는다)', () => {
+    const allowed = ['공통', '투자자', '창업자', '중개사'];
+    for (const [key, plan] of Object.entries(ENTRY_SECTION_PLAN)) {
+      expect(allowed, `${key} 의 역할`).toContain(plan.role);
+    }
+  });
+
+  it('제목에는 절대 규칙 2 의 금칙어가 없다', () => {
+    for (const plan of Object.values(ENTRY_SECTION_PLAN)) {
       for (const banned of ['적정가격', '적정가', '평가액', '감정가', '가치평가']) {
         expect(plan.title.includes(banned)).toBe(false);
       }
