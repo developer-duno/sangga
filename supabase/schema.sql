@@ -2962,6 +2962,136 @@ grant execute on function api.list_base_prices(text) to anon, authenticated;
 notify pgrst, 'reload schema';
 
 -- =====================================================================
+-- LH 상가 공고 알림판 (2026-08-28a)
+-- =====================================================================
+-- LH 가 내는 분양·임대 **상가** 공고를 받아 두고, 지금 살아 있는 것만 화면에 보여 준다
+-- (포털 lhLeaseNoticeInfo1 · UPP_AIS_TP_CD='22'). 1년 창 실측 531건(전체 2,913건 중,
+-- 2026-08-28). 상세한 실측 근거·버린 선택지는
+-- supabase/migrations/2026-08-28a_lh_notice.sql 머리말 참조.
+--
+-- ⛔ **마감된 공고를 지우지 않는다** — 숨기는 일은 읽는 함수가 한다. 지우면 "이 지역에
+--    상가 공고가 얼마나 자주 뜨는가"를 나중에 셀 수 없고, 그 값은 다른 어떤 자료로도
+--    못 만든다.
+-- ⛔ **호실 목록·가격 칸이 없다** — 같은 기관의 공급정보 API 가 상가 공고에는 빈 응답을
+--    준다(2026-08-27 실측 2건). 상세는 dtl_url(LH 공고문)로 보낸다.
+-- ⚠️ '전국' 공고(531건 중 59건)는 지역이 없는 게 아니라 **모든 지역**이라, NULL 이 아니라
+--    is_nationwide 로 담는다 — 그러지 않으면 어느 지역에서도 안 보인다.
+create table if not exists lh_notice (
+  -- LH 공고 식별자. **숫자가 아니다** — '0000061158'·'BN-0001342'·'LN-…' 가 섞여 있다.
+  pan_id         text primary key,
+  pan_nm         text not null,
+  -- 종류: 코드 · 화면용 짧은 이름 · **원문 이름**을 다 남긴다. 짧은 이름은 우리가 지은
+  -- 말이라, 원문이 없으면 LH 가 종류를 늘렸을 때 대조할 근거가 사라진다.
+  -- 실측 4종: 23 분양ㆍ(구)임대상가(입찰) / 24 임대상가(추첨) / 43 임대상가(입찰) /
+  --           38 임대상가(공모ㆍ심사)
+  kind_cd        text not null,
+  kind_nm        text not null,
+  kind_nm_src    text not null,
+  spl_inf_tp_cd  text,                  -- 공급정보 구분코드(220·221·223·224)
+  cnp_nm         text,                  -- LH 가 적어 준 지역 이름 그대로('경기도'·'전국')
+  sido_code      char(2),               -- 우리 시도코드로 옮긴 것. 못 옮겼으면 NULL(수집기가 경고)
+  is_nationwide  boolean not null default false,
+  -- ⛔ 상태에 CHECK 를 걸지 않는다 — LH 가 새 상태를 쓰는 날 수집이 통째로 멈춘다.
+  --    실측 5종(접수마감·상담요청·공고중·정정공고중·접수중).
+  pan_ss         text,
+  notice_date    date,                  -- 원본 '2026.08.27' 을 날짜로. 비어 있을 수 있다
+  close_date     date,
+  dtl_url        text,
+  collected_at   timestamptz not null default now()
+);
+
+comment on table lh_notice is
+  'LH 분양·임대 상가 공고 목록(포털 lhLeaseNoticeInfo1, UPP_AIS_TP_CD=22 만). '
+  '⛔ 마감된 공고도 지우지 않는다 — 숨기는 일은 list_lh_notices() 가 한다. '
+  '⛔ anon 에게 통째로 닫혀 있고 list_lh_notices() 로만 읽는다. '
+  '⛔ 호실 목록·가격은 없다(공급정보 API 가 상가에는 빈 응답 — 2026-08-27 실측).';
+comment on column lh_notice.pan_id is
+  'LH 공고 식별자. 숫자가 아니다 — ''0000061158''·''BN-0001342''·''LN-…'' 가 섞여 있다.';
+comment on column lh_notice.sido_code is
+  '시도 2자리. LH 지역명을 옮긴 값이며 옮기지 못했으면 NULL(수집기가 경고한다). '
+  '''전국''은 NULL 이 아니라 is_nationwide=true 로 담는다.';
+comment on column lh_notice.kind_nm_src is
+  'LH 원문 종류명. kind_nm 은 화면용으로 우리가 줄인 말이라, 원문이 있어야 나중에 '
+  'LH 가 종류를 늘렸을 때 대조할 수 있다.';
+
+create index if not exists idx_lh_notice_close on lh_notice (close_date);
+create index if not exists idx_lh_notice_sido on lh_notice (sido_code);
+
+alter table lh_notice enable row level security;
+
+-- ⛔ 위쪽의 `revoke all on all tables in schema public` 은 그 줄을 지날 때의 표만 닫는
+--    일회성 명령이라 여기서 만든 표에는 안 걸린다. 만든 자리에서 다시 닫는다.
+revoke all on lh_notice from public, anon, authenticated;
+
+-- ── list_lh_notices — 이 지역에서 지금 살아 있는 공고 ─────────────────────────
+-- ⛔ 마감 지난 것을 여기서 뺀다(창고에는 남는다). 화면이 스스로 거르게 두면 언젠가 한
+--    화면이 그 규칙을 빠뜨리고, 그날 사용자는 끝난 공고를 보고 헛걸음한다.
+-- ⛔ 마감일을 **모르는** 공고(NULL)는 빼지 않는다 — 모른다고 숨기면 살아 있는 공고가
+--    조용히 사라진다. 정렬에서 맨 뒤로 보낸다.
+create or replace function list_lh_notices(p_sido text)
+returns table (
+  pan_id       text,
+  pan_nm       text,
+  kind_nm      text,
+  pan_ss       text,
+  notice_date  date,
+  close_date   date,
+  dtl_url      text,
+  collected_at timestamptz
+)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  -- ⛔ 파라미터를 그대로 쓰지 않는다 — 서명은 text 인데 컬럼은 char(2) 라, 그대로 비교하면
+  --    컬럼 쪽이 캐스트돼 인덱스가 무력해진다(2026-08-16b 와 같은 함정).
+  -- ⚠️ 앞 2자리만 쓴다 — 화면의 지역 고르개는 시군구 코드(11680)를 들고 있다.
+  v_sido char(2) := nullif(left(btrim(coalesce(p_sido, '')), 2), '');
+begin
+  return query
+    select n.pan_id, n.pan_nm, n.kind_nm, n.pan_ss,
+           n.notice_date, n.close_date, n.dtl_url, n.collected_at
+      from lh_notice n
+     where ((v_sido is not null and n.sido_code = v_sido) or n.is_nationwide)
+       and (n.close_date is null or n.close_date >= current_date)
+     order by n.close_date asc nulls last, n.notice_date desc nulls last, n.pan_id;
+end;
+$$;
+
+comment on function list_lh_notices(text) is
+  '이 지역에서 지금 살아 있는 LH 상가 공고(마감 지난 것은 뺀다 — 창고에는 남아 있다). '
+  '''전국'' 공고는 어느 지역을 골라도 함께 나온다. 시군구 코드를 넘겨도 앞 2자리로 본다.';
+
+revoke all on function list_lh_notices(text) from public, anon, authenticated;
+
+create or replace function api.list_lh_notices(p_sido text)
+returns table (
+  pan_id       text,
+  pan_nm       text,
+  kind_nm      text,
+  pan_ss       text,
+  notice_date  date,
+  close_date   date,
+  dtl_url      text,
+  collected_at timestamptz
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$ select * from public.list_lh_notices(p_sido) $$;
+
+revoke all on function api.list_lh_notices(text) from public, anon, authenticated;
+grant execute on function api.list_lh_notices(text) to anon, authenticated;
+
+-- ⛔ public.list_lh_notices 는 끝까지 닫아 둔다 — 통과 함수가 security definer 다.
+
+-- 안 알리면 새 스키마 캐시가 다음 재시작까지 안 잡혀 404 가 난다.
+notify pgrst, 'reload schema';
+
+-- =====================================================================
 -- 완료
 -- =====================================================================
 -- 다음 단계:

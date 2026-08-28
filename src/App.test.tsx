@@ -170,6 +170,118 @@ describe('App — 구를 바꾸면 이전 결과가 사라진다', () => {
 });
 
 /**
+ * 입구 카드 — LH 상가 분양·입점 공고.
+ *
+ * 카드 안쪽(요약 문구·링크·빈손 처리)은 `components/LhNoticeSection.test.tsx` 가 촘촘히
+ * 덮는다. 여기서 보는 것은 **여러 조각을 이어 붙였을 때만 드러나는 것 하나** — 이 카드가
+ * 서고 사라지는 **때**다. 조건이 App 의 상태 셋(구·선택 건물·되살리는 중)에 걸려 있어
+ * 컴포넌트 시험만으로는 볼 수 없다.
+ */
+describe('App — 입구의 LH 공고 카드', () => {
+  const lhNotice = {
+    pan_id: '2026-0001',
+    pan_nm: '서울강남 A1블록 단지내상가 입찰공고',
+    kind_nm: '분양 입찰',
+    pan_ss: '공고중',
+    notice_date: '2026-08-20',
+    close_date: '2026-09-17',
+    dtl_url: 'https://apply.lh.or.kr/notice/2026-0001',
+    collected_at: new Date(2026, 7, 27, 9, 0).toISOString(),
+  };
+
+  /** 기본 목에 LH 응답만 얹는다(나머지 함수는 beforeEach 의 것을 그대로 쓴다). */
+  function withLhNotices(rows: unknown[] = [lhNotice]) {
+    const base = rpc.getMockImplementation()!;
+    rpc.mockImplementation((fn: string, args?: unknown) =>
+      fn === 'list_lh_notices' ? Promise.resolve({ data: rows, error: null }) : base(fn, args),
+    );
+  }
+
+  it('구를 고르면 접힌 카드로 서고, 시도 두 자리로 묻는다', async () => {
+    // ⚠️ 주소는 시험끼리 이어진다(replaceState 가 그대로 남는다) — 앞 시험이 남긴 구가
+    //    묻어 오면 "구를 고르기 전"이 아니게 되므로 첫 화면으로 되돌려 놓고 시작한다.
+    openWith('');
+    withLhNotices();
+    render(<App />);
+
+    // 구를 고르기 전에는 물을 곳이 없다 — 카드도 질문도 없다.
+    await screen.findByRole('button', { name: /^서울$/ });
+    expect(screen.queryByText('LH 상가 분양·입점 공고')).toBeNull();
+
+    await pickGu('서울', '강남구');
+
+    expect(await screen.findByText('LH 상가 분양·입점 공고')).toBeTruthy();
+    const toggle = screen.getByRole('button', { name: /LH 상가 분양·입점 공고/ });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    // ⚠️ 계약은 시도 두 자리다(서버도 앞 두 자리만 보게 막혀 있지만 거기 기대지 않는다).
+    expect(rpc.mock.calls.filter(([fn]) => fn === 'list_lh_notices')[0][1]).toEqual({
+      p_sido: '11',
+    });
+  });
+
+  it('★ 건물을 고르면 사라지고, 선택을 풀면 다시 보인다 (분석 화면을 어지럽히지 않는다)', async () => {
+    openWith('');
+    withLhNotices();
+    render(<App />);
+    await pickGu('서울', '강남구');
+    await screen.findByText('LH 상가 분양·입점 공고');
+
+    const input = screen.getByLabelText('건물명 또는 주소');
+    fireEvent.change(input, { target: { value: '테헤란로' } });
+    fireEvent.submit(input.closest('form')!);
+    fireEvent.click(await screen.findByRole('button', { name: /테스트빌딩/ }));
+
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+    expect(screen.queryByText('LH 상가 분양·입점 공고')).toBeNull();
+
+    // 새 검색을 걸면 선택이 풀린다 — 다시 입구 상태다.
+    fireEvent.change(input, { target: { value: '역삼' } });
+    fireEvent.submit(input.closest('form')!);
+    expect(await screen.findByText('LH 상가 분양·입점 공고')).toBeTruthy();
+  });
+
+  it('링크로 들어와 되살리는 동안에는 카드를 먼저 그리지 않는다 (나타났다 사라지지 않게)', async () => {
+    // 층 목록 응답을 붙잡아 "되살리는 중"을 만든다(위 ★ 시험과 같은 방식).
+    let release: ((r: { data: unknown; error: unknown }) => void) | null = null;
+    const pending = new Promise<{ data: unknown; error: unknown }>((r) => {
+      release = r;
+    });
+    from.mockImplementation((view: string) => {
+      if (view === 'v_coverage_stats') return makeQuery({ data: [], error: null });
+      const q: Record<string, unknown> = {};
+      for (const m of ['select', 'eq', 'order', 'limit']) q[m] = () => q;
+      q.then = (cb: (r: unknown) => unknown) => pending.then(cb);
+      return q;
+    });
+    withLhNotices();
+
+    // ⓘ 링크의 건물 id 는 아래 `LINK_BLD` 와 같은 값이지만, 그 상수는 이 블록보다 뒤에
+    //   선언돼 있어 여기서는 픽스처에서 그대로 얻는다(같은 값을 두 번 적지 않는다).
+    openWith(`?sgg=11680&bld=${hit().bld_id}`);
+    render(<App />);
+
+    await screen.findByText('링크에 담긴 건물을 불러오는 중입니다…');
+    expect(screen.queryByText('LH 상가 분양·입점 공고')).toBeNull();
+
+    release!({ data: [floorRow()], error: null });
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+    expect(screen.queryByText('LH 상가 분양·입점 공고')).toBeNull();
+  });
+
+  it('열린 공고가 없으면 입구에 아무것도 안 생긴다', async () => {
+    openWith('');
+    withLhNotices([]);
+    render(<App />);
+    await pickGu('서울', '강남구');
+
+    await waitFor(() =>
+      expect(rpc.mock.calls.filter(([fn]) => fn === 'list_lh_notices')).toHaveLength(1),
+    );
+    expect(screen.queryByText('LH 상가 분양·입점 공고')).toBeNull();
+  });
+});
+
+/**
  * 주소로 들고 다니기 (공유 링크 · 새로고침 복원).
  *
  * 여기서 특히 지키는 것

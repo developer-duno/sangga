@@ -1181,6 +1181,94 @@ body {
   line-height: 1.7;
 }
 
+/* ── LH 상가 분양·입점 공고 (입구 카드) ───────────────────────────────── */
+/*
+   ⚠️ 이 카드만 **입구**(구는 골랐고 건물은 아직 안 고른 자리)에 선다. 층별 화면의 카드
+      다섯 장과 달리 여기 내용은 우리가 잰 값이 아니라 **남의 집(LH) 공고 목록**이라,
+      배경을 따뜻한 쪽(경고 톤과 같은 계열)으로 두어 "밖으로 나가는 자리"임을 보인다.
+   ⚠️ `.card--closed` 보다 **위**에 둔다 — 여기서 padding 을 다시 잡으므로, 아래에 두면
+      접힌 상태의 아래 여백 규칙이 이 카드에서만 조용히 안 먹는다(.tx·.band·.mix 와 같다).
+*/
+.lh {
+  margin: 0 0 24px;
+  padding: 14px 16px 6px;
+  background: #fdfbf6;
+}
+
+.lh__lead {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.lh__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/*
+   한 줄에 종류·이름·상태·마감·링크. 이름만 남는 자리를 늘리고(minmax(0,1fr)) 나머지는
+   내용 크기로 둔다 — 공고명이 길어도 다른 칸을 밀어내지 않는다.
+*/
+.lh__list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.lh__list li:first-child {
+  border-top: none;
+}
+
+/* 종류 배지. 값·등급이 아니라 "무슨 공고인가"만 말한다. */
+.lh__kind {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-line);
+  color: var(--under);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.lh__nm {
+  flex: 1 1 240px;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.lh__ss {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* 마감은 이 목록에서 가장 먼저 눈에 들어와야 하는 값이다. */
+.lh__close {
+  color: var(--under);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.lh__link {
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.lh__src {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
 /*
    접힌 카드는 머리 + 요약 한 줄뿐이라 아래 여백이 남는다.
 
@@ -1713,6 +1801,7 @@ body {
   .tx__block,
   .mix__block,
   .floor,
+  .lh__list li,
   .tx__list li,
   .tx__bands li,
   .mix__bars li,
@@ -1742,6 +1831,26 @@ body {
   .floor__row {
     color: inherit;
     cursor: auto;
+  }
+
+  /*
+    ⛔ **LH 공고 카드는 종이에서도 남긴다.** 인쇄에서 빼는 것은 `.region`·`.search` 처럼
+       **누르는 장치**이지 내용이 아니고(지도는 남고 지도 버튼만 빠지는 것과 같다), 이
+       카드는 "지금 무엇이 열려 있나"라는 내용이다.
+
+    다만 종이에서는 링크를 누를 수 없다 — 파란 글씨만 남으면 그 줄은 아무 데도 못 간다.
+    그래서 주소를 글자로 함께 적는다(종이 머리글이 원본 주소를 적는 것과 같은 이유).
+    주소는 길어서 종이 폭을 넘기므로 아무 데서나 줄을 바꾸게 둔다.
+  */
+  .lh__link {
+    color: inherit;
+    word-break: break-all;
+  }
+
+  .lh__link::after {
+    content: ' (' attr(href) ')';
+    color: var(--muted);
+    font-size: 11px;
   }
 
   /*

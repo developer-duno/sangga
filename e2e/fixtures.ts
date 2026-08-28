@@ -4,6 +4,7 @@ import type {
   CoverageStats,
   FloorRow,
   IndustryMix,
+  LhNotice,
   ParcelTransaction,
   PriceBand,
   SigunguTxStat,
@@ -194,6 +195,28 @@ export function industryMix(over: Partial<IndustryMix> = {}): IndustryMix {
         { cd: 'G2', nm: '소매', n: 50 },
       ],
     },
+    ...over,
+  };
+}
+
+/**
+ * LH 상가 분양·입점 공고 한 줄(함수 list_lh_notices). 입구 카드에만 쓴다.
+ *
+ * ⚠️ `collected_at` 은 **현지 시각으로 지어** 쓴다 — 돌리는 시간대·날짜에 따라 요약 줄의
+ *    "M월 D일 수집 기준"이 달라지면 시험이 어느 날 갑자기 빨개진다(글로벌 규칙: 시험에
+ *    시각을 박아 넣지 않는다). 필드셋은 단위 테스트(src/components/LhNoticeSection.test.tsx
+ *    의 notice())와 같다 — 여기서 새 응답 모양을 발명하지 않는다.
+ */
+export function lhNotice(over: Partial<LhNotice> = {}): LhNotice {
+  return {
+    pan_id: '2026-0001',
+    pan_nm: '서울강남 A1블록 단지내상가 입찰공고',
+    kind_nm: '분양 입찰',
+    pan_ss: '공고중',
+    notice_date: '2026-08-20',
+    close_date: '2026-09-17',
+    dtl_url: 'https://apply.lh.or.kr/notice/2026-0001',
+    collected_at: new Date(2026, 7, 27, 9, 0).toISOString(),
     ...over,
   };
 }

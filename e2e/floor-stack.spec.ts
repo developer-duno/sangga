@@ -9,6 +9,7 @@ import {
   priceBandGate,
   industryMix,
   basePrices,
+  lhNotice,
 } from './fixtures';
 
 /**
@@ -65,6 +66,10 @@ const INDUSTRY_MIX_PATTERN = '**/rest/v1/rpc/list_industry_mix*';
 const INDUSTRY_DETAIL_PATTERN = '**/rest/v1/rpc/list_industry_detail*';
 // 의견함(2026-08-24b). 화면에서 창고로 **나가는** 유일한 길이라, 여기만 방향이 반대다.
 const FEEDBACK_PATTERN = '**/rest/v1/rpc/submit_feedback*';
+// LH 상가 분양·입점 공고 — 유일하게 **입구**(건물을 고르기 전)에서 나가는 요청이다.
+// ⚠️ 층 스택이 아니라 구를 고르는 순간 나가므로 `mockFloorStack` 이 아니라
+//    `mockOpenSigungu` 와 한 쌍으로 막는다(아래).
+const LH_NOTICE_PATTERN = '**/rest/v1/rpc/list_lh_notices*';
 
 const CORS_HEADERS = {
   'access-control-allow-origin': '*',
@@ -160,6 +165,15 @@ async function mockOpenSigungu(
   ],
 ) {
   await mockJson(page, SIGUNGU_PATTERN, rows);
+  /*
+    구를 고르는 순간 입구 카드(LH 공고)가 함께 묻는다 — 안 막으면 그 요청이 실존하지
+    않는 도메인으로 나가 테스트가 DNS 에 좌우된다.
+
+    기본값은 **함수가 없는 상태**(404/PGRST202)다. 마이그레이션 적용 전 라이브가 바로 그
+    상태이고, 그때 카드가 조용히 사라지는지가 테스트 X 의 관심사다. 공고를 보고 싶은
+    테스트는 이 뒤에 자기 응답을 한 번 더 등록한다(나중에 등록한 것이 먼저 잡힌다).
+  */
+  await mockMissingFunction(page, LH_NOTICE_PATTERN);
 }
 
 /** 시도 칩을 눌러 구 목록을 펼치고, 그 안의 구 칩을 눌러 고른다. */
@@ -983,5 +997,86 @@ test.describe('층별 스택뷰 — 국세청 기준시가', () => {
     // 카드도 값도 그대로다 — "기준시가 없음"이라고 적지도 않는다.
     await expect(band.locator('.band__val').first()).toBeVisible();
     await expect(band).not.toContainText('기준시가');
+  });
+});
+
+test.describe('입구 — LH 상가 분양·입점 공고', () => {
+  /**
+   * 이 카드만 **입구**(구는 골랐고 건물은 아직 안 고른 자리)에 선다.
+   *
+   * 여기서만 잡히는 것
+   * ------------------
+   * 카드 안쪽(요약 문구·링크·빈손 처리)은 단위 시험이 촘촘히 덮는다. 진짜 브라우저라야
+   * 보이는 것은 **서는 자리와 사라지는 때**다 — 구를 고르는 순간 요청이 실제로 나가는지,
+   * 건물을 고르면 분석 화면을 어지럽히지 않고 물러나는지.
+   */
+
+  test('W. 구를 고르면 접힌 카드로 서고, 펼치면 공고 줄과 LH 링크가 나온다', async ({ page }) => {
+    await mockOpenSigungu(page);
+    // ⚠️ mockOpenSigungu 뒤에 등록해야 이 응답이 잡힌다(나중에 등록한 것이 먼저다).
+    await mockJson(page, LH_NOTICE_PATTERN, [
+      lhNotice(),
+      lhNotice({
+        pan_id: '2026-0002',
+        pan_nm: '수서역세권 근린생활시설 임대공고',
+        kind_nm: '임대 추첨',
+        pan_ss: '접수중',
+        close_date: null,
+      }),
+    ]);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page);
+
+    await page.goto('/');
+    // 구를 고르기 전에는 물을 곳이 없다 — 카드도 없다.
+    await expect(page.locator('section.lh')).toHaveCount(0);
+
+    await pickGu(page, '서울', '강남구');
+
+    const lh = page.locator('section.lh');
+    await expect(lh).toBeVisible();
+    // 접혀 있어도 건수와 **수집일**은 읽힌다 — 마감이 있는 자료라 낡음을 감추지 않는다.
+    await expect(lh.locator('.card__summary')).toHaveText('2건 · 8월 27일 수집 기준');
+    await expect(lh.locator('.card__body')).toBeHidden();
+
+    await openCard(page, /LH 상가 분양·입점 공고/);
+    const rows = lh.locator('.lh__list li');
+    await expect(rows).toHaveCount(2);
+    await expect(rows.first()).toContainText('분양 입찰');
+    await expect(rows.first()).toContainText('서울강남 A1블록 단지내상가 입찰공고');
+    await expect(rows.first()).toContainText('공고중');
+    await expect(rows.first()).toContainText('~9월 17일');
+    // 마감일이 없는 공고를 '0월 0일'처럼 지어내지 않는다.
+    await expect(rows.nth(1)).toContainText('마감일 미정');
+
+    // 신청·가격은 우리가 옮겨 적지 않고 링크로 넘긴다(전략 — 매물은 링크로).
+    const link = rows.first().getByRole('link', { name: 'LH에서 보기' });
+    await expect(link).toHaveAttribute('href', 'https://apply.lh.or.kr/notice/2026-0001');
+    await expect(link).toHaveAttribute('target', '_blank');
+    await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    await expect(lh).toContainText('출처: 한국토지주택공사(LH)');
+
+    // ⛔ 건물을 고르면 화면의 주제가 그 건물이다 — 카드는 물러난다.
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+    await expect(page.locator('section.stack')).toBeVisible();
+    await expect(page.locator('section.lh')).toHaveCount(0);
+  });
+
+  test('X. 서버에 함수가 아직 없으면 카드가 통째로 조용히 빠진다', async ({ page }) => {
+    // 마이그레이션을 적용하기 전 라이브가 바로 이 상태다(404/PGRST202) — mockOpenSigungu 의
+    // 기본값이 그것이라 여기서는 아무것도 덧붙이지 않는다.
+    // ⓘ 검색·층 스택 목은 일부러 안 건다 — 이 시험은 건물을 고르지 않으므로 그 요청이
+    //   애초에 나가지 않는다. 안 쓰는 목을 걸어 두면 "이 시험이 그것까지 본다"고 읽힌다.
+    await mockOpenSigungu(page);
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+
+    // 검색창은 멀쩡하다 — 곁다리 하나가 입구를 통째로 죽이지 않는다.
+    await expect(page.getByLabel('건물명 또는 주소')).toBeVisible();
+    await expect(page.locator('section.lh')).toHaveCount(0);
+    // "공고 없음" 같은 말도 남기지 않는다 — 모르는 것을 없는 것이라 말하지 않는다.
+    await expect(page.locator('.app')).not.toContainText('LH 상가 분양·입점 공고');
   });
 });

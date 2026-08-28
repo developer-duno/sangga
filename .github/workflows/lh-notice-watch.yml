@@ -1,0 +1,179 @@
+# LH 상가 공고 감시 — 마감 있는 자료를 놓치지 않기 위한 장치
+#
+# 왜: 공고는 **마감이 있다**(상가는 대개 2~3주). 놓치면 나중에 받아도 이미 끝난 것을
+#     창고에 넣는 일이 된다. 수집은 전부 사람 손인데 "새 공고가 떴다"를 알려 주는 장치가
+#     없으면 잊는 것이 기본값이 된다 — 이 레포는 분기 스냅샷에서 같은 병을 앓았다.
+#
+# 무엇을 하나: 매주 포털을 확인해 **기준선보다 뒤에 뜬 상가 공고가 있으면 이슈를 연다.**
+#     그게 전부다. 받는 것·적재는 사람이 로컬에서 한다 —
+#       ① 적재하려면 DB 서비스키를 GitHub 에 올려야 하는데, 알림만 하면 비밀값이
+#          **읽기 전용 공공 API 키 하나(MOLIT_KEY)** 로 끝난다.
+#       ② 공고는 사람이 내용을 눈으로 훑을 값어치가 있다.
+#
+# ⛔ 이 워크플로는 **창고(Supabase)를 건드리지 않는다.** DB 주소·서비스키는 여기 없다.
+#
+# ⚠️ GitHub 는 저장소에 60일간 활동이 없으면 예약 실행을 자동으로 멈춘다.
+#    그 경우는 스스로 못 알리므로 형제 감시들이 이 워크플로를 대신 지켜본다.
+name: LH 상가 공고 감시
+
+on:
+  schedule:
+    # 매주 월요일 01:30 UTC = 10:30 KST. 형제들이 00:00·00:30·01:00 UTC 라 30분씩
+    # 비켜 간다 — 같은 시각에 몰리면 큐가 밀릴 때 함께 드롭된다.
+    - cron: "30 1 * * 1"
+  # 손으로 즉시 돌려보고 싶을 때 (Actions 탭 → Run workflow)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  # 형제 감시의 **실행 기록**을 읽어야 그쪽 예약이 살아 있는지 볼 수 있다.
+  actions: read
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Seoul # 로컬(KST)과 시간축 통일
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # ⚠️ 인증키가 없으면 job 을 **실패시키지는 않는다.** 여기서 죽이면 아래 상호 감시
+      #    단계가 통째로 안 돌아, 형제 감시가 죽어도 이 워크플로가 못 알린다
+      #    (2026-08-10 사고가 정확히 그 형태였다 — 앞 단계 실패가 뒤 단계를 삼켰다).
+      #
+      # ⛔ **그렇다고 조용히 넘어가서도 안 된다.** 건너뛰어도 job 은 '성공'으로 기록되므로,
+      #    형제 감시들 눈에는 멀쩡해 보이는 채로 **공고를 영영 안 보는 상태**가 계속된다.
+      #    이 레포가 가장 여러 번 데인 형태(조용한 누락)라, 다음 단계에서 이슈를 연다
+      #    (의견함 주간 알림과 같은 처방 — 2026-08-24c).
+      - name: 인증키가 있나
+        id: creds
+        env:
+          MOLIT_KEY: ${{ secrets.MOLIT_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MOLIT_KEY:-}" ]; then
+            echo "저장소 Secret MOLIT_KEY 가 없습니다 — 이번 주 확인은 건너뜁니다."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 열려 있는 같은 제목이 있으면 건너뛴다 → 사람이 키를 넣고 닫으면 끝난다.
+      - name: 인증키가 없으면 그 사실을 알린다
+        if: steps.creds.outputs.ready == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TITLE="LH 공고 감시가 꺼져 있습니다 — 인증키 하나가 필요합니다"
+          if gh issue list --state open --limit 100 --json title --jq '.[].title' | grep -Fxq "$TITLE"; then
+            echo "이미 열린 같은 이슈가 있습니다 — 건너뜁니다."
+            exit 0
+          fi
+          gh issue create --title "$TITLE" --body-file .github/lh-notice-setup-issue.md
+          echo "이슈를 열었습니다: $TITLE"
+
+      # 스크립트는 표준 라이브러리만 쓴다 — 설치 단계가 없다.
+      #
+      # ⚠️ 종료코드 1 은 실패가 아니라 **"새 공고가 있다"**는 뜻이다(공고는 마감이 있어
+      #    "있는데 아무도 안 봄"이 곧 손실이라 그렇게 정했다). 조회 자체가 실패하면 2 다.
+      #    `continue-on-error` 로 뭉뚱그리면 둘을 못 가려 **진짜 실패가 조용히 묻힌다** —
+      #    그래서 여기서 손수 가른다.
+      - name: 새 공고가 떴는지 확인
+        id: check
+        if: steps.creds.outputs.ready == 'true'
+        env:
+          MOLIT_KEY: ${{ secrets.MOLIT_KEY }}
+        run: |
+          set +e
+          python scripts/check_lh_notices.py
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; then
+            exit 0
+          fi
+          echo "LH 공고 조회에 실패했습니다 (종료코드 $rc)."
+          exit "$rc"
+
+      # 제목에 **가장 최근 공고일과 건수**가 박혀 있다. 열린·닫힌 이슈를 통틀어 같은 제목이
+      # 있으면 건너뛴다 → 한 번 닫으면 그 판으로는 다시 안 열린다. 새 공고가 또 뜨면
+      # 제목이 달라져 새 이슈가 열린다.
+      - name: 새 공고가 있으면 이슈를 연다
+        if: steps.check.outputs.found == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ steps.check.outputs.title }}
+        run: |
+          set -euo pipefail
+          if gh issue list --state all --limit 200 --json title \
+               --jq '.[].title' | grep -Fxq "$TITLE"; then
+            echo "같은 제목의 이슈가 이미 있습니다 — 건너뜁니다: $TITLE"
+            exit 0
+          fi
+          gh issue create \
+            --title "$TITLE" \
+            --body-file lh_new_notice_issue.md
+          echo "이슈를 열었습니다: $TITLE"
+
+      # ── 상호 감시 ────────────────────────────────────────────────────────
+      # 여기까지 왔다는 건 **내 예약은 살아 있다**는 뜻이다. 그 김에 형제 감시들이 아직
+      # 도는지 본다 — 예약이 아예 안 도는 경우(60일 무활동 자동중지·큐 드롭)는 실패조차
+      # 없어서 그쪽 워크플로우 스스로는 절대 알릴 수 없기 때문이다.
+      #
+      # continue-on-error 인 이유: 이 점검이 못 돌았다고 job 을 실패시키면 아래 failure()
+      # 가 "LH 감시가 실패했습니다"라는 **엉뚱한 이슈**를 연다.
+      # `if: !cancelled()` 가 없으면 **내 본연의 감시가 실패한 주에는 형제를 안 본다** —
+      # 앞 단계가 실패하면 job status 가 failure 라 뒤 단계가 통째로 건너뛰어진다.
+      - name: 형제 감시들이 아직 도는지 확인
+        id: heartbeat
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/check_watch_heartbeat.py --workflow sangkwon-quarterly-watch.yml --workflow district-source-watch.yml --workflow live-health-watch.yml --workflow feedback-digest.yml
+
+      # 제목에 날짜가 없으므로 **열려 있는** 같은 제목만 건너뛴다 →
+      # 사람이 닫아야 다음 사고를 다시 알린다.
+      - name: 형제 감시가 멈췄으면 이슈를 연다
+        if: ${{ !cancelled() && steps.heartbeat.outputs.stale == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ steps.heartbeat.outputs.title }}
+        run: |
+          set -euo pipefail
+          if gh issue list --state open --limit 100 --json title --jq '.[].title' | grep -Fxq "$TITLE"; then
+            echo "이미 열린 같은 이슈가 있습니다 — 건너뜁니다: $TITLE"
+            exit 0
+          fi
+          gh issue create --title "$TITLE" --body-file watch_heartbeat_issue.md
+          echo "이슈를 열었습니다: $TITLE"
+
+      # 감시가 **실패하면 이슈가 안 열린다.** 그런데 아무도 Actions 탭을 들여다보지
+      # 않으므로, 새 공고를 놓쳐도 아무 신호가 없다 — 조용한 실패가 자료를 잃는 두 번째
+      # 경로다(2026-08-10 에 실제로 예약이 죽은 걸 나흘 뒤에야 알았다).
+      - name: 감시가 실패하면 그 사실을 이슈로 알린다
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          TITLE="LH 공고 감시가 실패했습니다 — 사람이 직접 확인해 주세요"
+          # 매주 같은 이슈가 쌓이면 알림이 소음이 되고, 소음은 무시된다.
+          # **열려 있는** 같은 제목이 있으면 건너뛴다 → 닫아야 다음 실패를 다시 알린다.
+          if gh issue list --state open --limit 100 --json title \
+               --jq '.[].title' | grep -Fxq "$TITLE"; then
+            echo "이미 열린 실패 이슈가 있습니다 — 건너뜁니다: $TITLE"
+            exit 0
+          fi
+          {
+            cat .github/lh-notice-failure-issue.md
+            echo
+            echo "실패한 실행: $RUN_URL"
+          } > lh_failure_issue.md
+          gh issue create --title "$TITLE" --body-file lh_failure_issue.md
+          echo "실패 알림 이슈를 열었습니다: $TITLE"

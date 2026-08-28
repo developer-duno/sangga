@@ -137,7 +137,7 @@ jobs:
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: python scripts/check_watch_heartbeat.py --workflow sangkwon-quarterly-watch.yml --workflow district-source-watch.yml --workflow live-health-watch.yml
+        run: python scripts/check_watch_heartbeat.py --workflow sangkwon-quarterly-watch.yml --workflow district-source-watch.yml --workflow live-health-watch.yml --workflow lh-notice-watch.yml
 
       # 제목에 날짜가 없으므로 **열려 있는** 같은 제목만 건너뛴다 →
       # 사람이 닫아야 다음 사고를 다시 알린다.
