@@ -36,6 +36,7 @@ import { KNOWN_BAND_STATUS } from '../lib/priceBand';
 import { SECTION_PLAN } from '../lib/sectionCards';
 import { PriceBandSection } from './PriceBandSection';
 import { IndustryMixSection } from './IndustryMixSection';
+import { RentStatSection } from './RentStatSection';
 import { SectionCard } from './SectionCard';
 
 /**
@@ -467,7 +468,7 @@ export function FloorStack({ building }: Props) {
       </header>
 
       {/*
-        여기부터 아래가 **카드 다섯 장**이다(로드맵 Wave 2 『한 장 요약 접힘 틀』).
+        여기부터 아래가 **카드 여섯 장**이다(로드맵 Wave 2 『한 장 요약 접힘 틀』).
         제목·역할 태그·기본 펼침은 전부 `SECTION_PLAN` 한 표에서 온다 — 카드마다 따로
         정하면 "첫 화면에 몇 장이 펼쳐져 있나"를 아무 데서도 셀 수 없어 상한(4장)이
         조용히 깨진다.
@@ -591,6 +592,17 @@ export function FloorStack({ building }: Props) {
           });
         }}
       />
+
+      {/*
+        상권 임대 동향(결정 0024). 자기가 알아서 묻고, 못 읽으면 스스로 사라진다
+        — 마이그레이션 적용 전 라이브에서는 함수가 없어(PGRST202) 그 상태가 된다.
+
+        ⚠️ 바로 위 참고 시세(추정)와 **다른 자로 잰 다른 값**이다 — 이쪽은 우리가 어림한
+           것이 아니라 부동산원이 조사해 공표한 값이고, 대상도 이 건물이 아니라 이 건물이
+           속한 상권이다. 두 카드를 나란히 두되 **한 줄에 섞거나 서로 견주는 문구를 쓰지
+           않는다**(카드 안의 첫 줄과 등급 문단이 그 경계를 지킨다).
+      */}
+      <RentStatSection pnu={building.pnu} />
 
       <p className="grade">
         <span className="grade__badge">D등급 · 간접 추론</span>

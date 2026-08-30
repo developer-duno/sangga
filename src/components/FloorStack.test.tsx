@@ -57,6 +57,14 @@ const responses = {
    * 여기 있는 다른 시험들의 화면이 그대로 유지된다(마이그레이션 적용 전 라이브와 같은 상태).
    */
   industryMix: { data: null as unknown, error: { message: 'not applied' } as unknown },
+  /**
+   * 서버 함수 list_rent_stats 의 응답(상권 임대 동향 · 결정 0024).
+   *
+   * 기본값을 **오류**로 둔다(업종 분포와 같은 이유) — 이 파일은 층 스택을 보는 곳이고
+   * 그 카드는 `RentStatSection.test.tsx` 가 따로 본다. 오류면 카드가 스스로 사라지므로
+   * 여기 있는 다른 시험들의 화면(카드 다섯 장)이 그대로 유지된다.
+   */
+  rent: { data: null as unknown, error: { message: 'not applied' } as unknown },
 };
 
 /** 마지막 rpc 호출의 인자. "구 코드를 pnu 에서 뽑아 보내는가"를 여기서 확인한다. */
@@ -97,6 +105,9 @@ vi.mock('../lib/supabase', () => ({
       if (fn === 'count_nearby_permits') {
         return Promise.resolve({ data: null, error: { message: 'not applied' } });
       }
+      // 상권 임대 동향(결정 0024). 갈라 답하지 않으면 상권 응답(객체)이 흘러들어 모양
+      // 검사에 걸리고, 그러면 이 카드가 **왜** 안 뜨는지가 흐려진다(늘 미표시로 굳는다).
+      if (fn === 'list_rent_stats') return Promise.resolve(responses.rent);
       return Promise.resolve(responses.districts);
     },
   },
@@ -261,6 +272,9 @@ beforeEach(() => {
   // 기본은 오류 = 업종 섹션 미표시(마이그레이션 적용 전 라이브와 같은 상태).
   // 그 섹션 자체는 IndustryMixSection.test.tsx 가 따로 본다.
   responses.industryMix = { data: null, error: { message: 'not applied' } };
+  // 기본은 오류 = 임대 동향 카드 미표시(마이그레이션 적용 전 라이브와 같은 상태).
+  // 그 카드 자체는 RentStatSection.test.tsx 가 따로 본다.
+  responses.rent = { data: null, error: { message: 'not applied' } };
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
@@ -1702,9 +1716,33 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
   it('층 스택의 섹션은 전부 카드다 (틀을 안 쓰고 새 섹션을 끼워 넣지 못하게)', async () => {
     // `.card` 만 세면 "카드 class 를 안 붙인 섹션"이 조용히 늘어난다 — 그 섹션은 제목도
     // 역할 태그도 접기도 없이 화면에 붙는다. 겉의 section 수와 배치표 칸 수를 맞춰 막는다.
+    //
+    // ⚠️ 이 시험만은 **배치표의 카드가 전부 뜨는 상태**를 만들어야 한다. 곁다리 카드들은
+    //    자료가 없으면 스스로 사라지므로(그게 정상이다), 기본값 그대로 두면 "섹션 수 =
+    //    배치표 칸 수"가 자료 유무 때문에 어긋난다 — 여기서 보려는 것은 그게 아니다.
+    responses.industryMix = {
+      data: { snapshot_ym: '202606', radius_m: 500, districts: [], radius: { total: 3, cats: [] } },
+      error: null,
+    };
+    responses.rent = {
+      data: [
+        {
+          district_nm: '역삼역',
+          rone_region_nm: '서울>강남>테헤란로',
+          bld_type: '집합상가',
+          quarter: '2026Q2',
+          vacancy_rate: 10.08,
+          rent_per_m2: 27.06,
+          yield_rate: 0.82,
+        },
+      ],
+      error: null,
+    };
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => {
-      expect(container.querySelectorAll('.card')).toHaveLength(5);
+      expect(container.querySelectorAll('.card')).toHaveLength(
+        Object.keys(SECTION_PLAN).length,
+      );
       // 로딩 카드도 한 장으로 세어지므로 장수만 기다리면 경주가 남는다 — 응답이
       // 전부 자리 잡은 뒤에만 배치·상태·요약을 읽는다(본문 없는 카드는 버튼이 없어
       // aria-expanded 판독이 false 로 읽히는 것이 이 경주의 증상이었다).
