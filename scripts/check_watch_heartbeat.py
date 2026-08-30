@@ -24,6 +24,13 @@ GitHub REST API 로 그 워크플로우의 **가장 최근 성공 실행 시각*
      사람이 한 번 손으로 돌리면 그 주는 살아 있는 것으로 보인다 — 그래도 **점검 자체는
      실제로 일어났으므로** 조용한 낡음은 없다. 그래서 일부러 실행 종류를 가리지 않는다.
 
+  ⛔ **갓 만든 워크플로는 기록이 없는 게 정상이다.** 주 1회 예약을 금요일에 머지하면
+     첫 예약 슬롯(월요일)이 오기 전까지 성공 기록이 0건인데, 그걸 "멈췄다"로 읽으면
+     태어나자마자 부고가 뜬다(2026-08-28 LH 공고 감시가 실제로 그랬다 — 이슈 #98).
+     그래서 기록이 없을 때는 **워크플로를 언제 만들었는지**를 한 번 더 묻고, 만든 지
+     그 워크플로의 기준일이 안 지났으면 유예한다. 반대로 만든 지 기준일을 넘겼는데도
+     기록이 0건이면 그건 진짜 고장이다(cron 오타 등) — 그때는 지금처럼 알린다.
+
 이 판정을 누가 쓰나 (상호 감시)
 -------------------------------
 예약들이 **서로를 본다.** 자기 일이 끝난 뒤 나머지의 마지막 성공 나이를 재고, 오래됐으면
@@ -185,21 +192,58 @@ def parse_latest_success(payload):
     return parse_iso_utc(stamp)
 
 
+def parse_created_at(payload):
+    """워크플로우 메타 응답에서 **그것을 만든 시각**을 뽑는다.
+
+    ⚠️ 이 응답의 시각에는 밀리초가 붙는다(`2026-08-28T05:27:50.000Z` — 라이브 실측).
+       실행 기록 쪽(`run_started_at`)에는 안 붙어서 형식이 서로 다르다.
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("GitHub 응답이 객체가 아닙니다 — API 형식이 바뀌었을 수 있습니다.")
+    stamp = payload.get("created_at")
+    if not stamp:
+        raise ValueError(
+            "워크플로우 메타에 created_at 칸이 없습니다 — API 형식이 바뀌었을 수 있습니다."
+        )
+    return parse_iso_utc(stamp)
+
+
 def age_days(last_success, now):
     """마지막 성공이 며칠 전인지. 미래 시각이면 음수가 나온다(그대로 돌려준다)."""
     return (now - last_success).total_seconds() / 86400.0
 
 
-def judge(results, max_age_days=DEFAULT_MAX_AGE_DAYS, now=None):
+def is_newborn(workflow_file, created, now, max_age_days=DEFAULT_MAX_AGE_DAYS):
+    """**갓 만들어져 아직 첫 예약을 기다리는 중**인가.
+
+    만든 지 그 워크플로의 기준일이 안 지났으면 성공 기록이 0건인 게 당연하다 — 주 1회
+    예약을 금요일에 머지하면 월요일까지는 기록이 없다. 그 구간을 멈춤으로 읽으면
+    태어나자마자 부고가 뜬다(이슈 #98).
+
+    ⚠️ 만든 시각을 모르면(None) 유예하지 않는다. 모른다는 이유로 봐주면, 조회가 어긋난
+       순간부터 **진짜 멈춘 워크플로까지 영영 봐주게** 된다.
+    """
+    if created is None:
+        return False
+    return age_days(created, now) <= max_age_for(workflow_file, max_age_days)
+
+
+def judge(results, max_age_days=DEFAULT_MAX_AGE_DAYS, now=None, created_at=None):
     """조회 결과에서 **오래된 것만** 골라 목록으로 돌려준다.
 
     `results` 는 `[(워크플로우 파일명, 마지막 성공 시각 또는 None), ...]` 이다.
     순서는 준 그대로 지킨다 — 이슈 제목이 실행마다 달라지면 중복 방지가 깨진다.
+
+    `created_at` 은 `{파일명: 만든 시각}` 이다(성공 기록이 없는 것만 담긴다). 갓 만든
+    워크플로를 멈춤으로 오해하지 않기 위한 것 — `is_newborn` 참조.
     """
     now = now or datetime.datetime.now(UTC)
+    created_at = created_at or {}
     stale = []
     for workflow_file, last_success in results or []:
         if last_success is None:
+            if is_newborn(workflow_file, created_at.get(workflow_file), now, max_age_days):
+                continue  # 아직 첫 예약을 기다리는 중 — 기록이 없는 게 정상이다
             stale.append({
                 "workflow": workflow_file,
                 "label": label_of(workflow_file),
@@ -364,6 +408,25 @@ def fetch_latest_success(workflow_file):
     return parse_latest_success(_get_json_with_retry(runs_url(workflow_file)))
 
 
+def workflow_url(workflow_file, repo=REPO):
+    """그 워크플로우 **자체**(만든 시각 포함)를 달라고 하는 주소."""
+    return "{}/repos/{}/actions/workflows/{}".format(API_BASE, repo, workflow_file)
+
+
+def fetch_created_at(workflow_file):
+    """그 워크플로우를 만든 시각(UTC)."""
+    return parse_created_at(_get_json_with_retry(workflow_url(workflow_file)))
+
+
+def fetch_created_at_map(workflow_files):
+    """`{파일명: 만든 시각}`.
+
+    ⚠️ **성공 기록이 없는 것에만** 쓴다 — 평소 경로(전부 잘 도는 주)에 API 호출을 하나씩
+       더 얹지 않기 위해서다. 빈 목록이면 네트워크를 아예 안 탄다.
+    """
+    return {f: fetch_created_at(f) for f in workflow_files}
+
+
 def fetch_all(workflow_files):
     """여러 워크플로우를 순서대로 조회해 `[(파일명, 시각 또는 None), ...]` 로 돌려준다."""
     return [(f, fetch_latest_success(f)) for f in workflow_files]
@@ -417,6 +480,10 @@ def main(argv=None):
 
     try:
         results = fetch_all(workflows)
+        # 성공 기록이 없는 것만 "언제 만들었나"를 되묻는다. 갓 만든 워크플로는 첫 예약이
+        # 오기 전이라 기록이 없는 게 정상이기 때문이다(이슈 #98). 조회가 실패하면 여기서
+        # 같이 터져 종료코드 2 로 간다 — "멈췄다"가 아니라 "확인을 못 했다"가 맞다.
+        created = fetch_created_at_map([f for f, t in results if t is None])
     except Exception as e:  # 네트워크·API 형식 변경 등
         print("실행 기록 조회 실패: {}".format(e), file=sys.stderr)
         print(
@@ -427,7 +494,7 @@ def main(argv=None):
         return 2
 
     now = datetime.datetime.now(UTC)
-    stale = judge(results, max_age_days=args.max_age_days, now=now)
+    stale = judge(results, max_age_days=args.max_age_days, now=now, created_at=created)
 
     if args.json:
         print(json.dumps(
@@ -439,6 +506,10 @@ def main(argv=None):
                         "label": label_of(f),
                         "last_success": t.strftime("%Y-%m-%dT%H:%M:%SZ") if t else None,
                         "age_days": None if t is None else round(age_days(t, now), 1),
+                        # 기록이 없어도 갓 만든 것이면 멈춘 게 아니다 — 그 구분을 남긴다.
+                        "newborn": is_newborn(
+                            f, created.get(f), now, args.max_age_days
+                        ),
                     }
                     for f, t in results
                 ],
@@ -453,7 +524,13 @@ def main(argv=None):
         print("=" * 66)
         for f, t in results:
             if t is None:
-                print("  {:<12} 성공 기록 없음".format(label_of(f)))
+                born = created.get(f)
+                if is_newborn(f, born, now, args.max_age_days):
+                    print("  {:<12} 갓 만들어져 첫 예약을 기다리는 중 (만든 지 {:.1f}일)".format(
+                        label_of(f), age_days(born, now)
+                    ))
+                else:
+                    print("  {:<12} 성공 기록 없음".format(label_of(f)))
             else:
                 print("  {:<12} 마지막 성공 {} ({:.1f}일 전)".format(
                     label_of(f), t.strftime("%Y-%m-%d %H:%M UTC"), age_days(t, now)
