@@ -39,7 +39,9 @@ function notice(over: Partial<LhNotice> = {}): LhNotice {
     kind_nm: '분양 입찰',
     pan_ss: '공고중',
     notice_date: '2026-08-20',
-    close_date: '2026-09-17',
+    // 마감일은 **올해 기준 상대값**으로 짓는다 — 올해 마감이면 연도를 빼고 적으므로,
+    // 연도를 박아 두면 해가 바뀌는 순간 '~9월 17일' 단언이 저절로 빨개진다.
+    close_date: `${new Date().getFullYear()}-09-17`,
     dtl_url: 'https://apply.lh.or.kr/notice/2026-0001',
     // 시각은 **현지 시각으로 지어** 쓴다 — 돌리는 시간대·날짜에 따라 답이 달라지지
     // 않게(글로벌 규칙: 시험에 시각을 박아 넣지 않는다).
@@ -95,6 +97,17 @@ describe('LhNoticeSection — 공고가 있을 때', () => {
     fireEvent.click(await screen.findByRole('button', { name: /LH 상가 분양·입점 공고/ }));
 
     expect(screen.getByText('마감일 미정')).toBeTruthy();
+  });
+
+  it('★ 마감이 올해가 아니면 연도를 함께 적는다 (내년 마감이 지난 날짜처럼 보이지 않게)', async () => {
+    // 배선 가드 — 마감일 문장을 closeText 를 안 거치고 컴포넌트가 직접 짓게 바뀌면
+    // 연도가 조용히 사라진다(2026-08-30 라이브: 2027-06-30 이 "~6월 30일"로 보였다).
+    const nextYear = new Date().getFullYear() + 1;
+    responses.notices = { data: [notice({ close_date: `${nextYear}-06-30` })], error: null };
+    render(<LhNoticeSection sigungu="11680" />);
+    fireEvent.click(await screen.findByRole('button', { name: /LH 상가 분양·입점 공고/ }));
+
+    expect(screen.getByText(`~${nextYear}년 6월 30일`)).toBeTruthy();
   });
 
   it('★ 서버에는 시도 두 자리로 묻는다 (구 코드 다섯 자리를 그대로 보내지 않는다)', async () => {

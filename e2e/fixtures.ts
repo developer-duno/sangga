@@ -228,7 +228,10 @@ export function lhNotice(over: Partial<LhNotice> = {}): LhNotice {
     kind_nm: '분양 입찰',
     pan_ss: '공고중',
     notice_date: '2026-08-20',
-    close_date: '2026-09-17',
+    // ⚠️ 마감일도 **올해 기준 상대값**이다 — 스펙 W 가 '~9월 17일'을 단언하는데, 마감이
+    //    올해가 아니면 화면이 연도를 함께 적으므로 연도를 박아 두면 해가 바뀌는 순간
+    //    코드는 그대로인데 시험만 빨개진다.
+    close_date: `${new Date().getFullYear()}-09-17`,
     dtl_url: 'https://apply.lh.or.kr/notice/2026-0001',
     collected_at: new Date(2026, 7, 27, 9, 0).toISOString(),
     ...over,

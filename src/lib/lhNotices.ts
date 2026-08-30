@@ -28,6 +28,30 @@ export function sidoOf(sigungu: string | null | undefined): string | null {
 }
 
 /**
+ * (내부) 날짜를 연·월·일로. 시각이 붙은 값은 보는 사람의 시계로, 날짜만 있는 값은 적힌
+ * 그대로 — `monthDay` 가 쓰던 규칙 그대로다.
+ *
+ * ⛔ 이 해석을 두 벌로 복제하지 않는다. 마감일에 연도를 붙이려면 연도도 같은 규칙으로
+ *    읽어야 하는데, 규칙이 두 군데면 한쪽만 고쳐지는 날 월·일과 연도가 서로 다른 시계를
+ *    말하게 된다(자정 언저리에 "2026년 1월 1일"이 아니라 "2025년 1월 1일"이 된다).
+ */
+function parseDate(
+  value: string | null | undefined,
+): { year: number; month: number; day: number } | null {
+  if (!value) return null;
+  const s = value.trim();
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (!m) return null;
+  if (s.includes('T')) {
+    const at = new Date(s);
+    if (!Number.isNaN(at.getTime()))
+      return { year: at.getFullYear(), month: at.getMonth() + 1, day: at.getDate() };
+    // 시각이 붙어 있는데 못 읽었으면 날짜 부분만이라도 살린다(아래로 떨어진다).
+  }
+  return { year: Number(m[1]), month: Number(m[2]), day: Number(m[3]) };
+}
+
+/**
  * 날짜를 '9월 17일'로. 읽을 수 없으면 **null**(빈 글자도 '—'도 아니다).
  *
  * 왜 `format.ts` 가 아닌가 — 저기 함수들은 못 읽으면 '—' 를 준다. 여기서는 값이 없을 때
@@ -41,16 +65,8 @@ export function sidoOf(sigungu: string | null | undefined): string | null {
  *    한국보다 뒤진 시간대에서는 16일로 밀린다(마감일이 하루 당겨져 보인다).
  */
 export function monthDay(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const s = value.trim();
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
-  if (!m) return null;
-  if (s.includes('T')) {
-    const at = new Date(s);
-    if (!Number.isNaN(at.getTime())) return `${at.getMonth() + 1}월 ${at.getDate()}일`;
-    // 시각이 붙어 있는데 못 읽었으면 날짜 부분만이라도 살린다(아래로 떨어진다).
-  }
-  return `${Number(m[2])}월 ${Number(m[3])}일`;
+  const d = parseDate(value);
+  return d ? `${d.month}월 ${d.day}일` : null;
 }
 
 /**
@@ -86,10 +102,23 @@ export function lhSummary(notices: readonly LhNotice[]): string {
   return day ? `${n} · ${day} 수집 기준` : n;
 }
 
-/** 마감일 한 조각 — '~9월 17일', 없으면 '마감일 미정'. */
+/**
+ * 마감일 한 조각 — 올해 마감이면 '~9월 17일', 다른 해면 '~2027년 6월 30일'. 없으면
+ * '마감일 미정'.
+ *
+ * ⚠️ **올해가 아닐 때만 연도를 적는다.** 올해 마감에 연도는 소음이지만, 내년 마감을 연도
+ *    없이 적으면 **이미 지난 날짜처럼 읽힌다** — 2026-08-30 라이브 실측: 마감이
+ *    2027-06-30 인 청주모충2 공고가 "~6월 30일"로 보여 두 달 전에 끝난 공고로 오해됐다.
+ *    지난 해도 같다(낡은 공고가 올해 것처럼 보이면 안 된다).
+ *
+ * ⛔ 지금 시각을 **인자로 받지 않는다.** 시계를 주입받게 만들면 시험만 가짜 시계를 믿게
+ *    되고, 정작 실제 시계로 그리는 화면은 아무도 안 보게 된다(글로벌 시간대 규칙의 실사고).
+ */
 export function closeText(closeDate: string | null | undefined): string {
-  const day = monthDay(closeDate);
-  return day ? `~${day}` : '마감일 미정';
+  const d = parseDate(closeDate);
+  if (!d) return '마감일 미정';
+  const head = d.year === new Date().getFullYear() ? '' : `${d.year}년 `;
+  return `~${head}${d.month}월 ${d.day}일`;
 }
 
 /**
