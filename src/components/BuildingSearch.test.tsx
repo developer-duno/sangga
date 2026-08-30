@@ -269,6 +269,14 @@ describe('BuildingSearch — 너무 넓은 검색 안내', () => {
     const input = setup();
     search(input, '서울');
     await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy());
+    // ⚠️ dialog 가 DOM 에 보이는 순간에는 Esc 리스너가 아직 없다 — 리스너는 커밋 뒤
+    //    useEffect 에서 붙고, waitFor 는 act 밖에서 돌아 그 이펙트를 기다려 주지 않는다.
+    //    여기서 바로 keyDown 을 쏘면 느린 러너(CI)에서 이펙트보다 먼저 떨어져 유실되고,
+    //    아무도 다시 누르지 않으니 영영 안 닫힌다(2026-08-30 CI flaky 실측). 같은 이펙트가
+    //    리스너를 붙인 다음 닫기 버튼에 초점을 주므로, 초점 도착 = 리스너 부착 완료 신호다.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: '닫기' })),
+    );
     fireEvent.keyDown(window, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
