@@ -3254,6 +3254,133 @@ grant execute on function api.count_nearby_permits(text) to anon, authenticated;
 
 -- ⛔ public.count_nearby_permits 는 끝까지 닫아 둔다 — 통과 함수가 security definer 다.
 
+-- =====================================================================
+-- 함수: list_rent_stats — 이 땅이 속한 상권의 임대 조사값 (2026-08-31a · 결정 0024)
+-- =====================================================================
+-- `rent_stat` 은 2026-08-09 에 7,232행이 들어왔는데 **읽는 코드가 0줄**이었다. 이 함수
+-- 하나가 층별 화면의 여섯 번째 카드를 먹인다.
+--
+-- ⛔ **역산하지 않는다.** 절대 규칙 5 는 임대료를 부동산원 수익률·층별효용비율로 역산하라고
+--    하지만, 그 역산은 백테스트와 재결재를 거친 뒤의 일이다(결정 0013 이 매매에 그렇게 했다).
+--    이 함수는 조사값을 **그대로** 나른다 — 곱하지도, 나누지도, 층으로 펴지도 않는다.
+--    그래서 나가는 값에 `floor_util_ratio` 가 없다(있으면 화면이 언젠가 곱하게 된다).
+--
+-- ## 왜 상권을 거쳐 가나
+--
+-- rent_stat 의 지역 축은 시군구가 아니라 **상권**이다(같은 강남 안에서도 상권마다 값이
+-- 다르다). 그래서 필지 → 상권(공간) → district_rone_map(이름) → rent_stat 으로 두 번
+-- 건너간다. 이을 근거가 없으면 **줄이 아예 없다** — 시·도 평균으로 메우지 않는다.
+-- 부동산원 표본이 닿지 않는 자리가 실제로 훨씬 많고(전국 상권 중 조사 대상은 일부다),
+-- 그 자리에 상위 평균을 적으면 조사하지 않은 곳을 조사한 것처럼 말하게 된다.
+--
+-- ## 왜 (경로, 종류)마다 최신 분기를 따로 고르나
+--
+-- 전체 최신 분기 하나로 잘라 내면, 그 분기에 그 종류의 표본이 없는 상권에서 **그 종류가
+-- 통째로 사라진다**(사용자에게는 "오피스는 조사 안 하는 동네"로 보인다). 줄마다 분기를
+-- 함께 내보내므로 화면은 각 줄이 언제 것인지 정직하게 적을 수 있다.
+--
+-- ⚠️ 한 상권이 R-ONE 경로를 **둘까지** 가진다(district_rone_map 의 PK 가 복합인 이유 —
+--    부동산원이 bld_type 마다 서울 권역 분할을 달리한다). 그래서 조인이 상권당 여러 줄을
+--    낼 수 있고, 그 줄들은 **서로 다른 조사구역의 값**이다 — 화면이 조사구역 이름을 함께
+--    적어야 사람이 그 사실을 알 수 있다.
+-- ⛔ 종류(bld_type)끼리 더하거나 평균 내지 않는다 — 모집단이 다른 네 조사다.
+-- ⚠️ `rent_stat` 에는 region_nm 인덱스가 없지만 표가 7,232행뿐이라 그대로 훑는다.
+--    표가 자릿수 단위로 커지면 그때 인덱스를 만든다(지금 만들면 쓰지도 않을 것을 지킨다).
+-- ⛔ `p_pnu::char(19)` 캐스트를 지우지 말 것 — 컬럼이 char(19) 라 text 와 견주면 **컬럼 쪽**이
+--    캐스트돼 인덱스가 통째로 죽는다(2026-08-16b 실측 459.8ms↔0.796ms).
+create or replace function list_rent_stats(p_pnu text)
+returns table (
+  district_nm     text,
+  rone_region_nm  text,
+  bld_type        text,
+  quarter         text,
+  vacancy_rate    numeric,
+  rent_per_m2     numeric,
+  yield_rate      numeric
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with me as (
+    -- 좌표가 없으면 아예 답하지 않는다. 여기를 열어 두면 빈손이 "이 자리는 조사 대상이
+    -- 아니다"라는 **단정**으로 새어 나간다(list_building_districts 와 같은 원칙).
+    select p.geom as g
+    from parcel p
+    where p.pnu = p_pnu::char(19) and p.geom is not null
+  ),
+  hit as (
+    -- 술어를 st_contains 로 맞춘다 — 결정 0008·0011·0014 의 실측이 이 술어로 나온 숫자다.
+    select d.district_id, d.district_nm, d.area_m2
+    from district d cross join me
+    where st_contains(d.geom, me.g)
+  ),
+  pair as (
+    -- 이을 근거가 없는 상권은 여기서 저절로 빠진다(district_rone_map 에 행이 없다).
+    select h.district_id, h.district_nm, h.area_m2, m.rone_region_nm
+    from hit h
+    join district_rone_map m on m.district_id = h.district_id
+  ),
+  latest as (
+    -- (조사구역, 종류)마다 가장 최근 분기 한 줄. 위 머리말의 "따로 고르는" 자리다.
+    select distinct on (r.region_nm, r.bld_type)
+           r.region_nm, r.bld_type, r.quarter,
+           r.vacancy_rate, r.rent_per_m2, r.yield_rate
+    from rent_stat r
+    where r.region_nm in (select p.rone_region_nm from pair p)
+    order by r.region_nm, r.bld_type, r.quarter desc
+  )
+  select p.district_nm,
+         p.rone_region_nm,
+         l.bld_type,
+         l.quarter::text,
+         l.vacancy_rate,
+         l.rent_per_m2,
+         l.yield_rate
+  from pair p
+  join latest l on l.region_nm = p.rone_region_nm
+  -- 좁은 상권이 더 구체적인 설명이라 먼저 온다(list_building_districts 와 같은 정렬).
+  order by p.area_m2 asc, p.district_id, l.bld_type, l.region_nm;
+$$;
+
+comment on function list_rent_stats(text) is
+  '결정 0024 이 필지가 속한 상권의 한국부동산원 임대동향조사 값 — 상권 이름, 부동산원 '
+  '조사구역 이름, 건물 종류, 분기, 공실률(%), ㎡당 임대료(천원/㎡ 공표 단위 그대로), '
+  '투자수익률(%). ⛔ 역산·환산을 하지 않는다(조사값 그대로 나른다 — 층별효용비율은 안 나간다). '
+  '⛔ 이을 근거가 없으면 줄이 아예 없다 — 시·도 평균으로 메우지 않는다(조사 안 한 곳을 '
+  '조사한 것처럼 말하지 않기 위해서다). (조사구역, 종류)마다 가장 최근 분기 한 줄만 준다 — '
+  '전체 최신 분기로 자르면 그 분기에 표본이 없는 종류가 통째로 사라진다. '
+  'security definer (district·district_rone_map·rent_stat·parcel 이 anon 에게 닫혀 있어 '
+  '소유자 권한으로 대신 읽는다. 나가는 것은 상권·조사구역 이름과 공표 통계값뿐이다).';
+
+-- ⚠️ create or replace 는 권한을 유지하지만, 대시보드가 같은 함수를 다시 만들면
+--    Supabase 기본 권한이 anon 을 자동으로 붙인다. 만든 자리에서 다시 닫는다.
+revoke all on function list_rent_stats(text) from public, anon, authenticated;
+
+-- 화면이 실제로 부르는 것. public 은 REST 노출에서 빠져 있어(2026-08-24 옛 문 닫기)
+-- api 쪽에 통과 함수가 없으면 화면에서 못 부른다.
+create or replace function api.list_rent_stats(p_pnu text)
+returns table (
+  district_nm     text,
+  rone_region_nm  text,
+  bld_type        text,
+  quarter         text,
+  vacancy_rate    numeric,
+  rent_per_m2     numeric,
+  yield_rate      numeric
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$ select * from public.list_rent_stats(p_pnu) $$;
+
+revoke all on function api.list_rent_stats(text) from public, anon, authenticated;
+grant execute on function api.list_rent_stats(text) to anon, authenticated;
+
+-- ⛔ public.list_rent_stats 는 끝까지 닫아 둔다 — 통과 함수가 security definer 다.
+
 -- 안 알리면 새 스키마 캐시가 다음 재시작까지 안 잡혀 404 가 난다.
 notify pgrst, 'reload schema';
 

@@ -8,6 +8,7 @@ import type {
   NearbyPermits,
   ParcelTransaction,
   PriceBand,
+  RentStat,
   SigunguTxStat,
 } from '../src/types';
 
@@ -236,6 +237,36 @@ export function lhNotice(over: Partial<LhNotice> = {}): LhNotice {
     collected_at: new Date(2026, 7, 27, 9, 0).toISOString(),
     ...over,
   };
+}
+
+/**
+ * 상권 임대 동향 한 줄(함수 `list_rent_stats`). 결정 0024.
+ *
+ * ⛔ **조사값이지 추정이 아니다** — 위 `priceBand`(우리가 어림한 것)와 다른 자로 잰 다른
+ *    값이라 화면에서도 카드를 갈라 그린다. 필드·기본값은 단위 테스트
+ *    (src/components/RentStatSection.test.tsx 의 stat())와 같다.
+ * ⚠️ `rent_per_m2` 는 **천원/㎡**(부동산원 공표 단위 그대로)다 — 27.06 이 화면에서
+ *    '27,060원'이 되는지가 스펙 Z 의 관심사다.
+ */
+export function rentStat(over: Partial<RentStat> = {}): RentStat {
+  return {
+    district_nm: '역삼역',
+    rone_region_nm: '서울>강남>테헤란로',
+    bld_type: '집합상가',
+    quarter: '2026Q2',
+    vacancy_rate: 10.08,
+    rent_per_m2: 27.06,
+    yield_rate: 0.82,
+    ...over,
+  };
+}
+
+/** 한 상권에 종류 둘 — 고르개가 실제로 갈아 끼우는지 보려면 둘이라야 한다. */
+export function rentStats(): RentStat[] {
+  return [
+    rentStat(),
+    rentStat({ bld_type: '오피스', vacancy_rate: 5.5, rent_per_m2: 18.4, yield_rate: 1.1 }),
+  ];
 }
 
 export function coverageStats(over: Partial<CoverageStats> = {}): CoverageStats {

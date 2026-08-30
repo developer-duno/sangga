@@ -20,7 +20,7 @@ describe('SECTION_PLAN — 첫 화면 펼침 상한', () => {
   });
 
   it('상한을 넘기면 가드가 실제로 잡는다 (가드가 늘 참인 시험이 아니다)', () => {
-    // 일부러 다섯 장을 전부 펼친 표를 만들어 본다. 이 줄이 통과해야 위 시험이
+    // 일부러 카드를 전부 펼친 표를 만들어 본다. 이 줄이 통과해야 위 시험이
     // "무엇이든 통과하는 시험"이 아니라는 것이 증명된다.
     const overBudget: Record<string, SectionPlan> = Object.fromEntries(
       Object.entries(SECTION_PLAN).map(([k, v]) => [k, { ...v, defaultOpen: true }]),
@@ -29,7 +29,7 @@ describe('SECTION_PLAN — 첫 화면 펼침 상한', () => {
   });
 
   it('접힌 카드가 적어도 한 장은 있다 (틀이 실제로 쓰이는지)', () => {
-    // 다섯 장이 전부 펼침이면 접힘 틀이 화면에서 한 번도 안 쓰인다 —
+    // 카드가 전부 펼침이면 접힘 틀이 화면에서 한 번도 안 쓰인다 —
     // 코드는 남아 있는데 아무 일도 안 하는 상태가 된다.
     expect(countDefaultOpen()).toBeLessThan(Object.keys(SECTION_PLAN).length);
   });

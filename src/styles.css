@@ -1322,6 +1322,125 @@ body {
   line-height: 1.6;
 }
 
+/* ── 상권 임대 동향 (부동산원 조사 · 결정 0024) ────────────────────────────── */
+
+/*
+   ⚠️ 바탕색을 참고 시세 카드(`.band`)와 **다르게** 둔다. 두 카드가 나란히 서는데 하나는
+      우리가 어림한 추정이고 하나는 부동산원이 조사한 값이라, 같은 옷을 입히면 같은 무게로
+      읽힌다(상세계획 §7.4 "C·D는 시각적으로 구분한다"의 결).
+*/
+.rent {
+  margin: 0 0 24px;
+  padding: 14px 16px 6px;
+  background: #fbfcfd;
+}
+
+.rent__lead,
+.rent__note {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+/* 종이에서는 고르개가 빠지므로 이 줄이 "무엇을 보는 중인가"를 혼자 지킨다. */
+.rent__now {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.rent__pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.rent__pick-label {
+  color: var(--muted);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.rent__select {
+  flex: 0 1 200px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  font-size: 13px;
+}
+
+.rent__rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* 한 줄 = 상권 하나 × 조사구역 하나. 값이 여럿이라 줄바꿈을 허용한다. */
+.rent__rows li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 9px 0;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.rent__rows li:first-child {
+  border-top: none;
+}
+
+.rent__where {
+  font-weight: 600;
+}
+
+/* 우리 이름과 다른 **부동산원 쪽 이름**이라 눈에 덜 띄게 둔다(같은 무게면 두 상권으로 읽힌다). */
+.rent__scope {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.rent__vals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  flex: 1 1 100%;
+}
+
+.rent__num {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+/* 조사 시점은 값만큼 중요하다 — 줄마다 다를 수 있어 줄 안에 둔다. */
+.rent__quarter {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.rent__none,
+.rent__src {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.rent__why {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+
+.rent__why li + li {
+  margin-top: 4px;
+}
+
 /*
    접힌 카드는 머리 + 요약 한 줄뿐이라 아래 여백이 남는다.
 
@@ -1754,6 +1873,9 @@ body {
   .dmap__toggle,
   .dmap__picked--idle,
   .mix__pick,
+  /* ⛔ 고르개만 빼고 **고른 결과는 남긴다** — `.rent__now` 가 어느 종류를 보는 중인지
+     글자로 적고 있어서, 그 줄이 없으면 종이의 숫자가 무슨 종류인지 알 수 없게 된다. */
+  .rent__pick,
   .card__caret,
   .floor__caret,
   .modal__back {
@@ -1863,6 +1985,8 @@ body {
   .mix__bars li,
   .band__row,
   .band__base-rows li,
+  /* 값과 그 값이 어느 상권·어느 분기 것인지가 한 줄에 있다 — 갈리면 근거 없는 숫자가 된다. */
+  .rent__rows li,
   .grade,
   .stack__facts,
   .dmap__canvas,

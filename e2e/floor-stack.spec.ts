@@ -11,6 +11,7 @@ import {
   nearbyPermits,
   basePrices,
   lhNotice,
+  rentStats,
 } from './fixtures';
 
 /**
@@ -70,6 +71,10 @@ const INDUSTRY_DETAIL_PATTERN = '**/rest/v1/rpc/list_industry_detail*';
 // ⚠️ 기본값은 역시 **함수가 없는 상태**다 — 안 막으면 실존하지 않는 도메인으로 요청이
 //    나가 테스트가 DNS 에 좌우된다.
 const NEARBY_PERMITS_PATTERN = '**/rest/v1/rpc/count_nearby_permits*';
+// 상권 임대 동향(결정 0024). 층별 화면의 여섯 번째 카드가 이것 하나를 부른다.
+// ⚠️ 기본값은 역시 **함수가 없는 상태**다 — 마이그레이션 적용 전 라이브이 그것이고,
+//    그때 카드가 통째로 조용히 빠지는지가 테스트 AA 의 관심사다.
+const RENT_STATS_PATTERN = '**/rest/v1/rpc/list_rent_stats*';
 // 의견함(2026-08-24b). 화면에서 창고로 **나가는** 유일한 길이라, 여기만 방향이 반대다.
 const FEEDBACK_PATTERN = '**/rest/v1/rpc/submit_feedback*';
 // LH 상가 분양·입점 공고 — 유일하게 **입구**(건물을 고르기 전)에서 나가는 요청이다.
@@ -114,6 +119,7 @@ async function mockFloorStack(
   mix?: unknown,
   bases?: unknown[],
   permits?: unknown,
+  rents?: unknown[],
 ) {
   await mockJson(page, STATS_PATTERN, [coverageStats()]);
   await mockJson(page, FLOOR_PATTERN, floors ?? [floorRow()]);
@@ -146,6 +152,14 @@ async function mockFloorStack(
     await mockMissingFunction(page, NEARBY_PERMITS_PATTERN);
   } else {
     await mockJson(page, NEARBY_PERMITS_PATTERN, permits);
+  }
+  // 상권 임대 동향도 기본이 **함수가 없는 상태**다(위 상수 주석 참조).
+  // ⛔ 빈 배열로 두면 안 된다 — 그건 "물어봤더니 조사 대상이 아니었다"는 **다른 답**이라
+  //    카드가 서고, 그러면 카드 수를 세는 시험(L)이 이유 없이 달라진다.
+  if (rents === undefined) {
+    await mockMissingFunction(page, RENT_STATS_PATTERN);
+  } else {
+    await mockJson(page, RENT_STATS_PATTERN, rents);
   }
 }
 
@@ -1128,5 +1142,93 @@ test.describe('층별 스택뷰 — 둘레에 새로 올라오는 건물', () =>
     await expect(permits).not.toContainText('예정');
     // ⛔ 이 카드는 값을 말하지 않는다. 인허가 줄이 들어와도 그 성격은 그대로다.
     await expect(page.locator('section.mix')).not.toContainText('시세');
+  });
+});
+
+// ── 상권 임대 동향 (부동산원 조사 · 결정 0024) ──────────────────────────────
+// 층별 화면의 **여섯 번째 카드**다. 카드 안쪽의 규칙(단위 환산·종류 고르기·요약 문구)은
+// 단위 시험이 촘촘히 덮는다 — 여기서만 보이는 것은 **그 카드가 층별 화면에 실제로 서는가**,
+// 그리고 접힘 예산을 지키며 **접힌 채로 서는가**다.
+
+test.describe('층별 스택뷰 — 상권 임대 동향', () => {
+  test('Z. 접힌 여섯째 카드로 서고, 펼치면 조사값이 상권·분기와 함께 뜬다', async ({ page }) => {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(
+      page,
+      [],
+      priceBands(),
+      [floorRow({ floor_no: 2 }), floorRow()],
+      industryMix(),
+      undefined,
+      undefined,
+      rentStats(),
+    );
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+
+    const stack = page.locator('section.stack');
+    const rent = stack.locator('section.rent');
+    await expect(rent).toBeVisible();
+    // 카드가 하나 늘어도 **첫 화면 펼침은 여전히 넷**이다(로드맵 Wave 2 의 예산).
+    await expect(stack.locator('.card')).toHaveCount(6);
+    await expect(stack.locator('.card__toggle[aria-expanded="true"]')).toHaveCount(4);
+    // 접혀 있어도 무엇·언제는 읽힌다. ⛔ 값은 요약에 없다 — 한정어 없이 이 건물 값으로 읽힌다.
+    await expect(rent.locator('.card__summary')).toHaveText(
+      '공실률 · ㎡당 임대료 · 투자수익률 · 2026년 2분기 조사',
+    );
+    await expect(rent.locator('.card__body')).toBeHidden();
+
+    await openCard(page, /상권 임대 동향/);
+    // ★ 단위 — 공표값은 천원/㎡ 다. 1,000을 안 곱하면 '27원'이 되는데 그것도 그럴듯하다.
+    await expect(rent.getByText('㎡당 임대료 27,060원')).toBeVisible();
+    await expect(rent.getByText('공실률 10.08%')).toBeVisible();
+    // ★ '분기'가 붙어 있어야 한다 — 연 수익률로 읽히면 0.82%는 정반대의 뜻이 된다.
+    await expect(rent.getByText('투자수익률(분기) 0.82%')).toBeVisible();
+    // ⚠️ 요약 줄에도 같은 분기 글자가 있다 — **줄 안의 도장**을 콕 집어 본다(요약을 잡으면
+    //    "줄마다 분기를 적는가"라는 이 단언의 뜻이 사라진다).
+    await expect(rent.locator('.rent__quarter')).toHaveText('2026년 2분기 조사');
+    // 어느 상권의, 부동산원 어느 조사구역 값인지 함께 적는다.
+    await expect(rent.locator('.rent__where')).toHaveText('역삼역');
+    await expect(rent.locator('.rent__scope')).toHaveText(
+      '부동산원 조사구역 서울>강남>테헤란로',
+    );
+
+    // 종류를 갈아 끼우면 값이 함께 바뀌고, 무엇을 보는 중인지도 따라간다.
+    await rent.getByLabel('건물 종류 골라보기').selectOption('오피스');
+    await expect(rent.getByText('㎡당 임대료 18,400원')).toBeVisible();
+    await expect(rent.locator('.rent__now-type')).toHaveText('오피스');
+    // ⛔ 종류를 섞지 않는다 — 집합상가 값이 같은 화면에 남아 있으면 안 된다.
+    await expect(rent).not.toContainText('27,060원');
+
+    // ⛔ 이 카드는 조사값이다. 추정으로 읽히는 말이 섞이면 바로 옆 참고 시세 카드와
+    //    구분이 무너진다(사실과 추정을 가르는 것이 이 화면의 신뢰다).
+    await expect(rent).not.toContainText('추정');
+    await expect(rent).not.toContainText('시세');
+    await expect(rent.getByText(/B등급 · 공식 표본조사/)).toBeVisible();
+    await expect(rent).toContainText('출처: 한국부동산원 상업용부동산 임대동향조사');
+  });
+
+  test('AA. 서버에 함수가 아직 없으면 카드가 통째로 조용히 빠진다', async ({ page }) => {
+    // 마이그레이션을 적용하기 전 라이브가 바로 이 상태다(404/PGRST202) — mockFloorStack 의
+    // 기본값이 그것이라 여기서는 아무것도 덧붙이지 않는다.
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page, [], priceBands(), [floorRow({ floor_no: 2 }), floorRow()]);
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+
+    const stack = page.locator('section.stack');
+    // 층 목록은 멀쩡하다 — 곁다리 하나가 본체를 죽이지 않는다.
+    await expect(stack.locator('.card--floors .floor')).toHaveCount(2);
+    await expect(stack.locator('section.rent')).toHaveCount(0);
+    // "조사값 없음" 같은 말도 남기지 않는다 — 모르는 것을 없는 것이라 말하지 않는다.
+    await expect(stack).not.toContainText('상권 임대 동향');
   });
 });
