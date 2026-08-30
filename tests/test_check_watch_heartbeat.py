@@ -380,7 +380,9 @@ def test_main_checks_only_the_workflow_asked_for(monkeypatch, tmp_path):
 
     def fake(f):
         asked.append(f)
-        return _dt(1)
+        # main() 은 실제 시계를 쓴다 — 고정 상수(_dt)를 주면 날이 갈수록 늙어
+        # 저절로 깨진다(2026-08-30 CI 실사고: 8-29 초록 → 8-30 빨강, 코드 변경 0).
+        return _recent(24)
 
     monkeypatch.setattr(chk, "fetch_latest_success", fake)
     assert chk.main(["--workflow", chk.DISTRICT_WATCH]) == 0
