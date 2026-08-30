@@ -460,6 +460,33 @@ body {
   font-size: 12.5px;
 }
 
+/*
+  상권 이름표 — 한 단계 확대부터 면 위에 뜨는 작은 알약.
+
+  ⛔ **`pointer-events: none`을 지우지 말 것.** 이 화면은 지도 클릭 한 번을 받아 "누른 자리에
+     걸친 상권"을 우리가 직접 판정한다(`lib/geo.ts`). 이름표가 클릭을 받아 버리면 상권 이름
+     위를 눌렀을 때 — 즉 **가장 누르고 싶은 자리**에서 — 아무 일도 안 일어난다.
+     `DistrictMap.tsx`의 `clickable={false}`와 짝이다(카카오 쪽 차단 + 브라우저 쪽 차단).
+
+  건물 마커보다 약하게 둔다 — 이름표는 배경 설명이고, 지금 고른 건물이 주인공이다.
+*/
+.dmap__label {
+  display: inline-block;
+  max-width: 116px;
+  padding: 1px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.86);
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.6;
+  /* 긴 이름이 지도 위에서 두 줄로 접히면 면을 가린다 — 한 줄로 두고 넘치면 …로 줄인다. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
 .dmap__src {
   margin: 10px 0 0;
   color: var(--muted);

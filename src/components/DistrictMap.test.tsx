@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, act, waitFor } from '@testing-library/react';
 import type { BuildingHit, DistrictFeature, DistrictGeoJson, Ring } from '../types';
@@ -15,8 +16,11 @@ import type { BuildingHit, DistrictFeature, DistrictGeoJson, Ring } from '../typ
  */
 
 const kakao = vi.hoisted(() => ({
-  /** `<Map>` 이 마지막으로 받은 props. 클릭 이벤트를 여기서 직접 쏜다. */
-  mapProps: null as { onClick?: (m: unknown, e: unknown) => void } | null,
+  /** `<Map>` 이 마지막으로 받은 props. 클릭·확대 이벤트를 여기서 직접 쏜다. */
+  mapProps: null as {
+    onClick?: (m: unknown, e: unknown) => void;
+    onZoomChanged?: (m: { getLevel: () => number }) => void;
+  } | null,
   setBounds: vi.fn(),
   panTo: vi.fn(),
   setLevel: vi.fn(),
@@ -25,10 +29,24 @@ const kakao = vi.hoisted(() => ({
 vi.mock('react-kakao-maps-sdk', () => ({
   useKakaoLoader: () => [false, undefined],
   useMap: () => ({ setBounds: kakao.setBounds, panTo: kakao.panTo, setLevel: kakao.setLevel }),
-  Map: (props: { children?: React.ReactNode; onClick?: (m: unknown, e: unknown) => void }) => {
+  Map: (props: {
+    children?: React.ReactNode;
+    onClick?: (m: unknown, e: unknown) => void;
+    onZoomChanged?: (m: { getLevel: () => number }) => void;
+  }) => {
     kakao.mapProps = props;
     return <div data-testid="map">{props.children}</div>;
   },
+  // 이름표가 타는 오버레이. **클릭을 막는 스위치(clickable)** 를 볼 수 있게 그대로 내건다.
+  CustomOverlayMap: (props: {
+    children?: React.ReactNode;
+    clickable?: boolean;
+    position: { lat: number; lng: number };
+  }) => (
+    <div data-testid="label" data-clickable={String(props.clickable)} data-lat={props.position.lat}>
+      {props.children}
+    </div>
+  ),
   Polygon: (props: { fillColor?: string }) => <div data-testid="polygon" data-fill={props.fillColor} />,
   MapMarker: (props: { position: { lat: number; lng: number } }) => (
     <div data-testid="marker" data-lat={props.position.lat} data-lng={props.position.lng} />
@@ -290,6 +308,86 @@ describe('DistrictMap — 누른 자리의 상권', () => {
     await clickAt(128.5, 38.5);
 
     expect(screen.getByText(/어느 상권 경계에도 들지 않는/)).toBeTruthy();
+  });
+});
+
+// ── 상권 이름표 ─────────────────────────────────────────────────────────
+
+describe('DistrictMap — 상권 이름표', () => {
+  /** 카카오가 배율을 바꿨을 때 주는 이벤트를 그대로 흉내 낸다(인자는 지도 객체다). */
+  async function zoomTo(level: number) {
+    await act(async () => {
+      kakao.mapProps?.onZoomChanged?.({ getLevel: () => level });
+    });
+  }
+
+  it('처음 배율에서는 이름표를 안 켠다 — 한 구에 수십 개가 겹쳐 글자 죽이 된다', async () => {
+    await renderMap();
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    expect(screen.queryAllByTestId('label')).toHaveLength(0);
+  });
+
+  it('한 단계 확대하면 그린 면마다 이름이 붙는다', async () => {
+    await renderMap();
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+
+    await zoomTo(5);
+
+    // 그린 면과 같은 수다 — 다른 구(대전)는 애초에 안 그렸으니 이름도 없다.
+    expect(screen.getAllByTestId('label')).toHaveLength(2);
+    expect(screen.getByText('역삼역')).toBeTruthy();
+    expect(screen.getByText('역삼골목')).toBeTruthy();
+    expect(screen.queryByText('둔산')).toBeNull();
+  });
+
+  it('다시 넓게 보면 이름표가 걷힌다', async () => {
+    await renderMap();
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+
+    await zoomTo(4);
+    expect(screen.getAllByTestId('label')).toHaveLength(2);
+
+    await zoomTo(6);
+    expect(screen.queryAllByTestId('label')).toHaveLength(0);
+  });
+
+  it('이름표는 카카오 쪽 클릭 차단을 켜지 않는다', async () => {
+    // ⛔ `clickable`이 true 가 되면 카카오가 이름표 위 클릭에서 지도 이벤트를 막는다
+    //    (kakao.maps.d.ts `CustomOverlayOptions`). 그러면 상권 이름 위 — 가장 누르고 싶은
+    //    자리 — 를 눌렀을 때 "누른 자리 상권"이 아무 답도 안 한다.
+    await renderMap();
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await zoomTo(5);
+
+    for (const label of screen.getAllByTestId('label')) {
+      expect(label.getAttribute('data-clickable')).toBe('false');
+    }
+  });
+
+  it('이름표는 브라우저 쪽에서도 클릭 대상이 아니다(pointer-events: none)', async () => {
+    // 위 시험과 짝이다 — 차단 장치가 둘이라 하나가 사라져도 나머지가 남는다.
+    // ⚠️ jsdom 은 CSS 를 실제로 적용하지 않으므로 **규칙 자체**가 살아 있는지를 본다.
+    // ⚠️ `import '…styles.css?raw'` 로는 못 읽는다 — vitest 는 CSS 를 아예 처리하지 않아
+    //    **빈 문자열**이 온다(실측). 빈 문자열은 어떤 정규식에도 안 맞아 시험이 조용히
+    //    "규칙이 없다"고 말하게 되므로, 파일을 직접 연다(경로는 프로젝트 뿌리 기준).
+    const { readFileSync } = await import('node:fs');
+    const css = readFileSync('src/styles.css', 'utf8');
+    const block = css.slice(css.indexOf('.dmap__label {'));
+    expect(block.slice(0, block.indexOf('}'))).toMatch(/pointer-events:\s*none/);
+  });
+
+  it('이름표가 떠 있어도 누른 자리 판정은 그대로다', async () => {
+    await renderMap();
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await zoomTo(5);
+
+    await act(async () => {
+      kakao.mapProps?.onClick?.(null, {
+        latLng: { getLat: () => 37.55, getLng: () => 127.05 },
+      });
+    });
+
+    expect(screen.getByText(/누른 자리 \(2곳\)/)).toBeTruthy();
   });
 });
 

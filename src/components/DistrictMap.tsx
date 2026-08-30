@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Map, MapMarker, Polygon, useKakaoLoader, useMap } from 'react-kakao-maps-sdk';
+import {
+  CustomOverlayMap,
+  Map,
+  MapMarker,
+  Polygon,
+  useKakaoLoader,
+  useMap,
+} from 'react-kakao-maps-sdk';
 import { loadDistricts } from '../lib/districts';
+import { labelPointOf, showLabels } from '../lib/districtLabels';
 import { boundsOf, pointInGeometry, polygonsOf, ringsToPath, type Bounds } from '../lib/geo';
 import type { BuildingHit, DistrictFeature } from '../types';
 
@@ -35,6 +43,14 @@ type Props = {
  * 건물이 점이 된다.
  */
 const FOCUS_LEVEL = 4;
+
+/**
+ * 지도를 처음 그릴 때의 확대 수준.
+ *
+ * 이 값에서는 상권 이름표를 켜지 않는다 — 한 구에 상권이 수십~수백 개라 이름이 서로 겹쳐
+ * 글자 죽이 된다(`lib/districtLabels.ts`). 한 단계 확대하면(5) 그때부터 이름이 붙는다.
+ */
+const INITIAL_LEVEL = 6;
 
 /**
  * 유형별 색. 자료에 있는 5종(골목·발달·전통시장·관광특구·주요)을 여기서 색으로만 잇는다.
@@ -110,6 +126,15 @@ function DistrictMapBody({
   const [fileError, setFileError] = useState(false);
   /** 마지막으로 누른 자리에 걸친 상권들. null이면 아직 아무 데도 안 눌렀다는 뜻이다. */
   const [picked, setPicked] = useState<DistrictFeature[] | null>(null);
+  /**
+   * 지금 확대 수준. 이름표를 켤지 말지에만 쓴다.
+   *
+   * ⚠️ 이 값을 `<Map level>`로 되먹이지 **않는다.** 지도가 실제로 몇 배율인지는 카카오가
+   *    쥐고 있고(사용자 휠·`setBounds`·`setLevel`이 다 바꾼다), 우리는 그 결과를
+   *    `onZoomChanged`로 **받아 적기만** 한다. 되먹이면 우리가 적은 값이 다시 지도를
+   *    밀어 사용자가 맞춘 배율과 다투게 된다.
+   */
+  const [level, setLevel] = useState(INITIAL_LEVEL);
 
   useEffect(() => {
     let cancelled = false;
@@ -148,6 +173,22 @@ function DistrictMapBody({
     () => [...new Set(shown.map((f) => f.properties.district_type ?? '기타'))],
     [shown],
   );
+  /**
+   * 이름표를 놓을 자리 — 면 하나에 한 곳. 자리를 못 잡는 도형은 아예 빠진다.
+   *
+   * ⚠️ **`shown`이 바뀔 때만** 다시 센다. 배율이 바뀔 때마다 수백 개의 무게중심을 다시
+   *    세면 확대·축소가 그만큼 뻑뻑해진다(이름표를 켜고 끄는 것은 계산이 아니라 그리기다).
+   */
+  const labels = useMemo(
+    () =>
+      shown.flatMap((f) => {
+        const at = labelPointOf(f.geometry);
+        return at
+          ? [{ id: f.properties.district_id, nm: f.properties.district_nm || '(이름 없음)', at }]
+          : [];
+      }),
+    [shown],
+  );
 
   const focusLat = selected?.lat ?? null;
   const focusLng = selected?.lng ?? null;
@@ -167,12 +208,13 @@ function DistrictMapBody({
         <Map
           center={{ lat: (bounds.swLat + bounds.neLat) / 2, lng: (bounds.swLng + bounds.neLng) / 2 }}
           style={{ width: '100%', height: '100%' }}
-          level={6}
+          level={INITIAL_LEVEL}
           onClick={(_map, mouseEvent) => {
             const lat = mouseEvent.latLng.getLat();
             const lng = mouseEvent.latLng.getLng();
             setPicked(shown.filter((f) => pointInGeometry(lng, lat, f.geometry)));
           }}
+          onZoomChanged={(map) => setLevel(map.getLevel())}
         >
           <MapFocus bounds={bounds} focusLat={focusLat} focusLng={focusLng} />
 
@@ -189,6 +231,26 @@ function DistrictMapBody({
               />
             )),
           )}
+
+          {/*
+            상권 이름표 — 한 단계 확대(level ≤ 5)부터만 켠다.
+
+            ⛔ **클릭을 가로채면 안 된다.** 이 화면의 "누른 자리 상권"은 지도 클릭 한 번을
+               받아 우리가 직접 판정한다(lib/geo.ts 머리말). 이름표가 그 클릭을 삼키면
+               상권 위를 눌렀는데 아무 일도 안 일어난다.
+               막는 장치는 둘이고, 둘 다 필요하다:
+                ① `clickable={false}` — 카카오가 "컨텐츠를 클릭하면 지도 이벤트를 막는" 것은
+                   **`clickable: true`일 때뿐**이다(kakao.maps.d.ts `CustomOverlayOptions`).
+                   그래서 끈 채로 둔다. ⚠️ 값을 안 주면 기본값에 기대게 되므로 **적어 둔다.**
+                ② `styles.css`의 `.dmap__label { pointer-events: none }` — 브라우저 수준에서
+                   이름표 자체를 클릭 대상에서 빼, 클릭이 지도에 그대로 닿는다.
+          */}
+          {showLabels(level) &&
+            labels.map((l) => (
+              <CustomOverlayMap key={`label-${l.id}`} position={l.at} clickable={false}>
+                <span className="dmap__label">{l.nm}</span>
+              </CustomOverlayMap>
+            ))}
 
           {focusLat != null && focusLng != null && (
             <MapMarker
