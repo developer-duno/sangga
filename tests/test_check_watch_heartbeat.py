@@ -340,6 +340,16 @@ def _patch_fetch(monkeypatch, mapping):
     monkeypatch.setattr(chk, "fetch_latest_success", lambda f: mapping[f])
 
 
+def _patch_created(monkeypatch, mapping):
+    """'언제 만들었나' 조회를 갈아끼운다.
+
+    ⚠️ main 은 **성공 기록이 없는 것에만** 이걸 묻는다. 그래서 mapping 에 그 워크플로가
+       빠져 있으면 KeyError 로 시끄럽게 터진다 — 조용히 지나가면 테스트가 무엇을 검증한
+       건지 알 수 없어진다.
+    """
+    monkeypatch.setattr(chk, "fetch_created_at", lambda f: mapping[f])
+
+
 def test_main_returns_zero_when_everything_is_fresh(monkeypatch, capsys, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
@@ -428,6 +438,8 @@ def test_main_json_output(monkeypatch, capsys, tmp_path):
                            chk.FEEDBACK_DIGEST: _recent(48),
                            # LH 공고 감시도 주 1회 예약이다(2026-08-28a).
                            chk.LH_NOTICE_WATCH: _recent(48)})
+    # 기록이 없는 쪽은 "언제 만들었나"를 되묻는다 — 오래전에 만든 것이라 유예 대상이 아니다.
+    _patch_created(monkeypatch, {chk.DISTRICT_WATCH: _recent(70 * 24)})
     assert chk.main(["--json"]) == 1
     data = json.loads(capsys.readouterr().out)
     assert data["max_age_days"] == chk.DEFAULT_MAX_AGE_DAYS
@@ -451,6 +463,176 @@ def test_main_does_not_touch_network(monkeypatch, tmp_path):
                            # LH 공고 감시도 주 1회 예약이다(2026-08-28a).
                            chk.LH_NOTICE_WATCH: _recent(48)})
     assert chk.main([]) == 0
+
+
+# ── 갓 만든 워크플로 유예 (2026-08-28 이슈 #98) ───────────────────────────────
+#
+# 주 1회 예약을 금요일에 머지하면 첫 슬롯(월요일)까지 성공 기록이 0건이다. 그걸 멈춤으로
+# 읽으면 태어나자마자 부고가 뜬다. 그렇다고 기록 없음을 통째로 봐주면 cron 오타로 영영
+# 안 도는 진짜 고장을 놓친다 — 그래서 **만든 지 얼마나 됐나**로 둘을 가른다.
+
+
+def test_newborn_workflow_is_not_stale_yet():
+    """오늘 만든 주간 예약은 아직 첫 슬롯을 기다리는 중이다."""
+    results = [(chk.LH_NOTICE_WATCH, None)]
+    assert chk.judge(results, 8, NOW, created_at={chk.LH_NOTICE_WATCH: _dt(2)}) == []
+
+
+def test_old_workflow_with_no_runs_is_still_stale():
+    """⛔ 만든 지 기준일을 넘겼는데 기록이 0건이면 진짜 고장이다(cron 오타 등).
+
+    여기서 봐주면 유예가 '영구 면제'로 변해 감시가 통째로 눈을 감는다.
+    """
+    stale = chk.judge(
+        [(chk.LH_NOTICE_WATCH, None)], 8, NOW, created_at={chk.LH_NOTICE_WATCH: _dt(30)}
+    )
+    assert len(stale) == 1
+    assert stale[0]["workflow"] == chk.LH_NOTICE_WATCH
+    assert "없습니다" in stale[0]["reason"]
+
+
+def test_newborn_grace_boundary_matches_the_judge_boundary():
+    """딱 기준일이면 아직 유예 — judge 의 경계(초과할 때만 알림)와 같은 쪽으로 맞춘다."""
+    assert chk.judge(
+        [(chk.LH_NOTICE_WATCH, None)], 8, NOW, created_at={chk.LH_NOTICE_WATCH: _dt(8)}
+    ) == []
+    assert len(chk.judge(
+        [(chk.LH_NOTICE_WATCH, None)], 8, NOW, created_at={chk.LH_NOTICE_WATCH: _dt(8.5)}
+    )) == 1
+
+
+def test_newborn_grace_uses_each_workflows_own_threshold():
+    """6시간마다 도는 감시는 하루면 이미 여러 번 돌았어야 한다 — 이틀은 유예가 아니다."""
+    two_days = {chk.LIVE_HEALTH_WATCH: _dt(2), chk.QUARTERLY_WATCH: _dt(2)}
+    assert len(chk.judge([(chk.LIVE_HEALTH_WATCH, None)], 8, NOW, created_at=two_days)) == 1
+    assert chk.judge([(chk.QUARTERLY_WATCH, None)], 8, NOW, created_at=two_days) == []
+
+
+def test_unknown_birth_date_does_not_grant_grace():
+    """⛔ 만든 시각을 모른다는 이유로 봐주면, 조회가 어긋난 순간부터 영영 봐주게 된다."""
+    assert chk.is_newborn(chk.LH_NOTICE_WATCH, None, NOW) is False
+    assert len(chk.judge([(chk.LH_NOTICE_WATCH, None)], 8, NOW, created_at={})) == 1
+    # created_at 을 아예 안 넘기던 옛 호출도 그대로 동작해야 한다
+    assert len(chk.judge([(chk.LH_NOTICE_WATCH, None)], 8, NOW)) == 1
+
+
+def test_grace_does_not_touch_workflows_that_did_run():
+    """기록이 있는 쪽은 만든 시각과 무관하게 나이로만 판정한다."""
+    born = {chk.LH_NOTICE_WATCH: _dt(1)}
+    stale = chk.judge([(chk.LH_NOTICE_WATCH, _dt(30))], 8, NOW, created_at=born)
+    assert len(stale) == 1, "갓 만들었어도 '한 달째 안 돎'은 멈춘 것이다"
+
+
+# ── 만든 시각 읽기 ────────────────────────────────────────────────────────────
+
+
+def test_parse_created_at_reads_the_workflow_meta():
+    """⚠️ 이 응답의 시각에는 밀리초가 붙는다(라이브 실측 `2026-08-28T05:27:50.000Z`).
+
+    실행 기록 쪽에는 안 붙어서 형식이 서로 다르다 — 여기서 못 읽으면 유예가 통째로 죽는다.
+    """
+    payload = {"id": 1, "path": ".github/workflows/x.yml", "created_at": "2026-08-28T05:27:50.000Z"}
+    assert chk.parse_created_at(payload) == datetime.datetime(
+        2026, 8, 28, 5, 27, 50, tzinfo=UTC
+    )
+
+
+@pytest.mark.parametrize("bad", [None, [], "문자열", {}, {"created_at": ""}])
+def test_parse_created_at_raises_on_wrong_shape(bad):
+    """조용히 None 을 돌려주면 '못 읽었다'가 '갓 만든 게 아니다'로 둔갑한다."""
+    with pytest.raises(ValueError):
+        chk.parse_created_at(bad)
+
+
+def test_workflow_url_points_at_the_workflow_itself():
+    """실행 목록(/runs)이 아니라 워크플로우 자체를 물어야 created_at 이 온다."""
+    url = chk.workflow_url(chk.LH_NOTICE_WATCH)
+    assert url == "https://api.github.com/repos/developer-duno/sangga/actions/workflows/{}".format(
+        chk.LH_NOTICE_WATCH
+    )
+    assert "/runs" not in url
+
+
+def test_created_at_map_asks_nothing_when_everything_ran(monkeypatch):
+    """평소(전부 잘 도는 주)에는 API 호출을 하나도 더 얹지 않는다."""
+    def forbidden(_f):
+        raise AssertionError("물어볼 것이 없는데 조회했습니다")
+
+    monkeypatch.setattr(chk, "fetch_created_at", forbidden)
+    assert chk.fetch_created_at_map([]) == {}
+
+
+# ── main() 에서의 신생 유예 ───────────────────────────────────────────────────
+
+
+def _all_fresh_but(missing):
+    """`missing` 하나만 기록 없음, 나머지는 최근에 돈 것으로 채운다."""
+    fresh = {chk.QUARTERLY_WATCH: _recent(48), chk.DISTRICT_WATCH: _recent(48),
+             chk.LIVE_HEALTH_WATCH: _recent(3), chk.FEEDBACK_DIGEST: _recent(48),
+             chk.LH_NOTICE_WATCH: _recent(48)}
+    fresh[missing] = None
+    return fresh
+
+
+def test_main_says_zero_for_a_just_merged_workflow(monkeypatch, capsys, tmp_path):
+    """갓 머지된 예약에 부고를 띄우지 않는다 — 2026-08-28 이슈 #98 이 그 사고였다."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    _patch_fetch(monkeypatch, _all_fresh_but(chk.LH_NOTICE_WATCH))
+    # main 은 실제 시계를 쓴다 — 고정 날짜를 주면 날이 갈수록 늙어 저절로 깨진다.
+    _patch_created(monkeypatch, {chk.LH_NOTICE_WATCH: _recent(24)})
+
+    assert chk.main([]) == 0
+    out = capsys.readouterr().out
+    assert "갓 만들어져 첫 예약을 기다리는 중" in out, "왜 봐줬는지 사람이 읽을 수 있어야 한다"
+    assert "멈춘 감시           : 없음" in out
+    assert not (tmp_path / chk.ISSUE_BODY_FILE).exists(), "이슈를 열면 안 된다"
+
+
+def test_main_still_alarms_when_an_old_workflow_never_ran(monkeypatch, tmp_path):
+    """만든 지 오래됐는데 한 번도 안 돌았으면 그건 유예가 아니라 고장이다."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    _patch_fetch(monkeypatch, _all_fresh_but(chk.LH_NOTICE_WATCH))
+    _patch_created(monkeypatch, {chk.LH_NOTICE_WATCH: _recent(40 * 24)})
+
+    assert chk.main([]) == 1
+    body = (tmp_path / chk.ISSUE_BODY_FILE).read_text(encoding="utf-8")
+    assert "LH 공고 감시" in body
+    assert "기록 없음" in body
+
+
+def test_main_returns_two_when_the_birth_date_lookup_fails(monkeypatch, capsys, tmp_path):
+    """⛔ 못 물어봤으면 '멈췄다'가 아니라 '확인을 못 했다'다.
+
+    여기서 1(멈춤)로 답하면 GitHub 이 잠깐 흔들린 것만으로 헛이슈가 열리고, 0(정상)으로
+    답하면 진짜 고장을 덮는다. 기존 조회 실패와 같은 결로 2 를 낸다.
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    _patch_fetch(monkeypatch, _all_fresh_but(chk.LH_NOTICE_WATCH))
+
+    def boom(_f):
+        raise RuntimeError("연결 실패")
+
+    monkeypatch.setattr(chk, "fetch_created_at", boom)
+    assert chk.main([]) == 2
+    assert "실행 기록 조회 실패" in capsys.readouterr().err
+    assert not (tmp_path / chk.ISSUE_BODY_FILE).exists()
+
+
+def test_main_json_marks_the_newborn(monkeypatch, capsys, tmp_path):
+    """기계용 출력에서도 '기록 없음'과 '갓 만들어짐'이 구분돼야 한다."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    _patch_fetch(monkeypatch, _all_fresh_but(chk.LH_NOTICE_WATCH))
+    _patch_created(monkeypatch, {chk.LH_NOTICE_WATCH: _recent(24)})
+
+    assert chk.main(["--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    newborn = [c["workflow"] for c in data["checked"] if c["newborn"]]
+    assert newborn == [chk.LH_NOTICE_WATCH]
+    assert data["stale"] == []
 
 
 # ── 상호 감시 배선 점검 (한쪽만 걸려 있으면 반쪽 감시가 된다) ────────────────
