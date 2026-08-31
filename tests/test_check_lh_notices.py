@@ -74,6 +74,25 @@ class TestSameSourceAsCollector:
         assert chk.BASE_URL is lh.BASE_URL
         assert chk.SANGA_UPP_CD is lh.SANGA_UPP_CD
 
+    def test_inherits_the_collectors_patience(self, monkeypatch):
+        """감시는 조회기를 따로 넘기지 않는다 — 그래서 수집기 한 곳만 고치면 둘 다 낫는다.
+
+        2026-08-31 첫 예약 실행이 재시도 3번으로는 못 버텨 실패했고, 처방은 수집기의
+        RETRY_COUNT 를 올린 것뿐이었다. 그게 감시에도 먹히는 근거가 바로 이 성질이다 —
+        ⛔ 감시가 제 fetcher 를 넘기기 시작하면 참을성이 두 벌로 갈라져, 수집기를 고쳐도
+           감시는 그대로 일찍 포기한다(그리고 아무도 그 사실을 모른다).
+        """
+        used = []
+
+        def spy(url, service_key="", **kw):
+            used.append(url)
+            return [{"dsSch": []}, {"dsList": []}]
+
+        monkeypatch.setattr(lh, "get_json_with_retry", spy)
+        rows, pages, _all_cnt, _s, _e = chk.fetch_recent("KEY", months=1)
+        assert used, "감시가 수집기의 재시도 조회기를 쓰지 않았습니다"
+        assert rows == [] and pages == 1
+
     def test_does_not_reimplement_parsing(self):
         """파싱 함수를 여기서 다시 정의하지 않았는지 — 이름으로 확인한다."""
         src = read(os.path.join(ROOT, "scripts", "check_lh_notices.py"))
