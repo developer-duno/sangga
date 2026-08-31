@@ -1530,8 +1530,14 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
   }
 
   beforeEach(() => {
-    // 다섯 장이 **전부** 나오는 상태를 만든다 — 어느 하나라도 응답이 비면 그 카드는
+    // 카드가 **전부** 나오는 상태를 만든다 — 어느 하나라도 응답이 비면 그 카드는
     // 스스로 사라지므로(모름 ≠ 없음), 상한을 세는 시험이 헐거워진다.
+    //
+    // ⛔ **2026-09-01 감사에서 잡힌 구멍**: 여기에 임대 응답이 없어 여섯째 카드가 아예
+    //    안 그려졌고, 아래 배치 단언들이 다섯 장만 보고 있었다. 그래서 임대 카드의
+    //    제목·역할·기본 펼침이 **화면 위에서는 한 번도 검사되지 않았다**(배치표 자체를
+    //    세는 `sectionCards.test.ts` 만 알고 있었다). 카드를 더할 때 여기를 안 채우면
+    //    새 카드는 조용히 이 가드 밖에 남는다.
     responses.floors = { data: [floor({ floor_no: 2 }), floor()], error: null };
     responses.districts = {
       data: {
@@ -1544,12 +1550,26 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     responses.industryMix = { data: MIX, error: null };
     responses.txs = { data: [tx()], error: null };
     responses.bands = { data: priceBands(), error: null };
+    responses.rent = {
+      data: [
+        {
+          district_nm: '역삼역',
+          rone_region_nm: '서울>강남>테헤란로',
+          bld_type: '집합상가',
+          quarter: '2026Q2',
+          vacancy_rate: 10.08,
+          rent_per_m2: 27.06,
+          yield_rate: 0.82,
+        },
+      ],
+      error: null,
+    };
   });
 
-  it('다섯 장이 배치표가 정한 순서·제목·역할·기본 상태로 그려진다', async () => {
+  it('배치표가 정한 순서·제목·역할·기본 상태 그대로 그려진다', async () => {
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => {
-      expect(container.querySelectorAll('.card')).toHaveLength(5);
+      expect(container.querySelectorAll('.card')).toHaveLength(Object.keys(SECTION_PLAN).length);
       // 로딩 카드도 한 장으로 세어지므로 장수만 기다리면 경주가 남는다 — 응답이
       // 전부 자리 잡은 뒤에만 배치·상태·요약을 읽는다(본문 없는 카드는 버튼이 없어
       // aria-expanded 판독이 false 로 읽히는 것이 이 경주의 증상이었다).
@@ -1563,16 +1583,20 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       '둘레의 업종 분포',
       '실거래 기록',
       '참고 매매 시세 (추정값)',
+      '상권 임대 동향 (부동산원 조사)',
     ]);
-    expect(cards.map((c) => c.role)).toEqual(['공통', '공통', '창업자', '투자자', '투자자']);
-    // 공통 둘 + 역할마다 하나씩 = 넷을 펼치고, 투자자의 두 번째(추정값)를 접는다.
-    expect(cards.map((c) => c.open)).toEqual([true, true, true, true, false]);
+    expect(cards.map((c) => c.role)).toEqual([
+      '공통', '공통', '창업자', '투자자', '투자자', '투자자',
+    ]);
+    // 공통 둘 + 역할마다 하나씩 = 넷을 펼치고, 투자자의 나머지 둘(추정값·임대)은 접는다.
+    // ⛔ 임대 카드의 defaultOpen 이 실수로 true 가 되는 날 여기서 잡힌다(예산 4장 초과).
+    expect(cards.map((c) => c.open)).toEqual([true, true, true, true, false, false]);
   });
 
   it('첫 화면에 펼쳐진 카드가 상한(4장)을 넘지 않는다', async () => {
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => {
-      expect(container.querySelectorAll('.card')).toHaveLength(5);
+      expect(container.querySelectorAll('.card')).toHaveLength(Object.keys(SECTION_PLAN).length);
       // 로딩 카드도 한 장으로 세어지므로 장수만 기다리면 경주가 남는다 — 응답이
       // 전부 자리 잡은 뒤에만 배치·상태·요약을 읽는다(본문 없는 카드는 버튼이 없어
       // aria-expanded 판독이 false 로 읽히는 것이 이 경주의 증상이었다).
@@ -1584,7 +1608,7 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
   it('접힌 카드도 제목과 핵심 한 줄은 보인다 (접힘 ≠ 숨김)', async () => {
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => {
-      expect(container.querySelectorAll('.card')).toHaveLength(5);
+      expect(container.querySelectorAll('.card')).toHaveLength(Object.keys(SECTION_PLAN).length);
       // 로딩 카드도 한 장으로 세어지므로 장수만 기다리면 경주가 남는다 — 응답이
       // 전부 자리 잡은 뒤에만 배치·상태·요약을 읽는다(본문 없는 카드는 버튼이 없어
       // aria-expanded 판독이 false 로 읽히는 것이 이 경주의 증상이었다).
@@ -1604,7 +1628,7 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
   it('접힌 카드를 누르면 그 자리에서 내용이 펼쳐진다', async () => {
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => {
-      expect(container.querySelectorAll('.card')).toHaveLength(5);
+      expect(container.querySelectorAll('.card')).toHaveLength(Object.keys(SECTION_PLAN).length);
       // 로딩 카드도 한 장으로 세어지므로 장수만 기다리면 경주가 남는다 — 응답이
       // 전부 자리 잡은 뒤에만 배치·상태·요약을 읽는다(본문 없는 카드는 버튼이 없어
       // aria-expanded 판독이 false 로 읽히는 것이 이 경주의 증상이었다).
@@ -1619,7 +1643,7 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
   it('펼쳐진 카드를 누르면 접히고, 요약만 남는다', async () => {
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => {
-      expect(container.querySelectorAll('.card')).toHaveLength(5);
+      expect(container.querySelectorAll('.card')).toHaveLength(Object.keys(SECTION_PLAN).length);
       // 로딩 카드도 한 장으로 세어지므로 장수만 기다리면 경주가 남는다 — 응답이
       // 전부 자리 잡은 뒤에만 배치·상태·요약을 읽는다(본문 없는 카드는 버튼이 없어
       // aria-expanded 판독이 false 로 읽히는 것이 이 경주의 증상이었다).
@@ -1638,7 +1662,7 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
   it('카드 머리·요약에는 금칙어(절대 규칙 2)가 한 글자도 없다', async () => {
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => {
-      expect(container.querySelectorAll('.card')).toHaveLength(5);
+      expect(container.querySelectorAll('.card')).toHaveLength(Object.keys(SECTION_PLAN).length);
       // 로딩 카드도 한 장으로 세어지므로 장수만 기다리면 경주가 남는다 — 응답이
       // 전부 자리 잡은 뒤에만 배치·상태·요약을 읽는다(본문 없는 카드는 버튼이 없어
       // aria-expanded 판독이 false 로 읽히는 것이 이 경주의 증상이었다).
@@ -1658,7 +1682,7 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     // "몇 개인지"만 적고 금액·단가는 본문에서만 낸다.
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => {
-      expect(container.querySelectorAll('.card')).toHaveLength(5);
+      expect(container.querySelectorAll('.card')).toHaveLength(Object.keys(SECTION_PLAN).length);
       // 로딩 카드도 한 장으로 세어지므로 장수만 기다리면 경주가 남는다 — 응답이
       // 전부 자리 잡은 뒤에만 배치·상태·요약을 읽는다(본문 없는 카드는 버튼이 없어
       // aria-expanded 판독이 false 로 읽히는 것이 이 경주의 증상이었다).
@@ -1670,12 +1694,12 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     expect(summary).not.toContain('㎡당');
   });
 
-  it('요약 다섯 칸이 저마다 제 값을 말한다', async () => {
+  it('요약 칸이 카드마다 제 값을 말한다 (접힘 ≠ 숨김)', async () => {
     // 요약은 접었을 때 남는 유일한 정보다. 한 칸이 조용히 빈 문자열이 되어도 화면은
     // 멀쩡해 보이므로(줄만 비어 보인다) 다섯 칸을 통째로 못 박는다.
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => {
-      expect(container.querySelectorAll('.card')).toHaveLength(5);
+      expect(container.querySelectorAll('.card')).toHaveLength(Object.keys(SECTION_PLAN).length);
       // 로딩 카드도 한 장으로 세어지므로 장수만 기다리면 경주가 남는다 — 응답이
       // 전부 자리 잡은 뒤에만 배치·상태·요약을 읽는다(본문 없는 카드는 버튼이 없어
       // aria-expanded 판독이 false 로 읽히는 것이 이 경주의 증상이었다).
@@ -1688,6 +1712,9 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       '속한 상권 1개 · 반경 500m 이내 402곳',
       '이 땅 거래 1건 · 강남구 층대별 단가',
       '값을 낸 층 1개',
+      // ⛔ 임대 카드는 첫 화면에서 **접혀 있다** — 그래서 이 한 줄이 접은 채로 읽히는
+      //    유일한 내용이다(2026-09-01 감사 전까지 이 줄은 한 번도 검사된 적이 없었다).
+      '공실률 · ㎡당 임대료 · 투자수익률 · 2026년 2분기 조사',
     ]);
   });
 
@@ -1700,7 +1727,7 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     };
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => {
-      expect(container.querySelectorAll('.card')).toHaveLength(5);
+      expect(container.querySelectorAll('.card')).toHaveLength(Object.keys(SECTION_PLAN).length);
       // 로딩 카드도 한 장으로 세어지므로 장수만 기다리면 경주가 남는다 — 응답이
       // 전부 자리 잡은 뒤에만 배치·상태·요약을 읽는다(본문 없는 카드는 버튼이 없어
       // aria-expanded 판독이 false 로 읽히는 것이 이 경주의 증상이었다).
@@ -1759,7 +1786,7 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     //    안에 있기 때문이다. 사람은 그걸 고장으로 읽는다.
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => {
-      expect(container.querySelectorAll('.card')).toHaveLength(5);
+      expect(container.querySelectorAll('.card')).toHaveLength(Object.keys(SECTION_PLAN).length);
       // 로딩 카드도 한 장으로 세어지므로 장수만 기다리면 경주가 남는다 — 응답이
       // 전부 자리 잡은 뒤에만 배치·상태·요약을 읽는다(본문 없는 카드는 버튼이 없어
       // aria-expanded 판독이 false 로 읽히는 것이 이 경주의 증상이었다).
@@ -1789,7 +1816,7 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     // 출처표시(공공누리 1유형)는 접었을 때 사라지면 안 된다.
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => {
-      expect(container.querySelectorAll('.card')).toHaveLength(5);
+      expect(container.querySelectorAll('.card')).toHaveLength(Object.keys(SECTION_PLAN).length);
       // 로딩 카드도 한 장으로 세어지므로 장수만 기다리면 경주가 남는다 — 응답이
       // 전부 자리 잡은 뒤에만 배치·상태·요약을 읽는다(본문 없는 카드는 버튼이 없어
       // aria-expanded 판독이 false 로 읽히는 것이 이 경주의 증상이었다).
