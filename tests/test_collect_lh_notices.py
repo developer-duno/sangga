@@ -7,11 +7,14 @@
   2) 날짜 모양이 바뀌었는데 조용히 NULL 이 된다 → 마감일이 사라져 다 지난 공고가 계속 뜬다.
   3) 지역명을 못 옮기는데 아무도 모른다 → 행 수는 멀쩡한데 알림판이 빈다.
   4) 반쯤 들어간다 → "공고가 원래 이것뿐"인지 "우리가 흘렸는지" 화면에서 못 가린다.
+  5) 포털이 잠깐 느린데 너무 일찍 포기한다 → 그 주 감시가 통째로 실패하고, 새 공고를
+     못 본다. 2026-08-31 첫 예약 실행이 정확히 이것이었다.
 
 전부 네트워크·DB 없이 확인한다(CI 에는 둘 다 없다).
 """
 
 import datetime
+import urllib.error
 
 import pytest
 
@@ -312,7 +315,96 @@ class TestFetchSanga:
         assert "SECRET" not in lh.mask_key("failed for key=SECRET", "SECRET")
 
 
-# ── 8. SQL — 한 트랜잭션 · 지우지 않는다 · 반쪽이면 되돌린다 ──────────────────
+# ── 8. 참을성 — 포털이 잠깐 느릴 때 넘어간다 ──────────────────────────────────
+
+
+class TestRetryPatience:
+    """2026-08-31 첫 예약 실행이 **여기서** 죽었다 (run 33348733771).
+
+    포털은 가끔 몇 분씩 들쭉날쭉해진다. 그때 한 번 더 두드리면 통과하는데, 참을성이 그
+    구간보다 짧으면 통째로 갇힌다 — 그날 로컬은 1회차 504 → 2회차 성공이었고, 깃허브
+    러너는 60초 타임아웃 3번이 전부 그 구간 안에 들어가 실패했다.
+
+    ⛔ 이 구간에는 그날까지 시험이 **한 줄도 없었다.** 다른 시험들이 fetcher 를 끼워 넣어
+       재시도를 통째로 건너뛰었기 때문이다 — 그래서 라이브에서 처음 터졌다.
+    """
+
+    @staticmethod
+    def _die(_url, timeout=None):
+        raise TimeoutError("timed out")
+
+    def test_survives_a_bad_patch_that_ends_before_we_give_up(self, monkeypatch):
+        """마지막 한 번에 살아나도 성공이다 — 3번이던 시절엔 이 상황이 곧 실패였다."""
+        calls = []
+
+        def flaky(url, timeout=None):
+            calls.append(url)
+            if len(calls) < lh.RETRY_COUNT:
+                raise TimeoutError("timed out")
+            return {"ok": 1}
+
+        monkeypatch.setattr(lh, "_get_json", flaky)
+        assert lh.get_json_with_retry("u", sleep=lambda _s: None) == {"ok": 1}
+        assert len(calls) == lh.RETRY_COUNT
+
+    def test_retries_a_gateway_timeout(self, monkeypatch):
+        """504 는 다시 물으면 답이 달라진다 — 2026-08-31 로컬 1회차가 정확히 이것이었다."""
+        calls = []
+
+        def flaky(url, timeout=None):
+            calls.append(url)
+            if len(calls) == 1:
+                raise urllib.error.HTTPError(url, 504, "Gateway Timeout", None, None)
+            return {"ok": 1}
+
+        monkeypatch.setattr(lh, "_get_json", flaky)
+        assert lh.get_json_with_retry("u", sleep=lambda _s: None) == {"ok": 1}
+        assert len(calls) == 2
+
+    def test_total_patience_outlasts_the_outage_we_actually_saw(self):
+        """실측된 나쁜 구간이 최소 3분(01:49:13~01:52:30)이다 — 그보다 짧으면 또 갇힌다.
+
+        ⛔ 이 시험은 숫자를 지키는 게 아니라 **이유**를 지킨다. RETRY_COUNT 를 되돌리면
+           여기가 먼저 빨개진다.
+        """
+        waits = [lh.RETRY_BACKOFF_SEC * (2 ** i) for i in range(lh.RETRY_COUNT - 1)]
+        total = lh.TIMEOUT_SEC * lh.RETRY_COUNT + sum(waits)
+        assert total >= 360, "참을성이 {}초뿐입니다 — 실측된 3분 장애를 못 넘깁니다".format(total)
+
+    def test_waits_longer_between_each_knock(self, monkeypatch):
+        """쉬지 않고 연달아 두드리면 느려진 서버를 더 밀어붙일 뿐이다."""
+        monkeypatch.setattr(lh, "_get_json", self._die)
+        waits = []
+        with pytest.raises(TimeoutError):
+            lh.get_json_with_retry("u", sleep=waits.append)
+        assert waits == [lh.RETRY_BACKOFF_SEC * (2 ** i) for i in range(lh.RETRY_COUNT - 1)]
+
+    def test_gives_up_loudly_when_the_portal_is_really_down(self, monkeypatch):
+        """⛔ 조용히 넘기지 않는다.
+
+        실패를 삼켜 '성공'으로 기록하면 형제 하트비트가 '마지막 성공'만 보고 멀쩡하다고
+        판단해, **공고를 영영 안 보는 상태**가 조용히 이어진다.
+        """
+        monkeypatch.setattr(lh, "_get_json", self._die)
+        with pytest.raises(TimeoutError):
+            lh.get_json_with_retry("u", sleep=lambda _s: None)
+
+    @pytest.mark.parametrize("code", sorted(lh.NO_RETRY_HTTP_CODES))
+    def test_does_not_retry_what_will_not_change(self, monkeypatch, code):
+        """401·403·404 는 사람이 고쳐야 하는 것 — 참을성을 늘려도 여기는 한 번뿐이다."""
+        calls = []
+
+        def refused(url, timeout=None):
+            calls.append(url)
+            raise urllib.error.HTTPError(url, code, "refused", None, None)
+
+        monkeypatch.setattr(lh, "_get_json", refused)
+        with pytest.raises(urllib.error.HTTPError):
+            lh.get_json_with_retry("u", sleep=lambda _s: None)
+        assert calls == ["u"]
+
+
+# ── 9. SQL — 한 트랜잭션 · 지우지 않는다 · 반쪽이면 되돌린다 ──────────────────
 
 
 class TestBuildSql:
@@ -369,7 +461,7 @@ class TestBuildSql:
         assert "넣으려던 것은 5건" in sql
 
 
-# ── 9. 요약 ───────────────────────────────────────────────────────────────────
+# ── 10. 요약 ───────────────────────────────────────────────────────────────────
 
 
 class TestSummarize:
