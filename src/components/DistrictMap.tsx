@@ -11,6 +11,7 @@ import { loadDistricts } from '../lib/districts';
 import { labelPointOf, showLabels } from '../lib/districtLabels';
 import { boundsOf, pointInGeometry, polygonsOf, ringsToPath, type Bounds } from '../lib/geo';
 import type { BuildingHit, DistrictFeature } from '../types';
+import { DistrictBuildings } from './DistrictBuildings';
 
 /**
  * 상권 지도 — 고른 구의 상권 경계를 면으로 그린다(결정 0010).
@@ -32,6 +33,13 @@ type Props = {
   sigunguName: string | null;
   /** 지금 고른 건물. 좌표가 있을 때만 마커를 찍는다. */
   selected: BuildingHit | null;
+  /**
+   * 상권 안의 건물 목록에서 하나를 고르면 부른다.
+   *
+   * ⓘ 검색 결과를 골랐을 때와 **같은 handler** 를 받는다 — 들어온 길이 달라도 그 뒤는
+   *   똑같아야 주소 남기기·인쇄 머리글·지도 마커가 저절로 따라온다.
+   */
+  onSelectBuilding: (hit: BuildingHit) => void;
 };
 
 /**
@@ -74,7 +82,7 @@ function colorOf(type: string | null): string {
 /** 지도를 가리지 않을 만큼만 칠한다 — 겹친 면이 서로 비쳐 보여야 겹침이 눈에 띈다. */
 const FILL_OPACITY = 0.18;
 
-export function DistrictMap({ sigungu, sigunguName, selected }: Props) {
+export function DistrictMap({ sigungu, sigunguName, selected, onSelectBuilding }: Props) {
   const [open, setOpen] = useState(true);
 
   if (!sigungu) return null;
@@ -99,7 +107,12 @@ export function DistrictMap({ sigungu, sigunguName, selected }: Props) {
           <code>.env</code>에서 만들어집니다.
         </p>
       ) : (
-        <DistrictMapBody appkey={appkey} sigungu={sigungu} selected={selected} />
+        <DistrictMapBody
+          appkey={appkey}
+          sigungu={sigungu}
+          selected={selected}
+          onSelectBuilding={onSelectBuilding}
+        />
       )}
     </section>
   );
@@ -116,16 +129,25 @@ function DistrictMapBody({
   appkey,
   sigungu,
   selected,
+  onSelectBuilding,
 }: {
   appkey: string;
   sigungu: string;
   selected: BuildingHit | null;
+  onSelectBuilding: (hit: BuildingHit) => void;
 }) {
   const [kakaoLoading, kakaoError] = useKakaoLoader({ appkey });
   const [features, setFeatures] = useState<DistrictFeature[] | null>(null);
   const [fileError, setFileError] = useState(false);
   /** 마지막으로 누른 자리에 걸친 상권들. null이면 아직 아무 데도 안 눌렀다는 뜻이다. */
   const [picked, setPicked] = useState<DistrictFeature[] | null>(null);
+  /**
+   * 건물 목록을 펼쳐 둔 상권. 누른 자리에 여럿이 걸치면 그중 **하나만** 연다.
+   *
+   * ⛔ 지도를 다시 누르면 비운다 — 안 비우면 새로 누른 자리 아래에 **옛 상권의 건물들**이
+   *    그대로 서 있어, 방금 누른 곳의 목록으로 읽힌다.
+   */
+  const [openDistrict, setOpenDistrict] = useState<DistrictFeature | null>(null);
   /**
    * 지금 확대 수준. 이름표를 켤지 말지에만 쓴다.
    *
@@ -213,6 +235,7 @@ function DistrictMapBody({
             const lat = mouseEvent.latLng.getLat();
             const lng = mouseEvent.latLng.getLng();
             setPicked(shown.filter((f) => pointInGeometry(lng, lat, f.geometry)));
+            setOpenDistrict(null);
           }}
           onZoomChanged={(map) => setLevel(map.getLevel())}
         >
@@ -270,7 +293,24 @@ function DistrictMapBody({
         ))}
       </ul>
 
-      <PickedList picked={picked} />
+      <PickedList
+        picked={picked}
+        openId={openDistrict?.properties.district_id ?? null}
+        onPick={(f) =>
+          setOpenDistrict((cur) =>
+            cur?.properties.district_id === f.properties.district_id ? null : f,
+          )
+        }
+      />
+
+      {openDistrict && (
+        <DistrictBuildings
+          districtId={openDistrict.properties.district_id}
+          districtNm={openDistrict.properties.district_nm || '(이름 없음)'}
+          onSelect={onSelectBuilding}
+          selectedBldId={selected?.bld_id ?? null}
+        />
+      )}
 
       {/* 공공누리 1유형(출처표시) 의무. 문구가 아니라 자료(source_nm)에서 온다. */}
       {sources.length > 0 && <p className="dmap__src">출처: {sources.join(' · ')}</p>}
@@ -332,9 +372,23 @@ function MapFocus({
  *  ② 눌렀는데 어느 상권에도 안 든다 → "없음"이 정상이다
  *  ③ 여럿에 걸친다 → **전부** 나열
  */
-function PickedList({ picked }: { picked: DistrictFeature[] | null }) {
+function PickedList({
+  picked,
+  openId,
+  onPick,
+}: {
+  picked: DistrictFeature[] | null;
+  /** 지금 건물 목록을 펼쳐 둔 상권. 없으면 null. */
+  openId: string | null;
+  onPick: (f: DistrictFeature) => void;
+}) {
   if (picked === null) {
-    return <p className="dmap__picked dmap__picked--idle">지도를 누르면 그 자리의 상권을 알려드립니다.</p>;
+    return (
+      <p className="dmap__picked dmap__picked--idle">
+        지도를 누르면 그 자리의 상권을 알려드립니다. 상권 이름을 다시 누르면 그 안의 건물이
+        나옵니다.
+      </p>
+    );
   }
 
   if (picked.length === 0) {
@@ -352,9 +406,23 @@ function PickedList({ picked }: { picked: DistrictFeature[] | null }) {
       <ul className="dmap__picked-list">
         {picked.map((f) => (
           <li key={f.properties.district_id}>
-            <span className="dmap__swatch" style={{ background: colorOf(f.properties.district_type) }} />
-            <span className="dmap__picked-nm">{f.properties.district_nm || '(이름 없음)'}</span>
-            <span className="dmap__picked-ty">{f.properties.district_type ?? '유형 미상'}</span>
+            {/* 이름을 **버튼**으로 만든 것이 이 조각의 전부다 — 여태 이 목록은 이름만
+                알려주고 끝나는 막다른 길이었다(창업자는 건물 이름을 모른다). */}
+            <button
+              type="button"
+              className={`dmap__picked-btn${
+                openId === f.properties.district_id ? ' dmap__picked-btn--on' : ''
+              }`}
+              aria-expanded={openId === f.properties.district_id}
+              onClick={() => onPick(f)}
+            >
+              <span
+                className="dmap__swatch"
+                style={{ background: colorOf(f.properties.district_type) }}
+              />
+              <span className="dmap__picked-nm">{f.properties.district_nm || '(이름 없음)'}</span>
+              <span className="dmap__picked-ty">{f.properties.district_type ?? '유형 미상'}</span>
+            </button>
           </li>
         ))}
       </ul>

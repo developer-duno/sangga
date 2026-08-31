@@ -424,6 +424,13 @@ ANON_CALLABLE_ALLOWLIST = (
     # 전국 상권의 임대 통계가 통째로 긁히고, "이을 근거가 없으면 줄이 없다"는 규칙
     # (시·도 평균으로 안 메운다)도 함께 우회된다.
     "list_rent_stats",
+    # 상권 → 건물 다리(2026-08-31b · Wave 3). 표 district·parcel·building 은 **여기 없다** —
+    # 화면은 이 두 함수로만 읽는다. district 가 열리면 상권 경계(geom)가 통째로 긁히고,
+    # building 이 열리면 전국 24만 동의 대장 정보가 그대로 나간다.
+    #   ⛔ 점포는 **땅 단위 개수**만 나간다 — 상호명·업종은 한 글자도 안 나간다.
+    #   ⓘ 같은 이름의 public 쪽 함수는 닫혀 있다(이 목록은 이름 기준이라 api 쪽만 열려 있어도
+    #      통과한다 — 그래서 마이그레이션이 public 쪽을 따로 revoke 한다).
+    "list_district_buildings", "list_parcel_buildings",
 )
 
 

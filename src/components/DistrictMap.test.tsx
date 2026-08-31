@@ -154,6 +154,35 @@ function building(over: Partial<BuildingHit> = {}): BuildingHit {
 
 // ── 준비 ────────────────────────────────────────────────────────────────
 
+/**
+ * 상권 이름을 누르면 그 안의 건물을 서버에 묻는다(DistrictBuildings).
+ * 여기서는 **연결부**만 보므로 답은 한 줄이면 충분하다 — 목록 자체의 규칙은
+ * `DistrictBuildings.test.tsx` 가 지킨다.
+ */
+const landRows = [
+  {
+    pnu: '1168010100107070034',
+    store_cnt: 12,
+    bld_cnt_in_pnu: 1,
+    bld_id: 'B-1',
+    bld_nm: '역삼빌딩',
+    road_addr: '서울특별시 강남구 테헤란로 1',
+    jibun_addr: '서울특별시 강남구 역삼동 707-34',
+    lat: 37.5,
+    lng: 127.05,
+    floor_cnt: 10,
+    min_floor: -2,
+    max_floor: 8,
+    has_roof: false,
+    total_parcel_cnt: 1,
+    total_bld_cnt: 1,
+  },
+];
+
+vi.mock('../lib/supabase', () => ({
+  supabase: { rpc: () => Promise.resolve({ data: landRows, error: null }) },
+}));
+
 const fetchMock = vi.fn();
 
 /**
@@ -189,7 +218,7 @@ afterEach(() => {
 /** 지도가 자료를 받아 실제로 그려질 때까지 기다린다. */
 async function renderMap(props: Partial<Parameters<typeof import('./DistrictMap').DistrictMap>[0]> = {}) {
   const DistrictMap = await load();
-  render(<DistrictMap sigungu="11680" sigunguName="강남구" selected={null} {...props} />);
+  render(<DistrictMap sigungu="11680" sigunguName="강남구" selected={null} onSelectBuilding={() => {}} {...props} />);
   return DistrictMap;
 }
 
@@ -199,7 +228,7 @@ describe('DistrictMap — 지도 키가 없을 때', () => {
   it('스크립트를 부르지 않고 안내만 한다', async () => {
     vi.stubEnv('VITE_KAKAO_JS_KEY', '');
     const DistrictMap = await load();
-    render(<DistrictMap sigungu="11680" sigunguName="강남구" selected={null} />);
+    render(<DistrictMap sigungu="11680" sigunguName="강남구" selected={null} onSelectBuilding={() => {}} />);
 
     expect(screen.getByText(/지도 키가 설정되지 않았습니다/)).toBeTruthy();
     expect(screen.queryByTestId('map')).toBeNull();
@@ -213,7 +242,7 @@ describe('DistrictMap — 지도 키가 없을 때', () => {
 describe('DistrictMap — 구를 안 골랐을 때', () => {
   it('아무것도 그리지 않는다 — 어디를 비출지 정해지지 않았다', async () => {
     const DistrictMap = await load();
-    const { container } = render(<DistrictMap sigungu={null} sigunguName={null} selected={null} />);
+    const { container } = render(<DistrictMap sigungu={null} sigunguName={null} selected={null} onSelectBuilding={() => {}} />);
     expect(container.innerHTML).toBe('');
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -312,6 +341,61 @@ describe('DistrictMap — 누른 자리의 상권', () => {
 });
 
 // ── 상권 이름표 ─────────────────────────────────────────────────────────
+
+describe('DistrictMap — 상권 이름을 누르면 그 안의 건물', () => {
+  /*
+    이 조각이 고치는 것은 **막다른 길**이다. 여태 지도는 누른 자리의 상권 이름을 알려주고
+    끝났는데, 창업자는 건물 이름을 모르므로 거기서 더 갈 데가 없었다.
+  */
+  async function clickAt(lng: number, lat: number) {
+    await act(async () => {
+      kakao.mapProps?.onClick?.(null, { latLng: { getLat: () => lat, getLng: () => lng } });
+    });
+  }
+
+  it('상권 이름이 **누를 수 있는 것**이다', async () => {
+    await renderMap();
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await clickAt(127.09, 37.59);
+
+    const btn = screen.getByRole('button', { name: /역삼역/ });
+    expect(btn.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('누르면 그 상권의 건물 목록이 열린다', async () => {
+    await renderMap();
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await clickAt(127.09, 37.59);
+
+    fireEvent.click(screen.getByRole('button', { name: /역삼역/ }));
+    expect(await screen.findByText('역삼빌딩')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /역삼역/ }).getAttribute('aria-expanded')).toBe(
+      'true',
+    );
+  });
+
+  it('한 번 더 누르면 접힌다', async () => {
+    await renderMap();
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await clickAt(127.09, 37.59);
+
+    fireEvent.click(screen.getByRole('button', { name: /역삼역/ }));
+    await screen.findByText('역삼빌딩');
+    fireEvent.click(screen.getByRole('button', { name: /역삼역/ }));
+    await waitFor(() => expect(screen.queryByText('역삼빌딩')).toBeNull());
+  });
+
+  it('⛔ 지도를 다시 누르면 목록이 닫힌다 — 새 자리 아래 옛 상권의 건물이 서면 안 된다', async () => {
+    await renderMap();
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await clickAt(127.09, 37.59);
+    fireEvent.click(screen.getByRole('button', { name: /역삼역/ }));
+    await screen.findByText('역삼빌딩');
+
+    await clickAt(127.05, 37.55); // 다른 자리(두 상권이 겹치는 곳)
+    await waitFor(() => expect(screen.queryByText('역삼빌딩')).toBeNull());
+  });
+});
 
 describe('DistrictMap — 상권 이름표', () => {
   /** 카카오가 배율을 바꿨을 때 주는 이벤트를 그대로 흉내 낸다(인자는 지도 객체다). */
@@ -447,11 +531,11 @@ describe('DistrictMap — 접기와 캐시', () => {
   it('경계 파일은 한 번만 받는다 — 구를 바꿔도 다시 받지 않는다', async () => {
     const DistrictMap = await load();
     const { rerender } = render(
-      <DistrictMap sigungu="11680" sigunguName="강남구" selected={null} />,
+      <DistrictMap sigungu="11680" sigunguName="강남구" selected={null} onSelectBuilding={() => {}} />,
     );
     await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
 
-    rerender(<DistrictMap sigungu="30170" sigunguName="서구" selected={null} />);
+    rerender(<DistrictMap sigungu="30170" sigunguName="서구" selected={null} onSelectBuilding={() => {}} />);
     await waitFor(() => expect(screen.getByText(/출처: 소상공인시장진흥공단/)).toBeTruthy());
 
     // 파일 하나에 전국이 다 들어 있다 — 구별로 거르기만 하면 된다.

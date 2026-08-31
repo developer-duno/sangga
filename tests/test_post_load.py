@@ -480,6 +480,10 @@ class TestAnonExposure:
             # 상권 임대 동향(2026-08-31a · 결정 0024). 표 rent_stat·district_rone_map 은
             # **여기 없다** — 이 함수는 속한 상권의 조사값만 내보낸다.
             "list_rent_stats",
+            # 상권 → 건물 다리(2026-08-31b · 결정 0025). 표 district·parcel·building 은
+            # **여기 없다** — 열리면 상권 경계(geom)와 전국 24만 동 대장이 그대로 나간다.
+            # 점포는 **땅 단위 개수**만 나가고 상호명·업종은 한 글자도 안 나간다.
+            "list_district_buildings", "list_parcel_buildings",
         )
 
     def test_the_purge_function_is_never_exposed(self):

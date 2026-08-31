@@ -214,7 +214,12 @@ export default function App() {
         area="상권 지도"
         context={{ sigungu, sigungu_nm: sigunguName }}
       >
-        <DistrictMap sigungu={sigungu} sigunguName={sigunguName} selected={selected} />
+        <DistrictMap
+          sigungu={sigungu}
+          sigunguName={sigunguName}
+          selected={selected}
+          onSelectBuilding={handleSelectBuilding}
+        />
       </ErrorBoundary>
 
       {/*

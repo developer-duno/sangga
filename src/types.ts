@@ -577,3 +577,49 @@ export type BuildingHit = {
    */
   total_cnt?: number;
 };
+
+/**
+ * 함수 `list_district_buildings(p_district_id, p_limit, p_offset)`의 한 줄 = **땅 하나**.
+ *
+ * ⛔ `store_cnt` 는 "이 건물의 점포"가 아니라 **"이 땅의 점포"** 다. 층별 화면의 점포 칸과
+ *    **세는 대상이 다르므로**(거기는 그 건물의 층에 붙은 점포) 화면 문구가 이것을 흐리면
+ *    두 화면이 서로 다른 말을 하는 것처럼 보인다.
+ */
+export type DistrictLand = {
+  pnu: string;
+  /** 이 **땅**의 점포 수(최신 분기). 0 이 정상일 수 있다. */
+  store_cnt: number;
+  /** 이 땅에 선 동 수(층 자료가 있는 것만). 1 보다 크면 "같은 땅에 N동"을 적는다. */
+  bld_cnt_in_pnu: number;
+  /** 대표 동(연면적이 가장 큰 것). 아래 칸들은 검색 결과(`BuildingHit`)와 같은 모양이다. */
+  bld_id: string;
+  bld_nm: string | null;
+  road_addr: string | null;
+  jibun_addr: string | null;
+  lat: number | null;
+  lng: number | null;
+  floor_cnt: number;
+  min_floor: number | null;
+  max_floor: number | null;
+  has_roof: boolean;
+  /** 상한에 잘리기 전 전체 규모. 모든 행에 같은 값으로 온다. */
+  total_parcel_cnt: number;
+  total_bld_cnt: number;
+};
+
+/**
+ * 함수 `list_parcel_buildings(p_pnu)`의 한 줄 = 그 땅에 선 **동 하나**.
+ *
+ * ⓘ `dong_nm` 이 따로 있는 이유는 한 땅의 동들이 건물명을 공유하기 때문이다
+ *   (롯데호텔 4동 전부 '롯데호텔 및 백화점' — 본관동·신관동·부속건물 2동으로만 갈린다).
+ */
+export type ParcelBuilding = {
+  bld_id: string;
+  bld_nm: string | null;
+  dong_nm: string | null;
+  total_area_m2: number | null;
+  floor_cnt: number;
+  min_floor: number | null;
+  max_floor: number | null;
+  has_roof: boolean;
+};
