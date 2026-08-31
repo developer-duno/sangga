@@ -3385,6 +3385,247 @@ grant execute on function api.list_rent_stats(text) to anon, authenticated;
 notify pgrst, 'reload schema';
 
 -- =====================================================================
+-- 함수: list_district_buildings / list_parcel_buildings — 상권 → 건물 다리
+-- =====================================================================
+-- 마이그레이션 2026-08-31b. 정방향 list_building_districts 의 짝이다.
+--
+-- 왜: 지도는 상권을 누르면 이름·유형만 알려주고 끝나 **막다른 길**이었다. 창업자는
+--     건물 이름을 모르므로 검색으로 들어올 수 없다.
+--
+-- 판정은 정방향과 글자 그대로 같아야 한다 — st_contains(d.geom, parcel.geom).
+--    다르면 "상권 목록으로 들어간 건물인데 그 건물 화면엔 그 상권이 안 뜨는" 모순이 난다.
+--    필지는 폴리곤이 아니라 **점 하나**라, 경계에 걸친 땅은 "걸쳐서 빠지는" 것이 아니라
+--    그 대표점이 안쪽이냐 바깥이냐로 갈린다.
+--
+-- 세로줄은 건물이 아니라 **땅(필지)** 이다. 점포 수를 필지 단위로만 셀 수 있어서다
+--    (unit_business.unit_id 295만 행 전량 NULL — 건물 단위로는 영영 못 가른다).
+--    건물로 줄세우면 한 땅의 동들이 같은 점포 수를 **복사해** 갖는다: 명동 상위 10에
+--    "롯데호텔 및 백화점 317" 이 네 줄 연달아 나온다(본관동·신관동·부속건물 2동).
+--    한 땅에 동이 많은 것은 예외가 아니라 정상이다 — 전국 실측 20동 초과 637곳(21,635동),
+--    최대 168동(헬리오시티) · 창덕궁 157 · 서울대 154 · 경복궁 140.
+--
+-- 미리 굽지 않는다. 형제 mv_district_industry_mix 는 **전 상권 x 전 점포**라 12.5초였고,
+--    여기는 상권 하나만 본다 — 최대 상권도 찬 캐시 0.5초 / 더운 35ms(2026-08-31 실측).
+create or replace function list_district_buildings(
+  p_district_id text,
+  p_limit       int default 50,
+  p_offset      int default 0
+)
+returns table (
+  pnu              char(19),
+  store_cnt        int,        -- 이 **땅**의 점포 수(최신 분기)
+  bld_cnt_in_pnu   int,        -- 1 보다 크면 화면이 "같은 땅에 N동"을 적는다
+  bld_id           text,       -- 대표 동 = 연면적 최대. 아래 칸들은 검색 결과와 같은 모양
+  bld_nm           text,
+  road_addr        text,
+  jibun_addr       text,
+  lat              double precision,
+  lng              double precision,
+  floor_cnt        int,
+  min_floor        smallint,
+  max_floor        smallint,
+  has_roof         boolean,
+  total_parcel_cnt bigint,     -- 상한에 잘리기 전 전체 규모(모든 행에 같은 값)
+  total_bld_cnt    bigint
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with scope as (
+    select p.pnu
+    from district d
+    join parcel p on st_contains(d.geom, p.geom)
+    where d.district_id = p_district_id
+      and p.geom is not null
+  ),
+  elig as (
+    -- 층 자료가 아예 없는 건물은 눌러도 빈 화면이라 뺀다(검색과 같은 규칙, 239동).
+    select b.bld_id, b.pnu, b.display_nm, b.total_area_m2
+    from scope sc
+    join building b on b.pnu = sc.pnu
+    where exists (
+      select 1 from building_floor f
+      where f.bld_id = b.bld_id and f.floor_no is not null
+    )
+  ),
+  stores as (
+    select ub.pnu, count(*)::int as n
+    from unit_business ub
+    join scope sc on sc.pnu = ub.pnu
+    where ub.snapshot_ym = (select max(u.snapshot_ym) from unit_business u)
+    group by 1
+  ),
+  land as (
+    -- 창 함수는 GROUP BY 뒤에 돈다 -> count(*) over () = 땅 수, sum(count(*)) over () = 동 수.
+    select e.pnu,
+           coalesce(max(s.n), 0)::int as store_cnt,
+           count(*)::int              as bld_cnt_in_pnu,
+           count(*)      over ()      as total_parcel_cnt,
+           sum(count(*)) over ()      as total_bld_cnt
+    from elig e
+    left join stores s on s.pnu = e.pnu
+    group by e.pnu
+  ),
+  page as (
+    -- 무거운 조인 전에 **상한을 먼저**(검색 함수와 같은 수법).
+    -- tie-break 에 pnu 를 둔다 — 없으면 "더 보기"가 본 줄을 다시 가져오거나 건너뛴다.
+    select *
+    from land
+    order by store_cnt desc, pnu
+    limit  greatest(1, least(coalesce(p_limit, 50), 200))
+    offset greatest(0, coalesce(p_offset, 0))
+  )
+  select
+    pg.pnu, pg.store_cnt, pg.bld_cnt_in_pnu,
+    rep.bld_id, rep.display_nm as bld_nm, p.road_addr,
+    parcel_jibun_addr(p.sido_nm, p.sigungu_nm, p.emd_nm, p.jibun) as jibun_addr,
+    -- 좌표는 geom 에서만(2026-08-14e 규칙 — 칸을 쓰면 마커와 글자가 어긋난다).
+    st_y(p.geom)::double precision as lat,
+    st_x(p.geom)::double precision as lng,
+    fs.floor_cnt, fs.min_floor, fs.max_floor, fs.has_roof,
+    pg.total_parcel_cnt, pg.total_bld_cnt
+  from page pg
+  join parcel p on p.pnu = pg.pnu
+  join lateral (
+    select e.bld_id, e.display_nm
+    from elig e
+    where e.pnu = pg.pnu
+    order by e.total_area_m2 desc nulls last, e.bld_id
+    limit 1
+  ) rep on true
+  join lateral (
+    -- 층수 규칙을 새로 정하지 않는다 — 검색 함수의 것을 글자 그대로 옮겼다.
+    select count(*)::int                                    as floor_cnt,
+           min(s.floor_no) filter (where s.floor_no <> 99)  as min_floor,
+           max(s.floor_no) filter (where s.floor_no <> 99)  as max_floor,
+           coalesce(bool_or(s.floor_no = 99), false)        as has_roof
+    from v_building_floor_stack s
+    where s.bld_id = rep.bld_id
+  ) fs on true
+  order by pg.store_cnt desc, pg.pnu;
+$$;
+
+comment on function list_district_buildings(text, int, int) is
+  '상권 하나에 속한 **땅(필지)** 목록을 점포 많은 순으로. 정방향 list_building_districts 와 '
+  '같은 판정(st_contains + parcel.geom)을 써야 두 화면이 같은 말을 한다. '
+  'store_cnt 는 **그 땅**의 점포 수다(건물별로는 영영 못 가른다 — unit_business.unit_id 전량 NULL). '
+  '한 땅에 여러 동이면 대표 동(연면적 최대) 한 채만 싣고 bld_cnt_in_pnu 로 몇 동인지 알린다.';
+
+-- Supabase 는 새 함수를 anon 에게 자동으로 연다(pg_default_acl) — 만든 자리에서 닫는다.
+-- 2026-08-31 실측: 이 줄 없이 만드니 anon 실행 권한이 곧바로 t 였다.
+revoke all on function list_district_buildings(text, int, int) from public, anon, authenticated;
+
+-- 한 땅의 동 목록 — 목록에서 "같은 땅에 N동"을 **펼칠 때만** 부른다.
+-- 목록에 동을 전부 실으면 대전역 상권에서 606동이 딸려 오는데, 필지의 94%
+-- (176,488/188,442)는 동이 하나뿐이라 그 짐은 대부분 쓰이지 않는다.
+create or replace function list_parcel_buildings(p_pnu text)
+returns table (
+  bld_id        text,
+  bld_nm        text,
+  dong_nm       text,
+  total_area_m2 numeric,
+  floor_cnt     int,
+  min_floor     smallint,
+  max_floor     smallint,
+  has_roof      boolean
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select
+    b.bld_id,
+    b.display_nm as bld_nm,
+    -- 동명칭을 함께 준다 — 한 땅의 동들은 건물명이 같은 일이 흔해(롯데호텔 4동 전부
+    -- "롯데호텔 및 백화점") 이것 없이는 사용자가 무엇을 고르는지 알 수 없다.
+    -- 새로 여는 칸이 아니다: display_nm 은 건물명이 비면 이미 동명칭을 그대로 내보낸다.
+    nullif(btrim(mask_person_name(b.dong_nm)), '') as dong_nm,
+    b.total_area_m2,
+    fs.floor_cnt, fs.min_floor, fs.max_floor, fs.has_roof
+  from building b
+  join lateral (
+    select count(*)::int                                    as floor_cnt,
+           min(s.floor_no) filter (where s.floor_no <> 99)  as min_floor,
+           max(s.floor_no) filter (where s.floor_no <> 99)  as max_floor,
+           coalesce(bool_or(s.floor_no = 99), false)        as has_roof
+    from v_building_floor_stack s
+    where s.bld_id = b.bld_id
+  ) fs on true
+  -- p_pnu::char(19) 캐스트를 지우지 말 것 — 지우면 컬럼 쪽이 text 로 캐스트돼
+  -- 인덱스가 통째로 죽는다(2026-08-16b 실측 459.8ms <-> 0.796ms).
+  where b.pnu = p_pnu::char(19)
+    and exists (
+      select 1 from building_floor f
+      where f.bld_id = b.bld_id and f.floor_no is not null
+    )
+  order by b.total_area_m2 desc nulls last, b.bld_id;
+$$;
+
+comment on function list_parcel_buildings(text) is
+  '한 필지에 선 동 목록. 목록 화면에서 "같은 땅에 N동"을 펼칠 때만 부른다. '
+  '층 자료 없는 동은 뺀다(눌러도 빈 화면이라 — 검색과 같은 규칙). '
+  '동명칭을 함께 주는 이유: 한 땅의 동들은 건물명이 같은 일이 흔해 이름만으로는 못 가린다.';
+
+revoke all on function list_parcel_buildings(text) from public, anon, authenticated;
+
+-- 화면이 실제로 부르는 것.
+create or replace function api.list_district_buildings(
+  p_district_id text,
+  p_limit       int default 50,
+  p_offset      int default 0
+)
+returns table (
+  pnu              char(19),
+  store_cnt        int,
+  bld_cnt_in_pnu   int,
+  bld_id           text,
+  bld_nm           text,
+  road_addr        text,
+  jibun_addr       text,
+  lat              double precision,
+  lng              double precision,
+  floor_cnt        int,
+  min_floor        smallint,
+  max_floor        smallint,
+  has_roof         boolean,
+  total_parcel_cnt bigint,
+  total_bld_cnt    bigint
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$ select * from public.list_district_buildings(p_district_id, p_limit, p_offset) $$;
+
+revoke all on function api.list_district_buildings(text, int, int) from public, anon, authenticated;
+grant execute on function api.list_district_buildings(text, int, int) to anon, authenticated;
+
+create or replace function api.list_parcel_buildings(p_pnu text)
+returns table (
+  bld_id        text,
+  bld_nm        text,
+  dong_nm       text,
+  total_area_m2 numeric,
+  floor_cnt     int,
+  min_floor     smallint,
+  max_floor     smallint,
+  has_roof      boolean
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$ select * from public.list_parcel_buildings(p_pnu) $$;
+
+revoke all on function api.list_parcel_buildings(text) from public, anon, authenticated;
+grant execute on function api.list_parcel_buildings(text) to anon, authenticated;
+
+notify pgrst, 'reload schema';
+
+-- =====================================================================
 -- 완료
 -- =====================================================================
 -- 다음 단계:

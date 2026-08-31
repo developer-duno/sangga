@@ -493,6 +493,192 @@ body {
   font-size: 12px;
 }
 
+/*
+  누른 자리의 상권 이름 — 여태 글자였던 것을 **버튼**으로 바꿨다.
+
+  ⛔ 생김새를 검색 결과(.hit)처럼 카드로 만들지 않는다. 이 줄은 "지금 누른 자리가 어디인가"를
+     알려 주는 안내이기도 해서, 카드로 만들면 지도 아래에 카드 두 겹이 겹쳐 보인다.
+     대신 **누를 수 있다는 것**만 분명히 한다(손 모양 커서 + 밑줄 + 열렸을 때 색).
+*/
+.dmap__picked-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dmap__picked-btn:hover,
+.dmap__picked-btn:focus-visible {
+  border-color: var(--accent);
+}
+
+.dmap__picked-btn--on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.dmap__picked-nm {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ── 이 상권의 건물 ─────────────────────────────────────────────────── */
+
+.dbld {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  background: var(--bg);
+  border-radius: 8px;
+}
+
+.dbld__head {
+  margin: 0;
+  font-size: 13.5px;
+}
+
+.dbld__note {
+  margin: 4px 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.dbld__msg {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.dbld__msg--error {
+  color: var(--under);
+}
+
+.dbld__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  /* 상권 하나에 1,171동까지 있다 — 목록이 지도를 밀어내지 않게 여기서 끊는다
+     (검색 결과 .hits 와 같은 처방). */
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.dbld__row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) auto;
+  gap: 12px;
+  align-items: baseline;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dbld__row:hover,
+.dbld__row:focus-visible {
+  border-color: var(--accent);
+}
+
+.dbld__row--on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.dbld__name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dbld__addr,
+.dbld__meta {
+  color: var(--muted);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* "같은 땅에 N동" — 검색 결과의 같은 배지와 **같은 색**이다(규칙을 새로 만들지 않는다). */
+.dbld__warn {
+  color: var(--under);
+}
+
+.dbld__dongs {
+  list-style: none;
+  margin: 4px 0 0 16px;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.dbld__dong {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dbld__dong:hover,
+.dbld__dong:focus-visible {
+  border-color: var(--accent);
+}
+
+.dbld__dong--on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.dbld__dong-meta {
+  color: var(--muted);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.dbld__more {
+  margin: 8px 0 0;
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.dbld__more:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.dbld__src {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 /* ── 스택 ───────────────────────────────────────────────────────────── */
 
 .stack {
@@ -1822,6 +2008,18 @@ body {
     width: 100%;
     flex-basis: auto;
   }
+
+  /* 좁은 폭에서는 이름·주소·점포수 세 칸이 한 줄에 안 들어간다 — 세로로 쌓는다.
+     ⚠️ 넓은 화면만 보면 이 깨짐을 못 잡는다(2026-08-22 층별 막대 사고와 같은 자리). */
+  .dbld__row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .dbld__dong {
+    flex-direction: column;
+    gap: 2px;
+  }
 }
 
 /* ── 종이로 뽑기 (결정 0020) ──────────────────────────────────────────────────
@@ -1872,6 +2070,7 @@ body {
   .fb,
   .dmap__toggle,
   .dmap__picked--idle,
+  .dbld,
   .mix__pick,
   /* ⛔ 고르개만 빼고 **고른 결과는 남긴다** — `.rent__now` 가 어느 종류를 보는 중인지
      글자로 적고 있어서, 그 줄이 없으면 종이의 숫자가 무슨 종류인지 알 수 없게 된다. */
