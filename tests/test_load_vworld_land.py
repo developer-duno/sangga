@@ -328,3 +328,49 @@ def test_fetch_existing_parcels_HTTP_오류면_예외(monkeypatch):
     )
     with pytest.raises(RuntimeError, match="parcel 조회 실패"):
         lvl.fetch_existing_parcels("https://x.supabase.co", {"apikey": "k"})
+
+
+# ── 6. main() 갱신 대상 0건 가드 (2026-08-31 감사) ───────────────────────────
+# 이 적재기는 "바뀐 것만" 고르지 않는다 — raw 에 있고 parcel 에도 있는 PNU 를 전부 다시
+# 올린다. 그래서 0건은 "이미 다 채웠다"가 아니라 **항상 이상 신호**다(raw 가 비었거나
+# [A] 전국 시드를 아직 안 돌렸거나). 형제 load_vworld_bulk.py 가 같은 경우를 1 로 막는
+# 것과 규약을 맞춘다. 되돌리면(return 0) 아래 두 테스트 중 첫 번째가 빨간불이 된다.
+
+
+def _raw(tmp_path, pnu="1111011100100010000"):
+    """collect_vworld_land 가 남기는 모양 그대로의 raw 한 줄."""
+    p = tmp_path / "land_characteristics.jsonl"
+    p.write_text(
+        json.dumps({"pnu": pnu, "fetched_at": "x", "rows": [_ROW]}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return p
+
+
+def _patch_supabase(monkeypatch, existing, upsert_calls):
+    monkeypatch.setattr(lvl, "get_supabase_config", lambda: ("https://x.supabase.co", "k"))
+    monkeypatch.setattr(lvl, "fetch_existing_parcels", lambda base_url, headers: dict(existing))
+    monkeypatch.setattr(
+        lvl, "upsert_batch",
+        lambda base_url, headers, table, rows, **kw: upsert_calls.append(len(rows)) or len(rows),
+    )
+
+
+def test_main_실적재인데_갱신대상_0건이면_1(tmp_path, monkeypatch, capsys):
+    """parcel 에 그 PNU 가 하나도 없는데 조용히 exit 0 으로 끝나면, 자동화도 다음 사람도
+    '성공했는데 왜 안 채워졌지'를 원인 모른 채 헤맨다."""
+    _raw(tmp_path)
+    calls = []
+    _patch_supabase(monkeypatch, {}, calls)          # parcel 이 비어 있다
+    assert lvl.main(["--raw-dir", str(tmp_path)]) == 1
+    assert calls == []                                # 보낼 게 없으니 upsert 자체가 안 불린다
+    assert "전국 시드" in capsys.readouterr().out     # 무엇을 먼저 해야 하는지 알려 준다
+
+
+def test_main_dry_run은_갱신대상_0건이어도_0(tmp_path, monkeypatch):
+    """--dry-run 은 '미리보기'라 이 가드의 대상이 아니다 — 형제와 같은 예외."""
+    _raw(tmp_path)
+    calls = []
+    _patch_supabase(monkeypatch, {}, calls)
+    assert lvl.main(["--raw-dir", str(tmp_path), "--dry-run"]) == 0
+    assert calls == []

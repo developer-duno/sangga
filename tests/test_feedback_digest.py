@@ -24,12 +24,16 @@ import sys
 import urllib.error
 
 import pytest
+import yaml
 
 SCRIPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts")
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
 import feedback_digest as fd  # noqa: E402
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+WORKFLOW = os.path.join(ROOT, ".github", "workflows", "feedback-digest.yml")
 
 URL = "https://example.test"
 KEY = "anon-key-fake"
@@ -222,7 +226,13 @@ def test_retention_days_matches_the_server_constant():
 
 
 def test_transient_failure_is_retried(monkeypatch):
-    """한 번 끊겼다고 실패로 알리면, 그 이슈를 닫는 손이 들고 결국 알림이 무시된다."""
+    """한 번 끊겼다고 실패로 알리면, 그 이슈를 닫는 손이 들고 결국 알림이 무시된다.
+
+    ⛔ fetch_stats 가 아니라 rpc 를 직접 부른다 — sleep=lambda 로 재시도 사이 대기를
+    없애야 하는데, fetch_stats 는 그 자리를 밖으로 안 열어 준다(collect_lh_notices.py
+    가 get_json_with_retry 를 직접 시험하는 것과 같은 이유 — fetch_sanga 를 거치지
+    않는다).
+    """
     attempts = {"n": 0}
 
     def flaky(req, timeout=None):
@@ -232,14 +242,15 @@ def test_transient_failure_is_retried(monkeypatch):
         return FakeResponse(stats_row(opinion=1, total=1, oldest=0))
 
     monkeypatch.setattr(fd.urllib.request, "urlopen", flaky)
-    assert fd.fetch_stats(URL, KEY, 7)["opinion_cnt"] == 1
+    result = fd.rpc(URL, KEY, fd.STATS_FN, {"p_days": 7}, sleep=lambda _s: None)
+    assert result == stats_row(opinion=1, total=1, oldest=0)
     assert attempts["n"] == 2
 
 
 def test_gives_up_after_retries(monkeypatch):
     install_fake_urlopen(monkeypatch, urllib.error.URLError("계속 장애"))
     with pytest.raises(fd.CallFailed):
-        fd.fetch_stats(URL, KEY, 7)
+        fd.rpc(URL, KEY, fd.STATS_FN, {"p_days": 7}, sleep=lambda _s: None)
 
 
 # ── main() — 이 스크립트의 존재 이유 ─────────────────────────────────────────
@@ -292,8 +303,18 @@ def test_missing_credentials_returns_2(monkeypatch, capsys):
 
 
 def test_rpc_failure_returns_1_and_reports_nothing(monkeypatch, tmp_path, capsys):
-    """⛔ 조회에 실패했는데 '알릴 일 없음'으로 넘어가면, 창고가 죽어도 조용하다."""
-    install_fake_urlopen(monkeypatch, urllib.error.URLError("장애"))
+    """⛔ 조회에 실패했는데 '알릴 일 없음'으로 넘어가면, 창고가 죽어도 조용하다.
+
+    ⛔ fetch_stats 를 바로 실패시킨다 — collect_lh_notices.py 의 TestMain 이
+    fetch_recent 를 흉내 내는 것과 같은 이유다. main() 이 실제 재시도 루프
+    (rpc)까지 거치게 두면 기본 sleep=time.sleep 때문에 이 시험이 몇 초씩(총
+    75초) 실제로 기다리게 된다 — main() 은 재시도 루프를 우회할 자리를 안 열어
+    두므로(운영 스크립트라 정상), 여기서는 그 위 계층에서 실패를 흉내 낸다.
+    """
+    def boom(*args, **kwargs):
+        raise fd.CallFailed("장애")
+
+    monkeypatch.setattr(fd, "fetch_stats", boom)
     out = set_env(monkeypatch, tmp_path)
     assert fd.main() == 1
     assert "실패" in capsys.readouterr().out
@@ -368,3 +389,136 @@ def test_emit_output_delimiter_differs_every_run(monkeypatch, tmp_path):
 def test_emit_output_is_noop_outside_actions(monkeypatch):
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
     fd._emit_output("body", "아무거나")  # 예외가 안 나면 통과
+
+
+# ── 재시도 표준(collect_lh_notices.get_json_with_retry 와 같은 규칙) ───────────
+
+
+class TestRetryStandard:
+    """2026-08-31 PR #109 가 collect_lh_notices.py 에 세운 표준을 여기도 따른다 —
+    예전엔 RETRIES=3 이면서 재시도 사이 대기가 0초였고, 401/403/404 같은 영구 실패도
+    다시 물었다(check_live_health.py 와 같은 결함)."""
+
+    def test_matches_the_collector_standard(self):
+        """⛔ 두 벌로 두면 언젠가 한쪽만 고쳐진다 — 값이 갈리면 이 시험이 잡는다."""
+        import collect_lh_notices as lh
+
+        assert fd.RETRY_COUNT == lh.RETRY_COUNT
+        assert fd.RETRY_BACKOFF_SEC == lh.RETRY_BACKOFF_SEC
+        assert fd.NO_RETRY_HTTP_CODES == lh.NO_RETRY_HTTP_CODES
+
+    def test_waits_longer_between_each_knock(self, monkeypatch):
+        def always_down(req, timeout=None):
+            raise urllib.error.URLError("계속 장애")
+
+        monkeypatch.setattr(fd.urllib.request, "urlopen", always_down)
+        waits = []
+        with pytest.raises(fd.CallFailed):
+            fd.rpc(URL, KEY, fd.STATS_FN, {"p_days": 7}, sleep=waits.append)
+        assert waits == [fd.RETRY_BACKOFF_SEC * (2**i) for i in range(fd.RETRY_COUNT - 1)]
+
+    @pytest.mark.parametrize("code", sorted(fd.NO_RETRY_HTTP_CODES))
+    def test_does_not_retry_what_will_not_change(self, monkeypatch, code):
+        """401·403·404 는 사람이 설정을 고쳐야 하는 것 — 참을성을 늘려도 한 번뿐이다."""
+        calls = []
+
+        def refused(req, timeout=None):
+            calls.append(req.full_url)
+            raise urllib.error.HTTPError(req.full_url, code, "refused", None, None)
+
+        monkeypatch.setattr(fd.urllib.request, "urlopen", refused)
+        with pytest.raises(fd.CallFailed):
+            fd.rpc(URL, KEY, fd.STATS_FN, {"p_days": 7}, sleep=lambda _s: None)
+        assert len(calls) == 1, "다시 물어도 답이 같은 실패인데 재시도했습니다"
+
+    def test_retries_a_gateway_timeout_like_error(self, monkeypatch):
+        """502·503 같은 HTTPError 는 다시 물으면 답이 달라질 수 있어 재시도한다."""
+        calls = []
+
+        def flaky(req, timeout=None):
+            calls.append(req.full_url)
+            if len(calls) == 1:
+                raise urllib.error.HTTPError(req.full_url, 503, "Service Unavailable", None, None)
+            return FakeResponse(stats_row(opinion=1, total=1, oldest=0))
+
+        monkeypatch.setattr(fd.urllib.request, "urlopen", flaky)
+        result = fd.rpc(URL, KEY, fd.STATS_FN, {"p_days": 7}, sleep=lambda _s: None)
+        assert result == stats_row(opinion=1, total=1, oldest=0)
+        assert len(calls) == 2
+
+
+# ── 워크플로 배선 ──────────────────────────────────────────────────────────────
+
+
+@pytest.fixture(scope="module")
+def workflow_text():
+    with open(WORKFLOW, encoding="utf-8") as f:
+        return f.read()
+
+
+@pytest.fixture(scope="module")
+def workflow(workflow_text):
+    return yaml.safe_load(workflow_text)
+
+
+def _step(workflow, name):
+    matches = [s for s in workflow["jobs"]["digest"]["steps"] if s.get("name") == name]
+    assert matches, f"'{name}' 단계를 워크플로에서 못 찾았습니다"
+    return matches[0]
+
+
+class TestWorkflow:
+    """본보기는 lh-notice-watch.yml **하나**다 — 자격값 게이트 + outputs 기반 알림 +
+    별도 failure 알림, feedback-digest.yml 과 구조가 같다. (live-health-watch.yml 의
+    failure() 는 본연의 알림 그 자체라 모델이 아니다.)"""
+
+    def test_exists_and_parses(self, workflow):
+        assert workflow["name"]
+
+    def test_failure_is_loud(self, workflow_text):
+        """감시가 실패하면 이슈가 안 열린다 — 그 사실 자체를 이슈로 만든다(lh-notice
+        와 같은 형태)."""
+        assert "if: failure()" in workflow_text
+        assert "feedback-digest-failure-issue.md" in workflow_text
+        assert os.path.exists(os.path.join(ROOT, ".github", "feedback-digest-failure-issue.md"))
+
+    def test_failure_step_is_last(self, workflow):
+        """맨 끝에 둬야 앞의 모든 단계(자격값 게이트·숫자 세기·상호 감시)가 끝난
+        뒤의 job 상태를 본다."""
+        steps = workflow["jobs"]["digest"]["steps"]
+        assert steps[-1]["name"] == "감시가 실패하면 그 사실을 이슈로 알린다"
+        assert steps[-1]["if"] == "failure()"
+
+    def test_failure_issue_dedup_looks_at_open_only(self, workflow):
+        """제목에 날짜가 없으므로 **열려 있는** 같은 제목만 건너뛴다 —
+        사람이 닫아야 다음 실패를 다시 알린다."""
+        step = _step(workflow, "감시가 실패하면 그 사실을 이슈로 알린다")
+        assert "--state open" in step["run"]
+
+    def test_missing_vars_path_does_not_fail_the_job(self, workflow):
+        """⛔ 새로 붙인 failure() 잡이가 '변수 없음'까지 사고로 알리면 안 된다 — 그
+        경로는 이미 별도 설정 안내 이슈로 알리고, job 자체는 성공으로 끝나야 한다.
+
+        확인 방법: 두 단계 모두 `exit 1`(또는 다른 실패 종료)이 없다 — `set -euo
+        pipefail` 아래에서 마지막 명령이 성공(echo·gh issue create)으로 끝나면 job
+        은 성공으로 마감된다.
+        """
+        for name in ("창고 주소·공개키가 있나", "변수가 없으면 그 사실을 알린다"):
+            step = _step(workflow, name)
+            assert "exit 1" not in step["run"]
+
+    def test_uses_variables_not_secrets(self, workflow_text):
+        """⛔ URL·공개키는 비밀값이 아니다 — Secrets 가 아니라 vars.* 여야 한다."""
+        assert "vars.SANGGA_SUPABASE_URL" in workflow_text
+        assert "vars.SANGGA_SUPABASE_ANON_KEY" in workflow_text
+        assert "secrets.SANGGA_SUPABASE" not in workflow_text
+
+    def test_watches_all_four_siblings(self, workflow_text):
+        """⛔ 새 예약은 그물에 들어가야 하고, 그물도 새 예약을 봐야 한다(양방향)."""
+        import check_watch_heartbeat as hb
+
+        for other in hb.DEFAULT_WORKFLOWS:
+            if other == os.path.basename(WORKFLOW):
+                continue
+            assert "--workflow {}".format(other) in workflow_text
+        assert os.path.basename(WORKFLOW) in hb.DEFAULT_WORKFLOWS

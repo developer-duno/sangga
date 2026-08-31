@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
 import type { DistrictLand, ParcelBuilding } from '../types';
 
 /**
@@ -36,6 +36,12 @@ const rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
  */
 const hold: { next: Promise<unknown> | null } = { next: null };
 
+/**
+ * 동 목록(펼치기) 답을 붙들어 두는 같은 장치. 슬롯을 따로 두는 이유는 목록과 펼치기가
+ * **서로 다른 경합**을 갖기 때문이다 — 목록은 상권 단위, 펼치기는 줄 단위다.
+ */
+const holdDongs: { next: Promise<unknown> | null } = { next: null };
+
 vi.mock('../lib/supabase', () => ({
   supabase: {
     rpc: (fn: string, args?: Record<string, unknown>) => {
@@ -43,6 +49,11 @@ vi.mock('../lib/supabase', () => ({
       if (fn === 'list_district_buildings' && hold.next) {
         const held = hold.next;
         hold.next = null;
+        return held;
+      }
+      if (fn === 'list_parcel_buildings' && holdDongs.next) {
+        const held = holdDongs.next;
+        holdDongs.next = null;
         return held;
       }
       return Promise.resolve(fn === 'list_district_buildings' ? responses.lands : responses.dongs);
@@ -102,6 +113,9 @@ beforeEach(() => {
   rpcCalls.length = 0;
   responses.lands = { data: [land()], error: null };
   responses.dongs = { data: [dong()], error: null };
+  // 붙들어 둔 답이 다음 시험으로 새면 그 시험이 엉뚱한 이유로 빨개진다.
+  hold.next = null;
+  holdDongs.next = null;
 });
 
 afterEach(() => cleanup());
@@ -158,6 +172,14 @@ describe('DistrictBuildings — 한 땅에 여러 동', () => {
     expect(await screen.findByText('본관동')).toBeTruthy();
     // 어느 동인지 모르는 채로 건물을 고르면 안 된다.
     expect(onSelect).not.toHaveBeenCalled();
+
+    // ⛔ **함수 이름과 인자 이름을 눈으로 본다.** 위 목(mock)은 목록 함수 하나만 이름으로
+    //    가르고 **나머지 이름에는 전부 같은 답**을 준다 — 그래서 이 단언이 없으면
+    //    `list_parcel_buildings` 를 오타 내거나 인자를 `pnu` 로 잘못 보내도 시험은 초록이고,
+    //    라이브에서만 PGRST202 로 죽는다(목록 함수 쪽 ④ 단언과 같은 취지).
+    const call = rpcCalls.find((c) => c.fn === 'list_parcel_buildings');
+    expect(call, 'list_parcel_buildings 를 부르지 않았습니다').toBeTruthy();
+    expect(call!.args).toEqual({ p_pnu: '1114011100100010000' });
   });
 
   it('펼친 동을 누르면 **그 동**으로 고른다 — 층도 그 동의 것이다', async () => {
@@ -173,6 +195,68 @@ describe('DistrictBuildings — 한 땅에 여러 동', () => {
     expect(hit.max_floor).toBe(37);
     // 주소는 같은 땅이라 목록 줄에서 가져온다.
     expect(hit.road_addr).toBe('서울특별시 중구 남대문로 81');
+  });
+
+  it('★ 펼치는 중에 접으면, 늦게 온 답이 **저절로 되펼치지 않는다**', async () => {
+    /*
+      2026-08-31 감사. 위 목록의 세대 번호로는 못 잡는 **별개** 경합이다(세대는 상권 단위,
+      여기는 줄 단위). 답을 기다리는 동안 사용자가 접었는데 답이 도착하며 다시 펼쳐지면,
+      화면이 사용자의 뜻을 덮는다. 되돌리면(settle 의 'loading' 검사 삭제) 빨간불이 된다.
+    */
+    responses.lands = { data: [many()], error: null };
+    show();
+    const row = await screen.findByText('롯데호텔 및 백화점');
+
+    let give: (v: unknown) => void = () => {};
+    holdDongs.next = new Promise((res) => {
+      give = res;
+    });
+    fireEvent.click(row); // 펼치기 시작
+    expect(screen.getByText('동 목록을 불러오는 중…')).toBeTruthy();
+    fireEvent.click(row); // 기다리다 말고 접는다
+    expect(screen.queryByText('동 목록을 불러오는 중…')).toBeNull();
+
+    await act(async () => {
+      give({ data: [dong()], error: null });
+    });
+    expect(screen.queryByText('본관동')).toBeNull();
+  });
+
+  it('★ 펼치는 중에 상권이 바뀌면, 늦게 온 답이 **안 누른 줄을 펼치지 않는다**', async () => {
+    /*
+      ⚠️ 이 시험이 성립하려면 **두 상권에 같은 땅이 들어 있어야** 한다. 억지 설정이
+         아니다 — 상권 경계가 겹치도록 그려져 있어 서울만 3,342동이 두 상권에 동시에
+         들어간다(2026-08-14 실측). 겹치지 않는 땅으로 짜면 새 목록에 그 줄이 아예
+         없어서 **무엇을 무력화해도 통과하는 가짜 시험**이 된다(실제로 그렇게 짰다가
+         돌연변이 검증에서 걸렀다).
+    */
+    responses.lands = { data: [many()], error: null };
+    const { rerender } = show();
+    const row = await screen.findByText('롯데호텔 및 백화점');
+
+    let give: (v: unknown) => void = () => {};
+    holdDongs.next = new Promise((res) => {
+      give = res;
+    });
+    fireEvent.click(row); // 펼치기 시작 — 답은 붙들려 있다
+    expect(screen.getByText('동 목록을 불러오는 중…')).toBeTruthy();
+
+    // 겹치는 옆 상권으로 갈아탄다. **같은 땅**이 그 목록에도 들어 있다.
+    rerender(
+      <DistrictBuildings
+        districtId="3120028"
+        districtNm="명동거리"
+        onSelect={() => {}}
+        selectedBldId={null}
+      />,
+    );
+    await waitFor(() => expect(screen.queryByText('동 목록을 불러오는 중…')).toBeNull());
+
+    await act(async () => {
+      give({ data: [dong()], error: null });
+    });
+    // 새 상권에서는 아무도 이 줄을 누르지 않았다.
+    expect(screen.queryByText('본관동')).toBeNull();
   });
 
   it('동 목록을 못 읽으면 그 사실만 말한다 — 목록 전체는 그대로 선다', async () => {
@@ -250,6 +334,54 @@ describe('DistrictBuildings — 더 보기', () => {
       const calls = rpcCalls.filter((c) => c.fn === 'list_district_buildings');
       expect(calls[calls.length - 1].args.p_offset).toBe(50);
     });
+  });
+
+  it('2쪽을 못 받으면 **이미 받은 목록은 그대로** 두고 그 사실만 알린다', async () => {
+    responses.lands = { data: cut(), error: null };
+    show();
+    await screen.findByText(/이 중 50곳/);
+    responses.lands = { data: null, error: { message: '연결 실패' } };
+    fireEvent.click(screen.getByRole('button', { name: '더 보기' }));
+    expect(await screen.findByText('더 불러오지 못했습니다.')).toBeTruthy();
+    // 받아 둔 50곳을 지우면 사용자는 "왜 사라졌지"가 된다.
+    expect(screen.getByText(/이 중 50곳/)).toBeTruthy();
+  });
+
+  it('★ 더 보기 응답이 늦게 와도 **새 상권 목록에 섞이지 않는다**', async () => {
+    /*
+      2026-08-31 감사에서 잡힌 경합. 처음 불러오기에만 취소 가드가 있고 '더 보기'에는
+      없어서, 더 보기를 누른 직후 지도에서 다른 상권을 누르면 **옛 상권의 2쪽이 새 상권
+      이름 아래** 붙었다. 되돌리면(load 의 runId 검사 삭제) 이 시험이 빨간불이 된다.
+    */
+    responses.lands = { data: cut(), error: null };
+    const { rerender } = show();
+    await screen.findByText(/이 중 50곳/);
+
+    // 2쪽 답을 붙들어 둔다 — 이 구간이 진짜 위험한 자리다.
+    let give: (v: unknown) => void = () => {};
+    hold.next = new Promise((res) => {
+      give = res;
+    });
+    fireEvent.click(screen.getByRole('button', { name: '더 보기' }));
+
+    // 답을 기다리는 사이 다른 상권으로 갈아탄다(이쪽은 즉답 — hold 는 한 칸짜리다).
+    responses.lands = { data: [land({ bld_nm: '새 상권 건물', pnu: 'x1', bld_id: 'X-1' })], error: null };
+    rerender(
+      <DistrictBuildings
+        districtId="3120028"
+        districtNm="명동거리"
+        onSelect={() => {}}
+        selectedBldId={null}
+      />,
+    );
+    expect(await screen.findByText('새 상권 건물')).toBeTruthy();
+
+    // 이제서야 옛 상권의 2쪽이 도착한다.
+    await act(async () => {
+      give({ data: [land({ bld_nm: '옛 상권 2쪽', pnu: 'old2', bld_id: 'O-2' })], error: null });
+    });
+    expect(screen.queryByText('옛 상권 2쪽')).toBeNull();
+    expect(screen.getByText('새 상권 건물')).toBeTruthy();
   });
 });
 

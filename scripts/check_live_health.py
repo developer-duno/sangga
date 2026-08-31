@@ -31,15 +31,40 @@ import os
 import re
 import secrets
 import sys
+import time
 import urllib.error
 import urllib.request
 
 DEFAULT_SITE = "https://sangga-one.vercel.app"
 
-# 배포가 느릴 때 조급하게 실패로 판정하지 않는다. 죽었다고 잘못 알리면
-# 그 이슈를 닫는 사람의 손이 들고, 몇 번 반복되면 알림 자체가 무시된다.
+# 배포가 느릴 때 조급하게 실패로 판정하지 않는다 — 그런데 예전 RETRIES=3 은 재시도
+# 사이 대기가 **0초**였다(코드에 적힌 "조급하게 판정 안 한다"는 말과 실제 동작이
+# 어긋나 있었다). 대기가 없으면 세 번이 밀리초 안에 끝나 사실상 한 번만 두드리는
+# 것과 같다.
+#
+# ⚠️ 재시도 표준은 collect_lh_notices.py 의 get_json_with_retry(PR #109)를 따른다 —
+#    5번 · 5초부터 지수 백오프(5·10·20·40초) · 401/403/404 는 다시 물어도 답이 같아
+#    한 번만 두드리고 포기한다.
+#
+# ⚠️ TIMEOUT_S 는 형제(LH, 60초)와 **의도적으로 다르다**(30초로 유지) — 다음 사람이
+#    "형제와 값이 다르네"하며 무심코 맞추지 말 것. LH 는 해외 러너→한국 포털이 대상이라
+#    긴 지연 구간을 겪었지만, 이 감시는 우리 배포(Vercel, 보통 응답이 훨씬 빠름)를
+#    보는 것이라 요청당 타임아웃은 그대로 두고 **횟수·백오프만** 표준에 맞췄다.
+#
+# ⚠️ 이 워크플로(live-health-watch.yml)에는 timeout-minutes 가 없어 GitHub 기본값
+#    360분(6시간)이 적용된다(공식 문서 확인, docs.github.com — "The default is 360
+#    minutes"). 게다가 check() 는 첫 실패에서 **즉시 예외를 던져** 뒤의 URL(묶음·지도)
+#    을 아예 안 두드린다 — 그래서 최악의 총 대기는 3배가 아니라 **1배**다:
+#      TIMEOUT_S(30) × RETRY_COUNT(5) + 백오프합(5+10+20+40=75) = 최악 약 225초(3.75분)
+#    → 360분 기본 한도 안에 여유 있게 들어간다(테스트 TestWorkflowTimeout 이 이 계산을
+#      회귀로 지킨다). 6시간마다 도는 예약이라 이 정도 총 대기는 무해하다.
+RETRY_COUNT = 5
+RETRY_BACKOFF_SEC = 5
+
+# 다시 물어봐도 답이 같은 실패 — 재시도는 시간만 버린다.
+# 401·403 은 접근이 거절된 것, 404 는 주소가 바뀐 것. 전부 사람이 고쳐야 한다.
+NO_RETRY_HTTP_CODES = frozenset({401, 403, 404})
 TIMEOUT_S = 30
-RETRIES = 3
 
 # 첫 화면이 정말 우리 화면인지 보는 표식. 리액트가 붙을 자리가 없으면
 # 200 이 와도 그건 우리 앱이 아니다(호스팅 기본 페이지·오류 페이지 등).
@@ -61,30 +86,46 @@ def fetch(url: str) -> tuple[int, bytes]:
         return resp.status, resp.read()
 
 
-def fetch_with_retry(url: str, what: str) -> bytes:
-    """받아질 때까지 몇 번 다시 해 본다. 끝내 안 되면 CheckFailed."""
+def fetch_with_retry(url: str, what: str, attempts: int = RETRY_COUNT, sleep=time.sleep) -> bytes:
+    """받아질 때까지 몇 번 다시 해 본다. 끝내 안 되면 CheckFailed.
+
+    `sleep` 을 인자로 받는 이유는 collect_lh_notices.get_json_with_retry 와 같다 —
+    시험이 실제로 몇십 초씩 기다리지 않게, 가짜 sleep 을 끼워 넣을 자리를 열어 둔다.
+    """
     last = ""
-    for attempt in range(1, RETRIES + 1):
+    for attempt in range(1, attempts + 1):
         try:
             status, body = fetch(url)
             if status == 200:
                 return body
             last = f"HTTP {status}"
+            if status in NO_RETRY_HTTP_CODES:
+                raise CheckFailed(f"{what}을(를) 못 받았습니다: {url} → {last}")
         except urllib.error.HTTPError as ex:
             last = f"HTTP {ex.code}"
+            if ex.code in NO_RETRY_HTTP_CODES:
+                raise CheckFailed(f"{what}을(를) 못 받았습니다: {url} → {last}") from ex
         except (urllib.error.URLError, TimeoutError, OSError) as ex:
             last = f"연결 실패({ex})"
-        if attempt < RETRIES:
-            print(f"  · {what} {attempt}번째 실패({last}) — 다시 시도합니다")
+        if attempt < attempts:
+            wait = RETRY_BACKOFF_SEC * (2 ** (attempt - 1))
+            print(f"  · {what} {attempt}번째 실패({last}) — {wait}초 뒤 다시 시도합니다")
+            sleep(wait)
     raise CheckFailed(f"{what}을(를) 못 받았습니다: {url} → {last}")
 
 
-def check(site: str) -> list[str]:
-    """세 가지를 본다. 통과한 것들의 설명을 돌려주고, 실패하면 CheckFailed."""
+def check(site: str, sleep=time.sleep) -> list[str]:
+    """세 가지를 본다. 통과한 것들의 설명을 돌려주고, 실패하면 CheckFailed.
+
+    `sleep` 은 시험이 재시도 백오프를 실제로 기다리지 않게 끼워 넣는 자리다(기본은
+    진짜 time.sleep). ⛔ 첫 번째 검사가 끝내 실패하면 여기서 곧장 예외가 올라가
+    두·세 번째 URL 은 아예 두드리지 않는다 — 그래서 이 함수 전체의 최악 대기는
+    fetch_with_retry 한 번의 최악 대기와 같다(3배가 아니다).
+    """
     passed: list[str] = []
 
     # ① 첫 화면
-    home = fetch_with_retry(site + "/", "첫 화면")
+    home = fetch_with_retry(site + "/", "첫 화면", sleep=sleep)
     html = home.decode("utf-8", errors="replace")
     if ROOT_MARKER not in html:
         raise CheckFailed(
@@ -101,7 +142,7 @@ def check(site: str) -> list[str]:
             "빌드 결과가 바뀌었다면 이 스크립트의 BUNDLE_RE 도 함께 고쳐야 합니다."
         )
     bundle_path = match.group(1)
-    bundle = fetch_with_retry(site + bundle_path, "자바스크립트 묶음")
+    bundle = fetch_with_retry(site + bundle_path, "자바스크립트 묶음", sleep=sleep)
     if len(bundle) < 1024:
         raise CheckFailed(
             f"자바스크립트 묶음이 너무 작습니다({len(bundle)}바이트) — {bundle_path}. "
@@ -110,7 +151,7 @@ def check(site: str) -> list[str]:
     passed.append(f"묶음 200 · {len(bundle):,}바이트 ({bundle_path})")
 
     # ③ 지도가 쓰는 상권 파일
-    geo = fetch_with_retry(site + "/districts.geojson", "상권 지도 파일")
+    geo = fetch_with_retry(site + "/districts.geojson", "상권 지도 파일", sleep=sleep)
     if not geo.lstrip().startswith(b"{"):
         raise CheckFailed("상권 지도 파일이 JSON 이 아닙니다 — 오류 페이지가 온 듯합니다.")
     passed.append(f"상권 지도 파일 200 · {len(geo):,}바이트")

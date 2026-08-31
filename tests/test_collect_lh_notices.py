@@ -420,6 +420,23 @@ class TestBuildSql:
         assert "delete" not in sql
         assert "truncate" not in sql
 
+    def test_summary_counts_alive_in_korean_calendar(self):
+        """⛔ 적재기 요약의 '지금 살아 있는 것'은 화면(list_lh_notices)과 **같은 자**로 센다.
+
+        이 DB 는 UTC 라 `current_date` 를 쓰면 한국 새벽 0~9시에 화면과 이 요약이 서로 다른
+        수를 말한다(마이그레이션 2026-09-01a). 여기는 "마감된 것도 지우지 않는다"는 결재가
+        지켜지는지 **눈으로 보는 자리**라, 어긋나는 순간 판단 근거 자체가 오염된다.
+        2026-08-31 감사 전까지 이 줄을 지키는 시험이 하나도 없어 조용히 어긋나 있었다.
+        """
+        sql = lh.build_sql([row()])
+        assert "지금 살아 있는 것" in sql
+        assert "Asia/Seoul" in sql
+        # 주석이 아니라 **실제 문장**에 옛 방식이 남아 있지 않은지 본다.
+        statements = "\n".join(
+            ln for ln in sql.splitlines() if not ln.lstrip().startswith("#")
+        )
+        assert "close_date >= current_date" not in statements
+
     def test_upserts_on_pan_id(self):
         """상태·마감일은 바뀐다 — 같은 공고는 덮어써야 한다."""
         sql = lh.build_sql([row()])
