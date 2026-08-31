@@ -154,3 +154,33 @@ jobs:
           fi
           gh issue create --title "$TITLE" --body-file watch_heartbeat_issue.md
           echo "이슈를 열었습니다: $TITLE"
+
+      # 감시가 **실패하면 이슈가 안 열린다.** 그런데 아무도 Actions 탭을 들여다보지
+      # 않으므로, 의견함이 죽어도 아무 신호가 없다 — 조용한 실패가 우편함을 다시
+      # "아무도 안 읽는" 상태로 되돌리는 두 번째 경로다(2026-08-10 형제 감시의 예약
+      # 실행이 죽은 걸 나흘 뒤에야 알았다). 그래서 실패 자체도 이슈로 시끄럽게 만든다
+      # (lh-notice-watch.yml 과 같은 형태 — 저장소 변수 두 개가 없어 조용히 건너뛰는
+      # 경로는 위 "창고 주소·공개키가 있나" 단계가 항상 exit 0 으로 끝나 job 이
+      # '성공'으로 마감되므로, 이 failure() 는 그 경로에서는 발동하지 않는다).
+      - name: 감시가 실패하면 그 사실을 이슈로 알린다
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          TITLE="의견함 주간 알림이 실패했습니다 — 사람이 직접 확인해 주세요"
+          # 매주 같은 이슈가 쌓이면 알림이 소음이 되고, 소음은 무시된다.
+          # **열려 있는** 같은 제목이 있으면 건너뛴다 → 닫아야 다음 실패를 다시 알린다.
+          if gh issue list --state open --limit 100 --json title \
+               --jq '.[].title' | grep -Fxq "$TITLE"; then
+            echo "이미 열린 실패 이슈가 있습니다 — 건너뜁니다: $TITLE"
+            exit 0
+          fi
+          {
+            cat .github/feedback-digest-failure-issue.md
+            echo
+            echo "실패한 실행: $RUN_URL"
+          } > feedback_digest_failure_issue.md
+          gh issue create --title "$TITLE" --body-file feedback_digest_failure_issue.md
+          echo "실패 알림 이슈를 열었습니다: $TITLE"

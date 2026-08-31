@@ -238,9 +238,18 @@ def build_sql(rows, batch_rows=BATCH_ROWS):
     # 이번 판이 건드린 행은 전부 같은 now() 를 갖는다 → 그보다 오래된 computed_at 이
     # 곧 "이번 소스에 없던 상권"이다. **지우지는 않는다**(삭제 정책 미정 — 통폐합인지
     # 일시 누락인지 사람이 봐야 한다). 대신 조용히 지나가지 않게 세어서 보여준다.
+    # ⚠️ 세는 범위를 **우리 소스로 한정**한다 (2026-08-31 감사).
+    #    이 쿼리는 원래 district 표에 서울뿐일 때 쓴 것이라 전역 max(computed_at) 를 봤다.
+    #    그런데 2026-08-14 에 소진공 37개(대전)가 들어오면서, 서울을 다시 적재하면 그 37개가
+    #    **매번 통째로 "유령 의심"으로 잡힌다** — 손대지도 않은 남의 소스인데 그렇다.
+    #    동생 load_sbiz_district.py 는 만들 때부터 자기 소스로 한정해 뒀다(그 주석이 바로
+    #    이 오탐을 예고한다). 형 쪽만 안 고쳐져 있던 것을 맞춘다.
+    #    ⛔ 0 이 "정상"이라는 뜻을 지키는 것이 요점이다 — 늘 37 이 찍히면 아무도 안 본다.
     out.append(
         'select count(*) as "이번 판에 없던 상권(유령 의심 — 0 이어야 정상)" '
-        "from district where computed_at < (select max(computed_at) from district);")
+        "from district where source_nm = {src} "
+        "and computed_at < (select max(computed_at) from district "
+        "where source_nm = {src});".format(src=sql_str(SOURCE_NM)))
     out.append("commit;")
     return "\n".join(out) + "\n"
 

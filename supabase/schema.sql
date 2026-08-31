@@ -3055,7 +3055,12 @@ begin
            n.notice_date, n.close_date, n.dtl_url, n.collected_at
       from lh_notice n
      where ((v_sido is not null and n.sido_code = v_sido) or n.is_nationwide)
-       and (n.close_date is null or n.close_date >= current_date)
+       -- ⛔ `current_date` 로 되돌리지 말 것 — 이 DB 는 UTC 라(pg_settings.TimeZone, 어느
+       --    롤에도 재정의 없음) 한국 새벽 0~9시에 **어제 끝난 공고가 그대로 남는다**.
+       --    마감일을 **모르는** 것(NULL)은 여전히 뺀다(모른다 ≠ 끝났다).
+       --    마이그레이션 2026-09-01a. 타입: now()(timestamptz) → at time zone(서울 벽시계)
+       --    → ::date(서울 달력 날짜). STABLE 이라 idx_lh_notice_close 를 그대로 탄다.
+       and (n.close_date is null or n.close_date >= (now() at time zone 'Asia/Seoul')::date)
      order by n.close_date asc nulls last, n.notice_date desc nulls last, n.pan_id;
 end;
 $$;

@@ -346,9 +346,26 @@ def main(argv=None):
     if args.dry_run:
         print("dry-run 이므로 DB에 쓰지 않았습니다.")
         return 0
+    # 실적재 모드인데 갱신 대상이 0건이면 **조용히 성공하지 않는다.**
+    #
+    # 이 적재기는 "바뀐 것만" 고르지 않는다 — raw 에 있고 parcel 에도 있는 PNU 를 전부 다시
+    # 올린다. 그래서 0건은 "이미 다 채워서 할 일이 없다"가 아니라 **항상 이상 신호**다:
+    # raw 가 비었거나(수집이 아무것도 못 받았다), raw 의 PNU 가 parcel 에 하나도 없거나
+    # ([A] 전국 시드를 아직 안 돌렸다). 둘 다 사람이 손봐야 하는 상태인데, 종료코드 0 으로
+    # 끝나면 자동화·다음 사람 눈에는 성공으로 보인다.
+    # 형제 load_vworld_bulk.py 가 정확히 같은 경우를 1 로 막는다 — 규약을 맞춘다.
     if not updates:
-        print("갱신할 것이 없습니다.")
-        return 0
+        print("")
+        print("[에러] 갱신 대상이 0건입니다.")
+        if not best:
+            print("  raw 파일에서 읽어낸 필지가 없습니다: {}".format(path))
+            print("  → 수집(collect_vworld_land.py)이 실제로 받아 왔는지 먼저 확인하세요.")
+        else:
+            print("  raw 에는 필지 {:,}개가 있는데 그중 parcel 에 있는 것이 하나도 없습니다."
+                  .format(len(best)))
+            print("  → [A] 전국 시드(load_sangkwon_snapshot.py)가 먼저 실행돼야 합니다"
+                  " (docs/decisions/0005 실행 순서 참조).")
+        return 1
     sent = upsert_batch(base_url, headers, "parcel", updates)
     print("parcel 갱신 완료: {:,}행".format(sent))
     return 0

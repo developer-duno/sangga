@@ -17,6 +17,7 @@ import sys
 import urllib.error
 
 import pytest
+import yaml
 
 SCRIPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts")
 if SCRIPTS_DIR not in sys.path:
@@ -24,7 +25,12 @@ if SCRIPTS_DIR not in sys.path:
 
 import check_live_health as chk  # noqa: E402
 
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+WORKFLOW = os.path.join(ROOT, ".github", "workflows", "live-health-watch.yml")
+
 SITE = "https://example.test"
+
+NO_SLEEP = lambda _s: None  # noqa: E731
 
 GOOD_HTML = (
     '<!doctype html><html lang="ko"><head><title>상가 층별 스택뷰</title></head>'
@@ -180,7 +186,9 @@ def test_transient_failure_is_retried(monkeypatch):
         return all_good()[path]
 
     monkeypatch.setattr(chk, "fetch", flaky_fetch)
-    passed = chk.check(SITE)
+    # sleep=NO_SLEEP — 실제로 두 번(5초·10초)을 기다리지 않고도 재시도 자체는
+    # 그대로 검증된다(gives_up 류 시험과 같은 이유).
+    passed = chk.check(SITE, sleep=NO_SLEEP)
     assert len(passed) == 3
     assert attempts["n"] == 2
 
@@ -191,7 +199,7 @@ def test_gives_up_after_retries(monkeypatch):
 
     monkeypatch.setattr(chk, "fetch", always_down)
     with pytest.raises(chk.CheckFailed):
-        chk.check(SITE)
+        chk.check(SITE, sleep=NO_SLEEP)
 
 
 def test_non_200_status_is_failure(monkeypatch):
@@ -201,8 +209,108 @@ def test_non_200_status_is_failure(monkeypatch):
     install_fake_fetch(monkeypatch, routes)
 
     with pytest.raises(chk.CheckFailed) as ex:
-        chk.check(SITE)
+        chk.check(SITE, sleep=NO_SLEEP)
     assert "503" in str(ex.value)
+
+
+# ── 재시도 표준(collect_lh_notices.get_json_with_retry 와 같은 규칙) ───────────
+
+
+class TestRetryStandard:
+    """2026-08-31 PR #109 가 collect_lh_notices.py 에 세운 표준을 여기도 따른다 —
+    예전엔 RETRIES=3 이면서 재시도 사이 대기가 0초였다(주석은 '조급하게 판정 안 한다'
+    고 적혀 있었는데 실제로는 그렇지 않았다)."""
+
+    def test_matches_the_collector_standard(self):
+        """⛔ 두 벌로 두면 언젠가 한쪽만 고쳐진다 — 값이 갈리면 이 시험이 잡는다."""
+        import collect_lh_notices as lh
+
+        assert chk.RETRY_COUNT == lh.RETRY_COUNT
+        assert chk.RETRY_BACKOFF_SEC == lh.RETRY_BACKOFF_SEC
+        assert chk.NO_RETRY_HTTP_CODES == lh.NO_RETRY_HTTP_CODES
+
+    def test_waits_longer_between_each_knock(self, monkeypatch):
+        """쉬지 않고 연달아 두드리면 배포 확인이 무의미해진다."""
+
+        def always_down(_url):
+            raise urllib.error.URLError("계속 장애")
+
+        monkeypatch.setattr(chk, "fetch", always_down)
+        waits = []
+        with pytest.raises(chk.CheckFailed):
+            chk.fetch_with_retry(SITE + "/", "첫 화면", sleep=waits.append)
+        assert waits == [chk.RETRY_BACKOFF_SEC * (2**i) for i in range(chk.RETRY_COUNT - 1)]
+
+    @pytest.mark.parametrize("code", sorted(chk.NO_RETRY_HTTP_CODES))
+    def test_does_not_retry_what_will_not_change(self, monkeypatch, code):
+        """401·403·404 는 사람이 고쳐야 하는 것 — 참을성을 늘려도 여기는 한 번뿐이다."""
+        calls = []
+
+        def refused(url):
+            calls.append(url)
+            raise urllib.error.HTTPError(url, code, "refused", None, None)
+
+        monkeypatch.setattr(chk, "fetch", refused)
+        with pytest.raises(chk.CheckFailed):
+            chk.fetch_with_retry(SITE + "/", "첫 화면", sleep=NO_SLEEP)
+        assert calls == [SITE + "/"], "다시 물어도 답이 같은 실패인데 재시도했습니다"
+
+    def test_does_not_retry_a_non_exception_no_retry_status(self, monkeypatch):
+        """예외로 안 오고 상태코드로만 오는 404/403/401 도 마찬가지로 한 번뿐이어야 한다."""
+        routes = all_good()
+        routes["/"] = (404, b"not found")
+        calls = install_fake_fetch(monkeypatch, routes)
+        with pytest.raises(chk.CheckFailed):
+            chk.fetch_with_retry(SITE + "/", "첫 화면", sleep=NO_SLEEP)
+        assert calls == [SITE + "/"]
+
+    def test_retries_a_gateway_timeout_like_error(self, monkeypatch):
+        """502·503 처럼 다시 물으면 답이 달라질 수 있는 상태코드는 재시도한다."""
+        calls = []
+
+        def flaky(url):
+            calls.append(url)
+            if len(calls) == 1:
+                return (503, b"maintenance")
+            return all_good()["/"]
+
+        monkeypatch.setattr(chk, "fetch", flaky)
+        body = chk.fetch_with_retry(SITE + "/", "첫 화면", sleep=NO_SLEEP)
+        assert body == GOOD_HTML.encode("utf-8")
+        assert len(calls) == 2
+
+
+# ── 워크플로 배선 ──────────────────────────────────────────────────────────────
+
+
+@pytest.fixture(scope="module")
+def workflow():
+    with open(WORKFLOW, encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+class TestWorkflowTimeout:
+    # GitHub 공식 문서: timeout-minutes 를 안 정하면 job 기본값은 360분(6시간)이다.
+    DEFAULT_GH_JOB_TIMEOUT_MIN = 360
+
+    def test_live_health_watch_has_no_explicit_timeout(self, workflow):
+        """⛔ 지금은 명시값이 없다 — 없으면 위 기본 360분이 적용된다는 전제로
+        아래 여유 계산을 한다. 누군가 나중에 timeout-minutes 를 짧게 박으면 이
+        시험이 그 값을 읽어 여유를 다시 따지게 고쳐야 한다."""
+        job = workflow["jobs"]["health"]
+        assert "timeout-minutes" not in job
+
+    def test_worst_case_wait_fits_the_job_timeout(self, workflow):
+        """⛔ check() 는 첫 실패에서 곧장 예외를 던져 뒤의 URL(묶음·지도)을 아예 안
+        두드린다 — 그래서 최악의 총 대기는 fetch_with_retry 한 번 몫(3배가 아니라
+        1배)이다. 재시도 표준을 더 늘릴 때 이 시험이 시간 여유를 계속 지킨다."""
+        job = workflow["jobs"]["health"]
+        timeout_min = job.get("timeout-minutes", self.DEFAULT_GH_JOB_TIMEOUT_MIN)
+        waits = sum(chk.RETRY_BACKOFF_SEC * (2**i) for i in range(chk.RETRY_COUNT - 1))
+        worst_case_sec = chk.TIMEOUT_S * chk.RETRY_COUNT + waits
+        assert worst_case_sec < timeout_min * 60, (
+            "재시도 표준을 올리며 총 대기가 워크플로 제한 시간을 넘길 수 있습니다"
+        )
 
 
 # ── Actions 로 값 넘기기 ─────────────────────────────────────────────────────

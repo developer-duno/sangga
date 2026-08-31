@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { DISTRICT_BUILDINGS_FN, DISTRICT_BUILDINGS_PAGE, PARCEL_BUILDINGS_FN } from '../lib/appConstants';
 import {
@@ -59,10 +59,23 @@ export function DistrictBuildings({ districtId, districtNm, onSelect, selectedBl
   const [failed, setFailed] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, Expanded>>({});
   const listId = useId();
+  /**
+   * 늦게 도착한 **옛 상권**의 응답이 새 상권 목록을 건드리는 것을 막는다.
+   *
+   * ⛔ 처음 불러오기와 '더 보기'가 **같은 신호를 봐야** 한다. 예전에는 처음 불러오기에만
+   *    가드가 있어서, 더 보기를 누른 직후 지도에서 다른 상권을 누르면 옛 상권의 2쪽이
+   *    새 상권 이름 아래 붙었다. 더 나쁜 경로도 있었다 — 새 목록이 아직 비어 있는
+   *    순간에 옛 응답이 닿으면 `prev === null` 가지를 타서 **목록 전체가 옛 상권 것으로
+   *    바뀌었다**(이어 붙기가 아니라 바꿔치기).
+   * ⓘ 방식은 BuildingSearch 의 `latestRun` 과 **글자 그대로 같다** — 이 레포가 이미 쓰는
+   *   패턴을 재사용한다(경합 가드를 화면마다 다르게 만들면 어느 쪽이 옳은지 흐려진다).
+   */
+  const latestRun = useRef(0);
 
   /** 한 쪽(50곳)을 받아 뒤에 잇는다. `offset` 이 0 이면 처음부터 새로 담는다. */
   const load = useCallback(
     (offset: number) => {
+      const runId = ++latestRun.current;
       setLoading(true);
       return supabase
         .rpc(DISTRICT_BUILDINGS_FN, {
@@ -71,6 +84,7 @@ export function DistrictBuildings({ districtId, districtNm, onSelect, selectedBl
           p_offset: offset,
         })
         .then(({ data, error }) => {
+          if (runId !== latestRun.current) return; // 그새 상권이 바뀌었다
           setLoading(false);
           // ⚠️ 모양까지 본다. 뜻밖의 답이 렌더로 흘러 들어가면 그 자리에서 터지는데, 이
           //    목록은 **지도 안**에 있어 터지면 지도까지 함께 사라진다.
@@ -92,7 +106,7 @@ export function DistrictBuildings({ districtId, districtNm, onSelect, selectedBl
     setLands(null);
     setExpanded({});
     setFailed(false);
-    let cancelled = false;
+    const runId = ++latestRun.current;
     setLoading(true);
     supabase
       .rpc(DISTRICT_BUILDINGS_FN, {
@@ -101,7 +115,7 @@ export function DistrictBuildings({ districtId, districtNm, onSelect, selectedBl
         p_offset: 0,
       })
       .then(({ data, error }) => {
-        if (cancelled) return;
+        if (runId !== latestRun.current) return;
         setLoading(false);
         if (error || !isDistrictLandList(data)) {
           console.warn('상권 건물 목록 조회 실패', error ?? data);
@@ -110,9 +124,10 @@ export function DistrictBuildings({ districtId, districtNm, onSelect, selectedBl
         }
         setLands(data);
       });
-    return () => {
-      cancelled = true;
-    };
+    // ⓘ 정리(cleanup) 함수를 두지 않는다. 상권이 바뀌면 **다음 effect 가 번호를 올리므로**
+    //   날아가 있던 옛 요청은 그 순간 저절로 무효가 된다 — 정리에서 한 번 더 올리는 것은
+    //   같은 일을 두 번 하는 셈이다. 이 목록이 통째로 사라질 때(언마운트) 늦은 응답이
+    //   닿는 경우는 React 18 부터 아무 일도 일어나지 않는다(setState 가 무시된다).
   }, [districtId]);
 
   /** "같은 땅에 N동"을 펼친다. 이미 받아 뒀으면 접는다(다시 묻지 않는다). */
@@ -123,13 +138,24 @@ export function DistrictBuildings({ districtId, districtNm, onSelect, selectedBl
       return;
     }
     setExpanded((prev) => ({ ...prev, [land.pnu]: { at: 'loading' } }));
+    /**
+     * 답이 왔을 때 **그 줄이 아직 기다리는 중일 때만** 쓴다.
+     *
+     * ⛔ 여기는 위의 세대 번호로 못 잡는 별개 경합이다(세대는 상권 단위인데 여기는 줄 단위).
+     *    그냥 쓰면 두 가지가 어긋난다: ① 펼치는 중에 사용자가 **접으면** 답이 도착하며
+     *    **저절로 되펼쳐진다**(사용자 뜻을 덮는다) ② 상권이 바뀌어 `setExpanded({})` 로
+     *    비운 뒤 옛 답이 닿으면 **아무도 안 누른 줄이 펼쳐진 채** 나타난다.
+     *    둘 다 "그 키가 아직 'loading' 인가"만 보면 한 번에 막힌다.
+     */
+    const settle = (next: Expanded) =>
+      setExpanded((prev) => (prev[land.pnu]?.at === 'loading' ? { ...prev, [land.pnu]: next } : prev));
     supabase.rpc(PARCEL_BUILDINGS_FN, { p_pnu: land.pnu }).then(({ data, error }) => {
       if (error || !isParcelBuildingList(data)) {
         console.warn('땅의 동 목록 조회 실패', error ?? data);
-        setExpanded((prev) => ({ ...prev, [land.pnu]: { at: 'failed' } }));
+        settle({ at: 'failed' });
         return;
       }
-      setExpanded((prev) => ({ ...prev, [land.pnu]: { at: 'done', rows: data } }));
+      settle({ at: 'done', rows: data });
     });
   }
 

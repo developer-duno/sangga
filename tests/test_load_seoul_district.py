@@ -239,9 +239,25 @@ def test_build_sql_counts_ghost_districts():
     지우지는 않되 **반드시 세어서 보여줘야** 조용히 지나가지 않는다(2026-08-14 지적)."""
     sql = L.build_sql([_row()])
     assert "유령 의심" in sql
-    assert "computed_at < (select max(computed_at) from district)" in sql
+    assert "computed_at < (select max(computed_at) from district" in sql
     # 세는 것은 commit 앞이어야 같은 트랜잭션 안에서 이번 판 기준으로 센다
     assert sql.index("유령 의심") < sql.rindex("commit;")
+
+
+def test_build_sql_ghost_count_is_scoped_to_our_source():
+    """⛔ 유령 세기를 **우리 소스로 한정**한다 (2026-08-31 감사).
+
+    district 표에 서울뿐이던 시절의 쿼리는 전역 max(computed_at) 를 봤다. 2026-08-14 에
+    소진공(대전) 37개가 들어온 뒤로는, 서울을 다시 적재할 때마다 손대지도 않은 그 37개가
+    통째로 "유령 의심"으로 잡힌다 — 0 이 정상이라는 뜻이 무너지면 아무도 그 숫자를 안 본다.
+    동생 load_sbiz_district.py 는 만들 때부터 자기 소스로 한정해 뒀다(그 주석이 이 오탐을
+    미리 이름 대어 경고한다). 되돌리면 이 테스트가 빨간불이 된다.
+    """
+    sql = L.build_sql([_row()])
+    ghost = sql[sql.index("유령 의심"):sql.rindex("commit;")]
+    # 바깥 count 와 안쪽 max 둘 **다** 한정돼야 한다 — 하나만 걸면 여전히 어긋난다.
+    assert ghost.count("source_nm = '{}'".format(L.SOURCE_NM)) == 2, ghost
+    assert "소상공인" not in ghost      # 남의 소스 이름을 여기서 언급하지 않는다
 
 
 def test_build_sql_refuses_empty():

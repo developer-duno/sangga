@@ -40,6 +40,7 @@ import json
 import os
 import secrets
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -64,7 +65,18 @@ DEFAULT_WINDOW_DAYS = 7
 RETENTION_DAYS = 90
 
 TIMEOUT_S = 30
-RETRIES = 3
+
+# ⚠️ 재시도 표준은 collect_lh_notices.py 의 get_json_with_retry(PR #109)를 따른다 —
+#    5번 · 5초부터 지수 백오프(5·10·20·40초) · 401/403/404 는 다시 물어도 답이 같아
+#    한 번만 두드리고 포기한다. 예전 RETRIES=3 은 재시도 사이 대기가 0초라 세 번이
+#    밀리초 안에 끝났다(check_live_health.py 와 같은 결함).
+RETRY_COUNT = 5
+RETRY_BACKOFF_SEC = 5
+
+# 다시 물어봐도 답이 같은 실패. PostgREST RPC 기준: 401 은 apikey 문제,
+# 403 은 RLS·권한 거절, 404 는 함수 이름이 틀렸거나 스키마가 안 열린 것(PGRST106 도
+# 여기로 온다) — 전부 사람이 설정을 고쳐야 한다.
+NO_RETRY_HTTP_CODES = frozenset({401, 403, 404})
 
 STATS_FN = "get_feedback_stats"
 
@@ -73,18 +85,22 @@ class CallFailed(Exception):
     """RPC 호출이 실패했다. 메시지가 그대로 사람에게 보인다."""
 
 
-def rpc(base_url: str, anon_key: str, fn_name: str, payload: dict) -> object:
+def rpc(base_url: str, anon_key: str, fn_name: str, payload: dict,
+        attempts: int = RETRY_COUNT, sleep=time.sleep) -> object:
     """PostgREST RPC 를 한 번 부른다 — 성공하면 JSON 을 그대로 돌려준다.
 
     ⚠️ `Content-Profile: api` 가 핵심이다. RPC 는 POST 라서 `Accept-Profile` 이 아니라
        `Content-Profile` 로 스키마를 고른다(PostgREST 공식 문서 — 2026-08-24 확인).
        빠뜨리면 이 앱이 옛 문(public)을 닫은 그 사고(PGRST106)를 워크플로에서 그대로
        재현한다. 화면은 supabase-js 가 `db.schema` 로 이걸 대신 해 준다.
+
+    `sleep` 을 인자로 받는 이유는 collect_lh_notices.get_json_with_retry 와 같다 —
+    시험이 실제로 몇십 초씩 기다리지 않게, 가짜 sleep 을 끼워 넣을 자리를 열어 둔다.
     """
     url = f"{base_url}/rest/v1/rpc/{fn_name}"
     body = json.dumps(payload).encode("utf-8")
     last = ""
-    for attempt in range(1, RETRIES + 1):
+    for attempt in range(1, attempts + 1):
         # ⚠️ Request 를 **매번 새로 만든다.** urllib 은 재시도 때 같은 객체를 다시 쓰면
         #    리다이렉트 처리 등에서 상태가 남을 수 있다. 만드는 비용은 0에 가깝다.
         req = urllib.request.Request(
@@ -105,13 +121,20 @@ def rpc(base_url: str, anon_key: str, fn_name: str, payload: dict) -> object:
         except urllib.error.HTTPError as ex:
             detail = ex.read().decode("utf-8", errors="replace") if ex.fp else ""
             last = f"HTTP {ex.code} — {detail}".strip()
+            if ex.code in NO_RETRY_HTTP_CODES or attempt == attempts:
+                raise CallFailed(f"{fn_name} 호출에 실패했습니다: {last}") from ex
         except (urllib.error.URLError, TimeoutError, OSError) as ex:
             last = f"연결 실패({ex})"
+            if attempt == attempts:
+                raise CallFailed(f"{fn_name} 호출에 실패했습니다: {last}") from ex
         except json.JSONDecodeError as ex:
             last = f"응답이 JSON 이 아닙니다({ex})"
-        if attempt < RETRIES:
-            print(f"  · {fn_name} {attempt}번째 실패({last}) — 다시 시도합니다")
-    raise CallFailed(f"{fn_name} 호출에 실패했습니다: {last}")
+            if attempt == attempts:
+                raise CallFailed(f"{fn_name} 호출에 실패했습니다: {last}") from ex
+        wait = RETRY_BACKOFF_SEC * (2 ** (attempt - 1))
+        print(f"  · {fn_name} {attempt}번째 실패({last}) — {wait}초 뒤 다시 시도합니다")
+        sleep(wait)
+    raise RuntimeError("재시도 루프가 한 번도 돌지 않았습니다 (attempts 확인).")
 
 
 def fetch_stats(base_url: str, anon_key: str, days: int) -> dict:

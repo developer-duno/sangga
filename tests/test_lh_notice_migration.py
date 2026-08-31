@@ -21,7 +21,14 @@ import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MIGRATION = os.path.join(ROOT, "supabase", "migrations", "2026-08-28a_lh_notice.sql")
+# 마감 판정을 한국 날짜로 바꾼 판(2026-09-01a). 마이그레이션은 **날짜 원장**이라 28a 를
+# 제자리에서 고치지 않고 새 파일로 덮었다 — 그래서 "지금 있어야 할 모습"을 말하는 파일이
+# 둘(이 파일 + 정본)이고, 28a 는 "그날 무엇을 넣었나"의 기록으로 남는다.
+MIGRATION_KST = os.path.join(ROOT, "supabase", "migrations", "2026-09-01a_lh_close_date_kst.sql")
 SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
+
+# "지금 있어야 할 모습"을 말하는 판들. 새 마이그레이션이 또 생기면 여기에 더한다.
+CURRENT = [MIGRATION_KST, SCHEMA]
 
 TABLE = "lh_notice"
 FN = "list_lh_notices"
@@ -103,7 +110,7 @@ class TestTableIsClosed:
 
 
 class TestNeverDeletes:
-    @pytest.mark.parametrize("path", [MIGRATION, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, SCHEMA])
     def test_no_delete_or_truncate_anywhere(self, path):
         raw = read(path)
         # schema.sql 은 파일 전체가 아니라 **이 표를 다루는 구간만** 본다 — 남의 구간에
@@ -133,25 +140,53 @@ class TestNeverDeletes:
 
 
 class TestHidingRule:
-    @pytest.mark.parametrize("path", [MIGRATION, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, SCHEMA])
     def test_filters_out_closed_notices(self, path):
-        body = fn_body(read(path))
-        assert "close_date >= current_date" in body
+        """어느 판이든 **마감 거르기 자체는** 함수 안에 있어야 한다.
 
-    @pytest.mark.parametrize("path", [MIGRATION, SCHEMA])
+        표현식이 아니라 규칙의 존재를 본다 — 표현식을 문자 그대로 못 박아 두면
+        고쳐야 할 날(예: 시간대 정정)에 이 가드가 '고치지 말라'는 뜻이 돼 버린다.
+        """
+        body = fn_body(read(path))
+        assert "close_date >=" in body
+
+    @pytest.mark.parametrize("path", CURRENT)
+    def test_close_date_is_judged_in_korean_calendar(self, path):
+        """⛔ 마감은 **한국 날짜**로 판정한다 (2026-09-01a).
+
+        이 DB 는 UTC 다(`pg_settings.TimeZone`, 어느 롤에도 재정의 없음 — 2026-08-31 실측).
+        `current_date` 로 되돌리면 한국 새벽 0~9시에 **어제 끝난 공고가 그대로 남는다**.
+        되돌리면 이 시험이 빨간불이 된다.
+        """
+        # ⚠️ **주석을 걷어낸 뒤** 본다 — 이 함수의 주석에는 "current_date 로 되돌리지 말 것"
+        #    이라는 경고가 들어 있어서, 그대로 재면 경고문 자체가 위반으로 잡힌다.
+        body = statements(fn_body(read(path)))
+        assert "Asia/Seoul" in body
+        assert "current_date" not in body
+
+    def test_the_first_migration_keeps_its_utc_judgement_as_history(self):
+        """⛔ 이미 적용된 마이그레이션은 **날짜 원장**이라 고치지 않는다.
+
+        28a 를 손으로 고치면 "2026-08-28 에 라이브에 무엇을 넣었나"라는 기록이 사라지고,
+        '그 파일을 그대로 실행하면 그때 라이브가 재현된다'는 이 레포의 전제도 깨진다.
+        고침은 새 파일(2026-09-01a)이 맡는다.
+        """
+        assert "close_date >= current_date" in fn_body(read(MIGRATION))
+
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, SCHEMA])
     def test_keeps_the_ones_with_no_close_date(self, path):
         """⛔ 마감일을 **모르는** 것과 마감된 것은 다른 말이다 — 모른다고 숨기면 살아 있는
         공고가 조용히 사라진다."""
         body = fn_body(read(path))
         assert "close_date is null or" in body
 
-    @pytest.mark.parametrize("path", [MIGRATION, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, SCHEMA])
     def test_nationwide_shows_up_everywhere(self, path):
         """실측 531건 중 59건이 '전국'이다 — 이 줄이 없으면 그것들이 어디에서도 안 보인다."""
         body = fn_body(read(path))
         assert "or n.is_nationwide" in body
 
-    @pytest.mark.parametrize("path", [MIGRATION, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, SCHEMA])
     def test_sido_param_is_cast_before_comparing(self, path):
         """⛔ text 파라미터를 char 컬럼에 그대로 대면 컬럼 쪽이 캐스트돼 인덱스가 죽는다
         (2026-08-16b 라이브 실측: 459.8ms ↔ 0.796ms)."""
@@ -159,7 +194,7 @@ class TestHidingRule:
         assert "v_sido char(2)" in body
         assert "n.sido_code = v_sido" in body
 
-    @pytest.mark.parametrize("path", [MIGRATION, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, SCHEMA])
     def test_sorts_soonest_deadline_first(self, path):
         body = fn_body(read(path))
         assert "order by n.close_date asc nulls last" in body
