@@ -53,22 +53,39 @@ jobs:
 
       # 매번 같은 이슈가 쌓이면 알림이 소음이 되고, 소음은 무시된다.
       # **열려 있는** 같은 제목이 있으면 건너뛴다 → 사람이 닫아야 다음 사고를 다시 알린다.
-      - name: 라이브가 죽었으면 이슈를 연다
+      #
+      # ⛔ **제목과 대본은 실패 종류(kind)에 따라 갈라 쓴다** (2026-09-01 2차 적대검증).
+      #    예전에는 하나로 고정이라 두 가지 사고가 났다:
+      #      ① 관리자 키가 샌 날은 **사이트가 멀쩡히 뜬다.** 그런데 '사이트 다운' 대본의
+      #         첫 줄이 "멀쩡히 뜨면 이 이슈를 닫으세요"라, 운영자에게 **유출 이슈를 닫으라고
+      #         지시**하게 된다 — 알림이 있으나 마나가 아니라 **거꾸로 해가 된다.**
+      #      ② 제목이 같으면 중복 방지(완전일치)에 걸려, 이미 열린 '사이트 다운' 이슈가
+      #         유출 알림을 **통째로 삼킨다.**
+      #    ⇒ kind=leak 이면 전용 제목·전용 대본. 둘은 서로를 안 삼킨다.
+      - name: 라이브가 죽었으면(또는 키가 샜으면) 이슈를 연다
         if: failure()
         env:
           GH_TOKEN: ${{ github.token }}
           REASON: ${{ steps.check.outputs.reason }}
+          KIND: ${{ steps.check.outputs.kind }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          TITLE="라이브 사이트가 정상이 아닙니다 — 확인이 필요합니다"
+          # 확인 단계가 아예 못 돌았으면(설치 실패 등) kind 가 비어 있다 → 안전한 쪽(down).
+          if [ "${KIND:-down}" = "leak" ]; then
+            TITLE="🔴 배포된 화면에 관리자 키가 실렸습니다 — 즉시 회전이 필요합니다"
+            BODY_FILE=".github/live-health-leak-issue.md"
+          else
+            TITLE="라이브 사이트가 정상이 아닙니다 — 확인이 필요합니다"
+            BODY_FILE=".github/live-health-failure-issue.md"
+          fi
           if gh issue list --state open --limit 100 --json title \
                --jq '.[].title' | grep -Fxq "$TITLE"; then
             echo "이미 열린 같은 이슈가 있습니다 — 건너뜁니다: $TITLE"
             exit 0
           fi
           {
-            cat .github/live-health-failure-issue.md
+            cat "$BODY_FILE"
             echo
             echo "## 이번에 걸린 것"
             echo

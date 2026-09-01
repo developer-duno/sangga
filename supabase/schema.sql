@@ -32,6 +32,37 @@ create extension if not exists postgis;
 create extension if not exists pg_trgm;   -- 상호명 부분검색용
 
 -- =====================================================================
+-- 앞으로 만들 **함수**는 PUBLIC 에게 열린 채 태어나지 않는다 (2026-09-01b)
+-- =====================================================================
+-- ⛔ **이 줄이 여기(첫 `create function` 앞)에 있어야 하는 이유** — 2026-09-01 2차
+--    적대검증에서 잡혔다. 원래는 권한 절(파일 2/3 지점)에 있었는데, 기본권한은
+--    "**앞으로** 만드는 것"에만 걸리므로 **그 줄 위에서 만들어지는 함수 16개는 여전히
+--    PUBLIC 에게 열린 채 태어났다.** 지금 라이브에 PUBLIC EXECUTE 가 남아 있는 9개가
+--    정확히 그 16개 안에 있다 — 즉 정본만으로 새 창고를 세우면 **같은 누출이 그대로
+--    재현**됐다. 시험(test_api_schema_migration.py)이 이 줄의 **위치**까지 지킨다.
+--
+-- ⛔ **`in schema` 를 붙이지 말 것.** 붙이면 공식 문서가 말하는 '효과 없음'이 된다:
+--      "This command has no effect, unless it is undoing a matching GRANT:
+--       ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;"
+--    스키마별 기본권한은 전역 기본값에 **더하기만** 할 뿐 빼지 못한다. PostgreSQL 내장
+--    기본값이 새 함수에 PUBLIC EXECUTE 를 주므로(공식 문서 §5.8 표 5.2), `anon`·
+--    `authenticated` 만 회수해 온 지금까지의 줄들은 **PUBLIC 을 한 번도 못 막았다.**
+--
+-- ⚠️ 전역이라 **postgres 가 만드는 함수 전부**에 걸린다(public·api 뿐 아니라 어느 스키마든).
+--    · 기존 객체는 한 개도 안 바뀐다 — 기본권한은 "앞으로"에만 적용된다.
+--    · 다른 롤(supabase_admin 등)이 만드는 것에는 안 걸린다 — 그물이지 대체재가 아니라,
+--      **만든 자리 `revoke` 관습은 그대로 유지**한다.
+--    · ⚠️ **확장(extension)도 함수다.** 앞으로 postgres 로 `create extension` 이나
+--      `alter extension … update` 를 돌리면 그 확장 함수들이 PUBLIC 실행 불가로 태어난다
+--      (이 DB 의 pgcrypto·uuid-ossp·pg_stat_statements 49개가 postgres 소유다).
+--      그때는 그 확장에 대해 필요한 롤에 개별 `grant execute` 를 준다.
+--      ⓘ 현재 실피해 0 — 컬럼 기본값에서 uuid/crypt 를 쓰는 자리가 0행이고, anon 은
+--        표에 직접 못 닿는다.
+--
+-- 되돌리기 한 줄: `alter default privileges grant execute on functions to public;`
+alter default privileges revoke execute on functions from public;
+
+-- =====================================================================
 -- L0. bjd_code — 법정동코드 (행정표준코드관리시스템, code.go.kr)
 -- =====================================================================
 -- PNU 조립·시군구코드 조회의 기준 테이블. 존재/폐지 이력을 모두 보관한다.
@@ -1448,8 +1479,8 @@ as $$
   from transaction t
   where t.pnu = list_parcel_transactions.pnu
     and t.contract_ym >= '202401'
-  -- 계약일이 없는 행이 최신인 척 위로 올라오면 안 된다 → nulls last.
-  -- tx_id 는 같은 날 여러 건일 때 순서가 호출마다 흔들리지 않게 하는 못이다.
+  -- 계약일이 없는 행(구 자료)이 최신인 척 위로 올라오면 안 된다 → nulls last.
+  -- 마지막 tx_id 는 같은 날 여러 건일 때 순서가 호출마다 흔들리지 않게 하는 못이다.
   order by t.contract_ym desc, t.contract_day desc nulls last, t.tx_id
   limit 100;
 $$;
@@ -1534,8 +1565,8 @@ as $$
          s.median_unit_price,
          s.p25_unit_price,
          s.p75_unit_price,
-         -- 창은 갱신할 때 한 번 정해져 표 전체가 같은 값을 가진다. 그 구에 거래가 한 건도
-         -- 없어도 "언제부터 세었는지"는 말할 수 있어야 하므로 전체에서 읽는다.
+         -- 창은 갱신할 때 한 번 정해져 표 전체가 같은 값을 가진다. 그 구에 거래가
+         -- 한 건도 없어도 "언제부터 세었는지"는 말할 수 있어야 하므로 전체에서 읽는다.
          (select max(m.window_from) from mv_sigungu_tx_stats m),
          (select o.sigungu_nm from mv_open_sigungu o
            where o.sigungu_code = get_sigungu_tx_stats.sigungu)
@@ -2215,20 +2246,18 @@ alter default privileges in schema public revoke all on sequences from anon, aut
 --    자동으로 주고 있었다 — 새 함수를 만들 때마다 사람이 revoke 를 기억해야 하는 상태.
 --    실제로 트리거용 `unit_business_append_only` 가 그렇게 열려 있었다(2026-08-13g).
 alter default privileges in schema public revoke all on functions from anon, authenticated;
--- ⛔ **위 줄도 아직 반쪽이다** (2026-09-01 라이브 실측). PostgreSQL 의 내장 기본값은 새 함수에
---    **PUBLIC 에게 EXECUTE** 를 준다(공식 문서 §5.8 표 5.2). `anon`·`authenticated` 를 회수해도
---    PUBLIC 은 그대로 남는다 — 그래서 "새 함수가 열린 채 태어나는" 경로가 아직 살아 있다.
---    ⓘ 지금 라이브의 public 스키마는 마침 PUBLIC 이 빠져 있지만(`{postgres=X, service_role=X}`)
---      그건 Supabase 부트스트랩이 걸어 둔 것이지 **우리가 건 규칙이 아니다.** 명시해 둔다.
---    마이그레이션 2026-09-01b.
--- ⛔ **아래가 진짜 차단이다 — `in schema` 를 붙이지 말 것.**
---    붙이면 공식 문서가 말하는 '효과 없음'이 된다(스키마별 회수는 전역 기본값을 못 뺀다).
---    전역이라 **앞으로 postgres 가 만드는 함수 전부**(public·api 포함)에 걸린다.
---    기존 객체는 한 개도 안 바뀐다 — 기본권한은 "앞으로"에만 적용된다.
---    ⚠️ 만든 자리 `revoke` 관습은 그대로 유지한다(다른 롤이 만드는 것에는 안 걸린다).
---    되돌리기: `alter default privileges grant execute on functions to public;`
---    마이그레이션 2026-09-01b.
-alter default privileges revoke execute on functions from public;
+-- ⛔ **위 줄은 PUBLIC 을 한 번도 못 막았다** (2026-09-01 라이브 실측). PostgreSQL 내장
+--    기본값이 새 함수에 **PUBLIC 에게 EXECUTE** 를 준다(공식 문서 §5.8 표 5.2). `anon`·
+--    `authenticated` 는 그 기본값에 **애초에 없어서** 회수해도 PUBLIC 이 그대로 남는다.
+--    ⛔ **`pg_default_acl` 의 public 스키마 항목을 오독하지 말 것** (2026-09-01 2차 검증에서
+--      정정). 그 항목이 `{postgres=X, service_role=X}` 로 보이고 PUBLIC 이 없는데, 예전
+--      주석은 이것을 "Supabase 부트스트랩이 PUBLIC 을 막아 둔 것"이라 읽었다 — **둘 다 틀렸다.**
+--        ① 스키마별 항목에 PUBLIC 이 없는 것은 **아무 뜻이 없다.** 스키마별 기본권한은
+--           전역 기본값에 **더하기만** 하고 빼지 못하므로, 항목에 안 적혀도 PUBLIC 은 온다.
+--        ② 거기서 anon·authenticated 가 빠져 있는 것은 **바로 위 우리 줄이 한 일**이지
+--           Supabase 가 한 일이 아니다.
+--    ⇒ 실제 차단은 **파일 맨 앞의 전역 한 줄**이 한다(첫 `create function` 앞 — 거기 있어야
+--      그 아래 모든 함수에 걸린다). 마이그레이션 2026-09-01b.
 
 -- 트리거가 부르는 함수는 사람이 직접 부를 일이 없다. 노출면은 "화면이 쓰는 것"만 남긴다.
 revoke all on function unit_business_append_only() from public, anon, authenticated;
@@ -2951,7 +2980,8 @@ as $$
 declare
   -- ⛔ **파라미터를 그대로 쓰지 말 것.** 서명은 text 인데 pnu 컬럼은 char(19) 다.
   --    `char컬럼 = text파라미터` 는 컬럼 쪽이 text 로 캐스트돼 **인덱스가 통째로 무력해진다**
-  --    (2026-08-16b 라이브 실측: 459.8ms ↔ 0.796ms).
+  --    (2026-08-16b 라이브 실측: 459.8ms ↔ 0.796ms). 서명은 text 로 두고(PostgREST 가 보내는
+  --    값이 text 다) 안에서 char(19) 로 받아 쓴다.
   v_pnu  char(19) := p_pnu;
   v_date date;
 begin
@@ -3082,6 +3112,23 @@ revoke all on lh_notice from public, anon, authenticated;
 --    화면이 그 규칙을 빠뜨리고, 그날 사용자는 끝난 공고를 보고 헛걸음한다.
 -- ⛔ 마감일을 **모르는** 공고(NULL)는 빼지 않는다 — 모른다고 숨기면 살아 있는 공고가
 --    조용히 사라진다. 정렬에서 맨 뒤로 보낸다.
+-- ⛔ **본문을 여기서 손보지 말 것 — 마이그레이션이 정본이다.**
+--    함수 본문 주석은 `pg_proc.prosrc` 에 그대로 실려 **라이브에서 읽힌다.** 즉 여기서
+--    주석 한 줄만 다듬어도 그 순간 정본↔라이브가 어긋난다(2026-09-01 2차 검증에서 실제로
+--    5줄이 어긋나 있었다 — 드리프트를 잡겠다는 작업이 같은 드리프트를 남긴 것이다).
+--    아래 블록은 `supabase/migrations/2026-09-01d_lh_closed_status.sql` 에서 **글자 그대로**
+--    복사한 것이고, tests/test_schema_function_drift.py 가 그 일치를 지킨다.
+--    바꿀 일이 생기면 **새 마이그레이션 파일**을 만들고 그 본문을 여기 복사한다.
+--
+-- 배경 설명(본문에 넣으면 라이브와 어긋나므로 여기 둔다):
+--  · 시간축: now()(timestamptz) → at time zone 'Asia/Seoul'(서울 벽시계) → ::date(서울
+--    달력 날짜). 이 DB 의 TimeZone 은 UTC 이고 어느 롤에도 재정의가 없다(실측).
+--    STABLE 이라 idx_lh_notice_close 를 그대로 탄다. 마이그레이션 2026-09-01a.
+--  · 2026-09-01c: 본문 주석이 "NULL 마감일은 여전히 뺀다"로 적혀 **코드와 반대말**을
+--    하고 있었다(코드는 남긴다). 01a 를 제자리에서 고치지 않고 새 파일로 정정했다 —
+--    그 문구가 라이브 prosrc 에 그대로 있어 01a 는 그 시점 라이브를 정확히 재현하기 때문.
+--  · 2026-09-01d: '접수마감'은 마감일과 무관하게 뺀다. 이 표는 pan_ss 에 CHECK 를 안 걸어
+--    두었으므로 **허용 목록**으로 바꾸면 새 상태가 오는 날 살아 있는 공고가 통째로 사라진다.
 create or replace function list_lh_notices(p_sido text)
 returns table (
   pan_id       text,
@@ -3109,19 +3156,16 @@ begin
            n.notice_date, n.close_date, n.dtl_url, n.collected_at
       from lh_notice n
      where ((v_sido is not null and n.sido_code = v_sido) or n.is_nationwide)
-       -- ⛔ `current_date` 로 되돌리지 말 것 — 이 DB 는 UTC 라(pg_settings.TimeZone, 어느
-       --    롤에도 재정의 없음) 한국 새벽 0~9시에 **어제 끝난 공고가 그대로 남는다**.
+       -- ⛔ `current_date` 로 되돌리지 말 것 — 이 DB 는 UTC 라 한국 새벽에 끝난 공고가
+       --    아침 9시까지 남는다(2026-09-01a 머리말).
        -- ⛔ 마감일을 **모르는** 것(NULL)은 이 판정에서 **제외한다 = 그대로 남긴다.**
        --    모른다 ≠ 끝났다 — 모른다고 숨기면 살아 있는 공고가 조용히 사라진다.
-       --    (2026-09-01c: 여기 주석이 "여전히 뺀다"로 적혀 코드와 반대말을 하고 있었다.)
-       --    마이그레이션 2026-09-01a. 타입: now()(timestamptz) → at time zone(서울 벽시계)
-       --    → ::date(서울 달력 날짜). STABLE 이라 idx_lh_notice_close 를 그대로 탄다.
        and (n.close_date is null or n.close_date >= (now() at time zone 'Asia/Seoul')::date)
        -- ⛔ LH 가 **끝났다고 적어 준 것**은 마감일과 무관하게 뺀다(2026-09-01d).
-       --    마감일이 먼 미래로 적힌 공고는 날짜 필터가 **원리적으로** 못 거른다 —
+       --    마감일이 먼 미래로 적힌 공고는 날짜 필터가 원리적으로 못 거른다 —
        --    실측으로 '접수마감'인데 마감일 2028-12-31 인 것이 2건 있었고 하나는 [취소공고]다.
        -- ⛔ **허용 목록으로 바꾸지 말 것** — 새 상태가 생기는 날 살아 있는 공고가 통째로
-       --    사라진다(이 표가 pan_ss 에 CHECK 를 안 건 것과 같은 이유). 모르는 상태는 통과.
+       --    사라진다(표 정의가 CHECK 를 안 건 것과 같은 이유). 모르는 상태는 통과시킨다.
        and (n.pan_ss is null or n.pan_ss <> '접수마감')
      order by n.close_date asc nulls last, n.notice_date desc nulls last, n.pan_id;
 end;
@@ -3260,8 +3304,9 @@ security definer
 set search_path = public
 as $$
 declare
-  -- ⛔ 파라미터를 그대로 쓰지 않는다 — 서명은 text 인데 컬럼은 char(19) 라, 그대로 비교하면
-  --    컬럼 쪽이 캐스트돼 인덱스가 무력해진다(2026-08-16b 라이브 실측 459.8ms ↔ 0.796ms).
+  -- ⛔ **파라미터를 그대로 쓰지 말 것.** 서명은 text 인데 pnu 컬럼은 char(19) 다.
+  --    `char컬럼 = text파라미터` 는 컬럼 쪽이 캐스트돼 **인덱스가 통째로 무력해진다**
+  --    (2026-08-16b 라이브 실측: 459.8ms ↔ 0.796ms).
   v_pnu char(19) := p_pnu;
   v_ym  char(6);
 begin
@@ -3278,7 +3323,8 @@ begin
        where p.pnu = v_pnu and p.geom is not null
     ),
     near as (
-      -- ⚠️ char(19)[] 이라야 한다. text[] 로 두면 배열 조건이 인덱스 안으로 못 들어간다.
+      -- ⚠️ char(19)[] 이라야 한다. text[] 로 두면 배열 조건이 인덱스 안으로 못 들어가
+      --    힙 필터로 밀린다(list_industry_mix 주석의 실측과 같은 병).
       -- 마지막 인자 false = 구면으로 잰다. 형제 함수들과 같은 자를 쓴다.
       select coalesce(array_agg(p.pnu), '{}'::char(19)[]) as pnus
         from parcel p cross join me
@@ -3290,7 +3336,8 @@ begin
         from arch_permit a cross join near
        where a.pnu = any(near.pnus)
          and a.loaded_ym = v_ym
-         -- 표에는 미준공만 담기지만 규칙을 한 군데에만 두지 않는다.
+         -- 표에는 미준공만 담기지만 규칙을 한 군데에만 두지 않는다 — 언젠가 누가 완공분까지
+         -- 담기로 해도 이 화면은 계속 '곧 올라올 것'만 말해야 한다.
          and a.use_apr_day is null
          and left(a.main_purps_cd, 2) = any(array['03', '04', '07', '14'])
     )
@@ -3398,7 +3445,8 @@ as $$
     join district_rone_map m on m.district_id = h.district_id
   ),
   latest as (
-    -- (조사구역, 종류)마다 가장 최근 분기 한 줄. 위 머리말의 "따로 고르는" 자리다.
+    -- (조사구역, 종류)마다 가장 최근 분기 한 줄. 전체 최신 분기 하나로 자르면 그 분기에
+    -- 표본이 없는 종류가 통째로 사라진다("오피스는 조사 안 하는 동네"로 보인다).
     select distinct on (r.region_nm, r.bld_type)
            r.region_nm, r.bld_type, r.quarter,
            r.vacancy_rate, r.rent_per_m2, r.yield_rate
@@ -3509,6 +3557,8 @@ security definer
 set search_path = public
 as $$
   with scope as (
+    -- ⛔ 정방향(list_building_districts)과 같은 판정. 좌표 없는 필지는 아예 안 본다 —
+    --    st_contains 가 NULL 을 거짓으로 흘리면 "상권 밖"이라는 **단정**이 되어 버린다.
     select p.pnu
     from district d
     join parcel p on st_contains(d.geom, p.geom)
@@ -3516,7 +3566,8 @@ as $$
       and p.geom is not null
   ),
   elig as (
-    -- 층 자료가 아예 없는 건물은 눌러도 빈 화면이라 뺀다(검색과 같은 규칙, 239동).
+    -- 층 자료가 아예 없는 건물은 눌러도 빈 화면이라 뺀다
+    -- (검색과 **같은 규칙** — 2026-08-13 실측 242,631 중 239동).
     select b.bld_id, b.pnu, b.display_nm, b.total_area_m2
     from scope sc
     join building b on b.pnu = sc.pnu
@@ -3533,7 +3584,8 @@ as $$
     group by 1
   ),
   land as (
-    -- 창 함수는 GROUP BY 뒤에 돈다 -> count(*) over () = 땅 수, sum(count(*)) over () = 동 수.
+    -- ⓘ 창 함수는 GROUP BY **뒤에** 돈다 → count(*) over () = 땅 수,
+    --    sum(count(*)) over () = 동 수. 둘을 한 번에 얻으려고 이 모양을 쓴다.
     select e.pnu,
            coalesce(max(s.n), 0)::int as store_cnt,
            count(*)::int              as bld_cnt_in_pnu,
@@ -3544,8 +3596,10 @@ as $$
     group by e.pnu
   ),
   page as (
-    -- 무거운 조인 전에 **상한을 먼저**(검색 함수와 같은 수법).
-    -- tie-break 에 pnu 를 둔다 — 없으면 "더 보기"가 본 줄을 다시 가져오거나 건너뛴다.
+    -- ⛔ 무거운 조인(주소 조립·좌표·층 집계) 전에 **상한을 먼저** 건다.
+    --    검색 함수가 "25행에만 필요하다"며 쓰는 것과 같은 수법이다.
+    -- 정렬 tie-break 에 pnu 를 둔다 — 없으면 같은 점포 수끼리 순서가 흔들려
+    -- '더 보기'가 이미 본 줄을 다시 가져오거나 건너뛴다.
     select *
     from land
     order by store_cnt desc, pnu
@@ -3553,14 +3607,20 @@ as $$
     offset greatest(0, coalesce(p_offset, 0))
   )
   select
-    pg.pnu, pg.store_cnt, pg.bld_cnt_in_pnu,
-    rep.bld_id, rep.display_nm as bld_nm, p.road_addr,
+    pg.pnu,
+    pg.store_cnt,
+    pg.bld_cnt_in_pnu,
+    rep.bld_id,
+    rep.display_nm as bld_nm,
+    p.road_addr,
     parcel_jibun_addr(p.sido_nm, p.sigungu_nm, p.emd_nm, p.jibun) as jibun_addr,
-    -- 좌표는 geom 에서만(2026-08-14e 규칙 — 칸을 쓰면 마커와 글자가 어긋난다).
+    -- ⛔ 좌표는 geom 에서만 뽑는다. parcel 의 lat/lng **칸**을 쓰면 검색·상권판정과
+    --    자리가 갈려 "마커는 상권 밖인데 글자는 상권 안"이 된다(2026-08-14e 규칙).
     st_y(p.geom)::double precision as lat,
     st_x(p.geom)::double precision as lng,
     fs.floor_cnt, fs.min_floor, fs.max_floor, fs.has_roof,
-    pg.total_parcel_cnt, pg.total_bld_cnt
+    pg.total_parcel_cnt,
+    pg.total_bld_cnt
   from page pg
   join parcel p on p.pnu = pg.pnu
   join lateral (
@@ -3571,7 +3631,8 @@ as $$
     limit 1
   ) rep on true
   join lateral (
-    -- 층수 규칙을 새로 정하지 않는다 — 검색 함수의 것을 글자 그대로 옮겼다.
+    -- ⛔ 층수 규칙을 여기서 새로 정하지 않는다 — 검색 함수의 것을 글자 그대로 옮겼다.
+    --    갈리면 같은 건물이 들어온 길에 따라 "지하2~15층"과 "지하2~99층"으로 갈린다.
     select count(*)::int                                    as floor_cnt,
            min(s.floor_no) filter (where s.floor_no <> 99)  as min_floor,
            max(s.floor_no) filter (where s.floor_no <> 99)  as max_floor,
@@ -3614,9 +3675,11 @@ as $$
   select
     b.bld_id,
     b.display_nm as bld_nm,
-    -- 동명칭을 함께 준다 — 한 땅의 동들은 건물명이 같은 일이 흔해(롯데호텔 4동 전부
-    -- "롯데호텔 및 백화점") 이것 없이는 사용자가 무엇을 고르는지 알 수 없다.
-    -- 새로 여는 칸이 아니다: display_nm 은 건물명이 비면 이미 동명칭을 그대로 내보낸다.
+    -- 동명칭을 함께 준다 — 한 땅의 동들은 **이름이 같은 일이 흔해서**(롯데호텔 4동 전부
+    -- '롯데호텔 및 백화점') 이것 없이는 사용자가 무엇을 고르는지 알 수 없다.
+    -- ⓘ 새로 여는 칸이 아니다: display_nm 은 건물명이 비면 이미 동명칭을 그대로 내보낸다.
+    --    그래도 성명 가림을 한 번 더 통과시킨다 — 정상 동명칭엔 무해하고, 만에 하나
+    --    사람 이름이 끝에 붙어 있으면 지운다.
     nullif(btrim(mask_person_name(b.dong_nm)), '') as dong_nm,
     b.total_area_m2,
     fs.floor_cnt, fs.min_floor, fs.max_floor, fs.has_roof
@@ -3629,8 +3692,8 @@ as $$
     from v_building_floor_stack s
     where s.bld_id = b.bld_id
   ) fs on true
-  -- p_pnu::char(19) 캐스트를 지우지 말 것 — 지우면 컬럼 쪽이 text 로 캐스트돼
-  -- 인덱스가 통째로 죽는다(2026-08-16b 실측 459.8ms <-> 0.796ms).
+  -- ⛔ `p_pnu::char(19)` 의 캐스트를 지우지 말 것. pnu 컬럼이 char(19) 인데 text 와 견주면
+  --    **컬럼 쪽**이 text 로 캐스트돼 인덱스가 통째로 죽는다(2026-08-16b 실측 459.8ms↔0.796ms).
   where b.pnu = p_pnu::char(19)
     and exists (
       select 1 from building_floor f

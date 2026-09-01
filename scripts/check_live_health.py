@@ -131,7 +131,24 @@ def jwt_says_service_role(bundle: bytes) -> bool:
 
 
 class CheckFailed(Exception):
-    """검사 하나가 실패했다. 메시지가 그대로 사람에게 보인다."""
+    """검사 하나가 실패했다. 메시지가 그대로 사람에게 보인다.
+
+    ⛔ **`kind` 를 붙이는 이유** (2026-09-01 2차 적대검증에서 신설).
+       예전에는 실패에 종류가 없어서 워크플로가 **모든 실패에 같은 제목·같은 대본**을 썼다.
+       그 대본 첫 줄은 "주소를 열어 **멀쩡히 뜨면** 잠깐 끊겼던 것이니 이 이슈를 닫으세요"다.
+       그런데 관리자 키가 샌 날은 **사이트가 멀쩡히 뜬다** — 즉 운영자에게 유출 이슈를
+       **닫으라고 지시**하게 된다. 게다가 제목이 같으면 이미 열린 '사이트 다운' 이슈가
+       유출 알림을 통째로 삼킨다(중복 방지 로직이 제목 완전일치라서).
+       ⇒ 종류를 달아 워크플로가 제목과 대본을 **갈라 쓰게** 한다.
+
+    kind:
+      "down" — 사이트가 안 뜬다·반쪽 배포·파일이 이상하다 (기본값)
+      "leak" — 배포된 묶음에 관리자 키로 보이는 값이 실렸다 (사이트는 멀쩡하다)
+    """
+
+    def __init__(self, message: str, kind: str = "down"):
+        super().__init__(message)
+        self.kind = kind
 
 
 def fetch(url: str) -> tuple[int, bytes]:
@@ -235,7 +252,8 @@ def check(site: str, sleep=time.sleep) -> list[str]:
             f"({bundle_path}). Vercel 프로젝트 설정의 VITE_SUPABASE_ANON_KEY 가 "
             "공개키(sb_publishable_…)인지 즉시 확인하고, 관리자 키였다면 "
             "Supabase 콘솔에서 **그 키를 회전(재발급)**하세요 — 이미 배포된 값은 회수할 수 "
-            "없습니다. ⚠️ 값 자체는 여기에 찍지 않습니다(로그에 남으면 더 퍼집니다)."
+            "없습니다. ⚠️ 값 자체는 여기에 찍지 않습니다(로그에 남으면 더 퍼집니다).",
+            kind="leak",
         )
     passed.append(f"묶음 200 · {len(bundle):,}바이트 · 관리자 키 흔적 없음 ({bundle_path})")
 
@@ -266,6 +284,10 @@ def main() -> int:
         print(f"  [실패] {ex}")
         # 워크플로가 이 줄을 읽어 이슈 본문에 넣는다.
         _emit_output("reason", str(ex))
+        # ⛔ 종류도 함께 내보낸다 — 워크플로가 이걸로 **제목과 대본을 갈라 쓴다.**
+        #    안 내보내면 유출도 '사이트 다운' 대본으로 나가고(닫으라는 지시가 된다),
+        #    같은 제목이 이미 열려 있으면 통째로 삼켜진다. CheckFailed 머리말 참조.
+        _emit_output("kind", getattr(ex, "kind", "down"))
         print("\n라이브가 정상이 아닙니다.")
         return 1
 
