@@ -301,15 +301,40 @@ class TestWorkflowTimeout:
         assert "timeout-minutes" not in job
 
     def test_worst_case_wait_fits_the_job_timeout(self, workflow):
-        """⛔ check() 는 첫 실패에서 곧장 예외를 던져 뒤의 URL(묶음·지도)을 아예 안
-        두드린다 — 그래서 최악의 총 대기는 fetch_with_retry 한 번 몫(3배가 아니라
-        1배)이다. 재시도 표준을 더 늘릴 때 이 시험이 시간 여유를 계속 지킨다."""
+        """⛔ 최악은 **URL 수만큼**이다 (2026-09-01 적대검증에서 정정).
+
+        처음엔 "check() 가 첫 실패에서 곧장 예외를 던지니 뒤의 URL 은 안 두드린다 ⇒ 1배"
+        라고 적었는데 **틀렸다**: 앞 URL 이 **마지막 시도에서 성공**하면 예외가 안 나므로
+        그대로 다음 URL 로 넘어간다. 조기 종료는 실패했을 때만 일어나므로, 가장 비싼
+        경로는 "셋이 각각 끝까지 버티다 겨우 성공"이다.
+
+        ⛔ 틀린 공식을 그대로 두면 이 가드가 3배 헐거워진다 — 누가 `timeout-minutes` 를
+           짧게 박거나 RETRY_COUNT 를 크게 올리는 날 **시험은 초록인데 job 만 잘린다.**
+        """
         job = workflow["jobs"]["health"]
         timeout_min = job.get("timeout-minutes", self.DEFAULT_GH_JOB_TIMEOUT_MIN)
         waits = sum(chk.RETRY_BACKOFF_SEC * (2**i) for i in range(chk.RETRY_COUNT - 1))
-        worst_case_sec = chk.TIMEOUT_S * chk.RETRY_COUNT + waits
+        per_url = chk.TIMEOUT_S * chk.RETRY_COUNT + waits
+        worst_case_sec = per_url * chk.CHECKED_URLS
         assert worst_case_sec < timeout_min * 60, (
-            "재시도 표준을 올리며 총 대기가 워크플로 제한 시간을 넘길 수 있습니다"
+            "재시도 표준을 올리며 총 대기가 워크플로 제한 시간을 넘길 수 있습니다 "
+            "(최악 {}초 = URL {}개 × {}초)".format(worst_case_sec, chk.CHECKED_URLS, per_url)
+        )
+
+    def test_checked_urls_matches_what_check_actually_fetches(self):
+        """⛔ `CHECKED_URLS` 가 실제 호출 수와 어긋나면 위 계산이 **조용히** 낙관적이 된다.
+
+        상수와 코드가 갈리는 순간 위 가드는 "지킨다고 주장하는 것"을 안 지킨다 —
+        이 레포가 여러 번 데인 가짜 초록의 전형이다. 그래서 기계로 세어 대조한다.
+        """
+        with open(chk.__file__, encoding="utf-8") as f:
+            src = f.read()
+        body = src[src.index("def check("):]
+        body = body[:body.index("\ndef ", 1)] if "\ndef " in body[1:] else body
+        calls = body.count("fetch_with_retry(")
+        assert calls == chk.CHECKED_URLS, (
+            "check() 가 부르는 fetch_with_retry 는 {}번인데 CHECKED_URLS 는 {}입니다 — "
+            "검사를 더했으면 상수도 함께 올리세요.".format(calls, chk.CHECKED_URLS)
         )
 
 
@@ -375,3 +400,75 @@ def test_trailing_slash_in_site_is_normalized(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["check_live_health.py", "--site", SITE + "/"])
     assert chk.main() == 0
     assert all("//" not in c[len("https://") :] for c in calls)
+
+
+# ── 관리자 키가 배포된 묶음에 실렸나 (2026-09-01 적대검증에서 신설) ────────────
+#
+# 왜 여기인가: `scripts/make_env_local.py` 의 값 검사는 **로컬 번들**만 덮는다. 라이브
+# 번들은 `.env.local` 이 아니라 **Vercel 대시보드의 env** 로 빌드되므로, 콘솔 칸에 관리자
+# 키를 붙여넣는 경로는 그 검사를 통째로 지나간다. 그 문은 밖에서 묶음을 열어 보는 이
+# 감시만 지킬 수 있다 — 두 검사는 서로 다른 문이라 하나로 합칠 수 없다.
+
+
+class TestAdminKeyNeverShipsInTheBundle:
+    # ⛔ **가짜 키를 소스에 통짜로 적지 말 것** — GitHub 의 비밀 검사(push protection)가
+    #    진짜 Supabase 관리자 키로 오인해 **푸시를 막는다**(2026-09-01 실제로 막혔다).
+    #    그때 "허용 처리"로 뚫으면 안 된다 — 그건 앞으로 진짜 유출도 함께 통과시키는
+    #    방향이다. 대신 **접두사와 뒷부분을 나눠 조립**한다: 소스에는 온전한 모양이
+    #    한 번도 나타나지 않지만, 검사 대상 문자열은 똑같이 만들어진다.
+    #    (뒤 25자는 우리 정규식이 요구하는 "재료 20자 이상"을 넘기려는 것.)
+    _FAKE_SECRET = b"sb_secret_" + b"x" * 25
+
+    @pytest.mark.parametrize("mark", [
+        _FAKE_SECRET,                                    # 새 형식(이 프로젝트가 쓰는 것)
+        b'{"role":"service_role"}',                      # 옛 형식 JWT payload
+        b'{"role": "service_role"}',                     # 공백이 섞인 직렬화
+    ])
+    def test_admin_key_in_bundle_is_a_loud_failure(self, monkeypatch, mark):
+        """⛔ 걸리면 **즉시 시끄럽게** 실패한다 — '사이트가 죽었다'보다 급한 사고다."""
+        routes = all_good()
+        routes["/assets/index-ABC123.js"] = (200, GOOD_BUNDLE + b"\n" + mark + b"\n")
+        install_fake_fetch(monkeypatch, routes)
+
+        with pytest.raises(chk.CheckFailed) as ex:
+            chk.check(SITE)
+        said = str(ex.value)
+        assert "관리자" in said, "무엇이 문제인지 사람 말로 알려야 한다"
+        assert "회전" in said, "이미 배포된 값은 회수 불가 — 재발급을 안내해야 한다"
+        # ⛔ 값 자체는 절대 메시지에 담지 않는다(로그·이슈에 남으면 더 퍼진다).
+        assert mark.decode("utf-8") not in said
+
+    def test_a_normal_bundle_passes(self, monkeypatch):
+        """⛔ 오탐이 나면 이 감시가 매번 울어 곧 무시된다 — 정상 묶음은 조용히 통과."""
+        install_fake_fetch(monkeypatch, all_good())
+        passed = chk.check(SITE)
+        assert any("관리자 키 흔적 없음" in p for p in passed)
+
+    def test_publishable_key_is_not_mistaken_for_a_secret(self, monkeypatch):
+        """공개키(`sb_publishable_…`)는 원래 묶음에 실려 나간다 — 이걸 막으면 앱이 못 돈다."""
+        routes = all_good()
+        routes["/assets/index-ABC123.js"] = (
+            200, GOOD_BUNDLE + b'\nconst k="sb_publishable_aaaaaaaaaaaaaaaaaaaa";\n')
+        install_fake_fetch(monkeypatch, routes)
+        chk.check(SITE)      # 예외가 안 나야 정상
+
+    def test_the_library_own_prefix_check_is_not_a_false_alarm(self, monkeypatch):
+        """⛔ **이 시험이 이 가드의 존재 이유만큼 중요하다** (2026-09-01 라이브에서 실제로 터짐).
+
+        `@supabase/supabase-js` 는 키 형식을 판별하는 함수를 들고 있어서, 배포된 묶음에
+        접두사가 **맨몸으로** 등장한다(실측):
+
+            Va=e=>e.startsWith(`sb_publishable_`)||e.startsWith(`sb_secret_`)
+
+        접두사만 찾는 가드를 그대로 뒀다면 6시간마다 "🔴 관리자 키 유출" 이슈가 영원히
+        열렸을 것이다 — **오탐을 내는 감시는 곧 무시되고, 그러면 진짜 사고도 함께 묻힌다.**
+        되돌리면(뒤에 붙은 키 재료 요구를 빼면) 이 시험이 빨간불이 된다.
+        """
+        routes = all_good()
+        routes["/assets/index-ABC123.js"] = (
+            200,
+            GOOD_BUNDLE
+            + b"\nVa=e=>e.startsWith(`sb_publishable_`)||e.startsWith(`sb_secret_`)\n",
+        )
+        install_fake_fetch(monkeypatch, routes)
+        chk.check(SITE)      # 예외가 안 나야 정상

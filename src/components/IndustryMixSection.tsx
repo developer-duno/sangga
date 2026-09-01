@@ -79,8 +79,15 @@ export function IndustryMixSection({ pnu }: Props) {
     supabase.rpc(INDUSTRY_MIX_FN, { p_pnu: pnu }).then(({ data, error }) => {
       if (cancelled) return;
       // ⚠️ 모양까지 본다(isIndustryMix — 스코프·칸 하나하나까지). 뜻밖의 답이 들어오면
-      //    렌더 도중에 터지는데, 이 레포에는 ErrorBoundary 가 하나도 없어 그 순간
-      //    **층별 화면 전체가 하얗게 죽는다.** 곁다리 섹션 하나 때문에 본체를 잃지 않는다.
+      //    렌더 도중에 터지고, 그러면 **층별 화면이 통째로 오류 안내로 바뀐다.**
+      //    곁다리 섹션 하나 때문에 본체를 잃지 않는다.
+      //    ⓘ 정정 2026-09-01 — 원래 "이 레포에는 ErrorBoundary 가 하나도 없다"고 적혀
+      //      있었는데 2026-08-24 에 그물이 셋 생겼다(main·지도·층별 화면). 그래도 이
+      //      모양 검사의 값어치는 그대로다: 그물은 **터진 뒤**를 수습할 뿐이고, 여기서
+      //      걸러야 그 섹션만 조용히 빠지고 나머지가 산다.
+      //      ⛔ 같은 문장의 사본이 **셋**이었다(industryMix.ts · industryMix.test.ts · 여기).
+      //        문서 드리프트를 잡는 배치가 둘만 고치고 이것을 놓쳤다 — 다음엔
+      //        `grep -rn "ErrorBoundary 가 하나도 없"` 한 번으로 전부 찾을 것.
       if (error || !isIndustryMix(data)) {
         // 못 읽었으면 "업종 없음"이라고 적지 않는다 — 없는 것과 모르는 것은 다르다.
         // 마이그레이션 적용 전에는 함수가 아예 없어(PGRST202) 여기로 온다.

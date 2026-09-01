@@ -1623,6 +1623,19 @@ comment on column price_gate_sigungu.base_mdape is
 -- 남아 있으므로 **만든 자리에서 한 번 더 닫는다.** 라이브 확인은 post_load.py --check 가 한다.
 revoke all on price_gate_sigungu from public, anon, authenticated;
 
+-- ⛔ **이 표만 RLS 선언이 빠져 있었다** (2026-09-01 감사에서 기계 대조로 발견 — 정본의
+--    `create table` 17개 vs `enable row level security` 16개, 빠진 하나가 이것이었다).
+--    라이브는 켜져 있으니(17/17 실측) 지금 바뀌는 것은 없고, **정본으로 새 창고를 만들 때만**
+--    이 표가 이중 잠금의 한 겹을 잃는다. 그 상태에서 누가 이 표를 대시보드로 다시 만들면
+--    Supabase 가 새 객체에 anon 권한을 자동으로 붙이는 경로(2026-08-13 mv_search_parcel 사고)
+--    에 그대로 노출된다.
+-- ⓘ 다른 표와 같이 **정책은 하나도 만들지 않는다** — "RLS 켬 + 정책 0개" 가 곧 전부 거부다.
+-- ⚠️ 이 표는 다른 16개와 성격이 하나 다르다: **유일한 독자가 정의자 함수 하나**(list_price_bands)
+--    다. 그 함수는 이 표의 소유자와 같은 롤(postgres)이 만들므로 소유자 RLS 면제로 그대로
+--    돈다(force 미사용). ⛔ 소유자가 갈리는 환경에서는 게이트가 통째로 0행이 되어 **전 구가
+--    조용히 gate_fail 로 뒤집힌다** — 에러가 안 나므로 아무도 모른다.
+alter table price_gate_sigungu enable row level security;
+
 -- =====================================================================
 -- ② price_floor_band — 층 번호 → 층대 이름
 -- =====================================================================
@@ -2202,6 +2215,20 @@ alter default privileges in schema public revoke all on sequences from anon, aut
 --    자동으로 주고 있었다 — 새 함수를 만들 때마다 사람이 revoke 를 기억해야 하는 상태.
 --    실제로 트리거용 `unit_business_append_only` 가 그렇게 열려 있었다(2026-08-13g).
 alter default privileges in schema public revoke all on functions from anon, authenticated;
+-- ⛔ **위 줄도 아직 반쪽이다** (2026-09-01 라이브 실측). PostgreSQL 의 내장 기본값은 새 함수에
+--    **PUBLIC 에게 EXECUTE** 를 준다(공식 문서 §5.8 표 5.2). `anon`·`authenticated` 를 회수해도
+--    PUBLIC 은 그대로 남는다 — 그래서 "새 함수가 열린 채 태어나는" 경로가 아직 살아 있다.
+--    ⓘ 지금 라이브의 public 스키마는 마침 PUBLIC 이 빠져 있지만(`{postgres=X, service_role=X}`)
+--      그건 Supabase 부트스트랩이 걸어 둔 것이지 **우리가 건 규칙이 아니다.** 명시해 둔다.
+--    마이그레이션 2026-09-01b.
+-- ⛔ **아래가 진짜 차단이다 — `in schema` 를 붙이지 말 것.**
+--    붙이면 공식 문서가 말하는 '효과 없음'이 된다(스키마별 회수는 전역 기본값을 못 뺀다).
+--    전역이라 **앞으로 postgres 가 만드는 함수 전부**(public·api 포함)에 걸린다.
+--    기존 객체는 한 개도 안 바뀐다 — 기본권한은 "앞으로"에만 적용된다.
+--    ⚠️ 만든 자리 `revoke` 관습은 그대로 유지한다(다른 롤이 만드는 것에는 안 걸린다).
+--    되돌리기: `alter default privileges grant execute on functions to public;`
+--    마이그레이션 2026-09-01b.
+alter default privileges revoke execute on functions from public;
 
 -- 트리거가 부르는 함수는 사람이 직접 부를 일이 없다. 노출면은 "화면이 쓰는 것"만 남긴다.
 revoke all on function unit_business_append_only() from public, anon, authenticated;
@@ -2334,6 +2361,14 @@ create schema if not exists api;
 -- 스키마를 여는 것과 그 안을 읽는 것은 별개다. usage 가 없으면 PostgREST 가 못 연다.
 grant usage on schema api to anon, authenticated, service_role;
 
+-- ⛔ **`public` 쪽에는 이 줄이 없었다** (문서화된 백로그 — 2026-09-01 감사에서 정리).
+--    라이브는 Supabase 가 깔아 준 상태라 멀쩡하지만(`nspacl` 에 anon=U 실측), 그건 물려받은
+--    것이지 정본이 말한 것이 아니다. **정본만으로 새 창고를 세우면** anon 이 public 스키마를
+--    못 열어, 그 안을 읽는 정의자 함수들이 다른 이유로 죽는다.
+--    ⓘ 실행 권한(위 기본권한 블록)과는 별개 축이다 — usage 는 "방문을 여는 것", execute 는
+--      "그 안의 물건을 쓰는 것". 하나만 있어도 안 된다.
+grant usage on schema public to anon, authenticated, service_role;
+
 -- ⛔ 기본값부터 닫는다 — Supabase 는 새 객체마다 anon 에 권한을 자동으로 준다
 --    (pg_default_acl). public 에서 2026-08-13f·13g 가 겪은 함정을 새 스키마에서
 --    반복하지 않는다. ⚠️ 이 문장은 **실행한 롤이 만드는 것**에만 걸리므로, 아래에서
@@ -2341,6 +2376,25 @@ grant usage on schema api to anon, authenticated, service_role;
 alter default privileges in schema api revoke all on tables from anon, authenticated;
 alter default privileges in schema api revoke all on sequences from anon, authenticated;
 alter default privileges in schema api revoke all on functions from anon, authenticated;
+-- ⛔ **위 세 줄만으로는 함수가 안 막힌다** (2026-09-01 라이브 실측으로 발견).
+--    PostgreSQL 의 내장 기본값은 새 함수에 **PUBLIC 에게 EXECUTE** 를 준다(공식 문서
+--    §5.8 표 5.2). 그런데 그 기본값에 `anon`·`authenticated` 는 애초에 없어서, 위 줄은
+--    **없는 것을 회수하는 셈**이라 아무 일도 하지 않는다 — 실제로 라이브 `pg_default_acl`
+--    에 `api` 항목이 **0건**이었다(어느 롤에도 없음). 즉 이 스키마는 그동안 내장 기본값
+--    (= PUBLIC 에 열림) 위에 서 있었다. 지금 함수 17개가 안전한 것은 전부 만든 자리에서
+--    명시 회수를 해 왔기 때문이지 이 기본 규칙 덕이 아니다.
+--    ⓘ 대조로 `public` 스키마는 항목이 있고 PUBLIC 이 빠져 있다 — Supabase 부트스트랩이
+--      걸어 둔 것이라 **우리가 건 규칙이 아니다.** 아래 두 줄로 우리 뜻을 명시한다.
+--    ⚠️ 여전히 "실행한 롤이 만드는 것"에만 걸린다 — 만든 자리 revoke 관습은 그대로 둔다.
+--    마이그레이션 2026-09-01b.
+-- ⛔ **여기에 `in schema api … from public` 을 적지 말 것 — 아무 일도 안 한다.**
+--    공식 문서가 우리가 쓰던 바로 그 문장을 '효과 없음' 예시로 든다:
+--      "Per-schema REVOKE is only useful to reverse the effects of a previous per-schema
+--       GRANT." / "This command has no effect, unless it is undoing a matching GRANT:
+--       ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;"
+--    스키마별 기본권한은 전역 기본값에 **더하기만** 할 뿐 빼지 못한다.
+--    ⇒ 진짜 차단은 **전역 한 줄**이고, 이 파일 위쪽(public 기본권한 블록 끝)에 있다.
+--    (이 자리에 스키마별 형태를 한 번 넣었다가 라이브에서 무효임이 드러나 지웠다 — 2026-09-01b.)
 
 -- ── 화면이 읽는 뷰 2개 ───────────────────────────────────────────────────────
 -- 원본을 옮기지 않고 **덧붙인다** — 옮기면 public 을 읽는 다른 뷰·함수가 전부 깨진다.
@@ -3057,17 +3111,33 @@ begin
      where ((v_sido is not null and n.sido_code = v_sido) or n.is_nationwide)
        -- ⛔ `current_date` 로 되돌리지 말 것 — 이 DB 는 UTC 라(pg_settings.TimeZone, 어느
        --    롤에도 재정의 없음) 한국 새벽 0~9시에 **어제 끝난 공고가 그대로 남는다**.
-       --    마감일을 **모르는** 것(NULL)은 여전히 뺀다(모른다 ≠ 끝났다).
+       -- ⛔ 마감일을 **모르는** 것(NULL)은 이 판정에서 **제외한다 = 그대로 남긴다.**
+       --    모른다 ≠ 끝났다 — 모른다고 숨기면 살아 있는 공고가 조용히 사라진다.
+       --    (2026-09-01c: 여기 주석이 "여전히 뺀다"로 적혀 코드와 반대말을 하고 있었다.)
        --    마이그레이션 2026-09-01a. 타입: now()(timestamptz) → at time zone(서울 벽시계)
        --    → ::date(서울 달력 날짜). STABLE 이라 idx_lh_notice_close 를 그대로 탄다.
        and (n.close_date is null or n.close_date >= (now() at time zone 'Asia/Seoul')::date)
+       -- ⛔ LH 가 **끝났다고 적어 준 것**은 마감일과 무관하게 뺀다(2026-09-01d).
+       --    마감일이 먼 미래로 적힌 공고는 날짜 필터가 **원리적으로** 못 거른다 —
+       --    실측으로 '접수마감'인데 마감일 2028-12-31 인 것이 2건 있었고 하나는 [취소공고]다.
+       -- ⛔ **허용 목록으로 바꾸지 말 것** — 새 상태가 생기는 날 살아 있는 공고가 통째로
+       --    사라진다(이 표가 pan_ss 에 CHECK 를 안 건 것과 같은 이유). 모르는 상태는 통과.
+       and (n.pan_ss is null or n.pan_ss <> '접수마감')
      order by n.close_date asc nulls last, n.notice_date desc nulls last, n.pan_id;
 end;
 $$;
 
+-- ⛔ 이 코멘트는 라이브·마이그레이션과 **글자 그대로 같아야 한다.** 2026-09-01a 가 본문만
+--    정본에 옮기고 코멘트를 빠뜨려, **드리프트를 잡는 작업이 새 드리프트를 만들었다**
+--    (라이브 195자 vs 정본 2문장 — 같은 날 적대검증에서 잡혔다). 회귀 가드는
+--    tests/test_lh_notice_migration.py 의 코멘트 대조 시험이다.
 comment on function list_lh_notices(text) is
   '이 지역에서 지금 살아 있는 LH 상가 공고(마감 지난 것은 뺀다 — 창고에는 남아 있다). '
-  '''전국'' 공고는 어느 지역을 골라도 함께 나온다. 시군구 코드를 넘겨도 앞 2자리로 본다.';
+  '''전국'' 공고는 어느 지역을 골라도 함께 나온다. 시군구 코드를 넘겨도 앞 2자리로 본다. '
+  '⛔ 마감 판정은 **한국 날짜**다(2026-09-01a) — DB 세션이 UTC 라 current_date 를 쓰면 '
+  '한국 새벽 0~9시에 어제 끝난 공고가 남는다. '
+  '⛔ LH 가 ''접수마감''이라 적은 것은 마감일과 무관하게 뺀다(2026-09-01d) — '
+  '마감일이 먼 미래인 공고는 날짜만으로는 영영 못 거른다.';
 
 revoke all on function list_lh_notices(text) from public, anon, authenticated;
 

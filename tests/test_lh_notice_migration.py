@@ -25,10 +25,18 @@ MIGRATION = os.path.join(ROOT, "supabase", "migrations", "2026-08-28a_lh_notice.
 # 제자리에서 고치지 않고 새 파일로 덮었다 — 그래서 "지금 있어야 할 모습"을 말하는 파일이
 # 둘(이 파일 + 정본)이고, 28a 는 "그날 무엇을 넣었나"의 기록으로 남는다.
 MIGRATION_KST = os.path.join(ROOT, "supabase", "migrations", "2026-09-01a_lh_close_date_kst.sql")
+# 함수 안 주석이 코드와 **반대말**을 하던 것을 고친 판(2026-09-01c).
+# ⛔ 여기도 제자리 수정이 아니라 **새 파일**이다 — 01a 는 라이브 함수 소스에 그 옛 문구가
+#    그대로 들어 있어(실측) 지금도 라이브를 정확히 재현하기 때문이다. 고치면 그 성질이 깨진다.
+MIGRATION_CMT = os.path.join(ROOT, "supabase", "migrations", "2026-09-01c_lh_comment_fix.sql")
+# LH 가 "접수마감"이라 적어 준 것을 마감일과 무관하게 빼는 판(2026-09-01d).
+# ⛔ 마감일이 먼 미래로 적힌 공고는 날짜 필터가 **원리적으로** 못 거른다.
+MIGRATION_STATUS = os.path.join(ROOT, "supabase", "migrations", "2026-09-01d_lh_closed_status.sql")
 SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
 
 # "지금 있어야 할 모습"을 말하는 판들. 새 마이그레이션이 또 생기면 여기에 더한다.
-CURRENT = [MIGRATION_KST, SCHEMA]
+# ⛔ 28a·01a 는 여기 없다 — 그건 "그날 무엇을 넣었나"의 역사다.
+CURRENT = [MIGRATION_STATUS, SCHEMA]
 
 TABLE = "lh_notice"
 FN = "list_lh_notices"
@@ -110,7 +118,7 @@ class TestTableIsClosed:
 
 
 class TestNeverDeletes:
-    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, MIGRATION_CMT, MIGRATION_STATUS, SCHEMA])
     def test_no_delete_or_truncate_anywhere(self, path):
         raw = read(path)
         # schema.sql 은 파일 전체가 아니라 **이 표를 다루는 구간만** 본다 — 남의 구간에
@@ -140,7 +148,7 @@ class TestNeverDeletes:
 
 
 class TestHidingRule:
-    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, MIGRATION_CMT, MIGRATION_STATUS, SCHEMA])
     def test_filters_out_closed_notices(self, path):
         """어느 판이든 **마감 거르기 자체는** 함수 안에 있어야 한다.
 
@@ -164,6 +172,45 @@ class TestHidingRule:
         assert "Asia/Seoul" in body
         assert "current_date" not in body
 
+    @pytest.mark.parametrize("path", CURRENT)
+    def test_the_function_comment_says_kst_too(self, path):
+        """⛔ **코멘트도 함께 옮긴다** (2026-09-01 적대검증에서 잡힌 자기 사고).
+
+        2026-09-01a 는 함수 본문만 정본에 옮기고 `comment on function` 을 빠뜨렸다 —
+        라이브·마이그레이션은 KST 경고가 들어간 4문장인데 정본만 옛 2문장이었다.
+        즉 **드리프트를 잡겠다는 작업이 새 드리프트를 만들었다.**
+        하필 그 경고문이 "current_date 로 되돌리지 말 것"을 알리는 **DB 안의 유일한 표식**
+        이라, 정본에서 빠지면 새 창고에는 그 경고가 안 실린다.
+        """
+        body = read(path)
+        i = body.index("comment on function list_lh_notices(text) is")
+        cmt = body[i:body.index(";", i)]
+        assert "한국 날짜" in cmt, "함수 코멘트에 KST 판정 경고가 없습니다"
+        assert "2026-09-01a" in cmt, "어느 마이그레이션이 바꿨는지 코멘트에 남겨야 합니다"
+
+    @pytest.mark.parametrize("path", CURRENT)
+    def test_lh_own_closed_status_is_excluded(self, path):
+        """⛔ LH 가 **끝났다고 적어 준 것**은 마감일과 무관하게 뺀다 (2026-09-01d).
+
+        마감일 하나로만 판정하면 **마감일이 먼 미래로 적힌 공고를 원리적으로 못 거른다** —
+        실측(2026-09-01)으로 `pan_ss='접수마감'` 인데 `close_date=2028-12-31` 인 것이 2건
+        있었고 그중 하나는 제목이 문자 그대로 `[취소공고]…` 였다. 시간대 문제(최대 9시간)와
+        달리 이건 **2년 넘게 지속되는** 종류다.
+        """
+        body = statements(fn_body(read(path)))
+        assert "접수마감" in body, "LH 가 적어 준 마감 상태를 안 보고 있습니다"
+        assert "pan_ss" in body
+
+    @pytest.mark.parametrize("path", CURRENT)
+    def test_status_filter_is_a_denylist_not_an_allowlist(self, path):
+        """⛔ **허용 목록으로 바꾸지 않는다** — 새 상태가 생기는 날 살아 있는 공고가 통째로
+        사라진다(이 표가 `pan_ss` 에 CHECK 를 안 건 것과 같은 이유). 모르는 상태·NULL 은
+        그대로 통과시킨다. 되돌리면(`in (…)` 형태로 바꾸면) 이 시험이 빨간불이 된다.
+        """
+        body = statements(fn_body(read(path)))
+        assert "n.pan_ss is null or" in body, "상태를 모르는 공고까지 숨기면 안 됩니다"
+        assert "pan_ss in (" not in body.replace(" ", " "), "허용 목록 형태는 금지입니다"
+
     def test_the_first_migration_keeps_its_utc_judgement_as_history(self):
         """⛔ 이미 적용된 마이그레이션은 **날짜 원장**이라 고치지 않는다.
 
@@ -173,20 +220,35 @@ class TestHidingRule:
         """
         assert "close_date >= current_date" in fn_body(read(MIGRATION))
 
-    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, SCHEMA])
+    def test_the_kst_migration_keeps_its_original_comment_as_history(self):
+        """⛔ **01a 도 역사다** — 주석 한 줄이라도 제자리에서 고치지 않는다.
+
+        01a 가 넣은 "…NULL 은 여전히 뺀다" 는 코드와 반대말이라 틀렸지만, 그 문구는
+        **라이브 함수 소스(prosrc)에 그대로 실려 있다**(2026-09-01 실측). 즉 01a 는 지금도
+        라이브를 정확히 재현한다 — 파일을 고치면 그 성질이 깨진다. 고침은 01c 가 맡는다.
+
+        ⓘ 이 시험이 있는 이유: 실제로 한 번 고쳤다가 되돌린 자리다. 규칙을 글로만 적어
+          두면 급할 때 또 어긴다.
+        """
+        assert "여전히 뺀다" in fn_body(read(MIGRATION_KST)), (
+            "2026-09-01a 의 원래 주석을 고쳤습니다 — 그 파일은 라이브를 재현하는 기록입니다. "
+            "고침은 새 파일(2026-09-01c)로 하세요."
+        )
+
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, MIGRATION_CMT, MIGRATION_STATUS, SCHEMA])
     def test_keeps_the_ones_with_no_close_date(self, path):
         """⛔ 마감일을 **모르는** 것과 마감된 것은 다른 말이다 — 모른다고 숨기면 살아 있는
         공고가 조용히 사라진다."""
         body = fn_body(read(path))
         assert "close_date is null or" in body
 
-    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, MIGRATION_CMT, MIGRATION_STATUS, SCHEMA])
     def test_nationwide_shows_up_everywhere(self, path):
         """실측 531건 중 59건이 '전국'이다 — 이 줄이 없으면 그것들이 어디에서도 안 보인다."""
         body = fn_body(read(path))
         assert "or n.is_nationwide" in body
 
-    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, MIGRATION_CMT, MIGRATION_STATUS, SCHEMA])
     def test_sido_param_is_cast_before_comparing(self, path):
         """⛔ text 파라미터를 char 컬럼에 그대로 대면 컬럼 쪽이 캐스트돼 인덱스가 죽는다
         (2026-08-16b 라이브 실측: 459.8ms ↔ 0.796ms)."""
@@ -194,7 +256,7 @@ class TestHidingRule:
         assert "v_sido char(2)" in body
         assert "n.sido_code = v_sido" in body
 
-    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, MIGRATION_CMT, MIGRATION_STATUS, SCHEMA])
     def test_sorts_soonest_deadline_first(self, path):
         body = fn_body(read(path))
         assert "order by n.close_date asc nulls last" in body
