@@ -25,6 +25,31 @@ if SCRIPTS_DIR not in sys.path:
 
 import check_live_health as chk  # noqa: E402
 
+# ⛔ **가짜 키를 소스에 통짜로 적지 말 것** — GitHub 의 비밀 검사(push protection)가 진짜
+#    Supabase 관리자 키로 오인해 **푸시를 막는다**(2026-09-01 실제로 막혔다). 그때 "허용
+#    처리"로 뚫으면 앞으로 진짜 유출도 함께 통과시키는 방향이 된다. 나눠 조립한다.
+FAKE_SECRET = b"sb_secret_" + b"x" * 25
+
+
+def fake_jwt(role):
+    """옛 형식 키가 **번들에 실제로 실리는 모양**(base64url 인코딩)으로 만든다.
+
+    ⛔ 이게 핵심이다 — 2026-09-01 2차 검증 전까지 이 시험은 **디코딩된 글자**
+       (`{"role":"service_role"}`)를 그대로 번들에 넣어 검사했다. 그러면 시험은 초록인데
+       **실제 번들에는 그 글자가 없어서** 가드가 한 번도 발동할 수 없었다.
+       죽은 가드는 없는 가드보다 나쁘다 — "막고 있다"는 거짓 안심을 주기 때문이다.
+    """
+    import base64
+    import json
+
+    def seg(obj):
+        return base64.urlsafe_b64encode(
+            json.dumps(obj, separators=(",", ":")).encode()).rstrip(b"=")
+
+    return (seg({"alg": "HS256", "typ": "JWT"}) + b"."
+            + seg({"iss": "supabase", "role": role, "iat": 1, "exp": 2}) + b"."
+            + b"c2lnbmF0dXJlLXBsYWNlaG9sZGVy")
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORKFLOW = os.path.join(ROOT, ".github", "workflows", "live-health-watch.yml")
 
@@ -417,12 +442,11 @@ class TestAdminKeyNeverShipsInTheBundle:
     #    방향이다. 대신 **접두사와 뒷부분을 나눠 조립**한다: 소스에는 온전한 모양이
     #    한 번도 나타나지 않지만, 검사 대상 문자열은 똑같이 만들어진다.
     #    (뒤 25자는 우리 정규식이 요구하는 "재료 20자 이상"을 넘기려는 것.)
-    _FAKE_SECRET = b"sb_secret_" + b"x" * 25
+    _FAKE_SECRET = FAKE_SECRET
 
     @pytest.mark.parametrize("mark", [
-        _FAKE_SECRET,                                    # 새 형식(이 프로젝트가 쓰는 것)
-        b'{"role":"service_role"}',                      # 옛 형식 JWT payload
-        b'{"role": "service_role"}',                     # 공백이 섞인 직렬화
+        FAKE_SECRET,                                     # 새 형식(이 프로젝트가 쓰는 것)
+        fake_jwt("service_role"),                        # 옛 형식 — **인코딩된 실제 모양**
     ])
     def test_admin_key_in_bundle_is_a_loud_failure(self, monkeypatch, mark):
         """⛔ 걸리면 **즉시 시끄럽게** 실패한다 — '사이트가 죽었다'보다 급한 사고다."""
@@ -451,6 +475,26 @@ class TestAdminKeyNeverShipsInTheBundle:
             200, GOOD_BUNDLE + b'\nconst k="sb_publishable_aaaaaaaaaaaaaaaaaaaa";\n')
         install_fake_fetch(monkeypatch, routes)
         chk.check(SITE)      # 예외가 안 나야 정상
+
+    def test_an_anon_jwt_is_not_mistaken_for_an_admin_key(self, monkeypatch):
+        """⛔ 옛 형식 **공개키**(role=anon)는 원래 번들에 실려 나간다 — 막으면 앱이 못 돈다.
+
+        payload 를 풀어 역할을 보므로 anon 과 service_role 이 정확히 갈린다.
+        (접두사·글자 찾기로는 이 둘을 못 가른다.)
+        """
+        routes = all_good()
+        routes["/assets/index-ABC123.js"] = (
+            200, GOOD_BUNDLE + b'\nconst k="' + fake_jwt("anon") + b'";\n')
+        install_fake_fetch(monkeypatch, routes)
+        chk.check(SITE)      # 예외가 안 나야 정상
+
+    def test_a_jwt_shaped_but_undecodable_string_does_not_crash(self, monkeypatch):
+        """⛔ JWT 를 닮았을 뿐인 글자에 감시가 죽으면 **진짜 사고까지 못 알린다.**"""
+        routes = all_good()
+        routes["/assets/index-ABC123.js"] = (
+            200, GOOD_BUNDLE + b"\neyJnot-real.eyJalso-not-real.zzzzzzzzzz\n")
+        install_fake_fetch(monkeypatch, routes)
+        chk.check(SITE)      # 조용히 건너뛰어야 정상
 
     def test_the_library_own_prefix_check_is_not_a_false_alarm(self, monkeypatch):
         """⛔ **이 시험이 이 가드의 존재 이유만큼 중요하다** (2026-09-01 라이브에서 실제로 터짐).

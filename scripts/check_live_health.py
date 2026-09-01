@@ -93,8 +93,41 @@ BUNDLE_RE = re.compile(r'src="(/assets/[^"]+\.js)"')
 #    그래서 **뒤에 키 재료가 실제로 붙은 것만** 잡는다. 실제 키는 41자(접두사 10 + 재료 31)
 #    이므로 20자만 요구해도 라이브러리 쪽(뒤가 백틱)과는 확실히 갈린다.
 ADMIN_KEY_RE = re.compile(rb"sb_secret_[A-Za-z0-9_\-]{20,}")
-# 옛 형식(JWT)은 payload 안에 역할이 그대로 적힌다. 공백 유무를 함께 본다.
-SERVICE_ROLE_RE = re.compile(rb'"role"\s*:\s*"service_role"')
+
+# 옛 형식(JWT) 키.
+#
+# ⛔ **디코딩된 글자(`"role":"service_role"`)를 찾으면 안 된다 — 번들에 그 글자는 없다.**
+#    JWT 는 payload 가 base64url 로 **인코딩된 채** 실린다:
+#        eyJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJvbGUiOiJzZXJ2aWNlX3JvbGUi…
+#    처음엔 `"role"\s*:\s*"service_role"` 로 찾게 만들었는데, 실측해 보니 **한 번도 발동할
+#    수 없는 죽은 가드**였다(2026-09-01 2차 검증). 죽은 가드는 없는 가드보다 나쁘다 —
+#    "막고 있다"는 거짓 안심을 주기 때문이다.
+# ⇒ **JWT 모양을 찾아 payload 를 직접 풀어** 역할을 본다. base64 정렬(3가지)에 안 휘둘리고,
+#   `role` 이 어디에 있든(중간·끝) 잡힌다.
+# ⓘ 이 프로젝트는 새 형식(`sb_…`)을 쓰므로 이 갈래는 **방어적 이중 안전망**이다 — 옛 형식
+#   키를 다른 프로젝트·옛 문서에서 복사해 오는 날을 위한 것.
+JWT_RE = re.compile(rb"eyJ[A-Za-z0-9_\-]{8,}\.(eyJ[A-Za-z0-9_\-]{16,})\.[A-Za-z0-9_\-]{8,}")
+
+
+def jwt_says_service_role(bundle: bytes) -> bool:
+    """번들 안 JWT 들의 payload 를 풀어 `service_role` 인 것이 있나.
+
+    ⛔ 값을 돌려주지도 찍지도 않는다 — True/False 만.
+    ⚠️ 못 푸는 조각은 **조용히 건너뛴다**(JWT 를 닮았을 뿐인 글자일 수 있다). 여기서 예외를
+       던지면 감시 전체가 죽어 진짜 사고까지 못 알린다.
+    """
+    import base64
+
+    for m in JWT_RE.finditer(bundle):
+        body = m.group(1)
+        body += b"=" * (-len(body) % 4)      # base64url 은 패딩이 빠져 있다
+        try:
+            payload = base64.urlsafe_b64decode(body)
+        except Exception:
+            continue
+        if b"service_role" in payload:
+            return True
+    return False
 
 
 class CheckFailed(Exception):
@@ -191,17 +224,19 @@ def check(site: str, sleep=time.sleep) -> list[str]:
     #    오탐을 내는 감시는 곧 무시되고, 그러면 진짜 사고도 함께 묻힌다.
     # ⇒ **접두사 뒤에 키 재료가 실제로 붙어 있을 때만** 잡는다(실제 키는 41자 = 접두사
     #   10자 + 재료 31자). 라이브러리 쪽은 접두사 바로 뒤가 백틱이라 안 걸린다.
+    # ⛔ 옛 형식(JWT)은 **디코딩된 글자를 찾으면 안 된다** — 번들에는 base64 로 인코딩된
+    #    채 실려서 그 글자가 아예 없다(2026-09-01 2차 검증에서 죽은 가드로 드러남).
+    #    jwt_says_service_role() 이 payload 를 직접 풀어 본다.
     # ⛔ 걸리면 **즉시 시끄럽게** 실패시킨다. 이건 "사이트가 죽었다"보다 급한 사고라,
     #    6시간마다 도는 이 감시가 그날 안에 이슈를 연다.
-    for mark in (ADMIN_KEY_RE, SERVICE_ROLE_RE):
-        if mark.search(bundle):
-            raise CheckFailed(
-                "🔴 배포된 자바스크립트 묶음에 **관리자(비밀) 키로 보이는 값**이 들어 있습니다 "
-                f"({bundle_path}). Vercel 프로젝트 설정의 VITE_SUPABASE_ANON_KEY 가 "
-                "공개키(sb_publishable_…)인지 즉시 확인하고, 관리자 키였다면 "
-                "Supabase 콘솔에서 **그 키를 회전(재발급)**하세요 — 이미 배포된 값은 회수할 수 "
-                "없습니다. ⚠️ 값 자체는 여기에 찍지 않습니다(로그에 남으면 더 퍼집니다)."
-            )
+    if ADMIN_KEY_RE.search(bundle) or jwt_says_service_role(bundle):
+        raise CheckFailed(
+            "🔴 배포된 자바스크립트 묶음에 **관리자(비밀) 키로 보이는 값**이 들어 있습니다 "
+            f"({bundle_path}). Vercel 프로젝트 설정의 VITE_SUPABASE_ANON_KEY 가 "
+            "공개키(sb_publishable_…)인지 즉시 확인하고, 관리자 키였다면 "
+            "Supabase 콘솔에서 **그 키를 회전(재발급)**하세요 — 이미 배포된 값은 회수할 수 "
+            "없습니다. ⚠️ 값 자체는 여기에 찍지 않습니다(로그에 남으면 더 퍼집니다)."
+        )
     passed.append(f"묶음 200 · {len(bundle):,}바이트 · 관리자 키 흔적 없음 ({bundle_path})")
 
     # ③ 지도가 쓰는 상권 파일
