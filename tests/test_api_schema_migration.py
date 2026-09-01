@@ -278,3 +278,80 @@ class TestGuardRegexHasNoHole:
         """api 스키마만 본다 — public 함수까지 걸리면 검사가 엉뚱한 것을 요구한다."""
         assert RE_API_FN.findall("create function public.normal(x text)") == []
         assert not RE_MAKES_API_OBJECT.search("create or replace function public.normal(x text)")
+
+
+class TestDefaultPrivilegesActuallyBlockPublic:
+    """⛔ 기본권한이 **PUBLIC 까지** 막는가 (2026-09-01 감사 후속).
+
+    왜 이 시험이 필요한가
+    ---------------------
+    정본은 오랫동안 이렇게만 적어 뒀다:
+
+        alter default privileges in schema api revoke all on functions from anon, authenticated;
+
+    이건 **아무 일도 하지 않는다.** PostgreSQL 의 내장 기본값은 새 함수에 **PUBLIC 에게
+    EXECUTE** 를 주는데(공식 문서 §5.8 표 5.2 — "FUNCTION or PROCEDURE: Default PUBLIC
+    Privileges = X"), 그 기본값에 `anon`·`authenticated` 는 애초에 들어 있지 않다.
+    없는 것을 회수하면 결과가 내장 기본값과 같아서 Postgres 는 항목조차 저장하지 않는다 —
+    실제로 라이브 `pg_default_acl` 에 `api` 항목이 **0건**이었다(2026-09-01 실측).
+
+    즉 `api` 는 그동안 "새 함수는 PUBLIC 에게 열림" 위에 서 있었다. 지금 함수들이 안전한
+    것은 **만든 자리마다 사람이 revoke 를 기억해 왔기 때문**이지 기본 규칙 덕이 아니다.
+
+    ⚠️ 이 시험은 글자만 본다(CI 에 DB 가 없다). 라이브 적용 여부는 마이그레이션
+       `2026-09-01b` 와 `post_load.py --check` 소관이다.
+    """
+
+    GLOBAL = "alter default privileges revoke execute on functions from public;"
+
+    def test_execute_is_revoked_from_public_globally(self, schema):
+        """⛔ **전역 한 줄**이 있어야 한다 — 이게 유일하게 실제로 막는 문장이다."""
+        assert self.GLOBAL in schema, (
+            "정본에 '{}' 가 없습니다 — 이 줄이 빠지면 새 함수가 PUBLIC 에게 열린 채 태어납니다."
+            .format(self.GLOBAL)
+        )
+
+    @pytest.mark.parametrize("schema_name", ["api", "public"])
+    def test_the_useless_per_schema_form_never_comes_back(self, schema, schema_name):
+        """⛔ **스키마별 형태로 되돌아가지 않는다 — 그건 아무 일도 안 한다.**
+
+        공식 문서가 우리가 쓰던 그 문장을 그대로 '효과 없음' 예시로 든다:
+          "This command has no effect, unless it is undoing a matching GRANT:
+           ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;"
+        스키마별 기본권한은 전역 기본값에 **더하기만** 할 뿐 빼지 못하기 때문이다.
+        실제로 이 마이그레이션의 첫 판이 그 형태였고, 라이브에 적용해 보니 `pg_default_acl`
+        에 항목조차 안 생겨 무효임이 드러났다. 그 자리로 돌아가면 여기서 잡는다.
+        """
+        useless = (
+            "alter default privileges in schema {} revoke execute on functions from public;"
+            .format(schema_name)
+        )
+        assert useless not in schema, (
+            "'{}' 는 **아무 일도 하지 않습니다**(공식 문서의 '효과 없음' 예시). "
+            "전역 형태('{}')를 쓰세요.".format(useless, self.GLOBAL)
+        )
+
+    def test_the_anon_authenticated_lines_are_kept_too(self, schema):
+        """⛔ 옛 줄을 **지우지 않는다.** 지금은 무해하지만, 누가 기본권한에 그 둘을 넣는 날
+        (Supabase 정책 변경·사람이 grant) 다시 일하게 된다. 둘은 대체 관계가 아니다."""
+        for schema_name in ("api", "public"):
+            assert (
+                "alter default privileges in schema {} revoke all on functions from anon, authenticated;"
+                .format(schema_name) in schema
+            )
+
+
+class TestSchemaUsageIsGrantedForBothSchemas:
+    """⛔ 방을 여는 권한(usage)은 그 안의 물건을 쓰는 권한(execute)과 **별개 축**이다.
+
+    `api` 에는 있고 `public` 에는 없어 비대칭이던 것을 2026-09-01 에 채웠다. 라이브는
+    Supabase 가 깔아 준 상태라 멀쩡하지만(`nspacl` 에 anon=U 실측), 그건 물려받은 것이지
+    정본이 말한 것이 아니다 — **정본만으로 새 창고를 세우면** anon 이 public 을 못 연다.
+    """
+
+    @pytest.mark.parametrize("schema_name", ["api", "public"])
+    def test_usage_is_granted(self, schema, schema_name):
+        assert (
+            "grant usage on schema {} to anon, authenticated, service_role;".format(schema_name)
+            in schema
+        )

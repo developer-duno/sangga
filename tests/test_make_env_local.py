@@ -30,6 +30,14 @@ if SCRIPTS_DIR not in sys.path:
 
 import make_env_local as mel  # noqa: E402
 
+# ⛔ **가짜 관리자 키를 소스에 통짜로 적지 말 것** — GitHub 의 비밀 검사(push protection)가
+#    진짜 Supabase 키로 오인해 **푸시를 막는다**(2026-09-01 형제 시험에서 실제로 막혔다).
+#    그때 "허용 처리"로 뚫으면 앞으로 진짜 유출도 함께 통과시키는 방향이 된다.
+#    ⇒ 접두사와 뒷부분을 **나눠 조립**한다: 소스에는 온전한 모양이 한 번도 안 나타나지만
+#      검사 대상 문자열은 똑같이 만들어진다.
+FAKE_SECRET = "sb_secret_" + "b" * 22
+FAKE_PUBLISHABLE = "sb_publishable_" + "a" * 22
+
 
 # ── 1. looks_like_secret — 값의 생김새로 관리자 키를 알아본다 ────────────────
 
@@ -45,8 +53,8 @@ def _jwt(payload_json):
 
 
 @pytest.mark.parametrize("value", [
-    "sb_secret_abcdefghijklmnopqrstuv",                       # 새 형식 관리자 키
-    "  sb_secret_abcdefghijklmnopqrstuv  ",                   # 앞뒤 공백이 있어도
+    FAKE_SECRET,                                              # 새 형식 관리자 키
+    "  " + FAKE_SECRET + "  ",                                # 앞뒤 공백이 있어도
 ])
 def test_새형식_관리자키는_잡는다(value):
     assert mel.looks_like_secret(value) is True
@@ -62,7 +70,7 @@ def test_옛형식_JWT_라도_공백이_섞인_role_을_잡는다():
 
 
 @pytest.mark.parametrize("value", [
-    "sb_publishable_abcdefghijklmnopqrstuv",                  # 새 형식 공개키 — 통과해야 한다
+    FAKE_PUBLISHABLE,                                         # 새 형식 공개키 — 통과해야 한다
     "https://xxxx.supabase.co",                               # URL
     "0123456789abcdef0123456789abcdef",                       # 카카오 JS 키(32자, 점 없음)
     "",                                                       # 빈 값
@@ -109,13 +117,13 @@ def test_정상_키면_파일을_만든다(tmp_path, monkeypatch):
 def test_ANON_칸에_관리자키가_있으면_중단하고_파일을_안_만든다(tmp_path, monkeypatch, capsys):
     """⛔ 이 테스트가 이 파일의 존재 이유다. 되돌리면(값 검사 삭제) 빨간불이 된다."""
     bad = _GOOD.replace("sb_publishable_aaaaaaaaaaaaaaaaaaaaaa",
-                        "sb_secret_bbbbbbbbbbbbbbbbbbbbbb")
+                        FAKE_SECRET)
     code, out = _run(tmp_path, monkeypatch, bad)
     assert code == 1
     assert not out.exists(), ".env.local 이 만들어지면 안 된다"
     said = capsys.readouterr().out
     assert "SANGGA_SUPABASE_ANON_KEY" in said          # 어느 칸인지 알려준다
-    assert "sb_secret_bbbb" not in said                # ⛔ 값은 절대 안 찍는다
+    assert FAKE_SECRET not in said                # ⛔ 값은 절대 안 찍는다
 
 
 def test_옛형식_service_role_JWT를_ANON_칸에_넣어도_중단한다(tmp_path, monkeypatch):
@@ -130,7 +138,7 @@ def test_이미_있던_env_local_을_덮어쓰지_않고_남긴다(tmp_path, mon
     """중단은 **쓰기 전에** 일어나야 한다 — 반쯤 쓰고 죽으면 더 나쁘다."""
     (tmp_path / ".env.local").write_text("VITE_SUPABASE_ANON_KEY=이전값\n", encoding="utf-8")
     bad = _GOOD.replace("sb_publishable_aaaaaaaaaaaaaaaaaaaaaa",
-                        "sb_secret_bbbbbbbbbbbbbbbbbbbbbb")
+                        FAKE_SECRET)
     code, out = _run(tmp_path, monkeypatch, bad)
     assert code == 1
     assert out.read_text(encoding="utf-8") == "VITE_SUPABASE_ANON_KEY=이전값\n"

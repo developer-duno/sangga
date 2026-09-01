@@ -433,7 +433,7 @@ class TestBuildSql:
         assert "Asia/Seoul" in sql
         # 주석이 아니라 **실제 문장**에 옛 방식이 남아 있지 않은지 본다.
         statements = "\n".join(
-            ln for ln in sql.splitlines() if not ln.lstrip().startswith("#")
+            ln for ln in sql.splitlines() if not ln.lstrip().startswith("--")
         )
         assert "close_date >= current_date" not in statements
 
