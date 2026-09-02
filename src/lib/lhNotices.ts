@@ -128,7 +128,7 @@ export function closeText(closeDate: string | null | undefined): string {
  * 주소가 섞여 들어오면 누르는 순간 남의 코드가 우리 화면에서 돈다. 우리가 모은 자료라
  * 그럴 일이 없다고 **믿는 대신**, 믿지 않아도 되게 한 줄로 막는다.
  */
-export function isHttpUrl(url: string | null | undefined): boolean {
+export function isHttpUrl(url: string | null | undefined): url is string {
   return typeof url === 'string' && /^https?:\/\//i.test(url.trim());
 }
 
@@ -151,8 +151,12 @@ export function isLhNotice(x: unknown): x is LhNotice {
     typeof n.pan_id === 'string' &&
     typeof n.pan_nm === 'string' &&
     typeof n.kind_nm === 'string' &&
-    typeof n.pan_ss === 'string' &&
-    typeof n.dtl_url === 'string' &&
+    // ⚠️ pan_ss·dtl_url 은 DB 에서 nullable(text, NOT NULL 없음)이고 적재기
+    //    (collect_lh_notices.py 의 record_to_row)가 실제로 NULL 을 쓴다. 문자열만
+    //    통과시키면 그 값 하나 때문에 이 함수가 전체 목록을 거절하고(.every), 카드가
+    //    통째로 사라진다 — notice_date·close_date 에 이미 쓰는 것과 같은 규칙으로 맞춘다.
+    isNullableString(n.pan_ss) &&
+    isNullableString(n.dtl_url) &&
     typeof n.collected_at === 'string' &&
     isNullableString(n.notice_date) &&
     isNullableString(n.close_date)

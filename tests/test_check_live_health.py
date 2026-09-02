@@ -13,6 +13,7 @@ scripts/check_live_health.py 1:1 단위 테스트.
 """
 
 import os
+import re
 import sys
 import urllib.error
 
@@ -351,12 +352,31 @@ class TestWorkflowTimeout:
 
         상수와 코드가 갈리는 순간 위 가드는 "지킨다고 주장하는 것"을 안 지킨다 —
         이 레포가 여러 번 데인 가짜 초록의 전형이다. 그래서 기계로 세어 대조한다.
+
+        ⚠️ **이 시험 자체의 한계 — 정직히 적어 둔다(2026-09-01 감사에서 발견).**
+        `fetch_with_retry(` 글자 수를 세는 방식이라 양쪽으로 틀릴 수 있다:
+          · **과다 계수** — 이 이름이 `check()` 안 주석(`#` 로 시작하는 줄)이나 함수
+            자신의 독스트링에 설명 삼아 등장하면 실제 호출이 아닌데도 세어진다. 그래서
+            아래는 **독스트링과 `#` 주석을 걷어낸 뒤** 센다(이 파일의 `#` 주석은 전부
+            한 줄 전체라 트레일링 주석까지는 안 다룬다 — 지금 이 코드베이스 관례로는
+            충분하다).
+          · **과소 계수** — 언젠가 `check()` 가 URL 하나를 헬퍼 함수로 빼내 그 헬퍼가
+            `fetch_with_retry` 를 부르면, 이 문자열 세기는 `check()` 함수 **본문**만
+            보므로 그 호출을 못 센다(호출 자체는 여전히 일어나는데 카운트만 준다).
+            이건 문자열 세기로는 원리적으로 못 잡는 한계라, 함수 추출 리팩터를 할 때는
+            이 시험이 통과하더라도 `CHECKED_URLS` 를 손으로 다시 확인해야 한다.
         """
         with open(chk.__file__, encoding="utf-8") as f:
             src = f.read()
         body = src[src.index("def check("):]
         body = body[:body.index("\ndef ", 1)] if "\ndef " in body[1:] else body
-        calls = body.count("fetch_with_retry(")
+        # 독스트링(설명문 안에 이름이 등장할 수 있다)과 `#` 주석 줄을 걷어낸 뒤 센다 —
+        # 안 걷으면 위 한계에서 말한 과다 계수가 실제로 일어난다.
+        body_no_docstring = re.sub(r'"""[\s\S]*?"""', "", body, count=1)
+        code_only = "\n".join(
+            ln for ln in body_no_docstring.splitlines() if not ln.lstrip().startswith("#")
+        )
+        calls = code_only.count("fetch_with_retry(")
         assert calls == chk.CHECKED_URLS, (
             "check() 가 부르는 fetch_with_retry 는 {}번인데 CHECKED_URLS 는 {}입니다 — "
             "검사를 더했으면 상수도 함께 올리세요.".format(calls, chk.CHECKED_URLS)

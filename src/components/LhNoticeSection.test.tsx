@@ -134,6 +134,23 @@ describe('LhNoticeSection — 공고가 있을 때', () => {
     }
   });
 
+  it('★ pan_ss·dtl_url 이 null 인 행이 섞여도 목록이 살아남고 그 행이 그려진다', async () => {
+    // DB nullable(원본 API 결측)이라 실제로 이런 행이 온다 — 예전엔 이 한 행 때문에
+    // isLhNoticeList 가 목록 전체를 거절해 카드가 통째로 사라졌다.
+    responses.notices = {
+      data: [notice({ pan_id: '2026-0002', pan_nm: '대전유성 임대상가 공고', pan_ss: null, dtl_url: null })],
+      error: null,
+    };
+    render(<LhNoticeSection sigungu="11680" />);
+    fireEvent.click(await screen.findByRole('button', { name: /LH 상가 분양·입점 공고/ }));
+
+    expect(screen.getByText('대전유성 임대상가 공고')).toBeTruthy();
+    // pan_ss 가 없으므로 그 칸은 안 그려진다(빈 문자열을 지어내지 않는다).
+    expect(document.querySelector('.lh__ss')).toBeNull();
+    // dtl_url 이 없으므로 링크도 안 만든다(주소 모양이 아닌 값과 같은 처리).
+    expect(screen.queryByRole('link')).toBeNull();
+  });
+
   it('주소 모양이 아니면 링크를 아예 안 만든다 (줄은 그대로 남는다)', async () => {
     responses.notices = { data: [notice({ dtl_url: 'javascript:alert(1)' })], error: null };
     render(<LhNoticeSection sigungu="11680" />);

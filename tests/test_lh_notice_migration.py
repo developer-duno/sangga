@@ -209,7 +209,25 @@ class TestHidingRule:
         """
         body = statements(fn_body(read(path)))
         assert "n.pan_ss is null or" in body, "상태를 모르는 공고까지 숨기면 안 됩니다"
-        assert "pan_ss in (" not in body.replace(" ", " "), "허용 목록 형태는 금지입니다"
+        # ⚠️ 연속 공백(줄바꿈으로 나뉘어 `pan_ss  in (` 처럼 벌어진 형태)까지 한 칸으로
+        #    접어서 본다 — `.replace(" ", " ")`(둘 다 U+0020)는 아무것도 안 접는 완전한
+        #    no-op 이었다(2026-09-01 감사에서 발견). `\s+` 로 실제 정규화해야 SQL 을 여러
+        #    줄로 늘어써 공백이 벌어진 허용 목록도 잡힌다.
+        collapsed = re.sub(r"\s+", " ", body)
+        assert "pan_ss in (" not in collapsed, "허용 목록 형태는 금지입니다"
+
+    def test_the_no_op_space_collapse_would_have_missed_a_widened_allowlist(self):
+        """⛔ 위 시험이 실제로 공백을 접고 있는지 — 접지 않으면 이 표본을 통과시켜 버린다.
+
+        고쳐지기 전 코드(`body.replace(" ", " ")`)는 둘 다 U+0020 이라 완전한 no-op 이었다
+        — 즉 어떤 입력을 넣어도 원본 그대로였다. 그 상태에서는 아래처럼 공백 두 칸으로
+        벌어진 허용 목록('pan_ss  in (')이 'pan_ss in (' 과 글자가 달라 가드를 그냥
+        통과했을 것이다. 이 시험은 **정규화 자체**가 살아 있는지를 본다.
+        """
+        widened = "create or replace function list_lh_notices(p_sido text)\n" \
+            "  where n.pan_ss is null or n.pan_ss  in ('접수마감')\n$$;"
+        collapsed = re.sub(r"\s+", " ", widened)
+        assert "pan_ss in (" in collapsed, "정규화가 죽어 있으면 이 표본조차 못 잡습니다"
 
     def test_the_first_migration_keeps_its_utc_judgement_as_history(self):
         """⛔ 이미 적용된 마이그레이션은 **날짜 원장**이라 고치지 않는다.
