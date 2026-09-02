@@ -44,12 +44,21 @@ MIG_DIR = os.path.join(ROOT, "supabase", "migrations")
 SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
 
 DOLLAR = chr(36) * 2
-# `create or replace function <이름>( … ) … as $$ <본문> $$;`
+# `create [or replace] function <이름>( … ) … as $$ <본문> $$;`
+#
+# ⛔ **`or replace` 를 선택으로 둔다** (2026-09-01 독립 검토 지적). 필수로 두면
+#    `create function search_buildings(...)` 형태로 쓴 마이그레이션이 **조용히 빠진다** —
+#    실제로 `2026-08-11_search_by_jibun.sql` 이 그 형태다. 그러면 그 함수는 **더 낡은
+#    마이그레이션과 비교되며 초록**이 되어, 드리프트 가드가 있는 척만 하게 된다.
+#    형제 파일 `tests/test_api_schema_migration.py` 는 같은 이유로 이미 선택으로 둔다.
 FN_RE = re.compile(
-    r"create\s+or\s+replace\s+function\s+([\w.]+)\s*\(.*?"
+    r"create\s+(?:or\s+replace\s+)?function\s+([\w.]+)\s*\(.*?"
     + re.escape(DOLLAR) + r"(.*?)" + re.escape(DOLLAR) + r"\s*;",
     re.S | re.I,
 )
+
+# 파서가 몇 개를 **놓쳤는지** 재기 위한 별도 눈 — 본문($$)까지 안 보고 머리만 센다.
+FN_HEAD_RE = re.compile(r"(?im)^create\s+(?:or\s+replace\s+)?function\s+[\w.]+\s*\(")
 
 
 def read(path):
@@ -94,9 +103,20 @@ def schema_bodies():
 class TestCanonicalMatchesTheLatestMigration:
     def test_the_parser_finds_functions_at_all(self, schema_bodies, latest_migration_bodies):
         """⛔ **파서가 헛돌면 아래 시험들이 조용히 초록이 된다** — 이 레포가 가장 여러 번
-        데인 '가짜 초록'이다. 그래서 개수를 먼저 못 박는다."""
-        assert len(schema_bodies) >= 30, (
-            "정본에서 함수를 {}개밖에 못 찾았습니다 — 정규식이 헛돕니다.".format(len(schema_bodies)))
+        데인 '가짜 초록'이다.
+
+        ⚠️ 예전 판은 `>= 30`·`>= 5` 라는 **헐거운 바닥값**만 봤다 — 함수 열두 개가 사라져도
+           통과한다(2026-09-01 독립 검토 지적). 이제 **머리(`create … function` 문장) 개수와
+           실제로 파싱한 개수를 대조**한다. 하나라도 못 읽으면 그 자리에서 걸린다.
+        """
+        raw = read(SCHEMA)
+        heads = len(FN_HEAD_RE.findall(raw))
+        assert heads == len(schema_bodies), (
+            "정본에 `create … function` 이 {}개인데 본문을 {}개만 읽었습니다 — 정규식이 "
+            "일부 형태를 놓치고 있습니다(같은 이름을 두 번 정의한 경우가 아니라면).".format(
+                heads, len(schema_bodies))
+        )
+        assert heads >= 30, "정본에서 함수를 {}개밖에 못 찾았습니다 — 정규식이 헛돕니다.".format(heads)
         assert len(latest_migration_bodies) >= 5, (
             "마이그레이션에서 함수를 {}개밖에 못 찾았습니다."
             .format(len(latest_migration_bodies)))
@@ -122,11 +142,36 @@ class TestCanonicalMatchesTheLatestMigration:
             .format(drifted)
         )
 
-    def test_this_guard_would_catch_a_one_character_change(
+    def test_this_guard_would_catch_a_comment_only_change(
             self, schema_bodies, latest_migration_bodies):
-        """⛔ **가드가 진짜 무는지**를 시험 안에서 확인한다 — 주석 한 글자만 바꿔도 걸려야 한다."""
+        """⛔ **가드가 진짜 무는지**를 시험 안에서 확인한다 — 주석 한 줄만 달라도 걸려야 한다.
+
+        ⚠️ 예전 판은 `norm(x) + " " != norm(y)` 를 그 자리에서 다시 계산할 뿐이라 **"뒤 공백에
+           민감한가"만** 증명했다. 그래서 `norm()` 을 '주석 제거' 버전으로 바꿔치기해도 이
+           시험이 초록이었다(2026-09-01 독립 검토가 돌연변이로 실증). 그건 이 파일의 **존재
+           이유가 사라진 상태**인데 아무도 안 알려 주는 것이다.
+        ⇒ 이제 **실제 판정 경로**(위 시험이 쓰는 것과 같은 대조)를 태워서, 주석 한 줄만 다른
+          본문 쌍이 정말 '어긋남'으로 잡히는지 본다.
+        """
         shared = [f for f in latest_migration_bodies if f in schema_bodies]
         assert shared, "대조할 짝이 하나도 없습니다 — 파서나 파일 배치가 바뀌었습니다."
         fn = sorted(shared)[0]
-        tampered = norm(schema_bodies[fn]) + " "
-        assert tampered != norm(latest_migration_bodies[fn][1])
+        body = schema_bodies[fn]
+
+        # 주석 한 줄을 더한 사본 — SQL 문장은 **한 글자도** 안 바뀐다.
+        tampered = body + "\n  -- 이 줄은 시험이 넣은 것이다(라이브에는 없다).\n"
+        assert norm(tampered) != norm(body), (
+            "주석만 다른 본문을 '같다'고 판정합니다 — norm() 이 주석을 걷어내고 있습니다. "
+            "그러면 이 파일이 잡으려던 드리프트(정본에서 주석만 다듬는 것)를 통째로 못 봅니다."
+        )
+
+    def test_the_guard_is_not_fooled_by_line_endings_alone(self, schema_bodies):
+        """⛔ 반대편도 못 박는다 — 줄바꿈 표기(CRLF/LF)만 다른 것은 **같다고** 봐야 한다.
+
+        라이브 `pg_proc.prosrc` 는 실제로 CRLF 로 저장된 것이 섞여 있다(2026-09-01 실측).
+        여기서 CRLF 를 안 접으면 멀쩡한 함수가 매번 '어긋남'으로 올라와 **거짓 빨간불**이 되고,
+        거짓 경보를 내는 가드는 곧 무시된다.
+        """
+        fn = sorted(schema_bodies)[0]
+        lf = schema_bodies[fn].replace("\r\n", "\n")
+        assert norm(lf.replace("\n", "\r\n")) == norm(lf)

@@ -509,10 +509,25 @@ class TestAdminKeyNeverShipsInTheBundle:
         chk.check(SITE)      # 예외가 안 나야 정상
 
     def test_a_jwt_shaped_but_undecodable_string_does_not_crash(self, monkeypatch):
-        """⛔ JWT 를 닮았을 뿐인 글자에 감시가 죽으면 **진짜 사고까지 못 알린다.**"""
+        """⛔ JWT 를 닮았을 뿐인 글자에 감시가 죽으면 **진짜 사고까지 못 알린다.**
+
+        ⚠️ **픽스처가 실제로 그 코드에 닿는지 먼저 못 박는다** (2026-09-01 독립 검토 지적).
+           예전 픽스처(`eyJnot-real.eyJalso-not-real.zzz…`)는 payload 조각이 13자라
+           `JWT_RE` 의 `{16,}` 에 **아예 안 걸렸다** — 지키겠다던 try/except 에 한 번도
+           들어가지 않은 채 초록이었다. 그런 시험은 있으나 마나가 아니라, 있는 줄 알고
+           **안 지켜지는 것**이라 더 나쁘다.
+
+        여기 쓰는 글자는 payload 길이가 4로 나눈 나머지 1이라 base64 디코딩이 **실제로
+        예외를 던진다**(`binascii.Error: … cannot be 1 more than a multiple of 4`).
+        가드가 없으면 그 예외는 `CheckFailed` 가 아니라서 `main()` 이 못 잡고, 스텝이
+        traceback 으로 죽어 `kind` 가 빈 값으로 나가고, 워크플로가 `down` 으로 폴백해
+        **"사이트가 죽었다" 대본**을 연다 — 이 브랜치가 없애려던 바로 그 실패 모드다.
+        """
+        probe = b"eyJabcdefgh." + b"eyJ" + b"a" * 18 + b".zzzzzzzz"
+        assert chk.JWT_RE.search(probe), (
+            "픽스처가 JWT_RE 에 안 걸립니다 — 지키려는 코드에 닿지도 못하는 시험입니다.")
         routes = all_good()
-        routes["/assets/index-ABC123.js"] = (
-            200, GOOD_BUNDLE + b"\neyJnot-real.eyJalso-not-real.zzzzzzzzzz\n")
+        routes["/assets/index-ABC123.js"] = (200, GOOD_BUNDLE + b"\n" + probe + b"\n")
         install_fake_fetch(monkeypatch, routes)
         chk.check(SITE)      # 조용히 건너뛰어야 정상
 

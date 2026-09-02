@@ -271,14 +271,19 @@ class TestMigrationShape:
 
 
 class TestSchemaSqlHasTheSameThing:
-    """정본(schema.sql)에도 같은 것이 있어야 한다 — 한쪽만 고치면 조용히 갈라진다."""
+    """정본(schema.sql)에도 같은 것이 있어야 한다 — 한쪽만 고치면 조용히 갈라진다.
 
-    def test_functions(self, schema):
-        got = set(RE_API_FN.findall(schema))
+    ⚠️ **`schema_stmts`(주석 제거)를 본다.** 원문을 보면 `-- create or replace function api.X`
+       처럼 **주석 처리해 죽인 것도 "있다"고 센다** — 즉 함수를 지워 놓고도 초록이다
+       (2026-09-01 독립 검토 지적. 형제 클래스는 이미 옮겼는데 여기만 남아 있었다).
+    """
+
+    def test_functions(self, schema_stmts):
+        got = set(RE_API_FN.findall(schema_stmts))
         assert got == set(SCREEN_FNS), "정본의 api 함수 목록이 다릅니다: {}".format(sorted(got))
 
-    def test_views(self, schema):
-        got = set(RE_API_VIEW.findall(schema))
+    def test_views(self, schema_stmts):
+        got = set(RE_API_VIEW.findall(schema_stmts))
         assert got == set(SCREEN_VIEWS) | set(COLLECTOR_VIEWS), (
             "정본의 api 뷰 목록이 다릅니다: {}".format(sorted(got))
         )
@@ -429,8 +434,10 @@ class TestSchemaUsageIsGrantedForBothSchemas:
     """
 
     @pytest.mark.parametrize("schema_name", ["api", "public"])
-    def test_usage_is_granted(self, schema, schema_name):
+    def test_usage_is_granted(self, schema_stmts, schema_name):
+        """⚠️ `schema_stmts`(주석 제거)를 본다 — 원문을 보면 이 줄을 주석 처리해 **꺼 버려도**
+        초록이 유지된다(2026-09-01 독립 검토가 돌연변이로 실증했다)."""
         assert (
             "grant usage on schema {} to anon, authenticated, service_role;".format(schema_name)
-            in schema
+            in schema_stmts
         )

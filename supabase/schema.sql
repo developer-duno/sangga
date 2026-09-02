@@ -2262,6 +2262,24 @@ alter default privileges in schema public revoke all on functions from anon, aut
 -- 트리거가 부르는 함수는 사람이 직접 부를 일이 없다. 노출면은 "화면이 쓰는 것"만 남긴다.
 revoke all on function unit_business_append_only() from public, anon, authenticated;
 
+-- ── 생성 컬럼이 부르는 헬퍼는 **쓰는 롤**에게 EXECUTE 가 필요하다 (2026-09-01 독립 검토) ──
+--
+-- ⛔ **여기 빠지면 적재가 죽는다 — 그런데 지금 라이브에서는 안 죽는다.** 그 차이가 함정이다.
+--    `parcel`·`building` 의 검색 키 컬럼이 `generated always as (search_key(...)) stored` 라,
+--    PostgreSQL 은 **INSERT/UPDATE 하는 그 순간 그 롤로** 이 함수들을 부른다. 적재기는
+--    service_role 로 쓴다(scripts/collectors/*.py 가 SANGGA_SUPABASE_SERVICE_KEY 사용).
+-- ⚠️ 지금까지 정본에는 이 세 함수에 대한 grant 가 **한 줄도 없었다.** 라이브가 도는 이유는
+--    우리 파일이 아니라 **Supabase 부트스트랩의 스키마별 기본권한**(`pg_default_acl` 실측:
+--    `postgres | public | f → postgres=X | service_role=X`)이다. 즉 **물려받은 것이지 우리가
+--    말한 것이 아니었다.** 맨 Postgres 로 이 파일만 돌려 창고를 세우면 적재가
+--    `permission denied for function search_key` 로 죽는다.
+-- ⓘ 라이브에 적용해도 변화 0이다(이미 그 권한을 갖고 있다) — 정본이 **스스로 완결되게**
+--    하는 것이 목적이다.
+-- ⛔ anon 에게는 주지 않는다. 화면은 이 함수들을 직접 부르지 않고, 저장된 컬럼 값만 읽는다.
+grant execute on function search_key(text)                          to service_role;
+grant execute on function building_display_nm(text, text)           to service_role;
+grant execute on function parcel_jibun_addr(text, text, text, text) to service_role;
+
 
 -- 상한 함수는 내부용이다. 화면은 search_scope() 가 돌려주는 판정만 쓴다.
 -- (search_scope() 자체의 revoke·grant 는 그 함수를 만드는 자리에 한 벌만 둔다 —
