@@ -88,12 +88,19 @@ def to_yyyymmdd(iso_date):
     return str(iso_date).replace("-", "").strip() or None
 
 
-def is_open(close_date, today=None):
+def is_open(close_date, pan_ss=None, today=None):
     """아직 마감 전인가. 마감일을 **모르는 것은 열린 것으로 본다**.
 
     모르는 것을 닫힌 것으로 치면 살아 있는 공고가 조용히 사라진다 — 읽는 함수
     (list_lh_notices)가 NULL 을 남겨 두는 것과 같은 판단이다.
+
+    ⛔ **LH 가 '접수마감'이라 적어 준 것도 마감일과 무관하게 닫힌 것으로 본다**
+       (2026-09-01d, 화면과 같은 규칙). 마감일만 보면 못 거른다 — 실측으로 마감일이
+       2028년으로 먼 미래인 [취소공고]가 남아 있었다. 이걸 안 보면 이미 접수가
+       끝난(또는 취소된) 공고에 "새 공고입니다"라며 매주 소음 이슈가 열린다.
     """
+    if pan_ss == "접수마감":
+        return False
     if not close_date:
         return True
     today = today or datetime.datetime.now(KST).date()
@@ -111,7 +118,7 @@ def find_new_notices(rows, latest_known=LATEST_KNOWN_NOTICE_DATE, today=None):
         nd = to_yyyymmdd(r.get("notice_date"))
         if not nd or nd <= latest_known:
             continue
-        if not is_open(r.get("close_date"), today=today):
+        if not is_open(r.get("close_date"), pan_ss=r.get("pan_ss"), today=today):
             continue
         out.append({
             "pan_id": r.get("pan_id"),

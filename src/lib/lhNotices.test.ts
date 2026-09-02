@@ -215,6 +215,19 @@ describe('isLhNotice / isLhNoticeList — 서버 응답의 모양', () => {
   it('★ 글자여야 하는 칸이 숫자로 오면 거른다 (그리다 터지는 자리다)', () => {
     expect(isLhNotice({ ...notice(), pan_nm: 12345 })).toBe(false);
     expect(isLhNotice({ ...notice(), kind_nm: null })).toBe(false);
-    expect(isLhNotice({ ...notice(), dtl_url: undefined })).toBe(false);
+    // ⚠️ dtl_url·pan_ss 는 nullable 이라 null·undefined 는 **통과한다**(아래 별도 시험) —
+    //    여기서는 그 둘과 다른 종류의 틀림(숫자)만 본다.
+    expect(isLhNotice({ ...notice(), dtl_url: 12345 })).toBe(false);
+    expect(isLhNotice({ ...notice(), pan_ss: 12345 })).toBe(false);
+  });
+
+  it('★ pan_ss·dtl_url 은 nullable 이다 — 한 줄이 null 이어도 목록이 살아남는다', () => {
+    // DB 컬럼이 nullable(text, NOT NULL 없음)이고 적재기가 실제로 NULL 을 쓴다
+    // (collect_lh_notices.py record_to_row). 이 둘을 문자열로만 받으면 한 행만
+    // 어긋나도 .every 가 목록 전체를 거절해 카드가 통째로 사라진다.
+    expect(isLhNotice(notice({ pan_ss: null, dtl_url: null }))).toBe(true);
+    expect(
+      isLhNoticeList([notice(), notice({ pan_id: 'b', pan_ss: null, dtl_url: null })]),
+    ).toBe(true);
   });
 });

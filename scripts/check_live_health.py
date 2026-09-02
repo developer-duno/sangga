@@ -62,7 +62,13 @@ DEFAULT_SITE = "https://sangga-one.vercel.app"
 #       비싼 경로다. 조기 종료는 **실패했을 때만** 일어난다.
 #         URL 하나 몫 = TIMEOUT_S(30) × RETRY_COUNT(5) + 백오프합(5+10+20+40=75) = 225초
 #         최악 = 225 × CHECKED_URLS(3) = **675초(11.25분)**
-#       → 360분 기본 한도 안에는 여전히 넉넉하다. 다만 **틀린 공식을 시험에 박아 두면**
+#       → 360분 기본 한도 안에는 여전히 넉넉하다.
+#       ⚠️ **675초는 상한이 아니라 명목값(사실상 하한)이다** (2026-09-01 2차 검증에서 정정).
+#          `urlopen(timeout=)` 은 **요청 전체**가 아니라 **소켓 연산 하나**의 제한이라,
+#          서버가 30초 안에 조금씩 계속 흘려보내면 한 번의 시도가 30초를 훌쩍 넘길 수 있다.
+#          그래도 결론은 안 바뀐다 — 360분과 11분 사이의 여유가 워낙 커서, 이 느슨함이
+#          문제가 되려면 응답이 **30배 넘게** 늘어져야 한다. 다만 누가 `timeout-minutes` 를
+#          짧게(예: 15분) 박는 날에는 이 명목값만 믿으면 안 된다. 다만 **틀린 공식을 시험에 박아 두면**
 #         누가 `timeout-minutes` 를 짧게 박는 날 시험은 초록인데 job 만 잘린다(이 레포가
 #         가장 두려워하는 조용한 실패). 그래서 TestWorkflowTimeout 이 URL 수까지 곱한다.
 RETRY_COUNT = 5
@@ -93,12 +99,62 @@ BUNDLE_RE = re.compile(r'src="(/assets/[^"]+\.js)"')
 #    그래서 **뒤에 키 재료가 실제로 붙은 것만** 잡는다. 실제 키는 41자(접두사 10 + 재료 31)
 #    이므로 20자만 요구해도 라이브러리 쪽(뒤가 백틱)과는 확실히 갈린다.
 ADMIN_KEY_RE = re.compile(rb"sb_secret_[A-Za-z0-9_\-]{20,}")
-# 옛 형식(JWT)은 payload 안에 역할이 그대로 적힌다. 공백 유무를 함께 본다.
-SERVICE_ROLE_RE = re.compile(rb'"role"\s*:\s*"service_role"')
+
+# 옛 형식(JWT) 키.
+#
+# ⛔ **디코딩된 글자(`"role":"service_role"`)를 찾으면 안 된다 — 번들에 그 글자는 없다.**
+#    JWT 는 payload 가 base64url 로 **인코딩된 채** 실린다:
+#        eyJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJvbGUiOiJzZXJ2aWNlX3JvbGUi…
+#    처음엔 `"role"\s*:\s*"service_role"` 로 찾게 만들었는데, 실측해 보니 **한 번도 발동할
+#    수 없는 죽은 가드**였다(2026-09-01 2차 검증). 죽은 가드는 없는 가드보다 나쁘다 —
+#    "막고 있다"는 거짓 안심을 주기 때문이다.
+# ⇒ **JWT 모양을 찾아 payload 를 직접 풀어** 역할을 본다. base64 정렬(3가지)에 안 휘둘리고,
+#   `role` 이 어디에 있든(중간·끝) 잡힌다.
+# ⓘ 이 프로젝트는 새 형식(`sb_…`)을 쓰므로 이 갈래는 **방어적 이중 안전망**이다 — 옛 형식
+#   키를 다른 프로젝트·옛 문서에서 복사해 오는 날을 위한 것.
+JWT_RE = re.compile(rb"eyJ[A-Za-z0-9_\-]{8,}\.(eyJ[A-Za-z0-9_\-]{16,})\.[A-Za-z0-9_\-]{8,}")
+
+
+def jwt_says_service_role(bundle: bytes) -> bool:
+    """번들 안 JWT 들의 payload 를 풀어 `service_role` 인 것이 있나.
+
+    ⛔ 값을 돌려주지도 찍지도 않는다 — True/False 만.
+    ⚠️ 못 푸는 조각은 **조용히 건너뛴다**(JWT 를 닮았을 뿐인 글자일 수 있다). 여기서 예외를
+       던지면 감시 전체가 죽어 진짜 사고까지 못 알린다.
+    """
+    import base64
+
+    for m in JWT_RE.finditer(bundle):
+        body = m.group(1)
+        body += b"=" * (-len(body) % 4)      # base64url 은 패딩이 빠져 있다
+        try:
+            payload = base64.urlsafe_b64decode(body)
+        except Exception:
+            continue
+        if b"service_role" in payload:
+            return True
+    return False
 
 
 class CheckFailed(Exception):
-    """검사 하나가 실패했다. 메시지가 그대로 사람에게 보인다."""
+    """검사 하나가 실패했다. 메시지가 그대로 사람에게 보인다.
+
+    ⛔ **`kind` 를 붙이는 이유** (2026-09-01 2차 적대검증에서 신설).
+       예전에는 실패에 종류가 없어서 워크플로가 **모든 실패에 같은 제목·같은 대본**을 썼다.
+       그 대본 첫 줄은 "주소를 열어 **멀쩡히 뜨면** 잠깐 끊겼던 것이니 이 이슈를 닫으세요"다.
+       그런데 관리자 키가 샌 날은 **사이트가 멀쩡히 뜬다** — 즉 운영자에게 유출 이슈를
+       **닫으라고 지시**하게 된다. 게다가 제목이 같으면 이미 열린 '사이트 다운' 이슈가
+       유출 알림을 통째로 삼킨다(중복 방지 로직이 제목 완전일치라서).
+       ⇒ 종류를 달아 워크플로가 제목과 대본을 **갈라 쓰게** 한다.
+
+    kind:
+      "down" — 사이트가 안 뜬다·반쪽 배포·파일이 이상하다 (기본값)
+      "leak" — 배포된 묶음에 관리자 키로 보이는 값이 실렸다 (사이트는 멀쩡하다)
+    """
+
+    def __init__(self, message: str, kind: str = "down"):
+        super().__init__(message)
+        self.kind = kind
 
 
 def fetch(url: str) -> tuple[int, bytes]:
@@ -191,17 +247,27 @@ def check(site: str, sleep=time.sleep) -> list[str]:
     #    오탐을 내는 감시는 곧 무시되고, 그러면 진짜 사고도 함께 묻힌다.
     # ⇒ **접두사 뒤에 키 재료가 실제로 붙어 있을 때만** 잡는다(실제 키는 41자 = 접두사
     #   10자 + 재료 31자). 라이브러리 쪽은 접두사 바로 뒤가 백틱이라 안 걸린다.
+    # ⛔ 옛 형식(JWT)은 **디코딩된 글자를 찾으면 안 된다** — 번들에는 base64 로 인코딩된
+    #    채 실려서 그 글자가 아예 없다(2026-09-01 2차 검증에서 죽은 가드로 드러남).
+    #    jwt_says_service_role() 이 payload 를 직접 풀어 본다.
     # ⛔ 걸리면 **즉시 시끄럽게** 실패시킨다. 이건 "사이트가 죽었다"보다 급한 사고라,
     #    6시간마다 도는 이 감시가 그날 안에 이슈를 연다.
-    for mark in (ADMIN_KEY_RE, SERVICE_ROLE_RE):
-        if mark.search(bundle):
-            raise CheckFailed(
-                "🔴 배포된 자바스크립트 묶음에 **관리자(비밀) 키로 보이는 값**이 들어 있습니다 "
-                f"({bundle_path}). Vercel 프로젝트 설정의 VITE_SUPABASE_ANON_KEY 가 "
-                "공개키(sb_publishable_…)인지 즉시 확인하고, 관리자 키였다면 "
-                "Supabase 콘솔에서 **그 키를 회전(재발급)**하세요 — 이미 배포된 값은 회수할 수 "
-                "없습니다. ⚠️ 값 자체는 여기에 찍지 않습니다(로그에 남으면 더 퍼집니다)."
-            )
+    # ⚠️ **첫 화면(HTML)도 함께 훑는다** (2026-09-01 2차 검증에서 보탬). 지금 이 앱은 키를
+    #    묶음에만 싣지만, 화면 파일에 값이 박히는 경로(빌드 설정·수동 삽입)가 생기는 날
+    #    묶음만 보면 통째로 놓친다. 이미 손에 든 글자라 **추가 요청이 0**이다.
+    # ⚠️ 남는 한계: 첫 화면이 부르는 **첫 번째 묶음 하나만** 본다. 코드 분할(예: 지도 지연
+    #    로딩)을 들이는 날 나머지 묶음은 안 보게 된다 — 그때는 BUNDLE_RE 로 뽑은 것을 전부
+    #    돌아야 한다(그러면 CHECKED_URLS 도 고정값이 아니게 되므로 함께 손봐야 한다).
+    if (ADMIN_KEY_RE.search(bundle) or jwt_says_service_role(bundle)
+            or ADMIN_KEY_RE.search(home) or jwt_says_service_role(home)):
+        raise CheckFailed(
+            "🔴 배포된 자바스크립트 묶음에 **관리자(비밀) 키로 보이는 값**이 들어 있습니다 "
+            f"({bundle_path}). Vercel 프로젝트 설정의 VITE_SUPABASE_ANON_KEY 가 "
+            "공개키(sb_publishable_…)인지 즉시 확인하고, 관리자 키였다면 "
+            "Supabase 콘솔에서 **그 키를 회전(재발급)**하세요 — 이미 배포된 값은 회수할 수 "
+            "없습니다. ⚠️ 값 자체는 여기에 찍지 않습니다(로그에 남으면 더 퍼집니다).",
+            kind="leak",
+        )
     passed.append(f"묶음 200 · {len(bundle):,}바이트 · 관리자 키 흔적 없음 ({bundle_path})")
 
     # ③ 지도가 쓰는 상권 파일
@@ -231,6 +297,10 @@ def main() -> int:
         print(f"  [실패] {ex}")
         # 워크플로가 이 줄을 읽어 이슈 본문에 넣는다.
         _emit_output("reason", str(ex))
+        # ⛔ 종류도 함께 내보낸다 — 워크플로가 이걸로 **제목과 대본을 갈라 쓴다.**
+        #    안 내보내면 유출도 '사이트 다운' 대본으로 나가고(닫으라는 지시가 된다),
+        #    같은 제목이 이미 열려 있으면 통째로 삼켜진다. CheckFailed 머리말 참조.
+        _emit_output("kind", getattr(ex, "kind", "down"))
         print("\n라이브가 정상이 아닙니다.")
         return 1
 

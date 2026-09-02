@@ -13,6 +13,7 @@ scripts/check_live_health.py 1:1 단위 테스트.
 """
 
 import os
+import re
 import sys
 import urllib.error
 
@@ -24,6 +25,31 @@ if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
 import check_live_health as chk  # noqa: E402
+
+# ⛔ **가짜 키를 소스에 통짜로 적지 말 것** — GitHub 의 비밀 검사(push protection)가 진짜
+#    Supabase 관리자 키로 오인해 **푸시를 막는다**(2026-09-01 실제로 막혔다). 그때 "허용
+#    처리"로 뚫으면 앞으로 진짜 유출도 함께 통과시키는 방향이 된다. 나눠 조립한다.
+FAKE_SECRET = b"sb_secret_" + b"x" * 25
+
+
+def fake_jwt(role):
+    """옛 형식 키가 **번들에 실제로 실리는 모양**(base64url 인코딩)으로 만든다.
+
+    ⛔ 이게 핵심이다 — 2026-09-01 2차 검증 전까지 이 시험은 **디코딩된 글자**
+       (`{"role":"service_role"}`)를 그대로 번들에 넣어 검사했다. 그러면 시험은 초록인데
+       **실제 번들에는 그 글자가 없어서** 가드가 한 번도 발동할 수 없었다.
+       죽은 가드는 없는 가드보다 나쁘다 — "막고 있다"는 거짓 안심을 주기 때문이다.
+    """
+    import base64
+    import json
+
+    def seg(obj):
+        return base64.urlsafe_b64encode(
+            json.dumps(obj, separators=(",", ":")).encode()).rstrip(b"=")
+
+    return (seg({"alg": "HS256", "typ": "JWT"}) + b"."
+            + seg({"iss": "supabase", "role": role, "iat": 1, "exp": 2}) + b"."
+            + b"c2lnbmF0dXJlLXBsYWNlaG9sZGVy")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORKFLOW = os.path.join(ROOT, ".github", "workflows", "live-health-watch.yml")
@@ -326,12 +352,31 @@ class TestWorkflowTimeout:
 
         상수와 코드가 갈리는 순간 위 가드는 "지킨다고 주장하는 것"을 안 지킨다 —
         이 레포가 여러 번 데인 가짜 초록의 전형이다. 그래서 기계로 세어 대조한다.
+
+        ⚠️ **이 시험 자체의 한계 — 정직히 적어 둔다(2026-09-01 감사에서 발견).**
+        `fetch_with_retry(` 글자 수를 세는 방식이라 양쪽으로 틀릴 수 있다:
+          · **과다 계수** — 이 이름이 `check()` 안 주석(`#` 로 시작하는 줄)이나 함수
+            자신의 독스트링에 설명 삼아 등장하면 실제 호출이 아닌데도 세어진다. 그래서
+            아래는 **독스트링과 `#` 주석을 걷어낸 뒤** 센다(이 파일의 `#` 주석은 전부
+            한 줄 전체라 트레일링 주석까지는 안 다룬다 — 지금 이 코드베이스 관례로는
+            충분하다).
+          · **과소 계수** — 언젠가 `check()` 가 URL 하나를 헬퍼 함수로 빼내 그 헬퍼가
+            `fetch_with_retry` 를 부르면, 이 문자열 세기는 `check()` 함수 **본문**만
+            보므로 그 호출을 못 센다(호출 자체는 여전히 일어나는데 카운트만 준다).
+            이건 문자열 세기로는 원리적으로 못 잡는 한계라, 함수 추출 리팩터를 할 때는
+            이 시험이 통과하더라도 `CHECKED_URLS` 를 손으로 다시 확인해야 한다.
         """
         with open(chk.__file__, encoding="utf-8") as f:
             src = f.read()
         body = src[src.index("def check("):]
         body = body[:body.index("\ndef ", 1)] if "\ndef " in body[1:] else body
-        calls = body.count("fetch_with_retry(")
+        # 독스트링(설명문 안에 이름이 등장할 수 있다)과 `#` 주석 줄을 걷어낸 뒤 센다 —
+        # 안 걷으면 위 한계에서 말한 과다 계수가 실제로 일어난다.
+        body_no_docstring = re.sub(r'"""[\s\S]*?"""', "", body, count=1)
+        code_only = "\n".join(
+            ln for ln in body_no_docstring.splitlines() if not ln.lstrip().startswith("#")
+        )
+        calls = code_only.count("fetch_with_retry(")
         assert calls == chk.CHECKED_URLS, (
             "check() 가 부르는 fetch_with_retry 는 {}번인데 CHECKED_URLS 는 {}입니다 — "
             "검사를 더했으면 상수도 함께 올리세요.".format(calls, chk.CHECKED_URLS)
@@ -417,12 +462,11 @@ class TestAdminKeyNeverShipsInTheBundle:
     #    방향이다. 대신 **접두사와 뒷부분을 나눠 조립**한다: 소스에는 온전한 모양이
     #    한 번도 나타나지 않지만, 검사 대상 문자열은 똑같이 만들어진다.
     #    (뒤 25자는 우리 정규식이 요구하는 "재료 20자 이상"을 넘기려는 것.)
-    _FAKE_SECRET = b"sb_secret_" + b"x" * 25
+    _FAKE_SECRET = FAKE_SECRET
 
     @pytest.mark.parametrize("mark", [
-        _FAKE_SECRET,                                    # 새 형식(이 프로젝트가 쓰는 것)
-        b'{"role":"service_role"}',                      # 옛 형식 JWT payload
-        b'{"role": "service_role"}',                     # 공백이 섞인 직렬화
+        FAKE_SECRET,                                     # 새 형식(이 프로젝트가 쓰는 것)
+        fake_jwt("service_role"),                        # 옛 형식 — **인코딩된 실제 모양**
     ])
     def test_admin_key_in_bundle_is_a_loud_failure(self, monkeypatch, mark):
         """⛔ 걸리면 **즉시 시끄럽게** 실패한다 — '사이트가 죽었다'보다 급한 사고다."""
@@ -451,6 +495,41 @@ class TestAdminKeyNeverShipsInTheBundle:
             200, GOOD_BUNDLE + b'\nconst k="sb_publishable_aaaaaaaaaaaaaaaaaaaa";\n')
         install_fake_fetch(monkeypatch, routes)
         chk.check(SITE)      # 예외가 안 나야 정상
+
+    def test_an_anon_jwt_is_not_mistaken_for_an_admin_key(self, monkeypatch):
+        """⛔ 옛 형식 **공개키**(role=anon)는 원래 번들에 실려 나간다 — 막으면 앱이 못 돈다.
+
+        payload 를 풀어 역할을 보므로 anon 과 service_role 이 정확히 갈린다.
+        (접두사·글자 찾기로는 이 둘을 못 가른다.)
+        """
+        routes = all_good()
+        routes["/assets/index-ABC123.js"] = (
+            200, GOOD_BUNDLE + b'\nconst k="' + fake_jwt("anon") + b'";\n')
+        install_fake_fetch(monkeypatch, routes)
+        chk.check(SITE)      # 예외가 안 나야 정상
+
+    def test_a_jwt_shaped_but_undecodable_string_does_not_crash(self, monkeypatch):
+        """⛔ JWT 를 닮았을 뿐인 글자에 감시가 죽으면 **진짜 사고까지 못 알린다.**
+
+        ⚠️ **픽스처가 실제로 그 코드에 닿는지 먼저 못 박는다** (2026-09-01 독립 검토 지적).
+           예전 픽스처(`eyJnot-real.eyJalso-not-real.zzz…`)는 payload 조각이 13자라
+           `JWT_RE` 의 `{16,}` 에 **아예 안 걸렸다** — 지키겠다던 try/except 에 한 번도
+           들어가지 않은 채 초록이었다. 그런 시험은 있으나 마나가 아니라, 있는 줄 알고
+           **안 지켜지는 것**이라 더 나쁘다.
+
+        여기 쓰는 글자는 payload 길이가 4로 나눈 나머지 1이라 base64 디코딩이 **실제로
+        예외를 던진다**(`binascii.Error: … cannot be 1 more than a multiple of 4`).
+        가드가 없으면 그 예외는 `CheckFailed` 가 아니라서 `main()` 이 못 잡고, 스텝이
+        traceback 으로 죽어 `kind` 가 빈 값으로 나가고, 워크플로가 `down` 으로 폴백해
+        **"사이트가 죽었다" 대본**을 연다 — 이 브랜치가 없애려던 바로 그 실패 모드다.
+        """
+        probe = b"eyJabcdefgh." + b"eyJ" + b"a" * 18 + b".zzzzzzzz"
+        assert chk.JWT_RE.search(probe), (
+            "픽스처가 JWT_RE 에 안 걸립니다 — 지키려는 코드에 닿지도 못하는 시험입니다.")
+        routes = all_good()
+        routes["/assets/index-ABC123.js"] = (200, GOOD_BUNDLE + b"\n" + probe + b"\n")
+        install_fake_fetch(monkeypatch, routes)
+        chk.check(SITE)      # 조용히 건너뛰어야 정상
 
     def test_the_library_own_prefix_check_is_not_a_false_alarm(self, monkeypatch):
         """⛔ **이 시험이 이 가드의 존재 이유만큼 중요하다** (2026-09-01 라이브에서 실제로 터짐).

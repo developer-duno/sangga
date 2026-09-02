@@ -41,8 +41,13 @@ import post_load  # noqa: E402
 # ⚠️ 개수를 글자로 적지 않는다 — 공개 함수가 하나 늘 때마다 주석만 거짓말이 된다.
 # 손으로 다시 적으면 화면 함수가 하나 늘 때 두 목록이 갈라지고, 실패 메시지가
 # 진짜 원인(허용 목록 드리프트)을 가리키지 않는다 — 그래서 import 로 한 곳만 진실.
-SCREEN_FNS = post_load.ANON_CALLABLE_ALLOWLIST
-SCREEN_VIEWS = post_load.ANON_READABLE_ALLOWLIST
+# ⚠️ 2026-09-01 감사부터 post_load 쪽 허용 목록은 `api.search_buildings` 처럼 스키마가
+#    붙는다(잔존 노출을 이름만으로 가려 버리던 구멍을 막은 것 — post_load.py 의
+#    ANON_CALLABLE_ALLOWLIST 머리말 참조). 이 파일의 정규식은 `api\.` 를 스스로 붙이므로
+#    맨 이름이 필요해, post_load 가 같은 목록에서 파생해 둔 *_NAMES 를 쓴다(맨 이름을
+#    여기서 다시 벗기면 파생 로직이 두 곳으로 갈라진다).
+SCREEN_FNS = post_load.ANON_CALLABLE_NAMES
+SCREEN_VIEWS = post_load.ANON_READABLE_NAMES
 
 # 수집·적재기가 REST 로 쓰는 표 10개(scripts/ 를 훑어 뽑은 목록).
 COLLECTOR_VIEWS = (
@@ -104,6 +109,30 @@ def migration():
 @pytest.fixture(scope="module")
 def schema():
     return read(SCHEMA)
+
+
+def statements(sql):
+    """주석을 걷어낸 **실제 SQL 문장만**.
+
+    ⛔ **왜 이게 필요한가** (2026-09-01 2차 적대검증에서 신설).
+       권한 가드들이 원문(주석 포함)에서 문자열을 찾고 있었다. 그러면 양쪽으로 다 틀린다:
+
+         · **가짜 초록** — 실제 문장을 `--` 로 주석 처리해 죽여도 글자는 남아 있으므로
+           "있다"고 판정한다. 즉 **막는다던 규칙이 꺼져도 초록**이다. 이 레포가 가장
+           여러 번 데인 실패 모드이고, 바로 이번 감사가 잡겠다던 것이다.
+         · **거짓 빨간불** — 반대로 '이런 형태는 쓰지 말 것'을 금지하는 가드는, 그 형태를
+           **설명하려고 주석에 인용한 문장**에 걸린다. 지금 통과하는 유일한 이유가
+           "인용문이 우연히 대문자라서"였다 — 다음 사람이 소문자로 옮겨 적는 순간 빨간불.
+
+       형제 파일 `tests/test_schema_table_guards.py` 는 같은 이유로 이미 이 처리를 한다.
+    """
+    return "\n".join(ln for ln in sql.splitlines() if not ln.lstrip().startswith("--"))
+
+
+@pytest.fixture(scope="module")
+def schema_stmts(schema):
+    """정본에서 주석을 걷어낸 것. **권한 가드는 반드시 이쪽을 본다.**"""
+    return statements(schema)
 
 
 def function_bodies(sql):
@@ -242,14 +271,19 @@ class TestMigrationShape:
 
 
 class TestSchemaSqlHasTheSameThing:
-    """정본(schema.sql)에도 같은 것이 있어야 한다 — 한쪽만 고치면 조용히 갈라진다."""
+    """정본(schema.sql)에도 같은 것이 있어야 한다 — 한쪽만 고치면 조용히 갈라진다.
 
-    def test_functions(self, schema):
-        got = set(RE_API_FN.findall(schema))
+    ⚠️ **`schema_stmts`(주석 제거)를 본다.** 원문을 보면 `-- create or replace function api.X`
+       처럼 **주석 처리해 죽인 것도 "있다"고 센다** — 즉 함수를 지워 놓고도 초록이다
+       (2026-09-01 독립 검토 지적. 형제 클래스는 이미 옮겼는데 여기만 남아 있었다).
+    """
+
+    def test_functions(self, schema_stmts):
+        got = set(RE_API_FN.findall(schema_stmts))
         assert got == set(SCREEN_FNS), "정본의 api 함수 목록이 다릅니다: {}".format(sorted(got))
 
-    def test_views(self, schema):
-        got = set(RE_API_VIEW.findall(schema))
+    def test_views(self, schema_stmts):
+        got = set(RE_API_VIEW.findall(schema_stmts))
         assert got == set(SCREEN_VIEWS) | set(COLLECTOR_VIEWS), (
             "정본의 api 뷰 목록이 다릅니다: {}".format(sorted(got))
         )
@@ -304,15 +338,19 @@ class TestDefaultPrivilegesActuallyBlockPublic:
 
     GLOBAL = "alter default privileges revoke execute on functions from public;"
 
-    def test_execute_is_revoked_from_public_globally(self, schema):
-        """⛔ **전역 한 줄**이 있어야 한다 — 이게 유일하게 실제로 막는 문장이다."""
-        assert self.GLOBAL in schema, (
+    def test_execute_is_revoked_from_public_globally(self, schema_stmts):
+        """⛔ **전역 한 줄**이 있어야 한다 — 이게 유일하게 실제로 막는 문장이다.
+
+        ⚠️ `schema_stmts`(주석 제거)를 본다. 원문을 보면 이 줄을 주석 처리해 **꺼 버려도**
+           초록이 유지된다 — 막는다던 규칙이 꺼진 채 초록인 것이 이 감사의 주제였다.
+        """
+        assert self.GLOBAL in schema_stmts, (
             "정본에 '{}' 가 없습니다 — 이 줄이 빠지면 새 함수가 PUBLIC 에게 열린 채 태어납니다."
             .format(self.GLOBAL)
         )
 
     @pytest.mark.parametrize("schema_name", ["api", "public"])
-    def test_the_useless_per_schema_form_never_comes_back(self, schema, schema_name):
+    def test_the_useless_per_schema_form_never_comes_back(self, schema_stmts, schema_name):
         """⛔ **스키마별 형태로 되돌아가지 않는다 — 그건 아무 일도 안 한다.**
 
         공식 문서가 우리가 쓰던 그 문장을 그대로 '효과 없음' 예시로 든다:
@@ -321,24 +359,70 @@ class TestDefaultPrivilegesActuallyBlockPublic:
         스키마별 기본권한은 전역 기본값에 **더하기만** 할 뿐 빼지 못하기 때문이다.
         실제로 이 마이그레이션의 첫 판이 그 형태였고, 라이브에 적용해 보니 `pg_default_acl`
         에 항목조차 안 생겨 무효임이 드러났다. 그 자리로 돌아가면 여기서 잡는다.
+
+        ⚠️ `schema_stmts`(주석 제거)를 본다. 원문을 보면 **그 형태를 설명하려고 주석에
+           인용한 문장**에 걸려 거짓 빨간불이 난다 — 지금 안 나는 유일한 이유가 "인용문이
+           우연히 대문자라서"였다(다음 사람이 소문자로 옮겨 적는 순간 터진다).
         """
-        useless = (
-            "alter default privileges in schema {} revoke execute on functions from public;"
-            .format(schema_name)
+        # ⛔ **글자 완전일치로 찾지 않는다** (2026-09-01 2차 검증에서 보탬). 예전에는 문장
+        #    하나를 통째로 대조해서, 똑같이 무효인 변형이 그대로 지나갔다:
+        #      · `revoke all on functions from public`  (execute 대신 all)
+        #      · 공백이 둘 이상이거나 줄바꿈이 낀 형태
+        #      · `for role postgres in schema api …` 처럼 앞에 절이 붙은 형태
+        #    무효인 이유는 **`in schema` 가 붙었다는 것 하나**이므로, 그 모양을 정규식으로 잡는다.
+        pat = re.compile(
+            r"alter\s+default\s+privileges[^;]*in\s+schema\s+{}[^;]*"
+            r"revoke[^;]*from\s+public".format(schema_name),
+            re.I | re.S,
         )
-        assert useless not in schema, (
-            "'{}' 는 **아무 일도 하지 않습니다**(공식 문서의 '효과 없음' 예시). "
-            "전역 형태('{}')를 쓰세요.".format(useless, self.GLOBAL)
+        found = pat.search(schema_stmts)
+        assert not found, (
+            "'{}' 는 **아무 일도 하지 않습니다**(공식 문서의 '효과 없음' 예시 — 스키마별 "
+            "기본권한은 전역 기본값에 더하기만 할 뿐 빼지 못합니다). 전역 형태('{}')를 쓰세요."
+            .format(" ".join(found.group(0).split()), self.GLOBAL)
         )
 
-    def test_the_anon_authenticated_lines_are_kept_too(self, schema):
+    def test_the_anon_authenticated_lines_are_kept_too(self, schema_stmts):
         """⛔ 옛 줄을 **지우지 않는다.** 지금은 무해하지만, 누가 기본권한에 그 둘을 넣는 날
-        (Supabase 정책 변경·사람이 grant) 다시 일하게 된다. 둘은 대체 관계가 아니다."""
+        (Supabase 정책 변경·사람이 grant) 다시 일하게 된다. 둘은 대체 관계가 아니다.
+
+        ⚠️ 여기도 `schema_stmts` — 주석 처리로 죽여도 초록이 되는 것을 막는다."""
         for schema_name in ("api", "public"):
             assert (
                 "alter default privileges in schema {} revoke all on functions from anon, authenticated;"
-                .format(schema_name) in schema
+                .format(schema_name) in schema_stmts
             )
+
+    def test_the_global_line_comes_before_the_first_function(self, schema_stmts):
+        """⛔ **있기만 해서는 안 되고 첫 함수보다 앞이어야 한다** (2026-09-01 2차 검증).
+
+        기본권한은 "**앞으로** 만드는 것"에만 걸린다. 그래서 이 줄이 파일 2/3 지점에 있으면
+        **그 위에서 만들어지는 함수는 여전히 PUBLIC 에게 열린 채 태어난다** — 정본만으로 새
+        창고를 세우면 지금 라이브에 남아 있는 것과 **똑같은 누출이 그대로 재현**된다.
+
+        예전에는 이 줄이 2231행이고 첫 함수가 153행이라, 그 사이 함수 16개가 전부 그 상태였다.
+        """
+        first_fn = re.search(r"(?im)^create\s+(or\s+replace\s+)?function\b", schema_stmts)
+        assert first_fn, "정본에서 `create function` 을 못 찾습니다 — 정규식이 헛돕니다."
+        pos = schema_stmts.find(self.GLOBAL)
+        assert pos >= 0, "전역 회수 줄이 없습니다."
+        assert pos < first_fn.start(), (
+            "전역 회수가 첫 함수({}번째 글자)보다 뒤({}번째)에 있습니다 — 그 앞에서 만들어지는 "
+            "함수들은 PUBLIC 에게 열린 채 태어납니다. 확장 설치 직후로 올리세요."
+            .format(first_fn.start(), pos)
+        )
+
+    def test_these_guards_actually_bite_when_the_line_is_commented_out(self, schema):
+        """⛔ **가드 자신을 시험한다** — 주석 제거기가 헛돌면 위 시험들은 조용히 가짜 초록이
+        되고, 그건 가드가 없는 것보다 나쁘다(막고 있다는 거짓 안심).
+
+        정본에서 전역 회수 줄을 **주석 처리**해 보고, 그때 판정이 뒤집히는지 확인한다.
+        """
+        killed = schema.replace(self.GLOBAL, "-- " + self.GLOBAL, 1)
+        assert self.GLOBAL in killed, "전제: 원문에는 글자가 그대로 남아 있다"
+        assert self.GLOBAL not in statements(killed), (
+            "주석 처리했는데도 '있다'고 판정합니다 — 주석 제거기가 헛돌고 있습니다."
+        )
 
 
 class TestSchemaUsageIsGrantedForBothSchemas:
@@ -350,8 +434,10 @@ class TestSchemaUsageIsGrantedForBothSchemas:
     """
 
     @pytest.mark.parametrize("schema_name", ["api", "public"])
-    def test_usage_is_granted(self, schema, schema_name):
+    def test_usage_is_granted(self, schema_stmts, schema_name):
+        """⚠️ `schema_stmts`(주석 제거)를 본다 — 원문을 보면 이 줄을 주석 처리해 **꺼 버려도**
+        초록이 유지된다(2026-09-01 독립 검토가 돌연변이로 실증했다)."""
         assert (
             "grant usage on schema {} to anon, authenticated, service_role;".format(schema_name)
-            in schema
+            in schema_stmts
         )

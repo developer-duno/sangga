@@ -71,7 +71,9 @@ const INDUSTRY_DETAIL_PATTERN = '**/rest/v1/rpc/list_industry_detail*';
 // ⚠️ 기본값은 역시 **함수가 없는 상태**다 — 안 막으면 실존하지 않는 도메인으로 요청이
 //    나가 테스트가 DNS 에 좌우된다.
 const NEARBY_PERMITS_PATTERN = '**/rest/v1/rpc/count_nearby_permits*';
-// 상권 임대 동향(결정 0024). 층별 화면의 여섯 번째 카드가 이것 하나를 부른다.
+// 상권 임대 동향(결정 0024). 층별 화면의 임대 카드가 이것 하나를 부른다.
+// ⚠️ 몇 번째 카드인지는 적지 않는다 — 카드가 늘 때마다 이 주석이 낡는다.
+//    지금 몇 장이고 순서가 어떤지는 src/lib/sectionCards.ts 의 SECTION_PLAN 이 정본이다.
 // ⚠️ 기본값은 역시 **함수가 없는 상태**다 — 마이그레이션 적용 전 라이브이 그것이고,
 //    그때 카드가 통째로 조용히 빠지는지가 테스트 AA 의 관심사다.
 const RENT_STATS_PATTERN = '**/rest/v1/rpc/list_rent_stats*';

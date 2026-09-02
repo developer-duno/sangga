@@ -90,7 +90,13 @@ export function LhNoticeSection({ sigungu }: Props) {
                 날 화면만 옛말을 한다. */}
             <span className="lh__kind">{n.kind_nm}</span>
             <span className="lh__nm">{n.pan_nm}</span>
-            <span className="lh__ss">{n.pan_ss}</span>
+            {/* pan_ss 는 DB nullable(원본 결측)이라 없을 수 있다 — 없으면 그 칸만 비우고
+                줄은 그대로 그린다(§types.ts LhNotice.pan_ss 참조).
+                ⛔ `!== null` 이 아니라 **참/거짓**으로 본다. 검증기(isNullableString)는
+                   undefined 도 통과시키고 빈 문자열('')은 아무도 안 막는데, 둘 다 `!== null`
+                   을 지나 **빈 <span> 을 그린다** — 값이 없는데 있는 척하는 자리가 생긴다
+                   (2026-09-01 독립 검토 지적). */}
+            {n.pan_ss ? <span className="lh__ss">{n.pan_ss}</span> : null}
             {/* 마감이 이 목록에서 가장 중요한 값이라 한 덩어리 글자로 낸다. */}
             <span className="lh__close">{closeText(n.close_date)}</span>
             {/* ⚠️ 새 창으로 열되 `rel` 을 함께 준다 — 없으면 열린 쪽이 우리 창을 되돌려

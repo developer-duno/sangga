@@ -380,58 +380,129 @@ def report_coverage_freshness():
 #    200 + 188,442행 카운트까지 가능 — 검색 상한 게이트를 페이지네이션으로 통째로
 #    건너뛸 수 있었다. **정적 검사(schema.sql 에 revoke 가 적혀 있나)로는 이걸 못 잡는다**
 #    — 라이브에 실제로 뭐가 열려 있는지 물어봐야 한다.
-ANON_READABLE_ALLOWLIST = ("v_floor_stack", "v_coverage_stats")
+#
+# ⚠️ **이름은 이제 `스키마.이름`으로 적는다(2026-09-01 감사 신설).** 예전엔 이름만 보고
+#    판정해서 `api.search_buildings`(의도된 노출)와 `public.search_buildings`(잔존 노출 —
+#    아래 ANON_CALLABLE_PENDING 참조)가 **같은 이름이라는 이유로 하나로 묶여**, 뒤엣것이
+#    앞엣것 뒤에 3주 넘게 조용히 숨어 있었다. 스키마까지 적으면 그 둘은 서로 다른 항목이
+#    되어 다시는 서로를 가려주지 못한다.
+ANON_READABLE_ALLOWLIST = (
+    "public.v_floor_stack", "api.v_floor_stack",
+    "public.v_coverage_stats", "api.v_coverage_stats",
+)
 
 # anon 이 **불러도 되는** 함수. 화면이 실제로 쓰는 것만.
+# ⚠️ 전부 `api.` 스키마다 — 화면(src/lib/appConstants.ts 등)이 REST 로 부르는 것은 이제
+#    api 스키마 래퍼뿐이고, 같은 이름의 `public.*` 원본은 **여기 없다**(그게 열려 있으면
+#    아래 ANON_CALLABLE_PENDING 이 알려진 백로그로 따로 담는다 — 허용이 아니다).
 ANON_CALLABLE_ALLOWLIST = (
-    "search_buildings", "search_scope", "list_open_sigungu", "list_building_districts",
+    "api.search_buildings", "api.search_scope", "api.list_open_sigungu",
+    "api.list_building_districts",
     # Stage A 실거래 표시(결정 0012). 물질화뷰 mv_sigungu_tx_stats 는 **여기 없다** —
     # 화면은 함수로만 읽고, 표 자체가 열리면 그건 사고다.
-    "list_parcel_transactions", "get_sigungu_tx_stats",
+    "api.list_parcel_transactions", "api.get_sigungu_tx_stats",
     # Stage B 참고 시세 밴드(결정 0013). 게이트 표 price_gate_sigungu 와 층대 도우미
     # price_floor_band 는 **여기 없다** — 화면은 이 함수 하나로만 읽는다.
-    "list_price_bands",
+    "api.list_price_bands",
     # 둘레의 업종 분포(결정 0014). 사전계산표 mv_district_industry_mix 는 **여기 없다** —
     # 그 표가 열리면 상호명은 안 나가더라도 상권별 점포 구성이 통째로 긁힌다.
-    "list_industry_mix", "list_industry_detail",
+    "api.list_industry_mix", "api.list_industry_detail",
     # 의견함·오류 기록(2026-08-24b). ⚠️ **이 목록에서 유일하게 쓰는 함수다** — 나머지 아홉은
     # 전부 읽기다. 그래서 여는 뜻이 다르다는 것을 여기 적어 둔다:
     #   · 표 app_feedback 은 **여기 없다** — anon 에게 통째로 닫혀 있다(select·insert 전부).
     #     넣기는 이 함수가 소유자 권한으로 대신 한다. 표가 열리면 그건 사고다.
     #   · 읽는 함수는 만들지 않았다. 넣은 사람도 자기 글을 다시 못 본다.
-    "submit_feedback",
+    "api.submit_feedback",
     # 의견함 주간 알림(2026-08-24c). 화면이 아니라 GitHub Actions 주간 워크플로가
     # 공개키로 부른다 — **숫자만** 준다(건수·총량·가장 오래된 글의 나이).
     #   ⛔ body·context 는 어떤 칸으로도 안 나간다. 내용은 여전히 dbx.py 로만 읽는다.
     #   ⛔ 지우는 함수(purge_old_feedback)는 **여기 없다** — 일부러 안 열었다. 밖에서
     #      부를 수 있으면 지금은 무해해도 "유연성"으로 인자가 붙는 날 파괴 창구가 된다.
     #      치우기는 편지가 들어올 때 submit_feedback 이 소유자 권한으로 스스로 한다.
-    "get_feedback_stats",
+    "api.get_feedback_stats",
     # 국세청 층별 기준시가(2026-08-27a). 표 nts_base_price 는 **여기 없다** — anon 에게
     # 통째로 닫혀 있고, 열리면 전국 249만 호실의 건물명·호수가 그대로 긁힌다.
     # 화면은 이 함수 하나로만 읽고, 그것도 층별 중앙값까지만 나간다(호실별 값은 안 나간다).
-    "list_base_prices",
+    "api.list_base_prices",
     # LH 상가 공고 알림판(2026-08-28a). 표 lh_notice 는 **여기 없다** — 화면은 이 함수
     # 하나로만 읽는다. 함수가 마감 지난 공고를 빼 주는데 표가 열리면 그 규칙이 통째로
     # 우회돼, 이미 끝난 공고가 화면에 뜨는 길이 생긴다.
-    "list_lh_notices",
+    "api.list_lh_notices",
     # 곧 올라오는 상가 건물(2026-08-28b). 표 arch_permit 은 **여기 없다** — 열리면 전국
     # 55만 건의 허가 주소·건물 규모가 통째로 긁힌다. 이 함수는 **개수와 기준월만** 준다
     # (건물 주소·이름은 한 글자도 안 나간다).
-    "count_nearby_permits",
+    "api.count_nearby_permits",
     # 상권 임대 동향(2026-08-31a · 결정 0024). 표 rent_stat 과 이름 잇기 표
     # district_rone_map 은 **여기 없다** — 화면은 이 함수 하나로만 읽는다. 표가 열리면
     # 전국 상권의 임대 통계가 통째로 긁히고, "이을 근거가 없으면 줄이 없다"는 규칙
     # (시·도 평균으로 안 메운다)도 함께 우회된다.
-    "list_rent_stats",
+    "api.list_rent_stats",
     # 상권 → 건물 다리(2026-08-31b · Wave 3). 표 district·parcel·building 은 **여기 없다** —
     # 화면은 이 두 함수로만 읽는다. district 가 열리면 상권 경계(geom)가 통째로 긁히고,
     # building 이 열리면 전국 24만 동의 대장 정보가 그대로 나간다.
     #   ⛔ 점포는 **땅 단위 개수**만 나간다 — 상호명·업종은 한 글자도 안 나간다.
-    #   ⓘ 같은 이름의 public 쪽 함수는 닫혀 있다(이 목록은 이름 기준이라 api 쪽만 열려 있어도
-    #      통과한다 — 그래서 마이그레이션이 public 쪽을 따로 revoke 한다).
-    "list_district_buildings", "list_parcel_buildings",
+    #   ⓘ 같은 이름의 public 쪽 함수는 이 목록에 없다 — 스키마까지 보므로 api 쪽만 열려
+    #      있어도 정확히 그것만 통과한다(예전 이름 기준 판정의 구멍이 여기서 막힌다).
+    "api.list_district_buildings", "api.list_parcel_buildings",
 )
+
+# ── 공개키가 아직도 부를 수 있는 "대기" 함수 9개 (2026-09-01 감사 — 결재 대기) ─────
+#
+# ⛔ **왜 열려 있나** — PostgreSQL 은 새로 만드는 함수에 PUBLIC(=모든 사람) EXECUTE 를
+#    기본으로 준다(공식 문서 §5.8 표 5.2 "Summary of Access Privileges" — CREATE FUNCTION
+#    행의 기본 PUBLIC 권한이 EXECUTE 다). 이 아홉은 그 기본값이 그대로 살아 있다:
+#      · 7개(get_sigungu_tx_stats·list_building_districts·list_industry_detail·
+#        list_industry_mix·list_open_sigungu·list_parcel_transactions·list_price_bands)
+#        는 **public** 스키마에 만든 자리에 revoke 를 아예 안 적어 뒀다.
+#      · 2개(search_buildings·search_scope)는 정본 1400·2308행 부근에 `revoke ... from
+#        public;` 이 **적혀 있는데도** 라이브 실측은 PUBLIC=t — 적힌 revoke 가 그 뒤로
+#        효력을 잃은 것으로 보인다(같은 이름·서명으로 다시 만든 자리가 더 있을 수 있다).
+#    이 아홉과 위 ANON_CALLABLE_ALLOWLIST 의 api.* 17개는 함수 몸통까지 같다 — 화면은
+#    이미 api.* 만 부르므로, 여기 아홉을 닫아도 화면은 안 깨진다.
+# ✅ **앞으로 태어나는 함수는 이 함정에 안 걸린다.** 2026-09-01b 마이그레이션이 파일
+#    맨 앞(첫 `create function` 앞)에 전역 기본권한 한 줄을 박아 뒀다 — 그 뒤에 만들어지는
+#    함수는 PUBLIC EXECUTE 를 처음부터 못 받는다. 이 아홉은 그 한 줄이 생기기 **전에**
+#    만들어졌던 것들이라 여전히 남아 있다.
+# ⛔ **닫는 것은 이 스크립트의 일이 아니다** — 사장님 결재 대기 항목이다. 그래서 --check 는
+#    이 아홉이 열려 있어도 [주의]로만 적고 종료 코드를 1 로 만들지 않는다(매번 실패하면
+#    "알려진 백로그"라는 사실 자체가 --check 를 무쓸모하게 만든다 — WRITE_KNOWN_POSTGIS 와
+#    같은 논리). 닫히는 게 확인되면 이 목록에서 그 항목을 빼라 — report_anon_exposure() 가
+#    "[정리] ... 는 이제 닫혔습니다" 로 알려준다.
+ANON_CALLABLE_PENDING = (
+    "public.get_sigungu_tx_stats",
+    "public.list_building_districts",
+    "public.list_industry_detail",
+    "public.list_industry_mix",
+    "public.list_open_sigungu",
+    "public.list_parcel_transactions",
+    "public.list_price_bands",
+    "public.search_buildings",
+    "public.search_scope",
+)
+
+
+def _bare_names(qualified):
+    """`스키마.이름` 튜플에서 **맨 이름만** 뽑는다 (순수 함수 — 첫 등장 순서로 중복 제거).
+
+    ⚠️ 다른 파일(tests/test_api_schema_migration.py)이 `api.<이름>` 형태의 마이그레이션
+       정규식과 맞대 보려고 맨 이름이 필요해서 여기서 파생해 준다. **손으로 다시 적지
+       말 것** — 위 두 허용 목록에서 파생해야 이름을 더하거나 뺄 때 두 목록이 갈라지지
+       않는다(따로 적으면 드리프트가 나고, 실패 메시지가 "허용 목록에 없다"만 말해
+       진짜 원인인 스키마 접두어 불일치를 가린다).
+    """
+    seen = []
+    for q in qualified:
+        bare = q.split(".", 1)[1] if "." in q else q
+        if bare not in seen:
+            seen.append(bare)
+    return tuple(seen)
+
+
+# ANON_READABLE_ALLOWLIST·ANON_CALLABLE_ALLOWLIST 의 맨 이름 버전. 뷰는 public·api 두
+# 스키마에 같은 이름으로 열려 있어 4개 → 2개로 줄어드는 게 정상이다(v_floor_stack·
+# v_coverage_stats). 함수는 api.* 만 허용이라 17개 그대로 나온다.
+ANON_READABLE_NAMES = _bare_names(ANON_READABLE_ALLOWLIST)
+ANON_CALLABLE_NAMES = _bare_names(ANON_CALLABLE_ALLOWLIST)
 
 
 def build_anon_exposure_sql():
@@ -448,6 +519,13 @@ def build_anon_exposure_sql():
     ⚠️ 스키마가 **둘**이다(2026-08-22e). REST 노출면이 public 에서 api 로 옮겨 가는데,
        api 만 보면 전환 전 상태를 못 보고 public 만 보면 전환 후 상태를 못 본다.
        둘 다 물어야 **어느 시점에 돌려도** 같은 답을 준다.
+
+    ⚠️ **이름만이 아니라 `스키마.이름`을 돌려준다(2026-09-01 감사 신설).** 예전엔
+       `c.relname`/`p.proname` 만 돌려줬는데, 그러면 `api.search_buildings`(의도된
+       노출)와 `public.search_buildings`(잔존 노출)가 **같은 문자열**이 되어 허용
+       목록의 중복 제거 로직이 뒤엣것을 앞엣것 뒤에 가려 버렸다(라이브에서 실제로
+       3주 넘게 그렇게 숨어 있었다). 스키마를 붙이면 둘은 서로 다른 문자열이라
+       다시는 서로를 가리지 못한다.
     """
     # ⚠️ classid 를 함께 한정한다. oid 는 카탈로그마다 따로 매겨지므로, 한정하지 않으면
     #    **번호가 우연히 같은 남의 카탈로그 항목**(예: 어떤 확장의 연산자)이 우리 표를
@@ -457,13 +535,13 @@ def build_anon_exposure_sql():
         "where d.classid = '{cat}'::regclass and d.objid = {oid} and d.deptype = 'e')"
     )
     return (
-        "select c.relname from pg_class c "
+        "select n.nspname || '.' || c.relname from pg_class c "
         "join pg_namespace n on n.oid = c.relnamespace "
         "where n.nspname in ('public','api') and c.relkind in ('r','v','m','p') "
         "and has_table_privilege('anon', c.oid, 'SELECT') "
         "and " + not_from_extension.format(cat="pg_class", oid="c.oid") + " "
         "union all "
-        "select p.proname from pg_proc p "
+        "select n2.nspname || '.' || p.proname from pg_proc p "
         "join pg_namespace n2 on n2.oid = p.pronamespace "
         "where n2.nspname in ('public','api') "
         "and has_function_privilege('anon', p.oid, 'EXECUTE') "
@@ -593,6 +671,12 @@ def unexpected_anon_readables(names, allowlist=None):
 
     ⚠️ psql 출력에는 빈 줄·공백 줄이 섞인다. `if n` 만으로는 공백 줄(' ')이 통과해
        이름인 척하므로 반드시 strip 후 판정한다.
+
+    ⓘ **여기서는 "허용 목록에 있나"만 본다** — ANON_CALLABLE_PENDING(알려진 백로그)에
+       있는 것도 이 함수 기준으로는 여전히 "허용 안 됨"이다. [사고]/[주의]를 가르는 일은
+       report_anon_exposure() 가 이 함수의 결과 위에서 한 번 더 한다. 이름은 이제
+       `스키마.이름`(예: "api.search_buildings")을 전제한다(2026-09-01 감사) — 스키마
+       없이 넘기면 어느 쪽에도 안 걸려 있는 것으로 보여 실제로는 열린 것을 놓칠 수 있다.
     """
     allowed = set(allowlist if allowlist is not None
                   else ANON_READABLE_ALLOWLIST + ANON_CALLABLE_ALLOWLIST)
@@ -600,22 +684,45 @@ def unexpected_anon_readables(names, allowlist=None):
 
 
 def report_anon_exposure():
-    """공개키가 읽을 수 있는 것을 실제로 물어보고 사람 말로 찍는다.
+    """공개키가 읽을 수 있는 것을 실제로 물어보고 사람 말로 **세 갈래**로 찍는다.
 
-    ⓘ **이름 기준으로 한 번만 센다.** 2026-08-22e 부터 같은 이름이 public·api 두 스키마에
-      나란히 있다(api 쪽은 public 을 그대로 통과시키는 뷰·래퍼다). 그대로 세면 허용된
-      11개가 22개로 보여, 숫자가 늘어난 것이 사고인지 이사인지 구분이 안 된다.
-      허용 목록도 이름 기준이라 판정 결과는 달라지지 않는다.
+    ⚠️ **스키마까지 봐야 잔존 노출을 잡는다(2026-09-01 감사).** 예전엔 이름 하나로 판정해서
+       `api.search_buildings`(의도된 노출)와 `public.search_buildings`(잔존 노출)가 같은
+       이름이라는 이유로 하나로 묶였다 — 뒤엣것이 앞엣것 뒤에 조용히 숨어 라이브에서 3주
+       넘게 아무도 몰랐다. 지금은 `스키마.이름`을 통째로 비교하므로 그 둘은 서로 다른
+       항목이고, 아래 세 갈래 중 어디에 속하는지가 이름만으로도 드러난다.
+
+    세 갈래:
+      · [정상] — ANON_READABLE_ALLOWLIST·ANON_CALLABLE_ALLOWLIST 에 있는 것(의도된 노출).
+      · [주의] — 그 목록엔 없지만 ANON_CALLABLE_PENDING 에 있는 것(알려진 백로그 — 결재
+        대기. WRITE_KNOWN_POSTGIS 와 같은 논리로 exit 1 을 만들지 않는다 — 매번 실패하면
+        "알려진 것"이라는 사실이 --check 를 무쓸모하게 만든다).
+      · [사고] — 어느 목록에도 없는 것. 여기만 exit 1 을 만든다.
+
+    대기 목록이 낡지 않게, 목록에 있는데 지금은 안 열려 있는 항목은 [정리] 로 따로 알린다.
     """
     raw = query_one(build_anon_exposure_sql())
     names = sorted({ln.strip() for ln in raw.splitlines() if ln.strip()})
-    bad = unexpected_anon_readables(names)
+    not_allowed = unexpected_anon_readables(names)
+    pending_open = sorted(n for n in not_allowed if n in ANON_CALLABLE_PENDING)
+    bad = sorted(n for n in not_allowed if n not in ANON_CALLABLE_PENDING)
     if bad:
         print("[사고] 공개키에게 열리면 안 되는 것이 열려 있습니다: {}".format(", ".join(bad)))
         print("       → revoke all on <이름> from public, anon, authenticated; 를 적용하고")
         print("         supabase/schema.sql 에도 같이 반영하세요.")
     else:
-        print("[정상] 공개키가 읽거나 부를 수 있는 것은 허용된 {}개뿐입니다.".format(len(names)))
+        print("[정상] 공개키가 읽거나 부를 수 있는 것은 허용된 {}개뿐입니다.".format(
+            len(names) - len(not_allowed)))
+    if pending_open:
+        print("[주의] 아직 안 닫은 것 {}개 (백로그 — 결재 후 정리): {}".format(
+            len(pending_open), ", ".join(pending_open)))
+        print("       PostgreSQL 기본값이 새 함수에 PUBLIC EXECUTE 를 줘서 열린 것이지,")
+        print("       화면이 그걸 부르는 게 아닙니다(화면은 같은 이름의 api.* 만 씁니다).")
+        print("       닫는 것은 이 스크립트가 아니라 사장님 결재 뒤의 일입니다.")
+    # 대기 목록에 있는데 지금은 안 열려 있는 것 — 낡은 백로그를 남겨 두면 다음 사람이
+    # 이미 닫힌 것을 또 결재 대상으로 착각한다.
+    for closed in (p for p in ANON_CALLABLE_PENDING if p not in names):
+        print("[정리] {} 는 이제 닫혔습니다 — ANON_CALLABLE_PENDING 에서 빼세요.".format(closed))
     return names, bad
 
 

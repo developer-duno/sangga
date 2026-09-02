@@ -429,12 +429,18 @@ def build_sql(rows, batch_rows=BATCH_ROWS):
     # 지우지 않기로 한 결정이 실제로 지켜지고 있는지 눈으로 확인하는 자리다.
     out.append(
         'select count(*) as "창고 전체", '
-        # ⛔ 화면(list_lh_notices)과 **같은 자**로 센다 — 한국 날짜다. `current_date` 를
-        #    쓰면 이 DB 가 UTC 라 한국 새벽 0~9시에 화면과 이 요약이 서로 다른 수를
-        #    말한다(마이그레이션 2026-09-01a). 여기는 "지우지 않기로 한 결정이 지켜지는지"
-        #    눈으로 보는 자리라, 어긋나는 순간 판단 근거가 오염된다.
-        "count(*) filter (where close_date >= (now() at time zone 'Asia/Seoul')::date) "
-        'as "지금 살아 있는 것", '
+        # ⛔ 화면(list_lh_notices)과 **글자 그대로 같은 자**로 센다 — 한국 날짜 +
+        #    LH 자체 마감 상태(2026-09-01d). 이 둘 중 하나만 맞추면 다른 하나가
+        #    조용히 갈린다(2026-09-01 실측: 여기는 시간대만 맞춰 두고 상태를 안 봐서
+        #    라이브에서 67 vs 65 로 갈렸다). `current_date` 를 쓰면 이 DB 가 UTC 라
+        #    한국 새벽 0~9시에도 어긋나고(마이그레이션 2026-09-01a), '접수마감'을 안
+        #    빼면 화면에서는 숨긴 공고를 여기서는 살아 있다고 센다. 여기는 "지우지
+        #    않기로 한 결정이 지켜지는지" 눈으로 보는 자리라, 어긋나는 순간 판단
+        #    근거 자체가 오염된다.
+        "count(*) filter (where "
+        "(close_date is null or close_date >= (now() at time zone 'Asia/Seoul')::date) "
+        "and (pan_ss is null or pan_ss <> '접수마감')"
+        ') as "지금 살아 있는 것", '
         'count(*) filter (where sido_code is null and not is_nationwide) as "지역 미상" '
         "from lh_notice;")
     out.append("commit;")

@@ -141,6 +141,21 @@ class TestFindNew:
         rows = [notice("today", notice_date="2026-08-28", close_date="2026-08-28")]
         assert len(chk.find_new_notices(rows, latest_known="20260101", today=TODAY)) == 1
 
+    def test_lh_own_closed_status_is_not_worth_telling_even_with_a_future_close_date(self):
+        """⛔ 화면(list_lh_notices)과 같은 규칙(2026-09-01d) — LH 가 '접수마감'이라 적어
+        준 것은 마감일과 무관하게 뺀다. 마감일만 보면 못 거른다: 실측으로 마감일이
+        2028년(먼 미래)인데 '접수마감'(취소공고)인 것이 있었다 — 그런 공고에 "새 공고
+        떴습니다"로 매주 소음 이슈가 열리면 안 된다.
+        """
+        rows = [notice("cancelled", notice_date="2026-08-28",
+                        close_date="2028-12-31", pan_ss="접수마감")]
+        assert chk.find_new_notices(rows, latest_known="20260101", today=TODAY) == []
+
+    def test_pan_ss_missing_is_still_open(self):
+        """상태 칸을 안 준 공고(구버전 API 응답 등)까지 닫힌 것으로 오판하지 않는다."""
+        rows = [notice("nostat", notice_date="2026-08-28", close_date="2026-09-30")]
+        assert len(chk.find_new_notices(rows, latest_known="20260101", today=TODAY)) == 1
+
     def test_missing_notice_date_is_skipped_not_guessed(self):
         """공고일을 모르면 기준선과 견줄 수가 없다 — 새 것이라고 우기지 않는다."""
         rows = [notice("nodate", notice_date=None)]

@@ -421,12 +421,17 @@ class TestBuildSql:
         assert "truncate" not in sql
 
     def test_summary_counts_alive_in_korean_calendar(self):
-        """⛔ 적재기 요약의 '지금 살아 있는 것'은 화면(list_lh_notices)과 **같은 자**로 센다.
+        """⛔ 적재기 요약의 '지금 살아 있는 것'은 화면(list_lh_notices)과 **글자 그대로
+        같은 자**로 센다 — 한국 날짜 **+** LH 자체 마감 상태(2026-09-01d) 둘 다.
 
         이 DB 는 UTC 라 `current_date` 를 쓰면 한국 새벽 0~9시에 화면과 이 요약이 서로 다른
         수를 말한다(마이그레이션 2026-09-01a). 여기는 "마감된 것도 지우지 않는다"는 결재가
         지켜지는지 **눈으로 보는 자리**라, 어긋나는 순간 판단 근거 자체가 오염된다.
         2026-08-31 감사 전까지 이 줄을 지키는 시험이 하나도 없어 조용히 어긋나 있었다.
+
+        ⛔ 2026-09-01 재감사에서 시간대만 맞춰 두고 '접수마감' 상태 필터가 빠진 채였다는
+        것이 드러났다(라이브 67 vs 65). 이 시험이 시간대만 보고 있으면 다음에도 같은
+        틈을 못 잡는다 — 그래서 두 조각을 **함께** 요구한다.
         """
         sql = lh.build_sql([row()])
         assert "지금 살아 있는 것" in sql
@@ -436,6 +441,10 @@ class TestBuildSql:
             ln for ln in sql.splitlines() if not ln.lstrip().startswith("--")
         )
         assert "close_date >= current_date" not in statements
+        # ⛔ 화면과 같은 두 조각이 실제 문장에 있는지 — 없으면 다음번 규칙 변경 때
+        #    이 요약만 조용히 낡는다(2026-09-01 사고의 재발 방지).
+        assert "접수마감" in statements
+        assert "close_date is null or" in statements
 
     def test_upserts_on_pan_id(self):
         """상태·마감일은 바뀐다 — 같은 공고는 덮어써야 한다."""
