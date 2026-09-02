@@ -211,7 +211,7 @@ class TestMainFlow:
         # 각주 집계 · 업종 분포 · 공개키 읽기 · 공개키 쓰기) — mock 도 갈라 답해야 한다.
         # 여기 관심사는 앞의 하나뿐이라 나머지는 fixture 로 빼 둔다.
         monkeypatch.setattr(post_load, "query_one",
-                            lambda sql: "200|200" if "count(" in sql else "v_floor_stack")
+                            lambda sql: "200|200" if "count(" in sql else "")
         assert post_load.main(["--check"]) == 0
 
     def test_check_never_writes(
@@ -221,7 +221,7 @@ class TestMainFlow:
         """--check 는 읽기만 해야 한다 — 실수로 갱신을 돌리면 안 된다."""
         calls = []
         monkeypatch.setattr(post_load, "query_one",
-                            lambda sql: "200|200" if "count(" in sql else "v_floor_stack")
+                            lambda sql: "200|200" if "count(" in sql else "")
         monkeypatch.setattr(post_load.dbx, "run_sql",
                             lambda *a, **k: calls.append(a) or 0)
         post_load.main(["--check"])
@@ -270,7 +270,7 @@ class TestMainFlow:
 
         monkeypatch.setattr(sys, "stdout", FakeStdout())
         monkeypatch.setattr(post_load, "query_one",
-                            lambda sql: "200|200" if "count(" in sql else "v_floor_stack")
+                            lambda sql: "200|200" if "count(" in sql else "")
         post_load.main(["--check"])
         assert calls == [{"encoding": "utf-8", "errors": "replace"}], (
             "파이프로 넘길 때 stdout 을 UTF-8 로 다시 잡지 않으면 한글 출력이 죽는다"
@@ -381,7 +381,7 @@ class TestIndustryMixStale:
         monkeypatch.setattr(
             post_load, "query_one",
             lambda sql: ("202603|202606" if "mv_district_industry_mix" in sql
-                         else ("200|200" if "count(" in sql else "v_floor_stack")))
+                         else ("200|200" if "count(" in sql else "")))
         assert post_load.main(["--check"]) == 1
 
 
@@ -434,7 +434,7 @@ class TestCoverageStale:
         monkeypatch.setattr(
             post_load, "query_one",
             lambda sql: ("202603|202606" if "mv_coverage_stats" in sql
-                         else ("200|200" if "count(" in sql else "v_floor_stack")))
+                         else ("200|200" if "count(" in sql else "")))
         assert post_load.main(["--check"]) == 1
 
 
@@ -455,36 +455,64 @@ class TestAnonExposure:
         확장(PostGIS·pg_trgm)이 만든 것은 SQL 단계에서 제외하므로, 여기 남는 것은
         **전부 우리가 만든 것**이다. 그래서 목록이 짧고, 늘면 바로 눈에 띈다.
         """
-        assert post_load.ANON_READABLE_ALLOWLIST == ("v_floor_stack", "v_coverage_stats")
+        assert post_load.ANON_READABLE_ALLOWLIST == (
+            "public.v_floor_stack", "api.v_floor_stack",
+            "public.v_coverage_stats", "api.v_coverage_stats",
+        )
         assert post_load.ANON_CALLABLE_ALLOWLIST == (
-            "search_buildings", "search_scope", "list_open_sigungu",
-            "list_building_districts",
-            "list_parcel_transactions", "get_sigungu_tx_stats",
-            "list_price_bands",
-            "list_industry_mix", "list_industry_detail",
+            "api.search_buildings", "api.search_scope", "api.list_open_sigungu",
+            "api.list_building_districts",
+            "api.list_parcel_transactions", "api.get_sigungu_tx_stats",
+            "api.list_price_bands",
+            "api.list_industry_mix", "api.list_industry_detail",
             # ⚠️ 유일한 **쓰기** 함수다(2026-08-24b 의견함·오류 기록). 나머지는 전부 읽기.
-            "submit_feedback",
+            "api.submit_feedback",
             # 의견함 주간 알림(2026-08-24c). GitHub Actions 주간 워크플로가 공개키로
             # 부른다 — 숫자만 준다(건수·총량·가장 오래된 글의 나이).
-            "get_feedback_stats",
+            "api.get_feedback_stats",
             # 국세청 층별 기준시가(2026-08-27a). 표 nts_base_price 는 **여기 없다** —
             # 열리면 전국 249만 호실의 건물명·호수가 그대로 긁힌다. 이 함수는 층별
             # 중앙값까지만 내보낸다(호실별 값은 안 나간다).
-            "list_base_prices",
+            "api.list_base_prices",
             # LH 상가 공고 알림판(2026-08-28a). 표 lh_notice 는 **여기 없다** — 함수가
             # 마감 지난 공고를 빼 주는데 표가 열리면 그 규칙이 통째로 우회된다.
-            "list_lh_notices",
+            "api.list_lh_notices",
             # 곧 올라오는 상가 건물(2026-08-28b). 표 arch_permit 은 **여기 없다** —
             # 이 함수는 개수와 기준월만 내보낸다(허가 주소·건물 규모는 안 나간다).
-            "count_nearby_permits",
+            "api.count_nearby_permits",
             # 상권 임대 동향(2026-08-31a · 결정 0024). 표 rent_stat·district_rone_map 은
             # **여기 없다** — 이 함수는 속한 상권의 조사값만 내보낸다.
-            "list_rent_stats",
+            "api.list_rent_stats",
             # 상권 → 건물 다리(2026-08-31b · 결정 0025). 표 district·parcel·building 은
             # **여기 없다** — 열리면 상권 경계(geom)와 전국 24만 동 대장이 그대로 나간다.
             # 점포는 **땅 단위 개수**만 나가고 상호명·업종은 한 글자도 안 나간다.
-            "list_district_buildings", "list_parcel_buildings",
+            "api.list_district_buildings", "api.list_parcel_buildings",
         )
+
+    def test_pending_list_is_only_the_nine_public_leftovers(self):
+        """⛔ 2026-09-01 감사 — 라이브 실측으로 확인된 잔존 노출 9개만 여기 담는다.
+
+        전부 위 ANON_CALLABLE_ALLOWLIST 의 api.* 짝이 있는 public 원본이다. 화면은
+        api.* 만 부르므로 이 아홉을 닫아도 화면은 안 깨진다 — 닫는 시점만 결재 대기다.
+        """
+        assert post_load.ANON_CALLABLE_PENDING == (
+            "public.get_sigungu_tx_stats",
+            "public.list_building_districts",
+            "public.list_industry_detail",
+            "public.list_industry_mix",
+            "public.list_open_sigungu",
+            "public.list_parcel_transactions",
+            "public.list_price_bands",
+            "public.search_buildings",
+            "public.search_scope",
+        )
+        # 대기 목록의 이름은 전부 api.* 짝이 허용 목록에 있어야 한다 — 짝이 없으면
+        # "화면이 안 쓴다"는 전제 자체가 깨진다.
+        for pub_name in post_load.ANON_CALLABLE_PENDING:
+            api_twin = "api." + pub_name.split(".", 1)[1]
+            assert api_twin in post_load.ANON_CALLABLE_ALLOWLIST, (
+                "{} 의 api 짝 {} 이 허용 목록에 없습니다".format(pub_name, api_twin)
+            )
 
     def test_the_purge_function_is_never_exposed(self):
         """⛔ 지우는 함수는 밖에서 부를 수 있으면 안 된다(2026-08-24c).
@@ -566,19 +594,23 @@ class TestAnonExposure:
 
     def test_flags_anything_outside_the_allowlist(self):
         got = post_load.unexpected_anon_readables(
-            ["v_floor_stack", "v_coverage_stats", "mv_search_parcel"]
+            ["api.v_floor_stack", "api.v_coverage_stats", "public.mv_search_parcel"]
         )
-        assert got == ["mv_search_parcel"]
+        assert got == ["public.mv_search_parcel"]
 
     def test_quiet_when_only_allowed_are_open(self):
-        assert post_load.unexpected_anon_readables(["v_coverage_stats", "v_floor_stack"]) == []
+        assert post_load.unexpected_anon_readables(
+            ["api.v_coverage_stats", "api.v_floor_stack"]
+        ) == []
 
     def test_catches_raw_tables_being_opened(self):
         """원본 표가 열리는 것이 가장 위험하다."""
-        assert post_load.unexpected_anon_readables(["parcel", "building"]) == ["building", "parcel"]
+        assert post_load.unexpected_anon_readables(
+            ["public.parcel", "public.building"]
+        ) == ["public.building", "public.parcel"]
 
     def test_ignores_blank_lines_from_psql(self):
-        assert post_load.unexpected_anon_readables(["", "  ", "v_floor_stack"]) == []
+        assert post_load.unexpected_anon_readables(["", "  ", "api.v_floor_stack"]) == []
 
     def test_sql_asks_about_anon_and_both_schemas(self):
         sql = post_load.build_anon_exposure_sql()
@@ -598,23 +630,30 @@ class TestAnonExposure:
     ):
         monkeypatch.setattr(post_load, "query_one",
                             lambda sql: "200|200" if "count(" in sql
-                            else "v_floor_stack\nmv_search_parcel")
+                            else "api.v_floor_stack\npublic.mv_search_parcel")
         assert post_load.main(["--check"]) == 1
 
-    def test_the_same_name_in_both_schemas_is_counted_once(self, monkeypatch, capsys):
-        """api 뷰·래퍼는 public 과 **같은 이름**이다 — 두 번 세면 안 된다(2026-08-22e).
+    def test_the_same_name_in_two_schemas_is_counted_as_two_now(self, monkeypatch, capsys):
+        """⛔ 예전엔 이름만 보고 **한 번**으로 세서(2026-08-22e), 그 "한 번 세기"가 바로
+        `public.search_buildings`(잔존 노출)를 `api.search_buildings`(의도된 노출) 뒤에
+        가려 버린 원인이었다(2026-09-01 감사에서 발견 — 3주 넘게 라이브에서 열려 있었다).
 
-        그대로 세면 "허용된 11개"가 22개로 보여, 숫자가 늘어난 것이 사고인지 이사인지
-        구분이 안 된다. 판정(bad)은 이름 기준이라 어차피 같으므로 세는 쪽만 맞춘다.
+        이제는 `스키마.이름`을 통째로 세므로 같은 이름이라도 `public.*`·`api.*` 는
+        **서로 다른 항목**이다 — 허용 목록도 그렇게 두 자리(각 뷰마다 public·api)를 갖고,
+        넷 다 열려 있어야 "정상"이다.
         """
         monkeypatch.setattr(
             post_load, "query_one",
-            lambda sql: "v_floor_stack\nv_coverage_stats\nv_floor_stack\nv_coverage_stats",
+            lambda sql: "public.v_floor_stack\napi.v_floor_stack\n"
+                        "public.v_coverage_stats\napi.v_coverage_stats",
         )
         names, bad = post_load.report_anon_exposure()
-        assert names == ["v_coverage_stats", "v_floor_stack"]
+        assert names == [
+            "api.v_coverage_stats", "api.v_floor_stack",
+            "public.v_coverage_stats", "public.v_floor_stack",
+        ]
         assert bad == []
-        assert "허용된 2개" in capsys.readouterr().out
+        assert "허용된 4개" in capsys.readouterr().out
 
     def test_check_returns_0_when_clean(
         self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh,
@@ -622,7 +661,7 @@ class TestAnonExposure:
     ):
         monkeypatch.setattr(post_load, "query_one",
                             lambda sql: "200|200" if "count(" in sql
-                            else "v_floor_stack\nv_coverage_stats")
+                            else "api.v_floor_stack\napi.v_coverage_stats")
         assert post_load.main(["--check"]) == 0
 
 
@@ -744,7 +783,8 @@ class TestAnonExposureCoversFunctions:
 
     def test_screen_rpcs_are_allowed(self):
         assert post_load.unexpected_anon_readables(
-            ["search_buildings", "search_scope", "list_open_sigungu", "v_floor_stack"]
+            ["api.search_buildings", "api.search_scope", "api.list_open_sigungu",
+             "api.v_floor_stack"]
         ) == []
 
     def test_flags_a_function_that_the_screen_never_calls(self):
@@ -807,8 +847,13 @@ class TestWriteExposure:
         assert post_load.split_writables(["", "  "]) == ([], [])
 
     def test_even_an_allowlisted_name_is_an_accident(self):
-        """⛔ 이 점검의 핵심 — 읽기 허용 목록에 있는 이름이라도 쓰기가 붙으면 사고다."""
-        assert "v_floor_stack" in post_load.ANON_READABLE_ALLOWLIST
+        """⛔ 이 점검의 핵심 — 읽기 허용 목록에 있는 이름이라도 쓰기가 붙으면 사고다.
+
+        쓰기 점검(build_write_exposure_sql)은 스키마를 안 붙인다(WRITE_KNOWN_POSTGIS 와
+        같은 자) — 그래서 여기서는 맨 이름 버전(ANON_READABLE_NAMES)으로 "읽기 허용
+        목록에 있는 이름"임을 확인한다.
+        """
+        assert "v_floor_stack" in post_load.ANON_READABLE_NAMES
         assert post_load.split_writables(["v_floor_stack"]) == ([], ["v_floor_stack"])
 
     def test_flags_raw_tables(self):
@@ -909,7 +954,7 @@ class TestWriteExposure:
         monkeypatch.setattr(
             post_load, "query_one",
             lambda sql: ("\n".join(post_load.WRITE_KNOWN_POSTGIS) if "INSERT" in sql
-                         else ("200|200" if "count(" in sql else "v_floor_stack")))
+                         else ("200|200" if "count(" in sql else "")))
         assert post_load.main(["--check"]) == 0
 
     def test_check_returns_1_when_something_new_is_writable(
@@ -924,7 +969,7 @@ class TestWriteExposure:
         monkeypatch.setattr(
             post_load, "query_one",
             lambda sql: ("v_floor_stack" if "INSERT" in sql
-                         else ("200|200" if "count(" in sql else "v_floor_stack")))
+                         else ("200|200" if "count(" in sql else "")))
         assert post_load.main(["--check"]) == 1
 
     def test_apply_does_not_ask_about_permissions(self, monkeypatch):
@@ -1000,7 +1045,7 @@ class TestMapFreshness:
     ):
         """요약표·권한이 다 정상이어도 지도가 낡았으면 종료 코드 1 이어야 한다."""
         monkeypatch.setattr(post_load, "query_one",
-                            lambda sql: "200|200" if "count(" in sql else "v_floor_stack")
+                            lambda sql: "200|200" if "count(" in sql else "")
         monkeypatch.setattr(post_load.build_district_geojson, "read_meta",
                             lambda *a, **k: {"district_cnt": 1, "max_computed_at": "옛날"})
         assert post_load.main(["--check"]) == 1
@@ -1010,7 +1055,7 @@ class TestMapFreshness:
         no_anon_writes
     ):
         monkeypatch.setattr(post_load, "query_one",
-                            lambda sql: "200|200" if "count(" in sql else "v_floor_stack")
+                            lambda sql: "200|200" if "count(" in sql else "")
         monkeypatch.setattr(post_load.build_district_geojson, "read_meta",
                             lambda *a, **k: {"district_cnt": 200, "max_computed_at": "200"})
         assert post_load.main(["--check"]) == 0

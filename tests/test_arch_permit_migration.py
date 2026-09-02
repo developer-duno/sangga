@@ -118,7 +118,10 @@ class TestTableIsClosed:
         """post_load --check 의 허용 목록에 없으면 '뚫렸다'고 잘못 알린다."""
         import post_load
 
-        assert FN in post_load.ANON_CALLABLE_ALLOWLIST
+        # ⚠️ 2026-09-01 감사부터 ANON_CALLABLE_ALLOWLIST 는 `api.count_nearby_permits`
+        #    처럼 스키마가 붙는다(잔존 노출을 이름만으로 가려 버리던 구멍을 막은 것) —
+        #    맨 이름으로 물을 땐 post_load 가 같은 목록에서 파생해 둔 *_NAMES 를 쓴다.
+        assert FN in post_load.ANON_CALLABLE_NAMES
         # 표는 **열려 있으면 안 되므로** 허용 목록에 없어야 한다.
         assert TABLE not in post_load.ANON_READABLE_ALLOWLIST
         assert TABLE not in post_load.ANON_CALLABLE_ALLOWLIST
