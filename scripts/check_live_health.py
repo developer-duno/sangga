@@ -246,7 +246,14 @@ def check(site: str, sleep=time.sleep) -> list[str]:
     #    jwt_says_service_role() 이 payload 를 직접 풀어 본다.
     # ⛔ 걸리면 **즉시 시끄럽게** 실패시킨다. 이건 "사이트가 죽었다"보다 급한 사고라,
     #    6시간마다 도는 이 감시가 그날 안에 이슈를 연다.
-    if ADMIN_KEY_RE.search(bundle) or jwt_says_service_role(bundle):
+    # ⚠️ **첫 화면(HTML)도 함께 훑는다** (2026-09-01 2차 검증에서 보탬). 지금 이 앱은 키를
+    #    묶음에만 싣지만, 화면 파일에 값이 박히는 경로(빌드 설정·수동 삽입)가 생기는 날
+    #    묶음만 보면 통째로 놓친다. 이미 손에 든 글자라 **추가 요청이 0**이다.
+    # ⚠️ 남는 한계: 첫 화면이 부르는 **첫 번째 묶음 하나만** 본다. 코드 분할(예: 지도 지연
+    #    로딩)을 들이는 날 나머지 묶음은 안 보게 된다 — 그때는 BUNDLE_RE 로 뽑은 것을 전부
+    #    돌아야 한다(그러면 CHECKED_URLS 도 고정값이 아니게 되므로 함께 손봐야 한다).
+    if (ADMIN_KEY_RE.search(bundle) or jwt_says_service_role(bundle)
+            or ADMIN_KEY_RE.search(home) or jwt_says_service_role(home)):
         raise CheckFailed(
             "🔴 배포된 자바스크립트 묶음에 **관리자(비밀) 키로 보이는 값**이 들어 있습니다 "
             f"({bundle_path}). Vercel 프로젝트 설정의 VITE_SUPABASE_ANON_KEY 가 "

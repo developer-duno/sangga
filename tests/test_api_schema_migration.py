@@ -41,8 +41,13 @@ import post_load  # noqa: E402
 # ⚠️ 개수를 글자로 적지 않는다 — 공개 함수가 하나 늘 때마다 주석만 거짓말이 된다.
 # 손으로 다시 적으면 화면 함수가 하나 늘 때 두 목록이 갈라지고, 실패 메시지가
 # 진짜 원인(허용 목록 드리프트)을 가리키지 않는다 — 그래서 import 로 한 곳만 진실.
-SCREEN_FNS = post_load.ANON_CALLABLE_ALLOWLIST
-SCREEN_VIEWS = post_load.ANON_READABLE_ALLOWLIST
+# ⚠️ 2026-09-01 감사부터 post_load 쪽 허용 목록은 `api.search_buildings` 처럼 스키마가
+#    붙는다(잔존 노출을 이름만으로 가려 버리던 구멍을 막은 것 — post_load.py 의
+#    ANON_CALLABLE_ALLOWLIST 머리말 참조). 이 파일의 정규식은 `api\.` 를 스스로 붙이므로
+#    맨 이름이 필요해, post_load 가 같은 목록에서 파생해 둔 *_NAMES 를 쓴다(맨 이름을
+#    여기서 다시 벗기면 파생 로직이 두 곳으로 갈라진다).
+SCREEN_FNS = post_load.ANON_CALLABLE_NAMES
+SCREEN_VIEWS = post_load.ANON_READABLE_NAMES
 
 # 수집·적재기가 REST 로 쓰는 표 10개(scripts/ 를 훑어 뽑은 목록).
 COLLECTOR_VIEWS = (
@@ -354,13 +359,22 @@ class TestDefaultPrivilegesActuallyBlockPublic:
            인용한 문장**에 걸려 거짓 빨간불이 난다 — 지금 안 나는 유일한 이유가 "인용문이
            우연히 대문자라서"였다(다음 사람이 소문자로 옮겨 적는 순간 터진다).
         """
-        useless = (
-            "alter default privileges in schema {} revoke execute on functions from public;"
-            .format(schema_name)
+        # ⛔ **글자 완전일치로 찾지 않는다** (2026-09-01 2차 검증에서 보탬). 예전에는 문장
+        #    하나를 통째로 대조해서, 똑같이 무효인 변형이 그대로 지나갔다:
+        #      · `revoke all on functions from public`  (execute 대신 all)
+        #      · 공백이 둘 이상이거나 줄바꿈이 낀 형태
+        #      · `for role postgres in schema api …` 처럼 앞에 절이 붙은 형태
+        #    무효인 이유는 **`in schema` 가 붙었다는 것 하나**이므로, 그 모양을 정규식으로 잡는다.
+        pat = re.compile(
+            r"alter\s+default\s+privileges[^;]*in\s+schema\s+{}[^;]*"
+            r"revoke[^;]*from\s+public".format(schema_name),
+            re.I | re.S,
         )
-        assert useless not in schema_stmts, (
-            "'{}' 는 **아무 일도 하지 않습니다**(공식 문서의 '효과 없음' 예시). "
-            "전역 형태('{}')를 쓰세요.".format(useless, self.GLOBAL)
+        found = pat.search(schema_stmts)
+        assert not found, (
+            "'{}' 는 **아무 일도 하지 않습니다**(공식 문서의 '효과 없음' 예시 — 스키마별 "
+            "기본권한은 전역 기본값에 더하기만 할 뿐 빼지 못합니다). 전역 형태('{}')를 쓰세요."
+            .format(" ".join(found.group(0).split()), self.GLOBAL)
         )
 
     def test_the_anon_authenticated_lines_are_kept_too(self, schema_stmts):

@@ -146,3 +146,34 @@ class TestTheLeakScriptSaysTheOppositeOfTheDownScript:
         body = read(LEAK_BODY)
         assert "오탐" in body
         assert "ADMIN_KEY_RE" in body
+
+
+class TestTheHomePageIsScannedToo:
+    """첫 화면(HTML)에 키가 박히는 경로도 막는다 — 이미 손에 든 글자라 추가 요청 0."""
+
+    def test_an_admin_key_in_the_html_is_caught(self, chk, monkeypatch):
+        fake = b"sb_secret_" + b"w" * 30
+        html = ('<html><div id="root"></div><script src="/assets/app.js"></script>'
+                '<script>window.K="').encode() + fake + b'"</script></html>'
+
+        def fake_fetch(url, what, attempts=5, sleep=None):
+            return html if url.endswith("/") else b"y" * 4096
+
+        monkeypatch.setattr(chk, "fetch_with_retry", fake_fetch)
+        with pytest.raises(chk.CheckFailed) as ex:
+            chk.check("https://example.test")
+        assert ex.value.kind == "leak"
+
+    def test_a_clean_home_page_still_passes(self, chk, monkeypatch):
+        """⛔ 거짓 경보를 내면 6시간마다 열려 진짜 사고까지 묻힌다 — 반대편도 못 박는다."""
+        html = '<html><div id="root"></div><script src="/assets/app.js"></script></html>'
+
+        def fake_fetch(url, what, attempts=5, sleep=None):
+            if url.endswith("/"):
+                return html.encode()
+            if url.endswith(".js"):
+                return b"z" * 4096
+            return b'{"type":"FeatureCollection"}'
+
+        monkeypatch.setattr(chk, "fetch_with_retry", fake_fetch)
+        assert len(chk.check("https://example.test")) == 3
