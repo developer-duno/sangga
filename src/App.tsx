@@ -8,6 +8,7 @@ import { LhNoticeSection } from './components/LhNoticeSection';
 import { PrintButton } from './components/PrintButton';
 import { PrintHeader } from './components/PrintHeader';
 import { RegionPicker } from './components/RegionPicker';
+import { ScorecardSection } from './components/ScorecardSection';
 import { ShareButton } from './components/ShareButton';
 import { FLOOR_STACK_VIEW } from './lib/appConstants';
 import { buildingFromFloorRows } from './lib/restoreBuilding';
@@ -233,6 +234,21 @@ export default function App() {
           같으므로 다시 묻지 않는 것이 맞다. 카드가 시도 코드에만 매여 있다.
       */}
       {sigungu !== null && selected === null && !restoring && <LhNoticeSection sigungu={sigungu} />}
+
+      {/*
+        입구의 두 번째 카드 — 참고 시세 성적표(로드맵 Wave 4).
+
+        ⛔ **LH 공고 뒤에 둔다.** 앞의 것은 "지금 무엇이 열려 있나"(할 일)이고 이쪽은
+           "우리 값을 얼마나 믿어도 되나"(읽을거리)라, 순서를 바꾸면 입구에서 먼저 눈에
+           드는 것이 뒤바뀐다.
+        ⓘ 조건은 LH 카드와 **똑같다** — 구를 골랐고, 건물은 아직 안 골랐고, 되살리는
+          중도 아니다. 건물을 고르면 화면의 주제가 그 건물이므로 함께 물러난다.
+        ⓘ `key` 를 일부러 안 준다 — 서버 함수가 열린 구 **전부**를 한 번에 주므로 구를
+          바꿔도 다시 물을 것이 없다(카드가 받아 둔 목록에서 그 구 줄만 골라 쓴다).
+      */}
+      {sigungu !== null && selected === null && !restoring && (
+        <ScorecardSection sigungu={sigungu} />
+      )}
 
       {selected ? (
         <>

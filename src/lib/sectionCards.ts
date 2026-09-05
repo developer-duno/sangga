@@ -85,6 +85,17 @@ export const ENTRY_SECTION_PLAN = {
    * 대신 아무도 안 내치는 쪽을 골랐다.
    */
   lhNotice: { title: 'LH 상가 분양·입점 공고', role: '공통', defaultOpen: false },
+  /**
+   * 참고 시세 성적표(로드맵 Wave 4 — 성적표 공개 + 방법 공개).
+   *
+   * 역할을 `투자자` 로 둔 이유 — 이 카드가 말하는 것은 **참고 매매 시세가 얼마나 맞나**
+   * 이고, 그 값을 보는 것은 층별 화면의 『참고 매매 시세』 카드를 여는 사람이다(그쪽도
+   * 투자자다). 창업자에게 필요한 임대 이야기는 여기서 하지 않는다.
+   *
+   * ⛔ 요약 한 줄이 **고른 구의 판정**을 말한다 — 접힌 채로도 "우리 구는 받나 못 받나"는
+   *    읽힌다. 접힘이 숨김이 아니라는 규칙(SectionCard)이 여기서 특히 중요하다.
+   */
+  scorecard: { title: '참고 시세는 얼마나 맞나', role: '투자자', defaultOpen: false },
 } as const satisfies Record<string, SectionPlan>;
 
 /** 첫 화면에 펼쳐지는 카드 수. 상한을 지키는지 세는 데 쓴다. */

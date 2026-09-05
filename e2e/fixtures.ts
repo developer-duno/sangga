@@ -9,7 +9,10 @@ import type {
   NearbyPermits,
   ParcelTransaction,
   PriceBand,
+  PriceGateRow,
   RentStat,
+  Scorecard,
+  ScorecardOpsMode,
   SigunguTxStat,
 } from '../src/types';
 
@@ -274,6 +277,80 @@ export function rentStats(): RentStat[] {
     rentStat(),
     rentStat({ bld_type: '오피스', vacancy_rate: 5.5, rent_per_m2: 18.4, yield_rate: 1.1 }),
   ];
+}
+
+/**
+ * 참고 시세 게이트 한 줄(함수 `list_price_gate`). 입구 성적표 카드에만 쓴다.
+ *
+ * ⚠️ 서버는 **열린 구 전부**를 준다 — 통과한 구만 오는 것이 아니다. 그래서 아래
+ *    `priceGate()` 가 통과 하나 + 탈락 하나를 함께 준다(탈락 사유 표시가 스펙 AB 의
+ *    관심사라 둘 다 있어야 한다). 필드셋은 단위 시험
+ *    (src/components/ScorecardSection.test.tsx 의 gateRows())과 같다.
+ */
+export function priceGateRow(over: Partial<PriceGateRow> = {}): PriceGateRow {
+  return {
+    sigungu_code: '11680',
+    sigungu_nm: '강남구',
+    n_paired: 262,
+    ladder_mdape: 0.283,
+    base_mdape: 0.492,
+    gate_pass: true,
+    loaded_at: '2026-08-16T10:00:00+09:00',
+    ...over,
+  };
+}
+
+/** 통과 구 하나 + **오차는 기준선 안인데 구 평균에 진** 구 하나(금천구 사례). */
+export function priceGate(): PriceGateRow[] {
+  return [
+    priceGateRow({
+      sigungu_code: '11545',
+      sigungu_nm: '금천구',
+      n_paired: 99,
+      ladder_mdape: 0.26,
+      base_mdape: 0.176,
+      gate_pass: false,
+    }),
+    priceGateRow(),
+  ];
+}
+
+function opsMode(over: Partial<ScorecardOpsMode> = {}): ScorecardOpsMode {
+  return {
+    kind: '채택단계',
+    axis_value: 'L2',
+    axis_name: 'L2',
+    n_verified: 100,
+    n_estimated: 100,
+    coverage: 1,
+    mdape: 0.2,
+    mape: 0.3,
+    hit20: 0.5,
+    ...over,
+  };
+}
+
+/**
+ * 구워 둔 성적표 파일(`/scorecard-v1.json`)의 **작은 판**.
+ *
+ * ⚠️ 진짜 파일(180+41+30줄)을 그대로 쓰지 않는다 — 스펙이 보려는 것은 "맨 위에 무엇이
+ *    오나"이고, 그 판정에 필요한 것은 비중이 다른 줄 두엇뿐이다. 여기서는 L6 이 가장
+ *    흔하도록 지어 둔다(진짜 자료도 그렇다).
+ * ⓘ `stages` 는 빈 배열이어도 된다 — 화면이 읽는 것은 `ops_modes` 뿐이다.
+ */
+export function scorecard(over: Partial<Scorecard> = {}): Scorecard {
+  return {
+    version: 'v1',
+    generated_at: '2026-08-15T23:44:00+09:00',
+    sources: { '통과구.csv': 'a'.repeat(64) },
+    stages: [],
+    ops_modes: [
+      opsMode({ kind: '전체', axis_value: '전체', axis_name: '전체', n_verified: 1000, coverage: 0.9 }),
+      opsMode({ axis_value: 'L2', axis_name: 'L2', n_verified: 300, mdape: 0.13 }),
+      opsMode({ axis_value: 'L6', axis_name: 'L6', n_verified: 600, mdape: 0.4 }),
+    ],
+    ...over,
+  };
 }
 
 /**
