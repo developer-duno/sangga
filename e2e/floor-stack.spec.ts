@@ -507,7 +507,10 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await expect(band.locator('.band__gate')).not.toContainText('%');
     // 층 목록과 실거래 기록은 그대로 나온다 — 밴드만 없는 것이다.
     await expect(page.locator('.floors .floor')).toHaveCount(1);
-    await expect(page.getByText('실거래 기록')).toBeVisible();
+    // ⚠️ **층별 화면 안으로 좁혀서** 본다(형제 시험 G 와 같은 방식). 화면 아래 안내가
+    //    카드 제목을 한 번씩 더 적으므로(넘기기 구역의 "어디서 뭐를 보나"), 좁히지 않으면
+    //    같은 글자가 둘이 되어 어느 쪽을 잡았는지 모르게 된다.
+    await expect(page.locator('section.stack').getByText('실거래 기록')).toBeVisible();
   });
 
   // ── 화면 공짜 3종 (로드맵 Wave 2 PR-A) ────────────────────────────────────
@@ -715,6 +718,16 @@ test.describe('화면 아래 — 어디까지 믿을지와 한마디 남기는 �
     await expect(foot.getByText(/감정평가가 아니며/)).toBeVisible();
     await expect(foot.getByText(/"미상"/)).toBeVisible();
 
+    // 넘기기 링크 구역(결정 0014 §5) — 안내 바로 뒤에 선다.
+    await expect(foot.getByRole('heading', { name: '더 필요하면 여기서' })).toBeVisible();
+    // ⛔ `rel` 이 이 자리의 유일한 안전장치다 — 없으면 새 창으로 열린 쪽이 우리 창을
+    //    되돌려 다른 주소로 보낼 수 있다. 화면으로는 절대 안 보이는 종류라 여기서 본다.
+    const outLink = foot.getByRole('link', { name: '네이버 부동산' });
+    await expect(outLink).toHaveAttribute('target', '_blank');
+    await expect(outLink).toHaveAttribute('rel', 'noopener noreferrer');
+    // 안내는 **접힌 채로** 시작한다 — 나가는 문 앞을 설명으로 가로막지 않는다.
+    await expect(foot.locator('.links__guide-body')).toBeHidden();
+
     // 보던 지역이 함께 실리는지 보려고 구를 하나 고른다.
     await pickGu(page, '서울', '강남구');
 
@@ -864,6 +877,9 @@ test.describe('층별 스택뷰 — 종이로 뽑기', () => {
     await expect(page.locator('.fb')).toBeHidden();
     await expect(page.locator('.dmap__toggle')).toBeHidden();
     await expect(page.locator('.card__caret').first()).toBeHidden();
+    // ⛔ 넘기기 링크 구역도 통째로 빠진다(결정 0014 §5 — "페이지 끝 한 구역이면 인쇄 시
+    //    그것만 제외하면 된다"). 종이에서는 아무 데도 못 누르므로 죽은 파란 글씨만 남는다.
+    await expect(page.locator('.links')).toBeHidden();
 
     // ② 이 종이가 무슨 건물이고 언제 것이며 원본이 어디인지.
     const meta = page.locator('.printmeta');

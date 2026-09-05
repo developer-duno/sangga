@@ -1,6 +1,7 @@
 import type { FeedbackContext } from '../lib/feedback';
 
 import { FeedbackBox } from './FeedbackBox';
+import { HandoffLinks } from './HandoffLinks';
 
 /**
  * 화면 맨 아래 — 이 자료를 어떻게 받아들여야 하는지 + 한마디 남기는 자리.
@@ -45,6 +46,13 @@ export function AppFooter({ feedbackContext }: Props) {
           </li>
         </ul>
       </div>
+
+      {/*
+        넘기기 링크 구역(결정 0014 §5) — 안내 문구 **바로 뒤**다. "여기까지가 우리가 아는
+        것"을 말한 다음에 "그 다음은 저기서"가 오는 순서라, 이 두 덩어리 사이에 다른 것이
+        끼면 말이 끊긴다. 종이에서는 이 구역만 통째로 빠진다(`@media print` 의 `.links`).
+      */}
+      <HandoffLinks />
 
       <FeedbackBox context={feedbackContext} />
     </footer>
