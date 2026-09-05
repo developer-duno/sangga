@@ -259,6 +259,50 @@ describe('DistrictBuildings — 한 땅에 여러 동', () => {
     expect(screen.queryByText('본관동')).toBeNull();
   });
 
+  it('★ 접었다 다시 펼친 사이, **옛 요청의 실패**가 새 요청의 성공을 잡아먹지 않는다', async () => {
+    /*
+      2026-09-05 감사. 위 두 시험('접었다'·'상권이 바뀌었다')은 **아무도 안 기다릴 때** 늦은
+      답이 오는 경우였다. 여기는 반대다 — **기다리는 사람이 있는데 답이 두 개** 날아온다.
+
+      펼치기(A) → 접기 → 다시 펼치기(B) 를 하면 요청이 둘 살아 있다. 예전 코드는 "그 줄이
+      아직 'loading' 인가"만 봤는데, 그 물음에는 **A 의 답도 B 의 답도 똑같이 '그렇다'**고
+      나온다. 그래서 먼저 닿은 A 의 실패가 B 의 'loading' 을 'failed' 로 덮고, 뒤이어 닿은
+      B 의 성공은 "이제 'loading' 이 아니다"라며 버려졌다 — **자료는 왔는데 화면은 오류**다.
+      되돌리면(settle 의 token 비교 삭제) 이 시험이 빨간불이 된다.
+    */
+    responses.lands = { data: [many()], error: null };
+    show();
+    const row = await screen.findByText('롯데호텔 및 백화점');
+
+    let giveA: (v: unknown) => void = () => {};
+    holdDongs.next = new Promise((res) => {
+      giveA = res;
+    });
+    fireEvent.click(row); // A 시작 — 답은 붙들려 있다
+    expect(screen.getByText('동 목록을 불러오는 중…')).toBeTruthy();
+
+    fireEvent.click(row); // 기다리다 말고 접는다 (A 는 아직 날아가는 중)
+
+    let giveB: (v: unknown) => void = () => {};
+    holdDongs.next = new Promise((res) => {
+      giveB = res;
+    });
+    fireEvent.click(row); // B 시작 — 이제 A·B 둘이 같은 줄을 가리킨다
+    expect(screen.getByText('동 목록을 불러오는 중…')).toBeTruthy();
+
+    // 순서가 이 시험의 전부다 — **A 의 실패가 B 보다 먼저** 닿는다.
+    await act(async () => {
+      giveA({ data: null, error: { message: 'PGRST202' } });
+    });
+    await act(async () => {
+      giveB({ data: [dong()], error: null });
+    });
+
+    expect(await screen.findByText('본관동')).toBeTruthy();
+    // ⛔ 옛 실패가 남아 있으면 사용자는 "안 됐다"고 읽고 다시 누른다 — 자료는 이미 와 있는데.
+    expect(screen.queryByText('동 목록을 불러오지 못했습니다.')).toBeNull();
+  });
+
   it('동 목록을 못 읽으면 그 사실만 말한다 — 목록 전체는 그대로 선다', async () => {
     responses.lands = { data: [many()], error: null };
     responses.dongs = { data: null, error: { message: 'PGRST202' } };
@@ -411,5 +455,75 @@ describe('DistrictBuildings — 상권을 바꿨을 때', () => {
 
     give({ data: [land({ bld_nm: '새 건물', pnu: 'p2', bld_id: 'B-2' })], error: null });
     expect(await screen.findByText('새 건물')).toBeTruthy();
+  });
+});
+
+describe('DistrictBuildings — 읽어 주는 기기에도 같은 말을 한다', () => {
+  /*
+    ⓘ 이 목록은 사람이 **직접 누른** 결과라, 눈으로 보지 않는 사람에게도 결과가 닿아야 한다.
+      규약은 조각 안에 적힌 대로 둘뿐이다 — 알림은 `role="status"`, 실패는 `role="alert"`.
+      (이 시험들이 없으면 역할을 떼어내도 화면이 똑같아 보여 아무도 모른다.)
+  */
+  const many = () => land({ bld_cnt_in_pnu: 4, total_parcel_cnt: 1, total_bld_cnt: 4 });
+
+  it('"불러오는 중"은 status 로 알린다 — 하던 말을 끊지 않는다', () => {
+    show();
+    expect(screen.getByRole('status').textContent).toMatch(/불러오는 중/);
+  });
+
+  it('"못 불러왔다"는 alert 로 알린다 — 그 자리에서 들어야 다음 행동을 정한다', async () => {
+    responses.lands = { data: null, error: { message: '연결 실패' } };
+    show();
+    expect((await screen.findByRole('alert')).textContent).toMatch(/불러오지 못했습니다/);
+  });
+
+  it('여러 동인 줄의 버튼이 **자기가 펼치는 칸**을 가리킨다', async () => {
+    responses.lands = { data: [many()], error: null };
+    show();
+    fireEvent.click(await screen.findByText('롯데호텔 및 백화점'));
+    await screen.findByText('본관동');
+
+    const btn = screen.getByRole('button', { name: /롯데호텔 및 백화점/ });
+    const panelId = btn.getAttribute('aria-controls');
+    expect(panelId, 'aria-controls 가 없습니다').toBeTruthy();
+
+    // ⛔ 가리키는 곳이 실제로 있어야 한다. 있지도 않은 id 를 가리키는 것은 거짓말이고,
+    //    읽어 주는 기기는 "펼쳤다는데 내용이 없다"는 상태에 빠진다.
+    const panel = document.getElementById(panelId!);
+    expect(panel, `id="${panelId}" 인 요소가 없습니다`).toBeTruthy();
+    expect(panel!.textContent).toContain('본관동');
+  });
+
+  it('기다리는 동안에도 가리킬 곳이 있다 — 펼쳐 놓고 빈손인 순간을 만들지 않는다', async () => {
+    responses.lands = { data: [many()], error: null };
+    show();
+    const row = await screen.findByText('롯데호텔 및 백화점');
+
+    holdDongs.next = new Promise(() => {}); // 영영 안 오는 답 — '불러오는 중'에 멈춰 둔다
+    fireEvent.click(row);
+    expect(screen.getByText('동 목록을 불러오는 중…')).toBeTruthy();
+
+    const btn = screen.getByRole('button', { name: /롯데호텔 및 백화점/ });
+    expect(btn.getAttribute('aria-expanded')).toBe('true');
+    // ⛔ '펼쳤다'고 말해 놓고 가리키는 곳이 없으면, 읽어 주는 기기를 쓰는 사람은 열린 줄 알고
+    //    찾아 헤맨다. 그래서 답이 오기 전에도 **그 자리에 선 안내 문단**이 같은 id 를 단다.
+    const panel = document.getElementById(btn.getAttribute('aria-controls')!);
+    expect(panel, 'aria-controls 가 가리키는 요소가 없습니다').toBeTruthy();
+    expect(panel!.textContent).toContain('불러오는 중');
+  });
+
+  it('한 동뿐인 줄은 가리킬 칸이 없으므로 aria-controls 도 없다', async () => {
+    show();
+    const btn = await screen.findByRole('button', { name: /롯데호텔 및 백화점/ });
+    // 펼치는 버튼이 아니라 **고르는 버튼**이다.
+    expect(btn.getAttribute('aria-controls')).toBeNull();
+    expect(btn.getAttribute('aria-expanded')).toBeNull();
+  });
+
+  it('목록에 이름표가 붙어 있다 — 머릿글을 빌려 쓴다', async () => {
+    show();
+    await screen.findByText('롯데호텔 및 백화점');
+    // 예전에는 `id` 만 달려 있고 아무도 가리키지 않아 읽어 주는 기기에는 그냥 "목록"이었다.
+    expect(screen.getByRole('list', { name: /명동 남대문 관광특구의 건물/ })).toBeTruthy();
   });
 });

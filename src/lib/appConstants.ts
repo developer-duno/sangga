@@ -21,6 +21,35 @@ export const FLOOR_STACK_VIEW = 'v_floor_stack';
 export const COVERAGE_STATS_VIEW = 'v_coverage_stats';
 
 /**
+ * 건물 검색(`{ q, lim, sigungu }` 셋을 받는다).
+ *
+ * ⓘ 이름에 스키마를 안 적는다 — 클라이언트가 `db: { schema: 'api' }` 로 만들어져 있어
+ *   이 이름은 `api.search_buildings` 래퍼로 간다(`lib/supabase.ts`). 형제 상수들과 같은 규칙.
+ * ⚠️ 고른 구 안에서만 찾는다(`sigungu` 는 5자리). 같은 건물 이름이 여러 구에 겹치므로
+ *    구가 정해지지 않으면 화면이 서버를 아예 부르지 않는다.
+ */
+export const SEARCH_BUILDINGS_FN = 'search_buildings';
+
+/**
+ * 0건이 나왔을 때 **왜 0건인지**를 한 번 더 묻는 함수(`{ q, sigungu }`).
+ *
+ * ⓘ 위와 같은 이유로 이름만 적는다(`api.search_scope` 로 간다).
+ * ⛔ 0건일 때만 부른다 — 평소 검색을 두 번 왕복시키지 않기 위해서다. 돌려주는 `too_broad`
+ *    가 참이면 "없는 것"이 아니라 "너무 넓어 서버가 끊은 것"이라 화면 문구가 갈린다.
+ */
+export const SEARCH_SCOPE_FN = 'search_scope';
+
+/**
+ * 지금 **열려 있는 구** 목록(인자 없음).
+ *
+ * ⓘ 위와 같은 이유로 이름만 적는다(`api.list_open_sigungu` 로 간다).
+ * ⛔ 열린 지역의 진실은 **서버 한 곳**이다(`mv_open_sigungu`). 화면에 구 목록을 글자로 박아
+ *    두면 자료가 늘어도 화면만 옛 목록을 말한다(2026-08-13 실측 드리프트). `lib/regions.ts`
+ *    는 짧은 이름표(서울/대전)를 붙이는 데만 쓴다.
+ */
+export const OPEN_SIGUNGU_FN = 'list_open_sigungu';
+
+/**
  * 이 건물이 속한 상권을 묻는 서버 함수(`bld_id` 하나를 받는다).
  *
  * 돌려주는 것은 `{ covered, districts[] }` 두 칸뿐이다 — `covered` 는 "그 시·도에

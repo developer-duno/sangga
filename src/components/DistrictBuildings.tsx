@@ -42,8 +42,16 @@ type Props = {
   selectedBldId: string | null;
 };
 
-/** 한 땅을 펼쳤을 때의 상태. 셋을 갈라 둬야 물레방아가 영영 돌지 않는다. */
-type Expanded = { at: 'loading' } | { at: 'done'; rows: ParcelBuilding[] } | { at: 'failed' };
+/**
+ * 한 땅을 펼쳤을 때의 상태. 셋을 갈라 둬야 물레방아가 영영 돌지 않는다.
+ *
+ * ⓘ 'loading' 만 **요청 번호(`token`)** 를 든다 — 답이 도착했을 때 "지금 기다리는 그 요청의
+ *   답인가"를 가리려면 시각이 아니라 **신원**이 필요하기 때문이다(아래 `settle` 주석).
+ */
+type Expanded =
+  | { at: 'loading'; token: number }
+  | { at: 'done'; rows: ParcelBuilding[] }
+  | { at: 'failed' };
 
 export function DistrictBuildings({ districtId, districtNm, onSelect, selectedBldId }: Props) {
   const [lands, setLands] = useState<DistrictLand[] | null>(null);
@@ -58,7 +66,19 @@ export function DistrictBuildings({ districtId, districtNm, onSelect, selectedBl
    */
   const [failed, setFailed] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, Expanded>>({});
-  const listId = useId();
+  /**
+   * 이 목록 안에서 쓰는 id 의 공통 앞머리 — 머릿글 하나와 줄마다의 펼침 칸 하나씩에 쓴다.
+   *
+   * ⚠️ 훅(`useId`)을 줄마다 부를 수는 없다(map 안은 훅을 부를 수 없는 자리다). 그래서
+   *    **앞머리 하나를 받아 땅(pnu)을 붙여** 줄별 id 를 만든다 — pnu 는 이 목록 안에서 유일하다.
+   */
+  const idBase = useId();
+  const headId = `${idBase}-head`;
+  /**
+   * 펼치기 요청에 붙이는 일련번호. 줄이 아니라 **요청**을 세므로 목록 전체가 하나를 공유한다
+   * (같은 줄을 접었다 펼치면 번호가 다른 두 요청이 된다 — 그게 이 번호의 존재 이유다).
+   */
+  const nextToken = useRef(0);
   /**
    * 늦게 도착한 **옛 상권**의 응답이 새 상권 목록을 건드리는 것을 막는다.
    *
@@ -137,18 +157,26 @@ export function DistrictBuildings({ districtId, districtNm, onSelect, selectedBl
       setExpanded(({ [land.pnu]: _drop, ...rest }) => rest);
       return;
     }
-    setExpanded((prev) => ({ ...prev, [land.pnu]: { at: 'loading' } }));
+    const myToken = ++nextToken.current;
+    setExpanded((prev) => ({ ...prev, [land.pnu]: { at: 'loading', token: myToken } }));
     /**
-     * 답이 왔을 때 **그 줄이 아직 기다리는 중일 때만** 쓴다.
+     * 답이 왔을 때 **내가 보낸 바로 그 요청의 답일 때만** 쓴다.
      *
      * ⛔ 여기는 위의 세대 번호로 못 잡는 별개 경합이다(세대는 상권 단위인데 여기는 줄 단위).
      *    그냥 쓰면 두 가지가 어긋난다: ① 펼치는 중에 사용자가 **접으면** 답이 도착하며
      *    **저절로 되펼쳐진다**(사용자 뜻을 덮는다) ② 상권이 바뀌어 `setExpanded({})` 로
      *    비운 뒤 옛 답이 닿으면 **아무도 안 누른 줄이 펼쳐진 채** 나타난다.
-     *    둘 다 "그 키가 아직 'loading' 인가"만 보면 한 번에 막힌다.
+     * ⛔ **"아직 'loading' 인가"만 보는 것으로는 모자란다**(2026-09-05 감사). 펼쳤다 접고 다시
+     *    펼치면 같은 줄을 가리키는 요청이 둘(A·B) 날아가 있는데, 이때 먼저 닿은 **A 의 실패**가
+     *    B 의 'loading' 을 'failed' 로 덮어 버리고, 뒤이어 닿은 **B 의 성공은 더 이상 'loading'
+     *    이 아니라며 버려진다** — 자료는 왔는데 화면은 오류를 적는 상태다. 그래서 상태의
+     *    이름만이 아니라 **요청 번호**까지 본다(내 번호일 때만 반영).
      */
     const settle = (next: Expanded) =>
-      setExpanded((prev) => (prev[land.pnu]?.at === 'loading' ? { ...prev, [land.pnu]: next } : prev));
+      setExpanded((prev) => {
+        const at = prev[land.pnu];
+        return at?.at === 'loading' && at.token === myToken ? { ...prev, [land.pnu]: next } : prev;
+      });
     supabase.rpc(PARCEL_BUILDINGS_FN, { p_pnu: land.pnu }).then(({ data, error }) => {
       if (error || !isParcelBuildingList(data)) {
         console.warn('땅의 동 목록 조회 실패', error ?? data);
@@ -159,12 +187,31 @@ export function DistrictBuildings({ districtId, districtNm, onSelect, selectedBl
     });
   }
 
+  /*
+    ⓘ 이 조각의 메시지 역할 규약 — **알림은 `role="status"`, 실패는 `role="alert"`** 한 벌로만 쓴다.
+
+    왜 갈랐나: 이 목록은 사람이 **직접 누른** 결과라 결과가 화면에 나타나는 것을 읽어 주는
+    기기도 알아야 한다. 그런데 둘의 급함이 다르다 — "불러오는 중"은 하던 말을 끊으면서까지
+    알릴 일이 아니고(`status` = 하던 말이 끝난 뒤), "못 불러왔다"는 그 자리에서 알려야
+    다음 행동을 정할 수 있다(`alert` = 즉시). 둘 다 `alert` 로 두면 로딩 문구가 매번 말을
+    끊고, 둘 다 `status` 면 오류를 나중에야 듣는다.
+    ⛔ 새 메시지를 더할 때도 이 두 가지 밖으로 나가지 않는다(`aria-live` 를 손으로 붙이지
+       않는다 — 두 역할이 이미 그 뜻을 담고 있고, 섞이면 어느 쪽이 옳은지 흐려진다).
+  */
   if (loading && lands === null) {
-    return <p className="dbld__msg">{districtNm}의 건물을 불러오는 중…</p>;
+    return (
+      <p className="dbld__msg" role="status">
+        {districtNm}의 건물을 불러오는 중…
+      </p>
+    );
   }
 
   if (failed && lands === null) {
-    return <p className="dbld__msg dbld__msg--error">건물 목록을 불러오지 못했습니다.</p>;
+    return (
+      <p className="dbld__msg dbld__msg--error" role="alert">
+        건물 목록을 불러오지 못했습니다.
+      </p>
+    );
   }
 
   if (lands === null) return null;
@@ -172,12 +219,16 @@ export function DistrictBuildings({ districtId, districtNm, onSelect, selectedBl
   if (lands.length === 0) {
     // ⓘ 상권 1,687곳 중 10곳은 실제로 건물이 한 동도 없다(라이브 실측). 빈 목록을 띄우고
     //   "왜 아무것도 없지?" 하게 두는 대신, 자료가 없다고 말한다(지도의 빈 구와 같은 규칙).
-    return <p className="dbld__msg">이 상권에는 아직 건물 자료가 없습니다.</p>;
+    return (
+      <p className="dbld__msg" role="status">
+        이 상권에는 아직 건물 자료가 없습니다.
+      </p>
+    );
   }
 
   return (
     <div className="dbld">
-      <p className="dbld__head">
+      <p className="dbld__head" id={headId}>
         <strong>{districtNm}</strong>의 건물 — {landsSummary(lands)}
       </p>
       {/* ⛔ 무엇을 센 숫자인지 밝힌다. 이 값은 그 **땅**의 점포 수라, 한 땅에 여러 동이
@@ -187,16 +238,28 @@ export function DistrictBuildings({ districtId, districtNm, onSelect, selectedBl
         여러 동이 서 있으면 그 동들이 같은 수를 함께 씁니다.
       </p>
 
-      <ul className="dbld__list" id={listId}>
+      {/* ⓘ 목록에 **이름표를 붙인다** — 예전에는 `id` 만 달아 두고 아무도 가리키지 않아
+          읽어 주는 기기에는 그냥 "목록"이었다. 머릿글이 이미 "◯◯의 건물 — N곳"이라
+          말하므로 그 글을 이름으로 빌린다(글을 두 번 적지 않는다). */}
+      <ul className="dbld__list" aria-labelledby={headId}>
         {lands.map((land) => {
           const many = land.bld_cnt_in_pnu > 1;
           const open = expanded[land.pnu];
+          /** 이 줄이 펼치는 칸의 id. 훅을 줄마다 못 부르므로 앞머리에 땅을 붙여 만든다. */
+          const panelId = `${idBase}-${land.pnu}`;
           return (
             <li key={land.pnu}>
               <button
                 type="button"
                 className={`dbld__row${land.bld_id === selectedBldId ? ' dbld__row--on' : ''}`}
                 aria-expanded={many ? open !== undefined && open.at !== 'failed' : undefined}
+                /* ⚠️ 동이 하나뿐인 줄은 **펼치는 버튼이 아니라 고르는 버튼**이다 — 열 칸이
+                   영영 없으므로 `aria-controls` 도 주지 않는다(없는 곳을 가리키면 거짓말이 된다).
+                   ⓘ 여러 동인 줄에서는 펼친 순간 **셋 중 하나가 반드시 그 id 를 달고 선다**
+                     (불러오는 중 · 못 불러왔다 · 동 목록). 그래서 펼쳐 놓고 가리킬 곳이 없는
+                     순간이 생기지 않는다 — 접혀 있을 때만 비어 있고, 그때는 `aria-expanded`
+                     가 이미 '안 펼쳐졌다'고 말한다. */
+                aria-controls={many ? panelId : undefined}
                 onClick={() => (many ? toggle(land) : onSelect(landToHit(land)))}
               >
                 <span className="dbld__name">{land.bld_nm || '(이름 없는 건물)'}</span>
@@ -207,12 +270,18 @@ export function DistrictBuildings({ districtId, districtNm, onSelect, selectedBl
                 </span>
               </button>
 
-              {many && open?.at === 'loading' && <p className="dbld__msg">동 목록을 불러오는 중…</p>}
+              {many && open?.at === 'loading' && (
+                <p className="dbld__msg" id={panelId} role="status">
+                  동 목록을 불러오는 중…
+                </p>
+              )}
               {many && open?.at === 'failed' && (
-                <p className="dbld__msg dbld__msg--error">동 목록을 불러오지 못했습니다.</p>
+                <p className="dbld__msg dbld__msg--error" id={panelId} role="alert">
+                  동 목록을 불러오지 못했습니다.
+                </p>
               )}
               {many && open?.at === 'done' && (
-                <ul className="dbld__dongs">
+                <ul className="dbld__dongs" id={panelId}>
                   {open.rows.map((b) => (
                     <li key={b.bld_id}>
                       <button
@@ -250,7 +319,9 @@ export function DistrictBuildings({ districtId, districtNm, onSelect, selectedBl
       )}
       {/* 더 받다가 실패한 경우 — 이미 받은 목록은 그대로 두고 그 사실만 알린다. */}
       {failed && lands.length > 0 && (
-        <p className="dbld__msg dbld__msg--error">더 불러오지 못했습니다.</p>
+        <p className="dbld__msg dbld__msg--error" role="alert">
+          더 불러오지 못했습니다.
+        </p>
       )}
 
       {/* ⛔ 경계 판정은 건물 화면의 "속한 상권"과 **같은 자**를 쓴다. 그 사실을 적어 두는

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { SubmitEvent } from 'react';
 import { supabase } from '../lib/supabase';
+import { SEARCH_BUILDINGS_FN, SEARCH_SCOPE_FN } from '../lib/appConstants';
 import { describeError, describeRange } from '../lib/format';
 import type { BuildingHit } from '../types';
 
@@ -109,7 +110,7 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu
     try {
       // 검색어는 파라미터로 넘어간다 — % _ \ 를 서버가 리터럴로 이스케이프하므로
       // 여기서 따로 손대지 않는다(직접 문자열을 이어 붙이면 필터가 깨진다).
-      const { data, error: err } = await supabase.rpc('search_buildings', {
+      const { data, error: err } = await supabase.rpc(SEARCH_BUILDINGS_FN, {
         q,
         lim: MAX_BUILDINGS,
         sigungu,
@@ -124,7 +125,7 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu
       // 서버는 ②일 때 무거운 일을 하기 전에 0건으로 돌려주므로, 여기서 한 번 더 물어
       // 어느 쪽인지 가린다(0건일 때만 물으므로 평소 검색은 느려지지 않는다).
       if (rows.length === 0) {
-        const scope = await supabase.rpc('search_scope', { q, sigungu });
+        const scope = await supabase.rpc(SEARCH_SCOPE_FN, { q, sigungu });
         if (runId !== latestRun.current) return;
         const row = (scope.data ?? [])[0] as { too_broad?: boolean; match_cnt?: number } | undefined;
         if (row?.too_broad) {
