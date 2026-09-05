@@ -1,5 +1,6 @@
 import type { FeedbackContext } from '../lib/feedback';
 
+import { DataFreshness } from './DataFreshness';
 import { FeedbackBox } from './FeedbackBox';
 import { HandoffLinks } from './HandoffLinks';
 
@@ -53,6 +54,9 @@ export function AppFooter({ feedbackContext }: Props) {
         끼면 말이 끊긴다. 종이에서는 이 구역만 통째로 빠진다(`@media print` 의 `.links`).
       */}
       <HandoffLinks />
+      {/* "언제 것인가"는 "어디까지 믿어도 되나"의 나머지 절반이다 — 근거와 한계를 읽은
+          바로 다음에 오는 것이 자연스럽다. 서버가 못 답하면 이 자리만 조용히 빈다. */}
+      <DataFreshness />
 
       <FeedbackBox context={feedbackContext} />
     </footer>

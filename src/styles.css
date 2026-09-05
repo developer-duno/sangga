@@ -1818,6 +1818,71 @@ body {
   margin-top: 4px;
 }
 
+/* ── 이 자료는 언제 것인가 (2026-09-05d) ──────────────────────────────────────
+   ⛔ 칸 너비를 px 로 못 박지 않는다. 자료 이름·주기 문구를 서버가 주므로 길이가 바뀌는데,
+      고정 폭이면 그날 글자가 칸 밖으로 밀린다. 대신 `word-break: keep-all` 로 낱말 중간에서
+      끊기지 않게만 한다(한국어는 그렇게 끊기면 읽기가 확 나빠진다). */
+.fresh {
+  margin-top: 16px;
+  padding: 16px 18px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.fresh__h {
+  margin: 0 0 10px;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.fresh__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 1.6;
+  word-break: keep-all;
+}
+
+.fresh__table th,
+.fresh__table td {
+  padding: 6px 8px 6px 0;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.fresh__table thead th {
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.fresh__table tbody th {
+  font-weight: 600;
+}
+
+.fresh__table td {
+  color: var(--muted);
+}
+
+/* 기준값이 **무엇인가**(분기·고시일…)는 값보다 한 단계 여린 글씨로 — 눈이 값을 먼저 잡게. */
+.fresh__kind {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.fresh__val {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.fresh__note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 /* ── 더 필요하면 여기서 — 넘기는 곳 + 접힌 안내 (결정 0014 §5) ─────────────── */
 /*
   안내 상자(`.foot__notice`)와 **같은 톤**이되 테두리를 안 두른다 — 상자가 둘 나란히 서면
@@ -2356,6 +2421,10 @@ body {
   .grade,
   .stack__facts,
   .dmap__canvas,
+  /* ⛔ 신선도 표는 위 **감춤 목록(`.fb` 등)에 넣지 말 것** — 조종 장치가 아니라 내용이다.
+     종이는 되물을 수가 없어서, 이 숫자가 언제 것인지는 화면에서보다 종이에서 더 중요하다.
+     줄 단위로만 안 잘리게 한다(표 전체에 걸면 열 줄짜리가 통째로 다음 장으로 밀린다). */
+  .fresh tr,
   .foot__notice,
   .printmeta {
     break-inside: avoid;
