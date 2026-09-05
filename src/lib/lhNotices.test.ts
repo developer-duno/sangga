@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   closeText,
+  dupText,
   isHttpUrl,
   isLhNotice,
   isLhNoticeList,
@@ -8,6 +9,7 @@ import {
   lhSummary,
   monthDay,
   sidoOf,
+  splitByRegion,
 } from './lhNotices';
 import type { LhNotice } from '../types';
 
@@ -129,11 +131,83 @@ describe('lhSummary — 접혀 있어도 보이는 한 줄', () => {
     expect(lhSummary([notice({ collected_at: '알 수 없음' })])).toBe('1건');
   });
 
+  it('★ 접힌 묶음이 있으면 그 수를 따로 적는다 (지역 것이 먼저)', () => {
+    const at = new Date(2026, 7, 27, 9, 0).toISOString();
+    const rows = [
+      notice({ pan_id: 'a', collected_at: at, is_nationwide: false }),
+      notice({ pan_id: 'b', collected_at: at, is_nationwide: true }),
+      notice({ pan_id: 'c', collected_at: at, is_nationwide: true }),
+    ];
+    expect(lhSummary(rows)).toBe('1건 · 전국 표시 2건 · 8월 27일 수집 기준');
+  });
+
+  it('★ 지역 공고가 하나도 없으면 "0건"이라 적지 않는다 (카드가 빈 것처럼 보인다)', () => {
+    const at = new Date(2026, 7, 27, 9, 0).toISOString();
+    const rows = [
+      notice({ pan_id: 'a', collected_at: at, is_nationwide: true }),
+      notice({ pan_id: 'b', collected_at: at, is_nationwide: true }),
+    ];
+    expect(lhSummary(rows)).toBe('전국 표시 2건 · 8월 27일 수집 기준');
+  });
+
+  it('★ 옛 응답(지역 칸 없음)은 예전과 글자 하나까지 같다', () => {
+    const at = new Date(2026, 7, 27, 9, 0).toISOString();
+    expect(lhSummary([notice({ collected_at: at })])).toBe('1건 · 8월 27일 수집 기준');
+  });
+
   it('천 단위에는 쉼표가 붙는다', () => {
     const rows = Array.from({ length: 1000 }, (_, i) =>
       notice({ pan_id: `p${i}`, collected_at: '알 수 없음' }),
     );
     expect(lhSummary(rows)).toBe('1,000건');
+  });
+});
+
+describe('splitByRegion — LH 가 "전국"이라 적은 것만 접는다', () => {
+  it('is_nationwide 가 참인 줄만 갈라 놓는다 (순서는 그대로)', () => {
+    const rows = [
+      notice({ pan_id: 'a', is_nationwide: false }),
+      notice({ pan_id: 'b', is_nationwide: true }),
+      notice({ pan_id: 'c', is_nationwide: true }),
+      notice({ pan_id: 'd', is_nationwide: false }),
+    ];
+    const { regional, nationwide } = splitByRegion(rows);
+    expect(regional.map((n) => n.pan_id)).toEqual(['a', 'd']);
+    expect(nationwide.map((n) => n.pan_id)).toEqual(['b', 'c']);
+  });
+
+  it('★ 옛 응답(칸이 아예 없음)은 전부 지역 공고로 본다 — 화면이 예전과 똑같이 돈다', () => {
+    // 마이그레이션 2026-09-05c 적용 전 라이브가 바로 이 상태다. 여기서 접어 버리면
+    // 그날 카드가 통째로 접힌 것처럼 보인다.
+    const { regional, nationwide } = splitByRegion([notice(), notice({ pan_id: 'b' })]);
+    expect(regional).toHaveLength(2);
+    expect(nationwide).toHaveLength(0);
+  });
+
+  it('참이 아닌 값(false·undefined·null)은 접지 않는다 — 참일 때만 접는다', () => {
+    const { nationwide } = splitByRegion([
+      notice({ pan_id: 'a', is_nationwide: false }),
+      notice({ pan_id: 'b' }),
+      // 서버가 이 칸에 null 을 실어 보내도 **지역 공고**로 다룬다(모르면 접지 않는다).
+      notice({ pan_id: 'c', is_nationwide: null }),
+    ]);
+    expect(nationwide).toHaveLength(0);
+  });
+});
+
+describe('dupText — "정정·재게시 N회"', () => {
+  it('1 이상일 때만 적는다', () => {
+    expect(dupText(notice({ dup_cnt: 3 }))).toBe('정정·재게시 3회');
+    expect(dupText(notice({ dup_cnt: 1 }))).toBe('정정·재게시 1회');
+  });
+
+  it('★ 없음·0·음수·NaN 은 아무 말도 안 한다 (0회·NaN회를 지어내지 않는다)', () => {
+    expect(dupText(notice())).toBeNull(); // 옛 응답 — 칸이 아예 없다
+    expect(dupText(notice({ dup_cnt: null }))).toBeNull(); // 칸은 왔는데 값이 없다
+    expect(dupText(notice({ dup_cnt: 0 }))).toBeNull(); // 재게시 없음
+    expect(dupText(notice({ dup_cnt: -1 }))).toBeNull(); // 서버가 뜻밖의 값을 준 경우
+    expect(dupText(notice({ dup_cnt: Number.NaN }))).toBeNull();
+    expect(dupText(notice({ dup_cnt: 1.5 }))).toBeNull(); // 개수는 정수다
   });
 });
 
@@ -219,6 +293,22 @@ describe('isLhNotice / isLhNoticeList — 서버 응답의 모양', () => {
     //    여기서는 그 둘과 다른 종류의 틀림(숫자)만 본다.
     expect(isLhNotice({ ...notice(), dtl_url: 12345 })).toBe(false);
     expect(isLhNotice({ ...notice(), pan_ss: 12345 })).toBe(false);
+  });
+
+  it('★ 05c 로 늘어난 두 칸은 없어도 통과하고, 있는데 종류가 틀리면 거른다', () => {
+    // 없어도 통과 — 마이그레이션 전 라이브가 그 상태다. 여기서 필수로 받으면 그날
+    // 목록 전체가 거절돼 카드가 통째로 사라진다(.every 구조).
+    expect(isLhNotice(notice())).toBe(true);
+    expect(isLhNotice(notice({ is_nationwide: true, dup_cnt: 2 }))).toBe(true);
+    // ★ null 도 통과한다 — 이 검사는 .every() 라 한 줄만 거절해도 카드가 통째로 사라진다.
+    //   pan_ss·dtl_url 과 같은 태도이며, null 은 아래에서 '지역 공고'·'꼬리표 없음'이 된다.
+    expect(isLhNotice(notice({ is_nationwide: null, dup_cnt: null }))).toBe(true);
+    expect(
+      isLhNoticeList([notice(), notice({ pan_id: 'b', is_nationwide: null, dup_cnt: null })]),
+    ).toBe(true);
+    // 있는데 틀린 것은 다른 함수의 응답을 받은 신호다.
+    expect(isLhNotice({ ...notice(), is_nationwide: '전국' })).toBe(false);
+    expect(isLhNotice({ ...notice(), dup_cnt: '2' })).toBe(false);
   });
 
   it('★ pan_ss·dtl_url 은 nullable 이다 — 한 줄이 null 이어도 목록이 살아남는다', () => {

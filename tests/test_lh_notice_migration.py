@@ -32,11 +32,17 @@ MIGRATION_CMT = os.path.join(ROOT, "supabase", "migrations", "2026-09-01c_lh_com
 # LH 가 "접수마감"이라 적어 준 것을 마감일과 무관하게 빼는 판(2026-09-01d).
 # ⛔ 마감일이 먼 미래로 적힌 공고는 날짜 필터가 **원리적으로** 못 거른다.
 MIGRATION_STATUS = os.path.join(ROOT, "supabase", "migrations", "2026-09-01d_lh_closed_status.sql")
+# LH 가 '전국'이라 적은 공고를 접고, 같은 제목의 재게시를 한 줄로 묶는 판(2026-09-05c).
+# 반환 표에 칸을 더하므로 이 파일만 `drop function` 으로 시작한다 — 지우고 다시 만들면
+# 권한이 사라지므로 grant 를 다시 주는지까지 아래에서 함께 본다.
+MIGRATION_FOLD = os.path.join(ROOT, "supabase", "migrations", "2026-09-05c_lh_fold_and_dedupe.sql")
 SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
 
 # "지금 있어야 할 모습"을 말하는 판들. 새 마이그레이션이 또 생기면 여기에 더한다.
 # ⛔ 28a·01a 는 여기 없다 — 그건 "그날 무엇을 넣었나"의 역사다.
-CURRENT = [MIGRATION_STATUS, SCHEMA]
+# ⓘ 01d 는 05c 로 덮였지만 여기 남긴다 — 05c 가 그 판의 거르기 줄들을 **글자 그대로**
+#   물려받았으므로, 둘을 함께 재면 "물려받다가 한 줄 흘렸다"가 그 자리에서 드러난다.
+CURRENT = [MIGRATION_STATUS, MIGRATION_FOLD, SCHEMA]
 
 TABLE = "lh_notice"
 FN = "list_lh_notices"
@@ -97,7 +103,7 @@ class TestTableIsClosed:
         """정책을 하나도 안 만드는 것이 곧 '전부 거부'다 — 이 레포의 다른 표와 같은 방식."""
         assert not re.search(r"(?im)^create\s+policy", statements(read(path)))
 
-    @pytest.mark.parametrize("path", [MIGRATION, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_FOLD, SCHEMA])
     def test_only_the_api_wrapper_is_opened(self, path):
         text = statements(read(path))
         assert "grant execute on function api.{}(text) to anon, authenticated;".format(FN) in text
@@ -105,7 +111,7 @@ class TestTableIsClosed:
         assert "grant execute on function {}(text) to anon".format(FN) not in text
         assert "grant execute on function public.{}(text) to anon".format(FN) not in text
 
-    @pytest.mark.parametrize("path", [MIGRATION, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_FOLD, SCHEMA])
     def test_revokes_before_granting(self, path):
         """create or replace 는 권한을 남기지만, 대시보드가 다시 만들면 anon 이 자동으로
         붙는다 — 만든 자리에서 다시 닫는다."""
@@ -118,7 +124,7 @@ class TestTableIsClosed:
 
 
 class TestNeverDeletes:
-    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, MIGRATION_CMT, MIGRATION_STATUS, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, MIGRATION_CMT, MIGRATION_STATUS, MIGRATION_FOLD, SCHEMA])
     def test_no_delete_or_truncate_anywhere(self, path):
         raw = read(path)
         # schema.sql 은 파일 전체가 아니라 **이 표를 다루는 구간만** 본다 — 남의 구간에
@@ -148,7 +154,7 @@ class TestNeverDeletes:
 
 
 class TestHidingRule:
-    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, MIGRATION_CMT, MIGRATION_STATUS, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, MIGRATION_CMT, MIGRATION_STATUS, MIGRATION_FOLD, SCHEMA])
     def test_filters_out_closed_notices(self, path):
         """어느 판이든 **마감 거르기 자체는** 함수 안에 있어야 한다.
 
@@ -253,20 +259,20 @@ class TestHidingRule:
             "고침은 새 파일(2026-09-01c)로 하세요."
         )
 
-    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, MIGRATION_CMT, MIGRATION_STATUS, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, MIGRATION_CMT, MIGRATION_STATUS, MIGRATION_FOLD, SCHEMA])
     def test_keeps_the_ones_with_no_close_date(self, path):
         """⛔ 마감일을 **모르는** 것과 마감된 것은 다른 말이다 — 모른다고 숨기면 살아 있는
         공고가 조용히 사라진다."""
         body = fn_body(read(path))
         assert "close_date is null or" in body
 
-    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, MIGRATION_CMT, MIGRATION_STATUS, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, MIGRATION_CMT, MIGRATION_STATUS, MIGRATION_FOLD, SCHEMA])
     def test_nationwide_shows_up_everywhere(self, path):
         """실측 531건 중 59건이 '전국'이다 — 이 줄이 없으면 그것들이 어디에서도 안 보인다."""
         body = fn_body(read(path))
         assert "or n.is_nationwide" in body
 
-    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, MIGRATION_CMT, MIGRATION_STATUS, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, MIGRATION_CMT, MIGRATION_STATUS, MIGRATION_FOLD, SCHEMA])
     def test_sido_param_is_cast_before_comparing(self, path):
         """⛔ text 파라미터를 char 컬럼에 그대로 대면 컬럼 쪽이 캐스트돼 인덱스가 죽는다
         (2026-08-16b 라이브 실측: 459.8ms ↔ 0.796ms)."""
@@ -274,17 +280,84 @@ class TestHidingRule:
         assert "v_sido char(2)" in body
         assert "n.sido_code = v_sido" in body
 
-    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, MIGRATION_CMT, MIGRATION_STATUS, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_KST, MIGRATION_CMT, MIGRATION_STATUS, MIGRATION_FOLD, SCHEMA])
     def test_sorts_soonest_deadline_first(self, path):
         body = fn_body(read(path))
         assert "order by n.close_date asc nulls last" in body
+
+
+# ── 3-2. '전국' 접기 · 같은 공고 묶기 (2026-09-05c) ──────────────────────────
+#
+# 이 넷은 **화면이 셀 수 있는 재료**와 **묶는 기준**을 지킨다. 여기서 한 줄만 빠져도
+# 에러가 아니라 조용한 거짓말이 된다 — 지역 칸이 없으면 화면이 접을 근거를 잃고,
+# 열쇠가 헐거워지면 서로 다른 공고가 합쳐진다.
+
+
+class TestFoldAndDedupe:
+    @pytest.mark.parametrize("path", [MIGRATION_FOLD, SCHEMA])
+    def test_returns_the_two_new_columns(self, path):
+        """⛔ 반환 표에 `is_nationwide`·`dup_cnt` 가 있어야 화면이 접고 셀 수 있다.
+
+        빠지면 화면은 그 값을 undefined 로 받아 **옛날처럼** 전부 한 목록에 늘어놓는다
+        (검증기가 선택 칸으로 받으므로 에러도 안 난다 — 그래서 여기서 못 박는다).
+        """
+        head = fn_body(read(path))
+        assert re.search(r"is_nationwide\s+boolean", head), "지역 칸을 안 내보냅니다"
+        assert re.search(r"dup_cnt\s+int", head), "재게시 횟수를 안 내보냅니다"
+
+    @pytest.mark.parametrize("path", [MIGRATION_FOLD, SCHEMA])
+    def test_the_dedupe_key_also_holds_the_notice_kind(self, path):
+        """⛔ 묶는 열쇠는 제목 **하나가 아니라 종류와 한 쌍**이다.
+
+        분양과 임대는 제목이 같아도 **다른 물건**이라, 종류를 빼면 둘이 한 줄로 합쳐져
+        하나가 화면에서 사라진다. 라이브 실측(2026-09-05): 살아 있는 공고는 제목만 47 =
+        제목+종류 47 로 **오늘은 차이가 0** 이지만, 창고 전체(마감 포함)는 제목만 **417** vs
+        제목+종류 **419** — 같은 제목에 종류가 다른 쌍이 실제로 **2건** 있었다. 즉 오늘
+        안 겪는다고 안 나는 결함이 아니다(그 2건이 다시 열리는 날 조용히 합쳐진다).
+        """
+        body = statements(fn_body(read(path)))
+        assert "n.kind_cd" in body, "묶는 열쇠에 종류를 안 들고 있습니다"
+        # partition 두 곳 **모두** — 한쪽만 고치면 남는 줄과 셈(dup_cnt)이 다른 기준이 된다.
+        assert body.count("partition by a.kind_cd, a.norm_key") == 2
+
+    @pytest.mark.parametrize("path", [MIGRATION_FOLD, SCHEMA])
+    def test_the_dedupe_key_strips_both_brackets_and_spaces(self, path):
+        """⛔ **대괄호 표시와 공백을 둘 다** 지운 제목이 묶는 열쇠다.
+
+        하나만 지우면 라이브에서 60·62 가 나왔다(둘 다 지우면 59 — 2026-09-01 실측).
+        여기서는 표현식을 **글자 그대로** 못 박는다 — 규칙의 존재만 재면 열쇠가 조용히
+        헐거워지는 것(숫자·기호까지 지우기)을 못 잡는데, 그건 서로 다른 공고를 합쳐
+        사용자가 못 보는 공고를 만든다(여러 줄로 세는 것보다 나쁘다).
+        """
+        body = statements(fn_body(read(path)))
+        assert r"'\[[^]]*\]|\s+'" in body, "묶는 열쇠의 정규식이 바뀌었습니다"
+        assert "regexp_replace(n.pan_nm" in body
+
+    @pytest.mark.parametrize("path", [MIGRATION_FOLD, SCHEMA])
+    def test_only_the_latest_row_of_each_key_survives(self, path):
+        """같은 열쇠에서 **한 줄만** 나간다 — 건수도 그 기준으로 세어진다."""
+        body = statements(fn_body(read(path)))
+        assert "where n.rn = 1" in body, "묶어 놓고 전부 내보내면 셈이 그대로 부풀어 있습니다"
+        assert "row_number() over (partition by a.kind_cd, a.norm_key" in body
+        assert "count(*) over (partition by a.kind_cd, a.norm_key)" in body
+
+    @pytest.mark.parametrize("path", [MIGRATION_FOLD, SCHEMA])
+    def test_the_list_has_an_upper_bound(self, path):
+        """⛔ 상한 없는 목록 함수는 자료가 늘거나 반복 호출되는 날 창고·화면을 함께 끈다
+        (2026-09-05 보안 스캔 low). 형제 list_district_buildings 와 같은 자릿수다."""
+        body = statements(fn_body(read(path)))
+        assert "limit 200" in body
+
+    def test_tells_postgrest_to_reload(self):
+        """⛔ 이 판은 함수를 **지웠다 다시 만든다** — 알리지 않으면 화면만 404(PGRST202)다."""
+        assert "notify pgrst, 'reload schema';" in statements(read(MIGRATION_FOLD))
 
 
 # ── 4. 화면이 실제로 부를 수 있나 ─────────────────────────────────────────────
 
 
 class TestReachableFromTheScreen:
-    @pytest.mark.parametrize("path", [MIGRATION, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_FOLD, SCHEMA])
     def test_has_an_api_twin(self, path):
         """화면은 db.schema='api' 로 붙는다 — public 은 REST 노출에서 빠져 있다."""
         assert re.search(

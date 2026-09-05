@@ -235,6 +235,10 @@ export function lhNotice(over: Partial<LhNotice> = {}): LhNotice {
     close_date: `${new Date().getFullYear()}-09-17`,
     dtl_url: 'https://apply.lh.or.kr/notice/2026-0001',
     collected_at: new Date(2026, 7, 27, 9, 0).toISOString(),
+    // 2026-09-05c 로 늘어난 두 칸(결정 0026). 기본은 **그 지역 공고 · 재게시 없음** —
+    // 접힘 묶음·꼬리표를 보려는 시험만 이 값을 덮어쓴다.
+    is_nationwide: false,
+    dup_cnt: 0,
     ...over,
   };
 }
