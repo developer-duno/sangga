@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { RENT_STATS_FN } from '../lib/appConstants';
 import { SECTION_PLAN } from '../lib/sectionCards';
 import { SectionCard } from './SectionCard';
-import { isRentStatList, rentSummary, toRentRows, typeOptions } from '../lib/rentStats';
+import { defaultBldType, isRentStatList, rentSummary, toRentRows, typeOptions } from '../lib/rentStats';
 import type { RentStat } from '../types';
 
 /**
@@ -96,8 +96,14 @@ export function RentStatSection({ pnu }: Props) {
   const options = typeOptions(rows);
   // 고른 것이 지금 목록에 없으면(건물이 바뀌던 찰나) 있는 것 중 첫째로 되돌린다 —
   // 없는 종류를 고른 채로 두면 값이 하나도 없는 카드가 된다.
-  const bldType = picked !== null && options.includes(picked) ? picked : options[0];
-  const shown = toRentRows(rows, bldType);
+  // ⓘ 되돌릴 기본값은 `defaultBldType` **한 곳**에서 정한다. 여기 `options[0]` 이라고 손으로
+  //   다시 적어 두면(2026-09-05 이전이 그랬다) 그 함수의 규칙이 바뀌는 날 이 화면만 옛
+  //   규칙을 쓰게 된다 — 값은 글자 그대로 같다(`typeOptions(rows)[0]`).
+  const bldType = picked !== null && options.includes(picked) ? picked : defaultBldType(rows);
+  // ⓘ `bldType` 이 null 이 되는 경우는 하나다 — 온 줄이 전부 종류 칸이 빈 글자일 때.
+  //   예전에는 `options[0]`(런타임 undefined)이라 결과가 마찬가지로 빈 목록이었다 —
+  //   그 때도 카드는 서고 "이번 조사에서 값이 나오지 않았습니다"라고 적는다(동작 그대로).
+  const shown = bldType === null ? [] : toRentRows(rows, bldType);
 
   return (
     <SectionCard plan={SECTION_PLAN.rent} className="rent" summary={summary}>
@@ -119,7 +125,7 @@ export function RentStatSection({ pnu }: Props) {
           <select
             id="rent-type"
             className="rent__select"
-            value={bldType}
+            value={bldType ?? ''}
             onChange={(e) => setPicked(e.target.value)}
           >
             {options.map((t) => (

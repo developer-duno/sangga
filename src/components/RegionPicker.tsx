@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { OPEN_SIGUNGU_FN } from '../lib/appConstants';
 import { SIDOS } from '../lib/regions';
 import type { OpenSigungu } from '../types';
 
@@ -65,7 +66,7 @@ export function RegionPicker({
     setGuLoading(true);
     setGuError(null);
     try {
-      const { data, error } = await supabase.rpc('list_open_sigungu');
+      const { data, error } = await supabase.rpc(OPEN_SIGUNGU_FN);
       if (error) throw error;
       setGuList((data ?? []) as OpenSigungu[]);
     } catch (ex) {

@@ -168,6 +168,43 @@ describe('RentStatSection — 건물 종류 고르기', () => {
   });
 });
 
+describe('RentStatSection — 종류 칸이 비어서 고를 것이 없을 때', () => {
+  /*
+    2026-09-05. 되돌릴 기본값을 `options[0]` 대신 `defaultBldType(rows)` 로 바꾸면서
+    **없던 갈래가 하나 생겼다** — 그 함수는 고를 것이 없으면 `null` 을 준다(예전 `options[0]`
+    은 런타임 `undefined` 였다).
+
+    ⓘ 이 시험이 지키는 것을 정확히 적어 둔다. `shown` 의 `bldType === null ? [] : …` 자체는
+      **없애도 화면이 똑같다**(`toRentRows` 가 null 과 맞는 줄을 못 찾아 어차피 빈 목록이다 —
+      돌연변이로 실측). 그러니 이 시험이 붙드는 것은 그 삼항이 아니라 **"이 상태에서 카드가
+      터지지 않는다"** 다. 다음 사람이 `bldType` 을 그냥 `string` 으로 여기고 `.trim()` 같은
+      것을 부르는 순간 빨간불이 된다(그것도 실측했다). 카드가 터지면 그물에 걸려 **층별 화면
+      전체**가 오류 안내로 바뀐다 — 곁다리 하나로 본체를 잃는 자리다.
+
+    도달 경로: `isRentStat` 은 `bld_type` 이 **문자열이기만** 하면 통과시키므로(빈 글자도
+    문자열이다), 종류 칸이 빈 줄만 오면 `typeOptions` 가 그 줄들을 걸러 빈 목록이 된다.
+  */
+  beforeEach(() => {
+    responses.rent = { data: [stat({ bld_type: '' })], error: null };
+  });
+
+  it('★ 카드가 터지지 않고 선다 — 줄도 고르개도 없이', async () => {
+    const { container } = render(<RentStatSection pnu={PNU} />);
+
+    // 카드 자체는 있다(줄이 하나라도 왔으므로 "조사 대상이 아니다" 쪽이 아니다).
+    expect(await screen.findByText('상권 임대 동향 (부동산원 조사)')).toBeTruthy();
+    await openCard();
+
+    // 고를 것이 없으니 고르개도 없고, 무엇을 보는 중인지 적는 자리도 비어 있다.
+    expect(screen.queryByLabelText('건물 종류 골라보기')).toBeNull();
+    expect(container.querySelector('.rent__now-type')?.textContent).toBe('');
+
+    // ⛔ 값이 없는데 숫자 줄을 그리면 "여기는 0%"처럼 읽힌다 — 대신 그 사실을 적는다.
+    expect(container.querySelector('.rent__rows')).toBeNull();
+    expect(screen.getByText('이 종류는 이번 조사에서 값이 나오지 않았습니다.')).toBeTruthy();
+  });
+});
+
 describe('RentStatSection — 조사 대상이 아닐 때', () => {
   beforeEach(() => {
     responses.rent = { data: [], error: null };

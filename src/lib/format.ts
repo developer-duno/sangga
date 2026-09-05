@@ -24,11 +24,6 @@ export function formatFloor(floorNo: number, label: string | null): string {
   return `${floorNo}층`;
 }
 
-/** 스택에서 층을 위→아래로 세울 때 쓰는 정렬 키. 옥탑이 제일 위, 지하가 제일 아래. */
-export function floorSortKey(floorNo: number): number {
-  return floorNo;
-}
-
 /**
  * 분기 스냅샷 키 '202603' → '2026년 1분기'.
  *
@@ -121,13 +116,6 @@ function eokText(won: number): string {
  */
 function isEokScale(won: number): boolean {
   return Math.round(Math.abs(won) / 1_000_000) >= 100;
-}
-
-/** 추정 총액을 '2.4억' / '8,500만'으로. 값이 없으면 '—'. */
-export function formatEok(won: number | null | undefined): string {
-  if (won === null || won === undefined || !Number.isFinite(won)) return '—';
-  if (won === 0) return '0원';
-  return isEokScale(won) ? eokText(won) : manText(won);
 }
 
 /**
