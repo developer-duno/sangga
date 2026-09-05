@@ -64,6 +64,43 @@ def revoke_migration_sql():
     return read(REVOKE_MIGRATION)
 
 
+def _statement_text(sql):
+    """주석 줄을 걷어낸 **실제 SQL 문장만** 한 줄로 이어 붙인다.
+
+    ⛔ **왜 필요한가** — 원문을 그대로 훑으면 `-- ` 로 죽인 문장도 글자가 남아
+       "있다"고 판정한다 — 즉 **막는다던 규칙이 꺼져도 초록**이다. 2026-09-05a 작업
+       중 돌연변이 시험으로 실증했다: api grant 줄에 `-- ` 를 붙였는데도 이 파일의
+       시험 23개가 전부 통과했다.
+    ⓘ 형제 파일 tests/test_api_schema_migration.py 의 statements() 와 같은 뜻이다.
+       **import 하지 않는다** — 시험 파일끼리 얽히면 한쪽의 고장이 다른 쪽을 가린다.
+    ⓘ 이 파일에서 **정본 전체를 훑는 긍정 단언은 전부 이것을 쓴다.**
+       부정 단언(`not in`)·줄머리 고정 정규식(`(?m)^…`)·블록 추출 도우미는
+       원문 그대로 둔다 — 그쪽은 원문이 더 엄격하거나(주석까지 걸린다) 이미
+       주석에 안 속는 형태다.
+    """
+    body = "\n".join(ln for ln in sql.splitlines() if not ln.lstrip().startswith("--"))
+    return re.sub(r"\s+", " ", body)
+
+
+def test_statement_text_actually_strips_comments(schema_sql):
+    """⛔ **헬퍼 자신을 시험한다** — 주석 제거가 헛돌면 이 파일의 시험들이 조용히
+    가짜 초록이 되고, 그건 가드가 없는 것보다 나쁘다(막고 있다는 거짓 안심).
+
+    정본의 api grant 줄을 **주석 처리**해 보고, 그때 판정이 뒤집히는지 확인한다.
+    """
+    needle = "grant execute on function api.search_scope(text, text) to anon"
+    assert needle in _statement_text(schema_sql), (
+        "정본에 api.search_scope grant 가 없습니다 — 이 시험의 전제가 깨졌습니다"
+    )
+    dead = "\n".join(
+        ("-- " + ln) if ln.startswith("grant execute on function api.search_scope(") else ln
+        for ln in schema_sql.splitlines()
+    )
+    assert needle not in _statement_text(dead), (
+        "주석으로 죽인 grant 가 여전히 '있다'고 읽힙니다 — 주석 제거가 헛돕니다"
+    )
+
+
 def extract_person_regexes(sql):
     """mask_person_name 안의 정규식 두 개(대상 패턴 / 건물 지칭어 예외)를 뽑는다."""
     return re.findall(r"'(\\\([^']*?\\\)\\s\*\$)'", sql)
@@ -170,19 +207,21 @@ def test_schema_search_uses_stored_key_columns(schema_sql):
     식으로 되돌리면 에러가 아니라 **흔한 검색어만 조용히 500**이 되므로,
     사람 눈으로는 안 잡힌다 — 이 테스트가 가드다.
     """
+    # ⚠️ 공백 수에 흔들리지 않게 눌러서 비교한다. 2026-08-13 에 `pc.road_addr_key  like`
+    #    처럼 정렬용 공백을 두 칸 준 것만으로 이 가드가 빨간불이 됐다 — 지켜야 할 것은
+    #    "저장 컬럼을 본다"이지 "공백이 한 칸이다"가 아니다.
+    # ⛔ 그리고 **주석을 걷어낸 본문**으로 본다 — 원문을 보면 `-- ` 로 죽인 문장도
+    #    글자가 남아 "있다"고 읽힌다(막는다던 규칙이 꺼져도 초록).
+    flat = _statement_text(schema_sql)
+
     # 저장 컬럼이 표시명 식으로 만들어져야 한다
     # (동명칭 404개 찾기·개인 성명 가림이 전부 이 식에 걸려 있다).
     assert (
         "generated always as (search_key({})) stored".format(DISPLAY_EXPR)
-        in schema_sql
+        in flat
     ), "schema.sql: building.nm_key 가 표시명 식으로 만들어지지 않습니다"
 
     # WHERE 가 저장 컬럼을 본다 (세 가지 = 이름·도로명·지번)
-    #
-    # ⚠️ 공백 수에 흔들리지 않게 눌러서 비교한다. 2026-08-13 에 `pc.road_addr_key  like`
-    #    처럼 정렬용 공백을 두 칸 준 것만으로 이 가드가 빨간불이 됐다 — 지켜야 할 것은
-    #    "저장 컬럼을 본다"이지 "공백이 한 칸이다"가 아니다.
-    flat = re.sub(r"\s+", " ", schema_sql)
     for where in (
         "b.nm_key like pat.p",
         "pc.road_addr_key like pat.p",
@@ -194,9 +233,23 @@ def test_schema_search_uses_stored_key_columns(schema_sql):
         )
 
     # 그 컬럼 위에 인덱스가 있어야 한다 (없으면 전수 스캔)
-    for idx in ("idx_building_nm_key", "idx_parcel_road_key", "idx_parcel_jibun_key"):
-        assert idx in schema_sql, (
-            "schema.sql: {} 가 없습니다 — 검색이 전수 스캔이 됩니다".format(idx)
+    #
+    # ⛔ **이름만 찾으면 안 된다** — 정본에는 그 이름을 본문에 담은 **다른 SQL 문장**이
+    #    따로 있다: `comment on column building.nm_key is '… idx_building_nm_key 가 이
+    #    컬럼을 쓴다. …'`. 그건 주석이 아니라 진짜 문장이라 주석 제거로도 안 걷힌다.
+    #    그래서 생성문을 `-- ` 로 죽여도 이름은 살아남아 이 가드가 초록이 된다(실증).
+    #    지켜야 할 것은 "그 이름이 어딘가 적혀 있다"가 아니라 "그 인덱스를 만든다"이므로,
+    #    **생성문 전체**로 본다.
+    for stmt in (
+        "create index if not exists idx_building_nm_key "
+        "on building using gin (nm_key gin_trgm_ops)",
+        "create index if not exists idx_parcel_road_key "
+        "on parcel using gin (road_addr_key gin_trgm_ops)",
+        "create index if not exists idx_parcel_jibun_key "
+        "on parcel using gin (jibun_addr_key gin_trgm_ops)",
+    ):
+        assert stmt in flat, (
+            "schema.sql: `{}` 가 없습니다 — 검색이 전수 스캔이 됩니다".format(stmt)
         )
 
     # 죽은 식 인덱스를 되살리면 안 된다 (라이브에서 이미 지웠다)
@@ -301,7 +354,7 @@ def test_display_nm_column_is_defined_from_the_masking_function(schema_sql):
     이 컬럼이 뷰가 읽는 유일한 출처가 됐으므로, 정의가 바뀌면 가림이 통째로 풀린다.
     (예: 그냥 `bld_nm` 을 복사하도록 바꾸면 개인 성명이 다시 화면에 나온다.)
     """
-    flat = re.sub(r"\s+", " ", schema_sql)
+    flat = _statement_text(schema_sql)
     assert (
         "add column if not exists display_nm text generated always as "
         "(building_display_nm(bld_nm, dong_nm)) stored" in flat
@@ -431,7 +484,7 @@ def test_search_bounds_candidates_with_the_limit(schema_sql):
     전부 모으다 3초를 넘긴다. 따로 세는 조회를 두는 방식으로 되돌리면 좁은 검색어까지
     표를 두 번 더 훑어 오히려 느려진다(실측: '명동' 796ms → 2,803ms).
     """
-    flat = re.sub(r"\s+", " ", schema_sql)
+    flat = _statement_text(schema_sql)
     assert flat.count("limit search_scope_limit() + 1") >= 2, (
         "schema.sql: 후보 수집(주소·이름 두 가지)이 상한에서 멈추지 않습니다 — "
         "흔한 검색어가 20만 건을 다 모으다 3초를 넘겨 500이 됩니다"
@@ -439,40 +492,6 @@ def test_search_bounds_candidates_with_the_limit(schema_sql):
     assert "not (select g.broad from gate g)" in flat, (
         "schema.sql: 범위를 넘긴 검색을 끊는 게이트가 없습니다 — 결과 25개를 억지로 "
         "보여주게 되는데, 상권분석은 건물 한 채 단위라 의미가 없습니다"
-    )
-
-
-def _statement_text(sql):
-    """주석 줄을 걷어낸 **실제 SQL 문장만** 한 줄로 이어 붙인다.
-
-    ⛔ **왜 필요한가** — 원문을 그대로 훑으면 `-- ` 로 죽인 문장도 글자가 남아
-       "있다"고 판정한다 — 즉 **막는다던 규칙이 꺼져도 초록**이다. 2026-09-05a 작업
-       중 돌연변이 시험으로 실증했다: api grant 줄에 `-- ` 를 붙였는데도 이 파일의
-       시험 23개가 전부 통과했다.
-    ⓘ 형제 파일 tests/test_api_schema_migration.py 의 statements() 와 같은 뜻이다.
-       **import 하지 않는다** — 시험 파일끼리 얽히면 한쪽의 고장이 다른 쪽을 가린다.
-    ⚠️ 이 파일의 **나머지 시험은 아직 원문(flat)을 본다** — 파일 전체 전환은 별도 PR.
-    """
-    body = "\n".join(ln for ln in sql.splitlines() if not ln.lstrip().startswith("--"))
-    return re.sub(r"\s+", " ", body)
-
-
-def test_statement_text_actually_strips_comments(schema_sql):
-    """⛔ **헬퍼 자신을 시험한다** — 주석 제거가 헛돌면 아래 두 시험이 조용히
-    가짜 초록이 되고, 그건 가드가 없는 것보다 나쁘다(막고 있다는 거짓 안심).
-
-    정본의 api grant 줄을 **주석 처리**해 보고, 그때 판정이 뒤집히는지 확인한다.
-    """
-    needle = "grant execute on function api.search_scope(text, text) to anon"
-    assert needle in _statement_text(schema_sql), (
-        "정본에 api.search_scope grant 가 없습니다 — 이 시험의 전제가 깨졌습니다"
-    )
-    dead = "\n".join(
-        ("-- " + ln) if ln.startswith("grant execute on function api.search_scope(") else ln
-        for ln in schema_sql.splitlines()
-    )
-    assert needle not in _statement_text(dead), (
-        "주석으로 죽인 grant 가 여전히 '있다'고 읽힙니다 — 주석 제거가 헛돕니다"
     )
 
 
@@ -537,15 +556,20 @@ def test_search_scope_limit_matches_between_schema_and_migration():
 
 
 def test_search_reads_the_searchable_parcel_summary(schema_sql):
-    """검색은 parcel 이 아니라 mv_search_parcel 을 훑어야 한다."""
-    flat = re.sub(r"\s+", " ", schema_sql)
+    """검색은 parcel 이 아니라 mv_search_parcel 을 훑어야 한다.
+
+    ⛔ 함수 본문을 **원문에서** 자르면 안 된다 — 잘라낸 토막 안 주석에
+       `from mv_search_parcel` 이 한 줄만 있어도, 질의가 parcel 직접 훑기로
+       되돌아간 상태에서 이 가드가 초록이 된다. 그래서 주석을 걷어낸 본문에서 자른다.
+    """
+    text = _statement_text(schema_sql)
     for fn, head in (
         ("search_buildings", "create or replace function search_buildings(q text, lim int default 25, sigungu text default null)"),
         ("search_scope", "create or replace function search_scope(q text, sigungu text default null)"),
     ):
-        i = schema_sql.index(head)
-        j = schema_sql.index("$$;", schema_sql.index("as $$", i)) + 3
-        body = re.sub(r"\s+", " ", schema_sql[i:j])
+        i = text.index(head)
+        j = text.index("$$;", text.index("as $$", i)) + 3
+        body = text[i:j]
         assert "from mv_search_parcel" in body, (
             "schema.sql: {} 가 검색 전용 요약표를 안 씁니다 — 전국 시드 뒤 parcel 112만 행을 "
             "훑느라 2글자 검색이 3초를 넘겨 500이 됩니다".format(fn)
@@ -554,7 +578,7 @@ def test_search_reads_the_searchable_parcel_summary(schema_sql):
             "schema.sql: {} 가 parcel 을 직접 훑습니다 — 건물 없는 93만 필지까지 훑게 "
             "됩니다(2026-08-13 이전으로 되돌아갔습니다)".format(fn)
         )
-    assert "create materialized view if not exists mv_search_parcel" in flat, (
+    assert "create materialized view if not exists mv_search_parcel" in text, (
         "schema.sql: mv_search_parcel 정의가 없습니다"
     )
 
@@ -565,8 +589,10 @@ def test_search_summary_keeps_only_parcels_that_have_buildings(schema_sql):
     조건을 빼면 요약표가 parcel 전체 사본이 돼 크기 이점이 사라지고, 범위 판정도
     다시 부풀려진다(= 이 표를 만든 이유가 통째로 없어진다).
     """
-    i = schema_sql.index("create materialized view if not exists mv_search_parcel")
-    body = re.sub(r"\s+", " ", schema_sql[i : schema_sql.index(";", i)])
+    # ⛔ 원문이 아니라 주석을 걷어낸 본문에서 자른다(위 시험과 같은 이유).
+    text = _statement_text(schema_sql)
+    i = text.index("create materialized view if not exists mv_search_parcel")
+    body = text[i : text.index(";", i)]
     assert re.search(
         r"where exists\s*\(\s*select 1 from building b where b\.pnu = pc\.pnu\s*\)", body
     ), (
@@ -577,7 +603,7 @@ def test_search_summary_keeps_only_parcels_that_have_buildings(schema_sql):
 
 def test_search_summary_has_the_indexes_it_needs(schema_sql):
     """concurrently 갱신용 unique 인덱스 + 부분 일치용 gin 두 개."""
-    flat = re.sub(r"\s+", " ", schema_sql)
+    flat = _statement_text(schema_sql)
     assert "create unique index if not exists idx_msp_pnu on mv_search_parcel (pnu)" in flat, (
         "schema.sql: mv_search_parcel 의 unique 인덱스가 없습니다 — "
         "`refresh materialized view concurrently` 가 동작하지 않아 갱신 중 검색이 잠깁니다"
@@ -599,7 +625,7 @@ def test_search_can_be_narrowed_to_one_sigungu(schema_sql):
     같은 건물 이름이 여러 구에 겹치기 때문이다 — 이름 33,851종 중 2,443종(7.2%)이
     2개 이상 구에 존재한다. 좁히는 길이 사라지면 그 중복이 그대로 화면에 나온다.
     """
-    flat = re.sub(r"\s+", " ", schema_sql)
+    flat = _statement_text(schema_sql)
     assert "sigungu_code" in flat, "schema.sql: 요약표에 시군구 칸이 없습니다"
     assert "create index if not exists idx_msp_sigungu on mv_search_parcel (sigungu_code)" in flat, (
         "schema.sql: 구로 좁히는 인덱스가 없습니다 — 좁혀도 전수 스캔이 됩니다"
@@ -644,7 +670,7 @@ def test_materialized_views_are_closed_to_anon(schema_sql):
     검색 상한 게이트를 통째로 건너뛰는 옆문이었다. 원인은 Supabase 가 스키마 public 에
     걸어 둔 기본 권한이라, **새로 만드는 표마다 자동으로 열린다.**
     """
-    flat = re.sub(r"\s+", " ", schema_sql)
+    flat = _statement_text(schema_sql)
     for mv in ("mv_search_parcel", "mv_open_sigungu"):
         m = re.search(r"revoke all on {}\s+from\s+([^;]+);".format(mv), flat)
         assert m, "schema.sql: {} 의 권한 회수문이 없습니다".format(mv)
@@ -656,4 +682,101 @@ def test_materialized_views_are_closed_to_anon(schema_sql):
     assert "alter default privileges in schema public revoke all on tables from anon" in flat, (
         "schema.sql: 기본 권한이 안전한 쪽으로 안 바뀌어 있습니다 — 다음에 표를 하나 "
         "더 만들면 또 자동으로 열립니다(사람 기억에 의존하게 됩니다)"
+    )
+
+
+# =====================================================================
+# 돌연변이 상설 시험 — 위 가드들이 **죽은 문장을 실제로 잡는가**
+# =====================================================================
+# ⛔ 왜 상설로 두나: 위 가드는 정본에서 문자열을 찾는다. 찾는 대상이 원문이면
+#    `-- ` 로 죽인 문장도 글자가 남아 "있다"고 읽혀 **막는다던 규칙이 꺼져도
+#    초록**이 된다(2026-09-05a 실증: grant 한 줄을 죽였는데 이 파일 시험 23개가
+#    전부 통과했다). 한 번 고치고 끝낼 일이 아니다 — 누군가 `_statement_text` 를
+#    다시 원문 눌러보기로 되돌리거나 새 가드를 원문 기준으로 쓰면, 그 순간
+#    여기가 빨간불이 되어야 한다.
+
+
+def _kill_lines(sql, needle, first_only=False):
+    """`needle` 이 든 줄 앞에 `-- ` 를 붙여 **문장을 죽인 사본**을 만든다.
+
+    이미 주석인 줄은 건너뛴다 — 설명문에 옛 형태를 그대로 인용해 둔 줄이 있어서,
+    그걸 또 죽이면 "몇 줄을 죽였나"가 부풀려진다.
+    """
+    out = []
+    killed = 0
+    for ln in sql.splitlines():
+        dead_already = ln.lstrip().startswith("--")
+        if needle in ln and not dead_already and not (first_only and killed):
+            out.append("-- " + ln)
+            killed += 1
+        else:
+            out.append(ln)
+    return "\n".join(out), killed
+
+
+# (가드 시험, 죽일 문구, 첫 줄만 죽이나)
+MUTATIONS = [
+    (test_schema_search_uses_stored_key_columns, "b.nm_key like pat.p", False),
+    (test_schema_search_uses_stored_key_columns,
+     "generated always as (search_key(", False),
+    (test_display_nm_column_is_defined_from_the_masking_function,
+     "add column if not exists display_nm text", False),
+    (test_search_bounds_candidates_with_the_limit,
+     "limit search_scope_limit() + 1", False),
+    (test_search_bounds_candidates_with_the_limit,
+     "not (select g.broad from gate g)", False),
+    (test_search_reads_the_searchable_parcel_summary, "from mv_search_parcel", False),
+    (test_search_summary_keeps_only_parcels_that_have_buildings,
+     "select 1 from building b where b.pnu = pc.pnu", False),
+    # ⛔ 인덱스 생성문 3종 — 이름만 보던 시절에는 이 셋이 **전부 안 잡혔다**.
+    #    정본이 그 이름을 `comment on column …` 문장 본문에도 적어 두었거나(nm_key),
+    #    죽인 줄 자체에 이름이 남아 있어서다.
+    (test_schema_search_uses_stored_key_columns,
+     "create index if not exists idx_building_nm_key", False),
+    (test_search_summary_has_the_indexes_it_needs,
+     "create unique index if not exists idx_msp_pnu", False),
+    (test_search_summary_has_the_indexes_it_needs,
+     "create index if not exists idx_msp_road_key", False),
+    (test_search_can_be_narrowed_to_one_sigungu,
+     "create index if not exists idx_msp_sigungu", False),
+    # ⚠️ 여기만 **첫 줄 하나만** 죽인다 — 4곳 중 하나만 사라져도(4→3)
+    #    빨간불이어야 한다는 것이 그 가드의 본론이기 때문이다.
+    (test_search_can_be_narrowed_to_one_sigungu,
+     "pat.gu is null or pc.sigungu_code = pat.gu", True),
+    (test_materialized_views_are_closed_to_anon,
+     "revoke all on mv_search_parcel", False),
+    (test_materialized_views_are_closed_to_anon,
+     "alter default privileges in schema public revoke all on tables from anon", False),
+]
+
+MUTATION_IDS = [
+    "{} <- {}".format(guard.__name__, needle) for guard, needle, _ in MUTATIONS
+]
+
+
+@pytest.mark.parametrize("guard, needle, first_only", MUTATIONS, ids=MUTATION_IDS)
+def test_each_guard_catches_a_commented_out_statement(
+    schema_sql, guard, needle, first_only
+):
+    """정본에서 그 문장을 `-- ` 로 죽이면 **그 가드가 빨간불이 되어야** 한다.
+
+    어기면 무엇이 조용히 깨지나: 가드는 그대로 있는데 지키는 것이 없어진다.
+    문장을 지우는 대신 주석 처리한 PR 이 전부 초록으로 통과하고, 정본은 규칙이
+    꺼진 채로 남는다 — 에러가 아니라 **거짓 안심**이라 사람 눈으로는 안 잡힌다.
+    """
+    dead, killed = _kill_lines(schema_sql, needle, first_only)
+    assert killed, (
+        "전제가 깨졌습니다: 정본에 `{}` 가 든 (주석 아닌) 줄이 없습니다 — "
+        "정본 문장이 바뀌었다면 이 쌍의 문구부터 고치세요".format(needle)
+    )
+    if first_only:
+        assert killed == 1, "첫 줄만 죽여야 하는데 {}줄을 죽였습니다".format(killed)
+    try:
+        guard(dead)
+    except AssertionError:
+        return
+    raise AssertionError(
+        "{} 가 `-- ` 로 죽인 `{}` 를 못 잡습니다 — 그 가드가 주석까지 포함한 "
+        "원문을 보고 있다는 뜻입니다. `_statement_text(schema_sql)` 로 보게 "
+        "고치세요".format(guard.__name__, needle)
     )
