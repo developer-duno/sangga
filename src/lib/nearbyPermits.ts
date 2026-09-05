@@ -22,6 +22,15 @@ export type NearbyPermitLine = {
   started: number;
   /** 허가만 받고 아직 안 판 것 = `total - started`. */
   permitOnly: number;
+  /**
+   * 그중 **기준월 말일 기준으로 허가 후 2년 넘게 착공 기록이 없는** 것. 못 적을 때는 `null`.
+   *
+   * ⛔ **"실효됐다"가 아니다.** 원본에 실효 칸이 없어, 아는 것은 "착공 기록이 없다"까지다.
+   * ⚠️ `null` 이 되는 두 경우 — ①서버가 아직 그 칸을 안 준다(2026-09-05b 이전 라이브)
+   *    ②값이 말이 안 된다(음수·`permitOnly` 초과). 둘 다 **그 문장만** 빠지고 줄은 그대로
+   *    선다 — 있는 사실(전체·착공)까지 같이 버릴 이유가 없다.
+   */
+  stale: number | null;
   /** '2026년 7월'. 이 값이 없으면 줄을 아예 안 만든다(아래 참조). */
   baseLabel: string;
 };
@@ -66,5 +75,24 @@ export function toPermitLine(data: unknown): NearbyPermitLine | null {
   const baseLabel = formatMonthKo(row.base_ym);
   if (baseLabel === null) return null;
 
-  return { total, started, permitOnly: total - started, baseLabel };
+  const permitOnly = total - started;
+  return { total, started, permitOnly, stale: toStale(row.stale_cnt, permitOnly), baseLabel };
+}
+
+/**
+ * '오래 멈춰 있는 것'의 수. **줄 전체를 버리지 않는다** — 못 믿을 때는 이 조각만 `null` 이다.
+ *
+ * 위쪽 검사들과 다루는 태도가 다른 이유: 전체·착공은 **문장의 뼈대**라 어긋나면 문장이
+ * 통째로 거짓이 되지만, 이 수는 **덧붙이는 한 문장**이라 빼도 남는 말이 여전히 참이다.
+ *
+ * 안 적는 경우 셋:
+ *  · 서버가 안 준다 — 2026-09-05b 이전 라이브. 옛 응답이 새 화면을 깨뜨리면 안 된다.
+ *  · 숫자가 아니거나 음수 — '-3동이 멈춰 있다'는 말은 없다.
+ *  · `permitOnly`(= 전체 − 착공)보다 크다 — 착공한 것은 세지 않는 수라 그럴 수 없다.
+ *    그런데도 크게 왔다면 서버와 화면이 다른 것을 세고 있는 것이니 적지 않는다.
+ */
+function toStale(raw: unknown, permitOnly: number): number | null {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
+  if (raw < 0 || raw > permitOnly) return null;
+  return raw;
 }

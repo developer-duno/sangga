@@ -346,6 +346,40 @@ describe('IndustryMixSection — 둘레에 새로 올라오는 건물', () => {
     });
   });
 
+  it('오래 멈춰 있는 것이 있으면 한 줄을 더 적는다 (결재 2026-09-05)', async () => {
+    // ⛔ 숫자를 빼는 것이 아니라 **사실을 덧붙이는 것**이다 — 7동은 그대로 7동이다.
+    responses.permits = permits({ total_cnt: 7, started_cnt: 2, stale_cnt: 3 });
+    render(<IndustryMixSection pnu="1168010100100010000" />);
+
+    expect(await screen.findByText('새로 올라오는 상가 건물 7동')).toBeTruthy();
+    expect(
+      screen.getByText(
+        /그중 3동은 허가 후 2년 넘게 착공하지 않았습니다\(건축법상 허가가 실효됐을 수 있습니다\)\./,
+      ),
+    ).toBeTruthy();
+    // ⛔ 실효를 **단정**하지 않는다 — 원본에 실효 칸이 없다.
+    const text = document.body.textContent ?? '';
+    for (const banned of ['실효됐습니다', '실효된 허가', '취소됐']) {
+      expect(text).not.toContain(banned);
+    }
+  });
+
+  it('멈춘 것이 0동이거나 서버가 그 칸을 안 주면 그 문장만 빠진다', async () => {
+    // 0동 — '0동이 멈춰 있습니다'는 읽는 사람에게 아무 뜻이 없다.
+    responses.permits = permits({ total_cnt: 7, started_cnt: 2, stale_cnt: 0 });
+    const { unmount } = render(<IndustryMixSection pnu="1168010100100010000" />);
+    await screen.findByText('새로 올라오는 상가 건물 7동');
+    expect(screen.queryByText(/2년 넘게 착공하지 않았습니다/)).toBeNull();
+    unmount();
+
+    // 2026-09-05b 를 아직 안 올린 라이브 — 옛 응답이 새 화면을 깨뜨리면 안 된다.
+    responses.permits = permits({ total_cnt: 7, started_cnt: 2 });
+    render(<IndustryMixSection pnu="1168010100100010000" />);
+    expect(await screen.findByText('새로 올라오는 상가 건물 7동')).toBeTruthy();
+    expect(screen.getByText(/허가만 5동 · 착공 2동/)).toBeTruthy();
+    expect(screen.queryByText(/2년 넘게 착공하지 않았습니다/)).toBeNull();
+  });
+
   it('필지가 바뀌면 앞 건물의 인허가 수를 지운다', async () => {
     responses.permits = permits();
     const { rerender } = render(<IndustryMixSection pnu="1168010100100010000" />);
