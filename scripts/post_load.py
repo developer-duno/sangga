@@ -446,39 +446,25 @@ ANON_CALLABLE_ALLOWLIST = (
     "api.list_district_buildings", "api.list_parcel_buildings",
 )
 
-# ── 공개키가 아직도 부를 수 있는 "대기" 함수 9개 (2026-09-01 감사 — 결재 대기) ─────
+# ── 공개키가 아직 못 닫은 "대기" 함수 — 지금은 비어 있다 ─────────────────
 #
-# ⛔ **왜 열려 있나** — PostgreSQL 은 새로 만드는 함수에 PUBLIC(=모든 사람) EXECUTE 를
-#    기본으로 준다(공식 문서 §5.8 표 5.2 "Summary of Access Privileges" — CREATE FUNCTION
-#    행의 기본 PUBLIC 권한이 EXECUTE 다). 이 아홉은 그 기본값이 그대로 살아 있다:
-#      · 7개(get_sigungu_tx_stats·list_building_districts·list_industry_detail·
-#        list_industry_mix·list_open_sigungu·list_parcel_transactions·list_price_bands)
-#        는 **public** 스키마에 만든 자리에 revoke 를 아예 안 적어 뒀다.
-#      · 2개(search_buildings·search_scope)는 정본 1400·2308행 부근에 `revoke ... from
-#        public;` 이 **적혀 있는데도** 라이브 실측은 PUBLIC=t — 적힌 revoke 가 그 뒤로
-#        효력을 잃은 것으로 보인다(같은 이름·서명으로 다시 만든 자리가 더 있을 수 있다).
-#    이 아홉과 위 ANON_CALLABLE_ALLOWLIST 의 api.* 17개는 함수 몸통까지 같다 — 화면은
-#    이미 api.* 만 부르므로, 여기 아홉을 닫아도 화면은 안 깨진다.
-# ✅ **앞으로 태어나는 함수는 이 함정에 안 걸린다.** 2026-09-01b 마이그레이션이 파일
-#    맨 앞(첫 `create function` 앞)에 전역 기본권한 한 줄을 박아 뒀다 — 그 뒤에 만들어지는
-#    함수는 PUBLIC EXECUTE 를 처음부터 못 받는다. 이 아홉은 그 한 줄이 생기기 **전에**
-#    만들어졌던 것들이라 여전히 남아 있다.
-# ⛔ **닫는 것은 이 스크립트의 일이 아니다** — 사장님 결재 대기 항목이다. 그래서 --check 는
-#    이 아홉이 열려 있어도 [주의]로만 적고 종료 코드를 1 로 만들지 않는다(매번 실패하면
-#    "알려진 백로그"라는 사실 자체가 --check 를 무쓸모하게 만든다 — WRITE_KNOWN_POSTGIS 와
-#    같은 논리). 닫히는 게 확인되면 이 목록에서 그 항목을 빼라 — report_anon_exposure() 가
-#    "[정리] ... 는 이제 닫혔습니다" 로 알려준다.
-ANON_CALLABLE_PENDING = (
-    "public.get_sigungu_tx_stats",
-    "public.list_building_districts",
-    "public.list_industry_detail",
-    "public.list_industry_mix",
-    "public.list_open_sigungu",
-    "public.list_parcel_transactions",
-    "public.list_price_bands",
-    "public.search_buildings",
-    "public.search_scope",
-)
+# ✅ **닫힘 이력** — 2026-09-01 감사가 찾은 잔존 노출 9개는 마이그레이션
+#    **2026-09-05a** 로 닫혔다(get_sigungu_tx_stats·list_building_districts·
+#    list_industry_detail·list_industry_mix·list_open_sigungu·list_parcel_transactions·
+#    list_price_bands·search_buildings·search_scope 의 **public** 원본).
+# ⓘ **왜 열려 있었나** — PostgreSQL 은 새 함수에 PUBLIC EXECUTE 를 기본으로 준다
+#    (공식 문서 §5.8 표 5.2). 그 기본값을 막는 전역 한 줄은 2026-09-01b 에서야 들어갔고,
+#    기본권한은 "앞으로"에만 걸려서 그보다 먼저 태어난 아홉은 손으로 닫을 수밖에 없었다.
+#
+# ⚠️ **비어 있는 것이 정상이다 — 여기에 이름을 다시 더하지 말 것.** 이 목록은 "알고
+#    있지만 결재 때문에 아직 못 닫은 것"을 [주의]로 내려 exit 1 을 면제해 주는 장치다.
+#    앞으로 새 누출이 보이면 그건 백로그가 아니라 **[사고]** 다 — 여기 적어 넣으면
+#    빨간불이 꺼져 그 누출이 잠긴다. 닫는 것이 먼저다.
+#
+# ⓘ 명단은 비워도 **상수는 지우지 않는다** — report_anon_exposure() 가 이 목록을
+#    돌며 "대기 목록에 있는데 지금은 안 열린 것"을 [정리] 로 알려 주는 장치가
+#    그대로 돌아야 하고, tests/test_post_load.py 가 이 상수를 직접 읽는다.
+ANON_CALLABLE_PENDING = ()
 
 
 def _bare_names(qualified):
@@ -710,6 +696,8 @@ def report_anon_exposure():
         print("[사고] 공개키에게 열리면 안 되는 것이 열려 있습니다: {}".format(", ".join(bad)))
         print("       → revoke all on <이름> from public, anon, authenticated; 를 적용하고")
         print("         supabase/schema.sql 에도 같이 반영하세요.")
+        print("       ⓘ 정본에는 이미 닫혀 있는데 라이브만 뒤처진 것이면(머지 뒤·적용 전 창),")
+        print("         준비된 마이그레이션을 그대로 적용하면 됩니다 — 예: 2026-09-05a_close_public_leftovers.sql")
     else:
         print("[정상] 공개키가 읽거나 부를 수 있는 것은 허용된 {}개뿐입니다.".format(
             len(names) - len(not_allowed)))

@@ -489,30 +489,19 @@ class TestAnonExposure:
             "api.list_district_buildings", "api.list_parcel_buildings",
         )
 
-    def test_pending_list_is_only_the_nine_public_leftovers(self):
-        """⛔ 2026-09-01 감사 — 라이브 실측으로 확인된 잔존 노출 9개만 여기 담는다.
+    def test_pending_list_is_empty_after_2026_09_05a(self):
+        """⛔ **비어 있어야 한다** — 잔존 노출 9개는 2026-09-05a 로 닫혔다.
 
-        전부 위 ANON_CALLABLE_ALLOWLIST 의 api.* 짝이 있는 public 원본이다. 화면은
-        api.* 만 부르므로 이 아홉을 닫아도 화면은 안 깨진다 — 닫는 시점만 결재 대기다.
+        2026-09-01 감사가 라이브 실측으로 찾은 public.* 원본 아홉(전부 api.* 짝이
+        있어 화면은 안 깨졌다)은 마이그레이션
+        `supabase/migrations/2026-09-05a_close_public_leftovers.sql` 로 회수했다.
+
+        ⚠️ **앞으로 새 누출이 보이면 여기 적어 넣지 말 것.** 이 목록은 [주의]로
+        내려 exit 1 을 면제해 주는 장치라, 이름을 더하는 순간 그 누출은 빨간불 없이
+        잠긴다. 새 누출은 백로그가 아니라 **[사고]** 다 — 닫는 것이 먼저다.
+        그래서 이 시험은 "아홉이 맞나"가 아니라 **"비어 있나"**를 지킨다.
         """
-        assert post_load.ANON_CALLABLE_PENDING == (
-            "public.get_sigungu_tx_stats",
-            "public.list_building_districts",
-            "public.list_industry_detail",
-            "public.list_industry_mix",
-            "public.list_open_sigungu",
-            "public.list_parcel_transactions",
-            "public.list_price_bands",
-            "public.search_buildings",
-            "public.search_scope",
-        )
-        # 대기 목록의 이름은 전부 api.* 짝이 허용 목록에 있어야 한다 — 짝이 없으면
-        # "화면이 안 쓴다"는 전제 자체가 깨진다.
-        for pub_name in post_load.ANON_CALLABLE_PENDING:
-            api_twin = "api." + pub_name.split(".", 1)[1]
-            assert api_twin in post_load.ANON_CALLABLE_ALLOWLIST, (
-                "{} 의 api 짝 {} 이 허용 목록에 없습니다".format(pub_name, api_twin)
-            )
+        assert post_load.ANON_CALLABLE_PENDING == ()
 
     def test_the_purge_function_is_never_exposed(self):
         """⛔ 지우는 함수는 밖에서 부를 수 있으면 안 된다(2026-08-24c).
