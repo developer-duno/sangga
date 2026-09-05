@@ -175,6 +175,130 @@ describe('LhNoticeSection — 공고가 있을 때', () => {
   });
 });
 
+describe("LhNoticeSection — LH 가 지역을 '전국'으로 적은 공고 (결정 0026)", () => {
+  /*
+    여기서 지키는 것
+    ----------------
+     ① **그 지역 공고가 먼저**, 나머지는 접힘 묶음으로. 걸러 버리지 않는다(그러면 카드가
+        사실상 빈다) — 접어 두고 왜 접었는지 글자로 밝힌다.
+     ② **접힘은 숨김이 아니다** — 본문은 DOM 에 그대로 두고 `hidden` 으로만 감춘다.
+        빼 버리면 종이로 뽑을 때 되살릴 방법이 없다(결정 0020 실측).
+     ③ **옛 응답(지역 칸 없음)은 예전 화면 그대로** — 마이그레이션 전 라이브가 그 상태다.
+  */
+
+  /** 카드를 펼친다(접힘 묶음은 카드 본문 안에 있다). */
+  async function openCard() {
+    fireEvent.click(await screen.findByRole('button', { name: /LH 상가 분양·입점 공고/ }));
+  }
+
+  it('★ 지역 공고만 위에 서고, 전국 표시는 접힌 묶음 안에 있다 (지우지 않는다)', async () => {
+    responses.notices = {
+      data: [
+        notice({ pan_id: 'a', pan_nm: '서울강남 A1블록 단지내상가 입찰공고', is_nationwide: false }),
+        notice({ pan_id: 'b', pan_nm: '인천계양 지구 단지내상가 공고', is_nationwide: true }),
+        notice({ pan_id: 'c', pan_nm: '부산명지 지구 단지내상가 공고', is_nationwide: true }),
+      ],
+      error: null,
+    };
+    const { container } = render(<LhNoticeSection sigungu="11680" />);
+    await openCard();
+
+    // 위 목록에는 그 지역 공고 한 줄뿐이다.
+    const lists = container.querySelectorAll('.lh__list');
+    expect(lists).toHaveLength(2);
+    expect(lists[0].querySelectorAll('li')).toHaveLength(1);
+    expect(lists[0].textContent).toContain('서울강남 A1블록');
+
+    // 접힘 묶음의 버튼은 몇 건인지와 **LH 가 그렇게 적었다**는 사실을 함께 말한다.
+    const more = screen.getByRole('button', { name: /전국.*2건/ });
+    expect(more.textContent).toContain("LH가 지역을 '전국'으로 적은 공고");
+
+    // ⛔ 제목에서 도시를 추측하지 않는다 — 인천·부산이라고 다시 이름 붙이지 않는다.
+    expect(container.textContent).toContain('제목을 보고 지역을 추측하지 않습니다');
+  });
+
+  it('★ 접힘은 숨김이 아니다 — 본문은 DOM 에 있고 hidden 으로만 감춘다', async () => {
+    responses.notices = {
+      data: [
+        notice({ pan_id: 'a', is_nationwide: false }),
+        notice({ pan_id: 'b', pan_nm: '인천계양 지구 단지내상가 공고', is_nationwide: true }),
+      ],
+      error: null,
+    };
+    const { container } = render(<LhNoticeSection sigungu="11680" />);
+    await openCard();
+
+    const more = screen.getByRole('button', { name: /전국.*1건/ });
+    const body = container.querySelector('.lh__more-body') as HTMLElement;
+    // 가리키는 곳이 실제로 그 본문이어야 한다 — 읽어 주는 기기가 그 줄을 따라간다.
+    expect(more.getAttribute('aria-controls')).toBe(body.id);
+    expect(body.id).toBeTruthy();
+
+    // 접힌 상태: DOM 에는 있고(인쇄가 되살릴 수 있게) 눈에는 안 보인다.
+    expect(more.getAttribute('aria-expanded')).toBe('false');
+    expect(body.hasAttribute('hidden')).toBe(true);
+    expect(body.textContent).toContain('인천계양');
+
+    fireEvent.click(more);
+    expect(more.getAttribute('aria-expanded')).toBe('true');
+    expect(body.hasAttribute('hidden')).toBe(false);
+    expect(screen.getByText('인천계양 지구 단지내상가 공고')).toBeTruthy();
+  });
+
+  it('★ 옛 응답(지역 칸이 아예 없음)은 접힘 묶음을 만들지 않는다', async () => {
+    // 마이그레이션 2026-09-05c 적용 전 라이브가 이 상태다 — 그날 화면이 달라지면 안 된다.
+    responses.notices = {
+      data: [notice(), notice({ pan_id: 'b', pan_nm: '대전유성 임대상가 공고' })],
+      error: null,
+    };
+    const { container } = render(<LhNoticeSection sigungu="11680" />);
+    await openCard();
+
+    expect(container.querySelectorAll('.lh__list')).toHaveLength(1);
+    expect(container.querySelector('.lh__more')).toBeNull();
+    expect(container.querySelector('.card__summary')?.textContent).toBe(
+      '2건 · 8월 27일 수집 기준',
+    );
+  });
+
+  it('요약 한 줄이 지역 것과 접힌 것을 따로 센다', async () => {
+    responses.notices = {
+      data: [
+        notice({ pan_id: 'a', is_nationwide: false }),
+        notice({ pan_id: 'b', is_nationwide: true }),
+        notice({ pan_id: 'c', is_nationwide: true }),
+      ],
+      error: null,
+    };
+    const { container } = render(<LhNoticeSection sigungu="11680" />);
+    await screen.findByText('LH 상가 분양·입점 공고');
+
+    expect(container.querySelector('.card__summary')?.textContent).toBe(
+      '1건 · 전국 표시 2건 · 8월 27일 수집 기준',
+    );
+  });
+
+  it('★ 같은 공고가 여러 번 올라온 줄에만 "정정·재게시 N회"가 붙는다', async () => {
+    responses.notices = {
+      data: [
+        notice({ pan_id: 'a', dup_cnt: 2 }),
+        notice({ pan_id: 'b', pan_nm: '대전유성 임대상가 공고', dup_cnt: 0 }),
+        notice({ pan_id: 'c', pan_nm: '세종행복 임대상가 공고' }), // 옛 응답 — 칸 없음
+        notice({ pan_id: 'd', pan_nm: '광주선운 임대상가 공고', dup_cnt: null }), // 값이 null
+      ],
+      error: null,
+    };
+    const { container } = render(<LhNoticeSection sigungu="11680" />);
+    await openCard();
+
+    const dups = container.querySelectorAll('.lh__dup');
+    expect(dups).toHaveLength(1);
+    expect(dups[0].textContent).toBe('정정·재게시 2회');
+    // 0회·NaN회 같은 말을 지어내지 않는다.
+    expect(container.textContent).not.toContain('0회');
+  });
+});
+
 describe('LhNoticeSection — 빈손이거나 못 읽었을 때', () => {
   it('★ 서버에 함수가 아직 없으면 카드를 통째로 생략한다 (조용히)', async () => {
     responses.notices = {

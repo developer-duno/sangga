@@ -1047,13 +1047,20 @@ test.describe('입구 — LH 상가 분양·입점 공고', () => {
     await mockOpenSigungu(page);
     // ⚠️ mockOpenSigungu 뒤에 등록해야 이 응답이 잡힌다(나중에 등록한 것이 먼저다).
     await mockJson(page, LH_NOTICE_PATTERN, [
-      lhNotice(),
+      // 재게시가 있었던 줄 — 서버가 최신 한 줄만 주고 그 사실을 dup_cnt 로 알린다(결정 0026).
+      lhNotice({ dup_cnt: 1 }),
       lhNotice({
         pan_id: '2026-0002',
         pan_nm: '수서역세권 근린생활시설 임대공고',
         kind_nm: '임대 추첨',
         pan_ss: '접수중',
         close_date: null,
+      }),
+      // LH 가 지역을 '전국'이라 적은 줄 — 제목은 다른 도시다. 접어 두되 지우지 않는다.
+      lhNotice({
+        pan_id: '2026-0003',
+        pan_nm: '인천계양 지구 단지내상가 공고',
+        is_nationwide: true,
       }),
     ]);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
@@ -1068,18 +1075,33 @@ test.describe('입구 — LH 상가 분양·입점 공고', () => {
     const lh = page.locator('section.lh');
     await expect(lh).toBeVisible();
     // 접혀 있어도 건수와 **수집일**은 읽힌다 — 마감이 있는 자료라 낡음을 감추지 않는다.
-    await expect(lh.locator('.card__summary')).toHaveText('2건 · 8월 27일 수집 기준');
+    // 접어 둔 것(전국 표시)도 세어서 밝힌다 — 감추는 것과 없는 척하는 것은 다르다.
+    await expect(lh.locator('.card__summary')).toHaveText(
+      '2건 · 전국 표시 1건 · 8월 27일 수집 기준',
+    );
     await expect(lh.locator('.card__body')).toBeHidden();
 
     await openCard(page, /LH 상가 분양·입점 공고/);
-    const rows = lh.locator('.lh__list li');
+    // 위 목록은 **그 지역 공고**만이다(접힌 묶음은 아래에 따로 있다).
+    const rows = lh.locator('.lh__list').first().locator('li');
     await expect(rows).toHaveCount(2);
     await expect(rows.first()).toContainText('분양 입찰');
     await expect(rows.first()).toContainText('서울강남 A1블록 단지내상가 입찰공고');
     await expect(rows.first()).toContainText('공고중');
     await expect(rows.first()).toContainText('~9월 17일');
+    // 같은 공고가 다시 올라왔던 줄에는 꼬리표가 붙는다(서버가 최신 한 줄만 준다).
+    await expect(rows.first()).toContainText('정정·재게시 1회');
     // 마감일이 없는 공고를 '0월 0일'처럼 지어내지 않는다.
     await expect(rows.nth(1)).toContainText('마감일 미정');
+
+    // ⛔ LH 가 '전국'이라 적은 줄은 **접혀 있다가** 눌러야 나온다(결정 0026) — 지운 것이
+    //    아니라 접은 것이고, 화면이 제목으로 지역을 추측하지 않는다는 사실도 함께 적는다.
+    const more = lh.getByRole('button', { name: /전국.*1건/ });
+    await expect(more).toContainText("LH가 지역을 '전국'으로 적은 공고");
+    await expect(lh.getByText('인천계양 지구 단지내상가 공고')).toBeHidden();
+    await more.click();
+    await expect(lh.getByText('인천계양 지구 단지내상가 공고')).toBeVisible();
+    await expect(lh).toContainText('제목을 보고 지역을 추측하지 않습니다');
 
     // 신청·가격은 우리가 옮겨 적지 않고 링크로 넘긴다(전략 — 매물은 링크로).
     const link = rows.first().getByRole('link', { name: 'LH에서 보기' });

@@ -91,15 +91,59 @@ export function latestCollectedAt(notices: readonly LhNotice[]): string | null {
 }
 
 /**
- * 접혀 있어도 보이는 한 줄 — "3건 · 8월 27일 수집 기준".
+ * 목록을 **그 지역 공고**와 **LH 가 '전국'이라 적은 공고**로 가른다(결정 0026).
+ *
+ * ⛔ `is_nationwide` 는 '지역 칸이 비었다'가 아니라 **LH 가 '전국'이라 적었다**는 뜻이다
+ *    (수집기 `map_sido`: 빈 칸은 false). 그런데 그렇게 적힌 공고의 제목은 대개 특정
+ *    도시라(2026-09-05 실측 서울 39줄 중 35줄) 그대로 섞어 두면 "이 지역 공고"라 해 놓고
+ *    남의 도시를 보여 주게 된다.
+ * ⛔ **제목에서 도시를 뽑아 옮기지 않는다.** 지명이 안 든 제목·같은 이름의 다른 동네에서
+ *    조용히 틀리는데, 틀린 지역표는 없는 것보다 나쁘다(사용자가 믿고 헛걸음한다).
+ * ⓘ `true` 인 것만 접는다 — 값이 없거나(05c 이전 라이브) null 이면 전부 regional 로 가므로
+ *   화면이 지금까지와 **똑같이** 동작한다.
+ */
+export function splitByRegion(notices: readonly LhNotice[]): {
+  regional: LhNotice[];
+  nationwide: LhNotice[];
+} {
+  const regional: LhNotice[] = [];
+  const nationwide: LhNotice[] = [];
+  for (const n of notices) (n.is_nationwide === true ? nationwide : regional).push(n);
+  return { regional, nationwide };
+}
+
+/**
+ * 접혀 있어도 보이는 한 줄 — "3건 · 8월 27일 수집 기준",
+ * 접힌 묶음이 있으면 "4건 · 전국 표시 35건 · 9월 1일 수집 기준".
  *
  * ⛔ **수집 시각을 감추지 않는다.** 공고는 마감이 있는 자료라 "언제 받아 둔 것인가"가
  *    건수만큼 중요하다. 다만 그 시각을 못 읽으면 없는 날짜를 지어내지 않고 그 조각만 뺀다.
+ * ⚠️ **0 인 조각은 뺀다.** "0건 · 전국 표시 35건"이라 적으면 접힌 것만 있는 지역에서 카드가
+ *    비어 보인다. 반대로 접힌 것이 없으면 예전과 글자 하나까지 같은 한 줄이 된다.
  */
 export function lhSummary(notices: readonly LhNotice[]): string {
-  const n = `${notices.length.toLocaleString('ko-KR')}건`;
+  const { regional, nationwide } = splitByRegion(notices);
+  const pieces: string[] = [];
+  if (regional.length > 0 || nationwide.length === 0)
+    pieces.push(`${regional.length.toLocaleString('ko-KR')}건`);
+  if (nationwide.length > 0)
+    pieces.push(`전국 표시 ${nationwide.length.toLocaleString('ko-KR')}건`);
   const day = monthDay(latestCollectedAt(notices));
-  return day ? `${n} · ${day} 수집 기준` : n;
+  if (day) pieces.push(`${day} 수집 기준`);
+  return pieces.join(' · ');
+}
+
+/**
+ * "정정·재게시 N회" — 같은 공고가 여러 번 올라온 줄에만 붙는 꼬리표. 아니면 null.
+ *
+ * ⚠️ **정수이고 0보다 클 때만** 적는다. 05c 이전 라이브는 이 값을 안 주고(undefined·null),
+ *    0 은 "재게시 없음"이며, 음수·NaN 은 서버가 뜻밖의 값을 준 경우다 — 어느 쪽이든
+ *    "0회"·"NaN회" 같은 말을 지어내지 않고 그 자리를 비운다.
+ */
+export function dupText(n: LhNotice): string | null {
+  const c = n.dup_cnt;
+  if (typeof c !== 'number' || !Number.isInteger(c) || c <= 0) return null;
+  return `정정·재게시 ${c.toLocaleString('ko-KR')}회`;
 }
 
 /**
@@ -137,6 +181,19 @@ function isNullableString(x: unknown): boolean {
 }
 
 /**
+ * 05c 로 늘어난 칸들처럼 **있을 수도 없을 수도 있는** 값. 없으면 통과, 있으면 그 종류여야
+ * 한다 — 없는 것(옛 라이브)과 **틀린 것**(다른 함수의 응답)은 다르게 다뤄야 하기 때문이다.
+ *
+ * ⚠️ **`null` 도 통과시킨다** — `pan_ss`·`dtl_url` 과 같은 태도다. 이 목록 검증은 `.every()`
+ *    라서 한 줄만 거절해도 **카드가 통째로 사라지는데**, 서버가 어떤 이유로든 이 칸에 null 을
+ *    실어 보내는 날 그 대가가 너무 크다. null 이면 `splitByRegion` 은 지역 공고로,
+ *    `dupText` 는 꼬리표 없음으로 다룬다(둘 다 아래에서 값의 종류를 다시 본다).
+ */
+function isOptional(x: unknown, kind: 'boolean' | 'number'): boolean {
+  return x === undefined || x === null || typeof x === kind;
+}
+
+/**
  * 서버 응답의 **모양**을 본다.
  *
  * 타입 단언(`as LhNotice[]`)은 컴파일 때만 사는 약속이라 런타임에는 아무것도 막아 주지
@@ -159,7 +216,12 @@ export function isLhNotice(x: unknown): x is LhNotice {
     isNullableString(n.dtl_url) &&
     typeof n.collected_at === 'string' &&
     isNullableString(n.notice_date) &&
-    isNullableString(n.close_date)
+    isNullableString(n.close_date) &&
+    // ⚠️ 05c 로 늘어난 두 칸은 **없어도 통과**시킨다 — 마이그레이션 전 라이브는 안 주는데,
+    //    여기서 필수로 받으면 그 순간 목록 전체가 거절돼 카드가 통째로 사라진다(.every 구조).
+    //    다만 **있는데 종류가 틀린 것**(다른 함수의 응답 등)은 거른다.
+    isOptional(n.is_nationwide, 'boolean') &&
+    isOptional(n.dup_cnt, 'number')
   );
 }
 

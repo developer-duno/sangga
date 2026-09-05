@@ -3134,7 +3134,7 @@ revoke all on lh_notice from public, anon, authenticated;
 --    함수 본문 주석은 `pg_proc.prosrc` 에 그대로 실려 **라이브에서 읽힌다.** 즉 여기서
 --    주석 한 줄만 다듬어도 그 순간 정본↔라이브가 어긋난다(2026-09-01 2차 검증에서 실제로
 --    5줄이 어긋나 있었다 — 드리프트를 잡겠다는 작업이 같은 드리프트를 남긴 것이다).
---    아래 블록은 `supabase/migrations/2026-09-01d_lh_closed_status.sql` 에서 **글자 그대로**
+--    아래 블록은 `supabase/migrations/2026-09-05c_lh_fold_and_dedupe.sql` 에서 **글자 그대로**
 --    복사한 것이고, tests/test_schema_function_drift.py 가 그 일치를 지킨다.
 --    바꿀 일이 생기면 **새 마이그레이션 파일**을 만들고 그 본문을 여기 복사한다.
 --
@@ -3147,16 +3147,23 @@ revoke all on lh_notice from public, anon, authenticated;
 --    그 문구가 라이브 prosrc 에 그대로 있어 01a 는 그 시점 라이브를 정확히 재현하기 때문.
 --  · 2026-09-01d: '접수마감'은 마감일과 무관하게 뺀다. 이 표는 pan_ss 에 CHECK 를 안 걸어
 --    두었으므로 **허용 목록**으로 바꾸면 새 상태가 오는 날 살아 있는 공고가 통째로 사라진다.
+--  · 2026-09-05c: 칸 둘(is_nationwide·dup_cnt)을 함께 준다. is_nationwide 는 **LH 가 지역을
+--    '전국'이라 적었다**는 뜻이고(수집기 map_sido 실측 — 빈 칸은 false 다), 화면은 그 줄들을
+--    접어 두되 **제목으로 지역을 추측하지 않는다**(결재 ①). dup_cnt 는 대괄호 표시·공백을
+--    지운 제목이 같은 줄이 몇이었나이며, 그중 최신 한 줄만 나간다(결재 ②). 상한 200 은
+--    형제 list_district_buildings 와 같은 자릿수다(상한 없는 목록 함수는 자료가 늘 때 위험).
 create or replace function list_lh_notices(p_sido text)
 returns table (
-  pan_id       text,
-  pan_nm       text,
-  kind_nm      text,
-  pan_ss       text,
-  notice_date  date,
-  close_date   date,
-  dtl_url      text,
-  collected_at timestamptz
+  pan_id        text,
+  pan_nm        text,
+  kind_nm       text,
+  pan_ss        text,
+  notice_date   date,
+  close_date    date,
+  dtl_url       text,
+  collected_at  timestamptz,
+  is_nationwide boolean,
+  dup_cnt       int
 )
 language plpgsql
 stable
@@ -3170,22 +3177,59 @@ declare
   v_sido char(2) := nullif(left(btrim(coalesce(p_sido, '')), 2), '');
 begin
   return query
+    with alive as (
+      -- ⛔ kind_cd 는 화면에 안 나가지만 **묶는 열쇠의 절반**이라 여기서 함께 든다
+      --    (아래 partition 참조). 빼면 분양과 임대가 한 줄로 합쳐진다.
+      select n.pan_id, n.pan_nm, n.kind_nm, n.kind_cd, n.pan_ss,
+             n.notice_date, n.close_date, n.dtl_url, n.collected_at, n.is_nationwide,
+             -- ⛔ 같은 공고를 묶는 열쇠(2026-09-05c). **대괄호 표시와 공백을 둘 다** 지운다 —
+             --    재게시는 `[정정공고]` 가 붙거나 띄어쓰기가 달라지는 두 가지로 흔들려서,
+             --    하나만 지우면 라이브에서 60·62 가 나왔다(둘 다 지우면 59 — 2026-09-01 실측).
+             -- ⛔ 여기서 제목을 더 뭉개지 말 것 — 열쇠가 헐거워지면 **서로 다른 공고가 합쳐져**
+             --    사용자가 못 보는 공고가 생긴다(여러 줄로 세는 것보다 나쁘다).
+             regexp_replace(n.pan_nm, '\[[^]]*\]|\s+', '', 'g') as norm_key
+        from lh_notice n
+       where ((v_sido is not null and n.sido_code = v_sido) or n.is_nationwide)
+         -- ⛔ `current_date` 로 되돌리지 말 것 — 이 DB 는 UTC 라 한국 새벽에 끝난 공고가
+         --    아침 9시까지 남는다(2026-09-01a 머리말).
+         -- ⛔ 마감일을 **모르는** 것(NULL)은 이 판정에서 **제외한다 = 그대로 남긴다.**
+         --    모른다 ≠ 끝났다 — 모른다고 숨기면 살아 있는 공고가 조용히 사라진다.
+         and (n.close_date is null or n.close_date >= (now() at time zone 'Asia/Seoul')::date)
+         -- ⛔ LH 가 **끝났다고 적어 준 것**은 마감일과 무관하게 뺀다(2026-09-01d).
+         --    마감일이 먼 미래로 적힌 공고는 날짜 필터가 원리적으로 못 거른다 —
+         --    실측으로 '접수마감'인데 마감일 2028-12-31 인 것이 2건 있었고 하나는 [취소공고]다.
+         -- ⛔ **허용 목록으로 바꾸지 말 것** — 새 상태가 생기는 날 살아 있는 공고가 통째로
+         --    사라진다(표 정의가 CHECK 를 안 건 것과 같은 이유). 모르는 상태는 통과시킨다.
+         and (n.pan_ss is null or n.pan_ss <> '접수마감')
+    ),
+    ranked as (
+      -- 같은 열쇠(**종류 + 정규화 제목**) 안에서 **최신 한 줄만** 남긴다(rn=1). 최신은
+      -- 공고일 → 받아 둔 시각 → pan_id 순으로 정한다 — 마지막 pan_id 까지 두는 것은
+      -- 같은 질문에 매번 같은 답이 나오게 하기 위해서다(정렬 기준이 부족하면 흔들린다).
+      -- ⛔ 종류(kind_cd)를 partition 에서 빼지 말 것 — 분양과 임대는 제목이 같아도 다른
+      --    물건이라 합치면 하나가 화면에서 사라진다(창고 전체 실측 417 vs 419 = 2쌍).
+      -- dup_cnt = **나 말고 몇 줄이 더 있었나**(0 이면 재게시 없음). 화면은 이 값이 있을
+      -- 때만 "정정·재게시 N회"를 적는다.
+      select a.*,
+             row_number() over (partition by a.kind_cd, a.norm_key
+                                    order by a.notice_date desc nulls last,
+                                             a.collected_at desc,
+                                             a.pan_id desc) as rn,
+             (count(*) over (partition by a.kind_cd, a.norm_key) - 1)::int as dup_cnt
+        from alive a
+    )
+    -- ⚠️ 바깥 별칭을 `n` 으로 둔다 — 아래 정렬이 `n.close_date` 로 읽혀야 마감 임박순 가드
+    --    (tests/test_lh_notice_migration.py)가 옛 판들과 **같은 글자**로 이 함수를 지킨다.
     select n.pan_id, n.pan_nm, n.kind_nm, n.pan_ss,
-           n.notice_date, n.close_date, n.dtl_url, n.collected_at
-      from lh_notice n
-     where ((v_sido is not null and n.sido_code = v_sido) or n.is_nationwide)
-       -- ⛔ `current_date` 로 되돌리지 말 것 — 이 DB 는 UTC 라 한국 새벽에 끝난 공고가
-       --    아침 9시까지 남는다(2026-09-01a 머리말).
-       -- ⛔ 마감일을 **모르는** 것(NULL)은 이 판정에서 **제외한다 = 그대로 남긴다.**
-       --    모른다 ≠ 끝났다 — 모른다고 숨기면 살아 있는 공고가 조용히 사라진다.
-       and (n.close_date is null or n.close_date >= (now() at time zone 'Asia/Seoul')::date)
-       -- ⛔ LH 가 **끝났다고 적어 준 것**은 마감일과 무관하게 뺀다(2026-09-01d).
-       --    마감일이 먼 미래로 적힌 공고는 날짜 필터가 원리적으로 못 거른다 —
-       --    실측으로 '접수마감'인데 마감일 2028-12-31 인 것이 2건 있었고 하나는 [취소공고]다.
-       -- ⛔ **허용 목록으로 바꾸지 말 것** — 새 상태가 생기는 날 살아 있는 공고가 통째로
-       --    사라진다(표 정의가 CHECK 를 안 건 것과 같은 이유). 모르는 상태는 통과시킨다.
-       and (n.pan_ss is null or n.pan_ss <> '접수마감')
-     order by n.close_date asc nulls last, n.notice_date desc nulls last, n.pan_id;
+           n.notice_date, n.close_date, n.dtl_url, n.collected_at,
+           n.is_nationwide, n.dup_cnt
+      from ranked n
+     where n.rn = 1
+     order by n.close_date asc nulls last, n.notice_date desc nulls last, n.pan_id
+     -- ⛔ 상한을 없애지 말 것(2026-09-05c) — 형제 list_district_buildings 와 같은 자릿수다.
+     --    닿으면 조용히 잘리는 쪽은 마감이 먼 것·마감일 미상이다. 닿기 시작하면 상한을
+     --    늘릴 게 아니라 페이지를 만들 때다.
+     limit 200;
 end;
 $$;
 
@@ -3199,20 +3243,27 @@ comment on function list_lh_notices(text) is
   '⛔ 마감 판정은 **한국 날짜**다(2026-09-01a) — DB 세션이 UTC 라 current_date 를 쓰면 '
   '한국 새벽 0~9시에 어제 끝난 공고가 남는다. '
   '⛔ LH 가 ''접수마감''이라 적은 것은 마감일과 무관하게 뺀다(2026-09-01d) — '
-  '마감일이 먼 미래인 공고는 날짜만으로는 영영 못 거른다.';
+  '마감일이 먼 미래인 공고는 날짜만으로는 영영 못 거른다. '
+  '⛔ is_nationwide 는 **LH 가 지역을 ''전국''이라 적었다**는 뜻이다(칸이 빈 것이 아니다) — '
+  '화면은 그 줄들을 접어 두고 제목으로 지역을 추측하지 않는다(2026-09-05c). '
+  '⛔ **종류가 같고** 대괄호 표시·공백을 지운 제목이 같으면 **최신 한 줄만** 주고 dup_cnt 로 나머지 수를 '
+  '알린다(2026-09-05c) — 재게시는 새 pan_id 를 받아 같은 물건이 여러 줄이 된다. '
+  '⛔ 200건에서 끊는다(2026-09-05c) — 상한 없는 목록은 자료가 늘 때 창고·화면을 함께 끈다.';
 
 revoke all on function list_lh_notices(text) from public, anon, authenticated;
 
 create or replace function api.list_lh_notices(p_sido text)
 returns table (
-  pan_id       text,
-  pan_nm       text,
-  kind_nm      text,
-  pan_ss       text,
-  notice_date  date,
-  close_date   date,
-  dtl_url      text,
-  collected_at timestamptz
+  pan_id        text,
+  pan_nm        text,
+  kind_nm       text,
+  pan_ss        text,
+  notice_date   date,
+  close_date    date,
+  dtl_url       text,
+  collected_at  timestamptz,
+  is_nationwide boolean,
+  dup_cnt       int
 )
 language sql
 stable
