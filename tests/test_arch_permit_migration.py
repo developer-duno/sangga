@@ -23,6 +23,10 @@ import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MIGRATION = os.path.join(ROOT, "supabase", "migrations", "2026-08-28b_arch_permit.sql")
+# 반환 표에 stale_cnt 한 칸을 더한 판(사장님 결재 2026-09-05). 함수만 다시 만드는
+# 파일이라 **표 시험(RLS·PK·표 권한)은 여기 안 온다** — 그 파일에는 표가 없다.
+MIGRATION_STALE = os.path.join(
+    ROOT, "supabase", "migrations", "2026-09-05b_permit_stale_cnt.sql")
 SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
 SCRIPTS_DIR = os.path.join(ROOT, "scripts")
 if SCRIPTS_DIR not in sys.path:
@@ -97,7 +101,7 @@ class TestTableIsClosed:
             block = block[block.index("create table if not exists {} (".format(TABLE)):]
         assert not re.search(r"(?im)^create\s+policy", statements(block))
 
-    @pytest.mark.parametrize("path", [MIGRATION, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_STALE, SCHEMA])
     def test_only_the_api_wrapper_is_opened(self, path):
         text = statements(read(path))
         assert "grant execute on function api.{}(text) to anon, authenticated;".format(
@@ -106,7 +110,7 @@ class TestTableIsClosed:
         assert "grant execute on function {}(text) to anon".format(FN) not in text
         assert "grant execute on function public.{}(text) to anon".format(FN) not in text
 
-    @pytest.mark.parametrize("path", [MIGRATION, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_STALE, SCHEMA])
     def test_revokes_before_granting(self, path):
         """create or replace 는 권한을 남기지만, 대시보드가 다시 만들면 anon 이 자동으로
         붙는다 — 만든 자리에서 다시 닫는다."""
@@ -126,7 +130,7 @@ class TestTableIsClosed:
         assert TABLE not in post_load.ANON_READABLE_ALLOWLIST
         assert TABLE not in post_load.ANON_CALLABLE_ALLOWLIST
 
-    @pytest.mark.parametrize("path", [MIGRATION, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_STALE, SCHEMA])
     def test_only_counts_leave_the_building(self, path):
         """⛔ 나가는 것은 개수와 기준월뿐이다 — 주소·건물 이름 칸이 반환값에 끼면 안 된다.
 
@@ -158,14 +162,14 @@ class TestMonthlyReload:
         block = table_block(read(path))
         assert re.search(r"(?m)^\s+mgm_pmsrgst_pk\s+text\b", block)
 
-    @pytest.mark.parametrize("path", [MIGRATION, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_STALE, SCHEMA])
     def test_the_reader_pins_one_month(self, path):
         """달이 쌓이는 표라, 기준월을 고정하지 않으면 같은 건물을 여러 번 센다."""
         body = fn_body(read(path))
         assert "max(a.loaded_ym) into v_ym" in body
         assert "a.loaded_ym = v_ym" in body
 
-    @pytest.mark.parametrize("path", [MIGRATION, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_STALE, SCHEMA])
     def test_no_data_means_no_row_not_zero(self, path):
         """한 번도 안 담았는데 '0곳'이라고 하면 거짓말이다."""
         body = fn_body(read(path))
@@ -176,13 +180,13 @@ class TestMonthlyReload:
 
 
 class TestWhatItCounts:
-    @pytest.mark.parametrize("path", [MIGRATION, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_STALE, SCHEMA])
     def test_only_unfinished_buildings(self, path):
         """표에는 미준공만 담기지만 규칙을 한 군데에만 두지 않는다 — 표가 넓어져도
         이 화면은 계속 '곧 올라올 것'만 말해야 한다."""
         assert "a.use_apr_day is null" in fn_body(read(path))
 
-    @pytest.mark.parametrize("path", [MIGRATION, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_STALE, SCHEMA])
     def test_the_commercial_set_is_exactly_the_four(self, path):
         """⛔ 여기를 넓히면 화면 숫자가 조용히 부푼다. 실측 근거는 마이그레이션 머리말에 있다."""
         body = fn_body(read(path))
@@ -191,24 +195,53 @@ class TestWhatItCounts:
         got = tuple(re.findall(r"'(\d{2})'", m.group(1)))
         assert got == COMMERCIAL
 
-    @pytest.mark.parametrize("path", [MIGRATION, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_STALE, SCHEMA])
     def test_blank_purpose_is_not_counted(self, path):
         """주용도가 빈 값인 허가가 70%(389,822행)다. `left(NULL,2)` 는 NULL 이라 any() 에
         안 걸린다 — coalesce 로 빈 문자열을 만들어 넣으면 그 순간 다 딸려 온다."""
         body = fn_body(read(path))
         assert "coalesce(a.main_purps_cd" not in body
 
-    @pytest.mark.parametrize("path", [MIGRATION, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_STALE, SCHEMA])
     def test_counts_started_ones_separately(self, path):
         body = fn_body(read(path))
         assert "real_stcns_day is not null" in body
+
+    @pytest.mark.parametrize("path", [MIGRATION_STALE, SCHEMA])
+    def test_counts_the_long_stalled_ones_too(self, path):
+        """⛔ '그중 N동은 2년 넘게 착공하지 않았습니다' 한 줄의 재료다(결재 2026-09-05).
+
+        세는 자가 둘 다 있어야 뜻이 선다 — **착공 기록이 없고**(`real_stcns_day is null`)
+        **허가일이 기준월 말일보다 2년 넘게 전**인 것. 하나라도 빠지면 다른 수가 된다:
+          · 착공 조건이 빠지면 이미 짓고 있는 오래된 허가까지 세어 부풀고,
+          · 날짜 조건이 빠지면 그냥 '허가만 받은 것'과 같은 수가 된다.
+        ⛔ 그리고 재는 시점은 **기준월 말일**(v_month_end)이지 오늘이 아니다 — 이 표는 그
+           달의 상태를 찍은 것이라, 오늘로 재면 자료가 보지 못한 시간까지 섞어 센다.
+        """
+        body = fn_body(read(path))
+        assert re.search(
+            r"count\(\*\)\s+from\s+hit\s+"
+            r"where\s+hit\.real_stcns_day\s+is\s+null\s+"
+            r"and\s+hit\.arch_pms_day\s*<\s*\(v_month_end\s*-\s*interval\s*'2 years'\)",
+            body,
+        ), "stale_cnt 를 세는 조건을 못 찾았습니다"
+        # 오늘로 재면 안 된다 — 자료가 말하는 시점으로만 잰다.
+        assert "current_date" not in body and "now()" not in body
+
+    @pytest.mark.parametrize("path", [MIGRATION_STALE, SCHEMA])
+    def test_the_returned_columns_are_exactly_the_four(self, path):
+        """반환 표가 늘거나 순서가 바뀌면 화면이 다른 칸을 읽는다 — 에러 없이 조용히 틀린다."""
+        head = fn_body(read(path))
+        head = head[:head.index("language")]
+        got = re.findall(r"(?m)^\s+(\w+)\s+(?:int|text)\s*,?\s*$", head)
+        assert got == ["total_cnt", "started_cnt", "stale_cnt", "base_ym"], got
 
 
 # ── 4. 반경은 형제 함수와 같은 자 ─────────────────────────────────────────────
 
 
 class TestRadius:
-    @pytest.mark.parametrize("path", [MIGRATION, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_STALE, SCHEMA])
     def test_measures_five_hundred_meters_the_same_way(self, path):
         """한 화면에서 '500m 안'이 두 가지를 뜻하면 사람이 읽을 수 없다.
 
@@ -217,14 +250,14 @@ class TestRadius:
         body = fn_body(read(path))
         assert "st_dwithin(p.geom::geography, me.gg, 500, false)" in body
 
-    @pytest.mark.parametrize("path", [MIGRATION, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_STALE, SCHEMA])
     def test_neighbours_go_through_a_char19_array(self, path):
         """⛔ text[] 로 두면 배열 조건이 인덱스 안으로 못 들어가 힙 필터로 밀린다."""
         body = fn_body(read(path))
         assert "'{}'::char(19)[]" in body
         assert "a.pnu = any(near.pnus)" in body
 
-    @pytest.mark.parametrize("path", [MIGRATION, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_STALE, SCHEMA])
     def test_the_pnu_parameter_is_cast_before_comparing(self, path):
         """⛔ text 파라미터를 char 컬럼에 그대로 대면 컬럼 쪽이 캐스트돼 인덱스가 죽는다
         (2026-08-16b 라이브 실측: 459.8ms ↔ 0.796ms)."""
@@ -232,7 +265,7 @@ class TestRadius:
         assert "v_pnu char(19) := p_pnu;" in body
         assert "p.pnu = v_pnu" in body
 
-    @pytest.mark.parametrize("path", [MIGRATION, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_STALE, SCHEMA])
     def test_no_coordinates_means_no_row(self, path):
         """⛔ 0 을 돌려주면 '둘레에 아무것도 안 생긴다'는 단정이 된다 — 사실은 모르는 것이다."""
         body = fn_body(read(path))
@@ -244,15 +277,20 @@ class TestRadius:
 
 
 class TestReachableFromTheScreen:
-    @pytest.mark.parametrize("path", [MIGRATION, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_STALE, SCHEMA])
     def test_has_an_api_twin(self, path):
         """화면은 db.schema='api' 로 붙는다 — public 은 REST 노출에서 빠져 있다."""
         assert re.search(
             r"(?im)^create\s+or\s+replace\s+function\s+api\." + FN + r"\s*\(", read(path))
 
-    def test_tells_postgrest_to_reload(self, migration):
-        """⛔ 빠뜨리면 DB 에는 있는데 화면만 404(PGRST202) 가 난다 — 찾기 어려운 고장이다."""
-        assert "notify pgrst, 'reload schema';" in statements(migration)
+    @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_STALE])
+    def test_tells_postgrest_to_reload(self, path):
+        """⛔ 빠뜨리면 DB 에는 있는데 화면만 404(PGRST202) 가 난다 — 찾기 어려운 고장이다.
+
+        ⚠️ 칸을 더한 판(2026-09-05b)에서 더 아프다 — 캐시가 예전 칸 구성을 붙들고 있으면
+           새 칸이 아니라 **함수 자체**를 못 찾는다.
+        """
+        assert "notify pgrst, 'reload schema';" in statements(read(path))
 
 
 # ── 6. 정본 동기 ──────────────────────────────────────────────────────────────

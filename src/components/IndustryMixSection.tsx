@@ -306,6 +306,16 @@ function PermitLine({ line }: { line: NearbyPermitLine }) {
           시험이 못 찾는다(`.mix__rival` 과 같은 이유). */}
       <strong className="mix__permits-n">{`새로 올라오는 상가 건물 ${n(line.total)}동`}</strong>
       {` — 허가만 ${n(line.permitOnly)}동 · 착공 ${n(line.started)}동 (${line.baseLabel} 인허가 기준).`}
+      {/* ⛔ **숫자를 빼지 않고 사실을 덧붙인다**(사장님 결재 2026-09-05). 걸러 내면 사용자가
+          보는 수가 조용히 줄고, 그 기준(2년? 3년?)을 우리가 추정으로 정해야 한다.
+          ⛔ **"실효됐다"고 단정하지 않는다** — 원본에 실효 칸이 아예 없어, 아는 것은 "그 달
+          자료에 착공 기록이 없다"까지다. 그래서 "…있습니다"로 여지를 남긴다.
+          ⓘ 0동이면 안 적는다 — '0동이 멈춰 있습니다'는 읽는 사람에게 아무 뜻이 없다. */}
+      {line.stale !== null && line.stale > 0 && (
+        <span className="mix__permits-stale">
+          {`그중 ${n(line.stale)}동은 허가 후 2년 넘게 착공하지 않았습니다(건축법상 허가가 실효됐을 수 있습니다).`}
+        </span>
+      )}
       <span className="mix__permits-note">허가를 받았다고 모두 지어지는 것은 아닙니다.</span>
     </p>
   );

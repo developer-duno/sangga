@@ -1161,6 +1161,8 @@ test.describe('층별 스택뷰 — 둘레에 새로 올라오는 건물', () =>
     await expect(permits).toContainText('허가만 1동 · 착공 2동');
     // 기준월은 서버가 준 값이다 — 화면에 글자로 박으면 자료가 바뀌는 날 거짓말이 된다.
     await expect(permits).toContainText('(2026년 7월 인허가 기준)');
+    // 오래 멈춰 있는 것은 **빼지 않고 한 줄로 덧붙인다**(사장님 결재 2026-09-05).
+    await expect(permits).toContainText('그중 1동은 허가 후 2년 넘게 착공하지 않았습니다');
     // ⛔ 앞일을 단정하지 않는다 — 허가를 받고도 안 짓거나 용도가 바뀌는 일이 흔하다.
     await expect(permits).toContainText('허가를 받았다고 모두 지어지는 것은 아닙니다');
     await expect(permits).not.toContainText('예정');

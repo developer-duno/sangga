@@ -3349,7 +3349,8 @@ alter table arch_permit enable row level security;
 revoke all on arch_permit from public, anon, authenticated;
 
 -- ── count_nearby_permits — 둘레에 곧 올라올 상가 건물이 몇 곳인가 ─────────────
--- 한 줄만 돌려준다: 전체 곳수 · 그중 이미 착공한 곳수 · 어느 달 자료인가.
+-- 한 줄만 돌려준다: 전체 곳수 · 그중 이미 착공한 곳수 · 그중 2년 넘게 착공
+-- 기록이 없는 곳수(2026-09-05b) · 어느 달 자료인가.
 --
 -- 무엇을 '상가'로 보나 (2026-07 판 적재 대상 556,527행 실측 분포가 근거다):
 --   03 제1종근린생활 24,952 · 04 제2종근린생활 39,882 · 07 판매 1,617 · 14 업무 5,967
@@ -3365,6 +3366,7 @@ create or replace function count_nearby_permits(p_pnu text)
 returns table (
   total_cnt    int,
   started_cnt  int,
+  stale_cnt    int,
   base_ym      text
 )
 language plpgsql
@@ -3378,12 +3380,17 @@ declare
   --    (2026-08-16b 라이브 실측: 459.8ms ↔ 0.796ms).
   v_pnu char(19) := p_pnu;
   v_ym  char(6);
+  -- 기준월의 **말일**. '2년 넘게 미착공'을 재는 자다 — 오늘이 아니라 **자료가
+  -- 말하는 시점**이다. 이 표는 그 달의 상태를 찍은 것이라, 오늘로 재면 자료가
+  -- 보지 못한 시간까지 섞어 세게 된다.
+  v_month_end date;
 begin
   select max(a.loaded_ym) into v_ym from arch_permit a;
   -- 아직 한 번도 안 담았다 = 줄 0개. "0곳"과 "모른다"는 다른 말이다.
   if v_ym is null then
     return;
   end if;
+  v_month_end := (to_date(v_ym, 'YYYYMM') + interval '1 month' - interval '1 day')::date;
 
   return query
     with me as (
@@ -3401,7 +3408,8 @@ begin
          and st_dwithin(p.geom::geography, me.gg, 500, false)
     ),
     hit as (
-      select a.real_stcns_day
+      -- ⛔ 허가일은 **세는 데만** 쓴다. 밖으로 나가는 것은 여전히 개수뿐이다.
+      select a.real_stcns_day, a.arch_pms_day
         from arch_permit a cross join near
        where a.pnu = any(near.pnus)
          and a.loaded_ym = v_ym
@@ -3412,6 +3420,15 @@ begin
     )
     select (select count(*) from hit)::int,
            (select count(*) from hit where hit.real_stcns_day is not null)::int,
+           -- ⛔ **재는 자는 기준월의 말일이다 — 오늘이 아니다.** 자료가 그 달
+           --    상태라, 오늘로 재면 자료가 보지 못한 시간까지 섞어 세게 된다.
+           -- ⛔ **빼는 수가 아니다.** 위 전체 곳수 안에 들어 있는 부분집합이다.
+           -- ⛔ **'실효됐다'가 아니다.** 원본에 실효 칸이 아예 없어, 우리가 아는
+           --    것은 '그 달 자료에 착공 기록이 없다'까지다(사장님 결재 2026-09-05).
+           --    부등호도 **넘는 것만** 센다 — 딱 2년은 아직 아니다.
+           (select count(*) from hit
+             where hit.real_stcns_day is null
+               and hit.arch_pms_day < (v_month_end - interval '2 years')::date)::int,
            v_ym::text
      where exists (select 1 from me);
 end;
@@ -3424,7 +3441,10 @@ comment on function count_nearby_permits(text) is
   '⛔ 주용도가 빈 값인 허가는 세지 않는다(모르는 것을 상가라고 부르지 않는다). '
   '⛔ 필지 좌표가 없으면 줄을 아예 안 돌려준다 — 0 곳과 "모른다"는 다른 말이다. '
   'security definer — arch_permit·parcel 이 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. '
-  '**나가는 것은 개수와 기준월뿐이다 — 건물 주소·이름은 한 글자도 안 나간다.**';
+  '**나가는 것은 개수와 기준월뿐이다 — 건물 주소·이름은 한 글자도 안 나간다.** '
+  '2026-09-05b: stale_cnt = 그중 **기준월 말일 기준으로 허가 후 2년 넘게 착공 기록이 '
+  '없는** 곳수(전체 곳수 안에 들어 있는 부분집합이다). ⛔ "허가가 실효됐다"는 뜻이 '
+  '아니다 — 원본에 실효 칸이 없어 단정하지 않는다.';
 
 revoke all on function count_nearby_permits(text) from public, anon, authenticated;
 
@@ -3432,6 +3452,7 @@ create or replace function api.count_nearby_permits(p_pnu text)
 returns table (
   total_cnt    int,
   started_cnt  int,
+  stale_cnt    int,
   base_ym      text
 )
 language sql

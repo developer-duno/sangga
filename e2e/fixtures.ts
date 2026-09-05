@@ -209,9 +209,11 @@ export function industryMix(over: Partial<IndustryMix> = {}): IndustryMix {
  *    그대로 돌려주므로 어느 쪽으로 틀려도 조용하다). 화면이 둘 다 받는지는 단위 시험
  *    (src/lib/nearbyPermits.test.ts)이 함께 본다.
  * ⓘ 3동 중 2동 착공 = 허가만 1동. 셋이 서로 맞물려 있어 산수가 틀리면 바로 드러난다.
+ * ⓘ `stale_cnt` 는 **허가만(1동) 안에 들어 있는** 수라 1을 넘을 수 없다(2026-09-05b).
+ *    0 으로 두면 그 문장이 아예 안 그려져 E2E 가 볼 것이 없어진다 — 그래서 1이다.
  */
 export function nearbyPermits(over: Partial<NearbyPermits> = {}): NearbyPermits[] {
-  return [{ total_cnt: 3, started_cnt: 2, base_ym: '202607', ...over }];
+  return [{ total_cnt: 3, started_cnt: 2, stale_cnt: 1, base_ym: '202607', ...over }];
 }
 
 /**

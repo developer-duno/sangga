@@ -23,6 +23,8 @@ describe('toPermitLine — 산수', () => {
       total: 7,
       started: 2,
       permitOnly: 5,
+      // 서버가 stale_cnt 를 안 주는 응답이다(2026-09-05b 이전 라이브) — 그 조각만 비운다.
+      stale: null,
       baseLabel: '2026년 7월',
     });
   });
@@ -69,6 +71,41 @@ describe('toPermitLine — 안 적는 경우', () => {
     expect(toPermitLine(row({ base_ym: '2026-07' }))).toBeNull();
     expect(toPermitLine(row({ base_ym: '202613' }))).toBeNull();
     expect(toPermitLine(row({ base_ym: 202607 }))).toBeNull();
+  });
+});
+
+describe('toPermitLine — 오래 멈춰 있는 것 (2026-09-05b)', () => {
+  /**
+   * 이 조각은 **줄 전체와 운명을 같이하지 않는다.** 전체·착공은 문장의 뼈대라 어긋나면
+   * 문장이 통째로 거짓이 되지만, 이 수는 덧붙이는 한 문장이라 빼도 남는 말이 참이다.
+   */
+  it('서버가 주면 그대로 나른다', () => {
+    expect(toPermitLine(row({ total_cnt: 7, started_cnt: 2, stale_cnt: 3 }))?.stale).toBe(3);
+    // 0 도 값이다 — '멈춘 것이 없다'는 사실이라 화면이 그 문장만 안 적는다.
+    expect(toPermitLine(row({ total_cnt: 7, started_cnt: 2, stale_cnt: 0 }))?.stale).toBe(0);
+  });
+
+  it('서버가 그 칸을 안 주면 null 이다 (옛 라이브가 새 화면을 안 깨뜨린다)', () => {
+    // 2026-09-05b 를 아직 안 올린 DB 의 응답이다. 나머지 줄은 그대로 서야 한다.
+    const line = toPermitLine(row({ total_cnt: 7, started_cnt: 2 }));
+    expect(line?.stale).toBeNull();
+    expect(line?.permitOnly).toBe(5);
+  });
+
+  it("'허가만'보다 크거나 음수면 그 조각만 버린다 (줄은 그대로 선다)", () => {
+    // 착공한 것은 안 세는 수라 permitOnly(=5)를 넘을 수 없다. 넘게 왔다면 서버와 화면이
+    // 서로 다른 것을 세고 있다는 뜻이므로 적지 않는다 — 그래도 전체·착공은 사실이다.
+    const over = toPermitLine(row({ total_cnt: 7, started_cnt: 2, stale_cnt: 6 }));
+    expect(over?.stale).toBeNull();
+    expect(over?.total).toBe(7);
+    expect(toPermitLine(row({ stale_cnt: -1 }))?.stale).toBeNull();
+    expect(toPermitLine(row({ stale_cnt: '1' }))?.stale).toBeNull();
+  });
+
+  it('전체가 음수면 줄째로 버린다 (조각만 비우는 것으로 넘어가지 않는다)', () => {
+    // ⛔ 위 세 경우와 갈리는 자리다. 뼈대가 틀리면 덧붙이는 문장만 빼서 될 일이 아니다.
+    expect(toPermitLine(row({ total_cnt: -3, started_cnt: 0 }))).toBeNull();
+    expect(toPermitLine(row({ total_cnt: -3, started_cnt: 0, stale_cnt: 0 }))).toBeNull();
   });
 });
 
