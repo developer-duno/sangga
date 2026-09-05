@@ -1427,12 +1427,13 @@ comment on function search_buildings(text, int, text) is
   '주소는 mv_search_parcel(건물이 있는 필지만)을 본다. ⚠️ 자료 적재 후 `python scripts/post_load.py` 필수. '
   '⛔ 주소 가지와 이름 가지를 OR로 합치지 말 것 — 두 조인 테이블에 걸친 OR은 gin_trgm 인덱스를 무력화한다';
 
--- ⚠️ 먼저 회수하고 준다 — Postgres 는 새 함수의 EXECUTE 를 PUBLIC 에 기본 부여한다.
+-- ⚠️ public 원본은 회수만 한다 — 열리는 쪽은 api.* 래퍼뿐(2026-09-05a). Postgres 는 새 함수의 EXECUTE 를 PUBLIC 에 기본 부여한다.
 revoke all on function search_scope(text, text) from public;
-grant execute on function search_scope(text, text) to anon, authenticated;
-grant execute on function search_buildings(text, int, text) to anon, authenticated;
-grant execute on function list_open_sigungu() to anon, authenticated;
-grant execute on function list_building_districts(text) to anon, authenticated;
+-- 2026-09-05a: public.* 원본은 닫는다 — 화면은 api.* 래퍼만 부른다(security definer).
+revoke all on function search_scope(text, text) from public, anon, authenticated;
+revoke all on function search_buildings(text, int, text) from public, anon, authenticated;
+revoke all on function list_open_sigungu() from public, anon, authenticated;
+revoke all on function list_building_districts(text) from public, anon, authenticated;
 revoke all on function search_scope_limit() from public, anon, authenticated;
 
 
@@ -1584,8 +1585,8 @@ comment on function get_sigungu_tx_stats(text) is
   'window_from 은 집계한 창의 시작 달, sigungu_nm 은 구 이름(화면에 지역명을 박지 않기 위해 '
   '서버가 준다). security definer — 물질화뷰가 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다';
 
-grant execute on function list_parcel_transactions(text) to anon, authenticated;
-grant execute on function get_sigungu_tx_stats(text) to anon, authenticated;
+revoke all on function list_parcel_transactions(text) from public, anon, authenticated;
+revoke all on function get_sigungu_tx_stats(text) from public, anon, authenticated;
 
 
 -- =====================================================================
@@ -1970,8 +1971,8 @@ comment on function list_price_bands(text) is
   'security definer — transaction·parcel·price_gate_sigungu 가 anon 에게 닫혀 있어 '
   '소유자 권한으로 대신 읽는다. 나가는 것은 층·통계값뿐(개별 거래·상호명은 나가지 않는다)';
 
--- 화면이 부르는 함수만 명시적으로 연다(2026-08-13g 이후 함수는 기본으로 닫혀 있다).
-grant execute on function list_price_bands(text) to anon, authenticated;
+-- public 원본은 닫는다 — 화면이 부르는 것은 api.list_price_bands 뿐(2026-09-05a)
+revoke all on function list_price_bands(text) from public, anon, authenticated;
 
 
 -- =====================================================================
@@ -2216,8 +2217,8 @@ comment on function list_industry_detail(text, text) is
   '그대로 되돌려 준다(늦게 도착한 답을 화면이 버릴 수 있게). '
   'security definer — **나가는 것은 업종별 개수뿐이다(상호명 없음).**';
 
-grant execute on function list_industry_mix(text) to anon, authenticated;
-grant execute on function list_industry_detail(text, text) to anon, authenticated;
+revoke all on function list_industry_mix(text) from public, anon, authenticated;
+revoke all on function list_industry_detail(text, text) from public, anon, authenticated;
 
 
 -- ── ⛔ 요약표는 공개키에게 열지 않는다 (2026-08-13f) ─────────────────────────
@@ -2350,10 +2351,9 @@ grant select on v_floor_stack to anon, authenticated;
 revoke all on v_coverage_stats from public, anon, authenticated;
 grant select on v_coverage_stats to anon, authenticated;
 
--- 검색 함수도 명시적으로만 연다. Postgres는 새 함수의 EXECUTE를 PUBLIC에게 기본
--- 부여하므로 **먼저 회수하고** 정확히 필요한 롤에만 준다.
+-- 검색 함수의 public 원본은 닫는다 — 열리는 것은 api.search_buildings 뿐(2026-09-05a)
 revoke all on function search_buildings(text, int, text) from public;
-grant execute on function search_buildings(text, int, text) to anon, authenticated;
+revoke all on function search_buildings(text, int, text) from public, anon, authenticated;
 
 -- 뷰가 RLS를 우회하는 것이 사고가 아니라 선택임을 코드에 남긴다(기본값이지만 명시).
 alter view v_floor_stack           set (security_invoker = false);

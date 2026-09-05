@@ -442,12 +442,55 @@ def test_search_bounds_candidates_with_the_limit(schema_sql):
     )
 
 
+def _statement_text(sql):
+    """주석 줄을 걷어낸 **실제 SQL 문장만** 한 줄로 이어 붙인다.
+
+    ⛔ **왜 필요한가** — 원문을 그대로 훑으면 `-- ` 로 죽인 문장도 글자가 남아
+       "있다"고 판정한다 — 즉 **막는다던 규칙이 꺼져도 초록**이다. 2026-09-05a 작업
+       중 돌연변이 시험으로 실증했다: api grant 줄에 `-- ` 를 붙였는데도 이 파일의
+       시험 23개가 전부 통과했다.
+    ⓘ 형제 파일 tests/test_api_schema_migration.py 의 statements() 와 같은 뜻이다.
+       **import 하지 않는다** — 시험 파일끼리 얽히면 한쪽의 고장이 다른 쪽을 가린다.
+    ⚠️ 이 파일의 **나머지 시험은 아직 원문(flat)을 본다** — 파일 전체 전환은 별도 PR.
+    """
+    body = "\n".join(ln for ln in sql.splitlines() if not ln.lstrip().startswith("--"))
+    return re.sub(r"\s+", " ", body)
+
+
+def test_statement_text_actually_strips_comments(schema_sql):
+    """⛔ **헬퍼 자신을 시험한다** — 주석 제거가 헛돌면 아래 두 시험이 조용히
+    가짜 초록이 되고, 그건 가드가 없는 것보다 나쁘다(막고 있다는 거짓 안심).
+
+    정본의 api grant 줄을 **주석 처리**해 보고, 그때 판정이 뒤집히는지 확인한다.
+    """
+    needle = "grant execute on function api.search_scope(text, text) to anon"
+    assert needle in _statement_text(schema_sql), (
+        "정본에 api.search_scope grant 가 없습니다 — 이 시험의 전제가 깨졌습니다"
+    )
+    dead = "\n".join(
+        ("-- " + ln) if ln.startswith("grant execute on function api.search_scope(") else ln
+        for ln in schema_sql.splitlines()
+    )
+    assert needle not in _statement_text(dead), (
+        "주석으로 죽인 grant 가 여전히 '있다'고 읽힙니다 — 주석 제거가 헛돕니다"
+    )
+
+
 def test_search_scope_is_open_to_anon_but_limit_is_not(schema_sql):
-    """화면은 판정(search_scope)만 부른다. 상한 함수는 내부용이라 닫아 둔다."""
-    flat = re.sub(r"\s+", " ", schema_sql)
-    assert "grant execute on function search_scope(text, text) to anon" in flat, (
-        "schema.sql: search_scope() 가 anon 에게 안 열려 있습니다 — 화면이 '너무 넓은 "
-        "검색'인지 물어볼 수 없게 됩니다"
+    """화면은 판정(search_scope)만 부른다 — 그리고 그것도 **api 래퍼**로만 부른다.
+
+    상한 함수(search_scope_limit)는 내부용이라 닫아 둔다.
+    ⚠️ 2026-09-05a 부터 **public 원본은 닫혀 있다** — 열리는 쪽은 api 쪽 하나뿐이다.
+    """
+    flat = _statement_text(schema_sql)
+    assert "grant execute on function api.search_scope(text, text) to anon" in flat, (
+        "schema.sql: api.search_scope() 가 anon 에게 안 열려 있습니다 — 화면이 '너무 넓은 "
+        "검색'인지 물어볼 수 없게 됩니다. 화면은 api.* 만 부른다(2026-08-22e·2026-09-05a)"
+    )
+    # ⛔ 짝 단언 — 여는 쪽만 보면 원본이 다시 열려도 모른다.
+    assert ("revoke all on function search_scope(text, text) from public, anon, authenticated"
+            in flat), (
+        "schema.sql: public 원본이 다시 공개키에게 열렸습니다 — 2026-09-05a 로 닫은 것"
     )
     m = re.search(
         r"revoke all on function search_scope_limit\(\)\s+from\s+([^;]+);", flat
@@ -576,12 +619,20 @@ def test_open_sigungu_list_comes_from_the_database(schema_sql):
 
     프론트에 목록을 박아 두면 자료 없는 구를 고를 수 있게 되고, 고르면 아무것도
     안 나와 "고장난 것"처럼 보인다.
+
+    ⚠️ 화면이 읽는 문은 **api 래퍼** 하나다 — public 원본은 2026-09-05a 로 닫혔다.
     """
-    flat = re.sub(r"\s+", " ", schema_sql)
+    flat = _statement_text(schema_sql)
     assert "create materialized view if not exists mv_open_sigungu" in flat
     assert "create or replace function list_open_sigungu()" in flat
-    assert "grant execute on function list_open_sigungu() to anon" in flat, (
-        "schema.sql: 화면이 구 목록을 못 읽습니다"
+    assert "grant execute on function api.list_open_sigungu() to anon" in flat, (
+        "schema.sql: 화면이 구 목록을 못 읽습니다. "
+        "화면은 api.* 만 부른다(2026-08-22e·2026-09-05a)"
+    )
+    # ⛔ 짝 단언 — 여는 쪽만 보면 원본이 다시 열려도 모른다.
+    assert ("revoke all on function list_open_sigungu() from public, anon, authenticated"
+            in flat), (
+        "schema.sql: public 원본이 다시 공개키에게 열렸습니다 — 2026-09-05a 로 닫은 것"
     )
 
 
