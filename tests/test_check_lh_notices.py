@@ -252,6 +252,16 @@ def _patch(monkeypatch, rows=None, boom=None):
     monkeypatch.setattr(chk, "fetch_recent", fake)
 
 
+def _fresh(**kw):
+    """main() 은 실시계와 모듈 상수를 그대로 쓴다 — 그래서 날짜를 **상대값**으로 만든다.
+    기준선 다음 날 공고 · 오늘+30일 마감. 고정 날짜(8/28·9/30)로 두면 기준선을 올리는
+    순간(2026-09-05 실제로 터짐)이나 마감일이 지나는 순간 시험만 조용히 빨개진다."""
+    base = datetime.datetime.strptime(chk.LATEST_KNOWN_NOTICE_DATE, "%Y%m%d").date()
+    today = datetime.datetime.now(chk.KST).date()
+    return notice(notice_date=(base + datetime.timedelta(days=1)).isoformat(),
+                  close_date=(today + datetime.timedelta(days=30)).isoformat(), **kw)
+
+
 class TestMain:
     def test_zero_when_nothing_new(self, monkeypatch, tmp_path, capsys):
         monkeypatch.chdir(tmp_path)
@@ -264,7 +274,7 @@ class TestMain:
     def test_one_and_writes_the_issue_body_when_new(self, monkeypatch, tmp_path):
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
-        _patch(monkeypatch, [notice(notice_date="2026-08-28")])
+        _patch(monkeypatch, [_fresh()])
         assert chk.main([]) == 1
         assert "인천계양" in (tmp_path / chk.ISSUE_BODY_FILE).read_text(encoding="utf-8")
 
@@ -293,7 +303,7 @@ class TestMain:
     def test_json_output(self, monkeypatch, tmp_path, capsys):
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
-        _patch(monkeypatch, [notice(notice_date="2026-08-28")])
+        _patch(monkeypatch, [_fresh()])
         assert chk.main(["--json"]) == 1
         data = json.loads(capsys.readouterr().out)
         assert data["latest_known"] == chk.LATEST_KNOWN_NOTICE_DATE
