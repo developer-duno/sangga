@@ -11,8 +11,10 @@ import {
   nearbyPermits,
   basePrices,
   lhNotice,
+  priceGate,
   rentStats,
   dataFreshness,
+  scorecard,
 } from './fixtures';
 
 /**
@@ -91,6 +93,13 @@ const LH_NOTICE_PATTERN = '**/rest/v1/rpc/list_lh_notices*';
 // ⚠️ 기본값은 역시 **함수가 없는 상태**다 — 마이그레이션 적용 전 라이브가 그것이고, 그때
 //    표가 통째로 조용히 빠지는지가 테스트 M 의 관심사 중 하나다.
 const DATA_FRESHNESS_PATTERN = '**/rest/v1/rpc/get_data_freshness*';
+// 참고 시세 성적표 — 이것도 **입구**에서 나가는 요청이다(LH 공고와 한 쌍으로 막는다).
+// ⚠️ 기본값은 역시 **함수가 없는 상태**다 — 마이그레이션 적용 전 라이브이 그것이고,
+//    그때 카드가 통째로 조용히 빠지는지가 다른 입구 시험들이 기대는 전제다.
+const PRICE_GATE_PATTERN = '**/rest/v1/rpc/list_price_gate*';
+// 성적표 파일은 **같은 출처**(개발 서버의 public/)라 REST 목과 결이 다르다 — 라우트를
+// 안 걸면 진짜 파일이 그대로 나간다. 스펙 AB 는 작은 판으로 갈아 끼운다.
+const SCORECARD_PATTERN = '**/scorecard-v1.json';
 
 const CORS_HEADERS = {
   'access-control-allow-origin': '*',
@@ -219,6 +228,12 @@ async function mockOpenSigungu(
     자기 응답을 한 번 더 등록한다(나중에 등록한 것이 먼저 잡힌다).
   */
   await mockMissingFunction(page, DATA_FRESHNESS_PATTERN);
+  /*
+    성적표 카드도 구를 고르는 순간 함께 묻는다 — 같은 이유로 막는다.
+    기본값이 **함수가 없는 상태**인 것도 같다(마이그레이션 적용 전 라이브). 성적을 보고
+    싶은 시험은 이 뒤에 자기 응답을 한 번 더 등록한다.
+  */
+  await mockMissingFunction(page, PRICE_GATE_PATTERN);
 }
 
 /** 시도 칩을 눌러 구 목록을 펼치고, 그 안의 구 칩을 눌러 고른다. */
@@ -1184,7 +1199,7 @@ test.describe('입구 — LH 상가 분양·입점 공고', () => {
     await expect(page.locator('section.lh')).toHaveCount(0);
   });
 
-  test('X. 서버에 함수가 아직 없으면 카드가 통째로 조용히 빠진다', async ({ page }) => {
+  test('X. 입구 함수가 아직 없으면 그 카드들이 통째로 조용히 빠진다', async ({ page }) => {
     // 마이그레이션을 적용하기 전 라이브가 바로 이 상태다(404/PGRST202) — mockOpenSigungu 의
     // 기본값이 그것이라 여기서는 아무것도 덧붙이지 않는다.
     // ⓘ 검색·층 스택 목은 일부러 안 건다 — 이 시험은 건물을 고르지 않으므로 그 요청이
@@ -1199,7 +1214,82 @@ test.describe('입구 — LH 상가 분양·입점 공고', () => {
     await expect(page.locator('section.lh')).toHaveCount(0);
     // "공고 없음" 같은 말도 남기지 않는다 — 모르는 것을 없는 것이라 말하지 않는다.
     await expect(page.locator('.app')).not.toContainText('LH 상가 분양·입점 공고');
+    // ⓘ 입구 카드는 이제 둘이다(성적표도 같은 기본값 = 함수 없음). **둘 다** 빠져도
+    //   검색창이 서 있는지를 이 한 시험이 함께 본다 — 곁다리 둘이 본체를 못 죽인다.
+    await expect(page.locator('section.score')).toHaveCount(0);
+    await expect(page.locator('.app')).not.toContainText('참고 시세는 얼마나 맞나');
   });
+});
+
+// ── 입구 — 참고 시세 성적표 (로드맵 Wave 4) ────────────────────────────────
+//
+// 두 갈래에서 값이 온다는 것이 이 화면의 특징이고, 그 이음매는 진짜 브라우저에서만 보인다:
+//   · 판정(어느 구가 켜지나) = 서버 함수 `list_price_gate`
+//   · 방법·단계 분포        = **같은 출처의 정적 파일** `/scorecard-v1.json`
+// 단위 시험은 둘 다 흉내로 넣지만, "정말 그 주소를 받아 오나"는 여기서만 확인된다.
+//
+// ⓘ **함수가 없을 때 카드가 조용히 빠지는 경로는 여기 없다** — 그건 이미 위 스펙 X 가
+//   같은 자리에서 함께 본다(그 시험은 두 입구 함수가 **둘 다** 404 인 상태에서 검색창이
+//   멀쩡한지를 본다). 같은 것을 두 번 보는 시험을 만들지 않는다.
+//   카드 자체가 빠지는지는 단위 시험(ScorecardSection.test.tsx)이 따로 본다.
+
+test.describe('입구 — 참고 시세 성적표', () => {
+  test('AB. 접힌 카드로 서고, 펼치면 체감 단계 분포가 가장 흔한 자리부터 나온다', async ({
+    page,
+  }) => {
+    await mockOpenSigungu(page);
+    // ⚠️ mockOpenSigungu 뒤에 등록해야 이 응답이 잡힌다(나중에 등록한 것이 먼저다).
+    await mockJson(page, PRICE_GATE_PATTERN, priceGate());
+    // 정적 파일도 갈아 끼운다 — 안 그러면 진짜 성적표(구운 파일)가 나가 시험이 그 판의
+    // 숫자에 매인다(성적표를 다시 뽑는 날 코드 변경 0 인데 빨간불이 된다).
+    await mockJson(page, SCORECARD_PATTERN, scorecard());
+
+    await page.goto('/');
+    // 구를 고르기 전에는 물을 곳이 없다 — 카드도 없다.
+    await expect(page.locator('section.score')).toHaveCount(0);
+
+    await pickGu(page, '서울', '강남구');
+
+    const score = page.locator('section.score');
+    await expect(score).toBeVisible();
+    // 접혀 있어도 **이 구가 받나 못 받나**와 언제 잰 성적인가는 읽힌다.
+    const summary = score.locator('.card__summary');
+    await expect(summary).toContainText('참고 시세 제공');
+    await expect(summary).toContainText('262건');
+    await expect(summary).toContainText('성적표 v1');
+    await expect(summary).toContainText('2026년 8월 15일 생성');
+    await expect(score.locator('.card__body')).toBeHidden();
+
+    await openCard(page, /참고 시세는 얼마나 맞나/);
+
+    // ① 이 구의 성적 — 사다리와 구 평균을 나란히.
+    await expect(score.locator('.score__mine')).toContainText('28.3%');
+    await expect(score.locator('.score__mine')).toContainText('49.2%');
+
+    // ② ★ 체감 단계 분포 — **가장 흔한 자리(폴백)가 맨 위**(로드맵 Wave 4).
+    const stages = score.locator('.score__stages .score__rows li');
+    await expect(stages).toHaveCount(2);
+    await expect(stages.first()).toContainText('L6');
+    await expect(stages.first()).toContainText('60.0%');
+    // 커버리지가 유리한 숫자라는 정직 공지(결정 0013 §3).
+    await expect(score.locator('.score__honest')).toContainText('유리');
+
+    // ③ 전체 구 — 떨어진 구도 함께 서고, 왜 떨어졌는지가 적힌다.
+    await expect(score.locator('.score__all .score__rows li')).toHaveCount(2);
+    await expect(score.locator('.score__all')).toContainText('금천구');
+
+    // ④ 방법 + 도장.
+    await expect(score.locator('.grade__badge')).toHaveText('검증 성적 · 원본 성적표 v1');
+
+    // ⛔ 건물을 고르면 화면의 주제가 그 건물이다 — 입구 카드는 물러난다.
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page);
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+    await expect(page.locator('section.stack')).toBeVisible();
+    await expect(page.locator('section.score')).toHaveCount(0);
+  });
+
 });
 
 // ── 둘레에 새로 올라오는 상가 건물 (건축 인허가) ───────────────────────────

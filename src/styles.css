@@ -1557,6 +1557,148 @@ body {
   line-height: 1.6;
 }
 
+/* ── 참고 시세 성적표 (입구 · 로드맵 Wave 4) ───────────────────────────────── */
+
+/*
+   ⚠️ 바탕을 `.lh`(따뜻한 쪽 = 밖으로 나가는 자리)와 **다르게** 둔다. 나란히 서는 두
+      입구 카드인데 같은 옷을 입히면 "남의 집 공고"와 "우리 값의 성적"이 한 덩어리로
+      읽힌다. 이쪽은 우리가 스스로에게 매긴 점수라 차분한 회청 쪽으로 둔다.
+   ⚠️ `.card--closed` 보다 **위**에 둔다 — 여기서 padding 을 다시 잡으므로, 아래에 두면
+      접힌 상태의 아래 여백 규칙이 이 카드에서만 조용히 안 먹는다(.lh·.rent 와 같다).
+*/
+.score {
+  margin: 0 0 24px;
+  padding: 14px 16px 6px;
+  background: #f6f8fb;
+}
+
+.score__lead,
+.score__sub,
+.score__honest,
+.score__why,
+.score__none {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+/* 왜 떨어졌는지 한 줄. 값이 아니라 **판정의 이유**라 눈에 띄게 둔다. */
+.score__why {
+  color: var(--under);
+  font-weight: 600;
+}
+
+.score__h {
+  margin: 16px 0 6px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.score__facts {
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+
+.score__facts li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+}
+
+.score__facts li:first-child {
+  border-top: none;
+}
+
+.score__k {
+  flex: 1 1 220px;
+  min-width: 0;
+  color: var(--muted);
+}
+
+.score__v {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 제공·미제공을 색으로 가른다 — 이 카드에서 사람이 가장 먼저 찾는 한 글자다. */
+.score__v--pass {
+  color: var(--accent);
+}
+
+.score__v--fail {
+  color: var(--under);
+}
+
+.score__rows {
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.score__rows li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 7px 0;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.score__rows li:first-child {
+  border-top: none;
+}
+
+/* 단계 코드(L2·L6)는 성적표가 쓰는 이름 그대로다 — 우리가 다시 이름 붙이지 않는다. */
+.score__stage,
+.score__gu {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.score__note {
+  flex: 1 1 200px;
+  min-width: 0;
+  color: var(--muted);
+}
+
+.score__code {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.score__share {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.score__err {
+  margin-left: auto;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.score__how-list {
+  margin: 0 0 10px;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+
+.score__how-list li + li {
+  margin-top: 6px;
+}
+
 /* ── 상권 임대 동향 (부동산원 조사 · 결정 0024) ────────────────────────────── */
 
 /*
@@ -2411,6 +2553,9 @@ body {
   .mix__permits,
   .floor,
   .lh__list li,
+  /* 단계·구 한 줄에 이름과 그 성적이 함께 있다 — 갈리면 근거 없는 숫자가 된다. */
+  .score__facts li,
+  .score__rows li,
   .tx__list li,
   .tx__bands li,
   .mix__bars li,

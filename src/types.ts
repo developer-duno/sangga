@@ -675,6 +675,108 @@ export type ParcelBuilding = {
   has_roof: boolean;
 };
 
+// ── 성적표 공개 (2026-09-05e · 로드맵 Wave 4) ────────────────────────────────
+//
+// 두 갈래에서 온다 — **왜 갈라 두었나**가 이 묶음에서 가장 중요한 사실이다:
+//   · 어느 구가 켜지고 꺼졌나 → **서버 함수** `list_price_gate()` (결정 0013 §4: 통과 구
+//     목록의 정본은 서버 한 곳. 화면·문서에 목록을 복사하면 성적표를 다시 뽑는 날 그
+//     사본만 조용히 낡는다)
+//   · 방법과 단계 분포 → **정적 파일** `/scorecard-v1.json` (백테스트 산출물 CSV 를 구운
+//     것 — DB 에 다시 넣으면 같은 사실이 두 곳에 살게 된다)
+
+/** 함수 `list_price_gate()` 한 줄 = 열린 구 하나의 판정과 그 근거. */
+export type PriceGateRow = {
+  /** PNU 앞 5자리. */
+  sigungu_code: string;
+  sigungu_nm: string | null;
+  /**
+   * 짝지은 비교에 쓴 검증 거래 수 — **두 방법이 모두 값을 낸 거래만** 센 수다.
+   * 한쪽만 성립한 거래를 섞으면 "쉬운 거래만 맞힌 쪽"이 유리해져 비교가 무의미해진다.
+   */
+  n_paired: number | null;
+  /**
+   * 사다리(운영 모드)의 오차 중앙값. **비율이다**(0.29 = 29%).
+   *
+   * ⛔ 화면이 이 값을 100 곱해 적을 때 무엇의 값인지 함께 말한다 — 근거 없이 '29'만
+   *    적으면 무엇의 29인지 알 수 없다(절대 규칙 3).
+   */
+  ladder_mdape: number | null;
+  /** 대조군(구 평균)의 오차 중앙값. 같은 집합에서 잰 값이라 위와 직접 견줄 수 있다. */
+  base_mdape: number | null;
+  /**
+   * 이 구에서 참고 시세를 내도 되나(결정 0013 §2 — 오차 중앙값이 기준선 이하 **그리고**
+   * 구 평균을 이길 것).
+   *
+   * ⛔ 화면이 이 판정을 다시 계산하지 않는다. 조건을 화면에 옮겨 적으면 기준선을 바꾸는
+   *    날 서버와 화면이 서로 다른 말을 한다.
+   */
+  gate_pass: boolean;
+  /** 이 판정이 적재된 시각. */
+  loaded_at: string | null;
+};
+
+/** 성적표 파일의 단계별 성적 한 줄(`docs/backtest/단계별지표.csv` 한 줄). */
+export type ScorecardStage = {
+  /** 'L2'·'L4'·'L5'·'L6'·'BASE'. */
+  stage: string;
+  /** '전체'·'시도'·'구'·'층대'. */
+  axis: string;
+  axis_value: string;
+  axis_name: string;
+  n_verified: number | null;
+  n_estimated: number | null;
+  /** 전부 **비율**이다(0~1). 화면이 %로 바꿔 적는다. */
+  coverage: number | null;
+  mdape: number | null;
+  mape: number | null;
+  hit20: number | null;
+};
+
+/**
+ * 운영 모드(사다리)를 여러 축으로 자른 한 줄(`docs/backtest/운영모드지표.csv` 한 줄).
+ *
+ * ⚠️ `kind` 가 **'채택단계'** 인 줄들이 화면의 "체감 단계 분포"다 — 사다리가 실제로 어느
+ *    칸에서 멈췄나. `ScorecardStage` 의 같은 코드와 **다른 집합**이라 직접 견주면 안 된다
+ *    (사다리는 앞 단계가 못 푼 거래만 뒤로 넘기므로, 뒤 단계에는 어려운 거래만 남는다).
+ */
+export type ScorecardOpsMode = {
+  /** '전체'·'시도'·'구'·'층대'·'채택단계'. */
+  kind: string;
+  axis_value: string;
+  axis_name: string;
+  n_verified: number | null;
+  n_estimated: number | null;
+  coverage: number | null;
+  /** ⓘ 추정을 아예 못 낸 줄(`no_estimate`)에서는 **null 이 정상**이다(0 이 아니다). */
+  mdape: number | null;
+  mape: number | null;
+  hit20: number | null;
+};
+
+/**
+ * 구워 둔 성적표 파일(`/scorecard-v1.json`) 전체.
+ *
+ * ⛔ **`gate` 칸을 일부러 안 담는다.** 파일에는 들어 있지만(그 판이 어떤 게이트를 낳았나의
+ *    기록), 화면이 읽을 수 있게 두면 언젠가 읽고 그때부터 사본이 정본(서버
+ *    `list_price_gate()`)과 갈린다 — 결정 0013 §4 가 막으려던 바로 그 드리프트다.
+ *    타입에서 빼 두면 실수로 읽는 코드가 **편집기·빌드 단계에서** 막힌다.
+ */
+export type Scorecard = {
+  /** 'v1'. 화면이 도장으로 그대로 적는다. */
+  version: string;
+  /**
+   * **성적을 낸 시각**이지 파일을 구운 시각이 아니다(KST ISO).
+   *
+   * 구운 시각을 적으면 자료가 그대로인데 다시 구울 때마다 파일이 달라져 git diff 가
+   * 지저분해지고, 무엇보다 사람이 알고 싶은 것은 "성적을 언제 냈나"다.
+   */
+  generated_at: string;
+  /** 원본 CSV 의 sha256. 굽는 것을 잊었는지 나중에 대조하는 용도(화면은 안 쓴다). */
+  sources: Record<string, string>;
+  stages: ScorecardStage[];
+  ops_modes: ScorecardOpsMode[];
+};
+
 // ── 이 자료는 언제 것인가 (2026-09-05d) ──────────────────────────────────────
 //
 // ⛔ 여기 오는 값은 **화면이 아는 것이 하나도 없다.** 자료 이름·기준 종류·주기까지 전부
