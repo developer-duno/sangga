@@ -2,6 +2,7 @@ import type {
   BasePrice,
   BuildingHit,
   CoverageStats,
+  DataFreshnessRow,
   FloorRow,
   IndustryMix,
   LhNotice,
@@ -272,6 +273,89 @@ export function rentStats(): RentStat[] {
   return [
     rentStat(),
     rentStat({ bld_type: '오피스', vacancy_rate: 5.5, rent_per_m2: 18.4, yield_rate: 1.1 }),
+  ];
+}
+
+/**
+ * 화면 아래 신선도 표. 라이브와 같은 **열 줄**을 준다(2026-09-05d).
+ *
+ * ⚠️ 값을 손으로 계산해 적지 않는다 — 여기 적힌 `next_expected` 는 서버가 규칙으로 계산해
+ *    주는 값을 흉내 낸 것이고, 규칙이 맞는지는 파이썬 가드와 라이브가 본다. 여기서는
+ *    "서버가 준 값이 화면에 그대로 실리는가"만 본다.
+ */
+export function dataFreshness(): DataFreshnessRow[] {
+  return [
+    {
+      src: '점포·업종 (상권정보)',
+      basis_kind: '분기',
+      basis: '202606',
+      next_expected: '2026-10-31',
+      cadence: '분기마다 (다음 분기 자료가 공개되면 사람이 적재)',
+    },
+    {
+      src: '실거래 (매매)',
+      basis_kind: '계약월',
+      basis: '202608',
+      next_expected: null,
+      cadence: '수시 (서울·대전 전부 활성화 뒤 확대)',
+    },
+    {
+      src: '건축물대장',
+      basis_kind: '적재일',
+      basis: '2026-06-30',
+      next_expected: null,
+      cadence: '월간 파일 (사람이 적재)',
+    },
+    {
+      src: '상권 경계',
+      basis_kind: '계산일',
+      basis: '2026-08-15',
+      next_expected: null,
+      cadence: '비정기 (원천이 바뀌면)',
+    },
+    {
+      src: 'LH 상가 공고',
+      basis_kind: '수집일',
+      basis: '2026-08-28',
+      next_expected: null,
+      cadence: '주 1회 감시 · 적재는 사람',
+    },
+    {
+      src: '건축 인허가',
+      basis_kind: '기준월',
+      basis: '202607',
+      next_expected: '2026-08-31',
+      cadence: '월 1회',
+    },
+    {
+      src: '국세청 기준시가',
+      basis_kind: '고시일',
+      basis: '2026-01-01',
+      next_expected: '2027-03-31',
+      cadence: '연 1회 (매년 3월 고시)',
+    },
+    {
+      src: '상권 임대 동향 (부동산원)',
+      basis_kind: '분기',
+      basis: '2026Q2',
+      next_expected: '2026-10-31',
+      cadence: '분기마다',
+    },
+    {
+      src: '참고 시세 성적표',
+      basis_kind: '적재일',
+      basis: '2026-08-16',
+      next_expected: null,
+      cadence: '재생성 때 (결재 사항)',
+    },
+    {
+      // 자료가 아직 한 행도 없는 갈래도 **줄은 나온다**(화면이 '자료 없음'이라 적는다).
+      src: '필지 (토지 특성)',
+      basis_kind: '갱신일',
+      basis: null,
+      next_expected: null,
+      cadence: '연 1회 (브이월드)',
+    },
   ];
 }
 

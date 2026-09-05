@@ -12,6 +12,7 @@ import {
   basePrices,
   lhNotice,
   rentStats,
+  dataFreshness,
 } from './fixtures';
 
 /**
@@ -83,6 +84,13 @@ const FEEDBACK_PATTERN = '**/rest/v1/rpc/submit_feedback*';
 // ⚠️ 층 스택이 아니라 구를 고르는 순간 나가므로 `mockFloorStack` 이 아니라
 //    `mockOpenSigungu` 와 한 쌍으로 막는다(아래).
 const LH_NOTICE_PATTERN = '**/rest/v1/rpc/list_lh_notices*';
+// 화면 아래 신선도 표(2026-09-05d). ⚠️ **첫 그림에서 바로 나간다** — 푸터는 구를 고르기
+// 전에도 서 있어서, 건물·구와 아무 상관 없이 모든 시험에서 이 요청이 뜬다. 그래서
+// `mockOpenSigungu` 와 한 쌍으로 막는다(안 막으면 실존하지 않는 도메인으로 나가 테스트가
+// DNS 에 좌우된다).
+// ⚠️ 기본값은 역시 **함수가 없는 상태**다 — 마이그레이션 적용 전 라이브가 그것이고, 그때
+//    표가 통째로 조용히 빠지는지가 테스트 M 의 관심사 중 하나다.
+const DATA_FRESHNESS_PATTERN = '**/rest/v1/rpc/get_data_freshness*';
 
 const CORS_HEADERS = {
   'access-control-allow-origin': '*',
@@ -203,6 +211,14 @@ async function mockOpenSigungu(
     테스트는 이 뒤에 자기 응답을 한 번 더 등록한다(나중에 등록한 것이 먼저 잡힌다).
   */
   await mockMissingFunction(page, LH_NOTICE_PATTERN);
+  /*
+    화면 아래 신선도 표도 여기서 함께 막는다 — 푸터는 구를 고르기 전부터 서 있어서
+    이 요청은 **모든 시험**에서 첫 그림과 함께 나간다.
+
+    기본값은 LH 와 같은 이유로 **함수가 없는 상태**다. 표를 보고 싶은 시험은 이 뒤에
+    자기 응답을 한 번 더 등록한다(나중에 등록한 것이 먼저 잡힌다).
+  */
+  await mockMissingFunction(page, DATA_FRESHNESS_PATTERN);
 }
 
 /** 시도 칩을 눌러 구 목록을 펼치고, 그 안의 구 칩을 눌러 고른다. */
@@ -690,8 +706,12 @@ test.describe('화면 아래 — 어디까지 믿을지와 한마디 남기는 �
    * 읽기라 방향이 반대고, 그래서 여기만 실제 브라우저에서 요청이 나가는지 눈으로 확인해
    * 둘 값어치가 있다(그 요청이 안 나가면 사람은 "보냈다"고 믿고 우리는 아무것도 못 받는다).
    */
-  test('M. 아래 안내가 보이고, 의견을 보내면 보던 지역이 함께 간다', async ({ page }) => {
+  test('M. 아래 안내와 "언제 것인가" 표가 보이고, 의견을 보내면 보던 지역이 함께 간다', async ({
+    page,
+  }) => {
     await mockOpenSigungu(page);
+    // 신선도 표는 기본이 '함수 없음'이라(mockOpenSigungu) 여기서만 진짜 답을 덮어 등록한다.
+    await mockJson(page, DATA_FRESHNESS_PATTERN, dataFreshness());
 
     // 실제로 나간 요청을 붙잡는다 — 인자 이름까지 눈으로 본다.
     const sent: Array<Record<string, unknown>> = [];
@@ -727,6 +747,20 @@ test.describe('화면 아래 — 어디까지 믿을지와 한마디 남기는 �
     await expect(outLink).toHaveAttribute('rel', 'noopener noreferrer');
     // 안내는 **접힌 채로** 시작한다 — 나가는 문 앞을 설명으로 가로막지 않는다.
     await expect(foot.locator('.links__guide-body')).toBeHidden();
+    // "언제 것인가" 표도 같은 자리에 선다 — "어디까지 믿어도 되나"의 나머지 절반이다.
+    // ⛔ 여기 뜨는 글자 중 화면이 아는 것은 하나도 없다(자료 이름·기준값·주기 전부 서버 값).
+    //    화면에 박아 두면 적재하는 순간부터 그 글자만 거짓말을 한다.
+    const fresh = foot.locator('section.fresh');
+    await expect(fresh.getByRole('heading', { name: '이 자료는 언제 것인가' })).toBeVisible();
+    await expect(fresh.locator('tbody tr')).toHaveCount(10);
+    await expect(fresh.getByText('점포·업종 (상권정보)')).toBeVisible();
+    // '202606' 이 사람 말로 바뀌어 실린다(원본을 그대로 찍지 않는다).
+    await expect(fresh.getByText('2026년 2분기').first()).toBeVisible();
+    await expect(fresh.getByText('2027년 3월 31일 무렵')).toBeVisible();
+    // 주기가 없는 자료에 아무 날짜나 적지 않는다.
+    await expect(fresh.getByText('정해진 주기 없음').first()).toBeVisible();
+    // 자료가 아직 한 행도 없는 갈래도 줄은 남는다 — 빼면 "그런 자료를 안 쓴다"로 읽힌다.
+    await expect(fresh.getByText('자료 없음')).toBeVisible();
 
     // 보던 지역이 함께 실리는지 보려고 구를 하나 고른다.
     await pickGu(page, '서울', '강남구');
@@ -755,6 +789,12 @@ test.describe('화면 아래 — 어디까지 믿을지와 한마디 남기는 �
 
     await page.goto('/');
     const foot = page.locator('footer.foot');
+
+    // 신선도 표도 같은 상태(함수 없음)다 — **통째로 빠지되 아래 안내는 그대로 선다.**
+    // "자료 없음"이라 적으면 모르는 것을 없는 것이라 말하게 된다(LH 카드와 같은 규칙).
+    await expect(foot.locator('section.fresh')).toHaveCount(0);
+    await expect(foot.locator('.foot__notice')).toBeVisible();
+
     await foot.getByRole('button', { name: '의견 보내기' }).click();
     await foot.getByRole('textbox').fill('한마디');
     await foot.getByRole('button', { name: '보내기' }).click();
@@ -845,6 +885,13 @@ test.describe('층별 스택뷰 — 종이로 뽑기', () => {
    */
   async function openBuilding(page: Page) {
     await mockOpenSigungu(page);
+    /*
+      ⛔ 신선도 표를 **여기서 진짜 답으로 덮는다.** 기본값(함수 없음)으로 두면 표가 아예 안
+         그려져, `.fresh` 의 인쇄 규칙이 **한 번도 실제로 돌지 않는다** — 이 레포가 인쇄로 데인
+         사고(막대가 백지로 나옴 · 접힌 카드가 통째로 사라짐)는 전부 이 자리에서만 잡혔고,
+         그때도 "규칙을 적어 뒀다"는 사실만으로는 아무것도 보장되지 않았다.
+    */
+    await mockJson(page, DATA_FRESHNESS_PATTERN, dataFreshness());
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
     await mockFloorStack(
       page,
@@ -896,6 +943,10 @@ test.describe('층별 스택뷰 — 종이로 뽑기', () => {
     await expect(page.locator('.stack__title')).toBeVisible();
     await expect(page.locator('.card--floors .floor').first()).toBeVisible();
     await expect(page.locator('.foot__notice')).toBeVisible();
+    // ⛔ "이 자료는 언제 것인가"도 종이에 남는다 — 조종 장치가 아니라 **내용**이다.
+    //    종이는 되물을 수가 없어서, 이 숫자가 언제 것인지는 화면에서보다 종이에서 더 중요하다.
+    //    (감춤 목록에 `.fresh` 를 넣으면 이 줄이 빨간불이 된다 — 돌연변이로 확인함.)
+    await expect(page.locator('section.fresh')).toBeVisible();
     await expect(page.locator('.tx__src')).toBeVisible();
 
     await page.emulateMedia({ media: null });

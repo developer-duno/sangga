@@ -487,6 +487,9 @@ class TestAnonExposure:
             # **여기 없다** — 열리면 상권 경계(geom)와 전국 24만 동 대장이 그대로 나간다.
             # 점포는 **땅 단위 개수**만 나가고 상호명·업종은 한 글자도 안 나간다.
             "api.list_district_buildings", "api.list_parcel_buildings",
+            # 이 자료는 언제 것인가(2026-09-05d). 열 갈래 자료의 max() 도장만 내보낸다 —
+            # 원본 행은 한 줄도 안 나간다. api_quota_log 는 아예 안 본다.
+            "api.get_data_freshness",
         )
 
     def test_pending_list_is_empty_after_2026_09_05a(self):
