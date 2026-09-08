@@ -79,10 +79,17 @@ ANALYZE_TABLES = (
 #    굳는다. 새 분기를 적재하고 이걸 안 돌리면 업종 분포만 옛 분기를 계속 말한다(에러 0).
 #    아래 report_industry_mix_freshness() 가 그 어긋남을 등식으로 잡는다.
 #    (앞의 것들과 의존관계는 없다 — 순서는 "먼저 만들어진 것부터"일 뿐이다.)
+# ⚠️ mv_sigungu_tx_yearly(동네 매매 단가 흐름 · 결정 0027)는 앞의 것들과 **의존관계가
+#    없다** — `transaction` 하나만 읽는다. 그래도 목록에 있어야 하는 이유는 같다:
+#    이 표는 해마다 묶은 요약이라 새 거래를 넣어도 **갱신하지 않으면 화면만 옛 해에
+#    굳은 채** 남는다(에러 0 — 그래서 아무도 모른다). 형제 mv_sigungu_tx_stats 와 달리
+#    창(window)을 굳히지 않으므로 "낡음"을 등식으로 잴 자가 없다 — 그만큼 이 목록이
+#    유일한 방어선이다.
 REFRESH_MVS = (
     "mv_search_parcel",
     "mv_open_sigungu",
     "mv_sigungu_tx_stats",
+    "mv_sigungu_tx_yearly",
     "mv_coverage_stats",
     "mv_district_industry_mix",
 )
@@ -452,6 +459,11 @@ ANON_CALLABLE_ALLOWLIST = (
     # 원본 행은 한 줄도 안 나간다. ⛔ api_quota_log 는 쳐다보지도 않는다(호출 장부이지
     # 자료의 나이가 아니고, 하한선일 뿐이라 신선도 근거로 쓰면 틀린 날짜를 자신 있게 적는다).
     "api.get_data_freshness",
+    # 동네 매매 단가 흐름(2026-09-09a · 결정 0027). 물질화뷰 mv_sigungu_tx_yearly 는
+    # **여기 없다** — 화면은 이 함수 하나로만 읽는다. 나가는 것은 **구×연도 요약**
+    # (그 해의 거래 수·단가 중앙값·가운데 절반·층 미상 수, 그리고 그 해가 얼마나
+    # 온전한지)뿐이고, 개별 거래(필지·층·단가)는 그 뷰에 아예 없다.
+    "api.get_sigungu_tx_yearly",
 )
 
 # ── 공개키가 아직 못 닫은 "대기" 함수 — 지금은 비어 있다 ─────────────────

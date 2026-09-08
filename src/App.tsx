@@ -10,6 +10,7 @@ import { PrintHeader } from './components/PrintHeader';
 import { RegionPicker } from './components/RegionPicker';
 import { ScorecardSection } from './components/ScorecardSection';
 import { ShareButton } from './components/ShareButton';
+import { TxFlowSection } from './components/TxFlowSection';
 import { FLOOR_STACK_VIEW } from './lib/appConstants';
 import { buildingFromFloorRows } from './lib/restoreBuilding';
 import { supabase } from './lib/supabase';
@@ -249,6 +250,18 @@ export default function App() {
       {sigungu !== null && selected === null && !restoring && (
         <ScorecardSection sigungu={sigungu} />
       )}
+
+      {/*
+        입구의 세 번째 카드 — 동네 매매 단가 흐름(결정 0027).
+
+        ⛔ **성적표 뒤에 둔다.** 앞의 것은 "우리 값을 얼마나 믿어도 되나"(믿음의 근거)이고
+           이쪽은 "그래서 흐름은 어땠나"(읽을거리)라, 믿음의 근거가 먼저 오는 편이 맞다.
+        ⓘ 조건은 앞의 두 카드와 **똑같다** — 구를 골랐고, 건물은 아직 안 골랐고, 되살리는
+          중도 아니다. 건물을 고르면 화면의 주제가 그 건물이므로 함께 물러난다.
+        ⓘ `key` 를 일부러 안 준다 — 구가 바뀌면 `sigungu` prop 이 바뀌고 카드가 스스로
+          다시 묻는다(카드 안의 `useEffect` 가 그 값에 매여 있다).
+      */}
+      {sigungu !== null && selected === null && !restoring && <TxFlowSection sigungu={sigungu} />}
 
       {selected ? (
         <>

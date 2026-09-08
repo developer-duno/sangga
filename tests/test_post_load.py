@@ -494,6 +494,11 @@ class TestAnonExposure:
             # 이 자료는 언제 것인가(2026-09-05d). 열 갈래 자료의 max() 도장만 내보낸다 —
             # 원본 행은 한 줄도 안 나간다. api_quota_log 는 아예 안 본다.
             "api.get_data_freshness",
+            # 동네 매매 단가 흐름(2026-09-09a · 결정 0027). 물질화뷰
+            # mv_sigungu_tx_yearly 는 **여기 없다** — 나가는 것은 구×연도 요약뿐이고
+            # (그 해의 거래 수·단가 중앙값·가운데 절반·층 미상 수, 그 해가 얼마나
+            # 온전한지), 개별 거래(필지·층·단가)는 그 뷰에 아예 없다.
+            "api.get_sigungu_tx_yearly",
         )
 
     def test_pending_list_is_empty_after_2026_09_05a(self):
@@ -684,6 +689,18 @@ class TestRefreshCoversBothSummaries:
         이것도 에러가 안 난다 — 새 실거래를 넣어도 화면 숫자가 그대로다.
         """
         assert "refresh materialized view concurrently mv_sigungu_tx_stats;" in (
+            post_load.build_refresh_sql()
+        )
+
+    def test_refreshes_the_yearly_stats(self):
+        """⛔ 연도별 단가 표(결정 0027)가 빠지면 **화면만 옛 해에 굳은 채** 남는다.
+
+        형제(mv_sigungu_tx_stats)는 창(24개월)이 굳는 것이 문제라 신선도를 등식으로
+        잴 수 있지만, 이 표는 굳는 창이 없어 **잴 자가 없다** — 새 해의 거래를 넣고
+        갱신을 안 하면 그 해 줄이 아예 안 생기거나 옛 값 그대로다. 에러는 안 난다.
+        그러니 이 목록에 있는지가 유일한 방어선이다.
+        """
+        assert "refresh materialized view concurrently mv_sigungu_tx_yearly;" in (
             post_load.build_refresh_sql()
         )
 
