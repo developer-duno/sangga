@@ -144,6 +144,17 @@ def fetch(session=None):
 
 
 def main(argv=None):
+    # cp949 콘솔에서 안내문의 — 가 UnicodeEncodeError 로 죽지 않게 — 형제
+    # fetch_sbiz_district.py 와 같은 처방. 2026-09-08 --probe 실행에서 마지막 안내 줄이
+    # 실제로 죽었다(자료 확인은 끝난 뒤라 피해는 없었지만 종료코드가 1 이 된다).
+    try:
+        if sys.stdout.isatty():
+            sys.stdout.reconfigure(errors="replace")
+        else:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
     p = argparse.ArgumentParser(description="서울시 상권분석서비스(영역-상권) SHP 내려받기")
     p.add_argument("--probe", action="store_true",
                    help="크기·형식·좌표계만 확인하고 저장하지 않는다")
