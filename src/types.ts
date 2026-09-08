@@ -182,6 +182,42 @@ export type SigunguTxStat = {
   sigungu_nm: string | null;
 };
 
+/**
+ * 함수 `get_sigungu_tx_yearly(sigungu)` 한 행 = 그 구의 **한 해**(결정 0027).
+ *
+ * 집합(구분소유) 거래만 세고, **자료가 있는 해만** 온다 — 빈 해를 0 으로 채우지 않는다.
+ * 채우면 "그 해에는 한 건도 안 팔렸다"가 되는데, 실제로는 우리 창고에 그 해 자료가
+ * 없는 것뿐이라 없는 사실을 지어내게 된다.
+ *
+ * ⚠️ 위 `SigunguTxStat`(층대 5칸 · 최근 24개월 창)과 **다른 표**다. 이쪽은 연도 축이고
+ *    층을 가르지 않는다 — 한 카드에 섞어 그리면 같은 구의 두 숫자가 서로 안 맞아 보인다.
+ */
+export type SigunguTxYearly = {
+  /** '2015' — 네 글자 연도. */
+  yr: string;
+  /** 단가가 있어 중앙값의 근거가 된 행 수. 화면은 `TX_MIN_SAMPLE` 미만이면 수치를 감춘다. */
+  n: number;
+  /** 그 해 집합 거래 전부(단가 유무 무관) — 층 미상 비율의 분모다. */
+  n_all: number;
+  median_unit_price: number | null;
+  p25_unit_price: number | null;
+  p75_unit_price: number | null;
+  /**
+   * 층이 빈 거래 수. `TX_BASEMENT_MISSING_SINCE` 부터는 지하층이 자료에 아예 없어
+   * 이 칸에 흡수돼 있다 — 그래서 이 비율은 "조사가 덜 됐다"가 아니라 "지하가 섞여 있다"에
+   * 가깝다(화면이 그 사실을 각주로 적는다).
+   */
+  floor_missing: number;
+  /** 그 해에 자료가 있는 달 수. 12 미만이면 화면이 "(9~12월분)"처럼 범위를 붙인다. */
+  ym_cnt: number;
+  /** 그 해 자료의 첫 달('200609'). 없으면 null. */
+  first_ym: string | null;
+  /** 그 해 자료의 끝 달('200612'). 없으면 null. */
+  last_ym: string | null;
+  /** 구 이름. 화면에 지역명을 글자로 박지 않기 위해 서버가 준다. */
+  sigungu_nm: string | null;
+};
+
 // ── 참고 매매 시세 밴드 (Stage B · 결정 0013) ───────────────────────────────
 //
 // ⚠️ 여기 오는 값은 **추정이다.** 위 Stage A 와 화면에서도 카드를 갈라 그린다

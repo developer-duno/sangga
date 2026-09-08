@@ -11,6 +11,7 @@ import {
   TX_LIST_CAP,
   TX_OPEN_SINCE_LABEL,
   TX_BASEMENT_MISSING_SINCE,
+  TX_MIN_SAMPLE,
 } from '../lib/appConstants';
 import type {
   BasePrice,
@@ -44,8 +45,12 @@ import { SectionCard } from './SectionCard';
  *
  * 이보다 적으면 중앙값·사분위를 **적지 않는다.** 3건으로 낸 중앙값은 숫자 모양만
  * 통계일 뿐이고, 화면에 적히는 순간 사람은 그걸 근거로 쓴다 — 검증 규칙의 미표시 원칙이다.
+ *
+ * ⚠️ 값 자체는 `appConstants` 에 있다(결정 0027) — 입구의 『동네 매매 단가 흐름』 카드도
+ *    같은 자로 가려야 해서다. 두 곳에 5 를 따로 적어 두면 한쪽만 고치는 날 같은 자료를
+ *    두 화면이 다르게 가린다.
  */
-const MIN_SAMPLE = 5;
+const MIN_SAMPLE = TX_MIN_SAMPLE;
 
 /**
  * 도로접면을 **적지 않는** 값(로드맵 Wave 2 PR-A).

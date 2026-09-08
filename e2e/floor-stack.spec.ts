@@ -97,6 +97,10 @@ const DATA_FRESHNESS_PATTERN = '**/rest/v1/rpc/get_data_freshness*';
 // ⚠️ 기본값은 역시 **함수가 없는 상태**다 — 마이그레이션 적용 전 라이브이 그것이고,
 //    그때 카드가 통째로 조용히 빠지는지가 다른 입구 시험들이 기대는 전제다.
 const PRICE_GATE_PATTERN = '**/rest/v1/rpc/list_price_gate*';
+// 동네 매매 단가 흐름(결정 0027) — 이것도 **입구**에서 나가는 요청이다(위 둘과 한 쌍으로 막는다).
+// ⚠️ 기본값은 역시 **함수가 없는 상태**다 — 마이그레이션 적용 전 라이브이 그것이고,
+//    그때 카드가 통째로 조용히 빠지는지가 스펙 X 의 관심사다.
+const TX_YEARLY_PATTERN = '**/rest/v1/rpc/get_sigungu_tx_yearly*';
 // 성적표 파일은 **같은 출처**(개발 서버의 public/)라 REST 목과 결이 다르다 — 라우트를
 // 안 걸면 진짜 파일이 그대로 나간다. 스펙 AB 는 작은 판으로 갈아 끼운다.
 const SCORECARD_PATTERN = '**/scorecard-v1.json';
@@ -234,6 +238,12 @@ async function mockOpenSigungu(
     싶은 시험은 이 뒤에 자기 응답을 한 번 더 등록한다.
   */
   await mockMissingFunction(page, PRICE_GATE_PATTERN);
+  /*
+    동네 매매 단가 흐름 카드도 구를 고르는 순간 함께 묻는다 — 같은 이유로 막는다.
+    기본값이 **함수가 없는 상태**인 것도 같다(마이그레이션 적용 전 라이브). 흐름을 보고
+    싶은 시험은 이 뒤에 자기 응답을 한 번 더 등록한다.
+  */
+  await mockMissingFunction(page, TX_YEARLY_PATTERN);
 }
 
 /** 시도 칩을 눌러 구 목록을 펼치고, 그 안의 구 칩을 눌러 고른다. */
@@ -1214,10 +1224,12 @@ test.describe('입구 — LH 상가 분양·입점 공고', () => {
     await expect(page.locator('section.lh')).toHaveCount(0);
     // "공고 없음" 같은 말도 남기지 않는다 — 모르는 것을 없는 것이라 말하지 않는다.
     await expect(page.locator('.app')).not.toContainText('LH 상가 분양·입점 공고');
-    // ⓘ 입구 카드는 이제 둘이다(성적표도 같은 기본값 = 함수 없음). **둘 다** 빠져도
-    //   검색창이 서 있는지를 이 한 시험이 함께 본다 — 곁다리 둘이 본체를 못 죽인다.
+    // ⓘ 입구 카드는 이제 **셋**이다(성적표·흐름도 같은 기본값 = 함수 없음). **셋 다**
+    //   빠져도 검색창이 서 있는지를 이 한 시험이 함께 본다 — 곁다리들이 본체를 못 죽인다.
     await expect(page.locator('section.score')).toHaveCount(0);
     await expect(page.locator('.app')).not.toContainText('참고 시세는 얼마나 맞나');
+    await expect(page.locator('section.flow')).toHaveCount(0);
+    await expect(page.locator('.app')).not.toContainText('동네 매매 단가 흐름');
   });
 });
 
@@ -1290,6 +1302,107 @@ test.describe('입구 — 참고 시세 성적표', () => {
     await expect(page.locator('section.score')).toHaveCount(0);
   });
 
+});
+
+// ── 입구 — 동네 매매 단가 흐름 (결정 0027) ─────────────────────────────────
+//
+// ⓘ **함수가 없을 때 카드가 조용히 빠지는 경로는 여기 없다** — 위 스펙 X 가 같은 자리에서
+//   함께 본다(입구 함수 셋이 **전부** 404 인 상태에서 검색창이 멀쩡한지). 같은 것을 두 번
+//   보는 시험을 만들지 않는다.
+// ⚠️ 픽스처를 `e2e/fixtures.ts` 가 아니라 **여기 둔다** — 이 판에서 그 파일은 다른 작업이
+//    함께 만지고 있어, 한 줄을 얹으면 서로의 변경이 엉킨다. 쓰는 곳이 이 시험 하나뿐이라
+//    옮길 이유도 아직 없다.
+
+/** 첫 해(몇 달치) · 온전한 해 · 올해(표본 부족) 셋 — 화면이 갈라 대해야 하는 세 상태다. */
+function txYearly() {
+  return [
+    {
+      yr: '2006',
+      n: 447,
+      n_all: 447,
+      median_unit_price: 4_902_441,
+      p25_unit_price: 3_100_000,
+      p75_unit_price: 7_400_000,
+      floor_missing: 92,
+      ym_cnt: 4,
+      first_ym: '200609',
+      last_ym: '200612',
+      sigungu_nm: '강남구',
+    },
+    {
+      yr: '2015',
+      n: 1550,
+      n_all: 1550,
+      median_unit_price: 21_171_384,
+      p25_unit_price: 12_000_000,
+      p75_unit_price: 33_000_000,
+      floor_missing: 155,
+      ym_cnt: 12,
+      first_ym: '201501',
+      last_ym: '201512',
+      sigungu_nm: '강남구',
+    },
+    {
+      yr: '2026',
+      n: 3,
+      n_all: 3,
+      median_unit_price: 30_000_000,
+      p25_unit_price: 28_000_000,
+      p75_unit_price: 32_000_000,
+      floor_missing: 1,
+      ym_cnt: 8,
+      first_ym: '202601',
+      last_ym: '202608',
+      sigungu_nm: '강남구',
+    },
+  ];
+}
+
+test.describe('입구 — 동네 매매 단가 흐름', () => {
+  test('AC. 접힌 카드로 서고, 펼치면 해마다 한 줄씩 — 해의 일부와 표본 부족을 정직하게 적는다', async ({
+    page,
+  }) => {
+    await mockOpenSigungu(page);
+    // ⚠️ mockOpenSigungu 뒤에 등록해야 이 응답이 잡힌다(나중에 등록한 것이 먼저다).
+    await mockJson(page, TX_YEARLY_PATTERN, txYearly());
+
+    await page.goto('/');
+    // 구를 고르기 전에는 물을 곳이 없다 — 카드도 없다.
+    await expect(page.locator('section.flow')).toHaveCount(0);
+
+    await pickGu(page, '서울', '강남구');
+
+    const flow = page.locator('section.flow');
+    await expect(flow).toBeVisible();
+    // 접혀 있어도 **언제부터 언제까지 몇 건인지**는 읽힌다(범위·건수 전부 서버가 준 값).
+    const summary = flow.locator('.card__summary');
+    await expect(summary).toContainText('2006년 9월');
+    await expect(summary).toContainText('2026년 8월');
+    await expect(summary).toContainText('2,000건');
+    await expect(flow.locator('.card__body')).toBeHidden();
+
+    await openCard(page, /동네 매매 단가 흐름/);
+
+    const rows = flow.locator('.flow__rows li');
+    await expect(rows).toHaveCount(3);
+    // ① 첫 해는 몇 달치뿐이다 — 그렇다고 적는다.
+    await expect(rows.first()).toContainText('9~12월분');
+    await expect(rows.first()).toContainText('㎡당 490만');
+    await expect(rows.first()).toContainText('층 미상 21%');
+    // ② ★ 표본이 모자란 해는 값을 안 적는다(절대 규칙 3).
+    await expect(rows.last()).toContainText('표본 부족');
+    await expect(rows.last()).not.toContainText('㎡당');
+    // ③ 근거 등급 — 어림한 값이 아니라 신고된 거래다.
+    await expect(flow.locator('.grade__badge')).toHaveText('A등급 · 실거래');
+
+    // ⛔ 건물을 고르면 화면의 주제가 그 건물이다 — 입구 카드는 물러난다.
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page);
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+    await expect(page.locator('section.stack')).toBeVisible();
+    await expect(page.locator('section.flow')).toHaveCount(0);
+  });
 });
 
 // ── 둘레에 새로 올라오는 상가 건물 (건축 인허가) ───────────────────────────
