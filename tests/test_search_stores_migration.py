@@ -4,6 +4,14 @@
 여기서 막는 것은 **라이브에 붙여 넣기 전에는 아무도 모르는 종류의 실수**다.
 DB 없이 SQL 글자만 본다(CI 에는 DB 가 없다) — 대신 아래는 글자만으로 확실히 잡힌다.
 
+  0) **기존 표와 그 사슬을 건드린다** ← 이 파일에서 가장 중요한 가드.
+     이 마이그레이션의 1차 초안은 mv_search_parcel 에 칸을 더하려고 그 표를 떨어뜨렸다
+     다시 만들었고, 거기 기대어 사는 넷(mv_open_sigungu → mv_coverage_stats →
+     v_coverage_stats → api.v_coverage_stats)까지 함께 되세우는 538줄이 됐다. 그건
+     ①"⛔ drop 하고 다시 만들지 말 것"이라 못 박아 둔 뷰를 건드리고 ②되세울 본문을
+     정본에서 베껴 오다 정본↔라이브 드리프트를 **라이브에 실어 나른다**(2026-09-01
+     감사에서 함수 8개가 실제로 갈려 있었다). 그래서 **형제 표**로 방향을 바꿨다 —
+     기존 표·사슬을 한 글자도 안 건드린다. 그 약속을 기계가 지킨다.
   1) 나가는 칸이 늘어난다 → 이 함수의 계약은 **땅 한 줄 + 일치 상호 최대 3개**다.
      biz_no·업종 코드·점포 좌표를 붙이는 순간 점포 원자료가 공개키로 새는 길이 된다.
   2) `sigungu` 없이도 답한다 → 상호는 같은 이름이 전국에 널려 있어 구 없이는 답이
@@ -12,14 +20,10 @@ DB 없이 SQL 글자만 본다(CI 에는 DB 가 없다) — 대신 아래는 글
      기본권한을 못 걷는다.
   4) `notify pgrst` 누락 → DB 에는 함수가 멀쩡히 있는데 화면만 404(PGRST202) 가 난다.
   5) 정본(schema.sql) 미동기 → 새 환경만 다르게 만들어진다.
-  6) **의존 사슬을 반쪽만 되세운다** → 이 마이그레이션은 요약표에 칸을 더하려고
-     mv_search_parcel 을 떨어뜨리는데, 거기 기대어 사는 것이 넷이다
-     (mv_open_sigungu → mv_coverage_stats → v_coverage_stats → api.v_coverage_stats).
-     하나라도 안 되세우면 검색·지역 목록·각주가 통째로 사라지고, 뷰의 `grant` 를
-     빠뜨리면 **경보 없이 각주만** 사라진다(`post_load.py --check` 는 "열려 있어야
-     하는데 닫힌 것"을 못 잡는다 — 그 위험이 v_coverage_stats 코멘트의 ⛔ 그것이다).
+  6) 새 표가 mv_search_parcel 을 **참조하게** 된다 → 참조하는 순간 그 사슬에 하나 더
+     매달려, 다음에 그 표를 손볼 사람이 여기까지 함께 떨어뜨려야 한다(방금 피한 그 일).
   7) `drop index idx_ub_name` 이 덩어리 **안**으로 들어간다 → ACCESS EXCLUSIVE 락이
-     커밋까지 유지돼, 요약표 굽는 내내 점포 표 읽기가 전부 줄을 선다(2026-08-22c).
+     커밋까지 유지돼, 표를 굽는 내내 점포 표 읽기가 전부 줄을 선다(2026-08-22c).
 
 ⓘ 도우미(read·statements·flat·fn_block)는 형제 test_tx_yearly_migration.py 에서
   **복사**해 왔다 — import 하지 않는다. 시험 파일끼리 얽히면 한쪽의 고장이 다른 쪽을
@@ -27,6 +31,7 @@ DB 없이 SQL 글자만 본다(CI 에는 DB 가 없다) — 대신 아래는 글
   든 타입에서 첫 칸만 읽고 멈춘다.)
 """
 
+import hashlib
 import os
 import re
 import sys
@@ -47,8 +52,55 @@ SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
 BOTH = [MIGRATION, SCHEMA]
 
 FN = "search_stores"
-MV = "mv_search_parcel"
+NEW_MV = "mv_parcel_store_names"
 OLD_INDEX = "idx_ub_name"
+
+# ⛔ 이 마이그레이션이 **한 글자도 안 건드리기로 한** 것들. 1차 초안이 이 다섯을 전부
+#    떨어뜨렸다 되세웠고, 그 판을 버린 것이 이 PR 의 방향 전환이다(위 docstring 0).
+# ⓘ `v_coverage_stats` 는 `mv_coverage_stats` 의 뒷부분이기도 하다 — 그래서 아래 검사는
+#    반드시 낱말 경계(\b)로 찾는다. `\bv_coverage_stats\b` 는 "mv_coverage_stats" 안에서
+#    안 걸린다(m 과 v 사이에는 낱말 경계가 없다).
+PROTECTED = (
+    "mv_search_parcel",
+    "mv_open_sigungu",
+    "mv_coverage_stats",
+    "v_coverage_stats",
+)
+
+# 정본에서 그 다섯 문장을 뜯어 낸 **원문 그대로**의 SHA-256(2026-09-09, origin/main 기준).
+# ⛔ 이 값이 안 맞으면 "누군가 그 문장을 고쳤다"는 뜻이다. 이 PR 의 전제가 무너진 것이니
+#    상수를 조용히 갱신하지 말 것 — 정말 그 표를 고쳐야 한다면 그건 **별건 결정**이고,
+#    사슬 넷을 어떻게 다룰지부터 다시 정해야 한다(위 docstring 0).
+# ⓘ 왜 `git show origin/main:…` 으로 대조하지 않나: CI 의 checkout 은 얕아서(fetch-depth
+#   기본 1) origin/main 이 아예 없다 — 그러면 이 가드가 조용히 건너뛰어진다(가짜 초록).
+CANON_STATEMENT_SHA = {
+    "mv_search_parcel":
+        "8d731a2729e2eb5ea6ca5db2e6f73bc4e38bd51f61ce0ddee00be7a45b3949c4",
+    "mv_open_sigungu":
+        "681ecf13de19675ab4f977a8ce1c7078b6514b54c55579d08963fa9b83fc8f86",
+    "mv_coverage_stats":
+        "ce57acc493a75969d784ed4896ad73294d97198256930834d43168e9524b2df2",
+    "v_coverage_stats":
+        "161a8aefd7126bac44cd423d73b699ee1bee8c799aef8f8b2f92a70093186f55",
+    "api.v_coverage_stats":
+        "f4b9c20328bd2e7c2bcdcf4a7ee52854479529a30c1783fd018855d2958bdb87",
+}
+
+CANON_HEADER = {
+    "mv_search_parcel":
+        r"^create materialized view if not exists mv_search_parcel as\b",
+    "mv_open_sigungu":
+        r"^create materialized view if not exists mv_open_sigungu as\b",
+    "mv_coverage_stats":
+        r"^create materialized view if not exists mv_coverage_stats as\b",
+    "v_coverage_stats":
+        r"^create or replace view v_coverage_stats as\b",
+    "api.v_coverage_stats":
+        r"^create or replace view api\.v_coverage_stats as\b",
+}
+
+NEW_MV_HEADER = (
+    r"^create materialized view if not exists %s as\b" % NEW_MV)
 
 # 나가도 되는 칸 — **이것이 전부다**. 땅 한 줄(대표 동·주소·층 요약)과, 그 땅에서
 # 무엇이 몇 곳 걸렸는지, 그리고 전체 규모·너무 넓은지·언제 기준 자료인지.
@@ -77,24 +129,22 @@ RETURNED_COLUMNS = (
     "store_snapshot_ym",
 )
 
-# 요약표를 다시 만들 때 **함께 되살려야 할** 색인 — 옛 넷 + 새 하나.
-# ⛔ 하나라도 빠지면 갱신이 멈추거나(유니크) 검색이 조용히 느려진다(trgm·구).
-MV_INDEXES = (
-    ("idx_msp_pnu", True),          # unique — refresh … concurrently 의 자격 요건
-    ("idx_msp_road_key", False),
-    ("idx_msp_jibun_key", False),
-    ("idx_msp_sigungu", False),
-    ("idx_msp_store_names", False),  # 2026-09-09c 신설
+# 새 표가 내놓는 칸과 **그 칸이 어떻게 만들어지는지**를 함께 못 박는다.
+# ⛔ 이름만 보면 안 된다 — 예컨대 store_names 를 distinct 로 접어도 이름은 그대로다.
+NEW_MV_OUTPUT = (
+    "pc.pnu,",
+    "substr(pc.pnu, 1, 5)::char(5) as sigungu_code,",
+    "s.store_names,",
+    "s.store_names_key,",
+    "s.store_cnt,",
+    "(select l.ym from latest l)::char(6) as store_snapshot_ym",
 )
 
-# mv_search_parcel 을 떨어뜨리면 함께 딸려 오는 것들(의존하는 쪽부터) — (종류, 이름).
-# ⓘ 종류를 이름에서 유추하지 않는다 — "mv_coverage_stats" 도 "v_coverage_stats" 로 끝난다.
-CHAIN = (
-    ("view", "api.v_coverage_stats"),
-    ("view", "v_coverage_stats"),
-    ("materialized view", "mv_coverage_stats"),
-    ("materialized view", "mv_open_sigungu"),
-    ("materialized view", "mv_search_parcel"),
+# (이름, 유니크인가) — 셋 다 있어야 한다.
+NEW_MV_INDEXES = (
+    ("idx_mpsn_pnu", True),      # unique — refresh … concurrently 의 자격 요건
+    ("idx_mpsn_sigungu", False),
+    ("idx_mpsn_names", False),
 )
 
 
@@ -104,7 +154,11 @@ def read(path):
 
 
 def norm(text):
-    """줄바꿈 표기(CRLF/LF)만 통일한다 — 공백·주석은 일부러 안 건드린다."""
+    """줄바꿈 표기(CRLF/LF)만 통일한다 — 공백·주석은 일부러 안 건드린다.
+
+    ⛔ 이걸 빼면 `.gitattributes` 나 편집기 설정이 바뀐 날 해시 가드가 통째로 빨개진다
+      (2026-08 훅이 CRLF 로 바뀌어 조용히 안 돌던 사고의 반대 얼굴).
+    """
     return text.replace("\r\n", "\n")
 
 
@@ -119,6 +173,23 @@ def statements(sql):
     )
 
 
+# `comment on … is '…';` 한 문장. 여러 줄에 걸치고, 끝은 항상 `';` 다.
+RE_COMMENT_STMT = re.compile(r"(?ims)^comment\s+on\s+.*?';\s*$")
+
+
+def code_only(sql):
+    """주석 **그리고 `comment on … is '…'` 문장까지** 걷어낸 것.
+
+    ⛔ 왜 필요한가: `comment on` 의 본문은 사람이 읽는 **글**인데 SQL 로는 엄연한 문장이라
+       `statements()` 에 그대로 남는다. 이 파일의 코멘트에는 "형제 mv_search_parcel 과…"
+       같은 설명이 들어 있어서, 그것만 보고 "사슬을 건드렸다"고 판정하면 가드가 영영
+       빨간불이 된다 — 그러면 사람이 가드를 느슨하게 고친다.
+       (2026-09-01 감사에서 `comment on column` 문자열 때문에 인덱스 가드에 구멍이 났던
+        것과 **같은 병**이다. 그때는 반대 방향으로 새서 못 잡았고, 여기서는 헛것을 잡는다.)
+    """
+    return RE_COMMENT_STMT.sub("", statements(sql))
+
+
 def flat(sql):
     """주석을 걷고 **공백을 한 칸으로** 접은 것 — 권한 문장 단언은 전부 이것을 본다.
 
@@ -126,6 +197,24 @@ def flat(sql):
        "없다"고 판정해 거짓 빨간불이 나고, 그러면 사람이 시험을 느슨하게 고치게 된다.
     """
     return re.sub(r"\s+", " ", statements(sql))
+
+
+def sql_block(text, header_pattern):
+    """줄머리가 `header_pattern` 인 문장 하나를 **원문 그대로** 뜯어 온다.
+
+    끝은 "주석을 뗀 부분이 `;` 로 끝나는 첫 줄"이다 — 문장 안의 설명 주석에 세미콜론이
+    들어 있어도 거기서 안 끊긴다.
+    """
+    lines = norm(text).splitlines()
+    for i, line in enumerate(lines):
+        if re.match(header_pattern, line, re.I):
+            out = []
+            for j in range(i, len(lines)):
+                out.append(lines[j])
+                if lines[j].split("--")[0].rstrip().endswith(";"):
+                    return "\n".join(out)
+            raise AssertionError("문장이 안 끝납니다: " + header_pattern)
+    raise AssertionError("못 찾았습니다: " + header_pattern)
 
 
 def fn_block(sql, name=FN, schema=""):
@@ -172,7 +261,134 @@ def at(pattern, sql, last=False):
     return found[-1] if last else found[0]
 
 
-# ── 1. 나가는 것은 땅 한 줄 + 상호 3개뿐 ─────────────────────────────────────
+def sha(text):
+    return hashlib.sha256(norm(text).encode("utf-8")).hexdigest()
+
+
+# ── 0. 기존 표와 사슬 넷은 **한 글자도 안 건드린다** (이 파일의 본론) ────────
+
+
+class TestTheCanonBlocksAreUntouched:
+    """⛔ 이 PR 의 방향 전환 자체를 지키는 가드다.
+
+    1차 초안은 mv_search_parcel 에 칸을 더하려고 그 표와 사슬 넷을 떨어뜨렸다 되세웠다.
+    그 판을 버리고 **형제 표**로 바꾼 것이 이 PR 이므로, 다섯 문장이 정본에서 그대로여야
+    한다. 하나라도 달라졌다면 누군가 옛 길로 돌아간 것이다.
+    """
+
+    @pytest.mark.parametrize("name", sorted(CANON_STATEMENT_SHA))
+    def test_the_statement_is_byte_for_byte_the_same(self, name):
+        got = sql_block(read(SCHEMA), CANON_HEADER[name])
+        assert sha(got) == CANON_STATEMENT_SHA[name], (
+            "{} 의 정의가 바뀌었습니다 — 이 PR 은 그 표를 안 건드리기로 했습니다. "
+            "정말 고쳐야 한다면 사슬 넷을 어떻게 다룰지부터 다시 정할 일이라 "
+            "**별건 결정**입니다(해시 상수만 조용히 갱신하지 마세요).".format(name)
+        )
+
+    def test_the_migration_never_names_them_in_any_statement(self):
+        """⛔ 마이그레이션의 **문장**에는 그 넷의 이름이 아예 없어야 한다.
+
+        (설명 주석과 `comment on` 의 글에는 있다 — 왜 안 건드리는지를 적어 둔 자리라
+         오히려 있어야 한다. 그래서 code_only() 로 그 둘을 걷고 본다.)
+        """
+        code = code_only(read(MIGRATION))
+        for name in PROTECTED:
+            assert re.search(r"\b%s\b" % name, code) is None, (
+                "마이그레이션이 {} 를 건드리고 있습니다 — 1차 초안으로 되돌아갔습니다"
+                .format(name)
+            )
+
+    def test_the_migration_drops_nothing_but_the_old_index(self):
+        """⛔ 이 판에서 떨어뜨려도 되는 것은 옛 상호 색인 **하나뿐**이다."""
+        code = code_only(read(MIGRATION))
+        drops = re.findall(r"(?im)^drop\s+.*$", code)
+        assert drops == ["drop index if exists {};".format(OLD_INDEX)], drops
+
+
+# ── 1. 새 표는 **홀로 서는 형제**다 ──────────────────────────────────────────
+
+
+class TestTheNewTableIsAFreeStandingSibling:
+    @pytest.mark.parametrize("path", BOTH)
+    def test_it_never_reads_the_old_summary_table(self, path):
+        """⛔ mv_search_parcel 을 **참조하면** 이 표가 그 사슬에 하나 더 매달린다 —
+        다음에 그 표를 손볼 사람이 여기까지 함께 떨어뜨려야 한다(방금 피한 그 일이다).
+        포함 규칙만 같게 쓰고, 판단은 parcel·building 에서 직접 한다."""
+        stmt = statements(sql_block(read(path), NEW_MV_HEADER))
+        for name in PROTECTED:
+            assert re.search(r"\b%s\b" % name, stmt) is None, name
+
+    @pytest.mark.parametrize("path", BOTH)
+    def test_the_columns_and_how_they_are_made(self, path):
+        """⛔ 이름만 보면 안 된다 — store_names 를 distinct 로 접어도 이름은 그대로다."""
+        stmt = flat(sql_block(read(path), NEW_MV_HEADER))
+        for piece in NEW_MV_OUTPUT:
+            assert piece in stmt, piece
+
+    @pytest.mark.parametrize("path", BOTH)
+    def test_store_names_keeps_one_item_per_store(self, path):
+        """⛔ **distinct 로 접으면 안 된다.**
+
+        접는 순간 "이 이름의 가게 N곳"을 이 표 한 줄에서 못 세고, 세러 점포 표를
+        되짚어야 한다 — 그 2단계가 찬 캐시 3.2초였다(강남 시제품 실측). 그런데 접어도
+        에러는 안 나고 숫자만 조용히 작아진다(같은 이름 가게가 한 곳으로 세어진다).
+        """
+        stmt = flat(sql_block(read(path), NEW_MV_HEADER))
+        assert "array_agg(ub.biz_name order by ub.biz_name) as store_names" in stmt
+        assert "array_agg(distinct ub.biz_name" not in stmt, (
+            "store_names 를 distinct 로 접었습니다 — 가게 수가 조용히 줄어듭니다"
+        )
+
+    @pytest.mark.parametrize("path", BOTH)
+    def test_the_key_column_uses_the_same_ruler_as_building_names(self, path):
+        """⛔ 건물 이름과 **같은 자**(search_key)로 자른다 — 같은 검색어에 건물과 상호가
+        다른 답을 내면 안 된다."""
+        stmt = flat(sql_block(read(path), NEW_MV_HEADER))
+        assert (
+            "string_agg(distinct search_key(ub.biz_name), '|') as store_names_key"
+            in stmt
+        )
+
+    @pytest.mark.parametrize("path", BOTH)
+    def test_only_the_latest_snapshot(self, path):
+        """⛔ 분기를 안 고르면 폐업한 옛 가게가 그대로 검색된다.
+
+        ⓘ 스칼라 하위질의여야 idx_ub_pnu_cat (pnu, snapshot_ym) 이 이 조회를 받친다 —
+          조인 조건으로 바꾸면 에러 없이 느려지기만 한다(가장 늦게 발견되는 회귀).
+        """
+        stmt = flat(sql_block(read(path), NEW_MV_HEADER))
+        assert "select max(u.snapshot_ym) as ym from unit_business u" in stmt
+        assert "and ub.snapshot_ym = (select l.ym from latest l)" in stmt
+        assert "and ub.biz_name is not null" in stmt
+
+    @pytest.mark.parametrize("path", BOTH)
+    def test_it_keeps_only_parcels_that_have_buildings(self, path):
+        """⛔ 이 조건이 빠지면 표가 parcel 전체 사본(112만 행)이 되고, 상호로 찾아 들어간
+        땅이 주소로는 안 나오는 모순도 난다(형제 표와 포함 규칙이 갈린다)."""
+        stmt = flat(sql_block(read(path), NEW_MV_HEADER))
+        assert "where exists (select 1 from building b where b.pnu = pc.pnu);" in stmt
+
+    @pytest.mark.parametrize("path", BOTH)
+    def test_the_empty_parcels_are_dropped_by_the_join(self, path):
+        """가게가 하나도 없는 땅은 줄 자체가 없어야 한다 — 그래야 표가 작다."""
+        stmt = flat(sql_block(read(path), NEW_MV_HEADER))
+        assert ") s on s.store_cnt > 0" in stmt
+
+    @pytest.mark.parametrize("path", BOTH)
+    def test_every_index_exists(self, path):
+        """유니크가 빠지면 `refresh … concurrently` 가 에러로 멈춰 `post_load.py` 가 통째로
+        서고, trgm·구 색인이 빠지면 **에러 없이 검색만 느려진다**(가장 늦게 발견된다)."""
+        text = statements(read(path))
+        for name, unique in NEW_MV_INDEXES:
+            pat = r"(?im)^create %sindex if not exists %s\s+on %s " % (
+                "unique " if unique else "", name, NEW_MV)
+            assert re.search(pat, text), "{} 가 없습니다".format(name)
+        assert re.search(
+            r"(?im)^create index if not exists idx_mpsn_names\s+on %s "
+            r"using gin \(store_names_key gin_trgm_ops\);" % NEW_MV, text)
+
+
+# ── 2. 나가는 것은 땅 한 줄 + 상호 3개뿐 ─────────────────────────────────────
 
 
 class TestReturnedColumnsAreFixed:
@@ -217,7 +433,7 @@ class TestReturnedColumnsAreFixed:
             assert banned not in body, banned
 
 
-# ── 2. 구를 안 고르면 0건 · 너무 넓으면 한 줄 ────────────────────────────────
+# ── 3. 구를 안 고르면 0건 · 너무 넓으면 한 줄 ────────────────────────────────
 
 
 class TestScopeRules:
@@ -233,8 +449,8 @@ class TestScopeRules:
         assert "and pat.gu is not null" in body, (
             "구를 안 고른 검색이 열려 있습니다 — 결정 0007 위반"
         )
-        assert "and pc.sigungu_code = pat.gu" in body
-        assert "pat.gu is null or pc.sigungu_code = pat.gu" not in body, (
+        assert "and m.sigungu_code = pat.gu" in body
+        assert "pat.gu is null or" not in body, (
             "형제 search_buildings 의 '구를 안 고르면 전국' 조건을 베껴 왔습니다"
         )
 
@@ -272,7 +488,7 @@ class TestScopeRules:
         assert "like pat.p escape '\\'" in body
 
 
-# ── 3. 새 함수는 닫힌 채로 태어난다 (2026-09-01b) ────────────────────────────
+# ── 4. 새 함수·새 표는 닫힌 채로 태어난다 (2026-09-01b) ──────────────────────
 
 
 class TestClosedByDefault:
@@ -309,245 +525,45 @@ class TestClosedByDefault:
         assert rv < gr
 
     @pytest.mark.parametrize("path", BOTH)
-    def test_the_summary_table_is_never_opened_to_anon(self, path):
-        """⛔ 요약표가 열리면 상호 묶음(store_names)이 통째로 긁혀 구 좁히기·상한이
-        전부 우회된다 — 2026-08-13 사고와 같은 형태다."""
+    def test_the_new_table_is_never_opened_to_anon(self, path):
+        """⛔ 이 표가 열리면 상호 묶음(store_names)이 통째로 긁혀 구 좁히기·상한이
+        전부 우회된다 — 2026-08-13 사고(mv_search_parcel 200)와 같은 형태다."""
         text = flat(read(path))
-        assert "grant select on {}".format(MV) not in text
-        assert "grant all on {}".format(MV) not in text
-        assert "revoke all on {} from public, anon, authenticated;".format(MV) in text
+        assert "grant select on {}".format(NEW_MV) not in text
+        assert "grant all on {}".format(NEW_MV) not in text
+        assert "revoke all on {} from public, anon, authenticated;".format(NEW_MV) in text
 
     def test_the_exposure_check_knows_it(self):
         """허용 목록에 없으면 `--check` 가 멀쩡한 함수를 **[사고]** 로 알린다."""
         assert "api.{}".format(FN) in post_load.ANON_CALLABLE_ALLOWLIST
         assert FN in post_load.ANON_CALLABLE_NAMES
-        assert MV not in post_load.ANON_READABLE_ALLOWLIST
-        assert MV not in post_load.ANON_CALLABLE_ALLOWLIST
+        assert NEW_MV not in post_load.ANON_READABLE_ALLOWLIST
+        assert NEW_MV not in post_load.ANON_CALLABLE_ALLOWLIST
 
     def test_the_migration_reloads_postgrest(self):
         """⛔ 빠뜨리면 DB 에는 있는데 화면만 404(PGRST202) 가 난다."""
         assert "notify pgrst, 'reload schema';" in statements(read(MIGRATION))
 
 
-# ── 4. 요약표 — 새 칸 셋과 색인 다섯 ─────────────────────────────────────────
+# ── 5. 전부 아니면 전무 (begin … commit) ─────────────────────────────────────
 
 
-class TestTheSummaryTableCarriesTheStoreNames:
-    @pytest.mark.parametrize("path", BOTH)
-    def test_the_three_new_columns(self, path):
-        """⛔ 세 칸이 **요약표에** 있어야 한다. 점포 표를 직접 훑으면 2글자 검색어가
-        trigram 을 못 타 7.6초다(라이브 실측)."""
-        text = flat(read(path))
-        assert "sn.store_names," in text
-        assert "sn.store_names_key," in text
-        assert "(select l.ym from latest l)::char(6) as store_snapshot_ym" in text
-
-    @pytest.mark.parametrize("path", BOTH)
-    def test_store_names_keeps_one_item_per_store(self, path):
-        """⛔ **distinct 로 접으면 안 된다.**
-
-        접는 순간 "이 이름의 가게 N곳"을 요약표 한 줄에서 못 세고, 세러 점포 표를
-        되짚어야 한다 — 그 2단계가 찬 캐시 3.2초였다(강남 시제품 실측). 그런데 접어도
-        에러는 안 나고 숫자만 조용히 작아진다(같은 이름 가게가 한 곳으로 세어진다).
-        """
-        text = flat(read(path))
-        assert "array_agg(ub.biz_name order by ub.biz_name) as store_names" in text
-        assert "array_agg(distinct ub.biz_name" not in text, (
-            "store_names 를 distinct 로 접었습니다 — 가게 수가 조용히 줄어듭니다"
-        )
-
-    @pytest.mark.parametrize("path", BOTH)
-    def test_the_key_column_uses_the_same_ruler_as_building_names(self, path):
-        """⛔ 건물 이름과 **같은 자**(search_key)로 자른다 — 같은 검색어에 건물과 상호가
-        다른 답을 내면 안 된다."""
-        text = flat(read(path))
-        assert (
-            "string_agg(distinct search_key(ub.biz_name), '|') as store_names_key"
-            in text
-        )
-
-    @pytest.mark.parametrize("path", BOTH)
-    def test_only_the_latest_snapshot(self, path):
-        """⛔ 분기를 안 고르면 폐업한 옛 가게가 그대로 검색된다.
-
-        ⓘ 스칼라 하위질의여야 idx_ub_pnu_cat (pnu, snapshot_ym) 이 이 조회를 받친다 —
-          조인 조건으로 바꾸면 에러 없이 느려지기만 한다(가장 늦게 발견되는 회귀).
-        """
-        text = flat(read(path))
-        assert "select max(u.snapshot_ym) as ym from unit_business u" in text
-        assert "and ub.snapshot_ym = (select l.ym from latest l)" in text
-        assert "and ub.biz_name is not null" in text
-
-    @pytest.mark.parametrize("path", BOTH)
-    def test_it_still_keeps_only_parcels_that_have_buildings(self, path):
-        """⛔ 이 조건이 빠지면 요약표가 parcel 전체 사본(112만 행)이 돼 이 표를 만든
-        이유가 통째로 사라진다."""
-        assert (
-            "where exists (select 1 from building b where b.pnu = pc.pnu);"
-            in flat(read(path))
-        )
-
-    @pytest.mark.parametrize("path", BOTH)
-    def test_every_index_is_recreated(self, path):
-        """⛔ 뷰를 떨어뜨리면 색인도 함께 사라진다 — **옛 넷 + 새 하나**를 다 만든다.
-
-        유니크가 빠지면 `refresh … concurrently` 가 에러로 멈춰 `post_load.py` 가 통째로
-        서고, trgm·구 색인이 빠지면 **에러 없이 검색만 느려진다**(가장 늦게 발견된다).
-        """
-        text = statements(read(path))
-        for name, unique in MV_INDEXES:
-            pat = r"(?im)^create %sindex if not exists %s\s+on %s " % (
-                "unique " if unique else "", name, MV)
-            assert re.search(pat, text), "{} 를 다시 안 만들었습니다".format(name)
-        assert re.search(
-            r"(?im)^create index if not exists idx_msp_store_names\s+on %s "
-            r"using gin \(store_names_key gin_trgm_ops\);" % MV, text)
-
-    def test_the_migration_rebuilds_instead_of_pretending(self):
-        """⛔ **`if not exists` 로는 칸이 안 붙는다** — 이미 있으면 아무 일도 안 하고
-        에러도 안 난다(화면만 옛 모양을 계속 말한다). 반드시 떨어뜨린 **뒤** 만든다."""
-        text = statements(read(MIGRATION))
-        drop = text.index("drop materialized view if exists {};".format(MV))
-        make = text.index("create materialized view {} as".format(MV))
-        assert drop < make, "떨어뜨리기 전에 만들고 있습니다"
-        assert "create materialized view if not exists {}".format(MV) not in text, (
-            "칸을 더하는 판에서 `if not exists` 는 아무 일도 안 합니다"
-        )
-
-
-# ── 5. 딸려 오는 의존 사슬을 **전부** 되세운다 ───────────────────────────────
-
-
-class TestTheDependencyChainIsRestored:
-    """mv_search_parcel 에 기대어 사는 것이 넷이다 — 결정 0028 §결정 3 이 몰랐던 사실.
-
-    라이브에서 그냥 drop 하면 "cannot drop … because other objects depend on it" 로
-    막힌다. 그래서 이 마이그레이션은 다섯을 함께 다시 만든다. 하나라도 빠뜨리면
-    검색·지역 목록·각주가 통째로 사라진다.
-    """
-
-    def test_dropped_dependents_first(self):
-        """⛔ 순서가 뒤집히면 "다른 것이 기대고 있다"로 막힌다."""
-        text = statements(read(MIGRATION))
-        spots = []
-        for kind, name in CHAIN:
-            stmt = "drop {} if exists {};".format(kind, name)
-            assert stmt in text, stmt
-            spots.append(text.index(stmt))
-        assert spots == sorted(spots), "사슬을 의존하는 쪽부터 안 떨어뜨립니다"
-
-    def test_never_uses_cascade(self):
-        """⛔ cascade 는 **지금 모르는 의존물까지 조용히 지운다.** 이름을 하나씩 적으면
-        모르는 것이 있을 때 에러로 멈춘다 — 막히는 편이 조용히 지워지는 것보다 낫다."""
-        assert "cascade" not in statements(read(MIGRATION)).lower()
-
-    def test_every_dependent_is_recreated(self):
-        text = statements(read(MIGRATION))
-        assert re.search(r"(?im)^create materialized view mv_open_sigungu as", text)
-        assert re.search(r"(?im)^create materialized view mv_coverage_stats as", text)
-        assert re.search(r"(?im)^create or replace view v_coverage_stats as", text)
-        assert re.search(
-            r"(?im)^create or replace view api\.v_coverage_stats as", text)
-        # 그 표들의 유니크 색인도 함께 사라졌다 — 없으면 갱신이 멈춘다.
-        assert re.search(
-            r"(?im)^create unique index if not exists idx_mos_sigungu "
-            r"on mv_open_sigungu \(sigungu_code\);", text)
-        assert re.search(
-            r"(?im)^create unique index if not exists idx_mcs_snapshot_ym "
-            r"on mv_coverage_stats \(snapshot_ym\);", text)
-
-    def test_the_public_view_keeps_its_grant_and_invoker_setting(self):
-        """⛔ **이 파일에서 가장 조용히 깨질 수 있는 자리다.**
-
-        뷰가 사라졌다 돌아오면서 anon SELECT 가 같이 날아가는데, `post_load.py --check`
-        는 "열려 있으면 안 되는데 열린 것"만 잡지 "열려 있어야 하는데 닫힌 것"은 못
-        잡는다 — **경보 없이 각주만** 사라진다(그게 v_coverage_stats 코멘트의 ⛔ 그것이다).
-        """
-        text = flat(read(MIGRATION))
-        for view in ("v_coverage_stats", "api.v_coverage_stats"):
-            rv = text.index(
-                "revoke all on {} from public, anon, authenticated;".format(view))
-            gr = text.index("grant select on {} to anon, authenticated;".format(view))
-            assert rv < gr, view
-        assert "alter view v_coverage_stats set (security_invoker = false);" in text, (
-            "security_invoker 를 안 되돌리면 원본 표가 anon 에게 401 을 낸다"
-        )
-
-    def test_the_recreated_dependents_match_the_canon(self):
-        """⛔ 되세우면서 본문이 갈리면 **새 환경과 라이브가 다른 말을 하게 된다.**
-
-        정본에서 그대로 베껴 왔는지 문장 단위로 대조한다(주석은 걷고 공백은 접는다 —
-        정본은 칸을 맞춰 적는다).
-        """
-        mig, sch = flat(read(MIGRATION)), flat(read(SCHEMA))
-        for name in ("mv_open_sigungu", "mv_coverage_stats"):
-            assert _matview_body(mig, name) == _matview_body(sch, name), (
-                "{} 본문이 정본과 다릅니다".format(name)
-            )
-
-    def test_the_summary_table_body_matches_the_canon(self):
-        """정본은 `if not exists` 로, 마이그레이션은 그것 없이 만든다 — 그 한 조각만
-        빼고 **글자 그대로** 같아야 한다."""
-        assert (_matview_body(flat(read(MIGRATION)), MV)
-                == _matview_body(flat(read(SCHEMA)), MV))
-
-
-def _matview_body(flat_sql, name):
-    """`create materialized view [if not exists ]<name> as … ;` 한 문장(접힌 것)."""
-    m = re.search(
-        r"create materialized view (?:if not exists )?%s as .*?;" % name, flat_sql)
-    assert m, name
-    return re.sub(r"^create materialized view if not exists ",
-                  "create materialized view ", m.group(0))
-
-
-# ── 6. 옛 상호 색인은 **맨 끝**에서 지운다 ───────────────────────────────────
-
-
-class TestTheOldIndexIsDroppedLast:
-    def test_it_is_the_very_last_statement(self):
-        """⛔ 덩어리 **안**에 두면 ACCESS EXCLUSIVE 락이 커밋까지 유지돼, 요약표 굽는
-        내내 점포 표를 읽는 다른 세션이 전부 줄을 선다(2026-08-22c 가 적어 둔 함정).
-        커밋 뒤 제 트랜잭션에서 혼자 돌면 잠금이 순식간이다."""
-        text = statements(read(MIGRATION)).rstrip()
-        assert text.endswith("drop index if exists {};".format(OLD_INDEX)), (
-            "옛 색인 지우기가 맨 끝이 아닙니다"
-        )
-
-    def test_the_canon_no_longer_creates_it(self):
-        """⛔ 정본에 남아 있으면 **새 환경에만** 186MB 짜리 색인이 생겨 라이브와 갈린다
-        (형제 가드 test_schema_migration_sync 도 같은 것을 본다)."""
-        assert not re.search(
-            r"(?im)^create\s+(?:unique\s+)?index\s+(?:if\s+not\s+exists\s+)?%s\b"
-            % OLD_INDEX, read(SCHEMA)
-        ), "지운 색인이 정본에 남아 있습니다"
-
-    def test_nothing_uses_it_anymore(self):
-        """지우는 근거 — 쓰는 코드가 0건이다. 함수 본문 어디에도 이름이 없다."""
-        assert OLD_INDEX not in statements(read(SCHEMA))
-
-
-# ── 7. 전부 아니면 전무 (begin … commit) ─────────────────────────────────────
-
-
-class TestTheRebuildIsAtomic:
-    """다섯을 떨어뜨렸다 다시 만드는 판은 반드시 ``begin`` … ``commit`` 으로 감싼다.
+class TestTheMigrationIsAtomic:
+    """표 하나 + 색인 셋 + 함수 둘을 만드는 판은 ``begin`` … ``commit`` 으로 감싼다.
 
     ``scripts/dbx.py -f`` 는 psql 자동커밋(``--single-transaction`` 없음)이라, 감싸지
-    않으면 요약표를 굽는 도중 끊겼을 때 **검색·지역 목록·각주가 사라진 채 남는다**
-    (그리고 ``post_load.py`` 의 refresh 가 "그런 뷰 없음"으로 멈춰 다른 갱신까지 선다).
+    않으면 중간에 끊겼을 때 **색인 없는 표**(갱신이 concurrently 로 안 된다)나
+    **표 없는 함수**(화면이 부르면 "그런 표 없음")가 남는다.
     """
 
-    # ⓘ statements() 는 주석만 걷어낸 **한 덩어리 문자열**이라(함수 본문 안의 ';' 때문에
-    #   문장으로 쪼개지 않는다) 줄머리 정규식의 **위치**로 순서를 잰다.
-    DDL = r"(?m)^(drop |create |grant |revoke |comment on |analyze |alter view )"
+    DDL = r"(?m)^(alter |analyze |comment on |create |drop |grant |revoke )"
 
-    def test_begin_comes_before_the_first_drop(self):
+    def test_begin_comes_before_the_first_create(self):
         sql = statements(read(MIGRATION)).lower()
-        assert at(r"(?m)^begin;", sql) < at(r"(?m)^drop ", sql)
+        assert at(r"(?m)^begin;", sql) < at(r"(?m)^create ", sql)
 
     def test_commit_comes_after_every_ddl_but_the_last_drop_index(self):
-        """⛔ 커밋 뒤에 남아도 되는 것은 **옛 색인 지우기 하나뿐**이다(위 §6). 다른 DDL 이
+        """⛔ 커밋 뒤에 남아도 되는 것은 **옛 색인 지우기 하나뿐**이다(아래 §6). 다른 DDL 이
         덩어리 밖으로 새면 그만큼 '전부 아니면 전무'가 깨진다."""
         sql = statements(read(MIGRATION)).lower()
         commit = at(r"(?m)^commit;", sql)
@@ -568,12 +584,38 @@ class TestTheRebuildIsAtomic:
         assert "concurrently" not in statements(read(MIGRATION)).lower()
 
 
-# ── 8. 정본 동기 · post_load 가 알고 있는가 ──────────────────────────────────
+# ── 6. 옛 상호 색인은 **맨 끝**에서 지운다 ───────────────────────────────────
+
+
+class TestTheOldIndexIsDroppedLast:
+    def test_it_is_the_very_last_statement(self):
+        """⛔ 덩어리 **안**에 두면 ACCESS EXCLUSIVE 락이 커밋까지 유지돼, 표를 굽는
+        내내 점포 표를 읽는 다른 세션이 전부 줄을 선다(2026-08-22c 가 적어 둔 함정).
+        커밋 뒤 제 트랜잭션에서 혼자 돌면 잠금이 순식간이다."""
+        text = statements(read(MIGRATION)).rstrip()
+        assert text.endswith("drop index if exists {};".format(OLD_INDEX)), (
+            "옛 색인 지우기가 맨 끝이 아닙니다"
+        )
+
+    def test_the_canon_no_longer_creates_it(self):
+        """⛔ 정본에 남아 있으면 **새 환경에만** 186MB 짜리 색인이 생겨 라이브와 갈린다
+        (형제 가드 test_schema_migration_sync 도 같은 것을 본다)."""
+        assert not re.search(
+            r"(?im)^create\s+(?:unique\s+)?index\s+(?:if\s+not\s+exists\s+)?%s\b"
+            % OLD_INDEX, read(SCHEMA)
+        ), "지운 색인이 정본에 남아 있습니다"
+
+    def test_nothing_uses_it_anymore(self):
+        """지우는 근거 — 쓰는 코드가 0건이다. 함수 본문 어디에도 이름이 없다."""
+        assert OLD_INDEX not in statements(read(SCHEMA))
+
+
+# ── 7. 정본 동기 · post_load 가 알고 있는가 ──────────────────────────────────
 
 
 class TestSchemaMirrorsTheMigration:
     @pytest.mark.parametrize("schema", ["", "api."])
-    def test_bodies_letter_for_letter(self, schema):
+    def test_function_bodies_letter_for_letter(self, schema):
         """⛔ 정본만 살짝 다듬는 것이 곧 정본↔라이브 불일치다(2026-09-01 2차 적대검증).
 
         ⓘ 전 함수를 훑는 형제 가드가 따로 있다(tests/test_schema_function_drift.py).
@@ -582,25 +624,40 @@ class TestSchemaMirrorsTheMigration:
         assert fn_block(read(MIGRATION), schema=schema) == fn_block(
             read(SCHEMA), schema=schema)
 
+    def test_the_new_table_body_letter_for_letter(self):
+        """⛔ 새 표의 본문이 갈리면 **새 환경과 라이브가 다른 말을 하게 된다.**"""
+        assert (sql_block(read(MIGRATION), NEW_MV_HEADER)
+                == sql_block(read(SCHEMA), NEW_MV_HEADER))
+
 
 class TestPostLoadKnowsIt:
-    def test_refresh_list_still_names_the_summary_table(self):
-        """⛔ 갱신 목록에서 빠지면 새 가게를 넣어도 **조용히** 검색에서 빠진다."""
-        assert MV in post_load.REFRESH_MVS
-        assert "refresh materialized view concurrently {};".format(MV) in (
+    def test_refresh_list_names_the_new_table(self):
+        """⛔ 갱신 목록에서 빠지면 새 가게를 넣어도 **조용히** 검색에서 빠진다.
+
+        이 표는 형제라 아무것도 여기 의존하지 않는다 — 잊어도 어디서도 안 터진다는 뜻이라,
+        이 목록이 유일한 방어선이다.
+        """
+        assert NEW_MV in post_load.REFRESH_MVS
+        assert "refresh materialized view concurrently {};".format(NEW_MV) in (
             post_load.build_refresh_sql()
         )
 
-    def test_the_dependent_summary_is_refreshed_after_it(self):
-        """mv_open_sigungu 는 mv_search_parcel 에서 만들어진다 — 순서가 바뀌면 한 박자 늦는다."""
+    def test_the_old_summary_table_is_still_first(self):
+        """⛔ 새 표를 끼워 넣다 기존 순서를 흔들면 안 된다 — mv_open_sigungu 는
+        mv_search_parcel 에서 만들어지므로 반드시 그 뒤여야 한다."""
         sql = post_load.build_refresh_sql()
-        assert sql.index(MV) < sql.index("mv_open_sigungu")
+        assert post_load.SEARCH_MV == "mv_search_parcel"
+        assert sql.index("mv_search_parcel") < sql.index("mv_open_sigungu")
 
     def test_allowlist(self):
         assert "api." + FN in post_load.ANON_CALLABLE_ALLOWLIST
 
 
-# ── 9. 가드 자신의 시험 ──────────────────────────────────────────────────────
+# ── 8. 가드 자신의 시험 — 죽은 줄을 **진짜로** 잡는가 ────────────────────────
+#
+# ⓘ 아래 셋은 파일을 **안 건드린다** — 원문을 문자열로 읽어 한 군데를 망가뜨린 **사본**을
+#   만들고 그 사본에 판정을 돌린다. 그래서 "복원"이 따로 필요 없다(디스크는 처음부터
+#   그대로다). 시험이 중간에 죽어도 레포에 부서진 파일이 남지 않는다.
 
 
 def test_statements_really_strips_comments():
@@ -613,6 +670,23 @@ def test_statements_really_strips_comments():
     assert line not in flat(text.replace(line, "-- " + line)), (
         "주석으로 죽인 grant 가 여전히 '있다'고 읽힙니다 — 주석 제거가 헛돕니다"
     )
+
+
+def test_code_only_strips_comment_statements_but_nothing_else():
+    """⛔ `comment on … is '…'` 만 걷어야 한다. 더 걷으면 §0 의 이름 검사가 **아무것도 안
+    보는** 상태가 되고(가짜 초록), 덜 걷으면 코멘트에 적어 둔 설명 때문에 영영 빨간불이다."""
+    code = code_only(read(MIGRATION))
+    # 걷혔는가 — 코멘트 본문에만 있는 말이 사라졌다.
+    assert "형제 mv_search_parcel 과 같은 포함 규칙" not in code
+    # 너무 걷지는 않았는가 — 진짜 문장들은 그대로다.
+    for kept in (
+        "create materialized view if not exists {} as".format(NEW_MV),
+        "create or replace function api.{}(".format(FN),
+        "grant execute on function api.{}(text, int, text, int)".format(FN),
+        "drop index if exists {};".format(OLD_INDEX),
+        "commit;",
+    ):
+        assert kept in code, kept
 
 
 def test_returns_columns_helper_survives_parenthesised_types():
@@ -629,17 +703,77 @@ def test_returns_columns_helper_survives_parenthesised_types():
     assert returns_columns(sample) == ("pnu", "n", "names")
 
 
-def test_the_index_guard_actually_notices_a_missing_index():
-    """⛔ 색인 가드가 **죽은 줄을 진짜로 잡는지** 확인한다.
+def test_mutation_a_a_missing_unique_index_is_noticed():
+    """돌연변이 ① 유니크 색인을 주석으로 죽인다 → 색인 가드가 뒤집혀야 한다.
 
-    유니크 색인 한 줄을 주석으로 죽인 사본에서 판정이 뒤집혀야 한다 — 안 뒤집히면
-    "색인을 다 되살렸다"는 단언이 사실은 아무것도 안 보고 있는 것이다.
+    안 뒤집히면 "색인 셋을 다 만든다"는 단언이 사실은 아무것도 안 보고 있는 것이다.
     """
     text = read(MIGRATION)
-    line = "create unique index if not exists idx_msp_pnu        on mv_search_parcel (pnu);"
+    line = ("create unique index if not exists idx_mpsn_pnu     "
+            "on {} (pnu);".format(NEW_MV))
     assert line in text, "전제: 원문에 그 줄이 있다"
-    pat = r"(?im)^create unique index if not exists idx_msp_pnu\s+on %s " % MV
+    pat = r"(?im)^create unique index if not exists idx_mpsn_pnu\s+on %s " % NEW_MV
     assert re.search(pat, statements(text))
     assert not re.search(pat, statements(text.replace(line, "-- " + line))), (
         "주석으로 죽인 색인이 여전히 '있다'고 읽힙니다"
+    )
+
+
+def test_mutation_b_referencing_the_old_summary_table_is_noticed():
+    """돌연변이 ② 새 표가 mv_search_parcel 에서 읽게 바꾼다 → §0·§1 가드가 잡아야 한다.
+
+    이게 이 PR 에서 가장 되돌아가기 쉬운 실수다(옛 표를 참조하면 코드가 짧아 보인다).
+    """
+    text = read(MIGRATION)
+    assert "from parcel pc" in text, "전제: 원문은 parcel 에서 직접 읽는다"
+    broken = text.replace("from parcel pc", "from mv_search_parcel pc")
+
+    # ① 마이그레이션 문장에 옛 표 이름이 등장한다
+    assert re.search(r"\bmv_search_parcel\b", code_only(broken)) is not None
+    assert re.search(r"\bmv_search_parcel\b", code_only(text)) is None, (
+        "원문에서 이미 걸리고 있습니다 — 가드가 헛것을 잡고 있다는 뜻입니다"
+    )
+    # ② 새 표의 정의 안에도 등장한다
+    stmt = statements(sql_block(broken, NEW_MV_HEADER))
+    assert re.search(r"\bmv_search_parcel\b", stmt) is not None
+
+
+def test_mutation_c_moving_the_drop_inside_the_commit_is_noticed():
+    """돌연변이 ③ 옛 색인 지우기를 커밋 **안**으로 옮긴다 → 순서 가드가 잡아야 한다.
+
+    옮겨도 SQL 은 멀쩡히 돈다 — 다만 표를 굽는 내내 점포 표 읽기가 전부 줄을 선다.
+    라이브에 붙여 넣기 전에는 아무도 모르는 종류의 회귀라 여기서 막는다.
+    """
+    drop = "drop index if exists {};".format(OLD_INDEX)
+    text = read(MIGRATION)
+    assert statements(text).rstrip().endswith(drop), "전제: 원문은 맨 끝에 있다"
+
+    broken = norm(text).replace(drop + "\n", "").replace(
+        "\ncommit;\n", "\n" + drop + "\ncommit;\n", 1)
+    sql = statements(broken).lower()
+    # 옮겨졌는가 — 커밋 **앞**에 와 있다.
+    assert at(r"(?m)^drop index if exists %s;" % OLD_INDEX, sql) < at(
+        r"(?m)^commit;", sql), "옮기기가 안 됐습니다"
+    # 그리고 §6 의 판정이 뒤집힌다 — 이게 이 시험의 본론이다.
+    assert not statements(broken).rstrip().endswith(drop), (
+        "덩어리 안으로 옮겼는데도 '맨 끝에 있다'고 읽힙니다 — 순서 가드가 헛돕니다"
+    )
+
+
+def test_mutation_d_an_edit_at_the_end_of_a_canon_block_is_noticed():
+    """돌연변이 ④ 정본 블록의 **맨 끝 줄**을 고친다 → §0 해시 가드가 뒤집혀야 한다.
+
+    ⛔ 이 파일에서 가장 중요한 가드(§0)의 급소는 해시가 아니라 **sql_block 이 어디서
+       끊나**다. 일찍 끊으면 앞부분만 해시에 들어가, 뒷줄을 아무리 고쳐도 초록이다
+       (가드가 없는 것보다 나쁜 거짓 안심). 그래서 하필 맨 끝 줄을 건드려 본다.
+    """
+    canon = read(SCHEMA)
+    tail = "where exists (select 1 from building b where b.pnu = pc.pnu);"
+    assert canon.count(tail) == 2, (
+        "전제: 이 꼬리를 쓰는 것은 mv_search_parcel 과 새 표, 딱 둘이다"
+    )
+    broken = canon.replace(tail, "where true;", 1)   # 첫 번째 = mv_search_parcel
+    got = sql_block(broken, CANON_HEADER["mv_search_parcel"])
+    assert sha(got) != CANON_STATEMENT_SHA["mv_search_parcel"], (
+        "블록 **맨 끝** 줄을 고쳤는데 해시가 그대로입니다 — sql_block 이 일찍 끊고 있습니다"
     )

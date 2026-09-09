@@ -500,8 +500,8 @@ class TestAnonExposure:
             # 온전한지), 개별 거래(필지·층·단가)는 그 뷰에 아예 없다.
             "api.get_sigungu_tx_yearly",
             # 상호명으로 찾기(2026-09-09c · 결정 0028). 점포 표 unit_business 와 요약표
-            # mv_search_parcel 은 **여기 없다** — 열리면 전국 339만 점포의 상호가 통째로
-            # 긁힌다. 이 함수는 땅 한 줄과 **일치한 상호 최대 3개**·개수만 내보낸다
+            # mv_parcel_store_names 는 **여기 없다** — 열리면 전국 339만 점포의 상호가
+            # 통째로 긁힌다. 이 함수는 땅 한 줄과 **일치한 상호 최대 3개**·개수만 내보낸다
             # (biz_no·업종 코드·점포 좌표는 한 글자도 안 나간다).
             "api.search_stores",
         )
@@ -687,6 +687,20 @@ class TestRefreshCoversBothSummaries:
             assert "refresh materialized view concurrently {};".format(mv) in sql, (
                 "{} 가 갱신 대상에서 빠졌습니다".format(mv)
             )
+
+    def test_refreshes_the_store_names_summary(self):
+        """⛔ 상호명으로 찾기 요약표(2026-09-09c)가 빠지면 **새 가게가 조용히 검색에서
+        빠진다** — 위 mv_open_sigungu 사고와 똑같은 방식이다(에러 0).
+
+        이 표는 mv_search_parcel 의 **형제**라 의존관계가 없다(그래서 순서 시험도 없다).
+        의존이 없다는 것이 곧 "잊어도 아무 데서도 안 터진다"는 뜻이라, 목록에 들어 있는지를
+        여기서 못 박는다.
+        """
+        assert "mv_parcel_store_names" in post_load.REFRESH_MVS
+        assert (
+            "refresh materialized view concurrently mv_parcel_store_names;"
+            in post_load.build_refresh_sql()
+        )
 
     def test_refreshes_the_transaction_stats(self):
         """⛔ Stage A 의 구 단가 표(결정 0012)가 빠지면 **창(24개월)이 옛날에 굳은 채** 남는다.

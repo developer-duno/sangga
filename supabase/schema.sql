@@ -396,8 +396,9 @@ create index if not exists idx_ub_pnu_cat  on unit_business (pnu, snapshot_ym)
 -- ⚠️ 옛 `idx_ub_name (biz_name gin_trgm_ops)` 자리다(2026-09-09c 에서 지웠다 — 결정 0028).
 --    **쓰는 코드가 0건**이었고, 그럴 수밖에 없었다: '카페' 같은 2글자 검색어는 trigram
 --    선별력이 없어 이 색인을 **아예 안 타고** 277만 행을 통째로 훑었다(라이브 실측 7.6초).
---    상호명으로 찾는 일은 이제 필지 요약표의 idx_msp_store_names 가 한다(구 안 1.2만 행,
---    2글자 10ms). 되살리면 186MB 를 그냥 쓰게 된다 — 되살리지 말 것.
+--    상호명으로 찾는 일은 이제 필지별 가게 이름 요약표(mv_parcel_store_names)의
+--    idx_mpsn_names 가 한다(구 안 1.2만 행, 2글자 10ms). 되살리면 186MB 를 그냥 쓰게 된다
+--    — 되살리지 말 것.
 create index if not exists idx_ub_cat      on unit_business (cat_s_cd, snapshot_ym);
 create index if not exists idx_ub_geom     on unit_business using gist (geom);
 -- 각주 집계(v_coverage_stats) 전용 **커버링** 인덱스 — 뷰가 쓰는 세 컬럼이 다 들어
@@ -1046,17 +1047,7 @@ create index if not exists idx_parcel_jibun_key on parcel using gin (jibun_addr_
 --      refresh materialized view concurrently mv_search_parcel;
 --    안 하면 새로 넣은 건물이 **조용히 검색에서 빠진다**(에러가 아니다).
 
--- ⚠️ 2026-09-09c(결정 0028) 부터 **점포 상호**도 이 표가 담는다. 그 마이그레이션은 이 표를
---    떨어뜨렸다 다시 만드는데(물질화뷰는 칸을 나중에 못 붙인다), 그러면 이 표에 기대어 사는
---    것들이 함께 딸려 온다 — mv_open_sigungu → mv_coverage_stats → v_coverage_stats →
---    api.v_coverage_stats. 다음에 또 칸을 더할 일이 있으면 그 사슬을 먼저 떠올릴 것.
 create materialized view if not exists mv_search_parcel as
-with latest as (
-  -- ⚠️ **전역** 최신 분기 하나다(지역별로 고르지 않는다) — v_floor_stack·mv_coverage_stats
-  --    와 같은 기준이라, 한 지역만 분기가 밀리면 그 지역 가게가 통째로 안 나오는 알려진
-  --    결함을 그대로 물려받는다(결정 0028 결정 1 · 알려진한계 §4). 여기서 한 번만 구한다.
-  select max(u.snapshot_ym) as ym from unit_business u
-)
 select
   pc.pnu,
   substr(pc.pnu, 1, 5)::char(5) as sigungu_code,   -- 검색 범위를 좁히는 칸
@@ -1066,55 +1057,123 @@ select
   pc.sido_nm,
   pc.sigungu_nm,
   pc.emd_nm,
-  pc.jibun,
-  -- ── 상호명으로 찾기 (결정 0028 결정 3) ───────────────────────────────────
-  -- ⛔ distinct 로 접지 않는다 — **점포마다 한 항목**이어야 "이 이름의 가게 N곳"을
-  --    요약표 한 줄 안에서 셀 수 있다. 접으면 그 수를 세러 점포 표를 되짚어야 하는데,
-  --    그 2단계가 찬 캐시 **3.2초**였다(강남 시제품 실측).
-  sn.store_names,
-  -- 찾을 때 훑는 칸. 같은 이름이 여럿이면 한 번만 담는다(찾기에는 있으면 되고, 세는 것은
-  -- 위 배열이 한다). ⛔ 건물 이름과 **같은 자**(search_key = 공백 제거 + 소문자)로 자른다 —
-  -- 같은 검색어에 건물과 상호가 다른 답을 내면 안 된다.
-  sn.store_names_key,
-  -- 화면이 "2026년 6월 기준 점포 자료" 도장을 찍는 값(전 행 같다 — 숫자 리터럴 0).
-  (select l.ym from latest l)::char(6) as store_snapshot_ym
+  pc.jibun
 from parcel pc
-left join lateral (
-  select
-    array_agg(ub.biz_name order by ub.biz_name)       as store_names,
-    string_agg(distinct search_key(ub.biz_name), '|') as store_names_key
-  from unit_business ub
-  where ub.pnu = pc.pnu
-    -- ⓘ 스칼라 하위질의라 한 번만 계산되고(InitPlan) 상수처럼 쓰인다 —
-    --    그래야 idx_ub_pnu_cat (pnu, snapshot_ym) 이 이 조회를 그대로 받친다.
-    and ub.snapshot_ym = (select l.ym from latest l)
-    and ub.biz_name is not null
-) sn on true
 where exists (select 1 from building b where b.pnu = pc.pnu);
 
 comment on materialized view mv_search_parcel is
   '§8.1 검색 전용 요약표 — **건물이 있는 필지만** 담는다(2026-08-13). 전국 시드로 parcel 이 '
   '112만 행이 됐지만 건물은 서울·대전 24만 동뿐이라, 나머지 93만 필지는 검색 결과가 될 수 없는데도 '
-  '매번 훑혔다(명동 1,725ms → 500). 이 표는 188,442행이라 같은 스캔이 109ms 다. '
+  '매번 훑혔다(명동 1,725ms → 500). 이 표는 188,442행(42MB, 인덱스 포함 63MB)이라 같은 스캔이 109ms 다. '
   'sigungu_code 는 "고른 구 안에서만 검색"(2026-08-13e)에 쓴다. '
-  '2026-09-09c(결정 0028): store_names·store_names_key·store_snapshot_ym 세 칸이 여기 있는 이유는 '
-  '**점포 표(277만 행)를 직접 훑으면 2글자 검색어가 trigram 을 못 타 7.6초**가 되기 때문이다 — '
-  '이 표(구 안 1.2만 행)에서 찾으면 10ms 다. store_names 는 **점포마다 한 항목**(중복 포함)이라 '
-  '"이 이름의 가게 N곳"을 한 줄 안에서 셀 수 있고, store_names_key 는 그 이름들을 건물과 같은 자'
-  '(search_key)로 잘라 | 로 이은 것이다(그 위에 idx_msp_store_names). '
   '⚠️ 자료를 새로 넣으면 `python scripts/post_load.py` 를 반드시 돌릴 것 — '
-  '안 하면 새 건물·새 가게가 조용히 검색에서 빠진다(ANALYZE 와 같은 성격의 적재 후 필수 절차).';
+  '안 하면 새 건물이 조용히 검색에서 빠진다(ANALYZE 와 같은 성격의 적재 후 필수 절차).';
 
 create unique index if not exists idx_msp_pnu        on mv_search_parcel (pnu);
 create index if not exists idx_msp_road_key          on mv_search_parcel using gin (road_addr_key gin_trgm_ops);
 create index if not exists idx_msp_jibun_key         on mv_search_parcel using gin (jibun_addr_key gin_trgm_ops);
 -- 구로 좁히는 것이 이제 기본 경로다 — 이 인덱스가 그 길을 연다.
 create index if not exists idx_msp_sigungu           on mv_search_parcel (sigungu_code);
--- 상호명 부분 일치(2026-09-09c). 4글자 이상이면 이 색인이 받치고(0.6ms), 2글자는 못 타지만
--- 구 안 1.2만 행 순차 훑기라 10ms 다 — 277만 행을 훑던 7.6초와 비교할 자리가 아니다.
-create index if not exists idx_msp_store_names       on mv_search_parcel using gin (store_names_key gin_trgm_ops);
 
 analyze mv_search_parcel;
+
+-- =====================================================================
+-- 필지별 가게 이름 — 상호명으로 찾기 전용 (2026-09-09c, 결정 0028)
+-- =====================================================================
+-- ⛔ **바로 위 mv_search_parcel 에 칸을 더하지 않는다 — 형제 표로 따로 세운다.**
+--    물질화뷰는 칸을 나중에 못 붙인다(`alter materialized view … add column` 이 없다).
+--    그래서 칸을 더하려면 떨어뜨렸다 다시 만들어야 하는데, 그 표에 기대어 사는 것이 넷이다:
+--        mv_search_parcel
+--          └ mv_open_sigungu → mv_coverage_stats → v_coverage_stats → api.v_coverage_stats
+--    그 넷까지 한 판에서 되세우면 두 가지를 떠안는다 —
+--      ① v_coverage_stats 코멘트에 박아 둔 "drop 하고 다시 만들지 말 것"을 정면으로 어긴다
+--         (뷰가 사라졌다 돌아오며 anon SELECT 가 같이 날아가는데, `post_load.py --check` 는
+--          "열려 있으면 안 되는데 열린 것"만 잡지 "열려 있어야 하는데 닫힌 것"은 못 잡는다
+--          — 경보 없이 각주만 사라진다).
+--      ② 되세울 본문을 정본에서 베껴 오는 순간, 정본↔라이브가 이미 갈려 있으면 그 드리프트를
+--         **라이브에 실어 나른다**(2026-09-01 감사에서 함수 8개가 갈려 있었다).
+--    형제 표는 그 위험이 0 이다 — 기존 표와 사슬 넷을 한 글자도 안 건드린다.
+-- ⛔ 점포 표(unit_business)를 검색이 직접 훑게 두지 않는다 — '카페'(2글자)는 trigram
+--    선별력이 없어 상호 색인을 **아예 안 타고**, 구로 좁혀도 277만 행을 통째로 훑어 7.6초다
+--    (라이브 실측. '스타벅스'(4글자)는 0.07초 — 문제는 색인이 아니라 **훑는 표의 크기**다).
+--    그래서 땅 한 줄에 그 땅의 가게 이름을 미리 모아 둔다(구 안 1.2만 행 · 2글자 10ms).
+-- ⛔ 식(expression) 인덱스로는 못 푼다 — 이 레포가 라이브에서 지우고 "되살리지 말 것"이라
+--    못 박은 패턴이다(위 §8.1 ② — 재확인마다 정규식을 다시 돌려 간헐 500).
+-- ⚠️ **자료를 새로 넣으면 `python scripts/post_load.py`** — 안 하면 새 가게가 조용히
+--    검색에서 빠진다(mv_search_parcel 과 똑같은 방식으로, 에러 0).
+create materialized view if not exists mv_parcel_store_names as
+with latest as (
+  -- ⚠️ **전역** 최신 분기 하나다(지역별로 고르지 않는다) — v_floor_stack·mv_coverage_stats
+  --    와 같은 기준이라, 한 지역만 분기가 밀리면 그 지역 가게가 통째로 안 나오는 알려진
+  --    결함을 그대로 물려받는다(결정 0028 결정 1 · 알려진한계 §4). 여기서 한 번만 구한다.
+  select max(u.snapshot_ym) as ym from unit_business u
+)
+select
+  pc.pnu,
+  substr(pc.pnu, 1, 5)::char(5) as sigungu_code,   -- 검색 범위를 좁히는 칸
+  -- ⛔ distinct 로 접지 않는다 — **점포마다 한 항목**이어야 "이 이름의 가게 N곳"을
+  --    이 표 한 줄 안에서 셀 수 있다. 접으면 그 수를 세러 점포 표를 되짚어야 하는데,
+  --    그 2단계가 찬 캐시 3.2초였다(강남 시제품 실측). 접어도 에러는 안 나고 숫자만
+  --    조용히 작아진다(같은 이름 가게가 한 곳으로 세어진다).
+  s.store_names,
+  -- 찾을 때 훑는 칸. 같은 이름이 여럿이면 한 번만 담는다(찾기에는 있으면 되고, 세는 것은
+  -- 위 배열이 한다). ⛔ 건물 이름과 **같은 자**(search_key = 공백 제거 + 소문자)로 자른다 —
+  -- 같은 검색어에 건물과 상호가 다른 답을 내면 안 된다.
+  s.store_names_key,
+  -- 그 땅의 가게 수 전부. 화면이 적는 "일치한 가게 수"와는 **다른 값**이다(그건 검색어에
+  -- 걸린 것만 센다) — 이 칸은 위 배열이 비지 않았음을 조인 조건으로 못 박는 데 쓴다.
+  s.store_cnt,
+  -- 화면이 "2026년 6월 기준 점포 자료" 도장을 찍는 값(전 행 같다 — 화면에 숫자 리터럴 0).
+  (select l.ym from latest l)::char(6) as store_snapshot_ym
+from parcel pc
+join lateral (
+  select
+    array_agg(ub.biz_name order by ub.biz_name)       as store_names,
+    string_agg(distinct search_key(ub.biz_name), '|') as store_names_key,
+    count(*)::int                                     as store_cnt
+  from unit_business ub
+  where ub.pnu = pc.pnu
+    -- ⓘ 스칼라 하위질의라 한 번만 계산되고(InitPlan) 상수처럼 쓰인다 —
+    --    그래야 idx_ub_pnu_cat (pnu, snapshot_ym) 이 이 조회를 그대로 받친다.
+    --    조인 조건(`ub.snapshot_ym = latest.ym`)으로 바꾸면 에러 없이 느려지기만 한다.
+    and ub.snapshot_ym = (select l.ym from latest l)
+    and ub.biz_name is not null
+) s on s.store_cnt > 0
+-- ⛔ **건물이 있는 필지만** — 위 mv_search_parcel 과 같은 포함 규칙이다. 갈리면 상호로
+--    찾아 들어간 땅이 주소로는 안 나오는(또는 그 반대의) 모순이 난다.
+-- ⛔ 그렇다고 mv_search_parcel 을 **참조해서** 쓰지 않는다 — 참조하는 순간 이 표가 그
+--    사슬에 하나 더 매달려, 다음에 그 표를 손볼 때 여기까지 함께 딸려 온다(이 표를 형제로
+--    세운 이유가 통째로 사라진다).
+where exists (select 1 from building b where b.pnu = pc.pnu);
+
+comment on materialized view mv_parcel_store_names is
+  '§8.1 상호명으로 찾기 전용 요약표(2026-09-09c · 결정 0028) — 땅 한 줄에 **그 땅의 가게 '
+  '이름들**을 미리 모아 둔다. 형제 mv_search_parcel 과 같은 포함 규칙(건물이 있는 필지만)을 '
+  '쓰되 **참조하지는 않는다** — 그 표에 칸을 더하면 거기 기대어 사는 넷(mv_open_sigungu → '
+  'mv_coverage_stats → v_coverage_stats → api.v_coverage_stats)까지 떨어뜨렸다 되세워야 하고, '
+  '그건 "drop 하고 다시 만들지 말 것"이라 못 박아 둔 뷰를 건드리는 일이다. '
+  'store_names 는 **점포마다 한 항목**(중복 포함)이라 "이 이름의 가게 N곳"을 한 줄 안에서 '
+  '셀 수 있고, store_names_key 는 그 이름들을 건물과 같은 자(search_key)로 잘라 | 로 이은 것 '
+  '— 그 위에 idx_mpsn_names(gin_trgm)가 선다. 점포 표(277만 행)를 직접 훑으면 2글자 검색어가 '
+  'trigram 을 못 타 7.6초인데 이 표(구 안 1.2만 행)에서는 10ms 다. '
+  '⚠️ 자료를 새로 넣으면 `python scripts/post_load.py` 를 반드시 돌릴 것 — '
+  '안 하면 새 가게가 조용히 검색에서 빠진다(에러가 아니다).';
+
+-- ⛔ 유니크가 없으면 `refresh materialized view concurrently` 가 아예 안 된다 —
+--    post_load.py 가 그 형태로 갱신하므로, 빠지면 갱신이 통째로 멈춘다.
+create unique index if not exists idx_mpsn_pnu     on mv_parcel_store_names (pnu);
+-- 구로 좁히는 것이 이 검색의 **첫 걸음**이다(구를 안 고르면 아예 0건 — 결정 0007).
+create index if not exists idx_mpsn_sigungu        on mv_parcel_store_names (sigungu_code);
+-- 상호명 부분 일치. 4글자 이상이면 이 색인이 받치고(0.6ms), 2글자는 못 타지만 구 안
+-- 1.2만 행 순차 훑기라 10ms 다 — 277만 행을 훑던 7.6초와 비교할 자리가 아니다.
+create index if not exists idx_mpsn_names          on mv_parcel_store_names using gin (store_names_key gin_trgm_ops);
+
+analyze mv_parcel_store_names;
+
+-- ⛔ 이 표는 이 파일 **아래쪽**의 기본권한 회수(alter default privileges)보다 먼저 만들어진다
+--    — 새 환경에서 이 줄이 없으면 anon 이 그대로 읽는다(형제 mv_sigungu_tx_yearly 와 같은
+--    이유). 열리면 상호 묶음(store_names)이 통째로 긁혀 구 좁히기·상한이 전부 우회된다.
+revoke all on mv_parcel_store_names from public, anon, authenticated;
 
 -- ── 2) 고를 수 있는 구 목록 ─────────────────────────────────────────────────
 -- ⚠️ **자료가 실제로 있는 구만** 낸다. 목록을 코드에 박아 두면 자료가 없는 구를
@@ -1487,7 +1546,7 @@ revoke all on function search_scope_limit() from public, anon, authenticated;
 -- 있는데 그리로 들어오는 문이 하나도 없었다.
 -- ⛔ 기존 search_buildings 에 상호 가지를 붙이지 않는다 — 가지 2→3 에 763→1,550ms 실측.
 -- ⛔ 점포 표를 직접 훑지 않는다 — 2글자 검색어는 trigram 을 못 타 구로 좁혀도 7.6초다.
---    찾는 자리는 필지 요약표(mv_search_parcel)의 store_names_key 다(위 §8.1).
+--    찾는 자리는 필지별 가게 이름 요약표(mv_parcel_store_names)의 store_names_key 다(위 §8.1).
 
 create or replace function search_stores(
   q        text,
@@ -1538,18 +1597,22 @@ as $$
   -- ① 이름이 걸린 **땅**을 찾는다. 구를 안 골랐으면 0건이다(결정 0007) —
   --    상호는 같은 이름이 전국에 널려 있어 구 없이는 답이 될 수 없다.
   hit as (
-    select pc.pnu, pc.road_addr, pc.store_names, pc.store_snapshot_ym
-      from mv_search_parcel pc
+    select m.pnu, p.road_addr, m.store_names, m.store_snapshot_ym
+      from mv_parcel_store_names m
+      -- ⓘ road_addr 은 아래 정렬의 tie-break 에만 쓴다. 요약표에 road_addr 을 또 담지
+      --    않는 이유는, 같은 사실을 두 표가 들고 있으면 언젠가 갈리기 때문이다 —
+      --    필지 기본키 조회 한 번이 그 위험보다 싸다.
+      join parcel p on p.pnu = m.pnu
       cross join pat
      where pat.p is not null
        and pat.gu is not null
-       and pc.sigungu_code = pat.gu
-       and pc.store_names_key like pat.p escape '\'
+       and m.sigungu_code = pat.gu
+       and m.store_names_key like pat.p escape '\'
        -- 층 자료가 아예 없는 건물뿐인 땅은 눌러도 빈 화면이라 뺀다
        -- (검색·결정 0025 와 **같은 규칙** — 갈리면 들어온 길에 따라 다른 답이 된다).
        and exists (
          select 1 from building b
-          where b.pnu = pc.pnu
+          where b.pnu = m.pnu
             and exists (select 1 from building_floor f
                          where f.bld_id = b.bld_id and f.floor_no is not null)
        )
@@ -1706,6 +1769,7 @@ revoke all on function search_stores(text, int, text, int) from public, anon, au
 comment on function search_stores(text, int, text, int) is
   '결정 0028 상호명으로 찾기 — 한 줄은 건물이 아니라 **땅(필지)** 이다(점포는 필지에만 붙는다: '
   'unit_business.unit_id 전량 NULL — 건물로 줄세우면 한 땅의 동들이 같은 가게를 복사해 갖는다). '
+  '찾는 자리는 형제 요약표 mv_parcel_store_names 다(mv_search_parcel 은 한 글자도 안 건드린다). '
   '⛔ sigungu 를 안 주면 0건이다(결정 0007 — 상호는 같은 이름이 전국에 널려 있다). '
   '일치한 상호는 최대 3개(matched_names)와 그 땅의 일치 가게 수(match_store_cnt)만 나가고, '
   'biz_no·업종 코드·점포 좌표는 한 글자도 안 나간다. 층은 이 줄에 안 적는다 — 층 결측이 셋 중 '
