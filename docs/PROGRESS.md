@@ -1602,5 +1602,5 @@ PR #131: pytest 2,571 · vitest 754 · oxlint 0 · CI test/web/Vercel 통과 · 
 - 창고 1차가 **설계서가 몰랐던 사실**을 들고 왔다: `mv_search_parcel` 에 기대어 사는 물건이 넷(`mv_open_sigungu` → `mv_coverage_stats` → `v_coverage_stats` → `api.v_coverage_stats`). 칸을 더하려면 다섯을 한 트랜잭션에서 갈아 끼워야 하고 각주 뷰의 "⛔ drop 금지"를 어긴다 → 안전 모드 정지선(major 3)에서 사장님 보고 → "끝까지" 승인 → **형제 요약표 `mv_parcel_store_names`** 로 전환(drop 0·잠금 0·`search_buildings` 무변경·`REFRESH_MVS` +1 · 기존 표·사슬 다섯은 origin/main 과 **바이트 동일**을 해시 가드로 고정). 1차 안의 "새벽에만 적용" 제약이 사라졌다.
 - 화면: 두 rpc 를 `Promise.allSettled` 로 나란히 · `latestRun` 공유 · 구역 3갈래(정상 / `too_broad` 한 줄 안내 / 실패 문구 · PGRST202 만 생략) · 50줄+더 보기 · placeholder 가드 신설 · `aria-label` 불변 · 모바일 412px 세로 5줄 쌓임·넘침 0 실측. 판단: 너무 넓음 안내는 모달 대신 구역 안 한 줄(건물 결과를 덮지 않게) · 같은 땅 N동 펼치기는 v1 글자만.
 - 돌연변이: 창고 4건(유일 색인·새 표가 `mv_search_parcel` 참조·drop index 를 commit 안으로·정본 블록 끝줄 변조) + 화면 2건(가드 필수화 → 6개 빨간불 · 더 보기 runId 가드 → **안 잡히던 돌연변이는 시험이 엉뚱한 걸 보고 있었다는 신호**, 시험을 고쳐 잡음) 전부 확인.
-- 회귀(통합본): pytest **2,673** · vitest **803** · E2E **30스펙 × 2 = 60회** · build·oxlint·ruff 초록.
+- 회귀(통합본): pytest **2,675** · vitest **812** · E2E **30스펙 × 2 = 60회** · build·oxlint·ruff 초록.
 - 라이브 적용·검토 결과: (아래 세션 말미에 갱신)
