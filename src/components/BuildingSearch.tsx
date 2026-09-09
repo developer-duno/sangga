@@ -1,9 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
 import type { SubmitEvent } from 'react';
 import { supabase } from '../lib/supabase';
-import { SEARCH_BUILDINGS_FN, SEARCH_SCOPE_FN } from '../lib/appConstants';
-import { describeError, describeRange } from '../lib/format';
-import type { BuildingHit } from '../types';
+import {
+  SEARCH_BUILDINGS_FN,
+  SEARCH_SCOPE_FN,
+  SEARCH_STORES_FN,
+  SEARCH_STORES_PAGE,
+} from '../lib/appConstants';
+import { describeError, describeRange, formatMonthKo } from '../lib/format';
+import {
+  hasMoreStores,
+  isStoreHitList,
+  matchedLabel,
+  readStoreAnswer,
+  storeToHit,
+  type RpcAnswer,
+  type StoreState,
+} from '../lib/storeSearch';
+import type { BuildingHit, StoreHit } from '../types';
 
 /**
  * 건물명·도로명주소로 건물을 찾는다.
@@ -16,6 +30,19 @@ import type { BuildingHit } from '../types';
  *    앞자리가 법정동 코드라 **검색 결과가 한 동네에 갇힌다.**
  *    2026-08-08 실측: '빌딩' 검색 → 매칭 15,068행인데 화면엔 역삼동 69개 건물뿐,
  *    '테헤란로' → 10,517행인데 역삼동 95개뿐. 다른 동네는 재검색해도 안 나왔다.
+ *
+ * 2026-09-09부터 **가게 이름으로도 찾는다**(결정 0028)
+ * -----------------------------------------------------
+ * 창업자는 건물 이름을 모른다 — "스타벅스 있는 건물"로 찾는다. 그래서 검색 한 번에 서버를
+ * **둘** 부르고(건물 · 가게 이름) 결과를 두 구역으로 나란히 그린다. 사용자가 고를 것은 없다.
+ *
+ * ⛔ 두 질의를 **한 함수로 합치지 않는다** — `search_buildings` 에 상호 가지를 더하면 가지
+ *    2→3 에 763→1,550ms 다(알려진한계 §4).
+ * ⛔ 가게 구역의 한 줄은 **건물이 아니라 땅(필지)** 이다(점포는 필지 단위로만 셀 수 있다).
+ *    그래서 문구는 "이 **땅에** 가게 N곳"이지 건물 단위의 셈이 아니다(결정 0025 의 함정).
+ *    ⓘ 그 틀린 문구를 여기 부정형으로도 적지 않는다 — 원문 가드가 글자만 보므로
+ *      "그러면 안 된다"고 쓴 문장까지 걸리고, 그러면 사람이 가드를 느슨하게 고치게 된다.
+ * ⛔ 실패는 **구역별로 따로** 다룬다 — 한쪽이 죽어도 다른 쪽 결과는 산다.
  */
 
 /** 목록에 보여줄 건물 수. 서버가 관련도 높은 순으로 이 수만큼만 돌려준다. */
@@ -69,7 +96,28 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu
   const [searched, setSearched] = useState(false);
   /** "이 검색어로는 어디를 볼지 안 정해진다"는 안내창. null이면 안 띄운다. */
   const [notice, setNotice] = useState<ScopeNotice | null>(null);
-  /** 늦게 도착한 옛 검색 응답이 최신 결과를 덮는 것을 막는다. */
+  /** 가게 이름 구역(결정 0028). 건물 구역과 **상태를 따로** 든다 — 한쪽이 죽어도 다른 쪽은 산다. */
+  const [store, setStore] = useState<StoreState>({ at: 'hidden' });
+  /** '더 보기'로 다음 쪽을 받는 중인가. 검색 자체의 `loading` 과 다른 일이다. */
+  const [moreLoading, setMoreLoading] = useState(false);
+  /** 더 받다가 실패했다 — 이미 받은 목록은 그대로 두고 그 사실만 알린다(0025 규칙). */
+  const [moreFailed, setMoreFailed] = useState(false);
+  /**
+   * 지금 화면에 선 결과를 **실제로 물어본** 검색어와 구.
+   *
+   * ⛔ '더 보기'가 입력창(`query`)·`sigungu` 를 **다시 묻지 않게** 하려고 박아 둔다. 사람은
+   *    결과를 보면서 입력창을 계속 고치고(구도 바꿀 수 있다), 그 상태로 '더 보기'를 누르면
+   *    **첫 쪽과 다른 검색어의 51번째 줄**이 첫 쪽 뒤에 붙는다 — 에러가 아니라 조용히 섞이는
+   *    거짓 목록이다. 오프셋만 맞고 검색어가 다르면 그 목록은 아무 뜻이 없다.
+   */
+  const [ranWith, setRanWith] = useState<{ q: string; sigungu: string } | null>(null);
+  /**
+   * 늦게 도착한 옛 검색 응답이 최신 결과를 덮는 것을 막는다.
+   *
+   * ⛔ **건물 질의와 가게 질의가 이 번호 하나를 함께 본다**(결정 0028 결정 4). 구역마다
+   *    번호를 따로 두면 새 검색이 한쪽만 무효로 만들 수 있어, 화면 위쪽은 새 검색어의
+   *    건물을 말하는데 아래쪽은 옛 검색어의 가게를 말하는 상태가 생긴다.
+   */
   const latestRun = useRef(0);
   const noticeCloseRef = useRef<HTMLButtonElement>(null);
 
@@ -106,17 +154,45 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu
     setLoading(true);
     setError(null);
     setNotice(null);
+    // 가게 구역도 **먼저 비운다** — 안 비우면 새 답이 올 때까지 옛 검색어의 가게가 서 있다.
+    setStore({ at: 'hidden' });
+    setMoreFailed(false);
+    /*
+      ⛔ '더 보기 중'도 함께 끈다. 안 끄면 이런 일이 난다 — 더 받는 중에 새 검색을 하면
+         날아가 있던 `loadMoreStores` 는 번호가 어긋나 **아무것도 안 하고 나가므로**
+         `setMoreLoading(false)` 에 영영 닿지 못하고, 새 결과의 '더 보기' 버튼이 처음부터
+         눌리지 않는 채로 선다(disabled). 버튼이 죽었다는 신호는 어디에도 안 뜬다.
+    */
+    setMoreLoading(false);
     onSearchStart(); // 새 검색 = 이전 선택 해제(아래 스택뷰가 옛 건물을 계속 그리지 않게)
     try {
-      // 검색어는 파라미터로 넘어간다 — % _ \ 를 서버가 리터럴로 이스케이프하므로
-      // 여기서 따로 손대지 않는다(직접 문자열을 이어 붙이면 필터가 깨진다).
-      const { data, error: err } = await supabase.rpc(SEARCH_BUILDINGS_FN, {
-        q,
-        lim: MAX_BUILDINGS,
-        sigungu,
-      });
+      /*
+        검색어는 파라미터로 넘어간다 — % _ \ 를 서버가 리터럴로 이스케이프하므로
+        여기서 따로 손대지 않는다(직접 문자열을 이어 붙이면 필터가 깨진다).
+
+        ⛔ 둘을 **나란히** 보내고 `allSettled` 로 받는다(결정 0028 결정 4). `all` 이면 가게
+           질의가 던지는 순간 건물 결과까지 통째로 버려진다 — 부분 실패는 부분으로 다뤄야 한다.
+        ⓘ 건물 질의를 **먼저** 적는다. 두 요청은 어차피 겹쳐 나가지만, 이 순서가 곧 화면의
+          순서이고 시험이 "첫 호출이 무엇을 어떻게 넘겼는가"를 보는 자리이기도 하다.
+      */
+      const [bldRes, storeRes] = (await Promise.allSettled([
+        supabase.rpc(SEARCH_BUILDINGS_FN, { q, lim: MAX_BUILDINGS, sigungu }),
+        supabase.rpc(SEARCH_STORES_FN, {
+          q,
+          lim: SEARCH_STORES_PAGE,
+          sigungu,
+          p_offset: 0,
+        }),
+      ])) as [PromiseSettledResult<RpcAnswer>, PromiseSettledResult<RpcAnswer>];
 
       if (runId !== latestRun.current) return; // 그새 새 검색이 시작됐다
+
+      // ⓘ 화면에 세우는 결과와 **같은 순간**에 적어 둔다 — '더 보기'는 이 값만 본다.
+      setRanWith({ q, sigungu });
+      setStore(readStoreAnswer(storeRes, q));
+
+      if (bldRes.status === 'rejected') throw bldRes.reason;
+      const { data, error: err } = bldRes.value;
       if (err) throw err;
 
       const rows = (data ?? []) as BuildingHit[];
@@ -152,16 +228,61 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu
     }
   }
 
+  /**
+   * 가게 이름 결과의 다음 쪽(50곳)을 받아 뒤에 잇는다.
+   *
+   * ⛔ 여기서는 `latestRun` 을 **올리지 않고 지금 값을 적어 둔다**. 올리면 그 순간 날아가 있는
+   *    다른 요청(0건일 때 뒤따라 묻는 `search_scope`)까지 함께 무효가 돼, 눌러도 안 뜨는
+   *    "너무 넓은 검색" 안내가 된다. 새 검색이 시작되면 그쪽이 번호를 올리므로 이 쪽은
+   *    그때 저절로 버려진다 — 막으려던 것은 정확히 그 경우다.
+   */
+  function loadMoreStores(rows: StoreHit[]) {
+    const runId = latestRun.current;
+    /*
+      ⛔ **지금 칸에 적힌 말이 아니라 물어봤던 말**로 다음 쪽을 받는다. 결과를 보면서
+         입력창을 고쳐 놓고 '더 보기'를 누르는 것은 흔한 일인데, 그때 칸을 다시 읽으면
+         다른 검색어의 뒷줄이 이 목록에 붙는다(조용히 섞인 거짓 목록).
+      ⓘ 물어본 적이 없으면 받을 것도 없다 — 버튼이 그때는 서지도 않지만, 이 값이 곧
+        "무엇의 다음 쪽인가"의 정의라 없으면 아예 부르지 않는다.
+    */
+    if (!ranWith) return;
+    setMoreLoading(true);
+    setMoreFailed(false);
+    supabase
+      .rpc(SEARCH_STORES_FN, {
+        q: ranWith.q,
+        lim: SEARCH_STORES_PAGE,
+        sigungu: ranWith.sigungu,
+        p_offset: rows.length,
+      })
+      .then(({ data, error: err }) => {
+        if (runId !== latestRun.current) return; // 그새 새 검색이 시작됐다
+        setMoreLoading(false);
+        if (err || !isStoreHitList(data)) {
+          console.warn('가게 이름 결과 더 보기 실패', err ?? data);
+          setMoreFailed(true);
+          return;
+        }
+        setStore((prev) =>
+          // 받아 온 사이에 구역이 통째로 바뀌었으면(실패·새 검색) 이어 붙이지 않는다.
+          prev.at === 'done' ? { at: 'done', rows: [...prev.rows, ...data] } : prev,
+        );
+      });
+  }
+
   const shownAll = total > 0 && total <= hits.length;
 
   return (
     <section className="search">
+      {/* ⛔ `aria-label` 은 **바꾸지 않는다** — 이 이름을 부르는 시험이 vitest 9곳·E2E 2곳이고,
+          바꾸면 그 전부가 한꺼번에 깨진다. 무엇을 더 찾을 수 있는지는 placeholder 가 말한다
+          (결정 0028 결정 4). */}
       <form onSubmit={runSearch} className="search__form">
         <input
           className="search__input"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="건물명 · 도로명주소 · 지번 (예: 미도맨션, 테헤란로 117, 역삼동 823-4)"
+          placeholder="건물명 · 도로명주소 · 지번 · 가게 이름 (예: 미도맨션, 테헤란로 117, 역삼동 823-4, 스타벅스)"
           aria-label="건물명 또는 주소"
         />
         <button className="search__btn" type="submit" disabled={loading || !query.trim()}>
@@ -213,6 +334,121 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu
             ))}
           </ul>
         </>
+      )}
+
+      {/*
+        ── 가게 이름으로 찾은 땅 (결정 0028) ────────────────────────────────
+        ⛔ 반드시 `<section className="search">` 의 **자손**이어야 한다 — `.search` 가
+           `@media print` 에서 통째로 빠지므로, 형제로 빼면 이 구역만 종이에 남는다.
+        ⛔ `hidden` 상태에서는 아무것도 그리지 않는다(0건 · 서버에 함수가 아직 없음).
+      */}
+      {store.at === 'failed' && (
+        <section className="search__stores" aria-label="가게 이름으로 찾은 땅">
+          {/* ⛔ 조용히 생략하지 않는다 — 사람이 누른 결과다(0025 규칙). */}
+          <p className="msg msg--error" role="alert">
+            가게 이름 결과를 불러오지 못했습니다.
+          </p>
+        </section>
+      )}
+
+      {store.at === 'broad' && (
+        <section className="search__stores" aria-label="가게 이름으로 찾은 땅">
+          {/*
+            ⓘ 건물 쪽처럼 **안내창(모달)을 띄우지 않는다.** 건물 결과는 멀쩡히 서 있을 수
+              있는데 그 위를 덮으면 사람이 이미 얻은 답을 가린다. 문구는 건물 안내창의 뜻을
+              그대로 빌리되("더 좁혀 주세요") 숫자는 가게 수다.
+          */}
+          <p className="msg">
+            ‘{store.word}’ 이름의 가게가{' '}
+            <strong>{store.count.toLocaleString('ko-KR')}곳</strong>입니다 — 더 좁혀 주세요.
+          </p>
+        </section>
+      )}
+
+      {store.at === 'done' && (
+        <section className="search__stores" aria-label="가게 이름으로 찾은 땅">
+          <p className="search__count">
+            이 이름의 가게가 있는 땅 {store.rows[0].total_parcel_cnt.toLocaleString('ko-KR')}곳 ·
+            가게 {store.rows[0].total_store_cnt.toLocaleString('ko-KR')}곳
+            {/* ⛔ 분기를 화면에 글자로 박지 않는다 — 서버가 준 값을 옮길 뿐이다. */}
+            {formatMonthKo(store.rows[0].store_snapshot_ym) && (
+              <span className="stores__stamp">
+                {' '}
+                · {formatMonthKo(store.rows[0].store_snapshot_ym)} 기준 점포 자료
+              </span>
+            )}
+          </p>
+          <ul className="stores">
+            {store.rows.map((s) => {
+              const names = matchedLabel(s);
+              const many = (s.bld_cnt_in_pnu ?? 1) > 1;
+              const body = (
+                <>
+                  <span className="stores__name">{s.bld_nm || '(이름 없는 건물)'}</span>
+                  <span className="stores__addr">{s.road_addr || '주소 없음'}</span>
+                  {s.jibun_addr && <span className="stores__jibun">지번 {s.jibun_addr}</span>}
+                  {names && <span className="stores__names">{names}</span>}
+                  <span className="stores__meta">
+                    {/* ⛔ 건물이 아니라 **이 땅에** 다 — 층별 화면의 점포 칸과
+                        세는 대상이 다르다(결정 0025 의 함정). */}
+                    이 땅에 가게 {(s.match_store_cnt ?? 0).toLocaleString('ko-KR')}곳 일치
+                    {many && (
+                      <span className="stores__warn"> · 같은 땅에 {s.bld_cnt_in_pnu}동</span>
+                    )}
+                  </span>
+                </>
+              );
+              /*
+                ⚠️ 대표 동이 없을 수 있다(그 땅에 건물 기록이 없는 경우). 그때는 누를 곳이
+                   없으므로 **버튼이 아니라 그냥 줄**로 그리고 왜 못 가는지 적는다 —
+                   목록에서 빼 버리면 "그 이름의 가게가 여기 없다"는 거짓말이 된다.
+              */
+              const bldId = s.bld_id;
+              return (
+                <li key={s.pnu}>
+                  {bldId === null || bldId === undefined ? (
+                    <div className="stores__row stores__row--flat">
+                      {body}
+                      <span className="stores__note">
+                        건물 자료가 없어 층별 화면으로 갈 수 없습니다
+                      </span>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className={`stores__row${bldId === selectedBldId ? ' stores__row--on' : ''}`}
+                      onClick={() => onSelect(storeToHit({ ...s, bld_id: bldId }))}
+                    >
+                      {body}
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+
+          {hasMoreStores(store.rows) && (
+            <button
+              type="button"
+              className="stores__more"
+              disabled={moreLoading}
+              onClick={() => loadMoreStores(store.rows)}
+            >
+              {moreLoading ? '불러오는 중…' : '더 보기'}
+            </button>
+          )}
+          {moreFailed && (
+            <p className="msg msg--error" role="alert">
+              더 불러오지 못했습니다.
+            </p>
+          )}
+
+          {/* ⛔ 무엇을 센 숫자인지 밝힌다(상권 건물 목록과 같은 규칙). */}
+          <p className="stores__src">
+            가게 수는 <strong>그 땅 전체</strong>를 센 것이라, 한 땅에 여러 동이 서 있으면 그
+            동들이 같은 수를 함께 씁니다. 몇 층인지는 건물을 고른 뒤 층별 화면에서 봅니다.
+          </p>
+        </section>
       )}
 
       {notice && (

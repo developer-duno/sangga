@@ -16,7 +16,7 @@ src/                     # 프론트 (라우터·상태관리 라이브러리 �
 ├── types.ts             # DB 응답 타입 단일 소스 (e2e/fixtures.ts 도 여기서 import)
 ├── components/          # 화면 조각 20개 + 각 .test.tsx (hooks/·constants/ 폴더는 없음)
 │   ├── RegionPicker.tsx     # 시도→구 2단 칩. 목록 진실 = 서버 RPC list_open_sigungu()
-│   ├── BuildingSearch.tsx   # 검색 폼+결과. search_buildings / 0건이면 search_scope 재질의
+│   ├── BuildingSearch.tsx   # 검색 폼+결과. search_buildings / 0건이면 search_scope 재질의 + search_stores(가게 이름 → 땅 구역, 늘 함께 · 0028)
 │   ├── LhNoticeSection.tsx  # LH 상가 분양·입점 공고(결정 0022) — **입구**(구는 골랐고 건물은
 │   │                         #   아직)에 App 이 직접 꽂음. list_lh_notices, ENTRY_SECTION_PLAN
 │   ├── ScorecardSection.tsx # "참고 시세는 얼마나 맞나" 성적표(Wave 4) — 같은 입구 자리.
@@ -130,12 +130,12 @@ scripts/                 # 데이터 파이프라인 전부 21개 (수동 실행
     └── load_bjd_code.py                                 # 법정동코드 전체자료(code.go.kr) 적재
 
 supabase/
-├── schema.sql           # 정본 4,230줄 (라이브 반영본 — 마이그레이션과 드리프트 가드로 동기)
-└── migrations/          # 날짜 파일명 54개, 라이브 적용 순서 그대로
+├── schema.sql           # 정본 4,626줄 (라이브 반영본 — 마이그레이션과 드리프트 가드로 동기)
+└── migrations/          # 날짜 파일명 55개, 라이브 적용 순서 그대로
 
-tests/                   # pytest 55파일 2,571개 — collector/스크립트 1:1 + 드리프트 가드
-e2e/                     # playwright 29개(2파일: fixtures.ts, floor-stack.spec.ts). 넓은화면(chromium)·
-│                         #   휴대폰(mobile, Pixel 7) 2벌로 돌아 실행은 58회. E2E_PORT 로 포트 회피
+tests/                   # pytest 56파일 2,675개 — collector/스크립트 1:1 + 드리프트 가드
+e2e/                     # playwright 30개(2파일: fixtures.ts, floor-stack.spec.ts). 넓은화면(chromium)·
+│                         #   휴대폰(mobile, Pixel 7) 2벌로 돌아 실행은 60회. E2E_PORT 로 포트 회피
 .github/workflows/       # ci.yml(test+web) + 감시 5종: district-source-watch·feedback-digest·
 │                         #   live-health-watch·sangkwon-quarterly-watch·lh-notice-watch
 │                         #   (전부 하트비트로 서로 감시. 비밀값은 lh-notice-watch 의 MOLIT_KEY 하나뿐)
@@ -172,7 +172,7 @@ docs/                    # 상세계획·알려진한계(조사 전 필독)·PRO
   구 선택(이때 입구에 `LhNoticeSection`=`list_lh_notices`, `ScorecardSection`=`list_price_gate`+
   `/scorecard-v1.json`, `TxFlowSection`=`get_sigungu_tx_yearly` 가 뜬다. 지도에서 상권을 누르면 `DistrictBuildings` 가
   `list_district_buildings`·`list_parcel_buildings` 로 그 안의 땅을 펼친다) →
-  BuildingSearch `search_buildings(q, lim, sigungu)`(0건 시 `search_scope`) → 선택 →
+  BuildingSearch `search_buildings(q, lim, sigungu)`(0건 시 `search_scope`) ∥ `search_stores(q, lim, sigungu, p_offset)`(상호 → 땅, 0028) → 선택 →
   FloorStack 이 7개 질의 동시 발사: `v_coverage_stats`·`v_floor_stack`·`list_building_districts(bld_id)`·
   `list_parcel_transactions(pnu)`·`get_sigungu_tx_stats(sigungu)`·`list_price_bands(p_pnu)`·
   `list_base_prices(p_pnu)` → 층 막대+실거래+참고시세+기준시가 렌더. 그 안에서
@@ -190,8 +190,8 @@ docs/                    # 상세계획·알려진한계(조사 전 필독)·PRO
 
 - 빌드: `pnpm build` (tsc -b && vite build)
 - 실행: `pnpm dev` (http://localhost:5173)
-- 테스트: `pnpm test`(vitest 754, 38파일) / `python -m pytest tests/ -q`(2,571, 55파일) /
-  `E2E_PORT=5273 pnpm test:e2e`(29개 × 2벌 = 58회)
+- 테스트: `pnpm test`(vitest 812, 39파일) / `python -m pytest tests/ -q`(2,675, 56파일) /
+  `E2E_PORT=5273 pnpm test:e2e`(30개 × 2벌 = 60회)
 - 린트: `pnpm exec oxlint` / `python -m ruff check scripts/ tests/`
 - 배포: `main` push → Vercel 자동 배포(`https://sangga-one.vercel.app`). `main` 은 잠겨 있어
   가지→PR→검사(`test`·`web`) 통과→머지 순서로만 들어간다(결정 0018).

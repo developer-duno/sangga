@@ -722,6 +722,65 @@ export type ParcelBuilding = {
   has_roof: boolean;
 };
 
+// ── 상호명으로 찾기 (결정 0028) ──────────────────────────────────────────────
+
+/**
+ * 함수 `search_stores(q, lim, sigungu, p_offset)` 의 한 줄 = **땅 하나**.
+ *
+ * ⛔ 건물이 아니라 **땅(필지)** 이다 — `DistrictLand` 와 같은 이유다(점포는 필지 단위로만
+ *    셀 수 있다). 그래서 `match_store_cnt` 는 "이 **건물**의 가게"가 아니라 **"이 땅의 가게"**
+ *    이고, 층별 화면의 점포 칸과 **세는 대상이 다르다**. 화면 문구가 이것을 흐리면 두 화면이
+ *    서로 다른 말을 하는 것처럼 보인다.
+ *
+ * ⛔ **앞 12칸(`pnu` ~ `has_roof`)은 `BuildingHit` 과 같은 모양**이라 그대로 층별 화면으로
+ *    넘길 수 있다(대표 동 = 연면적 최대). 단 옮겨 담을 때 칸을 하나씩 옮긴다
+ *    (`storeToHit`) — 통째로 넘기면 `match_store_cnt` 가 건물 상태에 얹혀 흘러다닌다.
+ *
+ * ⚠️ **거의 모든 칸이 null 일 수 있다.** 검색어가 너무 넓으면 서버가 `too_broad=true` 인
+ *    **한 줄만** 보내는데, 그 줄은 `total_parcel_cnt`·`total_store_cnt` 말고는 전부 비어 있다.
+ *    모양 검사에서 이 칸들을 필수로 잡으면 그 한 줄 때문에 **목록 전체가 거부된다**
+ *    (LH 공고에서 실제로 났던 사고 — `.every()` 구조라 한 줄이 통째를 날린다).
+ */
+export type StoreHit = {
+  /**
+   * 땅 열쇠.
+   *
+   * ⛔ **`too_broad` 한 줄에서는 null 로 온다**(서버가 `null::char(19)` 를 보낸다) — 모양
+   *    검사가 문자열만 받으면 그 한 줄 때문에 목록 전체가 거부돼 안내가 사라진다.
+   *    글자로 못 박아 둔 것은 보통 줄이 이 값에 기대기 때문이다(`key`·`storeToHit`).
+   */
+  pnu: string;
+  /** 대표 동. ⚠️ 이 땅에 건물 기록이 없으면 null 이라 층별 화면으로 갈 수 없다. */
+  bld_id: string | null;
+  bld_nm: string | null;
+  road_addr: string | null;
+  jibun_addr: string | null;
+  lat: number | null;
+  lng: number | null;
+  bld_cnt_in_pnu: number | null;
+  floor_cnt: number | null;
+  min_floor: number | null;
+  max_floor: number | null;
+  has_roof: boolean | null;
+  /** 검색어에 걸린 상호 **원문**(서버가 최대 3개). 화면에 그대로 적는다. */
+  matched_names: string[] | null;
+  /** 이 **땅**에서 검색어에 걸린 가게 수. `matched_names` 보다 크면 "외 N곳". */
+  match_store_cnt: number | null;
+  /** 상한에 잘리기 전 전체 규모. 모든 행에 같은 값으로 온다. */
+  total_parcel_cnt: number;
+  total_store_cnt: number;
+  /** 참이면 이 줄은 결과가 아니라 **"너무 넓다"는 답**이다(정확히 한 줄만 온다). */
+  too_broad: boolean;
+  /**
+   * 점포 자료의 기준 분기 'YYYYMM'. 화면 도장("2026년 6월 기준 점포 자료")에 쓴다.
+   *
+   * ⛔ 화면에 분기를 글자로 박지 않는다 — 새 분기를 적재하는 순간 화면만 옛 분기를 말한다.
+   * ⚠️ **전역** 최신 분기다(지역별로 어긋나면 그 지역 가게가 통째로 안 나온다) —
+   *    `v_floor_stack` 에서 물려받은 알려진 결함이다.
+   */
+  store_snapshot_ym: string | null;
+};
+
 // ── 성적표 공개 (2026-09-05e · 로드맵 Wave 4) ────────────────────────────────
 //
 // 두 갈래에서 온다 — **왜 갈라 두었나**가 이 묶음에서 가장 중요한 사실이다:
