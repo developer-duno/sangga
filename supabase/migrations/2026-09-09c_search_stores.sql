@@ -118,7 +118,10 @@ select
   -- 같은 검색어에 건물과 상호가 다른 답을 내면 안 된다.
   s.store_names_key,
   -- 그 땅의 가게 수 전부. 화면이 적는 "일치한 가게 수"와는 **다른 값**이다(그건 검색어에
-  -- 걸린 것만 센다) — 이 칸은 위 배열이 비지 않았음을 조인 조건으로 못 박는 데 쓴다.
+  -- 걸린 것만 센다). ⓘ **지금 이 칸을 읽는 코드는 없다** — 위 lateral 의 별칭 `s` 를 보는
+  -- 조인 조건(`s.store_cnt > 0`)은 이 칸이 아니라 그 별칭을 본다. 다음에 쓸 값으로 남겨
+  -- 둔다(2026-09-10 검토관 지적 — 예전 주석은 "조인 조건으로 못 박는 데 쓴다"고 적어
+  -- 실제와 달랐다).
   s.store_cnt,
   -- 화면이 "2026년 6월 기준 점포 자료" 도장을 찍는 값(전 행 같다 — 화면에 숫자 리터럴 0).
   (select l.ym from latest l)::char(6) as store_snapshot_ym
@@ -233,7 +236,13 @@ as $$
       cross join pat
      where pat.p is not null
        and pat.gu is not null
-       and m.sigungu_code = pat.gu
+       -- ⛔ `::char(5)` 를 지우지 말 것 — 컬럼이 char(5) 인데 text 와 견주면 **컬럼 쪽**이
+       --    text 로 캐스트돼 색인이 Index Cond 가 아니라 Filter 로 떨어진다(형제 표 라이브
+       --    실측 2026-09-10: 2글자 검색 859.9ms → 76.6ms, 훑는 행 188,442 → 12,138).
+       --    `list_parcel_buildings` 의 `p_pnu::char(19)` 와 같은 처방(2026-08-16b).
+       -- ⚠️ 5자보다 긴 입력은 bpchar 캐스트가 조용히 자른다 — 구 코드는 서버 목록에서만
+       --    오므로 실사용 0건이다.
+       and m.sigungu_code = pat.gu::char(5)
        and m.store_names_key like pat.p escape '\'
        -- 층 자료가 아예 없는 건물뿐인 땅은 눌러도 빈 화면이라 뺀다
        -- (검색·결정 0025 와 **같은 규칙** — 갈리면 들어온 길에 따라 다른 답이 된다).

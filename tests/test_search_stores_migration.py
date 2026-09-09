@@ -455,6 +455,20 @@ class TestScopeRules:
         )
 
     @pytest.mark.parametrize("path", BOTH)
+    def test_the_gu_comparison_is_cast_to_char5(self, path):
+        """⛔ `::char(5)` 를 지우면 색인이 죽는다 — 에러 없이 느려지기만 한다.
+
+        sigungu_code 컬럼은 char(5) 인데 pat.gu 는 text 라, 캐스트가 없으면 **컬럼 쪽**이
+        text 로 올려붙여져 색인이 Index Cond 가 아니라 Filter 로 떨어진다(형제 표 라이브
+        실측 2026-09-10: 2글자 검색 859.9ms → 76.6ms, 훑는 행 188,442 → 12,138).
+        형제 `list_parcel_buildings` 의 `p_pnu::char(19)` 가 같은 처방이다(2026-08-16b).
+        """
+        body = flat(fn_block(read(path)))
+        assert "and m.sigungu_code = pat.gu::char(5)" in body, (
+            "구 비교에 ::char(5) 캐스트가 없습니다 — 색인이 죽습니다(2026-08-16b 와 같은 병)"
+        )
+
+    @pytest.mark.parametrize("path", BOTH)
     def test_the_gate_uses_the_shared_limit(self, path):
         """⛔ 상한을 숫자로 박지 않는다 — 정본은 search_scope_limit() 한 곳뿐이다."""
         body = flat(fn_block(read(path)))

@@ -29,8 +29,9 @@ function isNullableStringArray(x: unknown): boolean {
 /**
  * 서버 응답의 **모양**을 본다.
  *
- * ⛔ **`pnu`·`total_*`·`too_broad` 말고는 전부 "있어도 되고 없어도 되는" 칸으로 잡는다.**
- *    검색어가 너무 넓을 때 오는 `too_broad` 한 줄은 그 넷 말고 전부 비어 있고, 땅에 건물
+ * ⛔ **`total_*`·`too_broad` 말고는 전부 "있어도 되고 없어도 되는" 칸으로 잡는다**(`pnu` 는
+ *    보통 줄에서만 필수 — 아래 참조).
+ *    검색어가 너무 넓을 때 오는 `too_broad` 한 줄은 그 셋 말고 전부 비어 있고, 땅에 건물
  *    기록이 없으면 대표 동 칸들도 비어 있다. 이것들을 필수로 잡으면 **그런 줄 하나 때문에
  *    목록 전체가 거부된다** — LH 공고에서 실제로 났던 사고다(`.every()` 구조라 한 줄이
  *    통째를 날린다). 모양 검사는 "터지는 답을 막는" 그물이지 "자료 품질을 재는 자"가 아니다.
@@ -39,10 +40,17 @@ export function isStoreHit(x: unknown): x is StoreHit {
   if (typeof x !== 'object' || x === null) return false;
   const r = x as Record<string, unknown>;
   return (
-    typeof r.pnu === 'string' &&
+    // ⛔ `too_broad` 를 **먼저** 본다 — 아래 pnu 검사가 이 값에 기대기 때문이다.
+    typeof r.too_broad === 'boolean' &&
+    /*
+      ⛔ **너무 넓다 한 줄은 서버가 pnu 를 null 로 보낸다**(2026-09-09c 의 broad 가지:
+         `null::char(19)`). 문자열만 받으면 그 한 줄 때문에 목록 전체가 거부돼 안내가
+         사라진다(LH 사고와 같은 자리 — `.every()` 라 한 줄이 통째를 날린다).
+      ⓘ 보통 줄의 pnu 는 **여전히 필수**다 — `key={s.pnu}` 와 `storeToHit` 이 그것에 기댄다.
+    */
+    (r.too_broad === true ? isNullableString(r.pnu) : typeof r.pnu === 'string') &&
     typeof r.total_parcel_cnt === 'number' &&
     typeof r.total_store_cnt === 'number' &&
-    typeof r.too_broad === 'boolean' &&
     isNullableString(r.bld_id) &&
     isNullableString(r.bld_nm) &&
     isNullableString(r.road_addr) &&

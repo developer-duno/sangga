@@ -742,6 +742,13 @@ export type ParcelBuilding = {
  *    (LH 공고에서 실제로 났던 사고 — `.every()` 구조라 한 줄이 통째를 날린다).
  */
 export type StoreHit = {
+  /**
+   * 땅 열쇠.
+   *
+   * ⛔ **`too_broad` 한 줄에서는 null 로 온다**(서버가 `null::char(19)` 를 보낸다) — 모양
+   *    검사가 문자열만 받으면 그 한 줄 때문에 목록 전체가 거부돼 안내가 사라진다.
+   *    글자로 못 박아 둔 것은 보통 줄이 이 값에 기대기 때문이다(`key`·`storeToHit`).
+   */
   pnu: string;
   /** 대표 동. ⚠️ 이 땅에 건물 기록이 없으면 null 이라 층별 화면으로 갈 수 없다. */
   bld_id: string | null;

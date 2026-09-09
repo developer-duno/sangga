@@ -39,7 +39,9 @@ import type { BuildingHit, StoreHit } from '../types';
  * ⛔ 두 질의를 **한 함수로 합치지 않는다** — `search_buildings` 에 상호 가지를 더하면 가지
  *    2→3 에 763→1,550ms 다(알려진한계 §4).
  * ⛔ 가게 구역의 한 줄은 **건물이 아니라 땅(필지)** 이다(점포는 필지 단위로만 셀 수 있다).
- *    그래서 문구는 "이 **땅에** 가게 N곳"이지 "이 건물의 가게"가 아니다(결정 0025 의 함정).
+ *    그래서 문구는 "이 **땅에** 가게 N곳"이지 건물 단위의 셈이 아니다(결정 0025 의 함정).
+ *    ⓘ 그 틀린 문구를 여기 부정형으로도 적지 않는다 — 원문 가드가 글자만 보므로
+ *      "그러면 안 된다"고 쓴 문장까지 걸리고, 그러면 사람이 가드를 느슨하게 고치게 된다.
  * ⛔ 실패는 **구역별로 따로** 다룬다 — 한쪽이 죽어도 다른 쪽 결과는 산다.
  */
 
@@ -101,6 +103,15 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu
   /** 더 받다가 실패했다 — 이미 받은 목록은 그대로 두고 그 사실만 알린다(0025 규칙). */
   const [moreFailed, setMoreFailed] = useState(false);
   /**
+   * 지금 화면에 선 결과를 **실제로 물어본** 검색어와 구.
+   *
+   * ⛔ '더 보기'가 입력창(`query`)·`sigungu` 를 **다시 묻지 않게** 하려고 박아 둔다. 사람은
+   *    결과를 보면서 입력창을 계속 고치고(구도 바꿀 수 있다), 그 상태로 '더 보기'를 누르면
+   *    **첫 쪽과 다른 검색어의 51번째 줄**이 첫 쪽 뒤에 붙는다 — 에러가 아니라 조용히 섞이는
+   *    거짓 목록이다. 오프셋만 맞고 검색어가 다르면 그 목록은 아무 뜻이 없다.
+   */
+  const [ranWith, setRanWith] = useState<{ q: string; sigungu: string } | null>(null);
+  /**
    * 늦게 도착한 옛 검색 응답이 최신 결과를 덮는 것을 막는다.
    *
    * ⛔ **건물 질의와 가게 질의가 이 번호 하나를 함께 본다**(결정 0028 결정 4). 구역마다
@@ -146,6 +157,13 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu
     // 가게 구역도 **먼저 비운다** — 안 비우면 새 답이 올 때까지 옛 검색어의 가게가 서 있다.
     setStore({ at: 'hidden' });
     setMoreFailed(false);
+    /*
+      ⛔ '더 보기 중'도 함께 끈다. 안 끄면 이런 일이 난다 — 더 받는 중에 새 검색을 하면
+         날아가 있던 `loadMoreStores` 는 번호가 어긋나 **아무것도 안 하고 나가므로**
+         `setMoreLoading(false)` 에 영영 닿지 못하고, 새 결과의 '더 보기' 버튼이 처음부터
+         눌리지 않는 채로 선다(disabled). 버튼이 죽었다는 신호는 어디에도 안 뜬다.
+    */
+    setMoreLoading(false);
     onSearchStart(); // 새 검색 = 이전 선택 해제(아래 스택뷰가 옛 건물을 계속 그리지 않게)
     try {
       /*
@@ -169,6 +187,8 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu
 
       if (runId !== latestRun.current) return; // 그새 새 검색이 시작됐다
 
+      // ⓘ 화면에 세우는 결과와 **같은 순간**에 적어 둔다 — '더 보기'는 이 값만 본다.
+      setRanWith({ q, sigungu });
       setStore(readStoreAnswer(storeRes, q));
 
       if (bldRes.status === 'rejected') throw bldRes.reason;
@@ -218,13 +238,21 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu
    */
   function loadMoreStores(rows: StoreHit[]) {
     const runId = latestRun.current;
+    /*
+      ⛔ **지금 칸에 적힌 말이 아니라 물어봤던 말**로 다음 쪽을 받는다. 결과를 보면서
+         입력창을 고쳐 놓고 '더 보기'를 누르는 것은 흔한 일인데, 그때 칸을 다시 읽으면
+         다른 검색어의 뒷줄이 이 목록에 붙는다(조용히 섞인 거짓 목록).
+      ⓘ 물어본 적이 없으면 받을 것도 없다 — 버튼이 그때는 서지도 않지만, 이 값이 곧
+        "무엇의 다음 쪽인가"의 정의라 없으면 아예 부르지 않는다.
+    */
+    if (!ranWith) return;
     setMoreLoading(true);
     setMoreFailed(false);
     supabase
       .rpc(SEARCH_STORES_FN, {
-        q: query.trim(),
+        q: ranWith.q,
         lim: SEARCH_STORES_PAGE,
-        sigungu,
+        sigungu: ranWith.sigungu,
         p_offset: rows.length,
       })
       .then(({ data, error: err }) => {
@@ -361,7 +389,7 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu
                   {s.jibun_addr && <span className="stores__jibun">지번 {s.jibun_addr}</span>}
                   {names && <span className="stores__names">{names}</span>}
                   <span className="stores__meta">
-                    {/* ⛔ "이 건물의 가게"가 아니라 **이 땅에** 다 — 층별 화면의 점포 칸과
+                    {/* ⛔ 건물이 아니라 **이 땅에** 다 — 층별 화면의 점포 칸과
                         세는 대상이 다르다(결정 0025 의 함정). */}
                     이 땅에 가게 {(s.match_store_cnt ?? 0).toLocaleString('ko-KR')}곳 일치
                     {many && (
