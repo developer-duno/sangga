@@ -256,6 +256,32 @@ class TestReturnedColumnsAreFixed:
         assert returns_columns(
             fn_block(statements(read(path)), schema=schema)) == RETURNED_COLUMNS
 
+    @pytest.mark.parametrize("path", [MIGRATION_AREA, SCHEMA])
+    def test_the_select_list_order_matches_the_returned_columns(self, path):
+        """⛔ PostgreSQL 은 **이름이 아니라 자리**로 맞춘다 — 반환표는 그대로 두고
+        select 목록에서 두 칸 자리만 바꿔도 에러 없이 값이 서로 뒤바뀐다
+        (int↔numeric 대입 캐스트가 조용히 성립한다). 화면에는 '층 미상 0%'와
+        '한 건 면적 중앙값 92㎡'가 뜨는데 둘 다 그럴듯해서 아무도 모른다.
+
+        ⓘ 마지막 칸 sigungu_nm 은 하위질의(`(select o.sigungu_nm …)`)라 여기서 세지
+          않는다 — 그래서 `RETURNED_COLUMNS[:-1]` 과 맞춘다.
+        ⓘ 형제 test_exactly_these_columns 는 **반환표**의 칸을 본다. 둘은 다른 자리다 —
+          그쪽이 초록이어도 이쪽이 어긋나 있을 수 있고, 그게 이 시험이 있는 이유다.
+        """
+        block = flat(fn_block(statements(read(path))))
+        body = block[block.index("$$"):]
+        picked = tuple(re.findall(r"\bm\.(\w+)", body[:body.index("from " + MV)]))
+        assert picked == RETURNED_COLUMNS[:-1], picked
+
+    @pytest.mark.parametrize("path", ALL)
+    def test_the_api_twin_never_restates_the_column_order(self, path):
+        """⛔ api 쌍둥이가 칸을 **다시 나열하기 시작하면** 위 자물쇠가 통하지 않는 자리가
+        하나 더 생긴다(두 곳의 순서가 갈려도 에러가 안 난다). 통째로 넘기게 둔다."""
+        body = flat(fn_block(read(path), schema="api."))
+        body = body[body.index("$$"):]
+        assert "select * from public.{}(sigungu)".format(FN) in body
+        assert re.search(r"\bm\.", body) is None, "쌍둥이가 칸을 직접 나열하고 있습니다"
+
     @pytest.mark.parametrize("path", ALL)
     def test_it_only_reads(self, path):
         """⛔ 이 길에 쓰기가 붙는 날, 읽기 전용이라는 전제가 사라진다."""
@@ -391,3 +417,34 @@ def test_returns_columns_helper_actually_reads_the_list():
         ")\n"
     )
     assert returns_columns(sample) == ("a", "b")
+
+
+class TestTheRebuildIsAtomic:
+    """뷰·함수를 떨어뜨렸다 다시 만드는 판은 반드시 ``begin`` … ``commit`` 으로 감싼다.
+
+    ``scripts/dbx.py -f`` 는 psql 자동커밋(``--single-transaction`` 없음)이라, 감싸지 않으면
+    32만 행을 다시 훑는 ``create materialized view`` 도중 끊겼을 때 **함수·뷰가 지워진 채
+    남는다** — 카드는 사라지고 ``post_load.py`` 의 refresh 가 멈춘다. ``notify`` 는 commit
+    **뒤**에 둔다(09-05c 선례). 이 규칙은 2026-09-09 적대검증 때까지 사람 기억에만 걸려
+    있었다(코더가 "두 줄을 지워도 아무 시험도 안 잡는다"고 정직하게 적어 준 자리).
+    """
+
+    # statements() 는 주석만 걷어낸 **한 덩어리 문자열**이라(함수 본문 안의 ';' 때문에 문장으로
+    # 쪼개지 않는다) 줄머리 정규식의 **위치**로 순서를 잰다.
+    def _at(self, pattern, sql, last=False):
+        found = [m.start() for m in re.finditer(pattern, sql)]
+        assert found, pattern
+        return found[-1] if last else found[0]
+
+    def test_begin_comes_before_the_first_drop(self):
+        sql = statements(read(MIGRATION_AREA)).lower()
+        begin = self._at(r"(?m)^begin;", sql)
+        first_drop = self._at(r"(?m)^drop ", sql)
+        assert begin < first_drop, (begin, first_drop)
+
+    def test_commit_comes_after_every_ddl_and_before_notify(self):
+        sql = statements(read(MIGRATION_AREA)).lower()
+        commit = self._at(r"(?m)^commit;", sql)
+        last_ddl = self._at(r"(?m)^(drop |create |grant |revoke |comment on |analyze )", sql, last=True)
+        notify = self._at(r"(?m)^notify pgrst", sql)
+        assert last_ddl < commit < notify, (last_ddl, commit, notify)

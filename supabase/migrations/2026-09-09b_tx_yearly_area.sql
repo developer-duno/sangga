@@ -48,15 +48,33 @@
 -- 의 revoke 는 **그때 만든 그 객체**에만 걸렸으므로, 다시 만든 뷰는 다시 열려 있을 수 있다
 -- — 형제 뷰들과 글자 그대로 같은 revoke 를 여기서 한 번 더 둔다.
 --
+-- ⛔ 전부 아니면 전무 — `begin; … commit;` 로 묶는다
+-- --------------------------------------------------
+-- `scripts/dbx.py` 는 `psql -v ON_ERROR_STOP=1 -f` 로 돌린다 — **자동커밋**이다(그 명령에
+-- `--single-transaction` 이 없다). 그런데 이 파일은 함수 둘과 물질화뷰를 **먼저 떨어뜨린
+-- 뒤** 32만 행을 다시 훑어 뷰를 만든다. 그 사이(수십 초)에 연결이 끊기거나 뷰 만들기가
+-- 실패하면, 떨어뜨린 것만 지워진 채 남는다 — 그러면
+--   · 입구의 『동네 매매 단가 흐름』 카드가 화면에서 **통째로 사라지고**(함수가 없다),
+--   · `python scripts/post_load.py` 의 `refresh materialized view concurrently` 가
+--     "그런 뷰 없음"으로 **멈춰서** 다른 요약표 갱신까지 함께 서 버린다.
+-- 한 덩어리로 묶으면 실패한 순간 **적용 전 상태 그대로** 되돌아간다. 2026-09-05c 가 같은
+-- 이유로 같은 모양을 쓴다(칸을 더하느라 함수를 떨어뜨렸다 다시 만드는 판).
+-- ⓘ 안에 든 것 전부 트랜잭션 안에서 허용된다 — `analyze`, `create index`(concurrently 가
+--   **아닌** 것), `notify` 까지. 다만 `notify` 는 커밋되어야 전달되므로 commit **뒤**에 둔다
+--   (안에 두면 롤백된 판에서도 PostgREST 에 헛알림이 갈 이유가 없고, 바깥이 더 명확하다).
+-- ⛔ `create index concurrently` 로 바꾸지 말 것 — 그것만은 트랜잭션 안에서 못 돈다.
+--
 -- 실행법
 -- ------
 --   python scripts/dbx.py -f supabase/migrations/2026-09-09b_tx_yearly_area.sql
 --
 -- 적용한 사람이 보게 되는 것
 -- --------------------------
---   · DROP FUNCTION ×2 · DROP MATERIALIZED VIEW · CREATE MATERIALIZED VIEW · COMMENT
---     · CREATE INDEX · ANALYZE · REVOKE · CREATE FUNCTION ×2 · COMMENT · REVOKE ×2
---     · GRANT · NOTIFY
+--   · BEGIN · DROP FUNCTION ×2 · DROP MATERIALIZED VIEW · CREATE MATERIALIZED VIEW
+--     · COMMENT · CREATE INDEX · ANALYZE · REVOKE · CREATE FUNCTION ×2 · COMMENT
+--     · REVOKE ×2 · GRANT · COMMIT · NOTIFY
+--   · 중간에 실패하면 **아무것도 안 바뀐 상태**로 되돌아간다(위 `begin; … commit;` 참조) —
+--     그때는 고친 뒤 이 파일을 처음부터 다시 돌리면 된다.
 --   · 뷰를 다시 만드는 데 시간이 좀 걸린다(전 기간 거래를 다시 훑는다 — 32만 행).
 --   · 화면 줄 꼬리가 "1,550건 · 층 미상 10%" → "… · 한 건 면적 중앙값 40㎡" 가 된다.
 --   · `python scripts/post_load.py --check` 는 그대로 exit 0 이어야 한다. 공개 호출
@@ -66,6 +84,10 @@
 -- 되돌리기: 2026-09-09a 를 그대로 다시 돌린다 — 단 그 파일의 `create materialized view
 -- **if not exists**` 는 이미 있는 뷰에 아무 일도 안 하므로, 먼저 `drop materialized view
 -- mv_sigungu_tx_yearly;` 를 하고 돌려야 한다.
+
+-- ⛔ 여기부터 commit 까지가 **한 덩어리**다(위 머리말 참조) — 중간에 끊기면 함수·뷰가
+--    지워진 채 남아 카드가 사라지고 post_load 의 갱신이 멈춘다.
+begin;
 
 -- ⛔ 부르는 쪽(api)을 먼저 떨어뜨린다 — 막혀서가 아니라, 허공을 가리키는 순간을 안 만들려고.
 drop function if exists api.get_sigungu_tx_yearly(text);
@@ -188,6 +210,8 @@ grant execute on function api.get_sigungu_tx_yearly(text) to anon, authenticated
 -- ⛔ public.get_sigungu_tx_yearly 는 끝까지 닫아 둔다 — 통과 함수가 security definer 라
 --    소유자 권한으로 부르므로 anon 에게 열 필요가 없다.
 -- ⛔ 물질화뷰 mv_sigungu_tx_yearly 자체도 열지 않는다(화면은 함수로만 읽는다).
+
+commit;
 
 -- 칸이 하나 늘었으므로 스키마 캐시를 다시 읽게 한다. 안 알리면 화면이 예전 칸 구성으로
 -- 부르다 404(PGRST202) 를 맞는다 — DB 에는 멀쩡히 있는데 화면만 안 되는, 찾기 어려운 고장이다.

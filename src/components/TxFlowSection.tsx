@@ -129,6 +129,18 @@ export function TxFlowSection({ sigungu }: Props) {
                       {' '}
                       (가운데 절반 {formatManWonBand(r.p25_unit_price, r.p75_unit_price)})
                     </span>
+                    {/*
+                      ⛔ 이 조각은 **값 칸에 산다**(오른쪽 건수 칸이 아니다). 면적 중앙값은
+                         단가와 글자 그대로 **같은 filter**로 잰 형제라(모집단 `n`), 분모가
+                         그 해 거래 전부(`n_all`)인 건수·층 미상과 나란히 서면 둘이 같은
+                         거래를 말하는 것처럼 읽힌다.
+                      ⛔ 표본이 모자란 해는 자연히 빠진다 — 이 가지가 `enough` 안이다. 값을
+                         감추면서 이것만 남기면 감춘 근거를 곁눈으로 말해 주는 셈이 된다.
+                      ⛔ 서버가 이 칸을 안 주면(마이그레이션 전) 이 조각만 조용히 빠진다.
+                    */}
+                    {area === null ? null : (
+                      <span className="flow__area"> · 한 건 면적 중앙값 {area}</span>
+                    )}
                   </>
                 ) : (
                   /*
@@ -139,22 +151,9 @@ export function TxFlowSection({ sigungu }: Props) {
                   `표본 부족 (단가 있는 거래 ${r.n.toLocaleString('ko-KR')}건)`
                 )}
               </span>
-              {/*
-                꼬리는 조각마다 통째로 유지한다(`.flow__n > span` 이 nowrap). 좁은 폭에서는
-                조각 **사이**에서만 접힌다 — 조각 안에서 끊기면 '한 건 면적 / 중앙값 40㎡'
-                처럼 한 사실이 두 줄에 갈려 읽힌다.
-              */}
               <span className="flow__n">
-                <span>
-                  {r.n_all.toLocaleString('ko-KR')}건
-                  {miss === null ? '' : ` · 층 미상 ${miss}%`}
-                </span>
-                {/*
-                  ⛔ 표본이 모자란 해는 이 칸도 감춘다 — 단가와 **같은 거래들**을 잰 값이라,
-                     값을 감추면서 이것만 남기면 감춘 근거를 곁눈으로 말해 주는 셈이 된다.
-                  ⛔ 서버가 이 칸을 안 주면(마이그레이션 전) 이 조각만 조용히 빠진다.
-                */}
-                {enough && area !== null ? <span> · 한 건 면적 중앙값 {area}</span> : null}
+                {r.n_all.toLocaleString('ko-KR')}건
+                {miss === null ? '' : ` · 층 미상 ${miss}%`}
               </span>
             </li>
           );
