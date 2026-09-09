@@ -44,6 +44,9 @@ export function isSigunguTxYearlyRow(x: unknown): x is SigunguTxYearly {
     isNullableNumber(r.median_unit_price) &&
     isNullableNumber(r.p25_unit_price) &&
     isNullableNumber(r.p75_unit_price) &&
+    // ⚠️ 선택 칸이다 — 없어도(undefined) 통과한다. 마이그레이션 적용 전 라이브의 함수가
+    //    그 상태라, 여기서 필수로 두면 그날 카드가 통째로 사라진다.
+    isNullableNumber(r.median_area_m2) &&
     typeof r.floor_missing === 'number' &&
     typeof r.ym_cnt === 'number' &&
     isNullableString(r.first_ym) &&
@@ -71,6 +74,28 @@ export function hasEnoughSample(r: SigunguTxYearly): boolean {
  */
 export function missingRatePct(r: SigunguTxYearly): number | null {
   return r.n_all > 0 ? Math.round((r.floor_missing / r.n_all) * 100) : null;
+}
+
+/**
+ * 그 해 단가의 근거가 된 거래 **한 건의 크기**('40㎡'). 적을 수 없으면 null.
+ *
+ * 왜 이 칸을 나란히 적나
+ * ----------------------
+ * 어떤 해는 ㎡당 가운데값이 앞뒤 해의 두세 배로 튀는데, 시세가 그만큼 오른 것이 아니라
+ * **초소형 구획이 무더기로 거래된 해**여서 그렇다(작은 칸일수록 ㎡당 단가가 높다). 면적
+ * 중앙값을 나란히 적으면 기준선을 하나도 안 긋고 그 사실이 눈에 보인다 — 옆에 이미 있는
+ * '층 미상 %'와 같은 방식이다.
+ *
+ * ⛔ **없으면 지어내지 않는다.** 서버가 이 칸을 안 주는 판(마이그레이션 전)이 있고, 그때는
+ *    이 조각만 빠지고 줄은 그대로 선다.
+ * ⛔ **0㎡ 라고 적지 않는다.** 반올림해서 0 이 되는 값은 면적이 아니라 자료의 고장이고,
+ *    '0㎡ 짜리 거래'라고 적으면 없는 사실을 말하게 된다.
+ */
+export function medianAreaText(r: SigunguTxYearly): string | null {
+  const v = r.median_area_m2;
+  if (v === null || v === undefined || !Number.isFinite(v)) return null;
+  const m2 = Math.round(v);
+  return m2 >= 1 ? `${m2.toLocaleString('ko-KR')}㎡` : null;
 }
 
 /**

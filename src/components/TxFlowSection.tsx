@@ -15,6 +15,7 @@ import {
   hasEnoughSample,
   isSigunguTxYearlyList,
   maxMedian,
+  medianAreaText,
   missingRatePct,
   partialYearLabel,
 } from '../lib/txFlow';
@@ -107,6 +108,7 @@ export function TxFlowSection({ sigungu }: Props) {
           const enough = hasEnoughSample(r);
           const part = partialYearLabel(r);
           const miss = missingRatePct(r);
+          const area = medianAreaText(r);
           return (
             <li key={r.yr}>
               <span className="flow__yr">
@@ -137,9 +139,22 @@ export function TxFlowSection({ sigungu }: Props) {
                   `표본 부족 (단가 있는 거래 ${r.n.toLocaleString('ko-KR')}건)`
                 )}
               </span>
+              {/*
+                꼬리는 조각마다 통째로 유지한다(`.flow__n > span` 이 nowrap). 좁은 폭에서는
+                조각 **사이**에서만 접힌다 — 조각 안에서 끊기면 '한 건 면적 / 중앙값 40㎡'
+                처럼 한 사실이 두 줄에 갈려 읽힌다.
+              */}
               <span className="flow__n">
-                {r.n_all.toLocaleString('ko-KR')}건
-                {miss === null ? '' : ` · 층 미상 ${miss}%`}
+                <span>
+                  {r.n_all.toLocaleString('ko-KR')}건
+                  {miss === null ? '' : ` · 층 미상 ${miss}%`}
+                </span>
+                {/*
+                  ⛔ 표본이 모자란 해는 이 칸도 감춘다 — 단가와 **같은 거래들**을 잰 값이라,
+                     값을 감추면서 이것만 남기면 감춘 근거를 곁눈으로 말해 주는 셈이 된다.
+                  ⛔ 서버가 이 칸을 안 주면(마이그레이션 전) 이 조각만 조용히 빠진다.
+                */}
+                {enough && area !== null ? <span> · 한 건 면적 중앙값 {area}</span> : null}
               </span>
             </li>
           );
@@ -157,8 +172,9 @@ export function TxFlowSection({ sigungu }: Props) {
         출처: 국토교통부 상업업무용 부동산 매매 실거래가 · 집합(구분소유) 거래만 · 해제된
         거래 제외. “층 미상”은 신고 자료에 층이 빠진 거래의 비율입니다 —{' '}
         {TX_BASEMENT_MISSING_SINCE}년부터는 지하층이 자료에 아예 없어 이 칸에 섞여 있습니다.{' '}
-        {TX_OPEN_SINCE_LABEL} 이전 거래는 지번이 가려져 건물과 잇지 못하므로, 이 카드는 구
-        단위로만 셉니다.
+        “한 건 면적”은 그 해 단가 근거가 된 거래 한 건의 건물면적 중앙값입니다 — 다른 해보다
+        유난히 작으면 초소형 구획이 무더기로 거래된 해입니다. {TX_OPEN_SINCE_LABEL} 이전
+        거래는 지번이 가려져 건물과 잇지 못하므로, 이 카드는 구 단위로만 셉니다.
       </p>
     </SectionCard>
   );

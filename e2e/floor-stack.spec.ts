@@ -1323,6 +1323,7 @@ function txYearly() {
       median_unit_price: 4_902_441,
       p25_unit_price: 3_100_000,
       p75_unit_price: 7_400_000,
+      median_area_m2: 46.4,
       floor_missing: 92,
       ym_cnt: 4,
       first_ym: '200609',
@@ -1336,6 +1337,7 @@ function txYearly() {
       median_unit_price: 21_171_384,
       p25_unit_price: 12_000_000,
       p75_unit_price: 33_000_000,
+      median_area_m2: 18.3,
       floor_missing: 155,
       ym_cnt: 12,
       first_ym: '201501',
@@ -1349,6 +1351,7 @@ function txYearly() {
       median_unit_price: 30_000_000,
       p25_unit_price: 28_000_000,
       p75_unit_price: 32_000_000,
+      median_area_m2: 12.5,
       floor_missing: 1,
       ym_cnt: 8,
       first_ym: '202601',
@@ -1389,9 +1392,15 @@ test.describe('입구 — 동네 매매 단가 흐름', () => {
     await expect(rows.first()).toContainText('9~12월분');
     await expect(rows.first()).toContainText('㎡당 490만');
     await expect(rows.first()).toContainText('층 미상 21%');
+    // 그 해 단가의 근거가 된 거래 **한 건의 크기**도 같은 줄에 적힌다(2026-09-09b) —
+    // 초소형 구획이 무더기로 거래된 해를 기준선 없이 알아보게 하는 사실 한 칸이다.
+    await expect(rows.first()).toContainText('한 건 면적 중앙값 46㎡');
     // ② ★ 표본이 모자란 해는 값을 안 적는다(절대 규칙 3).
     await expect(rows.last()).toContainText('표본 부족');
     await expect(rows.last()).not.toContainText('㎡당');
+    // 면적도 함께 감춘다 — 단가와 **같은 거래들**을 잰 값이라, 이것만 남기면 감춘 근거를
+    // 곁눈으로 말해 주는 셈이 된다.
+    await expect(rows.last()).not.toContainText('한 건 면적');
     // ③ 근거 등급 — 어림한 값이 아니라 신고된 거래다.
     await expect(flow.locator('.grade__badge')).toHaveText('A등급 · 실거래');
 
