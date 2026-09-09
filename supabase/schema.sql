@@ -1630,20 +1630,10 @@ as $$
   matched as (
     select h.pnu, h.road_addr, h.store_snapshot_ym,
            agg.n        as match_store_cnt,
-           agg.exact_hit,
-           (
-             -- 화면에 적을 이름 최대 3개 — 정확히 같은 이름 먼저, 그다음 가나다.
-             -- ⛔ 원문 그대로 낸다(간판에 걸린 공개 이름이다 — 결정 0028 결정 5).
-             select array_agg(d.nm order by d.is_exact desc, d.nm)
-             from (
-               select distinct u2.nm,
-                      (search_key(u2.nm) = pat.k) as is_exact
-                 from unnest(h.store_names) as u2(nm)
-                where search_key(u2.nm) like pat.p escape '\'
-                order by is_exact desc, nm
-                limit 3
-             ) d
-           ) as matched_names
+           agg.exact_hit
+      -- ⓘ 화면에 적을 이름 셋(matched_names)은 여기서 안 만든다 — 아래 rows_out 의
+      --    lateral 로 내려갔다(2026-09-10b · 0028 §백로그 🟡-5). 여기서 만들면
+      --    게이트 상한(6,000땅)까지 땅마다 돌고 나서 50줄만 낸다.
       from hit h
       cross join pat
       join lateral (
@@ -1697,7 +1687,7 @@ as $$
       st_x(p.geom)::double precision as lng,
       cnt.bld_cnt_in_pnu,
       fs.floor_cnt, fs.min_floor, fs.max_floor, fs.has_roof,
-      pg.matched_names,
+      mn.matched_names,
       pg.match_store_cnt,
       pg.total_parcel_cnt,
       pg.total_store_cnt,
@@ -1705,6 +1695,9 @@ as $$
       pg.store_snapshot_ym::text as store_snapshot_ym,
       pg.exact_hit
     from page pg
+    -- ⓘ pat 은 한 줄짜리 CTE 라 cross join 이 행수를 바꾸지 않는다. 아래 mn lateral 이
+    --    검색 패턴(pat.p)과 정확일치 키(pat.k)를 쓰므로 여기서 한 번 끌어온다.
+    cross join pat
     join parcel p on p.pnu = pg.pnu
     join lateral (
       -- 대표 동 = 연면적 최대(결정 0025 와 같은 자). 층 자료 없는 동은 뺀다.
@@ -1736,6 +1729,26 @@ as $$
         from v_building_floor_stack s
        where s.bld_id = rep.bld_id
     ) fs on true
+    join lateral (
+      -- 화면에 적을 이름 최대 3개 — 정확히 같은 이름 먼저, 그다음 가나다.
+      -- ⛔ 원문 그대로 낸다(간판에 걸린 공개 이름이다 — 결정 0028 결정 5).
+      -- ⛔ 이 셈을 ②(matched)로 되돌리지 말 것 — 거기서 하면 게이트 상한(6,000땅)까지
+      --    땅마다 unnest→like→정렬을 돌고 나서 50줄만 낸다. 여기(page 뒤)면 **page 가 자른 줄 수만큼**
+      --    (기본 50 · 상한 200)이다(2026-09-10b · 0028 §백로그 🟡-5).
+      -- ⓘ 되짚는 곳이 점포 표가 아니라 **요약표의 같은 한 줄**(유일 색인 idx_mpsn_pnu)이라
+      --    "점포 표 되짚기 금지(3.2초)"와는 무관하다.
+      select array_agg(d.nm order by d.is_exact desc, d.nm) as matched_names
+      from (
+        select distinct u2.nm,
+               (search_key(u2.nm) = pat.k) as is_exact
+          from mv_parcel_store_names m2,
+               unnest(m2.store_names) as u2(nm)
+         where m2.pnu = pg.pnu
+           and search_key(u2.nm) like pat.p escape '\'
+         order by is_exact desc, nm
+         limit 3
+      ) d
+    ) mn on true
     union all
     -- ⛔ 게이트에 걸리면 **0건이 아니라 한 줄**이다 — 0건이면 화면이 "그런 가게가 없다"고
     --    말하게 되는데 사실은 "너무 많다"이다. 지금의 search_scope 는 상호를 안 세므로
