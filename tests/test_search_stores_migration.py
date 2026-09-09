@@ -45,9 +45,14 @@ if SCRIPTS_DIR not in sys.path:
 
 import post_load  # noqa: E402
 
-MIGRATION = os.path.join(
-    ROOT, "supabase", "migrations", "2026-09-09c_search_stores.sql")
+MIG_DIR = os.path.join(ROOT, "supabase", "migrations")
+MIGRATION = os.path.join(MIG_DIR, "2026-09-09c_search_stores.sql")
 SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
+
+# 이름 대조를 자르기 **뒤로** 옮긴 판(0028 §백로그 🟡-5). public 쪽 함수만 다시 만든다 —
+# api 쌍둥이는 통과 함수라 한 글자도 안 건드린다(그래서 쌍둥이의 최신은 아직 09-09c 다).
+NEW_MIGRATION = os.path.join(
+    MIG_DIR, "2026-09-10b_search_stores_names_after_limit.sql")
 
 BOTH = [MIGRATION, SCHEMA]
 
@@ -263,6 +268,58 @@ def at(pattern, sql, last=False):
 
 def sha(text):
     return hashlib.sha256(norm(text).encode("utf-8")).hexdigest()
+
+
+# `create [or replace] function [public.]search_stores(` — api 쌍둥이는 뺀다.
+RE_DEFINES_FN = re.compile(
+    r"(?im)^create\s+(?:or\s+replace\s+)?function\s+(?!api\.)(?:public\.)?"
+    + FN + r"\s*\(")
+
+
+def latest_migration_defining_the_function():
+    """public 쪽 `search_stores` 를 정의하는 **가장 최신** 마이그레이션 경로.
+
+    ⛔ 파일 이름을 상수로 박지 않는다 — 박아 두면 다음에 이 함수를 또 고치는 사람이
+       거울 시험을 함께 옮겨야 하고, 잊으면 **더 낡은 파일과 비교되며 초록**이 되어
+       가드가 있는 척만 한다(형제 test_schema_function_drift.py:86-95 와 같은 방식:
+       파일명 정렬이 곧 적용 순서라 뒤가 이긴다).
+    """
+    found = None
+    for name in sorted(os.listdir(MIG_DIR)):
+        if not name.endswith(".sql"):
+            continue
+        if RE_DEFINES_FN.search(code_only(read(os.path.join(MIG_DIR, name)))):
+            found = os.path.join(MIG_DIR, name)
+    assert found, "{} 를 정의하는 마이그레이션이 하나도 없습니다".format(FN)
+    return found
+
+
+LATEST_FN_MIGRATION = latest_migration_defining_the_function()
+
+
+def cte_block(sql, name):
+    """`with … <name> as ( … )` 한 덩어리를 괄호 짝을 세어 뜯어 온다.
+
+    ⛔ 반드시 `statements()` 로 주석을 걷은 텍스트를 넘길 것 — 설명 주석에 든 괄호나
+       낱말이 판정에 섞이면, 주석 한 줄 때문에 가드가 헛것을 잡거나 놓친다.
+    """
+    m = re.search(r"(?im)^ *%s as \(" % re.escape(name), sql)
+    assert m, "{} CTE 를 못 찾았습니다".format(name)
+    start = sql.index("(", m.start())
+    depth = 0
+    for j in range(start, len(sql)):
+        if sql[j] == "(":
+            depth += 1
+        elif sql[j] == ")":
+            depth -= 1
+            if depth == 0:
+                return sql[start:j + 1]
+    raise AssertionError("{} CTE 의 괄호가 안 닫힙니다".format(name))
+
+
+def squeeze(text):
+    """공백을 한 칸으로 접는다 (이미 주석을 걷어 낸 텍스트에 쓴다)."""
+    return re.sub(r"\s+", " ", text)
 
 
 # ── 0. 기존 표와 사슬 넷은 **한 글자도 안 건드린다** (이 파일의 본론) ────────
@@ -562,6 +619,9 @@ class TestClosedByDefault:
 # ── 5. 전부 아니면 전무 (begin … commit) ─────────────────────────────────────
 
 
+DDL_RE = r"(?m)^(alter |analyze |comment on |create |drop |grant |revoke )"
+
+
 class TestTheMigrationIsAtomic:
     """표 하나 + 색인 셋 + 함수 둘을 만드는 판은 ``begin`` … ``commit`` 으로 감싼다.
 
@@ -570,7 +630,7 @@ class TestTheMigrationIsAtomic:
     **표 없는 함수**(화면이 부르면 "그런 표 없음")가 남는다.
     """
 
-    DDL = r"(?m)^(alter |analyze |comment on |create |drop |grant |revoke )"
+    DDL = DDL_RE
 
     def test_begin_comes_before_the_first_create(self):
         sql = statements(read(MIGRATION)).lower()
@@ -634,8 +694,14 @@ class TestSchemaMirrorsTheMigration:
 
         ⓘ 전 함수를 훑는 형제 가드가 따로 있다(tests/test_schema_function_drift.py).
           여기서는 이 함수 하나를 못 박아 두어, 실패 메시지가 무엇 때문인지 바로 보이게 한다.
+
+        ⚠️ **둘이 서로 다른 파일을 본다.** 라이브의 진실은 "그 함수를 마지막으로 다시 만든
+           파일"이라, public 쪽은 그것을 **찾아서** 본다(2026-09-10b 가 본문을 고쳤다).
+           api 쌍둥이는 그 뒤로 아무도 안 건드렸으므로 09-09c 가 여전히 최신이다 —
+           형제 test_schema_function_drift 도 두 이름을 **따로** 셈한다(bodies() :69-74).
         """
-        assert fn_block(read(MIGRATION), schema=schema) == fn_block(
+        path = MIGRATION if schema else LATEST_FN_MIGRATION
+        assert fn_block(read(path), schema=schema) == fn_block(
             read(SCHEMA), schema=schema)
 
     def test_the_new_table_body_letter_for_letter(self):
@@ -790,4 +856,146 @@ def test_mutation_d_an_edit_at_the_end_of_a_canon_block_is_noticed():
     got = sql_block(broken, CANON_HEADER["mv_search_parcel"])
     assert sha(got) != CANON_STATEMENT_SHA["mv_search_parcel"], (
         "블록 **맨 끝** 줄을 고쳤는데 해시가 그대로입니다 — sql_block 이 일찍 끊고 있습니다"
+    )
+
+
+# ── 9. 이름 대조는 **자르기 뒤**에 있다 (2026-09-10b · 0028 §백로그 🟡-5) ─────
+#
+# 옮겨도 답은 한 글자도 안 바뀐다(이름 배열은 총계·게이트·정렬 어디에도 안 쓰인다).
+# 그래서 되돌아가도 **에러가 안 난다** — 조용히 느려지기만 한다(가장 늦게 발견되는 회귀).
+# 그 되돌아감을 여기서 막는다.
+
+# rows_out 의 새 lateral 이 갖춰야 할 조각들 — 요약표를 **제 기본키로** 다시 읽는다.
+NAMES_LATERAL_PIECES = (
+    # rows_out 에는 여태 pat 이 없었다. 없으면 컴파일 자체가 안 된다(pat.p 를 못 찾는다).
+    "cross join pat",
+    "from mv_parcel_store_names m2,",
+    "unnest(m2.store_names) as u2(nm)",
+    # ⛔ 유일 색인 idx_mpsn_pnu 로 한 줄만 집는다 — 점포 표를 되짚는 것이 아니다.
+    "where m2.pnu = pg.pnu",
+    "limit 3",
+    "as matched_names",
+)
+
+
+class TestNamesAfterLimitMigration:
+    """정본과 새 파일 **양쪽**을 본다 — 한쪽만 되돌아가도 드리프트다."""
+
+    BOTH_NEW = [NEW_MIGRATION, SCHEMA]
+
+    @pytest.mark.parametrize("path", BOTH_NEW)
+    def test_matched_no_longer_builds_the_names(self, path):
+        """⛔ ②matched 에서 만들면 게이트 상한(6,000땅)까지 땅마다 돌고 나서 50줄만 낸다.
+
+        강남 '학원'은 898땅이 걸린다 — 898번 만들어 50번 쓴다. 에러는 안 난다.
+        """
+        block = cte_block(statements(fn_block(read(path))), "matched")
+        assert "matched_names" not in block, (
+            "이름 만들기가 ②matched 로 되돌아갔습니다 — 자르기 **앞**입니다"
+        )
+
+    @pytest.mark.parametrize("path", BOTH_NEW)
+    def test_rows_out_builds_them_after_the_limit(self, path):
+        """⛔ 그러면 그 일을 page 가 이미 잘라 둔 줄에만 한다(기본 50 · 상한 200)."""
+        block = squeeze(cte_block(statements(fn_block(read(path))), "rows_out"))
+        for piece in NAMES_LATERAL_PIECES:
+            assert piece in block, piece
+
+    @pytest.mark.parametrize("path", BOTH_NEW)
+    def test_the_returned_columns_did_not_move(self, path):
+        """⛔ 이 판의 약속은 "같은 답을 더 적은 일로"다 — 칸이 늘거나 순서가 바뀌면 약속
+        위반이다(PostgreSQL 은 이름이 아니라 **자리**로 맞춘다)."""
+        assert returns_columns(
+            fn_block(statements(read(path)))) == RETURNED_COLUMNS
+
+    def test_the_new_file_mirrors_the_canon(self):
+        """⛔ 정본만 살짝 다듬는 것이 곧 정본↔라이브 불일치다(2026-09-01 2차 적대검증)."""
+        assert fn_block(read(NEW_MIGRATION)) == fn_block(read(SCHEMA))
+
+    def test_it_revokes_and_never_grants(self):
+        """⛔ 만든 자리에서 다시 닫는다(관습 2026-09-01d:89-90).
+
+        `create or replace` 가 권한을 보존하긴 하지만, 대시보드가 같은 함수를 다시 만들면
+        Supabase 기본 권한이 anon 을 자동으로 붙인다. public 원본에는 **grant 를 주지
+        않는다** — 화면은 api 쌍둥이로만 들어오고, 그 쌍둥이는 이 파일이 안 건드린다.
+        """
+        text = flat(read(NEW_MIGRATION))
+        assert (
+            "revoke all on function %s(text, int, text, int) "
+            "from public, anon, authenticated;" % FN in text
+        ), "만든 자리에서 다시 닫지 않았습니다"
+        assert not re.search(r"grant execute on function", text), (
+            "새 파일이 실행 권한을 주고 있습니다 — 이 판은 권한을 한 글자도 안 바꿉니다"
+        )
+        assert "api.%s" % FN not in code_only(read(NEW_MIGRATION)), (
+            "쌍둥이를 다시 정의하고 있습니다 — 그러면 위 거울 시험이 보는 파일이 갈립니다"
+        )
+
+    def test_it_is_atomic(self):
+        """⛔ `dbx.py -f` 는 psql 자동커밋이다 — 감싸지 않으면 함수만 바뀌고 revoke 가
+        빠진 채 남을 수 있다(그 순간 public 원본이 열린 채로 선다)."""
+        sql = statements(read(NEW_MIGRATION)).lower()
+        assert at(r"(?m)^begin;", sql) < at(r"(?m)^create ", sql)
+        commit = at(r"(?m)^commit;", sql)
+        outside = [m.start() for m in re.finditer(DDL_RE, sql)
+                   if m.start() > commit]
+        assert outside == [], (
+            "커밋 뒤로 샌 DDL 이 있습니다: {}".format([sql[p:p + 60] for p in outside])
+        )
+        assert commit < at(r"(?m)^notify pgrst", sql), (
+            "안에 두면 롤백된 판에서도 PostgREST 에 헛알림이 간다(09-09b 선례)"
+        )
+        assert "concurrently" not in sql, (
+            "`create index concurrently` 만은 트랜잭션 안에서 못 돈다"
+        )
+        assert re.search(r"(?m)^drop\s", sql) is None, (
+            "이 판은 아무것도 떨어뜨리지 않는다 — create or replace 하나뿐이다"
+        )
+
+    def test_post_load_needs_no_new_entry(self):
+        """ⓘ 갱신할 표도, 새 공개 호출도 안 늘었다 — `--check` 허용 총계 25 불변."""
+        assert NEW_MV in post_load.REFRESH_MVS
+        assert "api.%s" % FN in post_load.ANON_CALLABLE_ALLOWLIST
+
+
+# ⓘ 아래 둘은 §8 과 같은 방식이다 — 파일을 안 건드리고, 원문을 문자열로 읽어 한 군데를
+#   망가뜨린 **사본**에 판정을 돌린다.
+
+
+def test_the_mirror_helper_really_finds_the_newest_file():
+    """⛔ helper 가 옛 파일을 집으면 거울 시험이 **더 낡은 판과 비교되며 초록**이 된다 —
+    가드가 있는 척만 하는 상태다(이 파일이 가장 무서워하는 가짜 초록)."""
+    assert LATEST_FN_MIGRATION == NEW_MIGRATION, (
+        "public {} 를 정의하는 최신 파일이 {} 로 잡혔습니다 — 기대는 {} 입니다".format(
+            FN, os.path.basename(LATEST_FN_MIGRATION),
+            os.path.basename(NEW_MIGRATION))
+    )
+    assert LATEST_FN_MIGRATION != MIGRATION, "09-09c 로 되돌아갔습니다"
+
+
+def test_mutation_e_building_the_names_in_matched_again_is_noticed():
+    """돌연변이 ⑤ 이름 만들기를 ②matched 로 되돌린다 → §9 가드가 뒤집혀야 한다.
+
+    되돌려도 **답은 같고 에러도 안 난다** — 조용히 느려질 뿐이라, 글자를 보는 이 가드가
+    유일한 방어선이다. 그러니 그 가드가 진짜로 보고 있는지를 여기서 확인한다.
+    ⓘ 주석에 `matched_names` 라고 적어 둔 것에는 안 걸려야 한다(statements() 가 걷는다) —
+      실제로 정본 ②matched 에는 "여기서 안 만든다"는 설명 주석이 그 낱말과 함께 있다.
+    """
+    canon = norm(read(SCHEMA))
+    marker = "           agg.exact_hit\n"
+    assert canon.count(marker) == 1, "전제: ②matched 의 마지막 칸이 그 한 줄이다"
+
+    assert "matched_names" not in cte_block(
+        statements(fn_block(canon)), "matched"), (
+        "원문에서 이미 걸리고 있습니다 — 가드가 헛것(설명 주석)을 잡고 있다는 뜻입니다"
+    )
+    broken = canon.replace(
+        marker,
+        "           agg.exact_hit,\n"
+        "           (select array_agg(u3.nm) from unnest(h.store_names) as u3(nm))"
+        " as matched_names\n",
+        1,
+    )
+    assert "matched_names" in cte_block(statements(fn_block(broken)), "matched"), (
+        "②matched 로 되돌렸는데도 '없다'고 읽힙니다 — §9 가드가 헛돕니다"
     )
