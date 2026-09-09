@@ -131,7 +131,7 @@ scripts/                 # 데이터 파이프라인 전부 21개 (수동 실행
 
 supabase/
 ├── schema.sql           # 정본 4,230줄 (라이브 반영본 — 마이그레이션과 드리프트 가드로 동기)
-└── migrations/          # 날짜 파일명 53개, 라이브 적용 순서 그대로
+└── migrations/          # 날짜 파일명 54개, 라이브 적용 순서 그대로
 
 tests/                   # pytest 55파일 2,571개 — collector/스크립트 1:1 + 드리프트 가드
 e2e/                     # playwright 29개(2파일: fixtures.ts, floor-stack.spec.ts). 넓은화면(chromium)·
