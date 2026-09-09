@@ -349,6 +349,117 @@ body {
   color: var(--under);
 }
 
+/* ── 가게 이름으로 찾은 땅 (결정 0028) ─────────────────────────────────────
+   ⛔ 이 구역은 `.search` **안**에 있다 — `@media print` 가 `.search` 를 통째로 빼므로
+      종이에서는 저절로 사라진다(검색창과 같은 조종 장치다).
+   ⓘ `.hit` 을 그대로 쓰지 않고 이름을 새로 둔 이유: 이 줄은 칸이 하나 더 많고(일치 상호)
+     좁은 폭에서 세로로 쌓아야 하는데, `.hit` 을 고치면 **건물 결과 줄까지** 함께 바뀐다. */
+
+.search__stores {
+  display: block;
+  margin: 0 0 28px;
+}
+
+.stores {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.stores__row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 4px 12px;
+  align-items: baseline;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* 대표 동이 없어 층별 화면으로 갈 수 없는 줄 — 누를 수 없으니 손 모양도 주지 않는다. */
+.stores__row--flat {
+  cursor: default;
+}
+
+.stores__row:not(.stores__row--flat):hover {
+  border-color: var(--accent);
+}
+
+.stores__row--on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.stores__name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stores__addr,
+.stores__meta,
+.stores__jibun,
+.stores__names,
+.stores__note {
+  color: var(--muted);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stores__jibun {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+/* 일치한 상호는 이 줄이 왜 나왔는지를 말하는 값이라 흐리게 두지 않는다. */
+.stores__names {
+  color: var(--text);
+}
+
+.stores__warn {
+  color: var(--under);
+}
+
+.stores__stamp {
+  color: var(--muted);
+}
+
+.stores__more {
+  margin: 8px 0 0;
+  padding: 8px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.stores__more:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.stores__src {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 /* ── 상권 지도 (결정 0010) ───────────────────────────────────────────── */
 
 .dmap {
@@ -2511,6 +2622,13 @@ body {
 
   .dbld__dong {
     flex-direction: column;
+    gap: 2px;
+  }
+
+  /* 가게 이름 결과는 칸이 다섯이라 좁은 폭에서는 더 심하게 깨진다 — 세로로 쌓는다.
+     ⚠️ 넓은 화면만 보면 이 깨짐을 못 잡는다(위 `.dbld__row` 와 같은 자리). */
+  .stores__row {
+    grid-template-columns: minmax(0, 1fr);
     gap: 2px;
   }
 }
