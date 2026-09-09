@@ -16,7 +16,7 @@ src/                     # 프론트 (라우터·상태관리 라이브러리 �
 ├── types.ts             # DB 응답 타입 단일 소스 (e2e/fixtures.ts 도 여기서 import)
 ├── components/          # 화면 조각 20개 + 각 .test.tsx (hooks/·constants/ 폴더는 없음)
 │   ├── RegionPicker.tsx     # 시도→구 2단 칩. 목록 진실 = 서버 RPC list_open_sigungu()
-│   ├── BuildingSearch.tsx   # 검색 폼+결과. search_buildings / 0건이면 search_scope 재질의
+│   ├── BuildingSearch.tsx   # 검색 폼+결과. search_buildings / 0건이면 search_scope 재질의 + search_stores(가게 이름 → 땅 구역, 늘 함께 · 0028)
 │   ├── LhNoticeSection.tsx  # LH 상가 분양·입점 공고(결정 0022) — **입구**(구는 골랐고 건물은
 │   │                         #   아직)에 App 이 직접 꽂음. list_lh_notices, ENTRY_SECTION_PLAN
 │   ├── ScorecardSection.tsx # "참고 시세는 얼마나 맞나" 성적표(Wave 4) — 같은 입구 자리.
@@ -172,7 +172,7 @@ docs/                    # 상세계획·알려진한계(조사 전 필독)·PRO
   구 선택(이때 입구에 `LhNoticeSection`=`list_lh_notices`, `ScorecardSection`=`list_price_gate`+
   `/scorecard-v1.json`, `TxFlowSection`=`get_sigungu_tx_yearly` 가 뜬다. 지도에서 상권을 누르면 `DistrictBuildings` 가
   `list_district_buildings`·`list_parcel_buildings` 로 그 안의 땅을 펼친다) →
-  BuildingSearch `search_buildings(q, lim, sigungu)`(0건 시 `search_scope`) → 선택 →
+  BuildingSearch `search_buildings(q, lim, sigungu)`(0건 시 `search_scope`) ∥ `search_stores(q, lim, sigungu, p_offset)`(상호 → 땅, 0028) → 선택 →
   FloorStack 이 7개 질의 동시 발사: `v_coverage_stats`·`v_floor_stack`·`list_building_districts(bld_id)`·
   `list_parcel_transactions(pnu)`·`get_sigungu_tx_stats(sigungu)`·`list_price_bands(p_pnu)`·
   `list_base_prices(p_pnu)` → 층 막대+실거래+참고시세+기준시가 렌더. 그 안에서
