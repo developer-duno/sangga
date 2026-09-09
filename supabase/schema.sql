@@ -1611,6 +1611,12 @@ select
     filter (where t.unit_price is not null)                                     as p25_unit_price,
   percentile_cont(0.75) within group (order by t.unit_price)
     filter (where t.unit_price is not null)                                     as p75_unit_price,
+  -- 그 해 단가의 **근거가 된 거래 한 건**이 얼마나 큰 물건이었나(2026-09-09b).
+  -- ⛔ filter 를 위 셋과 **똑같이** 둔다 — 다른 모집단에서 재면 두 숫자가 서로 다른 거래를
+  --    말하게 된다. `unit_price` 는 `bld_area_m2 > 0` 일 때만 생기는 생성 컬럼이라, 이
+  --    filter 하나로 면적이 0·빈 행은 자연히 빠진다(면적 조건을 따로 적을 이유가 없다).
+  percentile_cont(0.5)  within group (order by t.bld_area_m2)
+    filter (where t.unit_price is not null)                                     as median_area_m2,
   count(*) filter (where t.floor_no is null)::int                               as floor_missing,
   count(distinct t.contract_ym)::int                                            as ym_cnt,
   min(t.contract_ym)                                                            as first_ym,
@@ -1623,6 +1629,8 @@ comment on materialized view mv_sigungu_tx_yearly is
   '결정 0027 구×연도 집합(구분소유) 실거래 단가 요약 — 동네 매매 단가 흐름 카드의 재료. '
   'n 은 단가가 있어 중앙값 근거가 된 행 수, n_all 은 그 해 집합 거래 전부(층 미상 비율 분모), '
   'ym_cnt·first_ym·last_ym 은 자료가 해의 일부뿐인지 화면이 적기 위한 값. '
+  '2026-09-09b: median_area_m2 = 그 해 단가의 근거가 된 거래 **한 건**의 건물면적 중앙값(㎡) — '
+  '단가와 같은 모집단에서 잰다. 다른 해보다 유난히 작으면 초소형 구획이 무더기로 거래된 해다. '
   '⚠️ 자료를 새로 넣으면 `python scripts/post_load.py` 로 갱신할 것. '
   '⛔ anon 에게 열지 않는다 — 화면은 api.get_sigungu_tx_yearly() 로만 읽는다.';
 
@@ -1642,6 +1650,7 @@ returns table (
   median_unit_price numeric,
   p25_unit_price    numeric,
   p75_unit_price    numeric,
+  median_area_m2    numeric,
   floor_missing     int,
   ym_cnt            int,
   first_ym          text,
@@ -1654,7 +1663,7 @@ security definer
 set search_path = public
 as $$
   select m.yr, m.n, m.n_all, m.median_unit_price, m.p25_unit_price, m.p75_unit_price,
-         m.floor_missing, m.ym_cnt, m.first_ym, m.last_ym,
+         m.median_area_m2, m.floor_missing, m.ym_cnt, m.first_ym, m.last_ym,
          (select o.sigungu_nm from mv_open_sigungu o
            where o.sigungu_code = get_sigungu_tx_yearly.sigungu)
   from mv_sigungu_tx_yearly m
@@ -1665,7 +1674,9 @@ $$;
 comment on function get_sigungu_tx_yearly(text) is
   '결정 0027 구 실거래 단가의 연도별 흐름 — 집합 거래만, 연도 오름차순, 자료가 있는 해만. '
   '화면은 n<5 면 수치를 감추고 "표본 부족"만 적는다(절대 규칙 3). security definer — 물질화뷰가 '
-  'anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. sigungu_nm 은 구 이름(화면에 지역명을 박지 않기 위해).';
+  'anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. sigungu_nm 은 구 이름(화면에 지역명을 박지 않기 위해). '
+  '2026-09-09b: median_area_m2 = 그 해 단가의 근거가 된 거래 한 건의 건물면적 중앙값(㎡). '
+  '⛔ 숫자를 거르는 칸이 아니다 — 초소형 구획이 무더기로 거래된 해를 사람이 알아보게 하는 사실 한 칸이다.';
 
 revoke all on function get_sigungu_tx_yearly(text) from public, anon, authenticated;
 
@@ -2636,6 +2647,7 @@ returns table (
   median_unit_price numeric,
   p25_unit_price    numeric,
   p75_unit_price    numeric,
+  median_area_m2    numeric,
   floor_missing     int,
   ym_cnt            int,
   first_ym          text,

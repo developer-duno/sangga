@@ -15,6 +15,7 @@ import {
   hasEnoughSample,
   isSigunguTxYearlyList,
   maxMedian,
+  medianAreaText,
   missingRatePct,
   partialYearLabel,
 } from '../lib/txFlow';
@@ -107,6 +108,7 @@ export function TxFlowSection({ sigungu }: Props) {
           const enough = hasEnoughSample(r);
           const part = partialYearLabel(r);
           const miss = missingRatePct(r);
+          const area = medianAreaText(r);
           return (
             <li key={r.yr}>
               <span className="flow__yr">
@@ -127,6 +129,18 @@ export function TxFlowSection({ sigungu }: Props) {
                       {' '}
                       (가운데 절반 {formatManWonBand(r.p25_unit_price, r.p75_unit_price)})
                     </span>
+                    {/*
+                      ⛔ 이 조각은 **값 칸에 산다**(오른쪽 건수 칸이 아니다). 면적 중앙값은
+                         단가와 글자 그대로 **같은 filter**로 잰 형제라(모집단 `n`), 분모가
+                         그 해 거래 전부(`n_all`)인 건수·층 미상과 나란히 서면 둘이 같은
+                         거래를 말하는 것처럼 읽힌다.
+                      ⛔ 표본이 모자란 해는 자연히 빠진다 — 이 가지가 `enough` 안이다. 값을
+                         감추면서 이것만 남기면 감춘 근거를 곁눈으로 말해 주는 셈이 된다.
+                      ⛔ 서버가 이 칸을 안 주면(마이그레이션 전) 이 조각만 조용히 빠진다.
+                    */}
+                    {area === null ? null : (
+                      <span className="flow__area"> · 한 건 면적 중앙값 {area}</span>
+                    )}
                   </>
                 ) : (
                   /*
@@ -157,8 +171,9 @@ export function TxFlowSection({ sigungu }: Props) {
         출처: 국토교통부 상업업무용 부동산 매매 실거래가 · 집합(구분소유) 거래만 · 해제된
         거래 제외. “층 미상”은 신고 자료에 층이 빠진 거래의 비율입니다 —{' '}
         {TX_BASEMENT_MISSING_SINCE}년부터는 지하층이 자료에 아예 없어 이 칸에 섞여 있습니다.{' '}
-        {TX_OPEN_SINCE_LABEL} 이전 거래는 지번이 가려져 건물과 잇지 못하므로, 이 카드는 구
-        단위로만 셉니다.
+        “한 건 면적”은 그 해 단가 근거가 된 거래 한 건의 건물면적 중앙값입니다 — 다른 해보다
+        유난히 작으면 초소형 구획이 무더기로 거래된 해입니다. {TX_OPEN_SINCE_LABEL} 이전
+        거래는 지번이 가려져 건물과 잇지 못하므로, 이 카드는 구 단위로만 셉니다.
       </p>
     </SectionCard>
   );

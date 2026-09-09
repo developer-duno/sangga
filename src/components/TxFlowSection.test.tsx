@@ -38,6 +38,7 @@ function yearlyRow(over: Partial<SigunguTxYearly> = {}): SigunguTxYearly {
     median_unit_price: 21_171_384,
     p25_unit_price: 12_000_000,
     p75_unit_price: 33_000_000,
+    median_area_m2: 18.3,
     floor_missing: 155,
     ym_cnt: 12,
     first_ym: '201501',
@@ -57,6 +58,7 @@ function yearlyRows(): SigunguTxYearly[] {
       median_unit_price: 4_902_441,
       p25_unit_price: 3_100_000,
       p75_unit_price: 7_400_000,
+      median_area_m2: 46.4,
       floor_missing: 92,
       ym_cnt: 4,
       first_ym: '200609',
@@ -154,6 +156,67 @@ describe('TxFlowSection — 자료가 있을 때', () => {
     expect(last).toContain('3건'); // 단가가 있는 거래
     expect(last).toContain('40건'); // 그 해 거래 전부
     expect(last).not.toContain('㎡당');
+  });
+
+  it('★ 줄마다 그 해 거래 한 건의 크기가 함께 적힌다 (2026-09-09b)', async () => {
+    // 어떤 해는 ㎡당 값이 앞뒤 해의 두세 배로 튀는데, 시세가 오른 것이 아니라 초소형
+    // 구획이 무더기로 거래된 해여서 그렇다. 면적 중앙값을 나란히 적으면 기준선을 하나도
+    // 안 긋고 그 사실이 보인다 — 옆에 이미 있는 '층 미상 %'와 같은 방식이다.
+    const { container } = render(<TxFlowSection sigungu="11680" />);
+    fireEvent.click(await screen.findByRole('button', { name: /동네 매매 단가 흐름/ }));
+
+    const rows = container.querySelectorAll('.flow__rows li');
+    expect(rows[0].textContent).toContain('한 건 면적 중앙값 46㎡');
+    expect(rows[1].textContent).toContain('한 건 면적 중앙값 18㎡');
+    // 무엇을 잰 값인지 각주가 밝힌다(절대 규칙 3 의 근거 병기와 같은 결).
+    expect(container.querySelector('.flow__src')?.textContent).toContain('한 건 면적');
+  });
+
+  it('★ 그 조각은 **값 칸**에 산다 — 건수 칸이 아니다 (모집단이 다르다)', async () => {
+    // ⛔ 자리를 시험이 고정한다. 오른쪽 건수 칸('1,550건 · 층 미상 10%')의 분모는 그 해
+    //    거래 **전부**(n_all)인데, 면적 중앙값은 단가와 글자 그대로 같은 filter 로 잰
+    //    형제(모집단 n)다. 건수 칸에 붙이면 둘이 같은 거래를 말하는 것처럼 읽힌다.
+    const { container } = render(<TxFlowSection sigungu="11680" />);
+    fireEvent.click(await screen.findByRole('button', { name: /동네 매매 단가 흐름/ }));
+
+    const row = container.querySelectorAll('.flow__rows li')[0];
+    expect(row.querySelector('.flow__val')?.textContent).toContain('한 건 면적 중앙값 46㎡');
+    expect(row.querySelector('.flow__n')?.textContent).not.toContain('한 건 면적');
+    // 값 칸 안에서도 '가운데 절반' 뒤에 온다 — 단가 → 퍼짐 → 한 건 크기 순으로 읽힌다.
+    expect(row.querySelector('.flow__val')?.textContent).toMatch(
+      /가운데 절반[^·]*· 한 건 면적/,
+    );
+  });
+
+  it('★ 서버가 그 칸을 안 주면 그 조각만 빠지고 줄은 그대로 선다', async () => {
+    // 마이그레이션 적용 전 라이브가 그 상태다. 칸 하나 없다고 카드를 통째로 버리면,
+    // 사실 한 칸을 더하려다 있던 카드를 없애는 셈이 된다.
+    const { median_area_m2: _drop, ...noArea } = yearlyRow();
+    responses.yearly = { data: [noArea, yearlyRow({ yr: '2016', median_area_m2: null })], error: null };
+
+    const { container } = render(<TxFlowSection sigungu="11680" />);
+    fireEvent.click(await screen.findByRole('button', { name: /동네 매매 단가 흐름/ }));
+
+    const rows = container.querySelectorAll('.flow__rows li');
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      const text = row.textContent ?? '';
+      expect(text).not.toContain('한 건 면적');
+      // 나머지는 그대로다 — 값·건수·층 미상.
+      expect(text).toContain('㎡당 2,117만');
+      expect(text).toContain('1,550건');
+      expect(text).toContain('층 미상 10%');
+    }
+  });
+
+  it('★ 표본이 모자란 해는 면적도 감춘다 — 단가와 같은 거래들을 잰 값이다', async () => {
+    // 값을 감추면서 이것만 남기면, 감춘 근거를 곁눈으로 말해 주는 셈이 된다.
+    const { container } = render(<TxFlowSection sigungu="11680" />);
+    fireEvent.click(await screen.findByRole('button', { name: /동네 매매 단가 흐름/ }));
+
+    const last = container.querySelectorAll('.flow__rows li')[2].textContent ?? '';
+    expect(last).toContain('표본 부족');
+    expect(last).not.toContain('한 건 면적');
   });
 
   it('배지와 각주가 함께 붙는다 (근거·표본 병기 — 절대 규칙 3)', async () => {

@@ -7,6 +7,7 @@ import {
   hasEnoughSample,
   isSigunguTxYearlyList,
   maxMedian,
+  medianAreaText,
   missingRatePct,
   partialYearLabel,
 } from './txFlow';
@@ -33,6 +34,7 @@ function row(over: Partial<SigunguTxYearly> = {}): SigunguTxYearly {
     median_unit_price: 21_171_384,
     p25_unit_price: 12_000_000,
     p75_unit_price: 33_000_000,
+    median_area_m2: 18.3,
     floor_missing: 100,
     ym_cnt: 12,
     first_ym: '201501',
@@ -70,6 +72,16 @@ describe('isSigunguTxYearlyList — 서버 답의 모양', () => {
         row({ median_unit_price: null, p25_unit_price: null, p75_unit_price: null, sigungu_nm: null }),
       ]),
     ).toBe(true);
+  });
+
+  it('★ 면적 칸은 아예 없어도 통과한다 (선택 칸 — 마이그레이션 전 라이브가 그렇다)', () => {
+    const { median_area_m2: _drop, ...noArea } = row();
+    expect(isSigunguTxYearlyList([noArea])).toBe(true);
+    expect(isSigunguTxYearlyList([row({ median_area_m2: null })])).toBe(true);
+  });
+
+  it('면적이 문자열로 오면 거른다 (반올림이 조용히 NaN 이 된다)', () => {
+    expect(isSigunguTxYearlyList([{ ...row(), median_area_m2: '18.3' }])).toBe(false);
   });
 
   it('칸이 빠지면 거른다 — 층 미상이 없으면 비율을 못 낸다', () => {
@@ -158,6 +170,31 @@ describe('partialYearLabel — 해의 일부만 있는 해', () => {
     expect(partialYearLabel(row({ first_ym: '200611', last_ym: '200611', ym_cnt: 2 }))).toBe(
       '11~11월 중 2개월분',
     );
+  });
+});
+
+describe('medianAreaText — 그 해 거래 한 건의 크기 (2026-09-09b)', () => {
+  it('반올림해 ㎡ 를 붙인다', () => {
+    expect(medianAreaText(row({ median_area_m2: 16.4 }))).toBe('16㎡');
+    expect(medianAreaText(row({ median_area_m2: 45.6 }))).toBe('46㎡');
+  });
+
+  it('★ 서버가 그 칸을 안 주면 지어내지 않는다 (마이그레이션 전 라이브가 그렇다)', () => {
+    const { median_area_m2: _drop, ...noArea } = row();
+    expect(medianAreaText(noArea)).toBeNull();
+    expect(medianAreaText(row({ median_area_m2: null }))).toBeNull();
+  });
+
+  it('★ 0㎡ 라고 적지 않는다 — 없는 사실을 말하게 된다', () => {
+    // 반올림해서 0 이 되는 값은 면적이 아니라 자료의 고장이다.
+    expect(medianAreaText(row({ median_area_m2: 0 }))).toBeNull();
+    expect(medianAreaText(row({ median_area_m2: 0.4 }))).toBeNull();
+    // 0.5 는 1㎡ 로 올라간다 — 작아도 있는 값은 적는다.
+    expect(medianAreaText(row({ median_area_m2: 0.5 }))).toBe('1㎡');
+  });
+
+  it('큰 값은 천 단위로 끊어 적는다 (다른 숫자들과 같은 자)', () => {
+    expect(medianAreaText(row({ median_area_m2: 1234 }))).toBe('1,234㎡');
   });
 });
 
