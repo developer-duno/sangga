@@ -14,6 +14,7 @@ import type {
   Scorecard,
   ScorecardOpsMode,
   SigunguTxStat,
+  StoreHit,
 } from '../src/types';
 
 /**
@@ -434,6 +435,37 @@ export function dataFreshness(): DataFreshnessRow[] {
       cadence: '연 1회 (브이월드)',
     },
   ];
+}
+
+/**
+ * 가게 이름으로 찾은 **땅** 한 줄(결정 0028).
+ *
+ * ⛔ 건물이 아니라 땅이다 — 앞 12칸은 `searchHit()` 과 같은 모양이라 그대로 층별 화면으로
+ *    넘어가지만, `match_store_cnt` 는 "이 **땅**의 가게"라 층별 화면의 점포 칸과 세는 대상이
+ *    다르다.
+ */
+export function storeHit(over: Partial<StoreHit> = {}): StoreHit {
+  return {
+    pnu: '1168010100100010000',
+    bld_id: '1168010100100010000_1024110',
+    bld_nm: '테스트빌딩',
+    road_addr: '서울 강남구 테헤란로 1',
+    jibun_addr: '서울 강남구 역삼동 823-4',
+    lat: 37.5,
+    lng: 127.03,
+    bld_cnt_in_pnu: 1,
+    floor_cnt: 2,
+    min_floor: -1,
+    max_floor: 1,
+    has_roof: false,
+    matched_names: ['스타벅스역삼점', '스타벅스테헤란점'],
+    match_store_cnt: 5,
+    total_parcel_cnt: 1,
+    total_store_cnt: 5,
+    too_broad: false,
+    store_snapshot_ym: '202606',
+    ...over,
+  };
 }
 
 export function coverageStats(over: Partial<CoverageStats> = {}): CoverageStats {

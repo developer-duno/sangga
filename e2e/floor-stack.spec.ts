@@ -15,6 +15,7 @@ import {
   rentStats,
   dataFreshness,
   scorecard,
+  storeHit,
 } from './fixtures';
 
 /**
@@ -45,6 +46,11 @@ const SEARCH_PATTERN = '**/rest/v1/rpc/search_buildings*';
 // ⚠️ 이걸 안 막으면 그 요청이 **진짜 Supabase 로 나간다** — 테스트가 네트워크와 라이브
 //    데이터에 좌우된다(2026-08-13 에 실제로 그런 상태였다).
 const SCOPE_PATTERN = '**/rest/v1/rpc/search_scope*';
+// 가게 이름으로 찾은 땅(결정 0028) — 검색 한 번에 **건물과 나란히** 나가는 두 번째 요청이다.
+// ⚠️ 안 막으면 실존하지 않는 도메인으로 요청이 나가 테스트가 DNS 에 좌우된다.
+// ⓘ 기본값은 **빈 배열**이다(함수 부재가 아니다) — 그러면 구역이 안 서므로 기존 검색
+//   스펙들이 보는 화면이 그대로다. 함수 부재 경로는 단위 시험이 따로 본다.
+const SEARCH_STORES_PATTERN = '**/rest/v1/rpc/search_stores*';
 const STATS_PATTERN = '**/rest/v1/v_coverage_stats*';
 const FLOOR_PATTERN = '**/rest/v1/v_floor_stack*';
 // ⚠️ 이 함수는 jsonb **스칼라**를 돌려준다 — PostgREST 가 그대로 JSON 으로 주므로
@@ -215,6 +221,17 @@ async function mockOpenSigungu(
   ],
 ) {
   await mockJson(page, SIGUNGU_PATTERN, rows);
+  /*
+    검색을 누르면 가게 이름 질의가 건물 질의와 **나란히** 나간다(결정 0028) — 안 막으면
+    그 요청이 실존하지 않는 도메인으로 나가 테스트가 DNS 에 좌우된다.
+
+    기본값은 **빈 배열**이라 구역이 안 선다 — 기존 검색 스펙들이 보던 화면 그대로다.
+    가게 결과를 보고 싶은 시험은 이 뒤에 자기 응답을 한 번 더 등록한다(나중에 등록한 것이
+    먼저 잡힌다).
+    ⓘ 여기(구 목록 옆)에 두는 이유: 검색하는 시험은 **예외 없이** 먼저 구를 골라야 하므로
+      이 함수가 곧 "검색을 하는 시험 전부"와 같은 자리다.
+  */
+  await mockJson(page, SEARCH_STORES_PATTERN, []);
   /*
     구를 고르는 순간 입구 카드(LH 공고)가 함께 묻는다 — 안 막으면 그 요청이 실존하지
     않는 도메인으로 나가 테스트가 DNS 에 좌우된다.
@@ -1535,5 +1552,53 @@ test.describe('층별 스택뷰 — 상권 임대 동향', () => {
     await expect(stack.locator('section.rent')).toHaveCount(0);
     // "조사값 없음" 같은 말도 남기지 않는다 — 모르는 것을 없는 것이라 말하지 않는다.
     await expect(stack).not.toContainText('상권 임대 동향');
+  });
+});
+
+// ── 가게 이름으로 찾기 (결정 0028) ──────────────────────────────────────────
+//
+// 검색 한 번에 서버를 **둘** 부르고(건물 · 가게 이름) 결과를 두 구역으로 나란히 그린다.
+// 여기서만 확인되는 것은 "두 요청이 정말 함께 나가고, 두 구역이 함께 서고, 가게 줄을 누르면
+// 층별 화면까지 이어지는가"다 — 조각별 규칙(모양 검사·외 N곳·경쟁 가드)은 단위 시험이 덮는다.
+//
+// ⓘ **함수가 없을 때 구역이 조용히 빠지는 경로는 여기 없다** — 그건 단위 시험
+//   (BuildingSearch.test.tsx)이 같은 자리에서 본다. 같은 것을 두 번 보는 시험을 만들지 않는다.
+
+test.describe('검색 — 가게 이름으로 찾은 땅', () => {
+  test('AD. 검색하면 건물 구역과 가게 구역이 함께 서고, 땅 줄을 누르면 층별 화면으로 간다', async ({
+    page,
+  }) => {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit({ bld_nm: '건물로찾은빌딩' })]);
+    // ⚠️ mockOpenSigungu 뒤에 등록해야 이 응답이 잡힌다(나중에 등록한 것이 먼저다).
+    await mockJson(page, SEARCH_STORES_PATTERN, [
+      storeHit({ total_parcel_cnt: 3, total_store_cnt: 12 }),
+    ]);
+    await mockFloorStack(page, [], priceBands(), [floorRow({ floor_no: 2 }), floorRow()]);
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '스타벅스');
+
+    // 건물 구역 — 여태 있던 그대로다.
+    await expect(page.getByRole('button', { name: /건물로찾은빌딩/ })).toBeVisible();
+
+    // 가게 구역 — 사용자가 고를 것 없이 함께 선다.
+    const stores = page.getByRole('region', { name: '가게 이름으로 찾은 땅' });
+    await expect(stores).toBeVisible();
+    await expect(stores).toContainText('이 이름의 가게가 있는 땅 3곳 · 가게 12곳');
+    // 서버가 준 상호 원문과, 3개보다 많이 걸렸다는 사실.
+    await expect(stores).toContainText('스타벅스역삼점 · 스타벅스테헤란점 외 3곳');
+    // ⛔ "이 건물의 가게"가 아니라 **이 땅에** — 층별 화면의 점포 칸과 세는 대상이 다르다.
+    await expect(stores).toContainText('이 땅에 가게 5곳 일치');
+    // 분기 도장은 서버가 준 값이다(화면에 글자로 박지 않는다).
+    await expect(stores).toContainText('2026년 6월 기준 점포 자료');
+
+    // 누르면 검색 결과를 골랐을 때와 **같은 길**로 층별 화면에 닿는다.
+    await stores.getByRole('button', { name: /테스트빌딩/ }).click();
+
+    const stack = page.locator('section.stack');
+    await expect(stack.getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
+    await expect(stack.locator('.card--floors .floor')).toHaveCount(2);
   });
 });
