@@ -499,6 +499,11 @@ class TestAnonExposure:
             # (그 해의 거래 수·단가 중앙값·가운데 절반·층 미상 수, 그 해가 얼마나
             # 온전한지), 개별 거래(필지·층·단가)는 그 뷰에 아예 없다.
             "api.get_sigungu_tx_yearly",
+            # 상호명으로 찾기(2026-09-09c · 결정 0028). 점포 표 unit_business 와 요약표
+            # mv_search_parcel 은 **여기 없다** — 열리면 전국 339만 점포의 상호가 통째로
+            # 긁힌다. 이 함수는 땅 한 줄과 **일치한 상호 최대 3개**·개수만 내보낸다
+            # (biz_no·업종 코드·점포 좌표는 한 글자도 안 나간다).
+            "api.search_stores",
         )
 
     def test_pending_list_is_empty_after_2026_09_05a(self):
