@@ -1121,7 +1121,10 @@ select
   -- 같은 검색어에 건물과 상호가 다른 답을 내면 안 된다.
   s.store_names_key,
   -- 그 땅의 가게 수 전부. 화면이 적는 "일치한 가게 수"와는 **다른 값**이다(그건 검색어에
-  -- 걸린 것만 센다) — 이 칸은 위 배열이 비지 않았음을 조인 조건으로 못 박는 데 쓴다.
+  -- 걸린 것만 센다). ⓘ **지금 이 칸을 읽는 코드는 없다** — 위 lateral 의 별칭 `s` 를 보는
+  -- 조인 조건(`s.store_cnt > 0`)은 이 칸이 아니라 그 별칭을 본다. 다음에 쓸 값으로 남겨
+  -- 둔다(2026-09-10 검토관 지적 — 예전 주석은 "조인 조건으로 못 박는 데 쓴다"고 적어
+  -- 실제와 달랐다).
   s.store_cnt,
   -- 화면이 "2026년 6월 기준 점포 자료" 도장을 찍는 값(전 행 같다 — 화면에 숫자 리터럴 0).
   (select l.ym from latest l)::char(6) as store_snapshot_ym
@@ -1606,7 +1609,13 @@ as $$
       cross join pat
      where pat.p is not null
        and pat.gu is not null
-       and m.sigungu_code = pat.gu
+       -- ⛔ `::char(5)` 를 지우지 말 것 — 컬럼이 char(5) 인데 text 와 견주면 **컬럼 쪽**이
+       --    text 로 캐스트돼 색인이 Index Cond 가 아니라 Filter 로 떨어진다(형제 표 라이브
+       --    실측 2026-09-10: 2글자 검색 859.9ms → 76.6ms, 훑는 행 188,442 → 12,138).
+       --    `list_parcel_buildings` 의 `p_pnu::char(19)` 와 같은 처방(2026-08-16b).
+       -- ⚠️ 5자보다 긴 입력은 bpchar 캐스트가 조용히 자른다 — 구 코드는 서버 목록에서만
+       --    오므로 실사용 0건이다.
+       and m.sigungu_code = pat.gu::char(5)
        and m.store_names_key like pat.p escape '\'
        -- 층 자료가 아예 없는 건물뿐인 땅은 눌러도 빈 화면이라 뺀다
        -- (검색·결정 0025 와 **같은 규칙** — 갈리면 들어온 길에 따라 다른 답이 된다).
@@ -2716,6 +2725,11 @@ revoke all on mv_district_industry_mix from public, anon, authenticated;
 -- 구×연도 단가 요약(2026-09-09a). 이 표는 아래 기본권한 회수보다 **먼저** 만들어지므로,
 -- 새 환경에서 이 줄이 없으면 anon 이 그대로 읽을 수 있다 — 화면은 함수로만 읽는다.
 revoke all on mv_sigungu_tx_yearly from public, anon, authenticated;
+-- 필지별 가게 이름 요약표(2026-09-09c · 결정 0028). 새 표 블록에도 같은 회수 문장이 있지만
+-- 여기에 한 번 더 적는다 — 이 묶음이 "닫힌 요약표 전부"의 목록이라, 빠지면 다음 사람이
+-- 훑을 때 열린 표로 읽힌다(중복 revoke 는 무해하다). ⛔ 이 표가 열리면 **구 전체의 상호가
+-- REST 로 통째** 나간다 — 화면은 search_stores 함수로만 읽는다.
+revoke all on mv_parcel_store_names from public, anon, authenticated;
 
 -- 그리고 **앞으로 만들 것도 자동으로 안 열리게** 기본값 자체를 바꾼다.
 -- 이게 없으면 다음에 표를 하나 더 만들 때 같은 일이 또 난다(사람 기억에 의존하게 된다).

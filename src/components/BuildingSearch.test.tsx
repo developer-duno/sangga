@@ -450,6 +450,15 @@ describe('BuildingSearch — 가게 이름으로 찾은 땅', () => {
       'search_stores',
       { q: '스타벅스', lim: expect.any(Number), sigungu: '11680', p_offset: 0 },
     ]);
+
+    /*
+      ⛔ 이 구역은 `.search` **안**에 있어야 한다 — 종이에서 조종 장치가 통째로 빠지는 것이
+         `.search` 를 지우는 인쇄 CSS 한 줄이기 때문이다. 밖으로 나가면 검색 상자만 사라지고
+         가게 목록은 종이에 남는다(결정 0020).
+      ⓘ 인쇄는 거의 전부가 CSS 라 jsdom 이 원리적으로 못 본다 — 그래서 "안 보인다" 대신
+        **조상**으로 대신 잰다. 진짜 인쇄 모양은 E2E 가 본다.
+    */
+    expect(region()!.closest('.search')).not.toBeNull();
   });
 
   it('그 이름의 가게가 없으면 구역 자체가 없다', async () => {
@@ -468,7 +477,15 @@ describe('BuildingSearch — 가게 이름으로 찾은 땅', () => {
     serverGives({
       search_buildings: { data: [hit({ total_cnt: 1 })] },
       search_stores: {
-        data: [storeHit({ too_broad: true, total_store_cnt: 33630, matched_names: null })],
+        data: [
+          // ⛔ 서버는 이 한 줄의 pnu 를 null 로 보낸다(2026-09-09c broad 가지).
+          storeHit({
+            pnu: null as unknown as string,
+            too_broad: true,
+            total_store_cnt: 33630,
+            matched_names: null,
+          }),
+        ],
       },
     });
     const { input } = setup();
@@ -607,6 +624,76 @@ describe('BuildingSearch — 가게 이름으로 찾은 땅', () => {
     expect(screen.getByText('첫쪽건물')).toBeTruthy();
     // 다 받았으면 '더 보기'가 남아 있으면 안 된다(눌러도 아무 일이 없다).
     expect(screen.queryByRole('button', { name: '더 보기' })).toBeNull();
+  });
+
+  it("'더 보기'는 지금 칸에 적힌 말이 아니라 **물어봤던 말**로 다음 쪽을 받는다", async () => {
+    /*
+      ⛔ 사람은 결과를 보면서 입력창을 계속 고친다. 그때 칸을 다시 읽으면 **다른 검색어의
+         51번째 줄**이 이 목록 뒤에 붙는다 — 에러가 아니라 조용히 섞인 거짓 목록이다.
+    */
+    let storeCalls = 0;
+    rpc.mockImplementation((fn: string) => {
+      if (fn !== 'search_stores') return Promise.resolve({ data: [], error: null });
+      storeCalls += 1;
+      return Promise.resolve({
+        data: [storeHit({ pnu: `p${storeCalls}`, bld_nm: `쪽${storeCalls}`, total_parcel_cnt: 3 })],
+        error: null,
+      });
+    });
+
+    const { input } = setup();
+    search(input, '스타벅스');
+    await waitFor(() => expect(screen.getByText('쪽1')).toBeTruthy());
+
+    // 검색은 안 하고 칸만 고친다(구도 함께 바꿔 본다면 그건 다른 렌더라, 여기선 말만).
+    fireEvent.change(input, { target: { value: '전혀다른가게' } });
+    fireEvent.click(screen.getByRole('button', { name: '더 보기' }));
+
+    expect(rpc).toHaveBeenLastCalledWith('search_stores', {
+      q: '스타벅스',
+      lim: expect.any(Number),
+      sigungu: '11680',
+      p_offset: 1,
+    });
+  });
+
+  it('더 보기 중에 새 검색이 끼어들어도 새 결과의 더 보기 버튼은 눌린다', async () => {
+    /*
+      ⛔ 새 검색이 '더 보기 중' 표시를 안 끄면, 날아가 있던 앞 요청은 번호가 어긋나 아무것도
+         안 하고 나가므로 그 표시를 끌 사람이 아무도 없다 — 새 결과의 버튼이 처음부터 죽은
+         채(disabled) 선다. 눌리지 않는다는 신호는 화면 어디에도 안 뜬다.
+    */
+    let hangMore!: (v: unknown) => void;
+    let storeCalls = 0;
+    rpc.mockImplementation((fn: string) => {
+      if (fn !== 'search_stores') return Promise.resolve({ data: [], error: null });
+      storeCalls += 1;
+      if (storeCalls === 2) return new Promise((r) => (hangMore = r)); // 더 보기 — 영영 안 온다
+      return Promise.resolve({
+        data: [storeHit({ pnu: `p${storeCalls}`, bld_nm: `쪽${storeCalls}`, total_parcel_cnt: 3 })],
+        error: null,
+      });
+    });
+
+    const { input } = setup();
+    search(input, '스타벅스');
+    await waitFor(() => expect(screen.getByText('쪽1')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: '더 보기' }));
+    expect(screen.getByRole('button', { name: '불러오는 중…' })).toBeTruthy();
+
+    search(input, '다른가게');
+    await waitFor(() => expect(screen.getByText('쪽3')).toBeTruthy());
+
+    const more = screen.getByRole('button', { name: '더 보기' }) as HTMLButtonElement;
+    expect(more.disabled).toBe(false);
+    fireEvent.click(more);
+    expect(rpc).toHaveBeenLastCalledWith('search_stores', {
+      q: '다른가게',
+      lim: expect.any(Number),
+      sigungu: '11680',
+      p_offset: 1,
+    });
+    hangMore({ data: [], error: null }); // 뒷정리 — 매달린 약속을 풀어 준다
   });
 
   it('줄을 누르면 층별 화면으로 갈 **앞 12칸만** 넘긴다', async () => {

@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
   hasMoreStores,
   isMissingFunction,
@@ -54,7 +56,10 @@ describe('isStoreHitList — 모양 검사', () => {
   it('“너무 넓다” 한 줄(나머지 칸이 전부 비어 있음)을 거부하지 않는다', () => {
     // ⛔ 이 줄을 거부하면 안내가 통째로 사라져 화면이 **아무 말도 안 하게** 된다.
     const broad: StoreHit = {
-      pnu: '-',
+      // ⛔ 서버가 이 한 줄의 pnu 를 null 로 보낸다(마이그레이션 2026-09-09c 의 broad 가지:
+      //    `null::char(19)`). 픽스처가 '-' 같은 글자였을 때는 서버 사실과 달라 가드의 구멍을
+      //    덮고 있었다 — 라이브에서는 이 한 줄이 목록 전체를 거부시킨다.
+      pnu: null as unknown as string,
       bld_id: null,
       bld_nm: null,
       road_addr: null,
@@ -146,7 +151,12 @@ describe('readStoreAnswer — 서버 답을 구역 상태로', () => {
   });
 
   it('“너무 넓다”는 0건이 아니라 별도 상태로 가른다', () => {
-    const broad = store({ too_broad: true, total_store_cnt: 33630, matched_names: null });
+    const broad = store({
+      pnu: null as unknown as string,
+      too_broad: true,
+      total_store_cnt: 33630,
+      matched_names: null,
+    });
     expect(readStoreAnswer(ok([broad]), '카페')).toEqual({
       at: 'broad',
       word: '카페',
@@ -231,5 +241,56 @@ describe('hasMoreStores · isMissingFunction', () => {
     expect(isMissingFunction({ code: '42501' })).toBe(false);
     expect(isMissingFunction(null)).toBe(false);
     expect(isMissingFunction(new Error('끊김'))).toBe(false);
+  });
+});
+
+
+/**
+ * ★ **화면 코드 원문 가드** — 형제 `txFlow.test.ts`·`scorecard.test.ts` 와 같은 모양.
+ *
+ * 여기서 막는 것 셋
+ * ------------------
+ *  ① **금칙어**(절대 규칙 2) — 감정평가사 독점 영역의 말이 UI 문구에 스며드는 것.
+ *  ② **연도 리터럴** — 점포 자료의 분기는 서버가 `store_snapshot_ym` 으로 준다. 화면에
+ *     글자로 박으면 새 분기를 적재하는 순간부터 **그 글자만** 거짓말을 한다(에러 0).
+ *  ③ **"이 건물의 가게"** — 이 구역의 한 줄은 건물이 아니라 **땅(필지)** 이라(점포는 필지
+ *     단위로만 셀 수 있다) 그렇게 적으면 층별 화면의 점포 칸과 세는 대상이 갈린다.
+ *
+ * ⚠️ 주석도 함께 훑는다 — 주석에 박힌 글자는 다음 사람이 그대로 화면으로 옮긴다. 그래서
+ *    부정형("~가 아니다")으로도 쓰지 않기로 하고, 원문 쪽 문장을 바꿔 두었다.
+ * ⚠️ `?raw` import 를 쓰지 않는다 — 이 레포에서 vitest 의 `?raw` 가 빈 문자열을 돌려준
+ *    적이 있어(가짜 초록), 파일을 `node:fs` 로 직접 읽는다.
+ */
+describe('★ 화면 코드에 연도·금칙어·틀린 단위가 없다', () => {
+  const files = ['./storeSearch.ts', '../components/BuildingSearch.tsx'];
+  const BANNED = ['적정가격', '적정가', '평가액', '감정가', '가치평가'];
+  const WRONG_UNIT = '이 건물의 가게';
+
+  function sourceOf(rel: string): string {
+    return readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf-8');
+  }
+
+  it.each(files)('%s 에 절대 규칙 2 의 금칙어가 없다', (rel) => {
+    const text = sourceOf(rel);
+    for (const banned of BANNED) {
+      expect(text.includes(banned), banned).toBe(false);
+    }
+  });
+
+  it.each(files)('%s 에 연도 리터럴이 없다 (분기 도장은 서버가 준다)', (rel) => {
+    const found = sourceOf(rel).match(/20\d\d년/g);
+    expect(found, `옮겨 적은 연도: ${found?.join(', ')}`).toBeNull();
+  });
+
+  it.each(files)('%s 에 "이 건물의 가게"가 없다 (한 줄은 건물이 아니라 땅이다)', (rel) => {
+    expect(sourceOf(rel).includes(WRONG_UNIT), WRONG_UNIT).toBe(false);
+  });
+
+  it('가드가 늘 참인 시험이 아니다 — 있으면 실제로 잡는다', () => {
+    // 이 문자열이 시험 대상 파일 안에 있었다면 위 셋이 전부 빨간불이 됐어야 한다.
+    const mutated = "const x = '2026년 기준 이 건물의 가게 감정가';";
+    expect(mutated.match(/20\d\d년/g)).not.toBeNull();
+    expect(BANNED.some((b) => mutated.includes(b))).toBe(true);
+    expect(mutated.includes(WRONG_UNIT)).toBe(true);
   });
 });
