@@ -398,8 +398,12 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     expect(searchCalls).toBe(0); // 물어볼 필요가 없는 질문은 아예 안 보낸다
   });
 
-  test('E. 너무 넓은 검색이면 걸린 곳 수와 무엇을 넣을지 알려준다', async ({ page }) => {
+  test('E. 너무 넓은 검색이면 걸린 곳 수와 무엇을 넣을지 알려준다 — 그 아래 가게 구역은 보이고 눌린다', async ({ page }) => {
     await mockOpenSigungu(page);
+    // ⚠️ 가게 답도 함께 준다 — 이 시험의 본론은 "안내가 한 줄이라 **그 밑의 가게 구역이 가려지지
+    //    않는다**"인데, 가게 답이 없으면 구역 자체가 안 서서 무엇도 증명하지 못한다(2026-09-10
+    //    사후 검증에서 발견 — jsdom 은 겹침을 못 보므로 이 사실을 볼 수 있는 곳은 여기뿐이다).
+    await mockJson(page, SEARCH_STORES_PATTERN, [storeHit({ total_parcel_cnt: 3, total_store_cnt: 12 })]);
     await mockJson(page, SEARCH_PATTERN, []);
     await mockJson(page, SCOPE_PATTERN, [{ too_broad: true, match_cnt: 163487 }]);
     await mockFloorStack(page);
@@ -416,12 +420,21 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await expect(page.getByText(/너무 넓은 검색/)).toBeVisible();
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(page.getByText('163,487곳')).toBeVisible();
-    await expect(page.getByText('역삼동 823-4')).toBeVisible();
+    // ⚠️ 예시 '역삼동 823-4'는 아래 가게 줄의 지번에도 있으므로 **안내 한 줄 안**에서만 찾는다
+    //    (페이지 전체 getByText 는 strict mode 로 두 요소에 걸려 실패한다).
+    await expect(page.getByText(/너무 넓은 검색/)).toContainText('역삼동 823-4');
     /*
       ⚠️ 여기서 여태 센 문구는 '결과가 없습니다'였는데 **그 말은 이 앱에 아예 없다** — 무엇을
          세도 0이라 늘 초록인 빈 단언이었다. 진짜 문구는 '찾지 못했습니다'다(C 시험 참조).
     */
     await expect(page.getByText(/찾지 못했습니다/)).toHaveCount(0);
+    // 본론 — 안내 한 줄 **아래 가게 구역이 서 있고, 눌린다**. Playwright 의 click 은 다른 요소에
+    // 가려져 있으면 실패하므로(actionability) 이 한 줄이 곧 "덮개가 없다"는 단언이다.
+    const stores = page.getByRole('region', { name: '가게 이름으로 찾은 땅' });
+    await expect(stores).toBeVisible();
+    await expect(stores).toContainText('이 이름의 가게가 있는 땅 3곳 · 가게 12곳');
+    await stores.getByRole('button', { name: /테스트빌딩/ }).click();
+    await expect(page.locator('section.stack').getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
   });
 
   // ── 구를 고른 뒤에만 검색된다 (2026-08-13e) ──────────────────────────────
