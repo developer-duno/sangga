@@ -130,8 +130,8 @@ scripts/                 # 데이터 파이프라인 전부 21개 (수동 실행
     └── load_bjd_code.py                                 # 법정동코드 전체자료(code.go.kr) 적재
 
 supabase/
-├── schema.sql           # 정본 4,626줄 (라이브 반영본 — 마이그레이션과 드리프트 가드로 동기)
-└── migrations/          # 날짜 파일명 55개, 라이브 적용 순서 그대로
+├── schema.sql           # 정본 4,670줄 (라이브 반영본 — 마이그레이션과 드리프트 가드로 동기)
+└── migrations/          # 날짜 파일명 57개, 라이브 적용 순서 그대로
 
 tests/                   # pytest 56파일 2,675개 — collector/스크립트 1:1 + 드리프트 가드
 e2e/                     # playwright 30개(2파일: fixtures.ts, floor-stack.spec.ts). 넓은화면(chromium)·
