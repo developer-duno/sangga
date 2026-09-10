@@ -1,0 +1,13 @@
+returncode=0
+    indexrelname     |  size   | idx_scan 
+---------------------+---------+----------
+ idx_building_nm_key | 6880 kB |     1479
+ idx_mpsn_names      | 38 MB   |      344
+ idx_mpsn_pnu        | 7352 kB |    23795
+ idx_mpsn_sigungu    | 1280 kB |      565
+ idx_msp_jibun_key   | 6392 kB |      535
+ idx_msp_pnu         | 7496 kB |  2331589
+ idx_msp_road_key    | 6840 kB |      538
+ idx_msp_sigungu     | 1304 kB |      212
+(8�� ��)
+

@@ -1,0 +1,28 @@
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Function Scan on search_buildings  (cost=0.25..10.25 rows=1000 width=197) (actual rows=7 loops=1)
+ Planning Time: 0.042 ms
+ Execution Time: 5.047 ms
+(3�� ��)
+
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Function Scan on search_buildings  (cost=0.25..10.25 rows=1000 width=197) (actual rows=7 loops=1)
+ Planning Time: 0.034 ms
+ Execution Time: 4.566 ms
+(3�� ��)
+
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Function Scan on search_buildings  (cost=0.25..10.25 rows=1000 width=197) (actual rows=7 loops=1)
+ Planning Time: 0.031 ms
+ Execution Time: 4.604 ms
+(3�� ��)
+
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Function Scan on search_buildings  (cost=0.25..10.25 rows=1000 width=197) (actual rows=7 loops=1)
+ Planning Time: 0.027 ms
+ Execution Time: 4.445 ms
+(3�� ��)
+

@@ -1,0 +1,4 @@
+전국 · 빌딩 · on : run2=400.4ms run3=399.6ms top=Bitmap Index Scan on/idx_msp_road_key rows=188442
+전국 · 빌딩 · off : run1=324.6ms run2=270.3ms run3=268.5ms top=Index Scan using/idx_msp_pnu rows=1
+전국 · 타워 · on : run2=399.2ms run3=396.4ms top=Bitmap Index Scan on/idx_msp_road_key rows=188442
+전국 · 타워 · off : run1=293.2ms run2=292.8ms run3=292.4ms top=Seq Scan on/building rows=242631

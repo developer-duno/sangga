@@ -1,0 +1,361 @@
+sigungu_code,sigungu_nm,q,mode,run2_ms,run3_ms,median_ms,top_type,top_index,top_rows,rows_removed,md5_same
+11110,종로구,카페,on,237.684,237.146,237.415,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11110,종로구,카페,off,26.553,26.439,26.496,Index Scan using,idx_mpsn_sigungu,205,7313,y
+11110,종로구,학원,on,234.962,231.302,233.132,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11110,종로구,학원,off,23.14,22.781,22.96,Index Scan using,idx_mpsn_sigungu,121,7397,y
+11110,종로구,공인중개사,on,33.621,33.532,33.576,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+11110,종로구,공인중개사,off,32.493,32.748,32.62,Index Scan using,idx_mpsn_sigungu,275,7243,y
+11110,종로구,편의점,on,1.001,1.022,1.011,Bitmap Index Scan on,idx_mpsn_sigungu,7518,,y
+11110,종로구,편의점,off,4.9,4.953,4.927,Index Scan using,idx_mpsn_sigungu,2,7516,y
+11110,종로구,스타벅스,on,12.668,12.96,12.814,Index Scan using,idx_mpsn_pnu,1,,y
+11110,종로구,스타벅스,off,17.386,17.445,17.416,Index Scan using,idx_mpsn_sigungu,40,7478,y
+11110,종로구,미용실,on,19.44,12.687,16.064,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+11110,종로구,미용실,off,13.852,13.559,13.706,Index Scan using,idx_mpsn_sigungu,62,7456,y
+11140,중구(서울),카페,on,234.692,233.421,234.056,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11140,중구(서울),카페,off,26.854,26.776,26.815,Index Scan using,idx_mpsn_sigungu,165,6082,y
+11140,중구(서울),학원,on,222.997,221.968,222.483,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11140,중구(서울),학원,off,15.692,15.642,15.667,Index Scan using,idx_mpsn_sigungu,58,6189,y
+11140,중구(서울),공인중개사,on,35.294,35.126,35.21,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+11140,중구(서울),공인중개사,off,35.307,35.626,35.466,Index Scan using,idx_mpsn_sigungu,293,5954,y
+11140,중구(서울),편의점,on,2.565,2.875,2.72,Bitmap Index Scan on,idx_mpsn_sigungu,6247,,y
+11140,중구(서울),편의점,off,6.28,6.405,6.343,Index Scan using,idx_mpsn_sigungu,6,6241,y
+11140,중구(서울),스타벅스,on,14.968,14.592,14.78,Index Scan using,idx_mpsn_pnu,1,,y
+11140,중구(서울),스타벅스,off,19.396,19.318,19.357,Index Scan using,idx_mpsn_sigungu,55,6192,y
+11140,중구(서울),미용실,on,10.509,10.714,10.611,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+11140,중구(서울),미용실,off,14.466,14.513,14.489,Index Scan using,idx_mpsn_sigungu,46,6201,y
+11170,용산구,카페,on,286.432,227.139,256.786,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11170,용산구,카페,off,19.912,20.095,20.003,Index Scan using,idx_mpsn_sigungu,127,6038,y
+11170,용산구,학원,on,224.581,227.975,226.278,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11170,용산구,학원,off,17.114,17.55,17.332,Index Scan using,idx_mpsn_sigungu,90,6075,y
+11170,용산구,공인중개사,on,35.511,35.829,35.67,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+11170,용산구,공인중개사,off,34.827,34.646,34.736,Index Scan using,idx_mpsn_sigungu,404,5761,y
+11170,용산구,편의점,on,3.668,3.601,3.635,Bitmap Index Scan on,idx_mpsn_sigungu,6165,,y
+11170,용산구,편의점,off,6.993,6.923,6.958,Index Scan using,idx_mpsn_sigungu,6,6159,y
+11170,용산구,스타벅스,on,11.451,11.556,11.503,Bitmap Index Scan on,idx_mpsn_names,731,,y
+11170,용산구,스타벅스,off,15.155,15.149,15.152,Index Scan using,idx_mpsn_sigungu,24,6141,y
+11170,용산구,미용실,on,8.677,8.287,8.482,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+11170,용산구,미용실,off,11.066,11.529,11.297,Index Scan using,idx_mpsn_sigungu,46,6119,y
+11200,성동구,카페,on,236.451,235.581,236.016,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11200,성동구,카페,off,29.289,29.493,29.391,Index Scan using,idx_mpsn_sigungu,138,4906,y
+11200,성동구,학원,on,234.549,234.889,234.719,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11200,성동구,학원,off,27.72,27.528,27.624,Index Scan using,idx_mpsn_sigungu,144,4900,y
+11200,성동구,공인중개사,on,49.777,50.045,49.911,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+11200,성동구,공인중개사,off,48.07,48.185,48.127,Index Scan using,idx_mpsn_sigungu,403,4641,y
+11200,성동구,편의점,on,1.129,1.089,1.109,Bitmap Index Scan on,idx_mpsn_sigungu,5044,,y
+11200,성동구,편의점,off,4.226,4.226,4.226,Index Scan using,idx_mpsn_sigungu,3,5041,y
+11200,성동구,스타벅스,on,7.993,7.935,7.964,Bitmap Index Scan on,idx_mpsn_names,731,,y
+11200,성동구,스타벅스,off,11.732,11.636,11.684,Index Scan using,idx_mpsn_sigungu,14,5030,y
+11200,성동구,미용실,on,11.424,11.496,11.46,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+11200,성동구,미용실,off,14.735,14.475,14.605,Index Scan using,idx_mpsn_sigungu,56,4988,y
+11215,광진구,카페,on,234.984,234.741,234.863,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11215,광진구,카페,off,27.44,27.57,27.505,Index Scan using,idx_mpsn_sigungu,195,6427,y
+11215,광진구,학원,on,231.839,231.087,231.463,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11215,광진구,학원,off,24.157,24.204,24.181,Index Scan using,idx_mpsn_sigungu,240,6382,y
+11215,광진구,공인중개사,on,44.606,45.0,44.803,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+11215,광진구,공인중개사,off,44.148,43.992,44.07,Index Scan using,idx_mpsn_sigungu,579,6043,y
+11215,광진구,편의점,on,1.746,1.768,1.757,Bitmap Index Scan on,idx_mpsn_sigungu,6622,,y
+11215,광진구,편의점,off,5.421,5.364,5.393,Index Scan using,idx_mpsn_sigungu,7,6615,y
+11215,광진구,스타벅스,on,8.712,8.781,8.747,Bitmap Index Scan on,idx_mpsn_names,731,,y
+11215,광진구,스타벅스,off,13.293,13.208,13.25,Index Scan using,idx_mpsn_sigungu,23,6599,y
+11215,광진구,미용실,on,10.466,10.548,10.507,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+11215,광진구,미용실,off,14.023,13.67,13.846,Index Scan using,idx_mpsn_sigungu,73,6549,y
+11230,동대문구,카페,on,230.331,230.034,230.183,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11230,동대문구,카페,off,23.633,23.244,23.438,Index Scan using,idx_mpsn_sigungu,182,6225,y
+11230,동대문구,학원,on,233.235,233.608,233.422,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11230,동대문구,학원,off,26.32,27.179,26.749,Index Scan using,idx_mpsn_sigungu,231,6176,y
+11230,동대문구,공인중개사,on,43.368,43.47,43.419,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+11230,동대문구,공인중개사,off,42.976,42.699,42.837,Index Scan using,idx_mpsn_sigungu,528,5879,y
+11230,동대문구,편의점,on,2.26,2.29,2.275,Bitmap Index Scan on,idx_mpsn_sigungu,6407,,y
+11230,동대문구,편의점,off,5.576,5.584,5.58,Index Scan using,idx_mpsn_sigungu,9,6398,y
+11230,동대문구,스타벅스,on,5.776,5.893,5.835,Bitmap Index Scan on,idx_mpsn_sigungu,6407,,y
+11230,동대문구,스타벅스,off,10.121,9.75,9.936,Index Scan using,idx_mpsn_sigungu,14,6393,y
+11230,동대문구,미용실,on,11.75,11.733,11.742,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+11230,동대문구,미용실,off,14.823,14.799,14.811,Index Scan using,idx_mpsn_sigungu,73,6334,y
+11260,중랑구,카페,on,227.939,227.943,227.941,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11260,중랑구,카페,off,20.545,20.106,20.326,Index Scan using,idx_mpsn_sigungu,162,5936,y
+11260,중랑구,학원,on,230.514,230.416,230.465,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11260,중랑구,학원,off,22.942,22.696,22.819,Index Scan using,idx_mpsn_sigungu,184,5914,y
+11260,중랑구,공인중개사,on,39.992,40.023,40.008,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+11260,중랑구,공인중개사,off,39.672,39.687,39.679,Index Scan using,idx_mpsn_sigungu,483,5615,y
+11260,중랑구,편의점,on,1.55,1.517,1.534,Bitmap Index Scan on,idx_mpsn_sigungu,6098,,y
+11260,중랑구,편의점,off,4.898,5.159,5.028,Index Scan using,idx_mpsn_sigungu,6,6092,y
+11260,중랑구,스타벅스,on,2.869,2.818,2.844,Bitmap Index Scan on,idx_mpsn_names,731,,y
+11260,중랑구,스타벅스,off,7.079,6.794,6.936,Index Scan using,idx_mpsn_sigungu,10,6088,y
+11260,중랑구,미용실,on,11.035,10.966,11.0,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+11260,중랑구,미용실,off,14.226,14.339,14.283,Index Scan using,idx_mpsn_sigungu,104,5994,y
+11290,성북구,카페,on,230.564,229.284,229.924,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11290,성북구,카페,off,22.627,22.215,22.421,Index Scan using,idx_mpsn_sigungu,189,6471,y
+11290,성북구,학원,on,237.385,238.062,237.724,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11290,성북구,학원,off,30.083,29.971,30.027,Index Scan using,idx_mpsn_sigungu,270,6390,y
+11290,성북구,공인중개사,on,47.196,47.12,47.158,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+11290,성북구,공인중개사,off,46.398,46.261,46.33,Index Scan using,idx_mpsn_sigungu,479,6181,y
+11290,성북구,편의점,on,1.135,1.124,1.13,Bitmap Index Scan on,idx_mpsn_sigungu,6660,,y
+11290,성북구,편의점,off,4.266,4.444,4.355,Index Scan using,idx_mpsn_sigungu,3,6657,y
+11290,성북구,스타벅스,on,4.925,4.842,4.883,Bitmap Index Scan on,idx_mpsn_names,731,,y
+11290,성북구,스타벅스,off,8.727,8.673,8.7,Index Scan using,idx_mpsn_sigungu,16,6644,y
+11290,성북구,미용실,on,12.19,12.325,12.258,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+11290,성북구,미용실,off,15.088,15.401,15.244,Index Scan using,idx_mpsn_sigungu,99,6561,y
+11305,강북구,카페,on,224.03,224.997,224.514,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11305,강북구,카페,off,16.319,16.577,16.448,Index Scan using,idx_mpsn_sigungu,133,4973,y
+11305,강북구,학원,on,226.742,226.502,226.622,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11305,강북구,학원,off,18.494,18.271,18.383,Index Scan using,idx_mpsn_sigungu,147,4959,y
+11305,강북구,공인중개사,on,33.518,33.607,33.562,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+11305,강북구,공인중개사,off,33.081,32.138,32.609,Index Scan using,idx_mpsn_sigungu,367,4739,y
+11305,강북구,편의점,on,1.434,1.416,1.425,Bitmap Index Scan on,idx_mpsn_sigungu,5106,,y
+11305,강북구,편의점,off,4.07,3.987,4.029,Index Scan using,idx_mpsn_sigungu,5,5101,y
+11305,강북구,스타벅스,on,2.512,2.519,2.516,Bitmap Index Scan on,idx_mpsn_names,731,,y
+11305,강북구,스타벅스,off,5.629,5.516,5.572,Index Scan using,idx_mpsn_sigungu,7,5099,y
+11305,강북구,미용실,on,10.532,10.216,10.374,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+11305,강북구,미용실,off,13.064,12.687,12.875,Index Scan using,idx_mpsn_sigungu,92,5014,y
+11320,도봉구,카페,on,222.883,221.968,222.425,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11320,도봉구,카페,off,15.506,15.091,15.299,Index Scan using,idx_mpsn_sigungu,115,3527,y
+11320,도봉구,학원,on,231.412,228.765,230.089,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11320,도봉구,학원,off,22.448,21.813,22.13,Index Scan using,idx_mpsn_sigungu,160,3482,y
+11320,도봉구,공인중개사,on,31.638,31.994,31.816,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+11320,도봉구,공인중개사,off,29.69,29.949,29.82,Index Scan using,idx_mpsn_sigungu,276,3366,y
+11320,도봉구,편의점,on,3.206,3.255,3.231,Bitmap Index Scan on,idx_mpsn_sigungu,3642,,y
+11320,도봉구,편의점,off,5.158,5.27,5.214,Index Scan using,idx_mpsn_sigungu,12,3630,y
+11320,도봉구,스타벅스,on,2.373,2.339,2.356,Bitmap Index Scan on,idx_mpsn_names,731,,y
+11320,도봉구,스타벅스,off,4.872,4.665,4.768,Index Scan using,idx_mpsn_sigungu,9,3633,y
+11320,도봉구,미용실,on,10.868,10.9,10.884,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+11320,도봉구,미용실,off,12.583,12.61,12.596,Index Scan using,idx_mpsn_sigungu,82,3560,y
+11350,노원구,카페,on,237.207,237.051,237.129,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11350,노원구,카페,off,29.439,29.575,29.507,Index Scan using,idx_mpsn_sigungu,219,3204,y
+11350,노원구,학원,on,242.626,241.687,242.156,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11350,노원구,학원,off,34.763,34.305,34.534,Index Scan using,idx_mpsn_sigungu,266,3157,y
+11350,노원구,공인중개사,on,44.419,44.062,44.24,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+11350,노원구,공인중개사,off,41.886,42.305,42.096,Index Scan using,idx_mpsn_sigungu,364,3059,y
+11350,노원구,편의점,on,2.496,2.499,2.498,Bitmap Index Scan on,idx_mpsn_sigungu,3423,,y
+11350,노원구,편의점,off,4.703,4.761,4.732,Index Scan using,idx_mpsn_sigungu,5,3418,y
+11350,노원구,스타벅스,on,3.909,3.893,3.901,Bitmap Index Scan on,idx_mpsn_names,731,,y
+11350,노원구,스타벅스,off,6.74,6.789,6.764,Index Scan using,idx_mpsn_sigungu,14,3409,y
+11350,노원구,미용실,on,16.113,17.581,16.847,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+11350,노원구,미용실,off,18.403,18.14,18.271,Index Scan using,idx_mpsn_sigungu,64,3359,y
+11380,은평구,카페,on,228.73,231.9,230.315,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11380,은평구,카페,off,58.618,47.303,52.96,Index Scan using,idx_mpsn_sigungu,168,6037,y
+11380,은평구,학원,on,232.496,232.682,232.589,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11380,은평구,학원,off,39.513,36.461,37.987,Index Scan using,idx_mpsn_sigungu,295,5910,y
+11380,은평구,공인중개사,on,49.579,50.04,49.809,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+11380,은평구,공인중개사,off,55.216,55.501,55.358,Index Scan using,idx_mpsn_sigungu,641,5564,y
+11380,은평구,편의점,on,2.387,2.42,2.404,Bitmap Index Scan on,idx_mpsn_sigungu,6205,,y
+11380,은평구,편의점,off,7.708,9.081,8.395,Index Scan using,idx_mpsn_sigungu,10,6195,y
+11380,은평구,스타벅스,on,4.714,4.785,4.75,Bitmap Index Scan on,idx_mpsn_names,731,,y
+11380,은평구,스타벅스,off,13.085,13.087,13.086,Index Scan using,idx_mpsn_sigungu,16,6189,y
+11380,은평구,미용실,on,12.375,12.406,12.39,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+11380,은평구,미용실,off,20.757,24.864,22.811,Index Scan using,idx_mpsn_sigungu,127,6078,y
+11410,서대문구,카페,on,229.442,229.272,229.357,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11410,서대문구,카페,off,22.004,21.49,21.747,Index Scan using,idx_mpsn_sigungu,171,4937,y
+11410,서대문구,학원,on,238.021,237.246,237.633,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11410,서대문구,학원,off,29.642,29.761,29.701,Index Scan using,idx_mpsn_sigungu,214,4894,y
+11410,서대문구,공인중개사,on,39.634,39.381,39.508,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+11410,서대문구,공인중개사,off,40.387,39.144,39.766,Index Scan using,idx_mpsn_sigungu,378,4730,y
+11410,서대문구,편의점,on,1.92,1.882,1.901,Bitmap Index Scan on,idx_mpsn_sigungu,5108,,y
+11410,서대문구,편의점,off,5.094,4.992,5.043,Index Scan using,idx_mpsn_sigungu,6,5102,y
+11410,서대문구,스타벅스,on,12.367,12.753,12.56,Bitmap Index Scan on,idx_mpsn_names,731,,y
+11410,서대문구,스타벅스,off,15.993,15.996,15.995,Index Scan using,idx_mpsn_sigungu,21,5087,y
+11410,서대문구,미용실,on,12.699,12.128,12.413,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+11410,서대문구,미용실,off,15.146,15.164,15.155,Index Scan using,idx_mpsn_sigungu,68,5040,y
+11440,마포구,카페,on,244.847,243.595,244.221,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11440,마포구,카페,off,35.2,35.232,35.216,Index Scan using,idx_mpsn_sigungu,312,9102,y
+11440,마포구,학원,on,247.564,247.121,247.343,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11440,마포구,학원,off,38.897,38.49,38.694,Index Scan using,idx_mpsn_sigungu,379,9035,y
+11440,마포구,공인중개사,on,64.202,64.639,64.421,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+11440,마포구,공인중개사,off,65.013,64.82,64.916,Index Scan using,idx_mpsn_sigungu,635,8779,y
+11440,마포구,편의점,on,0.872,0.856,0.864,Bitmap Index Scan on,idx_mpsn_sigungu,9414,,y
+11440,마포구,편의점,off,6.527,6.537,6.532,Index Scan using,idx_mpsn_sigungu,1,9413,y
+11440,마포구,스타벅스,on,11.211,10.841,11.026,Bitmap Index Scan on,idx_mpsn_sigungu,9414,,y
+11440,마포구,스타벅스,off,18.135,18.051,18.093,Index Scan using,idx_mpsn_sigungu,36,9378,y
+11440,마포구,미용실,on,12.221,11.955,12.088,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+11440,마포구,미용실,off,17.894,18.0,17.947,Index Scan using,idx_mpsn_sigungu,86,9328,y
+11470,양천구,카페,on,238.618,236.631,237.625,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11470,양천구,카페,off,28.587,29.163,28.875,Index Scan using,idx_mpsn_sigungu,200,4280,y
+11470,양천구,학원,on,245.805,244.86,245.333,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11470,양천구,학원,off,38.159,38.065,38.112,Index Scan using,idx_mpsn_sigungu,360,4120,y
+11470,양천구,공인중개사,on,52.198,52.614,52.406,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+11470,양천구,공인중개사,off,50.732,50.898,50.815,Index Scan using,idx_mpsn_sigungu,465,4015,y
+11470,양천구,편의점,on,1.395,1.316,1.356,Bitmap Index Scan on,idx_mpsn_sigungu,4480,,y
+11470,양천구,편의점,off,4.141,4.082,4.111,Index Scan using,idx_mpsn_sigungu,4,4476,y
+11470,양천구,스타벅스,on,6.858,6.974,6.916,Bitmap Index Scan on,idx_mpsn_names,731,,y
+11470,양천구,스타벅스,off,10.665,10.235,10.45,Index Scan using,idx_mpsn_sigungu,16,4464,y
+11470,양천구,미용실,on,18.0,17.563,17.782,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+11470,양천구,미용실,off,20.512,20.042,20.277,Index Scan using,idx_mpsn_sigungu,119,4361,y
+11500,강서구,카페,on,247.783,247.792,247.787,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11500,강서구,카페,off,39.727,39.747,39.737,Index Scan using,idx_mpsn_sigungu,273,5815,y
+11500,강서구,학원,on,250.099,274.435,262.267,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11500,강서구,학원,off,43.301,43.484,43.392,Index Scan using,idx_mpsn_sigungu,371,5717,y
+11500,강서구,공인중개사,on,77.07,76.963,77.016,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+11500,강서구,공인중개사,off,76.498,76.835,76.666,Index Scan using,idx_mpsn_sigungu,692,5396,y
+11500,강서구,편의점,on,4.192,4.125,4.159,Bitmap Index Scan on,idx_mpsn_sigungu,6088,,y
+11500,강서구,편의점,off,8.378,8.563,8.471,Index Scan using,idx_mpsn_sigungu,9,6079,y
+11500,강서구,스타벅스,on,11.431,11.578,11.505,Index Scan using,idx_mpsn_pnu,1,,y
+11500,강서구,스타벅스,off,16.821,16.788,16.805,Index Scan using,idx_mpsn_sigungu,33,6055,y
+11500,강서구,미용실,on,12.217,15.08,13.649,Index Scan using,idx_mpsn_pnu,1,,y
+11500,강서구,미용실,off,16.882,16.792,16.837,Index Scan using,idx_mpsn_sigungu,108,5980,y
+11530,구로구,카페,on,237.768,236.699,237.233,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11530,구로구,카페,off,29.578,29.627,29.602,Index Scan using,idx_mpsn_sigungu,175,4608,y
+11530,구로구,학원,on,236.327,235.708,236.017,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11530,구로구,학원,off,28.127,28.555,28.341,Index Scan using,idx_mpsn_sigungu,199,4584,y
+11530,구로구,공인중개사,on,49.674,49.526,49.6,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+11530,구로구,공인중개사,off,48.257,48.376,48.316,Index Scan using,idx_mpsn_sigungu,415,4368,y
+11530,구로구,편의점,on,1.797,1.791,1.794,Bitmap Index Scan on,idx_mpsn_sigungu,4783,,y
+11530,구로구,편의점,off,4.909,4.832,4.87,Index Scan using,idx_mpsn_sigungu,7,4776,y
+11530,구로구,스타벅스,on,10.319,9.986,10.152,Bitmap Index Scan on,idx_mpsn_names,731,,y
+11530,구로구,스타벅스,off,13.37,13.477,13.424,Index Scan using,idx_mpsn_sigungu,14,4769,y
+11530,구로구,미용실,on,11.146,11.541,11.344,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+11530,구로구,미용실,off,14.056,13.912,13.984,Index Scan using,idx_mpsn_sigungu,93,4690,y
+11545,금천구,카페,on,242.213,242.352,242.282,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11545,금천구,카페,off,34.357,35.277,34.817,Index Scan using,idx_mpsn_sigungu,135,3283,y
+11545,금천구,학원,on,229.848,230.302,230.075,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11545,금천구,학원,off,22.147,21.725,21.936,Index Scan using,idx_mpsn_sigungu,101,3317,y
+11545,금천구,공인중개사,on,55.938,55.972,55.955,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+11545,금천구,공인중개사,off,84.445,71.106,77.775,Index Scan using,idx_mpsn_sigungu,313,3105,y
+11545,금천구,편의점,on,2.254,2.238,2.246,Bitmap Index Scan on,idx_mpsn_sigungu,3418,,y
+11545,금천구,편의점,off,6.562,6.687,6.625,Index Scan using,idx_mpsn_sigungu,3,3415,y
+11545,금천구,스타벅스,on,14.527,14.44,14.483,Bitmap Index Scan on,idx_mpsn_names,731,,y
+11545,금천구,스타벅스,off,23.23,23.214,23.222,Index Scan using,idx_mpsn_sigungu,16,3402,y
+11545,금천구,미용실,on,9.817,9.76,9.788,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+11545,금천구,미용실,off,16.232,16.309,16.27,Index Scan using,idx_mpsn_sigungu,74,3344,y
+11560,영등포구,카페,on,248.496,248.94,248.718,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11560,영등포구,카페,off,40.826,40.6,40.713,Index Scan using,idx_mpsn_sigungu,227,6415,y
+11560,영등포구,학원,on,240.043,240.099,240.071,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11560,영등포구,학원,off,31.666,32.292,31.979,Index Scan using,idx_mpsn_sigungu,251,6391,y
+11560,영등포구,공인중개사,on,62.935,63.396,63.166,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+11560,영등포구,공인중개사,off,62.511,62.9,62.706,Index Scan using,idx_mpsn_sigungu,533,6109,y
+11560,영등포구,편의점,on,2.45,2.158,2.304,Bitmap Index Scan on,idx_mpsn_sigungu,6642,,y
+11560,영등포구,편의점,off,6.687,6.834,6.761,Index Scan using,idx_mpsn_sigungu,8,6634,y
+11560,영등포구,스타벅스,on,16.437,16.448,16.443,Index Scan using,idx_mpsn_pnu,1,,y
+11560,영등포구,스타벅스,off,22.075,21.979,22.027,Index Scan using,idx_mpsn_sigungu,40,6602,y
+11560,영등포구,미용실,on,15.036,15.076,15.056,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+11560,영등포구,미용실,off,19.698,19.647,19.672,Index Scan using,idx_mpsn_sigungu,116,6526,y
+11590,동작구,카페,on,233.564,235.051,234.308,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11590,동작구,카페,off,24.559,24.666,24.613,Index Scan using,idx_mpsn_sigungu,213,4766,y
+11590,동작구,학원,on,234.719,233.834,234.276,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11590,동작구,학원,off,25.241,24.936,25.088,Index Scan using,idx_mpsn_sigungu,241,4738,y
+11590,동작구,공인중개사,on,43.781,43.531,43.656,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+11590,동작구,공인중개사,off,41.627,41.855,41.741,Index Scan using,idx_mpsn_sigungu,468,4511,y
+11590,동작구,편의점,on,1.268,1.224,1.246,Bitmap Index Scan on,idx_mpsn_sigungu,4979,,y
+11590,동작구,편의점,off,3.797,3.791,3.794,Index Scan using,idx_mpsn_sigungu,3,4976,y
+11590,동작구,스타벅스,on,4.085,3.626,3.856,Bitmap Index Scan on,idx_mpsn_names,731,,y
+11590,동작구,스타벅스,off,6.862,6.829,6.845,Index Scan using,idx_mpsn_sigungu,14,4965,y
+11590,동작구,미용실,on,9.919,9.648,9.784,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+11590,동작구,미용실,off,12.331,12.192,12.261,Index Scan using,idx_mpsn_sigungu,73,4906,y
+11620,관악구,카페,on,237.712,236.973,237.343,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11620,관악구,카페,off,30.713,30.66,30.687,Index Scan using,idx_mpsn_sigungu,228,7661,y
+11620,관악구,학원,on,236.941,236.814,236.877,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11620,관악구,학원,off,30.242,30.612,30.427,Index Scan using,idx_mpsn_sigungu,252,7637,y
+11620,관악구,공인중개사,on,44.691,44.726,44.709,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+11620,관악구,공인중개사,off,44.945,44.502,44.724,Index Scan using,idx_mpsn_sigungu,621,7268,y
+11620,관악구,편의점,on,1.156,1.158,1.157,Bitmap Index Scan on,idx_mpsn_sigungu,7889,,y
+11620,관악구,편의점,off,5.149,5.024,5.087,Index Scan using,idx_mpsn_sigungu,3,7886,y
+11620,관악구,스타벅스,on,3.847,4.08,3.963,Bitmap Index Scan on,idx_mpsn_sigungu,7889,,y
+11620,관악구,스타벅스,off,8.626,8.666,8.646,Index Scan using,idx_mpsn_sigungu,15,7874,y
+11620,관악구,미용실,on,11.553,11.576,11.565,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+11620,관악구,미용실,off,15.738,15.499,15.619,Index Scan using,idx_mpsn_sigungu,113,7776,y
+11650,서초구,카페,on,248.968,248.606,248.787,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11650,서초구,카페,off,41.829,42.134,41.981,Index Scan using,idx_mpsn_sigungu,306,6584,y
+11650,서초구,학원,on,258.833,260.083,259.458,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11650,서초구,학원,off,51.633,52.037,51.835,Index Scan using,idx_mpsn_sigungu,488,6402,y
+11650,서초구,공인중개사,on,74.012,74.279,74.145,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+11650,서초구,공인중개사,off,74.844,74.427,74.636,Index Scan using,idx_mpsn_sigungu,634,6256,y
+11650,서초구,편의점,on,2.301,2.298,2.3,Bitmap Index Scan on,idx_mpsn_sigungu,6890,,y
+11650,서초구,편의점,off,8.037,7.952,7.995,Index Scan using,idx_mpsn_sigungu,5,6885,y
+11650,서초구,스타벅스,on,19.672,19.817,19.745,Index Scan using,idx_mpsn_pnu,1,,y
+11650,서초구,스타벅스,off,26.855,27.135,26.995,Index Scan using,idx_mpsn_sigungu,55,6835,y
+11650,서초구,미용실,on,14.422,14.25,14.336,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+11650,서초구,미용실,off,20.322,20.651,20.486,Index Scan using,idx_mpsn_sigungu,70,6820,y
+11680,강남구,카페,on,267.279,267.669,267.474,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11680,강남구,카페,off,58.501,58.429,58.465,Index Scan using,idx_mpsn_sigungu,437,11496,y
+11680,강남구,학원,on,288.626,285.022,286.824,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11680,강남구,학원,off,77.969,78.106,78.037,Index Scan using,idx_mpsn_sigungu,880,11053,y
+11680,강남구,공인중개사,on,103.405,103.384,103.394,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+11680,강남구,공인중개사,off,107.581,107.102,107.341,Index Scan using,idx_mpsn_sigungu,914,11019,y
+11680,강남구,편의점,on,0.997,0.984,0.99,Bitmap Index Scan on,idx_mpsn_sigungu,11933,,y
+11680,강남구,편의점,off,10.683,10.546,10.614,Index Scan using,idx_mpsn_sigungu,1,11932,y
+11680,강남구,스타벅스,on,20.0,19.955,19.977,Bitmap Index Scan on,idx_mpsn_sigungu,11933,,y
+11680,강남구,스타벅스,off,32.822,32.762,32.792,Index Scan using,idx_mpsn_sigungu,101,11832,y
+11680,강남구,미용실,on,20.114,19.858,19.986,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+11680,강남구,미용실,off,30.154,30.48,30.317,Index Scan using,idx_mpsn_sigungu,88,11845,y
+11710,송파구,카페,on,280.062,284.505,282.284,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11710,송파구,카페,off,71.43,71.409,71.419,Index Scan using,idx_mpsn_sigungu,310,6713,y
+11710,송파구,학원,on,275.341,276.157,275.749,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11710,송파구,학원,off,67.025,67.136,67.081,Index Scan using,idx_mpsn_sigungu,535,6488,y
+11710,송파구,공인중개사,on,101.11,101.135,101.123,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+11710,송파구,공인중개사,off,102.087,145.632,123.859,Index Scan using,idx_mpsn_sigungu,741,6282,y
+11710,송파구,편의점,on,4.623,4.633,4.628,Bitmap Index Scan on,idx_mpsn_sigungu,7023,,y
+11710,송파구,편의점,off,13.096,13.871,13.483,Index Scan using,idx_mpsn_sigungu,11,7012,y
+11710,송파구,스타벅스,on,25.893,25.755,25.824,Index Scan using,idx_mpsn_pnu,1,,y
+11710,송파구,스타벅스,off,42.941,42.892,42.916,Index Scan using,idx_mpsn_sigungu,39,6984,y
+11710,송파구,미용실,on,16.59,16.704,16.647,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+11710,송파구,미용실,off,28.962,29.99,29.476,Index Scan using,idx_mpsn_sigungu,94,6929,y
+11740,강동구,카페,on,234.776,233.654,234.215,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11740,강동구,카페,off,25.927,26.078,26.002,Index Scan using,idx_mpsn_sigungu,232,5505,y
+11740,강동구,학원,on,247.816,246.961,247.389,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+11740,강동구,학원,off,39.589,39.659,39.624,Index Scan using,idx_mpsn_sigungu,356,5381,y
+11740,강동구,공인중개사,on,54.668,55.148,54.908,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+11740,강동구,공인중개사,off,54.39,53.957,54.174,Index Scan using,idx_mpsn_sigungu,582,5155,y
+11740,강동구,편의점,on,1.751,1.762,1.756,Bitmap Index Scan on,idx_mpsn_sigungu,5737,,y
+11740,강동구,편의점,off,5.134,5.166,5.15,Index Scan using,idx_mpsn_sigungu,7,5730,y
+11740,강동구,스타벅스,on,5.528,5.46,5.494,Bitmap Index Scan on,idx_mpsn_names,731,,y
+11740,강동구,스타벅스,off,9.493,9.598,9.546,Index Scan using,idx_mpsn_sigungu,19,5718,y
+11740,강동구,미용실,on,12.067,11.998,12.032,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+11740,강동구,미용실,off,15.451,15.513,15.482,Index Scan using,idx_mpsn_sigungu,70,5667,y
+30110,동구(대전),카페,on,228.308,227.32,227.814,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+30110,동구(대전),카페,off,18.211,18.346,18.279,Index Scan using,idx_mpsn_sigungu,161,5231,y
+30110,동구(대전),학원,on,225.871,227.543,226.707,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+30110,동구(대전),학원,off,17.582,17.7,17.641,Index Scan using,idx_mpsn_sigungu,129,5263,y
+30110,동구(대전),공인중개사,on,27.187,27.208,27.197,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+30110,동구(대전),공인중개사,off,25.676,26.269,25.972,Index Scan using,idx_mpsn_sigungu,268,5124,y
+30110,동구(대전),편의점,on,1.8,1.733,1.767,Bitmap Index Scan on,idx_mpsn_sigungu,5392,,y
+30110,동구(대전),편의점,off,4.201,4.192,4.197,Index Scan using,idx_mpsn_sigungu,3,5389,y
+30110,동구(대전),스타벅스,on,2.781,2.749,2.765,Bitmap Index Scan on,idx_mpsn_names,731,,y
+30110,동구(대전),스타벅스,off,5.539,5.598,5.569,Index Scan using,idx_mpsn_sigungu,7,5385,y
+30110,동구(대전),미용실,on,12.63,12.785,12.707,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+30110,동구(대전),미용실,off,14.892,14.868,14.88,Index Scan using,idx_mpsn_sigungu,109,5283,y
+30140,중구(대전),카페,on,227.831,226.36,227.096,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+30140,중구(대전),카페,off,19.11,19.028,19.069,Index Scan using,idx_mpsn_sigungu,169,5699,y
+30140,중구(대전),학원,on,231.311,231.102,231.207,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+30140,중구(대전),학원,off,23.22,23.315,23.267,Index Scan using,idx_mpsn_sigungu,199,5669,y
+30140,중구(대전),공인중개사,on,28.829,28.735,28.782,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+30140,중구(대전),공인중개사,off,27.834,27.838,27.836,Index Scan using,idx_mpsn_sigungu,224,5644,y
+30140,중구(대전),편의점,on,1.706,1.651,1.679,Bitmap Index Scan on,idx_mpsn_sigungu,5868,,y
+30140,중구(대전),편의점,off,4.478,4.513,4.495,Index Scan using,idx_mpsn_sigungu,6,5862,y
+30140,중구(대전),스타벅스,on,2.268,2.173,2.22,Bitmap Index Scan on,idx_mpsn_names,731,,y
+30140,중구(대전),스타벅스,off,5.549,5.412,5.481,Index Scan using,idx_mpsn_sigungu,7,5861,y
+30140,중구(대전),미용실,on,14.431,14.153,14.292,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+30140,중구(대전),미용실,off,16.584,16.353,16.468,Index Scan using,idx_mpsn_sigungu,119,5749,y
+30170,서구(대전),카페,on,244.911,245.743,245.327,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+30170,서구(대전),카페,off,36.685,36.672,36.678,Index Scan using,idx_mpsn_sigungu,327,8578,y
+30170,서구(대전),학원,on,250.355,250.706,250.53,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+30170,서구(대전),학원,off,41.717,41.881,41.799,Index Scan using,idx_mpsn_sigungu,441,8464,y
+30170,서구(대전),공인중개사,on,58.167,58.268,58.218,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+30170,서구(대전),공인중개사,off,58.558,58.752,58.655,Index Scan using,idx_mpsn_sigungu,597,8308,y
+30170,서구(대전),편의점,on,1.808,1.768,1.788,Bitmap Index Scan on,idx_mpsn_sigungu,8905,,y
+30170,서구(대전),편의점,off,6.754,6.755,6.755,Index Scan using,idx_mpsn_sigungu,7,8898,y
+30170,서구(대전),스타벅스,on,7.936,7.856,7.896,Bitmap Index Scan on,idx_mpsn_sigungu,8905,,y
+30170,서구(대전),스타벅스,off,13.952,13.904,13.928,Index Scan using,idx_mpsn_sigungu,30,8875,y
+30170,서구(대전),미용실,on,16.815,16.394,16.605,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+30170,서구(대전),미용실,off,21.404,21.578,21.491,Index Scan using,idx_mpsn_sigungu,161,8744,y
+30200,유성구,카페,on,241.051,243.112,242.082,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+30200,유성구,카페,off,33.933,33.642,33.788,Index Scan using,idx_mpsn_sigungu,297,6698,y
+30200,유성구,학원,on,230.573,231.749,231.161,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+30200,유성구,학원,off,22.675,22.766,22.721,Index Scan using,idx_mpsn_sigungu,181,6814,y
+30200,유성구,공인중개사,on,47.099,47.757,47.428,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+30200,유성구,공인중개사,off,47.654,47.075,47.365,Index Scan using,idx_mpsn_sigungu,447,6548,y
+30200,유성구,편의점,on,1.322,1.305,1.313,Bitmap Index Scan on,idx_mpsn_sigungu,6995,,y
+30200,유성구,편의점,off,4.923,5.087,5.005,Index Scan using,idx_mpsn_sigungu,4,6991,y
+30200,유성구,스타벅스,on,6.852,7.004,6.928,Bitmap Index Scan on,idx_mpsn_sigungu,6995,,y
+30200,유성구,스타벅스,off,11.798,11.238,11.518,Index Scan using,idx_mpsn_sigungu,21,6974,y
+30200,유성구,미용실,on,10.167,10.231,10.199,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+30200,유성구,미용실,off,13.869,13.799,13.834,Index Scan using,idx_mpsn_sigungu,42,6953,y
+30230,대덕구,카페,on,225.08,224.665,224.873,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+30230,대덕구,카페,off,16.632,16.307,16.47,Index Scan using,idx_mpsn_sigungu,122,4121,y
+30230,대덕구,학원,on,219.822,220.032,219.927,Bitmap Index Scan on,idx_mpsn_names,184924,,y
+30230,대덕구,학원,off,11.677,11.588,11.633,Index Scan using,idx_mpsn_sigungu,44,4199,y
+30230,대덕구,공인중개사,on,22.872,22.97,22.921,Bitmap Index Scan on,idx_mpsn_names,14180,,y
+30230,대덕구,공인중개사,off,21.847,21.869,21.858,Index Scan using,idx_mpsn_sigungu,161,4082,y
+30230,대덕구,편의점,on,2.495,2.518,2.506,Bitmap Index Scan on,idx_mpsn_sigungu,4243,,y
+30230,대덕구,편의점,off,4.44,4.747,4.594,Index Scan using,idx_mpsn_sigungu,9,4234,y
+30230,대덕구,스타벅스,on,1.498,1.537,1.518,Bitmap Index Scan on,idx_mpsn_names,731,,y
+30230,대덕구,스타벅스,off,3.719,3.722,3.72,Index Scan using,idx_mpsn_sigungu,5,4238,y
+30230,대덕구,미용실,on,10.475,10.179,10.327,Bitmap Index Scan on,idx_mpsn_names,2614,,y
+30230,대덕구,미용실,off,11.924,11.815,11.869,Index Scan using,idx_mpsn_sigungu,87,4156,y
