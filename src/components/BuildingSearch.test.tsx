@@ -247,11 +247,29 @@ describe('BuildingSearch — 너무 넓은 검색 안내', () => {
     //    멀쩡히 서 있는 **가게 이름 구역**을 가리고 클릭까지 삼킨다(결정 0028 §백로그 🟡-10).
     serverSays(true, 13529);
     const input = setup();
+    /*
+      ⛔ 안내 자리는 **검색하기 전부터 빈 채로 서 있어야** 한다. 화면을 읽어 주는 기기는
+         "먼저 있던 자리의 내용이 바뀐 것"만 읽어 주고, **글자와 함께 새로 나타난 요소는
+         못 읽는다** — `role="status"` 를 달아도 마찬가지다. 이 안내는 안내창이 아니라
+         한 줄이라 초점도 안 옮겨 가므로(위 🟡-10), 자리가 미리 서 있지 않으면 눈으로
+         화면을 못 보는 사람에게는 **아무 일도 일어나지 않은 것과 같다.**
+      ⓘ 자리는 둘이다 — 건물 쪽 한 줄과 가게 쪽 한 줄(DOM 순서대로). FeedbackBox 의
+        항상 서 있는 `<p role="status">` 가 이 방식의 선례다.
+    */
+    const live = screen.getAllByRole('status');
+    expect(live).toHaveLength(2);
+    expect(live.map((el) => el.textContent)).toEqual(['', '']);
+    const [buildingLive, storeLive] = live;
+
     search(input, '강남');
     await waitFor(() => expect(screen.getByText(/너무 넓은 검색/)).toBeTruthy());
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.getByText(/‘강남’/)).toBeTruthy();
     expect(screen.getByText('13,529곳')).toBeTruthy();
+    // ⛔ **아까 그 자리**의 내용이 바뀐 것이어야 한다 — 새 요소가 나타난 것이면 안 읽힌다.
+    expect(screen.getByText(/너무 넓은 검색/)).toBe(buildingLive);
+    // 가게 쪽 자리는 이 검색에서 할 말이 없다 — 빈 채로 그대로 서 있다(사라지지 않는다).
+    expect(storeLive.textContent).toBe('');
     // 한 줄은 `.search` 안에 있어야 한다 — 인쇄가 `.search` 를 통째로 숨기므로 밖에 두면
     // 종이에 죽은 안내가 남는다(가게 구역과 같은 제약).
     expect(screen.getByText(/너무 넓은 검색/).closest('.search')).not.toBeNull();
@@ -497,10 +515,20 @@ describe('BuildingSearch — 가게 이름으로 찾은 땅', () => {
       },
     });
     const { input } = setup();
+    // ⛔ 건물 쪽과 같은 이유로 이 자리도 **검색 전부터 빈 채로 서 있어야** 한다(위 시험의 설명).
+    const live = screen.getAllByRole('status');
+    expect(live).toHaveLength(2);
+    expect(live.map((el) => el.textContent)).toEqual(['', '']);
+    const [buildingLive, storeLive] = live;
+
     search(input, '카페');
     await waitFor(() => expect(screen.getByText(/이름의 가게가/)).toBeTruthy());
     expect(screen.getByText('33,630곳')).toBeTruthy();
     expect(screen.getByText(/더 좁혀 주세요/)).toBeTruthy();
+    // ⛔ **아까 그 자리**의 내용이 바뀐 것이어야 한다 — 새 요소가 나타난 것이면 안 읽힌다.
+    expect(screen.getByText(/이름의 가게가/)).toBe(storeLive);
+    // 건물 쪽 자리는 이 검색에서 할 말이 없다 — 빈 채로 그대로 선다(건물 결과는 멀쩡하다).
+    expect(buildingLive.textContent).toBe('');
     // 건물 결과는 그대로 서 있어야 한다.
     expect(screen.getByText('테스트빌딩')).toBeTruthy();
   });
@@ -517,11 +545,18 @@ describe('BuildingSearch — 가게 이름으로 찾은 땅', () => {
       search_stores: { data: [storeHit({ bld_nm: '가게있는건물' })] },
     });
     const { input, onSelect } = setup();
+    const [buildingLive, storeLive] = screen.getAllByRole('status');
     search(input, '강남');
 
     await waitFor(() => expect(screen.getByText(/너무 넓은 검색/)).toBeTruthy());
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(region()).toBeTruthy();
+    /*
+      ⓘ 두 안내 자리는 **서로 독립**이다 — 건물 쪽만 말하고 가게 쪽은 빈 채로 선다.
+        (가게는 여기서 `broad` 가 아니라 목록을 받은 `done` 이라 할 말이 그 구역에 있다.)
+    */
+    expect(screen.getByText(/너무 넓은 검색/)).toBe(buildingLive);
+    expect(storeLive.textContent).toBe('');
     /*
       ⚠️ 여기서 **진짜 힘을 쓰는 단언은 바로 위 `queryByRole('dialog')` 이 null 이라는 것**이다.
          jsdom 에는 레이아웃도 히트 테스트도 없어서 덮개가 있든 없든 `fireEvent.click` 은
