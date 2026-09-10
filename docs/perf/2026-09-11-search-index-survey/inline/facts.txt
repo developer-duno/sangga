@@ -1,0 +1,107 @@
+# 2026-09-11 라이브 읽기 전용 사실 (설계서 0029 근거)
+
+## GIN 색인 속성 (index_scan / bitmap_scan)
+          i          | index_scan | bitmap_scan 
+---------------------+------------+-------------
+ idx_mpsn_names      | f          | t
+ idx_msp_road_key    | f          | t
+ idx_msp_jibun_key   | f          | t
+ idx_building_nm_key | f          | t
+ idx_mpsn_sigungu    | t          | t
+ idx_msp_sigungu     | t          | t
+ idx_building_pnu    | t          | t
+(7�� ��)
+
+
+## sigungu_code = substr(pnu,1,5) 불변식 (불일치 행수)
+ msp_mismatch | mpsn_mismatch | msp_rows | mpsn_rows 
+--------------+---------------+----------+-----------
+            0 |             0 |   188442 |    184924
+(1�� ��)
+
+
+## building 의 구 코드 집합 (앞 5자리 · 9 로 끝나는 코드 유무)
+ gu_cnt | ends_with_9 |                                                                                         gus                                                                                         
+--------+-------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+     30 |           0 | 11110 11140 11170 11200 11215 11230 11260 11290 11305 11320 11350 11380 11410 11440 11470 11500 11530 11545 11560 11590 11620 11650 11680 11710 11740 30110 30140 30170 30200 30230
+(1�� ��)
+
+
+## (f) 등가성: substr 방식 vs char(19) 범위 방식 — 30구 전부
+ gu_cnt | agree 
+--------+-------
+     30 |    30
+(1�� ��)
+
+
+## plan_cache_mode GUC 문맥 · search_key 볼러틸리티
+       name        | context | setting 
+-------------------+---------+---------
+ enable_bitmapscan | user    | on
+ plan_cache_mode   | user    | auto
+ statement_timeout | user    | 120000
+(3�� ��)
+
+     proname      | provolatile | prolang 
+------------------+-------------+---------
+ search_buildings | s           | 14
+ search_key       | i           | 14
+ search_scope     | s           | 14
+ search_stores    | s           | 14
+(4�� ��)
+
+
+## 롤별 statement_timeout
+    rolname    |                                                            rolconfig                                                            
+---------------+---------------------------------------------------------------------------------------------------------------------------------
+ authenticated | {statement_timeout=8s}
+ anon          | {statement_timeout=3s}
+ authenticator | {"session_preload_libraries=supautils, safeupdate",statement_timeout=8s,lock_timeout=8s,"pgrst.db_schemas=api, graphql_public"}
+(3�� ��)
+
+
+## 정본 줄번호
+981:create or replace function search_key(t text)
+1050:create materialized view if not exists mv_search_parcel as
+1104:create materialized view if not exists mv_parcel_store_names as
+1346:create or replace function search_scope(q text, sigungu text default null)
+1393:create or replace function search_buildings(q text, lim int default 25, sigungu text default null)
+1570:create or replace function search_stores(
+
+## with pat as 사용처
+1353:  with pat as (
+1417:  with pat as (
+1601:  with pat as (
+
+## 함수 본문 문자열을 단언하는 가드 (파일:줄)
+tests/test_search_gu_cast_migration.py:2:"""마이그레이션 2026-09-10a(구 비교를 색인이 타게)의 불변식을 지킨다.
+tests/test_search_gu_cast_migration.py:6:`mv_search_parcel.sigungu_code` 는 `char(5)` 인데 `pat.gu` 는 `text` 다. 그냥 견주면
+tests/test_search_gu_cast_migration.py:16:  1) 두 함수 본문에 `pc.sigungu_code = pat.gu::char(5)` 가 **정확히 두 번씩**,
+tests/test_search_gu_cast_migration.py:17:     캐스트 없는 `= pat.gu)` 는 **0번**.
+tests/test_search_gu_cast_migration.py:18:  2) `pat.gu is null or` 절반이 **함수마다 두 번 그대로** — 이 둘은 구를 안 고른 전�
+tests/test_search_gu_cast_migration.py:41:    ROOT, "supabase", "migrations", "2026-09-10a_search_gu_index_cond.sql")
+tests/test_search_gu_cast_migration.py:45:LABEL = {MIGRATION: "마이그레이션 2026-09-10a", SCHEMA: "정본 schema.sql"}
+tests/test_search_gu_cast_migration.py:53:CAST = "pc.sigungu_code = pat.gu::char(5)"
+tests/test_search_gu_cast_migration.py:54:BARE = "= pat.gu)"           # 캐스트가 빠진 옛 모양
+tests/test_search_gu_cast_migration.py:55:NATIONWIDE = "pat.gu is null or"
+tests/test_search_gu_cast_migration.py:74:    특히 그렇다 — 위 ⛔ 주석에 `pat.gu is null or` 라는 말이 **글로** 적혀 있어서,
+tests/test_search_gu_cast_migration.py:165:        필수로 둔 `search_stores` 와 다른 점이다). 캐스트를 붙이며 `pat.gu is null or`
+tests/test_search_gu_cast_migration.py:177:        따로 떨어지면(예: `and pat.gu is null` 을 위로 올리면) 구를 고른 검색이 통째�
+tests/test_search_gu_cast_migration.py:280:    tampered = block.replace(CAST, "pc.sigungu_code = pat.gu", 1)
+tests/test_search_gu_cast_migration.py:299:    그렇다. 정본·마이그레이션의 ⛔ 주석에 `pat.gu is null or` 가 **글로** 적혀 있어
+tests/test_display_name_sql_sync.py:188:    assert DISPLAY_EXPR_QUALIFIED + " ilike pat.p" in migration_sql, (
+tests/test_display_name_sql_sync.py:226:        "b.nm_key like pat.p",
+tests/test_display_name_sql_sync.py:227:        "pc.road_addr_key like pat.p",
+tests/test_display_name_sql_sync.py:228:        "pc.jibun_addr_key like pat.p",
+tests/test_display_name_sql_sync.py:270:    for old in ("and b.bld_nm ilike pat.p", "and b.bld_nm like pat.p"):
+tests/test_display_name_sql_sync.py:636:    assert flat.count("pat.gu is null or pc.sigungu_code = pat.gu") == 4, (
+tests/test_display_name_sql_sync.py:639:            flat.count("pat.gu is null or pc.sigungu_code = pat.gu"))
+tests/test_display_name_sql_sync.py:719:    (test_schema_search_uses_stored_key_columns, "b.nm_key like pat.p", False),
+tests/test_display_name_sql_sync.py:745:     "pat.gu is null or pc.sigungu_code = pat.gu", True),
+tests/test_search_stores_migration.py:506:        assert "and pat.gu is not null" in body, (
+tests/test_search_stores_migration.py:509:        assert "and m.sigungu_code = pat.gu" in body
+tests/test_search_stores_migration.py:510:        assert "pat.gu is null or" not in body, (
+tests/test_search_stores_migration.py:518:        sigungu_code 컬럼은 char(5) 인데 pat.gu 는 text 라, 캐스트가 없으면 **컬럼 쪽**이
+tests/test_search_stores_migration.py:524:        assert "and m.sigungu_code = pat.gu::char(5)" in body, (
+tests/test_search_stores_migration.py:559:        assert "like pat.p escape '\\'" in body
+tests/test_search_stores_migration.py:870:    # rows_out 에는 여태 pat 이 없었다. 없으면 컴파일 자체가 안 된다(pat.p 를 못 찾�

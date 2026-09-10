@@ -1,0 +1,241 @@
+sigungu_code,sigungu_nm,q,mode,run2_ms,run3_ms,median_ms,top_type,top_index,top_rows,rows_removed,md5_same
+11110,종로구,빌딩,on,458.557,455.497,457.027,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11110,종로구,빌딩,off,284.156,283.258,283.707,Index Scan using,idx_msp_pnu,1,,y
+11110,종로구,타워,on,375.58,373.13,374.355,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11110,종로구,타워,off,211.935,211.804,211.87,Seq Scan on,building,242631,,y
+11110,종로구,상가,on,388.734,388.075,388.404,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11110,종로구,상가,off,207.275,206.488,206.882,Seq Scan on,building,242631,,y
+11110,종로구,플라자,on,0.832,0.82,0.826,Index Scan using,idx_msp_pnu,1,,y
+11110,종로구,플라자,off,198.278,197.445,197.861,Seq Scan on,building,242631,,y
+11140,중구(서울),빌딩,on,455.359,452.473,453.916,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11140,중구(서울),빌딩,off,279.894,280.795,280.345,Index Scan using,idx_msp_pnu,1,,y
+11140,중구(서울),타워,on,371.279,371.014,371.147,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11140,중구(서울),타워,off,210.552,210.137,210.344,Seq Scan on,building,242631,,y
+11140,중구(서울),상가,on,384.164,384.32,384.242,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11140,중구(서울),상가,off,205.898,205.296,205.597,Seq Scan on,building,242631,,y
+11140,중구(서울),플라자,on,1.084,1.072,1.078,Index Scan using,idx_msp_pnu,1,,y
+11140,중구(서울),플라자,off,193.402,194.798,194.1,Seq Scan on,building,242631,,y
+11170,용산구,빌딩,on,454.069,455.179,454.624,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11170,용산구,빌딩,off,277.809,275.455,276.632,Index Scan using,idx_msp_pnu,1,,y
+11170,용산구,타워,on,376.064,374.904,375.484,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11170,용산구,타워,off,207.262,207.923,207.593,Seq Scan on,building,242631,,y
+11170,용산구,상가,on,387.281,388.132,387.707,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11170,용산구,상가,off,202.477,201.097,201.787,Seq Scan on,building,242631,,y
+11170,용산구,플라자,on,0.808,0.804,0.806,Index Scan using,idx_msp_pnu,1,,y
+11170,용산구,플라자,off,197.632,195.121,196.377,Seq Scan on,building,242631,,y
+11200,성동구,빌딩,on,451.711,449.991,450.851,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11200,성동구,빌딩,off,278.74,280.814,279.777,Index Scan using,idx_msp_pnu,1,,y
+11200,성동구,타워,on,371.868,371.587,371.727,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11200,성동구,타워,off,210.58,210.595,210.588,Seq Scan on,building,242631,,y
+11200,성동구,상가,on,384.984,385.774,385.379,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11200,성동구,상가,off,205.248,205.17,205.209,Seq Scan on,building,242631,,y
+11200,성동구,플라자,on,0.844,0.813,0.829,Index Scan using,idx_msp_pnu,1,,y
+11200,성동구,플라자,off,195.164,195.116,195.14,Seq Scan on,building,242631,,y
+11215,광진구,빌딩,on,450.961,451.877,451.419,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11215,광진구,빌딩,off,277.661,278.311,277.986,Index Scan using,idx_msp_pnu,1,,y
+11215,광진구,타워,on,379.64,373.066,376.353,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11215,광진구,타워,off,207.606,208.266,207.936,Seq Scan on,building,242631,,y
+11215,광진구,상가,on,383.975,381.581,382.778,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11215,광진구,상가,off,202.982,201.307,202.144,Seq Scan on,building,242631,,y
+11215,광진구,플라자,on,0.86,0.819,0.839,Index Scan using,idx_msp_pnu,1,,y
+11215,광진구,플라자,off,194.063,193.223,193.643,Seq Scan on,building,242631,,y
+11230,동대문구,빌딩,on,451.579,452.614,452.096,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11230,동대문구,빌딩,off,277.663,280.107,278.885,Index Scan using,idx_msp_pnu,1,,y
+11230,동대문구,타워,on,373.917,372.953,373.435,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11230,동대문구,타워,off,209.007,210.589,209.798,Seq Scan on,building,242631,,y
+11230,동대문구,상가,on,384.863,385.177,385.02,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11230,동대문구,상가,off,202.358,203.894,203.126,Seq Scan on,building,242631,,y
+11230,동대문구,플라자,on,0.741,0.722,0.732,Index Scan using,idx_msp_pnu,1,,y
+11230,동대문구,플라자,off,193.49,193.631,193.56,Seq Scan on,building,242631,,y
+11260,중랑구,빌딩,on,450.184,455.056,452.62,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11260,중랑구,빌딩,off,277.457,276.059,276.758,Index Scan using,idx_msp_pnu,1,,y
+11260,중랑구,타워,on,371.847,372.614,372.231,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11260,중랑구,타워,off,210.407,208.927,209.667,Seq Scan on,building,242631,,y
+11260,중랑구,상가,on,384.033,383.681,383.857,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11260,중랑구,상가,off,203.572,203.477,203.524,Seq Scan on,building,242631,,y
+11260,중랑구,플라자,on,0.714,0.719,0.716,Index Scan using,idx_msp_pnu,1,,y
+11260,중랑구,플라자,off,195.89,194.972,195.431,Seq Scan on,building,242631,,y
+11290,성북구,빌딩,on,452.141,454.305,453.223,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11290,성북구,빌딩,off,276.388,277.74,277.064,Index Scan using,idx_msp_pnu,1,,y
+11290,성북구,타워,on,371.078,371.632,371.355,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11290,성북구,타워,off,208.68,208.51,208.595,Seq Scan on,building,242631,,y
+11290,성북구,상가,on,383.888,385.548,384.718,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11290,성북구,상가,off,206.929,204.263,205.596,Seq Scan on,building,242631,,y
+11290,성북구,플라자,on,0.913,0.887,0.9,Index Scan using,idx_msp_pnu,1,,y
+11290,성북구,플라자,off,194.653,196.75,195.702,Seq Scan on,building,242631,,y
+11305,강북구,빌딩,on,449.596,451.656,450.626,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11305,강북구,빌딩,off,277.888,277.482,277.685,Index Scan using,idx_msp_pnu,1,,y
+11305,강북구,타워,on,371.32,371.171,371.245,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11305,강북구,타워,off,209.157,208.692,208.925,Seq Scan on,building,242631,,y
+11305,강북구,상가,on,387.472,387.09,387.281,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11305,강북구,상가,off,203.83,203.939,203.885,Seq Scan on,building,242631,,y
+11305,강북구,플라자,on,0.735,0.724,0.73,Index Scan using,idx_msp_pnu,1,,y
+11305,강북구,플라자,off,196.059,194.312,195.185,Seq Scan on,building,242631,,y
+11320,도봉구,빌딩,on,449.751,448.811,449.281,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11320,도봉구,빌딩,off,275.17,274.519,274.845,Index Scan using,idx_msp_pnu,1,,y
+11320,도봉구,타워,on,371.068,370.436,370.752,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11320,도봉구,타워,off,205.529,205.29,205.409,Seq Scan on,building,242631,,y
+11320,도봉구,상가,on,384.678,384.026,384.352,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11320,도봉구,상가,off,202.731,202.711,202.721,Seq Scan on,building,242631,,y
+11320,도봉구,플라자,on,0.715,0.675,0.695,Index Scan using,idx_msp_pnu,1,,y
+11320,도봉구,플라자,off,193.422,195.13,194.276,Seq Scan on,building,242631,,y
+11350,노원구,빌딩,on,451.549,451.009,451.279,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11350,노원구,빌딩,off,274.964,277.034,275.999,Index Scan using,idx_msp_pnu,1,,y
+11350,노원구,타워,on,370.007,371.084,370.546,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11350,노원구,타워,off,207.47,207.033,207.251,Seq Scan on,building,242631,,y
+11350,노원구,상가,on,384.524,384.338,384.431,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11350,노원구,상가,off,202.57,203.5,203.035,Seq Scan on,building,242631,,y
+11350,노원구,플라자,on,0.845,0.835,0.84,Index Scan using,idx_msp_pnu,1,,y
+11350,노원구,플라자,off,192.089,192.486,192.287,Seq Scan on,building,242631,,y
+11380,은평구,빌딩,on,453.554,452.916,453.235,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11380,은평구,빌딩,off,383.963,374.441,379.202,Index Scan using,idx_msp_pnu,1,,y
+11380,은평구,타워,on,372.354,373.708,373.031,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11380,은평구,타워,off,296.956,257.138,277.047,Seq Scan on,building,242631,,y
+11380,은평구,상가,on,424.114,458.815,441.464,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11380,은평구,상가,off,244.944,252.342,248.643,Seq Scan on,building,242631,,y
+11380,은평구,플라자,on,0.931,0.821,0.876,Index Scan using,idx_msp_pnu,1,,y
+11380,은평구,플라자,off,268.744,250.601,259.673,Seq Scan on,building,242631,,y
+11410,서대문구,빌딩,on,455.305,448.69,451.998,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11410,서대문구,빌딩,off,276.677,274.576,275.627,Index Scan using,idx_msp_pnu,1,,y
+11410,서대문구,타워,on,372.954,371.931,372.442,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11410,서대문구,타워,off,208.398,206.262,207.33,Seq Scan on,building,242631,,y
+11410,서대문구,상가,on,386.186,383.871,385.029,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11410,서대문구,상가,off,201.813,201.888,201.851,Seq Scan on,building,242631,,y
+11410,서대문구,플라자,on,0.724,0.745,0.734,Index Scan using,idx_msp_pnu,1,,y
+11410,서대문구,플라자,off,194.17,192.529,193.349,Seq Scan on,building,242631,,y
+11440,마포구,빌딩,on,462.326,462.11,462.218,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11440,마포구,빌딩,off,289.297,289.233,289.265,Index Scan using,idx_msp_pnu,1,,y
+11440,마포구,타워,on,372.511,374.539,373.525,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11440,마포구,타워,off,210.028,210.01,210.019,Seq Scan on,building,242631,,y
+11440,마포구,상가,on,384.294,387.694,385.994,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11440,마포구,상가,off,205.244,205.285,205.264,Seq Scan on,building,242631,,y
+11440,마포구,플라자,on,0.946,0.939,0.942,Index Scan using,idx_msp_pnu,1,,y
+11440,마포구,플라자,off,199.019,196.53,197.774,Seq Scan on,building,242631,,y
+11470,양천구,빌딩,on,458.779,458.253,458.516,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11470,양천구,빌딩,off,278.538,277.585,278.062,Index Scan using,idx_msp_pnu,1,,y
+11470,양천구,타워,on,378.306,379.893,379.099,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11470,양천구,타워,off,207.146,207.89,207.518,Seq Scan on,building,242631,,y
+11470,양천구,상가,on,391.734,395.211,393.472,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11470,양천구,상가,off,203.512,202.811,203.161,Seq Scan on,building,242631,,y
+11470,양천구,플라자,on,0.787,0.794,0.79,Index Scan using,idx_msp_pnu,1,,y
+11470,양천구,플라자,off,194.893,198.616,196.755,Seq Scan on,building,242631,,y
+11500,강서구,빌딩,on,454.298,452.87,453.584,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11500,강서구,빌딩,off,278.955,279.132,279.043,Index Scan using,idx_msp_pnu,1,,y
+11500,강서구,타워,on,373.255,374.423,373.839,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11500,강서구,타워,off,211.65,210.285,210.968,Seq Scan on,building,242631,,y
+11500,강서구,상가,on,384.116,383.263,383.689,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11500,강서구,상가,off,204.225,203.531,203.878,Seq Scan on,building,242631,,y
+11500,강서구,플라자,on,0.896,0.829,0.863,Index Scan using,idx_msp_pnu,1,,y
+11500,강서구,플라자,off,194.388,194.59,194.489,Seq Scan on,building,242631,,y
+11530,구로구,빌딩,on,451.938,450.957,451.447,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11530,구로구,빌딩,off,275.885,275.464,275.674,Index Scan using,idx_msp_pnu,1,,y
+11530,구로구,타워,on,374.696,373.276,373.986,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11530,구로구,타워,off,209.071,208.157,208.614,Seq Scan on,building,242631,,y
+11530,구로구,상가,on,386.153,384.716,385.435,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11530,구로구,상가,off,202.656,204.01,203.333,Seq Scan on,building,242631,,y
+11530,구로구,플라자,on,0.87,0.896,0.883,Index Scan using,idx_msp_pnu,1,,y
+11530,구로구,플라자,off,194.511,194.034,194.272,Seq Scan on,building,242631,,y
+11545,금천구,빌딩,on,452.089,449.751,450.92,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11545,금천구,빌딩,off,275.431,274.438,274.934,Index Scan using,idx_msp_pnu,1,,y
+11545,금천구,타워,on,373.87,373.865,373.868,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11545,금천구,타워,off,208.825,208.288,208.556,Seq Scan on,building,242631,,y
+11545,금천구,상가,on,385.802,384.76,385.281,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11545,금천구,상가,off,202.952,203.305,203.129,Seq Scan on,building,242631,,y
+11545,금천구,플라자,on,0.679,0.683,0.681,Index Scan using,idx_msp_pnu,1,,y
+11545,금천구,플라자,off,193.52,193.693,193.607,Seq Scan on,building,242631,,y
+11560,영등포구,빌딩,on,450.03,449.826,449.928,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11560,영등포구,빌딩,off,279.273,279.534,279.404,Index Scan using,idx_msp_pnu,1,,y
+11560,영등포구,타워,on,372.673,372.726,372.7,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11560,영등포구,타워,off,208.407,210.097,209.252,Seq Scan on,building,242631,,y
+11560,영등포구,상가,on,383.421,384.688,384.054,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11560,영등포구,상가,off,203.338,203.701,203.519,Seq Scan on,building,242631,,y
+11560,영등포구,플라자,on,0.871,0.842,0.857,Index Scan using,idx_msp_pnu,1,,y
+11560,영등포구,플라자,off,193.868,195.346,194.607,Seq Scan on,building,242631,,y
+11590,동작구,빌딩,on,456.741,454.79,455.765,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11590,동작구,빌딩,off,275.722,274.471,275.096,Index Scan using,idx_msp_pnu,1,,y
+11590,동작구,타워,on,374.954,376.197,375.576,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11590,동작구,타워,off,208.098,206.77,207.434,Seq Scan on,building,242631,,y
+11590,동작구,상가,on,388.197,388.555,388.376,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11590,동작구,상가,off,201.53,203.213,202.371,Seq Scan on,building,242631,,y
+11590,동작구,플라자,on,0.875,0.817,0.846,Index Scan using,idx_msp_pnu,1,,y
+11590,동작구,플라자,off,194.239,193.002,193.62,Seq Scan on,building,242631,,y
+11620,관악구,빌딩,on,449.875,450.63,450.252,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11620,관악구,빌딩,off,278.242,278.534,278.388,Index Scan using,idx_msp_pnu,1,,y
+11620,관악구,타워,on,371.694,372.044,371.869,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11620,관악구,타워,off,208.759,209.83,209.294,Seq Scan on,building,242631,,y
+11620,관악구,상가,on,384.083,383.593,383.838,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11620,관악구,상가,off,205.55,205.115,205.333,Seq Scan on,building,242631,,y
+11620,관악구,플라자,on,0.705,0.707,0.706,Index Scan using,idx_msp_pnu,1,,y
+11620,관악구,플라자,off,196.278,196.424,196.351,Seq Scan on,building,242631,,y
+11650,서초구,빌딩,on,464.741,462.708,463.725,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11650,서초구,빌딩,off,293.238,290.836,292.037,Index Scan using,idx_msp_pnu,1,,y
+11650,서초구,타워,on,373.443,373.28,373.361,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11650,서초구,타워,off,214.313,211.457,212.885,Seq Scan on,building,242631,,y
+11650,서초구,상가,on,384.867,388.154,386.51,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11650,서초구,상가,off,208.249,207.093,207.671,Seq Scan on,building,242631,,y
+11650,서초구,플라자,on,0.977,0.885,0.931,Index Scan using,idx_msp_pnu,1,,y
+11650,서초구,플라자,off,197.752,198.678,198.215,Seq Scan on,building,242631,,y
+11680,강남구,빌딩,on,477.443,475.763,476.603,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11680,강남구,빌딩,off,305.481,304.389,304.935,Index Scan using,idx_msp_pnu,1,,y
+11680,강남구,타워,on,378.365,377.821,378.093,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11680,강남구,타워,off,216.342,216.456,216.399,Seq Scan on,building,242631,,y
+11680,강남구,상가,on,388.005,387.027,387.516,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11680,강남구,상가,off,207.805,208.981,208.393,Seq Scan on,building,242631,,y
+11680,강남구,플라자,on,1.478,1.361,1.419,Index Scan using,idx_msp_pnu,1,,y
+11680,강남구,플라자,off,198.202,199.261,198.731,Seq Scan on,building,242631,,y
+11710,송파구,빌딩,on,457.19,455.509,456.35,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11710,송파구,빌딩,off,284.176,283.119,283.648,Index Scan using,idx_msp_pnu,1,,y
+11710,송파구,타워,on,373.484,373.549,373.516,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11710,송파구,타워,off,211.831,210.374,211.102,Seq Scan on,building,242631,,y
+11710,송파구,상가,on,385.663,385.466,385.565,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11710,송파구,상가,off,204.74,207.402,206.071,Seq Scan on,building,242631,,y
+11710,송파구,플라자,on,1.447,1.395,1.421,Index Scan using,idx_msp_pnu,1,,y
+11710,송파구,플라자,off,196.475,196.368,196.421,Seq Scan on,building,242631,,y
+11740,강동구,빌딩,on,454.674,454.502,454.588,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11740,강동구,빌딩,off,281.627,280.344,280.986,Index Scan using,idx_msp_pnu,1,,y
+11740,강동구,타워,on,374.344,373.418,373.881,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11740,강동구,타워,off,211.954,210.574,211.264,Seq Scan on,building,242631,,y
+11740,강동구,상가,on,386.728,386.886,386.807,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+11740,강동구,상가,off,205.13,206.006,205.568,Seq Scan on,building,242631,,y
+11740,강동구,플라자,on,0.876,0.872,0.874,Index Scan using,idx_msp_pnu,1,,y
+11740,강동구,플라자,off,194.007,195.419,194.713,Seq Scan on,building,242631,,y
+30110,동구(대전),빌딩,on,446.413,448.617,447.515,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+30110,동구(대전),빌딩,off,276.894,283.432,280.163,Index Scan using,idx_msp_pnu,1,,y
+30110,동구(대전),타워,on,369.835,370.712,370.274,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+30110,동구(대전),타워,off,207.046,207.997,207.522,Seq Scan on,building,242631,,y
+30110,동구(대전),상가,on,384.031,384.97,384.5,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+30110,동구(대전),상가,off,209.387,204.051,206.719,Seq Scan on,building,242631,,y
+30110,동구(대전),플라자,on,0.697,0.697,0.697,Index Scan using,idx_msp_pnu,1,,y
+30110,동구(대전),플라자,off,194.541,196.642,195.591,Seq Scan on,building,242631,,y
+30140,중구(대전),빌딩,on,451.764,449.016,450.39,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+30140,중구(대전),빌딩,off,278.621,278.654,278.637,Index Scan using,idx_msp_pnu,1,,y
+30140,중구(대전),타워,on,369.784,370.732,370.258,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+30140,중구(대전),타워,off,211.814,210.852,211.333,Seq Scan on,building,242631,,y
+30140,중구(대전),상가,on,383.282,386.356,384.819,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+30140,중구(대전),상가,off,206.921,213.68,210.3,Seq Scan on,building,242631,,y
+30140,중구(대전),플라자,on,0.698,0.729,0.714,Index Scan using,idx_msp_pnu,1,,y
+30140,중구(대전),플라자,off,195.025,197.889,196.457,Seq Scan on,building,242631,,y
+30170,서구(대전),빌딩,on,449.963,450.506,450.235,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+30170,서구(대전),빌딩,off,280.711,282.022,281.366,Index Scan using,idx_msp_pnu,1,,y
+30170,서구(대전),타워,on,372.726,372.586,372.656,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+30170,서구(대전),타워,off,211.653,211.572,211.613,Seq Scan on,building,242631,,y
+30170,서구(대전),상가,on,384.893,385.363,385.128,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+30170,서구(대전),상가,off,208.376,208.908,208.642,Seq Scan on,building,242631,,y
+30170,서구(대전),플라자,on,0.693,0.694,0.694,Index Scan using,idx_msp_pnu,1,,y
+30170,서구(대전),플라자,off,197.953,196.619,197.286,Seq Scan on,building,242631,,y
+30200,유성구,빌딩,on,448.703,447.298,448.0,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+30200,유성구,빌딩,off,279.542,280.99,280.266,Index Scan using,idx_msp_pnu,1,,y
+30200,유성구,타워,on,371.199,370.694,370.947,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+30200,유성구,타워,off,210.825,212.17,211.498,Seq Scan on,building,242631,,y
+30200,유성구,상가,on,383.115,383.338,383.226,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+30200,유성구,상가,off,207.318,206.999,207.159,Seq Scan on,building,242631,,y
+30200,유성구,플라자,on,0.784,0.783,0.784,Index Scan using,idx_msp_pnu,1,,y
+30200,유성구,플라자,off,195.108,198.064,196.586,Seq Scan on,building,242631,,y
+30230,대덕구,빌딩,on,445.511,447.433,446.472,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+30230,대덕구,빌딩,off,277.317,277.294,277.305,Index Scan using,idx_msp_pnu,1,,y
+30230,대덕구,타워,on,372.033,369.507,370.77,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+30230,대덕구,타워,off,210.048,211.039,210.543,Seq Scan on,building,242631,,y
+30230,대덕구,상가,on,382.666,382.822,382.744,Bitmap Index Scan on,idx_msp_road_key,188442,,y
+30230,대덕구,상가,off,205.237,205.214,205.226,Seq Scan on,building,242631,,y
+30230,대덕구,플라자,on,0.747,0.649,0.698,Index Scan using,idx_msp_pnu,1,,y
+30230,대덕구,플라자,off,196.05,196.254,196.152,Seq Scan on,building,242631,,y

@@ -1,0 +1,123 @@
+                                                                                                       QUERY PLAN                                                                                                        
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Incremental Sort  (cost=7342.97..7658.10 rows=25 width=253) (actual time=52.328..52.348 rows=25 loops=1)
+   Sort Key: e.jibun_hit DESC, ((e.nm_key = '빌딩'::text)) DESC NULLS LAST, ((e.nm_key ~~ '빌딩%'::text)) DESC NULLS LAST, ((e.bld_nm IS NULL)), (length(e.bld_nm)), e.road_addr, e.bld_id
+   Presorted Key: e.jibun_hit
+   Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 30kB  Peak Memory: 30kB
+   Buffers: shared hit=7567
+   CTE addr
+     ->  Limit  (cost=0.29..618.30 rows=2 width=103) (actual time=7.631..7.632 rows=0 loops=1)
+           Buffers: shared hit=353
+           ->  Index Scan using idx_msp_sigungu on mv_search_parcel pc_1  (cost=0.29..618.30 rows=2 width=103) (actual time=7.630..7.631 rows=0 loops=1)
+                 Index Cond: (sigungu_code = '11680'::character(5))
+                 Filter: ((road_addr_key ~~ '%빌딩%'::text) OR (jibun_addr_key ~~ '%빌딩%'::text))
+                 Rows Removed by Filter: 12138
+                 Buffers: shared hit=353
+   CTE nm
+     ->  Limit  (cost=883.79..6344.03 rows=41 width=174) (actual time=8.485..15.416 rows=1986 loops=1)
+           Buffers: shared hit=824
+           ->  Hash Join  (cost=883.79..6344.03 rows=41 width=174) (actual time=8.484..15.123 rows=1986 loops=1)
+                 Hash Cond: (b_1.pnu = pc_2.pnu)
+                 Buffers: shared hit=824
+                 ->  Bitmap Heap Scan on building b_1  (cost=175.88..5634.41 rows=653 width=91) (actual time=1.068..6.537 rows=1986 loops=1)
+                       Recheck Cond: ((pnu >= '11680              '::character(19)) AND (pnu <= '1168099999999999999'::character(19)))
+                       Filter: (nm_key ~~ '%빌딩%'::text)
+                       Rows Removed by Filter: 12237
+                       Heap Blocks: exact=406
+                       Buffers: shared hit=471
+                       ->  Bitmap Index Scan on idx_building_pnu  (cost=0.00..175.72 rows=12030 width=0) (actual time=1.001..1.002 rows=14223 loops=1)
+                             Index Cond: ((pnu >= '11680              '::character(19)) AND (pnu <= '1168099999999999999'::character(19)))
+                             Buffers: shared hit=65
+                 ->  Hash  (cost=558.57..558.57 rows=11947 width=103) (actual time=7.396..7.397 rows=12138 loops=1)
+                       Buckets: 16384  Batches: 1  Memory Usage: 1742kB
+                       Buffers: shared hit=353
+                       ->  Index Scan using idx_msp_sigungu on mv_search_parcel pc_2  (cost=0.29..558.57 rows=11947 width=103) (actual time=0.008..3.760 rows=12138 loops=1)
+                             Index Cond: (sigungu_code = '11680'::character(5))
+                             Buffers: shared hit=353
+   CTE gate
+     ->  Result  (cost=0.99..1.00 rows=1 width=1) (actual time=24.888..24.892 rows=1 loops=1)
+           Buffers: shared hit=1177
+           InitPlan 3
+             ->  Aggregate  (cost=0.04..0.06 rows=1 width=8) (actual time=7.634..7.635 rows=1 loops=1)
+                   Buffers: shared hit=353
+                   ->  CTE Scan on addr  (cost=0.00..0.04 rows=2 width=0) (actual time=7.631..7.631 rows=0 loops=1)
+                         Buffers: shared hit=353
+           InitPlan 4
+             ->  Aggregate  (cost=0.92..0.93 rows=1 width=8) (actual time=17.250..17.251 rows=1 loops=1)
+                   Buffers: shared hit=824
+                   ->  CTE Scan on nm  (cost=0.00..0.82 rows=41 width=0) (actual time=8.487..16.990 rows=1986 loops=1)
+                         Buffers: shared hit=824
+   ->  Nested Loop  (cost=64.87..693.96 rows=25 width=253) (actual time=50.801..52.278 rows=25 loops=1)
+         Buffers: shared hit=7567
+         ->  Nested Loop  (cost=43.59..120.58 rows=25 width=290) (actual time=50.729..51.244 rows=25 loops=1)
+               Join Filter: (pc.pnu = e.pnu)
+               Buffers: shared hit=7336
+               ->  Nested Loop  (cost=43.17..109.18 rows=25 width=269) (actual time=50.695..50.949 rows=25 loops=1)
+                     Buffers: shared hit=7236
+                     ->  Limit  (cost=42.74..42.80 rows=25 width=256) (actual time=50.663..50.677 rows=25 loops=1)
+                           Buffers: shared hit=7136
+                           ->  Sort  (cost=42.74..42.85 rows=46 width=256) (actual time=50.661..50.671 rows=25 loops=1)
+                                 Sort Key: e.jibun_hit DESC, ((e.nm_key = '빌딩'::text)) DESC NULLS LAST, ((e.nm_key ~~ '빌딩%'::text)) DESC NULLS LAST, ((e.bld_nm IS NULL)), (length(e.bld_nm)), e.road_addr, e.bld_id
+                                 Sort Method: top-N heapsort  Memory: 35kB
+                                 Buffers: shared hit=7136
+                                 ->  Subquery Scan on e  (cost=39.82..41.47 rows=46 width=256) (actual time=45.439..47.448 rows=1986 loops=1)
+                                       Buffers: shared hit=7136
+                                       ->  WindowAgg  (cost=39.82..40.66 rows=46 width=249) (actual time=45.436..46.690 rows=1986 loops=1)
+                                             Buffers: shared hit=7136
+                                             InitPlan 7
+                                               ->  Result  (cost=0.00..0.01 rows=1 width=32) (actual time=0.001..0.001 rows=1 loops=1)
+                                             ->  Nested Loop Semi Join  (cost=12.05..39.85 rows=46 width=240) (actual time=28.141..43.874 rows=1986 loops=1)
+                                                   Buffers: shared hit=7136
+                                                   ->  HashAggregate  (cost=11.62..12.08 rows=46 width=240) (actual time=28.109..28.863 rows=1986 loops=1)
+                                                         Group Key: b.bld_id, b.pnu, b.nm_key, b.display_nm, a.road_addr, a.jibun_addr_key
+                                                         Batches: 1  Memory Usage: 777kB
+                                                         Buffers: shared hit=1177
+                                                         ->  Append  (cost=0.44..10.93 rows=46 width=240) (actual time=24.899..25.926 rows=1986 loops=1)
+                                                               Buffers: shared hit=1177
+                                                               ->  Result  (cost=0.44..9.86 rows=5 width=155) (actual time=24.894..24.896 rows=0 loops=1)
+                                                                     One-Time Filter: (NOT (InitPlan 8).col1)
+                                                                     Buffers: shared hit=1177
+                                                                     InitPlan 8
+                                                                       ->  CTE Scan on gate g  (cost=0.00..0.02 rows=1 width=1) (actual time=24.890..24.891 rows=1 loops=1)
+                                                                             Buffers: shared hit=1177
+                                                                     ->  Nested Loop  (cost=0.42..9.84 rows=5 width=155) (actual time=0.001..0.002 rows=0 loops=1)
+                                                                           ->  CTE Scan on addr a  (cost=0.00..0.04 rows=2 width=144) (actual time=0.001..0.001 rows=0 loops=1)
+                                                                           ->  Index Scan using idx_building_pnu on building b  (cost=0.42..4.87 rows=3 width=91) (never executed)
+                                                                                 Index Cond: (pnu = a.pnu)
+                                                               ->  Result  (cost=0.02..0.84 rows=41 width=240) (actual time=0.004..0.773 rows=1986 loops=1)
+                                                                     One-Time Filter: (NOT (InitPlan 9).col1)
+                                                                     InitPlan 9
+                                                                       ->  CTE Scan on gate g_1  (cost=0.00..0.02 rows=1 width=1) (actual time=0.000..0.001 rows=1 loops=1)
+                                                                     ->  CTE Scan on nm n  (cost=0.02..0.84 rows=41 width=240) (actual time=0.001..0.309 rows=1986 loops=1)
+                                                   ->  Index Only Scan using idx_bf_bld on building_floor f  (cost=0.43..1.87 rows=17 width=32) (actual time=0.007..0.007 rows=1 loops=1986)
+                                                         Index Cond: ((bld_id = b.bld_id) AND (floor_no IS NOT NULL))
+                                                         Heap Fetches: 0
+                                                         Buffers: shared hit=5959
+                     ->  Index Scan using parcel_pkey on parcel p  (cost=0.43..2.65 rows=1 width=52) (actual time=0.009..0.009 rows=1 loops=25)
+                           Index Cond: (pnu = e.pnu)
+                           Buffers: shared hit=100
+               ->  Index Scan using idx_msp_pnu on mv_search_parcel pc  (cost=0.42..0.44 rows=1 width=61) (actual time=0.010..0.010 rows=1 loops=25)
+                     Index Cond: (pnu = p.pnu)
+                     Buffers: shared hit=100
+         ->  Aggregate  (cost=21.29..21.30 rows=1 width=9) (actual time=0.028..0.028 rows=1 loops=25)
+               Buffers: shared hit=155
+               ->  HashAggregate  (cost=20.65..20.82 rows=17 width=222) (actual time=0.022..0.024 rows=9 loops=25)
+                     Group Key: f_1.pnu, f_1.floor_no
+                     Batches: 1  Memory Usage: 24kB
+                     Buffers: shared hit=155
+                     ->  Index Scan using idx_bf_bld on building_floor f_1  (cost=0.43..20.57 rows=17 width=54) (actual time=0.009..0.014 rows=11 loops=25)
+                           Index Cond: ((bld_id = e.bld_id) AND (floor_no IS NOT NULL))
+                           Buffers: shared hit=155
+         SubPlan 6
+           ->  Aggregate  (cost=1.58..1.59 rows=1 width=4) (actual time=0.009..0.009 rows=1 loops=25)
+                 Buffers: shared hit=76
+                 ->  Index Only Scan using idx_building_pnu on building b2  (cost=0.42..1.57 rows=3 width=0) (actual time=0.007..0.008 rows=1 loops=25)
+                       Index Cond: (pnu = e.pnu)
+                       Heap Fetches: 0
+                       Buffers: shared hit=76
+ Planning:
+   Buffers: shared hit=42
+ Planning Time: 4.258 ms
+ Execution Time: 52.603 ms
+(119�� ��)
+

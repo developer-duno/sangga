@@ -1,0 +1,82 @@
+                                                                                    QUERY PLAN                                                                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Result  (cost=13925.75..13925.78 rows=1 width=5) (actual time=43.773..43.785 rows=1 loops=1)
+   Buffers: shared hit=2354
+   CTE pat
+     ->  Result  (cost=0.00..0.01 rows=1 width=64) (actual time=0.001..0.001 rows=1 loops=1)
+   InitPlan 2
+     ->  Aggregate  (cost=618.35..618.36 rows=1 width=8) (actual time=7.643..7.645 rows=1 loops=1)
+           Buffers: shared hit=353
+           ->  Nested Loop  (cost=0.29..618.34 rows=2 width=0) (actual time=7.639..7.641 rows=0 loops=1)
+                 Buffers: shared hit=353
+                 ->  CTE Scan on pat  (cost=0.00..0.02 rows=1 width=0) (actual time=0.002..0.003 rows=1 loops=1)
+                 ->  Index Scan using idx_msp_sigungu on mv_search_parcel pc  (cost=0.29..618.30 rows=2 width=0) (actual time=7.635..7.635 rows=0 loops=1)
+                       Index Cond: (sigungu_code = '11680'::character(5))
+                       Filter: ((road_addr_key ~~ '%빌딩%'::text) OR (jibun_addr_key ~~ '%빌딩%'::text))
+                       Rows Removed by Filter: 12138
+                       Buffers: shared hit=353
+   InitPlan 3
+     ->  Aggregate  (cost=6344.50..6344.51 rows=1 width=8) (actual time=13.948..13.953 rows=1 loops=1)
+           Buffers: shared hit=824
+           ->  Nested Loop  (cost=883.77..6344.40 rows=41 width=0) (actual time=7.198..13.729 rows=1986 loops=1)
+                 Buffers: shared hit=824
+                 ->  CTE Scan on pat pat_1  (cost=0.00..0.02 rows=1 width=0) (actual time=0.001..0.002 rows=1 loops=1)
+                 ->  Hash Join  (cost=883.77..6343.97 rows=41 width=0) (actual time=7.194..13.424 rows=1986 loops=1)
+                       Hash Cond: (b.pnu = pc_1.pnu)
+                       Buffers: shared hit=824
+                       ->  Bitmap Heap Scan on building b  (cost=175.86..5634.35 rows=653 width=20) (actual time=1.142..6.553 rows=1986 loops=1)
+                             Recheck Cond: ((pnu >= '11680              '::character(19)) AND (pnu < '11681              '::character(19)))
+                             Filter: (nm_key ~~ '%빌딩%'::text)
+                             Rows Removed by Filter: 12237
+                             Heap Blocks: exact=406
+                             Buffers: shared hit=471
+                             ->  Bitmap Index Scan on idx_building_pnu  (cost=0.00..175.70 rows=12028 width=0) (actual time=1.074..1.075 rows=14223 loops=1)
+                                   Index Cond: ((pnu >= '11680              '::character(19)) AND (pnu < '11681              '::character(19)))
+                                   Buffers: shared hit=65
+                       ->  Hash  (cost=558.57..558.57 rows=11947 width=20) (actual time=6.032..6.033 rows=12138 loops=1)
+                             Buckets: 16384  Batches: 1  Memory Usage: 745kB
+                             Buffers: shared hit=353
+                             ->  Index Scan using idx_msp_sigungu on mv_search_parcel pc_1  (cost=0.29..558.57 rows=11947 width=20) (actual time=0.010..3.150 rows=12138 loops=1)
+                                   Index Cond: (sigungu_code = '11680'::character(5))
+                                   Buffers: shared hit=353
+   InitPlan 4
+     ->  Aggregate  (cost=618.35..618.36 rows=1 width=8) (actual time=7.308..7.310 rows=1 loops=1)
+           Buffers: shared hit=353
+           ->  Nested Loop  (cost=0.29..618.34 rows=2 width=0) (actual time=7.306..7.307 rows=0 loops=1)
+                 Buffers: shared hit=353
+                 ->  CTE Scan on pat pat_2  (cost=0.00..0.02 rows=1 width=0) (actual time=0.001..0.002 rows=1 loops=1)
+                 ->  Index Scan using idx_msp_sigungu on mv_search_parcel pc_2  (cost=0.29..618.30 rows=2 width=0) (actual time=7.303..7.304 rows=0 loops=1)
+                       Index Cond: (sigungu_code = '11680'::character(5))
+                       Filter: ((road_addr_key ~~ '%빌딩%'::text) OR (jibun_addr_key ~~ '%빌딩%'::text))
+                       Rows Removed by Filter: 12138
+                       Buffers: shared hit=353
+   InitPlan 5
+     ->  Aggregate  (cost=6344.50..6344.51 rows=1 width=8) (actual time=14.863..14.865 rows=1 loops=1)
+           Buffers: shared hit=824
+           ->  Nested Loop  (cost=883.77..6344.40 rows=41 width=0) (actual time=7.993..14.618 rows=1986 loops=1)
+                 Buffers: shared hit=824
+                 ->  CTE Scan on pat pat_3  (cost=0.00..0.02 rows=1 width=0) (actual time=0.001..0.002 rows=1 loops=1)
+                 ->  Hash Join  (cost=883.77..6343.97 rows=41 width=0) (actual time=7.990..14.296 rows=1986 loops=1)
+                       Hash Cond: (b_1.pnu = pc_3.pnu)
+                       Buffers: shared hit=824
+                       ->  Bitmap Heap Scan on building b_1  (cost=175.86..5634.35 rows=653 width=20) (actual time=1.065..6.503 rows=1986 loops=1)
+                             Recheck Cond: ((pnu >= '11680              '::character(19)) AND (pnu < '11681              '::character(19)))
+                             Filter: (nm_key ~~ '%빌딩%'::text)
+                             Rows Removed by Filter: 12237
+                             Heap Blocks: exact=406
+                             Buffers: shared hit=471
+                             ->  Bitmap Index Scan on idx_building_pnu  (cost=0.00..175.70 rows=12028 width=0) (actual time=1.001..1.001 rows=14223 loops=1)
+                                   Index Cond: ((pnu >= '11680              '::character(19)) AND (pnu < '11681              '::character(19)))
+                                   Buffers: shared hit=65
+                       ->  Hash  (cost=558.57..558.57 rows=11947 width=20) (actual time=6.797..6.798 rows=12138 loops=1)
+                             Buckets: 16384  Batches: 1  Memory Usage: 745kB
+                             Buffers: shared hit=353
+                             ->  Index Scan using idx_msp_sigungu on mv_search_parcel pc_3  (cost=0.29..558.57 rows=11947 width=20) (actual time=0.013..3.211 rows=12138 loops=1)
+                                   Index Cond: (sigungu_code = '11680'::character(5))
+                                   Buffers: shared hit=353
+ Planning:
+   Buffers: shared hit=38
+ Planning Time: 1.850 ms
+ Execution Time: 43.895 ms
+(78�� ��)
+

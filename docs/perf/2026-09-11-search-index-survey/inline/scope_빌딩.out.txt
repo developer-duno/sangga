@@ -1,0 +1,80 @@
+                                                                                       QUERY PLAN                                                                                       
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Result  (cost=18945.27..18945.29 rows=1 width=5) (actual time=152.828..163.472 rows=1 loops=1)
+   Buffers: shared hit=12680
+   CTE pat
+     ->  Result  (cost=0.00..0.01 rows=1 width=64) (actual time=0.001..0.001 rows=1 loops=1)
+   InitPlan 2
+     ->  Aggregate  (cost=618.35..618.36 rows=1 width=8) (actual time=7.565..7.567 rows=1 loops=1)
+           Buffers: shared hit=353
+           ->  Nested Loop  (cost=0.29..618.34 rows=2 width=0) (actual time=7.563..7.564 rows=0 loops=1)
+                 Buffers: shared hit=353
+                 ->  CTE Scan on pat  (cost=0.00..0.02 rows=1 width=0) (actual time=0.002..0.003 rows=1 loops=1)
+                 ->  Index Scan using idx_msp_sigungu on mv_search_parcel pc  (cost=0.29..618.30 rows=2 width=0) (actual time=7.559..7.559 rows=0 loops=1)
+                       Index Cond: (sigungu_code = '11680'::character(5))
+                       Filter: ((road_addr_key ~~ '%빌딩%'::text) OR (jibun_addr_key ~~ '%빌딩%'::text))
+                       Rows Removed by Filter: 12138
+                       Buffers: shared hit=353
+   InitPlan 3
+     ->  Aggregate  (cost=8854.26..8854.27 rows=1 width=8) (actual time=67.537..67.641 rows=1 loops=1)
+           Buffers: shared hit=5987
+           ->  Nested Loop  (cost=1707.91..8852.18 rows=835 width=0) (actual time=9.187..67.320 rows=1986 loops=1)
+                 Buffers: shared hit=5987
+                 ->  CTE Scan on pat pat_1  (cost=0.00..0.02 rows=1 width=0) (actual time=0.001..0.002 rows=1 loops=1)
+                 ->  Gather  (cost=1707.91..8843.81 rows=835 width=0) (actual time=9.185..66.888 rows=1986 loops=1)
+                       Workers Planned: 1
+                       Workers Launched: 1
+                       Buffers: shared hit=5987
+                       ->  Hash Join  (cost=707.91..7760.31 rows=491 width=0) (actual time=9.593..61.383 rows=993 loops=2)
+                             Hash Cond: (b.pnu = pc_1.pnu)
+                             Buffers: shared hit=5987
+                             ->  Parallel Seq Scan on building b  (cost=0.00..7032.05 rows=7752 width=20) (actual time=0.040..49.627 rows=5236 loops=2)
+                                   Filter: (nm_key ~~ '%빌딩%'::text)
+                                   Rows Removed by Filter: 116080
+                                   Buffers: shared hit=5248
+                             ->  Hash  (cost=558.57..558.57 rows=11947 width=20) (actual time=9.403..9.404 rows=12138 loops=2)
+                                   Buckets: 16384  Batches: 1  Memory Usage: 745kB
+                                   Buffers: shared hit=707
+                                   ->  Index Scan using idx_msp_sigungu on mv_search_parcel pc_1  (cost=0.29..558.57 rows=11947 width=20) (actual time=0.028..4.776 rows=12138 loops=2)
+                                         Index Cond: (sigungu_code = '11680'::character(5))
+                                         Buffers: shared hit=707
+   InitPlan 4
+     ->  Aggregate  (cost=618.35..618.36 rows=1 width=8) (actual time=9.717..9.719 rows=1 loops=1)
+           Buffers: shared hit=353
+           ->  Nested Loop  (cost=0.29..618.34 rows=2 width=0) (actual time=9.713..9.714 rows=0 loops=1)
+                 Buffers: shared hit=353
+                 ->  CTE Scan on pat pat_2  (cost=0.00..0.02 rows=1 width=0) (actual time=0.001..0.003 rows=1 loops=1)
+                 ->  Index Scan using idx_msp_sigungu on mv_search_parcel pc_2  (cost=0.29..618.30 rows=2 width=0) (actual time=9.708..9.708 rows=0 loops=1)
+                       Index Cond: (sigungu_code = '11680'::character(5))
+                       Filter: ((road_addr_key ~~ '%빌딩%'::text) OR (jibun_addr_key ~~ '%빌딩%'::text))
+                       Rows Removed by Filter: 12138
+                       Buffers: shared hit=353
+   InitPlan 5
+     ->  Aggregate  (cost=8854.26..8854.27 rows=1 width=8) (actual time=67.997..78.531 rows=1 loops=1)
+           Buffers: shared hit=5987
+           ->  Nested Loop  (cost=1707.91..8852.18 rows=835 width=0) (actual time=9.673..78.187 rows=1986 loops=1)
+                 Buffers: shared hit=5987
+                 ->  CTE Scan on pat pat_3  (cost=0.00..0.02 rows=1 width=0) (actual time=0.001..0.002 rows=1 loops=1)
+                 ->  Gather  (cost=1707.91..8843.81 rows=835 width=0) (actual time=9.670..77.753 rows=1986 loops=1)
+                       Workers Planned: 1
+                       Workers Launched: 1
+                       Buffers: shared hit=5987
+                       ->  Hash Join  (cost=707.91..7760.31 rows=491 width=0) (actual time=9.706..60.597 rows=993 loops=2)
+                             Hash Cond: (b_1.pnu = pc_3.pnu)
+                             Buffers: shared hit=5987
+                             ->  Parallel Seq Scan on building b_1  (cost=0.00..7032.05 rows=7752 width=20) (actual time=0.019..48.723 rows=5236 loops=2)
+                                   Filter: (nm_key ~~ '%빌딩%'::text)
+                                   Rows Removed by Filter: 116080
+                                   Buffers: shared hit=5248
+                             ->  Hash  (cost=558.57..558.57 rows=11947 width=20) (actual time=9.511..9.512 rows=12138 loops=2)
+                                   Buckets: 16384  Batches: 1  Memory Usage: 745kB
+                                   Buffers: shared hit=707
+                                   ->  Index Scan using idx_msp_sigungu on mv_search_parcel pc_3  (cost=0.29..558.57 rows=11947 width=20) (actual time=0.036..4.783 rows=12138 loops=2)
+                                         Index Cond: (sigungu_code = '11680'::character(5))
+                                         Buffers: shared hit=707
+ Planning:
+   Buffers: shared hit=38
+ Planning Time: 1.648 ms
+ Execution Time: 163.747 ms
+(76�� ��)
+

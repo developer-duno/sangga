@@ -1,0 +1,74 @@
+                                                                                 QUERY PLAN                                                                                  
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Result  (cost=40118.42..40118.44 rows=1 width=5) (actual time=365.921..377.605 rows=1 loops=1)
+   Buffers: shared hit=83952
+   InitPlan 1
+     ->  Finalize Aggregate  (cost=7974.89..7974.90 rows=1 width=8) (actual time=75.903..76.023 rows=1 loops=1)
+           Buffers: shared hit=5312
+           ->  Gather  (cost=7974.78..7974.89 rows=1 width=8) (actual time=75.725..76.016 rows=2 loops=1)
+                 Workers Planned: 1
+                 Workers Launched: 1
+                 Buffers: shared hit=5312
+                 ->  Partial Aggregate  (cost=6974.78..6974.79 rows=1 width=8) (actual time=71.119..71.121 rows=1 loops=2)
+                       Buffers: shared hit=5312
+                       ->  Parallel Seq Scan on mv_search_parcel pc  (cost=0.00..6974.72 rows=22 width=0) (actual time=71.116..71.117 rows=0 loops=2)
+                             Filter: ((road_addr_key ~~ '%빌딩%'::text) OR (jibun_addr_key ~~ '%빌딩%'::text))
+                             Rows Removed by Filter: 94221
+                             Buffers: shared hit=5312
+   InitPlan 2
+     ->  Finalize Aggregate  (cost=12084.30..12084.31 rows=1 width=8) (actual time=104.517..104.591 rows=1 loops=1)
+           Buffers: shared hit=36664
+           ->  Gather  (cost=12084.19..12084.30 rows=1 width=8) (actual time=104.358..104.584 rows=2 loops=1)
+                 Workers Planned: 1
+                 Workers Launched: 1
+                 Buffers: shared hit=36664
+                 ->  Partial Aggregate  (cost=11084.19..11084.20 rows=1 width=8) (actual time=95.158..95.160 rows=1 loops=2)
+                       Buffers: shared hit=36664
+                       ->  Nested Loop  (cost=0.42..11064.81 rows=7752 width=0) (actual time=0.068..94.185 rows=5236 loops=2)
+                             Buffers: shared hit=36664
+                             ->  Parallel Seq Scan on building b  (cost=0.00..7032.05 rows=7752 width=20) (actual time=0.018..54.130 rows=5236 loops=2)
+                                   Filter: (nm_key ~~ '%빌딩%'::text)
+                                   Rows Removed by Filter: 116080
+                                   Buffers: shared hit=5248
+                             ->  Index Only Scan using idx_msp_pnu on mv_search_parcel pc_1  (cost=0.42..0.52 rows=1 width=20) (actual time=0.007..0.007 rows=1 loops=10471)
+                                   Index Cond: (pnu = b.pnu)
+                                   Heap Fetches: 0
+                                   Buffers: shared hit=31416
+   InitPlan 3
+     ->  Finalize Aggregate  (cost=7974.89..7974.90 rows=1 width=8) (actual time=81.241..81.314 rows=1 loops=1)
+           Buffers: shared hit=5312
+           ->  Gather  (cost=7974.78..7974.89 rows=1 width=8) (actual time=81.070..81.306 rows=2 loops=1)
+                 Workers Planned: 1
+                 Workers Launched: 1
+                 Buffers: shared hit=5312
+                 ->  Partial Aggregate  (cost=6974.78..6974.79 rows=1 width=8) (actual time=71.737..71.739 rows=1 loops=2)
+                       Buffers: shared hit=5312
+                       ->  Parallel Seq Scan on mv_search_parcel pc_2  (cost=0.00..6974.72 rows=22 width=0) (actual time=71.734..71.734 rows=0 loops=2)
+                             Filter: ((road_addr_key ~~ '%빌딩%'::text) OR (jibun_addr_key ~~ '%빌딩%'::text))
+                             Rows Removed by Filter: 94221
+                             Buffers: shared hit=5312
+   InitPlan 4
+     ->  Finalize Aggregate  (cost=12084.30..12084.31 rows=1 width=8) (actual time=104.248..115.665 rows=1 loops=1)
+           Buffers: shared hit=36664
+           ->  Gather  (cost=12084.19..12084.30 rows=1 width=8) (actual time=104.075..115.658 rows=2 loops=1)
+                 Workers Planned: 1
+                 Workers Launched: 1
+                 Buffers: shared hit=36664
+                 ->  Partial Aggregate  (cost=11084.19..11084.20 rows=1 width=8) (actual time=94.943..94.944 rows=1 loops=2)
+                       Buffers: shared hit=36664
+                       ->  Nested Loop  (cost=0.42..11064.81 rows=7752 width=0) (actual time=0.076..93.996 rows=5236 loops=2)
+                             Buffers: shared hit=36664
+                             ->  Parallel Seq Scan on building b_1  (cost=0.00..7032.05 rows=7752 width=20) (actual time=0.019..53.234 rows=5236 loops=2)
+                                   Filter: (nm_key ~~ '%빌딩%'::text)
+                                   Rows Removed by Filter: 116080
+                                   Buffers: shared hit=5248
+                             ->  Index Only Scan using idx_msp_pnu on mv_search_parcel pc_3  (cost=0.42..0.52 rows=1 width=20) (actual time=0.007..0.007 rows=1 loops=10471)
+                                   Index Cond: (pnu = b_1.pnu)
+                                   Heap Fetches: 0
+                                   Buffers: shared hit=31416
+ Planning:
+   Buffers: shared hit=38
+ Planning Time: 2.694 ms
+ Execution Time: 377.710 ms
+(70�� ��)
+

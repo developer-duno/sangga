@@ -1,0 +1,13 @@
+sigungu_code,sigungu_nm,q,mode,run2_ms,run3_ms,median_ms,top_type,top_index,top_rows,rows_removed
+11680,강남구,빌딩,on,899.661,895.683,897.672,Bitmap Index Scan on,idx_msp_road_key,188442,
+11680,강남구,카페,on,762.484,762.184,762.334,Bitmap Index Scan on,idx_msp_road_key,188442,
+11680,강남구,빌딩,off,549.425,548.202,548.813,Index Scan using,idx_msp_pnu,1,
+11680,강남구,카페,off,396.5,399.114,397.807,Seq Scan on,building,242631,
+11140,중구(서울),빌딩,on,894.657,896.894,895.775,Bitmap Index Scan on,idx_msp_road_key,188442,
+11140,중구(서울),카페,on,760.815,764.813,762.814,Bitmap Index Scan on,idx_msp_road_key,188442,
+11140,중구(서울),빌딩,off,541.897,543.844,542.87,Index Scan using,idx_msp_pnu,1,
+11140,중구(서울),카페,off,392.851,393.163,393.007,Seq Scan on,building,242631,
+30110,동구(대전),빌딩,on,896.002,894.838,895.42,Bitmap Index Scan on,idx_msp_road_key,188442,
+30110,동구(대전),카페,on,760.439,763.613,762.026,Bitmap Index Scan on,idx_msp_road_key,188442,
+30110,동구(대전),빌딩,off,546.387,547.582,546.985,Index Scan using,idx_msp_pnu,1,
+30110,동구(대전),카페,off,394.902,391.564,393.233,Seq Scan on,building,242631,

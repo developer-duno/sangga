@@ -1,0 +1,98 @@
+                                                                           QUERY PLAN                                                                           
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Result  (cost=7023.56..7023.59 rows=1 width=5) (actual time=892.769..892.782 rows=1 loops=1)
+   Buffers: shared hit=109762
+   CTE pat
+     ->  Result  (cost=0.00..0.01 rows=1 width=64) (actual time=0.001..0.001 rows=1 loops=1)
+   InitPlan 2
+     ->  Aggregate  (cost=1738.93..1738.94 rows=1 width=8) (actual time=277.475..277.479 rows=1 loops=1)
+           Buffers: shared hit=6913
+           ->  Nested Loop  (cost=17.70..1738.75 rows=72 width=0) (actual time=277.471..277.473 rows=0 loops=1)
+                 Buffers: shared hit=6913
+                 ->  CTE Scan on pat  (cost=0.00..0.02 rows=1 width=64) (actual time=0.003..0.005 rows=1 loops=1)
+                       Filter: (p IS NOT NULL)
+                 ->  Bitmap Heap Scan on mv_search_parcel pc  (cost=17.70..1738.01 rows=72 width=86) (actual time=277.463..277.465 rows=0 loops=1)
+                       Recheck Cond: ((road_addr_key ~~ like_escape(pat.p, '\'::text)) OR (jibun_addr_key ~~ like_escape(pat.p, '\'::text)))
+                       Rows Removed by Index Recheck: 188442
+                       Filter: ((pat.gu IS NULL) OR (sigungu_code = (pat.gu)::character(5)))
+                       Heap Blocks: exact=5258
+                       Buffers: shared hit=6913
+                       ->  BitmapOr  (cost=17.70..17.70 rows=1884 width=0) (actual time=133.333..133.334 rows=0 loops=1)
+                             Buffers: shared hit=1655
+                             ->  Bitmap Index Scan on idx_msp_road_key  (cost=0.00..8.84 rows=942 width=0) (actual time=70.171..70.172 rows=188442 loops=1)
+                                   Index Cond: (road_addr_key ~~ like_escape(pat.p, '\'::text))
+                                   Buffers: shared hit=855
+                             ->  Bitmap Index Scan on idx_msp_jibun_key  (cost=0.00..8.83 rows=942 width=0) (actual time=63.151..63.151 rows=188442 loops=1)
+                                   Index Cond: (jibun_addr_key ~~ like_escape(pat.p, '\'::text))
+                                   Buffers: shared hit=800
+   InitPlan 3
+     ->  Aggregate  (cost=1772.83..1772.84 rows=1 width=8) (actual time=169.082..169.086 rows=1 loops=1)
+           Buffers: shared hit=47968
+           ->  Nested Loop  (cost=12.28..1772.71 rows=46 width=0) (actual time=39.686..168.784 rows=1986 loops=1)
+                 Join Filter: ((pat_1.gu IS NULL) OR (pc_1.sigungu_code = (pat_1.gu)::character(5)))
+                 Rows Removed by Join Filter: 8485
+                 Buffers: shared hit=47968
+                 ->  Nested Loop  (cost=11.86..1189.47 rows=1213 width=52) (actual time=39.655..101.701 rows=10471 loops=1)
+                       Buffers: shared hit=6084
+                       ->  CTE Scan on pat pat_1  (cost=0.00..0.02 rows=1 width=64) (actual time=0.002..0.004 rows=1 loops=1)
+                             Filter: (p IS NOT NULL)
+                       ->  Bitmap Heap Scan on building b  (cost=11.86..1177.32 rows=1213 width=40) (actual time=39.648..99.869 rows=10471 loops=1)
+                             Recheck Cond: (nm_key ~~ like_escape(pat_1.p, '\'::text))
+                             Rows Removed by Index Recheck: 69034
+                             Heap Blocks: exact=5248
+                             Buffers: shared hit=6084
+                             ->  Bitmap Index Scan on idx_building_nm_key  (cost=0.00..11.56 rows=1213 width=0) (actual time=38.749..38.750 rows=79505 loops=1)
+                                   Index Cond: (nm_key ~~ like_escape(pat_1.p, '\'::text))
+                                   Buffers: shared hit=836
+                 ->  Index Scan using idx_msp_pnu on mv_search_parcel pc_1  (cost=0.42..0.47 rows=1 width=26) (actual time=0.005..0.006 rows=1 loops=10471)
+                       Index Cond: (pnu = b.pnu)
+                       Buffers: shared hit=41884
+   InitPlan 4
+     ->  Aggregate  (cost=1738.93..1738.94 rows=1 width=8) (actual time=277.742..277.745 rows=1 loops=1)
+           Buffers: shared hit=6913
+           ->  Nested Loop  (cost=17.70..1738.75 rows=72 width=0) (actual time=277.738..277.740 rows=0 loops=1)
+                 Buffers: shared hit=6913
+                 ->  CTE Scan on pat pat_2  (cost=0.00..0.02 rows=1 width=64) (actual time=0.001..0.003 rows=1 loops=1)
+                       Filter: (p IS NOT NULL)
+                 ->  Bitmap Heap Scan on mv_search_parcel pc_2  (cost=17.70..1738.01 rows=72 width=86) (actual time=277.732..277.734 rows=0 loops=1)
+                       Recheck Cond: ((road_addr_key ~~ like_escape(pat_2.p, '\'::text)) OR (jibun_addr_key ~~ like_escape(pat_2.p, '\'::text)))
+                       Rows Removed by Index Recheck: 188442
+                       Filter: ((pat_2.gu IS NULL) OR (sigungu_code = (pat_2.gu)::character(5)))
+                       Heap Blocks: exact=5258
+                       Buffers: shared hit=6913
+                       ->  BitmapOr  (cost=17.70..17.70 rows=1884 width=0) (actual time=132.414..132.415 rows=0 loops=1)
+                             Buffers: shared hit=1655
+                             ->  Bitmap Index Scan on idx_msp_road_key  (cost=0.00..8.84 rows=942 width=0) (actual time=70.399..70.399 rows=188442 loops=1)
+                                   Index Cond: (road_addr_key ~~ like_escape(pat_2.p, '\'::text))
+                                   Buffers: shared hit=855
+                             ->  Bitmap Index Scan on idx_msp_jibun_key  (cost=0.00..8.83 rows=942 width=0) (actual time=62.005..62.005 rows=188442 loops=1)
+                                   Index Cond: (jibun_addr_key ~~ like_escape(pat_2.p, '\'::text))
+                                   Buffers: shared hit=800
+   InitPlan 5
+     ->  Aggregate  (cost=1772.83..1772.84 rows=1 width=8) (actual time=168.457..168.458 rows=1 loops=1)
+           Buffers: shared hit=47968
+           ->  Nested Loop  (cost=12.28..1772.71 rows=46 width=0) (actual time=39.556..168.145 rows=1986 loops=1)
+                 Join Filter: ((pat_3.gu IS NULL) OR (pc_3.sigungu_code = (pat_3.gu)::character(5)))
+                 Rows Removed by Join Filter: 8485
+                 Buffers: shared hit=47968
+                 ->  Nested Loop  (cost=11.86..1189.47 rows=1213 width=52) (actual time=39.513..101.174 rows=10471 loops=1)
+                       Buffers: shared hit=6084
+                       ->  CTE Scan on pat pat_3  (cost=0.00..0.02 rows=1 width=64) (actual time=0.002..0.003 rows=1 loops=1)
+                             Filter: (p IS NOT NULL)
+                       ->  Bitmap Heap Scan on building b_1  (cost=11.86..1177.32 rows=1213 width=40) (actual time=39.507..99.387 rows=10471 loops=1)
+                             Recheck Cond: (nm_key ~~ like_escape(pat_3.p, '\'::text))
+                             Rows Removed by Index Recheck: 69034
+                             Heap Blocks: exact=5248
+                             Buffers: shared hit=6084
+                             ->  Bitmap Index Scan on idx_building_nm_key  (cost=0.00..11.56 rows=1213 width=0) (actual time=38.622..38.623 rows=79505 loops=1)
+                                   Index Cond: (nm_key ~~ like_escape(pat_3.p, '\'::text))
+                                   Buffers: shared hit=836
+                 ->  Index Scan using idx_msp_pnu on mv_search_parcel pc_3  (cost=0.42..0.47 rows=1 width=26) (actual time=0.005..0.006 rows=1 loops=10471)
+                       Index Cond: (pnu = b_1.pnu)
+                       Buffers: shared hit=41884
+ Planning:
+   Buffers: shared hit=50
+ Planning Time: 1.474 ms
+ Execution Time: 893.319 ms
+(94�� ��)
+

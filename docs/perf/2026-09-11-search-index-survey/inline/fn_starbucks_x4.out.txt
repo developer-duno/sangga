@@ -1,0 +1,28 @@
+                                           QUERY PLAN                                            
+-------------------------------------------------------------------------------------------------
+ Function Scan on search_stores  (cost=0.25..10.25 rows=1000 width=274) (actual rows=50 loops=1)
+ Planning Time: 0.044 ms
+ Execution Time: 24.930 ms
+(3�� ��)
+
+                                           QUERY PLAN                                            
+-------------------------------------------------------------------------------------------------
+ Function Scan on search_stores  (cost=0.25..10.25 rows=1000 width=274) (actual rows=50 loops=1)
+ Planning Time: 0.042 ms
+ Execution Time: 24.922 ms
+(3�� ��)
+
+                                           QUERY PLAN                                            
+-------------------------------------------------------------------------------------------------
+ Function Scan on search_stores  (cost=0.25..10.25 rows=1000 width=274) (actual rows=50 loops=1)
+ Planning Time: 0.043 ms
+ Execution Time: 24.650 ms
+(3�� ��)
+
+                                           QUERY PLAN                                            
+-------------------------------------------------------------------------------------------------
+ Function Scan on search_stores  (cost=0.25..10.25 rows=1000 width=274) (actual rows=50 loops=1)
+ Planning Time: 0.042 ms
+ Execution Time: 24.813 ms
+(3�� ��)
+
