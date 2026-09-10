@@ -144,6 +144,7 @@ python scripts/collectors/collect_lh_notices.py --dry-run   # LH 상가 공고 �
 python scripts/collectors/collect_lh_notices.py             # LH 상가 공고 적재 (upsert — 끝나면 안내대로 기준선 상수를 올릴 것)
 python scripts/feedback_digest.py               # 의견함에 뭐가 쌓였나 (숫자만 — 내용은 dbx.py 로. .env 자동 사용)
 python scripts/collectors/collect_transactions.py --sigungu-code <구> --months 216 --end-ym 202408   # 과거 백필(2006-09~2024-08) — 2026-09-09 서울·대전 30구 완료, 재실행은 이어받기
+# ⚠️ `--dry-run` 도 `collect_progress` 에 pending 시드를 **쓴다**(형제 수집기의 "DB 쓰기 0" 미리보기와 다르다 — `seed_progress` 가 dry_run 분기 **앞**에 있다, collect_transactions.py:735-746). 시드는 멱등(있는 행 보존)이라 무해하지만 미리보기에도 DB 열쇠가 필요하다.
 python scripts/backtest_price.py                # Stage B 백테스트 성적표 재생성 (DB 읽기 전용 → docs/backtest/, 통과구.csv 포함)
 python scripts/backtest_price.py --place-axis   # 1층 유형축(L7=도로등급×상권등급) 검증 — 새 파일 2개만 쓴다(기존 성적표·통과구.csv 안 건드림). psql 필요
 python scripts/load_price_gate.py --dry-run     # 통과구.csv → price_gate_sigungu 미리보기(DB 쓰기 0)
