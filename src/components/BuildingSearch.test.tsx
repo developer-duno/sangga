@@ -179,7 +179,7 @@ describe('BuildingSearch — 화면 동작', () => {
 });
 
 
-// ── 너무 넓은 검색 안내창 (2026-08-13) ──────────────────────────────────────
+// ── 너무 넓은 검색 안내 (2026-08-13 안내창 → 2026-09-10 건물 쪽은 한 줄) ──────────────────────────────────────
 //
 // 왜 이 화면이 필요한가: 이 서비스는 **건물 한 채·필지 한 곳**을 놓고 상권을 분석한다.
 // '서울'·'동' 처럼 어디를 볼지 정해지지 않는 검색은 결과 25개를 억지로 보여줘도 쓸모가
@@ -239,25 +239,33 @@ describe('BuildingSearch — 너무 넓은 검색 안내', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('두 글자여도 서버가 너무 넓다고 하면 안내하고, 걸린 곳 수를 알려준다', async () => {
+  it('두 글자여도 서버가 너무 넓다고 하면 **안내창이 아니라 한 줄로** 걸린 곳 수를 알려준다', async () => {
     // '강남'은 두 글자지만 구 조각이라 13,529곳과 맞는다. 반대로 '명동'은 두 글자여도
     // 동이 확정된다 — **글자 수로는 안 갈린다.** 그래서 서버가 세어 판정한다.
+    //
+    // ⛔ 이 경우만 안내창(모달)이 아니다 — 덮개가 화면을 통째로 덮으면 건물이 0건이어도
+    //    멀쩡히 서 있는 **가게 이름 구역**을 가리고 클릭까지 삼킨다(결정 0028 §백로그 🟡-10).
     serverSays(true, 13529);
     const input = setup();
     search(input, '강남');
-    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/너무 넓은 검색/)).toBeTruthy());
+    expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.getByText(/‘강남’/)).toBeTruthy();
     expect(screen.getByText('13,529곳')).toBeTruthy();
-    // 결과 목록 쪽 "결과가 없습니다"와 겹쳐 뜨면 안 된다(두 말이 동시에 보인다).
-    expect(screen.queryByText(/결과가 없습니다/)).toBeNull();
+    // 한 줄은 `.search` 안에 있어야 한다 — 인쇄가 `.search` 를 통째로 숨기므로 밖에 두면
+    // 종이에 죽은 안내가 남는다(가게 구역과 같은 제약).
+    expect(screen.getByText(/너무 넓은 검색/).closest('.search')).not.toBeNull();
+    // 결과 목록 쪽 "찾지 못했습니다"와 겹쳐 뜨면 안 된다(두 말이 동시에 보인다).
+    expect(screen.queryByText(/찾지 못했습니다/)).toBeNull();
   });
 
-  it('무엇을 넣으면 되는지 알려준다 (동 이름·건물 이름·지번)', async () => {
+  it('무엇을 넣으면 되는지 알려준다 (동 이름·건물 이름·지번·도로명)', async () => {
     serverSays(true, 163487);
     const input = setup();
     search(input, '서울');
-    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy());
-    for (const example of ['역삼동', '그랑프리빌딩', '역삼동 823-4']) {
+    await waitFor(() => expect(screen.getByText(/너무 넓은 검색/)).toBeTruthy());
+    // 도로명 갈래도 빠지면 안 된다 — 검색창 placeholder 가 여전히 도로명주소를 권한다.
+    for (const example of ['역삼동', '그랑프리빌딩', '역삼동 823-4', '테헤란로 117']) {
       expect(screen.getByText(example)).toBeTruthy();
     }
   });
@@ -272,10 +280,10 @@ describe('BuildingSearch — 너무 넓은 검색 안내', () => {
   });
 
   it('Esc 로 안내창을 닫을 수 있다', async () => {
-    serverSays(true, 99999);
+    // ⓘ 안내창이 남는 경우(①한 글자)로 잰다 — ③너무 넓음은 이제 안내창이 아니라 한 줄이다.
     const input = setup();
-    search(input, '서울');
-    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy());
+    search(input, '동');
+    expect(screen.getByRole('dialog')).toBeTruthy();
     // ⚠️ dialog 가 DOM 에 보이는 순간에는 Esc 리스너가 아직 없다 — 리스너는 커밋 뒤
     //    useEffect 에서 붙고, waitFor 는 act 밖에서 돌아 그 이펙트를 기다려 주지 않는다.
     //    여기서 바로 keyDown 을 쏘면 느린 러너(CI)에서 이펙트보다 먼저 떨어져 유실되고,
@@ -495,6 +503,33 @@ describe('BuildingSearch — 가게 이름으로 찾은 땅', () => {
     expect(screen.getByText(/더 좁혀 주세요/)).toBeTruthy();
     // 건물 결과는 그대로 서 있어야 한다.
     expect(screen.getByText('테스트빌딩')).toBeTruthy();
+  });
+
+  it('건물 쪽이 "너무 넓은 검색"이어도 가게 구역은 그대로 서고 **눌린다**', async () => {
+    /*
+      ⛔ 예전에는 건물 쪽 안내가 덮개(모달)였다 — `position:fixed; inset:0` 이라 화면을 통째로
+         덮어, 건물이 0건이라 안내가 뜬 그 순간에도 멀쩡히 서 있던 **가게 결과**를 가리고
+         클릭까지 삼켰다(결정 0028 §백로그 🟡-10). 건물 0건과 가게 0건은 서로 다른 일이다.
+    */
+    serverGives({
+      search_buildings: { data: [] },
+      search_scope: { data: [{ too_broad: true, match_cnt: 13529 }] },
+      search_stores: { data: [storeHit({ bld_nm: '가게있는건물' })] },
+    });
+    const { input, onSelect } = setup();
+    search(input, '강남');
+
+    await waitFor(() => expect(screen.getByText(/너무 넓은 검색/)).toBeTruthy());
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(region()).toBeTruthy();
+    /*
+      ⚠️ 여기서 **진짜 힘을 쓰는 단언은 바로 위 `queryByRole('dialog')` 이 null 이라는 것**이다.
+         jsdom 에는 레이아웃도 히트 테스트도 없어서 덮개가 있든 없든 `fireEvent.click` 은
+         그대로 꽂힌다 — 아래 클릭만 두면 옛 모달에서도 초록인 가짜 시험이 된다. 클릭은
+         "줄이 여전히 버튼으로 살아 있는가"까지만 본다.
+    */
+    fireEvent.click(screen.getByRole('button', { name: /가게있는건물/ }));
+    expect(onSelect).toHaveBeenCalledTimes(1);
   });
 
   it('가게 질의만 실패하면 건물 결과는 서고, 가게 구역은 못 불러왔다고 말한다', async () => {
@@ -753,6 +788,84 @@ describe('BuildingSearch — 가게 이름으로 찾은 땅', () => {
 
     search(input, '다른가게');
     await waitFor(() => expect(screen.queryByText('옛가게건물')).toBeNull());
+  });
+});
+
+// ── 안내창이 뜰 때 옛 결과가 남지 않는다 (2026-09-10) ────────────────────────
+//
+// ⛔ ①한 글자 ②구 미선택은 서버를 부르기 **전에** 되돌아 나간다. 그 자리에서 옛 결과를
+//    비우지 않으면, 직전 검색이 성공한 상태에서 한 글자를 넣는 순간 옛 건물 목록과 옛 가게
+//    구역이 **그대로 선 위에** 안내창이 덮인다 — 사람은 그것을 방금 넣은 말의 결과로 읽는다.
+//    조기 반환이 `setStore({ at: 'hidden' })` 보다 앞에 있어서 나던 일이고, 이 흐름을 보는
+//    시험이 여태 0개였다(전부 새 화면에서 시작했다).
+
+describe('BuildingSearch — 안내창이 뜰 때 옛 결과가 남지 않는다', () => {
+  function props(over: Partial<Parameters<typeof BuildingSearch>[0]> = {}) {
+    return {
+      onSelect: vi.fn(),
+      onSearchStart: vi.fn(),
+      selectedBldId: null,
+      sigungu: '11680' as string | null,
+      sigunguName: '강남구' as string | null,
+      ...over,
+    };
+  }
+
+  function search(input: HTMLInputElement, text: string) {
+    fireEvent.change(input, { target: { value: text } });
+    fireEvent.submit(input.closest('form')!);
+  }
+
+  /** 건물도 가게도 나오는 정상 검색. */
+  function serverAnswers() {
+    rpc.mockImplementation((fn: string) =>
+      fn === 'search_stores'
+        ? Promise.resolve({ data: [storeHit({ bld_nm: '옛가게건물' })], error: null })
+        : Promise.resolve({ data: [hit({ total_cnt: 1 })], error: null }),
+    );
+  }
+
+  const region = () => screen.queryByRole('region', { name: '가게 이름으로 찾은 땅' });
+
+  it('한 글자를 넣으면 앞 검색의 건물 목록·가게 구역이 함께 사라진다', async () => {
+    serverAnswers();
+    const p = props();
+    render(<BuildingSearch {...p} />);
+    const input = screen.getByLabelText('건물명 또는 주소') as HTMLInputElement;
+
+    search(input, '테헤란로');
+    await waitFor(() => expect(screen.getByText('테스트빌딩')).toBeTruthy());
+    expect(region()).toBeTruthy();
+
+    search(input, '동');
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    expect(screen.queryByText('테스트빌딩')).toBeNull();
+    expect(region()).toBeNull();
+    // 위(목록·가게 구역)만 비우고 아래 층 스택을 남기면 반쪽이다 — 정상 검색과 같이
+    // 상위에도 "새 검색 시작"을 알려 옛 건물 선택을 푼다(첫 검색 1회 + 지금 1회).
+    expect(p.onSearchStart).toHaveBeenCalledTimes(2);
+  });
+
+  it('구를 다시 안 고른 채 검색하면 앞 검색의 결과가 함께 사라진다', async () => {
+    serverAnswers();
+    const p = props();
+    const { rerender } = render(<BuildingSearch {...p} />);
+    const input = screen.getByLabelText('건물명 또는 주소') as HTMLInputElement;
+
+    search(input, '테헤란로');
+    await waitFor(() => expect(screen.getByText('테스트빌딩')).toBeTruthy());
+    expect(region()).toBeTruthy();
+
+    // 시·도를 바꾸면 구 선택이 풀린다 — 그 상태로 다시 검색을 누른 경우다.
+    // ⓘ App 은 `key={sigungu ?? …}` 로 이미 새로 그리므로 실제 사용자 경로는 ①(한 글자)뿐이다
+    //   — 이 시험은 그와 무관하게 컴포넌트 스스로의 계약을 본다.
+    rerender(<BuildingSearch {...p} sigungu={null} sigunguName={null} />);
+    search(input, '테헤란로');
+
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    expect(screen.getByText('먼저 지역을 골라 주세요')).toBeTruthy();
+    expect(screen.queryByText('테스트빌딩')).toBeNull();
+    expect(region()).toBeNull();
   });
 });
 

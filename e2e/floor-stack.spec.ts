@@ -375,7 +375,7 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await expect(page.locator('section.stack')).toHaveCount(0);
   });
 
-  // ── 너무 넓은 검색 안내창 (2026-08-13) ──────────────────────────────────
+  // ── 너무 넓은 검색 안내 (2026-08-13 안내창 → 2026-09-10 건물 쪽은 한 줄) ──────────────────────────────────
   // 이 서비스는 건물 한 채·필지 한 곳을 놓고 상권을 분석한다. '서울'·'동'처럼 어디를
   // 볼지 정해지지 않는 검색은 결과 25개를 억지로 보여줘도 쓸모가 없고, 서버에서는
   // 20만 건과 맞아 3초를 넘겨 500이 됐다(라이브 실측). 그래서 안내로 바꿨다.
@@ -408,15 +408,20 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await pickGu(page, '서울', '강남구');
     await search(page, '서울');
 
-    const dialog = page.getByRole('dialog');
-    await expect(dialog).toBeVisible();
-    await expect(dialog.getByText('163,487곳')).toBeVisible();
-    await expect(dialog.getByText('역삼동 823-4')).toBeVisible();
-    // "결과가 없습니다"와 겹쳐 뜨면 두 말이 동시에 보인다.
-    await expect(page.getByText('결과가 없습니다')).toHaveCount(0);
-
-    await dialog.getByRole('button', { name: '닫기' }).click();
+    /*
+      ⛔ 이 경우는 **안내창(모달)이 아니라 건물 결과 자리의 한 줄**이다 — 덮개가 화면을 통째로
+         덮으면 건물이 0건이어도 멀쩡히 서 있는 가게 이름 구역을 가리고 클릭까지 삼킨다
+         (결정 0028 §백로그 🟡-10). 한 글자·구 미선택(D·F)은 그대로 안내창이다.
+    */
+    await expect(page.getByText(/너무 넓은 검색/)).toBeVisible();
     await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.getByText('163,487곳')).toBeVisible();
+    await expect(page.getByText('역삼동 823-4')).toBeVisible();
+    /*
+      ⚠️ 여기서 여태 센 문구는 '결과가 없습니다'였는데 **그 말은 이 앱에 아예 없다** — 무엇을
+         세도 0이라 늘 초록인 빈 단언이었다. 진짜 문구는 '찾지 못했습니다'다(C 시험 참조).
+    */
+    await expect(page.getByText(/찾지 못했습니다/)).toHaveCount(0);
   });
 
   // ── 구를 고른 뒤에만 검색된다 (2026-08-13e) ──────────────────────────────
