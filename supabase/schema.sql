@@ -1361,14 +1361,22 @@ as $$
     select
       (select count(*) from mv_search_parcel pc cross join pat
         where pat.p is not null
-          and (pat.gu is null or pc.sigungu_code = pat.gu)
+          -- ⛔ `::char(5)` 를 지우지 말 것 — 컬럼이 char(5) 인데 text 와 견주면 **컬럼 쪽**이
+          --    text 로 캐스트돼 색인이 Index Cond 가 아니라 Filter 로 떨어진다(라이브 실측
+          --    2026-09-10: Parallel Seq Scan 188,442행·버퍼 5,312·116ms → Index Scan 12,138행·버퍼 353·8ms).
+          --    형제 `search_stores` 가 같은 처방을 쓴다(결정 0028 §백로그).
+          -- ⚠️ 5자보다 긴 입력은 bpchar 캐스트가 조용히 자른다 — 구 코드는 서버 목록에서만
+          --    오고 화면도 /^\d{5}$/ 로 막으므로(src/lib/urlState.ts) 실사용 0건이다.
+          -- ⛔ `pat.gu is null or` 절반은 그대로 둔다 — 이 함수는 구를 안 고른 전국 검색을
+          --    일부러 허용한다(구 없이는 답이 안 되는 `search_stores` 와 다른 점이다).
+          and (pat.gu is null or pc.sigungu_code = pat.gu::char(5))
           and (pc.road_addr_key  like pat.p escape '\'
             or pc.jibun_addr_key like pat.p escape '\')) as addr_cnt,
       (select count(*) from building b
          join mv_search_parcel pc on pc.pnu = b.pnu
          cross join pat
         where pat.p is not null
-          and (pat.gu is null or pc.sigungu_code = pat.gu)
+          and (pat.gu is null or pc.sigungu_code = pat.gu::char(5))
           and b.nm_key like pat.p escape '\')            as nm_cnt
   )
   select greatest(c.addr_cnt, c.nm_cnt) > search_scope_limit(),
@@ -1429,7 +1437,15 @@ as $$
       from mv_search_parcel pc
       cross join pat
      where pat.p is not null
-       and (pat.gu is null or pc.sigungu_code = pat.gu)
+       -- ⛔ `::char(5)` 를 지우지 말 것 — 컬럼이 char(5) 인데 text 와 견주면 **컬럼 쪽**이
+       --    text 로 캐스트돼 색인이 Index Cond 가 아니라 Filter 로 떨어진다(라이브 실측
+       --    2026-09-10: Parallel Seq Scan 188,442행·버퍼 5,312·116ms → Index Scan 12,138행·버퍼 353·8ms).
+       --    형제 `search_stores` 가 같은 처방을 쓴다(결정 0028 §백로그).
+       -- ⚠️ 5자보다 긴 입력은 bpchar 캐스트가 조용히 자른다 — 구 코드는 서버 목록에서만
+       --    오고 화면도 /^\d{5}$/ 로 막으므로(src/lib/urlState.ts) 실사용 0건이다.
+       -- ⛔ `pat.gu is null or` 절반은 그대로 둔다 — 이 함수는 구를 안 고른 전국 검색을
+       --    일부러 허용한다(구 없이는 답이 안 되는 `search_stores` 와 다른 점이다).
+       and (pat.gu is null or pc.sigungu_code = pat.gu::char(5))
        and (pc.road_addr_key  like pat.p escape '\'
          or pc.jibun_addr_key like pat.p escape '\')
      limit search_scope_limit() + 1
@@ -1443,7 +1459,7 @@ as $$
       join mv_search_parcel pc on pc.pnu = b.pnu
       cross join pat
      where pat.p is not null
-       and (pat.gu is null or pc.sigungu_code = pat.gu)
+       and (pat.gu is null or pc.sigungu_code = pat.gu::char(5))
        and b.nm_key like pat.p escape '\'
      limit search_scope_limit() + 1
   ),
