@@ -130,16 +130,16 @@ scripts/                 # 데이터 파이프라인 전부 21개 (수동 실행
     └── load_bjd_code.py                                 # 법정동코드 전체자료(code.go.kr) 적재
 
 supabase/
-├── schema.sql           # 정본 4,670줄 (라이브 반영본 — 마이그레이션과 드리프트 가드로 동기)
+├── schema.sql           # 정본 4,669줄 (라이브 반영본 — 마이그레이션과 드리프트 가드로 동기)
 └── migrations/          # 날짜 파일명 57개, 라이브 적용 순서 그대로
 
-tests/                   # pytest 56파일 2,675개 — collector/스크립트 1:1 + 드리프트 가드
+tests/                   # pytest 58파일 2,734개 — collector/스크립트 1:1 + 드리프트 가드
 e2e/                     # playwright 30개(2파일: fixtures.ts, floor-stack.spec.ts). 넓은화면(chromium)·
 │                         #   휴대폰(mobile, Pixel 7) 2벌로 돌아 실행은 60회. E2E_PORT 로 포트 회피
 .github/workflows/       # ci.yml(test+web) + 감시 5종: district-source-watch·feedback-digest·
 │                         #   live-health-watch·sangkwon-quarterly-watch·lh-notice-watch
 │                         #   (전부 하트비트로 서로 감시. 비밀값은 lh-notice-watch 의 MOLIT_KEY 하나뿐)
-docs/                    # 상세계획·알려진한계(조사 전 필독)·PROGRESS·ROADMAP + decisions/0001~0027 (27개)
+docs/                    # 상세계획·알려진한계(조사 전 필독)·PROGRESS·ROADMAP + decisions/0001~0028 (28개)
 ```
 
 ## 핵심 모듈 역할
@@ -190,7 +190,7 @@ docs/                    # 상세계획·알려진한계(조사 전 필독)·PRO
 
 - 빌드: `pnpm build` (tsc -b && vite build)
 - 실행: `pnpm dev` (http://localhost:5173)
-- 테스트: `pnpm test`(vitest 812, 39파일) / `python -m pytest tests/ -q`(2,675, 56파일) /
+- 테스트: `pnpm test`(vitest 815, 39파일) / `python -m pytest tests/ -q`(2,734, 58파일) /
   `E2E_PORT=5273 pnpm test:e2e`(30개 × 2벌 = 60회)
 - 린트: `pnpm exec oxlint` / `python -m ruff check scripts/ tests/`
 - 배포: `main` push → Vercel 자동 배포(`https://sangga-one.vercel.app`). `main` 은 잠겨 있어
