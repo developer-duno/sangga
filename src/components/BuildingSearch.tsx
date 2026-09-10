@@ -122,8 +122,10 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu
   const noticeCloseRef = useRef<HTMLButtonElement>(null);
 
   // Esc로 닫기 — 안내창을 띄워 놓고 빠져나갈 길이 없으면 안 된다(RegionPicker와 같은 방식).
+  // ⓘ `broad`는 안내창이 아니라 건물 결과 자리의 한 줄이라 **닫을 것이 없다** — 여기서 빠진다.
+  //   (안 빼면 Esc 한 번에 방금 받은 답이 사라져 빈 자리만 남는다.)
   useEffect(() => {
-    if (!notice) return;
+    if (!notice || notice.kind === 'broad') return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setNotice(null);
     };
@@ -132,6 +134,39 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu
     return () => window.removeEventListener('keydown', onKey);
   }, [notice]);
 
+  /**
+   * 서버를 부르지 않고 안내창만 띄우는 두 경우(①한 글자 ②구 미선택)에서 **옛 결과를 비운다.**
+   *
+   * ⛔ 안 비우면 직전 검색이 성공한 상태에서 한 글자를 넣는 순간, 옛 건물 목록과 옛 가게
+   *    구역이 **그대로 선 위에** 안내창이 덮인다 — 사람은 그것을 방금 넣은 말의 결과로 읽는다.
+   *    조기 반환이 `setStore({ at: 'hidden' })` 보다 앞에 있어서 나던 일이다.
+   * ⛔ 요청 번호도 함께 올린다. 안 올리면 **날아가 있던 앞 검색의 답**이 뒤늦게 도착해 방금
+   *    비운 자리를 안내창 밑에서 조용히 다시 채운다. 대신 번호를 올리면 그 요청은 `finally`
+   *    의 `setLoading(false)` 에도 못 닿으므로 여기서 직접 끈다 — 안 끄면 '찾는 중…' 인 채로
+   *    검색 버튼이 영영 눌리지 않는다.
+   * ⓘ 비우는 순서는 아래 정상 경로(`runSearch` 본문)와 같게 둔다 — `onSearchStart()` 까지.
+   *    안 부르면 위는 비는데 **아래 층 스택은 옛 건물인 채** 남는다(App.tsx 가 2026-08-08
+   *    적대검증에서 잡아 고친 바로 그 모양 — "결과가 없습니다" 밑에 옛 스택).
+   *    ⚠️ 단 **비울 것이 있었을 때만** 부른다 — 빈 화면에서 공백만 넣고 Enter 를 친 것은
+   *    아무 일도 아니어야 하고(기존 계약: 서버도 상위도 안 건드린다), 고른 건물을 그런
+   *    헛 Enter 로 잃으면 안 된다.
+   * ⓘ 지금은 검색 버튼이 `loading` 동안 잠겨 새 요청이 겹칠 수 없다 — 요청 번호 올리기는
+   *    그 잠금이 풀리는 날 곧바로 나는 일을 미리 막는 것이다.
+   */
+  function clearForNotice() {
+    const hadResults = hits.length > 0 || searched || store.at !== 'hidden';
+    latestRun.current += 1;
+    setLoading(false);
+    setError(null);
+    setHits([]);
+    setTotal(0);
+    setSearched(false);
+    setStore({ at: 'hidden' });
+    setMoreFailed(false);
+    setMoreLoading(false);
+    if (hadResults) onSearchStart();
+  }
+
   async function runSearch(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault();
     const q = query.trim();
@@ -139,6 +174,7 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu
 
     // 한 글자는 물어볼 필요가 없다 — 어떤 글자든 수만 곳과 맞는다. 왕복을 아끼고 바로 안내.
     if (normalizeQuery(q).length < MIN_QUERY_CHARS) {
+      clearForNotice();
       setNotice({ kind: 'short' });
       return;
     }
@@ -146,6 +182,7 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu
     // 구를 안 골랐으면 서버를 부르지 않는다 — 같은 건물 이름이 여러 구에 겹치므로
     // 어느 구인지 정해지지 않은 채로는 정확한 결과를 낼 수 없다(2026-08-13 사장님 결정).
     if (!sigungu) {
+      clearForNotice();
       setNotice({ kind: 'no-region' });
       return;
     }
@@ -291,6 +328,24 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu
       </form>
 
       {error && <p className="msg msg--error">{error}</p>}
+
+      {/*
+        ③너무 넓은 검색은 **안내창이 아니라 건물 결과 자리의 한 줄**로 말한다(결정 0028
+        §백로그 🟡-10).
+        ⛔ 덮개(`.modal__back`)는 `position:fixed; inset:0` 이라 화면을 통째로 덮는다 — 건물이
+           0건이어도 **가게 이름 구역은 멀쩡히 서 있을 수 있고**, 덮개가 그 답을 가리는 데다
+           클릭까지 삼킨다. 아래 가게 쪽(`store.at === 'broad'`)이 이미 같은 이유로 한 줄이다.
+        ⓘ 안내창이 사라지면서 초점이 옮겨 가던 알림도 함께 사라진다 — `role="status"` 로 대신
+          한다(이 파일의 실패 알림 `role="alert"` 과 같은 결).
+      */}
+      {notice?.kind === 'broad' && (
+        <p className="msg" role="status">
+          ‘{notice.word}’ — 건물·주소로 찾기엔 너무 넓은 검색이에요. 이 검색어에는{' '}
+          <strong>{notice.count.toLocaleString('ko-KR')}곳</strong>이 걸립니다. 동 이름(
+          <strong>역삼동</strong>)·건물 이름(<strong>그랑프리빌딩</strong>)·지번·도로명(
+          <strong>역삼동 823-4</strong>, <strong>테헤란로 117</strong>) 중 하나를 넣어 주세요.
+        </p>
+      )}
 
       {searched && !loading && hits.length === 0 && !error && (
         <p className="msg">
@@ -451,7 +506,11 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu
         </section>
       )}
 
-      {notice && (
+      {/*
+        ①한 글자 ②구 미선택만 안내창으로 남는다 — 서버를 부르기 전이라 **덮을 새 결과가
+        아예 없고**, 옛 결과는 `clearForNotice()` 가 이미 비웠다. ③너무 넓음은 위의 한 줄로 간다.
+      */}
+      {notice && notice.kind !== 'broad' && (
         <div className="modal__back" onClick={() => setNotice(null)} role="presentation">
           <div
             className="modal"
@@ -463,14 +522,8 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu
             <h2 className="modal__title" id="scope-modal-title">
               {notice.kind === 'short' && '한 글자로는 찾을 수 없어요'}
               {notice.kind === 'no-region' && '먼저 지역을 골라 주세요'}
-              {notice.kind === 'broad' && `‘${notice.word}’ — 너무 넓은 검색이에요`}
             </h2>
             <p className="modal__body">
-              {notice.kind === 'broad' && (
-                <>
-                  이 검색어에는 <strong>{notice.count.toLocaleString('ko-KR')}곳</strong>이 걸립니다.{' '}
-                </>
-              )}
               {notice.kind === 'short' && (
                 <>한 글자는 거의 모든 주소에 들어 있어서 어디를 볼지 정해지지 않습니다. </>
               )}
