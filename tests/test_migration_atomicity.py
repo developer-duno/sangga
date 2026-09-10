@@ -28,9 +28,11 @@
 파일까지 빨간불이 되고, 그러면 사람이 가드를 느슨하게 고친다.
 
 ⚠️ 걷어내는 주석은 `--` 줄과 `comment on … is '…'` 의 글뿐이다. `/* … */` 블록 주석과
-   `$$ … $$` 안의 동적 SQL 문자열은 안 걷는다 — 이 레포 마이그레이션 55개에 그 둘은
+   `$$ … $$` 안의 동적 SQL 문자열은 안 걷는다 — 이 레포 마이그레이션 **전부**에 그 둘은
    **0건**이고(관습이 `--` 뿐이다), 설령 생겨도 판정은 "감싸라"는 **안전한 쪽**으로
    틀린다(빠뜨리는 쪽이 아니다). 동적 SQL 을 쓰기 시작하면 그때 여기를 넓힌다.
+   ⚠️ 반대로 **들여쓴** DDL(`  drop …`)은 줄머리 판정에서 빠져 **면제 쪽으로** 틀릴 수 있어서
+   DDL·예외 정규식은 앞 공백을 허용한다(2026-09-10 사후 검증에서 보강).
 
 무엇을 판정하나:
 
@@ -68,11 +70,11 @@ MIGRATIONS = os.path.join(ROOT, "supabase", "migrations")
 RULE_BORN = "2026-09-09"
 
 # 형제 파일들과 **같은** DDL 정의를 쓴다(test_search_stores_migration.py §5).
-DDL = r"(?m)^(alter |analyze |comment on |create |drop |grant |revoke )"
+DDL = r"(?m)^\s*(alter |analyze |comment on |create |drop |grant |revoke )"
 
 # ⛔ 커밋 뒤에 남아도 되는 **유일한** 모양. 이보다 넓히면 "덩어리 밖으로 새는 DDL" 이
 #    그만큼 조용히 통과한다.
-RE_TRAILING_OK = re.compile(r"(?m)^drop index if exists [^;]+;")
+RE_TRAILING_OK = re.compile(r"(?m)^\s*drop index if exists [^;]+;")
 
 # `comment on … is '…';` 한 문장. 여러 줄에 걸치고, 끝은 항상 `';` 다.
 RE_COMMENT_STMT = re.compile(r"(?ims)^comment\s+on\s+.*?';\s*$")
@@ -225,6 +227,14 @@ class TestTheScopeIsProven:
         assert a in dated_files()
         assert not needs_wrapping(read(a))
         assert a not in guarded_files()
+        # 같은 날 뒤에 들어온 2026-09-10a·10b 도 `create or replace` 뿐이라 면제다 — 여기 못 박아
+        # 두어야 "고려했나 놓쳤나"를 다음 사람이 안 묻는다(2026-09-10 사후 검증).
+        for name in ("2026-09-10a_search_gu_index_cond.sql",
+                     "2026-09-10b_search_stores_names_after_limit.sql"):
+            f = os.path.join(MIGRATIONS, name)
+            assert f in dated_files(), name
+            assert not needs_wrapping(read(f)), name
+            assert f not in guarded_files(), name
 
     def test_the_old_unwrapped_drop_is_excluded_by_date_only(self):
         """⛔ 05b 는 **drop 이 있는데도 안 감싼** 알려진 옛 빚이다(이미 적용된 역사).

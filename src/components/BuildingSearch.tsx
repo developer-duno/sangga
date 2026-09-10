@@ -164,6 +164,9 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu
     setStore({ at: 'hidden' });
     setMoreFailed(false);
     setMoreLoading(false);
+    // '더 보기'가 무엇의 다음 쪽인지 가리키는 손가락도 지운다 — 지금은 `store.at === 'done'`
+    // 뒤에만 그 버튼이 서서 무해하지만, 잠금이 풀리는 날 남는 유일한 옛 포인터다.
+    setRanWith(null);
     if (hadResults) onSearchStart();
   }
 
@@ -335,8 +338,10 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu
         ⛔ 덮개(`.modal__back`)는 `position:fixed; inset:0` 이라 화면을 통째로 덮는다 — 건물이
            0건이어도 **가게 이름 구역은 멀쩡히 서 있을 수 있고**, 덮개가 그 답을 가리는 데다
            클릭까지 삼킨다. 아래 가게 쪽(`store.at === 'broad'`)이 이미 같은 이유로 한 줄이다.
-        ⓘ 안내창이 사라지면서 초점이 옮겨 가던 알림도 함께 사라진다 — `role="status"` 로 대신
-          한다(이 파일의 실패 알림 `role="alert"` 과 같은 결).
+        ⓘ 안내창이 사라지면서 초점이 옮겨 가던 알림도 함께 사라진다. `role="status"` 를 달아
+          두지만 **글자와 함께 나타나는 요소는 낭독기가 안 읽을 수 있다**(live region 은 먼저 서
+          있다가 내용이 바뀌어야 읽힌다 — FeedbackBox 의 항상 서 있는 `<p role="status">` 가 그
+          방식). 초점 이동의 완전한 대체는 아니다 — 가게 쪽 한 줄과 함께 손볼 때 같은 방식으로.
       */}
       {notice?.kind === 'broad' && (
         <p className="msg" role="status">
