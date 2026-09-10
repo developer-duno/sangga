@@ -338,19 +338,29 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu
         ⛔ 덮개(`.modal__back`)는 `position:fixed; inset:0` 이라 화면을 통째로 덮는다 — 건물이
            0건이어도 **가게 이름 구역은 멀쩡히 서 있을 수 있고**, 덮개가 그 답을 가리는 데다
            클릭까지 삼킨다. 아래 가게 쪽(`store.at === 'broad'`)이 이미 같은 이유로 한 줄이다.
-        ⓘ 안내창이 사라지면서 초점이 옮겨 가던 알림도 함께 사라진다. `role="status"` 를 달아
-          두지만 **글자와 함께 나타나는 요소는 낭독기가 안 읽을 수 있다**(live region 은 먼저 서
-          있다가 내용이 바뀌어야 읽힌다 — FeedbackBox 의 항상 서 있는 `<p role="status">` 가 그
-          방식). 초점 이동의 완전한 대체는 아니다 — 가게 쪽 한 줄과 함께 손볼 때 같은 방식으로.
+        ⛔ 이 자리는 **늘 서 있고 내용만 바뀐다** — 조건을 요소 바깥이 아니라 **안**에 둔 이유다.
+           화면을 읽어 주는 기기는 먼저 있던 자리의 내용이 바뀐 것만 읽어 주고, **글자와 함께
+           새로 나타난 요소는 `role="status"` 가 붙어 있어도 못 읽는다.** 안내창을 걷어내면서
+           초점이 옮겨 가던 길까지 함께 없어졌으므로, 자리가 미리 서 있지 않으면 눈으로 화면을
+           못 보는 사람에게 이 안내는 **아무 일도 일어나지 않은 것과 같다**(FeedbackBox 의 항상
+           서 있는 `<p role="status">` 가 선례).
+        ⓘ 빈 자리가 여백을 먹지 않게 하는 것은 `.msg--live:empty` 다 — 거기서 `display:none` 을
+          쓰면 접근성 트리에서 빠져 이 설계가 통째로 무의미해진다(그 규칙에 적어 뒀다).
+        ⚠️ 같은 모양의 줄이 둘 더 있다 — 위의 `error` 한 줄과 아래 "찾지 못했습니다" 한 줄.
+           둘 다 글자와 함께 나타나며 `role` 이 없어 **아직 낭독기가 못 읽는다.** 이번엔 결정 0028
+           §백로그 🟡-10 의 두 줄(너무 넓은 검색)만 고쳤고, 그 둘은 일부러 남겼다(별건 — 한 번에
+           손대면 "무엇이 무엇을 고쳤는지" 못 가른다). 다 고친 것으로 읽지 말 것.
       */}
-      {notice?.kind === 'broad' && (
-        <p className="msg" role="status">
-          ‘{notice.word}’ — 건물·주소로 찾기엔 너무 넓은 검색이에요. 이 검색어에는{' '}
-          <strong>{notice.count.toLocaleString('ko-KR')}곳</strong>이 걸립니다. 동 이름(
-          <strong>역삼동</strong>)·건물 이름(<strong>그랑프리빌딩</strong>)·지번·도로명(
-          <strong>역삼동 823-4</strong>, <strong>테헤란로 117</strong>) 중 하나를 넣어 주세요.
-        </p>
-      )}
+      <p className="msg msg--live" role="status" aria-live="polite">
+        {notice?.kind === 'broad' && (
+          <>
+            ‘{notice.word}’ — 건물·주소로 찾기엔 너무 넓은 검색이에요. 이 검색어에는{' '}
+            <strong>{notice.count.toLocaleString('ko-KR')}곳</strong>이 걸립니다. 동 이름(
+            <strong>역삼동</strong>)·건물 이름(<strong>그랑프리빌딩</strong>)·지번·도로명(
+            <strong>역삼동 823-4</strong>, <strong>테헤란로 117</strong>) 중 하나를 넣어 주세요.
+          </>
+        )}
+      </p>
 
       {searched && !loading && hits.length === 0 && !error && (
         <p className="msg">
@@ -411,19 +421,23 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu
         </section>
       )}
 
-      {store.at === 'broad' && (
-        <section className="search__stores" aria-label="가게 이름으로 찾은 땅">
-          {/*
-            ⓘ 건물 쪽처럼 **안내창(모달)을 띄우지 않는다.** 건물 결과는 멀쩡히 서 있을 수
-              있는데 그 위를 덮으면 사람이 이미 얻은 답을 가린다. 문구는 건물 안내창의 뜻을
-              그대로 빌리되("더 좁혀 주세요") 숫자는 가게 수다.
-          */}
-          <p className="msg">
+      {/*
+        ⓘ 건물 쪽처럼 **안내창(모달)을 띄우지 않는다.** 건물 결과는 멀쩡히 서 있을 수 있는데
+          그 위를 덮으면 사람이 이미 얻은 답을 가린다. 문구는 건물 안내창의 뜻을 그대로
+          빌리되("더 좁혀 주세요") 숫자는 가게 수다.
+        ⛔ 건물 쪽 한 줄과 **같은 이유로 늘 서 있고 내용만 바뀐다**(위 설명 참조).
+        ⛔ 이 한 줄만은 `<section aria-label=…>` 으로 감싸지 않는다 — 감싸개를 조건부로 두면
+           그 안의 줄도 결국 **글자와 함께 나타나** 다시 안 읽힌다. 목록·실패 쪽은 읽어 주는
+           자리가 아니라 구역이라 그대로 감싼다.
+      */}
+      <p className="msg msg--live msg--live-stores" role="status" aria-live="polite">
+        {store.at === 'broad' && (
+          <>
             ‘{store.word}’ 이름의 가게가{' '}
             <strong>{store.count.toLocaleString('ko-KR')}곳</strong>입니다 — 더 좁혀 주세요.
-          </p>
-        </section>
-      )}
+          </>
+        )}
+      </p>
 
       {store.at === 'done' && (
         <section className="search__stores" aria-label="가게 이름으로 찾은 땅">
