@@ -558,6 +558,20 @@ alter table district
 alter table district
   alter column source_nm set not null;
 
+-- ── 이름 칸 저장 방식 = main (2026-09-27, 마이그레이션 2026-09-27d) ─────────────
+-- 한 줄에 큰 도형(geom — 이미 main)이 실려 줄이 한 쪽을 넘치면, PostgreSQL 은 저장 방식이
+-- extended 인 칸부터 별관(TOAST)으로 내보낸다. 그래서 **작은 이름**(최대 85B·38B)이 쫓겨나
+-- 읽을 때마다 별관을 왕복했다(라이브 실측: source_nm 796행·district_nm 167행이 별관 —
+-- 상권 밖 건물의 list_building_districts 가 10,648쪽·16ms → 바꾼 복사본 517쪽·2.5ms).
+-- main 이면 geom 보다 뒤에야 밀려나므로 이름은 본관에 남는다.
+-- ⚠️ 이 문장은 source_nm 을 더하는 `add column` **뒤**에 있어야 한다(없는 칸엔 못 건다) ·
+--    저장 방식은 표 성질이라 적재기(upsert)가 새로 쓰는 줄에도 저절로 적용된다.
+-- district_id·district_type 은 최대 11B·13B 라 원리상 별관 후보가 아니어서 두지 않는다.
+-- 가드: tests/test_district_name_storage.py
+alter table district
+  alter column district_nm set storage main,
+  alter column source_nm set storage main;
+
 comment on column district.metrics is '정규화 점수. 화면 순위용';
 comment on column district.raw_metrics is '원본값. 주석에 출처·기준시점과 함께 노출';
 comment on column district.source_nm is
