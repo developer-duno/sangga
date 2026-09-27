@@ -50,7 +50,13 @@ def read(path):
 
 
 def strip_comments(sql):
-    """`--` 주석을 걷는다(줄 전체·줄 끝 모두). 이 두 파일엔 `'…'` 안의 `--` 가 없다."""
+    """`--` 주석을 걷는다(줄 전체·줄 끝 모두).
+
+    ⚠️ `'…'` 문자열 안의 `--` 도 주석으로 잘라 버린다 — schema.sql 에는 `'… --check …'` 가
+    3곳(1292·1330·1332줄 근방, comment on 글) 있다. 전부 district 정의·이 alter 보다 **뒤**이고
+    그 줄의 나머지 글만 잘리므로 여기 판정(district alter 의 위치·칸)은 바뀌지 않는다.
+    마이그레이션 27d 에는 문자열 안 `--` 가 없다.
+    """
     return "\n".join(
         line.split("--", 1)[0] for line in sql.replace("\r\n", "\n").splitlines())
 
@@ -65,6 +71,15 @@ def main_storage_stmts(sql):
     return out
 
 
+def final_storage(sql):
+    """district 의 `set storage` 를 문서 순서대로 되짚어 칸마다 **마지막** 값: {칸: 방식}."""
+    last = {}
+    for m in RE_ALTER_DISTRICT.finditer(sql):
+        for col, mode in RE_SET_ANY.findall(m.group(1)):
+            last[col.lower()] = mode.lower()
+    return last
+
+
 def schema_problems(text):
     """정본을 판정해 어긋난 것을 사람이 읽을 문장 목록으로(빈 목록 = 통과)."""
     sql = strip_comments(text)
@@ -73,6 +88,15 @@ def schema_problems(text):
     cols = set().union(*[c for _, c in stmts]) if stmts else set()
     if cols != EXPECTED:
         bad.append("정본의 main 칸이 {} 인데 기대는 {}".format(sorted(cols), sorted(EXPECTED)))
+    # 뒤에서 extended 로 되돌리는 줄이 덧붙으면 "main 문장이 있다"만으로는 못 잡는다 → 마지막 값으로.
+    last = final_storage(sql)
+    for col in sorted(EXPECTED):
+        if last.get(col) != "main":
+            bad.append("정본을 끝까지 되짚은 {} 의 저장 방식이 {!r} — main 이어야 합니다".format(
+                col, last.get(col)))
+    extra = sorted(set(last) - EXPECTED)
+    if extra:
+        bad.append("정본이 범위 밖 칸의 저장 방식을 바꿉니다: {}".format(extra))
     create = RE_CREATE.search(sql)
     add_src = RE_ADD_SOURCE.search(sql)
     if create is None or add_src is None:
@@ -122,6 +146,10 @@ def migration_problems(text):
             bad.append("set storage main {} 이 begin…commit 밖에 있습니다".format(sorted(c)))
     if upd is not None and not (begin.start() < upd.start() < commit.start()):
         bad.append("다시 싣는 update 가 begin…commit 밖에 있습니다")
+    # set storage 는 ACCESS EXCLUSIVE 라 begin 앞에서 lock_timeout 을 걸어야 줄 세우기를 막는다.
+    lt = re.search(r"(?m)^set\s+lock_timeout\b", low)
+    if lt is None or lt.start() > begin.start():
+        bad.append("`set lock_timeout` 이 begin; 앞에 없습니다 — alter 가 표를 통째로 잠급니다")
     if vac is None:
         bad.append("vacuum full 이 없습니다 — 부풀어 있는 힙(976쪽 vs 새로 담으면 ~500쪽)을 안 줄입니다")
     elif vac.start() < commit.start():
@@ -184,7 +212,16 @@ def test_mutation_d_moved_before_add_column_is_red():
     assert any("add column source_nm 앞" in b for b in schema_problems(broken))
 
 
-MIG_UPD = "   set district_nm = district_nm || '',\n       source_nm   = source_nm || ''\n"
+def test_mutation_h_reverting_to_extended_later_is_red():
+    """main 문장은 그대로 두고 **뒤에** extended 로 되돌리는 줄을 덧붙인다 → 빨강."""
+    text = _schema_lf()
+    revert = ("\nalter table district\n"
+              "  alter column source_nm set storage extended;\n")
+    broken = text.replace(SCHEMA_STMT, SCHEMA_STMT + revert, 1)
+    assert any("source_nm 의 저장 방식이 'extended'" in b for b in schema_problems(broken))
+
+
+MIG_UPD ="   set district_nm = district_nm || '',\n       source_nm   = source_nm || ''\n"
 
 
 def _mig_lf():
@@ -205,6 +242,13 @@ def test_mutation_f_vacuum_inside_transaction_is_red():
     broken = text.replace("\ncommit;\n", "\n", 1).replace(
         "vacuum (full, analyze) district;", "vacuum (full, analyze) district;\ncommit;", 1)
     assert any("commit 앞" in b for b in migration_problems(broken))
+
+
+def test_mutation_i_lock_timeout_after_begin_is_red():
+    text = _mig_lf()
+    assert "set lock_timeout = '5s';\n\nbegin;\n" in text, "전제: lock_timeout 이 begin 바로 앞"
+    broken = text.replace("set lock_timeout = '5s';\n\nbegin;\n", "begin;\nset lock_timeout = '5s';\n", 1)
+    assert any("lock_timeout" in b for b in migration_problems(broken))
 
 
 def test_mutation_g_touching_geom_is_red():

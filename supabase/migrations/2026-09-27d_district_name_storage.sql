@@ -3,8 +3,7 @@
 --   (district_nm · source_nm 의 저장 방식 extended → main + 기존 줄 다시 싣기)
 -- =====================================================================
 -- **라이브 적용 예정** — 메인 세션이 적용 전후 결과 동일 캡처(표 전체 md5 + 두 함수 결과 md5)와
---   함께 적용한다. 적용하면 이 줄을 "라이브 적용 YYYY-MM-DD HH:MM KST" 로 바꾸지 말고
---   PROGRESS·결정 문서에 적는다(적용된 마이그레이션 파일은 고치지 않는다 — CLAUDE.md).
+--   함께 적용한다.
 --
 -- 실행법 ⚠️ **대시보드 SQL Editor 로는 안 된다.**
 --   맨 끝의 `vacuum (full, analyze)` 는 트랜잭션 블록 안에서 못 돈다. SQL Editor 는 스크립트
@@ -22,6 +21,7 @@
 --       · geom 26 · district_id 0 · district_type 0
 --   이름은 최대 85B·38B 로 작은데, 읽을 때마다 별관 색인 + 별관 쪽을 한 번씩 더 왕복한다.
 --     · 시·도 11 의 `select count(*)` = 976쪽·1.8ms / `select distinct source_nm` = **15,338쪽·21.7ms**
+--       (재측정 2026-09-27 19:31 KST 무렵 · explain (analyze, buffers) · 스크래치 p10_remeasure.sql)
 --     · list_building_districts(상권 **밖** 건물 — sources 가 시·도 전체를 훑는 경로)
 --       = 10,648쪽·16.4ms, 상권 안 건물 = 989쪽·1.7ms
 --   화면의 "속한 상권" 한 줄이 부르는 함수라, 서울 건물 대부분(상권 밖)에서 이 값을 치른다.
@@ -49,10 +49,14 @@
 --     상권 안 건물 5곳     989쪽·1.7ms  → 518쪽·1.2ms
 --
 -- 잠금
---   ① alter … set storage = SHARE UPDATE EXCLUSIVE(읽기·쓰기 안 막음) · update 797행 = 줄 잠금.
---   ② vacuum full = ACCESS EXCLUSIVE — 도는 동안(8MB, 복사본 실측 0.1초) 이 표 읽기가 기다린다.
---     오래 도는 조회가 표를 쥐고 있으면 그 뒤로 줄이 서므로 `lock_timeout = '5s'` 로 빨리 포기하게
---     했다. 포기해도 ①은 이미 커밋돼 목적(이름 본관)은 이뤄졌다 — vacuum 한 줄만 다시 돌리면 된다.
+--   `lock_timeout = '5s'` 를 `begin;` **앞**에 한 번 건다 — 아래 ①·② 둘 다 표를 통째로 잠그므로,
+--   오래 도는 조회가 표를 쥐고 있으면 그 뒤로 화면 조회가 줄을 선다. 5초 넘게 못 잡으면 빨리 포기한다.
+--   ① alter … set storage = ACCESS EXCLUSIVE(PG17 문서 ALTER TABLE: "unless explicitly noted" 에
+--     SET STORAGE 는 예외로 안 적혀 있다 · 검사관 둘 pg_temp 실측) — commit 까지 약 0.1초
+--     (update 797행 포함) 이 표 읽기가 기다린다. 대기가 5초를 넘으면 트랜잭션이 **통째로 되돌아가**
+--     아무것도 안 바뀐다 — 다시 돌리면 된다.
+--   ② vacuum full = ACCESS EXCLUSIVE — 도는 동안(8MB, 복사본 실측 0.1초) 같은 사정. 포기해도
+--     ①은 이미 커밋돼 목적(이름 본관)은 이뤄졌다 — vacuum 한 줄만 다시 돌리면 된다.
 --
 -- 새로 만드는 환경: schema.sql 의 district 정의 뒤에 같은 `alter table … set storage main` 이 있다.
 -- 적재기 둘(load_seoul_district·load_sbiz_district)은 upsert 라 새 줄·고친 줄 모두 새로 쓰이므로
@@ -74,6 +78,7 @@
 --   ④ 캡처 SQL 전후 diff 0(표 전체 md5 · list_building_districts · list_district_buildings)
 
 set statement_timeout = '120s';
+set lock_timeout = '5s';
 
 begin;
 
@@ -88,7 +93,5 @@ update district
     or pg_column_toast_chunk_id(source_nm) is not null;
 
 commit;
-
-set lock_timeout = '5s';
 
 vacuum (full, analyze) district;
