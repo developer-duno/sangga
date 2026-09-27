@@ -90,7 +90,7 @@ public/                  # 정적 자산 (Supabase 를 안 거치는 것만)
 
 scripts/                 # 데이터 파이프라인 전부 21개 (수동 실행 — 자동화는 감시 워크플로우뿐)
 ├── dbx.py               # psql 감싸기 (SANGGA_DATABASE_URL) — DDL·EXPLAIN·matview 전용 통로
-├── post_load.py         # ★ 모든 적재 후 필수: VACUUM ANALYZE 6개 표 + 검색 요약표 5개 갱신 + 신선도 점검
+├── post_load.py         # ★ 모든 적재 후 필수: VACUUM ANALYZE 6개 표 + 검색 요약표(REFRESH_MVS 목록이 정본) 갱신 + 신선도 점검
 ├── post_load.py --check # 낡음 여부 + anon 권한(읽기/쓰기) 노출 점검 — post_load 본체엔 안 들어 있음
 ├── backup_raw.py        # data/raw → F:\sangga-raw-backup (robocopy /E + SHA-256 검증)
 ├── normalize_floor.py   # 층 정규화 정본 (지상n=n/지하n=-n/옥탑=99/불명=None) — 재구현 금지
@@ -190,7 +190,7 @@ docs/                    # 상세계획·알려진한계(조사 전 필독)·PRO
 
 - 빌드: `pnpm build` (tsc -b && vite build)
 - 실행: `pnpm dev` (http://localhost:5173)
-- 테스트: `pnpm test`(vitest 815, 39파일) / `python -m pytest tests/ -q`(2,734, 58파일) /
+- 테스트: `pnpm test`(vitest 824, 39파일) / `python -m pytest tests/ -q`(3,027, 58파일) /
   `E2E_PORT=5273 pnpm test:e2e`(30개 × 2벌 = 60회)
 - 린트: `pnpm exec oxlint` / `python -m ruff check scripts/ tests/`
 - 배포: `main` push → Vercel 자동 배포(`https://sangga-one.vercel.app`). `main` 은 잠겨 있어
