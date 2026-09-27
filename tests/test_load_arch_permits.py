@@ -374,6 +374,62 @@ class TestTransform:
         assert "적재 대상" in report
 
 
+class TestLoadOrder:
+    """P9 — CSV 를 pnu 순으로 써서 창고에서 같은 땅 자료가 한 쪽에 모이게 한다."""
+
+    @staticmethod
+    def _read(out):
+        with io.open(out, encoding="utf-8") as f:
+            rows = [line.split(",") for line in f.read().splitlines()]
+        at = target.CSV_COLUMNS.index("pnu")
+        pk = target.CSV_COLUMNS.index("mgm_pmsrgst_pk")
+        return [(r[pk], r[at]) for r in rows]
+
+    def _lines(self):
+        # 원본 순서 = pnu 가 뒤섞여 있고, 블록지번(pnu 빈 값)이 앞·가운데에 끼어 있다.
+        return [
+            line_of(useAprDay="", mgmPmsrgstPk="P1", bun="0900"),
+            line_of(useAprDay="", mgmPmsrgstPk="P2", platGbCd="2"),     # 블록 → pnu 없음
+            line_of(useAprDay="", mgmPmsrgstPk="P3", bun="0100"),
+            line_of(useAprDay="", mgmPmsrgstPk="P4", bun="0900"),       # P1 과 같은 땅
+            line_of(useAprDay="", mgmPmsrgstPk="P5", platGbCd="2"),     # 블록 → pnu 없음
+            line_of(useAprDay="", mgmPmsrgstPk="P6", bun="0500"),
+            line_of(useAprDay="", mgmPmsrgstPk="P7", bun="0100"),       # P3 과 같은 땅
+        ]
+
+    def test_csv_is_written_in_pnu_order(self, tmp_path):
+        _, written, out = stats_from(self._lines(), tmp_path)
+        got = self._read(out)
+        assert written == 7
+        pnus = [p for _, p in got if p]
+        assert pnus == sorted(pnus)
+        # 같은 pnu 안은 원래 순서(안정 정렬), 빈 pnu 두 줄은 맨 뒤에 원래 순서로.
+        assert [pk for pk, _ in got] == ["P3", "P7", "P6", "P1", "P4", "P2", "P5"]
+
+    def test_blank_pnu_rows_go_last(self, tmp_path):
+        _, _, out = stats_from(self._lines(), tmp_path)
+        got = self._read(out)
+        assert [p for _, p in got[-2:]] == ["", ""]
+        assert all(p for _, p in got[:-2])
+
+    def test_row_set_is_unchanged(self, tmp_path):
+        """⛔ 순서만 바꾼다 — 넣는 행의 집합·개수·요약은 원본 순서로 쓸 때와 같다."""
+        stats, written, out = stats_from(self._lines(), tmp_path)
+        got = self._read(out)
+        assert sorted(got) == sorted(
+            (pk, target.make_row(target.make_item(ln.split("|")), "202607")["pnu"] or "")
+            for pk, ln in zip(["P1", "P2", "P3", "P4", "P5", "P6", "P7"], self._lines()))
+        assert written == stats.kept == len(got) == 7
+        assert stats.pnu_block == 2
+
+    def test_limit_still_keeps_the_first_rows_of_the_source(self, tmp_path):
+        """--limit 은 '원본 앞 N행'이다 — 정렬한 뒤 앞 N행이 아니다."""
+        out = os.path.join(str(tmp_path), "arch_permit.csv")
+        _, written = target.transform(self._lines(), out, "202607", limit=3)
+        assert written == 3
+        assert sorted(pk for pk, _ in self._read(out)) == ["P1", "P2", "P3"]
+
+
 # ── 9. 적재 SQL ───────────────────────────────────────────────────────────────
 
 
