@@ -133,7 +133,7 @@ supabase/
 ├── schema.sql           # 정본 4,669줄 (라이브 반영본 — 마이그레이션과 드리프트 가드로 동기)
 └── migrations/          # 날짜 파일명 57개, 라이브 적용 순서 그대로
 
-tests/                   # pytest 58파일 2,734개 — collector/스크립트 1:1 + 드리프트 가드
+tests/                   # pytest 64파일 3,027개(2026-09-27 저녁) — collector/스크립트 1:1 + 드리프트 가드
 e2e/                     # playwright 30개(2파일: fixtures.ts, floor-stack.spec.ts). 넓은화면(chromium)·
 │                         #   휴대폰(mobile, Pixel 7) 2벌로 돌아 실행은 60회. E2E_PORT 로 포트 회피
 .github/workflows/       # ci.yml(test+web) + 감시 5종: district-source-watch·feedback-digest·
@@ -190,7 +190,7 @@ docs/                    # 상세계획·알려진한계(조사 전 필독)·PRO
 
 - 빌드: `pnpm build` (tsc -b && vite build)
 - 실행: `pnpm dev` (http://localhost:5173)
-- 테스트: `pnpm test`(vitest 824, 39파일) / `python -m pytest tests/ -q`(3,027, 58파일) /
+- 테스트: `pnpm test`(vitest 824, 40파일) / `python -m pytest tests/ -q`(3,027, 64파일) /
   `E2E_PORT=5273 pnpm test:e2e`(30개 × 2벌 = 60회)
 - 린트: `pnpm exec oxlint` / `python -m ruff check scripts/ tests/`
 - 배포: `main` push → Vercel 자동 배포(`https://sangga-one.vercel.app`). `main` 은 잠겨 있어
