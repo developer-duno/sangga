@@ -2,8 +2,11 @@
 -- 마이그레이션 2026-09-27d — 상권 표(district)의 작은 이름 칸 둘을 본관(main)에 둔다
 --   (district_nm · source_nm 의 저장 방식 extended → main + 기존 줄 다시 싣기)
 -- =====================================================================
--- **라이브 적용 예정** — 메인 세션이 적용 전후 결과 동일 캡처(표 전체 md5 + 두 함수 결과 md5)와
---   함께 적용한다.
+-- **라이브 적용 완료 2026-09-27 20:12 KST** (dbx -f · 1초 안 · UPDATE 797 · VACUUM 완료)
+--   적용 전후 캡처 1~3번 블록 동일(district 표 전체 · list_building_districts 상권 안 50·밖 50·대전 20 ·
+--   list_district_buildings 상권 20개) · 4번 저장 상태만 바뀜: 별관 district_nm/source_nm 167/796 → 0/0,
+--   힙 976 → 551쪽, attstorage x → m. 속한 상권(상권 밖 건물) 10,648쪽·16.4ms → 575쪽·3.3ms ·
+--   `distinct source_nm`(시도 11) 15,361쪽·20ms → 551쪽·2.4ms.
 --
 -- 실행법 ⚠️ **대시보드 SQL Editor 로는 안 된다.**
 --   맨 끝의 `vacuum (full, analyze)` 는 트랜잭션 블록 안에서 못 돈다. SQL Editor 는 스크립트
