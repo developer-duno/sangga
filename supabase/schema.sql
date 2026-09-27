@@ -29,7 +29,14 @@
 -- =====================================================================
 
 create extension if not exists postgis;
-create extension if not exists pg_trgm;   -- 상호명 부분검색용
+-- 상호명 부분검색용. **`extensions` 스키마에 둔다**(2026-09-23a — Supabase 보안 고문 경고
+-- "Extension in Public" 해소, 라이브 실측 `pg_trgm | extensions | 1.6`).
+-- 아래 색인들이 `gin_trgm_ops` 를 스키마 없이 적어도 되는 것은 postgres 롤의 search_path 가
+-- `"$user", public, extensions` 이기 때문이다(라이브 `pg_roles.rolconfig` 실측).
+-- ⚠️ **이 파일은 그 롤 설정을 스스로 만들지 않는다** — 그 값이 없는 창고에 이 파일을 돌리면
+--    색인 생성이 "연산자 클래스 없음"으로 멈춘다. 이미 만든 색인은 연산자 클래스를 OID 로
+--    붙잡고 있어 스키마를 옮겨도 그대로 돈다.
+create extension if not exists pg_trgm with schema extensions;
 
 -- =====================================================================
 -- 앞으로 만들 **함수**는 PUBLIC 에게 열린 채 태어나지 않는다 (2026-09-01b)
@@ -181,11 +188,16 @@ create index if not exists idx_building_nm  on building using gin (bld_nm gin_tr
 -- 건물명 끝의 (사람이름)을 지운다. 괄호 안이 건물 지칭어면 그대로 둔다
 -- ('썬프라자(태양빌딩)'·'은하빌딩2(신관)'은 보호). 이름만 남으면 NULL 로 돌려
 -- 동명칭 폴백이 이어받게 한다. IMMUTABLE — 이 식 위에 인덱스를 걸어야 하기 때문.
+-- search_path 고정(2026-09-23a — 보안 고문 경고 "Function Search Path Mutable" 해소).
+-- ⚠️ SET 절이 붙은 SQL 함수는 플래너가 인라인하지 못한다. 이 함수는 재 보니 차이가 작아
+--    (list_parcel_buildings 20~23ms vs 18~20ms) 고정을 유지한다. 행마다 불려 차이가 컸던
+--    search_key · price_floor_band 는 일부러 안 박았다(2026-09-23b·c, 각 함수 머리 참조).
 create or replace function mask_person_name(nm text)
 returns text
 language sql
 immutable
 parallel safe
+set search_path = public, extensions, pg_temp
 as $$
   select case
     when nm is null then null
@@ -216,6 +228,7 @@ returns text
 language sql
 immutable
 parallel safe
+set search_path = public, extensions, pg_temp   -- 2026-09-23a (mask_person_name 머리 참조)
 as $$
   select coalesce(
     nullif(btrim(public.mask_person_name(bld_nm)), ''),
@@ -436,6 +449,7 @@ create index if not exists idx_ub_snapshot_floor_pnu on unit_business (snapshot_
 create or replace function unit_business_append_only()
 returns trigger
 language plpgsql
+set search_path = public, extensions, pg_temp   -- 2026-09-23a (mask_person_name 머리 참조)
 as $$
 begin
   raise exception
@@ -941,6 +955,7 @@ create or replace function parcel_jibun_addr(
 language sql
 immutable
 parallel safe
+set search_path = public, extensions, pg_temp   -- 2026-09-23a (mask_person_name 머리 참조)
 as $$
   select nullif(btrim(
            coalesce(sido, '')    || ' ' ||
@@ -978,6 +993,12 @@ comment on function parcel_jibun_addr(text, text, text, text) is
 --       idx_parcel_jibun_addr)는 라이브에서 지웠다. 되살리지 말 것.
 --
 -- ⚠️ generated ... stored 는 IMMUTABLE 함수만 쓸 수 있다. 아래 셋 다 IMMUTABLE 이다.
+--
+-- ⛔ **search_path 를 박지 않는다**(2026-09-23b). SET 절이 붙으면 플래너가 인라인하지 못하는데,
+--    search_stores 가 땅마다 `unnest → search_key → like` 로 행마다 부르므로 그 비용이 그대로
+--    드러난다 — 2026-09-23a 에서 박았더니 search_stores('카페') 276~288ms → 334~428ms 로
+--    느려져 이 함수만 되돌렸다. 표를 읽지 않는 SECURITY INVOKER 순수 계산이라 탈취 위험은
+--    사실상 없고, 보안 고문 경고 1건은 **일부러 남긴다**.
 create or replace function search_key(t text)
 returns text
 language sql
@@ -1330,6 +1351,7 @@ returns int
 language sql
 immutable
 parallel safe
+set search_path = public, extensions, pg_temp   -- 2026-09-23a (mask_person_name 머리 참조)
 as $$ select 6000 $$;
 
 comment on function search_scope_limit() is
@@ -2200,6 +2222,8 @@ alter table price_gate_sigungu enable row level security;
 --
 -- 이 함수는 표를 한 줄도 읽지 않는다(순수 계산). SET 절을 붙이면 SQL 함수 인라인이 막혀
 -- 후보 한 줄마다 함수 호출이 남는다 — 같은 이유로 형제 함수 search_key() 도 안 박았다.
+-- 2026-09-23a 에서 보안 고문 경고를 지우려 한 번 박았다가 list_price_bands 가
+-- 45~56ms → 105~110ms(약 2.3배)로 느려져 되돌렸다(2026-09-23c). 경고 1건은 일부러 남긴다.
 create or replace function price_floor_band(p_floor smallint)
 returns text
 language sql
