@@ -46,6 +46,16 @@ pnu 를 비워 둔다(버리지 않는다).
 실측 길이 분포에 **22자리**가 794,704행 있다(`1000000000000000045934`). bigint 최대는
 19자리라 그대로 넣으면 넘친다. 원본 정의도 VARCHAR(33)이므로 **text** 로 담는다.
 
+왜 필지 순서로 넣나 (2026-09-27 P9)
+------------------------------------
+표는 넣은 순서대로 창고(디스크 쪽)에 쌓인다. 원본 순서 그대로 넣으면 서울·대전 행(5.6%)이
+표 전체 쪽의 약 90%에 흩어져, 둘레 인허가를 세는 함수가 한 번에 수십~수백 쪽을 꺼낸다.
+그래서 CSV 를 **pnu 오름차순**(빈 pnu 는 맨 뒤, 같은 pnu 안은 원래 순서)으로 써서 같은 땅의
+자료가 한 쪽에 모이게 한다. 넣는 **내용·행 수·관문은 그대로**이고 순서만 다르다.
+⚠️ 효과는 **다음 적재부터**다 — 이미 들어간 기준월 행은 이 변경으로 자리가 안 바뀐다.
+DB 쪽에서 정렬(임시 표 → order by)하지 않고 파이썬에서 하는 이유: 공용 DB 에 55만 행을 한 번
+더 쓰고 정렬시키는 대신 이 PC 메모리 약 0.3GB 로 끝나고, 적재 SQL·관문을 안 건드린다.
+
 쓰는 법
 -------
     python scripts/collectors/load_arch_permits.py --dry-run     # DB 쓰기 0 (관문 리포트)
@@ -487,37 +497,55 @@ def open_text(zip_path):
     return z, io.TextIOWrapper(z.open(names[0]), encoding="utf-8", errors="replace")
 
 
+_PNU_AT = CSV_COLUMNS.index("pnu")
+# pnu 가 빈 행을 맨 뒤로 보내는 정렬 키. PNU 는 숫자 19자리라 '~'(0x7E)가 어느 PNU 보다 크다.
+# 튜플 키 대신 글자 하나를 쓰는 이유 = 55만 행에 키 튜플을 새로 만들지 않기 위해서다.
+_PNU_LAST = "~"
+
+
+def sort_by_pnu(csv_rows):
+    """CSV 행 목록을 pnu 오름차순으로 **제자리** 정렬한다(pnu 가 빈 행은 맨 뒤).
+
+    파이썬 정렬은 안정 정렬이라 같은 pnu 안에서는 원본 순서가 그대로 남는다.
+    넣는 행의 **집합은 바뀌지 않는다** — 순서만 바뀐다(머리말 "왜 필지 순서로 넣나").
+    """
+    csv_rows.sort(key=lambda r: r[_PNU_AT] or _PNU_LAST)
+    return csv_rows
+
+
 def transform(lines, out_csv, loaded_ym, limit=None, progress=None):
     """원본 줄을 훑으며 CSV 를 쓰고 요약을 모은다. (stats, 쓴 행수)
 
     ⭐ zip 을 모르는 함수다 — 줄 목록만 주면 되므로 테스트에서 그냥 리스트를 넘긴다.
+    ⚠️ 담을 행을 **메모리에 모았다가** pnu 순으로 정렬해 한 번에 쓴다(머리말 "왜 필지
+       순서로 넣나" — 2026-07 판 55만 행 기준 약 0.3GB, 정렬 자체는 1초 안쪽).
     """
     stats = Stats(max_day=month_end(loaded_ym))
-    written = 0
+    csv_rows = []
+    for lineno, line in enumerate(lines, start=1):
+        stats.rows += 1
+        if progress and stats.rows % PROGRESS_EVERY == 0:
+            progress(stats.rows, stats.kept)
+        line = line.rstrip("\r\n")
+        if not line:
+            continue
+        item = make_item(line.split("|"))
+        if item is None:
+            stats.col_mismatch += 1
+            continue
+        ok, reason = is_target(item)
+        if not ok:
+            stats.skipped[reason] += 1
+            continue
+        row = make_row(item, loaded_ym)
+        stats.add(item, row, "{}행".format(lineno))
+        csv_rows.append([row[c] for c in CSV_COLUMNS])
+        if limit and len(csv_rows) >= limit:
+            break
+    sort_by_pnu(csv_rows)
     with io.open(out_csv, "w", encoding="utf-8", newline="") as f:
-        writer = csv.writer(f, lineterminator="\n")
-        for lineno, line in enumerate(lines, start=1):
-            stats.rows += 1
-            if progress and stats.rows % PROGRESS_EVERY == 0:
-                progress(stats.rows, stats.kept)
-            line = line.rstrip("\r\n")
-            if not line:
-                continue
-            item = make_item(line.split("|"))
-            if item is None:
-                stats.col_mismatch += 1
-                continue
-            ok, reason = is_target(item)
-            if not ok:
-                stats.skipped[reason] += 1
-                continue
-            row = make_row(item, loaded_ym)
-            stats.add(item, row, "{}행".format(lineno))
-            writer.writerow([row[c] for c in CSV_COLUMNS])
-            written += 1
-            if limit and written >= limit:
-                break
-    return stats, written
+        csv.writer(f, lineterminator="\n").writerows(csv_rows)
+    return stats, len(csv_rows)
 
 
 def main(argv=None):

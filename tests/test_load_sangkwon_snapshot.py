@@ -518,6 +518,58 @@ def test_scan_and_build_streams_per_file_and_dedupes_pnu_across_files(tmp_path):
     assert result["unit_business_records"] == []
 
 
+def _mixed_order_rows():
+    """pnu 가 뒤섞이고 pnu 없는 행이 앞·가운데 끼어 있는 원본 순서."""
+    return [
+        make_row(상가업소번호="S1", 지번코드="1168010100109000016"),
+        make_row(상가업소번호="S2", 지번코드=""),                       # pnu 없음
+        make_row(상가업소번호="S3", 지번코드="1168010100101000001"),
+        make_row(상가업소번호="S4", 지번코드="1168010100109000016"),    # S1 과 같은 땅
+        make_row(상가업소번호="S5", 지번코드="11680-bad"),              # pnu 무효 → None
+        make_row(상가업소번호="S6", 지번코드="1168010100105000001"),
+        make_row(상가업소번호="S7", 지번코드="1168010100101000001"),    # S3 과 같은 땅
+    ]
+
+
+def test_scan_and_build_sends_unit_business_in_pnu_order_per_file(tmp_path):
+    """P9 ★ 파일마다 넘기는 unit_business 는 pnu 순(없는 행은 맨 뒤, 같은 pnu 는 원래 순서)."""
+    write_csv(tmp_path, "소상공인시장진흥공단_상가(상권)정보_서울_202603.csv",
+              _mixed_order_rows())
+    got = []
+    target.scan_and_build(str(tmp_path), "11680", "202603",
+                          on_file_done=lambda _p, ub: got.append([r["biz_no"] for r in ub]))
+    assert got == [["S3", "S7", "S6", "S1", "S4", "S2", "S5"]]
+
+
+def test_scan_and_build_pnu_order_keeps_row_set_and_counts(tmp_path):
+    """⛔ 순서만 바꾼다 — 넣는 행의 집합·개수는 그대로다."""
+    write_csv(tmp_path, "소상공인시장진흥공단_상가(상권)정보_서울_202603.csv",
+              _mixed_order_rows())
+    result = target.scan_and_build(str(tmp_path), "11680", "202603")
+    ub = result["unit_business_records"]
+    assert sorted(r["biz_no"] for r in ub) == ["S1", "S2", "S3", "S4", "S5", "S6", "S7"]
+    assert result["unit_business_count"] == 7
+    assert result["ub_with_pnu_count"] == 5
+    assert [r["pnu"] for r in ub[-2:]] == [None, None]
+    pnus = [r["pnu"] for r in ub[:-2]]
+    assert pnus == sorted(pnus)
+
+
+def test_scan_and_build_sorts_within_each_file_not_across_files(tmp_path):
+    """정렬은 시·도 파일 단위다 — 파일 순서는 그대로, 전국을 한꺼번에 모으지 않는다."""
+    write_csv(tmp_path, "소상공인시장진흥공단_상가(상권)정보_서울_202603.csv",
+              [make_row(상가업소번호="A1", 지번코드="1168010100109000016"),
+               make_row(상가업소번호="A2", 지번코드="1168010100101000001")])
+    write_csv(tmp_path, "소상공인시장진흥공단_상가(상권)정보_경기_202603.csv",
+              [make_row(상가업소번호="B1", 지번코드="1168010100105000001"),
+               make_row(상가업소번호="B2", 지번코드="1168010100100000001")])
+    got = []
+    target.scan_and_build(str(tmp_path), "11680", "202603",
+                          on_file_done=lambda _p, ub: got.append([r["biz_no"] for r in ub]))
+    files = sorted(got)   # 파일을 읽는 차례는 collect_csv_files 가 정한다(여기서 안 바꾼다)
+    assert files == [["A2", "A1"], ["B2", "B1"]]
+
+
 def test_scan_and_build_ub_with_pnu_count_excludes_invalid(tmp_path):
     write_csv(tmp_path, "소상공인시장진흥공단_상가(상권)정보_서울_202603.csv",
               [make_row(상가업소번호="A1", 지번코드="1168010100108230004"),

@@ -33,6 +33,17 @@ Phase 1 ③ 강남구 2026Q1 적재. `docs/상세계획.md` §5.6(품질 지표)
   (실측: unit_business 1행당 614바이트, 가장 큰 경기 671,649행 = 약 413MB).
   파일 단위로 끊으면 한 번에 들고 있는 것이 가장 큰 시도 1개분뿐이다.
 
+왜 필지 순서로 넣나 (2026-09-27 P9):
+  표는 넣은 순서대로 창고(디스크 쪽)에 쌓인다. 원본 순서 그대로면 한 땅의 점포(평균 3.7개)가
+  3.7쪽에 하나씩 흩어져, 건물 하나를 볼 때마다 점포 수만큼 쪽을 꺼낸다. 그래서 unit_business
+  행을 **시·도 파일 단위로** pnu 오름차순(pnu 없는 행은 맨 뒤, 같은 pnu 안은 원래 순서)으로
+  정렬해 보낸다. 이미 들고 있는 파일 버퍼를 제자리 정렬하므로 메모리는 거의 안 는다.
+  넣는 행 집합·교차검증은 그대로다. ⚠️ 효과는 **다음 분기 적재부터** — 이미 들어간 분기
+  행은 자리가 안 바뀐다(append-only 라 다시 넣지도 않는다).
+  ⚠️ 중복 biz_no: PK (snapshot_ym, biz_no) + ignore-duplicates 라 먼저 들어간 행이 남는다.
+  한 파일에 같은 biz_no 가 다른 pnu 로 두 번 있으면 정렬이 남는 쪽을 바꿀 수 있지만, 그 경우는
+  순서와 무관하게 적재 뒤 REST 교차검증(행 수 대조)이 이미 불일치로 멈춘다.
+
 사용법:
   python scripts/collectors/load_sangkwon_snapshot.py --dry-run
   python scripts/collectors/load_sangkwon_snapshot.py
@@ -385,6 +396,21 @@ def build_unit_business_record(row, idx, snapshot_ym, floor_no):
     return rec
 
 
+# pnu 가 None 인 행을 맨 뒤로 보내는 정렬 키. 유효 PNU 는 숫자 19자리라 '~'(0x7E)가 더 크다.
+# 튜플 키 대신 글자 하나를 쓰는 이유 = 가장 큰 시·도 67만 행에 키 튜플을 새로 만들지 않기 위해서다.
+_PNU_LAST = "~"
+
+
+def sort_by_pnu(unit_business_records):
+    """unit_business 행 목록을 pnu 오름차순으로 **제자리** 정렬한다(pnu 가 None 이면 맨 뒤).
+
+    파이썬 정렬은 안정 정렬이라 같은 pnu 안에서는 원본 순서가 그대로 남는다.
+    넣는 행의 **집합은 바뀌지 않는다** — 순서만 바뀐다(머리말 "왜 필지 순서로 넣나").
+    """
+    unit_business_records.sort(key=lambda r: r["pnu"] or _PNU_LAST)
+    return unit_business_records
+
+
 def estimate_bldrgst_scale(unique_pnu_count):
     """건축물대장 API 호출 규모를 추정한다 (실행하지 않음 — 산정만).
 
@@ -537,6 +563,8 @@ def scan_and_build(data_dir, sigungu_code, snapshot_ym, on_file_done=None):
                         seen_pnu.add(pnu)
                         new_parcels.append(rec)
                 file_ub = file_result["unit_business_records"]
+                # 넣는 순서를 필지 번호 순으로 — 머리말 "왜 필지 순서로 넣나".
+                sort_by_pnu(file_ub)
                 parcel_count += len(new_parcels)
                 unit_business_count += len(file_ub)
                 ub_with_pnu_count += sum(1 for r in file_ub if r["pnu"])
