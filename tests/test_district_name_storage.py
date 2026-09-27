@@ -36,6 +36,7 @@ MIGRATION = os.path.join(
     ROOT, "supabase", "migrations", "2026-09-27d_district_name_storage.sql")
 
 EXPECTED = {"district_nm", "source_nm"}
+LOCK_TIMEOUT = "2s"
 
 RE_ALTER_DISTRICT = re.compile(r"(?is)\balter\s+table\s+(?:if\s+exists\s+)?(?:public\.)?district\b(.*?);")
 RE_SET_MAIN = re.compile(r"(?i)alter\s+column\s+(\w+)\s+set\s+storage\s+main\b")
@@ -150,6 +151,18 @@ def migration_problems(text):
     lt = re.search(r"(?m)^set\s+lock_timeout\b", low)
     if lt is None or lt.start() > begin.start():
         bad.append("`set lock_timeout` 이 begin; 앞에 없습니다 — alter 가 표를 통째로 잠급니다")
+    else:
+        val = re.match(r"set\s+lock_timeout\s*(?:=|to)\s*'([^']*)'", low[lt.start():])
+        if val is None or val.group(1) != LOCK_TIMEOUT:
+            bad.append("lock_timeout 값이 {!r} — {!r} 이어야 합니다(anon statement_timeout 보다 짧게)".format(
+                val.group(1) if val else None, LOCK_TIMEOUT))
+    # begin 부터 vacuum 까지 그 상한을 풀거나 바꾸는 문장이 끼면 vacuum full 이 무한정 줄을 세운다.
+    end = vac.start() if vac is not None else len(low)
+    between = re.findall(
+        r"(?m)^(?:reset\s+(?:lock_timeout|all)\b|set\s+(?:local\s+|session\s+)?lock_timeout\b)",
+        low[begin.start():end])
+    if between:
+        bad.append("begin 과 vacuum 사이에 lock_timeout 을 풀거나 바꾸는 문장 {}건".format(len(between)))
     if vac is None:
         bad.append("vacuum full 이 없습니다 — 부풀어 있는 힙(976쪽 vs 새로 담으면 ~500쪽)을 안 줄입니다")
     elif vac.start() < commit.start():
@@ -221,7 +234,7 @@ def test_mutation_h_reverting_to_extended_later_is_red():
     assert any("source_nm 의 저장 방식이 'extended'" in b for b in schema_problems(broken))
 
 
-MIG_UPD ="   set district_nm = district_nm || '',\n       source_nm   = source_nm || ''\n"
+MIG_UPD = "   set district_nm = district_nm || '',\n       source_nm   = source_nm || ''\n"
 
 
 def _mig_lf():
@@ -244,11 +257,35 @@ def test_mutation_f_vacuum_inside_transaction_is_red():
     assert any("commit 앞" in b for b in migration_problems(broken))
 
 
+LT_LINE = "set lock_timeout = '2s';\n\nbegin;\n"
+
+
 def test_mutation_i_lock_timeout_after_begin_is_red():
     text = _mig_lf()
-    assert "set lock_timeout = '5s';\n\nbegin;\n" in text, "전제: lock_timeout 이 begin 바로 앞"
-    broken = text.replace("set lock_timeout = '5s';\n\nbegin;\n", "begin;\nset lock_timeout = '5s';\n", 1)
-    assert any("lock_timeout" in b for b in migration_problems(broken))
+    assert LT_LINE in text, "전제: lock_timeout 이 begin 바로 앞"
+    broken = text.replace(LT_LINE, "begin;\nset lock_timeout = '2s';\n", 1)
+    assert any("begin; 앞에 없습니다" in b for b in migration_problems(broken))
+
+
+def test_mutation_j_longer_lock_timeout_is_red():
+    text = _mig_lf()
+    assert LT_LINE in text, "전제: lock_timeout 이 begin 바로 앞"
+    broken = text.replace(LT_LINE, "set lock_timeout = '5s';\n\nbegin;\n", 1)
+    assert any("lock_timeout 값이 '5s'" in b for b in migration_problems(broken))
+
+
+@pytest.mark.parametrize("stmt", [
+    "reset lock_timeout;",
+    "reset all;",
+    "set lock_timeout = '0';",
+    "set local lock_timeout = '0';",
+])
+def test_mutation_k_lifting_the_limit_before_vacuum_is_red(stmt):
+    text = _mig_lf()
+    anchor = "\ncommit;\n"
+    assert anchor in text, "전제: commit 문장"
+    broken = text.replace(anchor, anchor + "\n" + stmt + "\n", 1)
+    assert any("사이에 lock_timeout" in b for b in migration_problems(broken)), stmt
 
 
 def test_mutation_g_touching_geom_is_red():
