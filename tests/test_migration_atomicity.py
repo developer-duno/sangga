@@ -128,8 +128,19 @@ def _first(pattern, sql):
 
 
 def needs_wrapping(sql):
-    """②판정 — 주석을 걷은 본문에 줄머리 `drop` 문장이 있나."""
-    return re.search(r"(?m)^drop ", code_only(sql)) is not None
+    """②판정 — 주석을 걷은 본문에 줄머리 `drop` 문장이 있나.
+
+    ⓘ `drop index concurrently …` 줄만은 세지 않는다(2026-09-27e 신설). 트랜잭션 안에서
+       **원리적으로 못 도는** 문장이라 감쌀 수가 없고, 색인을 바꿔 끼우는 판은 새 색인을
+       **먼저** 만든 뒤 옛 것을 지워 중간에 끊겨도 '색인 없는 표'가 안 남는다. 그 줄 말고
+       다른 drop(뷰·함수·표)이 하나라도 있으면 여전히 감싸야 한다 — 그리고 그 판에 concurrently
+       가 섞이면 ④가 빨강이다(두 파일로 나누라는 뜻).
+    """
+    # ⛔ 면제는 **그 줄이 `drop index concurrently …;` 한 문장뿐일 때만**이다 — 같은 줄 뒤에
+    #    `drop view v;` 같은 다른 문장이 붙으면 줄이 남아 감시 대상이 된다(검사관 지적 2026-09-27).
+    code = re.sub(r"(?im)^drop[ \t]+index[ \t]+concurrently[ \t]+[^;\n]*;[ \t]*$", "",
+                  code_only(sql))
+    return re.search(r"(?m)^drop ", code) is not None
 
 
 def check(sql):
@@ -243,6 +254,26 @@ class TestTheScopeIsProven:
             assert f in dated_files(), name
             assert not needs_wrapping(read(f)), name
             assert f not in guarded_files(), name
+
+    def test_a_concurrent_index_swap_is_exempt_but_only_that(self):
+        """2026-09-27e 는 `drop index concurrently` 만 있어 **면제**다(감쌀 수 없는 문장).
+
+        같은 줄에 다른 drop 이 하나라도 섞이면 다시 감시 대상이어야 한다 — 면제가 그보다
+        넓으면 뷰·함수를 지우는 판이 concurrently 한 줄을 핑계로 조용히 빠진다.
+        """
+        e = os.path.join(MIGRATIONS, "2026-09-27e_arch_permit_pnu_pms_day.sql")
+        assert e in dated_files()
+        assert "drop index concurrently" in statements(read(e)).lower(), "전제: 교체 판이다"
+        assert not needs_wrapping(read(e))
+        assert e not in guarded_files()
+        mixed = read(e) + "\ndrop view if exists v;\ncreate view v as select 1;\n"
+        assert needs_wrapping(mixed)
+        assert check(mixed), "concurrently 판에 뷰 drop 을 섞었는데 통과합니다"
+        # 들여 쓰지 않은 평범한 `drop index` 는 여전히 감싸라는 쪽이다(면제는 concurrently 만).
+        assert needs_wrapping("drop index if exists idx_x;\ncreate index idx_x on t (a);\n")
+        # 한 줄에 두 문장 — concurrently 뒤에 다른 drop 이 붙으면 면제가 아니다.
+        assert needs_wrapping("drop index concurrently if exists a; drop view if exists v;\n")
+        assert not needs_wrapping("drop index concurrently if exists a;\n")
 
     def test_the_old_unwrapped_drop_is_excluded_by_date_only(self):
         """⛔ 05b 는 **drop 이 있는데도 안 감싼** 알려진 옛 빚이다(이미 적용된 역사).

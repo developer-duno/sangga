@@ -3956,13 +3956,16 @@ notify pgrst, 'reload schema';
 -- ⚠️ **월 1회 수동 갱신**이고, 원본은 건축HUB 에 최근 3개월치만 남는다 — 받은 zip 은
 --    `python scripts/backup_raw.py` 로 백업할 것(절대 규칙 6 과 같은 이유).
 -- ⛔ **PK 가 두 칸인 이유**: 같은 허가건이 달마다 다시 나오므로, 한 칸짜리 PK 로 두면
---    다음 달 적재가 PK 충돌로 통째로 실패한다. 읽는 함수는 가장 최근 기준월만 본다.
+--    다음 달 적재가 PK 충돌로 통째로 실패한다(적재는 새 달을 **먼저 넣고** 관문을 통과한 뒤에
+--    옛 달을 지우므로, 적재 도중엔 두 달이 함께 있다). 읽는 함수는 가장 최근 기준월만 본다.
 -- ⛔ **mgm_pmsrgst_pk 는 text 다** — 22자리 값이 있어 bigint 를 넘친다(원본도 VARCHAR(33)).
 -- ⛔ 용도로 거르지 않고 다 담는다 — 무엇을 상가로 볼지는 읽는 함수 한 곳에서만 정한다.
 create table if not exists arch_permit (
   -- 관리_허가대장_PK. **숫자로 담지 않는다** — 22자리가 있어 bigint 를 넘는다.
   mgm_pmsrgst_pk  text      not null,
-  -- 기준월(YYYYMM). 달마다 한 벌이 쌓이고, 읽는 함수는 가장 최근 한 벌만 본다.
+  -- 기준월(YYYYMM). 적재가 새 달을 넣은 뒤 옛 달을 지워 표는 평소 한 달분이다(옛 파일을 잘못
+  -- 넣으면 다음 적재 때까지 두 달 · 2026-09-27).
+  -- 읽는 함수는 가장 최근 한 벌만 본다.
   loaded_ym       char(6)   not null,
   -- 조립 실패(블록·특수지번 등)를 **버리지 않고** 담기 위해 NULL 을 허용한다.
   pnu             char(19),
@@ -3983,8 +3986,8 @@ create table if not exists arch_permit (
 
 comment on table arch_permit is
   '건축인허가 기본개요 중 **아직 사용승인이 안 난 최근 허가분**(건축HUB 분류 01·0101, 전국 월간). '
-  '2026-07 판 실측 556,527행(원본 6,498,901행에서). 달마다 한 벌이 쌓이며 읽는 함수는 가장 '
-  '최근 기준월만 본다. ⛔ anon 에게 통째로 닫혀 있고 count_nearby_permits() 로만 읽는다 — '
+  '2026-07 판 실측 556,527행(원본 6,498,901행에서). 적재가 새 달을 넣고 관문을 통과한 뒤 옛 달을 '
+  '지워 표는 평소 한 달분이다(옛 파일을 잘못 넣으면 다음 적재 때까지 두 달 · 2026-09-27). 읽는 함수는 가장 최근 기준월만 본다. ⛔ anon 에게 통째로 닫혀 있고 count_nearby_permits() 로만 읽는다 — '
   '그것도 개수만 나간다(건물 주소·이름은 한 글자도 안 나간다). '
   '⚠️ 원본은 건축HUB 에 최근 3개월치만 남는다 — 받은 zip 은 backup_raw.py 로 백업할 것.';
 comment on column arch_permit.mgm_pmsrgst_pk is
@@ -4000,9 +4003,11 @@ comment on column arch_permit.real_stcns_day is
 
 -- 읽는 길은 "이 필지들 중 상가 미준공 몇 곳"뿐이다. 그래서 pnu 로 찾고, 세는 데 필요한
 -- 칸을 **include 로 함께 실어** 힙에 안 가게 한다(idx_ub_pnu_cat 과 같은 처방).
--- ⛔ include 네 칸을 지우지 말 것 — 지워도 **에러는 안 나고 느려지기만 한다**.
+-- ⛔ include 다섯 칸을 지우지 말 것 — 지워도 **에러는 안 나고 느려지기만 한다**.
+--    arch_pms_day 는 2026-09-27e 에 더했다(읽는 함수가 '2년 넘게 미착공'을 세려고 허가일을
+--    꺼내는데 include 에 없어 행마다 힙에 갔다 — Index Scan 58쪽 실측).
 create index if not exists idx_arch_permit_pnu on arch_permit (pnu)
-  include (loaded_ym, use_apr_day, main_purps_cd, real_stcns_day);
+  include (loaded_ym, use_apr_day, main_purps_cd, real_stcns_day, arch_pms_day);
 
 -- 같은 기준월을 다시 넣을 때(월 1회 갱신) 지우는 자리. 55만 행을 전수 훑지 않게 한다.
 create index if not exists idx_arch_permit_ym on arch_permit (loaded_ym);

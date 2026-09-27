@@ -53,7 +53,15 @@ RE_CREATE_INDEX = re.compile(
     r"(?im)^create\s+(?:unique\s+)?index\s+(?:concurrently\s+)?"
     r"(?:if\s+not\s+exists\s+)?(\w+)"
 )
-RE_DROP_INDEX = re.compile(r"(?im)^drop\s+index\s+(?:if\s+exists\s+)?" + SCHEMA_PREFIX + r"(\w+)")
+# ⓘ `concurrently` 를 건너뛴다(2026-09-27e) — 없으면 그 낱말 자체가 "지운 인덱스 이름"으로 잡혀
+#    진짜로 지운 인덱스가 기록에서 빠진다(좀비를 못 잡는다).
+RE_DROP_INDEX = re.compile(
+    r"(?im)^drop\s+index\s+(?:concurrently\s+)?(?:if\s+exists\s+)?" + SCHEMA_PREFIX + r"(\w+)")
+# 인덱스 이름 바꾸기(2026-09-27e — include 칸을 더하려고 v2 로 만든 뒤 옛 이름으로 되돌린다).
+# 되짚기에서 "옛 이름이 사라지고 새 이름이 산다"로 친다. 모르면 v2 가 산 것으로 남아
+# "정본에 없는 인덱스"로 헛경보가 나고, 되돌린 옛 이름은 "지운 인덱스"로 좀비 경보가 난다.
+RE_RENAME_INDEX = re.compile(
+    r"(?im)^alter\s+index\s+(?:if\s+exists\s+)?" + SCHEMA_PREFIX + r"(\w+)\s+rename\s+to\s+(\w+)")
 RE_CREATE_FN = re.compile(r"(?im)^create\s+or\s+replace\s+function\s+" + SCHEMA_PREFIX + r"(\w+)")
 RE_DROP_FN = re.compile(r"(?im)^drop\s+function\s+(?:if\s+exists\s+)?" + SCHEMA_PREFIX + r"(\w+)")
 # 뷰도 같은 병을 앓는다 — 2026-08-22a 가 v_coverage_stats 의 where 절을 고칠 때
@@ -89,7 +97,7 @@ def migration_files():
     return [os.path.join(MIG_DIR, n) for n in names]
 
 
-def replay(create_re, drop_re):
+def replay(create_re, drop_re, rename_re=None):
     """마이그레이션을 순서대로 재생해 **지금 살아 있어야 할 이름**과 **지운 이름**을 낸다.
 
     ⚠️ 한 파일 **안에서도 적힌 순서대로** 처리해야 한다. 만든 것을 먼저 다 훑고 지운 것을
@@ -100,15 +108,25 @@ def replay(create_re, drop_re):
     alive, dropped = set(), set()
     for path in migration_files():
         sql = read(path)
-        events = [(m.start(), True, m.group(1)) for m in create_re.finditer(sql)]
-        events += [(m.start(), False, m.group(1)) for m in drop_re.finditer(sql)]
-        for _, is_create, name in sorted(events, key=lambda e: e[0]):
-            if is_create:
+        events = [(m.start(), "create", m.group(1), None) for m in create_re.finditer(sql)]
+        events += [(m.start(), "drop", m.group(1), None) for m in drop_re.finditer(sql)]
+        if rename_re is not None:
+            events += [(m.start(), "rename", m.group(1), m.group(2))
+                       for m in rename_re.finditer(sql)]
+        for _, kind, name, new in sorted(events, key=lambda e: e[0]):
+            if kind == "create":
                 alive.add(name)
                 dropped.discard(name)
-            else:
+            elif kind == "drop":
                 alive.discard(name)
                 dropped.add(name)
+            else:
+                # 이름 바꾸기 = 옛 이름은 **라이브에서 사라진다** — 정본에 옛 이름(v2)이 남아
+                # 있으면 좀비로 잡아야 하므로 dropped 에도 넣는다(2026-09-27e 검사관 지적).
+                alive.discard(name)
+                dropped.add(name)
+                alive.add(new)
+                dropped.discard(new)
     return alive, dropped
 
 
@@ -132,7 +150,7 @@ def test_migration_dir_is_not_empty():
 
 def test_live_indexes_are_in_schema(schema_sql):
     """마이그레이션으로 만들어 아직 살아 있는 인덱스는 정본에도 있어야 한다."""
-    alive, _ = replay(RE_CREATE_INDEX, RE_DROP_INDEX)
+    alive, _ = replay(RE_CREATE_INDEX, RE_DROP_INDEX, RE_RENAME_INDEX)
     missing = sorted(n for n in alive if not schema_has_index(schema_sql, n))
     assert not missing, (
         "마이그레이션에는 있는데 schema.sql 에 없는 인덱스: {}\n"
@@ -147,7 +165,7 @@ def test_dropped_indexes_are_gone_from_schema(schema_sql):
     남아 있으면 새 환경에만 그 인덱스가 생겨 라이브와 다르게 돈다. 실제로
     2026-08-11e 가 지운 식 인덱스 3개가 정본에만 남아 있었다.
     """
-    _, dropped = replay(RE_CREATE_INDEX, RE_DROP_INDEX)
+    _, dropped = replay(RE_CREATE_INDEX, RE_DROP_INDEX, RE_RENAME_INDEX)
     zombies = sorted(n for n in dropped if schema_has_index(schema_sql, n))
     assert not zombies, (
         "라이브에서 지운 인덱스가 schema.sql 에 남아 있습니다: {}\n"
@@ -266,7 +284,7 @@ def test_replay_actually_sees_the_2026_08_11e_swap():
     이 테스트가 없으면, 정규식이 아무것도 못 잡아도 위 네 테스트가 전부 초록이 된다
     (빈 집합은 언제나 통과한다). 즉 **가드가 헛도는 것**을 막는 가드다.
     """
-    alive, dropped = replay(RE_CREATE_INDEX, RE_DROP_INDEX)
+    alive, dropped = replay(RE_CREATE_INDEX, RE_DROP_INDEX, RE_RENAME_INDEX)
     for name in ("idx_building_nm_key", "idx_parcel_road_key", "idx_parcel_jibun_key"):
         assert name in alive, "재생이 11e 가 만든 {} 를 못 봤습니다".format(name)
     for name in ("idx_building_display_nm", "idx_parcel_road_addr", "idx_parcel_jibun_addr"):
@@ -284,6 +302,35 @@ def test_replay_actually_sees_the_2026_08_11e_swap():
     for name in ("mv_search_parcel", "mv_open_sigungu", "mv_sigungu_tx_stats",
                  "mv_coverage_stats"):
         assert name in mvs, "재생이 물질화뷰 {} 를 못 봤습니다".format(name)
+
+
+def test_replay_actually_sees_the_2026_09_27e_concurrent_swap():
+    """27e 의 '새 이름으로 만들고 → 옛 것을 concurrently 로 지우고 → 이름을 되돌리기'를 읽어내는가.
+
+    ⛔ 되짚기가 이름 바꾸기를 모르면 v2 가 살아 있는 것으로 남고, `drop index concurrently` 를
+       모르면 'concurrently' 라는 이름을 지운 것으로 적는다 — 둘 다 에러 없이 헛돈다.
+    """
+    alive, dropped = replay(RE_CREATE_INDEX, RE_DROP_INDEX, RE_RENAME_INDEX)
+    assert "idx_arch_permit_pnu" in alive
+    assert "idx_arch_permit_pnu" not in dropped, "이름을 되돌린 인덱스가 '지운 것'으로 남았습니다"
+    assert "idx_arch_permit_pnu_v2" not in alive, "이름을 바꾼 v2 가 살아 있다고 나옵니다"
+    assert "concurrently" not in dropped, "`concurrently` 를 인덱스 이름으로 잡고 있습니다"
+    # 이름 바꾸기를 빼고 되짚으면 v2 가 남는다 — 위 단언이 헛돌지 않는다는 대조군.
+    alive_wo, _ = replay(RE_CREATE_INDEX, RE_DROP_INDEX)
+    assert "idx_arch_permit_pnu_v2" in alive_wo
+    # 바꾸기 전 이름(v2)은 '라이브에서 사라진 이름'으로 기록돼야 한다 — 정본에 남으면 좀비.
+    assert "idx_arch_permit_pnu_v2" in dropped
+
+
+def test_a_renamed_away_index_left_in_schema_is_a_zombie(schema_sql):
+    """정본에 바꾸기 전 이름(v2)이 남아 있으면 좀비 가드가 빨강이어야 한다 — 가짜 정본으로 확인."""
+    _, dropped = replay(RE_CREATE_INDEX, RE_DROP_INDEX, RE_RENAME_INDEX)
+    fake = schema_sql + (
+        "\ncreate index if not exists idx_arch_permit_pnu_v2 on arch_permit (pnu);\n")
+    zombies = sorted(n for n in dropped if schema_has_index(fake, n))
+    assert "idx_arch_permit_pnu_v2" in zombies
+    # 진짜 정본에는 없다(평소 초록).
+    assert not schema_has_index(schema_sql, "idx_arch_permit_pnu_v2")
 
 
 def test_replay_reads_schema_qualified_names():
