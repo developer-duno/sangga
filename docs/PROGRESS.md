@@ -1634,3 +1634,42 @@ PR #131: pytest 2,571 · vitest 754 · oxlint 0 · CI test/web/Vercel 통과 · 
 **교훈.** ①**함수 안의 계획은 단독 쿼리로 대신 잴 수 없다** — 파라미터가 상수가 아니면 플래너의 선택이 달라진다. 앞으로 성능 처방은 **함수 본문을 추출해 같은 캐스트로** EXPLAIN 한 뒤에 적는다. ②검토관이 **전제**를 뒤집은 것이 이번에도 가장 값졌다(안내창 사례 — 코드가 아니라 내 가정이 틀렸다). ③백로그는 낡는다 — 착수 전 "이미 고쳐졌나"부터 실측(2건이 이미 종결 상태였다).
 
 **회귀·검증.** pytest **2,734**(main 기준 · #140 가드 14 포함. 워크트리는 raw 자료가 없어 3 skipped) · vitest 815 · E2E 30스펙×2=60회 · build·oxlint·ruff 초록 · `post_load.py --check` exit 0(허용 25 · 신선 5종) · 라이브 묶음 `index-DCymDj4A.js` 배포 확인.
+
+## 2026-09-27 — 감시 기준선 · 정본 9/23 반영 · 결정 0029 라이브 · 신선도 색인 · ALTER 되짚기 가드 · 속도 조사
+
+무엇을 왜. LH·서울 상권 감시 기준선이 낡아 있었고(#154), 9/23 라이브에 ALTER 로만 넣은 보안 자문 변경(pg_trgm→extensions·헬퍼 5개 search_path 고정)이 정본 `schema.sql` 에 반영되지 않은 채 4일 남아 있었다(#155). 그 사이 재발을 막을 가드가 없다는 것 자체가 구멍이라 ALTER 되짚기 시험을 신설했다(#156). 그 위에서 결정 0029(두 글자 검색 진짜 병목 — 플래너가 검색어 값을 못 보는 문제)를 구현·라이브 적용하고(#157), 신선도 표 필지 줄의 남은 병목을 색인으로 없앴다(#158).
+
+- **#154 감시 기준선 올리기** — LH 상가 공고 감시 `LATEST_KNOWN_NOTICE_DATE` 20260921, 서울 상권 원천 감시 수정일 기준선 2026-09-11 로 갱신.
+- **#155 정본에 9/23 라이브 변경 반영** — `pg_trgm` 확장을 `extensions` 스키마로, 헬퍼 함수 5개(`search_key`·`price_floor_band` 등 중 인라인 아닌 것)에 `search_path` 고정을 `schema.sql` 에 옮겨 적었다. ⛔ `search_key`·`price_floor_band` 는 **속도 때문에** 라이브에서 되돌려져 있어 정본에는 안 박았다(주석으로 이유만 남김).
+- **#156 ALTER 되짚기 가드** — `test_schema_alter_replay.py` 신설: 마이그레이션을 순서대로 되짚었을 때 함수 설정(`search_path` 등)·확장 위치가 정본과 같은지 검증. #155 같은 누락을 CI 가 빨강으로 잡는다.
+- **#157 결정 0029 구현(마이그레이션 `2026-09-27a_search_fns_plpgsql.sql`)** — `search_scope`·`search_buildings`·`search_stores` 세 함수를 `language sql` → `plpgsql`(+`search_path=public`·`plan_cache_mode=force_custom_plan`)로 바꿔 플래너가 검색어 값을 보게 했다.
+- **#158 신선도 색인(마이그레이션 `2026-09-27b_parcel_updated_at_index.sql`)** — `parcel(updated_at)` 색인 신설. `get_data_freshness` 의 필지 줄이 2.2~3.1초 걸리던 것을 없앴다.
+
+전부 squash 머지.
+
+### 0029 재측정 (pg_temp, 2026-09-27, 9/23 뒤 · 통과 기준 = 넓은 말 하락·좁은 말 +10ms 이내·md5 동일, 사장님 확정)
+
+| 범위 | 칸 수 | 불일치 | v1(SQL) 평균 | v2(plpgsql) 평균 | 느려진 칸 |
+|---|---|---|---|---|---|
+| 범위판정(`search_scope`) | 60 | 0 | 824.7ms | 19.5ms | 0 |
+| 건물(`search_buildings`) | 120 | 0 | 312.6ms | 13.6ms | 30칸(플라자류, 최악 +1.8ms) |
+| 가게(`search_stores`) | 180 | 0 | 96.9ms | 26.2ms | 2칸(최악 +3.0ms) |
+
+래퍼(api 쌍둥이) 15칸 — api 껍데기가 효과를 안 죽인다: 빌딩 11710 v2 직접 26.3ms = 껍데기 26.3ms vs 라이브 api 455.7ms(9/11 시제품과 같은 그림).
+
+### 라이브 적용 결과
+
+- **0029 (2026-09-27 14:23 KST, dbx -f, 한 트랜잭션·notify)**: 결과 md5 369칸 before/after diff **0** · `pg_proc` 본문 md5 3/3 = 정본 일치(plpgsql·`search_path=public`·`plan_cache_mode=force_custom_plan`·anon 실행 불가·api 쌍둥이 그대로) · `post_load.py --check` 허용 25. 브라우저 실측(강남, 휴대폰 회차): 카페(가게) 434→96ms · 빌딩(건물) 511→98ms · 스타벅스(건물) 597→38ms · '너무 넓은 검색' 경로 정상.
+  - 실사용 평균 스냅샷(`pg_stat_statements`, 적용 전 14:18 — 전후 비교는 리셋을 안 해 며칠 뒤 차이로): `search_buildings` 837회 201.9ms · `search_scope` 70회 789.7ms · `search_stores` 41회 295.4ms · `get_data_freshness` 57회 2,412.1ms.
+- **P1(#158) (2026-09-27 14:25 KST, 7초)**: 색인 3개 `indisvalid=t`(8,016kB·1,760kB·2,336kB) · `get_data_freshness` 의 parcel 줄 2,187~3,063ms → 9ms · 함수 전체 2,412ms → 12~16ms.
+
+### 교훈
+
+① **ALTER 로만 넣은 라이브 변경은 정본 누락으로 4일**(#155) 남아 있었다 — 라이브와 정본이 갈리는 동안 다음 작업자는 낡은 스키마를 보고 판단하게 된다.
+② **초안 마이그레이션이 닫힌 문(anon grant)을 다시 열 뻔했다** — 막는 가드가 없어 사람 검토에만 의존하던 자리였다.
+③ **"구 고를 때마다 2.4초"는 착시였다** — 요청을 끝난 시각으로 귀속한 측정이라, 실제로는 첫 호출(찬 캐시)이 평균을 지배하고 있었다.
+④ **찬 캐시 첫 호출이 실사용 평균을 지배한다** — `get_data_freshness` 실사용 평균 2,412.1ms 의 대부분이 P1 적용 전 첫 호출들이었다(P1 다음 세션에서 재확인 예정).
+
+### 회귀·검증
+
+시험 기준선(**main 77b2b5b, 2026-09-27**): pytest **2,928 passed**(D:/sangga, raw 자료 있는 본 폴더 — 워크트리·CI 는 raw 없어 3 skipped) · ruff 0 · vitest 815 · E2E 30스펙×2=60회 · 공개 호출 허용 25 · 마이그레이션 파일 62개.
