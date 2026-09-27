@@ -1,0 +1,27 @@
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+SET
+CREATE FUNCTION
+--- api 껍데기가 효과를 죽이나 (direct=v2 직접 / wrapped=v2를 api모양 껍데기로 / live_api=지금 라이브 api)
+   kind    |  gu   |   q    | direct_ms | wrapped_ms | live_api_ms | same 
+-----------+-------+--------+-----------+------------+-------------+------
+ buildings | 11110 | 빌딩   |      24.6 |       24.8 |       449.9 | t
+ buildings | 11110 | 플라자 |       4.5 |        4.5 |         3.8 | t
+ buildings | 11440 | 빌딩   |      35.2 |       35.4 |       456.4 | t
+ buildings | 11440 | 플라자 |       4.9 |        4.9 |         4.3 | t
+ buildings | 11680 | 빌딩   |      53.3 |       53.7 |       470.8 | t
+ buildings | 11680 | 플라자 |       5.0 |        5.0 |         4.3 | t
+ buildings | 11710 | 빌딩   |      26.9 |       26.7 |       455.3 | t
+ buildings | 11710 | 플라자 |       5.1 |        5.4 |         4.5 | t
+ buildings | 30170 | 빌딩   |      24.0 |       24.0 |       448.2 | t
+ buildings | 30170 | 플라자 |       4.4 |        4.4 |         3.7 | t
+ scope     | 11110 | 빌딩   |      24.7 |       24.0 |       881.2 | t
+ scope     | 11440 | 빌딩   |      31.5 |       30.5 |       877.6 | t
+ scope     | 11680 | 빌딩   |      41.0 |       40.7 |       883.1 | t
+ scope     | 11710 | 빌딩   |      24.6 |       23.9 |       879.2 | t
+ scope     | 30170 | 빌딩   |      28.7 |       27.9 |       877.2 | t
+(15�� ��)
+

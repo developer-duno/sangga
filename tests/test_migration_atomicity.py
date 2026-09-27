@@ -55,6 +55,14 @@
 
 ⓘ 파일별 시험 둘은 **그대로 둔다**. 중복이 아니다 — 그쪽은 그 파일 고유의 규칙(옛 색인이
   맨 끝인가, 사슬을 안 건드렸는가)까지 함께 본다.
+
+ⓘ 같은 "전부 훑기" 자리에 **권한 가드 하나**가 더 산다(아래 §4, 2026-09-27 신설):
+  파일 이름이 ``2026-08-22e``(api 스키마 전환) **이상**인 판은 ``api.`` 없는 함수(또는
+  api 아닌 스키마의 ``all functions``)에 ``execute``·``all`` 권한을 ``anon``·``public``·
+  ``authenticated`` 에게 주지 않는다. 화면은 api 쌍둥이로만 들어오고 그 쌍둥이가
+  security definer 라, public 원본을 anon 에게 열 이유가 없다(SECURITY DEFINER 자체는
+  호출자의 EXECUTE 검사를 면제하지 않는다 — 여는 것은 곧 공개키로 부를 수 있게 되는 것).
+  파일별 가드는 그 파일이 아는 함수만 보므로, 다른 함수를 여는 판은 원리적으로 못 잡는다.
 """
 
 import glob
@@ -357,3 +365,300 @@ def test_code_only_ignores_prose_inside_comment_statements():
     assert not needs_wrapping(prose), (
         "코멘트 **본문**의 글을 drop 문장으로 읽었습니다 — 헛것을 잡고 있습니다"
     )
+
+
+# ── 4. 권한 — api 전환 뒤로는 api 밖의 함수를 공개 쪽에 열지 않는다 ──────────
+#
+# 잡는 모양: 권한 `execute`·`all [privileges]` × 받는 쪽 `anon`·`public`·`authenticated`
+# (섞여 있어도) × 대상 `api.` 없는 function·procedure·routine(인자 목록이 없어도, 이름에
+# 따옴표를 쳐도) 또는 `all functions|procedures|routines in schema <api 아닌 스키마>` 또는
+# `alter default privileges [… in schema <api 아닌 스키마>] grant … on functions|routines`.
+# `service_role` 같은 다른 받는 쪽과 api 쌍둥이는 막지 않는다.
+#
+# ⛔ 바닥 앞의 판(2026-08-08b ~ 2026-08-22c)에는 public 함수를 anon 에게 연 줄이 25개쯤
+#    있다 — api 스키마 전환(2026-08-22e) **전**의 정당한 역사다(이미 적용 · 고치지 않는다).
+#    그래서 날짜 바닥을 둔다. 예외 목록을 따로 두지 않는다 — 바닥 뒤 위반은 하나도 없어야
+#    한다(2026-09-27a 초안의 grant 3줄이 이 가드를 세운 계기다 — 적용 전에 지웠다).
+
+GRANT_FLOOR = "2026-08-22e"
+
+# 권한 = `execute` 또는 `all [privileges]` — `all` 도 함수에는 곧 EXECUTE 다.
+_PRIV = r"(?:execute|all(?:\s+privileges)?)"
+
+# 함수류 = function·procedure·routine — PostgreSQL 은 셋 다 같은 EXECUTE 권한이다
+# (routine 은 둘을 함께 가리키는 말이라, 이 낱말로 적으면 function 가드를 비켜 간다).
+_ONE_KIND = r"(?:function|procedure|routine)"
+
+# `grant <권한> on function|procedure|routine <목록> to <받는 쪽>` 한 문장(공백 접은 뒤).
+# 목록에는 함수가 여럿 올 수 있고(쉼표), 인자 목록 `(…)` 은 **없어도 된다**(이름이 하나뿐인
+# 함수면 PostgreSQL 이 받아 준다 — `grant … on function price_floor_band to anon`).
+RE_GRANT_FN = re.compile(
+    r"(?i)^grant\s+" + _PRIV + r"\s+on\s+" + _ONE_KIND + r"\s+(.*?)\s+to\s+(.*)$")
+
+# `grant <권한> on all functions|procedures|routines in schema <스키마 목록> to <받는 쪽>`.
+RE_GRANT_SCHEMA = re.compile(
+    r"(?i)^grant\s+" + _PRIV + r"\s+on\s+all\s+(functions|procedures|routines)"
+    r"\s+in\s+schema\s+(.*?)\s+to\s+(.*)$")
+
+# `alter default privileges [for role …] [in schema …] grant <권한> on functions|routines
+# to <받는 쪽>` — **앞으로 만들 함수 전부**를 여는 문장이라 가장 넓다. `in schema` 가 없으면
+# 모든 스키마다(2026-09-01b 가 바로 그 전역 기본값을 막으려고 선 판이다).
+RE_DEFAULT_GRANT = re.compile(
+    r"(?i)^alter\s+default\s+privileges\b(.*?)\bgrant\s+" + _PRIV
+    + r"\s+on\s+(?:functions|routines)\s+to\s+(.*)$")
+RE_DEFAULT_IN_SCHEMA = re.compile(
+    r"(?i)\bin\s+schema\s+(.*?)(?:\s+for\s+(?:role|user)\s+.*)?$")
+
+# 공개키로 부를 수 있게 되는 받는 쪽 — anon 자신, anon 이 속한 PUBLIC, 로그인한 사람.
+RE_OPEN_GRANTEE = re.compile(r"(?i)\b(?:anon|public|authenticated)\b")
+
+
+# §4 **전용** `comment on … is '…';` — 끝의 `';` 뒤에 줄 끝 주석(`'; -- 메모`)이 붙어도 거기서
+# 멈춘다. ⛔ §2 의 RE_COMMENT_STMT(`';\s*$`)는 그 모양에서 멈추지 못하고 다음 `';` 줄 끝까지
+# 삼켜, 사이에 낀 grant 를 지웠다(2026-09-27 재검사관 R1). §2 쪽은 원자성 판정과 글자 그대로
+# 맞춰야 하므로 건드리지 않는다.
+RE_COMMENT_STMT_GRANT = re.compile(r"(?ims)^comment\s+on\s+.*?';[ \t]*(?:--[^\n]*)?$")
+
+
+def _grant_code(sql):
+    """§4 가 보는 본문 — 줄 전체 주석과 `comment on` 글(§4 전용 정규식)을 걷은 것."""
+    return RE_COMMENT_STMT_GRANT.sub("", statements(sql))
+
+
+def _split_top_level(text):
+    """쉼표로 나누되 괄호 **안**의 쉼표(인자 목록)는 안 자른다."""
+    parts, depth, cur = [], 0, []
+    for ch in text:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    parts.append("".join(cur))
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _routine_name(item):
+    """`"public"."f"(text)`·`f`·`api . f ()` → `public.f`·`f`·`api.f` (따옴표·인자 목록 걷기)."""
+    name = item.split("(", 1)[0].replace('"', "")
+    return re.sub(r"\s*\.\s*", ".", name).strip()
+
+
+def _is_api_schema(schema):
+    return schema.strip().strip('"').lower() == "api"
+
+
+def grants_opening_non_api(sql):
+    """`api.` 가 아닌 함수(또는 api 가 아닌 스키마의 함수 전부)를 anon·public·authenticated
+    에게 여는 **대상** 목록(비었으면 정상). 스키마 통째는 `all functions in schema <이름>`,
+    기본권한은 `default privileges …`.
+
+    주석과 `comment on` 글을 걷은 뒤 `;` 로 문장을 나눠 공백을 접어 본다 — 여러 줄에 걸친
+    grant 와 한 문장에 함수·받는 쪽 여럿을 적은 grant 도 잡는다. 잡는 모양(2026-09-27 넓힘):
+    인자 목록 있음·없음 · 따옴표 이름 · function/procedure/routine · `all … in schema` ·
+    `alter default privileges … grant`.
+
+    ⛔ 2026-09-27 재검사관 R1 — `statements()` 는 **줄 전체가** `--` 인 줄만 걷는다. 그래서
+       `;` 로 나눈 조각이 앞 문장의 줄 끝 주석·블록 주석·`do $$ begin` 으로 시작하면 `^grant`
+       앵커가 빗나갔다. 조각마다 주석을 한 번 더 걷고, 조각 **안의** `grant execute|all` 부터
+       다시 본다(DO 블록 안 문장·`execute 'grant …'` 문자열도 이렇게 잡힌다 — 끝에 남는 `'` 는
+       받는 쪽 판정에 영향이 없다). 기본권한 문장은 `grant` 가 가운데 있으므로 자르지 않는다.
+    """
+    bad = []
+    for stmt in _grant_code(sql).split(";"):
+        stmt = re.sub(r"--[^\n]*", " ", re.sub(r"/\*.*?\*/", " ", stmt, flags=re.S))
+        one = re.sub(r"\s+", " ", stmt).strip()
+        g = re.search(r"(?i)\bgrant\s+(?:execute|all)\b", one)
+        if g and not one.lower().startswith("alter default"):
+            one = one[g.start():]
+        m = RE_GRANT_FN.match(one)
+        if m:
+            if RE_OPEN_GRANTEE.search(m.group(2)):
+                for item in _split_top_level(m.group(1)):
+                    name = _routine_name(item)
+                    if not name.lower().startswith("api."):
+                        bad.append(name)
+            continue
+        m = RE_GRANT_SCHEMA.match(one)
+        if m:
+            if RE_OPEN_GRANTEE.search(m.group(3)):
+                for schema in re.split(r"\s*,\s*", m.group(2).strip()):
+                    if not _is_api_schema(schema):
+                        bad.append("all {} in schema {}".format(m.group(1).lower(), schema))
+            continue
+        m = RE_DEFAULT_GRANT.match(one)
+        if m and RE_OPEN_GRANTEE.search(m.group(2)):
+            s = RE_DEFAULT_IN_SCHEMA.search(m.group(1))
+            if s is None:
+                bad.append("default privileges (모든 스키마)")
+            else:
+                for schema in re.split(r"\s*,\s*", s.group(1).strip()):
+                    if not _is_api_schema(schema):
+                        bad.append("default privileges in schema " + schema)
+    return bad
+
+
+def grant_scope_files(mig_dir=MIGRATIONS):
+    """이름이 권한 바닥 **이상**인 마이그레이션."""
+    return sorted(
+        p for p in glob.glob(os.path.join(mig_dir, "*.sql"))
+        if os.path.basename(p) >= GRANT_FLOOR
+    )
+
+
+def grant_violations(mig_dir=MIGRATIONS):
+    """바닥 뒤 판 전부에서 (파일 이름, 대상) 위반 목록."""
+    return [(os.path.basename(p), fn)
+            for p in grant_scope_files(mig_dir)
+            for fn in grants_opening_non_api(read(p))]
+
+
+class TestNoPublicFunctionIsOpened:
+    def test_no_violation_after_the_floor(self):
+        """⛔ public 원본을 anon 에게 열면 **공개키로 원본을 직접 부를 수 있다** — 2026-09-05a
+        가 닫아 둔 문을 다시 여는 것이다. 에러는 안 나고 화면도 멀쩡하다."""
+        assert grant_violations() == []
+
+    def test_it_looks_at_something_at_all(self):
+        """⛔ 보는 파일이 0개면 가드가 있는 척만 한다(가짜 초록)."""
+        got = names(grant_scope_files())
+        assert "2026-08-22e_api_schema.sql" in got, "바닥 파일이 범위 안에 있어야 합니다"
+        assert "2026-09-27a_search_fns_plpgsql.sql" in got
+
+    def test_the_old_grants_are_excluded_by_date_only(self):
+        """바닥 앞 판의 grant 가 빠지는 이유는 **날짜**다 — 판정기가 눈이 멀어서가 아니다."""
+        c = os.path.join(MIGRATIONS, "2026-08-22c_industry_mix.sql")
+        assert grants_opening_non_api(read(c)), "전제: 08-22c 에는 public 함수 grant 가 있다"
+        assert c not in grant_scope_files(), "08-22c 가 날짜 바닥으로 빠져야 합니다"
+
+
+def test_mutation_g_a_new_public_grant_is_noticed(tmp_path):
+    """돌연변이 ⑦ 가짜 판으로 판정기가 진짜 무는지 본다.
+
+    · 바닥 **앞** 판의 위반은 안 센다(역사) · 바닥 **뒤** 판의 위반은 센다 — 한 줄짜리,
+      여러 줄·여러 함수짜리 둘 다 · api 쌍둥이 grant 와 주석 속 grant 는 위반이 아니다.
+    """
+    (tmp_path / "2026-08-22d_old.sql").write_text(
+        "grant execute on function search_scope(text, text) to anon;\n", encoding="utf-8")
+    (tmp_path / "2026-09-30a_one_line.sql").write_text(
+        "begin;\ngrant execute on function search_scope(text, text) to anon;\ncommit;\n",
+        encoding="utf-8")
+    (tmp_path / "2026-09-30b_multi.sql").write_text(
+        "grant execute on function\n  api.list_x(text),\n  public.list_y(text)\n"
+        "  to anon, authenticated;\n", encoding="utf-8")
+    (tmp_path / "2026-09-30c_ok.sql").write_text(
+        "grant execute on function api.search_scope(text, text) to anon, authenticated;\n"
+        "-- grant execute on function search_scope(text, text) to anon;\n"
+        "grant execute on function search_scope(text, text) to service_role;\n",
+        encoding="utf-8")
+    assert grant_violations(str(tmp_path)) == [
+        ("2026-09-30a_one_line.sql", "search_scope"),
+        ("2026-09-30b_multi.sql", "public.list_y"),
+    ]
+
+
+# 돌연변이 ⑧ 넓힌 모양(2026-09-27 보완) — (문장, 위반이어야 하나).
+GRANT_SHAPES = (
+    ("to_public",
+     "grant execute on function search_scope(text, text) to public;", True),
+    ("to_authenticated",
+     "grant execute on function search_scope(text, text) to authenticated;", True),
+    ("mixed_grantees",
+     "grant execute on function search_scope(text, text) to service_role, public;", True),
+    ("grant_all_to_anon",
+     "grant all on function search_scope(text, text) to anon;", True),
+    ("grant_all_privileges",
+     "grant all privileges on function search_scope(text, text) to anon;", True),
+    ("schema_public_to_anon",
+     "grant execute on all functions in schema public to anon;", True),
+    ("api_fn_to_anon_ok",
+     "grant execute on function api.search_scope(text, text) to anon;", False),
+    ("schema_api_to_anon_ok",
+     "grant execute on all functions in schema api to anon;", False),
+    ("service_role_only_ok",
+     "grant all on function search_scope(text, text) to service_role;", False),
+    # ── 2026-09-27 검사관 A 가 가짜 초록으로 보인 모양 ⓐ~ⓓ ──
+    # ⓐ 인자 목록 없는 이름(함수 이름이 하나뿐이면 PostgreSQL 이 받는다)
+    ("no_arg_list",
+     "grant execute on function price_floor_band to anon;", True),
+    ("no_arg_list_two_names",
+     "grant execute on function api.list_x, price_floor_band to anon;", True),
+    ("no_arg_list_api_ok",
+     "grant execute on function api.list_x to anon;", False),
+    # ⓑ 기본권한 — 앞으로 만들 함수 전부를 연다
+    ("default_privs_schema_public",
+     "alter default privileges in schema public grant execute on functions to anon;", True),
+    ("default_privs_global_routines",
+     "alter default privileges grant all on routines to public;", True),
+    ("default_privs_for_role_mixed_schemas",
+     "alter default privileges for role postgres in schema api, public "
+     "grant execute on functions to authenticated;", True),
+    ("default_privs_schema_after_role",
+     "alter default privileges in schema public for role postgres "
+     "grant execute on functions to anon;", True),
+    ("default_privs_api_ok",
+     "alter default privileges for role postgres in schema api "
+     "grant execute on functions to anon, authenticated;", False),
+    ("default_privs_service_role_ok",
+     "alter default privileges in schema public grant execute on functions to service_role;",
+     False),
+    # ⓒ routine·procedure·all routines
+    ("on_routine",
+     "grant execute on routine search_scope(text, text) to anon;", True),
+    ("on_procedure",
+     "grant execute on procedure do_something() to public;", True),
+    ("all_routines_in_schema_public",
+     "grant execute on all routines in schema public to anon;", True),
+    ("all_procedures_in_schema_public",
+     "grant all on all procedures in schema public to authenticated;", True),
+    ("all_routines_in_schema_api_ok",
+     "grant execute on all routines in schema api to anon;", False),
+    # ⓓ 따옴표 이름
+    ("quoted_schema_and_name",
+     'grant execute on function "public"."f"(text) to anon;', True),
+    ("quoted_name_only",
+     'grant execute on function "f"() to anon;', True),
+    ("quoted_api_ok",
+     'grant execute on function "api"."f"(text) to anon;', False),
+    # ── 2026-09-27 재검사관 R1 — 조각 머리가 주석·DO 로 시작해 `^grant` 가 빗나간 모양 ──
+    # ① 앞 문장의 줄 끝 주석 뒤 grant
+    ("after_line_end_comment",
+     "revoke all on function f(text) from anon; -- 닫기\n"
+     "grant execute on function g(text) to anon;", True),
+    # ② 블록 주석이 앞에 붙은 grant — 한 줄 · 여러 줄
+    ("block_comment_prefix_one_line",
+     "/* 설명 */ grant execute on function g(text) to anon;", True),
+    ("block_comment_prefix_multi_line",
+     "/* 여러 줄\n   설명 */\ngrant execute on function g(text) to anon;", True),
+    # ③ DO 블록의 첫 문장
+    ("do_block_first_statement",
+     "do $$ begin grant execute on function g() to anon; end $$;", True),
+    # ④ `comment on … is '…'; -- 메모` 다음 줄 grant (comment 정규식이 삼키던 것)
+    ("after_comment_with_memo",
+     "comment on function f(text) is '설명'; -- 메모\n"
+     "grant execute on function g(text) to anon;", True),
+    # ⑤ DO 블록 안 `execute '…'` 문자열
+    ("do_execute_string_fn",
+     "do $$ begin execute 'grant execute on function g() to anon'; end $$;", True),
+    ("do_execute_string_schema",
+     "do $$ begin execute 'grant all on all functions in schema public to anon'; end $$;",
+     True),
+    ("do_execute_string_api_ok",
+     "do $$ begin execute 'grant execute on function api.g() to anon'; end $$;", False),
+    ("after_comment_with_memo_api_ok",
+     "comment on function f(text) is '설명'; -- 메모\n"
+     "grant execute on function api.g(text) to anon;", False),
+)
+
+
+@pytest.mark.parametrize("name,stmt,is_bad", GRANT_SHAPES, ids=[g[0] for g in GRANT_SHAPES])
+def test_mutation_h_every_opening_shape(tmp_path, name, stmt, is_bad):
+    """바닥 뒤 가짜 판 하나에 문장 하나 → 여는 모양이면 빨강, api·service_role 은 초록."""
+    (tmp_path / "2026-09-30a_x.sql").write_text(
+        "begin;\n" + stmt + "\ncommit;\n", encoding="utf-8")
+    got = grant_violations(str(tmp_path))
+    assert bool(got) is is_bad, "{}: {}".format(name, got)
