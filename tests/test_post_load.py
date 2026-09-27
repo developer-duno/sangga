@@ -86,6 +86,20 @@ def no_anon_writes(monkeypatch):
     monkeypatch.setattr(post_load, "report_write_exposure", lambda: [])
 
 
+@pytest.fixture(autouse=True)
+def p7_alarms_quiet(monkeypatch):
+    """P7 경보 셋(느려짐·정본 색인·정본 함수)은 이 파일의 관심사가 아니다 — 늘 뺀다.
+
+    이 stub 이 없으면 `main(["--check"])` 가 mock 된 query_one 의 답을 색인·함수 목록으로
+    오해해 [사고](종료 코드 1)를 내고, 느려짐 경보는 **진짜 data/logs/ 에 스냅샷을 쓴다**.
+    판정 자체는 tests/test_post_load_check_alarms.py 가 따로 본다.
+    """
+    monkeypatch.setattr(post_load, "report_slow_functions", lambda: [])
+    monkeypatch.setattr(post_load, "report_canonical_indexes", lambda: [])
+    monkeypatch.setattr(post_load, "report_function_drift", lambda: [])
+    monkeypatch.setattr(post_load, "report_tx_geog_freshness", lambda: ("1", "1", False))
+
+
 # ── 1. ANALYZE 대상 ─────────────────────────────────────────────────────────
 
 

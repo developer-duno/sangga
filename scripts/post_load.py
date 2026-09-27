@@ -40,9 +40,19 @@
     python scripts/post_load.py --check    # 갱신이 필요한 상태인지만 본다 (DB 쓰기 0)
 
 `--check` 는 낡았으면 **종료 코드 1** 로 끝난다 — 다른 스크립트·CI 가 받아 쓸 수 있게.
+
+`--check` 는 2026-09-27(P7)부터 세 가지를 더 본다:
+  · 느려짐 — 화면이 부르는 api 함수의 **지난 점검 이후** 평균이 1초 초과면 [주의](종료 코드 1 아님).
+    누적값을 data/logs/post_load_api_stats.json 에 남겨 다음 점검과의 차이로 잰다(첫 번째는 기준만).
+  · 정본 색인 — schema.sql 의 색인이 라이브에 없거나 indisvalid=false 면 [사고](종료 코드 1).
+  · 정본↔라이브 함수 — 언어·본문 md5·설정(set …)이 schema.sql 과 다르면 [사고](종료 코드 1).
+  · 참고 시세 이웃 요약표(mv_tx_parcel_geog) 행수 == 좌표·거래 있는 필지 수 — 다르면 [낡음](종료 코드 1).
 """
 
+import hashlib
+import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime
@@ -385,6 +395,44 @@ def report_coverage_freshness():
     else:
         print("[신선] 각주 집계 분기 {} = 점포 원본 최신 분기.".format(mv_ym))
     return mv_ym, live_ym, stale
+
+
+# ── 참고 시세 이웃 요약표 신선도 (2026-09-27 P7 — 사장님 결재) ─────────────────
+#
+# mv_tx_parcel_geog(2026-09-27c)는 "좌표 있고 거래가 한 건이라도 있는 필지"만 담는다.
+# 실거래를 새로 넣고 갱신을 잊으면 **새로 거래가 생긴 필지가 참고 시세 이웃에서 조용히
+# 빠진다**(에러 0). 검색 요약표와 같은 방식의 등식으로 잡는다 — 표의 행수 == 정의 조건의 필지 수.
+# ⛔ 아래 조건은 schema.sql 의 뷰 정의(where 절)와 **글자 그대로 같은 뜻**이어야 한다.
+#    정의를 바꾸면 여기도 바꾼다(tests/test_post_load_check_alarms.py 가 두 곳을 맞대 본다).
+TX_GEOG_MV = "mv_tx_parcel_geog"
+TX_GEOG_CONDITION = (
+    "p.geom is not null and exists (select 1 from transaction t where t.pnu = p.pnu)"
+)
+
+
+def build_tx_geog_freshness_sql():
+    """요약표 행수와 '있어야 할 행수'를 한 줄로 뽑는다(build_freshness_sql 과 같은 모양)."""
+    return (
+        "select (select count(*) from {})::text || '|' || "
+        "(select count(*) from parcel p where {})::text;".format(TX_GEOG_MV, TX_GEOG_CONDITION)
+    )
+
+
+def report_tx_geog_freshness():
+    """참고 시세 이웃 요약표를 재서 (표행수, 있어야할행수, 낡음여부) 를 돌려준다.
+
+    판정은 검색 요약표와 같은 is_stale(많아도 적어도 낡음) — 종료 코드도 형제들처럼 낡음이면 1.
+    """
+    mv_rows, _, expected = query_one(build_tx_geog_freshness_sql()).partition("|")
+    stale = is_stale(mv_rows, expected)
+    if stale:
+        print("[낡음] 참고 시세 이웃 요약표 {}행 / 있어야 할 행수 {}행 — 갱신이 필요합니다."
+              .format(mv_rows, expected))
+        print("       이대로 두면 새로 거래가 생긴 필지가 참고 시세 이웃에서 빠집니다(에러는 안 납니다).")
+        print("       python scripts/post_load.py 를 실행하면 다시 굽습니다.")
+    else:
+        print("[신선] 참고 시세 이웃 요약표 {}행 = 좌표·거래 있는 필지 수.".format(mv_rows))
+    return mv_rows, expected, stale
 
 
 # ── 공개키(anon)가 읽어도 되는 것 ──────────────────────────────────────────
@@ -751,6 +799,346 @@ def report_anon_exposure():
     return names, bad
 
 
+# ── 경보 셋 (2026-09-27 P7 — 사장님 결재) ────────────────────────────────────
+#
+# 아래 셋은 "적재가 끝났나"가 아니라 **"라이브가 정본·평소와 같은가"** 를 본다.
+#   ① 느려짐 경보 — 화면이 부르는 api 함수의 평균이 **지난 점검 이후** 1초를 넘었나.
+#   ② 정본 색인 — schema.sql 의 색인이 라이브에 있고 쓸 수 있는(indisvalid) 상태인가.
+#   ③ 정본↔라이브 함수 — 언어·본문·설정이 글자 그대로 같은가(파일 없이 라이브만 바꾼 "뒷문").
+# ②③ 은 [사고](종료 코드 1), ① 은 [주의](종료 코드 1 아님 — 느린 것은 고장이 아니라 신호다).
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SCHEMA_SQL_PATH = os.path.join(PROJECT_ROOT, "supabase", "schema.sql")
+
+# ① 느려짐 경보 ───────────────────────────────────────────────────────────
+#
+# ⛔ **누적 평균을 보지 않는다.** pg_stat_statements 의 평균은 통계가 시작된 뒤 전부의
+#    평균이라, 색인을 고쳐 빨라진 함수도 옛 느린 호출이 평균을 끌어올려 몇 주씩 "느림"으로
+#    남는다(실측: 신선도 함수 누적 평균 2,412ms — 색인 뒤 한 번은 12~16ms). 그래서 점검할
+#    때마다 누적값을 **로컬 파일**에 남기고, 직전 파일과의 **차이**(새로 쌓인 호출 수·시간)로
+#    평균을 낸다. 파일은 data/logs/ 아래라 git 에 안 올라간다(.gitignore).
+SLOW_MEAN_MS = 1000.0
+API_STATS_SNAPSHOT_PATH = os.path.join(PROJECT_ROOT, "data", "logs", "post_load_api_stats.json")
+
+
+def build_api_stats_sql(names=None):
+    """화면이 부르는 api 함수의 **최상위 문장** 누적 통계를 한 줄씩 뽑는다.
+
+    PostgREST 는 함수 호출 하나를 최상위 문장 하나로 보내고, 그 글 안에 `"api"."<함수>"(`
+    꼴로 이름이 들어 있다. 같은 함수라도 인자 모양·역할마다 줄이 갈리므로 줄마다
+    (userid, queryid) 로 따로 들고 온다 — 초기화 판정이 줄 단위라서다.
+    ⚠️ `"api"."parcel"(` 같은 INSERT 도 같은 꼴이라 **허용 목록 이름으로만** 거른다.
+    """
+    names = ANON_CALLABLE_NAMES if names is None else names
+    arr = ",".join("'{}'".format(n) for n in names)
+    return (
+        "select s.userid::text || '|' || s.queryid::text || '|' || m[1] || '|' || "
+        "s.calls::text || '|' || s.total_exec_time::text || '|' || "
+        "coalesce(extract(epoch from s.stats_since)::text, '') "
+        "from extensions.pg_stat_statements s, "
+        "lateral regexp_match(s.query, '\"api\"\\.\"([A-Za-z0-9_]+)\"\\(') m "
+        "where s.toplevel and m[1] = any(array[" + arr + "]::text[]);"
+    )
+
+
+def parse_api_stats(raw):
+    """psql 출력 → {줄열쇠: {fn, calls, total_ms, since}} (순수 함수)."""
+    out = {}
+    for line in str(raw or "").splitlines():
+        parts = line.strip().split("|")
+        if len(parts) != 6:
+            continue
+        userid, queryid, fn, calls, total, since = parts
+        try:
+            out[userid + ":" + queryid] = {
+                "fn": fn, "calls": int(calls), "total_ms": float(total), "since": since}
+        except ValueError:
+            continue
+    return out
+
+
+def diff_api_stats(prev, cur, prev_taken_at=None):
+    """직전·지금 스냅샷 → ({함수: [새 호출 수, 새 시간 ms]}, 기준만 새로 잡은 줄 수) (순수 함수).
+
+    · 직전 스냅샷이 없으면(None) 비교하지 않는다 — 전부 기준만.
+    · 직전과 같은 줄(stats_since 그대로 · calls 안 줄음)은 **차이**를 센다.
+    · 그 밖(직전에 없던 줄 · stats_since 가 바뀐 줄 · calls 가 준 줄)은 stats_since 가
+      직전 점검 **뒤**면 "그 뒤 새로 생긴 줄"이라 **통째로** 센다. pg_stat_statements 는 줄 수
+      상한(라이브 5,000 · 2026-09-27 에 4,888)에 닿으면 드문 줄을 밀어내고, 밀려난 줄은 다시
+      생길 때 stats_since 가 그 시각으로 새로 찍힌다 — 그 호출은 전부 직전 점검 뒤의 것이다.
+      직전 점검보다 **앞**이면 언제 쌓였는지 모르므로 기준만 새로 잡는다.
+    """
+    per_fn = {}
+    rebased = 0
+    if prev is None:
+        return per_fn, len(cur)
+    for key, c in cur.items():
+        p = prev.get(key)
+        if p is not None and p.get("since") == c["since"] and c["calls"] >= p["calls"]:
+            d_calls, d_ms = c["calls"] - p["calls"], c["total_ms"] - p["total_ms"]
+        else:
+            try:
+                fresh = prev_taken_at is not None and float(c["since"]) > float(prev_taken_at)
+            except (TypeError, ValueError):
+                fresh = False
+            if not fresh:
+                rebased += 1
+                continue
+            d_calls, d_ms = c["calls"], c["total_ms"]
+        if d_calls <= 0:
+            continue
+        acc = per_fn.setdefault(c["fn"], [0, 0.0])
+        acc[0] += d_calls
+        acc[1] += d_ms
+    return per_fn, rebased
+
+
+def slow_functions(per_fn, threshold_ms=SLOW_MEAN_MS):
+    """새 호출 평균이 기준을 **넘는** 함수 → [(함수, 새 호출 수, 평균 ms)] (순수 함수)."""
+    out = []
+    for fn, (calls, ms) in sorted(per_fn.items()):
+        if calls > 0 and ms / calls > threshold_ms:
+            out.append((fn, calls, ms / calls))
+    return out
+
+
+def load_api_stats_snapshot(path=API_STATS_SNAPSHOT_PATH):
+    """직전 스냅샷 → (taken_at epoch, entries). 파일이 **없으면** (None, None).
+
+    파일은 있는데 모양이 틀리면 **예외를 그대로 올린다** — "처음 점검"과 "파일이 깨짐"은
+    다른 말이라, 부르는 쪽(report_slow_functions)이 [주의] 로 따로 알린다.
+    """
+    if not os.path.exists(path):
+        return None, None
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    return float(data["taken_at"]), dict(data["entries"])
+
+
+def save_api_stats_snapshot(entries, taken_at, path=API_STATS_SNAPSHOT_PATH):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump({"taken_at": taken_at, "entries": entries}, fh, ensure_ascii=False, indent=1)
+    os.replace(tmp, path)
+
+
+def report_slow_functions():
+    """느려짐 경보를 찍는다. **종료 코드에 영향을 주지 않는다**([주의]까지만)."""
+    try:
+        taken_at = float(query_one("select extract(epoch from now())::text;"))
+        cur = parse_api_stats(query_one(build_api_stats_sql()))
+    except Exception as exc:          # 통계 확장이 없거나 권한이 없으면 — 경보만 못 낸다
+        print("[주의] 느려짐 경보를 읽지 못했습니다(pg_stat_statements): {}".format(
+            str(exc).splitlines()[0] if str(exc) else type(exc).__name__))
+        return []
+    # ⚠️ 스냅샷 읽기·비교가 깨져도 --check 전체를 죽이지 않는다 — 경보 하나가 못 도는 것이지
+    #    다른 점검의 판정까지 잃을 일은 아니다. 깨진 파일은 기준만 새로 써서 다음부터 되살린다.
+    try:
+        prev_at, prev = load_api_stats_snapshot(API_STATS_SNAPSHOT_PATH)
+        per_fn, rebased = diff_api_stats(prev, cur, prev_at)
+    except Exception as exc:
+        print("[주의] 느려짐 경보: 직전 스냅샷 파일 모양이 틀립니다({}) — 기준만 새로 저장합니다."
+              .format(type(exc).__name__))
+        prev, per_fn, rebased = None, {}, 0
+        broken = True
+    else:
+        broken = False
+    try:
+        save_api_stats_snapshot(cur, taken_at, API_STATS_SNAPSHOT_PATH)
+    except OSError as exc:
+        print("[주의] 느려짐 경보: 스냅샷을 저장하지 못했습니다({}) — 다음 점검도 기준부터입니다."
+              .format(type(exc).__name__))
+    if prev is None:
+        if not broken:
+            print("[정보] 느려짐 경보: 기준만 저장했습니다({}줄) — 다음 점검부터 비교합니다.".format(len(cur)))
+        return []
+    slow = slow_functions(per_fn)
+    for fn, calls, mean in slow:
+        print("[주의] 느려짐: api.{} — 지난 점검 이후 {}회 · 평균 {:,.0f}ms (기준 {:,.0f}ms 초과)"
+              .format(fn, calls, mean, SLOW_MEAN_MS))
+    if not per_fn:
+        print("[정상] 느려짐 경보: 지난 점검 이후 api 호출 없음.")
+    elif not slow:
+        print("[정상] 느려짐 경보: 지난 점검 이후 호출된 api 함수 {}개 모두 평균 {:,.0f}ms 이하."
+              .format(len(per_fn), SLOW_MEAN_MS))
+    if rebased:
+        print("       ⓘ 통계가 초기화됐거나 새로 잡힌 {}줄은 이번엔 기준만 새로 잡았습니다.".format(rebased))
+    return slow
+
+
+# ② 정본 색인 ─────────────────────────────────────────────────────────────
+#
+# 줄머리의 `create [unique] index [concurrently] [if not exists] <이름> on` 만 센다 —
+# 주석(`-- create index …`)은 줄머리가 `--` 라 안 걸린다. 이름 뒤 `on` 이 다음 줄에 있어도
+# 된다(mv_district_industry_mix_key 가 그 꼴이다). 라이브에만 있는 색인은 이번 범위 밖이다.
+CANON_INDEX_RE = re.compile(
+    r"(?im)^[ \t]*create\s+(?:unique\s+)?index\s+(?:concurrently\s+)?"
+    r"(?:if\s+not\s+exists\s+)?(\w+)\s+on\b"
+)
+LIVE_INDEX_SQL = (
+    "select c.relname || '|' || i.indisvalid::text from pg_index i "
+    "join pg_class c on c.oid = i.indexrelid "
+    "join pg_namespace n on n.oid = c.relnamespace "
+    "where n.nspname in ('public','api');"
+)
+
+
+def canonical_index_names(sql):
+    """정본 → 색인 이름 목록 (순수 함수 — 첫 등장 순서, 중복 제거)."""
+    seen = []
+    for m in CANON_INDEX_RE.finditer(sql):
+        name = m.group(1).lower()
+        if name not in seen:
+            seen.append(name)
+    return seen
+
+
+def index_problems(canon_names, live_raw):
+    """정본 색인 중 라이브에 없거나 invalid 인 것 → [(이름, 사유)] (순수 함수)."""
+    live = {}
+    for line in str(live_raw or "").splitlines():
+        name, _, valid = line.strip().partition("|")
+        if name:
+            live[name.lower()] = valid.strip() == "true"
+    out = []
+    for name in canon_names:
+        if name not in live:
+            out.append((name, "라이브에 없음"))
+        elif not live[name]:
+            out.append((name, "indisvalid=false(쓸 수 없는 색인)"))
+    return out
+
+
+def report_canonical_indexes(sql_text=None):
+    if sql_text is None:
+        with open(SCHEMA_SQL_PATH, encoding="utf-8") as fh:
+            sql_text = fh.read()
+    names = canonical_index_names(sql_text)
+    bad = index_problems(names, query_one(LIVE_INDEX_SQL))
+    if bad:
+        print("[사고] 정본(schema.sql) 색인 중 라이브에서 못 쓰는 것 {}개:".format(len(bad)))
+        for name, why in bad:
+            print("       · {} — {}".format(name, why))
+        print("       이대로 두면 검색·화면이 조용히 느려집니다. 정본의 create index 문을 라이브에 적용하세요.")
+        print("       ⓘ 또는 아직 머지 안 한 PR 의 마이그레이션을 먼저 적용한 것 — 머지하면 사라집니다.")
+    else:
+        print("[정상] 정본 색인 {}개가 라이브에 모두 있고 쓸 수 있습니다.".format(len(names)))
+    return bad
+
+
+# ③ 정본↔라이브 함수 대조 ────────────────────────────────────────────────
+#
+# tests/test_schema_function_drift.py 는 "정본 == 마지막 마이그레이션"(글자)만 본다 — CI 에
+# DB 가 없어서다. 그래서 **파일 없이 라이브에서 바로 고친 것**은 아무도 못 본다. 여기서는
+# 라이브 pg_proc 을 직접 읽어 언어(prolang)·본문(prosrc md5)·설정(proconfig)을 맞춘다.
+# ⚠️ 본문은 양쪽 모두 CRLF→LF 만 접는다(주석까지 라이브의 일부 — 그 파일의 norm() 과 같은 자).
+_DOLLAR = chr(36) * 2
+CANON_FN_RE = re.compile(
+    r"(?im)^[ \t]*create\s+(?:or\s+replace\s+)?function\s+([\w.]+)\s*\((.*?)"
+    + re.escape(_DOLLAR) + r"(.*?)" + re.escape(_DOLLAR) + r"\s*;",
+    re.S,
+)
+CANON_FN_HEAD_RE = re.compile(r"(?im)^[ \t]*create\s+(?:or\s+replace\s+)?function\s+[\w.]+\s*\(")
+_SET_RE = re.compile(r"(?im)^[ \t]*set\s+(\w+)\s*(?:=|\bto\b)\s*(.*?)[ \t]*$")
+_LANG_RE = re.compile(r"(?i)\blanguage\s+(\w+)")
+LIVE_FUNCTION_SQL = (
+    "select n.nspname || '|' || p.proname || '|' || l.lanname || '|' || "
+    "md5(replace(p.prosrc, chr(13) || chr(10), chr(10))) || '|' || "
+    "coalesce(array_to_string(p.proconfig, ';'), '') "
+    "from pg_proc p join pg_namespace n on n.oid = p.pronamespace "
+    "join pg_language l on l.oid = p.prolang "
+    "where n.nspname in ('public','api') and p.prokind = 'f' "
+    "and not exists (select 1 from pg_depend d where d.classid = 'pg_proc'::regclass "
+    "and d.objid = p.oid and d.deptype = 'e');"
+)
+
+
+def _norm_config(item):
+    """`search_path = public, pg_temp` · `search_path=public, pg_temp` · `search_path=""` 를
+    한 모양으로 (열쇠 소문자 · 값의 공백·따옴표 제거 · 소문자)."""
+    key, _, val = str(item).partition("=")
+    val = re.sub(r"""[\s'"]""", "", val).lower()
+    return "{}={}".format(key.strip().lower(), val)
+
+
+def body_md5(body):
+    return hashlib.md5(body.replace("\r\n", "\n").encode("utf-8")).hexdigest()
+
+
+def canonical_functions(sql):
+    """정본 → {"스키마.이름": (언어, 본문 md5, 설정)} (순수 함수 — 뒤 정의가 이긴다)."""
+    out = {}
+    for m in CANON_FN_RE.finditer(sql):
+        name = m.group(1).strip().lower()
+        if "." not in name:
+            name = "public." + name
+        header = re.sub(r"--[^\n]*", "", m.group(2))   # 머리 주석의 'language' 글자에 안 속게
+        lang = _LANG_RE.search(header)
+        cfg = sorted(_norm_config(k + "=" + v) for k, v in _SET_RE.findall(header))
+        out[name] = ((lang.group(1).lower() if lang else ""), body_md5(m.group(3)), ";".join(cfg))
+    return out
+
+
+def parse_live_functions(raw):
+    """psql 출력 → {"스키마.이름": [(언어, md5, 설정), …]} (순수 함수 — 같은 이름 여럿이면 목록)."""
+    out = {}
+    for line in str(raw or "").splitlines():
+        parts = line.strip().split("|")
+        if len(parts) != 5:
+            continue
+        schema, name, lang, md5, cfg = parts
+        norm = ";".join(sorted(_norm_config(c) for c in cfg.split(";") if c))
+        out.setdefault("{}.{}".format(schema, name).lower(), []).append((lang.lower(), md5, norm))
+    return out
+
+
+def function_drift(canon, live):
+    """정본 함수마다 라이브와 다른 점 → [(이름, [사유…])] (순수 함수).
+
+    라이브에만 있는 함수는 이번 범위 밖이다. 같은 이름이 라이브에 여럿(오버로드)이면
+    어느 하나가 정본과 완전히 같아도 **남는 것은 옛 판의 찌꺼기**라 사고로 본다.
+    """
+    out = []
+    for name, (lang, md5, cfg) in sorted(canon.items()):
+        rows = live.get(name)
+        if not rows:
+            out.append((name, ["라이브에 없음"]))
+            continue
+        if len(rows) > 1:
+            out.append((name, ["라이브에 같은 이름 {}개(오버로드)".format(len(rows))]))
+            continue
+        l_lang, l_md5, l_cfg = rows[0]
+        why = []
+        if l_lang != lang:
+            why.append("언어 정본 {} / 라이브 {}".format(lang or "?", l_lang))
+        if l_md5 != md5:
+            why.append("본문 md5 정본 {} / 라이브 {}".format(md5[:8], l_md5[:8]))
+        if l_cfg != cfg:
+            why.append("설정 정본 [{}] / 라이브 [{}]".format(cfg, l_cfg))
+        if why:
+            out.append((name, why))
+    return out
+
+
+def report_function_drift(sql_text=None):
+    if sql_text is None:
+        with open(SCHEMA_SQL_PATH, encoding="utf-8") as fh:
+            sql_text = fh.read()
+    canon = canonical_functions(sql_text)
+    bad = function_drift(canon, parse_live_functions(query_one(LIVE_FUNCTION_SQL)))
+    if bad:
+        print("[사고] 정본(schema.sql)과 라이브가 다른 함수 {}개:".format(len(bad)))
+        for name, why in bad:
+            print("       · {} — {}".format(name, " · ".join(why)))
+        print("       파일 없이 라이브만 바뀌었거나(뒷문), 머지한 마이그레이션을 아직 안 적용한 것입니다.")
+        print("       ⓘ 또는 아직 머지 안 한 PR 의 마이그레이션을 먼저 적용한 것 — 머지하면 사라집니다.")
+        print("       어느 쪽이 맞는지 확인한 뒤 정본이나 라이브를 맞추세요(허용 목록으로 덮지 말 것).")
+    else:
+        print("[정상] 정본 함수 {}개가 라이브와 언어·본문·설정까지 같습니다.".format(len(canon)))
+    return bad
+
+
 def parse_args(argv):
     opts = {"check": False}
     for a in argv:
@@ -784,11 +1172,16 @@ def main(argv=None):
         _, _, tx_stale = report_tx_window_freshness()
         _, _, cov_stale = report_coverage_freshness()
         _, _, mix_stale = report_industry_mix_freshness()
+        _, _, geog_stale = report_tx_geog_freshness()
         _, exposed = report_anon_exposure()
         # 읽기와 쓰기는 따로 묻는다 — 허용 목록에 있는 이름이라도 쓰기가 붙어 있으면 사고다.
         writable = report_write_exposure()
-        return 1 if (stale or map_stale or tx_stale or cov_stale or mix_stale
-                     or exposed or writable) else 0
+        # 경보 셋(2026-09-27 P7). 느려짐은 [주의]까지만 — 종료 코드에 안 넣는다.
+        report_slow_functions()
+        bad_index = report_canonical_indexes()
+        drifted = report_function_drift()
+        return 1 if (stale or map_stale or tx_stale or cov_stale or mix_stale or geog_stale
+                     or exposed or writable or bad_index or drifted) else 0
 
     print("통계·가시성 지도를 갱신합니다 (VACUUM ANALYZE {}개 표)…".format(len(ANALYZE_TABLES)))
     rc = dbx.run_sql("set statement_timeout = '600s';\n" + build_analyze_sql(), quiet=True)
