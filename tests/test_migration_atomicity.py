@@ -421,8 +421,15 @@ RE_COMMENT_STMT_GRANT = re.compile(r"(?ims)^comment\s+on\s+.*?';[ \t]*(?:--[^\n]
 
 
 def _grant_code(sql):
-    """§4 가 보는 본문 — 줄 전체 주석과 `comment on` 글(§4 전용 정규식)을 걷은 것."""
-    return RE_COMMENT_STMT_GRANT.sub("", statements(sql))
+    """§4 가 보는 본문 — 줄 전체 주석·블록 주석과 `comment on` 글(§4 전용 정규식)을 걷은 것.
+
+    ⛔ 블록 주석은 `;` 로 문장을 나누기 **전에** 걷는다(2026-09-27 P11). 나눈 뒤에 걷으면
+       `/* 예: grant … to anon; … */` 처럼 주석 안의 `;` 가 주석을 둘로 잘라 짝(`*/`)을 잃은
+       앞 조각의 인용 grant 가 진짜 문장으로 읽혔다(거짓 빨강). ⓘ 마이그레이션에 `/*` 는
+       2026-09-27 grep 으로 0건 — 문자열 안의 `/*` 는 고려하지 않는다.
+    """
+    code = re.sub(r"/\*.*?\*/", " ", statements(sql), flags=re.S)
+    return RE_COMMENT_STMT_GRANT.sub("", code)
 
 
 def _split_top_level(text):
@@ -464,13 +471,14 @@ def grants_opening_non_api(sql):
 
     ⛔ 2026-09-27 재검사관 R1 — `statements()` 는 **줄 전체가** `--` 인 줄만 걷는다. 그래서
        `;` 로 나눈 조각이 앞 문장의 줄 끝 주석·블록 주석·`do $$ begin` 으로 시작하면 `^grant`
-       앵커가 빗나갔다. 조각마다 주석을 한 번 더 걷고, 조각 **안의** `grant execute|all` 부터
+       앵커가 빗나갔다. 조각마다 줄 끝 주석을 한 번 더 걷고(블록 주석은 `_grant_code` 가 나누기
+       **전에** 걷는다 — P11), 조각 **안의** `grant execute|all` 부터
        다시 본다(DO 블록 안 문장·`execute 'grant …'` 문자열도 이렇게 잡힌다 — 끝에 남는 `'` 는
        받는 쪽 판정에 영향이 없다). 기본권한 문장은 `grant` 가 가운데 있으므로 자르지 않는다.
     """
     bad = []
     for stmt in _grant_code(sql).split(";"):
-        stmt = re.sub(r"--[^\n]*", " ", re.sub(r"/\*.*?\*/", " ", stmt, flags=re.S))
+        stmt = re.sub(r"--[^\n]*", " ", stmt)
         one = re.sub(r"\s+", " ", stmt).strip()
         g = re.search(r"(?i)\bgrant\s+(?:execute|all)\b", one)
         if g and not one.lower().startswith("alter default"):
@@ -652,6 +660,17 @@ GRANT_SHAPES = (
     ("after_comment_with_memo_api_ok",
      "comment on function f(text) is '설명'; -- 메모\n"
      "grant execute on function api.g(text) to anon;", False),
+    # ── 2026-09-27 P11 — 블록 주석 **안의** `;` 가 주석을 잘라 인용 grant 를 문장으로 읽던 거짓 빨강 ──
+    ("block_comment_quotes_grant_ok",
+     "/* 예: grant execute on function f() to anon; 처럼 쓰면 안 된다 */\n"
+     "grant execute on function api.f() to anon;", False),
+    ("block_comment_multi_line_quotes_grant_ok",
+     "/* 금지 예시:\n   grant execute on function f() to anon;\n"
+     "   grant all on all functions in schema public to anon;\n*/\n"
+     "revoke all on function f() from anon;", False),
+    # 주석 안에 `;` 가 있어도 주석 **뒤**의 진짜 grant 는 여전히 잡는다
+    ("block_comment_with_semicolon_then_grant",
+     "/* 설명; 더 설명 */ grant execute on function g(text) to anon;", True),
 )
 
 
