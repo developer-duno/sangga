@@ -1367,12 +1367,16 @@ comment on function search_scope_limit() is
 --   예: '빌딩' 은 주소 매칭 0곳이지만 건물이름 15,068곳 → 큰 쪽인 15,068 로 판정.
 create or replace function search_scope(q text, sigungu text default null)
 returns table (too_broad boolean, match_cnt int)
-language sql
+language plpgsql
 stable
 security definer
 set search_path = public
+set plan_cache_mode = force_custom_plan
 as $$
-  with pat as (
+#variable_conflict use_column
+begin
+  return query
+with pat as not materialized (
     select case when search_key(q) is null then null
                 else '%' || replace(replace(replace(search_key(q), '\', '\\'),
                                     '%', '\%'), '_', '\_') || '%'
@@ -1399,11 +1403,14 @@ as $$
          cross join pat
         where pat.p is not null
           and (pat.gu is null or pc.sigungu_code = pat.gu::char(5))
+          and (pat.gu is null or (b.pnu >= pat.gu::char(19)
+                                        and b.pnu <= (pat.gu || repeat('9',14))::char(19)))
           and b.nm_key like pat.p escape '\')            as nm_cnt
   )
   select greatest(c.addr_cnt, c.nm_cnt) > search_scope_limit(),
          least(greatest(c.addr_cnt, c.nm_cnt), 2147483647)::int
   from c;
+end;
 $$;
 
 comment on function search_scope(text, text) is
@@ -1431,12 +1438,16 @@ returns table (
   has_roof       boolean,
   total_cnt      bigint
 )
-language sql
+language plpgsql
 stable
 security definer
 set search_path = public
+set plan_cache_mode = force_custom_plan
 as $$
-  with pat as (
+#variable_conflict use_column
+begin
+  return query
+with pat as not materialized (
     select
       case when esc.v is null then null else '%' || esc.v || '%' end as p,
       case when esc.v is null then null else '%' || esc.v      end as p_end,
@@ -1482,6 +1493,8 @@ as $$
       cross join pat
      where pat.p is not null
        and (pat.gu is null or pc.sigungu_code = pat.gu::char(5))
+       and (pat.gu is null or (b.pnu >= pat.gu::char(19)
+                                     and b.pnu <= (pat.gu || repeat('9',14))::char(19)))
        and b.nm_key like pat.p escape '\'
      limit search_scope_limit() + 1
   ),
@@ -1557,6 +1570,7 @@ as $$
     length(t.bld_nm)                asc nulls last,
     t.road_addr                     asc nulls last,
     t.bld_id;
+end;
 $$;
 
 comment on function search_buildings(text, int, text) is
@@ -1615,12 +1629,16 @@ returns table (
   too_broad         boolean,
   store_snapshot_ym text
 )
-language sql
+language plpgsql
 stable
 security definer
 set search_path = public
+set plan_cache_mode = force_custom_plan
 as $$
-  with pat as (
+#variable_conflict use_column
+begin
+  return query
+with pat as not materialized (
     -- 전처리는 형제 search_buildings 의 것을 **글자 그대로** 물려받는다 — 같은 검색어에
     -- 건물과 가게가 다른 답을 내면 안 된다. k 는 **이스케이프 전** 값이다(정확일치 정렬용).
     select
@@ -1820,6 +1838,7 @@ as $$
     o.exact_hit        desc,
     o.road_addr        asc nulls last,
     o.pnu;
+end;
 $$;
 
 -- ⚠️ create or replace 는 권한을 유지하지만, 대시보드가 같은 함수를 다시 만들면

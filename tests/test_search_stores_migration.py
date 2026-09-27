@@ -54,6 +54,17 @@ SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
 NEW_MIGRATION = os.path.join(
     MIG_DIR, "2026-09-10b_search_stores_names_after_limit.sql")
 
+# 그 뒤 public 쪽 함수를 **또** 다시 만든 판(결정 0029 — plpgsql 전환). 아래 탐색기가 집어야
+# 하는 기대값이다. ⛔ 새 판이 들어오면 `test_the_mirror_helper_really_finds_the_newest_file`
+#    이 시끄럽게 터진다 — 여기를 올리는 것이 곧 "새 판을 사람이 봤다"다.
+PLPGSQL_MIGRATION = os.path.join(MIG_DIR, "2026-09-27a_search_fns_plpgsql.sql")
+
+# 적용된 2026-09-10b 의 `search_stores` 블록(`create … function` 부터 `$$;` 앞까지, CRLF→LF)
+# 원문의 SHA-256. ⛔ 안 맞으면 "누군가 적용된 파일을 고쳤다"는 뜻이다 — 상수를 조용히
+#    갱신하지 말 것(아래 CANON_STATEMENT_SHA 와 같은 관용구). 파일을 되돌리는 것이 답이다.
+APPLIED_0910B_FN_SHA = (
+    "8bde19aa170cde67dcbd0f4960428b1a1d76c1780365ed6280c1643094aa2b3b")
+
 BOTH = [MIGRATION, SCHEMA]
 
 FN = "search_stores"
@@ -276,7 +287,7 @@ RE_DEFINES_FN = re.compile(
     + FN + r"\s*\(")
 
 
-def latest_migration_defining_the_function():
+def latest_migration_defining_the_function(mig_dir=MIG_DIR):
     """public 쪽 `search_stores` 를 정의하는 **가장 최신** 마이그레이션 경로.
 
     ⛔ 파일 이름을 상수로 박지 않는다 — 박아 두면 다음에 이 함수를 또 고치는 사람이
@@ -285,11 +296,11 @@ def latest_migration_defining_the_function():
        파일명 정렬이 곧 적용 순서라 뒤가 이긴다).
     """
     found = None
-    for name in sorted(os.listdir(MIG_DIR)):
+    for name in sorted(os.listdir(mig_dir)):
         if not name.endswith(".sql"):
             continue
-        if RE_DEFINES_FN.search(code_only(read(os.path.join(MIG_DIR, name)))):
-            found = os.path.join(MIG_DIR, name)
+        if RE_DEFINES_FN.search(code_only(read(os.path.join(mig_dir, name)))):
+            found = os.path.join(mig_dir, name)
     assert found, "{} 를 정의하는 마이그레이션이 하나도 없습니다".format(FN)
     return found
 
@@ -696,7 +707,8 @@ class TestSchemaMirrorsTheMigration:
           여기서는 이 함수 하나를 못 박아 두어, 실패 메시지가 무엇 때문인지 바로 보이게 한다.
 
         ⚠️ **둘이 서로 다른 파일을 본다.** 라이브의 진실은 "그 함수를 마지막으로 다시 만든
-           파일"이라, public 쪽은 그것을 **찾아서** 본다(2026-09-10b 가 본문을 고쳤다).
+           파일"이라, public 쪽은 그것을 **찾아서** 본다(09-09c 뒤로 public 본문을 고친
+           판이 여럿 있었다 — 어느 판인지는 탐색기가 정하고, 아래 핀 시험이 확인한다).
            api 쌍둥이는 그 뒤로 아무도 안 건드렸으므로 09-09c 가 여전히 최신이다 —
            형제 test_schema_function_drift 도 두 이름을 **따로** 셈한다(bodies() :69-74).
         """
@@ -881,7 +893,10 @@ NAMES_LATERAL_PIECES = (
 class TestNamesAfterLimitMigration:
     """정본과 새 파일 **양쪽**을 본다 — 한쪽만 되돌아가도 드리프트다."""
 
-    BOTH_NEW = [NEW_MIGRATION, SCHEMA]
+    # ⓘ 최신 판(LATEST_FN_MIGRATION)도 함께 본다 — 이 판이 산 성질(이름 대조가 자르기
+    #   뒤)을 **앞으로 라이브에 들어갈 판에서도** 직접 본다. 09-10b 한 벌만 보면 새 판은
+    #   정본을 거쳐 전이로만 보장된다.
+    BOTH_NEW = sorted({NEW_MIGRATION, LATEST_FN_MIGRATION}) + [SCHEMA]
 
     @pytest.mark.parametrize("path", BOTH_NEW)
     def test_matched_no_longer_builds_the_names(self, path):
@@ -908,26 +923,34 @@ class TestNamesAfterLimitMigration:
         assert returns_columns(
             fn_block(statements(read(path)))) == RETURNED_COLUMNS
 
-    def test_the_new_file_mirrors_the_canon(self):
-        """⛔ 정본만 살짝 다듬는 것이 곧 정본↔라이브 불일치다(2026-09-01 2차 적대검증)."""
-        assert fn_block(read(NEW_MIGRATION)) == fn_block(read(SCHEMA))
+    # ⓘ 정본↔최신판 거울은 §7(`test_function_bodies_letter_for_letter`)이 본다.
+    def test_the_applied_file_is_nailed(self):
+        """⛔ 적용된 마이그레이션 파일은 고치지 않는다(CLAUDE.md) — 규칙만으로는 가드가
+        아니라서 09-10b 의 함수 블록을 SHA-256 으로 못 박는다(이 판은 다시 안 바뀌므로
+        이 못은 안 낡는다)."""
+        assert sha(fn_block(read(NEW_MIGRATION))) == APPLIED_0910B_FN_SHA, (
+            "적용된 2026-09-10b 의 {} 블록이 바뀌었습니다 — 되돌리세요(상수를 올리지 말 것)"
+            .format(FN))
 
-    def test_it_revokes_and_never_grants(self):
-        """⛔ 만든 자리에서 다시 닫는다(관습 2026-09-01d:89-90).
+    @pytest.mark.parametrize(
+        "path", sorted({NEW_MIGRATION, LATEST_FN_MIGRATION}))
+    def test_it_revokes_and_never_grants(self, path):
+        """⛔ 만든 곳에서 다시 닫는다(관습 2026-09-01d:89-90).
 
         `create or replace` 가 권한을 보존하긴 하지만, 대시보드가 같은 함수를 다시 만들면
         Supabase 기본 권한이 anon 을 자동으로 붙인다. public 원본에는 **grant 를 주지
         않는다** — 화면은 api 쌍둥이로만 들어오고, 그 쌍둥이는 이 파일이 안 건드린다.
+        ⓘ 09-10b 와 **최신 판** 둘 다 본다 — 최신 판이 이 규칙을 어기면 아무도 못 잡는다.
         """
-        text = flat(read(NEW_MIGRATION))
+        text = flat(read(path))
         assert (
             "revoke all on function %s(text, int, text, int) "
             "from public, anon, authenticated;" % FN in text
-        ), "만든 자리에서 다시 닫지 않았습니다"
+        ), "만든 곳에서 다시 닫지 않았습니다"
         assert not re.search(r"grant execute on function", text), (
             "새 파일이 실행 권한을 주고 있습니다 — 이 판은 권한을 한 글자도 안 바꿉니다"
         )
-        assert "api.%s" % FN not in code_only(read(NEW_MIGRATION)), (
+        assert "api.%s" % FN not in code_only(read(path)), (
             "쌍둥이를 다시 정의하고 있습니다 — 그러면 위 거울 시험이 보는 파일이 갈립니다"
         )
 
@@ -965,12 +988,33 @@ class TestNamesAfterLimitMigration:
 def test_the_mirror_helper_really_finds_the_newest_file():
     """⛔ helper 가 옛 파일을 집으면 거울 시험이 **더 낡은 판과 비교되며 초록**이 된다 —
     가드가 있는 척만 하는 상태다(이 파일이 가장 무서워하는 가짜 초록)."""
-    assert LATEST_FN_MIGRATION == NEW_MIGRATION, (
+    assert LATEST_FN_MIGRATION == PLPGSQL_MIGRATION, (
         "public {} 를 정의하는 최신 파일이 {} 로 잡혔습니다 — 기대는 {} 입니다".format(
             FN, os.path.basename(LATEST_FN_MIGRATION),
-            os.path.basename(NEW_MIGRATION))
+            os.path.basename(PLPGSQL_MIGRATION))
     )
     assert LATEST_FN_MIGRATION != MIGRATION, "09-09c 로 되돌아갔습니다"
+
+
+def test_the_mirror_helper_logic_on_fake_files(tmp_path):
+    """⛔ 위 핀 시험은 **지금 나무**에서만 맞다 — helper 의 규칙 자체(뒤엣것이 이긴다 ·
+    api 전용 판과 주석 인용은 안 집는다)는 파일 이름에 안 낡는 가짜 판으로 따로 증명한다.
+
+    가짜 판 셋: 옛 public 정의 · 새 public 정의 · 가장 새 파일은 **api 쌍둥이 정의와
+    주석 인용뿐** → 새 public 정의를 집어야 한다.
+    """
+    body = "returns int language sql as $$ select 1 $$;\n"
+    (tmp_path / "2026-01-01a_old.sql").write_text(
+        "create or replace function %s(q text)\n" % FN + body, encoding="utf-8")
+    (tmp_path / "2026-02-02b_new.sql").write_text(
+        "create or replace function public.%s(q text)\n" % FN + body,
+        encoding="utf-8")
+    (tmp_path / "2026-03-03c_api_only.sql").write_text(
+        "-- 되돌리기: create or replace function %s(q text)\n" % FN
+        + "create or replace function api.%s(q text)\n" % FN + body,
+        encoding="utf-8")
+    got = latest_migration_defining_the_function(mig_dir=str(tmp_path))
+    assert os.path.basename(got) == "2026-02-02b_new.sql", os.path.basename(got)
 
 
 def test_mutation_e_building_the_names_in_matched_again_is_noticed():
