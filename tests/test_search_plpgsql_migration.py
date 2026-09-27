@@ -426,6 +426,11 @@ RE_CREATE_TABLE = re.compile(
     r"(?is)\bcreate\s+(?:unlogged\s+)?table\s+(?:if\s+not\s+exists\s+)?([\w.\"]+)\s*\(")
 RE_ADD_COLUMN = re.compile(
     r"(?is)\badd\s+column\s+(?:if\s+not\s+exists\s+)?\"?(\w+)\"?")
+# `alter table|view … rename [column] <옛 이름> to <새 이름>` — 새 이름이 칸으로 생긴다
+# (2026-09-27 P11). `rename to <새 표 이름>`(표 이름 바꾸기)·`rename constraint …` 는
+# `<옛 이름> to` 모양이 아니라 안 걸린다.
+RE_RENAME_COLUMN = re.compile(
+    r"(?is)\brename\s+(?:column\s+)?\"?(\w+)\"?\s+to\s+\"?(\w+)\"?")
 RE_CREATE_VIEW = re.compile(
     r"(?is)\bcreate\s+(?:or\s+replace\s+)?(?:materialized\s+)?view\s+"
     r"(?:if\s+not\s+exists\s+)?([\w.\"]+)\s+as\b(.*?);")
@@ -462,7 +467,8 @@ def _top_level_items(text):
 
 
 def relation_columns(sql):
-    """정본에서 (관계 이름, 칸 이름 목록) — 표(create table + add column)와 뷰(별칭)."""
+    """정본에서 (관계 이름, 칸 이름 목록) — 표(create table + add column + rename column)와
+    뷰(별칭)."""
     code = decomment(sql)
     out = []
     for m in RE_CREATE_TABLE.finditer(code):
@@ -475,6 +481,9 @@ def relation_columns(sql):
     adds = [a.group(1).lower() for a in RE_ADD_COLUMN.finditer(code)]
     if adds:
         out.append(("alter table … add column", adds))
+    renames = [r.group(2).lower() for r in RE_RENAME_COLUMN.finditer(code)]
+    if renames:
+        out.append(("alter table … rename column", renames))
     for m in RE_CREATE_VIEW.finditer(code):
         out.append(("view " + m.group(1),
                     [a.group(1).lower() for a in RE_ALIAS.finditer(m.group(2))]))
@@ -512,7 +521,15 @@ class TestUseColumnHasNothingToGrab:
                          "add column if not exists q text;", 1)),
     ("view_alias",
      lambda s: s.replace("::char(5) as sigungu_code,", "::char(5) as sigungu,", 1)),
-), ids=["table_column", "added_column", "view_alias"])
+    # 2026-09-27 P11 — 이름 바꾸기로 생기는 칸(column 낱말 있음·없음·따옴표)
+    ("renamed_column",
+     lambda s: s + "\nalter table parcel rename column jibun to q;\n"),
+    ("renamed_column_no_keyword",
+     lambda s: s + "\nalter table parcel rename jibun to lim;\n"),
+    ("renamed_column_quoted",
+     lambda s: s + '\nalter table parcel rename column "jibun" to "p_offset";\n'),
+), ids=["table_column", "added_column", "view_alias", "renamed_column",
+        "renamed_column_no_keyword", "renamed_column_quoted"])
 def test_mutation_h_a_clashing_column_is_noticed(name, mutate):
     """가짜 정본에 파라미터와 같은 이름의 칸 → 빨간불."""
     text = norm(read(SCHEMA))
@@ -520,3 +537,15 @@ def test_mutation_h_a_clashing_column_is_noticed(name, mutate):
     broken = mutate(text)
     assert broken != text, "전제: 사본이 실제로 달라야 한다({})".format(name)
     assert use_column_clashes(broken), "{} — 그런데도 '정상'이라 합니다".format(name)
+
+
+@pytest.mark.parametrize("tail", (
+    "\nalter table parcel rename to q;\n",                      # 표 이름 바꾸기 — 칸이 아니다
+    "\nalter table parcel rename constraint parcel_pkey to q;\n",  # 제약 이름
+    "\n-- alter table parcel rename column jibun to q;\n",      # 주석
+    "\nalter table parcel rename column jibun to q_code;\n",    # 다른 이름
+), ids=["rename_table", "rename_constraint", "commented", "other_name"])
+def test_rename_that_makes_no_clashing_column_stays_green(tail):
+    """이름 바꾸기 판정이 칸 아닌 것까지 물면 거짓 빨강 — 이 넷은 초록이어야 한다."""
+    text = norm(read(SCHEMA))
+    assert use_column_clashes(text + tail) == []

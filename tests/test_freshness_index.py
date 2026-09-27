@@ -13,9 +13,11 @@ max() 한다 ② 누가 받치던 색인을 지운다. 둘 다 에러가 안 나
 
 무엇을 지키나
 -------------
-ⓐ 정본의 public get_data_freshness 본문에서 `max(t.<칸>) … from <표> t` 쌍을 **전부** 뽑는다
-   (0개거나, 본문의 `max(` 개수와 안 맞으면 빨강 — 뽑기가 헛돌면 아무것도 안 보면서 초록이 된다)
+ⓐ 정본의 public get_data_freshness 본문에서 `max(t.<칸>)`·`min(t.<칸>) … from <표> t` 쌍을
+   **전부** 뽑는다(0개거나, 본문의 `max(`·`min(` 개수와 안 맞으면 빨강 — 뽑기가 헛돌면 아무것도
+   안 보면서 초록이 된다). count(*)·sum·avg 는 색인으로 못 줄이므로 대상이 아니다(RE_AGG 주석)
 ⓑ 쌍마다 그 표에 **첫 칸이 그 칸인** btree 색인이 정본에 있거나, 명시 예외(실측 사유)에 있어야 한다
+   (부분 색인은 조건이 정확히 `칸 is not null` 일 때만 친다 — has_leading_index 주석)
 ⓒ 예외 목록에 정본에 없는 쌍이 남으면 빨강(낡은 예외가 다음 사람을 속인다)
 ⓓ 마이그레이션 2026-09-27b 는 SET statement_timeout 한 줄(첫 색인 앞) + 색인 셋(parcel·building·
    transaction) 전부 concurrently · if not exists 이고 begin/commit 이 없다
@@ -48,8 +50,13 @@ RE_FN = re.compile(
     r"(?ims)^create\s+or\s+replace\s+function\s+(?:public\.)?get_data_freshness\s*\(\s*\)"
     r".*?\$\$(.*?)\$\$\s*;"
 )
+# max 뿐 아니라 min 도 본다(2026-09-27 P11) — 둘 다 btree 한쪽 끝 한 행으로 끝나는 집계라
+# 색인이 있으면 몇 ms, 없으면 전수다. ⓘ count(*)·sum·avg 는 대상이 아니다 — 색인이 있어도
+# 행을 전부 세거나 더해야 해서(index-only scan 도 전수) 색인으로 못 줄인다. 그런 줄을 큰 표에
+# 더하는 것은 이 가드가 아니라 설계에서 막을 일이다.
+RE_AGG = r"(?:max|min)"
 RE_PAIR = re.compile(
-    r"(?is)\bmax\(\s*t\.(\w+)\s*\)(.*?)\bfrom\s+(?:public\.)?(\w+)\s+t\b")
+    r"(?is)\b" + RE_AGG + r"\(\s*t\.(\w+)\s*\)(.*?)\bfrom\s+(?:public\.)?(\w+)\s+t\b")
 
 
 def read(path):
@@ -86,16 +93,31 @@ def freshness_pairs(body):
     """본문의 (표, 칸) 쌍 목록 — 적힌 순서대로."""
     pairs = []
     for m in RE_PAIR.finditer(body):
-        if "max(" in m.group(2).lower():
-            # 다음 max 까지 넘어가 버린 것 — 이 줄의 from 을 못 찾았다는 뜻이다.
+        if re.search(r"(?i)\b" + RE_AGG + r"\(", m.group(2)):
+            # 다음 max/min 까지 넘어가 버린 것 — 이 줄의 from 을 못 찾았다는 뜻이다.
             pairs.append(("?", m.group(1)))
             continue
         pairs.append((m.group(3).lower(), m.group(1).lower()))
     return pairs
 
 
+def _only_not_null(pred, col):
+    """부분 색인 조건이 정확히 `col is not null` 인가(바깥 괄호·따옴표·공백은 무시)."""
+    p = re.sub(r"\s+", " ", pred.replace('"', "")).strip().lower()
+    while p.startswith("(") and p.endswith(")"):
+        p = p[1:-1].strip()
+    return p == "{} is not null".format(col.lower())
+
+
 def has_leading_index(schema, table, col):
-    """정본(주석 줄 제외)에 첫 칸이 col 인 btree 색인이 table 에 있나."""
+    """정본(주석 줄 제외)에 첫 칸이 col 인 btree 색인이 table 에 있나.
+
+    ⛔ 부분 색인(`… where <조건>`)은 표 전체의 max/min 을 받치지 못하므로 치지 않는다
+       (2026-09-27 P11). 단 하나 예외 — 조건이 정확히 `col is not null` 이면 인정한다:
+       PostgreSQL 의 min/max 최적화(planagg.c build_minmax_path)는 `col IS NOT NULL` 조건을
+       스스로 붙여 `order by col limit 1` 로 바꾸므로 그 부분 색인이 증명돼 쓰인다
+       (max/min 은 null 을 어차피 안 센다). 그 밖의 조건은 전부 인정하지 않는다.
+    """
     pat = (
         r"(?im)^create\s+(?:unique\s+)?index\s+(?:concurrently\s+)?"
         r"(?:if\s+not\s+exists\s+)?\w+\s+on\s+(?:only\s+)?(?:public\.)?"
@@ -104,7 +126,14 @@ def has_leading_index(schema, table, col):
         + re.escape(col)
         + r"\s*[,)]"
     )
-    return re.search(pat, strip_comment_lines(schema)) is not None
+    code = strip_comment_lines(schema)
+    for m in re.finditer(pat, code):
+        end = code.find(";", m.end())
+        rest = code[m.end():] if end < 0 else code[m.end():end]
+        w = re.search(r"(?is)\bwhere\b(.*)$", rest)
+        if w is None or _only_not_null(w.group(1), col):
+            return True
+    return False
 
 
 def problems(schema, exceptions=None):
@@ -117,16 +146,16 @@ def problems(schema, exceptions=None):
     pairs = freshness_pairs(body)
     bad = []
     if not pairs:
-        bad.append("본문에서 max(t.칸) … from 표 t 쌍을 하나도 못 뽑았습니다 — 판정기가 헛돕니다")
+        bad.append("본문에서 max/min(t.칸) … from 표 t 쌍을 하나도 못 뽑았습니다 — 판정기가 헛돕니다")
         return bad
-    n_max = len(re.findall(r"(?i)\bmax\(", body))
+    n_max = len(re.findall(r"(?i)\b" + RE_AGG + r"\(", body))
     if n_max != len(pairs):
-        bad.append("본문의 max( 는 {}개인데 뽑은 쌍은 {}개입니다 — 뽑기가 한 줄을 놓칩니다".format(
+        bad.append("본문의 max(/min( 는 {}개인데 뽑은 쌍은 {}개입니다 — 뽑기가 한 줄을 놓칩니다".format(
             n_max, len(pairs)))
 
     for table, col in pairs:
         if table == "?":
-            bad.append("max(t.{}) 의 from 표를 못 찾았습니다 — `from <표> t` 모양인지 보세요".format(col))
+            bad.append("max/min(t.{}) 의 from 표를 못 찾았습니다 — `from <표> t` 모양인지 보세요".format(col))
             continue
         if has_leading_index(schema, table, col) or (table, col) in exceptions:
             continue
@@ -322,3 +351,53 @@ def test_mutation_removing_new_schema_index_is_noticed(table, col, line):
     assert line not in broken, "지우기가 안 됐습니다"
     bad = problems(broken)
     assert any("{}.{}".format(table, col) in m for m in bad), bad
+
+
+# ── 3. 2026-09-27 P11 — 부분 색인·min() 구멍 ─────────────────────────────────
+
+PARCEL_IDX_HEAD = "create index if not exists idx_parcel_updated_at on parcel (updated_at)"
+
+
+@pytest.mark.parametrize("where", [
+    "where pnu like '11%'",
+    "where updated_at > '2026-01-01'",
+    "where updated_at is not null and pnu like '11%'",
+    "where updated_at is null",
+    "where pnu is not null",
+])
+def test_mutation_partial_index_does_not_count(where):
+    """부분 색인은 표 전체의 max 를 못 받친다 → parcel.updated_at 빨간불."""
+    broken = _schema().replace(PARCEL_IDX, PARCEL_IDX_HEAD + "\n  " + where + ";", 1)
+    assert where in broken, "바꾸기가 안 됐습니다"
+    bad = problems(broken)
+    assert any("parcel.updated_at" in m for m in bad), bad
+
+
+@pytest.mark.parametrize("where", [
+    "where updated_at is not null",
+    "where (updated_at is not null)",
+    'WHERE "updated_at"  IS NOT NULL',
+])
+def test_partial_index_on_not_null_only_still_counts(where):
+    """조건이 `칸 is not null` 뿐이면 planagg 가 같은 조건을 붙이므로 받친다 → 초록."""
+    ok = _schema().replace(PARCEL_IDX, PARCEL_IDX_HEAD + " " + where + ";", 1)
+    assert where in ok, "바꾸기가 안 됐습니다"
+    assert problems(ok) == []
+
+
+def test_mutation_min_on_unindexed_column_is_noticed():
+    broken = _add_pair(_schema(), "select min(t.foo)::text from parcel t")
+    bad = problems(broken)
+    assert any("parcel.foo" in m for m in bad), bad
+
+
+def test_mutation_min_on_indexed_column_is_fine():
+    ok = _add_pair(_schema(), "select min(t.updated_at)::text from parcel t")
+    assert ("parcel", "updated_at") in freshness_pairs(freshness_body(ok))
+    assert problems(ok) == []
+
+
+def test_count_is_not_a_target():
+    """count(*) 는 색인으로 못 줄이므로 쌍으로 뽑지 않는다(개수 대조도 안 흔들린다)."""
+    ok = _add_pair(_schema(), "select count(*)::text from parcel t")
+    assert problems(ok) == []
