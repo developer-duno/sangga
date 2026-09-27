@@ -46,6 +46,7 @@
     누적값을 data/logs/post_load_api_stats.json 에 남겨 다음 점검과의 차이로 잰다(첫 번째는 기준만).
   · 정본 색인 — schema.sql 의 색인이 라이브에 없거나 indisvalid=false 면 [사고](종료 코드 1).
   · 정본↔라이브 함수 — 언어·본문 md5·설정(set …)이 schema.sql 과 다르면 [사고](종료 코드 1).
+  · 참고 시세 이웃 요약표(mv_tx_parcel_geog) 행수 == 좌표·거래 있는 필지 수 — 다르면 [낡음](종료 코드 1).
 """
 
 import hashlib
@@ -394,6 +395,44 @@ def report_coverage_freshness():
     else:
         print("[신선] 각주 집계 분기 {} = 점포 원본 최신 분기.".format(mv_ym))
     return mv_ym, live_ym, stale
+
+
+# ── 참고 시세 이웃 요약표 신선도 (2026-09-27 P7 — 사장님 결재) ─────────────────
+#
+# mv_tx_parcel_geog(2026-09-27c)는 "좌표 있고 거래가 한 건이라도 있는 필지"만 담는다.
+# 실거래를 새로 넣고 갱신을 잊으면 **새로 거래가 생긴 필지가 참고 시세 이웃에서 조용히
+# 빠진다**(에러 0). 검색 요약표와 같은 방식의 등식으로 잡는다 — 표의 행수 == 정의 조건의 필지 수.
+# ⛔ 아래 조건은 schema.sql 의 뷰 정의(where 절)와 **글자 그대로 같은 뜻**이어야 한다.
+#    정의를 바꾸면 여기도 바꾼다(tests/test_post_load_check_alarms.py 가 두 곳을 맞대 본다).
+TX_GEOG_MV = "mv_tx_parcel_geog"
+TX_GEOG_CONDITION = (
+    "p.geom is not null and exists (select 1 from transaction t where t.pnu = p.pnu)"
+)
+
+
+def build_tx_geog_freshness_sql():
+    """요약표 행수와 '있어야 할 행수'를 한 줄로 뽑는다(build_freshness_sql 과 같은 모양)."""
+    return (
+        "select (select count(*) from {})::text || '|' || "
+        "(select count(*) from parcel p where {})::text;".format(TX_GEOG_MV, TX_GEOG_CONDITION)
+    )
+
+
+def report_tx_geog_freshness():
+    """참고 시세 이웃 요약표를 재서 (표행수, 있어야할행수, 낡음여부) 를 돌려준다.
+
+    판정은 검색 요약표와 같은 is_stale(많아도 적어도 낡음) — 종료 코드도 형제들처럼 낡음이면 1.
+    """
+    mv_rows, _, expected = query_one(build_tx_geog_freshness_sql()).partition("|")
+    stale = is_stale(mv_rows, expected)
+    if stale:
+        print("[낡음] 참고 시세 이웃 요약표 {}행 / 있어야 할 행수 {}행 — 갱신이 필요합니다."
+              .format(mv_rows, expected))
+        print("       이대로 두면 새로 거래가 생긴 필지가 참고 시세 이웃에서 빠집니다(에러는 안 납니다).")
+        print("       python scripts/post_load.py 를 실행하면 다시 굽습니다.")
+    else:
+        print("[신선] 참고 시세 이웃 요약표 {}행 = 좌표·거래 있는 필지 수.".format(mv_rows))
+    return mv_rows, expected, stale
 
 
 # ── 공개키(anon)가 읽어도 되는 것 ──────────────────────────────────────────
@@ -822,9 +861,12 @@ def diff_api_stats(prev, cur, prev_taken_at=None):
     """직전·지금 스냅샷 → ({함수: [새 호출 수, 새 시간 ms]}, 기준만 새로 잡은 줄 수) (순수 함수).
 
     · 직전 스냅샷이 없으면(None) 비교하지 않는다 — 전부 기준만.
-    · 줄의 stats_since 가 바뀌었거나 calls 가 줄었으면 **초기화**다 — 그 줄은 이번엔 안 센다.
-    · 직전에 없던 줄은 stats_since 가 직전 점검 **뒤**면(그 사이 새로 생긴 줄) 통째로 새 호출,
-      아니면(밀려났다 돌아온 줄 등) 기준만.
+    · 직전과 같은 줄(stats_since 그대로 · calls 안 줄음)은 **차이**를 센다.
+    · 그 밖(직전에 없던 줄 · stats_since 가 바뀐 줄 · calls 가 준 줄)은 stats_since 가
+      직전 점검 **뒤**면 "그 뒤 새로 생긴 줄"이라 **통째로** 센다. pg_stat_statements 는 줄 수
+      상한(라이브 5,000 · 2026-09-27 에 4,888)에 닿으면 드문 줄을 밀어내고, 밀려난 줄은 다시
+      생길 때 stats_since 가 그 시각으로 새로 찍힌다 — 그 호출은 전부 직전 점검 뒤의 것이다.
+      직전 점검보다 **앞**이면 언제 쌓였는지 모르므로 기준만 새로 잡는다.
     """
     per_fn = {}
     rebased = 0
@@ -832,7 +874,9 @@ def diff_api_stats(prev, cur, prev_taken_at=None):
         return per_fn, len(cur)
     for key, c in cur.items():
         p = prev.get(key)
-        if p is None:
+        if p is not None and p.get("since") == c["since"] and c["calls"] >= p["calls"]:
+            d_calls, d_ms = c["calls"] - p["calls"], c["total_ms"] - p["total_ms"]
+        else:
             try:
                 fresh = prev_taken_at is not None and float(c["since"]) > float(prev_taken_at)
             except (TypeError, ValueError):
@@ -841,11 +885,6 @@ def diff_api_stats(prev, cur, prev_taken_at=None):
                 rebased += 1
                 continue
             d_calls, d_ms = c["calls"], c["total_ms"]
-        elif p.get("since") != c["since"] or c["calls"] < p["calls"]:
-            rebased += 1
-            continue
-        else:
-            d_calls, d_ms = c["calls"] - p["calls"], c["total_ms"] - p["total_ms"]
         if d_calls <= 0:
             continue
         acc = per_fn.setdefault(c["fn"], [0, 0.0])
@@ -864,13 +903,16 @@ def slow_functions(per_fn, threshold_ms=SLOW_MEAN_MS):
 
 
 def load_api_stats_snapshot(path=API_STATS_SNAPSHOT_PATH):
-    """직전 스냅샷 → (taken_at epoch, entries). 없거나 깨졌으면 (None, None)."""
-    try:
-        with open(path, encoding="utf-8") as fh:
-            data = json.load(fh)
-        return float(data["taken_at"]), dict(data["entries"])
-    except (OSError, ValueError, KeyError, TypeError):
+    """직전 스냅샷 → (taken_at epoch, entries). 파일이 **없으면** (None, None).
+
+    파일은 있는데 모양이 틀리면 **예외를 그대로 올린다** — "처음 점검"과 "파일이 깨짐"은
+    다른 말이라, 부르는 쪽(report_slow_functions)이 [주의] 로 따로 알린다.
+    """
+    if not os.path.exists(path):
         return None, None
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    return float(data["taken_at"]), dict(data["entries"])
 
 
 def save_api_stats_snapshot(entries, taken_at, path=API_STATS_SNAPSHOT_PATH):
@@ -890,17 +932,34 @@ def report_slow_functions():
         print("[주의] 느려짐 경보를 읽지 못했습니다(pg_stat_statements): {}".format(
             str(exc).splitlines()[0] if str(exc) else type(exc).__name__))
         return []
-    prev_at, prev = load_api_stats_snapshot(API_STATS_SNAPSHOT_PATH)
-    per_fn, rebased = diff_api_stats(prev, cur, prev_at)
-    save_api_stats_snapshot(cur, taken_at, API_STATS_SNAPSHOT_PATH)
+    # ⚠️ 스냅샷 읽기·비교가 깨져도 --check 전체를 죽이지 않는다 — 경보 하나가 못 도는 것이지
+    #    다른 점검의 판정까지 잃을 일은 아니다. 깨진 파일은 기준만 새로 써서 다음부터 되살린다.
+    try:
+        prev_at, prev = load_api_stats_snapshot(API_STATS_SNAPSHOT_PATH)
+        per_fn, rebased = diff_api_stats(prev, cur, prev_at)
+    except Exception as exc:
+        print("[주의] 느려짐 경보: 직전 스냅샷 파일 모양이 틀립니다({}) — 기준만 새로 저장합니다."
+              .format(type(exc).__name__))
+        prev, per_fn, rebased = None, {}, 0
+        broken = True
+    else:
+        broken = False
+    try:
+        save_api_stats_snapshot(cur, taken_at, API_STATS_SNAPSHOT_PATH)
+    except OSError as exc:
+        print("[주의] 느려짐 경보: 스냅샷을 저장하지 못했습니다({}) — 다음 점검도 기준부터입니다."
+              .format(type(exc).__name__))
     if prev is None:
-        print("[정보] 느려짐 경보: 기준만 저장했습니다({}줄) — 다음 점검부터 비교합니다.".format(len(cur)))
+        if not broken:
+            print("[정보] 느려짐 경보: 기준만 저장했습니다({}줄) — 다음 점검부터 비교합니다.".format(len(cur)))
         return []
     slow = slow_functions(per_fn)
     for fn, calls, mean in slow:
         print("[주의] 느려짐: api.{} — 지난 점검 이후 {}회 · 평균 {:,.0f}ms (기준 {:,.0f}ms 초과)"
               .format(fn, calls, mean, SLOW_MEAN_MS))
-    if not slow:
+    if not per_fn:
+        print("[정상] 느려짐 경보: 지난 점검 이후 api 호출 없음.")
+    elif not slow:
         print("[정상] 느려짐 경보: 지난 점검 이후 호출된 api 함수 {}개 모두 평균 {:,.0f}ms 이하."
               .format(len(per_fn), SLOW_MEAN_MS))
     if rebased:
@@ -962,6 +1021,7 @@ def report_canonical_indexes(sql_text=None):
         for name, why in bad:
             print("       · {} — {}".format(name, why))
         print("       이대로 두면 검색·화면이 조용히 느려집니다. 정본의 create index 문을 라이브에 적용하세요.")
+        print("       ⓘ 또는 아직 머지 안 한 PR 의 마이그레이션을 먼저 적용한 것 — 머지하면 사라집니다.")
     else:
         print("[정상] 정본 색인 {}개가 라이브에 모두 있고 쓸 수 있습니다.".format(len(names)))
     return bad
@@ -1072,6 +1132,7 @@ def report_function_drift(sql_text=None):
         for name, why in bad:
             print("       · {} — {}".format(name, " · ".join(why)))
         print("       파일 없이 라이브만 바뀌었거나(뒷문), 머지한 마이그레이션을 아직 안 적용한 것입니다.")
+        print("       ⓘ 또는 아직 머지 안 한 PR 의 마이그레이션을 먼저 적용한 것 — 머지하면 사라집니다.")
         print("       어느 쪽이 맞는지 확인한 뒤 정본이나 라이브를 맞추세요(허용 목록으로 덮지 말 것).")
     else:
         print("[정상] 정본 함수 {}개가 라이브와 언어·본문·설정까지 같습니다.".format(len(canon)))
@@ -1111,6 +1172,7 @@ def main(argv=None):
         _, _, tx_stale = report_tx_window_freshness()
         _, _, cov_stale = report_coverage_freshness()
         _, _, mix_stale = report_industry_mix_freshness()
+        _, _, geog_stale = report_tx_geog_freshness()
         _, exposed = report_anon_exposure()
         # 읽기와 쓰기는 따로 묻는다 — 허용 목록에 있는 이름이라도 쓰기가 붙어 있으면 사고다.
         writable = report_write_exposure()
@@ -1118,7 +1180,7 @@ def main(argv=None):
         report_slow_functions()
         bad_index = report_canonical_indexes()
         drifted = report_function_drift()
-        return 1 if (stale or map_stale or tx_stale or cov_stale or mix_stale
+        return 1 if (stale or map_stale or tx_stale or cov_stale or mix_stale or geog_stale
                      or exposed or writable or bad_index or drifted) else 0
 
     print("통계·가시성 지도를 갱신합니다 (VACUUM ANALYZE {}개 표)…".format(len(ANALYZE_TABLES)))

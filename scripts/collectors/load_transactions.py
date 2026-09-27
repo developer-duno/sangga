@@ -882,6 +882,7 @@ def main():
     print("")
     print("=" * 78)
     print("적재 완료: transaction {:,}행 (옛 행 정리 {:,}행)".format(sent, deleted))
+    print("  다음: python scripts/post_load.py   (vacuum + 요약표 갱신 — 구 단가·참고 시세 이웃)")
     print("=" * 78)
 
     try:

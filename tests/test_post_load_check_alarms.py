@@ -72,10 +72,10 @@ class TestSlowDiff:
         """기준은 '초과'다 — 딱 1,000ms 는 경보가 아니다."""
         assert post_load.slow_functions({"x": [2, 2000.0]}) == []
 
-    def test_stats_since_changed_is_a_reset_not_a_comparison(self):
-        """통계가 초기화된 줄은 이번엔 안 센다(느린 새 누적이 있어도)."""
+    def test_stats_since_changed_before_last_check_is_a_reset_not_a_comparison(self):
+        """통계가 초기화됐는데 그 시각이 직전 점검 **앞**이면 언제 쌓였는지 몰라 안 센다."""
         prev = {"1:10": entry("search_buildings", 50, 5000.0, since="1756000000")}
-        cur = {"1:10": entry("search_buildings", 60, 600000.0, since="1756099999")}
+        cur = {"1:10": entry("search_buildings", 60, 600000.0, since="1756000050")}
         per_fn, rebased = post_load.diff_api_stats(prev, cur, 1756000100)
         assert per_fn == {}
         assert rebased == 1
@@ -93,6 +93,19 @@ class TestSlowDiff:
         per_fn, rebased = post_load.diff_api_stats(prev, cur, 1756000100)
         assert per_fn == {"search_stores": [4, 8000.0]}
         assert rebased == 0
+
+    def test_row_evicted_and_reborn_after_last_check_counts_whole(self):
+        """⛔ 밀려났다 다시 생긴 줄 — stats_since 가 바뀌었지만 직전 점검 **뒤**라 통째로 센다.
+
+        라이브 pg_stat_statements 는 5,000 줄 상한에 4,888 줄이라(2026-09-27) 곧 밀어내기가 시작된다.
+        이걸 기준만 잡으면 드물게 불리는 느린 함수는 매번 밀려났다 돌아와 **영영 안 울린다**.
+        """
+        prev = {"1:10": entry("list_price_bands", 50, 5000.0, since="1756000000")}
+        cur = {"1:10": entry("list_price_bands", 2, 4000.0, since="1756000150")}
+        per_fn, rebased = post_load.diff_api_stats(prev, cur, 1756000100)
+        assert per_fn == {"list_price_bands": [2, 4000.0]}
+        assert rebased == 0
+        assert [f for f, _, _ in post_load.slow_functions(per_fn)] == ["list_price_bands"]
 
     def test_new_row_older_than_last_check_is_baseline_only(self):
         """직전에 없었는데 나이는 더 많은 줄(밀려났다 돌아온 것 등)은 언제 쌓였는지 모른다."""
@@ -158,6 +171,33 @@ class TestSlowReport:
         assert [f for f, _, _ in slow] == ["list_price_bands"]
         assert "[주의] 느려짐: api.list_price_bands" in out and "1,500ms" in out
 
+    def test_no_new_calls_says_so(self, monkeypatch, tmp_path, capsys):
+        path = str(tmp_path / "snap.json")
+        monkeypatch.setattr(post_load, "API_STATS_SNAPSHOT_PATH", path)
+        self._fake(monkeypatch, 1756000100, "1|10|f|10|1000|1756000000")
+        post_load.report_slow_functions()
+        self._fake(monkeypatch, 1756000200, "1|10|f|10|1000|1756000000")
+        capsys.readouterr()
+        assert post_load.report_slow_functions() == []
+        assert "지난 점검 이후 api 호출 없음" in capsys.readouterr().out
+
+    @pytest.mark.parametrize("content", [
+        "{not json",
+        '{"taken_at": "x", "entries": {}}',
+        '{"taken_at": 1, "entries": {"1:10": "문자열"}}',
+        "[1, 2]",
+    ])
+    def test_broken_snapshot_warns_and_rebases(self, monkeypatch, tmp_path, capsys, content):
+        """⛔ 스냅샷 파일 모양이 틀려도 --check 가 죽지 않는다 — [주의] 한 줄 + 기준만 새로."""
+        path = tmp_path / "snap.json"
+        path.write_text(content, encoding="utf-8")
+        monkeypatch.setattr(post_load, "API_STATS_SNAPSHOT_PATH", str(path))
+        self._fake(monkeypatch, 1756000200, "1|10|f|12|99999|1756000000")
+        assert post_load.report_slow_functions() == []
+        out = capsys.readouterr().out
+        assert "[주의] 느려짐 경보: 직전 스냅샷 파일 모양이 틀립니다" in out
+        assert json.loads(path.read_text(encoding="utf-8"))["entries"]["1:10"]["calls"] == 12
+
     def test_unreadable_stats_warns_but_does_not_raise(self, monkeypatch, tmp_path, capsys):
         monkeypatch.setattr(post_load, "API_STATS_SNAPSHOT_PATH", str(tmp_path / "s.json"))
 
@@ -176,6 +216,7 @@ class TestSlowReport:
             ("report_tx_window_freshness", lambda: ("", "", False)),
             ("report_coverage_freshness", lambda: ("", "", False)),
             ("report_industry_mix_freshness", lambda: ("", "", False)),
+            ("report_tx_geog_freshness", lambda: ("1", "1", False)),
             ("report_anon_exposure", lambda: ([], [])),
             ("report_write_exposure", lambda: []),
             ("report_slow_functions", lambda: [("list_price_bands", 3, 5000.0)]),
@@ -189,6 +230,42 @@ class TestSlowReport:
         monkeypatch.setattr(post_load, "report_canonical_indexes", lambda: [])
         monkeypatch.setattr(post_load, "report_function_drift", lambda: [("public.f", ["본문"])])
         assert post_load.main(["--check"]) == 1
+        monkeypatch.setattr(post_load, "report_function_drift", lambda: [])
+        monkeypatch.setattr(post_load, "report_tx_geog_freshness", lambda: ("4383", "4384", True))
+        assert post_load.main(["--check"]) == 1
+
+
+# ── 참고 시세 이웃 요약표 신선도 ────────────────────────────────────────────
+
+
+class TestTxGeogFreshness:
+    def _run(self, monkeypatch, capsys, raw):
+        monkeypatch.setattr(post_load, "query_one", lambda sql: raw)
+        got = post_load.report_tx_geog_freshness()
+        return got, capsys.readouterr().out
+
+    def test_equal_counts_are_fresh(self, monkeypatch, capsys):
+        (rows, expected, stale), out = self._run(monkeypatch, capsys, "4384|4384")
+        assert (rows, expected, stale) == ("4384", "4384", False)
+        assert "[신선] 참고 시세 이웃 요약표 4384행" in out
+
+    @pytest.mark.parametrize("raw", ["4383|4384", "4385|4384", "0|4384"])
+    def test_any_difference_is_stale(self, monkeypatch, capsys, raw):
+        """많아도 적어도 낡음이다 — 거래가 지워진 필지가 남아 있어도 이웃에 헛 필지가 섞인다."""
+        (_, _, stale), out = self._run(monkeypatch, capsys, raw)
+        assert stale is True
+        assert "[낡음] 참고 시세 이웃 요약표" in out and "post_load.py" in out
+
+    def test_condition_matches_the_view_definition_in_schema(self):
+        """⛔ 등식의 오른쪽(있어야 할 행수)은 뷰 정의와 같은 조건이어야 한다 — 갈리면 늘 낡음/늘 신선."""
+        raw = read_schema()
+        m = re.search(r"create materialized view if not exists mv_tx_parcel_geog as(.*?);", raw, re.S)
+        assert m, "정본에서 mv_tx_parcel_geog 정의를 못 찾았습니다."
+        norm = lambda s: re.sub(r"\s+", " ", s).strip().lower()  # noqa: E731
+        definition = norm(m.group(1))
+        assert "from parcel p where " + norm(post_load.TX_GEOG_CONDITION) in definition
+        sql = post_load.build_tx_geog_freshness_sql()
+        assert "from mv_tx_parcel_geog" in sql and "from parcel p where" in sql
 
 
 # ── ② 정본 색인 ──────────────────────────────────────────────────────────────
@@ -200,6 +277,7 @@ create unique index if not exists idx_b     on t (b);
 create unique index if not exists mv_key
   on mv (k);
   create index concurrently idx_c on t (c);
+create unique index concurrently if not exists idx_d on t (d);
 -- create index if not exists idx_commented on t (x);
 create index if not exists idx_a on t (a);
 """
@@ -207,7 +285,8 @@ create index if not exists idx_a on t (a);
 
 class TestCanonicalIndexes:
     def test_parser_forms(self):
-        assert post_load.canonical_index_names(INDEX_FIXTURE) == ["idx_a", "idx_b", "mv_key", "idx_c"]
+        assert post_load.canonical_index_names(INDEX_FIXTURE) == [
+            "idx_a", "idx_b", "mv_key", "idx_c", "idx_d"]
 
     def test_parser_reads_every_index_in_the_real_schema(self):
         """⛔ 파서가 헛돌면 '문제 0' 이 가짜 초록이 된다 — 머리 수와 대조한다."""
@@ -248,6 +327,11 @@ FN_FIXTURE = (
     "security definer\n"
     "set search_path = ''\n"
     "as " + D + "\n  select public.f('a');\n" + D + ";\n"
+    "\n"
+    "create function h()\n"
+    "returns int\n"
+    "language sql\n"
+    "as " + D + " select 2 " + D + ";\n"
 )
 
 
@@ -262,6 +346,7 @@ def live_line(schema, name, lang, body, cfg):
 LIVE_SAME = "\n".join([
     live_line("public", "f", "sql", BODY_F, "search_path=public, extensions, pg_temp"),
     live_line("api", "g", "sql", "\n  select public.f('a');\n", 'search_path=""'),
+    live_line("public", "h", "sql", " select 2 ", ""),
     live_line("public", "live_only", "plpgsql", "x", ""),
 ])
 
@@ -272,10 +357,16 @@ class TestCanonicalFunctions:
         assert got["public.f"] == ("sql", md5(BODY_F), "search_path=public,extensions,pg_temp")
         assert got["api.g"][0] == "sql"
         assert got["api.g"][2] == "search_path="
+        # `or replace` 없는 `create function` 도 읽는다(마이그레이션 2026-08-11 이 그 꼴이었다)
+        assert got["public.h"] == ("sql", md5(" select 2 "), "")
+        assert len(got) == 3
 
     def test_parser_reads_every_function_in_the_real_schema(self):
         raw = read_schema()
-        heads = len(post_load.CANON_FN_HEAD_RE.findall(raw))
+        # ⚠️ 머리 수는 **모듈 밖의 독립 패턴**으로 센다 — 모듈의 정규식으로 세면 둘이 같이 헛돌 때
+        #    같이 0 을 세어 초록이 된다. 이름에 따옴표(`"api"."x"`)가 있어도 머리로는 센다
+        #    (파서가 그 꼴을 못 읽으면 개수가 어긋나 여기서 빨개진다).
+        heads = len(re.findall(r'(?im)^\s*create\s+(?:or\s+replace\s+)?function\s+[\w."]+\s*\(', raw))
         canon = post_load.canonical_functions(raw)
         assert heads == len(canon) and heads >= 30
         assert all(lang in ("sql", "plpgsql") for lang, _, _ in canon.values())
@@ -312,7 +403,8 @@ class TestCanonicalFunctions:
     def test_missing_and_overload_are_drift(self):
         canon = post_load.canonical_functions(FN_FIXTURE)
         only_f = post_load.parse_live_functions(LIVE_SAME.splitlines()[0])
-        assert post_load.function_drift(canon, only_f) == [("api.g", ["라이브에 없음"])]
+        assert post_load.function_drift(canon, only_f) == [
+            ("api.g", ["라이브에 없음"]), ("public.h", ["라이브에 없음"])]
         twice = LIVE_SAME + "\n" + LIVE_SAME.splitlines()[0]
         bad = post_load.function_drift(canon, post_load.parse_live_functions(twice))
         assert bad[0][0] == "public.f" and "오버로드" in bad[0][1][0]

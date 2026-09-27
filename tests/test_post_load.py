@@ -97,6 +97,7 @@ def p7_alarms_quiet(monkeypatch):
     monkeypatch.setattr(post_load, "report_slow_functions", lambda: [])
     monkeypatch.setattr(post_load, "report_canonical_indexes", lambda: [])
     monkeypatch.setattr(post_load, "report_function_drift", lambda: [])
+    monkeypatch.setattr(post_load, "report_tx_geog_freshness", lambda: ("1", "1", False))
 
 
 # ── 1. ANALYZE 대상 ─────────────────────────────────────────────────────────
