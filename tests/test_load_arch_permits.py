@@ -12,6 +12,7 @@
 import datetime
 import io
 import os
+import re
 import sys
 
 import pytest
@@ -443,11 +444,61 @@ class TestBuildSql:
         assert sql.rstrip().endswith("vacuum (analyze) arch_permit;")
         assert "commit;" in sql
 
-    def test_reload_deletes_only_that_month(self, sql):
-        """⛔ 달 전체를 지우면 지난달 자료가 사라지고, 안 지우면 PK 충돌로 통째로 실패한다."""
+    def test_reload_deletes_that_month_first_and_older_months_last(self, sql):
+        """삭제는 딱 두 줄 — 같은 달(\\copy 앞, 재적재 겹침 방지)과 옛 달(관문 뒤, 2026-09-27).
+
+        ⛔ 표 전체를 지우면(`delete from arch_permit;`·truncate) 관문에 걸리기 전에 판단 근거가
+           사라지고, 같은 달을 안 지우면 PK 충돌로 통째로 실패한다. 세 번째 delete 가
+           붙으면(예: `>` 로 더 새 달까지) 그것도 빨강이다.
+        """
         assert "delete from arch_permit where loaded_ym = '202607';" in sql
+        assert sql.count("delete from arch_permit") == 2
         assert "delete from arch_permit;" not in sql
         assert "truncate" not in sql.lower()
+
+    def test_the_month_is_not_hardcoded(self):
+        """다른 달로 불러도 그 달 글자가 들어가야 한다 — '202607' 을 글자로 박는 변이를 잡는다."""
+        other = target.build_sql("/tmp/arch_permit.csv", "202608", 1)
+        assert "delete from arch_permit where loaded_ym = '202608';" in other
+        assert "delete from arch_permit where loaded_ym < '202608';" in other
+        assert "202607" not in other
+
+    def test_vacuum_gets_its_own_timeout_after_commit(self, sql):
+        """`set local` 은 commit 에서 풀린다 — commit 뒤 vacuum 은 dbx 기본 2분에 걸린다.
+        첫 월간 적재는 죽은 행 55만을 치우므로 commit 뒤·vacuum 앞에 세션 설정을 다시 준다."""
+        pos = sql.index("set statement_timeout = '1800s';")
+        assert sql.index("commit;") < pos < sql.index("vacuum (analyze) arch_permit;")
+
+    def test_same_month_delete_still_comes_first(self, sql):
+        """같은 달 지우기는 \\copy 보다 **앞**이어야 한다 — 뒤면 방금 넣은 행을 지운다."""
+        same = sql.index("delete from arch_permit where loaded_ym = '202607';")
+        assert same < sql.index("\\copy arch_permit")
+        assert same < sql.index("raise exception")
+
+    # ── 옛 달 지우기 (사장님 결정 2026-09-27 · 마이그레이션 2026-09-27e 와 같은 PR) ──
+    OLD_MONTHS = "delete from arch_permit where loaded_ym < '202607';"
+
+    def test_older_months_are_deleted(self, sql):
+        """⛔ 없으면 달마다 55만 행(약 180MB)이 쌓인다 — 에러 없이 표만 불어난다."""
+        assert sql.count(self.OLD_MONTHS) == 1
+
+    def test_older_months_delete_is_after_the_gates_and_before_commit(self, sql):
+        """관문 ②(마지막 raise) **뒤** · commit **앞**이어야 한다.
+        관문 앞이면 새 달이 거부돼도 옛 달이 먼저 사라지고(같은 트랜잭션이라 되돌아가긴
+        하지만 규칙은 '통과한 뒤'다), commit 뒤면 트랜잭션 밖이라 관문과 무관하게 지워진다."""
+        pos = sql.index(self.OLD_MONTHS)
+        assert pos > sql.rindex("raise exception")
+        assert pos > sql.index("use_apr_day is not null")
+        assert pos < sql.index("commit;")
+
+    @pytest.mark.parametrize("op", ["<>", "<=", "!=", "="])
+    def test_older_months_delete_uses_strictly_less_than(self, sql, op):
+        """⛔ `<=`·`<>`·`!=` 는 방금 넣은 달(또는 더 새 달)까지 지운다. `=` 만 있는 줄은 같은
+        달 지우기 한 줄뿐이어야 한다."""
+        needle = "delete from arch_permit where loaded_ym {} '202607';".format(op)
+        expected = 1 if op == "=" else 0
+        assert sql.count(needle) == expected, op
+        assert re.search(r"delete from arch_permit where loaded_ym\s*(<=|<>|!=)", sql) is None
 
     def test_copy_column_list_matches_the_csv(self, sql):
         assert "\\copy arch_permit ({})".format(", ".join(target.CSV_COLUMNS)) in sql

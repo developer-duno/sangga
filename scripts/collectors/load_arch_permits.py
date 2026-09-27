@@ -53,11 +53,12 @@ pnu 를 비워 둔다(버리지 않는다).
 그래서 CSV 를 **pnu 오름차순**(빈 pnu 는 맨 뒤, 같은 pnu 안은 원래 순서)으로 써서 같은 땅의
 자료가 한 쪽에 모이게 한다. 넣는 **내용·행 수·관문은 그대로**이고 순서만 다르다.
 ⚠️ 효과는 **다음 적재부터**다 — 이미 들어간 기준월 행은 이 변경으로 자리가 안 바뀐다.
-⚠️ 효과가 **희석된다** — 적재 SQL 은 같은 기준월만 지우므로(`delete … where loaded_ym = …`)
-   옛 달 행이 표에 흩어진 채 남는다. 읽는 함수(`count_nearby_permits`)는 `arch_pms_day` 를
-   꺼내는데 그 칸이 색인 `idx_arch_permit_pnu` 의 include 에 없어서 힙을 읽은 **뒤에**
-   loaded_ym 으로 거른다 — 즉 같은 땅의 옛 달 행 쪽까지 꺼낸다. 옛 달 행이 남아 있는 동안은
-   정렬 효과가 그만큼 줄어든다. (별건 결재 후보: include 에 arch_pms_day 추가 / 적재 뒤 옛 달 삭제)
+ⓘ 옛 달 행은 이제 안 쌓인다(사장님 결정 2026-09-27) — 적재 SQL 이 새 달을 넣고 관문을 다
+   통과한 뒤 같은 트랜잭션 안에서 `delete … where loaded_ym < …` 로 옛 달을 지운다. 그래서 표는
+   평소 한 달분이고(옛 파일을 잘못 넣으면 다음 적재 때까지 두 달), 정렬 효과가 옛 달 행에
+   희석되지 않는다. 색인 `idx_arch_permit_pnu` 의 include 에도 `arch_pms_day` 를 더해
+   (마이그레이션 2026-09-27e) 적용·vacuum 뒤 Index Only Scan 이 되어 힙을 안 읽게 된다
+   (적용 뒤 실측 예정).
 DB 쪽에서 정렬(임시 표 → order by)하지 않고 파이썬에서 하는 이유: 공용 DB 에 55만 행을 한 번
 더 쓰고 정렬시키는 대신 이 PC 메모리 약 0.4~0.5GB(칸마다 새 객체 — 행당 약 748B 실측)로
 끝나고, 적재 SQL·관문을 안 건드린다.
@@ -68,6 +69,8 @@ DB 쪽에서 정렬(임시 표 → order by)하지 않고 파이썬에서 하는
     python scripts/collectors/load_arch_permits.py               # 적재 (한 트랜잭션)
 
 같은 기준월을 다시 넣으면 그 기준월 행을 먼저 지우므로 여러 번 돌려도 겹치지 않는다.
+관문을 다 통과하면 그보다 옛 기준월 행도 지운다 — 평소처럼 가장 새 달을 넣으면 표에는
+그 달 한 벌만 남는다(더 새 달은 안 지우므로 실수로 옛 파일을 넣어도 새 달은 무사하다).
 """
 
 import argparse
@@ -460,7 +463,24 @@ select count(*) as "넣은 행",
        count(*) filter (where real_stcns_day is not null) as "실제 착공한 행"
   from {table} where loaded_ym = '{ym}';
 
+-- ── 옛 달 지우기 (사장님 결정 2026-09-27) ──────────────────────────────────
+-- 새 달이 관문 ①② 를 **다 통과한 뒤에만** 지운다. 같은 트랜잭션이라 관문에 걸리면 이
+-- 삭제도 없던 일이 된다(옛 달이 그대로 남는다). 표는 평소 한 달분(옛 파일을 잘못 넣으면 다음
+-- 적재 때까지 두 달) — 달마다 55만 행(약 180MB)씩 쌓이던 것을 멈춘다. 읽는 함수는 원래 가장
+-- 최근 달만 봤으므로 화면 숫자는 안 바뀐다.
+-- 옛 달 원본 zip 은 외장 SSD 백업(backup_raw.py)에 있어 필요하면 다시 넣을 수 있다. 단 읽는
+-- 함수는 가장 최근 달만 보므로, 되돌리려면 옛 zip 을 넣은 뒤 잘못 들어간 새 달 행을 손으로
+-- 지워야 한다.
+-- ⛔ 부등호는 `<` 다(더 오래된 달만). 실수로 옛 파일을 넣어도 그보다 **새 달은 안 지워진다**
+--    — 넣은 옛 달 행만 다음 적재 때 이 줄에 지워진다. `<>`·`<=` 로 바꾸지 말 것.
+delete from {table} where loaded_ym < '{ym}';
+
 commit;
+
+-- 위의 `set local statement_timeout` 은 commit 에서 풀려, 여기부터는 dbx 연결 기본 제한(2분)이
+-- 걸린다. 옛 달을 지운 첫 월간 적재는 죽은 행 55만을 치워야 해서 2분을 넘길 수 있다 — 끊기면
+-- 자료는 이미 들어갔는데 청소만 안 된 채 실패로 끝난다. 그래서 commit 뒤 세션 설정으로 다시 준다.
+set statement_timeout = '1800s';
 
 -- 갓 넣은 표는 통계도 가시성 지도도 없다. `analyze` 만으로는 부족하다 — 가시성 지도가
 -- 비어 있으면 커버링 인덱스를 만들어 두고도 행마다 힙을 다시 읽는다(post_load.py 머리말의
@@ -640,7 +660,19 @@ def main(argv=None):
     import dbx  # noqa: PLC0415  (dry-run 은 DB 설정 없이도 돌아야 한다)
     rc = dbx.run_sql(sql)
     if rc != 0:
-        print("적재 실패 (psql 종료코드 {}). 트랜잭션이라 아무것도 안 들어갔습니다.".format(rc),
+        # ⛔ "아무것도 안 들어갔다"고 단정하지 않는다 — commit 뒤의 청소(vacuum)에서 멈췄으면
+        #    자료는 이미 들어갔다. 어느 쪽인지는 표를 봐야 안다.
+        print("적재 실패 (psql 종료코드 {}).".format(rc), file=sys.stderr)
+        print("  · commit 전(관문·\\copy)에서 실패했으면 통째로 되돌려져 아무것도 안 들어갔습니다.",
+              file=sys.stderr)
+        print("  · commit 뒤 청소(vacuum)에서 멈췄으면 자료는 이미 들어갔습니다.", file=sys.stderr)
+        print("  → 다시 돌리기 전에 먼저 확인하세요:", file=sys.stderr)
+        print('      python scripts/dbx.py -c "select loaded_ym, count(*) from arch_permit group by 1;"',
+              file=sys.stderr)
+        print("    새 달({})만 있으면 청소만 손으로(dbx.py 는 문장을 하나씩 돌려 vacuum 이 된다 —"
+              " psql -c·SQL Editor 는 한 트랜잭션이라 vacuum 이 거부된다):".format(loaded_ym),
+              file=sys.stderr)
+        print('      python scripts/dbx.py -c "set statement_timeout = \'1800s\'; vacuum (analyze) arch_permit;"',
               file=sys.stderr)
         return rc
     print()

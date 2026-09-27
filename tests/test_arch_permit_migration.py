@@ -28,6 +28,9 @@ MIGRATION = os.path.join(ROOT, "supabase", "migrations", "2026-08-28b_arch_permi
 MIGRATION_STALE = os.path.join(
     ROOT, "supabase", "migrations", "2026-09-05b_permit_stale_cnt.sql")
 SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
+# include 에 허가일을 더한 판(2026-09-27e).
+MIGRATION_PMS_DAY = os.path.join(
+    ROOT, "supabase", "migrations", "2026-09-27e_arch_permit_pnu_pms_day.sql")
 SCRIPTS_DIR = os.path.join(ROOT, "scripts")
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
@@ -322,6 +325,60 @@ class TestSchemaMirrorsTheMigration:
         for text in (migration, schema):
             block = text[text.index("create index if not exists idx_arch_permit_pnu"):]
             assert col in block[:block.index(";")]
+
+    def test_the_covering_index_has_the_permit_day_since_0927e(self, schema):
+        """2026-09-27e — 읽는 함수가 꺼내는 arch_pms_day 가 include 에 있어야 Index Only Scan 이다.
+
+        옛 판(08-28b)에는 없던 칸이라 위 '두 파일 다' 시험 대신 정본 + 27e 를 본다. 빠지면
+        에러 없이 행마다 힙에 간다(2026-09-27 실측 Index Scan 58쪽).
+        """
+        e = read(MIGRATION_PMS_DAY)
+        for text, head in ((schema, "create index if not exists idx_arch_permit_pnu on"),
+                           (e, "create index concurrently if not exists idx_arch_permit_pnu_v2 on")):
+            block = text[text.index(head):]
+            include = block[:block.index(";")]
+            for col in ("loaded_ym", "use_apr_day", "main_purps_cd", "real_stcns_day",
+                        "arch_pms_day"):
+                assert col in include, col
+
+    def test_0927e_swaps_in_the_new_index_under_the_old_name(self):
+        """만들기 → 옛 것 지우기 → 이름 되돌리기 순서, lock_timeout 은 이름 바꾸기 **앞**,
+        concurrently 판이라 begin/commit 이 없다."""
+        e = statements(read(MIGRATION_PMS_DAY)).lower()
+        create = e.index("create index concurrently if not exists idx_arch_permit_pnu_v2 on")
+        drop = e.index("drop index concurrently if exists idx_arch_permit_pnu;")
+        lock = e.index("set lock_timeout")
+        rename = e.index("alter index idx_arch_permit_pnu_v2 rename to idx_arch_permit_pnu;")
+        assert e.index("set statement_timeout = '900s';") < create < drop < lock < rename
+        assert not re.search(r"(?m)^\s*(begin|commit);", e)
+
+    def test_0927e_gate_checks_the_new_index_before_dropping_the_old(self):
+        """관문은 v2 를 만든 **뒤**·옛 색인을 지우기 **앞**. `if not exists` 는 끊겨서 invalid 로
+        남은 v2 도 건너뛰므로, 관문 없이는 쓸 수 있는 pnu 색인이 0개인 채로 끝날 수 있다."""
+        e = statements(read(MIGRATION_PMS_DAY)).lower()
+        create = e.index("create index concurrently if not exists idx_arch_permit_pnu_v2 on")
+        drop = e.index("drop index concurrently if exists idx_arch_permit_pnu;")
+        gate_start = e.index("do $$")
+        gate = e[gate_start:e.index("end $$;", gate_start)]
+        assert create < gate_start < drop
+        # 글자가 '있나'만 보면 `if exists`·`not i.indisvalid`·`or` 로 뒤집어도 초록이다(재검사관 변이
+        # 2026-09-27) — 공백을 접은 조건 전체를 한 문장으로 대조한다.
+        g = re.sub(r"\s+", " ", gate)
+        assert ("if not exists ( select 1 from pg_index i join pg_class c on c.oid = i.indexrelid "
+                "where c.relname = 'idx_arch_permit_pnu_v2' and i.indisvalid "
+                "and pg_get_indexdef(i.indexrelid) like '%arch_pms_day%' ) then raise exception") in g
+
+    def test_0927e_table_comment_is_identical_to_the_schema(self, schema):
+        """27e 끝의 표 주석은 schema.sql 의 것과 글자 그대로 같아야 한다(줄바꿈 표기만 통일).
+        한쪽만 고치면 라이브 주석과 정본이 조용히 갈린다."""
+        pat = re.compile(r"(?ms)^comment on table arch_permit is\n.*?';$")
+        e = pat.search(read(MIGRATION_PMS_DAY).replace("\r\n", "\n"))
+        s = pat.search(schema.replace("\r\n", "\n"))
+        assert e and s
+        assert e.group(0).encode("utf-8") == s.group(0).encode("utf-8")
+        e_all = statements(read(MIGRATION_PMS_DAY)).lower()
+        assert e_all.index("comment on table arch_permit is") > e_all.index(
+            "alter index idx_arch_permit_pnu_v2 rename to idx_arch_permit_pnu;")
 
     def test_the_pnu_column_is_char19_in_both(self, migration, schema):
         """char(19) 가 아니면 형제 함수들의 배열 조건이 인덱스를 못 탄다."""
