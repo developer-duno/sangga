@@ -100,6 +100,8 @@ REFRESH_MVS = (
     "mv_sigungu_tx_yearly",
     "mv_coverage_stats",
     "mv_district_industry_mix",
+    # 참고 시세의 반경 이웃 찾기 전용(2026-09-27c) — 빠지면 새 거래 필지가 이웃에서 조용히 빠진다.
+    "mv_tx_parcel_geog",
 )
 SEARCH_MV = REFRESH_MVS[0]
 

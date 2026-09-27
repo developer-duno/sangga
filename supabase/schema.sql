@@ -1951,7 +1951,12 @@ as $$
          t.unit_price,
          t.tx_type
   from transaction t
-  where t.pnu = list_parcel_transactions.pnu
+  -- ⛔ `::char(19)` 캐스트를 지우지 말 것(2026-09-27c). pnu 칸이 char(19) 인데 text 와 견주면
+  --    **칸 쪽**이 text 로 캐스트돼 idx_tx_pnu 를 못 탄다 — 라이브 실측으로 거래 0건 필지가
+  --    idx_tx_pnu10_ym 으로 2024년 이후 거래 2.8만 행을 훑어 1,876쪽을 만졌다(찬 캐시면
+  --    그 쪽마다 창고 읽기다). 캐스트하면 idx_tx_pnu 한 번에 2쪽이다. 형제 함수들의 `p_pnu::char(19)` 와
+  --    같은 처방이다(2026-08-16b). 서명(pnu text)은 화면 약속이라 그대로 둔다.
+  where t.pnu = list_parcel_transactions.pnu::char(19)
     and t.contract_ym >= '202401'
   -- 계약일이 없는 행(구 자료)이 최신인 척 위로 올라오면 안 된다 → nulls last.
   -- 마지막 tx_id 는 같은 날 여러 건일 때 순서가 호출마다 흔들리지 않게 하는 못이다.
@@ -2292,6 +2297,45 @@ revoke all on function price_floor_band(smallint) from public, anon, authenticat
 create index if not exists idx_parcel_geog on parcel using gist ((geom::geography));
 
 -- =====================================================================
+-- 반경 이웃 찾기 전용 요약표 — 거래가 있는 필지만 (2026-09-27c)
+-- =====================================================================
+-- list_price_bands 의 반경 100m·500m 이웃은 L4·L5 의 `t.pnu = any(…)` 에만 쓰인다 — 거래가
+-- 없는 필지는 이웃 배열에 들어 있어도 아무것도 안 건진다. 그런데 예전에는 그 이웃을
+-- parcel(전국 111만 행 · 힙 416MB · idx_parcel_geog 90MB)에서 찾아, 첫 방문(찬 캐시)마다
+-- 반경 안 필지 수백 곳을 훑느라 창고에서 수백 쪽을 꺼냈다(2026-09-27 라이브 실측 —
+-- 이 함수 찬 캐시 첫 호출 74~789쪽의 대부분). 거래가 있고 좌표가 있는 필지는 4,384곳뿐이다.
+-- ⛔ **거래 조건을 좁히지 말 것**(집합·단가 있음·24개월 등). 그 조건은 L4·L5 가 거래 쪽에서
+--    이미 건다 — 여기서 또 걸면 두 곳이 같은 규칙을 따로 들게 되고, 한쪽만 고치는 날 조용히
+--    갈린다. 이 표는 "거래가 한 건이라도 있는 필지"라는 가장 넓은 상한만 진다.
+-- ⛔ 좌표는 parcel.geom 에서만 뽑는다(lat/lng 칸을 쓰면 검색·상권판정과 자리가 갈린다).
+-- ⚠️ **자료를 새로 넣으면 `python scripts/post_load.py`** — 안 하면 새로 거래가 생긴 필지가
+--    이웃에서 조용히 빠진다(에러 0 — 형제 요약표들과 같은 방식).
+create materialized view if not exists mv_tx_parcel_geog as
+select p.pnu,
+       p.geom::geography as geog
+  from parcel p
+ where p.geom is not null
+   and exists (select 1 from transaction t where t.pnu = p.pnu);
+
+comment on materialized view mv_tx_parcel_geog is
+  'list_price_bands 반경 이웃 찾기 전용(2026-09-27c) — 거래가 한 건이라도 있고 좌표가 있는 필지만. '
+  '이웃 배열은 L4·L5 의 t.pnu = any(…) 에만 쓰여 거래 없는 필지를 빼도 결과가 같다. '
+  'parcel 전국 111만 행 대신 이 표(수천 행)를 훑어 찬 캐시 첫 호출의 창고 읽기를 줄인다. '
+  '⚠️ 자료를 새로 넣으면 `python scripts/post_load.py` 를 반드시 돌릴 것 — '
+  '안 하면 새 거래 필지가 이웃에서 조용히 빠진다(에러가 아니다).';
+
+-- ⛔ 유니크가 없으면 `refresh materialized view concurrently` 가 아예 안 된다(post_load.py).
+create unique index if not exists idx_mtpg_pnu  on mv_tx_parcel_geog (pnu);
+-- 반경 조회(st_dwithin geography)를 받치는 색인 — 없으면 이 표를 통째로 훑는다.
+create index if not exists idx_mtpg_geog        on mv_tx_parcel_geog using gist (geog);
+
+analyze mv_tx_parcel_geog;
+
+-- ⛔ 이 표는 정본(schema.sql) 아래쪽의 기본권한 회수보다 먼저 만들어진다 — 새 환경에서 이 줄이
+--    없으면 anon 이 거래 있는 필지 목록과 좌표를 REST 로 통째 읽는다. 화면은 함수로만 읽는다.
+revoke all on mv_tx_parcel_geog from public, anon, authenticated;
+
+-- =====================================================================
 -- ③ list_price_bands — 이 필지의 층별 참고 시세 밴드
 -- =====================================================================
 -- ## 무엇을 돌려주나
@@ -2413,14 +2457,19 @@ begin
   -- 마지막 인자 false = **구면**으로 잰다(기본값 true 는 회전타원체). 백테스트가 쓴
   -- haversine 이 구면이라 자를 맞춘 것이다. 남는 차이는 반지름 소수점뿐이고
   -- (PostGIS 6,371,008.7714m vs 백테스트 6,371,008.8m) 500m 에서 1mm 미만이라 무시한다.
+  -- ⛔ 이웃은 parcel(전국 111만 행)이 아니라 **거래가 있는 필지만 모은 요약표**
+  --    mv_tx_parcel_geog 에서 찾는다(2026-09-27c). 이웃 배열은 아래 L4·L5 의
+  --    `t.pnu = any(…)` 에만 쓰이므로, 거래가 없는 필지는 들어 있어도 아무것도 안 건진다
+  --    — 빼도 결과가 같다(라이브 md5 대조로 증명). 찬 캐시에서 parcel 의 GiST·힙을 훑던
+  --    수백 쪽이 수십 쪽으로 준다. ⚠️ 새 실거래를 넣고 `post_load.py` 를 안 돌리면 그
+  --    필지가 이웃에서 조용히 빠진다(요약표 갱신 목록 REFRESH_MVS 에 들어 있다).
   if v_geog is not null then
     select coalesce(array_agg(p.pnu) filter (
-             where st_dwithin(p.geom::geography, v_geog, 100, false)), '{}'),
+             where st_dwithin(p.geog, v_geog, 100, false)), '{}'),
            coalesce(array_agg(p.pnu), '{}')
       into v_near100, v_near500
-      from parcel p
-     where p.geom is not null
-       and st_dwithin(p.geom::geography, v_geog, 500, false);
+      from mv_tx_parcel_geog p
+     where st_dwithin(p.geog, v_geog, 500, false);
   end if;
   v_near100 := coalesce(v_near100, '{}');
   v_near500 := coalesce(v_near500, '{}');
@@ -2812,6 +2861,9 @@ revoke all on mv_sigungu_tx_yearly from public, anon, authenticated;
 -- 훑을 때 열린 표로 읽힌다(중복 revoke 는 무해하다). ⛔ 이 표가 열리면 **구 전체의 상호가
 -- REST 로 통째** 나간다 — 화면은 search_stores 함수로만 읽는다.
 revoke all on mv_parcel_store_names from public, anon, authenticated;
+-- 반경 이웃 찾기 전용 요약표(2026-09-27c). 새 표 블록에도 같은 줄이 있다(위와 같은 이유로
+-- 목록에 한 번 더). 열리면 거래가 있는 필지 목록과 좌표가 통째로 나간다.
+revoke all on mv_tx_parcel_geog from public, anon, authenticated;
 
 -- 그리고 **앞으로 만들 것도 자동으로 안 열리게** 기본값 자체를 바꾼다.
 -- 이게 없으면 다음에 표를 하나 더 만들 때 같은 일이 또 난다(사람 기억에 의존하게 된다).
