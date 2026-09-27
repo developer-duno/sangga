@@ -5,6 +5,7 @@ import { SECTION_PLAN } from '../lib/sectionCards';
 import { SectionCard } from './SectionCard';
 import { defaultBldType, isRentStatList, rentSummary, toRentRows, typeOptions } from '../lib/rentStats';
 import type { RentStat } from '../types';
+import { takePrefetched, type RpcResult, type SidePrefetch } from '../lib/sidePrefetch';
 
 /**
  * "상권 임대 동향 (부동산원 조사)" 카드 — 층별 화면의 여섯 번째 카드(결정 0024).
@@ -24,9 +25,14 @@ import type { RentStat } from '../types';
 type Props = {
   /** 이 필지. 바뀌면 처음부터 다시 묻는다. */
   pnu: string;
+  /**
+   * 부모(층별 화면)가 건물을 고른 순간 먼저 보내 둔 요청. 이 pnu 것이 있으면 그 결과를 쓰고,
+   * 없으면(다른 필지 것·안 줌) 지금처럼 스스로 묻는다 — `lib/sidePrefetch.ts`.
+   */
+  prefetch?: SidePrefetch | null;
 };
 
-export function RentStatSection({ pnu }: Props) {
+export function RentStatSection({ pnu, prefetch }: Props) {
   /**
    * 받아 온 조사값. **아직 못 받았을 때와 못 읽었을 때가 똑같이 null 이다.**
    *
@@ -47,7 +53,11 @@ export function RentStatSection({ pnu }: Props) {
     setRows(null);
     setPicked(null);
 
-    supabase.rpc(RENT_STATS_FN, { p_pnu: pnu }).then(({ data, error }) => {
+    // 부모가 먼저 보내 둔 이 필지의 답이 있으면 그것을 받는다(`lib/sidePrefetch.ts`).
+    const req: PromiseLike<RpcResult> =
+      takePrefetched(prefetch, RENT_STATS_FN, pnu) ??
+      supabase.rpc(RENT_STATS_FN, { p_pnu: pnu });
+    req.then(({ data, error }) => {
       if (cancelled) return;
       // ⚠️ 모양까지 본다(칸 하나하나). 뜻밖의 답이 렌더로 흘러들면 그 자리에서 터지고,
       //    그러면 곁다리 카드 하나 때문에 층별 화면이 통째로 오류 안내가 된다.
@@ -63,7 +73,7 @@ export function RentStatSection({ pnu }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [pnu]);
+  }, [pnu, prefetch]);
 
   // 아직 안 왔거나 못 읽었다 = 카드 없음(위 주석 참조).
   if (rows === null) return null;

@@ -15,6 +15,7 @@ import {
   type MixBar,
 } from '../lib/industryMix';
 import { toPermitLine, type NearbyPermitLine } from '../lib/nearbyPermits';
+import { takePrefetched, type RpcResult, type SidePrefetch } from '../lib/sidePrefetch';
 
 /**
  * "둘레의 업종 분포" 섹션 — 결정 0014(상권 지표 계산) 1단계.
@@ -35,12 +36,17 @@ import { toPermitLine, type NearbyPermitLine } from '../lib/nearbyPermits';
 type Props = {
   /** 이 필지. 바뀌면 두 질문을 처음부터 다시 던진다. */
   pnu: string;
+  /**
+   * 부모(층별 화면)가 건물을 고른 순간 먼저 보내 둔 요청. 이 pnu 것이 있으면 그 결과를 쓰고,
+   * 없으면(다른 필지 것·안 줌) 지금처럼 스스로 묻는다 — `lib/sidePrefetch.ts`.
+   */
+  prefetch?: SidePrefetch | null;
 };
 
 // 제목은 `SECTION_PLAN.industry.title` 하나뿐이다 — 여기 또 적으면 카드 머리와 본문이
 // 서로 다른 이름을 말하는 날이 온다.
 
-export function IndustryMixSection({ pnu }: Props) {
+export function IndustryMixSection({ pnu, prefetch }: Props) {
   const [mix, setMix] = useState<IndustryMix | null>(null);
   /** 못 읽었나. 못 읽었으면 섹션을 통째로 감춘다 — 마이그레이션 적용 전 라이브가 이 상태다. */
   const [failed, setFailed] = useState(false);
@@ -76,7 +82,11 @@ export function IndustryMixSection({ pnu }: Props) {
     setDetail(null);
     setDetailFailed(false);
 
-    supabase.rpc(INDUSTRY_MIX_FN, { p_pnu: pnu }).then(({ data, error }) => {
+    // 부모가 먼저 보내 둔 이 필지의 답이 있으면 그것을 받는다(`lib/sidePrefetch.ts`).
+    const req: PromiseLike<RpcResult> =
+      takePrefetched(prefetch, INDUSTRY_MIX_FN, pnu) ??
+      supabase.rpc(INDUSTRY_MIX_FN, { p_pnu: pnu });
+    req.then(({ data, error }) => {
       if (cancelled) return;
       // ⚠️ 모양까지 본다(isIndustryMix — 스코프·칸 하나하나까지). 뜻밖의 답이 들어오면
       //    렌더 도중에 터지고, 그러면 **층별 화면이 통째로 오류 안내로 바뀐다.**
@@ -101,7 +111,7 @@ export function IndustryMixSection({ pnu }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [pnu]);
+  }, [pnu, prefetch]);
 
   /*
     둘레에 새로 올라오는 건물 — **따로 묻는다.**
@@ -116,7 +126,10 @@ export function IndustryMixSection({ pnu }: Props) {
     // 정보다(위 분포와 같은 원칙).
     setPermits(null);
 
-    supabase.rpc(NEARBY_PERMITS_FN, { p_pnu: pnu }).then(({ data, error }) => {
+    const req: PromiseLike<RpcResult> =
+      takePrefetched(prefetch, NEARBY_PERMITS_FN, pnu) ??
+      supabase.rpc(NEARBY_PERMITS_FN, { p_pnu: pnu });
+    req.then(({ data, error }) => {
       if (cancelled) return;
       if (error) {
         // 마이그레이션 적용 전 라이브가 이 상태다(PGRST202). 줄만 빠지고 카드는 선다.
@@ -131,7 +144,7 @@ export function IndustryMixSection({ pnu }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [pnu]);
+  }, [pnu, prefetch]);
 
   useEffect(() => {
     if (pickedCat === null) {
