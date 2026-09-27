@@ -121,6 +121,10 @@ comment on column parcel.road_contact is '광대로한면/중로각지/세로한
 
 create index if not exists idx_parcel_sigungu on parcel (sigungu_code);
 create index if not exists idx_parcel_geom    on parcel using gist (geom);
+-- get_data_freshness 의 `max(t.updated_at) from parcel t` 를 받친다(없으면 111만 행 전수).
+-- 2026-09-27 라이브 실측 2.2~3.1초(anon 제한 3초) → 이 색인. 마이그레이션 2026-09-27b
+-- (라이브는 concurrently 로 만들었다 — 정본은 새 창고용이라 그냥 만든다).
+create index if not exists idx_parcel_updated_at on parcel (updated_at);
 -- 주소 검색용 인덱스는 여기 없다 — 아래 **§검색 키** 절에서 저장 컬럼
 -- (parcel.road_addr_key)에 건다. 이유는 그 절에 적었다.
 -- 이게 없으면 search_buildings 의 주소 가지가 parcel 전수 스캔이 된다
@@ -169,6 +173,9 @@ comment on column building.bcr is
 
 create index if not exists idx_building_pnu on building (pnu);
 create index if not exists idx_building_nm  on building using gin (bld_nm gin_trgm_ops);
+-- get_data_freshness 의 `max(t.updated_at) from building t` 를 받친다(2026-09-27 실측 64ms —
+-- 지금은 체감 없음, 전국 확장 때 조용히 느려지는 자리라 미리 건다). 마이그레이션 2026-09-27b
+create index if not exists idx_building_updated_at on building (updated_at);
 
 -- =====================================================================
 -- 건물 표시명 — 동명칭 폴백 + 개인 성명 가리기 (2026-08-08e)
@@ -509,6 +516,9 @@ create index if not exists idx_tx_pnu    on transaction (pnu, contract_ym) where
 create index if not exists idx_tx_pnu10_ym on transaction (substr(pnu, 1, 10), contract_ym) where pnu is not null;
 create index if not exists idx_tx_region on transaction (sigungu_code, contract_ym);
 create index if not exists idx_tx_floor  on transaction (sigungu_code, floor_no, contract_ym);
+-- get_data_freshness 의 `max(t.contract_ym) from transaction t` 를 받친다(위 idx_tx_* 는 앞 칸이
+-- pnu·sigungu_code 라 못 받친다 · 2026-09-27 실측 75ms). 마이그레이션 2026-09-27b
+create index if not exists idx_tx_contract_ym on transaction (contract_ym);
 
 -- =====================================================================
 -- L4. district — 상권 (사전계산 대상 ★ 엔진 패턴)

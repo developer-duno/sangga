@@ -71,6 +71,9 @@ def run_file(path, quiet=False):
     env = dict(os.environ)
     env["PGPASSWORD"] = password          # ⚠️ 명령줄이 아니라 환경변수로
     env["PGCLIENTENCODING"] = "UTF8"
+    # psql 안내문("작업시간: … ms"·"(1개 행)")을 영어로 — 한글 안내문은 CP949 로 나와 grep 이
+    # "Binary file matches" 로 삼키고 `\timing` 값을 못 뽑는다(2026-09-27 실측). 자료는 그대로 UTF-8.
+    env["LC_MESSAGES"] = "C"
     cmd = ["psql"] + args + ["-v", "ON_ERROR_STOP=1", "-f", path]
     if quiet:
         cmd += ["-q"]
