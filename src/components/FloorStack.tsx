@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { startSidePrefetch, type SidePrefetch } from '../lib/sidePrefetch';
 import {
   FLOOR_STACK_VIEW,
   COVERAGE_STATS_VIEW,
@@ -223,6 +224,16 @@ export function FloorStack({ building }: Props) {
   // ⚠️ `<boolean>` 을 명시한다. `SECTION_PLAN` 이 `as const` 라 `defaultOpen` 의 타입이
   //    `true`(값 하나짜리 타입)라서, 안 적으면 "true 만 담는 상태"가 되어 접힐 수가 없다.
   const [floorsCardOpen, setFloorsCardOpen] = useState<boolean>(SECTION_PLAN.floors.defaultOpen);
+  /**
+   * 곁 카드(업종 분포·둘레 인허가·임대 동향) 요청을 건물을 고른 순간 먼저 보내 둔 것.
+   * 카드들은 층 목록이 온 뒤에야 마운트되므로, 여기서 먼저 보내 두면 그만큼 일찍 온다
+   * (`lib/sidePrefetch.ts` · 로드맵 속도 P3).
+   *
+   * ⓘ ref 에도 담아 두는 이유: 개발 모드(StrictMode)는 effect 를 두 번 돌리는데, 같은 필지면
+   *   ref 의 것을 다시 쓰게 해 **요청이 두 번 나가지 않게** 한다. 화면에 넘기는 것은 state 다.
+   */
+  const sidePrefetchRef = useRef<SidePrefetch | null>(null);
+  const [sidePrefetch, setSidePrefetch] = useState<SidePrefetch | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -276,6 +287,15 @@ export function FloorStack({ building }: Props) {
       cancelled = true;
     };
   }, [building.bld_id]);
+
+  // 곁 카드 요청을 지금 출발시킨다 — 층 목록을 기다리지 않는다. 보관은 이 필지 한 벌뿐이라
+  // 건물이 바뀌면 옛 것은 버려진다(카드도 pnu 가 다른 결과는 받지 않는다).
+  useEffect(() => {
+    if (sidePrefetchRef.current?.pnu !== building.pnu) {
+      sidePrefetchRef.current = startSidePrefetch(building.pnu);
+    }
+    setSidePrefetch(sidePrefetchRef.current);
+  }, [building.pnu]);
 
   useEffect(() => {
     let cancelled = false;
@@ -566,7 +586,7 @@ export function FloorStack({ building }: Props) {
            놓는 일은 자리가 아니라 **말**이 한다 — 섹션 제목("둘레의")과 첫 줄("이 건물만이
            아니라…")이 그 장치다. 자리를 옮겨 해결한 것이 아니니 그 문구를 지우지 말 것.
       */}
-      <IndustryMixSection pnu={building.pnu} />
+      <IndustryMixSection pnu={building.pnu} prefetch={sidePrefetch} />
 
       <TransactionSection txs={txs} stats={txStats} />
 
@@ -607,7 +627,7 @@ export function FloorStack({ building }: Props) {
            속한 상권이다. 두 카드를 나란히 두되 **한 줄에 섞거나 서로 견주는 문구를 쓰지
            않는다**(카드 안의 첫 줄과 등급 문단이 그 경계를 지킨다).
       */}
-      <RentStatSection pnu={building.pnu} />
+      <RentStatSection pnu={building.pnu} prefetch={sidePrefetch} />
 
       <p className="grade">
         <span className="grade__badge">D등급 · 간접 추론</span>
