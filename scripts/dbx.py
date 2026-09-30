@@ -97,7 +97,7 @@ def main(argv=None):
         if not os.path.exists(a.file):
             raise SystemExit("파일이 없습니다: {}".format(a.file))
         return run_file(a.file)
-    # EXPLAIN 은 오래 걸릴 수 있다 — 기본 statement_timeout(3s)을 넘기지 않게 풀어준다.
+    # EXPLAIN 은 오래 걸릴 수 있다 — 연결 기본 statement_timeout(2분 — 2026-09-27 실측 · 화면 anon 은 3초)을 넘기지 않게 풀어준다.
     return run_sql("set statement_timeout = '300s';\n"
                    "explain (analyze, buffers) {};".format(a.explain))
 
