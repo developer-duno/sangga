@@ -243,10 +243,13 @@ def test_schema_search_uses_stored_key_columns(schema_sql):
     for stmt in (
         "create index if not exists idx_building_nm_key "
         "on building using gin (nm_key gin_trgm_ops)",
-        "create index if not exists idx_parcel_road_key "
-        "on parcel using gin (road_addr_key gin_trgm_ops)",
-        "create index if not exists idx_parcel_jibun_key "
-        "on parcel using gin (jibun_addr_key gin_trgm_ops)",
+        # 주소 두 칸은 검색이 읽는 요약표(pc = mv_search_parcel) 쪽 색인이 받친다.
+        # ⓘ parcel 위의 같은 색인(idx_parcel_road_key·idx_parcel_jibun_key)은 안 쓰여서
+        #    2026-10-01b 로 지웠다 — tests/test_drop_unused_indexes_migration.py 가 지킨다.
+        "create index if not exists idx_msp_road_key "
+        "on mv_search_parcel using gin (road_addr_key gin_trgm_ops)",
+        "create index if not exists idx_msp_jibun_key "
+        "on mv_search_parcel using gin (jibun_addr_key gin_trgm_ops)",
     ):
         assert stmt in flat, (
             "schema.sql: `{}` 가 없습니다 — 검색이 전수 스캔이 됩니다".format(stmt)

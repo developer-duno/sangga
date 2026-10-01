@@ -285,8 +285,16 @@ def test_replay_actually_sees_the_2026_08_11e_swap():
     (빈 집합은 언제나 통과한다). 즉 **가드가 헛도는 것**을 막는 가드다.
     """
     alive, dropped = replay(RE_CREATE_INDEX, RE_DROP_INDEX, RE_RENAME_INDEX)
-    for name in ("idx_building_nm_key", "idx_parcel_road_key", "idx_parcel_jibun_key"):
-        assert name in alive, "재생이 11e 가 만든 {} 를 못 봤습니다".format(name)
+    # 11e 가 만든 셋 중 idx_building_nm_key 는 지금도 살아 있다 — 빈 집합 통과를 막는 기준점.
+    assert "idx_building_nm_key" in alive, "재생이 11e 가 만든 idx_building_nm_key 를 못 봤습니다"
+    # 나머지 둘(parcel 주소 색인)은 11e 가 만들고 2026-10-01b 가 지웠다. 11e 파일 안에서 '만들었다'를
+    # 직접 읽고, 끝까지 재생하면 '지웠다'로 나와야 한다 — 둘 중 하나만 보면 반쪽 가드다.
+    e = read(os.path.join(MIG_DIR, "2026-08-11e_search_key_stored.sql"))
+    made_in_11e = {m.group(1) for m in RE_CREATE_INDEX.finditer(e)}
+    for name in ("idx_parcel_road_key", "idx_parcel_jibun_key"):
+        assert name in made_in_11e, "재생이 11e 가 만든 {} 를 못 봤습니다".format(name)
+        assert name in dropped, "재생이 10-01b 가 지운 {} 를 못 봤습니다".format(name)
+        assert name not in alive, "{} 가 10-01b 로 지워졌는데 살아 있다고 나옵니다".format(name)
     for name in ("idx_building_display_nm", "idx_parcel_road_addr", "idx_parcel_jibun_addr"):
         assert name in dropped, "재생이 11e 가 지운 {} 를 못 봤습니다".format(name)
         assert name not in alive, "{} 가 지워졌는데 살아 있다고 나옵니다".format(name)

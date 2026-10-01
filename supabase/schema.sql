@@ -125,10 +125,10 @@ create index if not exists idx_parcel_geom    on parcel using gist (geom);
 -- 2026-09-27 라이브 실측 2.2~3.1초(anon 제한 3초) → 이 색인. 마이그레이션 2026-09-27b
 -- (라이브는 concurrently 로 만들었다 — 정본은 새 창고용이라 그냥 만든다).
 create index if not exists idx_parcel_updated_at on parcel (updated_at);
--- 주소 검색용 인덱스는 여기 없다 — 아래 **§검색 키** 절에서 저장 컬럼
--- (parcel.road_addr_key)에 건다. 이유는 그 절에 적었다.
--- 이게 없으면 search_buildings 의 주소 가지가 parcel 전수 스캔이 된다
--- (2026-08-08 실측: 같은 선택도에서 비용 8배·시간 28배).
+-- 주소 검색용 인덱스는 parcel 에 없다 — 검색은 parcel 이 아니라 검색 전용 요약표
+-- mv_search_parcel 을 읽고, 그 표의 idx_msp_road_key·idx_msp_jibun_key 가 받친다
+-- (아래 §검색 전용 요약표). parcel 위의 같은 색인 둘(idx_parcel_road_key·
+-- idx_parcel_jibun_key)은 2026-08-13 요약표 전환 뒤로 안 쓰여 2026-10-01b 로 지웠다.
 
 -- =====================================================================
 -- L2. building — 건물
@@ -362,7 +362,8 @@ create table if not exists unit (
 
 create index if not exists idx_unit_bld   on unit (bld_id, floor_no);
 create index if not exists idx_unit_pnu   on unit (pnu);
-create index if not exists idx_unit_geom  on unit using gist (geom);
+-- ⓘ 옛 idx_unit_geom (gist (geom)) 자리다 — 2026-10-01b 로 지웠다. unit.geom 을 조건으로 쓰는
+--    곳이 없어 통계 초기화(2026-07-24) 뒤 한 번도 안 쓰였다(113MB).
 create index if not exists idx_unit_floor on unit (floor_no) where floor_no is not null;
 
 -- =====================================================================
@@ -419,8 +420,12 @@ create index if not exists idx_ub_pnu_cat  on unit_business (pnu, snapshot_ym)
 --    상호명으로 찾는 일은 이제 필지별 가게 이름 요약표(mv_parcel_store_names)의
 --    idx_mpsn_names 가 한다(구 안 1.2만 행, 2글자 10ms). 되살리면 186MB 를 그냥 쓰게 된다
 --    — 되살리지 말 것.
-create index if not exists idx_ub_cat      on unit_business (cat_s_cd, snapshot_ym);
-create index if not exists idx_ub_geom     on unit_business using gist (geom);
+-- ⓘ 옛 idx_ub_cat (cat_s_cd, snapshot_ym) · idx_ub_geom (gist (geom)) 자리다 — 2026-10-01b 로
+--    지웠다. idx_ub_cat 은 업종 소분류를 조건으로 읽는 곳이 없어 한 번도 안 쓰였다(23MB) —
+--    업종 소분류로 거르는 기능(docs/상세계획.md §6.5 업종 프로파일 · §6.6 점포 생존기간)을
+--    만들 때 그 쿼리의 계획을 보고 다시 판단한다. idx_ub_geom 은 2026-08-22 07:06 뒤로 안
+--    쓰였다(137MB — 상권 안 점포를 세는 mv_district_industry_mix 는 상권 쪽 idx_district_geom
+--    으로 조인한다, 2026-10-01 EXPLAIN · 09-27·10-01 갱신 때도 사용 횟수 그대로).
 -- 각주 집계(v_coverage_stats) 전용 **커버링** 인덱스 — 뷰가 쓰는 세 컬럼이 다 들어
 -- 있어 힙에 안 간다(Index Only Scan). 없으면 pkey(snapshot_ym, biz_no)로 인덱스는
 -- 타지만 행마다 힙 페이지를 한 번씩 방문해(최신 스냅샷 63.5만 행 = 버퍼 63.6만 회)
@@ -1071,8 +1076,10 @@ comment on column parcel.jibun_addr_key is
 -- ── 저장 컬럼 위의 인덱스 ────────────────────────────────────────────────────
 -- 부분 일치(LIKE '%…%')라 gin_trgm_ops 가 필요하다. 없으면 전수 스캔.
 create index if not exists idx_building_nm_key on building using gin (nm_key gin_trgm_ops);
-create index if not exists idx_parcel_road_key on parcel using gin (road_addr_key gin_trgm_ops);
-create index if not exists idx_parcel_jibun_key on parcel using gin (jibun_addr_key gin_trgm_ops);
+-- ⓘ parcel 의 두 주소 칸 위 색인(idx_parcel_road_key·idx_parcel_jibun_key)은 2026-10-01b 로 지웠다.
+--    주소 검색이 2026-08-13d 부터 아래 요약표 mv_search_parcel 을 읽어 그 표의 idx_msp_road_key·
+--    idx_msp_jibun_key 가 대신하고, parcel 쪽은 그날(08-13) 뒤로 안 쓰였다(78MB·70MB).
+--    칸 자체(road_addr_key·jibun_addr_key)는 요약표가 꺼내 가므로 그대로 둔다.
 
 -- =====================================================================
 -- 검색 전용 요약표 — 찾힐 수 있는 필지만 (2026-08-13d)
@@ -2630,6 +2637,10 @@ revoke all on function list_price_bands(text) from public, anon, authenticated;
 -- list_price_bands 가 같은 화면에서 이미 "반경 500m"를 이웃 필지로 정의해 쓴다. 두 블록이
 -- 서로 다른 자로 500m 를 재면 비교가 거짓말이 된다. 두 자의 답을 8곳에서 대조해 최대
 -- 차이 1.4% 임을 확인했다(unit_business.pnu 채움률 99.94%).
+--
+-- ⓘ 이 조인은 상권 쪽 색인 idx_district_geom 으로 간다(점포 표는 최신 분기만 순차로 훑는다 —
+--    2026-10-01 EXPLAIN). 점포 쪽 idx_ub_geom 은 계획에 없고 09-27·10-01 갱신 때도 안 쓰여
+--    2026-10-01b 로 지웠다.
 create materialized view if not exists mv_district_industry_mix as
 select d.district_id,
        ub.snapshot_ym,
