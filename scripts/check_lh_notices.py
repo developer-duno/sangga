@@ -28,11 +28,16 @@ LH 공고문 API 를 최근 창으로 훑어 **상가 공고**만 고르고, 그
     python scripts/check_lh_notices.py          # 사람이 눈으로 확인
     python scripts/check_lh_notices.py --json   # 기계용 출력
 
-종료코드: 0 = 새 공고 없음 / 1 = **새 공고 있음** / 2 = 조회 실패.
+종료코드: 0 = 새 공고 없음 / 1 = **새 공고 있음** / 2 = 조회 실패(응답 판정 실패 포함) /
+          4 = 조회는 됐는데 결과(화면·이슈 파일·GITHUB_OUTPUT)를 쓰다 실패.
   ↳ 형제 감시(분기 스냅샷)는 새 것이 있어도 0 으로 끝내지만, 여기는 1 로 끝낸다.
     공고는 마감이 있어 "있는데 아무도 안 봄"이 곧 손실이기 때문이다. 워크플로는
     GITHUB_OUTPUT 의 found 값으로 이슈를 열므로, 종료코드 1 이 job 을 실패시키지 않게
     `continue-on-error` 로 받는다(워크플로 주석 참조).
+  ↳ 4 를 따로 두는 이유: 조회 **뒤**에 잡지 못한 예외는 파이썬 기본값 1 = "새 공고 있음"과
+    겹친다. 이슈 파일을 다 쓴 뒤 GITHUB_OUTPUT 에서 죽으면 워크플로는 1 을 통과시키는데
+    found 값이 없어 이슈 단계가 건너뛰어진다 — 그 주가 조용히 초록이 된다(지난 날짜 감시와
+    같은 처방, #178).
 
 적재한 뒤에는 아래 LATEST_KNOWN_NOTICE_DATE 를 그 판의 가장 최근 공고일로 올린다.
 그게 이 스크립트의 유일한 기준선이다(check_new_sangkwon_quarter.py 의
@@ -76,6 +81,9 @@ MAX_PAGES = 60          # 감시는 짧은 창(기본 2개월)만 보므로 이 
 DEFAULT_MONTHS = 2      # 주 1회 도는 감시에 2개월 창이면 한 달을 통째로 걸러도 잡힌다
 
 ISSUE_BODY_FILE = "lh_new_notice_issue.md"
+
+# 조회는 됐는데 결과를 쓰다 죽음 — 1(새 공고 있음)과 겹치지 않게 따로 둔다(머리말 참조).
+EXIT_OUTPUT_FAILED = 4
 
 KST = datetime.timezone(datetime.timedelta(hours=9), "KST")
 
@@ -230,6 +238,46 @@ def fetch_recent(key, months=DEFAULT_MONTHS):
     return rows, pages, all_cnt, start_dt, end_dt
 
 
+def report(as_json, rows, new_notices, pages, all_cnt, start_dt, end_dt):
+    """결과 화면(사람용 또는 --json 기계용)."""
+    if as_json:
+        print(json.dumps({
+            "latest_known": LATEST_KNOWN_NOTICE_DATE,
+            "window": {"start": start_dt, "end": end_dt},
+            "pages": pages,
+            "portal_total": all_cnt,
+            "sanga_in_window": len(rows),
+            "new": new_notices,
+        }, ensure_ascii=False, indent=2))
+        return
+    print("=" * 66)
+    print("LH 상가 공고 — 새 공고 감시")
+    print("=" * 66)
+    print("  기준선(창고 최신 공고일) : {}".format(LATEST_KNOWN_NOTICE_DATE))
+    print("  본 창                    : {} ~ {} ({}쪽)".format(start_dt, end_dt, pages))
+    print("  창 안의 상가 공고        : {:,}건".format(len(rows)))
+    if new_notices:
+        print("  ★ 새 공고(마감 전)      : {}건".format(len(new_notices)))
+        for n in new_notices[:10]:
+            print("      {}  {:<8} {:<20} {}".format(
+                n["notice_date"], n["region"][:8], (n["kind_nm"] or "")[:10],
+                (n["pan_nm"] or "")[:34]))
+        if len(new_notices) > 10:
+            print("      … 외 {}건".format(len(new_notices) - 10))
+        print()
+        print("  → 지금 받으세요. 공고는 마감이 지나면 지나간 것이 됩니다.")
+    else:
+        print("  새 공고                  : 없음")
+    print("=" * 66)
+
+
+def write_issue_body(new_notices):
+    """새 공고가 있을 때만 이슈 본문 파일을 쓴다(워크플로의 이슈 단계가 읽는다)."""
+    if new_notices:
+        with open(ISSUE_BODY_FILE, "w", encoding="utf-8") as f:
+            f.write(build_issue_body(new_notices))
+
+
 def main(argv=None):
     # cp949 콘솔에서 한글·특수문자(—) 출력이 깨지거나 죽지 않게 — 형제 감시와 같은 처방.
     for stream in (sys.stdout, sys.stderr):
@@ -274,42 +322,41 @@ def main(argv=None):
             file=sys.stderr)
         return 2
 
-    new_notices = find_new_notices(rows)
+    # ⛔ 판정에서 난 예외도 2 다. 응답 줄 모양이 바뀐 것(딕셔너리가 아님 등)은 조회 실패와
+    #    같은 종류인데, 놓치면 파이썬 기본값 1 = "새 공고 있음"으로 읽힌다.
+    try:
+        # ⛔ 줄은 있는데 공고일이 있는 줄이 0 이면 그것도 빈손이다. find_new_notices 는 공고일
+        #    없는 줄을 건너뛰므로, LH 가 공고일 칸 **둘 다**(PAN_NT_ST_DT·PAN_DT) 이름을 바꾸면 전부
+        #    건너뛰어 매주 "새 공고 없음"(0)이 된다. 줄이 딕셔너리가 아닐 수 있어 이 검사도 try 안에 둔다.
+        #    ⚠️ PAN_NT_ST_DT 하나만 바뀌면 PAN_DT 가 빈 줄(수집기 실측 약 34%)만 조용히 빠진다 — 이 검사는
+        #    그 경우를 못 잡는다(빈 줄 하나에 실패시키면 공고 한 건 때문에 감시가 두 달 멈춰 보류).
+        dated = sum(1 for r in rows if to_yyyymmdd(r.get("notice_date")))
+        if not dated:
+            print(
+                "창 안 상가 공고 {}건 중 공고일이 있는 줄이 0건입니다 — 정상이 아닙니다 "
+                "(LH 의 공고일 칸 이름이 바뀌었을 수 있습니다 — collect_lh_notices.py 의 "
+                "record_to_row 확인).".format(len(rows)),
+                file=sys.stderr)
+            return 2
+        new_notices = find_new_notices(rows)
+    except Exception as e:
+        print("[실패] 응답을 판정하는 중 {}: {} — 응답 모양이 바뀌었을 수 있습니다 "
+              "(collect_lh_notices.py 의 extract_rows 확인).".format(
+                  type(e).__name__, lh.mask_key(e, key)), file=sys.stderr)
+        return 2
 
-    if args.json:
-        print(json.dumps({
-            "latest_known": LATEST_KNOWN_NOTICE_DATE,
-            "window": {"start": start_dt, "end": end_dt},
-            "pages": pages,
-            "portal_total": all_cnt,
-            "sanga_in_window": len(rows),
-            "new": new_notices,
-        }, ensure_ascii=False, indent=2))
-    else:
-        print("=" * 66)
-        print("LH 상가 공고 — 새 공고 감시")
-        print("=" * 66)
-        print("  기준선(창고 최신 공고일) : {}".format(LATEST_KNOWN_NOTICE_DATE))
-        print("  본 창                    : {} ~ {} ({}쪽)".format(start_dt, end_dt, pages))
-        print("  창 안의 상가 공고        : {:,}건".format(len(rows)))
-        if new_notices:
-            print("  ★ 새 공고(마감 전)      : {}건".format(len(new_notices)))
-            for n in new_notices[:10]:
-                print("      {}  {:<8} {:<20} {}".format(
-                    n["notice_date"], n["region"][:8], (n["kind_nm"] or "")[:10],
-                    (n["pan_nm"] or "")[:34]))
-            if len(new_notices) > 10:
-                print("      … 외 {}건".format(len(new_notices) - 10))
-            print()
-            print("  → 지금 받으세요. 공고는 마감이 지나면 지나간 것이 됩니다.")
-        else:
-            print("  새 공고                  : 없음")
-        print("=" * 66)
-
-    if new_notices:
-        with open(ISSUE_BODY_FILE, "w", encoding="utf-8") as f:
-            f.write(build_issue_body(new_notices))
-    write_github_output(new_notices)
+    # ⛔ 조회 **뒤**(화면 출력·이슈 본문 파일·GITHUB_OUTPUT)에서 난 예외도 잡는다. 놓치면
+    #    파이썬 기본값 1 = "새 공고 있음"과 겹친다 — 이슈 파일을 다 쓴 뒤 GITHUB_OUTPUT 에서
+    #    죽으면 워크플로가 1 을 통과시키는데 found 값이 없어 이슈 단계가 건너뛰어져 그 주가
+    #    조용히 초록이 된다. 그래서 따로 4 로 끝내 실패 알림으로 보낸다.
+    try:
+        report(args.json, rows, new_notices, pages, all_cnt, start_dt, end_dt)
+        write_issue_body(new_notices)
+        write_github_output(new_notices)
+    except Exception as e:
+        print("[실패] 결과를 쓰는 중 {}: {} — 알림이 안 나갔을 수 있습니다.".format(
+            type(e).__name__, e), file=sys.stderr)
+        return EXIT_OUTPUT_FAILED
     return 1 if new_notices else 0
 
 
