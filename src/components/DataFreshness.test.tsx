@@ -159,13 +159,37 @@ describe('DataFreshness — 서버가 답할 때', () => {
   });
 
   it('다음 갱신 예정이 없는 자료는 그렇게 적는다 — 없는 주기를 지어내지 않는다', async () => {
-    render(<DataFreshness />);
+    // ⛔ 오늘을 못 박는다 — 실제 오늘에 기대면 2026-10-31 이 지나는 날 저절로 빨개진다.
+    render(<DataFreshness today="2026-10-01" />);
 
     // 분기 자료 둘은 같은 날 함께 갱신된다(같은 규칙을 쓰므로) — 그래서 두 줄이다.
     expect(await screen.findAllByText('2026년 10월 31일 무렵')).toHaveLength(2);
     expect(screen.getByText('2027년 3월 31일 무렵')).toBeTruthy();
     // 열 줄 중 여섯 줄이 주기가 없다(실거래·건축물대장·상권 경계·LH·성적표·필지).
     expect(screen.getAllByText('정해진 주기 없음')).toHaveLength(6);
+    // 인허가의 예정일(8월 31일)은 이 '오늘'보다 앞이다 — 지났다고 적는다.
+    expect(screen.getByText('2026년 8월 31일 무렵 — 지났습니다, 갱신 전')).toBeTruthy();
+  });
+
+  it('⛔ 예정일이 지나면 그 줄에 지났다고 적는다 — 날짜를 바꾸거나 줄을 숨기지 않는다', async () => {
+    const { container } = render(<DataFreshness today="2026-11-01" />);
+
+    // 10월 31일 예정인 분기 자료 둘이 하루 지났다.
+    expect(await screen.findAllByText('2026년 10월 31일 무렵 — 지났습니다, 갱신 전')).toHaveLength(
+      2,
+    );
+    expect(screen.queryByText('2026년 10월 31일 무렵')).toBeNull();
+    // 아직 안 온 것은 그대로다.
+    expect(screen.getByText('2027년 3월 31일 무렵')).toBeTruthy();
+    // 줄은 하나도 빠지지 않는다.
+    expect(container.querySelectorAll('.fresh__table tbody tr').length).toBe(10);
+  });
+
+  it('예정일 당일은 아직 지나지 않았다', async () => {
+    render(<DataFreshness today="2026-10-31" />);
+
+    expect(await screen.findAllByText('2026년 10월 31일 무렵')).toHaveLength(2);
+    expect(screen.queryAllByText(/지났습니다/)).toHaveLength(1); // 인허가(8월 31일)만
   });
 
   it('자료가 아직 한 행도 없는 갈래는 줄을 빼지 않고 "자료 없음"이라 적는다', async () => {

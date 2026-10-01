@@ -1,7 +1,7 @@
 import { useEffect, useId, useState } from 'react';
 
 import { DATA_FRESHNESS_FN } from '../lib/appConstants';
-import { basisText, isDataFreshnessList, nextText } from '../lib/dataFreshness';
+import { basisText, isDataFreshnessList, nextText, seoulToday } from '../lib/dataFreshness';
 import { supabase } from '../lib/supabase';
 import type { DataFreshnessRow } from '../types';
 
@@ -26,8 +26,11 @@ import type { DataFreshnessRow } from '../types';
  *    말하게 된다(LH 공고 카드와 같은 규칙). 아래 면책 안내와 의견함은 그대로 선다.
  *
  * ⓘ 접히지 않는다 — 네 칸짜리 표 한 장이라 접는 장치가 내용보다 커진다.
+ *
+ * ⓘ `today` 는 시험이 오늘을 못 박는 자리다(한국 날짜 'YYYY-MM-DD'). 화면에서는 안 넘기고,
+ *   그때는 진짜 오늘을 **한국 날짜로** 구해 모든 줄에 같은 값을 넘긴다.
  */
-export function DataFreshness() {
+export function DataFreshness({ today }: { today?: string } = {}) {
   /**
    * 받아 온 줄들. **아직 못 받았을 때와 못 읽었을 때가 똑같이 null 이다.**
    * 기다리는 동안 아무것도 안 그리므로 두 상태의 결과가 같다(`LhNoticeSection` 과 같은 결).
@@ -56,6 +59,9 @@ export function DataFreshness() {
   // 빈손이면 표를 만들지 않는다 — 머리글만 있는 표는 소음이다.
   if (rows === null || rows.length === 0) return null;
 
+  // 예정일이 지났는지 가를 오늘 — 한 번 구해 모든 줄에 같은 값을 쓴다.
+  const todayKst = today ?? seoulToday();
+
   return (
     <section className="fresh" aria-labelledby={headingId}>
       <h2 className="fresh__h" id={headingId}>
@@ -80,7 +86,7 @@ export function DataFreshness() {
                 <span className="fresh__kind">{row.basis_kind}</span>{' '}
                 <span className="fresh__val">{basisText(row)}</span>
               </td>
-              <td>{nextText(row)}</td>
+              <td>{nextText(row, todayKst)}</td>
               <td>{row.cadence}</td>
             </tr>
           ))}
