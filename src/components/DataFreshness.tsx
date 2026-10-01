@@ -60,7 +60,18 @@ export function DataFreshness({ today }: { today?: string } = {}) {
   if (rows === null || rows.length === 0) return null;
 
   // 예정일이 지났는지 가를 오늘 — 한 번 구해 모든 줄에 같은 값을 쓴다.
-  const todayKst = today ?? seoulToday();
+  // ⛔ seoulToday() 는 렌더 도중 호출돼, Intl.DateTimeFormat 이 던지면 이 컴포넌트가
+  //    터지고 바깥 오류 그물까지 번진다. 실패하면 오늘을 빈 문자열로 두고 지남 판정 없이
+  //    날짜만 적는다(nextText 가 이미 그렇게 짜여 있다).
+  let todayKst = today;
+  if (todayKst === undefined) {
+    try {
+      todayKst = seoulToday();
+    } catch (e) {
+      console.warn('오늘 날짜(한국)를 못 구했습니다 — 지남 표시 없이 그립니다', e);
+      todayKst = '';
+    }
+  }
 
   return (
     <section className="fresh" aria-labelledby={headingId}>
