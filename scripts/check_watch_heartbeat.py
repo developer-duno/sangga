@@ -24,6 +24,11 @@ GitHub REST API 로 그 워크플로우의 **가장 최근 성공 실행 시각*
      사람이 한 번 손으로 돌리면 그 주는 살아 있는 것으로 보인다 — 그래도 **점검 자체는
      실제로 일어났으므로** 조용한 낡음은 없다. 그래서 일부러 실행 종류를 가리지 않는다.
 
+  ⛔ **멈춤으로 나오면 다른 방식으로 한 번 더 묻는다**(거름망 없이 최근 실행 20건 → 그중
+     마지막 성공). 2026-10-01 GitHub 가 한 번 옛 답(09-17)을 줘 잘 도는 라이브 감시에
+     헛경보(#177)가 열렸다. 재확인이 실패하면 처음 판정(멈춤)을 그대로 둔다 — 알림이
+     사라지는 쪽보다 시끄러운 쪽이 낫다. 멈춤이 없는 평소에는 추가 호출이 없다.
+
   ⛔ **갓 만든 워크플로는 기록이 없는 게 정상이다.** 주 1회 예약을 금요일에 머지하면
      첫 예약 슬롯(월요일)이 오기 전까지 성공 기록이 0건인데, 그걸 "멈췄다"로 읽으면
      태어나자마자 부고가 뜬다(2026-08-28 LH 공고 감시가 실제로 그랬다 — 이슈 #98).
@@ -184,7 +189,11 @@ def parse_latest_success(payload):
         raise ValueError("workflow_runs 가 목록이 아닙니다 — API 형식이 바뀌었을 수 있습니다.")
     if not runs:
         return None
-    run = runs[0]
+    return _run_time(runs[0])
+
+
+def _run_time(run):
+    """실행 기록 한 건의 시각(UTC). `parse_latest_success`·`parse_latest_success_among` 공용."""
     if not isinstance(run, dict):
         raise ValueError("실행 기록이 객체가 아닙니다 — API 형식이 바뀌었을 수 있습니다.")
     # run_started_at 이 "실제로 돌기 시작한 시각"이라 하트비트에 가장 맞다.
@@ -193,6 +202,24 @@ def parse_latest_success(payload):
     if not stamp:
         raise ValueError("실행 기록에 시각 칸이 없습니다 — API 형식이 바뀌었을 수 있습니다.")
     return parse_iso_utc(stamp)
+
+
+def parse_latest_success_among(payload):
+    """상태 거름망 **없이** 받은 최근 실행 목록에서 `conclusion == "success"` 중 가장 최근 시각.
+
+    재확인용이다(`recheck_stale` 참조). 성공이 하나도 없으면 None, 모양이 이상하면 ValueError.
+    목록 순서에 기대지 않고 가장 늦은 시각을 고른다.
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("GitHub 응답이 객체가 아닙니다 — API 형식이 바뀌었을 수 있습니다.")
+    runs = payload.get("workflow_runs")
+    if not isinstance(runs, list):
+        raise ValueError("workflow_runs 가 목록이 아닙니다 — API 형식이 바뀌었을 수 있습니다.")
+    times = [
+        _run_time(run) for run in runs
+        if isinstance(run, dict) and run.get("conclusion") == "success"
+    ]
+    return max(times) if times else None
 
 
 def parse_created_at(payload):
@@ -411,6 +438,54 @@ def fetch_latest_success(workflow_file):
     return parse_latest_success(_get_json_with_retry(runs_url(workflow_file)))
 
 
+# 재확인 때 받을 최근 실행 수. 6시간 감시는 하루 4번이라 20건이면 닷새치다.
+RECHECK_PER_PAGE = 20
+
+
+def recent_runs_url(workflow_file, repo=REPO):
+    """상태 거름망 **없이** 최근 실행 여러 건을 달라고 하는 주소(재확인용)."""
+    return "{}/repos/{}/actions/workflows/{}/runs?per_page={}".format(
+        API_BASE, repo, workflow_file, RECHECK_PER_PAGE
+    )
+
+
+def fetch_recent_success(workflow_file):
+    """재확인: 최근 실행 목록에서 고른 마지막 성공 시각(UTC). 없으면 None."""
+    return parse_latest_success_among(_get_json_with_retry(recent_runs_url(workflow_file)))
+
+
+def recheck_stale(results, stale):
+    """멈춤으로 나온 것만 **다른 방식으로 한 번 더** 묻고, 더 새로운 성공이 있으면 바꿔 끼운다.
+
+    왜: 2026-10-01 GitHub 가 `status=success&per_page=1` 에 한 번 옛 답(09-17)을 줘, 6시간마다
+    잘 도는 라이브 감시에 "14일째 멈춤" 이슈(#177)가 열렸다. 같은 주소를 직후에 다시 물으면
+    정상이었다 — 거름망 없는 목록으로 한 번 더 확인하면 그런 헛경보를 거른다.
+
+    ⛔ 재확인이 실패하면 **처음 판정을 그대로 둔다**(stderr 경고 한 줄). 진짜 멈춤 + 재확인
+       실패가 겹칠 때 알림이 사라지면 안 되기 때문이다 — 종료코드 2·침묵으로 바꾸지 않는다.
+    ⓘ 멈춤이 없으면 이 함수를 부르지 않는다(평소 경로 추가 호출 0).
+    """
+    targets = {s["workflow"] for s in stale}
+    out = []
+    for workflow_file, first in results:
+        if workflow_file in targets:
+            try:
+                again = fetch_recent_success(workflow_file)
+            except Exception as e:
+                print("  재확인 실패({}): {} — 처음 판정(멈춤)을 그대로 둡니다.".format(
+                    label_of(workflow_file), e), file=sys.stderr)
+                again = None
+            if again is not None and (first is None or again > first):
+                print("  재확인({}): 마지막 성공이 {} 로 더 새롭습니다(처음 답 {}).".format(
+                    label_of(workflow_file),
+                    again.strftime("%Y-%m-%d %H:%M UTC"),
+                    first.strftime("%Y-%m-%d %H:%M UTC") if first else "기록 없음",
+                ), file=sys.stderr)
+                first = again
+        out.append((workflow_file, first))
+    return out
+
+
 def workflow_url(workflow_file, repo=REPO):
     """그 워크플로우 **자체**(만든 시각 포함)를 달라고 하는 주소."""
     return "{}/repos/{}/actions/workflows/{}".format(API_BASE, repo, workflow_file)
@@ -498,6 +573,10 @@ def main(argv=None):
 
     now = datetime.datetime.now(UTC)
     stale = judge(results, max_age_days=args.max_age_days, now=now, created_at=created)
+    if stale:
+        # 멈춤으로 나온 것만 다른 방식으로 한 번 더 묻는다 — GitHub 가 옛 답을 준 헛경보 거르기.
+        results = recheck_stale(results, stale)
+        stale = judge(results, max_age_days=args.max_age_days, now=now, created_at=created)
 
     if args.json:
         print(json.dumps(
