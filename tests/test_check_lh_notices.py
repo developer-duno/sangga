@@ -395,7 +395,7 @@ class TestAfterLookupFailures:
 
     @pytest.mark.parametrize("with_new, expect", [(True, 1), (False, 0)], ids=["새공고", "없음"])
     def test_some_rows_without_notice_date_judge_as_usual(self, monkeypatch, tmp_path, with_new, expect):
-        """양성 대조: 공고일이 **일부만** 빈 것은 평소대로 판정한다(PAN_DT 는 원래 34% 빈 칸)."""
+        """양성 대조: 공고일이 **일부만** 빈 것은 평소대로 판정한다(운영 실측상 빈 줄은 0건이지만, 한 줄이 비었다고 감시 전체를 멈추지 않는다)."""
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
         dated = _fresh(pan_id="d") if with_new else notice("d", notice_date="2026-01-01")
