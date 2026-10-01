@@ -325,6 +325,17 @@ def main(argv=None):
     # ⛔ 판정에서 난 예외도 2 다. 응답 줄 모양이 바뀐 것(딕셔너리가 아님 등)은 조회 실패와
     #    같은 종류인데, 놓치면 파이썬 기본값 1 = "새 공고 있음"으로 읽힌다.
     try:
+        # ⛔ 줄은 있는데 공고일이 있는 줄이 0 이면 그것도 빈손이다. find_new_notices 는 공고일
+        #    없는 줄을 건너뛰므로, LH 가 공고일 칸 이름(PAN_NT_ST_DT·PAN_DT)을 바꾸면 전부 건너뛰어
+        #    매주 "새 공고 없음"(0)이 된다. 줄이 딕셔너리가 아닐 수 있어 이 검사도 try 안에 둔다.
+        dated = sum(1 for r in rows if to_yyyymmdd(r.get("notice_date")))
+        if not dated:
+            print(
+                "창 안 상가 공고 {}건 중 공고일이 있는 줄이 0건입니다 — 정상이 아닙니다 "
+                "(LH 의 공고일 칸 이름이 바뀌었을 수 있습니다 — collect_lh_notices.py 의 "
+                "record_to_row 확인).".format(len(rows)),
+                file=sys.stderr)
+            return 2
         new_notices = find_new_notices(rows)
     except Exception as e:
         print("[실패] 응답을 판정하는 중 {}: {} — 응답 모양이 바뀌었을 수 있습니다 "

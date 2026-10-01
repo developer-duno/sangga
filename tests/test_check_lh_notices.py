@@ -362,18 +362,46 @@ class TestAfterLookupFailures:
 
     @pytest.mark.parametrize("stage", ["report", "write_issue_body", "write_github_output"])
     @pytest.mark.parametrize("as_json", [False, True], ids=["화면", "json"])
-    def test_any_failure_after_lookup_exits_four(self, monkeypatch, tmp_path, capsys, stage, as_json):
-        """조회가 끝난 뒤 화면 출력·이슈 본문 파일·GITHUB_OUTPUT 어디서 죽든 4 다(1·0 아님)."""
+    @pytest.mark.parametrize("exc", [OSError("디스크가 가득 찼습니다"), TypeError("칸 모양이 다릅니다")],
+                             ids=["OSError", "TypeError"])
+    def test_any_failure_after_lookup_exits_four(self, monkeypatch, tmp_path, capsys, stage, as_json, exc):
+        """조회가 끝난 뒤 화면 출력·이슈 본문 파일·GITHUB_OUTPUT 어디서 죽든 4 다(1·0 아님).
+
+        TypeError 도 넣는 이유: 파일 오류(OSError 류)만 던지면 except 를 OSError 로 좁혀도
+        초록이다 — 실제로는 모양이 다른 값(json 직렬화 실패 등)에서도 죽는다.
+        """
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
         _patch(monkeypatch, [_fresh()])
 
         def boom(*_a, **_kw):
-            raise OSError("디스크가 가득 찼습니다")
+            raise exc
 
         monkeypatch.setattr(chk, stage, boom)
         assert chk.main(["--json"] if as_json else []) == chk.EXIT_OUTPUT_FAILED
-        assert "OSError: 디스크가 가득 찼습니다" in capsys.readouterr().err
+        assert "{}: {}".format(type(exc).__name__, exc) in capsys.readouterr().err
+
+    def test_rows_without_any_notice_date_exit_two_not_zero(self, monkeypatch, tmp_path, capsys):
+        """⛔ 줄은 있는데 공고일이 전부 비면 find_new_notices 가 다 건너뛰어 0('새 공고 없음')이
+        된다 — LH 가 공고일 칸 이름을 바꾸면 매주 조용한 초록. 그래서 2 다."""
+        monkeypatch.chdir(tmp_path)
+        out = tmp_path / "gh_output"
+        monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+        _patch(monkeypatch, [notice("a", notice_date=None), notice("b", notice_date=None)])
+        assert chk.main([]) == 2
+        assert "공고일이 있는 줄이 0건" in capsys.readouterr().err
+        assert not (tmp_path / chk.ISSUE_BODY_FILE).exists()
+        assert not out.exists(), "found 기록을 남기면 안 된다"
+
+    @pytest.mark.parametrize("with_new, expect", [(True, 1), (False, 0)], ids=["새공고", "없음"])
+    def test_some_rows_without_notice_date_judge_as_usual(self, monkeypatch, tmp_path, with_new, expect):
+        """양성 대조: 공고일이 **일부만** 빈 것은 평소대로 판정한다(PAN_DT 는 원래 34% 빈 칸)."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+        dated = _fresh(pan_id="d") if with_new else notice("d", notice_date="2026-01-01")
+        _patch(monkeypatch, [notice("x", notice_date=None), dated])
+        assert chk.main([]) == expect
+        assert (tmp_path / chk.ISSUE_BODY_FILE).exists() is with_new
 
     def test_exit_codes_are_documented(self):
         assert chk.EXIT_OUTPUT_FAILED == 4
