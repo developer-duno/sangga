@@ -769,3 +769,49 @@ def test_issue_step_skips_only_the_open_title_for_real(workflow, tmp_path):
     assert res.returncode == 0, said
     created = (tmp_path / "created.txt").read_bytes().decode("utf-8").splitlines()
     assert created == [t2], said
+
+
+def test_check_step_says_rc4_is_not_a_lookup_failure(workflow, tmp_path):
+    """4 = 조회는 됐는데 결과를 쓰다 실패 — '조회에 실패했습니다'라고 말하면 엉뚱한 곳을 보게 된다."""
+    gh_output = tmp_path / "gh_output"
+    gh_output.write_bytes(b"")
+    res = _run_step(workflow, "예정일이 지난 자료가 있는지 확인", tmp_path, {"python": FAKE_PYTHON}, {
+        "FAKE_RC": "4", "FAKE_FILES": "1", "FAKE_OUTPUT": "", "GITHUB_OUTPUT": "gh_output",
+    })
+    said = res.stdout.decode("utf-8", "replace") + res.stderr.decode("utf-8", "replace")
+    assert res.returncode == 4, said
+    assert "결과를 쓰다 실패했습니다 (종료코드 4)" in said, said
+    assert "조회에 실패했습니다" not in said, said
+
+
+# ── bash 가 없을 때 가드 — CI 에서는 실패, 로컬에서만 건너뛴다 (2026-10-02) ──────
+# 위 실행 시험이 CI 에서 조용히 skip 되면 지키는 빈틈이 아무도 모르게 다시 열린다.
+
+
+def test_run_step_fails_on_ci_without_bash(monkeypatch, tmp_path):
+    monkeypatch.setitem(globals(), "_find_bash", lambda: None)
+    monkeypatch.setenv("CI", "1")
+    # BaseException 으로 받는다 — 건너뜀(Skipped)이 새어 나가면 시험이 빨강이 아니라 '건너뜀'이 된다.
+    with pytest.raises(BaseException) as caught:
+        _run_step(None, "아무 단계", tmp_path, {}, {})
+    assert caught.type is pytest.fail.Exception, caught.type
+
+
+def test_run_step_fails_on_github_actions_without_bash(monkeypatch, tmp_path):
+    monkeypatch.setitem(globals(), "_find_bash", lambda: None)
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    # BaseException 으로 받는다 — 건너뜀(Skipped)이 새어 나가면 시험이 빨강이 아니라 '건너뜀'이 된다.
+    with pytest.raises(BaseException) as caught:
+        _run_step(None, "아무 단계", tmp_path, {}, {})
+    assert caught.type is pytest.fail.Exception, caught.type
+
+
+def test_run_step_skips_locally_without_bash(monkeypatch, tmp_path):
+    monkeypatch.setitem(globals(), "_find_bash", lambda: None)
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    # BaseException 으로 받는다 — 건너뜀(Skipped)이 새어 나가면 시험이 빨강이 아니라 '건너뜀'이 된다.
+    with pytest.raises(BaseException) as caught:
+        _run_step(None, "아무 단계", tmp_path, {}, {})
+    assert caught.type is pytest.skip.Exception, caught.type
