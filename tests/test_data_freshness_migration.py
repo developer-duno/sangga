@@ -23,6 +23,17 @@ DB 없이 SQL 글자만 본다(CI 에는 DB 가 없다) — 대신 아래는 글
 
 ⚠️ 한계: 규칙이 **맞는 날짜를 내는지**는 여기서 못 본다(DB 가 없다). 그건 라이브에서
    `select * from api.get_data_freshness();` 로 사람이 확인한다.
+
+ⓘ 2026-10-01a 에 월간 규칙이 바뀌었다(기준월 + 2개월 - 하루 → + 3개월 - 하루, 사장님 결정).
+   05d 는 라이브에 적용된 **날짜 원장**이라 고치지 않는다 — 그래서 '다음 갱신 예정' 규칙
+   검사는 05d 가 아니라 **지금 정본(schema.sql)과 새 마이그레이션 2026-10-01a** 를 본다.
+   본문 불변식(열 갈래·줄 수·정렬·시간대·모양 검사)도 같은 두 벌(정본·10-01a)을 본다
+   (`public_body` fixture 가 이 둘로 매개변수화돼 있다) — 05d 는 옛 규칙을 그대로 간직해야
+   하므로 이 둘에서 빠지고, 그 사실 자체를 test_the_old_ledger_is_left_as_applied 가 따로
+   확인한다. 칸·권한·api 쌍둥이·notify 는 그대로 05d 원장을 본다. 10-01a 의 함수 머리와
+   comment 는 정본(schema.sql)과 글자 그대로 같은지 대조한다(10-01a 는 CREATE 문 전체를
+   다시 쓰므로, 머리·comment 를 베끼다 한 줄이라도 달라지면 라이브가 조용히 다른 모양으로
+   만들어진다 — 본문 전체가 정본과 같은지는 test_schema_function_drift.py 가 따로 본다).
 """
 
 import os
@@ -32,6 +43,9 @@ import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MIGRATION = os.path.join(ROOT, "supabase", "migrations", "2026-09-05d_data_freshness.sql")
+# 월간 규칙을 바꾼 마이그레이션(2026-10-01a) — public 함수 하나만 다시 만든다.
+PERMIT_MIGRATION = os.path.join(
+    ROOT, "supabase", "migrations", "2026-10-01a_permit_next_expected.sql")
 SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
 
 FN = "get_data_freshness"
@@ -96,15 +110,19 @@ def function_body(sql, name):
     return m.group(1)
 
 
-@pytest.fixture(scope="module")
-def public_body(migration):
+@pytest.fixture(scope="module", params=(SCHEMA, PERMIT_MIGRATION), ids=("schema", "2026-10-01a"))
+def public_body(request):
     """public 함수의 본문에서 **주석을 걷어낸 실제 SQL**.
 
     ⛔ 주석을 남겨 두면 양쪽으로 다 틀린다 — 문장을 `--` 로 죽여도 글자가 남아 초록이 되고,
        반대로 설명하려고 주석에 인용한 말('union all 은 순서를 보장하지 않는다')이 문장으로
        세어진다(실제로 그 한 줄 때문에 줄 수 세기가 10 을 세었다).
+
+    ⓘ 2026-10-01a 로 **지금 정본(schema.sql)과 새 마이그레이션 두 벌**을 본다 — 05d 는
+       라이브에 적용된 날짜 원장이라 옛 규칙('기준월 + 2개월 - 하루')을 그대로 간직해야
+       하므로(test_the_old_ledger_is_left_as_applied), 이 fixture 의 대상에서 뺐다.
     """
-    return statements(function_body(migration, FN))
+    return statements(function_body(read(request.param), FN))
 
 
 class TestFunctionExists:
@@ -210,11 +228,37 @@ class TestForbiddenSource:
 
 
 class TestNextExpectedRules:
-    def test_each_rule_is_written_exactly_once(self, public_body):
-        """규칙이 두 벌이면 한쪽만 고쳐지는 날 두 자료가 서로 다른 주기를 말한다."""
-        assert public_body.count("interval '5 months'") == 1, "분기 규칙이 한 번이 아닙니다"
-        assert public_body.count("interval '2 months'") == 1, "월간 규칙이 한 번이 아닙니다"
-        assert public_body.count("make_date(") == 1, "연 1회 규칙이 한 번이 아닙니다"
+    @pytest.mark.parametrize("path", (SCHEMA, PERMIT_MIGRATION), ids=("schema", "2026-10-01a"))
+    def test_each_rule_is_written_exactly_once(self, path):
+        """규칙이 두 벌이면 한쪽만 고쳐지는 날 두 자료가 서로 다른 주기를 말한다.
+
+        ⛔ 05d 원장이 아니라 **지금 정본과 그것을 라이브에 올리는 2026-10-01a** 를 본다.
+           월간 = 기준월 + 3개월 - 하루(다음 판이 공개되는 달의 말일 — 사장님 결정 2026-10-01).
+           옛 '2 months' 가 한 글자라도 남으면 매달 1일~20일 무렵 지난 날짜가 화면에 선다.
+        """
+        body = statements(function_body(read(path), FN))
+        assert body.count("interval '5 months'") == 1, "분기 규칙이 한 번이 아닙니다"
+        assert body.count("interval '3 months'") == 1, "월간 규칙(+3개월)이 한 번이 아닙니다"
+        assert body.count("interval '2 months'") == 0, (
+            "옛 월간 규칙(+2개월)이 남아 있습니다 — 지금 판이 게시된 달의 말일을 띄워 "
+            "매달 초 이미 지난 날짜가 화면에 섭니다")
+        assert body.count("make_date(") == 1, "연 1회 규칙이 한 번이 아닙니다"
+
+    @pytest.mark.parametrize("path", (SCHEMA, PERMIT_MIGRATION), ids=("schema", "2026-10-01a"))
+    def test_the_monthly_rule_belongs_to_permit(self, path):
+        """+3개월 이 **인허가 줄**의 규칙인지 본다 — 숫자만 세면 다른 갈래로 옮겨 가도 초록이다."""
+        body = statements(function_body(read(path), FN))
+        assert re.search(
+            r"when\s+n\.rule_kind\s*=\s*'permit'[^\n]*\n\s*then\s*\(to_date\(n\.basis,\s*'YYYYMM'\)"
+            r"\s*\+\s*interval\s+'3 months'\s*-\s*interval\s+'1 day'\)::date",
+            body,
+        ), "인허가(rule_kind = 'permit') 줄이 '기준월 + 3개월 - 하루' 가 아닙니다"
+
+    def test_the_old_ledger_is_left_as_applied(self, migration):
+        """⛔ 05d 는 라이브에 적용된 날짜 원장이다 — 새 규칙으로 고쳐 쓰면 원장이 거짓말을 한다."""
+        body = statements(function_body(migration, FN))
+        assert body.count("interval '2 months'") == 1
+        assert body.count("interval '3 months'") == 0
 
     def test_shape_is_checked_before_to_date(self, public_body):
         """`to_date('2026Q3','YYYYMM')` 은 **에러**다 — 터지면 표가 통째로 사라진다.
@@ -274,3 +318,116 @@ class TestMigrationShape:
                 r"(?im)^comment\s+on\s+function\s+{}\s*\(\s*\)\s+is".format(FN), sql
             ), "comment on function 이 없습니다"
         assert "2026-09-05d" in migration
+
+
+@pytest.fixture(scope="module")
+def permit_migration():
+    return read(PERMIT_MIGRATION)
+
+
+class TestPermitRuleMigration:
+    """2026-10-01a — 월간 규칙 한 줄만 바꿔 public 함수를 다시 만든다."""
+
+    def test_it_recreates_only_the_public_function(self, permit_migration):
+        """⛔ api 쌍둥이는 안 건드린다 — public 을 부르는 통과 함수라 그대로 따라온다.
+
+        다시 만들면 grant 를 다시 줘야 하고, 그 줄이 빠지는 날 화면이 permission denied 다.
+        """
+        stmts = statements(permit_migration)
+        made = re.findall(r"(?im)^create\s+(?:or\s+replace\s+)?function\s+([\w.]+)\s*\(", stmts)
+        assert made == [FN], "public.{} 하나만 다시 만들어야 합니다: {}".format(FN, made)
+
+    def test_no_grant_at_all(self, permit_migration):
+        """⛔ public 원본은 끝까지 닫아 둔다 — 이 파일엔 grant 가 한 줄도 없어야 한다."""
+        assert not re.search(r"(?im)^\s*grant\s", statements(permit_migration)), (
+            "grant 가 있습니다 — public 원본을 열거나 api 권한을 다시 손댈 이유가 없습니다")
+
+    def test_public_original_is_revoked_again(self, permit_migration):
+        """대시보드가 다시 만들며 붙인 anon 권한을 만든 자리에서 걷는다(05d 와 같은 관습)."""
+        assert re.search(
+            r"(?im)^revoke\s+all\s+on\s+function\s+{}\s*\(\s*\)\s+"
+            r"from\s+public,\s*anon,\s*authenticated\s*;".format(FN),
+            statements(permit_migration),
+        ), "public 원본의 revoke 가 없거나 anon·authenticated 를 안 지목합니다"
+
+    def test_comment_is_rewritten_with_the_new_rule(self, permit_migration):
+        """주석은 `pg_description` 에 실린다 — 본문만 바꾸면 라이브 설명이 옛 규칙을 말한다."""
+        m = re.search(
+            r"(?ims)^comment\s+on\s+function\s+{}\s*\(\s*\)\s+is(.*?);\s*$".format(FN),
+            permit_migration,
+        )
+        assert m, "comment on function 이 없습니다"
+        assert "기준월 + 3개월 - 하루" in m.group(1)
+        assert "2개월" not in m.group(1)
+        assert "2026-10-01a" in m.group(1)
+
+    def test_one_transaction_and_notify_after_commit(self, permit_migration):
+        """dbx.py 는 자동커밋이라 감싸지 않으면 함수만 바뀌고 revoke 가 빠진 채 남을 수 있다."""
+        stmts = statements(permit_migration)
+        begin = re.search(r"(?im)^begin\s*;", stmts)
+        create = re.search(r"(?im)^create\s+or\s+replace\s+function\s", stmts)
+        revoke = re.search(r"(?im)^revoke\s", stmts)
+        commit = re.search(r"(?im)^commit\s*;", stmts)
+        notify = stmts.find("notify pgrst, 'reload schema';")
+        assert begin and create and revoke and commit and notify != -1
+        assert begin.start() < create.start() < revoke.start() < commit.start() < notify, (
+            "begin → create → revoke → commit → notify 순서가 아닙니다")
+
+    def test_function_head_matches_the_schema(self, permit_migration, schema):
+        """함수 머리(`returns table`·`language sql`·`stable`·`security definer`·`search_path`)가
+
+        정본과 10-01a 에서 **글자 그대로** 같아야 한다 — `create or replace` 는 머리 속성을
+        새 정의로 덮어쓰므로, 머리를 베끼다 한 줄을 빼먹으면 라이브 함수가 조용히 다른 속성으로
+        재생성된다(2026-10-01 적대검증 로컬 실측: `set search_path` 가 빠지면 anon → api 경로가
+        `relation "unit_business" does not exist` 로 죽어 화면 표가 통째로 사라지고,
+        `security definer` 가 빠지면 화면은 돌지만 속성만 꺼진다 — 둘 다 이 시험 전엔 초록이었다).
+
+        ⛔ api.get_data_freshness 의 머리를 잘못 집지 않게 줄머리(`^`)에 고정한다.
+        """
+        head_re = re.compile(
+            r"(?ims)^create\s+or\s+replace\s+function\s+{}\s*\(".format(FN)
+            + r".*?(?=" + re.escape(chr(36) * 2) + r")"
+        )
+
+        def extract_head(sql):
+            m = head_re.search(statements(sql))
+            assert m, "{} 의 함수 머리를 못 찾았습니다".format(FN)
+            return m.group(0).replace("\r\n", "\n")
+
+        schema_head = extract_head(schema)
+        migration_head = extract_head(permit_migration)
+        assert migration_head == schema_head, (
+            "10-01a 의 함수 머리가 정본(schema.sql)과 글자가 다릅니다 — 새 환경만 조용히 "
+            "다른 모양으로 만들어집니다"
+        )
+        for needle in ("security definer", "set search_path = public", "language sql"):
+            assert needle in migration_head.lower() or needle in migration_head, (
+                "{} 가 함수 머리에 없습니다".format(needle)
+            )
+        assert re.search(r"(?im)^stable\s*$", migration_head), "stable 한 줄이 없습니다"
+
+    def test_comment_matches_the_schema(self, permit_migration, schema):
+        r"""`comment on function … is '…';` 문자열이 정본과 10-01a 에서 같아야 한다.
+
+        본문과 머리는 같은데 comment 만 다르면 `pg_description`(라이브 설명)이 schema.sql
+        의 서술과 갈라진다 — 다음 사람이 schema.sql 을 읽고 다른 설명을 믿게 된다.
+
+        ⛔ api 쌍둥이의 comment 가 있다면 섞이지 않게 같은 방식으로 줄머리를 고정한다
+        (`api.` 접두는 이 정규식에 안 걸린다 — `^comment\s+on\s+function\s+get_data_freshness`
+        는 `api.get_data_freshness` 의 `api.` 뒤를 줄머리로 보지 않는다).
+        """
+        comment_re = re.compile(
+            r"(?ims)^comment\s+on\s+function\s+{}\s*\(\s*\)\s+is.*?;\s*$".format(FN)
+        )
+
+        def extract_comment(sql):
+            m = comment_re.search(statements(sql))
+            assert m, "{} 의 comment on function 을 못 찾았습니다".format(FN)
+            return m.group(0).replace("\r\n", "\n")
+
+        schema_comment = extract_comment(schema)
+        migration_comment = extract_comment(permit_migration)
+        assert migration_comment == schema_comment, (
+            "10-01a 의 comment 가 정본(schema.sql)과 글자가 다릅니다 — 라이브 설명이 "
+            "schema.sql 의 서술과 갈라집니다"
+        )
