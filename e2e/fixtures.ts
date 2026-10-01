@@ -360,6 +360,10 @@ export function scorecard(over: Partial<Scorecard> = {}): Scorecard {
  * ⚠️ 값을 손으로 계산해 적지 않는다 — 여기 적힌 `next_expected` 는 서버가 규칙으로 계산해
  *    주는 값을 흉내 낸 것이고, 규칙이 맞는지는 파이썬 가드와 라이브가 본다. 여기서는
  *    "서버가 준 값이 화면에 그대로 실리는가"만 본다.
+ *
+ * ⛔ **예정일은 먼 미래(2099년)와 확실한 과거(2026-08-31)만 쓴다.** 화면이 실제 오늘과 견줘
+ *    지난 예정일에 "지났습니다, 갱신 전"을 붙이므로(2026-10-01), 가까운 날짜를 두면 날이
+ *    흐르는 것만으로 E2E 결과가 바뀐다. 라이브 값과 달라 보여도 일부러 그렇다.
  */
 export function dataFreshness(): DataFreshnessRow[] {
   return [
@@ -367,7 +371,7 @@ export function dataFreshness(): DataFreshnessRow[] {
       src: '점포·업종 (상권정보)',
       basis_kind: '분기',
       basis: '202606',
-      next_expected: '2026-10-31',
+      next_expected: '2099-12-31',
       cadence: '분기마다 (다음 분기 자료가 공개되면 사람이 적재)',
     },
     {
@@ -409,14 +413,14 @@ export function dataFreshness(): DataFreshnessRow[] {
       src: '국세청 기준시가',
       basis_kind: '고시일',
       basis: '2026-01-01',
-      next_expected: '2027-03-31',
+      next_expected: '2099-03-31',
       cadence: '연 1회 (매년 3월 고시)',
     },
     {
       src: '상권 임대 동향 (부동산원)',
       basis_kind: '분기',
       basis: '2026Q2',
-      next_expected: '2026-10-31',
+      next_expected: '2099-12-31',
       cadence: '분기마다',
     },
     {

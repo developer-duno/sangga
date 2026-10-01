@@ -816,7 +816,10 @@ test.describe('화면 아래 — 어디까지 믿을지와 한마디 남기는 �
     await expect(fresh.getByText('점포·업종 (상권정보)')).toBeVisible();
     // '202606' 이 사람 말로 바뀌어 실린다(원본을 그대로 찍지 않는다).
     await expect(fresh.getByText('2026년 2분기').first()).toBeVisible();
-    await expect(fresh.getByText('2027년 3월 31일 무렵')).toBeVisible();
+    // 아직 안 온 예정일은 '무렵'만 — 가짜 답이 2099년이라 날이 흘러도 이 줄은 안 바뀐다.
+    await expect(fresh.getByText('2099년 3월 31일 무렵', { exact: true })).toBeVisible();
+    // 지난 예정일은 지났다고 사실대로 적는다(인허가 2026-08-31 — 앞으로도 늘 과거다).
+    await expect(fresh.getByText('2026년 8월 31일 무렵 — 지났습니다, 갱신 전')).toBeVisible();
     // 주기가 없는 자료에 아무 날짜나 적지 않는다.
     await expect(fresh.getByText('정해진 주기 없음').first()).toBeVisible();
     // 자료가 아직 한 행도 없는 갈래도 줄은 남는다 — 빼면 "그런 자료를 안 쓴다"로 읽힌다.

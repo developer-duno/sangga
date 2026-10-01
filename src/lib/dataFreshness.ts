@@ -70,8 +70,18 @@ export function basisText(row: DataFreshnessRow): string {
  * ⚠️ **'무렵'을 붙인다.** 이 값은 규칙으로 계산한 예정일이지 약속된 날이 아니다. 자료가
  *    하루 이틀 늦게 올라오는 일이 흔한데, 딱 떨어지는 날짜로 적으면 그날 안 바뀐 것이
  *    고장처럼 보인다.
+ *
+ * ⛔ **예정일이 지났으면 지났다고 적는다**(👤 사장님 결정 2026-10-01). 지난 날짜를 그대로
+ *    '무렵'으로 두면 지나간 날을 앞날처럼 말하게 된다. 날짜를 새로 지어내지도, 줄을 숨기지도
+ *    않고 사실만 덧붙인다 — 칸 머리글이 이미 "다음 갱신 예정"이라 '예정'은 다시 안 적는다.
+ *    예정일 **당일**은 아직 안 지났다(그날 안에 올라올 수 있다).
+ *
+ * ⚠️ **오늘은 밖에서 받는다**(`today` = 한국 날짜 'YYYY-MM-DD', `seoulToday()` 가 만든다).
+ *    여기서 `new Date()` 를 부르면 시험이 실제 날짜에 묶여 날이 흐르면 저절로 빨개진다.
+ *    둘 중 하나라도 'YYYY-MM-DD' 모양이 아니면 지남 판정을 하지 않는다 — 같은 모양일 때만
+ *    글자 비교가 날짜 비교와 같다.
  */
-export function nextText(row: DataFreshnessRow): string {
+export function nextText(row: DataFreshnessRow, today: string): string {
   const raw = row.next_expected?.trim();
   if (!raw) return '정해진 주기 없음';
 
@@ -80,7 +90,26 @@ export function nextText(row: DataFreshnessRow): string {
   const month = Number(d[2]);
   const day = Number(d[3]);
   if (month < 1 || month > 12 || day < 1 || day > 31) return raw;
-  return `${d[1]}년 ${month}월 ${day}일 무렵`;
+  const text = `${d[1]}년 ${month}월 ${day}일 무렵`;
+  return RE_DATE.test(today) && raw < today ? `${text} — 지났습니다, 갱신 전` : text;
+}
+
+/**
+ * **한국 날짜**의 오늘('YYYY-MM-DD').
+ *
+ * ⛔ 로컬 시각대에 기대지 않는다 — 이 PC 는 한국 시각이지만 CI 는 UTC 라, `toISOString()`
+ *    이나 `getDate()` 로 자르면 한국 새벽 0~9시에 어제가 된다(서버 쪽도 같은 이유로
+ *    `Asia/Seoul` 로 옮겨 자른다). 시각대를 못 박아 조각으로 받아 잇는다.
+ */
+export function seoulToday(now: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
 function isNullableString(x: unknown): boolean {

@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 
-import { basisText, isDataFreshnessList, isDataFreshnessRow, nextText } from './dataFreshness';
+import {
+  basisText,
+  isDataFreshnessList,
+  isDataFreshnessRow,
+  nextText,
+  seoulToday,
+} from './dataFreshness';
 import type { DataFreshnessRow } from '../types';
 
 /**
@@ -73,19 +79,71 @@ describe('basisText — 기준값을 사람이 읽는 글자로', () => {
 });
 
 describe('nextText — 다음 갱신 예정', () => {
+  /**
+   * ⛔ 오늘은 늘 **못 박아** 넣는다. 실제 오늘에 기대면 날이 흐르는 것만으로 시험이 빨개진다
+   *    (2026-10-31 이 지나는 순간 '무렵'만 기대하던 단언이 깨진다).
+   */
+  const TODAY = '2026-10-01';
+
   it("날짜가 있으면 '무렵'을 붙인다 — 약속된 날이 아니라 계산한 예정일이다", () => {
-    expect(nextText(row({ next_expected: '2026-10-31' }))).toBe('2026년 10월 31일 무렵');
-    expect(nextText(row({ next_expected: '2027-03-31' }))).toBe('2027년 3월 31일 무렵');
+    expect(nextText(row({ next_expected: '2026-10-31' }), TODAY)).toBe('2026년 10월 31일 무렵');
+    expect(nextText(row({ next_expected: '2027-03-31' }), TODAY)).toBe('2027년 3월 31일 무렵');
+  });
+
+  it('⛔ 예정일이 지났으면 지났다고 적는다 — 날짜는 그대로, 사실만 덧붙인다', () => {
+    expect(nextText(row({ next_expected: '2026-10-31' }), '2026-11-01')).toBe(
+      '2026년 10월 31일 무렵 — 지났습니다, 갱신 전',
+    );
+    // 해를 넘겨도 같다(글자 비교가 날짜 비교와 같은 모양일 때만 비교한다).
+    expect(nextText(row({ next_expected: '2026-12-31' }), '2027-01-01')).toBe(
+      '2026년 12월 31일 무렵 — 지났습니다, 갱신 전',
+    );
+  });
+
+  it('경계 — 전날·당일은 안 지났고, 다음 날부터 지났다', () => {
+    const r = row({ next_expected: '2026-10-31' });
+    expect(nextText(r, '2026-10-30')).toBe('2026년 10월 31일 무렵');
+    // 당일은 아직이다 — 그날 안에 올라올 수 있다.
+    expect(nextText(r, '2026-10-31')).toBe('2026년 10월 31일 무렵');
+    expect(nextText(r, '2026-11-01')).toBe('2026년 10월 31일 무렵 — 지났습니다, 갱신 전');
   });
 
   it('⛔ 없으면 "정해진 주기 없음" — 아무 날짜나 적으면 "늦었다"는 거짓 신호가 뜬다', () => {
-    expect(nextText(row({ next_expected: null }))).toBe('정해진 주기 없음');
-    expect(nextText(row({ next_expected: '' }))).toBe('정해진 주기 없음');
+    expect(nextText(row({ next_expected: null }), TODAY)).toBe('정해진 주기 없음');
+    expect(nextText(row({ next_expected: '' }), TODAY)).toBe('정해진 주기 없음');
+    // 아주 먼 미래의 오늘이어도 '지났다'를 붙이지 않는다 — 비교할 날짜가 없다.
+    expect(nextText(row({ next_expected: null }), '2099-12-31')).toBe('정해진 주기 없음');
   });
 
-  it('모양이 낯설면 원본 그대로', () => {
-    expect(nextText(row({ next_expected: '언젠가' }))).toBe('언젠가');
-    expect(nextText(row({ next_expected: '2026-10-99' }))).toBe('2026-10-99');
+  it('모양이 낯설면 원본 그대로 — 지남 판정도 하지 않는다', () => {
+    expect(nextText(row({ next_expected: '언젠가' }), TODAY)).toBe('언젠가');
+    expect(nextText(row({ next_expected: '2026-10-99' }), TODAY)).toBe('2026-10-99');
+    // 글자로는 '오늘'보다 앞서지만 날짜가 아니므로 '지났다'를 붙이지 않는다.
+    expect(nextText(row({ next_expected: '2000-13-01' }), TODAY)).toBe('2000-13-01');
+  });
+
+  it('오늘이 날짜 모양이 아니면 지남 판정을 하지 않는다', () => {
+    expect(nextText(row({ next_expected: '2026-08-31' }), '')).toBe('2026년 8월 31일 무렵');
+    expect(nextText(row({ next_expected: '2026-08-31' }), '20261001')).toBe(
+      '2026년 8월 31일 무렵',
+    );
+  });
+});
+
+describe('seoulToday — 한국 날짜의 오늘', () => {
+  it('⛔ UTC 15:00 이 한국 다음 날 0시다 — 로컬 시각대가 아니라 한국 날짜로 자른다', () => {
+    expect(seoulToday(new Date('2026-10-31T14:59:59Z'))).toBe('2026-10-31');
+    expect(seoulToday(new Date('2026-10-31T15:00:00Z'))).toBe('2026-11-01');
+  });
+
+  it('한국 새벽(UTC 전날 밤)에 어제가 되지 않는다', () => {
+    // 한국 2026-11-01 08:59 = UTC 2026-10-31 23:59 — UTC 로 자르면 31일이 된다.
+    expect(seoulToday(new Date('2026-10-31T23:59:00Z'))).toBe('2026-11-01');
+  });
+
+  it("'YYYY-MM-DD' 모양으로 0 을 채운다 — nextText 가 글자로 비교하는 전제다", () => {
+    expect(seoulToday(new Date('2026-01-04T03:00:00Z'))).toBe('2026-01-04');
+    expect(seoulToday(new Date('2026-12-31T15:00:00Z'))).toBe('2027-01-01');
   });
 });
 
