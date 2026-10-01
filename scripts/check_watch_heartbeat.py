@@ -4,7 +4,7 @@
 
 왜 이게 필요한가
 ----------------
-예약 5종(분기 스냅샷·상권 원천·라이브 생존·의견함 주간 알림·LH 공고)은 "돌았는데
+예약 6종(분기 스냅샷·상권 원천·라이브 생존·의견함 주간 알림·LH 공고·지난 날짜)은 "돌았는데
 실패"는 이슈로 시끄럽게 알린다. 그런데 **예약이 아예 안 도는 경우**는 실패조차 없다 —
 실행이 없으니 알릴 것도 없다. 그 경로가 둘이다.
 
@@ -54,7 +54,7 @@ requests 가 없으므로 표준 라이브러리(urllib)만 쓴다.
 
 쓰는 법
 -------
-    python scripts/check_watch_heartbeat.py                              # 예약 5종 전부
+    python scripts/check_watch_heartbeat.py                              # 예약 6종 전부
     python scripts/check_watch_heartbeat.py --workflow district-source-watch.yml
     python scripts/check_watch_heartbeat.py --max-age-days 15 --json
 
@@ -81,10 +81,12 @@ DISTRICT_WATCH = "district-source-watch.yml"
 LIVE_HEALTH_WATCH = "live-health-watch.yml"
 FEEDBACK_DIGEST = "feedback-digest.yml"
 LH_NOTICE_WATCH = "lh-notice-watch.yml"
+DATA_FRESHNESS_WATCH = "data-freshness-watch.yml"
 
-# 아무것도 안 주면 예약 5종을 다 본다(사람이 내 PC 에서 돌릴 때의 기본값).
+# 아무것도 안 주면 예약 6종을 다 본다(사람이 내 PC 에서 돌릴 때의 기본값).
 DEFAULT_WORKFLOWS = (
     QUARTERLY_WATCH, DISTRICT_WATCH, LIVE_HEALTH_WATCH, FEEDBACK_DIGEST, LH_NOTICE_WATCH,
+    DATA_FRESHNESS_WATCH,
 )
 
 # 화면·이슈 제목에 쓸 짧은 이름표
@@ -94,6 +96,7 @@ WORKFLOW_LABELS = {
     LIVE_HEALTH_WATCH: "라이브 생존 감시",
     FEEDBACK_DIGEST: "의견함 주간 알림",
     LH_NOTICE_WATCH: "LH 공고 감시",
+    DATA_FRESHNESS_WATCH: "지난 날짜 감시",
 }
 
 # 분기·상권 감시는 **주 1회**(월요일) 예약이다. 8일이면 한 번을 통째로 걸러야 걸린다 —
@@ -324,7 +327,7 @@ def build_issue_body(stale, max_age_days=DEFAULT_MAX_AGE_DAYS):
         "",
         "```powershell",
         r"cd D:\sangga",
-        "python scripts/check_watch_heartbeat.py          # 예약 5종이 최근에 돌았나",
+        "python scripts/check_watch_heartbeat.py          # 예약 6종이 최근에 돌았나",
         "python scripts/check_new_sangkwon_quarter.py     # 새 분기가 떴나",
         "python scripts/check_district_source_update.py   # 상권 원천이 갱신됐나",
         "```",
@@ -465,7 +468,7 @@ def main(argv=None):
         "--workflow",
         action="append",
         metavar="파일명",
-        help="확인할 워크플로우 파일명 (여러 번 쓸 수 있음). 기본 = 예약 5종 전부",
+        help="확인할 워크플로우 파일명 (여러 번 쓸 수 있음). 기본 = 예약 6종 전부",
     )
     ap.add_argument(
         "--max-age-days",

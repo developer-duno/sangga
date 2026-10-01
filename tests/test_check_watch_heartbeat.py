@@ -359,7 +359,9 @@ def test_main_returns_zero_when_everything_is_fresh(monkeypatch, capsys, tmp_pat
                            # 주간 알림도 예약이라 같은 그물 안에 있다(2026-08-24c).
                            chk.FEEDBACK_DIGEST: _recent(48),
                            # LH 공고 감시도 주 1회 예약이다(2026-08-28a).
-                           chk.LH_NOTICE_WATCH: _recent(48)})
+                           chk.LH_NOTICE_WATCH: _recent(48),
+                           # 지난 날짜 감시도 주 1회 예약이다(2026-10-01).
+                           chk.DATA_FRESHNESS_WATCH: _recent(48)})
     assert chk.main([]) == 0
     assert "멈춘 감시           : 없음" in capsys.readouterr().out
     # 멈춘 게 없으면 이슈 본문 파일을 만들지 않는다
@@ -374,7 +376,9 @@ def test_main_returns_one_and_writes_issue_body_when_stale(monkeypatch, tmp_path
                            # 주간 알림도 예약이라 같은 그물 안에 있다(2026-08-24c).
                            chk.FEEDBACK_DIGEST: _recent(48),
                            # LH 공고 감시도 주 1회 예약이다(2026-08-28a).
-                           chk.LH_NOTICE_WATCH: _recent(48)})
+                           chk.LH_NOTICE_WATCH: _recent(48),
+                           # 지난 날짜 감시도 주 1회 예약이다(2026-10-01).
+                           chk.DATA_FRESHNESS_WATCH: _recent(48)})
     assert chk.main([]) == 1
     body = (tmp_path / chk.ISSUE_BODY_FILE).read_text(encoding="utf-8")
     assert "상권 원천 감시" in body
@@ -437,7 +441,9 @@ def test_main_json_output(monkeypatch, capsys, tmp_path):
                            # 주간 알림도 예약이라 같은 그물 안에 있다(2026-08-24c).
                            chk.FEEDBACK_DIGEST: _recent(48),
                            # LH 공고 감시도 주 1회 예약이다(2026-08-28a).
-                           chk.LH_NOTICE_WATCH: _recent(48)})
+                           chk.LH_NOTICE_WATCH: _recent(48),
+                           # 지난 날짜 감시도 주 1회 예약이다(2026-10-01).
+                           chk.DATA_FRESHNESS_WATCH: _recent(48)})
     # 기록이 없는 쪽은 "언제 만들었나"를 되묻는다 — 오래전에 만든 것이라 유예 대상이 아니다.
     _patch_created(monkeypatch, {chk.DISTRICT_WATCH: _recent(70 * 24)})
     assert chk.main(["--json"]) == 1
@@ -461,7 +467,9 @@ def test_main_does_not_touch_network(monkeypatch, tmp_path):
                            # 주간 알림도 예약이라 같은 그물 안에 있다(2026-08-24c).
                            chk.FEEDBACK_DIGEST: _recent(48),
                            # LH 공고 감시도 주 1회 예약이다(2026-08-28a).
-                           chk.LH_NOTICE_WATCH: _recent(48)})
+                           chk.LH_NOTICE_WATCH: _recent(48),
+                           # 지난 날짜 감시도 주 1회 예약이다(2026-10-01).
+                           chk.DATA_FRESHNESS_WATCH: _recent(48)})
     assert chk.main([]) == 0
 
 
@@ -569,7 +577,8 @@ def _all_fresh_but(missing):
     """`missing` 하나만 기록 없음, 나머지는 최근에 돈 것으로 채운다."""
     fresh = {chk.QUARTERLY_WATCH: _recent(48), chk.DISTRICT_WATCH: _recent(48),
              chk.LIVE_HEALTH_WATCH: _recent(3), chk.FEEDBACK_DIGEST: _recent(48),
-             chk.LH_NOTICE_WATCH: _recent(48)}
+             chk.LH_NOTICE_WATCH: _recent(48),
+             chk.DATA_FRESHNESS_WATCH: _recent(48)}
     fresh[missing] = None
     return fresh
 
@@ -698,9 +707,13 @@ def test_heartbeat_still_runs_when_my_own_watch_failed(name):
     assert "if: ${{ !cancelled() }}" in wf
 
 
-@pytest.mark.parametrize("name", [chk.QUARTERLY_WATCH, chk.DISTRICT_WATCH])
+@pytest.mark.parametrize("name", chk.DEFAULT_WORKFLOWS)
 def test_heartbeat_issue_step_also_survives_a_failed_watch(name):
-    """판정 단계만 살리고 알림 단계를 놔두면 암묵적 success() 에서 다시 막힌다."""
+    """판정 단계만 살리고 알림 단계를 놔두면 암묵적 success() 에서 다시 막힌다.
+
+    ⓘ 2026-10-01 그물 6호 때 분기·상권 둘에서 **예약 전부**로 넓혔다 — 새 워크플로에서
+       `!cancelled() &&` 를 지워도 초록이던 것을 검사관이 잡았다.
+    """
     wf = _read_text(os.path.join(WORKFLOW_DIR, name))
     assert "if: ${{ !cancelled() && steps.heartbeat.outputs.stale == 'true' }}" in wf
 
@@ -776,6 +789,7 @@ def test_default_workflows_covers_every_scheduled_workflow():
         chk.LIVE_HEALTH_WATCH,
         chk.FEEDBACK_DIGEST,
         chk.LH_NOTICE_WATCH,
+        chk.DATA_FRESHNESS_WATCH,
     }
     for wf in chk.DEFAULT_WORKFLOWS:
         assert wf in chk.WORKFLOW_LABELS
