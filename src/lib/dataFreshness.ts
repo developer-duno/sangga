@@ -91,7 +91,9 @@ export function nextText(row: DataFreshnessRow, today: string): string {
   const day = Number(d[3]);
   if (month < 1 || month > 12 || day < 1 || day > 31) return raw;
   const text = `${d[1]}년 ${month}월 ${day}일 무렵`;
-  return RE_DATE.test(today) && raw < today ? `${text} — 지났습니다, 갱신 전` : text;
+  // ⛔ '갱신'과 '전' 사이는 줄바꿈 없는 공백(U+00A0) — 보통 공백이면 휴대폰 폭에서
+  //    '전' 한 글자만 다음 줄로 넘어간다(word-break: keep-all 은 공백에서만 끊는다).
+  return RE_DATE.test(today) && raw < today ? `${text} — 지났습니다, 갱신\u00a0전` : text;
 }
 
 /**

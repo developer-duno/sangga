@@ -256,4 +256,25 @@ describe('DataFreshness — 서버가 못 답할 때', () => {
     await waitFor(() => expect(rpcCalls).toHaveLength(1));
     expect(container.querySelector('.fresh')).toBeNull();
   });
+
+  it('⛔ 오늘 날짜(한국)를 못 구해도 표는 선다 — seoulToday() 가 던져도 지남 표시 없이 그린다', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const dtfSpy = vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(() => {
+      throw new Error('Intl.DateTimeFormat 실패(흉내)');
+    });
+    try {
+      // today 를 안 넘겨 컴포넌트가 직접 seoulToday() 를 부르게 한다.
+      render(<DataFreshness />);
+
+      expect(await screen.findByText('이 자료는 언제 것인가')).toBeTruthy();
+      expect(warn).toHaveBeenCalledWith(
+        '오늘 날짜(한국)를 못 구했습니다 — 지남 표시 없이 그립니다',
+        expect.any(Error),
+      );
+      // 오늘을 못 구했으니 어떤 줄도 '지났습니다'를 말하지 않는다.
+      expect(screen.queryAllByText(/지났습니다/)).toHaveLength(0);
+    } finally {
+      dtfSpy.mockRestore();
+    }
+  });
 });
