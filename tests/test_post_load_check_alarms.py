@@ -294,7 +294,8 @@ class TestCanonicalIndexes:
         heads = len(re.findall(r"(?im)^\s*create\s+(?:unique\s+)?index\b", raw))
         names = post_load.canonical_index_names(raw)
         assert len(names) == heads
-        assert heads >= 50
+        # 바닥값 = 지금 정본 색인 수. 2026-10-01b 가 안 쓰는 다섯을 지워 54 → 49 가 됐다.
+        assert heads >= 49
         for must in ("idx_parcel_updated_at", "idx_msp_pnu", "mv_district_industry_mix_key"):
             assert must in names
 

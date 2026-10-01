@@ -1,0 +1,154 @@
+-- =====================================================================
+-- 마이그레이션 2026-10-01b — 안 쓰는 큰 색인 5개 지우기 (합계 421MB)
+--   idx_ub_geom · idx_unit_geom · idx_parcel_road_key · idx_parcel_jibun_key · idx_ub_cat
+-- =====================================================================
+-- 실행법 ⚠️ **대시보드 SQL Editor 로는 안 된다.**
+--   `drop index concurrently` 는 트랜잭션 블록 안에서 못 돈다. SQL Editor 는 스크립트 전체를
+--   한 트랜잭션으로 감싸므로 25P02 로 죽는다(2026-09-27b·27e 와 같은 사정).
+--   → `python scripts/dbx.py -f supabase/migrations/2026-10-01b_drop_unused_indexes.sql`
+--   ⛔ 그래서 이 파일은 begin/commit 으로 감싸지 않는다.
+--
+-- 운영 순서 ⚠️ **적재·`post_load.py` 와 동시에 돌리지 않는다.** concurrently 는 그 표를 만지는 다른
+--   트랜잭션이 끝나기를 기다린다 — 요약표 갱신(`refresh materialized view concurrently
+--   mv_district_industry_mix` 는 unit_business 를 통째로 읽는다)이나 분기 적재가 길면 그 기다림이
+--   900s 에 끊긴다(아래 "실패하면"). 밤 배치 창(01:30~06:30)도 피한다.
+--
+-- 왜 (사장님 결정 2026-10-01 "5개 전부 지우기")
+--   10/31 분기 스냅샷 적재(+약 1.4GB) 전에 디스크 여유를 만든다. 아래 다섯은 크기만 차지하고
+--   쓰이지 않는다. 라이브 실측(2026-10-01 15:07 KST 무렵 · PostgreSQL 17.6 · 통계 초기화 2026-07-24):
+--
+--        indexrelname     |  size  | idx_scan |       last_used_kst
+--   ----------------------+--------+----------+----------------------------
+--    idx_ub_geom          | 137 MB |     7228 | 2026-08-22 07:06:45
+--    idx_unit_geom        | 113 MB |        0 | (한 번도 없음)
+--    idx_parcel_road_key  | 78 MB  |      982 | 2026-08-13 13:14:51
+--    idx_parcel_jibun_key | 70 MB  |      979 | 2026-08-13 13:14:51
+--    idx_ub_cat           | 23 MB  |        0 | (한 번도 없음)
+--
+--   09-27 의 대량 적재·post_load.py 요약표 갱신, 10-01 의 post_load.py 때도 늘지 않았다.
+--   · idx_parcel_road_key·idx_parcel_jibun_key — 주소 검색은 2026-08-13d 부터 parcel 이 아니라
+--     검색 전용 요약표 mv_search_parcel 을 읽고, 그 표에 자기 색인(idx_msp_road_key·
+--     idx_msp_jibun_key)이 따로 있다. parcel 의 두 칸을 조건으로 읽는 함수·스크립트는 0개다
+--     (요약표 정의는 두 칸을 꺼내기만 하고 거르지 않는다). 마지막 사용 08-13 이 바로 그 전환일이다.
+--   · idx_unit_geom — unit.geom 을 조건으로 쓰는 함수·뷰·스크립트가 0개다(한 번도 안 쓰였다).
+--   · idx_ub_cat — cat_s_cd(업종 소분류)를 조건으로 읽는 곳이 0개다(적재기가 값을 넣기만 한다).
+--     업종 소분류로 거르는 기능(docs/상세계획.md §6.5 업종 프로파일 · §6.6 점포 생존기간)을
+--     만들 때 그 쿼리의 계획을 보고 다시 판단한다(아래 되돌리기 문장으로 되살린다).
+--   · idx_ub_geom — unit_business.geom 을 조건으로 쓰는 살아 있는 쿼리가 **하나 있다**:
+--     요약표 mv_district_industry_mix 의 정의(`join unit_business ub on … st_contains(d.geom,
+--     ub.geom)`, post_load.py 가 적재 때마다 다시 굽는다). 그래도 지우는 근거(메인 실측):
+--       ① 그 정의의 실행 계획(2026-10-01 15:15 KST, plain EXPLAIN — 실행 안 함):
+--            Nested Loop
+--              -> Parallel Seq Scan on unit_business ub
+--                   Filter: ((geom IS NOT NULL) AND (snapshot_ym = (InitPlan 2).col1))
+--              -> Index Scan using idx_district_geom on district d
+--                   Index Cond: (geom ~ ub.geom)   Filter: st_contains(geom, ub.geom)
+--          (최신 분기 찾기는 Index Only Scan Backward using idx_ub_snapshot_floor_pnu)
+--          → idx_ub_geom 은 계획에 없다. 조인은 상권 쪽 색인 idx_district_geom 으로 간다.
+--       ② 요약표 8개(mv_coverage_stats·mv_district_industry_mix·mv_open_sigungu·
+--          mv_parcel_store_names·mv_search_parcel·mv_sigungu_tx_stats·mv_sigungu_tx_yearly·
+--          mv_tx_parcel_geog) 정의 전부를 같은 방식으로 EXPLAIN 했고, 지울 다섯 이름은 어느
+--          계획에도 0회.
+--       ⇒ 판단을 받치는 것은 위 ①② 와, 09-27·10-01 의 실제 요약표 갱신 때 idx_scan 이 늘지 않은
+--          사실이다. 아래 둘은 **추정**이다(재지 않았다):
+--          · idx_ub_geom 은 모든 분기의 점포를 담고 그 쿼리는 최신 분기만 보므로, 분기가 쌓일수록
+--            (10/31 적재) 이 색인이 더 불리해져 플래너가 다시 고를 방향이 아닐 것이다.
+--          · 마지막 사용 08-22 07:06 은 그 요약표를 처음 구운 날(2026-08-22c)의 실험 때로 보인다.
+--
+-- 무엇이 바뀌나: 색인 다섯 개만 사라진다. 칸(road_addr_key·jibun_addr_key·geom·cat_s_cd)·표·
+--   함수·요약표는 그대로다. 화면·검색 결과도 그대로다(위 계획에 이 색인들이 없으므로).
+--
+-- 잠금 (PostgreSQL 17 공식 문서 https://www.postgresql.org/docs/17/sql-dropindex.html 원문,
+--   CONCURRENTLY — 라이브가 17.6):
+--   "Drop the index without locking out concurrent selects, inserts, updates, and deletes on the
+--    index's table. A normal DROP INDEX acquires an ACCESS EXCLUSIVE lock on the table, blocking
+--    other accesses until the index drop can be completed. With this option, the command instead
+--    waits until conflicting transactions have completed."
+--   "Only one index name can be specified, and the CASCADE option is not supported. ... regular
+--    DROP INDEX commands can be performed within a transaction block, but DROP INDEX
+--    CONCURRENTLY cannot."
+--   → 그래서 한 문장에 색인 하나씩, 다섯 문장이다(이름을 쉼표로 묶을 수 없다).
+--   → `set lock_timeout` 은 **두지 않는다.** 그 설정이 막으려는 것(ACCESS EXCLUSIVE 를 기다리는
+--     동안 뒤에 온 화면 읽기가 줄을 서는 일)이 concurrently 에는 없다고 문서가 말한다 — 읽기·쓰기를
+--     막지 않고 저쪽 트랜잭션이 끝나기를 기다릴 뿐이다. 기다림의 상한은 아래 statement_timeout 이
+--     맡는다(lock_timeout 을 두면 그 기다림이 몇 초에 잘려 문장이 실패할 뿐 얻는 것이 없다).
+--
+-- 시간 제한: 맨 앞의 `set statement_timeout = '900s'` 를 **지우지 말 것.** dbx.py 연결의 제한은
+--   2분이다(2026-09-27 실측). 2026-09-27b·27e 와 같은 선례.
+--
+-- 적용 전 확인 (①② 통과해야 적용한다 · ③은 기준값을 남긴다):
+--   ① 다섯 색인이 위 표 이후로 쓰였나 — idx_scan·last_idx_scan 이 위 표보다 **늘었으면 그 색인은
+--      적용하지 말 것**(그 줄만 빼고 돌리거나 멈추고 다시 본다). 출력에 지우기 직전의 **라이브
+--      정의**(되돌리기 문장과 대조)와 통계 초기화 시각도 남긴다 — 그 사이 통계가 초기화됐으면
+--      (stats_reset 이 2026-07-24 이 아니면) 숫자가 0 부터 다시 세어져 "안 늘었다"가 헛통과한다:
+--        select s.indexrelname, pg_size_pretty(pg_relation_size(s.indexrelid)) as size,
+--               s.idx_scan, s.last_idx_scan at time zone 'Asia/Seoul' as last_used_kst,
+--               pg_get_indexdef(s.indexrelid) as live_def,
+--               (select stats_reset from pg_stat_database
+--                 where datname = current_database()) as stats_reset
+--          from pg_stat_user_indexes s
+--         where s.indexrelname in ('idx_ub_geom', 'idx_unit_geom', 'idx_parcel_road_key',
+--                                  'idx_parcel_jibun_key', 'idx_ub_cat')
+--         order by pg_relation_size(s.indexrelid) desc;
+--   ② 업종 분포 요약표의 계획에 idx_ub_geom 이 안 나오나 — 정의를 그대로 explain 한다(실행 안 함):
+--        explain
+--        select d.district_id, ub.snapshot_ym, ub.cat_l_cd, ub.cat_l_nm, ub.cat_m_cd, ub.cat_m_nm,
+--               count(*)::int as n
+--          from district d
+--          join unit_business ub on ub.geom is not null and st_contains(d.geom, ub.geom)
+--         where ub.snapshot_ym = (select max(u.snapshot_ym) from unit_business u)
+--         group by 1, 2, 3, 4, 5, 6;
+--      → 출력에 `idx_ub_geom` 이 있으면 적용하지 말 것(위 근거 ①이 바뀐 것이다).
+--   ③ 업종 분포 요약표 갱신 시간의 기준값 — post_load.py 는 요약표 갱신을 한 덩어리로 돌려
+--      표마다 시간을 안 찍으므로 pg_stat_statements 에서 읽는다. 글자는 post_load.py 의
+--      build_refresh_sql 이 보내는 `refresh materialized view concurrently mv_district_industry_mix;`
+--      그대로다. 평균은 누적이라 **calls·total 을 적어 두고** 적용 뒤 차이로 한 번 몫을 계산한다:
+--        select calls, round(total_exec_time) as total_ms, round(mean_exec_time) as mean_ms,
+--               round(max_exec_time) as max_ms
+--          from extensions.pg_stat_statements
+--         where query ilike 'refresh materialized view concurrently mv_district_industry_mix%';
+--
+-- 실패하면: dbx.py 는 `ON_ERROR_STOP=1` 이라 실패한 문장에서 멈추고, 그 앞 문장들은 이미 확정이다
+--   (트랜잭션으로 감싸지 않았으므로). 남은 색인·끊긴 색인이 있는지는 아래 「적용 뒤 확인」 ①
+--   (`pg_indexes`)로 본다. 다섯 문장이 전부 `if exists` 라 같은 파일을 다시 돌려도 된다.
+--
+-- 적용 뒤 확인:
+--   ① select indexname from pg_indexes
+--       where indexname in ('idx_ub_geom', 'idx_unit_geom', 'idx_parcel_road_key',
+--                           'idx_parcel_jibun_key', 'idx_ub_cat');   -- 0행이어야 한다
+--      ⇒ **이것이 유일한 확인이다.** ②는 적용을 잊어도 조용하다.
+--   ② 머지된 main 을 받은 본 폴더에서 `python scripts/post_load.py --check` → "[정상] 정본 색인 49개가
+--      라이브에 모두 있고 쓸 수 있습니다."(지우기 전 정본은 54개 — 정본에서도 다섯 create index 를
+--      함께 지웠다). ⚠️ `--check` 는 정본에 있는 색인이 라이브에 있는지만 보고, 정본에 없고 라이브에만
+--      남은 색인은 보지 않는다(post_load.py 의 정본 색인 절 "라이브에만 있는 색인은 이번 범위 밖") —
+--      그래서 이 마이그레이션 적용을 잊어도 초록이다.
+--   ③ 다음 `python scripts/post_load.py` 뒤 「적용 전 확인」 ③ 쿼리로 다시 재서, (total 차이) ÷
+--      (calls 차이) 를 적용 전 평균과 비교한다. **10/31 분기 적재 전(10/20 무렵 인허가 월간 적재 때)**
+--      에 재야 점포 표가 커진 탓과 섞이지 않는다. 크게 늘면 「적용 전 확인」 ②의 explain 을 다시 보고
+--      알린다(계획에 이 색인이 없었으므로 달라질 이유는 없다).
+--
+-- 되돌리기 — 지우기 전 정본(schema.sql, 5e52bdf 의 365·422·423·1074·1075줄)의 create index 문
+--   원문에 concurrently 만 더했다. 각각 수 분 걸린다(추정 — 재지 않았다: 점포 표 약 340만 행의
+--   gist·필지 112만 행의 gin trgm). ⚠️ 맨 앞에 statement_timeout 을 꼭 둔다(dbx.py 연결 제한 2분).
+--   ⚠️ `gin_trgm_ops` 를 스키마 없이 적어도 되는 것은 postgres 롤의 search_path 에 extensions 가
+--   있어서다(schema.sql 34-38줄) — 다른 롤로 돌리면 `extensions.gin_trgm_ops` 로 적는다.
+--   되살리면 schema.sql 의 create index 줄과 tests/test_drop_unused_indexes_migration.py 도 함께
+--   되돌린다:
+--     set statement_timeout = '900s';
+--     create index concurrently if not exists idx_ub_geom     on unit_business using gist (geom);
+--     create index concurrently if not exists idx_unit_geom  on unit using gist (geom);
+--     create index concurrently if not exists idx_parcel_road_key on parcel using gin (road_addr_key gin_trgm_ops);
+--     create index concurrently if not exists idx_parcel_jibun_key on parcel using gin (jibun_addr_key gin_trgm_ops);
+--     create index concurrently if not exists idx_ub_cat      on unit_business (cat_s_cd, snapshot_ym);
+
+set statement_timeout = '900s';
+
+drop index concurrently if exists idx_ub_geom;
+
+drop index concurrently if exists idx_unit_geom;
+
+drop index concurrently if exists idx_parcel_road_key;
+
+drop index concurrently if exists idx_parcel_jibun_key;
+
+drop index concurrently if exists idx_ub_cat;
