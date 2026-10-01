@@ -15,6 +15,8 @@
 import datetime
 import json
 import os
+import shutil
+import subprocess
 
 import pytest
 import yaml
@@ -316,6 +318,68 @@ class TestMain:
         assert "SANGGA_DATABASE_URL" not in src
 
 
+# ── 4-1. 조회 뒤에 죽음 — 1(새 공고 있음)과 겹치면 워크플로가 조용히 초록 ─────────
+
+
+class TestAfterLookupFailures:
+    def test_judging_failure_exits_two_not_one(self, monkeypatch, tmp_path, capsys):
+        """⛔ 응답 줄이 딕셔너리가 아니면(모양이 바뀜) 판정에서 죽는다 — 조회 실패와 같은
+        종류라 2 다. 잡지 못하면 파이썬 기본값 1 = '새 공고 있음'으로 읽힌다."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+        _patch(monkeypatch, [_fresh(), "딕셔너리가 아닌 줄"])
+        assert chk.main([]) == 2
+        err = capsys.readouterr().err
+        assert "[실패] 응답을 판정하는 중 AttributeError" in err
+        assert not (tmp_path / chk.ISSUE_BODY_FILE).exists()
+
+    def test_unwritable_github_output_exits_four_not_one(self, monkeypatch, tmp_path, capsys):
+        """⛔ 이슈 본문 파일을 다 쓴 뒤 GITHUB_OUTPUT 에서 죽는 경로 — 기본값 1 이면 워크플로가
+        통과시키는데 found 값이 없어 이슈 단계가 건너뛰어진다.
+
+        GITHUB_OUTPUT 을 폴더로 가리켜 실제로 open 이 실패하게 만든다(윈도우·리눅스 공통).
+        """
+        monkeypatch.chdir(tmp_path)
+        blocked = tmp_path / "gh_output_is_a_folder"
+        blocked.mkdir()
+        monkeypatch.setenv("GITHUB_OUTPUT", str(blocked))
+        _patch(monkeypatch, [_fresh()])
+        assert chk.main([]) == chk.EXIT_OUTPUT_FAILED == 4
+        err = capsys.readouterr().err
+        assert "[실패] 결과를 쓰는 중" in err and "알림이 안 나갔을 수 있습니다" in err
+        assert (tmp_path / chk.ISSUE_BODY_FILE).exists(), "이슈 파일은 이미 써졌다 — 그래도 1 이 아니다"
+
+    def test_unwritable_issue_body_exits_four_not_one(self, monkeypatch, tmp_path, capsys):
+        """이슈 본문 파일 자리에 폴더가 있어 실제로 쓰기가 실패하는 경로."""
+        monkeypatch.chdir(tmp_path)
+        out = tmp_path / "gh_output"
+        monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+        (tmp_path / chk.ISSUE_BODY_FILE).mkdir()
+        _patch(monkeypatch, [_fresh()])
+        assert chk.main([]) == chk.EXIT_OUTPUT_FAILED
+        assert "[실패] 결과를 쓰는 중" in capsys.readouterr().err
+        assert not out.exists(), "이슈 파일에서 죽었으면 found 기록까지 가지 않는다"
+
+    @pytest.mark.parametrize("stage", ["report", "write_issue_body", "write_github_output"])
+    @pytest.mark.parametrize("as_json", [False, True], ids=["화면", "json"])
+    def test_any_failure_after_lookup_exits_four(self, monkeypatch, tmp_path, capsys, stage, as_json):
+        """조회가 끝난 뒤 화면 출력·이슈 본문 파일·GITHUB_OUTPUT 어디서 죽든 4 다(1·0 아님)."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+        _patch(monkeypatch, [_fresh()])
+
+        def boom(*_a, **_kw):
+            raise OSError("디스크가 가득 찼습니다")
+
+        monkeypatch.setattr(chk, stage, boom)
+        assert chk.main(["--json"] if as_json else []) == chk.EXIT_OUTPUT_FAILED
+        assert "OSError: 디스크가 가득 찼습니다" in capsys.readouterr().err
+
+    def test_exit_codes_are_documented(self):
+        assert chk.EXIT_OUTPUT_FAILED == 4
+        assert "4 = 조회는 됐는데 결과" in chk.__doc__
+
+
 # ── 5. 워크플로 배선 ──────────────────────────────────────────────────────────
 
 
@@ -393,3 +457,90 @@ class TestWorkflow:
         import check_watch_heartbeat as hb
 
         assert hb.max_age_for(os.path.basename(WORKFLOW)) == hb.DEFAULT_MAX_AGE_DAYS
+
+
+# ── 6. 워크플로 단계를 실제로 bash 로 돌려 본다 ──────────────────────────────
+#
+# 글자 검사만으로는 검사 줄을 지워도 초록이다(형제 지난 날짜 감시 2026-10-01 실측). 그래서
+# 단계의 run: 글자를 꺼내 GitHub 기본 셸(`bash -e` — `shell:` 을 안 적은 단계의 기본값)로
+# 돌리고, PATH 앞에 가짜 `python` 을 둔다. 네트워크·진짜 API 는 타지 않는다.
+# 윈도우는 Git Bash 로 돈다(WSL 의 System32 bash 는 PATH·경로를 다르게 풀어 건너뛴다).
+# 도우미는 tests/test_check_data_freshness.py 의 것을 옮겨 왔다(시험 파일끼리 import 하지 않는다).
+# ⛔ CI 에서는 bash 가 없으면 건너뛰지 않고 실패한다 — 거기서 조용히 skip 되면 이 시험이 지키는
+#    빈틈(이슈 파일·found 기록 검사)이 아무도 모르게 다시 열린다.
+
+
+def _find_bash():
+    path = shutil.which("bash")
+    if not path:
+        return None
+    low = path.lower()
+    if os.name == "nt" and ("system32" in low or "windowsapps" in low):
+        return None
+    return path
+
+
+def _write_lf(path, text):
+    """줄 끝을 LF 로 — CRLF 가 섞이면 bash 가 `\\r` 을 명령 글자로 읽는다."""
+    path.write_bytes(text.encode("utf-8"))
+    path.chmod(0o755)
+
+
+def _run_step(workflow, name, tmp_path, fakes, env_extra):
+    bash = _find_bash()
+    if bash is None:
+        if os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"):
+            pytest.fail("CI 인데 bash 를 못 찾았습니다 — 워크플로 단계 실행 시험을 건너뛸 수 없습니다")
+        pytest.skip("bash 가 없습니다(윈도우는 Git Bash 필요)")
+    steps = [s for s in workflow["jobs"]["watch"]["steps"] if s.get("name") == name]
+    assert steps, "'{}' 단계를 워크플로에서 못 찾았습니다".format(name)
+    bin_dir = tmp_path / "fakebin"
+    bin_dir.mkdir(exist_ok=True)
+    for fname, body in fakes.items():
+        _write_lf(bin_dir / fname, body)
+    _write_lf(tmp_path / "step.sh", steps[0]["run"])
+    env = dict(os.environ)
+    env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
+    env.update(env_extra)
+    return subprocess.run(
+        [bash, "-e", "step.sh"],
+        cwd=str(tmp_path), env=env, capture_output=True, timeout=60,
+    )
+
+
+FAKE_PYTHON = """#!/bin/sh
+# 가짜 check_lh_notices.py — 시나리오대로 이슈 본문 파일·기록을 남기고 정한 코드로 끝난다.
+if [ -n "$FAKE_FILES" ]; then
+  printf 'b\\n' > lh_new_notice_issue.md
+fi
+if [ -n "$FAKE_OUTPUT" ]; then
+  printf 'found=true\\ncount=1\\ntitle=t\\n' >> "$GITHUB_OUTPUT"
+fi
+exit "$FAKE_RC"
+"""
+
+
+@pytest.mark.parametrize("rc, files, output, expect, said_part", [
+    (1, True, True, 0, None),                       # 새 공고 — 이슈 파일 + found=true 둘 다 → 통과
+    (1, True, False, 1, "found=true 기록이 없습니다"),  # ⛔ 이슈 파일만 → 도중에 죽음
+    (1, False, True, 1, "이슈 본문 파일이 없습니다"),    # ⛔ 기록만 → 도중에 죽음
+    (1, False, False, 1, "이슈 본문 파일이 없습니다"),   # 잡지 못한 예외의 기본값 1
+    (0, False, False, 0, None),                     # 새 공고 없음
+    (2, False, False, 2, "조회에 실패했습니다"),         # 조회 실패 → 실패 알림
+    (4, True, False, 4, "결과를 쓰다 실패했습니다"),     # 결과를 쓰다 실패 → 실패 알림(조회 실패라 말하지 않음)
+], ids=["1-둘다", "1-파일만", "1-기록만", "1-둘다없음", "0", "2", "4"])
+def test_check_step_runs_for_real(workflow, tmp_path, rc, files, output, expect, said_part):
+    gh_output = tmp_path / "gh_output"
+    gh_output.write_bytes(b"")
+    res = _run_step(workflow, "새 공고가 떴는지 확인", tmp_path, {"python": FAKE_PYTHON}, {
+        "FAKE_RC": str(rc),
+        "FAKE_FILES": "1" if files else "",
+        "FAKE_OUTPUT": "1" if output else "",
+        "GITHUB_OUTPUT": "gh_output",
+    })
+    said = res.stdout.decode("utf-8", "replace") + res.stderr.decode("utf-8", "replace")
+    assert res.returncode == expect, said
+    if said_part:
+        assert said_part in said, said
+    if rc == 4:
+        assert "조회에 실패했습니다" not in said, "4 는 조회 실패가 아니다 — 다른 말로 알린다"

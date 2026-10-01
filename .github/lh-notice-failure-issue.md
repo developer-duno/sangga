@@ -35,6 +35,11 @@ python scripts/post_load.py                                 # 요약표 갱신 +
   `scripts/collectors/collect_lh_notices.py` 의 `extract_rows` 를 보세요.
 - **상가 0건** — 상위 유형코드(`UPP_AIS_TP_CD='22'`)가 바뀌었을 수 있습니다. 0건은
   정상이 아니라서 일부러 실패로 처리합니다(조용한 빈손 금지).
+- **종료코드 4 · 또는 종료코드 1 인데 found 기록·이슈 파일이 없다** — 4 는 조회는 됐는데
+  결과(화면·이슈 본문 파일·GITHUB_OUTPUT)를 쓰다 실패한 것이고, 1 인데 `found=true` 기록이나
+  `lh_new_notice_issue.md` 가 없는 것도 같은 일입니다 — **새 공고를 찾은 뒤 도중에 죽은 것**이라
+  그 주의 알림이 안 나갔을 수 있습니다. 그 실행 로그의 `[실패]` 줄을 보고, 내 PC 에서
+  `python scripts/check_lh_notices.py` 로 새 공고를 직접 확인하세요.
 
 ---
 
