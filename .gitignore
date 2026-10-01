@@ -16,6 +16,10 @@ sangkwon_new_quarter_issue.md
 district_source_update_issue.md
 watch_heartbeat_issue.md
 lh_new_notice_issue.md
+# 지난 날짜 감시 — 자료별 이슈 폴더(NN.title·NN.md)와 워크플로가 이어 붙이는 임시 본문
+data_freshness_issues/
+data_freshness_issue_full.md
+data_freshness_failure_issue.md
 
 # 의존성·운영 잔재물
 node_modules/
