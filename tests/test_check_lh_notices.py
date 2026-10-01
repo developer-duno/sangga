@@ -572,3 +572,36 @@ def test_check_step_runs_for_real(workflow, tmp_path, rc, files, output, expect,
         assert said_part in said, said
     if rc == 4:
         assert "조회에 실패했습니다" not in said, "4 는 조회 실패가 아니다 — 다른 말로 알린다"
+
+
+# ── bash 가 없을 때 가드 — CI 에서는 실패, 로컬에서만 건너뛴다 (2026-10-02) ──────
+# 위 실행 시험이 CI 에서 조용히 skip 되면 지키는 빈틈이 아무도 모르게 다시 열린다.
+
+
+def test_run_step_fails_on_ci_without_bash(monkeypatch, tmp_path):
+    monkeypatch.setitem(globals(), "_find_bash", lambda: None)
+    monkeypatch.setenv("CI", "1")
+    # BaseException 으로 받는다 — 건너뜀(Skipped)이 새어 나가면 시험이 빨강이 아니라 '건너뜀'이 된다.
+    with pytest.raises(BaseException) as caught:
+        _run_step(None, "아무 단계", tmp_path, {}, {})
+    assert caught.type is pytest.fail.Exception, caught.type
+
+
+def test_run_step_fails_on_github_actions_without_bash(monkeypatch, tmp_path):
+    monkeypatch.setitem(globals(), "_find_bash", lambda: None)
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    # BaseException 으로 받는다 — 건너뜀(Skipped)이 새어 나가면 시험이 빨강이 아니라 '건너뜀'이 된다.
+    with pytest.raises(BaseException) as caught:
+        _run_step(None, "아무 단계", tmp_path, {}, {})
+    assert caught.type is pytest.fail.Exception, caught.type
+
+
+def test_run_step_skips_locally_without_bash(monkeypatch, tmp_path):
+    monkeypatch.setitem(globals(), "_find_bash", lambda: None)
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    # BaseException 으로 받는다 — 건너뜀(Skipped)이 새어 나가면 시험이 빨강이 아니라 '건너뜀'이 된다.
+    with pytest.raises(BaseException) as caught:
+        _run_step(None, "아무 단계", tmp_path, {}, {})
+    assert caught.type is pytest.skip.Exception, caught.type

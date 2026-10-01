@@ -63,9 +63,13 @@ requests 가 없으므로 표준 라이브러리(urllib)만 쓴다.
     python scripts/check_watch_heartbeat.py --workflow district-source-watch.yml
     python scripts/check_watch_heartbeat.py --max-age-days 15 --json
 
-종료코드: 0 = 전부 최근에 돌았음 / 1 = 오래된 것이 있음 / 2 = 조회 실패.
+종료코드: 0 = 전부 최근에 돌았음 / 1 = 오래된 것이 있음 / 2 = 조회·판정 실패 /
+          4 = 조회는 됐는데 결과(화면·--json·이슈 본문 파일·GITHUB_OUTPUT)를 쓰다 실패.
   ↳ 1 과 2 를 가르는 이유: "감시가 멈췄다"와 "내가 확인을 못 했다"는 서로 다른 사건이라
     한 코드로 뭉뚱그리면 워크플로우가 엉뚱한 이슈를 연다.
+  ↳ 4 를 따로 두는 이유: 결과를 쓰다 죽으면 파이썬 기본값 1 = "멈춘 것이 있음"과 겹친다.
+    워크플로는 1 을 통과시키는데 stale 기록이 없으면 이슈 단계가 건너뛰어져 아무 알림이 없다.
+    판정에서 난 예외(응답 모양이 바뀐 것 등)도 같은 이유로 2 로 잡는다(형제 LH·지난 날짜 감시와 같다).
 """
 
 import argparse
@@ -129,6 +133,9 @@ REPO = "developer-duno/sangga"
 API_BASE = "https://api.github.com"
 
 ISSUE_BODY_FILE = "watch_heartbeat_issue.md"
+
+# 조회는 됐는데 결과를 쓰다 죽음 — 1(멈춘 것이 있음)과 겹치지 않게 따로 둔다(머리말 참조).
+EXIT_OUTPUT_FAILED = 4
 
 USER_AGENT = "sangga-watch-heartbeat"
 
@@ -527,57 +534,11 @@ def write_github_output(stale):
     return True
 
 
-def main(argv=None):
-    # cp949 콘솔에서 한글·특수문자(—) 출력이 깨지거나 죽지 않게 — 형제 감시와 같은 처방.
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            if stream.isatty():
-                stream.reconfigure(errors="replace")
-            else:
-                stream.reconfigure(encoding="utf-8", errors="replace")
-        except Exception:
-            pass
+def report(args, results, created, stale, now):
+    """판정 결과를 화면(또는 --json)에 내고, 멈춤이면 이슈 본문 파일을 쓰고, GITHUB_OUTPUT 을 쓴다.
 
-    ap = argparse.ArgumentParser(description="감시 워크플로우 하트비트 점검")
-    ap.add_argument(
-        "--workflow",
-        action="append",
-        metavar="파일명",
-        help="확인할 워크플로우 파일명 (여러 번 쓸 수 있음). 기본 = 예약 6종 전부",
-    )
-    ap.add_argument(
-        "--max-age-days",
-        type=float,
-        default=DEFAULT_MAX_AGE_DAYS,
-        help="이만큼보다 오래됐으면 멈춘 것으로 본다 (기본 {})".format(DEFAULT_MAX_AGE_DAYS),
-    )
-    ap.add_argument("--json", action="store_true", help="기계용 JSON 출력")
-    args = ap.parse_args(argv)
-
-    workflows = list(args.workflow) if args.workflow else list(DEFAULT_WORKFLOWS)
-
-    try:
-        results = fetch_all(workflows)
-        # 성공 기록이 없는 것만 "언제 만들었나"를 되묻는다. 갓 만든 워크플로는 첫 예약이
-        # 오기 전이라 기록이 없는 게 정상이기 때문이다(이슈 #98). 조회가 실패하면 여기서
-        # 같이 터져 종료코드 2 로 간다 — "멈췄다"가 아니라 "확인을 못 했다"가 맞다.
-        created = fetch_created_at_map([f for f, t in results if t is None])
-    except Exception as e:  # 네트워크·API 형식 변경 등
-        print("실행 기록 조회 실패: {}".format(e), file=sys.stderr)
-        print(
-            "GitHub 가 응답하지 않거나 워크플로우 파일명이 바뀌었을 수 있습니다. "
-            "check_watch_heartbeat.py 의 파일명 상수를 확인하세요.",
-            file=sys.stderr,
-        )
-        return 2
-
-    now = datetime.datetime.now(UTC)
-    stale = judge(results, max_age_days=args.max_age_days, now=now, created_at=created)
-    if stale:
-        # 멈춤으로 나온 것만 다른 방식으로 한 번 더 묻는다 — GitHub 가 옛 답을 준 헛경보 거르기.
-        results = recheck_stale(results, stale)
-        stale = judge(results, max_age_days=args.max_age_days, now=now, created_at=created)
-
+    ⓘ 여기서 난 예외는 main 이 종료코드 4 로 바꾼다(머리말 참조).
+    """
     if args.json:
         print(json.dumps(
             {
@@ -634,6 +595,77 @@ def main(argv=None):
         with open(ISSUE_BODY_FILE, "w", encoding="utf-8") as f:
             f.write(build_issue_body(stale, max_age_days=args.max_age_days))
     write_github_output(stale)
+
+
+def main(argv=None):
+    # cp949 콘솔에서 한글·특수문자(—) 출력이 깨지거나 죽지 않게 — 형제 감시와 같은 처방.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream.isatty():
+                stream.reconfigure(errors="replace")
+            else:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+    ap = argparse.ArgumentParser(description="감시 워크플로우 하트비트 점검")
+    ap.add_argument(
+        "--workflow",
+        action="append",
+        metavar="파일명",
+        help="확인할 워크플로우 파일명 (여러 번 쓸 수 있음). 기본 = 예약 6종 전부",
+    )
+    ap.add_argument(
+        "--max-age-days",
+        type=float,
+        default=DEFAULT_MAX_AGE_DAYS,
+        help="이만큼보다 오래됐으면 멈춘 것으로 본다 (기본 {})".format(DEFAULT_MAX_AGE_DAYS),
+    )
+    ap.add_argument("--json", action="store_true", help="기계용 JSON 출력")
+    args = ap.parse_args(argv)
+
+    workflows = list(args.workflow) if args.workflow else list(DEFAULT_WORKFLOWS)
+
+    try:
+        results = fetch_all(workflows)
+        # 성공 기록이 없는 것만 "언제 만들었나"를 되묻는다. 갓 만든 워크플로는 첫 예약이
+        # 오기 전이라 기록이 없는 게 정상이기 때문이다(이슈 #98). 조회가 실패하면 여기서
+        # 같이 터져 종료코드 2 로 간다 — "멈췄다"가 아니라 "확인을 못 했다"가 맞다.
+        created = fetch_created_at_map([f for f, t in results if t is None])
+    except Exception as e:  # 네트워크·API 형식 변경 등
+        print("실행 기록 조회 실패: {}".format(e), file=sys.stderr)
+        print(
+            "GitHub 가 응답하지 않거나 워크플로우 파일명이 바뀌었을 수 있습니다. "
+            "check_watch_heartbeat.py 의 파일명 상수를 확인하세요.",
+            file=sys.stderr,
+        )
+        return 2
+
+    # ⛔ 판정에서 난 예외도 2 다. 응답 모양이 바뀐 것(시각 칸이 문자열이 아님 등)은 조회 실패와
+    #    같은 종류인데, 놓치면 파이썬 기본값 1 = "멈춘 것이 있음"으로 읽힌다 — 그런데 stale 기록이
+    #    없어 이슈 단계가 건너뛰어지고 아무 알림이 없다(형제 LH 공고 감시와 같은 처방).
+    try:
+        now = datetime.datetime.now(UTC)
+        stale = judge(results, max_age_days=args.max_age_days, now=now, created_at=created)
+        if stale:
+            # 멈춤으로 나온 것만 다른 방식으로 한 번 더 묻는다 — GitHub 가 옛 답을 준 헛경보 거르기.
+            results = recheck_stale(results, stale)
+            stale = judge(results, max_age_days=args.max_age_days, now=now, created_at=created)
+    except Exception as e:
+        print("[실패] 실행 기록을 판정하는 중 {}: {} — 응답 모양이 바뀌었을 수 있습니다.".format(
+            type(e).__name__, e), file=sys.stderr)
+        return 2
+
+    # ⛔ 조회 **뒤**(화면 출력·--json·이슈 본문 파일·GITHUB_OUTPUT)에서 난 예외도 잡는다. 놓치면
+    #    파이썬 기본값 1 = "멈춘 것이 있음"과 겹친다 — 이슈 파일을 다 쓴 뒤 GITHUB_OUTPUT 에서
+    #    죽으면 stale 기록이 없어 이슈 단계가 건너뛰어진다. 멈춤이 없어도 기록 쓰기가 실패하면
+    #    4 다(다음 단계가 읽을 값이 비는 것은 같다). 워크플로가 4 를 받아 고장 알림을 연다.
+    try:
+        report(args, results, created, stale, now)
+    except Exception as e:
+        print("[실패] 결과를 쓰는 중 {}: {} — 멈춘 감시 알림이 안 나갔을 수 있습니다.".format(
+            type(e).__name__, e), file=sys.stderr)
+        return EXIT_OUTPUT_FAILED
     return 1 if stale else 0
 
 

@@ -9,6 +9,9 @@ scripts/check_watch_heartbeat.py 1:1 단위 테스트.
 import datetime
 import json
 import os
+import re
+import shutil
+import subprocess
 import sys
 import urllib.error
 
@@ -1053,3 +1056,425 @@ def test_every_scheduled_workflow_file_is_in_the_net():
         "예약으로 도는데 상호 감시 그물 밖입니다: {} — check_watch_heartbeat.py 의 "
         "DEFAULT_WORKFLOWS 와 형제 워크플로의 --workflow 인자에 넣으세요.".format(missing)
     )
+
+
+# ── 점검 자체가 고장 났을 때 — 판정 실패 2 · 결과 쓰기 실패 4 (2026-10-02) ─────
+#
+# 결과를 쓰다 죽으면 파이썬 기본값 1 = "멈춘 것이 있음"과 겹친다. 워크플로는 1 을 통과시키는데
+# stale 기록이 없으면 이슈 단계가 건너뛰어져 아무 알림이 없다 — 그래서 4 로 따로 끝낸다.
+
+
+def _all_fresh():
+    return {chk.QUARTERLY_WATCH: _recent(48), chk.DISTRICT_WATCH: _recent(48),
+            chk.LIVE_HEALTH_WATCH: _recent(3), chk.FEEDBACK_DIGEST: _recent(48),
+            chk.LH_NOTICE_WATCH: _recent(48), chk.DATA_FRESHNESS_WATCH: _recent(48)}
+
+
+def _one_stale():
+    """라이브 감시 하나만 30일째 멈춘 것으로 — 나머지는 최근."""
+    m = _all_fresh()
+    m[chk.LIVE_HEALTH_WATCH] = _recent(24 * 30)
+    return m
+
+
+def test_exit_output_failed_is_four_and_distinct():
+    assert chk.EXIT_OUTPUT_FAILED == 4
+    assert chk.EXIT_OUTPUT_FAILED not in (0, 1, 2)
+
+
+def test_main_returns_2_when_judging_raises(monkeypatch, capsys, tmp_path):
+    """판정에서 난 예외(응답 모양이 바뀜 등)는 기본값 1 이 아니라 2 = 확인을 못 했다."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    _patch_fetch(monkeypatch, _all_fresh())
+
+    def boom(*_a, **_kw):
+        raise ValueError("모양이 바뀜")
+
+    monkeypatch.setattr(chk, "judge", boom)
+    assert chk.main([]) == 2
+    assert "판정하는 중 ValueError" in capsys.readouterr().err
+    assert not (tmp_path / chk.ISSUE_BODY_FILE).exists()
+
+
+def test_main_returns_2_when_recheck_raises(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    _patch_fetch(monkeypatch, _one_stale())
+
+    def boom(*_a, **_kw):
+        raise TypeError("재확인 모양")
+
+    monkeypatch.setattr(chk, "recheck_stale", boom)
+    assert chk.main([]) == 2
+
+
+def test_main_returns_2_when_second_judge_raises(monkeypatch, tmp_path):
+    """재확인 뒤 두 번째 판정에서 죽어도 2 다."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    _patch_fetch(monkeypatch, _one_stale())
+    real_judge = chk.judge
+    calls = []
+
+    def judge_then_boom(*a, **kw):
+        calls.append(1)
+        if len(calls) == 2:
+            raise KeyError("두 번째")
+        return real_judge(*a, **kw)
+
+    monkeypatch.setattr(chk, "judge", judge_then_boom)
+    assert chk.main([]) == 2
+    assert len(calls) == 2
+
+
+def test_main_returns_4_when_github_output_is_a_folder_and_nothing_is_stale(
+        monkeypatch, capsys, tmp_path):
+    """멈춤이 없어도 기록 쓰기가 **실제로** 실패하면 4 — 다음 단계가 읽을 값이 비는 것은 같다."""
+    monkeypatch.chdir(tmp_path)
+    folder = tmp_path / "out_is_a_folder"
+    folder.mkdir()
+    monkeypatch.setenv("GITHUB_OUTPUT", str(folder))
+    _patch_fetch(monkeypatch, _all_fresh())
+    assert chk.main([]) == chk.EXIT_OUTPUT_FAILED
+    assert "결과를 쓰는 중" in capsys.readouterr().err
+
+
+def test_main_returns_4_when_github_output_is_a_folder_and_one_is_stale(monkeypatch, tmp_path):
+    """⛔ 이슈 본문 파일은 썼는데 기록에서 죽은 경우 — 예전에는 1 로 통과해 조용히 초록이었다."""
+    monkeypatch.chdir(tmp_path)
+    folder = tmp_path / "out_is_a_folder"
+    folder.mkdir()
+    monkeypatch.setenv("GITHUB_OUTPUT", str(folder))
+    _patch_fetch(monkeypatch, _one_stale())
+    assert chk.main([]) == chk.EXIT_OUTPUT_FAILED
+    assert (tmp_path / chk.ISSUE_BODY_FILE).exists()
+
+
+def test_main_returns_4_when_issue_body_path_is_a_folder(monkeypatch, tmp_path):
+    """멈춤인데 이슈 본문 파일 자리가 폴더라 못 쓰면 4 — stale 기록도 안 남는다."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / chk.ISSUE_BODY_FILE).mkdir()
+    out = tmp_path / "gh_output"
+    out.write_bytes(b"")
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    _patch_fetch(monkeypatch, _one_stale())
+    assert chk.main([]) == chk.EXIT_OUTPUT_FAILED
+    assert "stale=true" not in out.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("exc", [OSError, TypeError])
+@pytest.mark.parametrize("stale", [False, True], ids=["멈춤없음", "멈춤"])
+def test_main_returns_4_when_writing_the_record_raises(monkeypatch, tmp_path, exc, stale):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    _patch_fetch(monkeypatch, _one_stale() if stale else _all_fresh())
+
+    def boom(_stale):
+        raise exc("기록 실패")
+
+    monkeypatch.setattr(chk, "write_github_output", boom)
+    assert chk.main([]) == chk.EXIT_OUTPUT_FAILED
+
+
+@pytest.mark.parametrize("exc", [OSError, TypeError])
+def test_main_returns_4_when_building_the_issue_body_raises(monkeypatch, tmp_path, exc):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    _patch_fetch(monkeypatch, _one_stale())
+
+    def boom(*_a, **_kw):
+        raise exc("본문 실패")
+
+    monkeypatch.setattr(chk, "build_issue_body", boom)
+    assert chk.main([]) == chk.EXIT_OUTPUT_FAILED
+
+
+@pytest.mark.parametrize("exc", [OSError, TypeError])
+def test_main_returns_4_when_json_output_raises(monkeypatch, tmp_path, exc):
+    """--json 출력에서 죽어도 4 — 화면 출력도 '결과 쓰기'다."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    _patch_fetch(monkeypatch, _all_fresh())
+
+    def boom(*_a, **_kw):
+        raise exc("화면 실패")
+
+    monkeypatch.setattr(chk, "is_newborn", boom)
+    assert chk.main(["--json"]) == chk.EXIT_OUTPUT_FAILED
+
+
+def test_docstring_lists_exit_code_4():
+    assert "4 = 조회는 됐는데 결과" in chk.__doc__
+
+
+# ── 워크플로: 하트비트 단계가 고장을 가르고, 고장이면 이슈를 연다 (2026-10-02) ────
+#
+# 글자 검사만으로는 검사 줄을 지워도 초록이다(형제 지난 날짜 감시 2026-10-01 실측). 그래서
+# 단계의 run: 글자를 꺼내 GitHub 기본 셸(`bash -e` — `shell:` 을 안 적은 단계의 기본값)로
+# 돌리고, PATH 앞에 가짜 `python`·`gh` 를 둔다. 네트워크·진짜 API 는 타지 않는다.
+# 윈도우는 Git Bash 로 돈다(WSL 의 System32 bash 는 PATH·경로를 다르게 풀어 건너뛴다).
+# 도우미는 tests/test_check_data_freshness.py 의 것을 옮겨 왔다(시험 파일끼리 import 하지 않는다).
+# 다른 점: job 이름이 워크플로마다 달라(watch·health·digest) **모든 job** 에서 단계를 찾는다.
+# ⛔ CI 에서는 bash 가 없으면 건너뛰지 않고 실패한다 — 거기서 조용히 skip 되면 이 시험이 지키는
+#    빈틈(고장 가르기·열린 제목 건너뛰기)이 아무도 모르게 다시 열린다.
+
+FAILURE_STEP_NAME = "상호 감시 점검이 고장 났으면 이슈를 연다"
+FAILURE_TITLE = "상호 감시 점검(하트비트)이 결과를 내지 못했습니다 — 사람이 직접 확인해 주세요"
+FAILURE_BODY = os.path.join(REPO_ROOT, ".github", "watch-heartbeat-failure-issue.md")
+FAILURE_IF = "${{ !cancelled() && steps.heartbeat.outcome == 'failure' }}"
+STALE_IF = "${{ !cancelled() && steps.heartbeat.outputs.stale == 'true' }}"
+
+
+def _load_workflow(name):
+    import yaml
+
+    with open(os.path.join(WORKFLOW_DIR, name), encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+def _heartbeat_job_steps(workflow):
+    """하트비트 단계(id: heartbeat)가 든 job 의 단계 목록."""
+    found = [job["steps"] for job in workflow["jobs"].values()
+             if any(s.get("id") == "heartbeat" for s in job["steps"])]
+    assert len(found) == 1, "하트비트 단계가 든 job 이 하나가 아닙니다"
+    return found[0]
+
+
+def _find_step(workflow, key, value):
+    steps = [s for job in workflow["jobs"].values() for s in job["steps"] if s.get(key) == value]
+    assert steps, "{}={} 단계를 워크플로에서 못 찾았습니다".format(key, value)
+    return steps[0]
+
+
+def _find_bash():
+    path = shutil.which("bash")
+    if not path:
+        return None
+    low = path.lower()
+    if os.name == "nt" and ("system32" in low or "windowsapps" in low):
+        return None
+    return path
+
+
+def _write_lf(path, text):
+    """줄 끝을 LF 로 — CRLF 가 섞이면 bash 가 `\\r` 을 명령 글자로 읽는다."""
+    path.write_bytes(text.encode("utf-8"))
+    path.chmod(0o755)
+
+
+def _run_step(step, tmp_path, fakes, env_extra):
+    bash = _find_bash()
+    if bash is None:
+        if os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"):
+            pytest.fail("CI 인데 bash 를 못 찾았습니다 — 워크플로 단계 실행 시험을 건너뛸 수 없습니다")
+        pytest.skip("bash 가 없습니다(윈도우는 Git Bash 필요)")
+    bin_dir = tmp_path / "fakebin"
+    bin_dir.mkdir(exist_ok=True)
+    for fname, body in fakes.items():
+        _write_lf(bin_dir / fname, body)
+    _write_lf(tmp_path / "step.sh", step["run"])
+    env = dict(os.environ)
+    env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
+    env.update(env_extra)
+    return subprocess.run(
+        [bash, "-e", "step.sh"],
+        cwd=str(tmp_path), env=env, capture_output=True, timeout=60,
+    )
+
+
+FAKE_PYTHON = """#!/bin/sh
+# 가짜 check_watch_heartbeat.py — 시나리오대로 이슈 본문 파일·기록을 남기고 정한 코드로 끝난다.
+if [ -n "$FAKE_FILES" ]; then
+  printf 'b\\n' > watch_heartbeat_issue.md
+fi
+if [ -n "$FAKE_OUTPUT" ]; then
+  printf 'stale=true\\ntitle=t\\n' >> "$GITHUB_OUTPUT"
+fi
+exit "$FAKE_RC"
+"""
+
+
+@pytest.mark.parametrize("rc, files, output, expect, said_part", [
+    (0, False, False, 0, None),                                # 전부 최근
+    (1, True, True, 0, None),                                  # 멈춤 — 이슈 파일 + stale=true 둘 다 → 통과
+    (1, True, False, 1, "stale=true 기록이 없습니다"),             # ⛔ 이슈 파일만 → 도중에 죽음
+    (1, False, True, 1, "이슈 본문 파일이 없습니다"),               # ⛔ 기록만 → 도중에 죽음
+    (1, False, False, 1, "이슈 본문 파일이 없습니다"),              # 잡지 못한 예외의 기본값 1
+    (2, False, False, 2, "상호 감시 조회에 실패했습니다 (종료코드 2)"),  # 조회 실패
+    (4, True, False, 4, "결과를 쓰다 실패했습니다 (종료코드 4)"),      # 결과 쓰기 실패
+], ids=["0", "1-둘다", "1-파일만", "1-기록만", "1-둘다없음", "2", "4"])
+@pytest.mark.parametrize("name", chk.DEFAULT_WORKFLOWS)
+def test_heartbeat_step_sorts_failures_for_real(name, tmp_path, rc, files, output, expect, said_part):
+    gh_output = tmp_path / "gh_output"
+    gh_output.write_bytes(b"")
+    step = _find_step(_load_workflow(name), "id", "heartbeat")
+    res = _run_step(step, tmp_path, {"python": FAKE_PYTHON}, {
+        "FAKE_RC": str(rc),
+        "FAKE_FILES": "1" if files else "",
+        "FAKE_OUTPUT": "1" if output else "",
+        "GITHUB_OUTPUT": "gh_output",
+    })
+    said = res.stdout.decode("utf-8", "replace") + res.stderr.decode("utf-8", "replace")
+    assert res.returncode == expect, said
+    if said_part:
+        assert said_part in said, said
+    if rc == 4:
+        assert "조회에 실패했습니다" not in said, "4 는 조회 실패가 아니다 — 다른 말로 알린다"
+
+
+FAKE_GH = """#!/bin/sh
+# 가짜 gh — issue list 는 열린 제목 파일을, issue create 는 --title 과 --body-file 내용을 기록한다.
+if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
+  cat open_titles.txt
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "create" ]; then
+  shift 2
+  while [ $# -gt 0 ]; do
+    if [ "$1" = "--title" ]; then printf '%s\\n' "$2" >> created.txt; fi
+    if [ "$1" = "--body-file" ]; then cat "$2" >> created_body.txt; fi
+    shift
+  done
+  exit 0
+fi
+echo "예상 못 한 gh 호출: $*" >&2
+exit 99
+"""
+
+
+def _prepare_failure_step(tmp_path, open_titles):
+    (tmp_path / ".github").mkdir()
+    shutil.copyfile(FAILURE_BODY, str(tmp_path / ".github" / "watch-heartbeat-failure-issue.md"))
+    (tmp_path / "open_titles.txt").write_bytes(("\n".join(open_titles) + "\n").encode("utf-8"))
+
+
+@pytest.mark.parametrize("name", chk.DEFAULT_WORKFLOWS)
+def test_failure_step_opens_one_issue_when_none_is_open_for_real(name, tmp_path):
+    _prepare_failure_step(tmp_path, ["다른 이슈 제목"])
+    step = _find_step(_load_workflow(name), "name", FAILURE_STEP_NAME)
+    res = _run_step(step, tmp_path, {"gh": FAKE_GH}, {
+        "GH_TOKEN": "fake", "RUN_URL": "https://example.test/run/7",
+    })
+    said = res.stdout.decode("utf-8", "replace") + res.stderr.decode("utf-8", "replace")
+    assert res.returncode == 0, said
+    created = (tmp_path / "created.txt").read_bytes().decode("utf-8").splitlines()
+    assert created == [FAILURE_TITLE], said
+    body = (tmp_path / "created_body.txt").read_bytes().decode("utf-8").replace("\r\n", "\n")
+    with open(FAILURE_BODY, encoding="utf-8") as f:
+        expected = f.read().replace("\r\n", "\n")
+    assert expected in body
+    assert "이 알림을 만든 실행: https://example.test/run/7" in body
+
+
+@pytest.mark.parametrize("name", chk.DEFAULT_WORKFLOWS)
+def test_failure_step_skips_when_the_same_title_is_open_for_real(name, tmp_path):
+    _prepare_failure_step(tmp_path, ["다른 이슈 제목", FAILURE_TITLE])
+    step = _find_step(_load_workflow(name), "name", FAILURE_STEP_NAME)
+    res = _run_step(step, tmp_path, {"gh": FAKE_GH}, {
+        "GH_TOKEN": "fake", "RUN_URL": "https://example.test/run/7",
+    })
+    said = res.stdout.decode("utf-8", "replace") + res.stderr.decode("utf-8", "replace")
+    assert res.returncode == 0, said
+    assert not (tmp_path / "created.txt").exists(), "열린 같은 이슈가 있으면 새로 열면 안 된다"
+    assert "이미 열린 같은 이슈가 있습니다" in said
+
+
+# ── 워크플로: 글자·배치 ───────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("name", chk.DEFAULT_WORKFLOWS)
+def test_failure_step_is_wired_right_after_the_stale_step(name):
+    """새 단계 = stale 단계 **바로 다음**, 그 뒤에 오는 단계는 전부 `if: failure()`(0개 또는 1개).
+
+    ⓘ 라이브 감시는 failure() 단계가 하트비트 **앞**에 있어 새 단계가 맨 끝이다 — 이 한 규칙이
+       여섯 파일을 예외 없이 덮는다.
+    """
+    steps = _heartbeat_job_steps(_load_workflow(name))
+    names = [s.get("name") for s in steps]
+    i_stale = [k for k, s in enumerate(steps) if s.get("if") == STALE_IF]
+    assert len(i_stale) == 1, name
+    i_new = names.index(FAILURE_STEP_NAME)
+    assert i_new == i_stale[0] + 1, "{}: 새 단계가 stale 단계 바로 뒤가 아닙니다".format(name)
+    after = steps[i_new + 1:]
+    assert len(after) <= 1, name
+    assert all(s.get("if") == "failure()" for s in after), name
+
+
+@pytest.mark.parametrize("name", chk.DEFAULT_WORKFLOWS)
+def test_failure_step_reads_outcome_not_conclusion(name):
+    """`conclusion` 은 continue-on-error 적용 뒤라 늘 success — outcome 을 봐야 고장이 보인다."""
+    step = _find_step(_load_workflow(name), "name", FAILURE_STEP_NAME)
+    assert step["if"] == FAILURE_IF
+    assert "continue-on-error" not in step
+    assert step["env"]["GH_TOKEN"] == "${{ github.token }}"
+    assert "RUN_URL" in step["env"]
+    assert "set -euo pipefail" in step["run"]
+    assert "watch-heartbeat-failure-issue.md" in step["run"]
+    assert '<<< "$OPEN_TITLES"' in step["run"]
+    # ⛔ `--state all` 이면 사람이 닫은 고장 이슈도 목록에 남아 다음 고장부터 영영 안 열린다.
+    assert "--state open" in step["run"]
+
+
+def test_failure_title_is_identical_in_all_six():
+    """제목이 글자까지 같아야 같은 고장이 여섯 곳에서 이슈 하나로 묶인다."""
+    titles = set()
+    for name in chk.DEFAULT_WORKFLOWS:
+        run = _find_step(_load_workflow(name), "name", FAILURE_STEP_NAME)["run"]
+        found = re.findall(r'^TITLE="([^"]*)"$', run, re.M)
+        assert len(found) == 1, name
+        titles.add(found[0])
+    assert titles == {FAILURE_TITLE}
+
+
+@pytest.mark.parametrize("name", chk.DEFAULT_WORKFLOWS)
+def test_heartbeat_step_keeps_its_guards(name):
+    step = _find_step(_load_workflow(name), "id", "heartbeat")
+    assert step["continue-on-error"] is True
+    assert step["if"] == "${{ !cancelled() }}"
+    assert step["env"]["GITHUB_TOKEN"] == "${{ github.token }}"
+    assert "set +e" in step["run"]
+    assert "python scripts/check_watch_heartbeat.py --workflow" in step["run"]
+
+
+def test_failure_issue_body_exists_and_uses_powershell():
+    with open(FAILURE_BODY, encoding="utf-8") as f:
+        body = f.read()
+    assert "```powershell" in body
+    assert "cd D:\\sangga" in body
+    assert "python scripts/check_watch_heartbeat.py" in body
+    # PowerShell 5.1 에 없는 bash 문법을 사장님께 드리지 않는다.
+    assert "&&" not in body
+    assert "/dev/null" not in body
+
+
+# ── bash 가 없을 때 가드 — CI 에서는 실패, 로컬에서만 건너뛴다 ─────────────────
+
+
+def test_run_step_fails_on_ci_without_bash(monkeypatch, tmp_path):
+    monkeypatch.setitem(globals(), "_find_bash", lambda: None)
+    monkeypatch.setenv("CI", "1")
+    # BaseException 으로 받는다 — 건너뜀(Skipped)이 새어 나가면 시험이 빨강이 아니라 '건너뜀'이 된다.
+    with pytest.raises(BaseException) as caught:
+        _run_step({"run": "true"}, tmp_path, {}, {})
+    assert caught.type is pytest.fail.Exception, caught.type
+
+
+def test_run_step_fails_on_github_actions_without_bash(monkeypatch, tmp_path):
+    monkeypatch.setitem(globals(), "_find_bash", lambda: None)
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    # BaseException 으로 받는다 — 건너뜀(Skipped)이 새어 나가면 시험이 빨강이 아니라 '건너뜀'이 된다.
+    with pytest.raises(BaseException) as caught:
+        _run_step({"run": "true"}, tmp_path, {}, {})
+    assert caught.type is pytest.fail.Exception, caught.type
+
+
+def test_run_step_skips_locally_without_bash(monkeypatch, tmp_path):
+    monkeypatch.setitem(globals(), "_find_bash", lambda: None)
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    # BaseException 으로 받는다 — 건너뜀(Skipped)이 새어 나가면 시험이 빨강이 아니라 '건너뜀'이 된다.
+    with pytest.raises(BaseException) as caught:
+        _run_step({"run": "true"}, tmp_path, {}, {})
+    assert caught.type is pytest.skip.Exception, caught.type

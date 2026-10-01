@@ -83,7 +83,32 @@ jobs:
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: python scripts/check_watch_heartbeat.py --workflow sangkwon-quarterly-watch.yml --workflow live-health-watch.yml --workflow feedback-digest.yml --workflow lh-notice-watch.yml --workflow data-freshness-watch.yml
+        run: |
+          # ⛔ 고장을 가른다. continue-on-error 가 실패를 삼키므로 job 은 초록으로 남지만, 이 단계가
+          #    0 아닌 코드로 끝나면 outcome 이 failure 가 되어 아래 "점검이 고장 났으면" 단계가 알린다.
+          #    1 = 멈춘 감시가 있음 — 이슈 본문 파일과 stale=true 기록이 **둘 다** 있어야 진짜 1 이다
+          #    (잡지 못한 예외로 죽어도 파이썬은 1 로 끝난다). 2 = 조회·판정 실패 · 4 = 결과 쓰기 실패.
+          set +e
+          python scripts/check_watch_heartbeat.py --workflow sangkwon-quarterly-watch.yml --workflow live-health-watch.yml --workflow feedback-digest.yml --workflow lh-notice-watch.yml --workflow data-freshness-watch.yml
+          rc=$?
+          set -e
+          if [ "$rc" -eq 1 ] && [ ! -f watch_heartbeat_issue.md ]; then
+            echo "종료코드 1 인데 이슈 본문 파일이 없습니다 — 도중에 죽은 것으로 봅니다."
+            exit 1
+          fi
+          if [ "$rc" -eq 1 ] && ! grep -Fxq 'stale=true' "$GITHUB_OUTPUT"; then
+            echo "종료코드 1 인데 stale=true 기록이 없습니다 — 도중에 죽은 것으로 봅니다."
+            exit 1
+          fi
+          if [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; then
+            exit 0
+          fi
+          if [ "$rc" -eq 4 ]; then
+            echo "조회는 됐는데 결과를 쓰다 실패했습니다 (종료코드 4) — 멈춘 감시 알림이 안 나갔을 수 있습니다."
+            exit 4
+          fi
+          echo "상호 감시 조회에 실패했습니다 (종료코드 $rc)."
+          exit "$rc"
 
       # 제목에 날짜가 없으므로 **열려 있는** 같은 제목만 건너뛴다 →
       # 사람이 닫아야 다음 사고를 다시 알린다.
@@ -102,6 +127,35 @@ jobs:
             exit 0
           fi
           gh issue create --title "$TITLE" --body-file watch_heartbeat_issue.md
+          echo "이슈를 열었습니다: $TITLE"
+
+      # 하트비트 점검 **자체**가 고장 나면(조회 실패·결과 쓰기 실패·도중에 죽음) 위 단계는
+      # continue-on-error 라 job 이 초록이고 stale 기록도 없어 아무도 모른다 — 그래서 따로 알린다.
+      # `outcome` 을 보는 이유: `conclusion` 은 continue-on-error 가 적용된 **뒤**라 늘 success 다
+      # (outcome = 적용 전 결과 — GitHub 문서 "Contexts reference · steps context").
+      # 제목이 여섯 감시에서 글자까지 같아 같은 고장은 한 이슈로 묶이고, **열려 있는** 동안은
+      # 다시 안 연다 → 사람이 확인·조치 뒤 닫아야 다음 고장을 다시 알린다.
+      - name: 상호 감시 점검이 고장 났으면 이슈를 연다
+        if: ${{ !cancelled() && steps.heartbeat.outcome == 'failure' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          TITLE="상호 감시 점검(하트비트)이 결과를 내지 못했습니다 — 사람이 직접 확인해 주세요"
+          OPEN_TITLES="$(gh issue list --state open --limit 100 --json title --jq '.[].title')"
+          # here-string 으로 넘긴다 — 파이프 + pipefail 이면 grep -q 가 먼저 끝날 때 앞쪽이
+          # SIGPIPE 로 실패해 "열린 이슈 없음"으로 읽힐 수 있다(그러면 같은 이슈가 또 열린다).
+          if grep -Fxq -- "$TITLE" <<< "$OPEN_TITLES"; then
+            echo "이미 열린 같은 이슈가 있습니다 — 건너뜁니다: $TITLE"
+            exit 0
+          fi
+          {
+            cat .github/watch-heartbeat-failure-issue.md
+            echo
+            echo "이 알림을 만든 실행: $RUN_URL"
+          } > watch_heartbeat_failure_issue.md
+          gh issue create --title "$TITLE" --body-file watch_heartbeat_failure_issue.md
           echo "이슈를 열었습니다: $TITLE"
 
       # 감시가 **실패하면 이슈가 안 열린다.** 그런데 아무도 Actions 탭을 들여다보지
