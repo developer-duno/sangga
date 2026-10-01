@@ -44,13 +44,16 @@ YYYY-MM-DD)` 로, 매주 바뀌는 값(며칠 지났나·건수)을 넣지 않�
     python scripts/check_data_freshness.py                     # 오늘(한국 날짜) 기준
     python scripts/check_data_freshness.py --today 2026-11-02  # 오늘을 밖에서 넣기(시험·되짚기용)
 
-종료코드: 0 = 지난 줄 없음 / 1 = **지난 줄 있음** / 2 = 조회 실패 / 3 = 주소·공개키 없음.
+종료코드: 0 = 지난 줄 없음 / 1 = **지난 줄 있음** / 2 = 조회 실패 / 3 = 주소·공개키 없음 /
+          4 = 조회는 됐는데 결과(화면·이슈 파일·GITHUB_OUTPUT)를 쓰다 실패.
   ↳ 1 과 2 를 가르는 이유: "자료가 늦었다"와 "확인을 못 했다"는 서로 다른 사건이다.
     한 코드로 뭉뚱그리면 창고가 죽은 주에 "자료가 늦었습니다"라는 엉뚱한 이슈가 열린다.
   ↳ ⛔ 조회 중 **어떤 예외든** 2 로 끝낸다. 잡지 못한 예외는 파이썬 기본값 1 로 끝나는데,
     그건 여기서 "지난 줄 있음"과 같은 숫자다(워크플로는 그 경우를 한 번 더 막는다).
   ↳ 3 을 따로 두는 이유: 설정이 빠진 것은 창고가 죽은 것과도 다르다 — 사람이 변수만
     넣으면 끝난다(워크플로는 이 경우를 앞 단계에서 먼저 가려 설정 안내 이슈를 연다).
+  ↳ 4 를 따로 두는 이유: 이슈 파일을 다 쓴 뒤 GITHUB_OUTPUT 에서 죽으면 기본값 1 이 "지남"과
+    겹치는데, 워크플로의 이슈 단계는 overdue 값이 없어 건너뛰어진다 — 그 주가 조용히 초록이 된다.
 
 ⚠️ 표준 라이브러리만 쓴다 — 워크플로에 설치 단계가 없다.
 """
@@ -86,6 +89,7 @@ EXIT_OK = 0
 EXIT_OVERDUE = 1
 EXIT_LOOKUP_FAILED = 2
 EXIT_NO_CREDENTIALS = 3
+EXIT_OUTPUT_FAILED = 4
 
 # 서버가 늘 주는 칸. 이 중 하나라도 없으면 함수 모양이 바뀐 것이다 — 조회 실패로 본다.
 REQUIRED_KEYS = ("src", "basis_kind", "basis", "next_expected", "cadence")
@@ -266,6 +270,27 @@ def fetch_rows(base_url: str, anon_key: str, sleep=None) -> list:
     return check_rows(result)
 
 
+def report(rows, overdue, today: datetime.date) -> None:
+    """사람이 읽는 결과 화면."""
+    with_date = sum(1 for r in rows if parse_date(r.get("next_expected")) is not None)
+
+    print("=" * 66)
+    print("자료 신선도 — 다음 갱신 예정일이 지났나")
+    print("=" * 66)
+    print(f"  오늘(한국 날짜)          : {today.isoformat()}")
+    print(f"  받은 줄                  : {len(rows)}줄 (예정일 있는 줄 {with_date})")
+    if overdue:
+        print(f"  ★ 예정일이 지난 줄       : {len(overdue)}줄")
+        for o in overdue:
+            print("      {} — {} {} · 예정 {} · {}일 지남".format(
+                o["src"], o["basis_kind"], o["basis"], o["next_expected"], o["days_over"]))
+        print()
+        print("  → 포털에 새 판이 떴는지 확인 → 떴으면 적재")
+    else:
+        print("  예정일이 지난 줄         : 없음")
+    print("=" * 66)
+
+
 def main(argv=None) -> int:
     # cp949 콘솔에서 한글·특수문자(—) 출력이 깨지거나 죽지 않게 — 형제 감시와 같은 처방.
     for stream in (sys.stdout, sys.stderr):
@@ -316,26 +341,18 @@ def main(argv=None) -> int:
         return EXIT_LOOKUP_FAILED
 
     overdue = find_overdue(rows, today)
-    with_date = sum(1 for r in rows if parse_date(r.get("next_expected")) is not None)
 
-    print("=" * 66)
-    print("자료 신선도 — 다음 갱신 예정일이 지났나")
-    print("=" * 66)
-    print(f"  오늘(한국 날짜)          : {today.isoformat()}")
-    print(f"  받은 줄                  : {len(rows)}줄 (예정일 있는 줄 {with_date})")
-    if overdue:
-        print(f"  ★ 예정일이 지난 줄       : {len(overdue)}줄")
-        for o in overdue:
-            print("      {} — {} {} · 예정 {} · {}일 지남".format(
-                o["src"], o["basis_kind"], o["basis"], o["next_expected"], o["days_over"]))
-        print()
-        print("  → 포털에 새 판이 떴는지 확인 → 떴으면 적재")
-    else:
-        print("  예정일이 지난 줄         : 없음")
-    print("=" * 66)
-
-    write_issue_files(overdue, today)
-    write_github_output(overdue)
+    # ⛔ 조회 **뒤**(화면 출력·이슈 파일·GITHUB_OUTPUT)에서 난 예외도 잡는다. 놓치면 파이썬
+    #    기본값 1 = "지난 줄 있음"과 겹친다 — 이슈 파일을 다 쓴 뒤 GITHUB_OUTPUT 에서 죽으면
+    #    워크플로가 1 + 이슈 파일만 보고 통과시키는데 overdue 값이 없어 이슈 단계가 건너뛰어져
+    #    그 주가 조용히 초록이 된다. 그래서 따로 4 로 끝내 실패 알림으로 보낸다.
+    try:
+        report(rows, overdue, today)
+        write_issue_files(overdue, today)
+        write_github_output(overdue)
+    except Exception as ex:
+        print(f"[실패] 결과를 쓰는 중 {type(ex).__name__}: {ex} — 알림이 안 나갔을 수 있습니다.")
+        return EXIT_OUTPUT_FAILED
     return EXIT_OVERDUE if overdue else EXIT_OK
 
 

@@ -41,6 +41,20 @@ def _recent(hours_ago):
     return datetime.datetime.now(UTC) - datetime.timedelta(hours=hours_ago)
 
 
+# 아래 자동 고정물이 갈아끼우기 전의 진짜 재확인 함수 — 연결부(주소 → 응답 → 파서) 시험이 되돌려 쓴다.
+_REAL_FETCH_RECENT_SUCCESS = chk.fetch_recent_success
+
+
+@pytest.fixture(autouse=True)
+def _no_recheck_network(monkeypatch):
+    """멈춤이 나오면 main 이 재확인(`fetch_recent_success`)을 부른다 — 기본은 '더 새로운 성공 없음'.
+
+    ⛔ 이걸 안 막으면 멈춤을 다루는 기존 main 시험이 진짜 GitHub 을 두드린다(실패하면 재시도
+       대기 15초). 재확인 자체를 보는 시험은 각자 다시 갈아끼운다.
+    """
+    monkeypatch.setattr(chk, "fetch_recent_success", lambda f: None)
+
+
 # ── 시각 읽기 ─────────────────────────────────────────────────────────────────
 
 
@@ -642,6 +656,203 @@ def test_main_json_marks_the_newborn(monkeypatch, capsys, tmp_path):
     newborn = [c["workflow"] for c in data["checked"] if c["newborn"]]
     assert newborn == [chk.LH_NOTICE_WATCH]
     assert data["stale"] == []
+
+
+# ── 멈춤 판정 전 재확인 (2026-10-01 헛경보 #177) ─────────────────────────────
+#
+# GitHub 가 `status=success&per_page=1` 에 한 번 옛 답(09-17)을 줘, 6시간마다 잘 도는 라이브
+# 감시에 "14일째 멈춤" 이슈가 열렸다. 멈춤으로 나온 것만 거름망 없는 목록으로 한 번 더 묻는다.
+
+
+def _run(conclusion, started=None, created=None):
+    run = {"conclusion": conclusion}
+    if started:
+        run["run_started_at"] = started
+    if created:
+        run["created_at"] = created
+    return run
+
+
+def test_recent_runs_url_has_no_status_filter():
+    url = chk.recent_runs_url(chk.LIVE_HEALTH_WATCH)
+    assert url == (
+        "https://api.github.com/repos/developer-duno/sangga/actions/workflows/"
+        "{}/runs?per_page=20".format(chk.LIVE_HEALTH_WATCH)
+    )
+    assert "status=" not in url
+
+
+def test_among_picks_the_latest_success_and_skips_the_rest():
+    payload = {"workflow_runs": [
+        _run(None, "2026-10-01T18:36:00Z"),          # 아직 도는 중
+        _run("failure", "2026-10-01T12:36:00Z"),
+        _run("success", "2026-10-01T06:36:13Z"),
+        _run("cancelled", "2026-10-01T03:00:00Z"),
+        _run("success", "2026-09-30T18:36:00Z"),
+    ]}
+    assert chk.parse_latest_success_among(payload) == datetime.datetime(
+        2026, 10, 1, 6, 36, 13, tzinfo=UTC
+    )
+
+
+def test_among_does_not_trust_list_order():
+    payload = {"workflow_runs": [
+        _run("success", "2026-09-17T12:32:00Z"),
+        _run("success", "2026-10-01T12:36:13Z"),
+    ]}
+    assert chk.parse_latest_success_among(payload).day == 1
+
+
+def test_among_uses_the_same_time_rule_as_the_first_answer():
+    """run_started_at 이 없으면 created_at — parse_latest_success 와 같은 규칙."""
+    payload = {"workflow_runs": [_run("success", created="2026-10-01T12:00:00Z")]}
+    assert chk.parse_latest_success_among(payload) == datetime.datetime(
+        2026, 10, 1, 12, 0, tzinfo=UTC
+    )
+
+
+def test_among_returns_none_without_any_success():
+    assert chk.parse_latest_success_among({"workflow_runs": []}) is None
+    assert chk.parse_latest_success_among({"workflow_runs": [_run("failure", "2026-10-01T00:00:00Z")]}) is None
+
+
+@pytest.mark.parametrize("bad", [None, [], "문자열", {}, {"workflow_runs": "x"}])
+def test_among_raises_on_wrong_shape(bad):
+    with pytest.raises(ValueError):
+        chk.parse_latest_success_among(bad)
+
+
+def test_recheck_replaces_only_with_a_newer_success(monkeypatch):
+    first = [(chk.LIVE_HEALTH_WATCH, _dt(14)), (chk.DISTRICT_WATCH, _dt(20))]
+    stale = chk.judge(first, 8, NOW)
+    answers = {chk.LIVE_HEALTH_WATCH: _dt(0.1), chk.DISTRICT_WATCH: _dt(30)}  # 하나는 더 옛날
+    monkeypatch.setattr(chk, "fetch_recent_success", lambda f: answers[f])
+    got = chk.recheck_stale(first, stale)
+    assert got == [(chk.LIVE_HEALTH_WATCH, _dt(0.1)), (chk.DISTRICT_WATCH, _dt(20))]
+
+
+def test_recheck_asks_only_the_stale_ones(monkeypatch):
+    asked = []
+    monkeypatch.setattr(chk, "fetch_recent_success", lambda f: asked.append(f))
+    first = [(chk.QUARTERLY_WATCH, _dt(1)), (chk.LIVE_HEALTH_WATCH, _dt(14))]
+    chk.recheck_stale(first, chk.judge(first, 8, NOW))
+    assert asked == [chk.LIVE_HEALTH_WATCH]
+
+
+def test_main_drops_the_false_alarm_when_recheck_is_fresh(monkeypatch, capsys, tmp_path):
+    """#177 그대로: 첫 답 14일 전, 재확인은 몇 시간 전 → 멈춤 아님(이슈 안 엶)."""
+    monkeypatch.chdir(tmp_path)
+    out = tmp_path / "out.txt"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    _patch_fetch(monkeypatch, {chk.LIVE_HEALTH_WATCH: _recent(14 * 24)})
+    monkeypatch.setattr(chk, "fetch_recent_success", lambda f: _recent(2))
+    assert chk.main(["--workflow", chk.LIVE_HEALTH_WATCH]) == 0
+    captured = capsys.readouterr()
+    assert "멈춘 감시           : 없음" in captured.out
+    assert "재확인(라이브 생존 감시)" in captured.err
+    assert not (tmp_path / chk.ISSUE_BODY_FILE).exists()
+    assert "stale=false" in out.read_text(encoding="utf-8")
+
+
+def test_main_still_alarms_when_both_answers_are_old(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    _patch_fetch(monkeypatch, {chk.LIVE_HEALTH_WATCH: _recent(14 * 24)})
+    monkeypatch.setattr(chk, "fetch_recent_success", lambda f: _recent(10 * 24))
+    assert chk.main(["--workflow", chk.LIVE_HEALTH_WATCH]) == 1
+    assert "라이브 생존 감시" in (tmp_path / chk.ISSUE_BODY_FILE).read_text(encoding="utf-8")
+
+
+def test_main_keeps_the_alarm_when_recheck_fails(monkeypatch, capsys, tmp_path):
+    """⛔ 진짜 멈춤 + 재확인 실패가 겹쳐도 알림은 남는다 — 2(조회 실패)·0(침묵)으로 안 바꾼다."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    _patch_fetch(monkeypatch, {chk.LIVE_HEALTH_WATCH: _recent(14 * 24)})
+
+    def boom(_f):
+        raise RuntimeError("연결 실패")
+
+    monkeypatch.setattr(chk, "fetch_recent_success", boom)
+    assert chk.main(["--workflow", chk.LIVE_HEALTH_WATCH]) == 1
+    assert "재확인 실패(라이브 생존 감시)" in capsys.readouterr().err
+    assert (tmp_path / chk.ISSUE_BODY_FILE).exists()
+
+
+def test_main_rechecks_never_ran_too(monkeypatch, tmp_path):
+    """'성공 기록 없음(갓 만든 것 아님)'도 재확인 대상이다."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    _patch_fetch(monkeypatch, {chk.LH_NOTICE_WATCH: None})
+    _patch_created(monkeypatch, {chk.LH_NOTICE_WATCH: _recent(40 * 24)})
+    monkeypatch.setattr(chk, "fetch_recent_success", lambda f: _recent(48))
+    assert chk.main(["--workflow", chk.LH_NOTICE_WATCH]) == 0
+
+
+def _iso(dt):
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def test_main_recheck_wiring_url_response_parser(monkeypatch, capsys, tmp_path):
+    """연결부: 재확인이 **거름망 없는 주소**로 묻고, 그 응답에서 **가장 늦은 성공**을 고른다.
+
+    자동 고정물이 `fetch_recent_success` 를 통째로 바꿔 두므로 여기서 진짜를 되돌리고, 더 아래
+    `_get_json_with_retry` 만 가짜로 둔다(부른 주소를 기록). 재확인이 `runs_url` 을 쓰거나
+    (`status=success&per_page=1` → 옛 답), 맨 앞 1건만 보면(`parse_latest_success`) 멈춤이 안 풀린다.
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    monkeypatch.setattr(chk, "fetch_recent_success", _REAL_FETCH_RECENT_SUCCESS)
+    stale_answer = {"workflow_runs": [_run("success", _iso(_recent(14 * 24)))]}  # #177 의 옛 답
+    mixed = {"workflow_runs": [                       # 순서가 섞인 최근 실행 목록
+        _run("success", _iso(_recent(10 * 24))),      # 맨 앞은 옛 성공 — 1건만 보면 여기서 멈춘다
+        _run("failure", _iso(_recent(1))),
+        _run(None, _iso(_recent(0.5))),               # 아직 도는 중
+        _run("success", _iso(_recent(3))),            # ← 가장 늦은 성공
+        _run("cancelled", _iso(_recent(2))),
+        _run("success", _iso(_recent(9))),
+    ]}
+    asked = []
+
+    def fake_get(url, **_kw):
+        asked.append(url)
+        return stale_answer if "status=success" in url else mixed
+
+    monkeypatch.setattr(chk, "_get_json_with_retry", fake_get)
+    assert chk.main(["--workflow", chk.LIVE_HEALTH_WATCH]) == 0
+    assert asked == [chk.runs_url(chk.LIVE_HEALTH_WATCH), chk.recent_runs_url(chk.LIVE_HEALTH_WATCH)]
+    recheck = asked[1]
+    assert "status=" not in recheck and recheck.endswith("per_page=20")
+    assert not (tmp_path / chk.ISSUE_BODY_FILE).exists()
+    assert "마지막 성공" in capsys.readouterr().out
+
+
+def test_main_recheck_wiring_keeps_alarm_when_list_is_old_too(monkeypatch, tmp_path):
+    """연결부 반대쪽: 거름망 없는 목록에서도 성공이 오래됐으면(실패만 최근) 멈춤 그대로."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    monkeypatch.setattr(chk, "fetch_recent_success", _REAL_FETCH_RECENT_SUCCESS)
+    stale_answer = {"workflow_runs": [_run("success", _iso(_recent(14 * 24)))]}
+    only_failures_recent = {"workflow_runs": [
+        _run("failure", _iso(_recent(1))),
+        _run("success", _iso(_recent(14 * 24))),
+    ]}
+    monkeypatch.setattr(
+        chk, "_get_json_with_retry",
+        lambda url, **_kw: stale_answer if "status=success" in url else only_failures_recent,
+    )
+    assert chk.main(["--workflow", chk.LIVE_HEALTH_WATCH]) == 1
+    assert (tmp_path / chk.ISSUE_BODY_FILE).exists()
+
+
+def test_main_makes_no_extra_call_when_nothing_is_stale(monkeypatch, tmp_path):
+    """평소 경로(멈춤 없음)에는 재확인 호출이 0회다."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    asked = []
+    monkeypatch.setattr(chk, "fetch_recent_success", lambda f: asked.append(f))
+    _patch_fetch(monkeypatch, _all_fresh_but(chk.LH_NOTICE_WATCH) | {chk.LH_NOTICE_WATCH: _recent(48)})
+    assert chk.main([]) == 0
+    assert asked == []
 
 
 # ── 상호 감시 배선 점검 (한쪽만 걸려 있으면 반쪽 감시가 된다) ────────────────

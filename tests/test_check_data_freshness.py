@@ -20,6 +20,8 @@ import datetime
 import http.client
 import json
 import os
+import shutil
+import subprocess
 import sys
 import urllib.error
 
@@ -447,6 +449,48 @@ def test_malformed_url_exits_two_not_one(monkeypatch, tmp_path, capsys):
     _assert_lookup_failed(monkeypatch, tmp_path, capsys, out)
 
 
+# ── 조회 뒤 결과를 쓰다 죽음 = 4 (1 과 겹치면 워크플로가 조용히 초록) ───────────
+
+
+@pytest.mark.parametrize("today, overdue_cnt", [("2026-11-02", 3), ("2026-10-01", 0)],
+                         ids=["지남", "안지남"])
+def test_unwritable_github_output_exits_four_not_one(monkeypatch, tmp_path, capsys, today, overdue_cnt):
+    """⛔ 이슈 파일을 다 쓴 뒤 GITHUB_OUTPUT 에서 죽는 경로 — 기본값 1 이면 '지남'과 겹친다.
+
+    GITHUB_OUTPUT 을 폴더로 가리켜 실제로 open 이 실패하게 만든다(윈도우·리눅스 공통).
+    """
+    set_env(monkeypatch, tmp_path)
+    blocked = tmp_path / "gh_output_is_a_folder"
+    blocked.mkdir()
+    monkeypatch.setenv("GITHUB_OUTPUT", str(blocked))
+    install_fake_urlopen(monkeypatch, live_like_rows())
+    assert cdf.main(["--today", today]) == cdf.EXIT_OUTPUT_FAILED == 4
+    out = capsys.readouterr().out
+    assert "[실패] 결과를 쓰는 중" in out and "알림이 안 나갔을 수 있습니다" in out
+    assert len(issue_files(tmp_path)) == overdue_cnt, "이슈 파일은 이미 써졌다 — 그래도 1 이 아니다"
+
+
+@pytest.mark.parametrize("stage", ["report", "write_issue_files", "write_github_output"])
+def test_any_failure_after_lookup_exits_four(monkeypatch, tmp_path, capsys, stage):
+    """조회가 끝난 뒤 화면 출력·이슈 파일·GITHUB_OUTPUT 어디서 죽든 4 다(1·0 아님)."""
+    set_env(monkeypatch, tmp_path)
+    install_fake_urlopen(monkeypatch, live_like_rows())
+
+    def boom(*_a, **_kw):
+        raise OSError("디스크가 가득 찼습니다")
+
+    monkeypatch.setattr(cdf, stage, boom)
+    assert cdf.main(["--today", "2026-11-02"]) == cdf.EXIT_OUTPUT_FAILED
+    assert "OSError: 디스크가 가득 찼습니다" in capsys.readouterr().out
+
+
+def test_exit_codes_are_distinct_and_documented():
+    codes = [cdf.EXIT_OK, cdf.EXIT_OVERDUE, cdf.EXIT_LOOKUP_FAILED, cdf.EXIT_NO_CREDENTIALS,
+             cdf.EXIT_OUTPUT_FAILED]
+    assert codes == [0, 1, 2, 3, 4]
+    assert "4 = 조회는 됐는데 결과" in cdf.__doc__
+
+
 def test_github_output_is_noop_outside_actions(monkeypatch):
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
     assert cdf.write_github_output([]) is False
@@ -597,3 +641,131 @@ class TestWorkflow:
         """주 1회 예약이라 기준은 기본값(8일)이다 — 6시간 감시용 1일이 붙으면 헛알림이 매주 뜬다."""
         assert hb.max_age_for(hb.DATA_FRESHNESS_WATCH) == hb.DEFAULT_MAX_AGE_DAYS
         assert hb.label_of(hb.DATA_FRESHNESS_WATCH) == "지난 날짜 감시"
+
+
+# ── 워크플로 단계를 실제로 bash 로 돌려 본다 ─────────────────────────────────
+#
+# 글자 검사만으로는 `<<< "$OPEN_TITLES"` 를 `<<< ""` 로 바꿔도 초록이었다(2026-10-01 실측).
+# 그래서 단계의 run: 글자를 꺼내 GitHub 기본 셸(`bash -e` — `shell:` 을 안 적은 단계의 기본값,
+# 2026-10-01 run 36870678169 로그에 `shell: /usr/bin/bash -e {0}` 로 찍힘)로 돌리고, PATH 앞에
+# 가짜 `gh`·`python` 을 둔다. 네트워크·진짜 gh 는 타지 않는다. pipefail 은 단계가 스스로
+# `set -euo pipefail` 로 켜는 것만 따른다(기본 셸에는 없다).
+# 윈도우는 Git Bash 로 돈다(WSL 의 System32 bash 는 PATH·경로를 다르게 풀어 건너뛴다).
+# ⛔ CI 에서는 bash 가 없으면 건너뛰지 않고 실패한다 — 거기서 조용히 skip 되면 이 시험이 지키는
+#    빈틈(열린 제목 건너뛰기·overdue 기록 검사)이 아무도 모르게 다시 열린다.
+
+
+def _find_bash():
+    path = shutil.which("bash")
+    if not path:
+        return None
+    low = path.lower()
+    if os.name == "nt" and ("system32" in low or "windowsapps" in low):
+        return None
+    return path
+
+
+def _write_lf(path, text):
+    """줄 끝을 LF 로 — CRLF 가 섞이면 bash 가 `\\r` 을 명령 글자로 읽는다."""
+    path.write_bytes(text.encode("utf-8"))
+    path.chmod(0o755)
+
+
+def _run_step(workflow, name, tmp_path, fakes, env_extra):
+    bash = _find_bash()
+    if bash is None:
+        if os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"):
+            pytest.fail("CI 인데 bash 를 못 찾았습니다 — 워크플로 단계 실행 시험을 건너뛸 수 없습니다")
+        pytest.skip("bash 가 없습니다(윈도우는 Git Bash 필요)")
+    bin_dir = tmp_path / "fakebin"
+    bin_dir.mkdir(exist_ok=True)
+    for fname, body in fakes.items():
+        _write_lf(bin_dir / fname, body)
+    _write_lf(tmp_path / "step.sh", _step(workflow, name)["run"])
+    env = dict(os.environ)
+    env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
+    env.update(env_extra)
+    return subprocess.run(
+        [bash, "-e", "step.sh"],
+        cwd=str(tmp_path), env=env, capture_output=True, timeout=60,
+    )
+
+
+FAKE_PYTHON = """#!/bin/sh
+# 가짜 check_data_freshness.py — 시나리오대로 파일·기록을 남기고 정한 코드로 끝난다.
+if [ -n "$FAKE_FILES" ]; then
+  mkdir -p data_freshness_issues
+  printf 't\\n' > data_freshness_issues/01.title
+  printf 'b\\n' > data_freshness_issues/01.md
+fi
+if [ -n "$FAKE_OUTPUT" ]; then
+  printf 'overdue=true\\ncount=1\\n' >> "$GITHUB_OUTPUT"
+fi
+exit "$FAKE_RC"
+"""
+
+
+@pytest.mark.parametrize("rc, files, output, expect", [
+    (1, True, True, 0),     # 지남 — 이슈 파일 + overdue=true 둘 다 → 통과
+    (1, True, False, 1),    # ⛔ 이슈 파일만 있고 기록 없음 → 도중에 죽음 (A2)
+    (1, False, True, 1),    # ⛔ 기록만 있고 이슈 파일 없음 → 도중에 죽음
+    (1, False, False, 1),   # 잡지 못한 예외의 기본값 1
+    (0, False, False, 0),   # 지난 것 없음
+    (2, False, False, 2),   # 조회 실패 → 실패 알림
+    (4, True, False, 4),    # 결과를 쓰다 실패 → 실패 알림
+], ids=["1-둘다", "1-파일만", "1-기록만", "1-둘다없음", "0", "2", "4"])
+def test_check_step_runs_for_real(workflow, tmp_path, rc, files, output, expect):
+    gh_output = tmp_path / "gh_output"
+    gh_output.write_bytes(b"")
+    res = _run_step(workflow, "예정일이 지난 자료가 있는지 확인", tmp_path, {"python": FAKE_PYTHON}, {
+        "FAKE_RC": str(rc),
+        "FAKE_FILES": "1" if files else "",
+        "FAKE_OUTPUT": "1" if output else "",
+        "GITHUB_OUTPUT": "gh_output",
+    })
+    said = res.stdout.decode("utf-8", "replace") + res.stderr.decode("utf-8", "replace")
+    assert res.returncode == expect, said
+    if (rc, files, output) == (1, True, False):
+        assert "overdue=true 기록이 없습니다" in said
+
+
+FAKE_GH = """#!/bin/sh
+# 가짜 gh — issue list 는 열린 제목 파일을, issue create 는 --title 값을 기록 파일에 덧붙인다.
+if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
+  cat open_titles.txt
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "create" ]; then
+  shift 2
+  while [ $# -gt 0 ]; do
+    if [ "$1" = "--title" ]; then printf '%s\\n' "$2" >> created.txt; fi
+    shift
+  done
+  exit 0
+fi
+echo "예상 못 한 gh 호출: $*" >&2
+exit 99
+"""
+
+
+def test_issue_step_skips_only_the_open_title_for_real(workflow, tmp_path):
+    """열린 제목은 **그 자료만** 건너뛰고 나머지는 연다 — 단계를 실제로 돌려 확인한다.
+
+    `<<< ""` 로 바꾸면(열린 제목을 안 봄) 01 도 열려 빨강, `continue` 를 지우면 01 도 열려 빨강.
+    """
+    t1 = "갱신 예정일이 지난 자료 — 건축 인허가 (예정 2026-10-31)"
+    t2 = "갱신 예정일이 지난 자료 — 상권 임대 동향 (부동산원) (예정 2026-10-31)"
+    folder = tmp_path / cdf.ISSUE_DIR
+    folder.mkdir()
+    for stem, title in (("01", t1), ("02", t2)):
+        (folder / (stem + ".title")).write_bytes((title + "\n").encode("utf-8"))
+        (folder / (stem + ".md")).write_bytes("본문\n".encode("utf-8"))
+    (tmp_path / "open_titles.txt").write_bytes((t1 + "\n다른 이슈 제목\n").encode("utf-8"))
+
+    res = _run_step(workflow, "지난 자료마다 이슈를 연다", tmp_path, {"gh": FAKE_GH}, {
+        "GH_TOKEN": "fake", "RUN_URL": "https://example.test/run/1",
+    })
+    said = res.stdout.decode("utf-8", "replace") + res.stderr.decode("utf-8", "replace")
+    assert res.returncode == 0, said
+    created = (tmp_path / "created.txt").read_bytes().decode("utf-8").splitlines()
+    assert created == [t2], said
