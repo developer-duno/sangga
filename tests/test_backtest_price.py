@@ -9,6 +9,7 @@ scripts/backtest_price.py 1:1 단위 테스트 — **순수 함수만** 검사�
 
 import math
 import os
+import re
 import sys
 
 import pytest
@@ -509,12 +510,63 @@ def test_통과구_CSV_는_판정없는_구도_적는다(tmp_path):
 # ── 금지 표현 (절대 규칙 2) ──────────────────────────────────────────────────
 
 
+BANNED_TERMS = ("적정가격", "적정가", "평가액", "감정가", "가치평가")
+
+
+# 띄어 써도 같은 말인 두 낱말 — (앞, 뒤). 붙여 쓰면 BANNED_TERMS 의 낱말이다.
+BANNED_SPACED = (("적정", "가격"), ("가치", "평가"))
+
+
+def _banned_hits(body):
+    """금지 표현을 찾는다 — 두 낱말짜리(`적정 가격`·`가치 평가`)는 **띄어 쓴 꼴까지**.
+
+    글자 통째 비교(`"적정가격" in body`)는 띄어 쓴 꼴을 놓친다(2026-10-02 감사 실측).
+    ⛔ 공백 허용은 **두 낱말 사이 한 자리**(`적정`과 `가격` · `가치`와 `평가`)에만 둔다.
+       글자마다 허용하면 짧은 금지어가 정상 문장에 걸린다 — `적정 가중치`·`감정 가능한`
+       (2026-10-02 검사관 실측: 거짓 빨강). 짧은 셋(`적정가`·`감정가`·`평가액`)은 통째 비교.
+    ⚠️ 못 보는 것: 줄을 넘겨 띄운 꼴(공백은 빈칸·탭만 본다) · 짧은 셋을 띄어 쓴 꼴
+       (`감정 가`) · 낱말 사이에 다른 글자를 끼운 꼴(`적정한 가격`).
+    ⓘ 가드 본체와 양성 대조가 이 함수 하나를 함께 지난다.
+    """
+    hits = [banned for banned in BANNED_TERMS if banned in body]
+    for head, tail in BANNED_SPACED:
+        hits += re.findall(head + r"[ \t]+" + tail, body)
+    return hits
+
+
+def test_띄어쓴_꼴을_보는_낱말은_금지어_목록의_것이다():
+    """앞·뒤를 붙이면 BANNED_TERMS 의 낱말 — 목록과 따로 놀면 한쪽만 고쳐진다."""
+    for head, tail in BANNED_SPACED:
+        assert head + tail in BANNED_TERMS
+
+
 def test_스크립트에_금지표현이_없다():
     path = os.path.join(SCRIPTS_DIR, "backtest_price.py")
     with open(path, encoding="utf-8") as f:
         body = f.read()
-    for banned in ("적정가격", "적정가", "평가액", "감정가", "가치평가"):
+    for banned in BANNED_TERMS:
         assert banned not in body, "금지 표현 발견: {}".format(banned)
+    assert _banned_hits(body) == [], "금지 표현 발견(띄어 쓴 꼴 포함)"
+
+
+@pytest.mark.parametrize("bad", [
+    "# 적정가격", "x = '감정가'", "평가액", "가치평가", "적정가",
+    # ↓ 감사가 "초록(못 잡음)"이라 적은 변형 꼴 — 두 낱말 사이를 띄운 것
+    "# 적정 가격", "적정  가격", "적정\t가격", "가치 평가", "x = '가치  평가'",
+])
+def test_금지표현_탐지기는_띄어쓴_꼴도_잡는다(bad):
+    """양성 대조 — 위 가드가 쓰는 탐지기에 나쁜 예를 넣으면 걸린다."""
+    assert _banned_hits("print('ok')\n" + bad + "\n") != []
+
+
+@pytest.mark.parametrize("good", [
+    "# 참고 시세 밴드 (추정 시세)", "AI 추정값", "시세 밴드", "평가 구간 MdAPE", "적정",
+    # ↓ 글자마다 공백을 허용하던 때 걸리던 정상 문장(거짓 빨강 — 2026-10-02 검사관 실측)
+    "# 표본이 적으면 적정 가중치를 다시 고른다", "감정 가능한", "적정\n    가능한",
+    "평가 액수",
+])
+def test_금지표현_탐지기는_허용_표현을_건드리지_않는다(good):
+    assert _banned_hits("print('ok')\n" + good + "\n") == []
 
 
 # ── 유형축(L7) — 도로등급 · 상권등급 · 9칸 ──────────────────────────────────

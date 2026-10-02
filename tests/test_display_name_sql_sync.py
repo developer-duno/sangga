@@ -291,6 +291,36 @@ def extract_floor_stack_view(sql):
     return sql[i : j if j > 0 else len(sql)]
 
 
+def raw_name_exports(block):
+    """뷰 블록에서 **가리지 않은 원본 건물명(`b.bld_nm`) 참조가 남은 줄**을 돌려준다.
+
+    줄머리든 줄 가운데든 잡는다 — `b.bld_nm,` · `b.bld_nm as raw_nm,` ·
+    `coalesce(b.bld_nm, '') as x` · `select b.bld_nm`.
+    (예전 정규식은 `b.bld_nm,` 한 꼴만 봐서, 다른 이름을 붙여 실으면 초록이었다 —
+    2026-10-02 감사 실측. 가려야 할 개인 성명이 그대로 나가는 꼴이다.)
+
+    순서: ① `--` 주석을 걷는다(줄 전체와 줄 끝 꼬리 — 정본 v_unit_current 블록에
+    "원본 b.bld_nm 이 아니다"라는 주석이 실제로 있다) ② 허용 꼴인 가림 함수 호출
+    `building_display_nm(b.bld_nm, b.dong_nm)`(공백 차이 허용)을 지운다 ③ 그래도
+    `b.bld_nm` 낱말이 남은 줄이 위반이다.
+
+    ⓘ 가드 본체와 양성 대조(test_raw_name_detector_*)가 이 함수 하나를 함께 지난다.
+    ⚠️ 못 보는 것: 별칭이 `b` 가 아닌 경우(`bd.bld_nm`) · 별칭 없는 맨 `bld_nm` ·
+       `b.*` · 따옴표 이름(`b."bld_nm"`) · 점 둘레에 공백을 둔 `b . bld_nm` · 별칭과
+       칸 이름 사이에서 줄을 넘긴 꼴(뒤 둘은 2026-10-02 검사관 실측).
+       문자열 리터럴 안의 `--` 는 고려하지 않는다
+       (두 뷰 블록에 그런 리터럴이 없다 — 2026-10-02 확인).
+    """
+    hits = []
+    for line in block.splitlines():
+        code = line.split("--", 1)[0]
+        code = re.sub(
+            r"(?i)\bbuilding_display_nm\s*\(\s*b\.bld_nm\s*,\s*b\.dong_nm\s*\)", "", code)
+        if re.search(r"(?i)(?<![\w.])b\.bld_nm\b", code):
+            hits.append(line.strip())
+    return hits
+
+
 def test_floor_stack_view_masks_name(schema_sql, migration_sql):
     """스택 뷰 제목도 같은 표시명을 써야 한다 (여기만 빠지면 성명이 화면에 남는다).
 
@@ -318,6 +348,48 @@ def test_floor_stack_view_masks_name(schema_sql, migration_sql):
             "{}: v_floor_stack 이 b.bld_nm 을 그대로 내보냅니다 "
             "(2026-08-08e 이전으로 되돌아갔습니다)".format(label)
         )
+        # 위 정규식은 `b.bld_nm,` 한 꼴만 본다 — 다른 이름을 붙여 싣는 꼴까지.
+        assert raw_name_exports(block) == [], (
+            "{}: v_floor_stack 이 원본 건물명을 내보냅니다".format(label)
+        )
+
+
+@pytest.mark.parametrize("bad", [
+    "  b.bld_nm,",
+    # ↓ 감사가 "초록(못 잡음)"이라 적은 변형 꼴
+    "  b.bld_nm as raw_nm,",
+    "  b.bld_nm::text as raw_nm,",
+    "  B.BLD_NM AS raw_nm,",
+    "  , b.bld_nm",
+    "select b.bld_nm,",
+    "  b.bld_nm",
+    # ↓ 줄 가운데 참조 — 줄머리만 보면 놓치는 꼴
+    "  coalesce(b.bld_nm,'') as x,",
+    "  select b.bld_nm",
+    "  b.display_nm as bld_nm, b.bld_nm as raw_nm,",
+    "  building_display_nm(b.bld_nm, b.dong_nm) as bld_nm, b.bld_nm as raw_nm,",
+    "  building_display_nm(b.bld_nm, b.bld_nm) as bld_nm,",   # 허용 꼴이 아닌 호출
+    "  b.bld_nm as raw_nm,   -- 가렸다고 적어 둔 거짓 주석",
+])
+def test_raw_name_detector_catches(bad):
+    """양성 대조 — 두 뷰 가드가 쓰는 탐지기에 나쁜 예를 넣으면 걸린다."""
+    block = "create or replace view v_x as\nselect\n  b.building_id,\n{}\n  b.dong_nm\nfrom building b;\n"
+    assert raw_name_exports(block.format(bad)) != []
+
+
+@pytest.mark.parametrize("good", [
+    "  b.display_nm as bld_nm,   -- 함수를 부르지 않는다(위 §표시명 저장 컬럼 참조)",
+    "  " + DISPLAY_EXPR_QUALIFIED + " as bld_nm,",
+    "  -- ⚠️ 원본 b.bld_nm 이 아니다. 동명칭 폴백 + 개인 성명 가림을 거친 값이다",
+    "  --    원본은 building.bld_nm 에 그대로 있고, 이 뷰는 내보낼 때만 가린다.",
+    "  b.bld_nm_key,",
+    "  building_display_nm(b.bld_nm, b.dong_nm) as bld_nm,",
+    "  building_display_nm( b.bld_nm ,  b.dong_nm ) as bld_nm,",   # 공백 차이
+    "  b.display_nm as bld_nm,   -- 원본 b.bld_nm 대신 가린 값",   # 줄 끝 꼬리 주석
+])
+def test_raw_name_detector_leaves_the_masked_forms_alone(good):
+    block = "create or replace view v_x as\nselect\n  b.building_id,\n{}\n  b.dong_nm\nfrom building b;\n"
+    assert raw_name_exports(block.format(good)) == []
 
 
 def extract_unit_current_view(sql):
@@ -348,6 +420,10 @@ def test_unit_current_view_masks_name(schema_sql):
     ), "schema.sql: v_unit_current 가 가려진 이름을 안 내보냅니다 — 개인 성명이 그대로 나갑니다"
     assert not re.search(r"^\s*b\.bld_nm\s*,\s*$", block, re.M), (
         "schema.sql: v_unit_current 가 b.bld_nm 을 그대로 내보냅니다"
+    )
+    # 위 정규식은 `b.bld_nm,` 한 꼴만 본다 — 다른 이름을 붙여 싣는 꼴까지.
+    assert raw_name_exports(block) == [], (
+        "schema.sql: v_unit_current 가 원본 건물명을 내보냅니다"
     )
 
 

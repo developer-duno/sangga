@@ -83,6 +83,60 @@ def table_block(sql):
     return sql[start:sql.index(");", start)]
 
 
+# ── "없어야 한다" 탐지기 (가드 본체와 양성 대조가 **같은 함수**를 지난다) ─────
+#
+# ⛔ 글자 통째 비교·줄머리 고정으로 "없음"을 단언하면, 조금만 다르게 적은 위반이
+#    전부 초록으로 빠져나간다(2026-10-02 감사 실측 — 들여쓴 `create policy`,
+#    받는 역할 순서를 바꾼 grant, `grant all`, `"public.arch_permit"`).
+#    그래서 탐지를 함수로 빼고, 그 함수가 **실제로 잡는지**를 아래
+#    TestDetectorsActuallyCatch 가 나쁜 예로 확인한다.
+
+
+def policy_statements(sql):
+    """주석을 걷은 문장에서 `create policy` 를 전부 찾는다.
+
+    줄머리든 들여썼든, 같은 줄의 `;` 뒤에 붙었든 잡는다(대소문자 무시).
+    ⚠️ 못 보는 것(2026-10-02 검사관 실측): 한 줄에 적은
+       `do $$ begin create policy … end $$;` · `then create policy` · 블록 주석(`/* */`)
+       뒤에 붙은 것 · 동적 SQL(`execute '…'`).
+    """
+    return re.findall(r"(?im)(?:^|;)\s*(create\s+policy\b[^;\n]*)", statements(sql))
+
+
+def grant_targets(sql, name=FN):
+    """`grant … on function … <name>(` 의 **대상 이름**을 전부 돌려준다(소문자).
+
+    권한 종류(execute·all)·받는 역할과 그 순서·들여쓰기·줄바꿈·대소문자와
+    무관하게 본다. 돌려주는 값은 적힌 그대로의 이름이다 —
+    `api.<name>` · `public.<name>` · 스키마 없는 `<name>`.
+    ⓘ `revoke grant option for …` 는 회수라 건너뛴다.
+    ⚠️ 못 보는 것(2026-10-02 검사관 실측): 인자 괄호 없는 `on function <name> to …` ·
+       따옴표 이름(`"<name>"()`) · `on procedure`.
+    """
+    found = []
+    for stmt in re.findall(
+            r"(?is)(?<![\w.])grant\b(?!\s+option\s+for\b)[^;]*?"
+            r"\bon\s+(?:function|routine)\b([^;]*)",
+            statements(sql)):
+        found += re.findall(
+            r"(?i)(?<![\w.])((?:\w+\.)?" + re.escape(name) + r")\s*\(", stmt)
+    return [t.lower() for t in found]
+
+
+def public_grants(sql, name=FN):
+    """api 통과 함수가 아닌 대상(= public 원본)에 준 grant 만 고른다."""
+    return [t for t in grant_targets(sql, name) if t != "api." + name]
+
+
+def allowlisted(name, entries):
+    """허용 목록에서 **스키마를 벗긴 이름**이 `name` 과 같은 원소를 돌려준다.
+
+    ⛔ 목록 원소는 2026-09-01 부터 `"public.x"`·`"api.x"` 꼴이다 — 맨 이름으로
+       `name in 목록` 을 물으면 표를 목록에 넣어도 영원히 False 다(죽은 단언).
+    """
+    return [e for e in entries if e.rsplit(".", 1)[-1] == name]
+
+
 # ── 1. 표는 밖에서 잠긴다 ─────────────────────────────────────────────────────
 
 
@@ -103,6 +157,8 @@ class TestTableIsClosed:
         if path == SCHEMA:
             block = block[block.index("create table if not exists {} (".format(TABLE)):]
         assert not re.search(r"(?im)^create\s+policy", statements(block))
+        # 들여쓴 꼴·같은 줄 `;` 뒤에 붙은 꼴까지(위 한 줄은 줄머리만 본다).
+        assert policy_statements(block) == []
 
     @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_STALE, SCHEMA])
     def test_only_the_api_wrapper_is_opened(self, path):
@@ -112,6 +168,9 @@ class TestTableIsClosed:
         # ⛔ public 쪽은 끝까지 닫아 둔다 — 통과 함수가 security definer 라 열 필요가 없다.
         assert "grant execute on function {}(text) to anon".format(FN) not in text
         assert "grant execute on function public.{}(text) to anon".format(FN) not in text
+        # 위 두 줄은 글자 통째 비교라 `to authenticated, anon`·`grant all` 을 놓친다 —
+        # 받는 역할·권한 종류와 무관하게 public 원본을 향한 grant 가 0개인지 본다.
+        assert public_grants(read(path)) == []
 
     @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_STALE, SCHEMA])
     def test_revokes_before_granting(self, path):
@@ -132,6 +191,13 @@ class TestTableIsClosed:
         # 표는 **열려 있으면 안 되므로** 허용 목록에 없어야 한다.
         assert TABLE not in post_load.ANON_READABLE_ALLOWLIST
         assert TABLE not in post_load.ANON_CALLABLE_ALLOWLIST
+        # ⛔ 위 두 줄은 **죽은 단언**이었다(2026-10-02 감사) — 목록 원소가
+        #    `"public.arch_permit"` 꼴이라 맨 이름으로 물으면 표를 넣어도 초록이다.
+        #    스키마를 벗긴 이름으로 묻는다.
+        assert TABLE not in post_load.ANON_READABLE_NAMES
+        assert TABLE not in post_load.ANON_CALLABLE_NAMES
+        assert allowlisted(TABLE, post_load.ANON_READABLE_ALLOWLIST) == []
+        assert allowlisted(TABLE, post_load.ANON_CALLABLE_ALLOWLIST) == []
 
     @pytest.mark.parametrize("path", [MIGRATION, MIGRATION_STALE, SCHEMA])
     def test_only_counts_leave_the_building(self, path):
@@ -144,6 +210,86 @@ class TestTableIsClosed:
         assert "total_cnt" in head and "started_cnt" in head and "base_ym" in head
         for leak in ("plat_plc", "mgm_pmsrgst_pk", "main_purps_nm", "tot_area"):
             assert leak not in head, leak
+
+
+class TestDetectorsActuallyCatch:
+    """양성 대조 — 위 가드가 쓰는 탐지기에 **나쁜 예를 넣으면 걸리는지** 본다.
+
+    "없음"만 단언하는 시험은 탐지기가 죽어도 초록이다(2026-10-02 감사에서 죽은
+    단언 2곳·반쪽 27곳). 가드 본체와 **같은 함수**를 지나게 해야 대조가 된다.
+    """
+
+    @pytest.mark.parametrize("bad", [
+        "create policy p_x on arch_permit for select using (true);",
+        "  create policy p_x on arch_permit for select using (true);",   # 들여쓴 꼴
+        "\tCREATE  POLICY p_x on arch_permit for select using (true);",
+        "alter table arch_permit enable row level security; create policy p_x on arch_permit using (true);",
+    ])
+    def test_policy_detector_catches(self, bad):
+        assert policy_statements("select 1;\n" + bad + "\n") != []
+
+    @pytest.mark.parametrize("good", [
+        "-- create policy 는 만들지 않는다 (정책 0개 = 전부 거부)",
+        "  -- create policy p_x on arch_permit using (true);",
+        "alter table arch_permit enable row level security;",
+        "drop policy if exists p_x on arch_permit;",
+    ])
+    def test_policy_detector_leaves_the_rest_alone(self, good):
+        assert policy_statements("select 1;\n" + good + "\n") == []
+
+    @pytest.mark.parametrize("bad", [
+        "grant execute on function count_nearby_permits(text) to anon;",
+        "grant execute on function public.count_nearby_permits(text) to anon;",
+        # ↓ 감사가 "초록(못 잡음)"이라 적은 변형 꼴들
+        "grant execute on function public.count_nearby_permits(text) to authenticated, anon;",
+        "grant all on function count_nearby_permits(text) to anon;",
+        "  grant execute on function count_nearby_permits(text) to anon;",
+        "GRANT EXECUTE\n  ON FUNCTION public.count_nearby_permits (text)\n  TO anon;",
+        "grant execute on function api.count_nearby_permits(text), count_nearby_permits(text) to anon;",
+    ])
+    def test_public_grant_detector_catches(self, bad):
+        assert public_grants(bad) != []
+
+    @pytest.mark.parametrize("good", [
+        "grant execute on function api.count_nearby_permits(text) to anon, authenticated;",
+        "revoke all on function count_nearby_permits(text) from public, anon, authenticated;",
+        "revoke grant option for execute on function count_nearby_permits(text) from anon;",
+        "-- grant execute on function count_nearby_permits(text) to anon;",
+        "grant execute on function api.count_nearby_permits_v2(text) to anon;",
+        "grant execute on function other_fn(text) to anon;",
+    ])
+    def test_public_grant_detector_leaves_the_rest_alone(self, good):
+        assert public_grants(good) == []
+
+    def test_grant_targets_reports_the_api_wrapper(self):
+        """대상 이름을 적힌 그대로 돌려준다 — api 쪽이 안 잡히면 위 판정이 헛돈다."""
+        sql = ("revoke all on function api.count_nearby_permits(text) from public;\n"
+               "grant execute on function api.count_nearby_permits(text) to anon, authenticated;\n")
+        assert grant_targets(sql) == ["api.count_nearby_permits"]
+
+    @pytest.mark.parametrize("entries", [
+        ("public.arch_permit",),
+        ("api.arch_permit",),
+        ("arch_permit",),
+        ("api.count_nearby_permits", "public.arch_permit"),
+    ])
+    def test_allowlist_detector_sees_through_the_schema_prefix(self, entries):
+        assert allowlisted(TABLE, entries) != []
+
+    @pytest.mark.parametrize("entries", [
+        (),
+        ("api.count_nearby_permits",),
+        ("public.arch_permit_archive",),
+        ("public.v_floor_stack", "api.v_floor_stack"),
+    ])
+    def test_allowlist_detector_leaves_the_rest_alone(self, entries):
+        assert allowlisted(TABLE, entries) == []
+
+    def test_post_load_bare_names_strip_the_schema(self):
+        """가드가 기대는 `*_NAMES` 가 실제로 스키마를 벗기는지 — 안 벗기면 가드가 다시 죽는다."""
+        import post_load
+
+        assert post_load._bare_names(("public.arch_permit", "api.arch_permit")) == (TABLE,)
 
 
 # ── 2. 다음 달에 터지지 않는가 ────────────────────────────────────────────────
