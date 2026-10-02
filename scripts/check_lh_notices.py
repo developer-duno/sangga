@@ -295,7 +295,15 @@ def main(argv=None):
     ap.add_argument("--json", action="store_true", help="기계용 JSON 출력")
     args = ap.parse_args(argv)
 
-    key = get_api_key()
+    # ⛔ 열쇠를 읽다 난 예외도 2 다 — try 밖에서 죽으면 파이썬 기본값 1 = "새 공고 있음"으로 읽힌다.
+    #    ⚠️ 여기서는 lh.mask_key 를 못 쓴다(가릴 열쇠가 아직 없다). 그래서 예외 **종류 이름만** 적고
+    #    본문은 싣지 않는다 — 열쇠 값이 메시지에 섞여 로그로 나갈 길을 아예 두지 않는다.
+    try:
+        key = get_api_key()
+    except Exception as e:
+        print("[실패] 인증키를 읽는 중 {} — 확인을 못 했습니다('새 공고 없음'이 아닙니다).".format(
+            type(e).__name__), file=sys.stderr)
+        return 2
     if not key:
         print("MOLIT_KEY 가 없습니다 — 이 감시는 인증키 하나만 씁니다.", file=sys.stderr)
         print("  Actions 라면 저장소 Secrets 에 MOLIT_KEY 를 넣으세요.", file=sys.stderr)

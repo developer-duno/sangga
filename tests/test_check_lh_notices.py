@@ -302,6 +302,24 @@ class TestMain:
         assert chk.main([]) == 2
         assert "MOLIT_KEY" in capsys.readouterr().err
 
+    def test_two_when_reading_the_key_fails(self, monkeypatch, tmp_path, capsys):
+        """⛔ 열쇠를 읽다 죽어도 2 다 — try 밖이면 파이썬 기본값 1 = '새 공고 있음'으로 샌다.
+        예외 본문은 화면에 싣지 않는다(가릴 열쇠가 아직 없어 mask_key 를 못 쓴다)."""
+        monkeypatch.chdir(tmp_path)
+        out = tmp_path / "gh_output"
+        monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+        _patch(monkeypatch, [_fresh()])
+
+        def boom():
+            raise RuntimeError("열쇠값-절대-찍히면-안됨")
+
+        monkeypatch.setattr(chk, "get_api_key", boom)
+        assert chk.main([]) == 2
+        said = capsys.readouterr()
+        assert "[실패] 인증키를 읽는 중 RuntimeError" in said.err
+        assert "열쇠값-절대-찍히면-안됨" not in said.out + said.err
+        assert not out.exists() and not (tmp_path / chk.ISSUE_BODY_FILE).exists()
+
     def test_json_output(self, monkeypatch, tmp_path, capsys):
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
