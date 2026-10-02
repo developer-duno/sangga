@@ -118,6 +118,69 @@ def returns_columns(block):
     return tuple(m.group(1) for m in re.finditer(r"(?m)^\s+(\w+)\s+\w", head))
 
 
+# ── 탐지 함수 (2026-10-02 감사) ─────────────────────────────────────────────
+# "없다"만 단언하는 가드는 탐지가 헛돌아도 초록이다. 그래서 탐지를 **글자를 받아 위반
+# 목록을 돌려주는 함수**로 빼 두고, 가드 본체와 아래 양성 대조(§7)가 같은 함수를 지난다.
+# ⓘ 형제 test_price_gate_migration.py 의 것을 **복사**했다(import 하지 않는다 — 위 머리말).
+
+
+def write_words_in(body):
+    """함수 본문에서 **쓰기 낱말**을 찾아 돌려준다 — 없으면 빈 목록.
+
+    ⛔ `update` 만 뒤에 낱말 경계를 둔다(`updated_at` 같은 칸 이름과 가르려고).
+       예전에는 금지어가 `"update "`(뒤 공백)라 **줄바꿈이 오면** 놓쳤다.
+    ⓘ 나머지 셋은 예전 그대로 글자가 들어 있기만 해도 잡는다(좁히지 않는다).
+    ⚠️ 거짓 빨강 쪽: 뒤쪽 낱말 경계만 보므로 `last_update` 처럼 **`update` 로 끝나는 칸 이름**이
+       걸린다(2026-10-02 검사관 실측 · 지금 본문에는 0건) — 그런 칸을 쓰게 되면 이 탐지를
+       고칠 것(시험을 느슨하게 하지 말고).
+    """
+    return re.findall(r"insert|delete|truncate|update\b", body.lower())
+
+
+def table_grants_in(text, name):
+    """`grant <무엇이든> on [table] [public.]<name>` 꼴을 찾아 돌려준다 — 없으면 빈 목록.
+
+    ⛔ 예전에는 `"grant select on <뷰>"` 글자를 통째로 찾아, `on table …` 이나 `public.`
+       접두가 붙으면 놓쳤다. 권한 종류(select·all·여러 개)와 칸 수는 안 가린다.
+    ⓘ `[^;]` 라서 한 문장(세미콜론) 밖으로는 안 넘어간다 — 앞 문장의 grant 와 뒤 문장의
+       `revoke all on <뷰>` 가 이어 붙어 걸리는 일이 없다.
+    ⚠️ 못 보는 것(2026-10-02 검사관 실측): 여러 대상 나열에서 첫째가 아닌 자리
+       (`on v_floor_stack, <뷰>`) · 따옴표 이름(`"<뷰>"`) · `on all tables in schema public`.
+    """
+    return [m.group(0) for m in re.finditer(
+        r"(?i)\bgrant\b[^;]*?\bon\s+(?:table\s+)?(?:public\.)?" + re.escape(name), text)]
+
+
+def raw_table_reads_in(body):
+    """본문이 개별 거래 표 `transaction` 을 **직접 읽는 자리** — 없으면 빈 목록.
+
+    ⛔ 예전에는 `"from transaction"` 글자만 봐서 `join transaction t` 를 놓쳤다.
+    ⓘ 낱말로 본다 — 표 이름 자리에 `transaction` 이 **통째로** 올 때만 걸린다
+       (`public.` 접두는 허용). 요약 뷰(`mv_sigungu_tx_yearly`)나 별칭은 안 걸린다.
+    ⚠️ 못 보는 것(2026-10-02 검사관 실측): 쉼표 조인
+       (`from mv_sigungu_tx_yearly m, transaction t`) · `from only transaction` ·
+       따옴표 이름(`"transaction"`). `from`·`join` 바로 뒤에 올 때만 본다.
+    """
+    return re.findall(r"(?i)\b(?:from|join)\s+(?:public\.)?transaction\b", body)
+
+
+def allowlist_hits(name, allowlists=None):
+    """허용 목록 안에서 **맨 이름이 `name` 인 항목**을 적힌 그대로 모은다 — 없으면 빈 목록.
+
+    ⛔ 허용 목록은 2026-09-01 부터 `스키마.이름` 꼴이라, 맨 이름으로 `not in` 을 보면
+       `"public.<뷰>"` 로 넣는 순간 초록이다. 스키마를 벗긴 이름으로 견준다
+       (벗기는 규칙은 post_load._bare_names 한 곳 — 여기서 다시 적지 않는다).
+    ⓘ `allowlists` 를 안 주면 지금의 실제 두 목록(읽기·부르기)을 본다.
+    """
+    if allowlists is None:
+        allowlists = (post_load.ANON_READABLE_ALLOWLIST,
+                      post_load.ANON_CALLABLE_ALLOWLIST)
+    return [
+        q for allow in allowlists for q in allow
+        if post_load._bare_names((q,)) == (name,)
+    ]
+
+
 # ── 1. 요약표는 집합 거래만, 해마다 ──────────────────────────────────────────
 
 
@@ -159,8 +222,7 @@ class TestTheViewExists:
     def test_the_view_is_never_opened_to_anon(self, path):
         """⛔ 표가 열리면 화면이 함수로만 읽는다는 계약이 통째로 우회된다."""
         text = flat(read(path))
-        assert "grant select on {}".format(MV) not in text
-        assert "grant all on {}".format(MV) not in text
+        assert table_grants_in(text, MV) == []
 
     @pytest.mark.parametrize("path", ALL)
     def test_the_view_is_explicitly_revoked(self, path):
@@ -178,8 +240,7 @@ class TestTheViewExists:
         )
 
     def test_the_exposure_check_does_not_allow_the_view(self):
-        assert MV not in post_load.ANON_READABLE_ALLOWLIST
-        assert MV not in post_load.ANON_CALLABLE_ALLOWLIST
+        assert allowlist_hits(MV) == []
 
 
 class TestTheAreaColumn:
@@ -285,9 +346,8 @@ class TestReturnedColumnsAreFixed:
     @pytest.mark.parametrize("path", ALL)
     def test_it_only_reads(self, path):
         """⛔ 이 길에 쓰기가 붙는 날, 읽기 전용이라는 전제가 사라진다."""
-        body = statements(fn_block(read(path))).lower()
-        for banned in ("insert", "update ", "delete", "truncate"):
-            assert banned not in body, banned
+        body = statements(fn_block(read(path)))
+        assert write_words_in(body) == []
 
     @pytest.mark.parametrize("path", ALL)
     def test_it_reads_the_summary_not_the_raw_table(self, path):
@@ -296,6 +356,7 @@ class TestReturnedColumnsAreFixed:
         body = statements(fn_block(read(path)))
         assert MV in body
         assert "from transaction" not in body
+        assert raw_table_reads_in(body) == []
 
 
 # ── 3. 새 함수는 닫힌 채로 태어난다 (2026-09-01b) ────────────────────────────
@@ -417,6 +478,79 @@ def test_returns_columns_helper_actually_reads_the_list():
         ")\n"
     )
     assert returns_columns(sample) == ("a", "b")
+
+
+# ⛔ 아래는 "없다"만 단언하는 가드들의 **양성 대조**다(2026-10-02 감사). 가드 본체와 같은
+#    탐지 함수에 나쁜 예를 넣어 본다 — 흔한 꼴만이 아니라 감사 때 실제로 놓쳤던 변형 꼴까지.
+
+
+@pytest.mark.parametrize("bad", [
+    "select 1 from (delete from t returning 1) d",
+    "insert into t values (1)",
+    "truncate t",
+    "update t set n = 0",
+    "select 1 from (update\n    t set n = 0 returning 1) u",   # 놓치던 꼴 — 뒤가 줄바꿈
+    "UPDATE\tt SET n = 0",
+])
+def test_write_words_in_catches_every_write(bad):
+    assert write_words_in(bad), bad
+
+
+def test_write_words_in_leaves_plain_reads_alone():
+    assert write_words_in(
+        "select m.yr, m.updated_at\n  from mv_sigungu_tx_yearly m\n  order by m.yr") == []
+
+
+@pytest.mark.parametrize("bad", [
+    "grant select on {t} to anon;",
+    "grant all on {t} to anon;",
+    "grant select on public.{t} to anon;",                     # 놓치던 꼴
+    "grant select on table public.{t} to anon;",
+    "grant select, insert on table {t} to authenticated;",
+    "GRANT ALL PRIVILEGES ON {t} TO anon;",
+])
+def test_table_grants_in_catches_every_shape(bad):
+    assert table_grants_in(flat(bad.format(t=MV)), MV), bad
+
+
+@pytest.mark.parametrize("good", [
+    "revoke all on {t} from public, anon, authenticated;",
+    "refresh materialized view concurrently {t};",
+    "grant execute on function api.get_sigungu_tx_yearly(text) to anon, authenticated;",
+    # 앞 문장의 grant 가 뒤 문장의 뷰 이름과 이어 붙어 걸리면 안 된다.
+    "grant select on v_floor_stack to anon;\nrevoke all on {t} from anon;",
+])
+def test_table_grants_in_leaves_the_rest_alone(good):
+    assert table_grants_in(flat(good.format(t=MV)), MV) == [], good
+
+
+@pytest.mark.parametrize("bad", [
+    "select 1 from transaction t",
+    "from mv_sigungu_tx_yearly m\n  join transaction t on true",   # 놓치던 꼴 — join
+    "from mv_sigungu_tx_yearly m left join public.transaction t on true",
+    "select 1 FROM\n    transaction",
+])
+def test_raw_table_reads_in_catches_from_and_join(bad):
+    assert raw_table_reads_in(bad), bad
+
+
+@pytest.mark.parametrize("good", [
+    "select m.yr from mv_sigungu_tx_yearly m order by m.yr",
+    "select m.n_all as transaction_cnt from mv_sigungu_tx_yearly m",
+])
+def test_raw_table_reads_in_leaves_the_summary_alone(good):
+    assert raw_table_reads_in(good) == [], good
+
+
+def test_allowlist_hits_sees_the_schema_qualified_form():
+    fine = ("api." + FN, "public.v_floor_stack")
+    # 나쁜 예 — 맨 이름(흔한 꼴)과 스키마가 붙은 이름(놓치던 꼴).
+    for bad in (MV, "public." + MV, "api." + MV):
+        assert allowlist_hits(MV, [fine + (bad,)]) == [bad], bad
+    # 좋은 예 — 이름이 겹치기만 하는 것은 안 걸린다.
+    assert allowlist_hits(MV, [fine, ("public.%s_v2" % MV,)]) == []
+    # 전제 — 실제 목록이 정말 `스키마.이름` 꼴이고, 이 함수가 그 꼴에서 이름을 찾아낸다.
+    assert allowlist_hits(FN) == ["api." + FN]
 
 
 class TestTheRebuildIsAtomic:

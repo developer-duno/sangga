@@ -62,6 +62,18 @@ def rls_enabled_in(sql):
         r"(?im)^alter\s+table\s+(\w+)\s+enable\s+row\s+level\s+security", sql)))
 
 
+def policies_in(sql):
+    """`create policy <이름>` 문장이 만드는 정책 이름들 — 없으면 빈 목록.
+
+    ⛔ 줄머리에 **들여쓰기를 허용한다**. 예전에는 `^create policy` 만 봐서, DO 블록 안에
+       들여쓴 `create policy` 는 그대로 초록이었다(2026-10-02 감사).
+    ⚠️ 못 보는 것(2026-10-02 검사관 실측): 같은 줄의 `;` 뒤에 붙은 것
+       (`select 1; create policy …`) · `then create policy` · 블록 주석(`/* */`) 뒤에
+       붙은 것 · 동적 SQL(`execute '…'`). 줄 첫머리(공백 뒤)에 올 때만 본다.
+    """
+    return re.findall(r"(?im)^\s*create\s+policy\s+(\S+)", sql)
+
+
 class TestEveryTableHasRls:
     def test_no_table_is_missing_rls(self, schema):
         """⛔ 새 표를 만들며 RLS 를 잊으면 **여기서** 걸린다.
@@ -134,5 +146,30 @@ class TestNoPolicies:
     def test_schema_creates_no_policy(self, schema):
         """정책을 하나라도 만들면 '정책 0개 = 전부 거부' 전제가 깨진다 — 그때는 그 정책이
         무엇을 여는지 사람이 따져야 하므로, 조용히 늘어나지 않게 막는다."""
-        found = re.findall(r"(?im)^create\s+policy\s+(\S+)", schema)
+        found = policies_in(schema)
         assert not found, "정본이 정책을 만듭니다: {}".format(found)
+
+    @pytest.mark.parametrize("bad", [
+        "create policy p_read on parcel for select using (true);",
+        # 놓치던 꼴 — DO 블록 안에 들여쓴 것.
+        "do $$\nbegin\n  create policy p_read on parcel for select using (true);\nend\n$$;",
+        "\tCREATE  POLICY p_read ON parcel FOR SELECT USING (true);",
+        "create\n  policy p_read on parcel for select using (true);",
+    ])
+    def test_the_guard_itself_would_catch_a_policy(self, bad):
+        """⛔ 위 시험이 **진짜 무는지** — 같은 함수(policies_in)에 나쁜 예를 넣어 본다.
+
+        "없다"만 단언하는 시험은 정규식이 헛돌아도 초록이다. 정본과 같은 길(주석 걷기)을
+        지나게 해서, 흔한 꼴과 감사 때 놓쳤던 꼴(들여쓴 것)이 둘 다 걸리는지 본다.
+        """
+        assert policies_in(statements("create table t (id int);\n" + bad + "\n")) == ["p_read"]
+
+    @pytest.mark.parametrize("good", [
+        # 설명 주석에 적어 둔 말은 문장이 아니다(statements() 가 걷는다).
+        "-- create policy 는 만들지 않는다 (RLS 켬 + 정책 0개 = 전부 거부)",
+        "  -- create policy p_read on parcel for select using (true);",
+        "alter table parcel enable row level security;",
+        "drop policy if exists p_read on parcel;",
+    ])
+    def test_the_guard_leaves_the_rest_alone(self, good):
+        assert policies_in(statements("create table t (id int);\n" + good + "\n")) == []

@@ -20,6 +20,7 @@ scripts/feedback_digest.py 1:1 단위 테스트.
 
 import json
 import os
+import re
 import sys
 import urllib.error
 
@@ -467,6 +468,22 @@ def _step(workflow, name):
     return matches[0]
 
 
+def _secret_refs(text):
+    """워크플로 글자에서 `secrets.<이름>` · `secrets['이름']` 꼴의 참조를 찾는다.
+
+    ⚠️ "전부"는 아니다 — 이름을 안 짚고 통째로 넘기는 꼴은 못 본다(2026-10-02 검사관
+       실측): `${{ toJSON(secrets) }}` · 재사용 워크플로의 `secrets: inherit`.
+
+    ⛔ 이 워크플로는 Secrets 를 **하나도** 안 쓴다(URL·공개키는 vars.*) — 그래서
+       특정 이름(`secrets.SANGGA_SUPABASE…`)만 금지하면 이름이 다른 secret 은 초록으로
+       빠져나간다(2026-10-02 감사 실측: `secrets.SUPABASE_ANON_KEY`). 형제
+       tests/test_check_data_freshness.py 처럼 `secrets.` 전체를 금지한다.
+    ⓘ 가드 본체와 양성 대조가 이 함수 하나를 함께 지난다. 주석도 그대로 본다
+       (원래 가드가 원문 전체를 봤다) · GitHub 식은 대소문자를 안 가려 그것도 무시한다.
+    """
+    return re.findall(r"(?i)\bsecrets\s*(?:\.\s*\w+|\[[^\]]*\])", text)
+
+
 class TestWorkflow:
     """본보기는 lh-notice-watch.yml **하나**다 — 자격값 게이트 + outputs 기반 알림 +
     별도 failure 알림, feedback-digest.yml 과 구조가 같다. (live-health-watch.yml 의
@@ -512,6 +529,31 @@ class TestWorkflow:
         assert "vars.SANGGA_SUPABASE_URL" in workflow_text
         assert "vars.SANGGA_SUPABASE_ANON_KEY" in workflow_text
         assert "secrets.SANGGA_SUPABASE" not in workflow_text
+        # 위 한 줄은 그 이름으로 시작하는 secret 만 본다 — 이름이 무엇이든 0개여야 한다.
+        assert "secrets." not in workflow_text
+        assert _secret_refs(workflow_text) == []
+
+    @pytest.mark.parametrize("bad", [
+        "          SUPABASE_URL: ${{ secrets.SANGGA_SUPABASE_URL }}",
+        # ↓ 감사가 "초록(못 잡음)"이라 적은 변형 꼴 — 이름이 다른 secret
+        "          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}",
+        "          K: ${{secrets.FOO}}",
+        "          K: ${{ SECRETS.FOO }}",
+        "          K: ${{ secrets['FOO'] }}",
+        "# U: ${{ secrets.SUPABASE_ANON_KEY }}",
+    ])
+    def test_secret_detector_catches(self, bad):
+        """양성 대조 — 위 가드가 쓰는 탐지기에 나쁜 예를 넣으면 걸린다."""
+        assert _secret_refs("env:\n" + bad + "\n") != []
+
+    @pytest.mark.parametrize("good", [
+        "          SUPABASE_URL: ${{ vars.SANGGA_SUPABASE_URL }}",
+        "          SUPABASE_ANON_KEY: ${{ vars.SANGGA_SUPABASE_ANON_KEY }}",
+        "          GH_TOKEN: ${{ github.token }}",
+        "# ⓘ 비밀값(Secrets)은 여전히 **0개**다.",
+    ])
+    def test_secret_detector_leaves_the_rest_alone(self, good):
+        assert _secret_refs("env:\n" + good + "\n") == []
 
     def test_watches_all_four_siblings(self, workflow_text):
         """⛔ 새 예약은 그물에 들어가야 하고, 그물도 새 예약을 봐야 한다(양방향)."""

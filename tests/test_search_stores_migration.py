@@ -333,6 +333,80 @@ def squeeze(text):
     return re.sub(r"\s+", " ", text)
 
 
+# ── 탐지 함수 (2026-10-02 감사) ─────────────────────────────────────────────
+# "없다"만 단언하는 가드는 탐지가 헛돌아도 초록이다. 그래서 탐지를 **글자를 받아 위반
+# 목록을 돌려주는 함수**로 빼 두고, 가드 본체와 아래 양성 대조(§8)가 같은 함수를 지난다.
+# ⓘ 형제 test_tx_yearly_migration.py 의 것을 **복사**했다(import 하지 않는다 — 위 머리말).
+
+
+def write_words_in(body):
+    """함수 본문에서 **쓰기 낱말**을 찾아 돌려준다 — 없으면 빈 목록.
+
+    ⛔ `update` 만 뒤에 낱말 경계를 둔다(`updated_at` 같은 칸 이름과 가르려고).
+       예전에는 금지어가 `"update "`(뒤 공백)라 **줄바꿈이 오면** 놓쳤다.
+    ⓘ 나머지 셋은 예전 그대로 글자가 들어 있기만 해도 잡는다(좁히지 않는다).
+    ⚠️ 거짓 빨강 쪽: 뒤쪽 낱말 경계만 보므로 `last_update` 처럼 **`update` 로 끝나는 칸 이름**이
+       걸린다(2026-10-02 검사관 실측 · 지금 본문에는 0건) — 그런 칸을 쓰게 되면 이 탐지를
+       고칠 것(시험을 느슨하게 하지 말고).
+    """
+    return re.findall(r"insert|delete|truncate|update\b", body.lower())
+
+
+def table_grants_in(text, name):
+    """`grant <무엇이든> on [table] [public.]<name>` 꼴을 찾아 돌려준다 — 없으면 빈 목록.
+
+    ⛔ 예전에는 `"grant select on <표>"` 글자를 통째로 찾아, `on table …` 이나 `public.`
+       접두가 붙으면 놓쳤다. 권한 종류(select·all·여러 개)와 칸 수는 안 가린다.
+    ⓘ `[^;]` 라서 한 문장(세미콜론) 밖으로는 안 넘어간다 — 앞 문장의 grant 와 뒤 문장의
+       `revoke all on <표>` 가 이어 붙어 걸리는 일이 없다.
+    ⚠️ 못 보는 것(2026-10-02 검사관 실측): 여러 대상 나열에서 첫째가 아닌 자리
+       (`on v_floor_stack, <표>`) · 따옴표 이름(`"<표>"`) · `on all tables in schema public`.
+    """
+    return [m.group(0) for m in re.finditer(
+        r"(?i)\bgrant\b[^;]*?\bon\s+(?:table\s+)?(?:public\.)?" + re.escape(name), text)]
+
+
+def public_fn_grants_in(text, name):
+    """함수 grant 문장의 **대상** 가운데 api 통과 함수가 아닌 `<name>(` — 없으면 빈 목록.
+
+    `grant … on function|routine …` 문장마다 대상들을 뽑아, 이름이 `<name>` 인데
+    `api.<name>` 이 아닌 것(= public 원본 · 소문자, 적힌 그대로)을 돌려준다.
+    ⛔ 예전에는 인자 타입을 글자로 못 박아(`(text, int, text, int)`), 같은 함수를
+       `integer` 별칭으로 적으면 놓쳤다. **함수 이름까지만** 보고 인자 글자는 안 가린다.
+    ⛔ `grant execute on function [public.]<name>(` 를 한 덩어리로 찾으면 `grant all` ·
+       여러 대상 나열(`api.<name>(…), <name>(…)`) · `on routine` 을 놓친다(2026-10-02
+       검사관 실측) — 형제 test_arch_permit_migration.py 의 grant_targets 와 같은 방식.
+    ⓘ `revoke grant option for …` 는 회수라 건너뛴다.
+    ⚠️ 못 보는 것: 인자 괄호 없는 `on function <name> to …` · 따옴표 이름
+       (`"<name>"(…)`) · `on procedure`.
+    """
+    found = []
+    for stmt in re.findall(
+            r"(?is)(?<![\w.])grant\b(?!\s+option\s+for\b)[^;]*?"
+            r"\bon\s+(?:function|routine)\b([^;]*)",
+            text):
+        found += re.findall(
+            r"(?i)(?<![\w.])((?:\w+\.)?" + re.escape(name) + r")\s*\(", stmt)
+    return [t.lower() for t in found if t.lower() != "api." + name]
+
+
+def allowlist_hits(name, allowlists=None):
+    """허용 목록 안에서 **맨 이름이 `name` 인 항목**을 적힌 그대로 모은다 — 없으면 빈 목록.
+
+    ⛔ 허용 목록은 2026-09-01 부터 `스키마.이름` 꼴이라, 맨 이름으로 `not in` 을 보면
+       `"public.<표>"` 로 넣는 순간 초록이다. 스키마를 벗긴 이름으로 견준다
+       (벗기는 규칙은 post_load._bare_names 한 곳 — 여기서 다시 적지 않는다).
+    ⓘ `allowlists` 를 안 주면 지금의 실제 두 목록(읽기·부르기)을 본다.
+    """
+    if allowlists is None:
+        allowlists = (post_load.ANON_READABLE_ALLOWLIST,
+                      post_load.ANON_CALLABLE_ALLOWLIST)
+    return [
+        q for allow in allowlists for q in allow
+        if post_load._bare_names((q,)) == (name,)
+    ]
+
+
 # ── 0. 기존 표와 사슬 넷은 **한 글자도 안 건드린다** (이 파일의 본론) ────────
 
 
@@ -496,9 +570,8 @@ class TestReturnedColumnsAreFixed:
     @pytest.mark.parametrize("path", BOTH)
     def test_it_only_reads(self, path):
         """⛔ 이 길에 쓰기가 붙는 날, 읽기 전용이라는 전제가 사라진다."""
-        body = statements(fn_block(read(path))).lower()
-        for banned in ("insert", "update ", "delete", "truncate"):
-            assert banned not in body, banned
+        body = statements(fn_block(read(path)))
+        assert write_words_in(body) == []
 
 
 # ── 3. 구를 안 고르면 0건 · 너무 넓으면 한 줄 ────────────────────────────────
@@ -593,8 +666,7 @@ class TestClosedByDefault:
             "revoke all on function %s(text, int, text, int) "
             "from public, anon, authenticated;" % FN in text
         )
-        assert not re.search(
-            r"grant execute on function (public\.)?%s\(text, int, text, int\)" % FN, text)
+        assert public_fn_grants_in(text, FN) == []
 
     @pytest.mark.parametrize("path", BOTH)
     def test_api_twin_is_granted_after_revoke(self, path):
@@ -611,16 +683,14 @@ class TestClosedByDefault:
         """⛔ 이 표가 열리면 상호 묶음(store_names)이 통째로 긁혀 구 좁히기·상한이
         전부 우회된다 — 2026-08-13 사고(mv_search_parcel 200)와 같은 형태다."""
         text = flat(read(path))
-        assert "grant select on {}".format(NEW_MV) not in text
-        assert "grant all on {}".format(NEW_MV) not in text
+        assert table_grants_in(text, NEW_MV) == []
         assert "revoke all on {} from public, anon, authenticated;".format(NEW_MV) in text
 
     def test_the_exposure_check_knows_it(self):
         """허용 목록에 없으면 `--check` 가 멀쩡한 함수를 **[사고]** 로 알린다."""
         assert "api.{}".format(FN) in post_load.ANON_CALLABLE_ALLOWLIST
         assert FN in post_load.ANON_CALLABLE_NAMES
-        assert NEW_MV not in post_load.ANON_READABLE_ALLOWLIST
-        assert NEW_MV not in post_load.ANON_CALLABLE_ALLOWLIST
+        assert allowlist_hits(NEW_MV) == []
 
     def test_the_migration_reloads_postgrest(self):
         """⛔ 빠뜨리면 DB 에는 있는데 화면만 404(PGRST202) 가 난다."""
@@ -793,6 +863,90 @@ def test_returns_columns_helper_survives_parenthesised_types():
         ")\n"
     )
     assert returns_columns(sample) == ("pnu", "n", "names")
+
+
+# ⛔ 아래는 "없다"만 단언하는 가드들의 **양성 대조**다(2026-10-02 감사). 가드 본체와 같은
+#    탐지 함수에 나쁜 예를 넣어 본다 — 흔한 꼴만이 아니라 감사 때 실제로 놓쳤던 변형 꼴까지.
+
+
+@pytest.mark.parametrize("bad", [
+    "select 1 from (delete from t returning 1) d",
+    "insert into t values (1)",
+    "truncate t",
+    "update t set n = 0",
+    "select 1 from (update\n    t set n = 0 returning 1) u",   # 놓치던 꼴 — 뒤가 줄바꿈
+    "UPDATE\tt SET n = 0",
+])
+def test_write_words_in_catches_every_write(bad):
+    assert write_words_in(bad), bad
+
+
+def test_write_words_in_leaves_plain_reads_alone():
+    assert write_words_in(
+        "select h.pnu, h.updated_at\n  from mv_parcel_store_names h\n  order by 1") == []
+
+
+@pytest.mark.parametrize("bad", [
+    "grant select on {t} to anon;",
+    "grant all on {t} to anon;",
+    "grant select on table public.{t} to anon;",               # 놓치던 꼴
+    "grant select on public.{t} to anon;",                     # 놓치던 꼴
+    "grant select, insert on table {t} to authenticated;",
+    "GRANT ALL PRIVILEGES ON {t} TO anon;",
+])
+def test_table_grants_in_catches_every_shape(bad):
+    assert table_grants_in(flat(bad.format(t=NEW_MV)), NEW_MV), bad
+
+
+@pytest.mark.parametrize("good", [
+    "revoke all on {t} from public, anon, authenticated;",
+    "refresh materialized view concurrently {t};",
+    "grant execute on function api.search_stores(text, int, text, int) to anon, authenticated;",
+    # 앞 문장의 grant 가 뒤 문장의 표 이름과 이어 붙어 걸리면 안 된다.
+    "grant select on v_floor_stack to anon;\nrevoke all on {t} from anon;",
+])
+def test_table_grants_in_leaves_the_rest_alone(good):
+    assert table_grants_in(flat(good.format(t=NEW_MV)), NEW_MV) == [], good
+
+
+@pytest.mark.parametrize("bad", [
+    "grant execute on function {f}(text, int, text, int) to anon;",
+    "grant execute on function {f}(text, integer, text, integer) to anon;",   # 놓치던 꼴
+    "grant execute on function public.{f}(text, int, text, int) to authenticated;",
+    "grant execute on function {f}() to anon;",
+    "GRANT EXECUTE ON FUNCTION public.{f} (text, int4, text, int4) TO anon;",
+    # ↓ 검사관이 "초록(못 잡음)"이라 적은 세 꼴(2026-10-02)
+    "grant all on function {f}(text, int, text, int) to anon;",
+    # 여러 대상 중 public 원본
+    "grant execute on function api.{f}(text, int, text, int), {f}(text, int, text, int) to anon;",
+    "grant execute on routine {f}(text, int, text, int) to anon;",
+])
+def test_public_fn_grants_in_ignores_how_the_arguments_are_spelled(bad):
+    assert public_fn_grants_in(flat(bad.format(f=FN)), FN), bad
+
+
+@pytest.mark.parametrize("good", [
+    "grant execute on function api.{f}(text, int, text, int) to anon, authenticated;",
+    "revoke all on function {f}(text, int, text, int) from public, anon, authenticated;",
+    "grant execute on function {f}_v2(text) to anon;",      # 이름이 앞부분만 같은 다른 함수
+    "revoke grant option for execute on function {f}(text, int, text, int) from anon;",
+    # 앞 문장의 grant 가 뒤 문장의 함수 이름과 이어 붙어 걸리면 안 된다.
+    "grant execute on function api.{f}(text, int, text, int) to anon;\n"
+    "revoke all on function {f}(text, int, text, int) from anon;",
+])
+def test_public_fn_grants_in_leaves_the_api_twin_alone(good):
+    assert public_fn_grants_in(flat(good.format(f=FN)), FN) == [], good
+
+
+def test_allowlist_hits_sees_the_schema_qualified_form():
+    fine = ("api." + FN, "public.v_floor_stack")
+    # 나쁜 예 — 맨 이름(흔한 꼴)과 스키마가 붙은 이름(놓치던 꼴).
+    for bad in (NEW_MV, "public." + NEW_MV, "api." + NEW_MV):
+        assert allowlist_hits(NEW_MV, [fine + (bad,)]) == [bad], bad
+    # 좋은 예 — 이름이 겹치기만 하는 것은 안 걸린다.
+    assert allowlist_hits(NEW_MV, [fine, ("public.%s_v2" % NEW_MV,)]) == []
+    # 전제 — 실제 목록이 정말 `스키마.이름` 꼴이고, 이 함수가 그 꼴에서 이름을 찾아낸다.
+    assert allowlist_hits(FN) == ["api." + FN]
 
 
 def test_mutation_a_a_missing_unique_index_is_noticed():

@@ -96,6 +96,30 @@ def statements(sql):
     return "\n".join(ln for ln in sql.splitlines() if not ln.lstrip().startswith("--"))
 
 
+def grant_targets(sql, name=FN):
+    """`grant … on function … <name>(` 의 **대상 이름**을 전부 돌려준다(소문자).
+
+    권한 종류(execute·all)·받는 역할과 그 순서·들여쓰기·줄바꿈·대소문자와
+    무관하게 본다. 돌려주는 값은 적힌 그대로의 이름이다 —
+    `api.<name>` · `public.<name>` · 스키마 없는 `<name>`.
+
+    ⛔ 줄머리에 `grant execute` 로 못 박은 정규식은 `grant all …` 과 들여쓴 꼴을
+       놓친다(2026-10-02 감사 실측) — 그래서 탐지를 이 함수로 빼고, 실제로 잡는지를
+       TestPermissions 의 양성 대조가 나쁜 예로 확인한다(가드와 **같은 함수**).
+    ⓘ `revoke grant option for …` 는 회수라 건너뛴다.
+    ⚠️ 못 보는 것(2026-10-02 검사관 실측): 인자 괄호 없는 `on function <name> to …` ·
+       따옴표 이름(`"<name>"()`) · `on procedure`.
+    """
+    found = []
+    for stmt in re.findall(
+            r"(?is)(?<![\w.])grant\b(?!\s+option\s+for\b)[^;]*?"
+            r"\bon\s+(?:function|routine)\b([^;]*)",
+            statements(sql)):
+        found += re.findall(
+            r"(?i)(?<![\w.])((?:\w+\.)?" + re.escape(name) + r")\s*\(", stmt)
+    return [t.lower() for t in found]
+
+
 def function_body(sql, name):
     """`create [or replace] function <name>( … ) … as $$ <본문> $$;` 의 본문."""
     dollar = re.escape(chr(36) * 2)
@@ -294,6 +318,44 @@ class TestPermissions:
             assert granted == ["api." + FN], (
                 "grant 대상이 api 통과 함수 하나가 아닙니다: {}".format(granted)
             )
+            # 위 정규식은 줄머리 `grant execute` 만 본다 — `grant all`·들여쓴 꼴까지.
+            targets = grant_targets(sql)
+            assert targets == ["api." + FN], (
+                "grant 대상이 api 통과 함수 하나가 아닙니다: {}".format(targets)
+            )
+
+    @pytest.mark.parametrize("bad", [
+        "grant execute on function get_data_freshness() to anon;",
+        "grant execute on function public.get_data_freshness() to anon;",
+        # ↓ 감사가 "초록(못 잡음)"이라 적은 변형 꼴들
+        "grant all on function get_data_freshness() to anon;",
+        "  grant execute on function get_data_freshness() to anon;",
+        "grant execute on function public.get_data_freshness() to authenticated, anon;",
+        "GRANT ALL\n  ON FUNCTION public.get_data_freshness ( )\n  TO anon;",
+    ])
+    def test_grant_detector_catches_the_public_original(self, bad):
+        """양성 대조 — 가드와 같은 함수에 나쁜 예를 넣으면 api 가 아닌 대상이 잡힌다.
+
+        ⛔ `!= ["api." + FN]` 로 견주지 않는다 — 탐지 함수가 죽어 `[]` 만 돌려줘도
+           그 단언은 참이라 초록이다(2026-10-02 검사관 실측). 잡힌 것을 직접 센다.
+        """
+        good = "grant execute on function api.get_data_freshness() to anon, authenticated;\n"
+        targets = grant_targets(good + bad + "\n")
+        assert "api." + FN in targets, "좋은 예의 api 대상부터 못 찾았습니다"
+        assert [t for t in targets if t != "api." + FN], (
+            "public 원본에 준 grant 를 못 잡았습니다: {}".format(targets)
+        )
+
+    @pytest.mark.parametrize("harmless", [
+        "revoke all on function get_data_freshness() from public, anon, authenticated;",
+        "revoke grant option for execute on function get_data_freshness() from anon;",
+        "-- grant execute on function get_data_freshness() to anon;",
+        "grant execute on function api.get_data_freshness_v2() to anon;",
+        "grant execute on function other_fn() to anon;",
+    ])
+    def test_grant_detector_leaves_the_rest_alone(self, harmless):
+        good = "grant execute on function api.get_data_freshness() to anon, authenticated;\n"
+        assert grant_targets(good + harmless + "\n") == ["api." + FN]
 
     def test_public_original_is_revoked_from_anon_too(self, migration):
         """`from public` 만으로는 직접 부여된 anon 권한을 못 걷는다(2026-08-10 실측)."""

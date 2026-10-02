@@ -455,6 +455,26 @@ class TestCoverageStale:
 # ── 6. 공개키 노출 점검 (2026-08-13 실제 사고에서 신설) ─────────────────────
 
 
+def allowlist_hits(name, allowlists=None):
+    """허용 목록 안에서 **맨 이름이 `name` 인 항목**을 적힌 그대로 모은다(없으면 빈 목록).
+
+    ⛔ 왜 `name not in 목록` 으로 안 보나: 허용 목록은 2026-09-01 부터 `스키마.이름` 꼴이다
+       (`"public.v_floor_stack"`). 맨 이름으로 `not in` 을 보면, 금지 이름을 **목록이 실제로
+       쓰는 그 꼴**(`"public.app_feedback"`)로 넣는 순간 그대로 초록이다 — 2026-10-02 감사에서
+       아래 "절대 넣지 말 것" 시험 여섯이 전부 그랬다. 그래서 스키마를 벗긴 이름으로 견준다.
+    ⓘ 벗기는 규칙은 post_load._bare_names 한 곳뿐이다 — 여기서 다시 적지 않는다.
+    ⓘ `allowlists` 를 안 주면 **지금의 실제 두 목록**(읽기·부르기)을 본다. 가짜 목록을
+       넘길 수 있게 열어 둔 것은 아래 양성 대조가 **같은 함수**를 지나게 하려는 것이다.
+    """
+    if allowlists is None:
+        allowlists = (post_load.ANON_READABLE_ALLOWLIST,
+                      post_load.ANON_CALLABLE_ALLOWLIST)
+    return [
+        q for allow in allowlists for q in allow
+        if post_load._bare_names((q,)) == (name,)
+    ]
+
+
 class TestAnonExposure:
     """정적 검사(schema.sql 에 revoke 가 적혀 있나)로는 못 잡는 사고가 있다.
 
@@ -544,8 +564,7 @@ class TestAnonExposure:
 
         그래서 치우기는 편지가 들어올 때 submit_feedback 이 소유자 권한으로 대신 한다.
         """
-        assert "purge_old_feedback" not in post_load.ANON_READABLE_ALLOWLIST
-        assert "purge_old_feedback" not in post_load.ANON_CALLABLE_ALLOWLIST
+        assert allowlist_hits("purge_old_feedback") == []
         assert post_load.unexpected_anon_readables(["purge_old_feedback"]) == [
             "purge_old_feedback"
         ]
@@ -559,8 +578,7 @@ class TestAnonExposure:
           · insert 가 열리면 함수 안의 상한·모양 검사를 통째로 건너뛴다.
         2026-08-13 사고(mv_search_parcel 200)와 같은 형태이므로 형제들과 같은 방식으로 막는다.
         """
-        assert "app_feedback" not in post_load.ANON_READABLE_ALLOWLIST
-        assert "app_feedback" not in post_load.ANON_CALLABLE_ALLOWLIST
+        assert allowlist_hits("app_feedback") == []
         assert post_load.unexpected_anon_readables(["app_feedback"]) == ["app_feedback"]
 
     def test_the_industry_matview_is_never_allowed(self):
@@ -570,8 +588,7 @@ class TestAnonExposure:
         업종 구성이 통째로** REST 페이지네이션으로 긁힌다 — 2026-08-13 사고
         (mv_search_parcel 200)와 같은 형태다.
         """
-        assert "mv_district_industry_mix" not in post_load.ANON_READABLE_ALLOWLIST
-        assert "mv_district_industry_mix" not in post_load.ANON_CALLABLE_ALLOWLIST
+        assert allowlist_hits("mv_district_industry_mix") == []
         assert post_load.unexpected_anon_readables(["mv_district_industry_mix"]) == [
             "mv_district_industry_mix"
         ]
@@ -583,8 +600,7 @@ class TestAnonExposure:
         열리면 노출면만 늘 뿐 화면에 쓸모가 없다. 둘 다 열려 있으면 사고다.
         """
         for name in ("price_gate_sigungu", "price_floor_band"):
-            assert name not in post_load.ANON_READABLE_ALLOWLIST
-            assert name not in post_load.ANON_CALLABLE_ALLOWLIST
+            assert allowlist_hits(name) == [], name
             assert post_load.unexpected_anon_readables([name]) == [name]
 
     def test_the_tx_matview_is_never_allowed(self):
@@ -593,8 +609,7 @@ class TestAnonExposure:
         화면은 함수 둘로만 읽는다. 표가 열리면 REST 페이지네이션으로 구 전체 분포를
         통째로 긁어갈 수 있고, 그건 2026-08-13 사고(mv_search_parcel 200)와 같은 형태다.
         """
-        assert "mv_sigungu_tx_stats" not in post_load.ANON_READABLE_ALLOWLIST
-        assert "mv_sigungu_tx_stats" not in post_load.ANON_CALLABLE_ALLOWLIST
+        assert allowlist_hits("mv_sigungu_tx_stats") == []
         assert post_load.unexpected_anon_readables(["mv_sigungu_tx_stats"]) == [
             "mv_sigungu_tx_stats"
         ]
@@ -605,11 +620,35 @@ class TestAnonExposure:
         화면이 읽는 것은 **v_coverage_stats 뷰 하나**다. 표 이름이 허용 목록에 슬쩍
         들어가면 "뷰만 연다"는 설계가 무너지고, 다음 요약표도 같은 논리로 열린다.
         """
-        assert "mv_coverage_stats" not in post_load.ANON_READABLE_ALLOWLIST
-        assert "mv_coverage_stats" not in post_load.ANON_CALLABLE_ALLOWLIST
+        assert allowlist_hits("mv_coverage_stats") == []
         assert post_load.unexpected_anon_readables(["mv_coverage_stats"]) == [
             "mv_coverage_stats"
         ]
+
+    def test_the_never_allowed_check_really_bites(self):
+        """⛔ 위 "절대 넣지 말 것" 시험 여섯이 **진짜 무는지** — 같은 함수(allowlist_hits)를 지난다.
+
+        "없다"만 단언하는 시험은 탐지가 헛돌아도 초록이다(이 레포가 가장 여러 번 데인
+        가짜 초록). 2026-10-02 감사: 금지 이름을 `"public.app_feedback"` 처럼 **목록이
+        실제로 쓰는 꼴**로 넣었더니 여섯이 전부 초록이었다.
+        """
+        fine = ("api.submit_feedback", "public.v_floor_stack")
+        # 나쁜 예 — 흔한 꼴(맨 이름)과, 놓치던 꼴(스키마가 붙은 이름).
+        for bad in ("app_feedback", "public.app_feedback", "api.app_feedback"):
+            assert allowlist_hits("app_feedback", [fine + (bad,)]) == [bad], bad
+        # 두 목록 중 **어느 쪽**에 들어가도 걸린다.
+        assert allowlist_hits(
+            "purge_old_feedback", [fine, ("api.purge_old_feedback",)]
+        ) == ["api.purge_old_feedback"]
+        # 좋은 예 — 이름이 겹치기만 하는 것은 안 걸린다(낱말이 아니라 이름 전체를 견준다).
+        assert allowlist_hits(
+            "app_feedback", [fine + ("api.get_feedback_stats", "public.app_feedback_stats")]
+        ) == []
+        # 전제 — 실제 목록이 정말 `스키마.이름` 꼴이고, 이 함수가 그 꼴에서 이름을 찾아낸다.
+        #        (목록의 모양이 또 바뀌어 탐지가 헛돌게 되면 여기가 먼저 운다.)
+        assert allowlist_hits("v_floor_stack") == [
+            "public.v_floor_stack", "api.v_floor_stack"]
+        assert allowlist_hits("submit_feedback") == ["api.submit_feedback"]
 
 
     def test_flags_anything_outside_the_allowlist(self):
