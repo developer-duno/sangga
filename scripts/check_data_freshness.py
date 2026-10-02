@@ -328,19 +328,26 @@ def main(argv=None) -> int:
               "공개키로 창고에 묻습니다(내 PC 는 .env, Actions 는 저장소 Variables).")
         return EXIT_NO_CREDENTIALS
 
-    today = args.today or today_kst()
-
     # ⛔ **어떤 예외든** 조회 실패(2)다 — CallFailed 만 잡으면 IncompleteRead·UnicodeDecodeError·
     #    잘못된 주소의 ValueError 같은 것이 파이썬 기본값 1(= "지난 줄 있음")로 새어 나간다.
-    #    형제 check_lh_notices.py 와 같은 처방.
+    #    형제 check_lh_notices.py 와 같은 처방. 오늘 날짜를 정하는 것도 여기 안에 둔다 —
+    #    try 밖에서 죽으면 같은 1 로 샌다.
     try:
+        today = args.today or today_kst()
         rows = fetch_rows(args.url.rstrip("/"), args.anon_key)
     except Exception as ex:
         print(f"[실패] {type(ex).__name__}: {ex}")
         print("확인을 못 했습니다 — '지난 것 없음'이 아닙니다.")
         return EXIT_LOOKUP_FAILED
 
-    overdue = find_overdue(rows, today)
+    # ⛔ 판정에서 난 예외도 2 다. 놓치면 파이썬 기본값 1 = "지난 줄 있음"으로 읽히는데 이슈
+    #    파일도 overdue 기록도 없다(형제 LH 공고 감시·하트비트와 같은 처방).
+    try:
+        overdue = find_overdue(rows, today)
+    except Exception as ex:
+        print(f"[실패] 판정하는 중 {type(ex).__name__}: {ex} — 응답 모양이 바뀌었을 수 있습니다.")
+        print("확인을 못 했습니다 — '지난 것 없음'이 아닙니다.")
+        return EXIT_LOOKUP_FAILED
 
     # ⛔ 조회 **뒤**(화면 출력·이슈 파일·GITHUB_OUTPUT)에서 난 예외도 잡는다. 놓치면 파이썬
     #    기본값 1 = "지난 줄 있음"과 겹친다 — 이슈 파일을 다 쓴 뒤 GITHUB_OUTPUT 에서 죽으면

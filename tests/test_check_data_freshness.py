@@ -449,6 +449,38 @@ def test_malformed_url_exits_two_not_one(monkeypatch, tmp_path, capsys):
     _assert_lookup_failed(monkeypatch, tmp_path, capsys, out)
 
 
+def test_today_failure_exits_two_not_one(monkeypatch, tmp_path, capsys):
+    """⛔ 오늘 날짜를 정하다 죽어도 조회 실패(2)다 — try 밖이면 파이썬 기본값 1 = '지남'으로 샌다."""
+    out = set_env(monkeypatch, tmp_path)
+    install_fake_urlopen(monkeypatch, live_like_rows())
+
+    def boom(now=None):
+        raise RuntimeError("시계를 못 읽었습니다")
+
+    monkeypatch.setattr(cdf, "today_kst", boom)
+    assert cdf.main([]) == cdf.EXIT_LOOKUP_FAILED == 2
+    assert "[실패] RuntimeError: 시계를 못 읽었습니다" in capsys.readouterr().out
+    assert outputs(out) == {}
+    assert issue_files(tmp_path) == []
+
+
+def test_judging_failure_exits_two_not_one(monkeypatch, tmp_path, capsys):
+    """⛔ 판정(find_overdue)에서 죽어도 2 다 — 1 로 새면 '지남'인데 이슈 파일도 기록도 없다."""
+    out = set_env(monkeypatch, tmp_path)
+    install_fake_urlopen(monkeypatch, live_like_rows())
+
+    def boom(rows, today):
+        raise TypeError("칸 모양이 다릅니다")
+
+    monkeypatch.setattr(cdf, "find_overdue", boom)
+    assert cdf.main(["--today", "2026-11-02"]) == cdf.EXIT_LOOKUP_FAILED == 2
+    said = capsys.readouterr().out
+    assert "[실패] 판정하는 중 TypeError: 칸 모양이 다릅니다" in said
+    assert "'지난 것 없음'이 아닙니다" in said
+    assert outputs(out) == {}
+    assert issue_files(tmp_path) == []
+
+
 # ── 조회 뒤 결과를 쓰다 죽음 = 4 (1 과 겹치면 워크플로가 조용히 초록) ───────────
 
 
