@@ -55,7 +55,7 @@ def test_required_columns():
 
 def test_머리글_BOM은_벗겨_읽는다():
     """CSV 는 엑셀 대응으로 utf-8-sig 로 쓰인다 — BOM 을 못 벗기면 첫 칸이 통째로 안 읽힌다."""
-    assert L.assert_required_columns(["﻿sigungu_code", "sigungu_nm", "n_paired",
+    assert L.assert_required_columns(["\ufeffsigungu_code", "sigungu_nm", "n_paired",
                                       "ladder_mdape", "base_mdape", "gate_pass"]) is True
 
 

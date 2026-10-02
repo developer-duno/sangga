@@ -197,7 +197,7 @@ def assert_required_columns(header, where):
     시트가 5장이고 **장마다 머리글이 따로** 있다. 한 장만 형식이 달라도 그 장이 통째로
     엉뚱한 열에서 값을 읽게 되므로 장마다 본다.
     """
-    have = [(clean(c) or "").lstrip("﻿") for c in (header or [])]
+    have = [(clean(c) or "").lstrip("\ufeff") for c in (header or [])]
     missing = [c for c in REQUIRED_COLUMNS if c not in have]
     if missing:
         raise ValueError(

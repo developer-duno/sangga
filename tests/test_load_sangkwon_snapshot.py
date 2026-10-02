@@ -166,7 +166,7 @@ def test_build_col_index_missing_raises():
 
 def test_build_col_index_strips_bom():
     header_with_bom = list(HEADER)
-    header_with_bom[0] = "﻿" + header_with_bom[0]
+    header_with_bom[0] = "\ufeff" + header_with_bom[0]
     idx = target.build_col_index(header_with_bom, "test.csv")
     assert "상가업소번호" in idx
 

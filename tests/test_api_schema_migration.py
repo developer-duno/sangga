@@ -349,6 +349,32 @@ class TestDefaultPrivilegesActuallyBlockPublic:
             .format(self.GLOBAL)
         )
 
+    @staticmethod
+    def useless_form_pattern(schema_name):
+        """`in schema <이름>` 이 붙은 '기본권한 revoke … from public' 꼴을 잡는 정규식.
+
+        ⛔ **시험 본문에서 꺼내 둔 이유** (2026-10-02). 이 정규식의 단어 경계 일곱 자리에
+           **실제 백스페이스 문자(U+0008)**가 들어 있었다(편집 도구가 이스케이프 표기를 실제
+           문자로 바꿔 넣은 것으로 보인다). raw 문자열 속 백스페이스는 "백스페이스 글자와 일치"라 SQL 에는
+           영원히 안 걸린다 — 시험은 초록인데 **아무것도 못 잡고 있었다**(2026-09-03 #114 ~ 10-02).
+           그래서 정규식을 여기로 빼고, 아래 양성 대조
+           (`test_the_pattern_really_catches_the_useless_form`)가 **실제로 걸리는지**를 본다.
+           눈에 안 보이는 문자 자체는 `tests/test_no_invisible_chars.py` 가 막는다.
+        """
+        # ⛔ **글자 완전일치로 찾지 않는다** (2026-09-01 2차 검증에서 보탬). 예전에는 문장
+        #    하나를 통째로 대조해서, 똑같이 무효인 변형이 그대로 지나갔다:
+        #      · `revoke all on functions from public`  (execute 대신 all)
+        #      · 공백이 둘 이상이거나 줄바꿈이 낀 형태
+        #      · `for role postgres in schema api …` 처럼 앞에 절이 붙은 형태
+        #      · `from anon, public` 처럼 `public` 이 나열의 맨 앞이 아닌 형태 (2026-10-02 보탬 —
+        #        그래서 `from` 과 `public` 사이에 세미콜론 아닌 글자를 허용한다)
+        #    무효인 이유는 **`in schema` 가 붙었다는 것 하나**이므로, 그 모양을 정규식으로 잡는다.
+        return re.compile(
+            r"alter\s+default\s+privileges\b[^;]*\bin\s+schema\s+{}\b[^;]*"
+            r"\brevoke\b[^;]*\bfrom\b[^;]*\bpublic\b".format(schema_name),
+            re.I | re.S,
+        )
+
     @pytest.mark.parametrize("schema_name", ["api", "public"])
     def test_the_useless_per_schema_form_never_comes_back(self, schema_stmts, schema_name):
         """⛔ **스키마별 형태로 되돌아가지 않는다 — 그건 아무 일도 안 한다.**
@@ -364,23 +390,69 @@ class TestDefaultPrivilegesActuallyBlockPublic:
            인용한 문장**에 걸려 거짓 빨간불이 난다 — 지금 안 나는 유일한 이유가 "인용문이
            우연히 대문자라서"였다(다음 사람이 소문자로 옮겨 적는 순간 터진다).
         """
-        # ⛔ **글자 완전일치로 찾지 않는다** (2026-09-01 2차 검증에서 보탬). 예전에는 문장
-        #    하나를 통째로 대조해서, 똑같이 무효인 변형이 그대로 지나갔다:
-        #      · `revoke all on functions from public`  (execute 대신 all)
-        #      · 공백이 둘 이상이거나 줄바꿈이 낀 형태
-        #      · `for role postgres in schema api …` 처럼 앞에 절이 붙은 형태
-        #    무효인 이유는 **`in schema` 가 붙었다는 것 하나**이므로, 그 모양을 정규식으로 잡는다.
-        pat = re.compile(
-            r"alter\s+default\s+privileges[^;]*in\s+schema\s+{}[^;]*"
-            r"revoke[^;]*from\s+public".format(schema_name),
-            re.I | re.S,
-        )
+        pat = self.useless_form_pattern(schema_name)
         found = pat.search(schema_stmts)
         assert not found, (
             "'{}' 는 **아무 일도 하지 않습니다**(공식 문서의 '효과 없음' 예시 — 스키마별 "
             "기본권한은 전역 기본값에 더하기만 할 뿐 빼지 못합니다). 전역 형태('{}')를 쓰세요."
             .format(" ".join(found.group(0).split()), self.GLOBAL)
         )
+
+    # ⛔ 무효 문장 — `{}` 자리에 스키마 이름이 들어간다. 전부 `in schema` 가 붙어
+    #    **아무 일도 안 한다**(위 헬퍼의 주석이 든 변형 그대로).
+    USELESS_FORMS = {
+        "exact": "alter default privileges in schema {} revoke execute on functions from public;",
+        "all-instead-of-execute": (
+            "alter default privileges in schema {} revoke all on functions from public;"
+        ),
+        "extra-spaces-and-newlines": (
+            "alter  default\nprivileges in schema {}\n  revoke execute on functions from public;"
+        ),
+        "for-role-clause": (
+            "alter default privileges for role postgres in schema {} "
+            "revoke execute on functions from public;"
+        ),
+        "public-not-first-in-the-list": (
+            "alter default privileges in schema {} revoke execute on functions from anon, public;"
+        ),
+        # 공식 문서의 '효과 없음' 예시 꼴 그대로(대문자). 대소문자 무시 플래그가 빠지면 여기서 잡힌다.
+        "uppercase-like-the-docs": (
+            "ALTER DEFAULT PRIVILEGES IN SCHEMA {} REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;"
+        ),
+    }
+    # 정상 문장 — 정본에 실제로 있는 형태. 여기에 걸리면 거짓 빨간불이다.
+    HARMLESS_FORMS = {
+        "global": GLOBAL,
+        "anon-authenticated": (
+            "alter default privileges in schema {} revoke all on functions from anon, authenticated;"
+        ),
+        # 두 정상 문장이 잇달아 있어도 세미콜론을 넘어 한 문장처럼 이어 붙지 않는다.
+        "both-in-a-row": (
+            "alter default privileges in schema {} revoke all on functions from anon, authenticated;"
+            "\n" + GLOBAL
+        ),
+    }
+
+    @pytest.mark.parametrize("schema_name", ["api", "public"])
+    @pytest.mark.parametrize("form", sorted(USELESS_FORMS))
+    def test_the_pattern_really_catches_the_useless_form(self, schema_name, form):
+        """⛔ **양성 대조 — 위 시험이 실제로 잡는가.**
+
+        위 시험은 "정본에 그 형태가 없다"만 본다. 정규식이 죽어 있어도(아무것에도 안 걸려도)
+        똑같이 초록이라, 한 달 동안 죽은 것을 아무도 몰랐다. 무효 문장을 직접 넣어 본다.
+        """
+        sql = self.USELESS_FORMS[form].format(schema_name)
+        assert self.useless_form_pattern(schema_name).search(sql), (
+            "무효 문장({})이 정규식에 안 걸립니다 — 가드가 죽었습니다: {!r}".format(form, sql)
+        )
+
+    @pytest.mark.parametrize("schema_name", ["api", "public"])
+    @pytest.mark.parametrize("form", sorted(HARMLESS_FORMS))
+    def test_the_pattern_leaves_the_harmless_forms_alone(self, schema_name, form):
+        """넓게 잡다가 정본의 정상 문장까지 걸리면 안 된다(전역 형태 · anon/authenticated 줄)."""
+        sql = self.HARMLESS_FORMS[form].format(schema_name)
+        found = self.useless_form_pattern(schema_name).search(sql)
+        assert not found, "정상 문장({})이 걸립니다: {!r}".format(form, sql)
 
     def test_the_anon_authenticated_lines_are_kept_too(self, schema_stmts):
         """⛔ 옛 줄을 **지우지 않는다.** 지금은 무해하지만, 누가 기본권한에 그 둘을 넣는 날
