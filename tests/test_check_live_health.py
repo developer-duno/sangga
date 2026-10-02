@@ -520,8 +520,9 @@ class TestAdminKeyNeverShipsInTheBundle:
         여기 쓰는 글자는 payload 길이가 4로 나눈 나머지 1이라 base64 디코딩이 **실제로
         예외를 던진다**(`binascii.Error: … cannot be 1 more than a multiple of 4`).
         가드가 없으면 그 예외는 `CheckFailed` 가 아니라서 `main()` 이 못 잡고, 스텝이
-        traceback 으로 죽어 `kind` 가 빈 값으로 나가고, 워크플로가 `down` 으로 폴백해
-        **"사이트가 죽었다" 대본**을 연다 — 이 브랜치가 없애려던 바로 그 실패 모드다.
+        traceback 으로 죽어 `kind` 가 빈 값으로 나가고, 워크플로가 **'감시 고장' 대본**을
+        연다(2026-10-02 부터 — 그 전에는 `down` 으로 폴백해 "사이트가 죽었다" 대본을 열었다).
+        어느 쪽이든 진짜 유출이 유출 대본으로 못 나간다 — 이 브랜치가 없애려던 바로 그 실패 모드다.
         """
         probe = b"eyJabcdefgh." + b"eyJ" + b"a" * 18 + b".zzzzzzzz"
         assert chk.JWT_RE.search(probe), (

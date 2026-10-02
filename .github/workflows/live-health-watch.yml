@@ -62,22 +62,41 @@ jobs:
       #      ② 제목이 같으면 중복 방지(완전일치)에 걸려, 이미 열린 '사이트 다운' 이슈가
       #         유출 알림을 **통째로 삼킨다.**
       #    ⇒ kind=leak 이면 전용 제목·전용 대본. 둘은 서로를 안 삼킨다.
+      #
+      # ⛔ **갈래는 셋이다** (2026-10-02). kind 는 스크립트가 "정상이 아니다"라고 **판정했을 때만**
+      #    온다. 스크립트가 다른 예외로 죽거나 그 앞 단계(받기·파이썬 설치)가 실패하면 kind 가
+      #    빈 채로 오는데, 예전에는 그것을 '사이트 다운'으로 쳤다. 그 대본의 첫 지시가
+      #    "멀쩡히 뜬다 → 이 이슈를 닫으세요"라, 감시가 고장 난 날(사이트는 대개 멀쩡하다)
+      #    운영자는 닫고 끝낸다 — 그동안 **관리자 키 검사도 안 돈** 사실을 모른 채.
+      #    ⇒ 정확히 leak · 정확히 down 이 아니면(빈 값·모르는 값) '감시 고장' 제목·대본.
+      #       세 제목은 서로 다르다 — 같으면 먼저 열린 이슈가 나중 것을 삼킨다.
+      #
+      # ⛔ **받기 단계가 실패한 날에도 이슈는 열려야 한다.** 그날은 작업 폴더가 비어 있다:
+      #      · 대본 파일이 없다 → 없으면 한 줄 안내로 갈음한다(`cat` 이 죽으면 이슈가 안 열린다).
+      #      · `.git` 도 없다 → gh 가 대상 저장소를 못 찾는다 → GH_REPO 로 직접 알려 준다
+      #        (gh 문서 "gh help environment": GH_REPO = "specify the GitHub repository … for
+      #        commands that otherwise operate on a local repository").
+      #    ⚠️ 진짜 gh 가 `.git` 없이 도는지는 시험이 못 잰다(가짜 gh 만 쓴다) — 문서 근거다.
       - name: 라이브가 죽었으면(또는 키가 샜으면) 이슈를 연다
         if: failure()
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           REASON: ${{ steps.check.outputs.reason }}
           KIND: ${{ steps.check.outputs.kind }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          # 확인 단계가 아예 못 돌았으면(설치 실패 등) kind 가 비어 있다 → 안전한 쪽(down).
-          if [ "${KIND:-down}" = "leak" ]; then
+          if [ "${KIND:-}" = "leak" ]; then
             TITLE="🔴 배포된 화면에 관리자 키가 실렸습니다 — 즉시 회전이 필요합니다"
             BODY_FILE=".github/live-health-leak-issue.md"
-          else
+          elif [ "${KIND:-}" = "down" ]; then
             TITLE="라이브 사이트가 정상이 아닙니다 — 확인이 필요합니다"
             BODY_FILE=".github/live-health-failure-issue.md"
+          else
+            # 빈 값·모르는 값 = 감시가 판정을 못 냈다. 사이트가 죽었다는 뜻이 아니다.
+            TITLE="라이브 감시가 확인을 끝내지 못했습니다 — 사이트 상태는 아직 모릅니다"
+            BODY_FILE=".github/live-health-broken-issue.md"
           fi
           if gh issue list --state open --limit 100 --json title \
                --jq '.[].title' | grep -Fxq "$TITLE"; then
@@ -85,7 +104,11 @@ jobs:
             exit 0
           fi
           {
-            cat "$BODY_FILE"
+            if [ -f "$BODY_FILE" ]; then
+              cat "$BODY_FILE"
+            else
+              echo "대본 파일을 읽지 못했습니다 — 저장소 받기 단계가 실패했을 수 있습니다. 실행 기록을 보세요."
+            fi
             echo
             echo "## 이번에 걸린 것"
             echo
