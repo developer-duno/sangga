@@ -27,6 +27,7 @@ main 에 push 하면 그대로 배포되므로 잘못 나간 것을 막아 줄 �
 from __future__ import annotations
 
 import argparse
+import http.client
 import os
 import re
 import secrets
@@ -183,8 +184,11 @@ def fetch_with_retry(url: str, what: str, attempts: int = RETRY_COUNT, sleep=tim
             last = f"HTTP {ex.code}"
             if ex.code in NO_RETRY_HTTP_CODES:
                 raise CheckFailed(f"{what}을(를) 못 받았습니다: {url} → {last}") from ex
-        except (urllib.error.URLError, TimeoutError, OSError) as ex:
-            last = f"연결 실패({ex})"
+        # ⛔ http.client.HTTPException 도 연결 실패로 친다(2026-10-02 마무리 맹점 검사관) — 응답이 도중에
+        #    끊기는 IncompleteRead·BadStatusLine 은 OSError 가 아니라, 빠지면 반쪽 장애가 재시도 없이 잡지 못한
+        #    예외로 죽어 kind 가 비고 '감시 고장' 이슈로 나간다(진짜 장애인데 "사이트 상태는 모른다"가 된다).
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as ex:
+            last = f"연결 실패({type(ex).__name__}: {ex})"
         if attempt < attempts:
             wait = RETRY_BACKOFF_SEC * (2 ** (attempt - 1))
             print(f"  · {what} {attempt}번째 실패({last}) — {wait}초 뒤 다시 시도합니다")

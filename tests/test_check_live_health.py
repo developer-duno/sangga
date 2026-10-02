@@ -12,6 +12,7 @@ scripts/check_live_health.py 1:1 단위 테스트.
 "정상"이라 말하기 시작하면 감시가 있으나 마나 해진다.
 """
 
+import http.client
 import os
 import re
 import sys
@@ -226,6 +227,50 @@ def test_gives_up_after_retries(monkeypatch):
     monkeypatch.setattr(chk, "fetch", always_down)
     with pytest.raises(chk.CheckFailed):
         chk.check(SITE, sleep=NO_SLEEP)
+
+
+@pytest.mark.parametrize("exc", [
+    http.client.IncompleteRead(b"partial", 1024),
+    http.client.BadStatusLine("garbage"),
+    http.client.RemoteDisconnected("closed"),
+    # 가족 전체를 잡는지 지킨다(두 종류만 잡게 좁히면 아래 둘이 다시 '감시 고장'으로 간다 — 검사관 변이 M7).
+    http.client.UnknownProtocol("HTTP/2.0"),
+    http.client.HTTPException("got more than 100 headers"),
+])
+def test_cut_off_response_is_a_down_failure_not_a_crash(monkeypatch, exc):
+    """응답이 도중에 끊기는 반쪽 장애는 '사이트 다운'(CheckFailed · kind=down)이어야 한다.
+
+    ⛔ IncompleteRead·BadStatusLine 은 OSError 가 아니라(http.client.HTTPException), 예전에는 재시도도 없이
+       잡지 못한 예외로 죽었다 → kind 가 비어 워크플로가 '감시 고장' 대본을 열었다(진짜 장애인데).
+    """
+    calls = {"n": 0}
+
+    def cut_off(_url):
+        calls["n"] += 1
+        raise exc
+
+    monkeypatch.setattr(chk, "fetch", cut_off)
+    with pytest.raises(chk.CheckFailed) as caught:
+        chk.check(SITE, sleep=NO_SLEEP)
+    assert caught.value.kind == "down"
+    assert calls["n"] == chk.RETRY_COUNT, "끊김도 연결 실패처럼 다시 시도해야 한다"
+    assert type(exc).__name__ in str(caught.value)
+
+
+def test_cut_off_response_recovers_on_retry(monkeypatch):
+    """한 번 끊겼다가 다음 시도에 받아지면 정상 — 끊김도 재시도 대상이다."""
+    attempts = {"n": 0}
+
+    def flaky_fetch(url):
+        if url.endswith("/") and attempts["n"] < 1:
+            attempts["n"] += 1
+            raise http.client.IncompleteRead(b"", 10)
+        path = url[len(SITE) :]
+        return all_good()[path]
+
+    monkeypatch.setattr(chk, "fetch", flaky_fetch)
+    assert len(chk.check(SITE, sleep=NO_SLEEP)) == 3
+    assert attempts["n"] == 1
 
 
 def test_non_200_status_is_failure(monkeypatch):
