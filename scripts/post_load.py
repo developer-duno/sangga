@@ -44,7 +44,9 @@
 `--check` 는 2026-09-27(P7)부터 세 가지를 더 본다:
   · 느려짐 — 화면이 부르는 api 함수의 **지난 점검 이후** 평균이 1초 초과면 [주의](종료 코드 1 아님).
     누적값을 data/logs/post_load_api_stats.json 에 남겨 다음 점검과의 차이로 잰다(첫 번째는 기준만).
-  · 정본 색인 — schema.sql 의 색인이 라이브에 없거나 indisvalid=false 면 [사고](종료 코드 1).
+  · 정본 색인 — schema.sql 의 색인이 라이브에 없거나 indisvalid=false 이거나 INCLUDE 칸이
+    다르면 [사고](종료 코드 1). 거꾸로 라이브에만 남은 색인(제약이 만든 것·확장 소유 표의
+    것은 뺀다)은 [주의](종료 코드 1 아님 — 2026-10-02 보탬).
   · 정본↔라이브 함수 — 언어·본문 md5·설정(set …)이 schema.sql 과 다르면 [사고](종료 코드 1).
   · 참고 시세 이웃 요약표(mv_tx_parcel_geog) 행수 == 좌표·거래 있는 필지 수 — 다르면 [낡음](종료 코드 1).
 """
@@ -803,7 +805,8 @@ def report_anon_exposure():
 #
 # 아래 셋은 "적재가 끝났나"가 아니라 **"라이브가 정본·평소와 같은가"** 를 본다.
 #   ① 느려짐 경보 — 화면이 부르는 api 함수의 평균이 **지난 점검 이후** 1초를 넘었나.
-#   ② 정본 색인 — schema.sql 의 색인이 라이브에 있고 쓸 수 있는(indisvalid) 상태인가.
+#   ② 정본 색인 — schema.sql 의 색인이 라이브에 있고 쓸 수 있는(indisvalid) 상태이며
+#      INCLUDE 칸이 같은가. 라이브에만 남은 색인은 [주의]로만 알린다(종료 코드 1 아님).
 #   ③ 정본↔라이브 함수 — 언어·본문·설정이 글자 그대로 같은가(파일 없이 라이브만 바꾼 "뒷문").
 # ②③ 은 [사고](종료 코드 1), ① 은 [주의](종료 코드 1 아님 — 느린 것은 고장이 아니라 신호다).
 
@@ -971,17 +974,51 @@ def report_slow_functions():
 #
 # 줄머리의 `create [unique] index [concurrently] [if not exists] <이름> on` 만 센다 —
 # 주석(`-- create index …`)은 줄머리가 `--` 라 안 걸린다. 이름 뒤 `on` 이 다음 줄에 있어도
-# 된다(mv_district_industry_mix_key 가 그 꼴이다). 라이브에만 있는 색인은 이번 범위 밖이다.
+# 된다(mv_district_industry_mix_key 가 그 꼴이다).
+#
+# 보는 것(앞의 둘은 2026-09-27 P7, 뒤의 둘은 2026-10-02 에 보탰다):
+#   · 정본 색인이 라이브에 있는가 · 쓸 수 있는가(indisvalid)            → [사고]
+#   · INCLUDE 칸 목록이 정본과 같은가(순서까지)                          → [사고]
+#   · 라이브에만 있는 색인이 있는가(제약이 만든 것·확장 소유 표의 것은 뺀다) → [주의]
+# ⛔ INCLUDE 를 보는 이유: 이름만 같으면 칸이 빠져도 예전 점검은 [정상]이었다. 빠져도 **에러는
+#    안 나고 느려지기만 한다**(idx_arch_permit_pnu 의 arch_pms_day — 58쪽 ↔ 13쪽, 2026-09-27e).
+# ⛔ 라이브 전용이 [주의]인 이유: 남은 색인은 고장이 아니라 디스크·쓰기 비용 신호다(색인을
+#    지우는 마이그레이션이 덜 적용됐거나 라이브에서 손으로 만든 것 — 2026-10-01b 경고).
+# ⚠️ 여전히 못 보는 것: 색인 열(키 칸)·식·WHERE 조건·색인 방식(btree/gin/gist)·유일 여부·
+#    연산자 클래스의 차이. 이름과 INCLUDE 가 같으면 그런 차이는 [정상]으로 지나간다.
+#    그 밖(2026-10-02 검사 기록 — 알고 둔 것): 칸이 모자란 줄은 정본에 없는 이름이면 라이브
+#    전용으로 찍힌다 · 정본 추출은 문자열 안의 `--`/`;` 와 블록 주석(/* */)을 모른다 · 정의 칸이
+#    NULL 이면 빈 칸(coalesce)이라 "읽지 못함"이 된다(그 coalesce 는 시험이 안 지킨다 — 벗기면
+#    그 줄이 통째로 사라져 "라이브에 없음"으로 시끄럽다) · 이름만으로 맞춰 public·api 에 같은 이름이
+#    있으면 뒤 줄이 덮는다 · "읽지 못함"일 때도 안내 줄은 "create index 문을 적용하세요"다.
 CANON_INDEX_RE = re.compile(
     r"(?im)^[ \t]*create\s+(?:unique\s+)?index\s+(?:concurrently\s+)?"
     r"(?:if\s+not\s+exists\s+)?(\w+)\s+on\b"
 )
+_SQL_LINE_COMMENT_RE = re.compile(r"--[^\n]*")
+_CANON_INCLUDE_RE = re.compile(r"(?i)\binclude\s*\(([^)]*)\)")
+# pg_get_indexdef 는 `… USING btree (pnu) INCLUDE (a, b) WHERE …` 꼴로 대문자를 찍는다.
+_LIVE_INCLUDE_RE = re.compile(r"\bINCLUDE\s*\(([^)]*)\)")
+# 한 줄 = 이름|valid|표|제약이 만든 색인인가|확장 소유 표의 색인인가|색인 정의.
+# ⚠️ 색인 정의는 **맨 끝 칸**이어야 한다 — 식 색인의 `||` 가 구분자와 같은 글자라, 파서가
+#    앞의 다섯 번만 자른다(parse_live_indexes). 칸을 보태려면 정의 앞에 끼운다.
+# ⛔ 제약 칸은 기본키·유일·배제(contype p·u·x)만 센다 — pg_constraint.conindid 는 **외래키
+#    제약에도 채워진다**(참조되는 쪽 색인, PostgreSQL 문서). contype 을 안 거르면 외래키가
+#    가리키는 일반 유일 색인이 "제약이 만든 색인"으로 잘못 빠져 라이브 전용에서 안 보인다.
 LIVE_INDEX_SQL = (
-    "select c.relname || '|' || i.indisvalid::text from pg_index i "
+    "select c.relname || '|' || i.indisvalid::text || '|' || t.relname || '|' || "
+    "(exists (select 1 from pg_constraint k where k.conindid = i.indexrelid "
+    "and k.contype in ('p','u','x')))::text || '|' || "
+    "(exists (select 1 from pg_depend d where d.classid = 'pg_class'::regclass "
+    "and d.objid in (i.indrelid, i.indexrelid) and d.deptype = 'e'))::text || '|' || "
+    "coalesce(pg_get_indexdef(i.indexrelid), '') "
+    "from pg_index i "
     "join pg_class c on c.oid = i.indexrelid "
+    "join pg_class t on t.oid = i.indrelid "
     "join pg_namespace n on n.oid = c.relnamespace "
     "where n.nspname in ('public','api');"
 )
+_LIVE_INDEX_FIELDS = 6
 
 
 def canonical_index_names(sql):
@@ -994,20 +1031,99 @@ def canonical_index_names(sql):
     return seen
 
 
-def index_problems(canon_names, live_raw):
-    """정본 색인 중 라이브에 없거나 invalid 인 것 → [(이름, 사유)] (순수 함수)."""
+def _split_columns(text):
+    """`a, "B" ,c` → ['a', 'b', 'c'] (소문자 · 공백·큰따옴표 제거 · **순서 그대로**)."""
+    return [c.strip().strip('"').lower() for c in str(text).split(",") if c.strip()]
+
+
+def _format_columns(cols):
+    return "({})".format(", ".join(cols)) if cols else "(없음)"
+
+
+def canonical_index_includes(sql):
+    """정본 → {색인 이름: INCLUDE 칸 목록} (순수 함수 — include 가 없으면 빈 목록).
+
+    문장 = 머리(`create … index`)부터 첫 `;` 까지. 문장 가운데 낀 주석의 `;` 나 `include (…)`
+    글자에 속지 않게 `--` 주석을 먼저 걷어 낸다. 같은 이름이 두 번 나오면 첫 문장만 본다
+    (canonical_index_names 와 같은 규칙)."""
+    bare = _SQL_LINE_COMMENT_RE.sub("", sql)
+    out = {}
+    for m in CANON_INDEX_RE.finditer(bare):
+        name = m.group(1).lower()
+        if name in out:
+            continue
+        end = bare.find(";", m.end())
+        stmt = bare[m.start(): end if end != -1 else len(bare)]
+        found = _CANON_INCLUDE_RE.search(stmt)
+        out[name] = _split_columns(found.group(1)) if found else []
+    return out
+
+
+def parse_live_indexes(live_raw):
+    """LIVE_INDEX_SQL 의 출력 → {이름: {valid, table, constraint, extension, include}} (순수 함수).
+
+    색인 정의(맨 끝 칸)에는 `||` 같은 식이 들어갈 수 있어 **앞의 다섯 번만** 자른다.
+    ⛔ 칸이 모자란 줄(옛 두 칸 모양)이나 정의가 빈 줄은 include 를 None(모름)으로 둔다 —
+       빈 목록으로 두면 "INCLUDE 없음"과 구별이 안 돼, 조회 모양이 틀어진 날 조용히 초록이 된다."""
     live = {}
     for line in str(live_raw or "").splitlines():
-        name, _, valid = line.strip().partition("|")
-        if name:
-            live[name.lower()] = valid.strip() == "true"
+        parts = line.strip().split("|", _LIVE_INDEX_FIELDS - 1)
+        name = parts[0].strip().lower()
+        if not name:
+            continue
+        full = len(parts) == _LIVE_INDEX_FIELDS
+        definition = parts[5].strip() if full else ""
+        if definition:
+            found = _LIVE_INCLUDE_RE.search(definition)
+            include = _split_columns(found.group(1)) if found else []
+        else:
+            include = None
+        live[name] = {
+            "valid": len(parts) > 1 and parts[1].strip() == "true",
+            "table": parts[2].strip() if full else "",
+            "constraint": full and parts[3].strip() == "true",
+            "extension": full and parts[4].strip() == "true",
+            "include": include,
+        }
+    return live
+
+
+def index_problems(canon_names, live_raw, canon_includes=None):
+    """정본 색인 중 라이브에 없거나 invalid 이거나 INCLUDE 칸이 다른 것 → [(이름, 사유)] (순수 함수).
+
+    canon_includes(canonical_index_includes 의 결과)를 주면 INCLUDE 칸도 맞춘다 — 정본에
+    include 가 없는 색인은 라이브에도 없어야 한다. 안 주면 이름·indisvalid 만 본다."""
+    live = parse_live_indexes(live_raw)
     out = []
     for name in canon_names:
-        if name not in live:
+        row = live.get(name)
+        if row is None:
             out.append((name, "라이브에 없음"))
-        elif not live[name]:
+        elif not row["valid"]:
             out.append((name, "indisvalid=false(쓸 수 없는 색인)"))
+        elif canon_includes is not None:
+            want = list(canon_includes.get(name, []))
+            got = row["include"]
+            if got is None:
+                out.append((name, "INCLUDE 칸을 읽지 못함(라이브 조회 줄에 색인 정의가 없음)"))
+            elif got != want:
+                out.append((name, "INCLUDE 칸이 다름: 정본 {} · 라이브 {}".format(
+                    _format_columns(want), _format_columns(got))))
     return out
+
+
+def live_only_indexes(canon_names, live_raw):
+    """라이브에만 있는 색인 → [(이름, 표, valid)] 이름순 (순수 함수).
+
+    ⛔ 둘은 뺀다: 제약(기본키·유일·배제)이 만든 색인 — 정본에는 `create index` 가 아니라
+       표 정의로 적혀 있다 / 확장 소유 표의 색인(PostGIS spatial_ref_sys 등) — 우리 것이 아니다."""
+    canon = set(canon_names)
+    out = []
+    for name, row in parse_live_indexes(live_raw).items():
+        if name in canon or row["constraint"] or row["extension"]:
+            continue
+        out.append((name, row["table"], row["valid"]))
+    return sorted(out)
 
 
 def report_canonical_indexes(sql_text=None):
@@ -1015,15 +1131,36 @@ def report_canonical_indexes(sql_text=None):
         with open(SCHEMA_SQL_PATH, encoding="utf-8") as fh:
             sql_text = fh.read()
     names = canonical_index_names(sql_text)
-    bad = index_problems(names, query_one(LIVE_INDEX_SQL))
+    includes = canonical_index_includes(sql_text)
+    live_raw = query_one(LIVE_INDEX_SQL)          # 라이브 조회는 이 한 번뿐이다.
+    bad = index_problems(names, live_raw, includes)
     if bad:
-        print("[사고] 정본(schema.sql) 색인 중 라이브에서 못 쓰는 것 {}개:".format(len(bad)))
+        print("[사고] 정본(schema.sql) 색인 중 라이브에 없거나 못 쓰거나 INCLUDE 칸이 다른 것 {}개:"
+              .format(len(bad)))
         for name, why in bad:
             print("       · {} — {}".format(name, why))
         print("       이대로 두면 검색·화면이 조용히 느려집니다. 정본의 create index 문을 라이브에 적용하세요.")
+        if any(why.startswith("INCLUDE 칸이 다름") for _, why in bad):
+            print("       ⓘ INCLUDE 칸이 다른 색인은 `create index if not exists` 로는 안 고쳐집니다"
+                  "(이름이 이미 있어 건너뜁니다) — 그 색인의 마이그레이션(새로 만들고 옛것을 지우는 문장)을 적용하세요.")
         print("       ⓘ 또는 아직 머지 안 한 PR 의 마이그레이션을 먼저 적용한 것 — 머지하면 사라집니다.")
     else:
-        print("[정상] 정본 색인 {}개가 라이브에 모두 있고 쓸 수 있습니다.".format(len(names)))
+        print("[정상] 정본 색인 {}개가 라이브에 모두 있고 쓸 수 있으며, INCLUDE 칸도 같습니다"
+              "(INCLUDE 가 있는 색인 {}개).".format(len(names), sum(1 for n in names if includes.get(n))))
+    if not parse_live_indexes(live_raw):
+        # 빈 응답에 "라이브에만 있는 색인 없음"이라 하면 거짓 안심이다(위의 [사고]가 종료 코드를 정한다).
+        print("[주의] 라이브 색인 목록을 한 줄도 읽지 못했습니다 — 라이브 전용 색인 판정을 건너뜁니다.")
+        return bad
+    extra = live_only_indexes(names, live_raw)
+    if extra:
+        print("[주의] 라이브에만 있는 색인 {}개(정본 schema.sql 에 없음):".format(len(extra)))
+        for name, table, valid in extra:
+            print("       · {} (표 {}{})".format(name, table or "?", "" if valid else " · indisvalid=false"))
+        print("       색인을 지우는 마이그레이션이 덜 적용됐거나 라이브에서 손으로 만든 것 — 정본에 넣거나 지우세요.")
+        print("       ⓘ 고장은 아닙니다(종료 코드에 안 넣습니다) — 남은 색인은 디스크와 쓰기 비용을 먹습니다."
+              " 아직 머지 안 한 PR 의 마이그레이션이 만든 색인이면 머지하면 사라집니다.")
+    else:
+        print("[정상] 라이브에만 있는 색인 없음(제약이 만든 색인·확장 소유 표의 색인은 셈에서 뺍니다).")
     return bad
 
 
