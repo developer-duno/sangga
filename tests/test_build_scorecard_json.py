@@ -26,7 +26,7 @@ if SCRIPTS_DIR not in sys.path:
 
 import build_scorecard_json as bsj  # noqa: E402
 
-BOM = "﻿"
+BOM = "\ufeff"
 
 STAGE_CSV_TEXT = (
     "단계,축,축값,축값이름,검증거래수,추정성립수,커버리지,MdAPE,MAPE,적중률20\n"

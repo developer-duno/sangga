@@ -100,7 +100,7 @@ def test_build_col_index_missing_raises():
 
 def test_build_col_index_strips_bom():
     h = list(HEADER)
-    h[0] = "﻿" + h[0]
+    h[0] = "\ufeff" + h[0]
     idx = target.build_col_index(h, "t.zip")
     assert "고유번호" in idx
 

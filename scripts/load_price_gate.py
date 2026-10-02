@@ -81,7 +81,7 @@ def assert_required_columns(fieldnames):
     ⚠️ 이 CSV 는 `_write_csv` 가 utf-8-sig 로 쓴다(엑셀 대응). 첫 칸 이름 앞에 BOM 이
        붙으므로 벗겨 내지 않으면 sigungu_code 가 통째로 안 읽힌다.
     """
-    have = [(f or "").strip().lstrip("﻿") for f in (fieldnames or [])]
+    have = [(f or "").strip().lstrip("\ufeff") for f in (fieldnames or [])]
     missing = [c for c in REQUIRED_COLUMNS if c not in have]
     if missing:
         raise ValueError(

@@ -199,7 +199,7 @@ export function RegionPicker({
                     */}
                     {g.building_cnt > 0 && (
                       <span className="region__gu-cnt">
-                        {' '}
+                        {'\u00A0'}
                         {g.building_cnt.toLocaleString('ko-KR')}동
                       </span>
                     )}

@@ -218,7 +218,7 @@ def parse_csv(text, columns):
     """
     import csv as _csv
 
-    if text.startswith("﻿"):
+    if text.startswith("\ufeff"):
         text = text[1:]
     reader = _csv.DictReader(io.StringIO(text))
     return [map_row(row, columns) for row in reader]

@@ -110,7 +110,7 @@ def sql_str(value):
 
 def assert_required_columns(fieldnames):
     """머리글이 우리가 아는 그것인지 확인한다. 다르면 조용히 NULL 이 되지 않게 멈춘다."""
-    have = [(f or "").strip().lstrip("﻿") for f in (fieldnames or [])]
+    have = [(f or "").strip().lstrip("\ufeff") for f in (fieldnames or [])]
     missing = [c for c in REQUIRED_COLUMNS if c not in have]
     if missing:
         raise ValueError(

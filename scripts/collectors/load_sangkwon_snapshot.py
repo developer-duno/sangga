@@ -327,7 +327,7 @@ def classify_invalid_pnu(raw_pnu):
 
 def build_col_index(header, filename):
     """헤더 이름 -> 인덱스. REQUIRED_COLS 중 빠진 게 있으면 MissingColumnsError."""
-    header = [h.strip().lstrip("﻿") for h in header]
+    header = [h.strip().lstrip("\ufeff") for h in header]
     idx = {h: i for i, h in enumerate(header)}
     missing = [c for c in REQUIRED_COLS if c not in idx]
     if missing:
