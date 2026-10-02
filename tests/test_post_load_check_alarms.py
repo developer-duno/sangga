@@ -3,6 +3,7 @@
 
   ① 느려짐 — **지난 점검 이후** 평균이 1초를 넘으면 [주의](종료 코드 1 아님)
   ② 정본 색인 — schema.sql 의 색인이 라이브에 없거나 invalid 면 [사고]
+     (2026-10-02 보탬: INCLUDE 칸이 다르면 [사고] · 라이브에만 있는 색인은 [주의])
   ③ 정본↔라이브 함수 — 언어·본문 md5·설정이 다르면 [사고]
 
 각 판정은 순수 함수로 떼어 두었으므로 여기서는 그 함수들을 직접 친다.
@@ -307,6 +308,332 @@ class TestCanonicalIndexes:
 
     def test_all_present_and_valid_is_clean(self):
         assert post_load.index_problems(["idx_a"], "idx_a|true\nidx_live_only|false") == []
+
+
+# ── ② 보탬(2026-10-02): INCLUDE 칸 대조 · 라이브에만 있는 색인 ────────────────
+#
+# 이름만 보던 점검은 INCLUDE 칸이 라이브에서 빠져도 [정상]이라 했다(빠져도 에러는 안 나고
+# 느려지기만 한다 — idx_arch_permit_pnu 의 arch_pms_day). 그리고 색인을 지우는 마이그레이션이
+# 덜 적용돼 라이브에만 남은 색인은 아예 안 봤다.
+
+
+def index_line(name, include=None, valid="true", table="t", con="false", ext="false", definition=None):
+    """LIVE_INDEX_SQL 한 줄(이름|valid|표|제약|확장|색인 정의)을 pg_get_indexdef 모양으로 짓는다."""
+    if definition is None:
+        definition = "CREATE INDEX {} ON public.{} USING btree (a)".format(name, table)
+        if include:
+            definition += " INCLUDE ({})".format(", ".join(include))
+    return "|".join([name, valid, table, con, ext, definition])
+
+
+INCLUDE_FIXTURE = """
+create index if not exists idx_plain on t (a);
+create index if not exists idx_multi on t (pnu, ym)
+  -- include (ghost); 주석의 세미콜론과 include 글자에 속지 않는다
+  INCLUDE (Cat_L , cat_m,
+           "Cat_N")
+  where a is not null;
+create unique index concurrently if not exists idx_u
+  on t (b) Include(x);
+-- create index if not exists idx_commented on t (x) include (y);
+create index if not exists idx_after on t (c);
+create index if not exists idx_multi on t (pnu) include (other);
+"""
+
+
+class TestCanonicalIndexIncludes:
+    def test_extracts_include_columns_in_order(self):
+        """ⓒ 여러 줄 문장 · 문장 가운데 낀 주석 줄 · include 대소문자 · 따옴표 · 같은 이름은 첫 문장."""
+        assert post_load.canonical_index_includes(INCLUDE_FIXTURE) == {
+            "idx_plain": [],
+            "idx_multi": ["cat_l", "cat_m", "cat_n"],
+            "idx_u": ["x"],
+            "idx_after": [],
+        }
+
+    def test_include_of_the_next_statement_does_not_leak_backwards(self):
+        """문장은 첫 `;` 에서 끝난다 — 뒤 문장의 include 를 앞 색인이 가져가면 안 된다."""
+        got = post_load.canonical_index_includes(
+            "create index idx_a on t (a);\ncreate index idx_b on t (b) include (z);\n")
+        assert got == {"idx_a": [], "idx_b": ["z"]}
+
+    def test_names_match_the_name_parser(self):
+        assert list(post_load.canonical_index_includes(INCLUDE_FIXTURE)) == \
+            post_load.canonical_index_names(INCLUDE_FIXTURE)
+
+    def test_real_schema_has_exactly_the_two_known_include_indexes(self):
+        """⛔ 양성 대조(ⓓ): 추출이 조용히 0개를 내면 INCLUDE 대조는 영원히 초록이다.
+
+        정본에 include 를 더하거나 뺐다면 이 목록도 함께 고친다(그게 이 시험의 일이다)."""
+        raw = read_schema()
+        includes = post_load.canonical_index_includes(raw)
+        assert set(includes) == set(post_load.canonical_index_names(raw))
+        assert {k: v for k, v in includes.items() if v} == {
+            "idx_ub_pnu_cat": ["cat_l_cd", "cat_l_nm", "cat_m_cd", "cat_m_nm"],
+            "idx_arch_permit_pnu": [
+                "loaded_ym", "use_apr_day", "main_purps_cd", "real_stcns_day", "arch_pms_day"],
+        }
+
+
+class TestLiveIndexParser:
+    def test_reads_all_six_fields(self):
+        live = post_load.parse_live_indexes(
+            index_line("Idx_A", include=["x", "y"], table="parcel") + "\n\n"
+            + index_line("parcel_pkey", table="parcel", con="true") + "\n"
+            + index_line("srs_idx", valid="false", table="spatial_ref_sys", ext="true"))
+        assert live["idx_a"] == {
+            "valid": True, "table": "parcel", "constraint": False, "extension": False,
+            "include": ["x", "y"]}
+        assert live["parcel_pkey"]["constraint"] is True and live["parcel_pkey"]["include"] == []
+        assert live["srs_idx"]["extension"] is True and live["srs_idx"]["valid"] is False
+
+    def test_pipes_inside_the_definition_do_not_shift_fields(self):
+        """식 색인의 `||` 는 구분자와 같은 글자다 — 정의는 맨 끝 칸이라 앞의 다섯 번만 자른다."""
+        definition = ("CREATE INDEX idx_e ON public.t USING btree (((a || '|'::text) || b)) "
+                      "INCLUDE (c, \"D\") WHERE (e IS NOT NULL)")
+        row = post_load.parse_live_indexes(index_line("idx_e", table="t", definition=definition))["idx_e"]
+        assert row["table"] == "t" and row["valid"] is True
+        assert row["include"] == ["c", "d"]
+
+    @pytest.mark.parametrize("line", ["idx_a|true", "idx_a|true|t|false|false|", "idx_a|true|t|false"])
+    def test_short_or_empty_definition_is_unknown_not_empty(self, line):
+        """⛔ 칸이 모자라면 include 는 None(모름) — 빈 목록이면 'INCLUDE 없음'과 구별이 안 된다."""
+        assert post_load.parse_live_indexes(line)["idx_a"]["include"] is None
+
+    def test_query_shape_matches_the_parser(self):
+        """조회가 내는 칸 수와 파서가 기대하는 칸 수가 갈리면 전부 '읽지 못함'이 된다."""
+        sql = post_load.LIVE_INDEX_SQL
+        assert sql.count("'|'") == post_load._LIVE_INDEX_FIELDS - 1
+        assert sql.rindex("'|'") < sql.index("pg_get_indexdef(i.indexrelid)")   # 정의가 맨 끝 칸
+        assert "n.nspname in ('public','api')" in sql
+
+    def test_query_fields_come_in_the_order_the_parser_reads(self):
+        """⛔ 칸 수가 맞아도 순서가 바뀌면 조용히 틀린다(valid 자리에 표 이름이 오면 전부 invalid).
+
+        select 목록을 구분자로 잘라, 칸마다 그 자리의 표지가 들어 있는지 본다."""
+        select_list = post_load.LIVE_INDEX_SQL.split(" from pg_index i ")[0]
+        fields = select_list.split("'|'")
+        markers = ["c.relname", "i.indisvalid::text", "t.relname", "from pg_constraint k",
+                   "from pg_depend d", "pg_get_indexdef(i.indexrelid)"]
+        assert len(fields) == len(markers) == post_load._LIVE_INDEX_FIELDS
+        for pos, (field, marker) in enumerate(zip(fields, markers)):
+            assert marker in field, "{}번째 칸에 {} 가 없습니다: {}".format(pos + 1, marker, field)
+            for other in markers[:pos] + markers[pos + 1:]:
+                assert other not in field, "{}번째 칸에 다른 칸의 표지 {} 가 섞였습니다".format(pos + 1, other)
+
+    def test_constraint_flag_counts_only_primary_unique_exclusion(self):
+        """⛔ conindid 는 외래키 제약에도 채워진다(참조되는 쪽 색인) — contype 을 안 거르면 외래키가
+        가리키는 일반 유일 색인이 '제약이 만든 색인'으로 빠져 라이브 전용에서 안 보인다."""
+        assert ("from pg_constraint k where k.conindid = i.indexrelid "
+                "and k.contype in ('p','u','x'))") in post_load.LIVE_INDEX_SQL
+
+    def test_extension_flag_looks_at_the_table_and_the_index(self):
+        """확장 소유 판정은 표(indrelid)와 색인(indexrelid) 둘 다 — 조건을 통째로 본다
+        (`i.indrelid` 글자만 찾으면 join 줄에도 있어 헛돈다)."""
+        assert ("from pg_depend d where d.classid = 'pg_class'::regclass "
+                "and d.objid in (i.indrelid, i.indexrelid) and d.deptype = 'e')") in post_load.LIVE_INDEX_SQL
+
+
+class TestIndexIncludeProblems:
+    """ⓐ INCLUDE 같음 / 다름 / 정본에만 / 라이브에만."""
+
+    CANON = {"idx_x": ["a", "b"], "idx_y": []}
+
+    def problems(self, *lines):
+        return post_load.index_problems(["idx_x", "idx_y"], "\n".join(lines), self.CANON)
+
+    def test_same_include_is_clean(self):
+        assert self.problems(index_line("idx_x", include=["a", "b"]), index_line("idx_y")) == []
+
+    def test_different_include_is_a_problem(self):
+        got = self.problems(index_line("idx_x", include=["a"]), index_line("idx_y"))
+        assert got == [("idx_x", "INCLUDE 칸이 다름: 정본 (a, b) · 라이브 (a)")]
+
+    def test_include_only_in_canon(self):
+        got = self.problems(index_line("idx_x"), index_line("idx_y"))
+        assert got == [("idx_x", "INCLUDE 칸이 다름: 정본 (a, b) · 라이브 (없음)")]
+
+    def test_include_only_in_live(self):
+        got = self.problems(index_line("idx_x", include=["a", "b"]), index_line("idx_y", include=["z"]))
+        assert got == [("idx_y", "INCLUDE 칸이 다름: 정본 (없음) · 라이브 (z)")]
+
+    def test_order_matters(self):
+        got = self.problems(index_line("idx_x", include=["b", "a"]), index_line("idx_y"))
+        assert got == [("idx_x", "INCLUDE 칸이 다름: 정본 (a, b) · 라이브 (b, a)")]
+
+    def test_case_spacing_and_quotes_do_not_matter(self):
+        definition = 'CREATE INDEX idx_x ON public.t USING btree (k) INCLUDE ("A",  b) WHERE (k > 0)'
+        assert self.problems(index_line("idx_x", definition=definition), index_line("idx_y")) == []
+
+    def test_index_missing_from_the_include_map_must_have_no_include(self):
+        got = post_load.index_problems(["idx_z"], index_line("idx_z", include=["q"]), {})
+        assert got == [("idx_z", "INCLUDE 칸이 다름: 정본 (없음) · 라이브 (q)")]
+
+    def test_unreadable_definition_is_loud(self):
+        """⛔ 조회 줄 모양이 틀어져 정의를 못 읽으면 초록이 아니라 [사고]다."""
+        got = post_load.index_problems(["idx_x"], "idx_x|true", self.CANON)
+        assert len(got) == 1 and got[0][0] == "idx_x" and "INCLUDE 칸을 읽지 못함" in got[0][1]
+
+    @pytest.mark.parametrize("name, canon", [("idx_y", CANON), ("idx_z", {})])
+    def test_unreadable_definition_is_loud_even_when_canon_has_no_include(self, name, canon):
+        """⛔ 정본에 include 가 없는 색인(정본의 대부분)도 같다 — 못 읽은 것을 '없음 == 없음'
+        으로 넘기면 조회 줄 모양이 틀어진 날 거의 전부가 초록이 된다. 사유 문구까지 본다."""
+        got = post_load.index_problems([name], name + "|true", canon)
+        assert got == [(name, "INCLUDE 칸을 읽지 못함(라이브 조회 줄에 색인 정의가 없음)")]
+
+    def test_missing_and_invalid_still_win_over_include(self):
+        got = self.problems(index_line("idx_x", include=["a"], valid="false"))
+        assert got == [("idx_x", "indisvalid=false(쓸 수 없는 색인)"), ("idx_y", "라이브에 없음")]
+
+
+class TestLiveOnlyIndexes:
+    """ⓑ 라이브에만 있는 색인 — 제약이 만든 것·확장 소유 표의 것은 뺀다."""
+
+    def test_true_live_only_is_reported_with_its_table(self):
+        raw = "\n".join([
+            index_line("idx_a"),
+            index_line("idx_zombie", table="unit_business"),
+            index_line("idx_half_built", valid="false", table="parcel"),
+        ])
+        assert post_load.live_only_indexes(["idx_a"], raw) == [
+            ("idx_half_built", "parcel", False), ("idx_zombie", "unit_business", True)]
+
+    def test_constraint_backed_indexes_are_not_live_only(self):
+        raw = "\n".join([index_line("idx_a"), index_line("parcel_pkey", table="parcel", con="true")])
+        assert post_load.live_only_indexes(["idx_a"], raw) == []
+
+    def test_extension_owned_table_indexes_are_not_live_only(self):
+        raw = "\n".join([index_line("idx_a"), index_line("srs_idx", table="spatial_ref_sys", ext="true")])
+        assert post_load.live_only_indexes(["idx_a"], raw) == []
+
+    def test_canonical_names_are_never_live_only(self):
+        assert post_load.live_only_indexes(["idx_a", "idx_gone"], index_line("idx_a")) == []
+
+
+class TestReportCanonicalIndexes:
+    """ⓕ 보고 함수를 가장 낮은 경계(query_one)만 가짜로 두고 부른다 — 실제 출력 문구를 본다."""
+
+    SQL = (
+        "create index if not exists idx_a on t (a);\n"
+        "create index if not exists idx_inc on t (pnu)\n  include (c1, c2);\n"
+    )
+    CLEAN = [
+        index_line("idx_a"),
+        index_line("idx_inc", include=["c1", "c2"]),
+        index_line("t_pkey", con="true"),
+        index_line("srs_idx", table="spatial_ref_sys", ext="true"),
+    ]
+
+    def run(self, monkeypatch, capsys, lines):
+        calls = []
+
+        def fake_query_one(sql):
+            calls.append(sql)
+            return "\n".join(lines)
+        monkeypatch.setattr(post_load, "query_one", fake_query_one)
+        bad = post_load.report_canonical_indexes(sql_text=self.SQL)
+        assert calls == [post_load.LIVE_INDEX_SQL]          # 라이브 조회는 한 번뿐이다
+        return bad, capsys.readouterr().out
+
+    def test_clean(self, monkeypatch, capsys):
+        bad, out = self.run(monkeypatch, capsys, self.CLEAN)
+        assert bad == []
+        assert ("[정상] 정본 색인 2개가 라이브에 모두 있고 쓸 수 있으며, INCLUDE 칸도 같습니다"
+                "(INCLUDE 가 있는 색인 1개).") in out
+        assert "[정상] 라이브에만 있는 색인 없음" in out
+        assert "[사고]" not in out and "[주의]" not in out
+
+    def test_include_difference_is_an_incident(self, monkeypatch, capsys):
+        lines = [self.CLEAN[0], index_line("idx_inc", include=["c1"])] + self.CLEAN[2:]
+        bad, out = self.run(monkeypatch, capsys, lines)
+        assert bad == [("idx_inc", "INCLUDE 칸이 다름: 정본 (c1, c2) · 라이브 (c1)")]
+        assert "[사고] 정본(schema.sql) 색인 중 라이브에 없거나 못 쓰거나 INCLUDE 칸이 다른 것 1개:" in out
+        assert "       · idx_inc — INCLUDE 칸이 다름: 정본 (c1, c2) · 라이브 (c1)" in out
+        assert "`create index if not exists` 로는 안 고쳐집니다" in out
+        assert "[정상] 정본 색인" not in out
+        assert "[정상] 라이브에만 있는 색인 없음" in out       # 두 점검은 서로 독립이다
+
+    def test_missing_index_keeps_the_old_wording_without_the_include_hint(self, monkeypatch, capsys):
+        bad, out = self.run(monkeypatch, capsys, self.CLEAN[1:])
+        assert bad == [("idx_a", "라이브에 없음")]
+        assert "       · idx_a — 라이브에 없음" in out
+        assert "정본의 create index 문을 라이브에 적용하세요." in out
+        assert "안 고쳐집니다" not in out
+
+    def test_live_only_is_a_caution_and_not_returned(self, monkeypatch, capsys):
+        lines = self.CLEAN + [index_line("idx_zombie", table="unit_business"),
+                              index_line("idx_half", valid="false", table="parcel")]
+        bad, out = self.run(monkeypatch, capsys, lines)
+        assert bad == []                                      # 종료 코드에 안 들어간다
+        assert "[주의] 라이브에만 있는 색인 2개(정본 schema.sql 에 없음):" in out
+        assert "       · idx_zombie (표 unit_business)" in out
+        assert "       · idx_half (표 parcel · indisvalid=false)" in out
+        assert "색인을 지우는 마이그레이션이 덜 적용됐거나 라이브에서 손으로 만든 것 — 정본에 넣거나 지우세요." in out
+        assert "t_pkey" not in out and "srs_idx" not in out
+        assert "[정상] 정본 색인 2개" in out and "[사고]" not in out
+
+    @pytest.mark.parametrize("lines", [[], ["", "   "]])
+    def test_empty_live_answer_does_not_claim_no_live_only_indexes(self, monkeypatch, capsys, lines):
+        """⛔ 한 줄도 못 읽었는데 '라이브에만 있는 색인 없음'이라 하면 거짓 안심이다."""
+        bad, out = self.run(monkeypatch, capsys, lines)
+        assert bad == [("idx_a", "라이브에 없음"), ("idx_inc", "라이브에 없음")]   # 종료 코드는 [사고]가 정한다
+        assert "[사고]" in out
+        assert "[주의] 라이브 색인 목록을 한 줄도 읽지 못했습니다 — 라이브 전용 색인 판정을 건너뜁니다." in out
+        assert "라이브에만 있는 색인 없음" not in out
+        assert "[주의] 라이브에만 있는 색인" not in out
+
+
+class TestCheckExitCodeForIndexes:
+    """ⓔ 종료 코드: INCLUDE 다름 → 1 · 라이브 전용만 → 0. 정본은 실제 schema.sql 을 쓴다."""
+
+    def live_from_schema(self):
+        raw = read_schema()
+        includes = post_load.canonical_index_includes(raw)
+        return [index_line(name, include=includes[name]) for name in post_load.canonical_index_names(raw)]
+
+    def check(self, monkeypatch, capsys, lines):
+        for name, val in (
+            ("report_freshness", lambda: ("1", "1", False)),
+            ("report_map_freshness", lambda: ({}, False)),
+            ("report_tx_window_freshness", lambda: ("", "", False)),
+            ("report_coverage_freshness", lambda: ("", "", False)),
+            ("report_industry_mix_freshness", lambda: ("", "", False)),
+            ("report_tx_geog_freshness", lambda: ("1", "1", False)),
+            ("report_anon_exposure", lambda: ([], [])),
+            ("report_write_exposure", lambda: []),
+            ("report_slow_functions", lambda: []),
+            ("report_function_drift", lambda: []),
+        ):
+            monkeypatch.setattr(post_load, name, val)
+        monkeypatch.setattr(post_load, "query_one", lambda sql: "\n".join(lines))
+        code = post_load.main(["--check"])
+        return code, capsys.readouterr().out
+
+    def test_live_equal_to_schema_exits_0(self, monkeypatch, capsys):
+        lines = self.live_from_schema() + [index_line("parcel_pkey", table="parcel", con="true")]
+        code, out = self.check(monkeypatch, capsys, lines)
+        assert code == 0
+        assert "INCLUDE 칸도 같습니다(INCLUDE 가 있는 색인 2개)." in out
+        assert "[정상] 라이브에만 있는 색인 없음" in out
+
+    def test_include_column_dropped_in_live_exits_1(self, monkeypatch, capsys):
+        """2026-09-27e 가 더한 허가일 칸이 라이브에서 빠진 꼴 — 이름은 같아 예전엔 [정상]이었다."""
+        lines = [ln for ln in self.live_from_schema() if not ln.startswith("idx_arch_permit_pnu|")]
+        assert len(lines) == len(self.live_from_schema()) - 1
+        lines.append(index_line("idx_arch_permit_pnu", table="arch_permit", include=[
+            "loaded_ym", "use_apr_day", "main_purps_cd", "real_stcns_day"]))
+        code, out = self.check(monkeypatch, capsys, lines)
+        assert code == 1
+        assert ("       · idx_arch_permit_pnu — INCLUDE 칸이 다름: 정본 (loaded_ym, use_apr_day, "
+                "main_purps_cd, real_stcns_day, arch_pms_day) · 라이브 (loaded_ym, use_apr_day, "
+                "main_purps_cd, real_stcns_day)") in out
+
+    def test_live_only_index_alone_exits_0(self, monkeypatch, capsys):
+        lines = self.live_from_schema() + [index_line("idx_ub_name", table="unit_business")]
+        code, out = self.check(monkeypatch, capsys, lines)
+        assert code == 0
+        assert "[주의] 라이브에만 있는 색인 1개" in out
+        assert "       · idx_ub_name (표 unit_business)" in out
 
 
 # ── ③ 정본↔라이브 함수 ───────────────────────────────────────────────────────
