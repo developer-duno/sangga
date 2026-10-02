@@ -1809,7 +1809,7 @@ pytest **3,224**(본 폴더, 목록 세기) = CI·워크트리 3,221 + 3 skipped
 - 2027-01 분기 적재 전 👤: 옛 분기 보관 수 + Small 한 묶음.
 - 전역 스킬 `external-access-cloudflare/templates` 의 `.ps1` 두 개 — UTF-8 BOM 으로 다시 저장(그 스킬 쓰는 세션에서).
 - 👤 로컬 가지 정리(안전장치가 막음 — squash 머지됨): `fix/lh-watch-output` · `docs/wrap-1002`(이 문서 PR 이 합쳐진 뒤). (3) 의 세 가지는 사장님이 지웠다(이 세션 시작 실측: 가지 main 하나).
-- 이월: Small(보류) · `--check` 색인 include 칸 · 27e 되돌리기 관문 · P7 🟡5 · P6 REFRESH_MVS 역방향 가드 · P10 · P11 · 기준시가 문구(결정 0021 vs 함수).
+- 이월: Small(보류) · `--check` 색인 include 칸 · 27e 되돌리기 관문 · P7 🟡5 · P6 REFRESH_MVS 역방향 가드 · P10 · P11 · 기준시가 문구(결정 0021 vs 함수) · `list_price_bands` L6 재훑음.
 
 ## 2026-10-02 (2) — 하트비트(상호 감시) 자기 고장 알림(#183) — 결정 0030 후속
 
@@ -1817,6 +1817,7 @@ pytest **3,224**(본 폴더, 목록 세기) = CI·워크트리 3,221 + 3 skipped
 
 - **#183** — `check_watch_heartbeat.py`: 판정(`judge`·`recheck_stale`) 예외 = 2 · 결과 쓰기(화면·`--json`·이슈 본문 파일·`GITHUB_OUTPUT` — `report()` 로 옮겨 try 안에, 내용 그대로) 예외 = **4**(`EXIT_OUTPUT_FAILED`). 워크플로 6개 하트비트 단계: 종료코드를 손수 가른다 — 1 은 `watch_heartbeat_issue.md` + `stale=true` 기록 둘 다 있어야 통과, 그 밖은 0 아닌 코드(continue-on-error 라 job 은 초록). 새 단계 `상호 감시 점검이 고장 났으면 이슈를 연다`(stale 단계 바로 뒤 · `steps.heartbeat.outcome == 'failure'` — `conclusion` 은 continue-on-error 뒤라 늘 success, 공식 문서 확인) · 제목 여섯 곳 글자까지 같음 · 열린 같은 제목이면 건너뜀 · 본문 `.github/watch-heartbeat-failure-issue.md`. 라이브 감시는 실패 알림 단계가 하트비트 **앞**이라 새 단계가 맨 끝. `data-freshness-watch.yml` 확인 단계에 종료코드 4 문구(LH 와 같음). 두 감시 시험 파일 + 하트비트 시험에 "CI·GITHUB_ACTIONS 면 bash 없을 때 실패, 로컬만 건너뜀" 가드 시험 — ⛔ `pytest.raises(pytest.fail.Exception)` 만 쓰면 fail→skip 변이에서 시험 자체가 '건너뜀'이 돼 초록이다(작업반 첫 변이에서 생존 → `raises(BaseException)` + 종류 대조로).
 - 작업반 Opus 1 · 검사관 적대 Opus 1인(맹점 겸임 — 실행 코드 고유분 약 90줄을 6벌 복사, 결제·인증·DB 무관, 형제 #178·#181 과 같은 1인) 🔴 0 · 🟡 2 · ⚪ 6 → 🟡1(새 단계 `--state open` 을 지키는 시험 없음 — `--state all` 변이 생존) 시험 한 줄 + 🟡2(문서) 메인 반영 · ⚪4 이슈 본문 인용 문구(실제 출력은 공백이 끼어 있음) 메인 정정 · 나머지 ⚪(새 단계 `gh` 실패 시 엉뚱한 실패 이슈 · 같은 시각 두 감시가 겹치면 이슈 2건 가능 · 안내 문구 어긋남 3경우 · 기존 시험 범위)는 형제 stale 단계와 같은 성질이라 기록만. 검사관이 옛·새 `main` 을 같은 가짜 입력 15경우로 돌려 종료코드·출력·이슈 본문·기록 바이트 전부 같음.
+- **머지 뒤 깃허브 첫 실제 실행**(main b9ccea8 · 라이브 감시 예약 run 36948772247 · 2026-10-02 09:59 KST 시작): `형제 감시들이 아직 도는지 확인` success · `형제 감시가 멈췄으면 이슈를 연다` skipped · `상호 감시 점검이 고장 났으면 이슈를 연다` skipped · 열린 이슈 0 — 기대대로. 주 1회 감시 다섯의 첫 실행은 10/5(월). 마무리 검사관(Sonnet 1인 · 할루+맹점 겸임) 30항 전부 일치 · 🟡 1(위 「2026-10-02」 이월 목록에 `list_price_bands` L6 누락 → 이 문서 PR 에서 더함).
 
 ### 회귀·검증
 
