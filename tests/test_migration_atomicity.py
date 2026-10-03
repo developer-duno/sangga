@@ -31,6 +31,8 @@
    `$$ … $$` 안의 동적 SQL 문자열은 안 걷는다 — 이 레포 마이그레이션 **전부**에 그 둘은
    **0건**이고(관습이 `--` 뿐이다), 설령 생겨도 판정은 "감싸라"는 **안전한 쪽**으로
    틀린다(빠뜨리는 쪽이 아니다). 동적 SQL 을 쓰기 시작하면 그때 여기를 넓힌다.
+   (이 문단은 §1~§3 원자성 판정 이야기다. §4 권한 가드는 그 위에 줄 끝 `--` 주석과 블록 주석을
+    작은따옴표 글 밖에서만 한 번 더 걷는다 — `_grant_code`, 2026-10-03 P11.)
    ⚠️ 반대로 **들여쓴** DDL(`  drop …`)은 줄머리 판정에서 빠져 **면제 쪽으로** 틀릴 수 있어서
    DDL·예외 정규식은 앞 공백을 허용한다(2026-09-10 사후 검증에서 보강).
 
@@ -451,15 +453,61 @@ RE_OPEN_GRANTEE = re.compile(r"(?i)\b(?:anon|public|authenticated)\b")
 RE_COMMENT_STMT_GRANT = re.compile(r"(?ims)^comment\s+on\s+.*?';[ \t]*(?:--[^\n]*)?$")
 
 
-def _grant_code(sql):
-    """§4 가 보는 본문 — 줄 전체 주석·블록 주석과 `comment on` 글(§4 전용 정규식)을 걷은 것.
+def _strip_comments_outside_quotes(text):
+    """§4 전용 — 작은따옴표 글 **밖**의 줄 끝 주석(`--` 부터 줄 끝까지)과 블록 주석을 걷는다.
 
-    ⛔ 블록 주석은 `;` 로 문장을 나누기 **전에** 걷는다(2026-09-27 P11). 나눈 뒤에 걷으면
-       `/* 예: grant … to anon; … */` 처럼 주석 안의 `;` 가 주석을 둘로 잘라 짝(`*/`)을 잃은
-       앞 조각의 인용 grant 가 진짜 문장으로 읽혔다(거짓 빨강). ⓘ 마이그레이션에 `/*` 는
-       2026-09-27 grep 으로 0건 — 문자열 안의 `/*` 는 고려하지 않는다.
+    글자를 하나씩 따라가며 작은따옴표 글 안인지 기억한다(글 안의 따옴표 두 개는 따옴표 한
+    글자다 — 글이 끝난 게 아니다). 글 안의 대시 두 개·블록 주석 여는 표시는 주석이 아니라
+    글자 그대로 둔다. 줄 끝 주석은 줄바꿈을 남기고, 블록 주석은 빈칸 하나로 바꾼다.
+
+    ⓘ 못 보는 것: 달러 따옴표(`$$ … $$`) 본문을 글로 치지 않는다 — 그 안도 바깥과 똑같이
+       따옴표를 센다(plpgsql 본문의 글은 짝이 맞으므로 지금 판정은 같다). `E'…'` 글의
+       역슬래시 따옴표, 겹친 블록 주석(PostgreSQL 은 허용), 닫히지 않은 블록 주석(끝까지 걷는다)
+       도 따로 보지 않는다.
     """
-    code = re.sub(r"/\*.*?\*/", " ", statements(sql), flags=re.S)
+    out, i, n, in_quote = [], 0, len(text), False
+    while i < n:
+        ch = text[i]
+        if in_quote:
+            out.append(ch)
+            if ch == "'":
+                if i + 1 < n and text[i + 1] == "'":
+                    out.append("'")
+                    i += 2
+                    continue
+                in_quote = False
+            i += 1
+        elif ch == "'":
+            in_quote = True
+            out.append(ch)
+            i += 1
+        elif text.startswith("--", i):
+            end = text.find("\n", i)
+            i = n if end == -1 else end
+        elif text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            i = n if end == -1 else end + 2
+            out.append(" ")
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
+def _grant_code(sql):
+    """§4 가 보는 본문 — 줄 전체 주석·줄 끝 주석·블록 주석과 `comment on` 글(§4 전용 정규식)을
+    걷은 것.
+
+    ⛔ 주석은 `;` 로 문장을 나누기 **전에** 걷는다. 나눈 뒤에 걷으면 주석 안의 `;` 가 주석을
+       둘로 잘라, 짝을 잃은 뒷조각의 인용 grant 가 진짜 문장으로 읽혔다(거짓 빨강) — 블록 주석은
+       2026-09-27 P11, 줄 끝 주석(`-- 나쁜 예; grant … to anon 처럼 …`)은 2026-10-03 P11-a.
+    ⛔ 작은따옴표 글 안의 `--`·`/*` 는 주석이 아니다(2026-10-03 P11-b) — 예전 정규식은
+       `'a /* b'` 의 `/*` 부터 다음 `*/` 까지 지워 그 사이의 진짜 grant 를 숨겼다(조용히 놓침).
+       못 보는 꼴은 `_strip_comments_outside_quotes` 머리말.
+    ⓘ §2 의 `statements()` 는 원자성 판정과 글자 그대로 맞춰야 하므로 건드리지 않는다 — 이
+       함수가 그 결과 위에 한 번 더 걷는다.
+    """
+    code = _strip_comments_outside_quotes(statements(sql))
     return RE_COMMENT_STMT_GRANT.sub("", code)
 
 
@@ -502,14 +550,13 @@ def grants_opening_non_api(sql):
 
     ⛔ 2026-09-27 재검사관 R1 — `statements()` 는 **줄 전체가** `--` 인 줄만 걷는다. 그래서
        `;` 로 나눈 조각이 앞 문장의 줄 끝 주석·블록 주석·`do $$ begin` 으로 시작하면 `^grant`
-       앵커가 빗나갔다. 조각마다 줄 끝 주석을 한 번 더 걷고(블록 주석은 `_grant_code` 가 나누기
-       **전에** 걷는다 — P11), 조각 **안의** `grant execute|all` 부터
+       앵커가 빗나갔다. 줄 끝 주석·블록 주석은 `_grant_code` 가 `;` 로 나누기 **전에** 걷고
+       (작은따옴표 글 안은 빼고 — 2026-10-03 P11-a·b), 조각 **안의** `grant execute|all` 부터
        다시 본다(DO 블록 안 문장·`execute 'grant …'` 문자열도 이렇게 잡힌다 — 끝에 남는 `'` 는
        받는 쪽 판정에 영향이 없다). 기본권한 문장은 `grant` 가 가운데 있으므로 자르지 않는다.
     """
     bad = []
     for stmt in _grant_code(sql).split(";"):
-        stmt = re.sub(r"--[^\n]*", " ", stmt)
         one = re.sub(r"\s+", " ", stmt).strip()
         g = re.search(r"(?i)\bgrant\s+(?:execute|all)\b", one)
         if g and not one.lower().startswith("alter default"):
@@ -702,6 +749,35 @@ GRANT_SHAPES = (
     # 주석 안에 `;` 가 있어도 주석 **뒤**의 진짜 grant 는 여전히 잡는다
     ("block_comment_with_semicolon_then_grant",
      "/* 설명; 더 설명 */ grant execute on function g(text) to anon;", True),
+    # ── 2026-10-03 P11-a — 줄 **끝** 주석 안의 `;` 뒤 인용 grant 를 문장으로 읽던 거짓 빨강 ──
+    ("line_end_comment_quotes_grant_ok",
+     "grant execute on function api.f() to anon; -- 나쁜 예; "
+     "grant execute on function public.g() to anon 처럼 쓰지 말 것", False),
+    ("line_end_comment_quotes_schema_grant_ok",
+     "revoke all on function f() from anon; -- 금지; "
+     "grant all on all functions in schema public to anon 은 안 된다\n"
+     "grant execute on function api.f() to anon;", False),
+    # 같은 줄 앞의 진짜 grant 는 여전히 잡는다(주석은 `--` 부터만 걷힌다)
+    ("real_grant_before_line_end_comment",
+     "grant execute on function public.g() to anon; -- 예: "
+     "grant execute on function api.f() to anon; 처럼 쓸 것", True),
+    # 작은따옴표 글 안의 `--` 는 주석이 아니다 — 그 뒤 글자를 걷지 않는다
+    ("dash_dash_inside_quotes_is_not_a_comment",
+     "do $$ begin execute 'select 1 -- x' || "
+     "'; grant execute on function g() to anon'; end $$;", True),
+    # ── 2026-10-03 P11-b — 작은따옴표 글 안의 `/*` 가 다음 `*/` 까지 진짜 grant 를 숨기던 것 ──
+    ("block_opener_inside_quotes_hides_nothing",
+     "comment on function api.f() is 'a /* b';\n"
+     "grant execute on function public.g() to anon;\n"
+     "/* 끝 */", True),
+    ("block_opener_inside_doubled_quote_string",
+     "comment on function api.f() is 'it''s /* b';\n"
+     "grant all on function g(text) to public;\n"
+     "/* 끝 */", True),
+    ("block_opener_inside_quotes_api_ok",
+     "comment on function api.f() is 'a /* b';\n"
+     "grant execute on function api.g() to anon;\n"
+     "/* 끝 */", False),
 )
 
 
