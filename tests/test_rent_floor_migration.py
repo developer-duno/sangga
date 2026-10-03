@@ -237,6 +237,56 @@ def grant_targets(sql):
     return [t.lower() for t in found]
 
 
+def _grant_statements(sql):
+    """주석(줄 전체·줄 끝·블록)을 걷은 뒤 `grant …;` 문장들(회수 `grant option for` 는 뺀다)."""
+    return re.findall(r"(?is)(?<![\w.])grant\b(?!\s+option\s+for\b)[^;]*;", code_only(statements(sql)))
+
+
+def _grantees(stmt):
+    """`… to <롤>, <롤> [with grant option];` 의 받는 롤(소문자·정렬). 대상 이름 속 `to` 는 안 집는다."""
+    m = re.search(r"(?is)\bto\s+(.*?)\s*(?:with\s+grant\s+option\s*)?;$", stmt.strip())
+    if not m:
+        return ()
+    return tuple(sorted(r.strip().strip('"').lower() for r in m.group(1).split(",") if r.strip()))
+
+
+def function_grants(sql):
+    """`grant … on function <…list_rent_stats>(…) to …;` → [(대상 이름, 받는 롤 묶음)].
+
+    ⚠️ 못 보는 것: 인자 괄호 없는 꼴 · 따옴표 이름 · `on all functions in schema` · 한 grant 에 함수를
+       여럿 쓴 꼴(빈 목록이 되어 '정확히 같은가' 시험이 시끄럽게 빨강이 된다).
+    """
+    out = []
+    for stmt in _grant_statements(sql):
+        m = re.search(r"(?is)\bon\s+(?:function|routine)\s+((?:\w+\.)?list_rent_stats)\s*\(", stmt)
+        if m:
+            out.append((m.group(1).lower(), _grantees(stmt)))
+    return out
+
+
+OPEN_ROLES = {"anon", "authenticated", "public"}
+
+
+def table_open_grants(sql):
+    """rent_stat 표나 api.rent_stat 뷰를 anon·authenticated·public 에 여는 grant 문장 목록.
+
+    잡는 것: `grant select on api.rent_stat to anon;` · `GRANT ALL ON TABLE public.rent_stat TO public;`
+    처럼 권한 종류·`table` 낱말·접두·대소문자·들여쓰기·여러 롤과 무관하게.
+    ⚠️ 못 보는 것: `on all tables in schema api` 처럼 이름 없이 통째로 여는 꼴 · 따옴표 이름 ·
+       동적 SQL · 한 grant 에 대상을 여럿 쓰고 rent_stat 이 둘째 이후인 꼴(`on api.x, api.rent_stat`) ·
+       맨 끝 `granted by <롤>` 이 붙은 꼴 · 점 앞뒤 공백(`api . rent_stat`). 지금 정본·마이그레이션에는
+       이런 꼴이 없다(2026-10-04 재검사관 탐침). (기본 권한으로 열리는 것은 문장이 아니라
+       `post_load.py --check` 가 본다.)
+    """
+    bad = []
+    for stmt in _grant_statements(sql):
+        if not re.search(r"(?is)\bon\s+(?:table\s+)?(?:api\.|public\.)?rent_stat\b(?!\s*\()", stmt):
+            continue
+        if OPEN_ROLES & set(_grantees(stmt)):
+            bad.append(re.sub(r"\s+", " ", stmt.strip()))
+    return bad
+
+
 # ── ⓐ 머리·comment 글자 대조 ──────────────────────────────────────────────────
 
 
@@ -432,3 +482,42 @@ def test_only_the_api_twin_is_granted(migration):
 def test_grant_detector_catches_public_opening(bad):
     targets = grant_targets(bad)
     assert targets and targets != ["api.list_rent_stats"]
+
+
+def test_the_api_twin_is_granted_to_exactly_anon_and_authenticated(migration, schema):
+    """받는 롤까지 본다 — 롤 하나가 빠지면(로그인 사용자 화면) 에러 없이 그쪽 카드만 사라진다."""
+    expected = [("api.list_rent_stats", ("anon", "authenticated"))]
+    assert function_grants(migration) == expected
+    assert function_grants(schema) == expected
+
+
+@pytest.mark.parametrize("bad,roles", [
+    ("grant execute on function api.list_rent_stats(text) to anon;", ("anon",)),           # 흔한 꼴
+    ("  GRANT ALL ON FUNCTION api.list_rent_stats (text)\n    TO anon, authenticated, service_role;",
+     ("anon", "authenticated", "service_role")),                                             # 변형
+])
+def test_function_grant_roles_detector_sees_the_role_list(bad, roles):
+    got = function_grants(bad)
+    assert got == [("api.list_rent_stats", roles)]
+    assert got != [("api.list_rent_stats", ("anon", "authenticated"))]
+
+
+def test_no_grant_opens_the_rent_stat_table_or_view(migration, schema):
+    assert table_open_grants(migration) == []
+    assert table_open_grants(schema) == []
+
+
+@pytest.mark.parametrize("bad", [
+    "grant select on api.rent_stat to anon;",                                    # 흔한 꼴
+    "  GRANT ALL ON TABLE public.rent_stat\n    TO service_role, PUBLIC;",       # 변형: table·접두·여러 롤
+    "grant select, insert on rent_stat to authenticated;",
+])
+def test_table_open_grant_detector_catches_shapes(bad):
+    assert table_open_grants(bad), "탐지가 {!r} 를 놓쳤습니다".format(bad)
+
+
+def test_table_open_grant_detector_ignores_service_role_and_comments():
+    assert table_open_grants(
+        "grant select, insert, update, delete on api.rent_stat        to service_role;") == []
+    assert table_open_grants("-- grant select on api.rent_stat to anon;\n") == []
+    assert table_open_grants("grant execute on function api.list_rent_stats(text) to anon;") == []

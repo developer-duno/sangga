@@ -491,6 +491,115 @@ def test_main_returns_1_when_income_yield_is_empty(monkeypatch, tmp_path):
     assert _run_main(monkeypatch, tmp_path) == 1
 
 
+@pytest.mark.parametrize("val,expected", [
+    (0.004, {}),             # 반올림하면 0.0 — 0 은 "조사값 없음"이라 열쇠가 없다
+    ("0.0049", {}),
+    (0.005, {"1": 0.01}),    # 반올림하면 0.01 — 값이 있다
+    (0.006, {"1": 0.01}),
+])
+def test_build_floor_rent_filters_after_rounding(val, expected):
+    assert target.build_floor_rent([_fu("1층", "임대료", val)]) == expected
+
+
+def test_unknown_rent_buckets_are_counted_and_left_out(tmp_path, capsys):
+    """모르는 층 구간의 '임대료' 줄은 열쇠에서 빠지고, 그 수가 보고에 [주의] 로 찍힌다."""
+    rows = [_fu("1층", "임대료", 74.6), _fu("지하2층", "임대료", 10.0), _fu("옥탑", "임대료", 9.0),
+            _fu("지하2층", "효용비율", 13.4)]          # 효용비율 줄은 세지 않는다
+    assert target.count_unknown_rent_buckets(rows) == {"지하2층": 1, "옥탑": 1}
+    assert target.build_floor_rent(rows) == {"1": 74.6}
+
+    _write_raw(tmp_path, "집합상가", "floor_util", rows + [_fu("1층", "효용비율", 100.0)])
+    _write_raw(tmp_path, "집합상가", "yield",
+               [{"CLS_NM": "테헤란로", "ITM_NM": "소득수익률", "DTA_VAL": 0.9}])
+    records, stats, _ = target.process_bld_type(str(tmp_path), "집합상가")
+    assert sum(stats["floor_rent_unknown_bucket"].values()) == 2
+    assert records[0]["floor_rent"] == {"1": 74.6}
+    target.print_report([("집합상가", stats)], 0, len(records))
+    out = capsys.readouterr().out
+    assert "층별 임대료 모르는 층 구간 2줄" in out
+    assert "[주의]" in out
+
+
+def test_report_has_no_warning_when_every_bucket_is_known(tmp_path, capsys):
+    _seed(tmp_path)
+    records, stats, _ = target.process_bld_type(str(tmp_path), "집합상가")
+    target.print_report([("집합상가", stats)], 0, len(records))
+    out = capsys.readouterr().out
+    assert "층별 임대료 모르는 층 구간 0줄" in out
+    assert "[주의]" not in out
+
+
+# ── 12. 채움 0 검사는 (종류, 최신 분기)마다 ───────────────────────────────────
+
+
+def _write_quarters(raw_dir, bld_type, rent_items, income_items):
+    """분기마다 '임대료'·'소득수익률' 항목 이름을 따로 정한 가짜 원본(분기 = 사전 열쇠 순서)."""
+    import json
+    lines = {"floor_util": [], "yield": []}
+    for quarter, rent_item in rent_items.items():
+        for row in (_fu("1층", "효용비율", 100.0), _fu("1층", rent_item, 74.6)):
+            lines["floor_util"].append({"bld_type": bld_type, "metric": "floor_util",
+                                        "quarter_id": quarter, "fetched_at": "x", "row": row})
+    for quarter, income_item in income_items.items():
+        for row in ({"CLS_NM": "테헤란로", "ITM_NM": "투자수익률", "DTA_VAL": 1.9},
+                    {"CLS_NM": "테헤란로", "ITM_NM": income_item, "DTA_VAL": 0.9}):
+            lines["yield"].append({"bld_type": bld_type, "metric": "yield",
+                                   "quarter_id": quarter, "fetched_at": "x", "row": row})
+    for metric, rows in lines.items():
+        path = target.raw_path(str(raw_dir), bld_type, metric)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fp:
+            for r in rows:
+                fp.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+
+def _run_all_types(monkeypatch, raw_dir):
+    monkeypatch.setattr(sys, "argv", ["load_rone.py", "--dry-run", "--raw-dir", str(raw_dir)])
+    return target.main()
+
+
+OK_Q = {"202601": "임대료", "202602": "임대료"}
+OK_I = {"202601": "소득수익률", "202602": "소득수익률"}
+
+
+def test_latest_quarter_fill_reads_only_the_newest_quarter():
+    records = [
+        {"quarter": "2026Q1", "floor_rent": {"1": 1.0}, "income_yield_rate": 0.5},
+        {"quarter": "2026Q2", "floor_rent": None, "income_yield_rate": 0.4},
+    ]
+    assert target.latest_quarter_fill(records) == ("2026Q2", 0, 1)
+    assert target.latest_quarter_fill([]) == (None, 0, 0)
+
+
+def test_main_0_when_every_latest_quarter_is_filled(monkeypatch, tmp_path):
+    """양성 대조 — 아래 1 들이 '무조건 1'이 아님을 보인다(옛 분기만 이름이 바뀐 경우도 0)."""
+    _write_quarters(tmp_path, "집합상가", OK_Q, OK_I)
+    _write_quarters(tmp_path, "오피스", {"202601": "임대료(옛 이름)", "202602": "임대료"}, OK_I)
+    assert _run_all_types(monkeypatch, tmp_path) == 0
+
+
+def test_main_1_when_only_the_latest_quarter_lost_its_rent_item(monkeypatch, tmp_path, capsys):
+    """옛 분기 값이 합계를 채워도, 화면이 읽는 최신 분기가 비면 멈춘다."""
+    _write_quarters(tmp_path, "집합상가", {"202601": "임대료", "202602": "층별임대료"}, OK_I)
+    assert _run_all_types(monkeypatch, tmp_path) == 1
+    assert "[에러] 집합상가 2026Q2" in capsys.readouterr().out
+
+
+def test_main_1_when_only_the_latest_quarter_lost_its_income_item(monkeypatch, tmp_path):
+    _write_quarters(tmp_path, "집합상가", OK_Q, {"202601": "소득수익률", "202602": "소득 수익률"})
+    assert _run_all_types(monkeypatch, tmp_path) == 1
+
+
+def test_main_1_when_one_type_of_two_is_empty(monkeypatch, tmp_path, capsys):
+    """종류 하나만 비어도 멈춘다 — 다른 종류의 값이 합계를 채워 주지 않는다."""
+    _write_quarters(tmp_path, "집합상가", OK_Q, OK_I)
+    _write_quarters(tmp_path, "오피스", {"202601": "임대료", "202602": "임대료(오타)"}, OK_I)
+    assert _run_all_types(monkeypatch, tmp_path) == 1
+    out = capsys.readouterr().out
+    assert "[에러] 오피스 2026Q2" in out
+    assert "[에러] 집합상가" not in out
+
+
 def test_process_bld_type_puts_each_yield_in_its_own_column(tmp_path):
     """원본 → 레코드 끝까지: 투자수익률은 yield_rate, 소득수익률은 income_yield_rate(서로 바뀌지 않는다)."""
     _seed(tmp_path)

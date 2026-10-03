@@ -44,14 +44,23 @@
 --   python scripts/dbx.py -f supabase/migrations/2026-10-04a_rent_floor_rent.sql
 --   (합친 뒤 본 폴더 main 에서 — 그다음 load_rone.py --dry-run → 적재 → post_load.py → --check)
 --
--- 적용한 사람이 보게 되는 것
+--   적재 전후 확인(dbx.py 로 — 적재 전에 ①②를 기록해 두고 적재 뒤 다시 잰다):
+--   -- ① 적재 전에 기록하고 ② 적재 뒤 같은 값인지 본다(효용비율이 한 글자도 안 바뀌었나)
+--   select md5(string_agg(quarter || region_code || bld_type || coalesce(floor_util_ratio::text, ''), '|' order by quarter, region_code, bld_type)) from rent_stat;
+--   -- ③ 적재 뒤 세 값이 모두 같아야 한다(지금 7,232)
+--   select count(*), count(floor_rent), count(income_yield_rate) from rent_stat;
+--
+-- 적용한 사람이 보게 되는 것 (파일의 실제 문장 순서)
 -- --------------------------
---   SET ×1 · BEGIN · ALTER TABLE · COMMENT ×4 · CREATE VIEW · REVOKE · GRANT ·
---   DROP FUNCTION ×2 · CREATE FUNCTION ×2 · COMMENT · REVOKE ×2 · GRANT · COMMIT · NOTIFY
+--   SET · BEGIN · ALTER TABLE · COMMENT ×4 · CREATE VIEW · REVOKE · GRANT ·
+--   DROP FUNCTION ×2 · CREATE FUNCTION · COMMENT · REVOKE ·
+--   CREATE FUNCTION · REVOKE · GRANT · COMMIT · NOTIFY
+--   (api 쌍둥이에는 comment 를 따로 달지 않는다 — 옛 2026-08-31a 와 정본도 그렇다)
 --   적재 전에는 새 두 칸이 전부 비어(null) 있다 — 화면은 선택 칸이라 그대로 선다.
 --
--- 되돌리기: 정본 df8a710 의 옛 list_rent_stats 두 정의(칸 7개)를 지우고 다시 만들면 된다
--- (같은 이유로 drop 이 먼저 · api 먼저) · 칸 둘은 남겨 둬도 해가 없다.
+-- 되돌리기 = **새 마이그레이션 파일**(set lock_timeout → begin → api 먼저 drop → 옛 7칸 정의
+-- 다시 만들기 → comment·revoke/grant → commit → notify) **+ 정본 되돌림(PR revert)**.
+-- 적용된 이 파일은 고치지 않는다(원장). 칸 둘은 남겨도 해가 없다.
 
 set lock_timeout = '2s';
 
