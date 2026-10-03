@@ -38,9 +38,16 @@ MIGRATION = os.path.join(
 EXPECTED = {"district_nm", "source_nm"}
 LOCK_TIMEOUT = "2s"
 
-RE_ALTER_DISTRICT = re.compile(r"(?is)\balter\s+table\s+(?:if\s+exists\s+)?(?:public\.)?district\b(.*?);")
-RE_SET_MAIN = re.compile(r"(?i)alter\s+column\s+(\w+)\s+set\s+storage\s+main\b")
-RE_SET_ANY = re.compile(r"(?i)alter\s+column\s+(\w+)\s+set\s+storage\s+(\w+)")
+# PostgreSQL 문법은 `ALTER TABLE [IF EXISTS] [ONLY] 이름 … ALTER [COLUMN] 칸 SET STORAGE …` 라
+# `only` 와 `column` 낱말은 있어도 없어도 같은 문장이다(2026-10-03 P10 — 둘 다 빠뜨리면
+# 나중 문장이 extended 로 되돌리는 것을 조용히 놓쳤다). `alter column x` 꼴은 앞의 선택 묶음이
+# `column` 을 먼저 먹으므로 칸 이름이 "column" 으로 읽히지 않는다.
+# ⚠️ 못 보는 것: 따옴표 친 표·칸 이름(`"district"`·`"source_nm"`), `public` 아닌 스키마 접두,
+#    주석 걷기가 문자열 안 `--` 까지 자르는 것(strip_comments 머리말).
+RE_ALTER_DISTRICT = re.compile(
+    r"(?is)\balter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?(?:public\.)?district\b(.*?);")
+RE_SET_MAIN = re.compile(r"(?i)alter\s+(?:column\s+)?(\w+)\s+set\s+storage\s+main\b")
+RE_SET_ANY = re.compile(r"(?i)alter\s+(?:column\s+)?(\w+)\s+set\s+storage\s+(\w+)")
 RE_CREATE = re.compile(r"(?i)\bcreate\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?district\s*\(")
 RE_ADD_SOURCE = re.compile(r"(?i)\badd\s+column\s+(?:if\s+not\s+exists\s+)?source_nm\b")
 
@@ -234,7 +241,51 @@ def test_mutation_h_reverting_to_extended_later_is_red():
     assert any("source_nm 의 저장 방식이 'extended'" in b for b in schema_problems(broken))
 
 
-MIG_UPD = "   set district_nm = district_nm || '',\n       source_nm   = source_nm || ''\n"
+# 2026-10-03 P10 — `only` 와 `column` 낱말을 뺀 꼴(PostgreSQL 이 같은 문장으로 받는다).
+@pytest.mark.parametrize("revert", [
+    "alter table public.district alter source_nm set storage extended;",
+    "alter table only public.district alter column source_nm set storage extended;",
+    "alter table if exists only district\n  alter source_nm set storage extended;",
+], ids=["no_column_word", "only", "if_exists_only_no_column_word"])
+def test_mutation_l_reverting_with_the_short_forms_is_red(revert):
+    """되돌리는 줄을 `column` 없이·`only` 를 붙여 덧붙여도 빨강이어야 한다."""
+    broken = _schema_lf().replace(SCHEMA_STMT, SCHEMA_STMT + "\n" + revert + "\n", 1)
+    assert any("source_nm 의 저장 방식이 'extended'" in b for b in schema_problems(broken)), revert
+
+
+@pytest.mark.parametrize("stmt,expected", [
+    # 흔한 꼴
+    ("alter table district alter column district_nm set storage main;",
+     {"district_nm": "main"}),
+    # 변형 꼴 — only · column 생략 · 둘 다
+    ("alter table only public.district alter column district_nm set storage main;",
+     {"district_nm": "main"}),
+    ("alter table district alter district_nm set storage main, alter source_nm set storage main;",
+     {"district_nm": "main", "source_nm": "main"}),
+    ("alter table only district alter source_nm set storage extended;",
+     {"source_nm": "extended"}),
+], ids=["common", "only", "no_column_word", "only_no_column_word"])
+def test_short_forms_are_read(stmt, expected):
+    """양성 대조 — 판정기 본체와 같은 되짚기(final_storage)를 지난다."""
+    assert final_storage(stmt) == expected
+
+
+@pytest.mark.parametrize("stmt,expected", [
+    # 칸 이름이 "column" 으로 읽히면 안 된다(칸은 district_nm 하나)
+    ("alter table district alter column district_nm set storage main;",
+     {"district_nm": "main"}),
+    # 다른 표의 같은 칸 — district 가 아니다
+    ("alter table only districts alter source_nm set storage extended;", {}),
+    ("alter table only public.district_rone_map alter source_nm set storage extended;", {}),
+    # 저장 방식이 아닌 다른 alter
+    ("alter table only district alter source_nm set default '';", {}),
+], ids=["column_word_not_a_name", "other_table", "other_table_prefix", "not_storage"])
+def test_short_forms_do_not_overreach(stmt, expected):
+    """음성 대조 — 넓힌 꼴이 엉뚱한 표·낱말을 물지 않는다."""
+    assert final_storage(stmt) == expected
+
+
+MIG_UPD ="   set district_nm = district_nm || '',\n       source_nm   = source_nm || ''\n"
 
 
 def _mig_lf():

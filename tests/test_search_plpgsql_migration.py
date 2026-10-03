@@ -424,8 +424,14 @@ _CONSTRAINT_HEADS = ("constraint", "primary", "unique", "check", "foreign", "exc
 
 RE_CREATE_TABLE = re.compile(
     r"(?is)\bcreate\s+(?:unlogged\s+)?table\s+(?:if\s+not\s+exists\s+)?([\w.\"]+)\s*\(")
+# `add [column] [if not exists] <이름>` — PostgreSQL 은 `column` 낱말을 빼도 받는다(2026-10-03
+# P11-c). 낱말을 뺀 꼴에서 `constraint`·`primary`·`foreign`·`unique`·`check`·`exclude` 로 시작하면
+# 칸이 아니라 제약이다(`added_columns` 가 거른다).
+# ⚠️ 못 보는 것·더 무는 것: `alter table` 문장 안인지는 안 본다 — `alter type … add value 'x'` 의
+#    `value`, `alter publication … add table t` 의 `table` 같은 낱말도 칸 이름으로 센다(파라미터
+#    이름과 같지 않으면 판정에 영향 없음). 이름 앞뒤의 따옴표만 걷고 따옴표 안 공백은 못 본다.
 RE_ADD_COLUMN = re.compile(
-    r"(?is)\badd\s+column\s+(?:if\s+not\s+exists\s+)?\"?(\w+)\"?")
+    r"(?is)\badd\s+(column\s+)?(?:if\s+not\s+exists\s+)?\"?(\w+)\"?")
 # `alter table|view … rename [column] <옛 이름> to <새 이름>` — 새 이름이 칸으로 생긴다
 # (2026-09-27 P11). `rename to <새 표 이름>`(표 이름 바꾸기)·`rename constraint …` 는
 # `<옛 이름> to` 모양이 아니라 안 걸린다.
@@ -466,6 +472,18 @@ def _top_level_items(text):
     return [i.strip() for i in items if i.strip()]
 
 
+def added_columns(code):
+    """`add [column] …` 로 생기는 칸 이름 목록(주석 걷은 본문을 받는다). `column` 낱말이 없는
+    꼴에서 제약 머리말(`_CONSTRAINT_HEADS`)로 시작하는 것은 칸이 아니라 거른다."""
+    out = []
+    for a in RE_ADD_COLUMN.finditer(code):
+        name = a.group(2).lower()
+        if a.group(1) is None and name in _CONSTRAINT_HEADS:
+            continue
+        out.append(name)
+    return out
+
+
 def relation_columns(sql):
     """정본에서 (관계 이름, 칸 이름 목록) — 표(create table + add column + rename column)와
     뷰(별칭)."""
@@ -478,7 +496,7 @@ def relation_columns(sql):
             if first not in _CONSTRAINT_HEADS:
                 cols.append(first)
         out.append(("table " + m.group(1), cols))
-    adds = [a.group(1).lower() for a in RE_ADD_COLUMN.finditer(code)]
+    adds = added_columns(code)
     if adds:
         out.append(("alter table … add column", adds))
     renames = [r.group(2).lower() for r in RE_RENAME_COLUMN.finditer(code)]
@@ -547,5 +565,37 @@ def test_mutation_h_a_clashing_column_is_noticed(name, mutate):
 ), ids=["rename_table", "rename_constraint", "commented", "other_name"])
 def test_rename_that_makes_no_clashing_column_stays_green(tail):
     """이름 바꾸기 판정이 칸 아닌 것까지 물면 거짓 빨강 — 이 넷은 초록이어야 한다."""
+    text = norm(read(SCHEMA))
+    assert use_column_clashes(text + tail) == []
+
+
+# 2026-10-03 P11-c — `column` 낱말을 뺀 `add` 로 생기는 칸(PostgreSQL 이 받는다).
+@pytest.mark.parametrize("tail,expected", (
+    # 흔한 꼴
+    ("\nalter table public.district add column q text;\n", ["q"]),
+    # 변형 꼴 — column 생략 · if not exists · 따옴표 · 여러 칸
+    ("\nalter table public.district add q text;\n", ["q"]),
+    ("\nalter table parcel add if not exists lim int;\n", ["lim"]),
+    ('\nalter table parcel add "sigungu" text;\n', ["sigungu"]),
+    ("\nalter table parcel add x int, add p_offset int;\n", ["x", "p_offset"]),
+), ids=["with_column_word", "no_column_word", "if_not_exists", "quoted", "two_adds"])
+def test_added_columns_reads_the_short_form(tail, expected):
+    """양성 대조 — 가드 본체(relation_columns)와 같은 added_columns 를 지난다."""
+    assert added_columns(decomment(tail)) == expected
+    text = norm(read(SCHEMA))
+    assert use_column_clashes(text + tail), "{} — 그런데도 '정상'이라 합니다".format(tail)
+
+
+@pytest.mark.parametrize("tail", (
+    "\nalter table t add constraint q check (x > 0);\n",
+    "\nalter table t add primary key (q);\n",
+    "\nalter table t add foreign key (q) references u (q);\n",
+    "\nalter table t add unique (q);\n",
+    "\nalter table t add check (q > 0);\n",
+    "\nalter table t add exclude using gist (q with &&);\n",
+), ids=["constraint", "primary_key", "foreign_key", "unique", "check", "exclude"])
+def test_added_constraints_are_not_columns(tail):
+    """음성 대조 — 제약을 더하는 `add` 는 칸을 만들지 않는다(이름이 q 여도)."""
+    assert added_columns(decomment(tail)) == []
     text = norm(read(SCHEMA))
     assert use_column_clashes(text + tail) == []
