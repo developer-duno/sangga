@@ -839,6 +839,88 @@ class TestRefreshCoversBothSummaries:
             )
 
 
+def canonical_matviews(sql_text):
+    """schema.sql 글자에서 "요약표를 만드는 문장"의 이름만 모은다(정본 → 목록 방향).
+
+    잡는 꼴: `create materialized view` 뒤에 `if not exists` 가 있을 수도 없을 수도
+    있고, 이름 앞에 `public.` 접두가 붙을 수도, 이름 전체가 큰따옴표로 감싸일 수도
+    있다. `create` 와 `materialized`·`view` 사이, 문장 앞 들여쓰기는 칸 수·줄바꿈
+    상관없이 허용한다(대소문자도 무시). `--` 로 시작하는 한 줄 주석 안의 글자는
+    먼저 지우고 나서 찾는다 — 그래야 주석 속 옛 이름이 섞여 들어오지 않는다.
+
+    「못 보는 것」(2026-10-03 · P6 — 정본은 한 줄에 한 문장이라 지금은 해가 없다):
+      - `/* … */` 블록 주석·작은따옴표 글 안에 적힌 만드는 문장도 진짜로 센다 → 그 이름이
+        목록에 없으면 **시끄럽게 빨강**이 된다(조용히 놓치는 쪽이 아니다).
+      - 작은따옴표 글 안의 `--` 도 주석으로 보고 그 줄 끝까지 지운다 → 같은 줄 뒤에 만드는
+        문장이 이어 붙어 있으면 **놓친다**.
+      - 이름을 스키마까지 따옴표로 감싼 꼴(큰따옴표 public 점 큰따옴표 이름)은 이름을 public 으로
+        잘못 읽는다 → 그런 요약표는 목록에 없으니 **시끄럽게 빨강**(놓치지는 않는다).
+      - public 이 아닌 스키마 접두(예: api 점 이름)도 접두를 이름으로 읽어 **시끄럽게 빨강**.
+        일부러 안 넓혔다 — REFRESH_MVS 는 스키마 없이 이름만 들고 public 기준으로 갱신하므로,
+        다른 스키마에 요약표가 생기는 날은 사람이 갱신 방법부터 정해야 한다(2026-10-03 검사관).
+    """
+    text = re.sub(r"--[^\n]*", "", sql_text)
+    pattern = re.compile(
+        r"(?is)\bcreate\s+materialized\s+view\s+"
+        r"(?:if\s+not\s+exists\s+)?"
+        r'(?:public\.)?"?(\w+)"?'
+    )
+    return {m.group(1).lower() for m in pattern.finditer(text)}
+
+
+class TestCanonicalMatviewsAreAllRefreshed:
+    """⛔ 정본에 만든 요약표가 전부 갱신 목록에 있는가 (2026-10-03 · P6).
+
+    지금까지의 시험(위 TestRefreshCoversBothSummaries)은 "목록 → 정본" 방향만
+    본다 — 목록에 있는 요약표가 정본에도 있는지는 지키지만, **정본에 새 요약표를
+    만들어 놓고 목록(post_load.REFRESH_MVS)에 넣는 걸 잊는 것**은 아무도 못 잡는다.
+    그 경우도 에러는 안 난다 — 그 표가 그냥 영원히 비어 있거나 첫 적재 시점에
+    굳은 채로 남는다(post_load.py 머리 주석들이 이 위험을 여러 번 적는 이유).
+    이 반은 그 반대 방향(정본 → 목록)을 본다.
+    """
+
+    def _schema_text(self):
+        schema_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "supabase", "schema.sql",
+        )
+        with open(schema_path, encoding="utf-8") as f:
+            return f.read()
+
+    def test_every_canonical_mv_is_refreshed(self):
+        found = canonical_matviews(self._schema_text())
+        assert found, (
+            "schema.sql 에서 요약표를 하나도 못 찾았습니다 — 탐지 함수가 죽었다는 "
+            "뜻이라 아래 대조가 의미 없어집니다(빈 집합은 늘 통과하니까)."
+        )
+        refreshed = {mv.lower() for mv in post_load.REFRESH_MVS}
+        missing = found - refreshed
+        assert not missing, (
+            "정본(schema.sql)에는 있는데 post_load.REFRESH_MVS 에는 없는 요약표: "
+            "{} — 여기에 넣어야 적재 후 화면이 새 자료를 봅니다.".format(sorted(missing))
+        )
+
+    def test_detector_catches_common_and_variant_forms(self):
+        """양성 대조 — 흔한 꼴 + 변형 꼴을 실제로 잡는지."""
+        sql = (
+            "create materialized view mv_a as select 1;\n"
+            'CREATE MATERIALIZED VIEW IF NOT EXISTS public."mv_b" AS select 1;\n'
+            "  create materialized\n"
+            "    view mv_c as select 1;\n"
+        )
+        assert canonical_matviews(sql) == {"mv_a", "mv_b", "mv_c"}
+
+    def test_detector_ignores_non_creating_forms(self):
+        """음성 대조 — 만드는 문장이 아닌 것은 잡지 않는다."""
+        sql = (
+            "-- create materialized view mv_old as select 1;\n"
+            "refresh materialized view concurrently mv_d;\n"
+            "drop materialized view mv_e;\n"
+            "comment on materialized view mv_f is '설명';\n"
+        )
+        assert canonical_matviews(sql) == set()
+
+
 class TestAnonExposureCoversFunctions:
     """표·뷰만 보면 **함수가 열린 것을 놓친다**(2026-08-13: unit_business_append_only)."""
 
