@@ -10,9 +10,14 @@ collect_rone.py가 받아둔 raw(24개 파일: 4건물유형 x 6지표)를 읽�
      표만 GRP_ID(지역 식별자)를 직접 준다고 보고, 나머지 5개 표는 CLS_NM(지역
      이름 텍스트)만 있다고 보아 floor_util의 이름→GRP_ID 조회표로 되짚는다.
   2. 층별효용비율 — floor_util 표의 CLS_NM(층 7구간)을 floor_bucket_key()로
-     jsonb 키("-1"·"1".."5"·"6+")로 바꾼다. ITM_NM='효용비율'인 행만 채택하고
-     ('임대료' 행은 버림), 값이 없는 층은 키 자체를 만들지 않는다(0 금지 —
+     jsonb 키("-1"·"1".."5"·"6+")로 바꾼다. ITM_NM='효용비율'인 행만 채택하고,
+     값이 없는 층은 키 자체를 만들지 않는다(0 금지 —
      CLAUDE.md 절대 규칙 4를 jsonb 레벨로 확장).
+  2-1. 층별 임대료(결정 0031) — 같은 표의 ITM_NM='임대료' 행을 floor_rent 로 담는다
+     (천원/㎡ 공표값 그대로 · 열쇠는 7구간 + 오피스의 "6-10"·"11+"). 0 이하·빈 값은
+     키를 만들지 않는다(0 은 "조사값 없음"). yield 표에서는 투자수익률(yield_rate)과
+     따로 소득수익률을 골라 income_yield_rate 로 담는다. (종류, 그 종류의 최신 분기)마다
+     둘 중 하나라도 채움 0건이면 종료코드 1(미리보기도).
   3. 6개 지표를 (분기, 지역, 건물유형) 키로 병합한다 — 일부 지표가 없어도
      (quiet-zero·이름 미매칭) 그 컬럼만 NULL, 나머지는 채운다(부분 병합).
   4. 적재 후 지역 매칭 성공/실패·층별효용비율 채움 비율을 실측 보고한다.
@@ -31,6 +36,7 @@ collect_rone.py가 받아둔 raw(24개 파일: 4건물유형 x 6지표)를 읽�
 """
 
 import json
+import math
 import os
 import re
 import sys
@@ -53,6 +59,19 @@ FLOOR_BUCKET_COUNT = 7
 # yield(수익률) 표는 다른 지표가 섞여 나올 수 있어 ITM_NM으로 골라야 한다(설계 요구사항).
 YIELD_ITEM_NAME = "투자수익률"
 FLOOR_UTIL_RATIO_ITEM_NAME = "효용비율"
+# 결정 0031 — floor_util 원본의 '임대료' 줄(층 구간별 ㎡당 임대료, 천원/㎡)과 yield 원본의
+# '소득수익률' 줄도 담는다. ⛔ 철자가 틀리면 그 칸이 통째로 비는데 에러가 안 난다 —
+# 그래서 main() 이 (종류, 그 종류의 최신 분기)마다 두 칸의 채움 수를 세어 0 이면 종료코드 1 로 멈춘다.
+FLOOR_RENT_ITEM_NAME = "임대료"
+INCOME_YIELD_ITEM_NAME = "소득수익률"
+
+# 임대료용 층 구간 대응표의 **추가분** — 오피스 원본에만 있는 두 구간(6층 위를 둘로 나눈다).
+# ⛔ collect_rone._FLOOR_BUCKET_MAP(7구간)을 넓히지 않는다 — 넓히면 floor_util_ratio 의
+#    내용(오피스 효용비율의 열쇠)이 조용히 바뀐다. 그래서 임대료 쪽만 여기서 덧댄다.
+FLOOR_RENT_EXTRA_BUCKETS = {
+    "6-10층": "6-10",
+    "11층이상": "11+",
+}
 
 # 지표 -> rent_stat 컬럼명. floor_util은 컬럼 2개(region_nm은 공용, floor_util_ratio
 # 전용)를 만들어 별도 처리하므로 이 표에는 없다.
@@ -63,6 +82,11 @@ METRIC_TO_COLUMN = {
     "yield": "yield_rate",
     "conversion": "conversion_rate",
 }
+
+# yield 원본에서 한 번 더 고르는 소득수익률 조각(결정 0031). METRICS 의 원본 파일 이름이
+# 아니라 merge_metrics 안에서만 쓰는 조각 이름이라 METRIC_TO_COLUMN 과 따로 둔다.
+INCOME_YIELD_METRIC = "income_yield"
+INCOME_YIELD_COLUMN = "income_yield_rate"
 
 BATCH_SIZE = 1000
 TIMEOUT_SEC = 120
@@ -147,8 +171,64 @@ def build_floor_util_ratio(rows):
     return out
 
 
+def floor_rent_bucket_key(cls_nm):
+    """임대료용 층 구간 열쇠 — 7구간(collect_rone.floor_bucket_key) + 오피스 두 구간.
+
+    모르는 문자열은 None(무시) — 억지로 추측하지 않는다.
+    """
+    from collect_rone import floor_bucket_key
+
+    key = floor_bucket_key(cls_nm)
+    if key is not None:
+        return key
+    return FLOOR_RENT_EXTRA_BUCKETS.get(s(cls_nm))
+
+
+def build_floor_rent(rows):
+    """floor_util raw 행(한 지역 x 한 분기 스코프) -> {층 구간 열쇠: ㎡당 임대료(천원/㎡)}.
+
+    ITM_NM=='임대료'인 행만 채택한다(효용비율은 build_floor_util_ratio 몫).
+    ⛔ 0 이하·빈 값·숫자 아님은 **열쇠를 만들지 않는다** — 0 은 임대료가 아니라 "조사값
+       없음"이다(소규모상가 지하1층 66행이 0 으로 온다 — 결정 0031). 값은 소수 둘째 자리로
+       반올림한다(rent_per_m2 numeric(10,2) 와 같은 정밀도 — jsonb 는 저절로 안 자른다).
+    열쇠가 하나도 없으면 빈 사전을 돌려준다(빈 사전 → None 은 merge_metrics 가 한다).
+    """
+    out = {}
+    for row in rows:
+        if s(row.get("ITM_NM")) != FLOOR_RENT_ITEM_NAME:
+            continue
+        key = floor_rent_bucket_key(row.get("CLS_NM"))
+        if key is None:
+            continue
+        val = to_float(row.get("DTA_VAL"))
+        if val is None or not math.isfinite(val):
+            continue
+        # ⛔ 반올림한 **뒤에** 거른다 — 0.004 는 반올림하면 0.0 이 되는데, 먼저 거르면 0 이 열쇠로
+        #    들어간다(0 은 "조사값 없음"이다). `not (val > 0)` 은 NaN 도 거른다(어떤 비교도 거짓).
+        val = round(val, 2)
+        if not (val > 0):
+            continue
+        out[key] = val
+    return out
+
+
+def count_unknown_rent_buckets(rows):
+    """'임대료' 줄 가운데 층 구간(CLS_NM)을 모르는 줄 수 → Counter({CLS_NM: 줄 수}).
+
+    모르는 구간은 build_floor_rent 가 조용히 빼므로, 부동산원이 구간을 새로 나누면(예: 지하2층)
+    값이 사라지는 것을 아무도 모른다 — 그래서 세어 보고에 [주의] 로 찍는다(종료코드는 안 바꾼다).
+    """
+    out = Counter()
+    for row in rows:
+        if s(row.get("ITM_NM")) != FLOOR_RENT_ITEM_NAME:
+            continue
+        if floor_rent_bucket_key(row.get("CLS_NM")) is None:
+            out[s(row.get("CLS_NM"))] += 1
+    return out
+
+
 def build_floor_util_by_region(floor_util_rows):
-    """floor_util raw 행(한 건물유형 x 한 분기 스코프) -> {GRP_ID: {region_nm, floor_util_ratio}}."""
+    """floor_util raw 행(한 건물유형 x 한 분기 스코프) -> {GRP_ID: {region_nm, floor_util_ratio, floor_rent}}."""
     grouped = defaultdict(list)
     for row in floor_util_rows:
         gid = s(row.get("GRP_ID"))
@@ -159,7 +239,11 @@ def build_floor_util_by_region(floor_util_rows):
     out = {}
     for gid, rows in grouped.items():
         region_nm = s(rows[0].get("GRP_FULLNM")) or s(rows[0].get("GRP_NM")) or None
-        out[gid] = {"region_nm": region_nm, "floor_util_ratio": build_floor_util_ratio(rows)}
+        out[gid] = {
+            "region_nm": region_nm,
+            "floor_util_ratio": build_floor_util_ratio(rows),
+            "floor_rent": build_floor_rent(rows),
+        }
     return out
 
 
@@ -200,13 +284,19 @@ def merge_metrics(quarter, bld_type, per_metric_rows):
     (분기, 지역, 건물유형) 키로 6개 조각을 병합한다. 일부 지표가 없어도
     (quiet-zero·이름 미매칭) 그 컬럼만 NULL로 두고 나머지는 채운다(전량주의 금지).
     quarter 형식이 이상하면 (api_quarter_to_db_quarter가 None) 빈 목록.
+
+    결정 0031: floor_util 조각의 floor_rent(층별 임대료)와 "income_yield" 조각
+    (yield 원본의 소득수익률 — 투자수익률 yield_rate 와 **다른 칸**)도 함께 싣는다.
+    ⛔ 모든 레코드가 **같은 열쇠 집합**을 갖는다(값이 없으면 None) — 묶음 upsert 는 줄마다
+       칸이 다르면 실패한다.
     """
     db_quarter = api_quarter_to_db_quarter(quarter)
     if db_quarter is None:
         return []
 
     floor_util = per_metric_rows.get("floor_util") or {}
-    region_codes = set(floor_util.keys())
+    income_yield = per_metric_rows.get(INCOME_YIELD_METRIC) or {}
+    region_codes = set(floor_util.keys()) | set(income_yield.keys())
     for metric in METRIC_TO_COLUMN:
         region_codes |= set((per_metric_rows.get(metric) or {}).keys())
 
@@ -219,12 +309,38 @@ def merge_metrics(quarter, bld_type, per_metric_rows):
             "region_nm": fu.get("region_nm"),
             "bld_type": bld_type,
             "floor_util_ratio": fu.get("floor_util_ratio") or None,
+            # 빈 사전은 None 으로 — floor_util_ratio 와 같은 관례(빈 jsonb '{}' 를 싣지 않는다).
+            "floor_rent": fu.get("floor_rent") or None,
         }
         for metric, column in METRIC_TO_COLUMN.items():
             values = per_metric_rows.get(metric) or {}
             row[column] = values.get(rc)
+        row[INCOME_YIELD_COLUMN] = income_yield.get(rc)
         records.append(row)
     return records
+
+
+def fill_counts(records):
+    """(층별 임대료가 찬 레코드 수, 소득수익률이 찬 레코드 수)."""
+    floor_rent_n = sum(1 for r in records if r.get("floor_rent"))
+    income_yield_n = sum(1 for r in records if r.get(INCOME_YIELD_COLUMN) is not None)
+    return floor_rent_n, income_yield_n
+
+
+def latest_quarter_fill(records):
+    """한 종류의 레코드에서 (최신 분기, 그 분기의 층별 임대료 채움 수, 소득수익률 채움 수).
+
+    ⛔ 채움 0 검사를 전 분기 **합계**로 하면, 최신 분기만 항목 이름이 바뀌어도 옛 분기 값이
+       합계를 채워 조용히 통과한다 — 그런데 화면은 (조사구역, 종류)마다 **최신 분기 한 줄**만
+       읽으므로 바로 그 분기가 통째로 빈다. 그래서 종류마다 최신 분기로 잰다.
+    레코드가 없으면 (None, 0, 0).
+    """
+    quarters = [r.get("quarter") for r in records if r.get("quarter")]
+    if not quarters:
+        return None, 0, 0
+    latest = max(quarters)
+    fr, iy = fill_counts([r for r in records if r.get("quarter") == latest])
+    return latest, fr, iy
 
 
 def assert_unique(records, fields=("quarter", "region_code", "bld_type")):
@@ -300,11 +416,13 @@ def process_bld_type(raw_dir, bld_type):
         "unmatched": Counter(),
         "conflicts": Counter(),
         "floor_util_fill": [],   # 각 (지역,분기)의 채움 비율(0~1) — 평균 보고용
+        "floor_rent_unknown_bucket": Counter(),   # '임대료' 줄의 모르는 층 구간(결정 0031)
     }
 
     for quarter in sorted(quarters):
         fu_rows = [r["row"] for r in raw_by_metric["floor_util"]
                    if r.get("quarter_id") == quarter and isinstance(r.get("row"), dict)]
+        stats["floor_rent_unknown_bucket"].update(count_unknown_rent_buckets(fu_rows))
         name_lookup, conflicts = build_name_lookup(fu_rows)
         stats["conflicts"].update(conflicts)
         floor_util_by_region = build_floor_util_by_region(fu_rows)
@@ -319,9 +437,17 @@ def process_bld_type(raw_dir, bld_type):
             by_region, unmatched = build_metric_by_region(m_rows, name_lookup, item_name=item_name)
             stats["unmatched"].update(unmatched)
             per_metric_rows[metric] = by_region
+            if metric == "yield":
+                # 같은 원본에서 소득수익률만 한 번 더 고른다. 미매칭 이름은 위 투자수익률 쪽이
+                # 이미 셌으므로(같은 CLS_NM) 여기서는 다시 세지 않는다.
+                per_metric_rows[INCOME_YIELD_METRIC], _ = build_metric_by_region(
+                    m_rows, name_lookup, item_name=INCOME_YIELD_ITEM_NAME)
 
         records.extend(merge_metrics(quarter, bld_type, per_metric_rows))
 
+    stats["floor_rent_filled"], stats["income_yield_filled"] = fill_counts(records)
+    stats["latest_quarter"], stats["latest_floor_rent_filled"], stats["latest_income_yield_filled"] = \
+        latest_quarter_fill(records)
     return records, stats, broken_total
 
 
@@ -401,6 +527,18 @@ def print_report(all_stats, broken_total, record_count):
             avg = sum(stats["floor_util_fill"]) / len(stats["floor_util_fill"])
             print("  층별효용비율 평균 채움 비율: {:.1f}% ({}개 지역x분기, §6.1의 66.6%와 참고 대조)".format(
                 avg * 100, len(stats["floor_util_fill"])))
+        print("  층별 임대료 채움 {:,}행 · 소득수익률 채움 {:,}행".format(
+            stats.get("floor_rent_filled", 0), stats.get("income_yield_filled", 0)))
+        if stats.get("latest_quarter"):
+            print("  최신 분기 {}: 층별 임대료 채움 {:,}행 · 소득수익률 채움 {:,}행".format(
+                stats["latest_quarter"], stats.get("latest_floor_rent_filled", 0),
+                stats.get("latest_income_yield_filled", 0)))
+        unknown = stats.get("floor_rent_unknown_bucket") or Counter()
+        print("  층별 임대료 모르는 층 구간 {:,}줄".format(sum(unknown.values())))
+        if unknown:
+            top = ", ".join("{}({})".format(k or "(빈 값)", v) for k, v in unknown.most_common(5))
+            print("  [주의] 층 구간을 모르는 '임대료' 줄을 뺐습니다: {} — 부동산원이 구간을 새로 "
+                  "나눴는지 보세요".format(top))
     print("")
     print("[ rent_stat ] {:,}행 (would-upsert)".format(record_count))
     print("=" * 78)
@@ -480,6 +618,23 @@ def main():
         return 1
 
     print_report(all_stats, broken_total, len(all_records))
+
+    # ⛔ 결정 0031 — 새 두 칸 중 하나라도 0건이면 멈춘다(미리보기도). 항목 이름(ITM_NM) 철자가
+    #    틀리거나 원본 모양이 바뀌면 에러 없이 그 칸만 통째로 비고, 라이브에서는 화면의 층별 표나
+    #    소득수익률 줄이 조용히 사라진다(load_vworld_land.py 의 "0건 = 이상 신호" 규약과 같다).
+    # ⛔ 잣대는 **(종류, 그 종류의 최신 분기)마다**다 — 전 분기 합계로 재면 최신 분기만 비어도 옛
+    #    분기가 합계를 채워 통과하는데, 화면은 바로 그 최신 분기 한 줄을 읽는다(latest_quarter_fill).
+    empty = [(bt, st) for bt, st in all_stats if st.get("latest_quarter")
+             and (st.get("latest_floor_rent_filled", 0) == 0 or st.get("latest_income_yield_filled", 0) == 0)]
+    if empty:
+        print("")
+        for bt, st in empty:
+            print("[에러] {} {} — 층별 임대료 {:,}행 · 소득수익률 {:,}행: 새 칸이 비었습니다.".format(
+                bt, st["latest_quarter"], st.get("latest_floor_rent_filled", 0),
+                st.get("latest_income_yield_filled", 0)))
+        print("       원본의 항목 이름('{}'·'{}')이 바뀌었는지 먼저 보세요. 적재하지 않습니다.".format(
+            FLOOR_RENT_ITEM_NAME, INCOME_YIELD_ITEM_NAME))
+        return 1
 
     if opts["dry_run"]:
         print("")

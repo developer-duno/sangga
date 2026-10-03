@@ -669,7 +669,19 @@ create table if not exists rent_stat (
   primary key (quarter, region_code, bld_type)
 );
 
-comment on column rent_stat.floor_util_ratio is '1층=100 기준. 층별 임대료 추정의 유일한 공식 근거';
+-- ── 층별 임대료·소득수익률 (2026-10-04a · 결정 0031) ───────────────────────
+-- ⚠️ 표 정의부 안이 아니라 여기 있는 이유: 마이그레이션과 **같은 문장**이라야 정본↔마이그레이션
+--    대조가 된다(district.source_nm 과 같은 관례 — 가드는 `add column <이름>` 형태를 알아본다).
+-- 부동산원은 층 구간별 ㎡당 임대료를 **공표한다**(floor_util 원본의 '임대료' 줄) — 추정이 아니라
+-- 조사값이라 그대로 담는다. 효용비율은 그 값 ÷ 1층 값 × 100 그 자체다(최대 차이 0 검산).
+alter table rent_stat
+  add column if not exists floor_rent jsonb,
+  add column if not exists income_yield_rate numeric(5,2);
+
+comment on column rent_stat.floor_util_ratio is '1층=100 기준 층별효용비율(그 층 임대료 ÷ 1층 임대료 × 100 — 부동산원 공표값). 층별 임대료 자체는 floor_rent 에 공표값 그대로 있다(결정 0031). 함수 밖으로 내보내지 않는다(결정 0024 — 내보내면 화면이 언젠가 곱한다)';
+comment on column rent_stat.yield_rate is '투자수익률(%) · 분기 값(4를 곱해 한 해 값으로 바꾸지 않는다). 소득수익률은 income_yield_rate';
+comment on column rent_stat.floor_rent is '결정 0031 층 구간별 ㎡당 월 임대료(천원/㎡ — 부동산원 층별 임대료 공표값 그대로). 열쇠 = "-1"·"1"~"5"·"6+"(상가 3종) + "6-10"·"11+"(오피스). 0 이하·빈 값은 조사값 없음이라 열쇠를 만들지 않는다. 건물 값이 아니라 조사 상권의 평균이다';
+comment on column rent_stat.income_yield_rate is '결정 0031 소득수익률(%) · 분기 값. 투자수익률(yield_rate)과 다른 항목이다(투자 = 소득 + 자본)';
 
 -- =====================================================================
 -- 운영: collect_progress — 이어받기 ★
@@ -4149,6 +4161,8 @@ grant execute on function api.count_nearby_permits(text) to anon, authenticated;
 
 -- =====================================================================
 -- 함수: list_rent_stats — 이 땅이 속한 상권의 임대 조사값 (2026-08-31a · 결정 0024)
+--   2026-10-04a(결정 0031): 돌려주는 칸 끝에 income_yield_rate · floor_rent 를 더했다
+--   (칸이 바뀌어 api 쌍둥이부터 지우고 다시 만들었다 — 마이그레이션 머리말 참조).
 -- =====================================================================
 -- `rent_stat` 은 2026-08-09 에 7,232행이 들어왔는데 **읽는 코드가 0줄**이었다. 이 함수
 -- 하나가 층별 화면의 여섯 번째 카드를 먹인다.
@@ -4183,13 +4197,15 @@ grant execute on function api.count_nearby_permits(text) to anon, authenticated;
 --    캐스트돼 인덱스가 통째로 죽는다(2026-08-16b 실측 459.8ms↔0.796ms).
 create or replace function list_rent_stats(p_pnu text)
 returns table (
-  district_nm     text,
-  rone_region_nm  text,
-  bld_type        text,
-  quarter         text,
-  vacancy_rate    numeric,
-  rent_per_m2     numeric,
-  yield_rate      numeric
+  district_nm       text,
+  rone_region_nm    text,
+  bld_type          text,
+  quarter           text,
+  vacancy_rate      numeric,
+  rent_per_m2       numeric,
+  yield_rate        numeric,
+  income_yield_rate numeric,
+  floor_rent        jsonb
 )
 language sql
 stable
@@ -4218,9 +4234,12 @@ as $$
   latest as (
     -- (조사구역, 종류)마다 가장 최근 분기 한 줄. 전체 최신 분기 하나로 자르면 그 분기에
     -- 표본이 없는 종류가 통째로 사라진다("오피스는 조사 안 하는 동네"로 보인다).
+    -- 결정 0031: 소득수익률과 층별 임대료(공표값 그대로)를 같은 줄에 싣는다.
+    -- ⛔ floor_util_ratio 는 여기에도 바깥 select 에도 넣지 않는다(결정 0024).
     select distinct on (r.region_nm, r.bld_type)
            r.region_nm, r.bld_type, r.quarter,
-           r.vacancy_rate, r.rent_per_m2, r.yield_rate
+           r.vacancy_rate, r.rent_per_m2, r.yield_rate,
+           r.income_yield_rate, r.floor_rent
     from rent_stat r
     where r.region_nm in (select p.rone_region_nm from pair p)
     order by r.region_nm, r.bld_type, r.quarter desc
@@ -4231,7 +4250,9 @@ as $$
          l.quarter::text,
          l.vacancy_rate,
          l.rent_per_m2,
-         l.yield_rate
+         l.yield_rate,
+         l.income_yield_rate,
+         l.floor_rent
   from pair p
   join latest l on l.region_nm = p.rone_region_nm
   -- 좁은 상권이 더 구체적인 설명이라 먼저 온다(list_building_districts 와 같은 정렬).
@@ -4239,9 +4260,11 @@ as $$
 $$;
 
 comment on function list_rent_stats(text) is
-  '결정 0024 이 필지가 속한 상권의 한국부동산원 임대동향조사 값 — 상권 이름, 부동산원 '
+  '결정 0024·0031 이 필지가 속한 상권의 한국부동산원 임대동향조사 값 — 상권 이름, 부동산원 '
   '조사구역 이름, 건물 종류, 분기, 공실률(%), ㎡당 임대료(천원/㎡ 공표 단위 그대로), '
-  '투자수익률(%). ⛔ 역산·환산을 하지 않는다(조사값 그대로 나른다 — 층별효용비율은 안 나간다). '
+  '투자수익률(%, 분기 값), 소득수익률(%, 분기 값), 층별 ㎡당 임대료(jsonb — 열쇠 "-1"·"1"~"5"·"6+"·'
+  '"6-10"·"11+", 천원/㎡ 공표값 그대로 · 조사값 없는 층 구간은 열쇠가 없다). '
+  '⛔ 역산·환산을 하지 않는다(조사값 그대로 나른다 — 층별효용비율은 안 나간다). '
   '⛔ 이을 근거가 없으면 줄이 아예 없다 — 시·도 평균으로 메우지 않는다(조사 안 한 곳을 '
   '조사한 것처럼 말하지 않기 위해서다). (조사구역, 종류)마다 가장 최근 분기 한 줄만 준다 — '
   '전체 최신 분기로 자르면 그 분기에 표본이 없는 종류가 통째로 사라진다. '
@@ -4256,13 +4279,15 @@ revoke all on function list_rent_stats(text) from public, anon, authenticated;
 -- api 쪽에 통과 함수가 없으면 화면에서 못 부른다.
 create or replace function api.list_rent_stats(p_pnu text)
 returns table (
-  district_nm     text,
-  rone_region_nm  text,
-  bld_type        text,
-  quarter         text,
-  vacancy_rate    numeric,
-  rent_per_m2     numeric,
-  yield_rate      numeric
+  district_nm       text,
+  rone_region_nm    text,
+  bld_type          text,
+  quarter           text,
+  vacancy_rate      numeric,
+  rent_per_m2       numeric,
+  yield_rate        numeric,
+  income_yield_rate numeric,
+  floor_rent        jsonb
 )
 language sql
 stable

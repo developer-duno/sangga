@@ -317,3 +317,297 @@ def test_parse_args_rejects_unknown_flag():
 def test_parse_args_missing_value():
     with pytest.raises(ValueError, match="뒤에 값이 필요"):
         target.parse_args(["--bld-type"])
+
+
+# ── 10. 층별 임대료·소득수익률 (결정 0031) ──────────────────────────────────────
+#
+# floor_util 원본의 '임대료' 줄을 floor_rent 로, yield 원본의 '소득수익률' 줄을
+# income_yield_rate 로 담는다. ⛔ 효용비율(floor_util_ratio)은 글자 그대로 불변이어야 한다.
+
+
+def _fu(cls_nm, itm_nm, val, gid="1168000001", nm="테헤란로", full="서울>강남>테헤란로"):
+    return {"GRP_ID": gid, "GRP_NM": nm, "GRP_FULLNM": full,
+            "CLS_NM": cls_nm, "ITM_NM": itm_nm, "DTA_VAL": val}
+
+
+def test_build_floor_rent_takes_rent_rows_only_and_rounds_to_two_places():
+    rows = [
+        _fu("지하1층", "임대료", 16.9512),
+        _fu("1층", "임대료", 74.596956),
+        _fu("6층이상", "임대료", "22.7"),
+        _fu("1층", "효용비율", 100.0),        # 효용비율 줄은 floor_rent 에 안 들어온다
+    ]
+    out = target.build_floor_rent(rows)
+    assert out == {"-1": 16.95, "1": 74.6, "6+": 22.7}
+
+
+@pytest.mark.parametrize("bad", [0, 0.0, "0", -3.2, "-0.01", None, "", "  ", "abc", "nan", "inf"])
+def test_build_floor_rent_makes_no_key_for_zero_negative_blank_or_non_number(bad):
+    """0 은 임대료가 아니라 '조사값 없음'이다 — 열쇠 자체를 만들지 않는다(소규모 지하1층 66행)."""
+    out = target.build_floor_rent([_fu("1층", "임대료", 52.46), _fu("지하1층", "임대료", bad)])
+    assert out == {"1": 52.46}
+    assert "-1" not in out
+
+
+def test_build_floor_rent_empty_when_every_value_is_missing():
+    assert target.build_floor_rent([_fu("지하1층", "임대료", 0), _fu("1층", "임대료", None)]) == {}
+
+
+def test_build_floor_rent_keeps_the_two_office_buckets():
+    rows = [_fu("5층", "임대료", 26.51), _fu("6-10층", "임대료", 26.73), _fu("11층이상", "임대료", 28.62)]
+    assert target.build_floor_rent(rows) == {"5": 26.51, "6-10": 26.73, "11+": 28.62}
+
+
+def test_floor_rent_bucket_key_unknown_is_none():
+    assert target.floor_rent_bucket_key("지하2층") is None
+    assert target.floor_rent_bucket_key("옥탑") is None
+    assert target.floor_rent_bucket_key(None) is None
+
+
+def test_the_ratio_bucket_map_was_not_widened():
+    """⛔ 오피스 두 구간은 임대료 쪽에만 있다 — 효용비율 대응표가 넓어지면 floor_util_ratio 가 바뀐다."""
+    from collect_rone import floor_bucket_key
+    assert floor_bucket_key("6-10층") is None
+    assert floor_bucket_key("11층이상") is None
+    rows = [_fu("1층", "효용비율", 100.0), _fu("6-10층", "효용비율", 68.5), _fu("11층이상", "효용비율", 73.4)]
+    assert target.build_floor_util_ratio(rows) == {"1": 100.0}
+
+
+def test_build_floor_util_by_region_carries_rent_without_touching_the_ratio():
+    rows = [_fu("1층", "효용비율", 100.0), _fu("2층", "효용비율", 43.5),
+            _fu("1층", "임대료", 74.6), _fu("2층", "임대료", 32.48)]
+    out = target.build_floor_util_by_region(rows)["1168000001"]
+    assert out["floor_util_ratio"] == {"1": 100.0, "2": 43.5}
+    assert out["floor_rent"] == {"1": 74.6, "2": 32.48}
+    # 임대료 줄이 없을 때와 효용비율 결과가 같다(글자 그대로 불변).
+    ratio_only = target.build_floor_util_by_region(rows[:2])["1168000001"]["floor_util_ratio"]
+    assert out["floor_util_ratio"] == ratio_only
+
+
+def test_income_and_investment_yield_go_to_different_columns():
+    lookup, _ = target.build_name_lookup([FU_GANGNAM_1F])
+    rows = [YIELD_GANGNAM_OK, YIELD_GANGNAM_OTHER]
+    invest, _ = target.build_metric_by_region(rows, lookup, item_name=target.YIELD_ITEM_NAME)
+    income, _ = target.build_metric_by_region(rows, lookup, item_name=target.INCOME_YIELD_ITEM_NAME)
+    assert invest == {"1168000000": 4.5}
+    assert income == {"1168000000": 99.9}
+
+    per_metric = {
+        "floor_util": {"1168000000": {"region_nm": "서울>강남", "floor_util_ratio": {"1": 100.0},
+                                      "floor_rent": {"1": 54.11}}},
+        "region_rent": {}, "vacancy": {}, "rent_price_index": {}, "conversion": {},
+        "yield": invest,
+        target.INCOME_YIELD_METRIC: income,
+    }
+    r = target.merge_metrics("202602", "집합상가", per_metric)[0]
+    assert r["yield_rate"] == 4.5
+    assert r["income_yield_rate"] == 99.9
+    assert r["floor_rent"] == {"1": 54.11}
+
+
+def test_merge_metrics_every_record_has_the_same_keys():
+    """묶음 upsert 는 줄마다 칸이 다르면 실패한다 — 값이 없어도 열쇠는 있어야 한다(None)."""
+    per_metric = {
+        "floor_util": {
+            "A": {"region_nm": "a", "floor_util_ratio": {"1": 100.0}, "floor_rent": {"1": 50.0}},
+            "B": {"region_nm": "b", "floor_util_ratio": {}, "floor_rent": {}},
+        },
+        "region_rent": {"C": 10.0},       # floor_util 에 없는 지역
+        "vacancy": {}, "rent_price_index": {}, "yield": {}, "conversion": {},
+        target.INCOME_YIELD_METRIC: {"A": 0.9, "D": 0.4},   # 소득수익률에만 있는 지역도 행을 만든다
+    }
+    records = target.merge_metrics("202602", "집합상가", per_metric)
+    assert [r["region_code"] for r in records] == ["A", "B", "C", "D"]
+    assert len({tuple(sorted(r)) for r in records}) == 1
+    assert {"floor_rent", "income_yield_rate"} <= set(records[0])
+    by = {r["region_code"]: r for r in records}
+    assert by["B"]["floor_rent"] is None, "빈 사전은 None — 빈 jsonb 를 싣지 않는다"
+    assert by["C"]["floor_rent"] is None and by["C"]["income_yield_rate"] is None
+    assert by["D"]["income_yield_rate"] == 0.4
+
+
+def test_merge_metrics_without_income_slice_still_has_the_column():
+    """옛 호출(소득수익률 조각 없음)도 깨지지 않고 칸은 None 으로 선다."""
+    per_metric = {
+        "floor_util": {"A": {"region_nm": "a", "floor_util_ratio": {"1": 100.0}}},
+        "region_rent": {}, "vacancy": {}, "rent_price_index": {}, "yield": {}, "conversion": {},
+    }
+    r = target.merge_metrics("202602", "집합상가", per_metric)[0]
+    assert r["floor_rent"] is None and r["income_yield_rate"] is None
+
+
+def test_fill_counts():
+    records = [
+        {"floor_rent": {"1": 1.0}, "income_yield_rate": 0.5},
+        {"floor_rent": None, "income_yield_rate": None},
+        {"floor_rent": None, "income_yield_rate": 0.0},     # 0.0 도 '채움'이다(값이 있다)
+    ]
+    assert target.fill_counts(records) == (1, 2)
+
+
+# ── 11. main — 새 칸이 비면 종료코드 1 ─────────────────────────────────────────
+
+
+def _write_raw(raw_dir, bld_type, metric, rows, quarter="202602"):
+    import json
+    path = target.raw_path(str(raw_dir), bld_type, metric)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fp:
+        for row in rows:
+            fp.write(json.dumps({"bld_type": bld_type, "metric": metric, "quarter_id": quarter,
+                                 "fetched_at": "2026-08-09T00:00:00", "row": row},
+                                ensure_ascii=False) + "\n")
+
+
+def _run_main(monkeypatch, raw_dir):
+    monkeypatch.setattr(sys, "argv", ["load_rone.py", "--dry-run", "--bld-type", "집합상가",
+                                      "--raw-dir", str(raw_dir)])
+    return target.main()
+
+
+def _seed(raw_dir, rent_item="임대료", income_item="소득수익률"):
+    _write_raw(raw_dir, "집합상가", "floor_util",
+               [_fu("1층", "효용비율", 100.0), _fu("1층", rent_item, 74.6)])
+    _write_raw(raw_dir, "집합상가", "yield",
+               [{"CLS_NM": "테헤란로", "ITM_NM": "투자수익률", "DTA_VAL": 1.9},
+                {"CLS_NM": "테헤란로", "ITM_NM": income_item, "DTA_VAL": 0.9}])
+
+
+def test_main_returns_0_when_both_new_columns_are_filled(monkeypatch, tmp_path, capsys):
+    """양성 대조 — 아래 두 시험의 1 이 '무조건 1'이 아님을 보인다."""
+    _seed(tmp_path)
+    assert _run_main(monkeypatch, tmp_path) == 0
+    assert "층별 임대료 채움 1행 · 소득수익률 채움 1행" in capsys.readouterr().out
+
+
+def test_main_returns_1_when_floor_rent_is_empty(monkeypatch, tmp_path):
+    """항목 이름 철자가 틀리면 그 칸이 통째로 빈다 — 미리보기에서도 멈춰야 한다."""
+    _seed(tmp_path, rent_item="임대료(오타)")
+    assert _run_main(monkeypatch, tmp_path) == 1
+
+
+def test_main_returns_1_when_income_yield_is_empty(monkeypatch, tmp_path):
+    _seed(tmp_path, income_item="소득 수익률")
+    assert _run_main(monkeypatch, tmp_path) == 1
+
+
+@pytest.mark.parametrize("val,expected", [
+    (0.004, {}),             # 반올림하면 0.0 — 0 은 "조사값 없음"이라 열쇠가 없다
+    ("0.0049", {}),
+    (0.005, {"1": 0.01}),    # 반올림하면 0.01 — 값이 있다
+    (0.006, {"1": 0.01}),
+])
+def test_build_floor_rent_filters_after_rounding(val, expected):
+    assert target.build_floor_rent([_fu("1층", "임대료", val)]) == expected
+
+
+def test_unknown_rent_buckets_are_counted_and_left_out(tmp_path, capsys):
+    """모르는 층 구간의 '임대료' 줄은 열쇠에서 빠지고, 그 수가 보고에 [주의] 로 찍힌다."""
+    rows = [_fu("1층", "임대료", 74.6), _fu("지하2층", "임대료", 10.0), _fu("옥탑", "임대료", 9.0),
+            _fu("지하2층", "효용비율", 13.4)]          # 효용비율 줄은 세지 않는다
+    assert target.count_unknown_rent_buckets(rows) == {"지하2층": 1, "옥탑": 1}
+    assert target.build_floor_rent(rows) == {"1": 74.6}
+
+    _write_raw(tmp_path, "집합상가", "floor_util", rows + [_fu("1층", "효용비율", 100.0)])
+    _write_raw(tmp_path, "집합상가", "yield",
+               [{"CLS_NM": "테헤란로", "ITM_NM": "소득수익률", "DTA_VAL": 0.9}])
+    records, stats, _ = target.process_bld_type(str(tmp_path), "집합상가")
+    assert sum(stats["floor_rent_unknown_bucket"].values()) == 2
+    assert records[0]["floor_rent"] == {"1": 74.6}
+    target.print_report([("집합상가", stats)], 0, len(records))
+    out = capsys.readouterr().out
+    assert "층별 임대료 모르는 층 구간 2줄" in out
+    assert "[주의]" in out
+
+
+def test_report_has_no_warning_when_every_bucket_is_known(tmp_path, capsys):
+    _seed(tmp_path)
+    records, stats, _ = target.process_bld_type(str(tmp_path), "집합상가")
+    target.print_report([("집합상가", stats)], 0, len(records))
+    out = capsys.readouterr().out
+    assert "층별 임대료 모르는 층 구간 0줄" in out
+    assert "[주의]" not in out
+
+
+# ── 12. 채움 0 검사는 (종류, 최신 분기)마다 ───────────────────────────────────
+
+
+def _write_quarters(raw_dir, bld_type, rent_items, income_items):
+    """분기마다 '임대료'·'소득수익률' 항목 이름을 따로 정한 가짜 원본(분기 = 사전 열쇠 순서)."""
+    import json
+    lines = {"floor_util": [], "yield": []}
+    for quarter, rent_item in rent_items.items():
+        for row in (_fu("1층", "효용비율", 100.0), _fu("1층", rent_item, 74.6)):
+            lines["floor_util"].append({"bld_type": bld_type, "metric": "floor_util",
+                                        "quarter_id": quarter, "fetched_at": "x", "row": row})
+    for quarter, income_item in income_items.items():
+        for row in ({"CLS_NM": "테헤란로", "ITM_NM": "투자수익률", "DTA_VAL": 1.9},
+                    {"CLS_NM": "테헤란로", "ITM_NM": income_item, "DTA_VAL": 0.9}):
+            lines["yield"].append({"bld_type": bld_type, "metric": "yield",
+                                   "quarter_id": quarter, "fetched_at": "x", "row": row})
+    for metric, rows in lines.items():
+        path = target.raw_path(str(raw_dir), bld_type, metric)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fp:
+            for r in rows:
+                fp.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+
+def _run_all_types(monkeypatch, raw_dir):
+    monkeypatch.setattr(sys, "argv", ["load_rone.py", "--dry-run", "--raw-dir", str(raw_dir)])
+    return target.main()
+
+
+OK_Q = {"202601": "임대료", "202602": "임대료"}
+OK_I = {"202601": "소득수익률", "202602": "소득수익률"}
+
+
+def test_latest_quarter_fill_reads_only_the_newest_quarter():
+    records = [
+        {"quarter": "2026Q1", "floor_rent": {"1": 1.0}, "income_yield_rate": 0.5},
+        {"quarter": "2026Q2", "floor_rent": None, "income_yield_rate": 0.4},
+    ]
+    assert target.latest_quarter_fill(records) == ("2026Q2", 0, 1)
+    assert target.latest_quarter_fill([]) == (None, 0, 0)
+
+
+def test_main_0_when_every_latest_quarter_is_filled(monkeypatch, tmp_path):
+    """양성 대조 — 아래 1 들이 '무조건 1'이 아님을 보인다(옛 분기만 이름이 바뀐 경우도 0)."""
+    _write_quarters(tmp_path, "집합상가", OK_Q, OK_I)
+    _write_quarters(tmp_path, "오피스", {"202601": "임대료(옛 이름)", "202602": "임대료"}, OK_I)
+    assert _run_all_types(monkeypatch, tmp_path) == 0
+
+
+def test_main_1_when_only_the_latest_quarter_lost_its_rent_item(monkeypatch, tmp_path, capsys):
+    """옛 분기 값이 합계를 채워도, 화면이 읽는 최신 분기가 비면 멈춘다."""
+    _write_quarters(tmp_path, "집합상가", {"202601": "임대료", "202602": "층별임대료"}, OK_I)
+    assert _run_all_types(monkeypatch, tmp_path) == 1
+    assert "[에러] 집합상가 2026Q2" in capsys.readouterr().out
+
+
+def test_main_1_when_only_the_latest_quarter_lost_its_income_item(monkeypatch, tmp_path):
+    _write_quarters(tmp_path, "집합상가", OK_Q, {"202601": "소득수익률", "202602": "소득 수익률"})
+    assert _run_all_types(monkeypatch, tmp_path) == 1
+
+
+def test_main_1_when_one_type_of_two_is_empty(monkeypatch, tmp_path, capsys):
+    """종류 하나만 비어도 멈춘다 — 다른 종류의 값이 합계를 채워 주지 않는다."""
+    _write_quarters(tmp_path, "집합상가", OK_Q, OK_I)
+    _write_quarters(tmp_path, "오피스", {"202601": "임대료", "202602": "임대료(오타)"}, OK_I)
+    assert _run_all_types(monkeypatch, tmp_path) == 1
+    out = capsys.readouterr().out
+    assert "[에러] 오피스 2026Q2" in out
+    assert "[에러] 집합상가" not in out
+
+
+def test_process_bld_type_puts_each_yield_in_its_own_column(tmp_path):
+    """원본 → 레코드 끝까지: 투자수익률은 yield_rate, 소득수익률은 income_yield_rate(서로 바뀌지 않는다)."""
+    _seed(tmp_path)
+    records, stats, _ = target.process_bld_type(str(tmp_path), "집합상가")
+    assert len(records) == 1
+    r = records[0]
+    assert r["yield_rate"] == 1.9
+    assert r["income_yield_rate"] == 0.9
+    assert r["floor_rent"] == {"1": 74.6}
+    assert r["floor_util_ratio"] == {"1": 100.0}
+    assert (stats["floor_rent_filled"], stats["income_yield_filled"]) == (1, 1)
