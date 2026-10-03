@@ -48,7 +48,8 @@
     다르면 [사고](종료 코드 1). 거꾸로 라이브에만 남은 색인(제약이 만든 것·확장 소유 표의
     것은 뺀다)은 [주의](종료 코드 1 아님 — 2026-10-02 보탬).
   · 정본↔라이브 함수 — 언어·본문 md5·설정(set …)이 schema.sql 과 다르면 [사고](종료 코드 1).
-  · 참고 시세 이웃 요약표(mv_tx_parcel_geog) 행수 == 좌표·거래 있는 필지 수 — 다르면 [낡음](종료 코드 1).
+  · 참고 시세 이웃 요약표(mv_tx_parcel_geog) pnu 집합 == 좌표·거래 있는 필지 집합 — 어느 쪽에든
+    남는 필지가 있으면 [낡음](종료 코드 1 · 2026-10-03 부터 행수가 아니라 양쪽 차집합으로 잰다).
 """
 
 import hashlib
@@ -403,7 +404,8 @@ def report_coverage_freshness():
 #
 # mv_tx_parcel_geog(2026-09-27c)는 "좌표 있고 거래가 한 건이라도 있는 필지"만 담는다.
 # 실거래를 새로 넣고 갱신을 잊으면 **새로 거래가 생긴 필지가 참고 시세 이웃에서 조용히
-# 빠진다**(에러 0). 검색 요약표와 같은 방식의 등식으로 잡는다 — 표의 행수 == 정의 조건의 필지 수.
+# 빠진다**(에러 0). 표의 pnu 집합 == 정의 조건의 pnu 집합(양쪽 차집합이 0)으로 잡는다
+# (2026-10-03 — 행수만 보면 지워진 필지와 새 필지가 같은 수일 때 [신선]이었다).
 # ⛔ 아래 조건은 schema.sql 의 뷰 정의(where 절)와 **글자 그대로 같은 뜻**이어야 한다.
 #    정의를 바꾸면 여기도 바꾼다(tests/test_post_load_check_alarms.py 가 두 곳을 맞대 본다).
 TX_GEOG_MV = "mv_tx_parcel_geog"
@@ -413,27 +415,41 @@ TX_GEOG_CONDITION = (
 
 
 def build_tx_geog_freshness_sql():
-    """요약표 행수와 '있어야 할 행수'를 한 줄로 뽑는다(build_freshness_sql 과 같은 모양)."""
+    """한 번의 조회로 네 수를 뽑는다: 표 행수 | 있어야 할 행수 | 표에만 있는 pnu | 표에 빠진 pnu.
+
+    ⛔ 행수만 보면 지워진 필지와 새 필지가 같은 수일 때 [신선]이다 — 그래서 pnu 집합을 양쪽으로
+       뺀다(4천 행끼리라 싸다). '있어야 할 필지'는 CTE 한 번으로 구해 양쪽 차집합이 같이 쓴다.
+    ⚠️ 못 보는 것: pnu 집합만 본다 — 필지 도형(geom)이 바뀌었는데 표의 geog 가 옛것인 경우는 [신선]이다.
+    """
     return (
-        "select (select count(*) from {})::text || '|' || "
-        "(select count(*) from parcel p where {})::text;".format(TX_GEOG_MV, TX_GEOG_CONDITION)
-    )
+        "with want as (select p.pnu from parcel p where {cond}) "
+        "select (select count(*) from {mv})::text || '|' || "
+        "(select count(*) from want)::text || '|' || "
+        "(select count(*) from {mv} m where not exists "
+        "(select 1 from want w where w.pnu = m.pnu))::text || '|' || "
+        "(select count(*) from want w where not exists "
+        "(select 1 from {mv} m where m.pnu = w.pnu))::text;"
+    ).format(mv=TX_GEOG_MV, cond=TX_GEOG_CONDITION)
 
 
 def report_tx_geog_freshness():
     """참고 시세 이웃 요약표를 재서 (표행수, 있어야할행수, 낡음여부) 를 돌려준다.
 
-    판정은 검색 요약표와 같은 is_stale(많아도 적어도 낡음) — 종료 코드도 형제들처럼 낡음이면 1.
+    낡음 = 표에만 있는 pnu 가 있거나 표에 빠진 pnu 가 있다(행수가 같아도) — 종료 코드도
+    형제들처럼 낡음이면 1. 답이 네 칸이 아니거나 숫자가 아니면 예외로 시끄럽게 죽는다.
     """
-    mv_rows, _, expected = query_one(build_tx_geog_freshness_sql()).partition("|")
-    stale = is_stale(mv_rows, expected)
+    mv_rows, expected, only_mv, missing = query_one(build_tx_geog_freshness_sql()).split("|")
+    # 네 칸을 **먼저 전부** 숫자로 — 판정이 앞에서 끝나도 뒤 칸이 글자면 죽어야 설명이 참이다.
+    n_rows, n_expected, n_only, n_missing = (int(v) for v in (mv_rows, expected, only_mv, missing))
+    stale = n_only > 0 or n_missing > 0 or is_stale(n_rows, n_expected)
     if stale:
-        print("[낡음] 참고 시세 이웃 요약표 {}행 / 있어야 할 행수 {}행 — 갱신이 필요합니다."
-              .format(mv_rows, expected))
+        print("[낡음] 참고 시세 이웃 요약표 {}행 / 있어야 할 행수 {}행 · 표에만 있는 필지 {}곳 · "
+              "표에 빠진 필지 {}곳 — 갱신이 필요합니다.".format(mv_rows, expected, only_mv, missing))
         print("       이대로 두면 새로 거래가 생긴 필지가 참고 시세 이웃에서 빠집니다(에러는 안 납니다).")
         print("       python scripts/post_load.py 를 실행하면 다시 굽습니다.")
     else:
-        print("[신선] 참고 시세 이웃 요약표 {}행 = 좌표·거래 있는 필지 수.".format(mv_rows))
+        print("[신선] 참고 시세 이웃 요약표 {}행 = 좌표·거래 있는 필지 수 · 표에만 있는 필지 0곳 · "
+              "표에 빠진 필지 0곳.".format(mv_rows))
     return mv_rows, expected, stale
 
 
@@ -915,7 +931,15 @@ def load_api_stats_snapshot(path=API_STATS_SNAPSHOT_PATH):
         return None, None
     with open(path, encoding="utf-8") as fh:
         data = json.load(fh)
-    return float(data["taken_at"]), dict(data["entries"])
+    taken_at, entries = float(data["taken_at"]), dict(data["entries"])
+    # 줄마다 diff_api_stats 가 직전 줄에서 실제로 쓰는 것(calls·total_ms 는 숫자, since 는 .get)을
+    # 여기서 미리 본다 — 그래야 비교 코드에서 터진 것과 "파일 모양이 틀림"이 갈린다(2026-10-03).
+    for key, row in entries.items():
+        if not isinstance(row, dict) or not all(
+                isinstance(row.get(k), (int, float)) and not isinstance(row.get(k), bool)
+                for k in ("calls", "total_ms")):
+            raise ValueError("스냅샷 줄 {} 의 모양이 틀립니다".format(key))
+    return taken_at, entries
 
 
 def save_api_stats_snapshot(entries, taken_at, path=API_STATS_SNAPSHOT_PATH):
@@ -937,23 +961,42 @@ def report_slow_functions():
         return []
     # ⚠️ 스냅샷 읽기·비교가 깨져도 --check 전체를 죽이지 않는다 — 경보 하나가 못 도는 것이지
     #    다른 점검의 판정까지 잃을 일은 아니다. 깨진 파일은 기준만 새로 써서 다음부터 되살린다.
+    # ⛔ 읽기(파일 모양)와 비교(코드)는 따로 잡는다 — 한 try 면 비교 코드의 결함도 "파일 모양이
+    #    틀립니다"로 찍혀 엉뚱한 파일을 의심하게 된다(2026-10-03). 둘 다 [주의] · 종료 코드 영향 0.
+    broken = None
     try:
         prev_at, prev = load_api_stats_snapshot(API_STATS_SNAPSHOT_PATH)
-        per_fn, rebased = diff_api_stats(prev, cur, prev_at)
     except Exception as exc:
-        print("[주의] 느려짐 경보: 직전 스냅샷 파일 모양이 틀립니다({}) — 기준만 새로 저장합니다."
+        print("[주의] 느려짐 경보: 직전 스냅샷 파일 모양이 틀립니다({}) — 이번엔 비교하지 않습니다."
               .format(type(exc).__name__))
-        prev, per_fn, rebased = None, {}, 0
-        broken = True
+        prev, per_fn, rebased, broken = None, {}, 0, "file"
     else:
-        broken = False
+        try:
+            per_fn, rebased = diff_api_stats(prev, cur, prev_at)
+        except Exception as exc:
+            print("[주의] 느려짐 경보: 직전 스냅샷과 비교하는 코드가 실패했습니다({}) — 파일 모양 탓이"
+                  " 아닙니다. 이번엔 비교하지 않습니다.".format(type(exc).__name__))
+            prev, per_fn, rebased, broken = None, {}, 0, "diff"
+    had_prev = prev is not None
+    # ⛔ 저장이 실패하면 os.replace 앞에서 멈추므로 **옛 스냅샷 파일이 그대로 남는다** — 다음 점검은
+    #    "기준부터"가 아니라 그 옛 파일을 다시 읽는다. 그리고 실패했으면 "저장했습니다"를 말하지 않는다.
     try:
         save_api_stats_snapshot(cur, taken_at, API_STATS_SNAPSHOT_PATH)
     except OSError as exc:
-        print("[주의] 느려짐 경보: 스냅샷을 저장하지 못했습니다({}) — 다음 점검도 기준부터입니다."
-              .format(type(exc).__name__))
+        if broken:
+            after = "옛 스냅샷 파일이 그대로 남아 다음 점검도 그 파일을 다시 읽습니다"
+        elif had_prev:
+            after = "옛 스냅샷 파일이 그대로 남아 다음 점검은 그 파일과 다시 비교합니다"
+        else:
+            after = "스냅샷 파일이 아직 없어 다음 점검도 기준부터입니다"
+        print("[주의] 느려짐 경보: 스냅샷을 저장하지 못했습니다({}) — {}.".format(type(exc).__name__, after))
+        saved = False
+    else:
+        saved = True
     if prev is None:
-        if not broken:
+        if saved and broken:
+            print("       ⓘ 기준을 새로 저장했습니다({}줄) — 다음 점검부터 이 기준과 비교합니다.".format(len(cur)))
+        elif saved:
             print("[정보] 느려짐 경보: 기준만 저장했습니다({}줄) — 다음 점검부터 비교합니다.".format(len(cur)))
         return []
     slow = slow_functions(per_fn)
@@ -965,8 +1008,11 @@ def report_slow_functions():
     elif not slow:
         print("[정상] 느려짐 경보: 지난 점검 이후 호출된 api 함수 {}개 모두 평균 {:,.0f}ms 이하."
               .format(len(per_fn), SLOW_MEAN_MS))
-    if rebased:
+    if rebased and saved:
         print("       ⓘ 통계가 초기화됐거나 새로 잡힌 {}줄은 이번엔 기준만 새로 잡았습니다.".format(rebased))
+    elif rebased:
+        print("       ⓘ 통계가 초기화됐거나 새로 잡힌 {}줄은 이번엔 비교하지 않았습니다"
+              "(저장이 실패해 기준도 새로 잡히지 않았습니다).".format(rebased))
     return slow
 
 
@@ -1344,7 +1390,9 @@ def main(argv=None):
     _, _, cov_stale = report_coverage_freshness()
     # 업종 분포 표도 방금 다시 구웠으니 최신 분기여야 한다 — 역시 다시 잰다.
     _, _, mix_stale = report_industry_mix_freshness()
-    return 1 if (stale or map_stale or tx_stale or cov_stale or mix_stale) else 0
+    # 참고 시세 이웃 요약표도 REFRESH_MVS 에 있어 방금 다시 구웠다 — 다시 잰다(2026-10-03).
+    _, _, geog_stale = report_tx_geog_freshness()
+    return 1 if (stale or map_stale or tx_stale or cov_stale or mix_stale or geog_stale) else 0
 
 
 if __name__ == "__main__":

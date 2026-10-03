@@ -187,9 +187,15 @@ class TestSlowReport:
         '{"taken_at": "x", "entries": {}}',
         '{"taken_at": 1, "entries": {"1:10": "문자열"}}',
         "[1, 2]",
+        '{"taken_at": 1, "entries": {"1:10": {"fn": "f", "since": "1756000000"}}}',
+        '{"taken_at": 1, "entries": {"1:10": {"fn": "f", "calls": "10", "total_ms": 1.0}}}',
+        '{"taken_at": 1, "entries": {"1:10": {"fn": "f", "calls": true, "total_ms": 1.0}}}',
     ])
     def test_broken_snapshot_warns_and_rebases(self, monkeypatch, tmp_path, capsys, content):
-        """⛔ 스냅샷 파일 모양이 틀려도 --check 가 죽지 않는다 — [주의] 한 줄 + 기준만 새로."""
+        """⛔ 스냅샷 파일 모양이 틀려도 --check 가 죽지 않는다 — [주의] 한 줄 + 기준만 새로.
+
+        줄 값이 사전이 아니거나 calls·total_ms 가 숫자가 아닌 것도 **파일** 탓이다 — 비교 코드
+        오류 문구로 새면 안 된다(2026-10-03 읽기·비교 try 분리)."""
         path = tmp_path / "snap.json"
         path.write_text(content, encoding="utf-8")
         monkeypatch.setattr(post_load, "API_STATS_SNAPSHOT_PATH", str(path))
@@ -197,7 +203,54 @@ class TestSlowReport:
         assert post_load.report_slow_functions() == []
         out = capsys.readouterr().out
         assert "[주의] 느려짐 경보: 직전 스냅샷 파일 모양이 틀립니다" in out
+        assert "비교하는 코드가 실패했습니다" not in out
+        assert "기준을 새로 저장했습니다(1줄)" in out
         assert json.loads(path.read_text(encoding="utf-8"))["entries"]["1:10"]["calls"] == 12
+
+    def test_diff_code_error_is_not_blamed_on_the_file(self, monkeypatch, tmp_path, capsys):
+        """⛔ 비교 코드가 터지면 '파일 모양' 이 아니라 비교 오류 문구 — 예외 종류 이름만 · 기준은 새로."""
+        path = tmp_path / "snap.json"
+        monkeypatch.setattr(post_load, "API_STATS_SNAPSHOT_PATH", str(path))
+        self._fake(monkeypatch, 1756000100, "1|10|f|10|1000|1756000000")
+        post_load.report_slow_functions()
+        capsys.readouterr()
+
+        def boom(*a, **k):
+            raise ZeroDivisionError("속 글은 안 찍는다")
+        monkeypatch.setattr(post_load, "diff_api_stats", boom)
+        self._fake(monkeypatch, 1756000200, "1|10|f|12|99999|1756000000")
+        assert post_load.report_slow_functions() == []
+        out = capsys.readouterr().out
+        assert "[주의] 느려짐 경보: 직전 스냅샷과 비교하는 코드가 실패했습니다(ZeroDivisionError)" in out
+        assert "파일 모양이 틀립니다" not in out and "속 글은 안 찍는다" not in out
+        assert "기준을 새로 저장했습니다(1줄)" in out
+        assert json.loads(path.read_text(encoding="utf-8"))["entries"]["1:10"]["calls"] == 12
+
+    def test_diff_code_error_does_not_make_check_exit_1(self, monkeypatch, tmp_path):
+        """비교 오류도 [주의] — --check 를 죽이지 않고 종료 코드에도 안 들어간다."""
+        monkeypatch.setattr(post_load, "API_STATS_SNAPSHOT_PATH", str(tmp_path / "snap.json"))
+        (tmp_path / "snap.json").write_text(
+            '{"taken_at": 1, "entries": {"1:10": {"fn": "f", "calls": 1, "total_ms": 1.0, "since": "0"}}}',
+            encoding="utf-8")
+
+        def boom(*a, **k):
+            raise RuntimeError("x")
+        monkeypatch.setattr(post_load, "diff_api_stats", boom)
+        self._fake(monkeypatch, 1756000200, "1|10|f|12|99999|1756000000")
+        for name, val in (
+            ("report_freshness", lambda: ("1", "1", False)),
+            ("report_map_freshness", lambda: ({}, False)),
+            ("report_tx_window_freshness", lambda: ("", "", False)),
+            ("report_coverage_freshness", lambda: ("", "", False)),
+            ("report_industry_mix_freshness", lambda: ("", "", False)),
+            ("report_tx_geog_freshness", lambda: ("1", "1", False)),
+            ("report_anon_exposure", lambda: ([], [])),
+            ("report_write_exposure", lambda: []),
+            ("report_canonical_indexes", lambda: []),
+            ("report_function_drift", lambda: []),
+        ):
+            monkeypatch.setattr(post_load, name, val)
+        assert post_load.main(["--check"]) == 0
 
     def test_unreadable_stats_warns_but_does_not_raise(self, monkeypatch, tmp_path, capsys):
         monkeypatch.setattr(post_load, "API_STATS_SNAPSHOT_PATH", str(tmp_path / "s.json"))
@@ -236,6 +289,110 @@ class TestSlowReport:
         assert post_load.main(["--check"]) == 1
 
 
+class TestSlowSnapshotSaveFailure:
+    """저장 실패 안내가 실제 동작과 같은가(2026-10-03) — 저장은 os.replace 앞에서 멈추므로
+    옛 스냅샷 파일이 그대로 남는다. 다음 점검은 '기준부터'가 아니라 그 옛 파일을 읽는다."""
+
+    def _fake(self, monkeypatch, now, rows):
+        monkeypatch.setattr(post_load, "query_one",
+                            lambda sql: str(now) if "extract(epoch from now())" in sql else rows)
+
+    def _block_save(self, path):
+        os.mkdir(str(path) + ".tmp")          # 임시 파일 자리가 폴더라 open(…, "w") 가 OSError
+
+    def _unblock_save(self, path):
+        os.rmdir(str(path) + ".tmp")
+
+    def test_old_snapshot_survives_and_next_check_compares_with_it(self, monkeypatch, tmp_path, capsys):
+        path = tmp_path / "snap.json"
+        monkeypatch.setattr(post_load, "API_STATS_SNAPSHOT_PATH", str(path))
+        self._fake(monkeypatch, 1756000100, "1|10|f|10|1000|1756000000")
+        post_load.report_slow_functions()
+        before = path.read_text(encoding="utf-8")
+        capsys.readouterr()
+
+        self._block_save(path)
+        self._fake(monkeypatch, 1756000200, "1|10|f|11|1100|1756000000")
+        post_load.report_slow_functions()
+        out = capsys.readouterr().out
+        assert ("[주의] 느려짐 경보: 스냅샷을 저장하지 못했습니다(" in out
+                and "옛 스냅샷 파일이 그대로 남아 다음 점검은 그 파일과 다시 비교합니다." in out)
+        assert "기준부터" not in out and "저장했습니다" not in out
+        assert path.read_text(encoding="utf-8") == before
+
+        # 다음 점검: 옛 파일(10회·1,000ms)과 비교 → 3회·8,100ms(평균 2,700ms)가 울려야 한다.
+        self._unblock_save(path)
+        self._fake(monkeypatch, 1756000300, "1|10|f|13|9100|1756000000")
+        slow = post_load.report_slow_functions()
+        assert [(f, c) for f, c, _ in slow] == [("f", 3)]
+
+    def test_no_snapshot_and_save_fails_never_says_saved(self, monkeypatch, tmp_path, capsys):
+        """⛔ 직전 파일이 없는데 저장도 실패하면 '기준만 저장했습니다'를 말하면 안 된다."""
+        path = tmp_path / "snap.json"
+        monkeypatch.setattr(post_load, "API_STATS_SNAPSHOT_PATH", str(path))
+        self._block_save(path)
+        self._fake(monkeypatch, 1756000100, "1|10|f|10|1000|1756000000")
+        assert post_load.report_slow_functions() == []
+        out = capsys.readouterr().out
+        assert "스냅샷 파일이 아직 없어 다음 점검도 기준부터입니다." in out
+        assert "저장했습니다" not in out and "[정보]" not in out
+        assert not path.exists()
+
+    def test_broken_snapshot_and_save_fails_says_it_will_be_read_again(self, monkeypatch, tmp_path, capsys):
+        path = tmp_path / "snap.json"
+        path.write_text("{not json", encoding="utf-8")
+        monkeypatch.setattr(post_load, "API_STATS_SNAPSHOT_PATH", str(path))
+        self._block_save(path)
+        self._fake(monkeypatch, 1756000100, "1|10|f|10|1000|1756000000")
+        assert post_load.report_slow_functions() == []
+        out = capsys.readouterr().out
+        assert "파일 모양이 틀립니다" in out
+        assert "옛 스냅샷 파일이 그대로 남아 다음 점검도 그 파일을 다시 읽습니다." in out
+        assert "저장했습니다" not in out
+        assert path.read_text(encoding="utf-8") == "{not json"
+
+    def test_diff_error_and_save_fails_says_the_old_file_stays(self, monkeypatch, tmp_path, capsys):
+        """⛔ 비교 코드 오류 + 저장 실패: 파일은 멀쩡히 있으니 '아직 없어 … 기준부터' 가 아니다."""
+        path = tmp_path / "snap.json"
+        monkeypatch.setattr(post_load, "API_STATS_SNAPSHOT_PATH", str(path))
+        self._fake(monkeypatch, 1756000100, "1|10|f|10|1000|1756000000")
+        post_load.report_slow_functions()
+        before = path.read_text(encoding="utf-8")
+        capsys.readouterr()
+
+        def boom(*a, **k):
+            raise RuntimeError("x")
+        monkeypatch.setattr(post_load, "diff_api_stats", boom)
+        self._block_save(path)
+        self._fake(monkeypatch, 1756000200, "1|10|f|12|99999|1756000000")
+        assert post_load.report_slow_functions() == []
+        out = capsys.readouterr().out
+        assert "비교하는 코드가 실패했습니다(RuntimeError)" in out
+        assert "옛 스냅샷 파일이 그대로 남아 다음 점검도 그 파일을 다시 읽습니다." in out
+        assert "아직 없어" not in out and "기준부터" not in out and "저장했습니다" not in out
+        assert path.read_text(encoding="utf-8") == before
+
+    def test_save_fails_with_rebased_rows_does_not_claim_a_new_baseline(self, monkeypatch, tmp_path, capsys):
+        """⛔ 저장이 실패했으면 기준만 새로 잡은 줄도 실제로는 안 잡혔다 — '기준만 새로 잡았습니다' 금지.
+        그 줄은 다음 점검에서도 다시 기준만이므로 '이번 점검 몫까지 함께 센다' 류도 금지."""
+        path = tmp_path / "snap.json"
+        monkeypatch.setattr(post_load, "API_STATS_SNAPSHOT_PATH", str(path))
+        self._fake(monkeypatch, 1756000100, "1|10|f|10|1000|1756000000")
+        post_load.report_slow_functions()
+        capsys.readouterr()
+
+        self._block_save(path)
+        # 통계가 직전 점검 **앞** 시각으로 초기화된 줄(calls 감소) → 기준만 새로 잡을 줄 1개
+        self._fake(monkeypatch, 1756000200, "1|10|f|5|500|1756000050")
+        assert post_load.report_slow_functions() == []
+        out = capsys.readouterr().out
+        assert "다음 점검은 그 파일과 다시 비교합니다." in out
+        assert ("ⓘ 통계가 초기화됐거나 새로 잡힌 1줄은 이번엔 비교하지 않았습니다"
+                "(저장이 실패해 기준도 새로 잡히지 않았습니다).") in out
+        assert "기준만 새로 잡았습니다" not in out and "함께 셉니다" not in out
+        assert "저장했습니다" not in out
+
+
 # ── 참고 시세 이웃 요약표 신선도 ────────────────────────────────────────────
 
 
@@ -245,28 +402,121 @@ class TestTxGeogFreshness:
         got = post_load.report_tx_geog_freshness()
         return got, capsys.readouterr().out
 
-    def test_equal_counts_are_fresh(self, monkeypatch, capsys):
-        (rows, expected, stale), out = self._run(monkeypatch, capsys, "4384|4384")
+    def test_equal_sets_are_fresh(self, monkeypatch, capsys):
+        (rows, expected, stale), out = self._run(monkeypatch, capsys, "4384|4384|0|0")
         assert (rows, expected, stale) == ("4384", "4384", False)
         assert "[신선] 참고 시세 이웃 요약표 4384행" in out
+        assert "표에만 있는 필지 0곳 · 표에 빠진 필지 0곳" in out
 
-    @pytest.mark.parametrize("raw", ["4383|4384", "4385|4384", "0|4384"])
+    @pytest.mark.parametrize("raw", ["4383|4384|0|1", "4385|4384|1|0", "0|4384|0|4384"])
     def test_any_difference_is_stale(self, monkeypatch, capsys, raw):
         """많아도 적어도 낡음이다 — 거래가 지워진 필지가 남아 있어도 이웃에 헛 필지가 섞인다."""
         (_, _, stale), out = self._run(monkeypatch, capsys, raw)
         assert stale is True
         assert "[낡음] 참고 시세 이웃 요약표" in out and "post_load.py" in out
 
-    def test_condition_matches_the_view_definition_in_schema(self):
-        """⛔ 등식의 오른쪽(있어야 할 행수)은 뷰 정의와 같은 조건이어야 한다 — 갈리면 늘 낡음/늘 신선."""
-        raw = read_schema()
-        m = re.search(r"create materialized view if not exists mv_tx_parcel_geog as(.*?);", raw, re.S)
-        assert m, "정본에서 mv_tx_parcel_geog 정의를 못 찾았습니다."
-        norm = lambda s: re.sub(r"\s+", " ", s).strip().lower()  # noqa: E731
-        definition = norm(m.group(1))
-        assert "from parcel p where " + norm(post_load.TX_GEOG_CONDITION) in definition
+    def test_same_row_count_but_different_sets_is_stale(self, monkeypatch, capsys):
+        """⛔ 행수가 같아도(지워진 필지 1 · 새 필지 1) 집합이 다르면 낡음이다 — 예전엔 [신선]이었다."""
+        (rows, expected, stale), out = self._run(monkeypatch, capsys, "4384|4384|1|1")
+        assert (rows, expected, stale) == ("4384", "4384", True)
+        assert "표에만 있는 필지 1곳 · 표에 빠진 필지 1곳" in out
+        assert "[신선]" not in out
+
+    @pytest.mark.parametrize("raw", ["4384|4384", "4384|4384|0", "4384|4384|x|0", "4384|4384|1|x"])
+    def test_malformed_answer_is_loud(self, monkeypatch, raw):
+        """답 모양이 틀리면 [신선]·[낡음] 어느 쪽으로도 넘어가지 않고 예외로 죽는다(칸이 모자라거나
+        숫자가 아님 — 앞 칸만으로 낡음이 정해져도 뒤 칸이 글자면 죽는다)."""
+        monkeypatch.setattr(post_load, "query_one", lambda sql: raw)
+        with pytest.raises(ValueError):
+            post_load.report_tx_geog_freshness()
+
+    def test_sql_counts_both_set_differences_from_one_condition(self):
+        """한 번의 조회 · 조건 글자는 TX_GEOG_CONDITION 한 곳 · 양쪽 차집합 둘 다 센다."""
         sql = post_load.build_tx_geog_freshness_sql()
-        assert "from mv_tx_parcel_geog" in sql and "from parcel p where" in sql
+        assert sql.count(post_load.TX_GEOG_CONDITION) == 1
+        assert "from parcel p where " + post_load.TX_GEOG_CONDITION in sql   # 옛 단언을 이어받는다
+        assert "from mv_tx_parcel_geog" in sql
+        assert sql.count("'|'") == 3 and sql.rstrip().endswith(";") and sql.count(";") == 1
+        assert "from mv_tx_parcel_geog m where not exists (select 1 from want w where w.pnu = m.pnu)" in sql
+        assert "from want w where not exists (select 1 from mv_tx_parcel_geog m where m.pnu = w.pnu)" in sql
+        assert "::char" not in sql          # pnu 는 양쪽 다 char(19) 칸 — 캐스트를 넣으면 색인이 죽는다
+
+    @pytest.mark.parametrize("raw", ["4384|4384|1|0", "4384|4384|0|1", "4385|4384|0|0"])
+    def test_each_term_alone_makes_it_stale(self, monkeypatch, capsys, raw):
+        """판정의 세 항(표에만 있음 · 표에 빠짐 · 행수 다름)이 **각각 혼자서도** 낡음을 만든다.
+
+        실데이터에선 pnu 가 유일 키라 안 나오는 조합도 있지만, 항 하나를 지운 변이를 잡으려면 필요하다."""
+        (_, _, stale), out = self._run(monkeypatch, capsys, raw)
+        assert stale is True and "[낡음]" in out
+
+    @staticmethod
+    def _matches(definition):
+        """뷰 정의의 where 절 **전체**가 TX_GEOG_CONDITION 과 같은가 — 본 시험과 양성 대조가 함께 쓰는 판정."""
+        norm = lambda s: re.sub(r"\s+", " ", s).strip().lower()  # noqa: E731
+        m = re.search(r"\bfrom parcel p where (.*)$", norm(definition))
+        assert m, "뷰 정의에서 where 절을 못 찾았습니다: " + definition
+        return m.group(1) == norm(post_load.TX_GEOG_CONDITION)
+
+    def _view_definition(self):
+        m = re.search(r"create materialized view if not exists mv_tx_parcel_geog as(.*?);",
+                      read_schema(), re.S)
+        assert m, "정본에서 mv_tx_parcel_geog 정의를 못 찾았습니다."
+        return m.group(1)
+
+    def test_condition_matches_the_view_definition_in_schema(self):
+        """⛔ 오른쪽(있어야 할 필지)은 뷰 정의의 where 절 **전체**와 같아야 한다 — 갈리면 늘 낡음/늘 신선.
+
+        예전엔 부분 문자열 비교라 정본 where 끝에 조건을 덧붙여도 초록이었다(2026-10-03)."""
+        assert self._matches(self._view_definition())
+
+    @pytest.mark.parametrize("mutate", [
+        lambda d: d + " and p.x is not null",
+        lambda d: d + "\n   or p.pnu is null",
+        lambda d: d.replace("and exists (select 1 from transaction t where t.pnu = p.pnu)", ""),
+        lambda d: re.sub(r"p\.geom is not null\s+and ", "", d),
+    ])
+    def test_where_clause_comparison_catches_added_or_removed_conditions(self, mutate):
+        """양성 대조: 정의 사본(정본 파일은 안 고친다)에 조건을 더하거나 빼면 **본 시험과 같은 판정**이
+        거짓이어야 한다 — 판정을 부분 문자열 비교로 되돌리면 여기가 빨개진다."""
+        original = self._view_definition()
+        mutated = mutate(original)
+        assert mutated != original, "변이가 정의를 못 바꿨습니다 — 탐침 글자를 정본에 맞추세요."
+        assert not self._matches(mutated)
+
+
+class TestApplyRechecksTxGeog:
+    """갱신 흐름(`--check` 없이)도 참고 시세 이웃 요약표를 다시 잰다 — REFRESH_MVS 에 있어 방금
+    다시 구운 표다(2026-10-03 · 예전엔 --check 쪽에만 있었다)."""
+
+    def _apply(self, monkeypatch, geog):
+        assert "mv_tx_parcel_geog" in post_load.REFRESH_MVS
+        monkeypatch.setattr(post_load.dbx, "run_sql", lambda sql, **k: 0)
+        for name, val in (
+            ("report_freshness", lambda: ("1", "1", False)),
+            ("report_map_freshness", lambda: ({}, False)),
+            ("report_tx_window_freshness", lambda: ("", "", False)),
+            ("report_coverage_freshness", lambda: ("", "", False)),
+            ("report_industry_mix_freshness", lambda: ("", "", False)),
+        ):
+            monkeypatch.setattr(post_load, name, val)
+        asked = []
+
+        def fake_query_one(sql):
+            asked.append(sql)
+            assert sql == post_load.build_tx_geog_freshness_sql()
+            return geog
+        monkeypatch.setattr(post_load, "query_one", fake_query_one)
+        return post_load.main([]), asked
+
+    def test_only_this_table_stale_after_refresh_exits_1(self, monkeypatch, capsys):
+        code, asked = self._apply(monkeypatch, "4384|4384|1|1")
+        assert code == 1 and len(asked) == 1
+        assert "[낡음] 참고 시세 이웃 요약표" in capsys.readouterr().out
+
+    def test_fresh_after_refresh_exits_0(self, monkeypatch, capsys):
+        code, asked = self._apply(monkeypatch, "4384|4384|0|0")
+        assert code == 0 and len(asked) == 1
+        assert "[신선] 참고 시세 이웃 요약표" in capsys.readouterr().out
 
 
 # ── ② 정본 색인 ──────────────────────────────────────────────────────────────
