@@ -273,6 +273,129 @@ def test_cut_off_response_recovers_on_retry(monkeypatch):
     assert attempts["n"] == 1
 
 
+# ── 주소 설정 오류는 '사이트 다운'이 아니다 (2026-10-03 · #191 후속) ─────────────
+#
+# InvalidURL 은 http.client.HTTPException 의 하위라, 끊김을 잡으려 넓힌 튜플(#191)에 함께 걸려
+# 다섯 번 헛되이 다시 두드린 뒤 '사이트 다운' 이슈를 열고 있었다. 틀린 것은 사이트가 아니라
+# 감시의 주소 설정(SANGGA_SITE_URL·--site)이다 → 그대로 올려 '감시 고장'으로 가게 한다.
+# ⚠️ 서버가 이상한 경로·리다이렉트를 줘서 생기는 InvalidURL 도 같은 갈래로 가는 것이 의도다
+#    (check_live_health.py 의 fetch_with_retry 주석 참조 — down 으로 돌리지 말 것).
+# ⓘ 대조(InvalidURL 이 아닌 HTTPException 은 여전히 재시도 · kind=down)는 위
+#    test_cut_off_response_is_a_down_failure_not_a_crash 가 덮는다.
+
+
+def test_invalid_url_is_raised_without_retry(monkeypatch):
+    calls = {"fetch": 0, "sleep": 0}
+
+    def bad_address(_url):
+        calls["fetch"] += 1
+        raise http.client.InvalidURL("nonnumeric port: 'abc'")
+
+    def counting_sleep(_s):
+        calls["sleep"] += 1
+
+    monkeypatch.setattr(chk, "fetch", bad_address)
+    with pytest.raises(http.client.InvalidURL):
+        chk.fetch_with_retry(SITE + ":abc/", "첫 화면", sleep=counting_sleep)
+    assert calls == {"fetch": 1, "sleep": 0}, "주소가 틀린 것은 다시 물어도 답이 같다"
+
+
+def test_invalid_url_crashes_main_without_kind(monkeypatch, tmp_path):
+    """main 에서 안 잡혀 죽어야 kind 가 비고, 워크플로가 '감시 고장' 대본을 연다."""
+    calls = {"n": 0}
+
+    def bad_address(_url):
+        calls["n"] += 1
+        raise http.client.InvalidURL("nonnumeric port: 'abc'")
+
+    out = tmp_path / "gh_output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    monkeypatch.setattr(chk, "fetch", bad_address)
+    monkeypatch.setattr(sys, "argv", ["check_live_health.py", "--site", SITE + ":abc"])
+    with pytest.raises(http.client.InvalidURL):
+        chk.main()
+    assert calls["n"] == 1
+    written = out.read_text(encoding="utf-8") if out.exists() else ""
+    assert "kind<<" not in written
+    assert "reason<<" not in written
+
+
+def test_real_fetch_raises_invalid_url_before_any_connection(monkeypatch):
+    """진짜 fetch(urlopen)도 주소를 읽는 단계에서 InvalidURL 을 낸다 — 연결 전이다.
+
+    ⛔ 소켓을 열려 하면 그 자리에서 AssertionError 로 터지게 막아 둔다(이 시험은 네트워크에 닿으면 안 된다).
+       AssertionError 는 OSError 가 아니라 urllib 이 URLError 로 감싸지 않고 그대로 올라온다.
+    """
+    import socket
+
+    def no_network(*_a, **_k):
+        raise AssertionError("이 시험은 네트워크에 닿으면 안 된다")
+
+    monkeypatch.setattr(socket, "create_connection", no_network)
+    monkeypatch.setattr(socket, "getaddrinfo", no_network)
+    sleeps = []
+    with pytest.raises(http.client.InvalidURL):
+        chk.fetch_with_retry("https://example.invalid:abc/", "첫 화면", sleep=sleeps.append)
+    assert sleeps == []
+
+
+# ── 연결 실패 사유는 짧은 한 줄로 (2026-10-03 · #191 후속) ──────────────────────
+
+
+def _excerpt_of(message: str, name: str) -> str:
+    m = re.search(rf"연결 실패\({name}: (.*)\)$", message, re.DOTALL)
+    assert m, message
+    return m.group(1)
+
+
+def test_long_status_line_is_cut_to_one_short_line(monkeypatch):
+    """BadStatusLine 은 서버가 보낸 상태 줄을 통째로(줄바꿈 포함) 담는다 — 이슈 본문을 덮지 않게."""
+    # 줄바꿈을 자르는 자리 **앞에도** 둔다 — 끝에만 있으면 잘려 나가 치환이 빠져도 시험이 초록이다.
+    raw = "A" * 100 + "\r\n" + "A" * 4900 + "\r\n"
+
+    def garbage(_url):
+        raise http.client.BadStatusLine(raw)
+
+    monkeypatch.setattr(chk, "fetch", garbage)
+    with pytest.raises(chk.CheckFailed) as caught:
+        chk.check(SITE, sleep=NO_SLEEP)
+    msg = str(caught.value)
+    assert "\n" not in msg and "\r" not in msg
+    excerpt = _excerpt_of(msg, "BadStatusLine")
+    cut = len(raw) - chk.REASON_EXCERPT_MAX
+    assert excerpt == "A" * 100 + "  " + "A" * 98 + f"…({cut}자 생략)"
+    assert cut == 4804
+    # 우리가 만든 문구는 그대로 남는다.
+    assert msg.startswith(f"첫 화면을(를) 못 받았습니다: {SITE}/ → 연결 실패(")
+
+
+@pytest.mark.parametrize("length,expect_cut", [(200, False), (201, True)])
+def test_excerpt_boundary(length, expect_cut):
+    assert chk.REASON_EXCERPT_MAX == 200
+    text = "B" * length
+    got = chk._one_line_excerpt(text)
+    if expect_cut:
+        assert got == "B" * 200 + "…(1자 생략)"
+    else:
+        assert got == text
+
+
+def test_excerpt_replaces_control_characters_one_for_one():
+    assert chk._one_line_excerpt("가\r\n나\t다\x0b라\u2028마\x85바") == "가  나 다 라 마 바"
+
+
+def test_short_exception_text_is_kept_as_is(monkeypatch):
+    exc = http.client.IncompleteRead(b"partial", 1024)
+
+    def cut_off(_url):
+        raise exc
+
+    monkeypatch.setattr(chk, "fetch", cut_off)
+    with pytest.raises(chk.CheckFailed) as caught:
+        chk.check(SITE, sleep=NO_SLEEP)
+    assert _excerpt_of(str(caught.value), "IncompleteRead") == str(exc)
+
+
 def test_non_200_status_is_failure(monkeypatch):
     """예외가 아니라 상태코드로 오는 경우도 있다(리다이렉트 처리 등)."""
     routes = all_good()
