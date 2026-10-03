@@ -146,6 +146,28 @@ def destructive_statements(sql, table=TABLE):
     return hits
 
 
+def allowlist_status_filters(sql):
+    """주석을 걷은 문장에서 `pan_ss` 를 **허용 목록**으로 거르는 꼴을 찾는다(대소문자·공백 무시).
+
+    잡는 꼴: `pan_ss in (…)`·`pan_ss in(…)` · `pan_ss = any(array[…])`·`pan_ss = any('{…}')` ·
+    `pan_ss = '공고중'`(값 하나만 통과) — 전부 "아는 상태만 남긴다"라 새 상태가 생기는 날
+    살아 있는 공고가 통째로 사라진다.
+    걸지 않는 꼴(거부 목록 — 지금 설계): `not in (` · `<> all(` · `!= all(` · `<>` · `!=` ·
+    `is null`·`is not null`.
+    ⚠️ 못 보는 것: 칸이 오른쪽에 오는 꼴(`'공고중' = n.pan_ss`·`… = any(…)` 의 반대편) ·
+       칸을 감싼 꼴(`coalesce(n.pan_ss, '') in (…)`·`lower(n.pan_ss) = …`) · 상태 표와의 조인 ·
+       `is not distinct from` · 따옴표 이름(`"pan_ss"`) · 동적 SQL · 무늬 맞추기(`like`·`~`·
+       `similar to` — 이것도 사실상 허용 목록이다).
+    ⚠️ 거꾸로 걸리는 것(오탐): `not (pan_ss = any(…))`·`not (pan_ss in (…))` 처럼 허용 목록 꼴을
+       `not` 으로 감싼 거부 목록도 허용 목록으로 친다. `pan_ss =` 는 자리를 가리지 않으므로
+       `case when n.pan_ss = '…' then …`·select 목록의 참거짓 칸·`a.pan_ss = b.pan_ss` 조인도
+       걸린다 — 시끄럽게 실패하는 쪽이다. 그런 꼴을 쓰게 되면 이 함수부터 고친다.
+    """
+    text = re.sub(r"\s+", " ", statements(sql)).lower()
+    # `=` 바로 앞이 칸 이름이어야 한다 — `<>`·`!=`·`>=` 는 앞에 다른 글자가 끼어 안 걸린다.
+    return re.findall(r"\bpan_ss\b\s*(?:in\s*\(|=)", text)
+
+
 def allowlisted(name, entries):
     """허용 목록에서 **스키마를 벗긴 이름**이 `name` 과 같은 원소를 돌려준다.
 
@@ -273,6 +295,33 @@ class TestDetectorsActuallyCatch:
     def test_destructive_detector_leaves_the_rest_alone(self, good):
         assert destructive_statements("select 1;\n" + good + "\n") == []
 
+    @pytest.mark.parametrize("bad", [
+        "where n.pan_ss is null or n.pan_ss in ('공고중', '접수중')",   # 흔한 꼴
+        # ↓ 2026-10-03 감사가 "초록(못 잡음)"이라 적은 변형 꼴
+        "where n.pan_ss = any(array['공고중'])",
+        "where n.pan_ss in('공고중')",
+        "where n.pan_ss = any('{공고중,접수중}')",
+        "where n.pan_ss  IN\n   ('공고중')",
+        "where n.pan_ss='공고중'",
+        "WHERE N.PAN_SS = SOME(ARRAY['공고중'])",
+    ])
+    def test_allowlist_status_detector_catches(self, bad):
+        assert allowlist_status_filters("select 1;\n" + bad + "\n") != []
+
+    @pytest.mark.parametrize("good", [
+        "where (n.pan_ss is null or n.pan_ss <> '접수마감')",   # 지금 설계(거부 목록)
+        "where n.pan_ss not in ('접수마감')",
+        "where n.pan_ss <> all(array['접수마감'])",
+        "where n.pan_ss != all(array['접수마감'])",
+        "where n.pan_ss != '접수마감'",
+        "where n.pan_ss is not null",
+        "select n.pan_id, n.pan_nm, n.pan_ss, n.pan_ss_note",
+        "-- n.pan_ss in ('공고중') 으로 바꾸지 않는다",
+        "where n.pan_ss_old in ('공고중')",                      # 이름이 앞부분만 같은 다른 칸
+    ])
+    def test_allowlist_status_detector_leaves_the_rest_alone(self, good):
+        assert allowlist_status_filters("select 1;\n" + good + "\n") == []
+
     @pytest.mark.parametrize("entries", [
         ("public.lh_notice",),
         ("api.lh_notice",),
@@ -399,8 +448,10 @@ class TestHidingRule:
         #    접어서 본다 — `.replace(" ", " ")`(둘 다 U+0020)는 아무것도 안 접는 완전한
         #    no-op 이었다(2026-09-01 감사에서 발견). `\s+` 로 실제 정규화해야 SQL 을 여러
         #    줄로 늘어써 공백이 벌어진 허용 목록도 잡힌다.
-        collapsed = re.sub(r"\s+", " ", body)
-        assert "pan_ss in (" not in collapsed, "허용 목록 형태는 금지입니다"
+        # ⓘ 2026-10-03: 글자 `pan_ss in (` 하나만 보던 것을 탐지 함수로 넓혔다 —
+        #    `= any(array[…])`·`in(`·`= any('{…}')`·`= '값'` 도 허용 목록이다.
+        #    잡는 꼴·못 보는 꼴은 allowlist_status_filters 머리말에.
+        assert allowlist_status_filters(body) == [], "허용 목록 형태는 금지입니다"
 
     def test_the_no_op_space_collapse_would_have_missed_a_widened_allowlist(self):
         """⛔ 위 시험이 실제로 공백을 접고 있는지 — 접지 않으면 이 표본을 통과시켜 버린다.
@@ -408,12 +459,14 @@ class TestHidingRule:
         고쳐지기 전 코드(`body.replace(" ", " ")`)는 둘 다 U+0020 이라 완전한 no-op 이었다
         — 즉 어떤 입력을 넣어도 원본 그대로였다. 그 상태에서는 아래처럼 공백 두 칸으로
         벌어진 허용 목록('pan_ss  in (')이 'pan_ss in (' 과 글자가 달라 가드를 그냥
-        통과했을 것이다. 이 시험은 **정규화 자체**가 살아 있는지를 본다.
+        통과했을 것이다. 이 시험은 **공백이 벌어진 허용 목록도 잡는지**를 본다.
+        ⓘ 2026-10-03 부터 탐지 정규식의 공백 자리가 여러 칸 공백을 먼저 흡수해, 탐지 함수 안의 공백 접기는
+           지워도 이 시험이 초록이다(남는 코드 — 해는 없다). 지키는 것은 '접기'가 아니라 결과다.
         """
         widened = "create or replace function list_lh_notices(p_sido text)\n" \
             "  where n.pan_ss is null or n.pan_ss  in ('접수마감')\n$$;"
-        collapsed = re.sub(r"\s+", " ", widened)
-        assert "pan_ss in (" in collapsed, "정규화가 죽어 있으면 이 표본조차 못 잡습니다"
+        # ⓘ 2026-10-03 부터 가드와 **같은 탐지 함수**를 지난다(공백 접기도 그 안에 있다).
+        assert allowlist_status_filters(widened) != [], "정규화가 죽어 있으면 이 표본조차 못 잡습니다"
 
     def test_the_first_migration_keeps_its_utc_judgement_as_history(self):
         """⛔ 이미 적용된 마이그레이션은 **날짜 원장**이라 고치지 않는다.

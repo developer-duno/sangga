@@ -23,6 +23,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 VERCEL_JSON_PATH = Path(__file__).resolve().parent.parent / "vercel.json"
 
 
@@ -42,13 +44,22 @@ def matched_header_values(config, path, header_key):
     아니라 source 패턴을 정규식으로 컴파일해 매칭 여부를 가른다 — 그래야
     `/assets/(.*)` 가 assets 하위에만, `/(.*)` 가 모든 경로에 걸리는 것을 실제로
     증명하는 테스트가 된다.
+
+    ⓘ 헤더 이름은 **대소문자를 무시**하고 비교한다(2026-10-03) — HTTP 헤더 이름은 대소문자를
+       가리지 않아(RFC 9110 §5.1) `cache-control` 로 적어도 똑같이 붙는다. 글자 그대로 비교하면
+       소문자 키로 장기 캐시가 `/(.*)` 에 붙어도 "붙은 헤더 없음"으로 읽혀 핵심 가드가 초록이었다.
+       이 함수를 부르는 시험 전부가 함께 넓어진다.
+    ⚠️ 못 보는 것: `source` 의 Vercel 경로 문법 중 정규식과 뜻이 다른 것(`:path*` 같은 이름 붙은
+       자리) — 지금 vercel.json 은 정규식 꼴만 쓴다. `has`/`missing` 조건도 안 본다.
+       이름이 다른 캐시 헤더(`CDN-Cache-Control` 등)와 앞뒤 공백이 붙은 키(`" Cache-Control"`)도
+       다른 헤더로 친다.
     """
     values = []
     for rule in config.get("headers", []):
         pattern = re.compile("^" + rule["source"] + "$")
         if pattern.match(path):
             for header in rule["headers"]:
-                if header["key"] == header_key:
+                if header["key"].lower() == header_key.lower():
                     values.append(header["value"])
     return values
 
@@ -116,3 +127,34 @@ def test_no_rewrites_configured():
     """
     config = load_config()
     assert "rewrites" not in config
+
+
+# ── 양성 대조 — 가드가 쓰는 matched_header_values 가 키 대소문자와 무관하게 잡는가 (2026-10-03) ──
+#
+# 위 "붙은 헤더 = []" 단언들은 탐지가 죽어도 초록이다. 가짜 설정을 **같은 함수**에 넣어 본다.
+
+
+def _fake_catch_all_cache(key):
+    return {"headers": [
+        {"source": "/(.*)", "headers": [{"key": key, "value": "public, max-age=31536000"}]},
+    ]}
+
+
+@pytest.mark.parametrize("key", ["Cache-Control", "cache-control", "CACHE-CONTROL"])
+def test_long_cache_on_catch_all_is_seen_whatever_the_key_case(key):
+    """`/(.*)` 에 장기 캐시가 붙으면 `/index.html`·`/districts.geojson` 에서 보여야 한다 — 키 대소문자 무관."""
+    fake = _fake_catch_all_cache(key)
+    for path in ("/index.html", "/districts.geojson"):
+        assert matched_header_values(fake, path, "Cache-Control") == ["public, max-age=31536000"]
+
+
+def test_the_asked_key_case_does_not_matter_either():
+    """묻는 쪽 글자가 소문자여도 같은 결과 — 양쪽을 다 접는다."""
+    fake = _fake_catch_all_cache("Cache-Control")
+    assert matched_header_values(fake, "/", "cache-control") == ["public, max-age=31536000"]
+
+
+def test_a_different_header_is_not_mistaken_for_cache_control():
+    """대소문자만 접는다 — 이름이 다른 헤더까지 같다고 보면 안 된다."""
+    fake = _fake_catch_all_cache("X-Cache-Control-Note")
+    assert matched_header_values(fake, "/index.html", "Cache-Control") == []

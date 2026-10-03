@@ -62,14 +62,23 @@ RE_DROP_INDEX = re.compile(
 # "정본에 없는 인덱스"로 헛경보가 나고, 되돌린 옛 이름은 "지운 인덱스"로 좀비 경보가 난다.
 RE_RENAME_INDEX = re.compile(
     r"(?im)^alter\s+index\s+(?:if\s+exists\s+)?" + SCHEMA_PREFIX + r"(\w+)\s+rename\s+to\s+(\w+)")
-RE_CREATE_FN = re.compile(r"(?im)^create\s+or\s+replace\s+function\s+" + SCHEMA_PREFIX + r"(\w+)")
+# ⓘ `or replace` 는 **있어도 없어도** 잡는다(2026-10-03 넓힘). 예전엔 필수였는데, 그러면
+#    `create function x(...)`(or replace 없이 — 반환 칸을 바꾸려고 drop 뒤 새로 만드는 꼴,
+#    실제로 2026-08-11_search_by_jibun.sql:53 이 그렇다)로 만들고 정본에 안 옮긴 함수를
+#    가드가 **아예 못 봤다**. 정본 쪽 찾기(`schema_has_fn`·`schema_has_view`)도 같이 넓혔다.
+#    ⚠️ 못 보는 것: `create temp view`·`create recursive view` · 동적 SQL(`execute '…'`) 안의 정의 ·
+#       들여쓴 정의(줄머리 고정은 설명 주석 속 인용을 피하려는 일부러 둔 한계다).
+RE_CREATE_FN = re.compile(
+    r"(?im)^create\s+(?:or\s+replace\s+)?function\s+" + SCHEMA_PREFIX + r"(\w+)")
 RE_DROP_FN = re.compile(r"(?im)^drop\s+function\s+(?:if\s+exists\s+)?" + SCHEMA_PREFIX + r"(\w+)")
 # 뷰도 같은 병을 앓는다 — 2026-08-22a 가 v_coverage_stats 의 where 절을 고칠 때
 # 정본에 옮겨 적는 것을 잊으면 새 환경만 전국을 세게 된다(에러 0, 조용한 드리프트).
-# ⚠️ 물질화 뷰(create materialized view)는 `or replace` 가 없어 이 정규식에 안 걸린다.
-RE_CREATE_VIEW = re.compile(r"(?im)^create\s+or\s+replace\s+view\s+" + SCHEMA_PREFIX + r"(\w+)")
+# ⚠️ 물질화 뷰(create materialized view)는 이 정규식에 안 걸린다 — `create` 바로 뒤가
+#    `materialized` 라 `view` 자리에 못 닿는다. 물질화 뷰는 아래 RE_CREATE_MATVIEW 가 따로 본다.
+RE_CREATE_VIEW = re.compile(
+    r"(?im)^create\s+(?:or\s+replace\s+)?view\s+" + SCHEMA_PREFIX + r"(\w+)")
 RE_DROP_VIEW = re.compile(r"(?im)^drop\s+view\s+(?:if\s+exists\s+)?" + SCHEMA_PREFIX + r"(\w+)")
-# 물질화 뷰는 위 정규식에 안 걸린다(`or replace` 라는 형태가 없다). 그래서 따로 본다 —
+# 물질화 뷰는 위 정규식에 안 걸린다(`create` 바로 뒤가 `materialized` 라서 — 위 ⚠️). 그래서 따로 본다 —
 # 2026-08-22d 가 mv_coverage_stats 를 만들 때 이 구멍이 드러났다: 새 요약표를 정본에
 # 안 옮겨도 아무 테스트가 안 울렸고, 그 파일로 새 환경을 만들면 각주가 통째로 깨진다.
 RE_CREATE_MATVIEW = re.compile(
@@ -138,6 +147,35 @@ def schema_has_index(schema, name):
     )
 
 
+def schema_has_fn(schema, name):
+    """정본에 그 이름의 함수 정의가 있는가 — `or replace` 는 있어도 없어도 된다.
+
+    ⓘ 가드 본체(test_live_functions_are_in_schema)와 양성 대조가 **같은 함수**를 지난다.
+    ⚠️ 못 보는 것: 들여쓴 정의 · 따옴표 이름(`"x"(`) · 동적 SQL 안의 정의.
+    """
+    return re.search(
+        r"(?im)^create\s+(?:or\s+replace\s+)?function\s+{}{}\s*\(".format(
+            SCHEMA_PREFIX, re.escape(name)
+        ),
+        schema,
+    )
+
+
+def schema_has_view(schema, name):
+    """정본에 그 이름의 (물질화가 아닌) 뷰 정의가 있는가 — `or replace` 는 있어도 없어도 된다.
+
+    ⓘ 산 뷰 가드·지운 뷰(좀비) 가드·양성 대조가 **같은 함수**를 지난다.
+    ⚠️ `create materialized view` 는 여기 안 걸린다(schema_has_matview 가 따로 본다).
+    ⚠️ 못 보는 것: 들여쓴 정의 · `create temp|recursive view` · 따옴표 이름.
+    """
+    return re.search(
+        r"(?im)^create\s+(?:or\s+replace\s+)?view\s+{}{}\b".format(
+            SCHEMA_PREFIX, re.escape(name)
+        ),
+        schema,
+    )
+
+
 @pytest.fixture(scope="module")
 def schema_sql():
     return read(SCHEMA)
@@ -176,16 +214,7 @@ def test_dropped_indexes_are_gone_from_schema(schema_sql):
 def test_live_functions_are_in_schema(schema_sql):
     """마이그레이션으로 만든 함수는 정본에도 있어야 한다 (search_key 누락 사고 재발 방지)."""
     alive, _ = replay(RE_CREATE_FN, RE_DROP_FN)
-    missing = sorted(
-        n
-        for n in alive
-        if not re.search(
-            r"(?im)^create\s+or\s+replace\s+function\s+{}{}\s*\(".format(
-                SCHEMA_PREFIX, re.escape(n)
-            ),
-            schema_sql,
-        )
-    )
+    missing = sorted(n for n in alive if not schema_has_fn(schema_sql, n))
     assert not missing, (
         "마이그레이션에는 있는데 schema.sql 에 없는 함수: {}\n"
         "→ 이 파일로 새 환경을 만들면 그 함수가 없어 검색·표시가 통째로 깨집니다 "
@@ -201,16 +230,7 @@ def test_live_views_are_in_schema(schema_sql):
        그래도 "새 뷰를 만들고 정본에 안 옮긴 것"은 여기서 걸린다.
     """
     alive, _ = replay(RE_CREATE_VIEW, RE_DROP_VIEW)
-    missing = sorted(
-        n
-        for n in alive
-        if not re.search(
-            r"(?im)^create\s+or\s+replace\s+view\s+{}{}\b".format(
-                SCHEMA_PREFIX, re.escape(n)
-            ),
-            schema_sql,
-        )
-    )
+    missing = sorted(n for n in alive if not schema_has_view(schema_sql, n))
     assert not missing, (
         "마이그레이션에는 있는데 schema.sql 에 없는 뷰: {}\n"
         "→ 이 파일로 새 환경을 만들면 그 뷰가 없어 화면이 401/빈칸이 됩니다.".format(missing)
@@ -228,7 +248,7 @@ def schema_has_matview(schema, name):
 def test_live_matviews_are_in_schema(schema_sql):
     """마이그레이션으로 만든 물질화뷰는 정본에도 있어야 한다.
 
-    일반 뷰와 달리 `create or replace` 가 없어 위 뷰 가드가 못 본다. 빠지면 이 파일로
+    `create` 바로 뒤가 `materialized` 라 위 뷰 가드(RE_CREATE_VIEW)가 못 본다. 빠지면 이 파일로
     만든 새 환경에서 그 요약표가 아예 없어 검색·지역목록·각주가 통째로 깨진다.
     """
     alive, _ = replay(RE_CREATE_MATVIEW, RE_DROP_MATVIEW)
@@ -244,16 +264,7 @@ def test_live_matviews_are_in_schema(schema_sql):
 def test_dropped_views_are_gone_from_schema(schema_sql):
     """마이그레이션에서 지운 뷰가 정본에 남아 있으면 안 된다."""
     _, dropped = replay(RE_CREATE_VIEW, RE_DROP_VIEW)
-    zombies = sorted(
-        n
-        for n in dropped
-        if re.search(
-            r"(?im)^create\s+or\s+replace\s+view\s+{}{}\b".format(
-                SCHEMA_PREFIX, re.escape(n)
-            ),
-            schema_sql,
-        )
-    )
+    zombies = sorted(n for n in dropped if schema_has_view(schema_sql, n))
     assert not zombies, (
         "라이브에서 지운 뷰가 schema.sql 에 남아 있습니다: {}".format(zombies)
     )
@@ -359,3 +370,99 @@ def test_replay_reads_schema_qualified_names():
     assert "api" not in fns, (
         "정규식이 스키마 접두를 이름으로 잘못 잡고 있습니다 — SCHEMA_PREFIX 를 확인하세요"
     )
+
+
+# ── 양성 대조 — 탐지(정규식·schema_has_*)가 `or replace` 없는 꼴도 실제로 잡는가 (2026-10-03) ──
+#
+# "정본에 없는 것 = 0개"만 단언하는 시험은 탐지가 죽어도 초록이다. 가드 본체와 **같은
+# 정규식·같은 함수**에 나쁜 예를 넣어 걸리는지 본다(흔한 꼴 + 변형 꼴).
+
+
+@pytest.mark.parametrize("sql", [
+    "create or replace function foo(x int)",          # 흔한 꼴
+    "create function public.foo(x int)",              # or replace 없는 꼴(예전엔 못 봤다)
+    "CREATE  OR  REPLACE\n FUNCTION api.foo (x int)",  # 대소문자·공백 변형
+])
+def test_create_fn_regex_sees_both_forms(sql):
+    assert [m.group(1) for m in RE_CREATE_FN.finditer("select 1;\n" + sql)] == ["foo"]
+
+
+@pytest.mark.parametrize("sql", [
+    "create or replace view bar as select 1",
+    "create view api.bar as select 1",
+    "Create View public.bar as select 1",
+])
+def test_create_view_regex_sees_both_forms(sql):
+    assert [m.group(1) for m in RE_CREATE_VIEW.finditer("select 1;\n" + sql)] == ["bar"]
+
+
+@pytest.mark.parametrize("sql", [
+    "create materialized view mv_x as select 1",      # 물질화 뷰는 뷰로 세지 않는다
+    "create materialized view if not exists mv_x as select 1",
+    "-- create view bar as select 1",                  # 설명 주석 속 인용
+    "  create view bar as select 1",                   # 들여쓴 꼴(일부러 둔 한계)
+])
+def test_create_view_regex_leaves_the_rest_alone(sql):
+    assert list(RE_CREATE_VIEW.finditer("select 1;\n" + sql)) == []
+
+
+def test_replay_now_sees_the_bare_create_function_of_2026_08_11():
+    """실제 원장 한 줄 — 08-11 의 `create function search_buildings(`(or replace 없음)를 읽는가."""
+    body = read(os.path.join(MIG_DIR, "2026-08-11_search_by_jibun.sql"))
+    assert "search_buildings" in {m.group(1) for m in RE_CREATE_FN.finditer(body)}
+
+
+@pytest.mark.parametrize("schema", [
+    "create or replace function foo(x int) returns int",
+    "create function public.foo(x int) returns int",
+    "create function foo (x int) returns int",
+])
+def test_schema_has_fn_sees_both_forms(schema):
+    assert schema_has_fn("select 1;\n" + schema, "foo")
+
+
+@pytest.mark.parametrize("schema", [
+    "create function foo_v2(x int)",       # 이름이 앞부분만 같은 다른 함수
+    "-- create function foo(x int)",
+    "drop function if exists foo(int);",
+])
+def test_schema_has_fn_leaves_the_rest_alone(schema):
+    assert not schema_has_fn("select 1;\n" + schema, "foo")
+
+
+@pytest.mark.parametrize("schema", [
+    "create or replace view bar as select 1",
+    "create view api.bar as select 1",
+])
+def test_schema_has_view_sees_both_forms(schema):
+    assert schema_has_view("select 1;\n" + schema, "bar")
+
+
+@pytest.mark.parametrize("schema", [
+    "create materialized view bar as select 1",   # 물질화 뷰는 뷰가 아니다
+    "create view bar_v2 as select 1",
+    "-- create view bar as select 1",
+])
+def test_schema_has_view_leaves_the_rest_alone(schema):
+    assert not schema_has_view("select 1;\n" + schema, "bar")
+
+
+def test_a_bare_created_function_missing_from_schema_turns_the_guard_red(schema_sql):
+    """마이그레이션에만 `create function public.zz_only_in_mig(` 가 있으면 '빠진 함수'로 나와야 한다."""
+    mig = "create function public.zz_only_in_mig(x int) returns int language sql as $$ select 1 $$;"
+    alive = {m.group(1) for m in RE_CREATE_FN.finditer(mig)}
+    assert sorted(n for n in alive if not schema_has_fn(schema_sql, n)) == ["zz_only_in_mig"]
+
+
+def test_a_bare_created_view_missing_from_schema_turns_the_guard_red(schema_sql):
+    """마이그레이션에만 `create view api.zz_only_in_mig as` 가 있으면 '빠진 뷰'로 나와야 한다."""
+    mig = "create view api.zz_only_in_mig as select 1;"
+    alive = {m.group(1) for m in RE_CREATE_VIEW.finditer(mig)}
+    assert sorted(n for n in alive if not schema_has_view(schema_sql, n)) == ["zz_only_in_mig"]
+
+
+def test_a_dropped_view_left_as_bare_create_view_is_a_zombie(schema_sql):
+    """지운 뷰가 정본에 `create view x as`(or replace 없이)로 남아 있어도 좀비로 잡혀야 한다."""
+    fake = schema_sql + "\ncreate view zz_dropped_view as select 1;\n"
+    assert schema_has_view(fake, "zz_dropped_view")
+    assert not schema_has_view(schema_sql, "zz_dropped_view")
