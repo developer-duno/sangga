@@ -85,6 +85,11 @@ CHECKED_URLS = 3
 NO_RETRY_HTTP_CODES = frozenset({401, 403, 404})
 TIMEOUT_S = 30
 
+# 연결 실패 사유에 싣는 예외 글의 최대 글자 수 (2026-10-03).
+# 왜 200인가 — 이슈 본문의 코드 블록에서 한눈에 읽히는 길이다. BadStatusLine 은 서버가 보낸 상태 줄을
+# 통째로(파이썬 원본상 최대 65,536자 · 끝의 줄바꿈 포함) 담아 오므로, 자르지 않으면 이슈 본문이 그 글로 덮인다.
+REASON_EXCERPT_MAX = 200
+
 # 첫 화면이 정말 우리 화면인지 보는 표식. 리액트가 붙을 자리가 없으면
 # 200 이 와도 그건 우리 앱이 아니다(호스팅 기본 페이지·오류 페이지 등).
 ROOT_MARKER = '<div id="root">'
@@ -158,6 +163,23 @@ class CheckFailed(Exception):
         self.kind = kind
 
 
+# 줄바꿈·탭 등 제어 문자(C0·DEL·C1)와 유니코드 줄·문단 구분자. 이스케이프 표기로만 적는다(실제 글자 금지).
+_CONTROL_CHARS_RE = re.compile("[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]")
+
+
+def _one_line_excerpt(text: str) -> str:
+    """예외 글을 이슈 본문에 실을 한 줄로 만든다 (2026-10-03).
+
+    ⛔ 줄바꿈이 섞이면 이슈 본문의 코드 블록 밖으로 글이 새어 본문 모양이 깨질 수 있다 — 제어 문자를
+       공백으로 **한 글자씩** 바꾼다(글자 수가 그대로라 아래 '생략 N자'가 원문 기준으로 맞는다).
+    ⚠️ 우리가 만든 문구가 아니라 **예외 글에만** 쓴다(서버가 보낸 줄이 그대로 들어오는 자리).
+    """
+    line = _CONTROL_CHARS_RE.sub(" ", text)
+    if len(line) <= REASON_EXCERPT_MAX:
+        return line
+    return f"{line[:REASON_EXCERPT_MAX]}…({len(line) - REASON_EXCERPT_MAX}자 생략)"
+
+
 def fetch(url: str) -> tuple[int, bytes]:
     """한 번 받아 본다. 실패하면 예외."""
     req = urllib.request.Request(url, headers={"User-Agent": "sangga-health-check"})
@@ -187,8 +209,17 @@ def fetch_with_retry(url: str, what: str, attempts: int = RETRY_COUNT, sleep=tim
         # ⛔ http.client.HTTPException 도 연결 실패로 친다(2026-10-02 마무리 맹점 검사관) — 응답이 도중에
         #    끊기는 IncompleteRead·BadStatusLine 은 OSError 가 아니라, 빠지면 반쪽 장애가 재시도 없이 잡지 못한
         #    예외로 죽어 kind 가 비고 '감시 고장' 이슈로 나간다(진짜 장애인데 "사이트 상태는 모른다"가 된다).
+        # ⛔ 단 InvalidURL 은 HTTPException 의 하위라 아래 튜플보다 **먼저** 빼내 그대로 올린다(2026-10-03) —
+        #    주소 설정(`SANGGA_SITE_URL`·`--site`)이 틀린 것이지 사이트가 죽은 게 아니다. 튜플에 걸리면 다섯 번
+        #    헛되이 다시 두드린 뒤 '사이트 다운' 이슈가 열린다. 안 잡혀 죽으면 kind 가 비어 '감시 고장'으로 간다.
+        #    ⚠️ 서버 쪽에서도 생긴다 — 첫 화면의 묶음 경로에 공백·줄바꿈이 섞였거나(BUNDLE_RE 가 통과시킨다),
+        #    리다이렉트 주소의 포트가 숫자가 아닐 때(2026-10-03 검사관 실측). 그때도 '감시 고장'이 맞다 — 관리자 키
+        #    검사가 안 돌았고, 고장 대본은 "감시가 다시 초록일 때까지 닫지 말라"고 적는다. down 으로 돌리지 말 것.
+        #    (워크플로는 SANGGA_SITE_URL 을 안 주므로 CI 에서 설정 오류는 DEFAULT_SITE 를 고친 경우뿐이다.)
+        except http.client.InvalidURL:
+            raise
         except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as ex:
-            last = f"연결 실패({type(ex).__name__}: {ex})"
+            last = f"연결 실패({type(ex).__name__}: {_one_line_excerpt(str(ex))})"
         if attempt < attempts:
             wait = RETRY_BACKOFF_SEC * (2 ** (attempt - 1))
             print(f"  · {what} {attempt}번째 실패({last}) — {wait}초 뒤 다시 시도합니다")
@@ -317,7 +348,8 @@ def _emit_output(key: str, value: str) -> None:
 
     ⚠️ 구분자를 **실행마다 다르게** 만든다. 고정 문자열을 쓰면, 값 안에 그 문자열과 똑같은
        줄이 들어오는 순간 거기서 값이 끊기고 **그 뒤가 새 key=value 로 읽힌다**(GitHub 이
-       랜덤 구분자를 권하는 이유). 지금 이 자리에 들어오는 값은 우리가 만든 문구뿐이라
+       랜덤 구분자를 권하는 이유). 지금 이 자리에 들어오는 값은 우리가 만든 문구와, 그 안에
+       실린 예외 글의 발췌(#191 부터 — `_one_line_excerpt` 가 한 줄·200자로 줄인 것)뿐이라
        실제 위험은 낮지만, 값의 출처가 늘어나는 날 이 한 줄이 방어선이 된다.
        (2026-08-24 적대적 보안 검토 지적.)
     """
