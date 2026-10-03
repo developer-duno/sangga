@@ -121,6 +121,159 @@ describe('RentStatSection — 조사값이 있을 때', () => {
   });
 });
 
+describe('RentStatSection — 층별 임대료 · 소득수익률 (결정 0031)', () => {
+  /** 2026-10-04 라이브 실호출 값(서울>강남>테헤란로 · 2026Q2 — 천원/㎡). */
+  const COLLECTIVE = { '1': 74.6, '2': 32.48, '3': 23.54, '4': 23.73, '5': 25.0, '-1': 16.95, '6+': 22.7 };
+  const OFFICE = {
+    '1': 38.99,
+    '2': 31.4,
+    '3': 27.09,
+    '4': 26.6,
+    '5': 26.51,
+    '-1': 13.93,
+    '11+': 28.62,
+    '6-10': 26.73,
+  };
+  const SMALL = { '1': 72.97, '2': 38.92, '-1': 30.02 };
+
+  beforeEach(() => {
+    responses.rent = {
+      data: [
+        stat({ rent_per_m2: 74.6, income_yield_rate: 0.9, floor_rent: COLLECTIVE }),
+        stat({ bld_type: '오피스', rent_per_m2: 27.69, income_yield_rate: 0.84, floor_rent: OFFICE }),
+        stat({ bld_type: '소규모상가', rent_per_m2: 72.97, income_yield_rate: 0.41, floor_rent: SMALL }),
+      ],
+      error: null,
+    };
+  });
+
+  /** 표의 줄을 '층 금액' 글자로 — 화면 차례 그대로. */
+  function floorRows(container: HTMLElement): string[] {
+    return [...container.querySelectorAll('.rent__floors tbody tr')].map(
+      (tr) => `${tr.querySelector('th')?.textContent} ${tr.querySelector('td')?.textContent}`,
+    );
+  }
+
+  it('★ 펼치면 줄 아래 층별 표가 높은 층부터 서고, 머리글이 "이 건물 값이 아님"을 말한다', async () => {
+    const { container } = render(<RentStatSection pnu={PNU} />);
+    await openCard();
+
+    expect(floorRows(container)).toEqual([
+      '6층 이상 22,700원',
+      '5층 25,000원',
+      '4층 23,730원',
+      '3층 23,540원',
+      '2층 32,480원',
+      '1층 74,600원',
+      '지하 1층 16,950원',
+    ]);
+    expect(container.querySelector('.rent__floors caption')?.textContent).toBe(
+      '층별 ㎡당 월 임대료 — 조사 상권 평균, 이 건물 값이 아님',
+    );
+    // 표는 그 조사구역 줄 **안**에 있다(조사구역끼리 섞이지 않게).
+    expect(container.querySelector('.rent__rows li .rent__floors')).not.toBeNull();
+    expect(screen.getByText(/조사 상권의 평균입니다/)).toBeTruthy();
+    expect(screen.getByText(/지하 2층 이하와 옥탑은 부동산원이 층 구간을 발표하지 않습니다/)).toBeTruthy();
+  });
+
+  it('★ 소득수익률을 분기 라벨로 적고, 요약 줄 끝에 "층별 임대료 포함"이 붙는다', async () => {
+    const { container } = render(<RentStatSection pnu={PNU} />);
+    await openCard();
+
+    expect(screen.getByText('소득수익률(분기) 0.9%')).toBeTruthy();
+    expect(container.querySelector('.card__summary')?.textContent).toBe(
+      '공실률 · ㎡당 임대료 · 투자수익률 · 소득수익률 · 2026년 2분기 조사 · 층별 임대료 포함',
+    );
+  });
+
+  it('★ 소득수익률 0 은 "0%" 로 적는다 (빈 값과 다르다)', async () => {
+    responses.rent = { data: [stat({ income_yield_rate: 0 })], error: null };
+    render(<RentStatSection pnu={PNU} />);
+    await openCard();
+
+    expect(screen.getByText('소득수익률(분기) 0%')).toBeTruthy();
+  });
+
+  it('기준층·환산임대료·부가가치세·소득수익률 정의를 카드 안에서 밝힌다', async () => {
+    render(<RentStatSection pnu={PNU} />);
+    await openCard();
+
+    expect(screen.getByText(/부가가치세도 뺀 금액입니다/)).toBeTruthy();
+    expect(screen.getByText(/보증금을 월세로 바꿔 더한 값이고/)).toBeTruthy();
+    expect(screen.getByText(/3층부터 최고층까지의 평균/)).toBeTruthy();
+    expect(screen.getByText(/우리가 곱하거나 나눠 만든 값이 아닙니다/)).toBeTruthy();
+    expect(screen.getByText(/순영업소득/)).toBeTruthy();
+    // 상가를 볼 때는 1층 값과 거의 같다는 말이, 오피스 문장은 없다.
+    expect(screen.getByText(/1층 값과 같은 기준이라 거의 같습니다/)).toBeTruthy();
+    expect(screen.queryByText(/3층 이상 평균이라 층별 표의 1층 값과 다릅니다/)).toBeNull();
+  });
+
+  it('오피스를 고르면 그 종류의 표(11층 이상 · 6~10층)와 오피스 문장으로 바뀐다 — 종류를 섞지 않는다', async () => {
+    const { container } = render(<RentStatSection pnu={PNU} />);
+    await openCard();
+
+    fireEvent.change(screen.getByLabelText('건물 종류 골라보기'), { target: { value: '오피스' } });
+
+    await waitFor(() => expect(floorRows(container)[0]).toBe('11층 이상 28,620원'));
+    expect(floorRows(container)).toHaveLength(8);
+    expect(floorRows(container)).toContain('6~10층 26,730원');
+    expect(container.textContent).not.toContain('22,700원');
+    expect(screen.getByText(/3층 이상 평균이라 층별 표의 1층 값과 다릅니다/)).toBeTruthy();
+    expect(screen.queryByText(/1층 값과 같은 기준이라 거의 같습니다/)).toBeNull();
+  });
+
+  it('소규모상가를 고르면 3층 이상 값이 원래 없다고 적는다', async () => {
+    const { container } = render(<RentStatSection pnu={PNU} />);
+    await openCard();
+    expect(screen.queryByText(/소규모상가 조사는 2층 이하 건물이 대상이라/)).toBeNull();
+
+    fireEvent.change(screen.getByLabelText('건물 종류 골라보기'), { target: { value: '소규모상가' } });
+
+    await waitFor(() => expect(floorRows(container)).toEqual(['2층 38,920원', '1층 72,970원', '지하 1층 30,020원']));
+    expect(
+      screen.getByText('소규모상가 조사는 2층 이하 건물이 대상이라 3층 이상 값이 없습니다.'),
+    ).toBeTruthy();
+  });
+
+  it('★ 새 칸이 없는 답(옛 함수)에서도 카드는 서고, 표와 표에 딸린 문장만 빠진다', async () => {
+    responses.rent = { data: [stat()], error: null };
+    const { container } = render(<RentStatSection pnu={PNU} />);
+    await openCard();
+
+    expect(screen.getByText('㎡당 임대료 27,060원')).toBeTruthy();
+    expect(container.querySelector('.rent__floors')).toBeNull();
+    expect(screen.queryByText(/소득수익률\(분기\)/)).toBeNull();
+    expect(screen.queryByText(/조사 상권의 평균입니다/)).toBeNull();
+    expect(screen.queryByText(/1층 값과 같은 기준이라/)).toBeNull();
+    expect(container.querySelector('.card__summary')?.textContent).toBe(
+      '공실률 · ㎡당 임대료 · 투자수익률 · 2026년 2분기 조사',
+    );
+  });
+
+  it('★ 표 모양이 이상하면 그 표만 빠지고 카드·값은 선다', async () => {
+    responses.rent = {
+      data: [stat({ floor_rent: 'broken' as unknown as Record<string, number>, income_yield_rate: 0.9 })],
+      error: null,
+    };
+    const { container } = render(<RentStatSection pnu={PNU} />);
+    await openCard();
+
+    expect(screen.getByText('공실률 10.08%')).toBeTruthy();
+    expect(screen.getByText('소득수익률(분기) 0.9%')).toBeTruthy();
+    expect(container.querySelector('.rent__floors')).toBeNull();
+  });
+
+  it('⛔ 층별 표가 있어도 추정으로 읽히는 말을 쓰지 않는다', async () => {
+    const { container } = render(<RentStatSection pnu={PNU} />);
+    await openCard();
+
+    const text = container.textContent ?? '';
+    for (const banned of ['적정가격', '적정가', '평가액', '감정가', '가치평가', '추정', '시세']) {
+      expect(text.includes(banned), `'${banned}' 가 카드에 있습니다`).toBe(false);
+    }
+  });
+});
+
 describe('RentStatSection — 건물 종류 고르기', () => {
   beforeEach(() => {
     responses.rent = {

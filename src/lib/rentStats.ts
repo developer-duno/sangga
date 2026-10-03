@@ -9,8 +9,9 @@ import type { RentStat } from '../types';
  *
  * ⛔ **계산을 지어내지 않는다.** 여기서 하는 산수는 딱 하나, 공표 단위(천원/㎡)를 원으로
  *    바꾸는 곱하기뿐이다. 종류끼리 더하기·평균, 분기 수익률 × 4(연 환산), 층별효용비율을
- *    곱해 층으로 펴는 것 — 전부 여기 넣지 말 것. 그건 역산이고, 역산은 백테스트와
- *    재결재를 거친 뒤의 일이다(매매가 결정 0013 으로 그렇게 했다).
+ *    곱해 층으로 펴는 것 — 전부 여기 넣지 말 것. 층별 임대료는 부동산원이 층 구간마다
+ *    **이미 공표한 값**이 그대로 온다(결정 0031 — `floor_rent`). 건물·층별 임대료를 우리가
+ *    계산해 추정하는 일은 검증 수단이 생기기 전까지 하지 않는다(절대 규칙 5).
  */
 
 /**
@@ -27,8 +28,18 @@ export const BLD_TYPE_ORDER = ['집합상가', '중대형상가', '소규모상�
 /** 화면에 그리는 조사값 한 칸(라벨 + 이미 사람 말로 바뀐 값). */
 export type RentMetric = {
   /** 화면 key + 시험용 식별자. */
-  key: 'vacancy' | 'rent' | 'yield';
+  key: 'vacancy' | 'rent' | 'yield' | 'income';
   label: string;
+  value: string;
+};
+
+/** 층별 표의 한 줄(층 구간 하나). 결정 0031. */
+export type FloorRentLine = {
+  /** 서버 열쇠 그대로('-1'·'1'·'6+'·'11+' …). 화면 key + 시험용 식별자. */
+  key: string;
+  /** 사람 말로 바꾼 층 구간 이름('지하 1층' · '6층 이상'). */
+  label: string;
+  /** 원 단위로 바꾼 ㎡당 월 임대료('74,600원'). */
   value: string;
 };
 
@@ -41,8 +52,13 @@ export type RentRow = {
   regionNm: string;
   /** '2026년 2분기'. 못 읽으면 null 이고, 그때 화면은 분기 도장을 안 찍는다. */
   quarter: string | null;
-  /** 값이 있는 것만 담는다. 하나도 없으면 그 줄은 아예 안 온다(`toRentRows` 가 거른다). */
+  /** 값이 있는 것만 담는다. 지표도 층별 표도 하나도 없으면 그 줄은 아예 안 온다(`toRentRows` 가 거른다). */
   metrics: RentMetric[];
+  /**
+   * 층별 ㎡당 월 임대료 표(높은 층이 위). 없거나 모양이 이상하면 **빈 배열**이고, 그때 화면은
+   * 그 표만 조용히 뺀다(결정 0031 — 줄·카드는 그대로 선다).
+   */
+  floorRents: FloorRentLine[];
 };
 
 /**
@@ -61,9 +77,10 @@ export function quarterLabel(quarter: string | null | undefined): string | null 
 /**
  * ㎡당 임대료 표기. 공표 단위가 **천원/㎡** 라 원으로 바꿔 적는다('27,063원').
  *
- * ⛔ **기간(월·연)과 층 기준을 붙이지 않는다.** 부동산원 공표 자료가 이 값 옆에 그 둘을
- *    적어 주지 않아(공공데이터포털 메타에도 없다) 확인되지 않은 한정어를 우리가 지어내지
- *    않는다. 대신 화면이 "부동산원이 공표한 ㎡당 값"이라고만 말한다.
+ * ⓘ 기간과 층 기준은 **부동산원 공식 정의로 확인됐다**(결정 0031 — reb.or.kr 통계산출항목
+ *   원문): ㎡당 **한 달** 값(보증금을 월세로 바꿔 더한 환산임대료 ÷ 전용+공용 임대면적 ·
+ *   관리비·부가가치세 제외)이고, 상가는 1층 기준(없으면 2층) · 오피스는 3층부터 최고층까지의
+ *   평균이다. 그 설명은 카드 문구가 맡고, 이 함수는 숫자만 바꾼다.
  * ⓘ 원 단위로 바꾸는 것은 화면 몫이다 — 서버는 공표값 그대로 준다(그래야 "서버 값 =
  *   공표값" 대조가 남는다).
  */
@@ -72,6 +89,54 @@ export function formatRentPerM2(thousandWon: number | null | undefined): string 
     return null;
   }
   return `${Math.round(thousandWon * 1000).toLocaleString('ko-KR')}원`;
+}
+
+/**
+ * 층 구간 열쇠 → 이름. **이 차례가 곧 화면 차례다(높은 층이 위 — 층 목록과 같은 방향).**
+ *
+ * 열쇠는 적재기(`load_rone.py`)가 만든다 — 상가 3종은 `-1`·`1`~`5`·`6+`, 오피스는 그 위
+ * 구간이 `6-10`·`11+` 로 나뉜다. 지하 2층 이하와 옥탑은 부동산원 조사 자체가 없다.
+ *
+ * ⛔ 여기에 없는 열쇠는 **그 줄만 뺀다**(표 전체를 버리지 않는다 — LH 카드 `.every()` 사고의
+ *    교훈). 모르는 열쇠의 이름을 짐작해 지어 붙이지도 않는다.
+ */
+const FLOOR_RENT_KEYS: ReadonlyArray<readonly [string, string]> = [
+  ['11+', '11층 이상'],
+  ['6-10', '6~10층'],
+  ['6+', '6층 이상'],
+  ['5', '5층'],
+  ['4', '4층'],
+  ['3', '3층'],
+  ['2', '2층'],
+  ['1', '1층'],
+  ['-1', '지하 1층'],
+];
+
+/**
+ * 서버의 `floor_rent`(천원/㎡, 열쇠 = 층 구간)를 화면 표의 줄들로.
+ *
+ * ⛔ **모양이 이상해도 던지지 않는다** — 줄 하나·표 하나 때문에 카드나 목록이 통째로 사라지면
+ *    안 된다. 객체가 아니면(배열·글자·null) 빈 표, 값이 숫자가 아니거나 0 이하이면 그 줄만 뺀다
+ *    (0 은 임대료가 아니라 "조사값 없음"이다 — 적재기도 0 이하는 열쇠를 안 만든다).
+ * ⛔ 값을 곱하거나 나누지 않는다 — 천원 → 원 하나뿐이다(`formatRentPerM2`).
+ */
+export function floorRentLines(floorRent: unknown): FloorRentLine[] {
+  if (typeof floorRent !== 'object' || floorRent === null || Array.isArray(floorRent)) return [];
+  const src = floorRent as Record<string, unknown>;
+  const out: FloorRentLine[] = [];
+  for (const [key, label] of FLOOR_RENT_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(src, key)) continue;
+    const v = src[key];
+    if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) continue;
+    const value = formatRentPerM2(v);
+    if (value !== null) out.push({ key, label, value });
+  }
+  return out;
+}
+
+/** 숫자면 그 값, 아니면 null — 선택 칸(`income_yield_rate`)이 이상한 모양이면 그 값만 뺀다. */
+function finiteOrNull(x: unknown): number | null {
+  return typeof x === 'number' && Number.isFinite(x) ? x : null;
 }
 
 /**
@@ -116,7 +181,7 @@ export function defaultBldType(rows: readonly RentStat[]): string | null {
  * 고른 종류의 줄들을 화면이 그릴 모양으로.
  *
  * ⛔ **값이 하나도 없는 줄은 버린다.** 부동산원은 지표별로 따로 공표해서 어떤 분기에는
- *    한 지표만 오기도 하는데(적재기의 부분 병합), 셋 다 비어 있는 줄을 그리면 상권 이름만
+ *    한 지표만 오기도 하는데(적재기의 부분 병합), 지표도 층별 표도 다 비어 있는 줄을 그리면 상권 이름만
  *    적힌 빈 줄이 남아 "여기는 값이 0"처럼 읽힌다.
  * ⛔ 없는 지표에 '—'를 적지도 않는다 — 칸을 만들어 두면 조사 안 한 것을 조사했는데
  *    비어 있는 것처럼 보인다(층별 스택의 도로접면과 같은 규칙).
@@ -137,7 +202,14 @@ export function toRentRows(rows: readonly RentStat[], bldType: string): RentRow[
       // 연 4~5%로 아는 사람에게 0.8%는 "형편없는 자리"라는 정반대의 뜻이 된다.
       metrics.push({ key: 'yield', label: '투자수익률(분기)', value: yieldRate });
     }
-    if (metrics.length === 0) return;
+    // 소득수익률도 분기 값이다(결정 0031). ⓘ 0 은 값이다 — '0%'로 적는다(없는 것과 다르다).
+    //   선택 칸이라 옛 함수의 답에는 아예 없고, 숫자가 아닌 것이 오면 이 값만 뺀다.
+    const incomeRate = formatRate(finiteOrNull(r.income_yield_rate));
+    if (incomeRate !== null) {
+      metrics.push({ key: 'income', label: '소득수익률(분기)', value: incomeRate });
+    }
+    const floorRents = floorRentLines(r.floor_rent);
+    if (metrics.length === 0 && floorRents.length === 0) return;
 
     out.push({
       key: `rent-${i}-${r.rone_region_nm}`,
@@ -145,6 +217,7 @@ export function toRentRows(rows: readonly RentStat[], bldType: string): RentRow[
       regionNm: r.rone_region_nm,
       quarter: quarterLabel(r.quarter),
       metrics,
+      floorRents,
     });
   });
   return out;
@@ -161,7 +234,12 @@ export function toRentRows(rows: readonly RentStat[], bldType: string): RentRow[
 export function rentSummary(rows: readonly RentStat[]): string {
   if (rows.length === 0) return '부동산원 조사 대상 상권이 아닙니다';
 
-  const labels = '공실률 · ㎡당 임대료 · 투자수익률';
+  // 소득수익률과 층별 표는 **온 줄에 있을 때만** 이름을 적는다(결정 0031 — 선택 칸이라
+  // 옛 함수의 답에는 없다). 없는 것을 요약에 적으면 펼쳤을 때 찾을 수 없는 것을 약속하게 된다.
+  const hasIncome = rows.some((r) => finiteOrNull(r.income_yield_rate) !== null);
+  const hasFloorRent = rows.some((r) => floorRentLines(r.floor_rent).length > 0);
+  const labels = `공실률 · ㎡당 임대료 · 투자수익률${hasIncome ? ' · 소득수익률' : ''}`;
+  const tail = hasFloorRent ? ' · 층별 임대료 포함' : '';
   const quarters = new Set<string>();
   for (const r of rows) {
     const q = quarterLabel(r.quarter);
@@ -170,9 +248,9 @@ export function rentSummary(rows: readonly RentStat[]): string {
   // 분기가 여럿인 것은 결함이 아니다 — (조사구역, 종류)마다 최신 분기를 따로 고르기
   // 때문이다. 그때 하나만 골라 적으면 나머지 줄에 대해 거짓말이 되므로 개수만 말하고,
   // 어느 줄이 언제 것인지는 줄마다 적는다.
-  if (quarters.size === 1) return `${labels} · ${[...quarters][0]} 조사`;
-  if (quarters.size > 1) return `${labels} · 조사 분기 ${quarters.size}개`;
-  return labels;
+  if (quarters.size === 1) return `${labels} · ${[...quarters][0]} 조사${tail}`;
+  if (quarters.size > 1) return `${labels} · 조사 분기 ${quarters.size}개${tail}`;
+  return `${labels}${tail}`;
 }
 
 function isNullableNumber(x: unknown): boolean {
@@ -181,6 +259,10 @@ function isNullableNumber(x: unknown): boolean {
 
 /**
  * 서버 응답의 **모양**을 본다.
+ *
+ * ⛔ 선택 칸 둘(`income_yield_rate`·`floor_rent` — 결정 0031)은 **여기서 보지 않는다.** 그 둘이
+ *    이상한 모양이면 줄·목록 전체를 거부하는 대신 그 값·그 표만 뺀다(`toRentRows`·
+ *    `floorRentLines`). 옛 함수의 답(두 칸이 아예 없음)도 그래서 그대로 통과한다.
  *
  * 타입 단언(`as RentStat[]`)은 컴파일 때만 사는 약속이라 런타임에는 아무것도 막아 주지
  * 않는다. 뜻밖의 답(마이그레이션 적용 전 라이브의 오류 객체, 다른 함수의 응답)이 그대로

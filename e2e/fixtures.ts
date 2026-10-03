@@ -268,15 +268,47 @@ export function rentStat(over: Partial<RentStat> = {}): RentStat {
     vacancy_rate: 10.08,
     rent_per_m2: 27.06,
     yield_rate: 0.82,
+    // 결정 0031 로 늘어난 두 칸(2026-10-04a) — 값은 같은 날 라이브 실호출(테헤란로 집합상가 ·
+    // 2026Q2 · 천원/㎡). ⚠️ 둘 다 **선택 칸**이라, 옛 함수의 답을 흉내 내려면 `rentStatOld()` 를 쓴다.
+    income_yield_rate: 0.9,
+    floor_rent: { '1': 74.6, '2': 32.48, '3': 23.54, '4': 23.73, '5': 25.0, '-1': 16.95, '6+': 22.7 },
     ...over,
   };
+}
+
+/**
+ * 새 두 칸(`income_yield_rate`·`floor_rent`)이 **아예 없는** 한 줄 — 2026-10-04a 이전 함수의 답.
+ * 그 답에서도 카드가 서는지(선택 칸이 빠졌다고 카드가 사라지지 않는지) 보는 스펙 전용이다.
+ */
+export function rentStatOld(): RentStat {
+  const old: RentStat = { ...rentStat() };
+  delete old.income_yield_rate;
+  delete old.floor_rent;
+  return old;
 }
 
 /** 한 상권에 종류 둘 — 고르개가 실제로 갈아 끼우는지 보려면 둘이라야 한다. */
 export function rentStats(): RentStat[] {
   return [
     rentStat(),
-    rentStat({ bld_type: '오피스', vacancy_rate: 5.5, rent_per_m2: 18.4, yield_rate: 1.1 }),
+    rentStat({
+      bld_type: '오피스',
+      vacancy_rate: 5.5,
+      rent_per_m2: 18.4,
+      yield_rate: 1.1,
+      // 오피스는 위 구간이 6~10층 · 11층 이상으로 나뉜다(같은 날 라이브 실호출 값).
+      income_yield_rate: 0.84,
+      floor_rent: {
+        '1': 38.99,
+        '2': 31.4,
+        '3': 27.09,
+        '4': 26.6,
+        '5': 26.51,
+        '-1': 13.93,
+        '11+': 28.62,
+        '6-10': 26.73,
+      },
+    }),
   ];
 }
 

@@ -2013,6 +2013,58 @@ body {
   white-space: nowrap;
 }
 
+/*
+   층별 ㎡당 월 임대료 표(결정 0031) — 줄(조사구역) 안, 값 아래에 선다. 줄이 flex 라 한 줄을
+   통째로 쓰게 한다. 두 칸(층 · 금액)뿐이라 좁은 폭에서도 칸을 접을 일이 없다.
+   ⚠️ 층 목록(`.floor`)과 닮아 보이지 않게 작게·흐리게 둔다 — 이 건물의 층 값이 아니다.
+*/
+.rent__floors {
+  flex: 1 1 100%;
+  max-width: 320px;
+  margin: 4px 0 2px;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.rent__floors-cap {
+  padding: 0 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: left;
+}
+
+.rent__floors th,
+.rent__floors td {
+  padding: 3px 0;
+  border-top: 1px dashed var(--line);
+}
+
+.rent__floors th {
+  padding-right: 16px;
+  font-weight: 400;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.rent__floors td {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* 표가 있으면 분기 도장을 표 **아래 한 줄**로 내린다 — 표 폭이 좁아(최대 320px) 그대로 두면
+   도장이 표 옆 첫 줄 높이에 떠서 "6층 이상" 줄에만 딸린 말처럼 보인다(1280px 실측). */
+.rent__floors + .rent__quarter {
+  flex-basis: 100%;
+}
+
+.rent__floor-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
 .rent__none,
 .rent__src {
   margin: 10px 0 0;
@@ -2538,6 +2590,13 @@ body {
   .flow__n {
     grid-column: 3;
   }
+
+  /* 층별 임대료 표는 좁은 폭에서도 **두 칸(층 · 금액) 그대로** 둔다(결정 0031) — 한 칸으로
+     접으면 층 이름과 금액이 위아래로 갈려 줄이 두 배가 된다. 폭만 화면에 맞춘다. */
+  .rent__floors {
+    max-width: none;
+    width: 100%;
+  }
 }
 
 /* ── 가지고 나가기(링크 복사) ──────────────────────────────────────────────
@@ -2844,6 +2903,10 @@ body {
   .band__base-rows li,
   /* 값과 그 값이 어느 상권·어느 분기 것인지가 한 줄에 있다 — 갈리면 근거 없는 숫자가 된다. */
   .rent__rows li,
+  /* 층별 표는 **줄 단위로만** 안 잘리게 한다(결정 0031). 위 `li` 가 한 장보다 길어지면
+     브라우저가 avoid 를 포기하는데, 그때도 한 층의 이름과 금액은 갈리지 않는다.
+     ⛔ 카드 통째(`.rent`)에는 걸지 않는다(위 설명 참조 — 장수가 늘고 흰 종이가 남는다). */
+  .rent__floors tr,
   .grade,
   .stack__facts,
   .dmap__canvas,

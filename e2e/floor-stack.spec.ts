@@ -12,6 +12,7 @@ import {
   basePrices,
   lhNotice,
   priceGate,
+  rentStatOld,
   rentStats,
   dataFreshness,
   scorecard,
@@ -1521,7 +1522,7 @@ test.describe('층별 스택뷰 — 상권 임대 동향', () => {
     await expect(stack.locator('.card__toggle[aria-expanded="true"]')).toHaveCount(4);
     // 접혀 있어도 무엇·언제는 읽힌다. ⛔ 값은 요약에 없다 — 한정어 없이 이 건물 값으로 읽힌다.
     await expect(rent.locator('.card__summary')).toHaveText(
-      '공실률 · ㎡당 임대료 · 투자수익률 · 2026년 2분기 조사',
+      '공실률 · ㎡당 임대료 · 투자수익률 · 소득수익률 · 2026년 2분기 조사 · 층별 임대료 포함',
     );
     await expect(rent.locator('.card__body')).toBeHidden();
 
@@ -1540,12 +1541,27 @@ test.describe('층별 스택뷰 — 상권 임대 동향', () => {
       '부동산원 조사구역 서울>강남>테헤란로',
     );
 
+    // ★ 층별 표(결정 0031) — 그 조사구역 줄 안에, 높은 층부터, 지하 1층까지. 소득수익률은 분기 라벨.
+    await expect(rent.getByText('소득수익률(분기) 0.9%')).toBeVisible();
+    const floors = rent.locator('.rent__rows li .rent__floors');
+    await expect(floors).toBeVisible();
+    await expect(floors.locator('caption')).toHaveText(
+      '층별 ㎡당 월 임대료 — 조사 상권 평균, 이 건물 값이 아님',
+    );
+    await expect(floors.locator('tbody tr')).toHaveCount(7);
+    await expect(floors.locator('tbody tr').first()).toHaveText(/6층 이상\s*22,700원/);
+    await expect(floors.locator('tr[data-floor="-1"]')).toHaveText(/지하 1층\s*16,950원/);
+    await expect(rent.getByText(/조사 상권의 평균입니다/)).toBeVisible();
+
     // 종류를 갈아 끼우면 값이 함께 바뀌고, 무엇을 보는 중인지도 따라간다.
     await rent.getByLabel('건물 종류 골라보기').selectOption('오피스');
     await expect(rent.getByText('㎡당 임대료 18,400원')).toBeVisible();
     await expect(rent.locator('.rent__now-type')).toHaveText('오피스');
+    // 표도 그 종류의 것으로 바뀐다(오피스는 위 구간이 둘로 나뉜다).
+    await expect(floors.locator('tbody tr').first()).toHaveText(/11층 이상\s*28,620원/);
     // ⛔ 종류를 섞지 않는다 — 집합상가 값이 같은 화면에 남아 있으면 안 된다.
     await expect(rent).not.toContainText('27,060원');
+    await expect(rent).not.toContainText('22,700원');
 
     // ⛔ 이 카드는 조사값이다. 추정으로 읽히는 말이 섞이면 바로 옆 참고 시세 카드와
     //    구분이 무너진다(사실과 추정을 가르는 것이 이 화면의 신뢰다).
@@ -1573,6 +1589,41 @@ test.describe('층별 스택뷰 — 상권 임대 동향', () => {
     await expect(stack.locator('section.rent')).toHaveCount(0);
     // "조사값 없음" 같은 말도 남기지 않는다 — 모르는 것을 없는 것이라 말하지 않는다.
     await expect(stack).not.toContainText('상권 임대 동향');
+  });
+
+  test('AE. 새 두 칸이 없는 답(2026-10-04a 이전 함수)에서도 카드가 서고, 층별 표만 빠진다', async ({
+    page,
+  }) => {
+    // 결정 0031 — 층별 임대료·소득수익률은 **선택 칸**이다. 화면이 먼저 나가고 함수가 뒤에
+    // 바뀌어도(또는 되돌려도) 카드가 통째로 사라지면 안 된다.
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(
+      page,
+      [],
+      priceBands(),
+      [floorRow({ floor_no: 2 }), floorRow()],
+      industryMix(),
+      undefined,
+      undefined,
+      [rentStatOld()],
+    );
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+
+    const rent = page.locator('section.stack section.rent');
+    await expect(rent).toBeVisible();
+    // 요약은 온 것만 말한다 — 소득수익률·층별 표를 약속하지 않는다.
+    await expect(rent.locator('.card__summary')).toHaveText(
+      '공실률 · ㎡당 임대료 · 투자수익률 · 2026년 2분기 조사',
+    );
+    await openCard(page, /상권 임대 동향/);
+    await expect(rent.getByText('㎡당 임대료 27,060원')).toBeVisible();
+    await expect(rent.locator('.rent__floors')).toHaveCount(0);
+    await expect(rent).not.toContainText('소득수익률(분기)');
   });
 });
 
