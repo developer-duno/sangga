@@ -538,7 +538,12 @@ class TestAnonExposure:
             # 통째로 긁힌다. 이 함수는 땅 한 줄과 **일치한 상호 최대 3개**·개수만 내보낸다
             # (biz_no·업종 코드·점포 좌표는 한 글자도 안 나간다).
             "api.search_stores",
+            # 호실 구성표(2026-10-04b · 결정 0032). 표 unit 은 **여기 없다** — 열면 아파트
+            # 세대 목록이 통째로 긁힌다. 주거·오피스텔·미상 층은 면적 null · 목록 0줄.
+            "api.list_unit_floor_summary", "api.list_floor_units",
         )
+        # 읽기 4 + 부르기 23 = `--check` 총계 27.
+        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 27
 
     def test_pending_list_is_empty_after_2026_09_05a(self):
         """⛔ **비어 있어야 한다** — 잔존 노출 9개는 2026-09-05a 로 닫혔다.
