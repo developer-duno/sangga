@@ -198,7 +198,7 @@ export function noUnitDataText(
   isJiphap: boolean | null | undefined,
   bldCntInPnu?: number | null,
 ): string {
-  const head = '이 건물에는 호실(전유부) 자료가 없습니다';
+  const head = '이 건물에는 호실 자료가 없습니다';
   if (isJiphap === false) {
     return `${head} — 칸별로 등기가 나뉘지 않은 일반 건물이면 원래 없는 자료입니다.`;
   }

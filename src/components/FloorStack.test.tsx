@@ -1966,6 +1966,9 @@ describe('FloorStack — 호실 구성표 (결정 0032)', () => {
     });
     const col = container.querySelector('.units')!;
     expect(col.querySelector('.detail__h')?.textContent).toContain('호실 (543)');
+    // 셋째 칸 제목의 작은 출처 글은 쉬운 말로 — '전유부' 는 더 이상 화면에 없다(2026-10-05).
+    expect(col.querySelector('.detail__h')?.textContent).toContain('건축물대장 기준');
+    expect(col.querySelector('.detail__h')?.textContent).not.toContain('전유부');
     expect(col.textContent).toContain(
       '이 층은 상가와 주거·오피스텔이 섞여 있어 함께 나옵니다 — 호실마다의 용도는 아직 담지 않았습니다.',
     );
@@ -2062,7 +2065,7 @@ describe('FloorStack — 호실 구성표 (결정 0032)', () => {
     const { container, unmount } = render(<FloorStack building={building()} />);
     await waitFor(() => expect(container.querySelector('.floor__units-none')).toBeTruthy());
     expect(container.querySelector('.floor__units-none')!.textContent).toBe(
-      '이 건물에는 호실(전유부) 자료가 없습니다 — 칸별로 등기가 나뉘지 않은 일반 건물이면 원래 없는 자료입니다.',
+      '이 건물에는 호실 자료가 없습니다 — 칸별로 등기가 나뉘지 않은 일반 건물이면 원래 없는 자료입니다.',
     );
     expect(container.querySelector('.floor__units')).toBeNull();
     // 호실 줄이 하나도 없으면 각주·등급 문장도 안 보탠다.
@@ -2075,7 +2078,7 @@ describe('FloorStack — 호실 구성표 (결정 0032)', () => {
     const again = render(<FloorStack building={building({ bld_cnt_in_pnu: 2 })} />);
     await waitFor(() => expect(again.container.querySelector('.floor__units-none')).toBeTruthy());
     expect(again.container.querySelector('.floor__units-none')!.textContent).toBe(
-      '이 건물에는 호실(전유부) 자료가 없습니다 — 같은 땅 다른 동에 붙어 있을 수 있습니다.',
+      '이 건물에는 호실 자료가 없습니다 — 같은 땅 다른 동에 붙어 있을 수 있습니다.',
     );
     again.unmount();
 
@@ -2084,7 +2087,7 @@ describe('FloorStack — 호실 구성표 (결정 0032)', () => {
     const single = render(<FloorStack building={building()} />);
     await waitFor(() => expect(single.container.querySelector('.floor__units-none')).toBeTruthy());
     expect(single.container.querySelector('.floor__units-none')!.textContent).toBe(
-      '이 건물에는 호실(전유부) 자료가 없습니다.',
+      '이 건물에는 호실 자료가 없습니다.',
     );
   });
 
@@ -2099,7 +2102,7 @@ describe('FloorStack — 호실 구성표 (결정 0032)', () => {
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => expect(container.querySelector('.floor__units-orphan')).toBeTruthy());
     expect(container.querySelector('.floor__units-none')).toBeNull();
-    expect(container.textContent).not.toContain('호실(전유부) 자료가 없습니다');
+    expect(container.textContent).not.toContain('호실 자료가 없습니다');
   });
 
   it('각주·등급 문장은 층 줄에 실제로 붙은 요약을 보고 선다 (층 종류별 세 갈래)', async () => {
@@ -2209,6 +2212,7 @@ describe('FloorStack — 호실 구성표 (결정 0032)', () => {
       expect(container.querySelector('.floor__units-none')).toBeNull();
       // ⓘ '호실' 낱말 자체는 원래 등급 문단("어느 호실인지까지는")에 있다 — 새 글만 본다.
       expect(container.textContent).not.toContain('전유부');
+      expect(container.textContent).not.toContain('건축물대장 기준');
       expect(container.textContent).not.toContain('PGRST202');
       unmount();
       rpcCalls.length = 0;

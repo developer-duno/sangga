@@ -1837,7 +1837,7 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
     const unitRequests = await openBuilding(page, [], [floorRow({ floor_no: 2, is_jiphap: false }), floorRow({ is_jiphap: false })]);
     const card = page.locator('.card--floors');
     await expect(card.locator('.floor__units-none')).toHaveText(
-      '이 건물에는 호실(전유부) 자료가 없습니다 — 칸별로 등기가 나뉘지 않은 일반 건물이면 원래 없는 자료입니다.',
+      '이 건물에는 호실 자료가 없습니다 — 칸별로 등기가 나뉘지 않은 일반 건물이면 원래 없는 자료입니다.',
     );
     await expect(card.locator('.floor__units')).toHaveCount(0);
     await card.screenshot({ path: testInfo.outputPath(`u2-nounits-${testInfo.project.name}.png`) });
@@ -1852,6 +1852,7 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
     await expect(card.locator('.floor__units')).toHaveCount(0);
     await expect(card.locator('.floor__units-none')).toHaveCount(0);
     await expect(card).not.toContainText('전유부');
+    await expect(card).not.toContainText('건축물대장 기준');
     // 층을 펼쳐도 셋째 칸이 안 생기고 목록 요청도 안 나간다.
     await floorRowOf(page, '3층').click();
     await expect(card.locator('.detail')).toBeVisible();
