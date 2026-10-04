@@ -547,6 +547,8 @@ ANON_CALLABLE_ALLOWLIST = (
     #   ⛔ 요약표 mv_parcel_store_names 도 여기 없다 — 그 표가 열리면 상호 묶음
     #      (store_names)이 통째로 긁혀 이 함수의 상한·구 좁히기가 전부 우회된다.
     "api.search_stores",
+    # 호실 구성표(2026-10-04b · 결정 0032). 표 unit 은 **여기 없다** — 열면 아파트 세대 목록이 통째로 긁힌다.
+    "api.list_unit_floor_summary", "api.list_floor_units",
 )
 
 # ── 공개키가 아직 못 닫은 "대기" 함수 — 지금은 비어 있다 ─────────────────
