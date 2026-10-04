@@ -7,6 +7,9 @@
 
   ⓐ 두 함수와 api 쌍둥이의 머리(`returns table`·`language sql`·`stable`·`security definer`·
      `set search_path`)·본문·`comment on function` 이 정본(schema.sql)과 글자 그대로 같은가.
+     ⓘ 04b 뒤에 다시 만든 함수(RECREATED_LATER — list_floor_units 는 2026-10-05a 정렬)는 머리만 여기서
+       대조하고, 본문·comment 의 정본 대조는 그 판의 시험(tests/test_unit_order_migration.py)이 맡는다.
+       판정 블록·거르기·권한 시험은 계속 정본에도 돈다.
   ⓑ 층 종류 판정식(`kind` CTE)이 두 함수 본문에서 **글자 그대로 같은가** — 갈리면 요약은
      "세대 10"이라 적는데 목록은 그 층 세대를 내보내는 일이 생긴다. 판정식의 가지 순서와
      이름 목록을 SQL 에서 읽어 결정 0032 의 꼴(기타용도에만 오피스텔 · 공장 + 기타용도 기숙사 ·
@@ -402,13 +405,21 @@ def order_problems(sql):
 
 NAMES = [(pub(SUMMARY), "public"), (api(SUMMARY), "api"), (pub(UNITS), "public"), (api(UNITS), "api")]
 
+# 04b 뒤에 다른 마이그레이션이 다시 만든 함수 — 그 함수의 본문·comment 의 정본 대조는 그 판의 시험이 맡는다
+# (04b 는 적용된 원장이라 고치지 않는다). 머리(returns table·서명·security definer·search_path)는 그대로라
+# 여기서도 정본과 대조한다.
+RECREATED_LATER = {
+    pub(UNITS): "2026-10-05a — tests/test_unit_order_migration.py (호 목록 정렬)",
+}
+
 
 @pytest.mark.parametrize("name_re,kind", NAMES, ids=[n for n, _ in NAMES])
 def test_function_head_and_body_match_the_schema(migration, schema, name_re, kind):
     mh, sh = function_head(migration, name_re), function_head(schema, name_re)
     assert mh is not None and sh is not None, "함수 머리를 못 찾았습니다 — 정규식이 헛돕니다"
     assert mh == sh, "마이그레이션의 함수 머리가 정본과 글자가 다릅니다"
-    assert raw_function_body(migration, name_re) == raw_function_body(schema, name_re)
+    if name_re not in RECREATED_LATER:
+        assert raw_function_body(migration, name_re) == raw_function_body(schema, name_re)
     low = mh.lower()
     assert "language sql" in low and "security definer" in low
     assert re.search(r"(?im)^stable\s*$", mh), "stable 한 줄이 없습니다"
@@ -427,7 +438,8 @@ def test_api_twin_passes_everything_through(migration, name):
 def test_public_comment_matches_the_schema(migration, schema, name):
     mc, sc = function_comment(migration, pub(name), SIG[name]), function_comment(schema, pub(name), SIG[name])
     assert mc is not None and sc is not None, "comment on function 을 못 찾았습니다"
-    assert mc == sc, "마이그레이션의 comment 가 정본과 글자가 다릅니다"
+    if pub(name) not in RECREATED_LATER:
+        assert mc == sc, "마이그레이션의 comment 가 정본과 글자가 다릅니다"
     assert "결정 0032" in mc and "bld_id" in mc
 
 
