@@ -65,6 +65,23 @@ const responses = {
    * 여기 있는 다른 시험들의 화면(카드 다섯 장)이 그대로 유지된다.
    */
   rent: { data: null as unknown, error: { message: 'not applied' } as unknown },
+  /**
+   * 서버 함수 list_unit_floor_summary 의 응답(호실 구성표 · 결정 0032).
+   *
+   * 기본값을 **함수 없음(PGRST202)** 으로 둔다 — 그러면 요약 줄도 "자료 없음" 안내도 안 서서
+   * 이 파일의 다른 시험들이 보던 화면이 그대로다. 호실을 보는 시험만 덮어쓴다.
+   */
+  unitSummary: {
+    data: null as unknown,
+    error: { code: 'PGRST202', message: 'function does not exist' } as unknown,
+  },
+  /**
+   * 서버 함수 list_floor_units 의 응답. 인자(쪽)를 보고 답하도록 함수로 둔다.
+   * ⓘ 프라미스를 돌려주면 그대로 따른다 — 영영 안 끝나는 프라미스로 "받는 중" 상태를 붙잡는다.
+   */
+  floorUnits: (() => ({ data: [] as unknown, error: null as unknown })) as (
+    args: Record<string, unknown>,
+  ) => { data: unknown; error: unknown } | Promise<never>,
 };
 
 /** 마지막 rpc 호출의 인자. "구 코드를 pnu 에서 뽑아 보내는가"를 여기서 확인한다. */
@@ -108,6 +125,12 @@ vi.mock('../lib/supabase', () => ({
       // 상권 임대 동향(결정 0024). 갈라 답하지 않으면 상권 응답(객체)이 흘러들어 모양
       // 검사에 걸리고, 그러면 이 카드가 **왜** 안 뜨는지가 흐려진다(늘 미표시로 굳는다).
       if (fn === 'list_rent_stats') return Promise.resolve(responses.rent);
+      // 호실 구성표(결정 0032). 갈라 답하지 않으면 상권 응답(객체)이 흘러들어 "배열인가" 검사에
+      // 걸려 늘 실패로 굳는다 — 그러면 요약·목록 시험이 통째로 헛돈다(거짓 초록).
+      if (fn === 'list_unit_floor_summary') return Promise.resolve(responses.unitSummary);
+      if (fn === 'list_floor_units') {
+        return Promise.resolve(responses.floorUnits((args ?? {}) as Record<string, unknown>));
+      }
       return Promise.resolve(responses.districts);
     },
   },
@@ -275,6 +298,12 @@ beforeEach(() => {
   // 기본은 오류 = 임대 동향 카드 미표시(마이그레이션 적용 전 라이브와 같은 상태).
   // 그 카드 자체는 RentStatSection.test.tsx 가 따로 본다.
   responses.rent = { data: null, error: { message: 'not applied' } };
+  // 기본은 함수 없음 = 호실 요약·안내 미표시(위 주석). 호실 시험만 덮어쓴다.
+  responses.unitSummary = {
+    data: null,
+    error: { code: 'PGRST202', message: 'function does not exist' },
+  };
+  responses.floorUnits = () => ({ data: [], error: null });
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
@@ -1830,5 +1859,359 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
 
     fireEvent.click(dist.querySelector('.card__toggle')!);
     expect(dist.querySelector('.card__summary')?.textContent).toContain('출처: 서울특별시');
+  });
+});
+
+describe('FloorStack — 호실 구성표 (결정 0032)', () => {
+  /** 신구로자이 나인스에비뉴 2026-10-04 라이브 실호출 값 일부. */
+  function summaryRows() {
+    return [
+      { floor_no: 35, unit_cnt: 10, median_area_m2: null, min_area_m2: null, max_area_m2: null, floor_kind: 'residential' },
+      { floor_no: 8, unit_cnt: 10, median_area_m2: null, min_area_m2: null, max_area_m2: null, floor_kind: 'officetel' },
+      { floor_no: 3, unit_cnt: 543, median_area_m2: 4.0, min_area_m2: 2.74, max_area_m2: 8.81, floor_kind: 'mixed' },
+      { floor_no: 1, unit_cnt: 690, median_area_m2: 4.0, min_area_m2: 3.18, max_area_m2: 13.07, floor_kind: 'commercial' },
+    ];
+  }
+
+  function stackFloors() {
+    return [
+      floor({ floor_no: 35, main_use: '아파트' }),
+      floor({ floor_no: 8, main_use: '오피스텔' }),
+      floor({ floor_no: 3 }),
+      floor({ floor_no: 1 }),
+    ];
+  }
+
+  /** 한 쪽(page)의 호 목록을 지어 준다 — 이름은 '3-001호' 꼴, total 은 543. */
+  function unitsPage(args: Record<string, unknown>) {
+    const offset = Number(args.p_offset ?? 0);
+    const limit = Number(args.p_limit ?? 50);
+    const rows = [];
+    for (let i = offset; i < Math.min(offset + limit, 543); i++) {
+      rows.push({ ho: `3-${String(i + 1).padStart(3, '0')}호`, excl_area_m2: 4.0, total_cnt: 543 });
+    }
+    return { data: rows, error: null };
+  }
+
+  function floorButton(container: HTMLElement, label: string): HTMLElement {
+    const btn = [...container.querySelectorAll<HTMLElement>('.floor__row')].find(
+      (b) => b.querySelector('.floor__label')?.textContent === label,
+    );
+    if (!btn) throw new Error(`층 줄을 못 찾음: ${label}`);
+    return btn;
+  }
+
+  function unitCalls() {
+    return rpcCalls.filter((c) => c.fn === 'list_floor_units');
+  }
+
+  beforeEach(() => {
+    responses.floors = { data: stackFloors(), error: null };
+    responses.unitSummary = { data: summaryRows(), error: null };
+    responses.floorUnits = unitsPage;
+  });
+
+  it('층 줄 아래 둘째 줄에 층 종류별 요약을 적는다', async () => {
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(4));
+    const texts = [...container.querySelectorAll('.floor__units')].map((p) => p.textContent);
+    expect(texts).toEqual([
+      '세대 10',
+      '오피스텔 10실',
+      '호실 543칸 · 보통 4.0㎡ · 2.7~8.8㎡',
+      '호실 690칸 · 보통 4.0㎡ · 3.2~13.1㎡',
+    ]);
+    // 요약은 층 버튼 **밖**이다 — 버튼 안이면 층 줄 칸 수가 늘고 버튼 이름이 길어진다.
+    expect(container.querySelector('.floor__row .floor__units')).toBeNull();
+    // '보통' 각주와 복층 각주, 등급 문단의 전용면적 문장이 함께 선다.
+    expect(container.textContent).toContain("'보통'은 그 층 호실 전용면적의 가운데값입니다.");
+    expect(container.textContent).toContain('여러 층에 걸친 호실은 걸친 층마다 한 번씩 셉니다.');
+    // 👤 2026-10-04 사장님이 고르신 쉬운 말 글자 그대로(결정 0032).
+    expect(container.textContent).toContain(
+      '호실 목록은 건축물대장에 칸별로 적힌 내용 그대로입니다. 면적은 그 칸 안쪽만 잰 넓이라(복도·계단 몫은 빠짐) 분양 광고의 면적보다 작습니다. 어느 칸에 어떤 가게가 있는지는 자료가 없어 알 수 없습니다.',
+    );
+    expect(container.textContent).toContain(
+      '이 호실 면적에 임대 카드의 ㎡당 임대료를 곱해도 이 호실의 월세가 아닙니다. 임대료는 동네(상권) 평균이고, 면적을 재는 방법도 다릅니다.',
+    );
+    // 금지어(절대 규칙 2)가 새 문장에도 없다.
+    for (const w of ['적정가격', '적정가', '평가액', '감정가', '가치평가']) {
+      expect(container.textContent).not.toContain(w);
+    }
+    // 요약이 붙었으니 "자료 없음" 안내는 없다.
+    expect(container.querySelector('.floor__units-none')).toBeNull();
+  });
+
+  it('요약은 건물을 열 때 p_bld_id 라는 이름으로 bld_id 를 보낸다 (pnu 가 아니다)', async () => {
+    render(<FloorStack building={building()} />);
+    await waitFor(() =>
+      expect(rpcCalls.find((c) => c.fn === 'list_unit_floor_summary')).toBeTruthy(),
+    );
+    const call = rpcCalls.find((c) => c.fn === 'list_unit_floor_summary')!;
+    expect(call.args).toEqual({ p_bld_id: '1168010100-1' });
+  });
+
+  it('섞인 층을 펼치면 그때 목록 50줄을 부르고, 섞임 안내를 붙이며, 더 보기로 이어 붙인다', async () => {
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(4));
+    // 펼치기 전에는 목록 요청이 하나도 안 나갔다(그때 부른다).
+    expect(unitCalls()).toHaveLength(0);
+
+    fireEvent.click(floorButton(container, '3층'));
+    await waitFor(() => expect(container.querySelectorAll('.units__list li')).toHaveLength(50));
+    expect(unitCalls()[0].args).toEqual({
+      p_bld_id: '1168010100-1',
+      p_floor_no: 3,
+      p_limit: 50,
+      p_offset: 0,
+    });
+    const col = container.querySelector('.units')!;
+    expect(col.querySelector('.detail__h')?.textContent).toContain('호실 (543)');
+    expect(col.textContent).toContain(
+      '이 층은 상가와 주거·오피스텔이 섞여 있어 함께 나옵니다 — 호실마다의 용도는 아직 담지 않았습니다.',
+    );
+    // ⛔ 우리가 안 담은 것을 대장 탓으로 말하지 않는다(결정 0032 :148).
+    expect(container.textContent).not.toContain('대장 자료에 없습니다');
+    expect(col.querySelector('.units__list li')?.textContent).toContain('3-001호');
+    expect(col.querySelector('.units__list li')?.textContent).toContain('4.0㎡');
+
+    fireEvent.click(screen.getByRole('button', { name: /더 보기/ }));
+    await waitFor(() => expect(container.querySelectorAll('.units__list li')).toHaveLength(100));
+    expect(unitCalls()[1].args).toMatchObject({ p_offset: 50, p_limit: 50 });
+    // 앞 쪽 줄이 사라지지 않고 이어 붙는다.
+    expect(container.querySelectorAll('.units__list li')[50].textContent).toContain('3-051호');
+  });
+
+  it('목록 제공 층(commercial)에는 섞임 안내를 붙이지 않는다', async () => {
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(4));
+    fireEvent.click(floorButton(container, '1층'));
+    await waitFor(() => expect(container.querySelectorAll('.units__list li').length).toBeGreaterThan(0));
+    expect(container.querySelector('.units__mixed')).toBeNull();
+    expect(unitCalls()[0].args).toMatchObject({ p_floor_no: 1 });
+  });
+
+  it('⛔ 주거·오피스텔 층을 펼쳐도 목록을 부르지 않고 안내 한 줄만 적는다', async () => {
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(4));
+
+    fireEvent.click(floorButton(container, '35층'));
+    await waitFor(() => expect(container.querySelector('.units')).toBeTruthy());
+    expect(container.querySelector('.units')!.textContent).toContain(
+      '주거·오피스텔 층은 호 목록을 보여 주지 않습니다.',
+    );
+    fireEvent.click(floorButton(container, '8층'));
+    await waitFor(() =>
+      expect(container.querySelector('.units')!.textContent).toContain('호실 (10)'),
+    );
+    // 두 층을 다 열어 봤어도 목록 요청은 0번이다.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(unitCalls()).toHaveLength(0);
+    expect(container.querySelector('.units__list')).toBeNull();
+  });
+
+  it('호 이름이 빈 칸(null·빈 글자)이면 "(호 이름 없음)", 나머지는 원문 그대로', async () => {
+    responses.floorUnits = () => ({
+      data: [
+        { ho: '(홍길동)', excl_area_m2: 5.5, total_cnt: 3 },
+        { ho: null, excl_area_m2: 4.0, total_cnt: 3 },
+        { ho: '', excl_area_m2: null, total_cnt: 3 },
+      ],
+      error: null,
+    });
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(4));
+    fireEvent.click(floorButton(container, '1층'));
+    await waitFor(() => expect(container.querySelectorAll('.units__list li')).toHaveLength(3));
+    const names = [...container.querySelectorAll('.units__list .detail__name')].map((n) => n.textContent);
+    expect(names).toEqual(['(홍길동)', '(호 이름 없음)', '(호 이름 없음)']);
+    // 다 받았으면 더 보기가 없다.
+    expect(screen.queryByRole('button', { name: /더 보기/ })).toBeNull();
+  });
+
+  it('펼친 층의 목록을 못 불러오면 조용히 비우지 않고 그렇다고 적는다', async () => {
+    responses.floorUnits = () => ({ data: null, error: { message: 'boom' } });
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(4));
+    fireEvent.click(floorButton(container, '1층'));
+    await waitFor(() => expect(container.textContent).toContain('호 목록을 불러오지 못했습니다.'));
+    expect(container.textContent).not.toContain('boom');
+  });
+
+  it('층 줄에 붙을 자리가 없는 호실을 카드 맨 아래 한 줄로 센다', async () => {
+    responses.unitSummary = {
+      data: [
+        ...summaryRows(),
+        { floor_no: 12, unit_cnt: 4, median_area_m2: null, min_area_m2: null, max_area_m2: null, floor_kind: 'residential' },
+        { floor_no: 13, unit_cnt: 6, median_area_m2: 5, min_area_m2: 4, max_area_m2: 6, floor_kind: 'commercial' },
+        { floor_no: null, unit_cnt: 7, median_area_m2: null, min_area_m2: null, max_area_m2: null, floor_kind: 'unknown' },
+      ],
+      error: null,
+    };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelector('.floor__units-orphan')).toBeTruthy());
+    expect(container.querySelector('.floor__units-orphan')!.textContent).toBe(
+      '층을 알 수 없는 호실 7칸 · 층 목록에 없는 층 2개의 호실 10칸',
+    );
+    // 층 줄은 여전히 넷이다(없는 층을 지어 붙이지 않는다).
+    expect(container.querySelectorAll('.floor__units')).toHaveLength(4);
+  });
+
+  it('호실 자료가 없는 건물(0줄)이면 카드 맨 아래 안내 — 건물 종류로 문구를 가른다', async () => {
+    responses.unitSummary = { data: [], error: null };
+    responses.floors = { data: [floor({ is_jiphap: false })], error: null };
+    const { container, unmount } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelector('.floor__units-none')).toBeTruthy());
+    expect(container.querySelector('.floor__units-none')!.textContent).toBe(
+      '이 건물에는 호실(전유부) 자료가 없습니다 — 칸별로 등기가 나뉘지 않은 일반 건물이면 원래 없는 자료입니다.',
+    );
+    expect(container.querySelector('.floor__units')).toBeNull();
+    // 호실 줄이 하나도 없으면 각주·등급 문장도 안 보탠다.
+    expect(container.textContent).not.toContain('호실 목록은 건축물대장에 칸별로');
+    expect(container.querySelector('.floor__units-note')).toBeNull();
+    unmount();
+
+    // 집합건물 · 그 땅에 동이 둘 이상 → "같은 땅 다른 동" 절이 붙는다.
+    responses.floors = { data: [floor({ is_jiphap: true, bld_cnt_in_pnu: 2 })], error: null };
+    const again = render(<FloorStack building={building({ bld_cnt_in_pnu: 2 })} />);
+    await waitFor(() => expect(again.container.querySelector('.floor__units-none')).toBeTruthy());
+    expect(again.container.querySelector('.floor__units-none')!.textContent).toBe(
+      '이 건물에는 호실(전유부) 자료가 없습니다 — 같은 땅 다른 동에 붙어 있을 수 있습니다.',
+    );
+    again.unmount();
+
+    // ⛔ 집합건물이라도 그 땅에 동이 하나뿐이면 없는 동을 가리키지 않는다 — 중립 문장만.
+    responses.floors = { data: [floor({ is_jiphap: true, bld_cnt_in_pnu: 1 })], error: null };
+    const single = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(single.container.querySelector('.floor__units-none')).toBeTruthy());
+    expect(single.container.querySelector('.floor__units-none')!.textContent).toBe(
+      '이 건물에는 호실(전유부) 자료가 없습니다.',
+    );
+  });
+
+  it('⛔ 요약이 한 줄이라도 있으면 "자료 없음" 안내는 서지 않는다 (상호 배제)', async () => {
+    // 층 줄에 못 붙는 층 하나뿐이어도 "자료가 없다"가 아니다 — 자료는 있다.
+    responses.unitSummary = {
+      data: [
+        { floor_no: 40, unit_cnt: 3, median_area_m2: null, min_area_m2: null, max_area_m2: null, floor_kind: 'residential' },
+      ],
+      error: null,
+    };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelector('.floor__units-orphan')).toBeTruthy());
+    expect(container.querySelector('.floor__units-none')).toBeNull();
+    expect(container.textContent).not.toContain('호실(전유부) 자료가 없습니다');
+  });
+
+  it('각주·등급 문장은 층 줄에 실제로 붙은 요약을 보고 선다 (층 종류별 세 갈래)', async () => {
+    const MEDIAN = "'보통'은 그 층 호실 전용면적의 가운데값입니다.";
+    const MULTI = '여러 층에 걸친 호실은 걸친 층마다 한 번씩 셉니다.';
+    const GRADE = '호실 목록은 건축물대장에 칸별로 적힌 내용 그대로입니다.';
+    const none = { median_area_m2: null, min_area_m2: null, max_area_m2: null };
+
+    // ① 주거 층뿐인 건물 — 면적을 안 적으므로 '보통'·곱셈 안내 없음, 복층 각주는 있다.
+    responses.floors = { data: [floor({ floor_no: 5, main_use: '아파트' })], error: null };
+    responses.unitSummary = {
+      data: [{ floor_no: 5, unit_cnt: 4, floor_kind: 'residential', ...none }],
+      error: null,
+    };
+    const a = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(a.container.querySelector('.floor__units')).toBeTruthy());
+    expect(a.container.textContent).not.toContain(MEDIAN);
+    expect(a.container.textContent).not.toContain(GRADE);
+    expect(a.container.textContent).toContain(MULTI);
+    a.unmount();
+
+    // ② 층 줄에 못 붙고 따로 떨어진 호실뿐인 건물 — 셋 다 없음(따로 센 한 줄만 선다).
+    responses.floors = { data: [floor({ floor_no: 1 })], error: null };
+    responses.unitSummary = {
+      data: [
+        { floor_no: 9, unit_cnt: 6, median_area_m2: 5, min_area_m2: 4, max_area_m2: 6, floor_kind: 'commercial' },
+        { floor_no: null, unit_cnt: 2, floor_kind: 'unknown', ...none },
+      ],
+      error: null,
+    };
+    const b = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(b.container.querySelector('.floor__units-orphan')).toBeTruthy());
+    expect(b.container.querySelector('.floor__units')).toBeNull();
+    expect(b.container.querySelector('.floor__units-note')).toBeNull();
+    expect(b.container.textContent).not.toContain(GRADE);
+    b.unmount();
+
+    // ③ 섞인 층이 붙은 건물 — 셋 다 있다.
+    responses.floors = { data: [floor({ floor_no: 3 })], error: null };
+    responses.unitSummary = {
+      data: [{ floor_no: 3, unit_cnt: 543, median_area_m2: 4, min_area_m2: 2.74, max_area_m2: 8.81, floor_kind: 'mixed' }],
+      error: null,
+    };
+    const c = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(c.container.querySelector('.floor__units')).toBeTruthy());
+    expect(c.container.textContent).toContain(MEDIAN);
+    expect(c.container.textContent).toContain(MULTI);
+    expect(c.container.textContent).toContain(GRADE);
+  });
+
+  it('더 보기를 받는 동안 버튼을 지우지 않고 "불러오는 중…"으로 잠근다', async () => {
+    responses.floorUnits = (args) =>
+      Number(args.p_offset ?? 0) === 0 ? unitsPage(args) : new Promise<never>(() => {});
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(4));
+    fireEvent.click(floorButton(container, '3층'));
+    await waitFor(() => expect(container.querySelectorAll('.units__list li')).toHaveLength(50));
+
+    fireEvent.click(screen.getByRole('button', { name: /더 보기/ }));
+    const btn = await screen.findByRole('button', { name: '불러오는 중…' });
+    expect((btn as HTMLButtonElement).disabled).toBe(true);
+    // 받아 둔 줄은 그대로 남는다.
+    expect(container.querySelectorAll('.units__list li')).toHaveLength(50);
+  });
+
+  it('다음 쪽이 0줄로 오면 끝으로 본다 — 눌러도 안 느는 더 보기를 남기지 않는다', async () => {
+    responses.floorUnits = (args) =>
+      Number(args.p_offset ?? 0) === 0 ? unitsPage(args) : { data: [], error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(4));
+    fireEvent.click(floorButton(container, '3층'));
+    await waitFor(() => expect(container.querySelectorAll('.units__list li')).toHaveLength(50));
+
+    fireEvent.click(screen.getByRole('button', { name: /더 보기/ }));
+    await waitFor(() => expect(unitCalls()).toHaveLength(2));
+    await waitFor(() => expect(screen.queryByRole('button', { name: /더 보기|불러오는 중/ })).toBeNull());
+    expect(container.querySelectorAll('.units__list li')).toHaveLength(50);
+    expect(container.textContent).not.toContain('호 목록을 불러오지 못했습니다');
+  });
+
+  it('⛔ 같은 땅의 다른 동으로 바뀌면 요약을 다시 부른다 (의존은 bld_id — pnu 가 아니다)', async () => {
+    const { container, rerender } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(4));
+    rerender(<FloorStack building={building({ bld_id: '1168010100-2' })} />);
+    await waitFor(() =>
+      expect(rpcCalls.filter((c) => c.fn === 'list_unit_floor_summary')).toHaveLength(2),
+    );
+    const calls = rpcCalls.filter((c) => c.fn === 'list_unit_floor_summary');
+    expect(calls[1].args).toEqual({ p_bld_id: '1168010100-2' });
+  });
+
+  it('⛔ 함수가 없거나(PGRST202) 실패하면 요약도 "자료 없음" 안내도 조용히 생략한다 (0줄과 섞지 않는다)', async () => {
+    for (const bad of [
+      { data: null, error: { code: 'PGRST202', message: 'function does not exist' } },
+      { data: null, error: { message: 'boom' } },
+      // 엉뚱한 모양(객체)도 실패다 — 빈 배열로 읽으면 "자료 없음"이라 거짓말을 한다.
+      { data: { covered: true }, error: null },
+    ]) {
+      responses.unitSummary = bad;
+      const { container, unmount } = render(<FloorStack building={building()} />);
+      await waitFor(() => expect(container.querySelector('.floor__row')).toBeTruthy());
+      await waitFor(() =>
+        expect(rpcCalls.some((c) => c.fn === 'list_unit_floor_summary')).toBe(true),
+      );
+      await new Promise((r) => setTimeout(r, 0));
+      expect(container.querySelector('.floor__units')).toBeNull();
+      expect(container.querySelector('.floor__units-none')).toBeNull();
+      // ⓘ '호실' 낱말 자체는 원래 등급 문단("어느 호실인지까지는")에 있다 — 새 글만 본다.
+      expect(container.textContent).not.toContain('전유부');
+      expect(container.textContent).not.toContain('PGRST202');
+      unmount();
+      rpcCalls.length = 0;
+    }
   });
 });

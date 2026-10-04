@@ -4,6 +4,7 @@ import type {
   CoverageStats,
   DataFreshnessRow,
   FloorRow,
+  FloorUnit,
   IndustryMix,
   LhNotice,
   NearbyPermits,
@@ -15,6 +16,7 @@ import type {
   ScorecardOpsMode,
   SigunguTxStat,
   StoreHit,
+  UnitFloorSummary,
 } from '../src/types';
 
 /**
@@ -502,6 +504,33 @@ export function storeHit(over: Partial<StoreHit> = {}): StoreHit {
     store_snapshot_ym: '202606',
     ...over,
   };
+}
+
+/**
+ * 호실 구성표 요약(함수 `list_unit_floor_summary`) — 결정 0032.
+ *
+ * 값은 2026-10-04 라이브 실호출(신구로자이 나인스에비뉴)에서 골랐다 — 3층 섞인 층 543칸 ·
+ * 1층 목록 제공 층 690칸 · 35층 주거 10세대(면적 셋 null). 서버처럼 **높은 층이 위**다.
+ * ⛔ 주거 층 면적은 null 이다(서버가 막는다) — 여기에 값을 넣으면 라이브에 없는 모양을 흉내 낸다.
+ */
+export function unitSummary(): UnitFloorSummary[] {
+  return [
+    { floor_no: 35, unit_cnt: 10, median_area_m2: null, min_area_m2: null, max_area_m2: null, floor_kind: 'residential' },
+    { floor_no: 3, unit_cnt: 543, median_area_m2: 4.0, min_area_m2: 2.74, max_area_m2: 8.81, floor_kind: 'mixed' },
+    { floor_no: 1, unit_cnt: 690, median_area_m2: 4.0, min_area_m2: 3.18, max_area_m2: 13.07, floor_kind: 'commercial' },
+  ];
+}
+
+/**
+ * 한 층의 호 목록 한 쪽(함수 `list_floor_units`). 이름은 라이브 꼴('3가001호')을 따라 짓고,
+ * `total_cnt` 는 쪽과 무관하게 그 층 전체 수가 모든 줄에 같은 값으로 온다(서버와 같다).
+ */
+export function floorUnitsPage(offset: number, limit: number, total = 543): FloorUnit[] {
+  const rows: FloorUnit[] = [];
+  for (let i = offset; i < Math.min(offset + limit, total); i++) {
+    rows.push({ ho: `3가${String(i + 1).padStart(3, '0')}호`, excl_area_m2: 4.0, total_cnt: total });
+  }
+  return rows;
 }
 
 export function coverageStats(over: Partial<CoverageStats> = {}): CoverageStats {
