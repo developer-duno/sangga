@@ -13,6 +13,9 @@ import {
   TX_OPEN_SINCE_LABEL,
   TX_BASEMENT_MISSING_SINCE,
   TX_MIN_SAMPLE,
+  UNIT_FLOOR_SUMMARY_FN,
+  FLOOR_UNITS_FN,
+  FLOOR_UNITS_PAGE,
 } from '../lib/appConstants';
 import type {
   BasePrice,
@@ -20,10 +23,26 @@ import type {
   BuildingHit,
   CoverageStats,
   FloorRow,
+  FloorUnit,
   ParcelTransaction,
   PriceBand,
   SigunguTxStat,
+  UnitFloorSummary,
 } from '../types';
+import {
+  UNIT_HOME_FLOOR_NOTE,
+  UNIT_MEDIAN_NOTE,
+  UNIT_MULTI_FLOOR_NOTE,
+  formatUnitArea,
+  hasUnitList,
+  noUnitDataText,
+  orphanUnits,
+  orphanUnitsText,
+  parseFloorUnits,
+  parseUnitSummary,
+  unitDisplayName,
+  unitSummaryText,
+} from '../lib/unitTable';
 import {
   formatArea,
   formatApproveDate,
@@ -207,6 +226,11 @@ export function FloorStack({ building }: Props) {
    */
   const [basePrices, setBasePrices] = useState<BasePrice[] | null>(null);
   /**
+   * 이 건물의 층별 호실 요약(결정 0032). null = 아직 안 왔거나 **못 읽음** — 그때는 요약 줄도
+   * "자료 없음" 안내도 안 그린다. 빈 배열 = 물어봤더니 호실 자료가 없는 건물(안내가 선다).
+   */
+  const [unitSummary, setUnitSummary] = useState<UnitFloorSummary[] | null>(null);
+  /**
    * 층 목록 카드를 **펼치라고 부르는 신호**. 참고 시세 줄을 누를 때마다 1씩 올린다.
    *
    * ⛔ 이게 없으면 사용자가 층 목록을 접어 둔 상태에서 시세 줄을 눌렀을 때 **아무 일도
@@ -319,6 +343,32 @@ export function FloorStack({ building }: Props) {
     };
   }, [building.bld_id]);
 
+  // ── 호실 구성표 (결정 0032) ──────────────────────────────────────────────
+  //
+  // ⛔ 의존은 `[building.bld_id]` 다 — 기준시가처럼 `[building.pnu]` 로 두면 같은 땅 다른 동으로
+  //    옮길 때 다시 안 부른다(지금은 App.tsx 의 key=bld_id 재마운트가 가려 줄 뿐이다).
+  // ⛔ 곁 카드 미리 부르기(`sidePrefetch`)에 끼우지 않는다 — 그 보관 열쇠가 pnu 라 옆 동과 섞인다.
+  // ⛔ 실패(함수 없음 PGRST202 포함)와 0줄을 섞지 않는다 — 실패면 null 로 남아 요약도 "자료
+  //    없음" 안내도 안 그린다. 실패를 "자료 없음"이라 적으면 모르는 것을 없다고 말하게 된다.
+  useEffect(() => {
+    let cancelled = false;
+    setUnitSummary(null);
+
+    supabase.rpc(UNIT_FLOOR_SUMMARY_FN, { p_bld_id: building.bld_id }).then(({ data, error: err }) => {
+      if (cancelled) return;
+      const rows = err ? null : parseUnitSummary(data);
+      if (rows === null) {
+        console.warn('호실 요약 조회 실패 — 요약 없이 표시합니다', err);
+        return;
+      }
+      setUnitSummary(rows);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [building.bld_id]);
+
   // ── 실거래 사실 표시 (Stage A · 결정 0012) ────────────────────────────────
   //
   // 두 질문을 따로 던진다. 하나는 "이 땅에서 무슨 거래가 있었나"(대부분 빈 배열이 정답),
@@ -419,6 +469,28 @@ export function FloorStack({ building }: Props) {
     if (t.floor_no === null) continue;
     txCountByFloor.set(t.floor_no, (txCountByFloor.get(t.floor_no) ?? 0) + 1);
   }
+
+  // 호실 요약을 층 번호로 짝짓는다(결정 0032). 인덱스로 맞추면 층이 어긋난다 — 층 목록은
+  // 층별개요에서, 요약은 호실 표에서 오므로 서로 없는 층이 있다. 붙을 자리가 없는 호실은
+  // 카드 맨 아래 한 줄로 따로 센다(조용히 사라지지 않게).
+  const unitByFloor = new Map<number, UnitFloorSummary>();
+  for (const u of unitSummary ?? []) {
+    if (u.floor_no !== null) unitByFloor.set(u.floor_no, u);
+  }
+  const orphanLine =
+    unitSummary && unitSummary.length > 0
+      ? orphanUnitsText(orphanUnits(unitSummary, floors.map((f) => f.floor_no)))
+      : null;
+  // 각주·등급 문장은 **층 줄에 실제로 붙은 요약**을 보고 세운다(요약 표에 줄이 있다는 것만으로는
+  // 안 된다 — 주거 층뿐인 아파트에 '보통'·면적 곱셈 안내가 뜨거나, 층 줄에 못 붙고 따로 떨어진
+  // 호실뿐인 건물에 복층 각주가 뜬다).
+  //   · 면적을 적는 요약(목록 제공 층 commercial·mixed)이 하나라도 붙었나 → '보통' 각주 · 등급 문단 보탬
+  //   · 어떤 요약이든 층 줄에 하나라도 붙었나 → 복층 각주
+  const attachedUnits = floors
+    .map((f) => unitByFloor.get(f.floor_no))
+    .filter((u): u is UnitFloorSummary => u !== undefined);
+  const hasAttachedUnits = attachedUnits.length > 0;
+  const hasListedUnits = attachedUnits.some((u) => hasUnitList(u.floor_kind));
 
   // 각주 숫자는 DB에서 계산해 온다. 못 불러왔으면 숫자를 빼고 경고만 남긴다
   // — 옛 숫자로 되돌리면 이 코드가 고치려던 문제(화면만 틀려지는 것)가 그대로 살아난다.
@@ -531,6 +603,9 @@ export function FloorStack({ building }: Props) {
             const ratio = hasArea ? f.floor_area_m2! / maxArea : 0;
             const isOpen = openFloor === f.floor_no;
             const txCount = txCountByFloor.get(f.floor_no) ?? 0;
+            const unitRow = unitByFloor.get(f.floor_no);
+            // 호 목록이 든 채 펼쳐진 층 — 종이에서는 이 층만 줄 단위로 끊는다(50~200줄이면 한 장보다 크다).
+            const unitsOpen = isOpen && unitRow !== undefined && hasUnitList(unitRow.floor_kind);
             return (
               // 옥탑도 지하와 같은 "근거 없는 층"이라 색으로 갈라 둔다(결정 0001 가드 4).
               // id 는 참고 시세 줄에서 이 층으로 스크롤할 때 쓴다.
@@ -539,40 +614,68 @@ export function FloorStack({ building }: Props) {
                 id={`floor-${f.floor_no}`}
                 className={`floor${
                   f.floor_no < 0 ? ' floor--under' : f.floor_no === 99 ? ' floor--roof' : ''
-                }`}
+                }${unitsOpen ? ' floor--units-open' : ''}`}
               >
-                <button
-                  className="floor__row"
-                  onClick={() => setOpenFloor(isOpen ? null : f.floor_no)}
-                >
-                  <span className="floor__label">{formatFloor(f.floor_no, f.floor_label)}</span>
-                  <span className="floor__bar">
-                    {hasArea && (
-                      <span
-                        className="floor__fill"
-                        style={{ width: `${Math.max(ratio * 100, 2)}%` }}
-                      />
-                    )}
-                  </span>
-                  <span className="floor__use">{f.main_use || '용도 미상'}</span>
-                  <span className="floor__area">{formatArea(f.floor_area_m2)}</span>
-                  <span className="floor__stores">
-                    {f.store_cnt != null ? `점포 ${f.store_cnt}` : '—'}
-                  </span>
-                  {/*
-                    거래가 있는 층에만 뱃지를 단다. 0건일 때 "거래 0건"이라고 적으면
-                    "이 층은 안 팔린다"는 단정이 되는데, 실제로는 지번이 가려진 거래·층이
-                    빠진 거래가 그 밑에 깔려 있다(칸은 비워 두되 자리는 남긴다).
-                  */}
-                  <span className="floor__tx">{txCount > 0 ? `거래 ${txCount}건` : ''}</span>
-                  <span className="floor__caret">{isOpen ? '▲' : '▼'}</span>
-                </button>
+                {/*
+                  층 줄 + 호실 요약 둘째 줄을 한 덩어리로 묶는다 — 종이에서 둘이 갈리지 않게.
+                  ⓘ 요약은 버튼 **밖**에 둔다. 버튼 안에 넣으면 층 줄의 칸 수(좁은 화면에서는 줄 수)가
+                    늘고, 버튼 이름에 요약 글이 섞인다.
+                */}
+                <div className="floor__head">
+                  <button
+                    className="floor__row"
+                    onClick={() => setOpenFloor(isOpen ? null : f.floor_no)}
+                  >
+                    <span className="floor__label">{formatFloor(f.floor_no, f.floor_label)}</span>
+                    <span className="floor__bar">
+                      {hasArea && (
+                        <span
+                          className="floor__fill"
+                          style={{ width: `${Math.max(ratio * 100, 2)}%` }}
+                        />
+                      )}
+                    </span>
+                    <span className="floor__use">{f.main_use || '용도 미상'}</span>
+                    <span className="floor__area">{formatArea(f.floor_area_m2)}</span>
+                    <span className="floor__stores">
+                      {f.store_cnt != null ? `점포 ${f.store_cnt}` : '—'}
+                    </span>
+                    {/*
+                      거래가 있는 층에만 뱃지를 단다. 0건일 때 "거래 0건"이라고 적으면
+                      "이 층은 안 팔린다"는 단정이 되는데, 실제로는 지번이 가려진 거래·층이
+                      빠진 거래가 그 밑에 깔려 있다(칸은 비워 두되 자리는 남긴다).
+                    */}
+                    <span className="floor__tx">{txCount > 0 ? `거래 ${txCount}건` : ''}</span>
+                    <span className="floor__caret">{isOpen ? '▲' : '▼'}</span>
+                  </button>
+                  {unitRow && <p className="floor__units">{unitSummaryText(unitRow)}</p>}
+                </div>
 
-                {isOpen && <FloorDetail floor={f} />}
+                {isOpen && (
+                  <FloorDetail floor={f} bldId={building.bld_id} unitRow={unitRow} />
+                )}
               </li>
             );
           })}
         </ol>
+
+        {/*
+          호실 구성표의 카드 맨 아래 줄들(결정 0032).
+          ⛔ `unitSummary === null`(아직 안 옴 · 실패 · 함수 없음)이면 아무것도 안 그린다 —
+             실패를 "자료 없음"이라 적으면 거짓이다. 빈 배열일 때만 "자료 없음" 안내가 선다.
+        */}
+        {orphanLine && <p className="floor__units-orphan">{orphanLine}</p>}
+        {hasAttachedUnits && (
+          <p className="floor__units-note">
+            {hasListedUnits && <>{UNIT_MEDIAN_NOTE} </>}
+            {UNIT_MULTI_FLOOR_NOTE}
+          </p>
+        )}
+        {unitSummary !== null && unitSummary.length === 0 && (
+          <p className="floor__units-none">
+            {noUnitDataText(head.is_jiphap, head.bld_cnt_in_pnu)}
+          </p>
+        )}
       </SectionCard>
 
       {/*
@@ -635,6 +738,23 @@ export function FloorStack({ building }: Props) {
         알 수 없습니다. 면적·용도와 위 건물 스펙(연면적·용적률·건폐율·주차)은 건축물대장{' '}
         <strong>실측(A등급)</strong>입니다. 대장에 안 적힌 칸은 “미상”으로 둡니다 — 원본이
         미기재를 <strong>0</strong>으로 주기 때문에 0을 값으로 적으면 없는 사실이 생깁니다.
+        {/*
+          결정 0032 — 호실 면적을 적는 요약(목록 제공 층)이 층 줄에 하나라도 붙었을 때만 보탠다
+          (주거·오피스텔 층뿐인 건물은 면적을 안 적으므로 곱셈 안내가 할 말이 아니다).
+          👤 문구는 2026-10-04 사장님이 쉬운 말로 고르신 글자 그대로다(옛 문장은 결정 0032 에).
+        */}
+        {hasListedUnits && (
+          <>
+            {' '}
+            호실 목록은 건축물대장에 칸별로 적힌 내용 그대로입니다. 면적은 그 칸 안쪽만 잰 넓이라(복도·계단
+            몫은 빠짐) 분양 광고의 면적보다 작습니다. 어느 칸에 어떤 가게가 있는지는 자료가 없어 알 수
+            없습니다.{' '}
+            <strong>
+              이 호실 면적에 임대 카드의 ㎡당 임대료를 곱해도 이 호실의 월세가 아닙니다. 임대료는
+              동네(상권) 평균이고, 면적을 재는 방법도 다릅니다.
+            </strong>
+          </>
+        )}
       </p>
       <p className="grade grade--sub">
         <strong>점포 수는 실제와 다를 수 있습니다.</strong> ① <strong>빠짐</strong> — 상권정보에 층이
@@ -920,12 +1040,28 @@ function SigunguTxBands({ stats }: { stats: SigunguTxStat[] }) {
   );
 }
 
-function FloorDetail({ floor }: { floor: FloorRow }) {
+function FloorDetail({
+  floor,
+  bldId,
+  unitRow,
+}: {
+  floor: FloorRow;
+  bldId: string;
+  /** 그 층의 호실 요약(결정 0032). 없으면 셋째 칸을 아예 안 만든다. */
+  unitRow?: UnitFloorSummary;
+}) {
   const uses = floor.uses ?? [];
   const stores = floor.stores ?? [];
+  // 셋째 칸은 목록 제공 층(목록) · 주거·오피스텔 층(안내 한 줄)에서만. 미상 층은 요약 줄의
+  // "용도 미상"이 이미 말하므로 칸을 더 만들지 않는다.
+  const unitCol =
+    unitRow !== undefined &&
+    (hasUnitList(unitRow.floor_kind) ||
+      unitRow.floor_kind === 'residential' ||
+      unitRow.floor_kind === 'officetel');
 
   return (
-    <div className="detail">
+    <div className={`detail${unitCol ? ' detail--units' : ''}`}>
       <div className="detail__col">
         <h4 className="detail__h">용도별 구획 {uses.length > 0 && `(${uses.length})`}</h4>
         {uses.length === 0 ? (
@@ -962,6 +1098,119 @@ function FloorDetail({ floor }: { floor: FloorRow }) {
           </ul>
         )}
       </div>
+
+      {unitCol && unitRow && <FloorUnits bldId={bldId} unitRow={unitRow} />}
+    </div>
+  );
+}
+
+/**
+ * 펼친 층의 셋째 칸 "호실"(결정 0032).
+ *
+ * - 목록 제공 층(commercial·mixed): 펼친 **그때** 그 층 목록을 50줄 부르고, 더 보기로 이어 붙인다.
+ * - 주거·오피스텔 층: 목록을 **부르지 않는다** — 안내 한 줄만. 서버도 0줄을 주지만, 화면이
+ *   요청조차 안 보내야 아파트 세대 목록을 묻는 요청이 아예 생기지 않는다.
+ *
+ * ⛔ 섞인 층 안내는 "대장 자료에 없습니다"라고 쓰지 않는다 — 원본 전유부에는 호마다 용도가
+ *    있다. 우리가 아직 안 담은 것을 대장 탓으로 말하면 안 된다(결정 0032 `:147-148`).
+ * ⛔ 사람이 눌러 연 칸이라, 불러오지 못하면 조용히 비우지 않고 그렇다고 적는다(0025 규칙).
+ */
+function FloorUnits({ bldId, unitRow }: { bldId: string; unitRow: UnitFloorSummary }) {
+  const listed = hasUnitList(unitRow.floor_kind);
+  const floorNo = unitRow.floor_no;
+  const [units, setUnits] = useState<FloorUnit[]>([]);
+  const [total, setTotal] = useState<number | null>(null);
+  const [loading, setLoading] = useState(listed);
+  const [failed, setFailed] = useState(false);
+  // 더 보기를 누를 때마다 1씩 올린다 — 0 이 첫 쪽이다.
+  const [page, setPage] = useState(0);
+  /** 다음 쪽이 0줄로 왔다 = 더 받을 것이 없다(더 보기를 거둔다). */
+  const [ended, setEnded] = useState(false);
+
+  useEffect(() => {
+    if (!listed || floorNo === null) return;
+    let cancelled = false;
+    setLoading(true);
+    setFailed(false);
+    supabase
+      .rpc(FLOOR_UNITS_FN, {
+        p_bld_id: bldId,
+        p_floor_no: floorNo,
+        p_limit: FLOOR_UNITS_PAGE,
+        p_offset: page * FLOOR_UNITS_PAGE,
+      })
+      .then(({ data, error: err }) => {
+        if (cancelled) return;
+        const rows = err ? null : parseFloorUnits(data);
+        if (rows === null) {
+          console.warn('호 목록 조회 실패', err);
+          setFailed(true);
+        } else {
+          setUnits((prev) => (page === 0 ? rows : [...prev, ...rows]));
+          if (rows.length > 0) setTotal(rows[0].total_cnt);
+          else if (page === 0) setTotal(0);
+          // 다음 쪽이 0줄이면 끝이다 — 받은 수 < 전체 수라도 더 보기를 남기면 눌러도 안 느는
+          // 버튼이 된다(그 사이 호실이 줄었거나 total_cnt 가 어긋난 경우).
+          else setEnded(true);
+        }
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [bldId, floorNo, listed, page]);
+
+  const count = (total ?? unitRow.unit_cnt).toLocaleString('ko-KR');
+
+  return (
+    <div className="detail__col units">
+      <h4 className="detail__h">
+        호실 ({count}) <span className="units__src">— 대장의 전유부</span>
+      </h4>
+      {!listed ? (
+        <p className="detail__none">{UNIT_HOME_FLOOR_NOTE}</p>
+      ) : (
+        <>
+          {unitRow.floor_kind === 'mixed' && (
+            <p className="units__mixed">
+              이 층은 상가와 주거·오피스텔이 섞여 있어 함께 나옵니다 — 호실마다의 용도는{' '}
+              <strong>아직 담지 않았습니다</strong>.
+            </p>
+          )}
+          {units.length > 0 && (
+            <ul className="detail__list units__list">
+              {units.map((u, i) => (
+                <li key={i}>
+                  <span className="detail__name">{unitDisplayName(u.ho)}</span>
+                  <span className="detail__val">{formatUnitArea(u.excl_area_m2)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {/* 첫 쪽을 받는 동안만 글줄로 알린다 — 더 보기를 받는 동안은 버튼 글자가 알린다. */}
+          {loading && page === 0 && <p className="detail__none">호 목록을 불러오는 중…</p>}
+          {failed && <p className="detail__none">호 목록을 불러오지 못했습니다.</p>}
+          {!loading && !failed && total === 0 && (
+            <p className="detail__none">이 층의 호 목록이 없습니다.</p>
+          )}
+          {/*
+            ⓘ 받는 동안 버튼을 **지우지 않고** 글자만 바꿔 잠근다(상권 건물 목록·가게 검색과 같은 모양) —
+              지웠다 다시 그리면 목록 아래가 덜컥거리고, 두 번 눌러 같은 쪽을 두 번 받는 길도 막힌다.
+          */}
+          {!failed && !ended && total !== null && units.length < total && (
+            <button
+              type="button"
+              className="units__more"
+              disabled={loading}
+              onClick={() => setPage((n) => n + 1)}
+            >
+              {loading
+                ? '불러오는 중…'
+                : `더 보기 (${units.length.toLocaleString('ko-KR')} / ${total.toLocaleString('ko-KR')})`}
+            </button>
+          )}
+        </>
+      )}
     </div>
   );
 }

@@ -17,6 +17,8 @@ import {
   dataFreshness,
   scorecard,
   storeHit,
+  unitSummary,
+  floorUnitsPage,
 } from './fixtures';
 
 /**
@@ -87,6 +89,11 @@ const NEARBY_PERMITS_PATTERN = '**/rest/v1/rpc/count_nearby_permits*';
 // ⚠️ 기본값은 역시 **함수가 없는 상태**다 — 마이그레이션 적용 전 라이브이 그것이고,
 //    그때 카드가 통째로 조용히 빠지는지가 테스트 AA 의 관심사다.
 const RENT_STATS_PATTERN = '**/rest/v1/rpc/list_rent_stats*';
+// 호실 구성표(결정 0032). 요약은 건물을 열 때 · 목록은 층을 펼칠 때 나간다.
+// ⚠️ 기본값은 둘 다 **함수가 없는 상태**다 — 그때 요약도 "자료 없음" 안내도 조용히 빠지는지가
+//    스펙 AH 의 관심사다(빈 배열로 두면 "호실 자료가 없는 건물"이라는 **다른 답**이 되어 안내가 선다).
+const UNIT_SUMMARY_PATTERN = '**/rest/v1/rpc/list_unit_floor_summary*';
+const FLOOR_UNITS_PATTERN = '**/rest/v1/rpc/list_floor_units*';
 // 의견함(2026-08-24b). 화면에서 창고로 **나가는** 유일한 길이라, 여기만 방향이 반대다.
 const FEEDBACK_PATTERN = '**/rest/v1/rpc/submit_feedback*';
 // LH 상가 분양·입점 공고 — 유일하게 **입구**(건물을 고르기 전)에서 나가는 요청이다.
@@ -191,6 +198,10 @@ async function mockFloorStack(
   } else {
     await mockJson(page, RENT_STATS_PATTERN, rents);
   }
+  // 호실 구성표 둘도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 호실을 보는 스펙은
+  // 이 뒤에 자기 응답을 한 번 더 등록한다(나중에 등록한 것이 먼저 잡힌다).
+  await mockMissingFunction(page, UNIT_SUMMARY_PATTERN);
+  await mockMissingFunction(page, FLOOR_UNITS_PATTERN);
 }
 
 /**
@@ -1067,6 +1078,8 @@ test.describe('층별 스택뷰 — 종이로 뽑기', () => {
     await mockMissingFunction(page, INDUSTRY_MIX_PATTERN);
     await mockMissingFunction(page, INDUSTRY_DETAIL_PATTERN);
     await mockMissingFunction(page, BASE_PRICE_PATTERN);
+    await mockMissingFunction(page, UNIT_SUMMARY_PATTERN);
+    await mockMissingFunction(page, FLOOR_UNITS_PATTERN);
 
     await page.goto('/');
     await pickGu(page, '서울', '강남구');
@@ -1672,5 +1685,177 @@ test.describe('검색 — 가게 이름으로 찾은 땅', () => {
     const stack = page.locator('section.stack');
     await expect(stack.getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
     await expect(stack.locator('.card--floors .floor')).toHaveCount(2);
+  });
+});
+
+test.describe('층별 스택뷰 — 호실 구성표', () => {
+  /**
+   * 결정 0032. 여기서 눈으로 보는 것은 넷이다:
+   *   ① 층 줄 아래 요약 둘째 줄 + 펼친 층의 호 목록(50줄 + 더 보기) + 섞임 안내
+   *   ② 주거 층은 수만 — 목록 요청이 **아예 안 나간다**(요청 기록으로 단언)
+   *   ③ 호실 자료가 없는 건물의 안내 한 줄 · 함수가 없으면 요약·안내 둘 다 조용히 생략
+   *   ④ 종이 — 목록이 든 층만 줄 단위로 끊고, 요약 줄은 층 줄과 한 덩어리
+   * (응답 모양 검사·요약 글 같은 순수 규칙은 src/lib/unitTable.test.ts 가 촘촘히 덮는다.)
+   */
+
+  /** 층 목록 넷 — 5층은 **요약이 없는 층**(좁은 화면에서 층 줄 모양을 견줄 짝)이다. */
+  function unitFloors() {
+    return [
+      floorRow({ floor_no: 35, main_use: '아파트' }),
+      floorRow({ floor_no: 5 }),
+      floorRow({ floor_no: 3 }),
+      floorRow({ floor_no: 1 }),
+    ];
+  }
+
+  /**
+   * 건물을 연다. `summary` 를 안 주면 함수가 없는 상태(mockFloorStack 기본값) 그대로다.
+   * 돌려주는 배열에 목록 함수로 나간 요청(인자)이 차례로 쌓인다.
+   */
+  async function openBuilding(page: Page, summary?: unknown[], floors = unitFloors()) {
+    const unitRequests: Array<Record<string, unknown>> = [];
+    page.on('request', (r) => {
+      if (r.method() === 'POST' && r.url().includes('/rpc/list_floor_units')) {
+        unitRequests.push((r.postDataJSON() ?? {}) as Record<string, unknown>);
+      }
+    });
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page, [], [], floors);
+    if (summary !== undefined) {
+      await mockJson(page, UNIT_SUMMARY_PATTERN, summary);
+      await page.route(FLOOR_UNITS_PATTERN, async (route) => {
+        if (route.request().method() === 'OPTIONS') {
+          await route.fulfill({ status: 204, headers: CORS_HEADERS });
+          return;
+        }
+        const args = (route.request().postDataJSON() ?? {}) as Record<string, number>;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          headers: CORS_HEADERS,
+          body: JSON.stringify(floorUnitsPage(args.p_offset ?? 0, args.p_limit ?? 50)),
+        });
+      });
+    }
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+    await expect(page.locator('section.stack')).toBeVisible();
+    return unitRequests;
+  }
+
+  /** 층 이름으로 층 줄 버튼을 찾는다. */
+  function floorRowOf(page: Page, label: string) {
+    return page
+      .locator('.card--floors .floor__row')
+      .filter({ has: page.locator('.floor__label', { hasText: new RegExp(`^${label}$`) }) });
+  }
+
+  test('AF. 층 줄 아래 요약이 서고, 섞인 층을 펼치면 목록·안내·더 보기 — 주거 층은 목록 요청이 안 나간다', async ({
+    page,
+  }, testInfo) => {
+    const unitRequests = await openBuilding(page, unitSummary());
+    const card = page.locator('.card--floors');
+
+    // ① 요약 둘째 줄 — 요약이 있는 층만(5층은 없다).
+    const lines = card.locator('.floor__units');
+    await expect(lines).toHaveCount(3);
+    await expect(lines.nth(0)).toHaveText('세대 10');
+    await expect(lines.nth(1)).toHaveText('호실 543칸 · 보통 4.0㎡ · 2.7~8.8㎡');
+    await expect(lines.nth(2)).toHaveText('호실 690칸 · 보통 4.0㎡ · 3.2~13.1㎡');
+    await expect(card.getByText(/'보통'은 그 층 호실 전용면적의 가운데값입니다/)).toBeVisible();
+
+    // ⛔ 요약 줄 때문에 층 줄의 칸 수가 늘지 않는다(좁은 화면 포함) — 요약이 있는 층(3층)과 없는
+    //    층(5층)의 층 줄이 같은 칸 배치·같은 높이여야 한다(요약은 층 줄 **밖** 둘째 줄이다).
+    const shape = (label: string) =>
+      floorRowOf(page, label).evaluate((el) => ({
+        cols: el.ownerDocument.defaultView!.getComputedStyle(el).gridTemplateColumns,
+        kids: el.children.length,
+        h: Math.round(el.getBoundingClientRect().height),
+      }));
+    expect(await shape('3층')).toEqual(await shape('5층'));
+
+    // ② 주거 층은 수만 — 펼쳐도 목록을 부르지 않는다.
+    await floorRowOf(page, '35층').click();
+    await expect(card.locator('.units')).toContainText('주거·오피스텔 층은 호 목록을 보여 주지 않습니다.');
+    await expect(card.locator('.units__list')).toHaveCount(0);
+
+    // ① 섞인 층 — 펼치는 그때 50줄 + 섞임 안내.
+    await floorRowOf(page, '3층').click();
+    const list = card.locator('.units__list li');
+    await expect(list).toHaveCount(50);
+    await expect(list.first()).toContainText('3가001호');
+    await expect(card.locator('.units__mixed')).toHaveText(
+      '이 층은 상가와 주거·오피스텔이 섞여 있어 함께 나옵니다 — 호실마다의 용도는 아직 담지 않았습니다.',
+    );
+    await expect(card).not.toContainText('대장 자료에 없습니다');
+    // 넓은 화면은 상세가 세 칸(구획 · 점포 · 호실)으로 나란히, 좁은 화면은 한 칸으로 접힌다.
+    // ⓘ 한 번 `.detail` 규칙에 밀려 셋째 칸이 둘째 줄로 떨어진 적이 있다(이 스펙의 스크린숏으로 잡음).
+    const detailCols = await card
+      .locator('.detail--units')
+      .evaluate((el) => el.ownerDocument.defaultView!.getComputedStyle(el).gridTemplateColumns.split(' ').length);
+    expect(detailCols).toBe(testInfo.project.name === 'mobile' ? 1 : 3);
+    await page.getByRole('button', { name: /더 보기/ }).click();
+    await expect(list).toHaveCount(100);
+    await expect(list.nth(50)).toContainText('3가051호');
+
+    // ② 요청 기록 — 섞인 층의 두 쪽만 나갔다. 35층(주거)을 묻는 요청은 **0번**이다.
+    // ⓘ 개발 서버는 StrictMode 라 effect 가 두 번 돌아 첫 쪽 요청이 겹쳐 나갈 수 있다(앞 것은
+    //   버려진다) — 그래서 횟수가 아니라 **무엇을 물었나**(층·쪽)의 묶음으로 본다.
+    const asked = [...new Set(unitRequests.map((a) => `${a.p_floor_no}/${a.p_offset}/${a.p_limit}`))];
+    expect(asked).toEqual(['3/0/50', '3/50/50']);
+    expect(unitRequests.some((a) => a.p_floor_no === 35)).toBe(false);
+    expect(unitRequests.every((a) => a.p_bld_id === searchHit().bld_id)).toBe(true);
+
+    await card.screenshot({ path: testInfo.outputPath(`u2-floors-${testInfo.project.name}.png`) });
+    // 등급 문단의 호실 문장(👤 2026-10-04 쉬운 말) — 목록 제공 층 요약이 붙었으니 선다.
+    const grade = page.locator('p.grade', { hasText: 'D등급' });
+    await expect(grade).toContainText('이 호실 면적에 임대 카드의 ㎡당 임대료를 곱해도 이 호실의 월세가 아닙니다.');
+    await grade.screenshot({ path: testInfo.outputPath(`u2-grade-${testInfo.project.name}.png`) });
+
+    // ④ 종이 — 목록이 든 층만 줄 단위로 끊는다.
+    await page.emulateMedia({ media: 'print' });
+    const opened = card.locator('li.floor.floor--units-open');
+    await expect(opened).toHaveCount(1);
+    await expect(opened).toHaveCSS('break-inside', 'auto');
+    // 나머지 층은 그대로 통째 유지 · 층 줄과 요약 줄은 한 덩어리 · 호 목록 줄도 갈리지 않는다.
+    await expect(card.locator('li.floor').first()).toHaveCSS('break-inside', 'avoid');
+    await expect(opened.locator('.floor__head')).toHaveCSS('break-inside', 'avoid');
+    await expect(list.first()).toHaveCSS('break-inside', 'avoid');
+    await expect(lines.nth(1)).toBeVisible();
+    // 받아 둔 줄은 종이에 그대로 나오고, 누르는 장치(더 보기)만 빠진다.
+    await expect(list.nth(99)).toBeVisible();
+    await expect(card.locator('.units__more')).toBeHidden();
+    await card.screenshot({ path: testInfo.outputPath(`u2-floors-print-${testInfo.project.name}.png`) });
+    await page.emulateMedia({ media: null });
+  });
+
+  test('AG. 호실 자료가 없는 건물이면 층 목록 카드 맨 아래에 안내 한 줄', async ({ page }, testInfo) => {
+    // floorRow 의 기본값은 집합건물이라 문구를 일반 건물 쪽으로 보려고 덮어쓴다.
+    const unitRequests = await openBuilding(page, [], [floorRow({ floor_no: 2, is_jiphap: false }), floorRow({ is_jiphap: false })]);
+    const card = page.locator('.card--floors');
+    await expect(card.locator('.floor__units-none')).toHaveText(
+      '이 건물에는 호실(전유부) 자료가 없습니다 — 칸별로 등기가 나뉘지 않은 일반 건물이면 원래 없는 자료입니다.',
+    );
+    await expect(card.locator('.floor__units')).toHaveCount(0);
+    await card.screenshot({ path: testInfo.outputPath(`u2-nounits-${testInfo.project.name}.png`) });
+    expect(unitRequests).toHaveLength(0);
+  });
+
+  test('AH. 서버에 함수가 아직 없으면 요약도 안내도 조용히 빠진다', async ({ page }) => {
+    // 마이그레이션 적용 전 라이브의 상태(404/PGRST202) — mockFloorStack 의 기본값 그대로다.
+    const unitRequests = await openBuilding(page);
+    const card = page.locator('.card--floors');
+    await expect(card.locator('.floor__row')).toHaveCount(4);
+    await expect(card.locator('.floor__units')).toHaveCount(0);
+    await expect(card.locator('.floor__units-none')).toHaveCount(0);
+    await expect(card).not.toContainText('전유부');
+    // 층을 펼쳐도 셋째 칸이 안 생기고 목록 요청도 안 나간다.
+    await floorRowOf(page, '3층').click();
+    await expect(card.locator('.detail')).toBeVisible();
+    await expect(card.locator('.units')).toHaveCount(0);
+    expect(unitRequests).toHaveLength(0);
   });
 });

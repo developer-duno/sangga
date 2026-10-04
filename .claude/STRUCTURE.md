@@ -26,8 +26,9 @@ src/                     # 프론트 (라우터·상태관리 라이브러리 �
 │   ├── DistrictMap.tsx      # 카카오맵 + 상권 폴리곤 (정적 /districts.geojson — Supabase 안 씀)
 │   ├── DistrictBuildings.tsx  # 지도 안 — 상권 이름을 누르면 그 안의 **땅**(필지) 목록이 펼쳐짐
 │   │                         #   (결정 0025). list_district_buildings / 여러 동은 list_parcel_buildings
-│   ├── FloorStack.tsx       # 시그니처 화면: 층 스택+속한 상권+실거래+참고시세+기준시가 등
-│   │                         #   7개 질의를 독립 상태로 발사 (하나 실패해도 나머지 렌더)
+│   ├── FloorStack.tsx       # 시그니처 화면: 층 스택+속한 상권+실거래+참고시세+기준시가+호실 요약 등
+│   │                         #   8개 질의를 독립 상태로 발사 (하나 실패해도 나머지 렌더). 층을 펼치면
+│   │                         #   셋째 칸 "호실"이 그 층 호 목록을 그때 부른다(결정 0032 · 주거 층은 안 부름)
 │   ├── SectionCard.tsx      # 카드 공통 틀(로드맵 Wave 2) — 접어도 요약 한 줄은 항상 보임,
 │   │                         #   본문은 hidden 으로 감춰 둘 뿐 DOM 에서 안 뺌(인쇄가 되살릴 수 있게)
 │   ├── IndustryMixSection.tsx  # 둘레의 업종 분포(결정 0014) — 상권/반경 두 스코프 + 인허가 한 줄,
@@ -46,7 +47,7 @@ src/                     # 프론트 (라우터·상태관리 라이브러리 �
 │   ├── ShareButton.tsx      # 지금 화면 주소 복사 버튼(결정 0019, 휴대폰 대응)
 │   ├── PrintButton.tsx      # 종이로 뽑기 버튼(결정 0020) — window.print() 호출, 인쇄의 유일한 길 아님
 │   └── PrintHeader.tsx      # 종이에만 나오는 머리글(건물명·주소·뽑은시각·원본주소) — @media print 전용
-└── lib/                 # 부수효과·순수함수 계층 23개 (components 를 절대 import 안 함)
+└── lib/                 # 부수효과·순수함수 계층 26개 (components 를 절대 import 안 함)
     ├── supabase.ts      # 클라이언트 1개 생성 (env 읽는 유일한 곳 — 그래서 흉내내기 까다로움)
     ├── appConstants.ts  # 서버 함수/뷰 이름·짝수(TX_LIST_CAP·SCORECARD_URL 등) 상수만 모은 순수 모듈
     │                     #   (supabase.ts 와 분리한 이유: 이건 env 를 안 봐서 테스트가 흉내 안 내도 됨)
@@ -66,6 +67,8 @@ src/                     # 프론트 (라우터·상태관리 라이브러리 �
     │                     #   그대로 나름). priceBand.ts 와 일부러 갈라 둠(두 값을 견주게 되므로)
     ├── rentStats.ts     # 상권 임대 동향 순수 계산(결정 0024) — 산수는 천원/㎡→원 곱하기 하나뿐
     │                     #   (종류끼리 더하기·수익률 ×4·층별효용비율은 넣지 않는다)
+    ├── unitTable.ts     # 호실 구성표 순수 규칙(결정 0032) — 응답 모양 검사(이상한 줄만 뺌)·층 줄 요약 글·
+    │                     #   붙을 자리 없는 호실 세기·안내 문장. 층 종류 판정은 안 함(서버 한 곳)
     ├── lhNotices.ts     # LH 공고 순수 계산(결정 0022) — 시도 두 자리 자르기·마감·중복 묶기·링크
     ├── txFlow.ts        # 동네 매매 단가 흐름 순수 계산(결정 0027) — 요약 문구·부분 해 라벨·
     │                     #   표본 부족 가르기·막대 폭. 연도 리터럴 0(시험이 원문을 훑어 지킴)
@@ -130,12 +133,12 @@ scripts/                 # 데이터 파이프라인 전부 21개 (수동 실행
     └── load_bjd_code.py                                 # 법정동코드 전체자료(code.go.kr) 적재
 
 supabase/
-├── schema.sql           # 정본 4,669줄 (라이브 반영본 — 마이그레이션과 드리프트 가드로 동기)
-└── migrations/          # 날짜 파일명 57개, 라이브 적용 순서 그대로
+├── schema.sql           # 정본 (라이브 반영본 — 마이그레이션과 드리프트 가드로 동기)
+└── migrations/          # 날짜 파일명 70개(2026-10-04c 까지), 라이브 적용 순서 그대로
 
-tests/                   # pytest 4,009개(2026-10-04 · 워크트리·CI 4,006 + 3 skipped) — collector/스크립트 1:1 + 드리프트 가드
-e2e/                     # playwright 31개(2파일: fixtures.ts, floor-stack.spec.ts). 넓은화면(chromium)·
-│                         #   휴대폰(mobile, Pixel 7) 2벌로 돌아 실행은 62회. E2E_PORT 로 포트 회피
+tests/                   # pytest 4,116개(2026-10-04 · 워크트리·CI 4,113 + 3 skipped) — collector/스크립트 1:1 + 드리프트 가드
+e2e/                     # playwright 34개(2파일: fixtures.ts, floor-stack.spec.ts). 넓은화면(chromium)·
+│                         #   휴대폰(mobile, Pixel 7) 2벌로 돌아 실행은 68회. E2E_PORT 로 포트 회피
 .github/workflows/       # ci.yml(test+web) + 감시 5종: district-source-watch·feedback-digest·
 │                         #   live-health-watch·sangkwon-quarterly-watch·lh-notice-watch
 │                         #   (전부 하트비트로 서로 감시. 비밀값은 lh-notice-watch 의 MOLIT_KEY 하나뿐)
@@ -173,9 +176,10 @@ docs/                    # 상세계획·알려진한계(조사 전 필독)·PRO
   `/scorecard-v1.json`, `TxFlowSection`=`get_sigungu_tx_yearly` 가 뜬다. 지도에서 상권을 누르면 `DistrictBuildings` 가
   `list_district_buildings`·`list_parcel_buildings` 로 그 안의 땅을 펼친다) →
   BuildingSearch `search_buildings(q, lim, sigungu)`(0건 시 `search_scope`) ∥ `search_stores(q, lim, sigungu, p_offset)`(상호 → 땅, 0028) → 선택 →
-  FloorStack 이 7개 질의 동시 발사: `v_coverage_stats`·`v_floor_stack`·`list_building_districts(bld_id)`·
+  FloorStack 이 8개 질의 동시 발사: `v_coverage_stats`·`v_floor_stack`·`list_building_districts(bld_id)`·
+  `list_unit_floor_summary(p_bld_id)`(호실 요약 · 결정 0032 — 층을 펼치면 그 층만 `list_floor_units`)·
   `list_parcel_transactions(pnu)`·`get_sigungu_tx_stats(sigungu)`·`list_price_bands(p_pnu)`·
-  `list_base_prices(p_pnu)` → 층 막대+실거래+참고시세+기준시가 렌더. 그 안에서
+  `list_base_prices(p_pnu)` → 층 막대+실거래+참고시세+기준시가+호실 요약 렌더. 그 안에서
   `IndustryMixSection` 이 `list_industry_mix`·`list_industry_detail`·`count_nearby_permits` 를,
   `RentStatSection` 이 `list_rent_stats` 를 따로 발사한다.
   건물을 고르면 화면 상태가 `urlState.ts` 로 주소에 따라 적히고(되살리는 중엔 안 적음),
@@ -190,8 +194,8 @@ docs/                    # 상세계획·알려진한계(조사 전 필독)·PRO
 
 - 빌드: `pnpm build` (tsc -b && vite build)
 - 실행: `pnpm dev` (http://localhost:5173)
-- 테스트: `pnpm test`(vitest 856, 40파일) / `python -m pytest tests/ -q`(4,009 — 워크트리·CI 4,006 + 3 skipped) /
-  `E2E_PORT=5273 pnpm test:e2e`(31개 × 2벌 = 62회)
+- 테스트: `pnpm test`(vitest 891, 41파일) / `python -m pytest tests/ -q`(4,116 — 워크트리·CI 4,113 + 3 skipped) /
+  `E2E_PORT=5273 pnpm test:e2e`(34개 × 2벌 = 68회)
 - 린트: `pnpm exec oxlint` / `python -m ruff check scripts/ tests/`
 - 배포: `main` push → Vercel 자동 배포(`https://sangga-one.vercel.app`). `main` 은 잠겨 있어
   가지→PR→검사(`test`·`web`) 통과→머지 순서로만 들어간다(결정 0018).

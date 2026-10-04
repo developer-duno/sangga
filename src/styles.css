@@ -946,6 +946,55 @@ body {
   font-size: 10px;
 }
 
+/* ── 호실 구성표 (결정 0032) ─────────────────────────────────────────── */
+/*
+   층 줄 아래 **둘째 줄**. ⛔ 층 줄(`.floor__row`) 안에 칸으로 넣지 않는다 — 좁은 화면에서
+   층 줄의 칸·줄 수가 늘어난다. 막대 칸 시작선(74px + 12px + 10px)에 맞춰 들여 쓴다.
+*/
+.floor__units {
+  margin: -4px 0 2px;
+  padding: 0 10px 0 96px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.floor__units-orphan,
+.floor__units-note,
+.floor__units-none {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+/* 펼친 상세의 셋째 칸 "호실" — 칸이 셋일 때만 세 줄로 나눈다.
+   ⚠️ `.detail` 이 이 아래(층 펼침 절)에 있어 같은 무게면 그쪽이 이긴다 — 두 이름을 함께 쓴다. */
+.detail.detail--units {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+.units__src {
+  font-weight: 400;
+}
+
+.units__mixed {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.units__more {
+  margin-top: 8px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--accent);
+  cursor: pointer;
+}
+
 /* ── 한 장 요약 카드 틀 (로드맵 Wave 2) ──────────────────────────────── */
 /*
    층별 화면의 섹션 다섯 장이 공유하는 겉틀이다. `.tx`(사실)·`.band`(추정)·`.mix`(둘레)는
@@ -2523,8 +2572,14 @@ body {
 @media (max-width: 720px) {
   .hit,
   .floor__row,
-  .detail {
+  .detail,
+  .detail.detail--units {
     grid-template-columns: 1fr;
+  }
+
+  /* 층 줄이 한 칸으로 접히면 막대 칸 시작선이 없다 — 층 줄 글자와 같은 자리에서 시작한다. */
+  .floor__units {
+    padding-left: 10px;
   }
 
   .band__hit {
@@ -2779,6 +2834,8 @@ body {
   .floor__caret,
   /* ⛔ 접기 버튼만 뺀다 — 그 **안의 공고 줄들은 아래에서 되살린다**(내용이지 장치가 아니다). */
   .lh__more-btn,
+  /* 호 목록의 더 보기 — 누르는 장치다. 이미 받아 둔 줄은 그대로 나온다(결정 0032). */
+  .units__more,
   .modal__back {
     display: none !important;
   }
@@ -2915,8 +2972,23 @@ body {
      줄 단위로만 안 잘리게 한다(표 전체에 걸면 열 줄짜리가 통째로 다음 장으로 밀린다). */
   .fresh tr,
   .foot__notice,
-  .printmeta {
+  .printmeta,
+  /* 층 줄 + 호실 요약 둘째 줄은 한 덩어리다(결정 0032) — 요약만 다음 장으로 넘어가면 어느 층
+     것인지 모른다. 호 목록 줄도 이름과 면적이 한 줄이라 갈리지 않게 한다. */
+  .floor__head,
+  .units__list li,
+  .units__mixed {
     break-inside: avoid;
+  }
+
+  /*
+    ⛔ **호 목록이 든 채 펼쳐 둔 층만** 줄 단위로 끊는다(결정 0032). 그런 층은 50~200줄이라 한 장보다
+       커서, 층 통째로 avoid 를 두면 앞장 아래가 통째로 빈다(2026-08-25 '카드 통째' 사고와 같은 모양).
+       나머지 층은 위의 `.floor` avoid 그대로다. 접어 둔 층의 호 목록은 아예 그려지지 않으므로
+       종이에도 안 나온다(5천 칸짜리 건물이 종이 수십 장이 되지 않는다).
+  */
+  .floor.floor--units-open {
+    break-inside: auto;
   }
 
   /* 제목만 페이지 끝에 혼자 남는 것을 막는다. */

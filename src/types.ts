@@ -934,3 +934,40 @@ export type DataFreshnessRow = {
   /** 사람 말로 적은 주기('분기마다 …'). 이것도 서버가 준다. */
   cadence: string;
 };
+
+// ── 호실 구성표 (결정 0032) ──────────────────────────────────────────────────
+//
+// ⛔ 층 종류는 **서버 한 곳**(`list_unit_floor_summary`·`list_floor_units` 의 같은 판정식)이
+//    정한다. 화면은 받은 값을 글로 옮기기만 한다 — 화면이 따로 판정하면 요약과 목록이 갈린다.
+
+/**
+ * 층 종류. `commercial`·`mixed` 만 호 목록을 준다(서버가 막는다).
+ * `mixed` 는 상가+오피스텔과 상가+주거를 **가르지 않는다** — 그래서 섞임 안내도 둘을 골라 말하지 않는다.
+ */
+export type UnitFloorKind = 'commercial' | 'mixed' | 'residential' | 'officetel' | 'unknown';
+
+/** 함수 `list_unit_floor_summary(p_bld_id)` 한 줄 = 층 하나. */
+export type UnitFloorSummary = {
+  /** 층. **null 이면 "층 미상" 호실 묶음**이다(어느 층 줄에도 붙일 수 없다). */
+  floor_no: number | null;
+  /** 그 층의 호실 줄 수(복층 호실은 걸친 층마다 한 번씩 센다). */
+  unit_cnt: number;
+  /**
+   * 전용면적 가운데값·최소·최대(㎡). ⛔ `residential`·`officetel`·`unknown` 층은 **셋 다 null**
+   * (한두 세대뿐인 층이면 그 집 크기가 공개 주소로 나간다 — 서버가 막는다).
+   */
+  median_area_m2: number | null;
+  min_area_m2: number | null;
+  max_area_m2: number | null;
+  floor_kind: UnitFloorKind;
+};
+
+/** 함수 `list_floor_units(p_bld_id, p_floor_no, p_limit, p_offset)` 한 줄 = 호실 하나. */
+export type FloorUnit = {
+  /** 호 이름 — 대장 **원문 그대로**. null·'' 둘 다 올 수 있다(화면이 "(호 이름 없음)"). */
+  ho: string | null;
+  /** 전용면적(㎡). 공용 제외 — 분양면적이 아니다. */
+  excl_area_m2: number | null;
+  /** 쪽 나누기 전 그 층 전체 호실 수(모든 줄에 같은 값). */
+  total_cnt: number;
+};
