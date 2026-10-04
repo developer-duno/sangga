@@ -1165,7 +1165,7 @@ function FloorUnits({ bldId, unitRow }: { bldId: string; unitRow: UnitFloorSumma
   return (
     <div className="detail__col units">
       <h4 className="detail__h">
-        호실 ({count}) <span className="units__src">— 대장의 전유부</span>
+        호실 ({count}) <span className="units__src">— 건축물대장 기준</span>
       </h4>
       {!listed ? (
         <p className="detail__none">{UNIT_HOME_FLOOR_NOTE}</p>

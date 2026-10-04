@@ -156,17 +156,17 @@ describe('그 밖의 작은 규칙', () => {
 
   it('자료 없는 건물 안내는 건물 종류로 가르고, 모르면 중립 문장만', () => {
     expect(noUnitDataText(false)).toBe(
-      '이 건물에는 호실(전유부) 자료가 없습니다 — 칸별로 등기가 나뉘지 않은 일반 건물이면 원래 없는 자료입니다.',
+      '이 건물에는 호실 자료가 없습니다 — 칸별로 등기가 나뉘지 않은 일반 건물이면 원래 없는 자료입니다.',
     );
     expect(noUnitDataText(true, 3)).toBe(
-      '이 건물에는 호실(전유부) 자료가 없습니다 — 같은 땅 다른 동에 붙어 있을 수 있습니다.',
+      '이 건물에는 호실 자료가 없습니다 — 같은 땅 다른 동에 붙어 있을 수 있습니다.',
     );
     expect(noUnitDataText(true, 3)).not.toContain('일반 건물');
-    expect(noUnitDataText(null)).toBe('이 건물에는 호실(전유부) 자료가 없습니다.');
+    expect(noUnitDataText(null)).toBe('이 건물에는 호실 자료가 없습니다.');
   });
 
   it('⛔ "같은 땅 다른 동" 절은 그 땅에 동이 둘 이상일 때만 — 한 동이거나 모르면 중립 문장', () => {
-    const neutral = '이 건물에는 호실(전유부) 자료가 없습니다.';
+    const neutral = '이 건물에는 호실 자료가 없습니다.';
     expect(noUnitDataText(true, 1)).toBe(neutral);
     expect(noUnitDataText(true, null)).toBe(neutral);
     expect(noUnitDataText(true)).toBe(neutral);
