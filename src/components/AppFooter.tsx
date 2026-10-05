@@ -16,6 +16,10 @@ import { HandoffLinks } from './HandoffLinks';
  * ⛔ 자료 출처(공공누리 1유형 의무)를 여기에 모아 적지 않는다. 출처는 그 자료를 실제로
  *    쓴 섹션이 **자기가 쓴 것만** 적는다(지도·상권 카드) — 여기에 모아 두면 안 쓴 출처를
  *    덧붙이게 되고 그건 지어낸 출처다.
+ * ⓘ 넘기기 구역 바로 뒤의 「함께 보면 좋은 사이트」는 형제 사이트(2u부동산·미분양 아파트
+ *    비교) 링크 두 개뿐이다(2026-10-06 · 2u 인계 10-05). 남의 서비스로 넘기는 구역과
+ *    성격이 달라 따로 세우고, 종이에서는 빠진다. ⛔ 그룹 이름은 붙이지 않고 링크만 둔다 —
+ *    2u 가 네이버 매물을 보여 주는 사이트라 한 그룹으로 묶어 부르지 않는다(사장님 결정).
  */
 
 interface Props {
@@ -54,6 +58,37 @@ export function AppFooter({ feedbackContext }: Props) {
         끼면 말이 끊긴다. 종이에서는 이 구역만 통째로 빠진다(`@media print` 의 `.links`).
       */}
       <HandoffLinks />
+      {/*
+        형제 사이트 링크 — 넘기기 구역 **안에 섞지 않는다**. 저건 "이 일을 잘하는 남의 곳으로
+        넘기기"이고 이건 같은 사람이 만든 다른 사이트라 성격이 다르다. 종이에서는 이 구역도
+        통째로 빠진다(`@media print` 의 `.family`).
+      */}
+      <nav aria-label="함께 보면 좋은 사이트" className="family">
+        <p className="family__h">함께 보면 좋은 사이트</p>
+        <ul className="family__list">
+          <li>
+            {/* ⚠️ 새 창으로 열되 `rel` 을 함께 준다 — 넘기기 링크와 같은 규칙. */}
+            <a
+              className="family__a"
+              href="https://2u.pe.kr"
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              2u부동산(아파트 매물·시세)
+            </a>
+          </li>
+          <li>
+            <a
+              className="family__a"
+              href="https://mibunyang-peach.vercel.app"
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              미분양 아파트 비교
+            </a>
+          </li>
+        </ul>
+      </nav>
       {/* "언제 것인가"는 "어디까지 믿어도 되나"의 나머지 절반이다 — 근거와 한계를 읽은
           바로 다음에 오는 것이 자연스럽다. 서버가 못 답하면 이 자리만 조용히 빈다. */}
       <DataFreshness />
