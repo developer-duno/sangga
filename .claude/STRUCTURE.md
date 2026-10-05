@@ -110,6 +110,7 @@ scripts/                 # 데이터 파이프라인 전부 21개 (수동 실행
 ├── download_sangkwon_history.py     # 상권정보 "주기성 과거 데이터" 분기별 zip 일괄 다운로드
 ├── make_env_local.py                # .env → .env.local (브라우저용 공개키만 골라 씀)
 ├── backtest_price.py                # Stage B 백테스트 성적표(docs/backtest/) 재생성 — DB 읽기 전용
+├── backtest_openclose.py            # 결정 0033 R3 개업·폐업 정답지(사진 비교 vs 서울시 공표 · docs/backtest/) — DB·외부 호출 0 · shapely 필요
 ├── load_price_gate.py               # 통과구.csv → price_gate_sigungu 적재(관문 3종, 걸리면 롤백)
 ├── build_district_geojson.py        # district → public/districts.geojson (단순화)
 ├── build_scorecard_json.py          # 백테스트 CSV 3종 → public/scorecard-v1.json (굽고 커밋 —
