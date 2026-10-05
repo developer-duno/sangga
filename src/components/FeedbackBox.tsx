@@ -1,7 +1,12 @@
 import { useId, useState } from 'react';
 
 import { FEEDBACK_MAX_LEN } from '../lib/appConstants';
-import { submitFeedback, type FeedbackContext } from '../lib/feedback';
+import {
+  FEEDBACK_CATEGORIES,
+  submitFeedback,
+  type FeedbackCategory,
+  type FeedbackContext,
+} from '../lib/feedback';
 
 /**
  * 보던 사람이 한마디 남기는 자리.
@@ -16,6 +21,13 @@ import { submitFeedback, type FeedbackContext } from '../lib/feedback';
  *    만들어 놓고 안 하는 것이 가장 나쁘다.
  *
  * ⛔ 실패를 성공처럼 말하지 않는다. 못 보냈으면 못 보냈다고 적는다(거짓 안심 금지).
+ *
+ * 종류를 먼저 고르게 하는 이유(2026-10-06) — 편지가 오기 시작할 때 종류별로 나뉘어 쌓여야
+ * 다음에 무엇을 만들지 정하는 자료가 된다. **기본 선택을 두지 않는다** — 미리 골라 두면
+ * 대부분 그대로 보내 전부 한 갈래('기타')로 쌓이고, 나눈 의미가 사라진다.
+ *
+ * ⚠️ 숨김 칸(`fb_url_confirm`)은 반쪽 방어다 — 서버 코드가 없어 브라우저에서만 검사하므로
+ *    화면 폼을 긁어 채우는 봇만 걸린다. 창고 함수를 직접 부르는 봇은 창고 쪽 상한이 막는다.
  */
 
 interface Props {
@@ -31,20 +43,33 @@ type Status = 'idle' | 'sending' | 'sent' | 'failed';
 export function FeedbackBox({ context }: Props) {
   const [open, setOpen] = useState(false);
   const [body, setBody] = useState('');
+  const [category, setCategory] = useState<FeedbackCategory | null>(null);
+  // 사람 눈·탭 순서에 안 걸리는 칸. 여기에 값이 있으면 사람이 아니라 폼을 긁는 봇이다.
+  const [trap, setTrap] = useState('');
   const [status, setStatus] = useState<Status>('idle');
   const fieldId = useId();
+  const groupName = useId();
 
   const trimmed = body.trim();
   const tooLong = body.length > FEEDBACK_MAX_LEN;
-  const canSend = trimmed.length > 0 && !tooLong && status !== 'sending';
+  const canSend = category !== null && trimmed.length > 0 && !tooLong && status !== 'sending';
 
   async function handleSend() {
     if (!canSend) return;
+    if (trap) {
+      // 봇에게는 성공처럼 보이게 한다 — 막혔다는 신호를 주면 다른 길로 다시 온다.
+      setStatus('sent');
+      setBody('');
+      setCategory(null);
+      setTrap('');
+      return;
+    }
     setStatus('sending');
-    const ok = await submitFeedback('opinion', trimmed, context);
+    const ok = await submitFeedback('opinion', trimmed, { ...context, category });
     if (ok) {
       setStatus('sent');
       setBody('');
+      setCategory(null);
     } else {
       setStatus('failed');
     }
@@ -76,6 +101,23 @@ export function FeedbackBox({ context }: Props) {
 
   return (
     <div className="fb">
+      <fieldset className="fb__kinds">
+        <legend className="fb__label">어떤 의견인가요?</legend>
+        <div className="fb__kind-list">
+          {FEEDBACK_CATEGORIES.map((c) => (
+            <label key={c.key} className="fb__kind">
+              <input
+                type="radio"
+                name={groupName}
+                value={c.key}
+                checked={category === c.key}
+                onChange={() => setCategory(c.key)}
+              />
+              {c.label}
+            </label>
+          ))}
+        </div>
+      </fieldset>
       <label className="fb__label" htmlFor={fieldId}>
         무엇이 불편하거나 아쉬우셨나요?
       </label>
@@ -97,6 +139,17 @@ export function FeedbackBox({ context }: Props) {
         }}
         placeholder="예: 3층 정보가 안 보여요 / 이 건물 주차 칸이 실제와 달라요"
       />
+      {/* 숨김 칸 — display:none 이면 봇이 건너뛰므로 화면 밖으로만 뺀다(.fb__hp). */}
+      <input
+        type="text"
+        name="fb_url_confirm"
+        className="fb__hp"
+        autoComplete="off"
+        tabIndex={-1}
+        aria-hidden="true"
+        value={trap}
+        onChange={(e) => setTrap(e.target.value)}
+      />
       <div className="fb__foot">
         <span className="fb__count">
           {body.length} / {FEEDBACK_MAX_LEN}자
@@ -108,6 +161,7 @@ export function FeedbackBox({ context }: Props) {
             onClick={() => {
               setOpen(false);
               setBody('');
+              setCategory(null);
               // ⚠️ status 를 여기서 비우지 않는다 — 보내고 나서 닫으면 "보냈다"는 사실까지
               //    사라져, 보낸 사람이 보냈는지 아닌지 알 수 없게 된다. 접힌 모습은
               //    'sent' 일 때만 안내를 보여주므로 실패 안내가 남아 돌 걱정은 없다.

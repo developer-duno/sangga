@@ -2714,6 +2714,46 @@ body {
   font-size: 14px;
 }
 
+/* 의견 종류 고르기(2026-10-06). 칸이 좁으면 라디오가 저절로 다음 줄로 접힌다(넘침 0). */
+.fb__kinds {
+  margin: 0 0 12px;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.fb__kind-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+
+.fb__kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.fb__kind input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+/* 봇 숨김 칸 — 사람 눈에는 안 보이게 화면 밖으로만 뺀다. ⛔ display:none 으로 바꾸지 말 것
+   (그러면 폼을 긁는 봇도 이 칸을 건너뛰어 걸리지 않는다). */
+.fb__hp {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 0;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  opacity: 0;
+}
+
 .fb__guide {
   margin: 0 0 8px;
   color: var(--muted);

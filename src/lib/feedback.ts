@@ -24,6 +24,24 @@ export type FeedbackKind = 'opinion' | 'error';
 export type FeedbackContext = Record<string, unknown>;
 
 /**
+ * 사람이 쓴 의견의 종류(2026-10-06 — 2u 의견함과 같은 네 갈래, 글자도 그대로).
+ *
+ * 순서·키·글자를 **여기 한 곳**에만 둔다 — 화면(라디오 순서)과 창고에 실리는 키가
+ * 따로 놀면 쌓인 편지를 종류별로 셀 때 어긋난다.
+ *
+ * ⚠️ 서버의 `kind`(opinion·error CHECK)와는 다른 축이다. 종류는 `context.category`
+ *    한 칸으로 실린다 — 서버 제약·마이그레이션을 건드리지 않으려는 선택이다.
+ */
+export const FEEDBACK_CATEGORIES = [
+  { key: 'bug', label: '버그·오류' },
+  { key: 'data', label: '정보가 틀려요' },
+  { key: 'suggest', label: '건의·제안' },
+  { key: 'other', label: '기타' },
+] as const;
+
+export type FeedbackCategory = (typeof FEEDBACK_CATEGORIES)[number]['key'];
+
+/**
  * 편지 한 통을 보낸다.
  *
  * @returns 창고가 받았으면 `true`. 모양이 아니거나·분당 상한에 걸렸거나·
