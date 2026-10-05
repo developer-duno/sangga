@@ -987,14 +987,15 @@ export type OpenCloseStatus = 'no_coord' | 'not_seoul' | 'outside_seoul_district
  * 상권 하나 × 분기 하나의 합(그 상권의 업종 행 전부를 더한 것).
  *
  * ⛔ 유사 업종 점포 수 합이 30 곳이 안 되면 두 비율이 **null** 이다(개수만 온다).
+ * ⓘ 개수 칸은 늘 수다(열쇠가 없거나 수가 아니면 화면 모양 검사가 카드째 거부한다). 비율 둘만 null 이 될 수 있다.
  */
 export type OpenCloseQuarter = {
   quarter: string;
-  similr_induty_stor_co: number | null;
-  stor_co: number | null;
-  frc_stor_co: number | null;
-  opbiz_stor_co: number | null;
-  clsbiz_stor_co: number | null;
+  similr_induty_stor_co: number;
+  stor_co: number;
+  frc_stor_co: number;
+  opbiz_stor_co: number;
+  clsbiz_stor_co: number;
   opbiz_rt: number | null;
   clsbiz_rt: number | null;
 };
@@ -1003,11 +1004,11 @@ export type OpenCloseQuarter = {
 export type OpenCloseIndustry = {
   svc_induty_cd: string;
   svc_induty_cd_nm: string | null;
-  similr_induty_stor_co: number | null;
-  stor_co: number | null;
-  frc_stor_co: number | null;
-  opbiz_stor_co: number | null;
-  clsbiz_stor_co: number | null;
+  similr_induty_stor_co: number;
+  stor_co: number;
+  frc_stor_co: number;
+  opbiz_stor_co: number;
+  clsbiz_stor_co: number;
   opbiz_rt: number | null;
   clsbiz_rt: number | null;
 };
@@ -1015,11 +1016,11 @@ export type OpenCloseIndustry = {
 /** 상위 10 업종 밖의 합. 업종이 열 개 이하이면 서버가 null 을 준다. */
 export type OpenCloseOther = {
   industry_count: number;
-  similr_induty_stor_co: number | null;
-  stor_co: number | null;
-  frc_stor_co: number | null;
-  opbiz_stor_co: number | null;
-  clsbiz_stor_co: number | null;
+  similr_induty_stor_co: number;
+  stor_co: number;
+  frc_stor_co: number;
+  opbiz_stor_co: number;
+  clsbiz_stor_co: number;
   opbiz_rt: number | null;
   clsbiz_rt: number | null;
 };

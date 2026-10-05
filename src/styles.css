@@ -2153,6 +2153,17 @@ body {
   line-height: 1.6;
 }
 
+/* 막대 눈금 한 줄(카드 공통 — 상권끼리 같은 눈금). 화면·종이 둘 다에 나온다. */
+.oc__scale {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.oc__dir {
+  color: var(--muted);
+}
+
 /* 상권 하나 = 한 덩어리. 상권끼리 더하지 않으므로 줄로 갈라 둔다. */
 .oc__district {
   padding: 10px 0;

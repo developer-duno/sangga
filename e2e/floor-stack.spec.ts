@@ -1895,7 +1895,7 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
     // 카드가 하나 늘어도 첫 화면 펼침은 여전히 넷이다(로드맵 Wave 2 의 예산).
     await expect(stack.locator('.card__toggle[aria-expanded="true"]')).toHaveCount(4);
     await expect(oc.locator('.card__summary')).toHaveText(
-      '코엑스 외 1곳 · 2026년 2분기 개업 5곳(1.13%) · 폐업 9곳(2.04%)',
+      '코엑스 외 상권 1곳 · 2026년 2분기까지 서울시 공표',
     );
     await expect(oc.locator('.card__body')).toBeHidden();
 
@@ -1903,9 +1903,9 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
     await expect(oc.locator('.oc__name')).toHaveText(['코엑스 · 발달상권', '강남 마이스 관광특구 · 관광특구']);
     const first = oc.locator('.oc__district').first();
     await expect(first.locator('.oc__latest .oc__num')).toHaveText([
-      '유사 업종 점포 441곳',
-      '개업 5곳 1.13%',
-      '폐업 9곳 2.04%',
+      '점포 441곳(프랜차이즈 포함)',
+      '개업 5곳 · 개업률(분기) 1.13%',
+      '폐업 9곳 · 폐업률(분기) 2.04%',
     ]);
     // 추이 — 여덟 칸, 옛 분기가 왼쪽. 둘째 상권은 빠진 분기가 빈 칸으로 선다.
     await expect(first.locator('.oc__col')).toHaveCount(8);
@@ -1914,15 +1914,20 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
     const second = oc.locator('.oc__district').nth(1);
     await expect(second.locator('.oc__col--missing')).toHaveCount(6);
     await expect(second.locator('.oc__col--missing .oc__bar')).toHaveCount(0);
-    // 막대 높이 — 둘째 상권 창 안 최댓값(2.1%)이 100%, 1.5% 는 그 비례.
-    const lastCol = second.locator('.oc__col').last();
-    const heightPct = async (sel: string) =>
-      lastCol.locator(sel).evaluate((el) => {
+    // 막대 눈금 — 카드 하나에 하나(두 상권 공통). 최댓값은 첫 상권 가장 옛 분기 폐업률 2.74%.
+    await expect(oc.locator('.oc__scale')).toHaveText('막대가 꽉 차면 2.74%(분기)');
+    const barPct = async (bar: ReturnType<typeof oc.locator>) =>
+      bar.evaluate((el) => {
         // 바탕 칸의 아래 선(1px)은 빼고 잰다(clientHeight).
         return (el.getBoundingClientRect().height / el.parentElement!.clientHeight) * 100;
       });
-    expect(await heightPct('.oc__bar--close')).toBeCloseTo(100, 0);
-    expect(await heightPct('.oc__bar--open')).toBeCloseTo((1.5 / 2.1) * 100, 0);
+    const firstMax = await barPct(first.locator('.oc__col').first().locator('.oc__bar--close'));
+    const secondClose = await barPct(second.locator('.oc__col').last().locator('.oc__bar--close'));
+    const secondOpen = await barPct(second.locator('.oc__col').last().locator('.oc__bar--open'));
+    expect(firstMax).toBeCloseTo(100, 0);
+    // ★ 둘째 상권 2.1% 는 제 최댓값(100%)이 아니라 공통 눈금 2.74% 기준 비례다.
+    expect(secondClose).toBeCloseTo((2.1 / 2.74) * 100, 0);
+    expect(secondOpen).toBeCloseTo((1.5 / 2.74) * 100, 0);
     // 업종 표는 접혀 있다.
     await expect(first.locator('.oc__table')).toBeHidden();
     await first.locator('.oc__ind-sum').click();
@@ -1934,7 +1939,8 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
     );
     await expect(oc).toContainText('상권 전체 값이며 이 건물의 값이 아닙니다');
     await expect(oc).toContainText('둘레의 업종 분포');
-    await expect(oc).toContainText('서울시 계산식(개업·폐업 점포 ÷ 유사 업종 점포 × 100)');
+    await expect(oc).toContainText('서울시 계산식(개업·폐업 점포 ÷ 점포(프랜차이즈 포함) × 100)');
+    await expect(oc.locator('.oc__trend-cap').first()).toContainText('분기별 개업률·폐업률 — 최근 2년(8분기)');
 
     // ⛔ 좁은 폭(412px)에서 여덟 칸 막대가 옆으로 넘치지 않는다 — 페이지도, 추이 칸도.
     // ⓘ e2e 는 DOM 타입 없이 돈다 — 전역 document 대신 locator 로 잰다.
@@ -1951,6 +1957,7 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
     await page.emulateMedia({ media: 'print' });
     await expect(first.locator('.oc__bar--open').first()).toHaveCSS('print-color-adjust', 'exact');
     await expect(first.locator('.oc__trend')).toHaveCSS('break-inside', 'avoid');
+    await expect(oc.locator('.oc__scale')).toBeVisible();
     await page.emulateMedia({ media: null });
 
     // 같은 시험 안에서 대전 건물로 — 카드는 서고 그 사실 한 줄(지역 이름은 pnu 로 고른다).

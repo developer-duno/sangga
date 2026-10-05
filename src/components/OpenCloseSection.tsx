@@ -15,8 +15,10 @@ import {
   openCloseSummary,
   otherIndustries,
   sidoNameOfPnu,
+  storeTotalText,
   tableCellText,
   trendCells,
+  trendScaleMax,
   windowText,
   type TrendCell,
 } from '../lib/openClose';
@@ -104,14 +106,19 @@ export function OpenCloseSection({ pnu, prefetch }: Props) {
     );
   }
 
+  // 카드 하나에 눈금 하나 — 상권끼리 같은 높이가 같은 비율이 되게 한다(`trendScaleMax`).
+  const scaleMax = trendScaleMax(rows);
+
   return (
     <SectionCard plan={SECTION_PLAN.openclose} className="oc" summary={summary}>
       <p className="oc__lead">
         <strong>이 건물이 속한 상권의 개업·폐업입니다</strong> — 서울시가 공표한 점포 수 그대로입니다.
       </p>
+      {/* 막대 눈금 — 눈에 보이는 글로 둔다(인쇄에도 나온다). 그릴 막대가 없으면 줄도 없다. */}
+      {scaleMax > 0 && <p className="oc__scale">{`막대가 꽉 차면 ${formatRate(scaleMax)}(분기)`}</p>}
 
       {rows.map((r) => (
-        <DistrictBlock key={r.district_id ?? r.status} row={r} />
+        <DistrictBlock key={r.district_id ?? r.status} row={r} scaleMax={scaleMax} />
       ))}
 
       <ul className="oc__why">
@@ -124,8 +131,9 @@ export function OpenCloseSection({ pnu, prefetch }: Props) {
           전 업종)와 다릅니다.
         </li>
         <li>
-          상권 전체 비율은 서울시가 업종별로 공표한 점포 수를 더해 서울시 계산식(개업·폐업 점포 ÷ 유사
-          업종 점포 × 100)으로 낸 값입니다.
+          상권 전체 비율은 서울시가 업종별로 공표한 점포 수를 더해 서울시 계산식(개업·폐업 점포 ÷
+          점포(프랜차이즈 포함) × 100)으로 낸 값입니다 — 서울시 자료는 이 점포 수를 &lsquo;유사 업종 점포
+          수&rsquo;라고 부릅니다.
         </li>
       </ul>
     </SectionCard>
@@ -137,7 +145,7 @@ const SOURCE_TEXT =
   '출처: 서울시 상권분석서비스(점포-상권) · 서울 열린데이터광장 · 공공누리 1유형(출처표시)';
 
 /** 상권 하나의 덩어리. 상권끼리 더하지 않는다. */
-function DistrictBlock({ row }: { row: DistrictOpenClose }) {
+function DistrictBlock({ row, scaleMax }: { row: DistrictOpenClose; scaleMax: number }) {
   const name = districtName(row);
   const title = row.district_type ? `${name} · ${row.district_type}` : name;
 
@@ -158,9 +166,11 @@ function DistrictBlock({ row }: { row: DistrictOpenClose }) {
   if (!latest || !label) return null;
 
   const noRate = latest.opbiz_rt === null || latest.clsbiz_rt === null;
+  // ⛔ 표본 문장은 **점포 수 합이 정말 30 곳 미만일 때만**(비율 null 만으로 띄우지 않는다 — F5).
+  const smallSample = latest.similr_induty_stor_co < OPEN_CLOSE_MIN_SAMPLE;
   const windowLatest = row.window_quarters[0];
   const behind = windowLatest !== undefined && windowLatest !== row.latest_quarter;
-  const cells = trendCells(row.window_quarters, row.quarters ?? []);
+  const cells = trendCells(row.window_quarters, row.quarters ?? [], scaleMax);
   const inds = industryRows(row.industries);
   const other = otherIndustries(row.other_industries);
 
@@ -168,7 +178,7 @@ function DistrictBlock({ row }: { row: DistrictOpenClose }) {
     <div className="oc__district">
       <p className="oc__name">{title}</p>
       <p className="oc__latest">
-        <strong className="oc__num">{`유사 업종 점포 ${formatStoreCount(latest.similr_induty_stor_co)}`}</strong>
+        <strong className="oc__num">{storeTotalText(latest.similr_induty_stor_co)}</strong>
         <strong className="oc__num oc__num--open">
           {countRateText('개업', latest.opbiz_stor_co, noRate ? null : latest.opbiz_rt)}
         </strong>
@@ -177,9 +187,9 @@ function DistrictBlock({ row }: { row: DistrictOpenClose }) {
         </strong>
         <span className="oc__quarter">{label}</span>
       </p>
-      {noRate && (
+      {smallSample && (
         <p className="oc__note">
-          {`표본 ${formatStoreCount(latest.similr_induty_stor_co)} — ${OPEN_CLOSE_MIN_SAMPLE}곳이 안 돼 비율은 적지 않습니다.`}
+          {`표본 ${formatStoreCount(latest.similr_induty_stor_co)}(점포 · 프랜차이즈 포함) — ${OPEN_CLOSE_MIN_SAMPLE}곳이 안 돼 비율은 적지 않습니다.`}
         </p>
       )}
       {behind && <p className="oc__note">{`이 상권 자료는 ${label}까지입니다.`}</p>}
@@ -188,14 +198,14 @@ function DistrictBlock({ row }: { row: DistrictOpenClose }) {
 
       {inds && (
         <details className="oc__ind">
-          <summary className="oc__ind-sum">업종별 표 — {label} · 유사 업종 점포가 많은 순</summary>
+          <summary className="oc__ind-sum">업종별 표 — {label} · 점포가 많은 순</summary>
           <table className="oc__table">
             <thead>
               <tr>
                 <th scope="col">업종</th>
-                <th scope="col">유사 업종 점포</th>
-                <th scope="col">개업</th>
-                <th scope="col">폐업</th>
+                <th scope="col">점포(프랜차이즈 포함)</th>
+                <th scope="col">개업 (개업률·분기)</th>
+                <th scope="col">폐업 (폐업률·분기)</th>
               </tr>
             </thead>
             <tbody>
@@ -235,7 +245,8 @@ function Trend({ cells, windowLabel }: { cells: TrendCell[]; windowLabel: string
   return (
     <figure className="oc__trend">
       <figcaption className="oc__trend-cap">
-        {windowLabel} 개업률·폐업률 — 왼쪽이 옛 분기, 오른쪽이 최근
+        {`분기별 개업률·폐업률 — ${windowLabel}`}
+        <span className="oc__dir">왼쪽이 옛 분기, 오른쪽이 최근</span>
         <span className="oc__legend">
           <span className="oc__key oc__key--open" aria-hidden="true" />
           개업률
@@ -293,8 +304,8 @@ function Trend({ cells, windowLabel }: { cells: TrendCell[]; windowLabel: string
       </div>
       {cells.some((c) => c.kind !== 'ok') && (
         <p className="oc__note">
-          &lsquo;–&rsquo; 칸은 그 분기에 서울시가 이 상권 자료를 내지 않은 것이고, &lsquo;표본&rsquo; 칸은 유사 업종 점포가{' '}
-          {OPEN_CLOSE_MIN_SAMPLE}곳이 안 돼 비율을 적지 않은 분기입니다.
+          &lsquo;–&rsquo; 칸은 그 분기에 서울시가 이 상권 자료를 내지 않은 것이고, &lsquo;표본&rsquo; 칸은 점포(프랜차이즈
+          포함)가 {OPEN_CLOSE_MIN_SAMPLE}곳이 안 돼 비율을 적지 않은 분기입니다.
         </p>
       )}
     </figure>

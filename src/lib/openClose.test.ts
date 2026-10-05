@@ -10,6 +10,7 @@ import {
   otherIndustries,
   sidoNameOfPnu,
   trendCells,
+  trendScaleMax,
   windowText,
 } from './openClose';
 
@@ -117,6 +118,18 @@ describe('trendCells — 추이 칸', () => {
     expect(last.closeH).toBeCloseTo(100, 6);
   });
 
+  it('★ 공통 눈금 — trendScaleMax 는 카드 안 ok 상권 전부의 최댓값, 주면 그 눈금으로 그린다', () => {
+    const a = okRow();
+    const b = okRow({ district_id: 'b', quarters: [q({ quarter: '20262', opbiz_rt: 1.0, clsbiz_rt: 2.0 })] });
+    expect(trendScaleMax([a, b])).toBe(4);
+    // 창 밖 분기와 상태 줄은 세지 않는다.
+    const outside = okRow({ quarters: [q({ quarter: '20262' }), q({ quarter: '20232', clsbiz_rt: 99 })] });
+    expect(trendScaleMax([outside, headRow('not_seoul')])).toBe(2.04);
+    const cells = trendCells(WINDOW, b.quarters!, 4);
+    expect(cells[cells.length - 1].closeH).toBeCloseTo(50, 6);
+    expect(cells[cells.length - 1].openH).toBeCloseTo(25, 6);
+  });
+
   it('0 은 값이다 — 비율이 모두 0 이면 ok 칸에 높이 0', () => {
     const cells = trendCells(['20262'], [q({ quarter: '20262', opbiz_rt: 0, clsbiz_rt: 0 })]);
     expect(cells[0].kind).toBe('ok');
@@ -146,28 +159,53 @@ describe('isOpenCloseList — 서버 응답 모양', () => {
     expect(isOpenCloseList({ code: 'PGRST202' })).toBe(false);
   });
 
-  it('업종 두 칸이 이상해도 목록은 받고, 그 표만 빠진다', () => {
-    expect(isOpenCloseList([okRow({ industries: 'x' as never })])).toBe(true);
-    expect(industryRows('x')).toBeNull();
-    expect(industryRows([{ svc_induty_cd: 'CS1', svc_induty_cd_nm: '한식', similr_induty_stor_co: '9' }])).toBeNull();
+  it('★ 숫자 칸 열쇠가 빠지면 거부한다 — 분기 합·업종 표·그 밖 합 모두(F5)', () => {
+    const { stor_co: _drop, ...noStor } = q({ quarter: '20262' });
+    expect(isOpenCloseList([okRow({ quarters: [noStor as OpenCloseQuarter] })])).toBe(false);
+    const { clsbiz_rt: _r, ...noRate } = q({ quarter: '20262' });
+    expect(isOpenCloseList([okRow({ quarters: [noRate as OpenCloseQuarter] })])).toBe(false);
+    // 비율 null 은 받는다(열쇠는 있다) · 개수 null 은 받지 않는다(개수는 늘 수).
+    expect(isOpenCloseList([okRow({ quarters: [q({ quarter: '20262', opbiz_rt: null, clsbiz_rt: null })] })])).toBe(true);
+    expect(isOpenCloseList([okRow({ quarters: [q({ quarter: '20262', opbiz_stor_co: null as never })] })])).toBe(false);
+    const ind = { svc_induty_cd: 'CS1', svc_induty_cd_nm: '한식', similr_induty_stor_co: 9, stor_co: 9, frc_stor_co: 0, opbiz_stor_co: 1, clsbiz_stor_co: 0, opbiz_rt: 11.1, clsbiz_rt: 0 };
+    expect(isOpenCloseList([okRow({ industries: [ind] })])).toBe(true);
+    const { frc_stor_co: _f, ...indNoFrc } = ind;
+    expect(isOpenCloseList([okRow({ industries: [indNoFrc as never] })])).toBe(false);
+    expect(isOpenCloseList([okRow({ industries: 'x' as never })])).toBe(false);
+    expect(isOpenCloseList([okRow({ other_industries: { industry_count: 3 } as never })])).toBe(false);
+    expect(industryRows(null)).toBeNull();
     expect(otherIndustries(null)).toBeNull();
-    expect(otherIndustries({ industry_count: 0 })).toBeNull();
+  });
+
+  it('★ 상권 줄인데 창이 비어 있으면 거부한다(F6) — 상태 줄은 빈 창이어도 받는다', () => {
+    expect(isOpenCloseList([okRow({ window_quarters: [] })])).toBe(false);
+    expect(isOpenCloseList([okRow({ status: 'no_data', latest_quarter: null, quarters: null, window_quarters: [] })])).toBe(false);
+    expect(isOpenCloseList([{ ...headRow('not_seoul'), window_quarters: [] }])).toBe(true);
   });
 });
 
-describe('openCloseSummary — 접힌 한 줄', () => {
-  it('첫 상권 이름 + 외 N곳 + 최신 분기 개업·폐업(비율)', () => {
-    const rows = [okRow(), okRow({ district_id: '3001496', district_nm: '강남 마이스 관광특구' })];
-    expect(openCloseSummary(rows, '1168010500101590000')).toBe(
-      '코엑스 외 1곳 · 2026년 2분기 개업 5곳(1.13%) · 폐업 9곳(2.04%)',
-    );
+/** 요약에 값(개수·비율)이 섞였나 — 상권 수('외 상권 1곳')는 값이 아니다. */
+function summaryHasValue(text: string): boolean {
+  return /%/.test(text) || /(개업|폐업|점포)\s*[\d,]+곳/.test(text);
+}
+
+describe('openCloseSummary — 접힌 한 줄 (⛔ 값을 적지 않는다)', () => {
+  it('양성 대조 — 값 탐지가 비율·개수를 실제로 잡는다', () => {
+    expect(summaryHasValue('코엑스 · 2026년 2분기 개업 5곳(1.13%)')).toBe(true);
+    expect(summaryHasValue('코엑스 · 폐업 1,234곳')).toBe(true);
+    expect(summaryHasValue('코엑스 외 상권 1곳 · 2026년 2분기까지 서울시 공표')).toBe(false);
   });
 
-  it('표본이 모자라면 비율 없이 개수만', () => {
-    const rows = [
-      okRow({ quarters: [q({ quarter: '20262', similr_induty_stor_co: 20, opbiz_rt: null, clsbiz_rt: null })] }),
-    ];
-    expect(openCloseSummary(rows, '1168010500101590000')).toBe('코엑스 · 2026년 2분기 개업 5곳 · 폐업 9곳');
+  it('★ 첫 상권 이름 + 외 상권 N곳 + 표 전체 최신 분기까지 서울시 공표 — 숫자 없음', () => {
+    const rows = [okRow(), okRow({ district_id: '3001496', district_nm: '강남 마이스 관광특구' })];
+    const s = openCloseSummary(rows, '1168010500101590000');
+    expect(s).toBe('코엑스 외 상권 1곳 · 2026년 2분기까지 서울시 공표');
+    expect(summaryHasValue(s)).toBe(false);
+  });
+
+  it('상권 하나면 이름만 · 분기는 상권 최신이 아니라 창의 최신', () => {
+    const rows = [okRow({ latest_quarter: '20261', quarters: [q({ quarter: '20261' })] })];
+    expect(openCloseSummary(rows, '1168010500101590000')).toBe('코엑스 · 2026년 2분기까지 서울시 공표');
   });
 
   it('빈 상태는 그 사실 한 줄 — 서울 밖 지역 이름은 표에서 고른다', () => {

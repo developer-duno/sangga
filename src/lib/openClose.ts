@@ -32,10 +32,11 @@ export const OPEN_CLOSE_STATUSES: readonly OpenCloseStatus[] = [
 ];
 
 /**
- * 상권 합산 비율을 내는 최소 표본(유사 업종 점포 수 합).
+ * 상권 합산 비율을 내는 최소 표본(점포(프랜차이즈 포함) 수 합 = 서울시 '유사 업종 점포 수').
  *
- * ⓘ 판정은 **서버가** 한다(이 값보다 적으면 비율이 null 로 온다 — 결정 0033 결정 7). 여기
- *   숫자는 그 사실을 사람 말로 적는 데만 쓴다. 서버 상수를 바꾸면 이것도 함께 바꾼다.
+ * ⛔ **서버 `list_district_openclose` 의 `min_similr` 와 같은 값**이다(결정 0033 결정 7 — 서버가
+ *    이 값보다 적으면 비율을 null 로 보낸다). 화면은 "표본 N곳 — 30곳이 안 돼…" 문장을 띄울지
+ *    정하고 사람 말로 적는 데만 쓴다. 서버 상수를 바꾸면 이것도 함께 바꾼다.
  */
 export const OPEN_CLOSE_MIN_SAMPLE = 30;
 
@@ -62,12 +63,20 @@ export function formatStoreCount(n: number | null | undefined): string {
 }
 
 /**
- * 개업·폐업 한 칸의 글. 비율이 있으면 '개업 5곳 1.13%', 없으면 '개업 5곳'(비율을 지어내지 않는다).
+ * 개업·폐업 한 칸의 글. 비율이 있으면 '개업 5곳 · 개업률(분기) 1.13%', 없으면 '개업 5곳'
+ * (비율을 지어내지 않는다). 👤 비율이 **분기** 값임을 낱말에 박는다(연 비율로 읽히지 않게).
  * ⓘ 비율 표기는 임대 카드와 같은 자(`formatRate` — 소수 둘째 자리까지)다.
  */
 export function countRateText(label: string, count: number | null, rate: number | null): string {
   const r = formatRate(rate);
-  return r === null ? `${label} ${formatStoreCount(count)}` : `${label} ${formatStoreCount(count)} ${r}`;
+  return r === null
+    ? `${label} ${formatStoreCount(count)}`
+    : `${label} ${formatStoreCount(count)} · ${label}률(분기) ${r}`;
+}
+
+/** 큰 숫자 줄의 점포 수 — 👤 화면 낱말은 '점포(프랜차이즈 포함)'(서울시 이름은 유사 업종 점포 수). */
+export function storeTotalText(count: number | null): string {
+  return `점포 ${formatStoreCount(count)}(프랜차이즈 포함)`;
 }
 
 /** 업종 표 한 칸('1곳 (1%)' · 비율이 없으면 '1곳 (–)'). 비율은 공표값 그대로다. */
@@ -124,6 +133,7 @@ export type TrendCell = {
 export function trendCells(
   windowQuarters: readonly string[],
   quarters: readonly OpenCloseQuarter[],
+  scaleMax?: number,
 ): TrendCell[] {
   const byQ = new Map(quarters.map((x) => [x.quarter, x]));
   const cells: TrendCell[] = [...windowQuarters].reverse().map((quarter): TrendCell => {
@@ -149,7 +159,9 @@ export function trendCells(
       similr: hit.similr_induty_stor_co,
     };
   });
-  const max = Math.max(0, ...cells.flatMap((c) => (c.kind === 'ok' ? [c.openRt ?? 0, c.closeRt ?? 0] : [])));
+  // 눈금 — 주면 그 값(카드 안 상권 전부 공통 · `trendScaleMax`), 안 주면 이 상권 칸들의 최댓값.
+  const max =
+    scaleMax ?? Math.max(0, ...cells.flatMap((c) => (c.kind === 'ok' ? [c.openRt ?? 0, c.closeRt ?? 0] : [])));
   if (max > 0) {
     for (const c of cells) {
       if (c.kind !== 'ok') continue;
@@ -158,6 +170,26 @@ export function trendCells(
     }
   }
   return cells;
+}
+
+/**
+ * 카드 하나의 **공통 눈금** — ok 상권 전부의 창 안 두 비율 중 최댓값 하나(메인 판정 F4).
+ *
+ * ⛔ 상권마다 제 최댓값으로 그리면 같은 높이 막대가 상권마다 다른 비율이 되어, 나란히 놓인 두
+ *    상권을 막대 키로 견주는 순간 틀린다. 그래서 한 카드 안에서는 한 눈금만 쓴다.
+ * ⓘ 창 밖 분기·비율이 null 인 분기는 세지 않는다. 그릴 막대가 없거나 전부 0 이면 0.
+ */
+export function trendScaleMax(rows: readonly DistrictOpenClose[]): number {
+  let max = 0;
+  for (const r of rows) {
+    if (r.status !== 'ok' || !r.quarters) continue;
+    const inWindow = new Set(r.window_quarters);
+    for (const q of r.quarters) {
+      if (!inWindow.has(q.quarter)) continue;
+      for (const v of [q.opbiz_rt, q.clsbiz_rt]) if (v !== null && v > max) max = v;
+    }
+  }
+  return max;
 }
 
 /** 그 상권 최신 분기의 합 한 줄. 없으면 null(모양 검사가 ok 줄에는 있음을 보장한다). */
@@ -170,10 +202,14 @@ export function latestOf(row: DistrictOpenClose): OpenCloseQuarter | null {
 /**
  * 접혀 있어도 보이는 한 줄.
  *
- * ⓘ 임대 카드와 달리 값을 적는다 — 대신 **상권 이름을 맨 앞에** 둬서 "이 건물이 아니라 그
- *   상권의 값"이라는 한정어가 같은 줄에 함께 있게 한다. 상권이 여럿이면 첫 상권(서버 차례 =
- *   좁은 상권 먼저) 이름 뒤에 '외 N곳'.
- * ⓘ 빈 상태(서울 아님·상권 없음·좌표 없음·자료 없음)는 그 사실을 그대로 한 줄로 적는다.
+ * ⛔ **여기에 값을 적지 않는다**(👤 결정 — 임대 카드 `rentSummary` 와 같은 규칙). 접힌 요약은
+ *    "이 건물이 아니라 그 상권 전체"라는 한정어를 함께 담을 자리가 없어서, 개수·비율이 여기
+ *    나오면 사람은 그것을 이 건물의 개업·폐업으로 읽는다. 그래서 "어느 상권인지"와 "언제까지
+ *    공표된 자료인지"만 말하고, 숫자는 펼쳐서 그 한정어와 함께 읽게 한다.
+ * ⓘ 분기는 **표 전체 최신**(`window_quarters[0]`)이다 — 상권마다 다를 수 있는 최신 분기를 하나
+ *   골라 적으면 나머지 상권에 대해 거짓이 된다. 상권이 여럿이면 첫 상권(서버 차례 = 좁은 상권
+ *   먼저) 이름 뒤에 '외 상권 N곳'.
+ * ⓘ 빈 상태(서울 아님·상권 없음·좌표 없음·창 안 자료 없음)는 그 사실을 그대로 한 줄로 적는다.
  */
 export function openCloseSummary(rows: readonly DistrictOpenClose[], pnu: string): string {
   const head = rows.find((r) => r.status !== 'ok' && r.status !== 'no_data');
@@ -189,24 +225,15 @@ export function openCloseSummary(rows: readonly DistrictOpenClose[], pnu: string
   }
 
   const districts = rows.filter((r) => r.status === 'ok' || r.status === 'no_data');
-  const firstOk = districts.find((r) => r.status === 'ok');
-  const lead = firstOk ?? districts[0];
-  const name = districtName(lead);
+  const lead = districts[0];
   const others = districts.length - 1;
-  const who = others > 0 ? `${name} 외 ${others}곳` : name;
-  if (!firstOk) return `${who} · ${windowText(lead?.window_quarters ?? [])} 서울시 자료 없음`;
-
-  const latest = latestOf(firstOk);
-  const label = openCloseQuarterLabel(firstOk.latest_quarter);
-  if (!latest || !label) return who;
-  const open = summaryPart('개업', latest.opbiz_stor_co, latest.opbiz_rt);
-  const close = summaryPart('폐업', latest.clsbiz_stor_co, latest.clsbiz_rt);
-  return `${who} · ${label} ${open} · ${close}`;
-}
-
-function summaryPart(label: string, count: number | null, rate: number | null): string {
-  const r = formatRate(rate);
-  return r === null ? `${label} ${formatStoreCount(count)}` : `${label} ${formatStoreCount(count)}(${r})`;
+  const who = others > 0 ? `${districtName(lead)} 외 상권 ${others}곳` : districtName(lead);
+  const windowQuarters = lead?.window_quarters ?? [];
+  if (!districts.some((r) => r.status === 'ok')) {
+    return `${who} · ${windowText(windowQuarters)} 서울시 자료 없음`;
+  }
+  const label = openCloseQuarterLabel(windowQuarters[0]);
+  return label ? `${who} · ${label}까지 서울시 공표` : who;
 }
 
 /** 상권 이름. 비어 있으면 빈칸 대신 이렇게 적는다(빈 제목은 상권이 아닌 무언가로 읽힌다). */
@@ -232,11 +259,18 @@ const COUNT_KEYS = [
   'clsbiz_stor_co',
 ] as const;
 
+/**
+ * 개수 칸 다섯은 **열쇠가 있고 수**여야 하고, 비율 둘은 **열쇠가 있고** 수 또는 null 이어야 한다.
+ * ⛔ 열쇠가 빠진 것을 null 로 너그럽게 받지 않는다 — 함수 정의가 바뀌어 칸 이름이 달라진 날
+ *    화면이 '–'·비율 없음을 조용히 그리면 그것이 그대로 틀린 화면이다(모양 실패 → 카드째 숨김).
+ */
 function hasCountsAndRates(r: Record<string, unknown>): boolean {
   return (
-    COUNT_KEYS.every((k) => isNullableNumber(r[k] ?? null)) &&
-    isNullableNumber(r.opbiz_rt ?? null) &&
-    isNullableNumber(r.clsbiz_rt ?? null)
+    COUNT_KEYS.every((k) => k in r && typeof r[k] === 'number' && Number.isFinite(r[k])) &&
+    'opbiz_rt' in r &&
+    'clsbiz_rt' in r &&
+    isNullableNumber(r.opbiz_rt) &&
+    isNullableNumber(r.clsbiz_rt)
   );
 }
 
@@ -253,22 +287,23 @@ function isIndustry(x: unknown): x is OpenCloseIndustry {
 }
 
 /**
- * 업종 표 줄들. 배열이 아니거나 한 줄이라도 모양이 이상하면 **null**(그 표만 빠진다 — 카드는 선다).
- *
- * ⛔ 이상한 줄 하나만 빼고 나머지를 그리지 않는다 — 상위 10 표에서 한 줄이 빠지면 '그 밖 N업종'
- *    줄과 숫자가 맞지 않게 된다. 표 전체를 빼는 것이 정직하다.
+ * 업종 표 줄들. 없거나 비었으면 null(표를 안 그린다).
+ * ⓘ 모양이 이상한 줄은 `isOpenCloseList` 가 이미 카드째 거부한다(열쇠 엄격). 여기 검사는 그 뒤에도
+ *   남겨 둔 두 번째 그물이다.
  */
 export function industryRows(x: unknown): OpenCloseIndustry[] | null {
   return Array.isArray(x) && x.length > 0 && x.every(isIndustry) ? x : null;
 }
 
-/** '그 밖 N업종' 한 줄. 없거나 모양이 이상하면 null(그 줄만 빠진다). */
-export function otherIndustries(x: unknown): OpenCloseOther | null {
-  if (typeof x !== 'object' || x === null || Array.isArray(x)) return null;
+function isOther(x: unknown): x is OpenCloseOther {
+  if (typeof x !== 'object' || x === null || Array.isArray(x)) return false;
   const r = x as Record<string, unknown>;
-  return typeof r.industry_count === 'number' && r.industry_count > 0 && hasCountsAndRates(r)
-    ? (x as OpenCloseOther)
-    : null;
+  return typeof r.industry_count === 'number' && r.industry_count > 0 && hasCountsAndRates(r);
+}
+
+/** '그 밖 N업종' 한 줄. 없으면 null(그 줄을 안 그린다). */
+export function otherIndustries(x: unknown): OpenCloseOther | null {
+  return isOther(x) ? x : null;
 }
 
 function isRow(x: unknown): x is DistrictOpenClose {
@@ -280,19 +315,24 @@ function isRow(x: unknown): x is DistrictOpenClose {
   if (!Array.isArray(r.window_quarters) || !r.window_quarters.every((q) => typeof q === 'string')) {
     return false;
   }
+  if (r.status === 'ok' || r.status === 'no_data') {
+    // ⛔ 상권 줄인데 창이 비어 있으면 받지 않는다 — "최근 0분기" 같은 말을 지어내게 된다(F6).
+    if (r.window_quarters.length === 0) return false;
+    if (typeof r.district_id !== 'string' || !isNullableString(r.district_nm) || !isNullableString(r.district_type)) {
+      return false;
+    }
+  }
   if (r.status === 'ok') {
     return (
-      typeof r.district_id === 'string' &&
-      isNullableString(r.district_nm) &&
-      isNullableString(r.district_type) &&
       typeof r.latest_quarter === 'string' &&
       Array.isArray(r.quarters) &&
       r.quarters.every(isOpenCloseQuarter) &&
-      r.quarters.some((q) => (q as OpenCloseQuarter).quarter === r.latest_quarter)
+      r.quarters.some((q) => (q as OpenCloseQuarter).quarter === r.latest_quarter) &&
+      'industries' in r &&
+      (r.industries === null || (Array.isArray(r.industries) && r.industries.every(isIndustry))) &&
+      'other_industries' in r &&
+      (r.other_industries === null || isOther(r.other_industries))
     );
-  }
-  if (r.status === 'no_data') {
-    return typeof r.district_id === 'string' && isNullableString(r.district_nm) && isNullableString(r.district_type);
   }
   return true;
 }
@@ -302,8 +342,8 @@ function isRow(x: unknown): x is DistrictOpenClose {
  *
  * ⛔ 빈 배열도 false 다 — 서버는 어떤 필지에도 적어도 한 줄(상태 줄 또는 상권 줄)을 준다.
  *    빈 답은 이 함수가 아는 답이 아니라서 "자료 없음"이라 적으면 거짓이 될 수 있다.
- * ⓘ 업종 표 두 칸(`industries`·`other_industries`)은 여기서 보지 않는다 — 이상하면 그 표만
- *   빠진다(`industryRows`·`otherIndustries` · 임대 카드의 선택 칸과 같은 결).
+ * ⛔ ok 줄의 분기 합·업종 표·그 밖 합은 **숫자 칸 열쇠까지** 본다 — 하나라도 빠지면 카드째
+ *    숨긴다(`hasCountsAndRates`). 상권 줄인데 창이 비었으면 그것도 거부한다.
  */
 export function isOpenCloseList(x: unknown): x is DistrictOpenClose[] {
   return Array.isArray(x) && x.length > 0 && x.every(isRow);
