@@ -11,7 +11,7 @@
 - **DB 스키마** — `supabase/schema.sql`
 - **부동산 데이터 처리 규격** — `budongsan-data` 스킬 참조 (PNU 조립·층 정규화·API 카탈로그)
 - **현재 Phase** — **Phase 1 통과**(2026-08-09, 조인률 95.92%/96.86%) → 1단계 서비스범위(서울+대전) 확장 완료(결정 0006) → **Phase 2 진행 중**(층별 스택 화면, 눈 검증 2/10). **라이브 https://sangga-one.vercel.app** (Vercel 프로젝트 `sangga`, GitHub 연결이라 **main push 가 곧 배포**. ⛔ **새 배포 주소가 생기면 카카오 콘솔에 그 주소를 등록해야 지도가 뜬다**(미분양아파트 앱 1398824 의 "플랫폼 키 > JS 키 수정 > JavaScript SDK 도메인")). 진행 기록 정본 = `docs/PROGRESS.md` · 결정 = `docs/decisions/`
-- **기능별 경위·⛔ 주의사항** = **`.claude/rules/feature-notes.md`** — 화면 코드(`src/`)·DB 정본(`supabase/`)·`e2e/`·마이그레이션 시험을 열면 자동으로 읽힌다. ⚠️ **파일을 안 열고 기능을 바꾸거나 설명하거나 DB 함수·마이그레이션을 다룰 때는 그 파일을 먼저 직접 연다** — 그 안의 ⛔ 는 어기면 에러 없이 조용히 틀리는 것들이다. 담긴 것(날짜순): 상권 경계·실거래·Stage B(0008·0011~0013) · 둘레의 업종 분포(0014) · 접히는 카드 `SECTION_PLAN` · 첫 배포 · 기본기 3종·의견함(0016·0017) · 주소로 들고 다니기(0019) · 종이로 뽑기(0020) · 국세청 기준시가(0021) · LH 상가 공고(0022) · 곧 올라오는 상가 건물(0023) · 임대 사실 카드·층별 임대료(0024·0031) · 상권→건물 다리(0025) · 성적표 공개 · 자료 신선도(0030) · 넘기기 링크 · 동네 매매 단가 흐름(0027) · 상호명 검색(0028) · 호실 구성표(0032) · 첫 방문 속도(09-27)
+- **기능별 경위·⛔ 주의사항** = **`.claude/rules/feature-notes.md`** — 화면 코드(`src/`)·DB 정본(`supabase/`)·`e2e/`·마이그레이션 시험을 열면 자동으로 읽힌다. ⚠️ **파일을 안 열고 기능을 바꾸거나 설명하거나 DB 함수·마이그레이션을 다룰 때는 그 파일을 먼저 직접 연다** — 그 안의 ⛔ 는 어기면 에러 없이 조용히 틀리는 것들이다. 담긴 것(날짜순): 상권 경계·실거래·Stage B(0008·0011~0013) · 둘레의 업종 분포(0014) · 접히는 카드 `SECTION_PLAN` · 첫 배포 · 기본기 3종·의견함(0016·0017) · 주소로 들고 다니기(0019) · 종이로 뽑기(0020) · 국세청 기준시가(0021) · LH 상가 공고(0022) · 곧 올라오는 상가 건물(0023) · 임대 사실 카드·층별 임대료(0024·0031) · 상권→건물 다리(0025) · 성적표 공개 · 자료 신선도(0030) · 넘기기 링크 · 동네 매매 단가 흐름(0027) · 상호명 검색(0028) · 호실 구성표(0032) · 첫 방문 속도(09-27) · 서울 개업·폐업 자료·DB(0033 R1)
 
 ### 🔴 운영 7계명 (매 세션 확인 — 어기면 복구 불가하거나 조용히 깨진다)
 
@@ -88,7 +88,7 @@
 | 3 | 건축물대장 층별개요 | 건축HUB |
 | 4 | 부동산원 임대동향 | 15134761 |
 | 5 | 토지특성 (도로접면) — 구 NSDI, 브이월드로 통합 | 브이월드 / 15048121 |
-| 6 | 서울 상권분석 (서울만 풀버전) | 서울 열린데이터광장 |
+| 6 | 서울 상권분석 (서울만 풀버전) — 점포-상권 개업·폐업(결정 0033) | 서울 열린데이터광장 OA-15577 |
 
 ## 아키텍처
 
@@ -102,7 +102,7 @@ main → App → components → lib → types   (단방향 — 역방향 import 
 | 서버 | **없다** — 화면이 Supabase PostgREST·RPC 를 직접 부른다(`api/` 폴더도 서버리스 함수도 **0개** — 2026-08-25 실측). Vercel 은 정적 파일 호스팅과 배포만 맡는다. ⚠️ 그래서 **고칠 서버 코드가 없다** — 서버에서 해야 할 일은 전부 DB 함수(schema.sql)로 간다 |
 | DB | Supabase PostgreSQL + PostGIS (**별도 프로젝트**) |
 | 수집 | ⬜ **여전히 로컬 수동 실행이다** — 받기·적재·백업 전부 사람 손. 다만 **놓치는 것만은 막아 뒀다**: 감시 그물 여섯(분기 스냅샷 `sangkwon-quarterly-watch` · 상권 원천 `district-source-watch` · 라이브 생존 `live-health-watch` · 의견함 주간 알림 `feedback-digest` · LH 상가 공고 `lh-notice-watch` · 지난 날짜 감시 `data-freshness-watch`)이 서로를 전부 본다(`check_watch_heartbeat.py`). ⛔ **새 예약 워크플로를 만들면 그물에도 넣어야 한다** — `DEFAULT_WORKFLOWS` 와 형제들의 `--workflow` 인자 둘 다. 빠뜨리면 테스트가 빨간불로 잡는다(`schedule:` 있는 파일을 훑어 대조한다). ⛔ 알리기만 한다 — 적재는 여전히 사람 손. ⛔ **검색 함수만 고장 난 경우는 여전히 아무도 안 본다**. 적재 후 기준선 상수(`LATEST_KNOWN_QUARTER` · `LATEST_KNOWN_NOTICE_DATE` · 상권 원천 기준선)는 **사람이 올린다**. 각 그물의 비밀값·종료코드·이슈 제목 규칙·못 보는 틈 = **`.claude/rules/watch-nets.md`**(`.github/`·`scripts/check_*.py`·감시 시험을 열면 자동으로 읽힌다 — ⚠️ 감시가 연 이슈를 처리하거나 감시를 고칠 때는 그 파일을 먼저 직접 연다) |
-| 테스트 | 파이썬 **pytest 4,261개** + 프론트 **vitest 897개**(jsdom + @testing-library/react) + **E2E playwright 34개**(`e2e/floor-stack.spec.ts` — 시험별 내용 = **`.claude/rules/e2e-catalog.md`**, `e2e/` 를 열면 자동으로 읽힌다). ⚠️ **E2E 는 같은 34개를 넓은 화면(chromium)과 휴대폰(mobile — Pixel 7 프리셋, 폭 412px·터치)에서 두 번 돌려 총 68회다** — 좁은 폭은 `styles.css` 의 `@media (max-width: 720px)` 가 판을 다시 짜는 자리라 넓은 화면만 보면 못 잡는다(2026-08-22 층별 막대를 모바일에서만 숨긴 사고). 개수를 셀 때 34(시험)와 68(실행)을 헷갈리지 말 것. CI가 셋 다 돌린다(`pnpm test:e2e`). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도. ⛔ **인쇄는 거의 전부가 CSS라 jsdom(vitest)이 원리적으로 못 본다** — 인쇄 매체를 흉내 낼 수 있는 곳은 E2E 뿐이다 |
+| 테스트 | 파이썬 **pytest 4,417개** + 프론트 **vitest 899개**(jsdom + @testing-library/react) + **E2E playwright 34개**(`e2e/floor-stack.spec.ts` — 시험별 내용 = **`.claude/rules/e2e-catalog.md`**, `e2e/` 를 열면 자동으로 읽힌다). ⚠️ **E2E 는 같은 34개를 넓은 화면(chromium)과 휴대폰(mobile — Pixel 7 프리셋, 폭 412px·터치)에서 두 번 돌려 총 68회다** — 좁은 폭은 `styles.css` 의 `@media (max-width: 720px)` 가 판을 다시 짜는 자리라 넓은 화면만 보면 못 잡는다(2026-08-22 층별 막대를 모바일에서만 숨긴 사고). 개수를 셀 때 34(시험)와 68(실행)을 헷갈리지 말 것. CI가 셋 다 돌린다(`pnpm test:e2e`). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도. ⛔ **인쇄는 거의 전부가 CSS라 jsdom(vitest)이 원리적으로 못 본다** — 인쇄 매체를 흉내 낼 수 있는 곳은 E2E 뿐이다 |
 
 **성능 원칙**: 상권(수천 개)은 사전계산 정적 JSON, 호실(수백만)은 Supabase 쿼리.
 정적 JSON 폴백을 호실에는 두지 않는다.
@@ -135,13 +135,13 @@ main → App → components → lib → types   (단방향 — 역방향 import 
 ```bash
 pnpm dev                                        # 개발 서버 (http://localhost:5173)
 pnpm build                                      # 타입 검사 + 빌드 (tsc -b && vite build)
-pnpm test                                       # 프론트 테스트 (vitest, 897개)
+pnpm test                                       # 프론트 테스트 (vitest, 899개)
 pnpm test:e2e                                   # ★ 화면 E2E (playwright, 34개 × 넓은화면·휴대폰 2벌 = 68회) — 아래 경고 참조
 pnpm exec oxlint                                # 프론트 린트
 ```
 
 ```bash
-python -m pytest tests/ -q                      # 파이썬 테스트 (4,261개 — 원본 자료가 있는 본 폴더 기준, CI·워크트리는 4,258 + 3 skipped)
+python -m pytest tests/ -q                      # 파이썬 테스트 (4,417개 — 원본 자료가 있는 본 폴더 기준, 워크트리는 4,414 + 3 skipped · CI 는 로컬 PostgreSQL 이 없어 test_district_openclose_migration 의 실행 시험 16개를 더 건너뛴다 = 4,398 + 19 skipped)
 python scripts/check_new_sangkwon_quarter.py    # 새 분기 스냅샷이 떴나 (읽기만, 키 불필요)
 python scripts/check_district_source_update.py  # 상권 원천(서울·소진공) 수정일이 바뀌었나 (읽기만, 키 불필요)
 python scripts/check_watch_heartbeat.py         # 예약 6종이 아직 돌고 있나 (읽기만, 키 불필요 — 멈춤=exit 1 · 조회·판정 실패=2 · 결과 쓰기 실패=4)
@@ -202,6 +202,14 @@ python scripts/collectors/collect_rone.py --dry-run --end-qid <분기> --quarter
 python scripts/collectors/collect_rone.py --end-qid <분기> --quarters 1             # R-ONE API → raw JSONL (이어받기 · 4유형×6지표)
 python scripts/collectors/load_rone.py --dry-run                   # raw → rent_stat 미리보기(DB 쓰기 0)
 python scripts/collectors/load_rone.py                             # rent_stat 적재 → 끝나면 post_load.py · --check (⚠️ 게시 시기 근거가 없다 — 알려진한계 §3)
+# ↓ 서울 상권 개업·폐업(결정 0033 — 서울시 공표값 그대로 · 인증키 = .env 의 SEOUL_OPENAPI_KEY). ⛔ `--end-quarter` 는 의무(기본값 없음) —
+#   게시된 분기를 dry-run 으로 먼저 확인한다(미게시 분기는 INFO-200 → done 으로 굳히지 않고 pending 유지).
+#   ⛔ 수집을 다 끝낸 뒤 **같은 날** 마이그레이션 2026-10-05b → 적재를 **한 번에**(일부 분기만 넣으면 신선도가 '지났습니다').
+python scripts/collectors/collect_seoul_openclose.py --dry-run --end-quarter <분기> --quarters 22  # API 1회로 행수 + 장부 읽기만 (DB 쓰기 0)
+python scripts/collectors/collect_seoul_openclose.py --end-quarter <분기> --quarters 22           # API → data/raw/seoul_openclose/api/ (이어받기 · 최신 분기부터 · 22분기 ≈ 1,700회)
+python scripts/collectors/load_seoul_openclose.py --dry-run        # raw(API jsonl·연도 zip) → 관문 6 리포트 (DB·파일 쓰기 0)
+python scripts/collectors/load_seoul_openclose.py                  # district_openclose 분기 단위 교체 (한 트랜잭션) → post_load.py · --check
+# ↑ 키가 막힌 날의 대비책 = fetch_seoul_openclose_zip.py --year <연도> (연 1회 zip · 인증키 없음)
 python scripts/load_rone_map.py --dry-run                          # seed → district_rone_map 미리보기(DB 쓰기 0)
 python scripts/load_rone_map.py                                    # 매핑 적재 (검증 관문 3종 내장 — 걸리면 통째 롤백)
 python scripts/build_district_geojson.py --dry-run                  # 지도용 상권 파일 미리보기(행수·크기만, 파일 안 씀)

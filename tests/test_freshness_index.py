@@ -136,6 +136,29 @@ def has_leading_index(schema, table, col):
     return False
 
 
+def has_leading_primary_key(schema, table, col):
+    """정본(주석 줄 제외)의 `create table … <table> (` 안에 **표 제약** `primary key (<col>, …)` 가
+    있어 그 첫 칸이 col 인가 — 좁은 예외(2026-10-05b · 결정 0033).
+
+    기본키도 btree 색인이다(PostgreSQL 은 기본키마다 고유 btree 색인을 만든다). 첫 칸이 col 이면
+    max(col)/min(col) 을 그 색인 한쪽 끝 한 행으로 끝낸다 — 같은 색인을 `create index` 로 또
+    만들면 쓰기만 두 배가 된다(district_openclose 168만 행).
+
+    잡는 꼴: 줄머리의 `primary key (<col>, …)` · `constraint <이름> primary key (<col>, …)`(대소문자·공백 무관).
+    못 보는 것(전부 빨강 쪽 — 안전하게 틀린다): 칸 정의 끝의 `<col> … primary key`(한 칸 기본키) ·
+    `alter table … add primary key` — 그런 꼴로 받치면 이 가드가 빨강을 내니 그때 넓힌다.
+    """
+    code = strip_comment_lines(schema)
+    m = re.search(
+        r"(?ims)^create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?" + re.escape(table)
+        + r"\s*\((.*?)^\);", code)
+    if not m:
+        return False
+    return re.search(
+        r"(?im)^\s*(?:constraint\s+\w+\s+)?primary\s+key\s*\(\s*" + re.escape(col) + r"\s*[,)]",
+        m.group(1)) is not None
+
+
 def problems(schema, exceptions=None):
     """어긴 것을 사람이 읽을 문장 목록으로 돌려준다(빈 목록 = 통과)."""
     exceptions = EXCEPTIONS if exceptions is None else exceptions
@@ -157,7 +180,8 @@ def problems(schema, exceptions=None):
         if table == "?":
             bad.append("max/min(t.{}) 의 from 표를 못 찾았습니다 — `from <표> t` 모양인지 보세요".format(col))
             continue
-        if has_leading_index(schema, table, col) or (table, col) in exceptions:
+        if (has_leading_index(schema, table, col) or has_leading_primary_key(schema, table, col)
+                or (table, col) in exceptions):
             continue
         bad.append(
             "{}.{}: 새 자료 줄이 큰 표를 색인 없이 훑는다 — 색인을 걸거나 "
@@ -401,3 +425,51 @@ def test_count_is_not_a_target():
     """count(*) 는 색인으로 못 줄이므로 쌍으로 뽑지 않는다(개수 대조도 안 흔들린다)."""
     ok = _add_pair(_schema(), "select count(*)::text from parcel t")
     assert problems(ok) == []
+
+
+# ── 4. 2026-10-05b — 첫 칸이 quarter 인 기본키도 받친다(좁은 예외 · 결정 0033) ─────────
+
+OC_PK = "  primary key (quarter, district_id, svc_induty_cd)"
+
+
+def test_openclose_quarter_is_backed_by_its_primary_key():
+    s = _schema()
+    assert ("district_openclose", "quarter") in freshness_pairs(freshness_body(s))
+    assert not has_leading_index(s, "district_openclose", "quarter"), \
+        "전제: 같은 색인을 create index 로 또 만들지 않았다"
+    assert has_leading_primary_key(s, "district_openclose", "quarter")
+    assert ("district_openclose", "quarter") not in EXCEPTIONS
+
+
+@pytest.mark.parametrize("pk", [
+    "  PRIMARY KEY ( quarter , district_id, svc_induty_cd)",
+    "  constraint district_openclose_pkey primary key (quarter, district_id, svc_induty_cd)",
+])
+def test_primary_key_variants_still_count(pk):
+    """양성 대조 — 흔한 꼴 + 변형 꼴(대문자·공백·이름 붙인 제약)."""
+    s = _schema()
+    assert OC_PK in s, "전제: 정본에 그 기본키 줄이 있다"
+    ok = s.replace(OC_PK, pk, 1)
+    assert has_leading_primary_key(ok, "district_openclose", "quarter")
+    assert problems(ok) == []
+
+
+@pytest.mark.parametrize("pk", [
+    "  primary key (district_id, quarter, svc_induty_cd)",      # quarter 가 첫 칸이 아니다
+    "  -- primary key (quarter, district_id, svc_induty_cd)",   # 주석은 기본키가 아니다
+    "  unique (quarter, district_id, svc_induty_cd)",           # 기본키가 아니다(좁은 예외)
+])
+def test_mutation_primary_key_not_leading_is_noticed(pk):
+    s = _schema()
+    broken = s.replace(OC_PK, pk, 1)
+    assert broken != s
+    bad = problems(broken)
+    assert any("district_openclose.quarter" in m for m in bad), bad
+
+
+def test_primary_key_of_another_table_does_not_count():
+    """rent_stat 의 기본키(첫 칸 quarter)가 district_openclose 를 받친다고 보지 않는다."""
+    s = _schema()
+    broken = s.replace(OC_PK, "  primary key (district_id, quarter, svc_induty_cd)", 1)
+    assert not has_leading_primary_key(broken, "district_openclose", "quarter")
+    assert has_leading_primary_key(broken, "rent_stat", "quarter")

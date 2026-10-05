@@ -34,6 +34,11 @@ DB 없이 SQL 글자만 본다(CI 에는 DB 가 없다) — 대신 아래는 글
    comment 는 정본(schema.sql)과 글자 그대로 같은지 대조한다(10-01a 는 CREATE 문 전체를
    다시 쓰므로, 머리·comment 를 베끼다 한 줄이라도 달라지면 라이브가 조용히 다른 모양으로
    만들어진다 — 본문 전체가 정본과 같은지는 test_schema_function_drift.py 가 따로 본다).
+
+ⓘ 2026-10-05b(결정 0033)에 11번째 줄 '상권 개업·폐업 (서울시)'과 `norm` 셋째 갈래(서울시 분기 꼴
+   'YYYYQ' 다섯 자리)가 생겼다. 10-01a 도 이제 라이브에 적용된 **원장**이라 고칠 수 없다 — 그래서
+   본문 불변식·규칙 검사의 두 벌을 (정본, 10-01a) 에서 **(정본, 10-05b)** 로 옮겼고, 10-01a 는
+   "열 줄 그대로 남아 있나"(test_the_10_01a_ledger_is_left_as_applied)만 따로 본다.
 """
 
 import os
@@ -46,6 +51,9 @@ MIGRATION = os.path.join(ROOT, "supabase", "migrations", "2026-09-05d_data_fresh
 # 월간 규칙을 바꾼 마이그레이션(2026-10-01a) — public 함수 하나만 다시 만든다.
 PERMIT_MIGRATION = os.path.join(
     ROOT, "supabase", "migrations", "2026-10-01a_permit_next_expected.sql")
+# 11번째 줄(서울 개업·폐업)과 norm 셋째 갈래를 더한 마이그레이션(2026-10-05b · 결정 0033).
+OPENCLOSE_MIGRATION = os.path.join(
+    ROOT, "supabase", "migrations", "2026-10-05b_district_openclose.sql")
 SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
 
 FN = "get_data_freshness"
@@ -65,6 +73,7 @@ SOURCE_LABELS = (
     "상권 임대 동향 (부동산원)",
     "참고 시세 성적표",
     "필지 (토지 특성)",
+    "상권 개업·폐업 (서울시)",
 )
 
 # `timestamptz` 를 날짜로 자르는 자리 — 전부 한국 시각으로 옮긴 뒤 잘라야 한다.
@@ -134,7 +143,7 @@ def function_body(sql, name):
     return m.group(1)
 
 
-@pytest.fixture(scope="module", params=(SCHEMA, PERMIT_MIGRATION), ids=("schema", "2026-10-01a"))
+@pytest.fixture(scope="module", params=(SCHEMA, OPENCLOSE_MIGRATION), ids=("schema", "2026-10-05b"))
 def public_body(request):
     """public 함수의 본문에서 **주석을 걷어낸 실제 SQL**.
 
@@ -142,9 +151,10 @@ def public_body(request):
        반대로 설명하려고 주석에 인용한 말('union all 은 순서를 보장하지 않는다')이 문장으로
        세어진다(실제로 그 한 줄 때문에 줄 수 세기가 10 을 세었다).
 
-    ⓘ 2026-10-01a 로 **지금 정본(schema.sql)과 새 마이그레이션 두 벌**을 본다 — 05d 는
-       라이브에 적용된 날짜 원장이라 옛 규칙('기준월 + 2개월 - 하루')을 그대로 간직해야
-       하므로(test_the_old_ledger_is_left_as_applied), 이 fixture 의 대상에서 뺐다.
+    ⓘ **지금 정본(schema.sql)과 가장 최근에 이 함수를 다시 만든 마이그레이션 두 벌**을 본다 —
+       05d·10-01a 는 라이브에 적용된 날짜 원장이라 그때의 정의를 그대로 간직해야 하므로
+       (test_the_old_ledger_is_left_as_applied · test_the_10_01a_ledger_is_left_as_applied),
+       이 fixture 의 대상에서 뺐다(2026-10-05b 로 10-01a → 10-05b 이동).
     """
     return statements(function_body(read(request.param), FN))
 
@@ -207,7 +217,7 @@ class TestEverySourceIsListed:
             "사라지고, 보는 사람은 '그런 자료는 안 쓰나 보다'로 읽습니다".format(literal)
         )
 
-    def test_there_are_exactly_ten_rows(self, public_body):
+    def test_there_are_exactly_eleven_rows(self, public_body):
         """줄 수를 못 박는다 — 자료를 늘리거나 줄이면 이 시험과 화면 시험이 함께 걸린다."""
         assert public_body.count("union all") == len(SOURCE_LABELS) - 1, (
             "자료 갈래 수가 {}개가 아닙니다 — 늘렸다면 SOURCE_LABELS 와 화면 시험도 "
@@ -252,11 +262,11 @@ class TestForbiddenSource:
 
 
 class TestNextExpectedRules:
-    @pytest.mark.parametrize("path", (SCHEMA, PERMIT_MIGRATION), ids=("schema", "2026-10-01a"))
+    @pytest.mark.parametrize("path", (SCHEMA, OPENCLOSE_MIGRATION), ids=("schema", "2026-10-05b"))
     def test_each_rule_is_written_exactly_once(self, path):
         """규칙이 두 벌이면 한쪽만 고쳐지는 날 두 자료가 서로 다른 주기를 말한다.
 
-        ⛔ 05d 원장이 아니라 **지금 정본과 그것을 라이브에 올리는 2026-10-01a** 를 본다.
+        ⛔ 05d·10-01a 원장이 아니라 **지금 정본과 그것을 라이브에 올리는 2026-10-05b** 를 본다.
            월간 = 기준월 + 3개월 - 하루(다음 판이 공개되는 달의 말일 — 사장님 결정 2026-10-01).
            옛 '2 months' 가 한 글자라도 남으면 매달 1일~20일 무렵 지난 날짜가 화면에 선다.
         """
@@ -268,7 +278,7 @@ class TestNextExpectedRules:
             "매달 초 이미 지난 날짜가 화면에 섭니다")
         assert body.count("make_date(") == 1, "연 1회 규칙이 한 번이 아닙니다"
 
-    @pytest.mark.parametrize("path", (SCHEMA, PERMIT_MIGRATION), ids=("schema", "2026-10-01a"))
+    @pytest.mark.parametrize("path", (SCHEMA, OPENCLOSE_MIGRATION), ids=("schema", "2026-10-05b"))
     def test_the_monthly_rule_belongs_to_permit(self, path):
         """+3개월 이 **인허가 줄**의 규칙인지 본다 — 숫자만 세면 다른 갈래로 옮겨 가도 초록이다."""
         body = statements(function_body(read(path), FN))
@@ -293,6 +303,7 @@ class TestNextExpectedRules:
             "'YYYYMM' 모양 검사가 두 자리(상권정보·인허가)에 다 있지 않습니다"
         )
         assert r"^\d{4}Q[1-4]$" in public_body, "부동산원 분기 모양 검사가 없습니다"
+        assert r"^\d{4}[1-4]$" in public_body, "서울시 분기(YYYYQ 다섯 자리) 모양 검사가 없습니다"
         assert r"^\d{4}-\d{2}-\d{2}$" in public_body, "고시일 모양 검사가 없습니다"
 
 
@@ -435,10 +446,12 @@ class TestPermitRuleMigration:
         assert begin.start() < create.start() < revoke.start() < commit.start() < notify, (
             "begin → create → revoke → commit → notify 순서가 아닙니다")
 
-    def test_function_head_matches_the_schema(self, permit_migration, schema):
+    @pytest.mark.parametrize("path", (PERMIT_MIGRATION, OPENCLOSE_MIGRATION),
+                             ids=("2026-10-01a", "2026-10-05b"))
+    def test_function_head_matches_the_schema(self, path, schema):
         """함수 머리(`returns table`·`language sql`·`stable`·`security definer`·`search_path`)가
 
-        정본과 10-01a 에서 **글자 그대로** 같아야 한다 — `create or replace` 는 머리 속성을
+        정본과 10-01a·10-05b 에서 **글자 그대로** 같아야 한다 — `create or replace` 는 머리 속성을
         새 정의로 덮어쓰므로, 머리를 베끼다 한 줄을 빼먹으면 라이브 함수가 조용히 다른 속성으로
         재생성된다(2026-10-01 적대검증 로컬 실측: `set search_path` 가 빠지면 anon → api 경로가
         `relation "unit_business" does not exist` 로 죽어 화면 표가 통째로 사라지고,
@@ -457,9 +470,9 @@ class TestPermitRuleMigration:
             return m.group(0).replace("\r\n", "\n")
 
         schema_head = extract_head(schema)
-        migration_head = extract_head(permit_migration)
+        migration_head = extract_head(read(path))
         assert migration_head == schema_head, (
-            "10-01a 의 함수 머리가 정본(schema.sql)과 글자가 다릅니다 — 새 환경만 조용히 "
+            "마이그레이션의 함수 머리가 정본(schema.sql)과 글자가 다릅니다 — 새 환경만 조용히 "
             "다른 모양으로 만들어집니다"
         )
         for needle in ("security definer", "set search_path = public", "language sql"):
@@ -468,8 +481,11 @@ class TestPermitRuleMigration:
             )
         assert re.search(r"(?im)^stable\s*$", migration_head), "stable 한 줄이 없습니다"
 
-    def test_comment_matches_the_schema(self, permit_migration, schema):
-        r"""`comment on function … is '…';` 문자열이 정본과 10-01a 에서 같아야 한다.
+    def test_comment_matches_the_schema(self, schema):
+        r"""`comment on function … is '…';` 문자열이 정본과 **가장 최근 마이그레이션(10-05b)** 에서 같아야 한다.
+
+        ⓘ 2026-10-05b 로 comment 가 '열한 갈래'로 바뀌었다 — 10-01a 의 comment 는 원장이라 옛 글
+        그대로 남고(test_the_10_01a_ledger_is_left_as_applied), 정본과 대조하는 쪽은 10-05b 다.
 
         본문과 머리는 같은데 comment 만 다르면 `pg_description`(라이브 설명)이 schema.sql
         의 서술과 갈라진다 — 다음 사람이 schema.sql 을 읽고 다른 설명을 믿게 된다.
@@ -488,8 +504,60 @@ class TestPermitRuleMigration:
             return m.group(0).replace("\r\n", "\n")
 
         schema_comment = extract_comment(schema)
-        migration_comment = extract_comment(permit_migration)
+        migration_comment = extract_comment(read(OPENCLOSE_MIGRATION))
         assert migration_comment == schema_comment, (
-            "10-01a 의 comment 가 정본(schema.sql)과 글자가 다릅니다 — 라이브 설명이 "
+            "10-05b 의 comment 가 정본(schema.sql)과 글자가 다릅니다 — 라이브 설명이 "
             "schema.sql 의 서술과 갈라집니다"
         )
+
+    def test_the_10_01a_ledger_is_left_as_applied(self, permit_migration):
+        """⛔ 10-01a 는 라이브에 적용된 원장이다 — 열 줄·두 갈래 그대로여야 한다(고쳐 쓰면 원장이 거짓말)."""
+        body = statements(function_body(permit_migration, FN))
+        assert body.count("union all") == 9
+        assert "district_openclose" not in body
+        assert r"^\d{4}[1-4]$" not in body
+        assert "2026-10-05b" not in permit_migration
+
+
+class TestSeoulOpenCloseRule:
+    """2026-10-05b — 11번째 줄은 **기존 분기 규칙**을 쓰고, 'YYYYQ' 다섯 자리를 분기말 달로 옮긴다."""
+
+    SEOUL_BRANCH = re.compile(
+        r"when\s+r\.rule_kind\s*=\s*'seoul_openclose'\s+and\s+r\.basis\s*~\s*'\^\\d\{4\}\[1-4\]\$'\s*\n"
+        r"\s*then\s+(left\(r\.basis,\s*4\)\s*\|\|\s*lpad\(\(right\(r\.basis,\s*1\)::int\s*\*\s*3\)::text,"
+        r"\s*2,\s*'0'\))")
+    RONE_BRANCH = re.compile(
+        r"when\s+r\.rule_kind\s*=\s*'rone'\s+and\s+r\.basis\s*~\s*'\^\\d\{4\}Q\[1-4\]\$'\s*\n"
+        r"\s*then\s+(.*)")
+
+    def test_the_row_uses_the_seoul_rule(self, public_body):
+        assert re.search(
+            r"select\s+11,\s*'상권 개업·폐업 \(서울시\)',\s*'분기',\s*\n\s*"
+            r"\(select max\(t\.quarter\)::text from district_openclose t\),\s*\n\s*'seoul_openclose'",
+            public_body), "11번째 줄이 district_openclose 의 max(quarter) 와 seoul_openclose 규칙을 쓰지 않습니다"
+
+    def test_third_branch_exists_and_equals_the_rone_formula(self, public_body):
+        """셋째 갈래가 없으면 그 줄은 **조용히** '정해진 주기 없음'이 된다(결정 0033 v3 재검사).
+
+        식은 부동산원 갈래와 글자가 같다 — 그 식이 라이브에서 2026Q2 → 2026-10-31 을 낸다
+        (10-01a 머리말 적용 뒤 확인표). 그래서 20262 → 202606 → 2026-10-31(상권정보 줄과 같은 날).
+        """
+        m = self.SEOUL_BRANCH.search(public_body)
+        assert m, "norm 의 셋째 갈래(서울시 YYYYQ)가 없습니다"
+        r = self.RONE_BRANCH.search(public_body)
+        assert r and r.group(1).strip() == m.group(1).strip()
+
+    def test_mutation_without_third_branch_is_noticed(self, public_body):
+        broken = self.SEOUL_BRANCH.sub("", public_body, count=1)
+        assert broken != public_body
+        assert not self.SEOUL_BRANCH.search(broken)
+
+    def test_the_date_for_20262_is_2026_10_31(self):
+        """그 식을 파이썬으로 그대로 따라 셈한다: 앞 네 자리 + 분기×3 → 분기말 달 + 5개월 - 하루."""
+        import datetime
+        basis = "20262"
+        ym = basis[:4] + "{:02d}".format(int(basis[-1]) * 3)
+        assert ym == "202606"
+        y, m = int(ym[:4]), int(ym[4:]) + 5
+        y, m = y + (m - 1) // 12, (m - 1) % 12 + 1
+        assert datetime.date(y, m, 1) - datetime.timedelta(days=1) == datetime.date(2026, 10, 31)
