@@ -248,6 +248,7 @@ class TestSlowReport:
             ("report_write_exposure", lambda: []),
             ("report_canonical_indexes", lambda: []),
             ("report_function_drift", lambda: []),
+            ("report_toast_evictions", lambda: []),
         ):
             monkeypatch.setattr(post_load, name, val)
         assert post_load.main(["--check"]) == 0
@@ -276,6 +277,7 @@ class TestSlowReport:
             ("report_slow_functions", lambda: [("list_price_bands", 3, 5000.0)]),
             ("report_canonical_indexes", lambda: []),
             ("report_function_drift", lambda: []),
+            ("report_toast_evictions", lambda: []),
         ):
             monkeypatch.setattr(post_load, name, val)
         assert post_load.main(["--check"]) == 0
@@ -853,6 +855,7 @@ class TestCheckExitCodeForIndexes:
             ("report_write_exposure", lambda: []),
             ("report_slow_functions", lambda: []),
             ("report_function_drift", lambda: []),
+            ("report_toast_evictions", lambda: []),
         ):
             monkeypatch.setattr(post_load, name, val)
         monkeypatch.setattr(post_load, "query_one", lambda sql: "\n".join(lines))
