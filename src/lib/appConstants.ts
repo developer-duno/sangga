@@ -256,6 +256,17 @@ export const LH_NOTICES_FN = 'list_lh_notices';
 export const RENT_STATS_FN = 'list_rent_stats';
 
 /**
+ * 이 필지가 속한 서울시 상권마다 개업·폐업(서울시 공표 그대로)을 주는 서버 함수. 결정 0033.
+ *
+ * ⚠️ 인자 이름이 `p_pnu` 다(임대 동향과 같다) — 목은 인자 이름을 안 보므로 잘못 불러도
+ *    시험은 초록이고 라이브만 PGRST202 가 난다.
+ * ⓘ 서울이 아니거나(not_seoul) 속한 서울 상권이 없거나(outside_seoul_district) 좌표가 없으면
+ *   (no_coord) **한 줄**로 그 상태를 알려 준다 — 카드는 서서 그렇다고 적는다.
+ * ⓘ 함수가 아직 없으면(PGRST202) 카드를 통째로 생략한다(임대 동향과 같은 규칙).
+ */
+export const OPEN_CLOSE_FN = 'list_district_openclose';
+
+/**
  * 화면에서 온 짧은 글 한 통을 창고에 넣는 서버 함수. 2026-08-24b.
  *
  * ⚠️ **인자 이름이 `p_kind`·`p_body`·`p_context` 다**(`list_price_bands` 와 같은 이유 —

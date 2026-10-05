@@ -1,8 +1,8 @@
 import { supabase } from './supabase';
-import { INDUSTRY_MIX_FN, NEARBY_PERMITS_FN, RENT_STATS_FN } from './appConstants';
+import { INDUSTRY_MIX_FN, NEARBY_PERMITS_FN, OPEN_CLOSE_FN, RENT_STATS_FN } from './appConstants';
 
 /**
- * 층별 화면의 곁 카드(둘레의 업종 분포 · 둘레 인허가 한 줄 · 상권 임대 동향) 요청을
+ * 층별 화면의 곁 카드(둘레의 업종 분포 · 둘레 인허가 한 줄 · 상권 임대 동향 · 상권 개업·폐업) 요청을
  * **건물을 고른 순간** 먼저 출발시킨다(로드맵 속도 P3 — 사장님 결재 2026-09-27 "① 요청만 먼저").
  *
  * 왜: 그 카드들은 층 목록이 온 뒤에야 마운트된다(`FloorStack` 의 `if (loading) return …`).
@@ -13,7 +13,7 @@ import { INDUSTRY_MIX_FN, NEARBY_PERMITS_FN, RENT_STATS_FN } from './appConstant
  *    (postgrest-js `then()` 안에서 매번 `executeWithRetry()` 를 실행). 요청 객체를 그대로
  *    저장해 부모·자식이 각각 `.then` 하면 두 번 나간다 — 목(mock)은 이걸 못 잡는다.
  *    그래서 여기서 **한 번만** `.then` 해 만든 진짜 Promise 를 나눠 쓴다.
- * ⛔ 보관 열쇠 = 함수 이름 + pnu(세 함수의 인자는 `p_pnu` 하나뿐이라 이것이 인자 전부다).
+ * ⛔ 보관 열쇠 = 함수 이름 + pnu(네 함수의 인자는 `p_pnu` 하나뿐이라 이것이 인자 전부다).
  *    pnu 가 다르면 절대 내주지 않는다 — 건물 A 의 늦은 답이 건물 B 카드에 붙으면 그 순간이
  *    그대로 틀린 정보다. 보관은 **지금 건물 것 한 벌뿐**(부모가 건물이 바뀌면 통째로 갈아 끼운다).
  */
@@ -21,8 +21,13 @@ import { INDUSTRY_MIX_FN, NEARBY_PERMITS_FN, RENT_STATS_FN } from './appConstant
 /** 카드들이 쓰는 모양 그대로 — 카드가 `data`·`error` 를 스스로 검사한다. */
 export type RpcResult = { data: unknown; error: unknown };
 
-/** 미리 보내는 함수들. 셋 다 인자가 `{ p_pnu }` 하나다. */
-export const SIDE_PREFETCH_FNS = [INDUSTRY_MIX_FN, NEARBY_PERMITS_FN, RENT_STATS_FN] as const;
+/** 미리 보내는 함수들. 넷 다 인자가 `{ p_pnu }` 하나다. */
+export const SIDE_PREFETCH_FNS = [
+  INDUSTRY_MIX_FN,
+  NEARBY_PERMITS_FN,
+  RENT_STATS_FN,
+  OPEN_CLOSE_FN,
+] as const;
 
 export type SidePrefetch = {
   pnu: string;
