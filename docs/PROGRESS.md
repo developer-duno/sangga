@@ -2040,3 +2040,19 @@ PR #208 CI pytest **4,147 passed + 3 skipped**(본 폴더 수집 **4,150**) · v
 ### 남은 것
 
 - 작은 후속: TOAST 감시 · 27e 되돌리기 관문 · 기준시가 문구(2027-03) · list_price_bands L6 재훑음(결재 먼저).
+
+## 2026-10-05 (5) — `post_load.py --check` 에 별관(TOAST) 쫓겨남 경보
+
+- **무엇** — `--check` 가 이제 별관(TOAST)을 쓰는 public·api 표(일반 표·요약표 중 별관 크기 > 0 인 것만 저절로 고른다)의 가변 길이 칸(저장 방식 x·e — m·p 는 본관 고정이라 뺀다)을 표마다 **한 번씩** 훑어, 별관에 있는데 저장 크기가 **256바이트 미만**인 값을 센다. 1개라도 있으면 `[주의] 별관(TOAST)으로 쫓겨난 작은 값: <스키마.표>.<칸> N개` + 고치는 법 두 줄(새 마이그레이션 + schema.sql 에 그 칸 `set storage main` — lock_timeout 은 begin 앞, 본보기 2026-09-27d → 다시 싣기: 일반 표는 `vacuum full`, 요약표는 concurrently 없는 refresh 또는 vacuum full — post_load 의 concurrently 갱신은 안 바뀐 줄을 다시 쓰지 않는다). **종료 코드에 영향 없음**(느려짐 경보와 같은 세기) · 조회가 실패해도 [주의] 한 줄로 알리고 넘어간다(psql 실패면 `ERROR:`·`FATAL:`·`psql:` 로 시작하는 첫 줄, 없으면 마지막 줄 — 명령줄은 안 찍는다 · 접속 실패 줄에는 호스트가 들어갈 수 있다). 두 조회 모두 앞에 `statement_timeout 60s`. 옵션 없는 적재 흐름에는 안 넣었다. 코드 = `scripts/post_load.py` ④(`TOAST_TARGETS_SQL`·`build_toast_scan_sql`·`parse_toast_scan`·`toast_evictions`·`report_toast_evictions`) · 시험 = `tests/test_post_load_toast.py`(40개).
+- **왜** — 2026-09-27 P10(#164)의 병: 큰 옆 칸(본관 고정 도형) 때문에 줄이 넘치면 **작은 값**이 별관으로 쫓겨나 그 칸을 훑는 쿼리가 10배 느려진다(district 이름 칸 `distinct source_nm`(시도 11) 15,361쪽·20ms → 라이브 적용 뒤 551쪽·2.4ms — 2026-09-27d 머리말). 에러가 안 나 아무도 모른다 — 「작은 후속」 자동화 후보 셋 중 마지막(TOAST 감시). 큰 값의 별관행(가게 수백 개 건물의 이름 묶음 — `mv_parcel_store_names.store_names` 630개 · `store_names_key` 429개)은 정상이라 세지 않는다.
+- **라이브 결과(읽기만)** — 서버 PostgreSQL 17.6. 별관을 쓰는 표 2개(`public.mv_parcel_store_names` 본관 39MB·별관 2,240kB / `public.district` 본관 4,408kB·별관 280kB) · 볼 칸 11개(district 6 · 요약표 5 — char 칸도 attlen = -1 이라 포함) · **쫓겨난 작은 값 0** · 0.4초. district 이름 칸(`district_nm`·`source_nm`)은 m 이라 대상 밖이고 별관 값도 0 / 0 그대로.
+- **라이브 양성 대조(한 psql 호출 안의 임시 표 — 영구 객체 0)** — 같은 2단계 SQL 생성 함수로 쟀다. ① 큰 text(약 10kB, 기본 x) + 작은 text 40자: 큰 값만 별관 5/5 · 작은 값 0 → 경보 0(PostgreSQL 은 큰 x 값부터 내보낸다). ② 도형(PostGIS geometry — 타입 기본 저장 방식 m · 4,832B) + 작은 text 40자 + 4글자 text: 40자 칸 5/5 별관 → **경보 5** · 4글자 칸은 안 쫓겨남(0 — 별관 포인터보다 작은 값은 내보내지 않는 것으로 보인다 · 원인은 확인 안 함). ③ 도형 + 길이 250~260 text: 11줄 전부 별관, 저장 크기 250~260 → **경보 6**(250~255) · 256~260 은 안 셈 — 경계가 실측과 같다.
+- **알게 된 것** — 윈도우에서 `query_one`(psql `-c`)에 한글이 든 SQL 을 넘기면 cp949 로 넘어가 서버가 `invalid byte sequence for encoding "UTF8"` 로 거부한다. 새 SQL 은 전부 ASCII(시험이 지킨다) · 이름에 한글이 든 표가 생기면 이 경보는 [주의] "점검을 하지 못했습니다"로 나온다(조용히 초록이 되지는 않는다).
+
+### 회귀·검증
+
+워크트리 pytest **4,258 passed + 3 skipped**(4,218 + 40) · 본 폴더 기준 4,261(계산) · ruff 초록. 변이 9(256 비교 `<`→`<=` · 별관 조건 반전 · 판정 `> 0`→`>= 0` · main 에서 종료 코드에 넣기 · 검사관 생존 변이 5 = 조건 뒤 `and false`·`or …` 덧붙임 / 대상 WHERE 에 `and false`·`and 1=0`·`(… or true)`) 전부 빨강 뒤 원복. 검사관 3명 지적으로 보완: 고치는 법 문구(refresh concurrently 로는 안 고쳐짐 · jsonb 에 `|| ''` 불가 · 라이브 ALTER 대신 마이그레이션) · 시험이 조건 전체를 통째로 대조 · 실패 줄에서 명령줄 제거 · 숫자 정정 · 「못 보는 것」 보강.
+
+### 남은 것
+
+- 작은 후속: 27e 되돌리기 관문 · 기준시가 문구(2027-03) · list_price_bands L6 재훑음(결재 먼저). TOAST 감시는 이걸로 끝.

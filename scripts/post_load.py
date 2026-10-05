@@ -50,6 +50,8 @@
   · 정본↔라이브 함수 — 언어·본문 md5·설정(set …)이 schema.sql 과 다르면 [사고](종료 코드 1).
   · 참고 시세 이웃 요약표(mv_tx_parcel_geog) pnu 집합 == 좌표·거래 있는 필지 집합 — 어느 쪽에든
     남는 필지가 있으면 [낡음](종료 코드 1 · 2026-10-03 부터 행수가 아니라 양쪽 차집합으로 잰다).
+  · 별관 쫓겨남 — 별관(TOAST)을 쓰는 public·api 표에서 256바이트 미만 값이 별관에 있으면(큰 옆 칸
+    탓에 쫓겨난 작은 값 — 그 칸을 훑는 쿼리가 느려진다) [주의](종료 코드 1 아님 · 2026-10-05 보탬).
 """
 
 import hashlib
@@ -1324,6 +1326,191 @@ def report_function_drift(sql_text=None):
     return bad
 
 
+# ④ 별관(TOAST)으로 쫓겨난 작은 값 (2026-10-05 — 사장님 결재) ─────────────────────
+#
+# 한 줄이 약 2kB 를 넘으면 PostgreSQL 은 저장 방식이 x(extended)·e(external)인 칸의 값을
+# 별관(TOAST)으로 내보낸다. 큰 옆 칸이 본관 고정(m — PostGIS 도형이 그렇다)이면 그 대신
+# **제 크기와 상관없는 작은 값**들이 쫓겨나고, 그 칸을 훑는 쿼리가 별관을 다시 읽어 10배
+# 느려진다(2026-09-27 P10 #164 — district 이름 칸: `distinct source_nm`(시도 11) 15,361쪽·20ms →
+# 라이브 적용 뒤 551쪽·2.4ms · 마이그레이션 2026-09-27d 머리말). 에러는 안 난다 — 느려지기만 한다. 그래서 [주의](종료 코드 1 아님 — 느려짐
+# 경보와 같은 세기).
+# 판정: 별관에 있는데(pg_column_toast_chunk_id 가 not null — PostgreSQL 17 부터) 저장 크기가
+# 256바이트 **미만**이면 제 크기 탓이 아니라 옆 칸 탓으로 본다. 큰 값의 별관행(가게 수백 개
+# 건물의 이름 묶음 등)은 정상이라 세지 않는다.
+# 비용 묶음: 별관에 자료가 있는 표만(별관 크기 > 0) 고르고, 한 표는 한 번만 훑는다.
+TOAST_SMALL_BYTES = 256
+TOAST_SCAN_TIMEOUT = "60s"
+# 1단계 — 볼 표·칸 목록. 한 줄 jsonb 배열: [스키마, 표, 칸, 따옴표 친 표, 따옴표 친 칸] 들.
+# ⛔ 이름은 서버가 감싼다(format('%I.%I')·quote_ident) — 대소문자·특수문자가 든 이름도 안전하다.
+# ⓘ jsonb 로 받는 이유: json_agg 는 원소 사이에 줄바꿈을 넣지만 jsonb 의 글 모양은 한 줄이다.
+# ⓘ 2단계와 같이 앞에 statement_timeout 을 붙인다(출력 앞에 `SET` 줄 — 파서는 마지막 줄만 본다).
+TOAST_TARGETS_SQL = (
+    "set statement_timeout = '" + TOAST_SCAN_TIMEOUT + "';\n"
+    "select coalesce(jsonb_agg(jsonb_build_array(n.nspname::text, c.relname::text, a.attname::text, "
+    "format('%I.%I', n.nspname, c.relname), quote_ident(a.attname)) "
+    "order by n.nspname, c.relname, a.attnum), '[]'::jsonb)::text "
+    "from pg_class c "
+    "join pg_namespace n on n.oid = c.relnamespace "
+    "join pg_attribute a on a.attrelid = c.oid "
+    "where n.nspname in ('public','api') and c.relkind in ('r','m') "
+    "and c.reltoastrelid <> 0 and pg_relation_size(c.reltoastrelid) > 0 "
+    "and a.attnum > 0 and not a.attisdropped and a.attlen = -1 "
+    "and a.attstorage in ('x','e');"
+)
+
+
+def _last_line(raw):
+    """psql 출력의 마지막 빈 줄 아닌 줄 — 앞에 `SET` 같은 명령 꼬리표가 붙어 와도 결과만 본다."""
+    lines = [ln.strip() for ln in str(raw or "").splitlines() if ln.strip()]
+    if not lines:
+        raise ValueError("빈 응답")
+    return lines[-1]
+
+
+def parse_toast_targets(raw):
+    """TOAST_TARGETS_SQL 의 출력 → [(스키마, 표, 칸, 따옴표 친 표, 따옴표 친 칸)] (순수 함수).
+
+    모양이 틀리면 예외 — "볼 칸 없음"과 "목록을 못 읽음"이 섞이면 조용히 초록이 된다."""
+    data = json.loads(_last_line(raw))
+    if not isinstance(data, list):
+        raise ValueError("대상 목록이 배열이 아닙니다")
+    out = []
+    for row in data:
+        if not (isinstance(row, list) and len(row) == 5
+                and all(isinstance(x, str) and x for x in row)):
+            raise ValueError("대상 목록 줄 모양이 틀립니다: {!r}".format(row))
+        out.append(tuple(row))
+    return out
+
+
+def _group_toast_targets(targets):
+    """칸 목록을 표별로 묶는다 → [(따옴표 친 표, [칸 줄…])] (처음 나온 순서 그대로)."""
+    groups = []
+    index = {}
+    for t in targets:
+        key = (t[0], t[1])
+        if key not in index:
+            index[key] = len(groups)
+            groups.append((t[3], []))
+        groups[index[key]][1].append(t)
+    return groups
+
+
+def build_toast_scan_sql(targets, small_bytes=TOAST_SMALL_BYTES, timeout=TOAST_SCAN_TIMEOUT):
+    """2단계 — 표마다 한 번 훑어 칸별 '별관에 있는 작은 값' 수를 센다 (순수 함수 · 탐지는 여기다).
+
+    한 줄 jsonb 배열로 돌려준다: [[표 번호, 칸1 수, 칸2 수, …], …] (표 번호 = 묶은 순서).
+    앞에 `set statement_timeout` 을 붙인다 — query_one 은 -c 하나라 같은 문자열에 잇는다
+    (그래서 출력 앞에 `SET` 줄이 온다 · parse_toast_scan 은 마지막 줄만 본다).
+
+    못 보는 것:
+      · 256바이트 이상인데 옆 칸 탓에 쫓겨난 값 — 제 크기 탓과 구별할 수 없어 일부러 안 센다.
+        예: district 의 jsonb 칸(dna_vector·metrics·raw_metrics — 지금 비어 있음)이 채워지면
+        도형(m)보다 먼저 쫓겨나는데, 256바이트 이상이면 세지 않는다.
+      · 256 은 **압축 뒤** 저장 크기다 — 원래 수 kB 인 값도 압축이 잘 되면 256 미만으로 세어진다.
+      · 별관이 빈 표 — 1단계가 고르지 않는다(지금 안 쫓겨났으면 볼 것도 없다).
+      · public·api 밖 스키마의 표, 일반 표·요약표가 아닌 것(분할 표의 부모 등).
+      · 지금은 쫓겨난 값이 없지만 저장 방식이 x 로 되돌아간 칸(다음 적재 때 다시 쫓겨난다) —
+        schema.sql 은 새로 만들 때만 지킨다 · 라이브 저장 방식을 대조하는 점검은 없다
+        (값이 다시 쓰여 쫓겨난 뒤에야 이 경보가 잡는다).
+      · 칸이 99개를 넘는 표 — jsonb_build_array 의 인자 한도(100)에 걸려 조회가 실패한다
+        (조용히 넘어가지 않고 [주의] "점검을 하지 못했습니다"로 나온다).
+      · 이름에 한글 등 ASCII 밖 글자가 든 표·칸 — 윈도우에서 psql -c 인자가 cp949 로 넘어가
+        서버가 `invalid byte sequence` 로 거부한다(2026-10-05 실측 · 역시 [주의]로 나온다).
+    """
+    groups = _group_toast_targets(targets)
+    if not groups:
+        raise ValueError("볼 칸이 없습니다")
+    parts = []
+    for i, (rel, cols) in enumerate(groups):
+        counts = ", ".join(
+            "count(*) filter (where pg_column_toast_chunk_id({c}) is not null"
+            " and pg_column_size({c}) < {n})".format(c=t[4], n=int(small_bytes))
+            for t in cols)
+        parts.append("select jsonb_build_array({}, {}) as r from {}".format(i, counts, rel))
+    return ("set statement_timeout = '{}';\n".format(timeout)
+            + "select coalesce(jsonb_agg(r), '[]'::jsonb)::text from (\n  "
+            + "\n  union all ".join(parts) + "\n) s;")
+
+
+def parse_toast_scan(raw, targets):
+    """build_toast_scan_sql 의 출력 → [(스키마, 표, 칸, 수)] 대상 순서대로 (순수 함수).
+
+    물은 표가 다 왔는지·칸 수가 맞는지 본다 — 모자라면 예외(빠진 표를 0 으로 치면 거짓 안심이다)."""
+    groups = _group_toast_targets(targets)
+    data = json.loads(_last_line(raw))
+    if not isinstance(data, list) or len(data) != len(groups):
+        raise ValueError("표 {}개를 물었는데 답 모양이 다릅니다".format(len(groups)))
+    by_table = {}
+    for row in data:
+        ok = (isinstance(row, list) and row
+              and all(isinstance(x, int) and not isinstance(x, bool) for x in row))
+        if not ok or not 0 <= row[0] < len(groups) or row[0] in by_table \
+                or len(row) != 1 + len(groups[row[0]][1]):
+            raise ValueError("답 줄 모양이 틀립니다: {!r}".format(row))
+        by_table[row[0]] = row[1:]
+    out = []
+    for i, (_, cols) in enumerate(groups):
+        for t, n in zip(cols, by_table[i]):
+            out.append((t[0], t[1], t[2], n))
+    return out
+
+
+def toast_evictions(counts):
+    """쫓겨난 작은 값이 있는 칸만 → [(스키마, 표, 칸, 수)] (순수 함수 — 판정)."""
+    return [row for row in counts if row[3] > 0]
+
+
+def _toast_failure_reason(exc):
+    """실패 이유 한 줄 — psql 실패면 출력에서 `ERROR:`·`FATAL:`·`psql:` 로 시작하는 첫 줄을,
+    그런 줄이 없을 때만 마지막 비어 있지 않은 줄을 고른다.
+
+    마지막 줄만 고르면 `ERROR: relation … does not exist` 뒤의 `줄 1: …`(cp949)·`^` 표시나
+    `힌트:` 줄이 찍혀 정작 이유가 사라진다(2026-10-05 재검사관 라이브 실측).
+    psql 명령줄(접속 인자·SQL 전문)은 찍지 않는다. 다만 psql 접속 실패면 그 오류 줄 자체에
+    호스트 이름이 들어갈 수 있다 — 로컬 화면에만 찍힌다(CI 는 --check 를 돌리지 않는다)."""
+    if isinstance(exc, subprocess.CalledProcessError):
+        text = (exc.output or b"")
+        if isinstance(text, bytes):
+            text = text.decode("utf-8", "replace")
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        for ln in lines:
+            if ln.startswith(("ERROR:", "FATAL:", "psql:")):
+                return ln
+        return lines[-1] if lines else "psql 이 이유 없이 실패했습니다(종료 코드 {})".format(exc.returncode)
+    first = str(exc).splitlines()[0] if str(exc) else ""
+    return "{}: {}".format(type(exc).__name__, first) if first else type(exc).__name__
+
+
+def report_toast_evictions():
+    """별관 쫓겨남 경보를 찍는다. **종료 코드에 영향을 주지 않는다**([주의]까지만).
+
+    조회가 실패해도 --check 전체를 죽이지 않는다 — [주의] 한 줄로 알리고 넘어간다."""
+    try:
+        targets = parse_toast_targets(query_one(TOAST_TARGETS_SQL))
+        if not targets:
+            print("[정상] 별관 점검: public·api 에 별관을 쓰는 표가 없습니다 — 볼 칸 0.")
+            return []
+        counts = parse_toast_scan(query_one(build_toast_scan_sql(targets)), targets)
+    except Exception as exc:
+        print("[주의] 별관(TOAST) 점검을 하지 못했습니다: {}".format(_toast_failure_reason(exc)))
+        return []
+    found = toast_evictions(counts)
+    for schema, table, column, n in found:
+        print("[주의] 별관(TOAST)으로 쫓겨난 작은 값: {}.{}.{} {:,}개({}바이트 미만)".format(
+            schema, table, column, n, TOAST_SMALL_BYTES))
+    if found:
+        print("       고치는 법: 새 마이그레이션 + schema.sql 에 그 칸 `set storage main`(lock_timeout 은 begin 앞 —"
+              " 본보기 supabase/migrations/2026-09-27d_district_name_storage.sql) →")
+        print("       다시 싣기: 일반 표는 `vacuum full <표>`, 요약표는 concurrently 없는 refresh 또는 vacuum full"
+              "(post_load 의 concurrently 갱신은 안 바뀐 줄을 다시 쓰지 않아 별관 값이 그대로 남는다).")
+        print("       ⓘ 고장은 아닙니다(종료 코드에 안 넣습니다) — 그 칸을 훑는 쿼리가 별관을 다시 읽어 느려집니다.")
+    else:
+        print("[정상] 별관 점검: 별관을 쓰는 표 {}개 · 칸 {}개 · 쫓겨난 작은 값({}바이트 미만) 0.".format(
+            len(_group_toast_targets(targets)), len(targets), TOAST_SMALL_BYTES))
+    return found
+
+
 def parse_args(argv):
     opts = {"check": False}
     for a in argv:
@@ -1363,6 +1550,8 @@ def main(argv=None):
         writable = report_write_exposure()
         # 경보 셋(2026-09-27 P7). 느려짐은 [주의]까지만 — 종료 코드에 안 넣는다.
         report_slow_functions()
+        # 별관 쫓겨남(2026-10-05)도 [주의]까지만 — 종료 코드에 안 넣는다.
+        report_toast_evictions()
         bad_index = report_canonical_indexes()
         drifted = report_function_drift()
         return 1 if (stale or map_stale or tx_stale or cov_stale or mix_stale or geog_stale
