@@ -171,20 +171,41 @@ CONDITIONS = {
     "nullif(btrim(fl.first_use), '') is not null": lambda c: bool((c["first_use"] or "").strip()),
 }
 
-# 줄마다의 깃발식 — SQL 글자(공백 접음)가 이것과 같아야 아래 파이썬 판정이 SQL 을 대신 말할 수 있다.
-FLAG_SQL = {
-    "has_home": "coalesce(bool_or(f.main_purps_nm ~ nm.home_re or coalesce(f.etc_purps, '') ~ nm.home_re), false)",
-    "has_officetel": ("coalesce(bool_or(f.main_purps_nm ~ nm.officetel_re or coalesce(f.etc_purps, '') "
-                      "~ nm.officetel_re), false)"),
+# 판정식이 쓰는 깃발 이름(SQL 의 `… as <이름>`).
+FLAG_NAMES = ("has_home", "has_officetel", "has_other", "has_counted_home_or_ot")
+
+
+def _hit(pat, s):
+    return bool(re.search(pat, s or ""))
+
+
+# 깃발식 글자(공백 접음) → 파이썬 계산 `(층별개요 줄들, home_re, officetel_re, skip_nm) → bool`.
+# judge() 는 SQL 에서 **읽은 글자**로 여기를 찾는다 — CONDITIONS 와 같은 방식이다. 그래서
+#   ① SQL 깃발식을 고치고 여기 열쇠를 안 고치면 KeyError 로 시끄럽게 빨강이고
+#   ② 두 깃발의 식을 서로 바꿔 달면 파이썬도 바뀐 대로 계산해 꼴 시험이 빨강이 된다.
+# ⚠️ 못 보는 것: 열쇠 글자만 SQL 과 함께 고치고 계산(lambda)은 옛 뜻 그대로 두는 꼴 — 글자와 계산이
+#    한 줄에 붙어 있어 고치는 사람 눈에 띄게 둔 것이 방어선이다(CONDITIONS 와 같은 한계).
+FLAG_IMPL = {
+    "coalesce(bool_or(f.main_purps_nm ~ nm.home_re or coalesce(f.etc_purps, '') ~ nm.home_re), false)":
+        lambda rows, home, ot, skip: any(_hit(home, m) or _hit(home, e) for m, e in rows),
+    ("coalesce(bool_or(f.main_purps_nm ~ nm.officetel_re or coalesce(f.etc_purps, '') "
+     "~ nm.officetel_re), false)"):
+        lambda rows, home, ot, skip: any(_hit(ot, m) or _hit(ot, e) for m, e in rows),
     # 한 줄 = 한 갈래(결정 0032 :70-76) — 기타용도에 살림집·오피스텔 낱말이 있는 줄은 그 밖이 아니다.
-    "has_other": ("coalesce(bool_or(f.main_purps_nm !~ nm.home_re and f.main_purps_nm !~ nm.officetel_re "
-                  "and coalesce(f.etc_purps, '') !~ nm.home_re and coalesce(f.etc_purps, '') !~ nm.officetel_re "
-                  "and not (f.main_purps_nm = any (nm.skip_nm))), false)"),
+    ("coalesce(bool_or(f.main_purps_nm !~ nm.home_re and f.main_purps_nm !~ nm.officetel_re "
+     "and coalesce(f.etc_purps, '') !~ nm.home_re and coalesce(f.etc_purps, '') !~ nm.officetel_re "
+     "and not (f.main_purps_nm = any (nm.skip_nm))), false)"):
+        lambda rows, home, ot, skip: any(not _hit(home, m) and not _hit(ot, m)
+                                         and not _hit(home, e) and not _hit(ot, e)
+                                         and m not in skip for m, e in rows),
     # 섞임 판정 전용 — 치지 않는 것 줄은 없는 셈(결정 0032 :75). has_home·has_officetel 은 모든 줄 그대로.
-    "has_counted_home_or_ot": ("coalesce(bool_or(not (f.main_purps_nm = any (nm.skip_nm)) "
-                               "and (f.main_purps_nm ~ nm.home_re or f.main_purps_nm ~ nm.officetel_re "
-                               "or coalesce(f.etc_purps, '') ~ nm.home_re "
-                               "or coalesce(f.etc_purps, '') ~ nm.officetel_re)), false)"),
+    ("coalesce(bool_or(not (f.main_purps_nm = any (nm.skip_nm)) "
+     "and (f.main_purps_nm ~ nm.home_re or f.main_purps_nm ~ nm.officetel_re "
+     "or coalesce(f.etc_purps, '') ~ nm.home_re "
+     "or coalesce(f.etc_purps, '') ~ nm.officetel_re)), false)"):
+        lambda rows, home, ot, skip: any(m not in skip
+                                         and (_hit(home, m) or _hit(ot, m) or _hit(home, e) or _hit(ot, e))
+                                         for m, e in rows),
 }
 ROW_FILTER_SQL = ("where f.bld_id = p_bld_id and f.floor_no = fl.floor_no and not f.area_excluded "
                   "and nullif(btrim(f.main_purps_nm), '') is not null")
@@ -195,7 +216,7 @@ def parse_kind(block):
 
     outer·inner = [(조건 글자, 결과)] 차례대로 · 마지막 `else` 는 조건 None.
     ⚠️ 못 보는 것: 바깥 case 안에 안쪽 case 가 둘 이상인 꼴(지금은 `bf.n = 0` 가지 하나뿐) ·
-       깃발식을 다른 이름으로 바꾼 꼴(FLAG_SQL 대조가 빨강으로 알린다).
+       깃발 이름을 바꾼 꼴(FLAG_NAMES 로 찾다가 AttributeError — 시끄럽게 빨강).
     """
     code = flat(code_only(block))
     names = re.search(r"select '(.*?)'::text as home_re, '(.*?)'::text as officetel_re, "
@@ -204,7 +225,7 @@ def parse_kind(block):
     skip_nm = re.findall(r"'(.*?)'", skip)
     # ⓘ 깃발식 안에 다른 bool_or 가 끼지 않게 막는다 — 아니면 첫 깃발부터 길게 집는다.
     flags = {k: re.search(r"(coalesce\(bool_or\((?:(?!bool_or).)*?\), false\)) as " + k + r"\b", code).group(1)
-             for k in FLAG_SQL}
+             for k in FLAG_NAMES}
     row_filter = re.search(r"from building_floor f (where .*?) \) bf", code).group(1)
     case = re.search(r"select fl\.\*, case (.*) end as floor_kind", code).group(1)
     inner_m = re.search(r"when bf\.n = 0 then case (.*?) end ", case)
@@ -237,19 +258,10 @@ def judge(parsed, rows, main_use=None, first_use=None):
     줄 거르기(연면적 제외분·빈 주용도)는 부르는 쪽이 이미 걸렀다고 본다(ROW_FILTER_SQL 대조로 SQL 쪽을 지킨다).
     """
     home, ot, skip = parsed["home_re"], parsed["ot_re"], parsed["skip_nm"]
-    ctx = {
-        "n": len(rows),
-        "has_home": any(re.search(home, m) or re.search(home, e or "") for m, e in rows),
-        "has_officetel": any(re.search(ot, m) or re.search(ot, e or "") for m, e in rows),
-        "has_other": any(not re.search(home, m) and not re.search(ot, m)
-                         and not re.search(home, e or "") and not re.search(ot, e or "")
-                         and m not in skip for m, e in rows),
-        "has_counted_home_or_ot": any(m not in skip
-                                      and (re.search(home, m) or re.search(ot, m)
-                                           or re.search(home, e or "") or re.search(ot, e or ""))
-                                      for m, e in rows),
-        "main_use": main_use, "first_use": first_use, "home_re": home, "ot_re": ot,
-    }
+    ctx = {"n": len(rows), "main_use": main_use, "first_use": first_use, "home_re": home, "ot_re": ot}
+    # 깃발 계산은 SQL 에서 읽은 글자로 찾는다 — 모르는 글자면 KeyError(FLAG_IMPL 머리말).
+    for name, sql in parsed["flags"].items():
+        ctx[name] = FLAG_IMPL[sql](rows, home, ot, skip)
 
     def run(branches):
         for cond, result in branches:
@@ -504,7 +516,7 @@ def parsed(migration):
 
 def test_the_flag_expressions_are_what_the_python_mirror_assumes(parsed):
     """아래 꼴 시험의 파이썬 판정은 이 글자들을 대신 말한다 — 글자가 바뀌면 여기가 먼저 빨강이다."""
-    assert parsed["flags"] == FLAG_SQL
+    assert set(parsed["flags"].values()) <= set(FLAG_IMPL), "FLAG_IMPL 에 없는 깃발식 — 파이썬 계산을 함께 고칠 것"
     assert parsed["row_filter"] == ROW_FILTER_SQL
     assert parsed["skip_nm"] == ["부대시설", "복리시설", "주차장"]
     assert parsed["ot_re"] == "오피스텔"
@@ -596,6 +608,30 @@ def test_parse_kind_fails_loudly_on_an_unknown_condition(parsed):
     broken["outer"] = [("bf.has_home or true", "residential")] + parsed["outer"]
     with pytest.raises(KeyError):
         judge(broken, [("판매시설", None)])
+
+
+def test_judge_fails_loudly_on_a_changed_flag_expression(parsed):
+    """양성 대조 — 깃발식 글자를 바꾸면(예: '그 밖'에서 치지 않는 것 거르기를 지움) 파이썬이 옛 뜻으로
+    조용히 계산하지 않는다. 예전엔 FLAG_SQL 표만 함께 고치면 계산은 옛 뜻 그대로 초록이었다."""
+    broken = dict(parsed)
+    broken["flags"] = dict(parsed["flags"])
+    broken["flags"]["has_other"] = parsed["flags"]["has_other"].replace(
+        " and not (f.main_purps_nm = any (nm.skip_nm))", "")
+    assert broken["flags"]["has_other"] != parsed["flags"]["has_other"]
+    with pytest.raises(KeyError):
+        judge(broken, [("판매시설", None)])
+
+
+def test_judge_follows_swapped_flag_expressions(parsed):
+    """양성 대조 — 두 깃발의 식을 서로 바꿔 달면 파이썬도 바뀐 대로 계산한다(글자로 찾으므로).
+    오피스텔 한 줄뿐인 층: 원래는 officetel, 식을 바꾸면 has_home 이 오피스텔을 보고 residential."""
+    rows = [("오피스텔", None)]
+    assert judge(parsed, rows, "업무시설", "오피스텔") == "officetel"
+    swapped = dict(parsed)
+    swapped["flags"] = dict(parsed["flags"])
+    swapped["flags"]["has_home"], swapped["flags"]["has_officetel"] = (
+        parsed["flags"]["has_officetel"], parsed["flags"]["has_home"])
+    assert judge(swapped, rows, "업무시설", "오피스텔") == "residential"
 
 
 # ── ⓒ 주거·오피스텔·미상 층은 면적 null ───────────────────────────────────────

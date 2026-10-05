@@ -2183,6 +2183,32 @@ describe('FloorStack — 호실 구성표 (결정 0032)', () => {
     expect(container.textContent).not.toContain('호 목록을 불러오지 못했습니다');
   });
 
+  it('0줄로 끝난 뒤 다른 층을 펼치면 그 층은 처음부터 — 끝 표시가 옮겨 붙지 않는다', async () => {
+    // 3층은 둘째 쪽이 0줄(끝) · 1층은 정상 쪽.
+    responses.floorUnits = (args) =>
+      args.p_floor_no === 3 && Number(args.p_offset ?? 0) > 0 ? { data: [], error: null } : unitsPage(args);
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(4));
+    fireEvent.click(floorButton(container, '3층'));
+    await waitFor(() => expect(container.querySelectorAll('.units__list li')).toHaveLength(50));
+    fireEvent.click(screen.getByRole('button', { name: /더 보기/ }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: /더 보기|불러오는 중/ })).toBeNull());
+
+    fireEvent.click(floorButton(container, '1층'));
+    await waitFor(() =>
+      expect(unitCalls().at(-1)?.args).toEqual({
+        p_bld_id: '1168010100-1',
+        p_floor_no: 1,
+        p_limit: 50,
+        p_offset: 0,
+      }),
+    );
+    await waitFor(() => expect(container.querySelectorAll('.units__list li')).toHaveLength(50));
+    // 3층의 '끝'이 1층으로 옮겨 붙었다면 여기서 더 보기가 없다.
+    expect(screen.getByRole('button', { name: /더 보기/ })).toBeTruthy();
+    expect(container.querySelectorAll('.units')).toHaveLength(1);
+  });
+
   it('⛔ 같은 땅의 다른 동으로 바뀌면 요약을 다시 부른다 (의존은 bld_id — pnu 가 아니다)', async () => {
     const { container, rerender } = render(<FloorStack building={building()} />);
     await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(4));
