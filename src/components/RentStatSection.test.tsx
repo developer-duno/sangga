@@ -208,6 +208,61 @@ describe('RentStatSection — 층별 임대료 · 소득수익률 (결정 0031)'
     expect(screen.queryByText(/3층 이상 평균이라 층별 표의 1층 값과 다릅니다/)).toBeNull();
   });
 
+  it('★ 층별 표가 없으면 "층별 표는 부동산원이" 문장을 빼고, 1층 기준 문장은 그대로 둔다', async () => {
+    responses.rent = { data: [stat()], error: null };
+    const { container } = render(<RentStatSection pnu={PNU} />);
+    await openCard();
+
+    expect(container.querySelector('.rent__floors')).toBeNull();
+    expect(screen.queryByText(/층별 표는 부동산원이/)).toBeNull();
+    expect(screen.queryByText(/우리가 곱하거나 나눠 만든 값이 아닙니다/)).toBeNull();
+    // 기준층 문장(부동산원 정의)은 표와 무관하게 늘 선다.
+    expect(screen.getByText('1층 기준')).toBeTruthy();
+    expect(screen.getByText(/3층부터 최고층까지의 평균/)).toBeTruthy();
+    expect(container.querySelector('.rent__why')?.textContent).toContain('입니다(부동산원 정의).');
+  });
+
+  it('★ 층별 표가 있으면 "층별 표는 부동산원이 … 공표한 값" 문장이 선다', async () => {
+    render(<RentStatSection pnu={PNU} />);
+    await openCard();
+
+    expect(
+      screen.getByText(/층별 표는 부동산원이 층 구간마다 공표한 값이며, 우리가 곱하거나 나눠 만든 값이 아닙니다\./),
+    ).toBeTruthy();
+  });
+
+  it('★ 소득수익률 값이 없으면 그 정의를 빼고 "투자수익률은 분기 값" 만 적는다', async () => {
+    responses.rent = { data: [stat()], error: null };
+    const { container } = render(<RentStatSection pnu={PNU} />);
+    await openCard();
+
+    expect(screen.queryByText(/순영업소득/)).toBeNull();
+    const why = container.querySelector('.rent__why')?.textContent ?? '';
+    expect(why).toContain('투자수익률은 분기 값입니다. 4를 곱해 한 해 수익률로 바꾸지 않습니다.');
+    expect(why).not.toContain('소득수익률');
+  });
+
+  it('두 설명 조각은 지금 보이는 종류를 따라간다 — 다른 종류에만 있는 값으로 붙지 않는다', async () => {
+    responses.rent = {
+      data: [
+        stat(),
+        stat({ bld_type: '오피스', rent_per_m2: 27.69, income_yield_rate: 0.84, floor_rent: OFFICE }),
+      ],
+      error: null,
+    };
+    render(<RentStatSection pnu={PNU} />);
+    await openCard();
+
+    // 기본은 집합상가 — 표도 소득수익률도 없다.
+    expect(screen.queryByText(/순영업소득/)).toBeNull();
+    expect(screen.queryByText(/층별 표는 부동산원이/)).toBeNull();
+
+    fireEvent.change(screen.getByLabelText('건물 종류 골라보기'), { target: { value: '오피스' } });
+
+    await waitFor(() => expect(screen.getByText(/순영업소득/)).toBeTruthy());
+    expect(screen.getByText(/층별 표는 부동산원이/)).toBeTruthy();
+  });
+
   it('오피스를 고르면 그 종류의 표(11층 이상 · 6~10층)와 오피스 문장으로 바뀐다 — 종류를 섞지 않는다', async () => {
     const { container } = render(<RentStatSection pnu={PNU} />);
     await openCard();

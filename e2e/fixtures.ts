@@ -258,8 +258,8 @@ export function lhNotice(over: Partial<LhNotice> = {}): LhNotice {
  * ⛔ **조사값이지 추정이 아니다** — 위 `priceBand`(우리가 어림한 것)와 다른 자로 잰 다른
  *    값이라 화면에서도 카드를 갈라 그린다. 필드·기본값은 단위 테스트
  *    (src/components/RentStatSection.test.tsx 의 stat())와 같다.
- * ⚠️ `rent_per_m2` 는 **천원/㎡**(부동산원 공표 단위 그대로)다 — 27.06 이 화면에서
- *    '27,060원'이 되는지가 스펙 Z 의 관심사다.
+ * ⚠️ `rent_per_m2` 는 **천원/㎡**(부동산원 공표 단위 그대로)다 — 74.6 이 화면에서
+ *    '74,600원'이 되는지가 스펙 Z 의 관심사다.
  */
 export function rentStat(over: Partial<RentStat> = {}): RentStat {
   return {
@@ -268,7 +268,7 @@ export function rentStat(over: Partial<RentStat> = {}): RentStat {
     bld_type: '집합상가',
     quarter: '2026Q2',
     vacancy_rate: 10.08,
-    rent_per_m2: 27.06,
+    rent_per_m2: 74.6,
     yield_rate: 0.82,
     // 결정 0031 로 늘어난 두 칸(2026-10-04a) — 값은 같은 날 라이브 실호출(테헤란로 집합상가 ·
     // 2026Q2 · 천원/㎡). ⚠️ 둘 다 **선택 칸**이라, 옛 함수의 답을 흉내 내려면 `rentStatOld()` 를 쓴다.

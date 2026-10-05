@@ -1540,8 +1540,8 @@ test.describe('층별 스택뷰 — 상권 임대 동향', () => {
     await expect(rent.locator('.card__body')).toBeHidden();
 
     await openCard(page, /상권 임대 동향/);
-    // ★ 단위 — 공표값은 천원/㎡ 다. 1,000을 안 곱하면 '27원'이 되는데 그것도 그럴듯하다.
-    await expect(rent.getByText('㎡당 임대료 27,060원')).toBeVisible();
+    // ★ 단위 — 공표값은 천원/㎡ 다. 1,000을 안 곱하면 '75원'이 되는데 그것도 그럴듯하다.
+    await expect(rent.getByText('㎡당 임대료 74,600원')).toBeVisible();
     await expect(rent.getByText('공실률 10.08%')).toBeVisible();
     // ★ '분기'가 붙어 있어야 한다 — 연 수익률로 읽히면 0.82%는 정반대의 뜻이 된다.
     await expect(rent.getByText('투자수익률(분기) 0.82%')).toBeVisible();
@@ -1573,7 +1573,7 @@ test.describe('층별 스택뷰 — 상권 임대 동향', () => {
     // 표도 그 종류의 것으로 바뀐다(오피스는 위 구간이 둘로 나뉜다).
     await expect(floors.locator('tbody tr').first()).toHaveText(/11층 이상\s*28,620원/);
     // ⛔ 종류를 섞지 않는다 — 집합상가 값이 같은 화면에 남아 있으면 안 된다.
-    await expect(rent).not.toContainText('27,060원');
+    await expect(rent).not.toContainText('74,600원');
     await expect(rent).not.toContainText('22,700원');
 
     // ⛔ 이 카드는 조사값이다. 추정으로 읽히는 말이 섞이면 바로 옆 참고 시세 카드와
@@ -1634,7 +1634,7 @@ test.describe('층별 스택뷰 — 상권 임대 동향', () => {
       '공실률 · ㎡당 임대료 · 투자수익률 · 2026년 2분기 조사',
     );
     await openCard(page, /상권 임대 동향/);
-    await expect(rent.getByText('㎡당 임대료 27,060원')).toBeVisible();
+    await expect(rent.getByText('㎡당 임대료 74,600원')).toBeVisible();
     await expect(rent.locator('.rent__floors')).toHaveCount(0);
     await expect(rent).not.toContainText('소득수익률(분기)');
   });
