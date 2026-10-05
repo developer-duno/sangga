@@ -482,7 +482,9 @@ describe('DistrictMap — 건물 마커', () => {
     await renderMap({ selected: building({ lat: 37.55, lng: 127.05 }) });
     await waitFor(() => expect(screen.getByTestId('marker')).toBeTruthy());
     expect(screen.getByTestId('marker').getAttribute('data-lat')).toBe('37.55');
-    expect(kakao.panTo).toHaveBeenCalled();
+    // panTo 는 MapFocus 의 effect(지도 객체가 잡힌 뒤)에서 불린다 — 마커가 먼저 그려질 수 있어
+    // 기다린다(2026-10-06 CI 러너에서 1회 빨강 · 아래 setLevel 시험과 같은 꼴).
+    await waitFor(() => expect(kakao.panTo).toHaveBeenCalled());
   });
 
   it('건물을 고르면 그 주변이 보이게 확대한다 — 구 전체 배율로 두지 않는다', async () => {
