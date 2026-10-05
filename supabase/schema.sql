@@ -4981,6 +4981,258 @@ grant execute on function api.list_price_gate() to anon, authenticated;
 notify pgrst, 'reload schema';
 
 -- =====================================================================
+-- 표·함수: district_openclose / list_district_openclose — 서울 상권 개업·폐업 (2026-10-05b · 결정 0033)
+-- =====================================================================
+-- 서울시 상권분석서비스 「점포-상권」(OA-15577) 공표값을 그대로 담고 그대로 나른다 — 우리가
+-- 계산하는 것은 상권 합산(업종 행의 더하기)과 서울시 산식 그대로의 비율뿐이다. 마이그레이션
+-- supabase/migrations/2026-10-05b_district_openclose.sql 머리말 참조(실행 순서 — 수집 끝 → 같은 날
+-- 적용 → 한 번에 적재). 이 표는 get_data_freshness 가 읽으므로 그 함수보다 **앞**에 둔다.
+create table if not exists district_openclose (
+  quarter                char(5) not null,              -- '20262' (서울시 표기 YYYYQ · Q 없음)
+  district_id            text    not null references district(district_id),
+  svc_induty_cd          text    not null,              -- 서울시 서비스 업종 100종 코드 (CS100001 …)
+  svc_induty_cd_nm       text,
+  stor_co                int,                           -- 일반 점포 수(프랜차이즈 제외)
+  similr_induty_stor_co  int,                           -- 유사 업종 점포 수 = stor_co + frc_stor_co · 공표 비율의 분모
+  opbiz_rt               numeric(6,2),                  -- 개업률 % (공표값 그대로 — 100 을 넘는 행도 있다)
+  opbiz_stor_co          int,
+  clsbiz_rt              numeric(6,2),                  -- 폐업률 % (공표값 그대로)
+  clsbiz_stor_co         int,
+  frc_stor_co            int,                           -- 프랜차이즈 점포 수
+  source_nm              text,                          -- raw 파일 이름(어느 판에서 왔나)
+  loaded_at              timestamptz default now(),
+  primary key (quarter, district_id, svc_induty_cd)
+);
+
+comment on table district_openclose is '결정 0033 서울시 상권분석서비스(점포-상권 · OA-15577) 공표값 그대로 — (분기, 상권, 업종) 한 줄. 상권 합계 행은 원본에 없다(업종 행을 더한다). 공개키 읽기 금지 — 화면은 list_district_openclose 로만 읽는다';
+comment on column district_openclose.similr_induty_stor_co is '유사 업종 점포 수(= stor_co + frc_stor_co, 원본 100% 성립). 서울시 개업률·폐업률의 분모 — stor_co 가 아니다(결정 0033 검산 99.93% · stor 분모면 96.1%)';
+comment on column district_openclose.opbiz_rt is '개업률 % — 서울시 공표값 그대로(= 개업 점포 수 ÷ 유사 업종 점포 수 × 100 반올림). 유사 업종 점포 수가 0 이면 0 으로 공표된다. 100 을 넘는 행도 공표값 그대로다';
+comment on column district_openclose.clsbiz_rt is '폐업률 % — 서울시 공표값 그대로(= 폐업 점포 수 ÷ 유사 업종 점포 수 × 100 반올림). 유사 업종 점포 수가 0 인데 폐업이 있는 행은 0 으로 공표된다(분기 안에 그 업종 마지막 가게까지 닫힘)';
+
+-- 함수가 상권별로 최근 분기를 읽는 길. max(quarter) 는 기본키(첫 칸 quarter)가 받친다.
+create index if not exists idx_district_openclose_district on district_openclose (district_id, quarter);
+
+alter table district_openclose enable row level security;
+
+-- ⛔ Supabase 는 새 표를 anon 에 자동으로 연다(pg_default_acl) — 만든 자리에서 닫는다.
+revoke all on district_openclose from public, anon, authenticated;
+
+create or replace function list_district_openclose(p_pnu text)
+returns table (
+  status           text,
+  district_id      text,
+  district_nm      text,
+  district_type    text,
+  latest_quarter   text,
+  quarters         jsonb,
+  industries       jsonb,
+  other_industries jsonb,
+  window_quarters  jsonb
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with recursive const as (
+    -- 상권 합산 비율을 내는 최소 표본(결정 0033 결정 7 · 절대 규칙 3)과 보는 분기 창의 크기.
+    -- 둘 다 한 곳에만 적는다.
+    select 30 as min_similr, 8 as n_quarters
+  ),
+  me as (
+    -- 좌표가 없으면 아무 상권에도 안 든다는 **단정**이 새어 나가지 않게 따로 가른다(no_coord).
+    -- ⛔ pnu 칸은 char(19) — 인자를 그대로 견주면 칸 쪽이 text 로 캐스트돼 색인이 죽는다.
+    select p.geom
+    from parcel p
+    where p.pnu = p_pnu::char(19) and p.geom is not null
+  ),
+  hit as (
+    -- 서울 필지가 담긴 **서울시 상권**만. 술어는 list_building_districts 와 같은 st_contains.
+    select d.district_id, d.district_nm, d.district_type, d.area_m2
+    from district d cross join me
+    where left(p_pnu::char(19), 2) = '11'
+      and left(d.sigungu_code, 2) = '11'
+      and st_contains(d.geom, me.geom)
+  ),
+  head as (
+    -- 건물 단위 상태 셋 — 판정 순서가 곧 뜻이다(위부터, 서로 배타).
+    --   no_coord               필지 좌표 없음(서울이든 아니든 — 모르는 것은 모른다고)
+    --   not_seoul              시·도가 서울이 아님(대전 등 — 서울시 자료는 서울 상권만 다룬다)
+    --   outside_seoul_district 서울인데 속한 서울시 상권이 없음
+    -- 셋 다 아니면 null → 상권마다 ok / no_data 한 줄씩이 대신 나간다.
+    select case
+             when not exists (select 1 from me) then 'no_coord'
+             when left(p_pnu::char(19), 2) <> '11' then 'not_seoul'
+             when not exists (select 1 from hit) then 'outside_seoul_district'
+           end as status
+  ),
+  win (quarter, n) as (
+    -- **표 전체** 기준 가장 최근 8분기 — 모든 상권이 같은 창을 본다(상권마다 제 최신 8분기를
+    -- 잡으면 자료가 끊긴 상권이 몇 해 전 숫자를 '최근'처럼 보인다). 한 분기씩 기본키(첫 칸
+    -- quarter)를 거꾸로 짚어 내려간다 — distinct 로 168만 행을 훑지 않는다.
+    select max(o.quarter), 1 from district_openclose o
+    union all
+    select (select max(o.quarter) from district_openclose o where o.quarter < w.quarter), w.n + 1
+    from win w cross join const c
+    where w.n < c.n_quarters and w.quarter is not null
+  ),
+  wq as (
+    -- 창 그 자체(표 전체 최근 8분기 · 최신 → 옛 순 · 표가 비었으면 빈 배열) — 화면이 그 상권의
+    -- latest_quarter 와 견주어 "이 상권은 n분기까지"를 말할 수 있게 **모든 줄에 같은 값**을 싣는다.
+    select coalesce(jsonb_agg(w.quarter::text order by w.quarter desc)
+                      filter (where w.quarter is not null), '[]'::jsonb) as window_quarters
+    from win w
+  ),
+  qs as (
+    -- 창 안의 분기 × 이 필지의 상권. 창 안에서 그 상권에 빠진 분기는 빠진 채 둔다(채우지 않는다).
+    select h.district_id, w.quarter
+    from hit h cross join win w
+    where w.quarter is not null
+  ),
+  sums as (
+    -- ⛔ 그 상권·분기의 업종 행 **전부**를 더한다(결정 0033 결정 7 합산 규칙). 유사 업종 점포 수가
+    --   0 인데 개업·폐업이 있는 행(분기 안에 그 업종 마지막 가게까지 닫힘)도 분자에 넣는다 —
+    --   닫힌 가게는 실제로 닫혔다. 여기에 유사 업종 점포 수 조건을 걸면 그 가게들이 숫자에서 사라진다.
+    select o.district_id, o.quarter,
+           sum(o.similr_induty_stor_co) as similr,
+           sum(o.stor_co)               as stor,
+           sum(o.frc_stor_co)           as frc,
+           sum(o.opbiz_stor_co)         as opbiz,
+           sum(o.clsbiz_stor_co)        as clsbiz
+    from qs
+    join district_openclose o on o.district_id = qs.district_id and o.quarter = qs.quarter
+    group by o.district_id, o.quarter
+  ),
+  latest as (
+    -- 그 상권이 창 안에서 **실제로 가진** 최신 분기 — 창의 최신(표 전체 최신)과 다를 수 있다
+    -- (화면이 "이 상권은 20xx년 n분기까지"라고 따로 말할 수 있게 그대로 돌려준다).
+    -- 창 안에 행이 하나도 없으면 여기 없다 → no_data.
+    select s.district_id, max(s.quarter) as quarter
+    from sums s
+    group by s.district_id
+  ),
+  ranked as (
+    -- 최신 분기 업종 행 — 유사 업종 점포 수가 많은 순(같으면 코드 순). 위 10개만 따로 싣고
+    -- 나머지는 '그 밖 N업종' 한 덩어리로 더한다. 업종 행의 비율은 공표값 그대로다.
+    select o.*,
+           row_number() over (partition by o.district_id
+                              order by o.similr_induty_stor_co desc, o.svc_induty_cd) as rn
+    from latest l
+    join district_openclose o on o.district_id = l.district_id and o.quarter = l.quarter
+  ),
+  rows_out as (
+    select hd.status,
+           null::text as district_id, null::text as district_nm, null::text as district_type,
+           null::text as latest_quarter,
+           null::jsonb as quarters, null::jsonb as industries, null::jsonb as other_industries,
+           0::numeric as sort_area
+    from head hd
+    where hd.status is not null
+    union all
+    select case when l.quarter is null then 'no_data' else 'ok' end,
+           h.district_id, h.district_nm, h.district_type,
+           l.quarter::text,
+           (select jsonb_agg(jsonb_build_object(
+                     'quarter',               s.quarter::text,
+                     'similr_induty_stor_co', s.similr,
+                     'stor_co',               s.stor,
+                     'frc_stor_co',           s.frc,
+                     'opbiz_stor_co',         s.opbiz,
+                     'clsbiz_stor_co',        s.clsbiz,
+                     -- 서울시 산식 그대로(분모 = 유사 업종 점포 수). 표본이 모자라면 비율은 null —
+                     -- 개수만 나간다. 분모가 0 이면 여기서 이미 null 이다(min_similr > 0).
+                     'opbiz_rt',  case when s.similr >= c.min_similr
+                                       then round(s.opbiz * 100.0 / s.similr, 2) end,
+                     'clsbiz_rt', case when s.similr >= c.min_similr
+                                       then round(s.clsbiz * 100.0 / s.similr, 2) end)
+                   order by s.quarter desc)
+              from sums s cross join const c
+             where s.district_id = h.district_id),
+           (select jsonb_agg(jsonb_build_object(
+                     'svc_induty_cd',         r.svc_induty_cd,
+                     'svc_induty_cd_nm',      r.svc_induty_cd_nm,
+                     'similr_induty_stor_co', r.similr_induty_stor_co,
+                     'stor_co',               r.stor_co,
+                     'frc_stor_co',           r.frc_stor_co,
+                     'opbiz_stor_co',         r.opbiz_stor_co,
+                     'opbiz_rt',              r.opbiz_rt,
+                     'clsbiz_stor_co',        r.clsbiz_stor_co,
+                     'clsbiz_rt',             r.clsbiz_rt)
+                   order by r.rn)
+              from ranked r
+             where r.district_id = h.district_id and r.rn <= 10),
+           (select case when count(*) > 0 then jsonb_build_object(
+                     'industry_count',        count(*),
+                     'similr_induty_stor_co', sum(r.similr_induty_stor_co),
+                     'stor_co',               sum(r.stor_co),
+                     'frc_stor_co',           sum(r.frc_stor_co),
+                     'opbiz_stor_co',         sum(r.opbiz_stor_co),
+                     'clsbiz_stor_co',        sum(r.clsbiz_stor_co),
+                     'opbiz_rt',  case when sum(r.similr_induty_stor_co) >= max(c.min_similr)
+                                       then round(sum(r.opbiz_stor_co) * 100.0
+                                                  / sum(r.similr_induty_stor_co), 2) end,
+                     'clsbiz_rt', case when sum(r.similr_induty_stor_co) >= max(c.min_similr)
+                                       then round(sum(r.clsbiz_stor_co) * 100.0
+                                                  / sum(r.similr_induty_stor_co), 2) end) end
+              from ranked r cross join const c
+             where r.district_id = h.district_id and r.rn > 10),
+           h.area_m2
+    from hit h
+    left join latest l on l.district_id = h.district_id
+  )
+  select ro.status, ro.district_id, ro.district_nm, ro.district_type, ro.latest_quarter,
+         ro.quarters, ro.industries, ro.other_industries, wq.window_quarters
+  from rows_out ro cross join wq
+  -- 좁은 상권이 더 구체적인 설명이라 먼저 온다(list_building_districts 와 같은 정렬).
+  order by ro.sort_area asc, ro.district_id;
+$$;
+
+comment on function list_district_openclose(text) is
+  '결정 0033 이 필지가 속한 서울시 상권마다(좁은 상권 먼저 · 합치지 않는다) 서울시 상권분석서비스가 '
+  '공표한 개업·폐업 — 표 전체 기준 최근 8분기(모든 상권이 같은 창) 안의 상권 합산(유사 업종 점포 수·'
+  '점포 수·프랜차이즈·개업·폐업의 합과, '
+  '서울시 산식 그대로의 비율 = 개업 합 ÷ 유사 업종 점포 수 합 × 100 · 폐업 같음 · 유사 업종 점포 수 합이 '
+  '30 미만이면 비율 null · 창 안에서 그 상권에 빠진 분기는 빠진 채) + 그 상권의 최신 분기 업종별 표(유사 업종 '
+  '점포 수 상위 10 · 나머지는 그 밖 N업종 합 · 업종 행의 비율은 공표값 그대로). latest_quarter 는 그 상권이 '
+  '창 안에서 실제로 가진 최신 분기다(표 전체 최신과 다를 수 있다). window_quarters 는 그 창의 분기 목록(jsonb · '
+  '최신 → 옛 순 · 표가 비었으면 빈 배열)이고 status 와 무관하게 **모든 줄에 같은 값**이다(no_coord·not_seoul·'
+  'outside_seoul_district 줄에도). '
+  '합산은 업종 행 전부를 더한다(유사 업종 점포 수 0 인데 폐업이 있는 '
+  '행도 분자에 든다). status 로 빈 상태를 가른다: no_coord(필지 좌표 없음) → not_seoul(서울 아님) → '
+  'outside_seoul_district(서울인데 속한 서울시 상권 없음) — 이 셋은 한 줄만, 아니면 상권마다 ok(창 안에 행 있음) / '
+  'no_data(창 안에 행 없음 — 창 밖 옛 분기만 있어도 no_data). 대전은 not_seoul 이다 — 숫자 0 이 아니라 그 자료가 없는 곳이다. '
+  'security definer (district_openclose·district·parcel 이 anon 에게 닫혀 있어 소유자 권한으로 대신 '
+  '읽는다. 나가는 것은 상권 이름·종류와 서울시 공표 수·비율뿐이다).';
+
+-- 만든 자리에서 다시 닫는다(대시보드 판은 anon 을 붙인다).
+revoke all on function list_district_openclose(text) from public, anon, authenticated;
+
+-- 화면이 실제로 부르는 것. public 은 REST 노출에서 빠져 있어(2026-08-24 옛 문 닫기)
+-- api 쪽에 통과 함수가 없으면 화면에서 못 부른다.
+create or replace function api.list_district_openclose(p_pnu text)
+returns table (
+  status           text,
+  district_id      text,
+  district_nm      text,
+  district_type    text,
+  latest_quarter   text,
+  quarters         jsonb,
+  industries       jsonb,
+  other_industries jsonb,
+  window_quarters  jsonb
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$ select * from public.list_district_openclose(p_pnu) $$;
+
+revoke all on function api.list_district_openclose(text) from public, anon, authenticated;
+grant execute on function api.list_district_openclose(text) to anon, authenticated;
+
+-- ⛔ public.list_district_openclose 는 끝까지 닫아 둔다 — 통과 함수가 security definer 다.
+
+-- =====================================================================
 -- 함수: get_data_freshness — 이 자료는 언제 것인가 (2026-09-05d)
 -- =====================================================================
 -- 마이그레이션 2026-09-05d. 화면 아래 푸터의 표 한 장이 이 함수 하나만 부른다.
@@ -5078,16 +5330,26 @@ as $$
            (select (max(t.updated_at) at time zone 'Asia/Seoul')::date::text from parcel t),
            'none',
            '연 1회 (브이월드)'
+    union all
+    -- 결정 0033 — 서울시 상권분석서비스 개업·폐업. 분기 꼴이 'YYYYQ' 다섯 자리(Q 없음)다.
+    select 11, '상권 개업·폐업 (서울시)', '분기',
+           (select max(t.quarter)::text from district_openclose t),
+           'seoul_openclose',
+           '분기마다'
   ),
   norm as (
-    -- 분기 규칙을 쓰는 두 줄을 **같은 모양('YYYYMM' 분기말 달)** 으로 맞춘다. 이렇게 해야
-    -- 아래 계산이 한 번만 적힌다 — 두 벌로 적어 두면 한쪽만 고쳐지는 날 두 자료가 서로
+    -- 분기 규칙을 쓰는 세 줄을 **같은 모양('YYYYMM' 분기말 달)** 으로 맞춘다. 이렇게 해야
+    -- 아래 계산이 한 번만 적힌다 — 세 벌로 적어 두면 한쪽만 고쳐지는 날 자료끼리 서로
     -- 다른 주기를 말한다.
+    -- ⛔ 서울시 분기 꼴('20262')은 둘째 갈래(`YYYYQn`)에도 첫째 갈래(여섯 자리)에도 안 걸린다 —
+    --   셋째 갈래가 없으면 그 줄은 에러 없이 '정해진 주기 없음'(null)이 된다(결정 0033 v3 재검사).
     select r.*,
            case
              when r.rule_kind = 'sangkwon' and r.basis ~ '^\d{4}(0[1-9]|1[0-2])$'
                then r.basis
              when r.rule_kind = 'rone' and r.basis ~ '^\d{4}Q[1-4]$'
+               then left(r.basis, 4) || lpad((right(r.basis, 1)::int * 3)::text, 2, '0')
+             when r.rule_kind = 'seoul_openclose' and r.basis ~ '^\d{4}[1-4]$'
                then left(r.basis, 4) || lpad((right(r.basis, 1)::int * 3)::text, 2, '0')
            end as q_ym
     from raw r
@@ -5112,11 +5374,12 @@ as $$
 $$;
 
 comment on function get_data_freshness() is
-  '화면 아래 "이 자료는 언제 것인가" 표. 열 갈래 자료의 가장 최근 도장(분기·계약월·적재일·'
+  '화면 아래 "이 자료는 언제 것인가" 표. 열한 갈래 자료의 가장 최근 도장(분기·계약월·적재일·'
   '계산일·수집일·기준월·고시일·갱신일)을 창고에서 읽어 한 줄씩 준다. '
   '⛔ 숫자를 화면에 박지 않기 위한 함수다 — 신선도를 글자로 적어 두면 적재하는 순간부터 '
   '그 글자만 거짓말을 한다. next_expected 도 사람이 적는 값이 아니라 규칙으로 계산한다: '
-  '분기 자료는 분기말 달 + 5개월 - 하루(다음 분기가 공개되는 달의 말일), 월간 자료는 '
+  '분기 자료는 분기말 달 + 5개월 - 하루(다음 분기가 공개되는 달의 말일 — 분기 꼴 셋 '
+  '''YYYYMM''·''YYYYQn''·''YYYYQ''(서울시 다섯 자리)를 같은 분기말 달로 맞춘 뒤 한 번만 계산), 월간 자료는 '
   '기준월 + 3개월 - 하루(다음 판이 공개되는 달의 말일), 국세청 기준시가는 고시일의 다음 해 3월 31일. '
   '주기가 없는 자료는 null 이다 — 없는 주기를 지어내면 "늦었다"는 거짓 신호가 뜬다. '
   '기준값이 그 모양이 아니면 계산하지 않고 그 칸만 비운다(to_date 가 터지면 표가 통째로 '
@@ -5125,8 +5388,9 @@ comment on function get_data_freshness() is
   '⛔ api_quota_log 는 안 본다 — 그건 우리 호출 장부이지 자료의 나이가 아니고, 하한선일 뿐이다. '
   '자료가 0행이면 basis 가 null 이고 줄은 그대로 나온다(화면이 "자료 없음"이라 적는다 — '
   '줄을 빼면 "그런 자료를 안 쓴다"로 읽힌다). '
-  'security definer (열 표가 전부 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. '
-  '나가는 것은 집계 도장 열 개뿐이고 원본 행은 한 줄도 안 나간다). 2026-09-05d · 월간 규칙 2026-10-01a';
+  'security definer (열한 표가 전부 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. '
+  '나가는 것은 집계 도장 열한 개뿐이고 원본 행은 한 줄도 안 나간다). 2026-09-05d · 월간 규칙 2026-10-01a · '
+  '서울 개업·폐업 2026-10-05b';
 
 -- ⚠️ create or replace 는 권한을 유지하지만, 대시보드가 같은 함수를 다시 만들면
 --    Supabase 기본 권한이 anon 을 자동으로 붙인다. 만든 자리에서 다시 닫는다.

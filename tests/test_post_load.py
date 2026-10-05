@@ -543,9 +543,12 @@ class TestAnonExposure:
             # 호실 구성표(2026-10-04b · 결정 0032). 표 unit 은 **여기 없다** — 열면 아파트
             # 세대 목록이 통째로 긁힌다. 주거·오피스텔·미상 층은 면적 null · 목록 0줄.
             "api.list_unit_floor_summary", "api.list_floor_units",
+            # 서울 상권 개업·폐업(2026-10-05b · 결정 0033). 표 district_openclose 는 **여기
+            # 없다** — 화면은 이 함수로만 읽는다(상권 합산과 최신 분기 업종 상위 10줄 + 그 밖 합).
+            "api.list_district_openclose",
         )
-        # 읽기 4 + 부르기 23 = `--check` 총계 27.
-        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 27
+        # 읽기 4 + 부르기 24 = `--check` 총계 28.
+        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 28
 
     def test_pending_list_is_empty_after_2026_09_05a(self):
         """⛔ **비어 있어야 한다** — 잔존 노출 9개는 2026-09-05a 로 닫혔다.

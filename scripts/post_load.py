@@ -551,6 +551,10 @@ ANON_CALLABLE_ALLOWLIST = (
     "api.search_stores",
     # 호실 구성표(2026-10-04b · 결정 0032). 표 unit 은 **여기 없다** — 열면 아파트 세대 목록이 통째로 긁힌다.
     "api.list_unit_floor_summary", "api.list_floor_units",
+    # 서울 상권 개업·폐업(2026-10-05b · 결정 0033). 표 district_openclose 는 **여기 없다** —
+    # 화면은 이 함수 하나로만 읽는다. 나가는 것은 상권 합산(공표 수의 더하기)과 최신 분기 업종
+    # 상위 10줄 + '그 밖' 합뿐이다. 표가 열리면 서울 1,650 상권 × 100 업종 × 22분기가 통째로 긁힌다.
+    "api.list_district_openclose",
 )
 
 # ── 공개키가 아직 못 닫은 "대기" 함수 — 지금은 비어 있다 ─────────────────

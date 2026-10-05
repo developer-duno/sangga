@@ -54,6 +54,22 @@ describe('basisText — 기준값을 사람이 읽는 글자로', () => {
     expect(basisText(row({ basis_kind: '분기', basis: '2026Q4' }))).toBe('2026년 4분기');
   });
 
+  it("서울시 분기 표기 '20262'(Q 없는 다섯 자리)는 '2026Q2' 와 **같은 글**이다 (결정 0033)", () => {
+    for (const q of ['1', '2', '3', '4']) {
+      expect(basisText(row({ basis_kind: '분기', basis: `2026${q}` }))).toBe(
+        basisText(row({ basis_kind: '분기', basis: `2026Q${q}` })),
+      );
+    }
+    expect(basisText(row({ basis_kind: '분기', basis: '20262' }))).toBe('2026년 2분기');
+  });
+
+  it("⛔ 여섯 자리 '202606' 은 다섯 자리 분기 갈래에 안 걸린다 — 계약월은 여전히 달이다", () => {
+    expect(basisText(row({ basis_kind: '계약월', basis: '202603' }))).toBe('2026년 3월');
+    expect(basisText(row({ basis_kind: '기준월', basis: '202601' }))).toBe('2026년 1월');
+    // 분기 숫자가 1~4 밖인 다섯 자리는 해석하지 않는다.
+    expect(basisText(row({ basis_kind: '분기', basis: '20265' }))).toBe('20265');
+  });
+
   it('날짜는 연·월·일로 적는다 — 0 을 떼고 사람 말로', () => {
     expect(basisText(row({ basis_kind: '고시일', basis: '2026-01-01' }))).toBe('2026년 1월 1일');
     expect(basisText(row({ basis_kind: '수집일', basis: '2026-08-27' }))).toBe('2026년 8월 27일');
