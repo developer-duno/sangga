@@ -855,6 +855,8 @@ test.describe('화면 아래 — 어디까지 믿을지와 한마디 남기는 �
     // 답장을 못 한다는 사실을 **미리** 말한다 — 기다리게 해 놓고 안 하는 것이 가장 나쁘다.
     await expect(foot.getByText(/답장을 드릴 수 없습니다/)).toBeVisible();
 
+    // 종류를 고르지 않으면 보내기가 잠겨 있다(기본 선택 없음 — 2026-10-06).
+    await foot.getByRole('radio', { name: '건의·제안' }).check();
     await foot.getByRole('textbox').fill('3층 정보가 안 보여요');
     await foot.getByRole('button', { name: '보내기' }).click();
 
@@ -866,6 +868,8 @@ test.describe('화면 아래 — 어디까지 믿을지와 한마디 남기는 �
     // ⛔ 여기가 이 의견함의 값어치 전부다 — 사람이 손으로 안 적어도 어디를 보던 중이었는지가
     //    함께 간다. 이 줄이 깨지면 남는 것은 맥락 없는 한 줄짜리 불평뿐이다.
     expect((sent[0].p_context as Record<string, unknown>).sigungu).toBe('11680');
+    // 고른 종류는 kind 가 아니라 context.category 로 실린다(서버 CHECK 는 그대로).
+    expect((sent[0].p_context as Record<string, unknown>).category).toBe('suggest');
   });
 
   test('N. 못 보냈으면 못 보냈다고 말한다 — 거짓 안심을 만들지 않는다', async ({ page }) => {
@@ -882,6 +886,7 @@ test.describe('화면 아래 — 어디까지 믿을지와 한마디 남기는 �
     await expect(foot.locator('.foot__notice')).toBeVisible();
 
     await foot.getByRole('button', { name: '의견 보내기' }).click();
+    await foot.getByRole('radio', { name: '건의·제안' }).check();
     await foot.getByRole('textbox').fill('한마디');
     await foot.getByRole('button', { name: '보내기' }).click();
 
