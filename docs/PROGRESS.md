@@ -2070,4 +2070,17 @@ PR #208 CI pytest **4,147 passed + 3 skipped**(본 폴더 수집 **4,150**) · v
 **raw**: 검사관이 내려받은 연도 zip 5개를 `data/raw/seoul_openclose/zip/<연도>_20261005.zip` 으로 보관(각 2.1~2.2MB · `backup_raw.py` 는 data/raw 전체라 다음 백업 때 저절로 포함).
 
 ### 남은 것
-- R1·R2·R3 전부(계획서 「실행 계획」). 👤 인증키. 다음 조사 후보(이 결정 밖): 행안부 지방행정 인허가 자료(대전용 공식 길일 수 있음).
+- ~~R1·R2·R3 전부~~ → R1 은 (7) 에서 끝(코드 #218 + 라이브 2026-10-05 23:45) · R2·R3 남음. ~~👤 인증키~~ ✅ `.env`. 다음 조사 후보(이 결정 밖): 행안부 지방행정 인허가 자료(대전용 공식 길일 수 있음).
+
+## 2026-10-05 (7) — 결정 0033 R1: 코드(#218) + 라이브 창 — 서울 개업·폐업 22분기가 운영 DB 에 들어갔다
+
+**코드(#218 → main f63891d · 밤 Opus 세션)**: 수집기 `collect_seoul_openclose.py`(열린 API · `--end-quarter` 의무 · 미게시 분기 INFO-200 은 pending 유지) · 대비책 `fetch_seoul_openclose_zip.py` · 적재기 `load_seoul_openclose.py`(관문 ⒜~⒡ + 빠진 분기 ⒢ = 7) · 마이그레이션 `2026-10-05b_district_openclose.sql`(표 `district_openclose` · `list_district_openclose(p_pnu)` + api 쌍둥이 · 신선도 11번째 줄 — `norm` 셋째 갈래 `YYYYQ`) · 시험 4파일. 구현 opus-coder 1 · 적대 Opus(🟡5) · 할루 Sonnet(11/12 맞음·틀림 0). 메인 기술 결정 둘: **최근 8분기 창 = 표 전체 기준**(상권별 아님) · 반환 칸 9개째 `window_quarters`(jsonb · 모든 줄 같은 값 — R2 추이 막대 자리). CI: pytest 4,398+19 skip · vitest 899 · E2E 68.
+
+**라이브 창(이 세션 · Fable · 23:30~23:50)**: ① 게시 확인 — 20262 = 75,912행(INFO-000) · **20263 = INFO-200(미게시)** → 22분기(20211~20262) 확정 ② 수집 22분기 **1,680,756행 · 호출 1,690회 · 약 4분** · pending 0(파일 `data/raw/seoul_openclose/api/<분기>_20261005.jsonl` 22개 · 각 33MB) ③ 적재 dry-run 관문 7 전부 통과 · 빠진 분기 0 · ⒜ 에 20261·20262 도 안 걸림(`--skip-quarter` 불필요) ④ 마이그 적용(머리말 문장 순서 그대로 SET…COMMIT·NOTIFY · 신선도 11줄) → **같은 자리에서** 적재(한 트랜잭션 · 23:45 COMMIT) → `post_load.py` → `--check` **exit 0**([정상] 공개 허용 **28** · 정본 색인 50 · 정본 함수 **56**(시작 블록의 55 는 계획값 — 실측 56) · [주의]/[사고] 0). ⑤ 확인 — DB **4,966 → 5,256MB(+290MB = 표 크기 그대로 · 추정 0.3~0.5GB 안)** · 공개키 실호출(anon · PostgREST `Content-Profile: api`): 코엑스 필지 1168010500101590000 → `ok` 두 줄 **코엑스 먼저, 강남 마이스 관광특구 다음**(좁은 상권 먼저) · `latest_quarter` 20262 · `window_quarters` 8개 20262→20243 / 대전 3011010700108770000 → `not_seoul` / 서울 상권 밖 1156011000100400000(영등포) → `outside_seoul_district` / `get_data_freshness` 11줄 · '상권 개업·폐업 (서울시)' basis 20262 · 다음 예정 **2026-10-31** · 창 쿼리 EXPLAIN = 기본키 Index Only Scan Backward(첫 1회 + 재귀 7회) · 버퍼 26 · 함수 전체 5.5ms(3회) ⑥ `backup_raw.py` 1회(F: 외장 · 아래 결과).
+
+**다음 분기(20263) 적재 절차**(사람 손 · 결정 0033 수집 규칙): `collect_seoul_openclose.py --dry-run --end-quarter 20263 --quarters 1` 로 INFO-000 확인 → `--end-quarter 20263 --quarters 1` 수집 → `load_seoul_openclose.py --dry-run` → 적재 → `post_load.py` · `--check` → `backup_raw.py`. ⛔ 창은 표 전체 최근 8분기라 새 분기가 들어오면 20243 이 창 밖으로 밀린다(정상).
+
+### 남은 것
+- **R2 화면**(`OpenCloseSection.tsx` · 👤 no_data 문구 — '창 밖 옛 분기만 있는 상권'도 덮는 글 · PGRST202 숨김 · 맹점 Opus R1+R2 묶어 1회) → **R3 정답지 시험**(20262 jsonl 은 이제 있다 · shapely).
+- 20263 게시 시기 미확인 → 11/1 부터 이 줄에도 '지났습니다'(정상) · 11/2 첫 경보 때 실제 게시일을 알려진한계 §3 에.
+- 작은 후속: `tests/test_freshness_index.py` 의 `("rent_stat","quarter")` 예외는 기본키 인정으로 불필요해졌는지 확인 뒤 정리 · 27e 관문 · 별관 경보 후속 ④ · 전역 max(snapshot_ym) 6곳.
