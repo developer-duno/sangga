@@ -207,7 +207,7 @@ python scripts/collectors/load_rone.py                             # rent_stat �
 #   ⛔ 수집을 다 끝낸 뒤 **같은 날** 마이그레이션 2026-10-05b → 적재를 **한 번에**(일부 분기만 넣으면 신선도가 '지났습니다').
 python scripts/collectors/collect_seoul_openclose.py --dry-run --end-quarter <분기> --quarters 22  # API 1회로 행수 + 장부 읽기만 (DB 쓰기 0)
 python scripts/collectors/collect_seoul_openclose.py --end-quarter <분기> --quarters 22           # API → data/raw/seoul_openclose/api/ (이어받기 · 최신 분기부터 · 22분기 ≈ 1,700회)
-python scripts/collectors/load_seoul_openclose.py --dry-run        # raw(API jsonl·연도 zip) → 관문 6 리포트 (DB·파일 쓰기 0)
+python scripts/collectors/load_seoul_openclose.py --dry-run        # raw(API jsonl·연도 zip) → 관문 7(⒜~⒢) 리포트 (DB·파일 쓰기 0)
 python scripts/collectors/load_seoul_openclose.py                  # district_openclose 분기 단위 교체 (한 트랜잭션) → post_load.py · --check
 # ↑ 키가 막힌 날의 대비책 = fetch_seoul_openclose_zip.py --year <연도> (연 1회 zip · 인증키 없음)
 python scripts/load_rone_map.py --dry-run                          # seed → district_rone_map 미리보기(DB 쓰기 0)
