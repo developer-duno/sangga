@@ -2134,6 +2134,220 @@ body {
   margin-top: 4px;
 }
 
+/* ── 상권 개업·폐업 (서울시 공표 · 결정 0033) ─────────────────────────────── */
+
+/*
+   임대 동향 카드와 같은 옷을 입힌다 — 둘 다 이 건물이 아니라 **속한 상권**의 공표값이다.
+   ⚠️ 추이 막대는 순수 CSS 비율 막대다(그리기 라이브러리 없음 — `.mix__bar` 와 같은 방식).
+*/
+.oc {
+  margin: 0 0 24px;
+  padding: 14px 16px 6px;
+  background: #fbfcfd;
+}
+
+.oc__lead {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+/* 상권 하나 = 한 덩어리. 상권끼리 더하지 않으므로 줄로 갈라 둔다. */
+.oc__district {
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.oc__name {
+  margin: 0 0 4px;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.oc__latest {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.oc__num {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.oc__quarter {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.oc__note,
+.oc__none,
+.oc__src {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.oc__trend {
+  margin: 12px 0 0;
+}
+
+.oc__trend-cap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.oc__legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.oc__key {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.oc__key--close {
+  margin-left: 8px;
+}
+
+/* 개업은 초록, 폐업은 주황 — 두 막대를 색으로만이 아니라 왼쪽·오른쪽 자리로도 가른다. */
+.oc__key--open,
+.oc__bar--open {
+  background: #2e8b57;
+}
+
+.oc__key--close,
+.oc__bar--close {
+  background: #c8553d;
+}
+
+/* 칸 수는 서버의 창 크기라 화면이 `grid-template-columns` 를 인라인으로 준다. */
+.oc__cols {
+  display: grid;
+  gap: 4px;
+  max-width: 520px;
+}
+
+.oc__col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.oc__bars {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2px;
+  height: 72px;
+  border-bottom: 1px solid var(--line);
+}
+
+.oc__bar {
+  display: block;
+  width: 40%;
+  max-width: 12px;
+  border-radius: 2px 2px 0 0;
+}
+
+/* 막대가 없는 칸('–' 자료 없음 · '표본' 비율 없음) — 0 막대와 헷갈리지 않게 글자로 둔다. */
+.oc__gap {
+  align-self: center;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.oc__tick {
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.3;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.oc__tick-year {
+  display: block;
+}
+
+/* 업종 표는 접어 둔다(`details`). 표가 좁은 폭보다 넓어지면 표 안에서만 옆으로 민다. */
+.oc__ind {
+  margin: 12px 0 0;
+  overflow-x: auto;
+}
+
+.oc__ind-sum {
+  color: var(--accent);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.oc__table {
+  width: 100%;
+  margin-top: 6px;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.oc__table th,
+.oc__table td {
+  padding: 3px 4px;
+  border-top: 1px dashed var(--line);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.oc__table thead th {
+  border-top: none;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.oc__table th:first-child {
+  font-weight: 400;
+  text-align: left;
+  white-space: normal;
+}
+
+.oc__other th,
+.oc__other td {
+  color: var(--muted);
+}
+
+.oc__why {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+
+.oc__why li + li {
+  margin-top: 4px;
+}
+
+.oc__why .oc__src {
+  margin: 0;
+}
+
 /*
    접힌 카드는 머리 + 요약 한 줄뿐이라 아래 여백이 남는다.
 
@@ -2836,6 +3050,9 @@ body {
   .lh__more-btn,
   /* 호 목록의 더 보기 — 누르는 장치다. 이미 받아 둔 줄은 그대로 나온다(결정 0032). */
   .units__more,
+  /* 접어 둔 업종 표(결정 0033)는 종이에 안 나온다 — 브라우저가 닫힌 details 의 내용을 그리지
+     않아 제목만 남는다. 펼쳐 둔 표는 그대로 나온다(호 목록과 같은 결). */
+  .oc__ind:not([open]),
   .modal__back {
     display: none !important;
   }
@@ -2964,6 +3181,11 @@ body {
      브라우저가 avoid 를 포기하는데, 그때도 한 층의 이름과 금액은 갈리지 않는다.
      ⛔ 카드 통째(`.rent`)에는 걸지 않는다(위 설명 참조 — 장수가 늘고 흰 종이가 남는다). */
   .rent__floors tr,
+  /* 개업·폐업 카드(결정 0033) — 큰 숫자 줄 · 추이 그림 한 벌 · 업종 표 줄은 갈리면 근거 없는 숫자가
+     된다. ⛔ 카드 통째(`.oc`)에는 걸지 않는다(위 설명 참조). */
+  .oc__latest,
+  .oc__trend,
+  .oc__table tr,
   .grade,
   .stack__facts,
   .dmap__canvas,

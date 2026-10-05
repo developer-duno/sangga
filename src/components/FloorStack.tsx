@@ -58,6 +58,7 @@ import { SECTION_PLAN } from '../lib/sectionCards';
 import { PriceBandSection } from './PriceBandSection';
 import { IndustryMixSection } from './IndustryMixSection';
 import { RentStatSection } from './RentStatSection';
+import { OpenCloseSection } from './OpenCloseSection';
 import { SectionCard } from './SectionCard';
 
 /**
@@ -249,7 +250,7 @@ export function FloorStack({ building }: Props) {
   //    `true`(값 하나짜리 타입)라서, 안 적으면 "true 만 담는 상태"가 되어 접힐 수가 없다.
   const [floorsCardOpen, setFloorsCardOpen] = useState<boolean>(SECTION_PLAN.floors.defaultOpen);
   /**
-   * 곁 카드(업종 분포·둘레 인허가·임대 동향) 요청을 건물을 고른 순간 먼저 보내 둔 것.
+   * 곁 카드(업종 분포·둘레 인허가·임대 동향·개업·폐업) 요청을 건물을 고른 순간 먼저 보내 둔 것.
    * 카드들은 층 목록이 온 뒤에야 마운트되므로, 여기서 먼저 보내 두면 그만큼 일찍 온다
    * (`lib/sidePrefetch.ts` · 로드맵 속도 P3).
    *
@@ -731,6 +732,12 @@ export function FloorStack({ building }: Props) {
            않는다**(카드 안의 첫 줄과 등급 문단이 그 경계를 지킨다).
       */}
       <RentStatSection pnu={building.pnu} prefetch={sidePrefetch} />
+      <OpenCloseSection pnu={building.pnu} prefetch={sidePrefetch} />
+      {/*
+        ↑ 상권 개업·폐업(결정 0033 — 서울시 공표 그대로). 임대 카드와 같은 뼈대 — 스스로 묻고,
+        못 읽으면(함수 없음 PGRST202·모양 이상) 스스로 사라진다. 서울 밖·상권 밖이면 카드는
+        서서 그렇다고 적는다. ⛔ 이 건물이 아니라 속한 서울시 상권 전체의 값이다.
+      */}
 
       <p className="grade">
         <span className="grade__badge">D등급 · 간접 추론</span>

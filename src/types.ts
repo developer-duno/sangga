@@ -971,3 +971,72 @@ export type FloorUnit = {
   /** 쪽 나누기 전 그 층 전체 호실 수(모든 줄에 같은 값). */
   total_cnt: number;
 };
+
+// ── 상권 개업·폐업 (서울시 공표 · 결정 0033) ────────────────────────────────
+//
+// ⛔ **공표값 그대로다.** 서울시 상권분석서비스(점포-상권)가 분기마다 상권 × 업종으로 공표한
+//    점포 수·개업·폐업을 서버가 상권마다 더해 준다. 상권 전체 비율도 서버가 서울시 산식
+//    (개업·폐업 점포 ÷ 유사 업종 점포 × 100)으로 낸다 — 화면은 다시 나누지 않는다.
+// ⛔ **이 건물의 값이 아니다.** 이 건물이 속한 **서울시 상권 전체**의 값이다.
+// ⓘ 분기 표기는 서울시 꼴 그대로 다섯 자리(연도 넷 + 분기 하나 · Q 없음)다.
+
+/** 함수 `list_district_openclose` 의 줄 상태. 앞 셋은 건물 단위로 **한 줄만** 온다. */
+export type OpenCloseStatus = 'no_coord' | 'not_seoul' | 'outside_seoul_district' | 'ok' | 'no_data';
+
+/**
+ * 상권 하나 × 분기 하나의 합(그 상권의 업종 행 전부를 더한 것).
+ *
+ * ⛔ 유사 업종 점포 수 합이 30 곳이 안 되면 두 비율이 **null** 이다(개수만 온다).
+ */
+export type OpenCloseQuarter = {
+  quarter: string;
+  similr_induty_stor_co: number | null;
+  stor_co: number | null;
+  frc_stor_co: number | null;
+  opbiz_stor_co: number | null;
+  clsbiz_stor_co: number | null;
+  opbiz_rt: number | null;
+  clsbiz_rt: number | null;
+};
+
+/** 그 상권 최신 분기의 업종 한 줄. 비율은 **서울시 공표값 그대로**(100 을 넘는 값도 있다). */
+export type OpenCloseIndustry = {
+  svc_induty_cd: string;
+  svc_induty_cd_nm: string | null;
+  similr_induty_stor_co: number | null;
+  stor_co: number | null;
+  frc_stor_co: number | null;
+  opbiz_stor_co: number | null;
+  clsbiz_stor_co: number | null;
+  opbiz_rt: number | null;
+  clsbiz_rt: number | null;
+};
+
+/** 상위 10 업종 밖의 합. 업종이 열 개 이하이면 서버가 null 을 준다. */
+export type OpenCloseOther = {
+  industry_count: number;
+  similr_induty_stor_co: number | null;
+  stor_co: number | null;
+  frc_stor_co: number | null;
+  opbiz_stor_co: number | null;
+  clsbiz_stor_co: number | null;
+  opbiz_rt: number | null;
+  clsbiz_rt: number | null;
+};
+
+/** 함수 `list_district_openclose(p_pnu)` 한 줄. */
+export type DistrictOpenClose = {
+  status: OpenCloseStatus;
+  /** 상권 줄(`ok`·`no_data`)에만 있다. 건물 단위 상태 줄에서는 null. */
+  district_id: string | null;
+  district_nm: string | null;
+  district_type: string | null;
+  /** 그 상권이 창 안에서 **실제로 가진** 최신 분기. 창의 최신과 다를 수 있다. `no_data` 면 null. */
+  latest_quarter: string | null;
+  /** 최신 → 옛. 창 안에서 그 상권에 빠진 분기는 **아예 없다**(채우지 않는다). */
+  quarters: OpenCloseQuarter[] | null;
+  industries: OpenCloseIndustry[] | null;
+  other_industries: OpenCloseOther | null;
+  /** 표 전체 기준 최근 분기 창(최신 → 옛). **모든 줄에 같은 값**이다. */
+  window_quarters: string[];
+};

@@ -2,7 +2,7 @@ import { StrictMode } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, waitFor, act } from '@testing-library/react';
 import { SECTION_PLAN } from '../lib/sectionCards';
-import type { BuildingHit, FloorRow, IndustryMix, RentStat } from '../types';
+import type { BuildingHit, DistrictOpenClose, FloorRow, IndustryMix, RentStat } from '../types';
 
 /**
  * 곁 카드 요청을 건물을 고른 순간 먼저 보내는가(로드맵 속도 P3 · `lib/sidePrefetch.ts`).
@@ -23,7 +23,12 @@ function deferred(): Deferred {
   return { promise, resolve };
 }
 
-const SIDE_FNS = ['list_industry_mix', 'count_nearby_permits', 'list_rent_stats'] as const;
+const SIDE_FNS = [
+  'list_industry_mix',
+  'count_nearby_permits',
+  'list_rent_stats',
+  'list_district_openclose',
+] as const;
 type SideFn = (typeof SIDE_FNS)[number];
 
 /** 실제로 나간 요청(= `.then` 호출) 기록. */
@@ -76,6 +81,7 @@ vi.mock('../lib/supabase', () => ({
 const { FloorStack } = await import('./FloorStack');
 const { IndustryMixSection } = await import('./IndustryMixSection');
 const { RentStatSection } = await import('./RentStatSection');
+const { OpenCloseSection } = await import('./OpenCloseSection');
 const { takePrefetched } = await import('../lib/sidePrefetch');
 
 const A = { bld_id: 'A-1', pnu: '1168010100100010000', tag: '가' };
@@ -158,9 +164,39 @@ function rentOf(pnu: string): RentStat[] {
   ];
 }
 
+/** 상권 개업·폐업(결정 0033) — 필지마다 다른 상권 이름. */
+function openCloseOf(pnu: string): DistrictOpenClose[] {
+  const tag = pnu === A.pnu ? '가' : '나';
+  return [
+    {
+      status: 'ok',
+      district_id: `oc-${tag}`,
+      district_nm: `개폐업상권${tag}`,
+      district_type: '발달상권',
+      latest_quarter: '20262',
+      quarters: [
+        {
+          quarter: '20262',
+          similr_induty_stor_co: 100,
+          stor_co: 90,
+          frc_stor_co: 10,
+          opbiz_stor_co: 3,
+          clsbiz_stor_co: 4,
+          opbiz_rt: 3,
+          clsbiz_rt: 4,
+        },
+      ],
+      industries: null,
+      other_industries: null,
+      window_quarters: ['20262'],
+    },
+  ];
+}
+
 function okSide(fn: SideFn, pnu: string): Res {
   if (fn === 'list_industry_mix') return { data: mixOf(pnu), error: null };
   if (fn === 'list_rent_stats') return { data: rentOf(pnu), error: null };
+  if (fn === 'list_district_openclose') return { data: openCloseOf(pnu), error: null };
   const total = pnu === A.pnu ? 3 : 7;
   return { data: { total_cnt: total, started_cnt: 2, base_ym: '202607' }, error: null };
 }
@@ -183,7 +219,7 @@ afterEach(() => {
 });
 
 describe('FloorStack — 곁 카드 요청을 먼저 보낸다 (P3)', () => {
-  it('(a) 층 목록이 아직 안 왔는데도 세 요청은 이미 출발했다', async () => {
+  it('(a) 층 목록이 아직 안 왔는데도 네 요청은 이미 출발했다', async () => {
     // 층 목록은 영영 안 온다(state.floors 비어 있음).
     render(<FloorStack building={building(A)} />);
     expect(screen.getByText('층 정보를 불러오는 중…')).toBeTruthy();
@@ -206,6 +242,7 @@ describe('FloorStack — 곁 카드 요청을 먼저 보낸다 (P3)', () => {
     rerender(<FloorStack building={building(B)} />);
     await screen.findByText('빌딩나');
     await screen.findByText('임대상권나');
+    await screen.findByText(SECTION_PLAN.openclose.title);
 
     // 이제서야 A 의 답이 도착한다.
     await act(async () => {
@@ -218,6 +255,8 @@ describe('FloorStack — 곁 카드 요청을 먼저 보낸다 (P3)', () => {
     expect(text).toContain('새로 올라오는 상가 건물 7동');
     expect(text).not.toContain('상권가');
     expect(text).not.toContain('임대상권가');
+    expect(text).toContain('개폐업상권나');
+    expect(text).not.toContain('개폐업상권가');
     expect(text).not.toContain('111곳');
     expect(text).not.toContain('상가 건물 3동');
   });
@@ -236,6 +275,7 @@ describe('FloorStack — 곁 카드 요청을 먼저 보낸다 (P3)', () => {
     // 업종 분포·임대 동향은 실패면 카드째 사라지고, 인허가 줄도 없다(각 카드의 실패 규칙 그대로).
     expect(screen.queryByText(SECTION_PLAN.industry.title)).toBeNull();
     expect(screen.queryByText(SECTION_PLAN.rent.title)).toBeNull();
+    expect(screen.queryByText(SECTION_PLAN.openclose.title)).toBeNull();
     expect(screen.queryByText(/새로 올라오는 상가 건물/)).toBeNull();
     for (const fn of SIDE_FNS) expect(countFetches(fn)).toBe(1);
   });
@@ -253,7 +293,7 @@ describe('FloorStack — 곁 카드 요청을 먼저 보낸다 (P3)', () => {
     expect(screen.queryByText(/새로 올라오는 상가 건물/)).toBeNull();
   });
 
-  it('(d) 건물 한 번 보는 데 세 함수 각각 정확히 1회', async () => {
+  it('(d) 건물 한 번 보는 데 네 함수 각각 정확히 1회', async () => {
     state.floors.set(A.bld_id, floorsOf(A));
     render(<FloorStack building={building(A)} />);
     await screen.findByText('임대상권가');
@@ -307,5 +347,14 @@ describe('곁 카드 — 다른 필지의 미리 보낸 답은 받지 않는다 
     render(<RentStatSection pnu={B.pnu} prefetch={prefetchOfA()} />);
     expect(await screen.findByText('임대상권나')).toBeTruthy();
     expect(screen.queryByText('임대상권가')).toBeNull();
+  });
+
+  it('개업·폐업 카드: A 몫을 받은 채 B 로 그려지면 B 를 스스로 묻고 B 값만 보인다', async () => {
+    const { container } = render(<OpenCloseSection pnu={B.pnu} prefetch={prefetchOfA()} />);
+    await screen.findByText(SECTION_PLAN.openclose.title);
+    const text = container.textContent ?? '';
+    expect(text).toContain('개폐업상권나');
+    expect(text).not.toContain('개폐업상권가');
+    expect(countFetches('list_district_openclose', B.pnu)).toBe(1);
   });
 });

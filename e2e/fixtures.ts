@@ -3,6 +3,7 @@ import type {
   BuildingHit,
   CoverageStats,
   DataFreshnessRow,
+  DistrictOpenClose,
   FloorRow,
   FloorUnit,
   IndustryMix,
@@ -541,4 +542,86 @@ export function coverageStats(over: Partial<CoverageStats> = {}): CoverageStats 
     floor_missing_pct: 32.9,
     ...over,
   };
+}
+
+/** 표 전체 기준 최근 8분기(최신 → 옛) — 서버 `window_quarters` 꼴 그대로(결정 0033). */
+const OC_WINDOW = ['20262', '20261', '20254', '20253', '20252', '20251', '20244', '20243'];
+
+/**
+ * 상권 개업·폐업(함수 `list_district_openclose`) — 서울 코엑스 필지의 답 모양(2026-10-06 라이브
+ * 실호출 모양 · 값은 일부 줄임). 상권 둘(좁은 상권 먼저) · 둘째 상권은 창 안에 빠진 분기가 있다.
+ */
+export function openClose(): DistrictOpenClose[] {
+  const quarter = (qq: string, op: number, cl: number, opRt: number | null, clRt: number | null) => ({
+    quarter: qq,
+    similr_induty_stor_co: 441,
+    stor_co: 378,
+    frc_stor_co: 63,
+    opbiz_stor_co: op,
+    clsbiz_stor_co: cl,
+    opbiz_rt: opRt,
+    clsbiz_rt: clRt,
+  });
+  return [
+    {
+      status: 'ok',
+      district_id: '3120218',
+      district_nm: '코엑스',
+      district_type: '발달상권',
+      latest_quarter: '20262',
+      quarters: OC_WINDOW.map((qq, i) => quarter(qq, 5 + i, 9 + i, 1.13 + i * 0.1, 2.04 + i * 0.1)),
+      industries: [
+        {
+          svc_induty_cd: 'CS300011',
+          svc_induty_cd_nm: '일반의류',
+          similr_induty_stor_co: 90,
+          stor_co: 90,
+          frc_stor_co: 0,
+          opbiz_stor_co: 1,
+          clsbiz_stor_co: 4,
+          opbiz_rt: 1.0,
+          clsbiz_rt: 4.0,
+        },
+      ],
+      other_industries: {
+        industry_count: 47,
+        similr_induty_stor_co: 172,
+        stor_co: 149,
+        frc_stor_co: 23,
+        opbiz_stor_co: 1,
+        clsbiz_stor_co: 1,
+        opbiz_rt: 0.58,
+        clsbiz_rt: 0.58,
+      },
+      window_quarters: OC_WINDOW,
+    },
+    {
+      status: 'ok',
+      district_id: '3001496',
+      district_nm: '강남 마이스 관광특구',
+      district_type: '관광특구',
+      latest_quarter: '20262',
+      quarters: [quarter('20262', 30, 41, 1.5, 2.1), quarter('20254', 28, 35, 1.4, 1.8)],
+      industries: null,
+      other_industries: null,
+      window_quarters: OC_WINDOW,
+    },
+  ];
+}
+
+/** 대전 필지의 답 — 건물 단위 상태 한 줄(나머지 칸 null · 창만 값). */
+export function openCloseNotSeoul(): DistrictOpenClose[] {
+  return [
+    {
+      status: 'not_seoul',
+      district_id: null,
+      district_nm: null,
+      district_type: null,
+      latest_quarter: null,
+      quarters: null,
+      industries: null,
+      other_industries: null,
+      window_quarters: OC_WINDOW,
+    },
+  ];
 }

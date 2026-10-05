@@ -66,6 +66,11 @@ const responses = {
    */
   rent: { data: null as unknown, error: { message: 'not applied' } as unknown },
   /**
+   * 서버 함수 list_district_openclose 의 응답(상권 개업·폐업 · 결정 0033).
+   * 기본값을 **오류**로 둔다(임대 동향과 같은 이유) — 그 카드는 `OpenCloseSection.test.tsx` 가 본다.
+   */
+  openclose: { data: null as unknown, error: { message: 'not applied' } as unknown },
+  /**
    * 서버 함수 list_unit_floor_summary 의 응답(호실 구성표 · 결정 0032).
    *
    * 기본값을 **함수 없음(PGRST202)** 으로 둔다 — 그러면 요약 줄도 "자료 없음" 안내도 안 서서
@@ -125,6 +130,8 @@ vi.mock('../lib/supabase', () => ({
       // 상권 임대 동향(결정 0024). 갈라 답하지 않으면 상권 응답(객체)이 흘러들어 모양
       // 검사에 걸리고, 그러면 이 카드가 **왜** 안 뜨는지가 흐려진다(늘 미표시로 굳는다).
       if (fn === 'list_rent_stats') return Promise.resolve(responses.rent);
+      // 상권 개업·폐업(결정 0033). 같은 이유로 갈라 답한다.
+      if (fn === 'list_district_openclose') return Promise.resolve(responses.openclose);
       // 호실 구성표(결정 0032). 갈라 답하지 않으면 상권 응답(객체)이 흘러들어 "배열인가" 검사에
       // 걸려 늘 실패로 굳는다 — 그러면 요약·목록 시험이 통째로 헛돈다(거짓 초록).
       if (fn === 'list_unit_floor_summary') return Promise.resolve(responses.unitSummary);
@@ -298,6 +305,8 @@ beforeEach(() => {
   // 기본은 오류 = 임대 동향 카드 미표시(마이그레이션 적용 전 라이브와 같은 상태).
   // 그 카드 자체는 RentStatSection.test.tsx 가 따로 본다.
   responses.rent = { data: null, error: { message: 'not applied' } };
+  // 기본은 오류 = 개업·폐업 카드 미표시. 그 카드 자체는 OpenCloseSection.test.tsx 가 본다.
+  responses.openclose = { data: null, error: { message: 'not applied' } };
   // 기본은 함수 없음 = 호실 요약·안내 미표시(위 주석). 호실 시험만 덮어쓴다.
   responses.unitSummary = {
     data: null,
@@ -1593,6 +1602,33 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       ],
       error: null,
     };
+    responses.openclose = {
+      data: [
+        {
+          status: 'ok',
+          district_id: '3120189',
+          district_nm: '역삼역',
+          district_type: '발달상권',
+          latest_quarter: '20262',
+          quarters: [
+            {
+              quarter: '20262',
+              similr_induty_stor_co: 441,
+              stor_co: 378,
+              frc_stor_co: 63,
+              opbiz_stor_co: 5,
+              clsbiz_stor_co: 9,
+              opbiz_rt: 1.13,
+              clsbiz_rt: 2.04,
+            },
+          ],
+          industries: null,
+          other_industries: null,
+          window_quarters: ['20262'],
+        },
+      ],
+      error: null,
+    };
   });
 
   it('배치표가 정한 순서·제목·역할·기본 상태 그대로 그려진다', async () => {
@@ -1613,13 +1649,15 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       '실거래 기록',
       '참고 매매 시세 (추정값)',
       '상권 임대 동향 (부동산원 조사)',
+      '상권 개업·폐업 (서울시 공표)',
     ]);
     expect(cards.map((c) => c.role)).toEqual([
-      '공통', '공통', '창업자', '투자자', '투자자', '투자자',
+      '공통', '공통', '창업자', '투자자', '투자자', '투자자', '창업자',
     ]);
     // 공통 둘 + 역할마다 하나씩 = 넷을 펼치고, 투자자의 나머지 둘(추정값·임대)은 접는다.
     // ⛔ 임대 카드의 defaultOpen 이 실수로 true 가 되는 날 여기서 잡힌다(예산 4장 초과).
-    expect(cards.map((c) => c.open)).toEqual([true, true, true, true, false, false]);
+    // ⛔ 개업·폐업 카드(결정 0033)도 접힌다 — 이 건물이 아니라 상권 전체의 값이다.
+    expect(cards.map((c) => c.open)).toEqual([true, true, true, true, false, false, false]);
   });
 
   it('첫 화면에 펼쳐진 카드가 상한(4장)을 넘지 않는다', async () => {
@@ -1744,6 +1782,8 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       // ⛔ 임대 카드는 첫 화면에서 **접혀 있다** — 그래서 이 한 줄이 접은 채로 읽히는
       //    유일한 내용이다(2026-09-01 감사 전까지 이 줄은 한 번도 검사된 적이 없었다).
       '공실률 · ㎡당 임대료 · 투자수익률 · 2026년 2분기 조사',
+      // 개업·폐업 카드는 상권 이름을 맨 앞에 두고 최신 분기 숫자를 적는다(결정 0033).
+      '역삼역 · 2026년 2분기 개업 5곳(1.13%) · 폐업 9곳(2.04%)',
     ]);
   });
 
@@ -1790,6 +1830,33 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
           vacancy_rate: 10.08,
           rent_per_m2: 27.06,
           yield_rate: 0.82,
+        },
+      ],
+      error: null,
+    };
+    responses.openclose = {
+      data: [
+        {
+          status: 'ok',
+          district_id: '3120189',
+          district_nm: '역삼역',
+          district_type: '발달상권',
+          latest_quarter: '20262',
+          quarters: [
+            {
+              quarter: '20262',
+              similr_induty_stor_co: 441,
+              stor_co: 378,
+              frc_stor_co: 63,
+              opbiz_stor_co: 5,
+              clsbiz_stor_co: 9,
+              opbiz_rt: 1.13,
+              clsbiz_rt: 2.04,
+            },
+          ],
+          industries: null,
+          other_industries: null,
+          window_quarters: ['20262'],
         },
       ],
       error: null,

@@ -14,6 +14,8 @@ import {
   priceGate,
   rentStatOld,
   rentStats,
+  openClose,
+  openCloseNotSeoul,
   dataFreshness,
   scorecard,
   storeHit,
@@ -89,6 +91,9 @@ const NEARBY_PERMITS_PATTERN = '**/rest/v1/rpc/count_nearby_permits*';
 // ⚠️ 기본값은 역시 **함수가 없는 상태**다 — 마이그레이션 적용 전 라이브이 그것이고,
 //    그때 카드가 통째로 조용히 빠지는지가 테스트 AA 의 관심사다.
 const RENT_STATS_PATTERN = '**/rest/v1/rpc/list_rent_stats*';
+// 상권 개업·폐업(결정 0033). ⚠️ 기본값은 **함수가 없는 상태**다(임대 동향과 같은 이유) — 다른
+// 스펙들의 카드 수·화면이 그대로 남는다. 카드를 보는 것은 스펙 AI 뿐이다.
+const OPEN_CLOSE_PATTERN = '**/rest/v1/rpc/list_district_openclose*';
 // 호실 구성표(결정 0032). 요약은 건물을 열 때 · 목록은 층을 펼칠 때 나간다.
 // ⚠️ 기본값은 둘 다 **함수가 없는 상태**다 — 그때 요약도 "자료 없음" 안내도 조용히 빠지는지가
 //    스펙 AH 의 관심사다(빈 배열로 두면 "호실 자료가 없는 건물"이라는 **다른 답**이 되어 안내가 선다).
@@ -198,6 +203,8 @@ async function mockFloorStack(
   } else {
     await mockJson(page, RENT_STATS_PATTERN, rents);
   }
+  // 상권 개업·폐업도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 스펙 AI 만 덮어쓴다.
+  await mockMissingFunction(page, OPEN_CLOSE_PATTERN);
   // 호실 구성표 둘도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 호실을 보는 스펙은
   // 이 뒤에 자기 응답을 한 번 더 등록한다(나중에 등록한 것이 먼저 잡힌다).
   await mockMissingFunction(page, UNIT_SUMMARY_PATTERN);
@@ -1080,6 +1087,7 @@ test.describe('층별 스택뷰 — 종이로 뽑기', () => {
     await mockMissingFunction(page, BASE_PRICE_PATTERN);
     await mockMissingFunction(page, UNIT_SUMMARY_PATTERN);
     await mockMissingFunction(page, FLOOR_UNITS_PATTERN);
+    await mockMissingFunction(page, OPEN_CLOSE_PATTERN);
 
     await page.goto('/');
     await pickGu(page, '서울', '강남구');
@@ -1858,5 +1866,107 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
     await expect(card.locator('.detail')).toBeVisible();
     await expect(card.locator('.units')).toHaveCount(0);
     expect(unitRequests).toHaveLength(0);
+  });
+});
+
+// ── 상권 개업·폐업 (서울시 공표 · 결정 0033 R2) ──────────────────────────────
+// 카드 안쪽 규칙(표본 < 30 · 빠진 분기 빈 칸 · 막대 높이 · 빈 상태 넷)은 단위 시험이 덮는다
+// (`OpenCloseSection.test.tsx`·`openClose.test.ts`). 여기서만 보이는 것은 **층별 화면에 접힌 채
+// 실제로 서는가**, 좁은 폭(412px)에서 추이 칸이 넘치지 않는가, 종이에도 나오는가다.
+
+test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
+  test('AI. 접힌 카드로 서고 펼치면 서울 상권 숫자·발 문구, 대전 건물이면 그 사실 한 줄', async ({
+    page,
+  }) => {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page, [], priceBands(), [floorRow({ floor_no: 2 }), floorRow()], industryMix());
+    // 나중에 등록한 것이 먼저 잡힌다 — mockFloorStack 의 '함수 없음' 위에 덮는다.
+    await mockJson(page, OPEN_CLOSE_PATTERN, openClose());
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+
+    const stack = page.locator('section.stack');
+    const oc = stack.locator('section.oc');
+    await expect(oc).toBeVisible();
+    // 카드가 하나 늘어도 첫 화면 펼침은 여전히 넷이다(로드맵 Wave 2 의 예산).
+    await expect(stack.locator('.card__toggle[aria-expanded="true"]')).toHaveCount(4);
+    await expect(oc.locator('.card__summary')).toHaveText(
+      '코엑스 외 1곳 · 2026년 2분기 개업 5곳(1.13%) · 폐업 9곳(2.04%)',
+    );
+    await expect(oc.locator('.card__body')).toBeHidden();
+
+    await openCard(page, /상권 개업·폐업/);
+    await expect(oc.locator('.oc__name')).toHaveText(['코엑스 · 발달상권', '강남 마이스 관광특구 · 관광특구']);
+    const first = oc.locator('.oc__district').first();
+    await expect(first.locator('.oc__latest .oc__num')).toHaveText([
+      '유사 업종 점포 441곳',
+      '개업 5곳 1.13%',
+      '폐업 9곳 2.04%',
+    ]);
+    // 추이 — 여덟 칸, 옛 분기가 왼쪽. 둘째 상권은 빠진 분기가 빈 칸으로 선다.
+    await expect(first.locator('.oc__col')).toHaveCount(8);
+    await expect(first.locator('.oc__col').first()).toHaveAttribute('data-quarter', '20243');
+    await expect(first.locator('.oc__col').last()).toHaveAttribute('data-quarter', '20262');
+    const second = oc.locator('.oc__district').nth(1);
+    await expect(second.locator('.oc__col--missing')).toHaveCount(6);
+    await expect(second.locator('.oc__col--missing .oc__bar')).toHaveCount(0);
+    // 막대 높이 — 둘째 상권 창 안 최댓값(2.1%)이 100%, 1.5% 는 그 비례.
+    const lastCol = second.locator('.oc__col').last();
+    const heightPct = async (sel: string) =>
+      lastCol.locator(sel).evaluate((el) => {
+        // 바탕 칸의 아래 선(1px)은 빼고 잰다(clientHeight).
+        return (el.getBoundingClientRect().height / el.parentElement!.clientHeight) * 100;
+      });
+    expect(await heightPct('.oc__bar--close')).toBeCloseTo(100, 0);
+    expect(await heightPct('.oc__bar--open')).toBeCloseTo((1.5 / 2.1) * 100, 0);
+    // 업종 표는 접혀 있다.
+    await expect(first.locator('.oc__table')).toBeHidden();
+    await first.locator('.oc__ind-sum').click();
+    await expect(first.locator('.oc__table tbody tr')).toHaveCount(2);
+    await expect(first.locator('.oc__other')).toContainText('그 밖 47업종');
+    // 발 문구 넷.
+    await expect(oc).toContainText(
+      '출처: 서울시 상권분석서비스(점포-상권) · 서울 열린데이터광장 · 공공누리 1유형(출처표시)',
+    );
+    await expect(oc).toContainText('상권 전체 값이며 이 건물의 값이 아닙니다');
+    await expect(oc).toContainText('둘레의 업종 분포');
+    await expect(oc).toContainText('서울시 계산식(개업·폐업 점포 ÷ 유사 업종 점포 × 100)');
+
+    // ⛔ 좁은 폭(412px)에서 여덟 칸 막대가 옆으로 넘치지 않는다 — 페이지도, 추이 칸도.
+    // ⓘ e2e 는 DOM 타입 없이 돈다 — 전역 document 대신 locator 로 잰다.
+    const overflow = {
+      page: await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth),
+      cols: await oc
+        .locator('.oc__cols')
+        .evaluateAll((els) => Math.max(...els.map((c) => c.scrollWidth - c.clientWidth))),
+    };
+    expect(overflow.page).toBeLessThanOrEqual(0);
+    expect(overflow.cols).toBeLessThanOrEqual(0);
+
+    // 종이 — 펼친 카드 본문이 그대로 나오고 막대 색이 안 지워진다.
+    await page.emulateMedia({ media: 'print' });
+    await expect(first.locator('.oc__bar--open').first()).toHaveCSS('print-color-adjust', 'exact');
+    await expect(first.locator('.oc__trend')).toHaveCSS('break-inside', 'avoid');
+    await page.emulateMedia({ media: null });
+
+    // 같은 시험 안에서 대전 건물로 — 카드는 서고 그 사실 한 줄(지역 이름은 pnu 로 고른다).
+    await mockJson(page, OPEN_CLOSE_PATTERN, openCloseNotSeoul());
+    await mockJson(page, SEARCH_PATTERN, [
+      searchHit({ bld_id: 'dj-1', pnu: '3011010700108770000', bld_nm: '대전빌딩', road_addr: '대전 중구 1' }),
+    ]);
+    await search(page, '대전빌딩');
+    await page.getByRole('button', { name: /대전빌딩/ }).click();
+    // ⓘ 층 목록 목업은 그대로라 머리 제목은 앞 건물 이름이다 — 카드 요약이 바뀐 것으로 본다.
+    await expect(oc.locator('.card__summary')).toHaveText('서울 상권만 다루는 자료라 이 건물(대전)에는 없습니다');
+    await openCard(page, /상권 개업·폐업/);
+    await expect(oc.locator('.oc__lead')).toHaveText(
+      '서울시 상권분석서비스는 서울 상권만 다룹니다 — 이 건물(대전)에는 그 자료가 없습니다.',
+    );
+    await expect(oc.locator('.oc__col')).toHaveCount(0);
+    await expect(oc).not.toContainText('코엑스');
   });
 });
