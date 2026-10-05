@@ -172,6 +172,17 @@ describe('그 밖의 작은 규칙', () => {
     expect(noUnitDataText(true)).toBe(neutral);
     expect(noUnitDataText(true, 2)).toContain('같은 땅 다른 동');
   });
+
+  it('⛔ 동 수가 문자열로 와도("3") "같은 땅 다른 동" 절을 붙이지 않는다 — 숫자일 때만', () => {
+    // 서버 답의 모양이 어긋나 동 수가 글자로 오는 경우를 타입을 속여 흉내 낸다.
+    // `'3' > 1` 은 JS 에서 참이라, `typeof` 가드가 빠지면 이 시험이 빨강이 된다.
+    const asString = '3' as unknown as number;
+    expect(noUnitDataText(true, asString)).toBe('이 건물에는 호실 자료가 없습니다.');
+    // 양성 대조 — 같은 값이 숫자로 오면 그 절이 붙는다(가드가 늘 중립만 내는 꼴이 아님을 확인).
+    expect(noUnitDataText(true, 3)).toBe(
+      '이 건물에는 호실 자료가 없습니다 — 같은 땅 다른 동에 붙어 있을 수 있습니다.',
+    );
+  });
 });
 
 describe('orphanUnits — 층 줄에 붙을 자리가 없는 호실', () => {
