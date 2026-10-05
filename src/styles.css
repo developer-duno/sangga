@@ -2687,6 +2687,41 @@ body {
   margin-top: 4px;
 }
 
+/* ── 함께 보면 좋은 사이트 — 형제 사이트 링크 두 개 (2026-10-06) ─────────────── */
+/*
+  `.links` 와 같은 톤의 작은 한 줄 구역 — 머리말 옆에 링크가 가로로 늘어서고, 좁으면 접혀
+  내려간다(`flex-wrap` — 720px 이하에서도 넘침 0). 새 색·새 글꼴을 들이지 않는다.
+  ⛔ 종이에서는 이 구역도 통째로 빠진다(`@media print` 의 `.family`) — 누를 수 없는 링크다.
+*/
+.family {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  margin-top: 12px;
+  padding-top: 7px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.family__h {
+  margin: 0;
+  font-weight: 700;
+}
+
+.family__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.family__a {
+  color: var(--accent);
+}
+
 .fb {
   margin-top: 16px;
 }
@@ -3055,6 +3090,8 @@ body {
       눌러야 뜻이 있는 **문**이다. 못 누르는 종이에서는 죽은 파란 글씨일 뿐이다.
   */
   .links,
+  /* 형제 사이트 링크도 같은 이유로 통째로 뺀다 — 눌러야 뜻이 있는 문이다. */
+  .family,
   .card__caret,
   .floor__caret,
   /* ⛔ 접기 버튼만 뺀다 — 그 **안의 공고 줄들은 아래에서 되살린다**(내용이지 장치가 아니다). */

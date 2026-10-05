@@ -826,6 +826,10 @@ test.describe('화면 아래 — 어디까지 믿을지와 한마디 남기는 �
     await expect(outLink).toHaveAttribute('rel', 'noopener noreferrer');
     // 안내는 **접힌 채로** 시작한다 — 나가는 문 앞을 설명으로 가로막지 않는다.
     await expect(foot.locator('.links__guide-body')).toBeHidden();
+    // 형제 사이트 링크(2026-10-06) — 넘기기 구역과 따로 선 한 줄 구역, 링크는 두 개뿐이다.
+    const family = foot.getByRole('navigation', { name: '함께 보면 좋은 사이트' });
+    await expect(family).toBeVisible();
+    await expect(family.getByRole('link')).toHaveCount(2);
     // "언제 것인가" 표도 같은 자리에 선다 — "어디까지 믿어도 되나"의 나머지 절반이다.
     // ⛔ 여기 뜨는 글자 중 화면이 아는 것은 하나도 없다(자료 이름·기준값·주기 전부 서버 값).
     //    화면에 박아 두면 적재하는 순간부터 그 글자만 거짓말을 한다.
@@ -1009,6 +1013,8 @@ test.describe('층별 스택뷰 — 종이로 뽑기', () => {
     // ⛔ 넘기기 링크 구역도 통째로 빠진다(결정 0014 §5 — "페이지 끝 한 구역이면 인쇄 시
     //    그것만 제외하면 된다"). 종이에서는 아무 데도 못 누르므로 죽은 파란 글씨만 남는다.
     await expect(page.locator('.links')).toBeHidden();
+    // 형제 사이트 링크 구역도 같은 이유로 빠진다(2026-10-06).
+    await expect(page.locator('.family')).toBeHidden();
 
     // ② 이 종이가 무슨 건물이고 언제 것이며 원본이 어디인지.
     const meta = page.locator('.printmeta');
