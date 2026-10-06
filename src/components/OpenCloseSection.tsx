@@ -235,7 +235,7 @@ function DistrictBlock({ row, scaleMax }: { row: DistrictOpenClose; scaleMax: nu
               )}
             </tbody>
           </table>
-          {/* 표 안 '–' 는 두 뜻이다 — 표본이 작아 우리가 비율을 안 적은 칸 · 서울시가 비율을 안 낸 칸(2026-10-06). */}
+          {/* 표 안 '–' 는 두 뜻이다 — 표본이 작아 우리가 비율을 안 적은 칸 · 서울시가 비율을 안 낸 칸. */}
           <p className="oc__note">{`'–' = 점포(프랜차이즈 포함)가 ${OPEN_CLOSE_MIN_SAMPLE}곳이 안 되거나 서울시가 비율을 내지 않은 칸입니다.`}</p>
         </details>
       )}
