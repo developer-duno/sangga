@@ -94,8 +94,10 @@ CANON_STATEMENT_SHA = {
         "8d731a2729e2eb5ea6ca5db2e6f73bc4e38bd51f61ce0ddee00be7a45b3949c4",
     "mv_open_sigungu":
         "681ecf13de19675ab4f977a8ce1c7078b6514b54c55579d08963fa9b83fc8f86",
+    # ⓘ 2026-10-07a(결정 0035 — **별건 결정**으로 분기 고르는 한 줄만 표지 loaded_ym 으로 바꿨다 ·
+    #    사슬은 drop 이 아니라 _next 굽기 → rename 으로 다뤘다). 옛 값 ce57acc4…2df2.
     "mv_coverage_stats":
-        "ce57acc493a75969d784ed4896ad73294d97198256930834d43168e9524b2df2",
+        "2ca018374d205805f045a4ae2e775eecc9927bb13da2a3971723e485eab8906f",
     "v_coverage_stats":
         "161a8aefd7126bac44cd423d73b699ee1bee8c799aef8f8b2f92a70093186f55",
     "api.v_coverage_stats":
@@ -117,6 +119,10 @@ CANON_HEADER = {
 
 NEW_MV_HEADER = (
     r"^create materialized view if not exists %s as\b" % NEW_MV)
+
+# 이 표를 마지막으로 다시 구운 마이그레이션(2026-10-07a · 결정 0035 — `_next` 로 굽고 rename).
+RELEASE_MIGRATION = os.path.join(MIG_DIR, "2026-10-07a_snapshot_release.sql")
+RELEASE_MV_HEADER = r"^create materialized view %s_next as\b" % NEW_MV
 
 # 나가도 되는 칸 — **이것이 전부다**. 땅 한 줄(대표 동·주소·층 요약)과, 그 땅에서
 # 무엇이 몇 곳 걸렸는지, 그리고 전체 규모·너무 넓은지·언제 기준 자료인지.
@@ -499,7 +505,13 @@ class TestTheNewTableIsAFreeStandingSibling:
           조인 조건으로 바꾸면 에러 없이 느려지기만 한다(가장 늦게 발견되는 회귀).
         """
         stmt = flat(sql_block(read(path), NEW_MV_HEADER))
-        assert "select max(u.snapshot_ym) as ym from unit_business u" in stmt
+        # ⓘ 적용된 09-09c 는 옛 max() 판이고, 정본은 2026-10-07a(결정 0035)부터 표지 loaded_ym 이다
+        #    — 반쯤 찬 새 분기를 굽지 않게(published 가 아니다: 구운 뒤 post_load 가 올린다).
+        if path == SCHEMA:
+            assert "select r.loaded_ym as ym from snapshot_release r" in stmt
+            assert "max(u.snapshot_ym)" not in stmt
+        else:
+            assert "select max(u.snapshot_ym) as ym from unit_business u" in stmt
         assert "and ub.snapshot_ym = (select l.ym from latest l)" in stmt
         assert "and ub.biz_name is not null" in stmt
 
@@ -787,9 +799,17 @@ class TestSchemaMirrorsTheMigration:
             read(SCHEMA), schema=schema)
 
     def test_the_new_table_body_letter_for_letter(self):
-        """⛔ 새 표의 본문이 갈리면 **새 환경과 라이브가 다른 말을 하게 된다.**"""
-        assert (sql_block(read(MIGRATION), NEW_MV_HEADER)
-                == sql_block(read(SCHEMA), NEW_MV_HEADER))
+        """⛔ 새 표의 본문이 갈리면 **새 환경과 라이브가 다른 말을 하게 된다.**
+
+        ⓘ 라이브의 진실은 그 표를 **마지막으로 다시 구운** 파일이다 — 2026-10-07a(결정 0035)가
+           `<이름>_next` 로 굽고 정본 이름으로 rename 했다. 머리 한 줄의 이름만 맞춰 대조한다.
+        """
+        latest = sql_block(read(RELEASE_MIGRATION), RELEASE_MV_HEADER)
+        first, rest = latest.split("\n", 1)
+        first = first.replace(
+            "create materialized view %s_next as" % NEW_MV,
+            "create materialized view if not exists %s as" % NEW_MV)
+        assert first + "\n" + rest == sql_block(read(SCHEMA), NEW_MV_HEADER)
 
 
 class TestPostLoadKnowsIt:

@@ -52,6 +52,13 @@
     남는 필지가 있으면 [낡음](종료 코드 1 · 2026-10-03 부터 행수가 아니라 양쪽 차집합으로 잰다).
   · 별관 쫓겨남 — 별관(TOAST)을 쓰는 public·api 표에서 256바이트 미만 값이 별관에 있으면(큰 옆 칸
     탓에 쫓겨난 작은 값 — 그 칸을 훑는 쿼리가 느려진다) [주의](종료 코드 1 아님 · 2026-10-05 보탬).
+  · 분기 표지(snapshot_release · 결정 0035 · 2026-10-07 보탬) — 표가 비었거나 보여 주는 분기가
+    점포 표에 0행이면 [사고], 다 들어온 분기 ≠ 보여 주는 분기면 [낡음](둘 다 종료 코드 1) ·
+    점포 표에 표지보다 새 분기가 있거나(적재 중) 행 수가 표지 기록과 다르면 [주의](종료 코드 무관).
+
+⭐ 새 상권 분기는 이 스크립트가 **표지를 올려야** 화면에 보인다(결정 0035) — 갱신 흐름은
+   요약표를 다 들어온 분기(loaded_ym)로 굽고 → 낡음 판정 6종을 통과하면 → 보여 주는 분기
+   (published_ym)를 한 줄 UPDATE 로 올리고("표지 올림 X → Y") → 다시 잰다.
 """
 
 import hashlib
@@ -325,10 +332,14 @@ def is_industry_mix_stale(mix_ym, latest_ym):
 
 
 def report_industry_mix_freshness():
-    """업종 분포 표의 분기를 점포 자료의 최신 분기와 대조한다."""
+    """업종 분포 표의 분기를 표지 loaded_ym(다 들어온 분기 · 결정 0035)과 대조한다.
+
+    ⓘ 2026-10-07a 전에는 `max(snapshot_ym) from unit_business` 와 견줬다 — 그러면 적재 도중
+       (반쯤 찬 새 분기가 max 인 동안) 이 점검이 '낡음'이라 말했고, 그 말대로 굽으면 반쪽을 구웠다.
+    """
     raw = query_one(
         "select coalesce((select max(snapshot_ym) from mv_district_industry_mix), '')"
-        " || '|' || coalesce((select max(snapshot_ym) from unit_business), '');"
+        " || '|' || coalesce((select loaded_ym from snapshot_release), '');"
     )
     # partition 을 쓴다 — split 은 값에 '|' 가 섞이면 "unpack 3 into 2" 로 죽는다
     # (형제 report_coverage_freshness 와 같은 방식으로 맞춘다).
@@ -339,12 +350,12 @@ def report_industry_mix_freshness():
         if not mix_ym:
             print("[낡음] 업종 분포 표가 비어 있습니다 — 갱신이 필요합니다.")
         else:
-            print("[낡음] 업종 분포 표 {} / 점포 자료 최신 {} — 갱신이 필요합니다."
+            print("[낡음] 업종 분포 표 {} / 다 들어온 분기(표지) {} — 갱신이 필요합니다."
                   .format(mix_ym, latest_ym))
         print("       이대로 두면 층별 화면의 업종 분포만 옛 분기를 말합니다(에러는 안 납니다).")
         print("       python scripts/post_load.py 를 실행하면 최신 분기로 다시 굽습니다.")
     else:
-        print("[신선] 업종 분포 표 {} = 점포 자료 최신 분기.".format(mix_ym or "(자료 없음)"))
+        print("[신선] 업종 분포 표 {} = 다 들어온 분기(표지).".format(mix_ym or "(자료 없음)"))
     return mix_ym, latest_ym, stale
 
 
@@ -362,10 +373,10 @@ def report_industry_mix_freshness():
 
 
 def build_coverage_freshness_sql():
-    """표에 굳은 분기와 원본의 최신 분기를 한 줄로 뽑는다."""
+    """표에 굳은 분기와 표지 loaded_ym(다 들어온 분기 · 결정 0035)을 한 줄로 뽑는다."""
     return (
         "select coalesce((select max(snapshot_ym) from mv_coverage_stats), '') || '|' || "
-        "coalesce((select max(snapshot_ym) from unit_business), '');"
+        "coalesce((select loaded_ym from snapshot_release), '');"
     )
 
 
@@ -393,13 +404,135 @@ def report_coverage_freshness():
         if not mv_ym:
             print("[낡음] 각주 집계 표가 비어 있습니다 — 갱신이 필요합니다.")
         else:
-            print("[낡음] 각주 집계 분기 {} / 점포 원본 최신 분기 {} — 다릅니다."
+            print("[낡음] 각주 집계 분기 {} / 다 들어온 분기(표지) {} — 다릅니다."
                   .format(mv_ym, live_ym or "(없음)"))
         print("       이대로 두면 화면 각주가 옛 분기의 결측률을 계속 말합니다(에러는 안 납니다).")
         print("       python scripts/post_load.py 를 실행하면 오늘 자료 기준으로 다시 잡힙니다.")
     else:
-        print("[신선] 각주 집계 분기 {} = 점포 원본 최신 분기.".format(mv_ym))
+        print("[신선] 각주 집계 분기 {} = 다 들어온 분기(표지).".format(mv_ym))
     return mv_ym, live_ym, stale
+
+
+# ── 분기 표지 snapshot_release (2026-10-07a · 결정 0035 — 굽고, 확인하고, 올린다) ────
+#
+# 화면은 점포 분기를 `max(snapshot_ym)` 이 아니라 표지 한 줄에서 읽는다:
+#   loaded_ym    = 다 들어온 분기(적재기가 전국 적재 + 교차검증 뒤 RPC 로 적는다) — 요약표가 이 칸으로 굽는다
+#   published_ym = 화면이 보는 분기 — **이 스크립트가** 요약표를 굽고 낡음 판정을 다 통과한 뒤 올린다
+# 그래서 새 분기는 적재 2시간 동안 화면에 안 새고, 이 UPDATE 한 줄에 모든 카드가 한순간에 바뀐다.
+# ⛔ 표지가 0줄이면 화면 가게 칸이 **조용히** 빈다(하위질의가 null) — [사고].
+# ⛔ 올리는 일은 갱신 흐름(`--check` 없이)에서만 한다. `--check` 는 DB 쓰기 0.
+
+SNAPSHOT_RELEASE_SQL = (
+    "select coalesce((select r.loaded_ym from snapshot_release r), '') || '|' || "
+    "coalesce((select r.published_ym from snapshot_release r), '') || '|' || "
+    "coalesce((select r.loaded_rows::text from snapshot_release r), '') || '|' || "
+    "coalesce((select max(snapshot_ym) from unit_business), '') || '|' || "
+    "(select count(*) from unit_business u"
+    " where u.snapshot_ym = (select r.published_ym from snapshot_release r))::text || '|' || "
+    "(select count(*) from unit_business u"
+    " where u.snapshot_ym = (select r.loaded_ym from snapshot_release r))::text;"
+)
+
+PUBLISH_SNAPSHOT_SQL = (
+    "update snapshot_release set published_ym = loaded_ym, published_at = now()"
+    " where id = 1 and loaded_ym > published_ym;"
+)
+
+
+def _int_or_none(v):
+    v = str(v if v is not None else "").strip()
+    return int(v) if v.lstrip("-").isdigit() else None
+
+
+def judge_snapshot_release(loaded, published, loaded_rows, max_ub, published_cnt, loaded_cnt):
+    """표지 상태를 판정해 [(수준, 말)…] 을 돌려준다 (순수 함수 — 시험이 여기만 보면 된다).
+
+    수준: "사고"(--check exit 1 · 화면 가게 칸이 빈 상태) · "낡음"(exit 1 · 구웠는데 안 올림) ·
+          "주의"(종료 코드 무관). 문제가 없으면 빈 목록.
+    """
+    loaded = str(loaded or "").strip()
+    published = str(published or "").strip()
+    max_ub = str(max_ub or "").strip()
+    published_cnt = _int_or_none(published_cnt)
+    loaded_cnt = _int_or_none(loaded_cnt)
+    rows = _int_or_none(loaded_rows)
+    if not loaded and not published:
+        return [("사고", "표지(snapshot_release)가 비었습니다 — 화면 가게 칸·각주·업종 카드가 통째로 빈 상태입니다. "
+                       "python scripts/publish_snapshot.py --ym <분기> 로 채운 뒤 python scripts/post_load.py")]
+    out = []
+    if not published_cnt:
+        out.append(("사고", "보여 주는 분기 {} 의 점포 행이 0 입니다 — 화면 가게 칸이 통째로 빈 상태입니다. "
+                           "python scripts/publish_snapshot.py --show 로 확인하세요".format(published or "(없음)")))
+    if loaded != published:
+        out.append(("낡음", "다 들어온 분기 {} ≠ 보여 주는 분기 {} — 요약표를 구웠는데 표지를 안 올렸거나 "
+                           "post_load 를 안 돌렸습니다. python scripts/post_load.py 를 돌리면 올라갑니다"
+                    .format(loaded or "(없음)", published or "(없음)")))
+    if max_ub and loaded and max_ub > loaded:
+        out.append(("주의", "점포 표에 표지보다 새 분기 {} 가 있습니다(다 들어온 분기 {}) — 적재 중이거나 중간에 "
+                           "멈췄습니다. 전국 적재가 끝나면 적재기가 표지를 올립니다".format(max_ub, loaded)))
+    if rows != loaded_cnt:
+        out.append(("주의", "표지를 적을 때 센 {} 분기 행 수 {} ≠ 지금 {} — 행이 더 들어왔거나 덜 들어왔습니다"
+                    .format(loaded or "(없음)", "(기록 없음)" if rows is None else rows,
+                            "(없음)" if loaded_cnt is None else loaded_cnt)))
+    return out
+
+
+def read_snapshot_release():
+    """표지를 읽어 판정 함수의 인자 여섯 개를 dict 로. 표가 없거나 못 읽으면 예외."""
+    raw = query_one(SNAPSHOT_RELEASE_SQL)
+    parts = (raw.splitlines()[-1] if raw else "").split("|")
+    if len(parts) != 6:
+        raise ValueError("표지 응답 모양이 다릅니다: {!r}".format(raw[:200]))
+    keys = ("loaded", "published", "loaded_rows", "max_ub", "published_cnt", "loaded_cnt")
+    return dict(zip(keys, (p.strip() for p in parts)))
+
+
+def report_snapshot_release():
+    """표지를 재서 찍고 (사고 여부, 낡음 여부) 를 돌려준다. 못 읽으면 [사고]."""
+    try:
+        st = read_snapshot_release()
+    except Exception as exc:  # noqa: BLE001 — 표가 없거나(마이그레이션 전) 접속 실패
+        print("[사고] 분기 표지(snapshot_release)를 읽지 못했습니다 — {}".format(
+            str(exc).splitlines()[0][:200] if str(exc) else type(exc).__name__))
+        print("       마이그레이션 2026-10-07a 가 적용됐는지 보세요(python scripts/publish_snapshot.py --show).")
+        return True, False
+    found = judge_snapshot_release(**st)
+    for level, msg in found:
+        print("[{}] {}".format(level, msg))
+    if not found:
+        print("[신선] 분기 표지 — 다 들어온 분기 = 보여 주는 분기 = {} ({}행).".format(
+            st["published"], st["published_cnt"]))
+    fatal = any(level == "사고" for level, _ in found)
+    stale = any(level == "낡음" for level, _ in found)
+    return fatal, stale
+
+
+def should_publish(loaded, published):
+    """표지를 올릴 때인가 — 두 칸이 다 YYYYMM 이고 다 들어온 분기가 보여 주는 분기보다 새것."""
+    loaded = str(loaded or "").strip()
+    published = str(published or "").strip()
+    ok = re.fullmatch(r"\d{6}", loaded) and re.fullmatch(r"\d{6}", published)
+    return bool(ok) and loaded > published
+
+
+def publish_snapshot_release_if_ready():
+    """갱신 흐름 끝(요약표 굽기·낡음 판정 6종 통과 뒤): 올릴 때면 표지를 올리고 다시 잰다.
+
+    (사고 여부, 낡음 여부) 를 돌려준다 — main 이 둘 중 하나면 1 을 돌려준다.
+    """
+    try:
+        st = read_snapshot_release()
+    except Exception:  # noqa: BLE001 — report_snapshot_release 가 같은 실패를 [사고]로 찍는다
+        return report_snapshot_release()
+    if should_publish(st["loaded"], st["published"]):
+        rc = dbx.run_sql(PUBLISH_SNAPSHOT_SQL, quiet=True)
+        if rc != 0:
+            print("[실패] 표지를 올리지 못했습니다 — 화면은 그대로 {} 입니다.".format(st["published"]))
+            return True, False
+        print("표지 올림 {} → {} — 화면이 이제 {} 분기를 보여 줍니다.".format(
+            st["published"], st["loaded"], st["loaded"]))
+    # 했다고 믿지 않고 다시 잰다.
+    return report_snapshot_release()
 
 
 # ── 참고 시세 이웃 요약표 신선도 (2026-09-27 P7 — 사장님 결재) ─────────────────
@@ -1558,8 +1691,12 @@ def main(argv=None):
         report_toast_evictions()
         bad_index = report_canonical_indexes()
         drifted = report_function_drift()
+        # 분기 표지(2026-10-07a · 결정 0035) — 비었거나 보여 주는 분기가 0행이면 [사고],
+        # 구웠는데 안 올렸으면 [낡음] → 둘 다 exit 1. [주의] 둘은 종료 코드 무관.
+        rel_fatal, rel_stale = report_snapshot_release()
         return 1 if (stale or map_stale or tx_stale or cov_stale or mix_stale or geog_stale
-                     or exposed or writable or bad_index or drifted) else 0
+                     or exposed or writable or bad_index or drifted
+                     or rel_fatal or rel_stale) else 0
 
     print("통계·가시성 지도를 갱신합니다 (VACUUM ANALYZE {}개 표)…".format(len(ANALYZE_TABLES)))
     rc = dbx.run_sql("set statement_timeout = '600s';\n" + build_analyze_sql(), quiet=True)
@@ -1588,6 +1725,11 @@ def main(argv=None):
     # 참고 시세 이웃 요약표도 REFRESH_MVS 에 있어 방금 다시 구웠다 — 다시 잰다(2026-10-03).
     _, _, geog_stale = report_tx_geog_freshness()
     if stale or map_stale or tx_stale or cov_stale or mix_stale or geog_stale:
+        return 1
+    # 요약표를 다 들어온 분기로 굽고 판정 6종을 다 통과했다 — 이제 화면 기준 분기(표지)를 올린다
+    # (결정 0035). 다 들어온 분기가 보여 주는 분기보다 새것일 때만 UPDATE 한 줄이 돈다.
+    rel_fatal, rel_stale = publish_snapshot_release_if_ready()
+    if rel_fatal or rel_stale:
         return 1
     # 권한·옛 문·색인·별관은 --check 에서만 돈다 — 성공했을 때만 이어서 돌리라고 알린다(2026-10-06).
     print("  ⓘ 권한·옛 문 닫힘·색인·함수 일치·느려짐·별관 점검은 여기서 안 돕니다 — 이어서 python scripts/post_load.py --check")

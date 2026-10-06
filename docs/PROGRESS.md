@@ -2260,3 +2260,25 @@ pytest **4,457 passed**(본 폴더) · vitest **960 passed** · tsc 0 · oxlint 
 
 - 🔴 다음 세션: '한 번에 바꾸기' 설계(위 고칠 자리 9곳 분류 → 플랜 → 👤 승인 → 구현 → 검사 Opus) — 11/2 전.
 - 상권 분기 적재와 서울 개폐업 20263 적재가 11/2 전후 같은 주에 몰린다 — 같은 날 둘을 넣지 않는다(디스크·화면 확인을 하나씩).
+
+## 2026-10-07 (1) — 결정 0035 새 상권 분기는 '다 넣은 뒤 한 번에' · 분기 표지 `snapshot_release`
+
+**왜**: 「2026-10-06 (8)」 정정 줄·「(9)」 — 화면이 `max(snapshot_ym) from unit_business` 로 분기를 골라, 한 트랜잭션이 아닌 분기 적재기(약 2시간 · 1,000행씩) 가 도는 동안 손님이 반쯤 찬 새 분기를 봤다. 적재가 중간에 죽으면 그 반쪽이 남았다. 👤 결정 10-06 저녁(표지 두 칸 · post_load 가 자동으로 올림 · 라이브 적용 뒤 예행연습).
+
+**한 것**:
+1. 마이그레이션 `supabase/migrations/2026-10-07a_snapshot_release.sql` + 정본 `supabase/schema.sql` — 표 `snapshot_release`(한 줄 · RLS · 정책 0 · seed 202606/202606/2,772,484) · RPC `api.mark_snapshot_loaded`(service_role 전용 · 공개 호출 허용 28 그대로) · 실시간 셋 → published · 요약표 셋 → loaded(**`_next` 로 먼저 굽고 → 옛 표 drop → rename** · 색인 이름도 rename · `v_coverage_stats` 는 drop 하지 않고 새 표로 다시 묶음) · `list_industry_*` 2순위. 느린 굽기를 앞에, 화면 객체를 잠그는 짧은 문장을 뒤에 둔다(한 트랜잭션의 잠금은 commit 까지) · `lock_timeout 2s`·`statement_timeout 900s` 를 begin 앞에.
+2. `scripts/post_load.py` — 업종·각주 낡음 판정의 기준을 표지 loaded_ym 으로 · 본 실행은 판정 6종 통과 뒤 loaded > published 이면 표지를 올리고("표지 올림 X → Y") 다시 잰다 · `--check` 에 표지 점검([사고]·[낡음] = exit 1 · [주의] 둘).
+3. `scripts/collectors/load_sangkwon_snapshot.py` — 전국 적재 + 교차검증 일치 뒤에만 RPC(실패면 안내 + exit 1 · 넣은 행은 그대로) · 시도·시군구 모드는 표지를 안 적는다는 한 줄.
+4. 새 `scripts/publish_snapshot.py`(`--show` · `--ym`) — 되돌리기·확인 전용.
+5. 감시 이슈 본문(`check_new_sangkwon_quarter.py`) — '적재 금지' 경고를 표지 설명으로 · post_load 줄에 "요약표 굽기 → 표지 올림".
+6. 시험 — 새 `tests/test_snapshot_release_migration.py`(코드에 `max(… snapshot_ym) from unit_business` 0건 가드 + 양성 대조 · 요약표 loaded/실시간 published · 함수 넷·뷰·요약표 셋이 정본과 글자 그대로 · 잠금 순서) · `test_schema_migration_sync` 가 물질화뷰 rename 을 되짚는다(넓힘) · `test_api_schema_migration` 에 적재기 전용 api 함수 목록 · `test_publish_snapshot.py` · post_load·적재기·감시 시험.
+
+### 회귀·검증
+
+작업반(Opus) 워크트리 — 수치는 PR 본문(구현 보고)에 · 변이 13건 전부 빨강 → 복원 바이트 일치 · ruff 초록. 라이브는 아직 그대로다(마이그레이션 미적용).
+
+### 남은 것
+
+- 머지 뒤 한가한 시간에 라이브 적용(`python scripts/dbx.py -f supabase/migrations/2026-10-07a_snapshot_release.sql` — 가게 이름 표 굽기 약 2분 · 옛 표 바꿔 끼우는 순간만 잠금) → 머리말 「적용 뒤 확인」 전부(dbx · anon 요청 다섯 · 넓은 화면·412px 눈 확인) → `post_load.py --check` 0.
+- 예행연습(결정 4 · 👤 결재됨): `publish_snapshot.py --show` → `--ym 202603` → `post_load.py` → 화면이 전부 202603 → `--ym 202606` → `post_load.py` → 전부 202606 → `--check` 0. 결과를 이 절에.
+- 11/2 첫 실전 분기 적재는 감시 이슈 본문 순서대로(디스크 12GB 확장이 먼저 · 개폐업 20263 과 같은 날 넣지 않는다).

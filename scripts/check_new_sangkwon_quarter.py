@@ -106,10 +106,10 @@ def build_issue_body(new_quarters, latest_known=LATEST_KNOWN_QUARTER):
         "",
         "## 할 일 (내 PC에서)",
         "",
-        "⛔ 적재 전에 확인 — 새 분기를 '다 넣은 뒤 한 번에' 보이게 하는 변경"
-        "(docs/PROGRESS.md 「2026-10-06 (8)」 정정 줄)이 main 에 들어왔는지."
-        " 아직이면 적재하지 말 것: 지금 화면은 가장 새 분기를 바로 읽어, 넣는 약"
-        " 2시간 동안 건물 대부분의 가게 칸이 비어 보입니다.",
+        "ⓘ 결정 0035: 적재기가 끝에 '다 들어온 분기' 표지를 적고, `post_load.py` 가 요약표를"
+        " 구운 뒤 '보여 주는 분기'를 올린다 — 그 전까지 화면 변화 0.",
+        "(넣는 약 2시간 동안·적재가 중간에 멈춰도 손님은 지금 분기를 그대로 봅니다 ·"
+        " 표지 확인 = `python scripts/publish_snapshot.py --show`.)",
         "",
         "```powershell",
         r"cd D:\sangga",
@@ -121,7 +121,7 @@ def build_issue_body(new_quarters, latest_known=LATEST_KNOWN_QUARTER):
         " data/raw/sangkwon_{} --sigungu-code all --dry-run".format(folder_ym),
         "python scripts/collectors/load_sangkwon_snapshot.py --dir"
         " data/raw/sangkwon_{} --sigungu-code all".format(folder_ym),
-        "python scripts/post_load.py",
+        "python scripts/post_load.py                   # 요약표 굽기 → 표지 올림(여기서 화면이 한순간에 바뀐다)",
         "python scripts/post_load.py --check   # 권한(노출)·색인·별관 점검 — 위 줄에서는 안 돈다",
         "python scripts/backup_raw.py                  # 외장 SSD(F:) 연결 필요",
         "python scripts/backup_raw.py --verify",

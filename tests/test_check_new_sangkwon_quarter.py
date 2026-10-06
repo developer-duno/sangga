@@ -133,17 +133,33 @@ def test_issue_body_warns_irreversible():
     assert "다시 받을 수 없" in body
 
 
-def test_issue_body_warns_before_loading_without_the_design():
-    """'다 넣은 뒤 한 번에' 설계가 main 에 들어오기 전엔 적재하지 말라는 경고가
+def test_issue_body_explains_the_release_flag_before_the_commands():
+    """결정 0035('다 넣은 뒤 한 번에')가 들어왔으니 '적재 금지' 경고 대신 표지 설명이
 
     명령 블록보다 **앞**에 와야 한다 — 뒤에 있으면 이미 명령을 실행한 뒤에야 읽는다.
+    ⓘ 2026-10-06 (8)~10-07 사이의 '아직이면 적재하지 말 것' 문단은 이 결정으로 풀렸다.
     """
     body = chk.build_issue_body([("20260930", "자료_20260930")])
-    warn_idx = body.find("2026-10-06 (8)")
+    note_idx = body.find("결정 0035")
     cmd_idx = body.find("```powershell")
-    assert warn_idx != -1, "경고 단락에 PROGRESS 절 가리키는 문자열이 없다"
+    assert note_idx != -1, "표지 설명(결정 0035)이 없다"
     assert cmd_idx != -1
-    assert warn_idx < cmd_idx, "경고가 명령 블록보다 뒤에 있다"
+    assert note_idx < cmd_idx, "표지 설명이 명령 블록보다 뒤에 있다"
+    assert "아직이면 적재하지 말 것" not in body, "옛 '적재 금지' 경고가 남았다"
+    assert "그 전까지 화면 변화 0" in body
+    assert "publish_snapshot.py --show" in body
+
+
+def test_issue_body_says_post_load_publishes_the_flag():
+    """post_load 줄에 '요약표 굽기 → 표지 올림' — 화면이 바뀌는 자리가 어디인지 명령 옆에 적는다."""
+    body = chk.build_issue_body([("20260930", "자료_20260930")])
+    lines = [ln for ln in body.splitlines() if ln.startswith("python scripts/post_load.py")]
+    assert any("요약표 굽기 → 표지 올림" in ln for ln in lines), lines
+    # 순서: 적재(전국) → post_load → --check
+    load_idx = body.find("--sigungu-code all\n")
+    post_idx = body.find("요약표 굽기 → 표지 올림")
+    check_idx = body.find("post_load.py --check")
+    assert -1 < load_idx < post_idx < check_idx
 
 
 def test_issue_body_uses_sigungu_code_all_and_dir():

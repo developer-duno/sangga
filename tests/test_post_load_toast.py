@@ -311,6 +311,8 @@ QUIET = (
     ("report_slow_functions", lambda: []),
     ("report_canonical_indexes", lambda: []),
     ("report_function_drift", lambda: []),
+    ("report_snapshot_release", lambda: (False, False)),
+    ("publish_snapshot_release_if_ready", lambda: (False, False)),
 )
 
 

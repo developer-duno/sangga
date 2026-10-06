@@ -100,6 +100,9 @@ def p7_alarms_quiet(monkeypatch):
     monkeypatch.setattr(post_load, "report_tx_geog_freshness", lambda: ("1", "1", False))
     # 별관 경보(2026-10-05)도 같은 까닭으로 뺀다 — 판정은 tests/test_post_load_toast.py.
     monkeypatch.setattr(post_load, "report_toast_evictions", lambda: [])
+    # 분기 표지(2026-10-07a · 결정 0035)도 뺀다 — 판정·배선은 아래 TestSnapshotRelease 가 본다.
+    monkeypatch.setattr(post_load, "report_snapshot_release", lambda: (False, False))
+    monkeypatch.setattr(post_load, "publish_snapshot_release_if_ready", lambda: (False, False))
 
 
 # ── 1. ANALYZE 대상 ─────────────────────────────────────────────────────────
@@ -442,7 +445,9 @@ class TestCoverageStale:
         """엉뚱한 표를 물으면 판정이 통째로 헛돈다."""
         sql = post_load.build_coverage_freshness_sql()
         assert "mv_coverage_stats" in sql
-        assert "unit_business" in sql
+        # 2026-10-07a(결정 0035)부터 원본 max() 가 아니라 표지의 다 들어온 분기와 견준다.
+        assert "loaded_ym from snapshot_release" in sql
+        assert "from unit_business" not in sql
 
     def test_check_returns_1_when_coverage_is_stale(
         self, monkeypatch, map_is_fresh, tx_window_is_fresh, industry_mix_is_fresh,
@@ -1264,3 +1269,198 @@ class TestMapFreshness:
                             lambda *a, **k: None)
         assert post_load.main([]) == 1
         assert "build_district_geojson.py" in capsys.readouterr().out
+
+
+# ── 분기 표지 snapshot_release (2026-10-07a · 결정 0035 — 굽고, 확인하고, 올린다) ──────
+#
+# 위 autouse(p7_alarms_quiet)가 report_snapshot_release · publish_snapshot_release_if_ready 를
+# 늘 빼 두므로, 여기서는 **진짜** 함수를 import 때 잡아 둔 것으로 되돌려 본다.
+_REAL_REPORT_RELEASE = post_load.report_snapshot_release
+_REAL_PUBLISH_RELEASE = post_load.publish_snapshot_release_if_ready
+
+FRESH_RELEASE = "202606|202606|2772484|202606|2772484|2772484"
+
+
+def _levels(found):
+    return [level for level, _ in found]
+
+
+class TestJudgeSnapshotRelease:
+    def test_all_good_is_empty(self):
+        assert post_load.judge_snapshot_release(
+            "202606", "202606", "2772484", "202606", "2772484", "2772484") == []
+
+    def test_empty_table_is_an_incident_and_nothing_else(self):
+        """⛔ 0줄이면 화면 가게 칸이 **조용히** 빈다 — 다른 판정은 덧붙이지 않는다."""
+        found = post_load.judge_snapshot_release("", "", "", "202606", "0", "0")
+        assert _levels(found) == ["사고"]
+        assert "publish_snapshot.py --ym" in found[0][1]
+
+    def test_published_quarter_with_zero_rows_is_an_incident(self):
+        found = post_load.judge_snapshot_release(
+            "202603", "202603", "616096", "202606", "0", "0")
+        assert "사고" in _levels(found)
+
+    def test_loaded_ahead_of_published_is_stale(self):
+        found = post_load.judge_snapshot_release(
+            "202609", "202606", "2800000", "202609", "2772484", "2800000")
+        assert _levels(found) == ["낡음"]
+        assert "python scripts/post_load.py" in found[0][1]
+
+    def test_store_table_ahead_of_loaded_is_only_a_caution(self):
+        """적재 중(반쯤 찬 새 분기) — 화면엔 안 샌다. 종료 코드를 바꾸지 않는 [주의]."""
+        found = post_load.judge_snapshot_release(
+            "202606", "202606", "2772484", "202609", "2772484", "2772484")
+        assert _levels(found) == ["주의"]
+        assert "202609" in found[0][1]
+
+    def test_row_count_drift_is_only_a_caution(self):
+        found = post_load.judge_snapshot_release(
+            "202606", "202606", "2772484", "202606", "2772490", "2772490")
+        assert _levels(found) == ["주의"]
+        found = post_load.judge_snapshot_release(
+            "202606", "202606", "", "202606", "2772484", "2772484")
+        assert _levels(found) == ["주의"], "행 수 기록이 없으면 대조할 수 없다고 알린다"
+
+    def test_whitespace_from_psql_is_trimmed(self):
+        assert post_load.judge_snapshot_release(
+            " 202606 ", "202606 ", " 2772484", "202606", " 2772484 ", "2772484") == []
+
+
+class TestShouldPublish:
+    @pytest.mark.parametrize("loaded,published,want", [
+        ("202609", "202606", True),
+        ("202606", "202606", False),     # 같은 분기 — 올릴 것 없음
+        ("202603", "202606", False),     # 되돌린 뒤(publish_snapshot --ym) — 끌어내리지 않는다
+        ("", "202606", False),
+        ("2026Q3", "202606", False),     # 모양이 다르면 올리지 않는다
+        ("202609", "", False),
+    ])
+    def test_cases(self, loaded, published, want):
+        assert post_load.should_publish(loaded, published) is want
+
+
+class TestSnapshotReleaseWiring:
+    def test_sql_reads_the_flag_and_counts_both_quarters(self):
+        sql = post_load.SNAPSHOT_RELEASE_SQL
+        for piece in ("r.loaded_ym from snapshot_release r", "r.published_ym from snapshot_release r",
+                      "r.loaded_rows::text", "max(snapshot_ym) from unit_business"):
+            assert piece in sql, piece
+        assert sql.count("select count(*) from unit_business u") == 2
+        assert post_load.PUBLISH_SNAPSHOT_SQL.startswith(
+            "update snapshot_release set published_ym = loaded_ym, published_at = now()")
+        assert "loaded_ym > published_ym" in post_load.PUBLISH_SNAPSHOT_SQL
+
+    def test_industry_mix_check_compares_against_loaded_ym(self, monkeypatch):
+        asked = []
+        monkeypatch.setattr(post_load, "query_one", lambda sql: asked.append(sql) or "202606|202606")
+        post_load.report_industry_mix_freshness()
+        assert "loaded_ym from snapshot_release" in asked[0]
+        assert "from unit_business" not in asked[0]
+
+    def test_report_fresh(self, monkeypatch, capsys):
+        monkeypatch.setattr(post_load, "query_one", lambda sql: FRESH_RELEASE)
+        assert _REAL_REPORT_RELEASE() == (False, False)
+        assert "[신선] 분기 표지" in capsys.readouterr().out
+
+    def test_report_unreadable_is_an_incident(self, monkeypatch, capsys):
+        def boom(sql):
+            raise RuntimeError('relation "snapshot_release" does not exist')
+        monkeypatch.setattr(post_load, "query_one", boom)
+        assert _REAL_REPORT_RELEASE() == (True, False)
+        assert "[사고]" in capsys.readouterr().out
+
+    def test_report_odd_shape_is_an_incident(self, monkeypatch):
+        monkeypatch.setattr(post_load, "query_one", lambda sql: "202606|202606")
+        assert _REAL_REPORT_RELEASE() == (True, False)
+
+    @pytest.mark.parametrize("result", [(True, False), (False, True)])
+    def test_check_exits_1_on_incident_or_stale(
+        self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh,
+        industry_mix_is_fresh, no_anon_writes, result
+    ):
+        monkeypatch.setattr(post_load, "query_one",
+                            lambda sql: "200|200" if "count(" in sql else "")
+        monkeypatch.setattr(post_load, "report_snapshot_release", lambda: result)
+        assert post_load.main(["--check"]) == 1
+        monkeypatch.setattr(post_load, "report_snapshot_release", lambda: (False, False))
+        assert post_load.main(["--check"]) == 0
+
+    def test_check_never_publishes(
+        self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh,
+        industry_mix_is_fresh, no_anon_writes
+    ):
+        """--check 는 DB 쓰기 0 — 표지를 올리는 길을 아예 안 탄다."""
+        monkeypatch.setattr(post_load, "query_one",
+                            lambda sql: "200|200" if "count(" in sql else "")
+        monkeypatch.setattr(post_load, "publish_snapshot_release_if_ready",
+                            lambda: pytest.fail("--check 가 표지를 올리려 했습니다"))
+        post_load.main(["--check"])
+
+
+class TestPublishSnapshotRelease:
+    def _run(self, monkeypatch, answers, rc=0):
+        answers = list(answers)
+        monkeypatch.setattr(post_load, "query_one", lambda sql: answers.pop(0))
+        ran = []
+        monkeypatch.setattr(post_load.dbx, "run_sql", lambda sql, **k: ran.append(sql) or rc)
+        # 다시 재는 쪽도 진짜로(autouse 가 빼 둔 것을 되돌린다).
+        monkeypatch.setattr(post_load, "report_snapshot_release", _REAL_REPORT_RELEASE)
+        return _REAL_PUBLISH_RELEASE(), ran
+
+    def test_publishes_when_loaded_is_newer_and_rechecks(self, monkeypatch, capsys):
+        before = "202609|202606|2800000|202609|2772484|2800000"
+        after = "202609|202609|2800000|202609|2800000|2800000"
+        got, ran = self._run(monkeypatch, [before, after])
+        assert ran == [post_load.PUBLISH_SNAPSHOT_SQL]
+        assert got == (False, False)
+        assert "표지 올림 202606 → 202609" in capsys.readouterr().out
+
+    def test_no_update_when_already_equal(self, monkeypatch):
+        got, ran = self._run(monkeypatch, [FRESH_RELEASE, FRESH_RELEASE])
+        assert ran == [] and got == (False, False)
+
+    def test_never_pulls_down(self, monkeypatch):
+        """loaded < published(되돌린 뒤 옛 값이 남은 꼴)이면 올리지도 내리지도 않고 [낡음]으로 알린다."""
+        odd = "202603|202606|616096|202606|2772484|616096"
+        got, ran = self._run(monkeypatch, [odd, odd])
+        assert ran == [] and got == (False, True)
+
+    def test_failed_update_is_an_incident(self, monkeypatch):
+        before = "202609|202606|2800000|202609|2772484|2800000"
+        got, ran = self._run(monkeypatch, [before], rc=2)
+        assert ran == [post_load.PUBLISH_SNAPSHOT_SQL] and got == (True, False)
+
+    def test_update_that_did_not_take_is_stale(self, monkeypatch):
+        """UPDATE 가 0 을 돌려줘도 다시 잰 값이 그대로면 [낡음] — 했다고 믿지 않는다."""
+        before = "202609|202606|2800000|202609|2772484|2800000"
+        got, _ = self._run(monkeypatch, [before, before])
+        assert got == (False, True)
+
+
+class TestApplyPublishesOnlyAfterTheSixChecksPass:
+    def _apply(self, monkeypatch, cov_stale=False, publish=(False, False)):
+        monkeypatch.setattr(post_load.dbx, "run_sql", lambda sql, **k: 0)
+        for name, val in (
+            ("report_freshness", lambda: ("1", "1", False)),
+            ("report_map_freshness", lambda: ({}, False)),
+            ("report_tx_window_freshness", lambda: ("", "", False)),
+            ("report_coverage_freshness", lambda: ("", "", cov_stale)),
+            ("report_industry_mix_freshness", lambda: ("", "", False)),
+        ):
+            monkeypatch.setattr(post_load, name, val)
+        calls = []
+        monkeypatch.setattr(post_load, "publish_snapshot_release_if_ready",
+                            lambda: calls.append(1) or publish)
+        return post_load.main([]), calls
+
+    def test_publishes_after_passing(self, monkeypatch):
+        assert self._apply(monkeypatch) == (0, [1])
+
+    def test_does_not_publish_when_a_check_fails(self, monkeypatch):
+        """⛔ 반쪽으로 구운 요약표 위에서 표지를 올리면 화면이 반쪽을 보여 준다."""
+        assert self._apply(monkeypatch, cov_stale=True) == (1, [])
+
+    @pytest.mark.parametrize("publish", [(True, False), (False, True)])
+    def test_exit_1_when_the_flag_is_left_bad(self, monkeypatch, publish):
+        assert self._apply(monkeypatch, publish=publish) == (1, [1])

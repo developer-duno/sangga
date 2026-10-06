@@ -87,6 +87,12 @@ RE_CREATE_MATVIEW = re.compile(
 RE_DROP_MATVIEW = re.compile(
     r"(?im)^drop\s+materialized\s+view\s+(?:if\s+exists\s+)?" + SCHEMA_PREFIX + r"(\w+)"
 )
+# 물질화뷰 이름 바꾸기(2026-10-07a · 결정 0035 — 새 기준으로 `<이름>_next` 에 먼저 굽고, 옛 것을
+# 지운 뒤 정본 이름으로 되돌린다). 모르면 _next 가 산 것으로 남아 "정본에 없는 물질화뷰"로
+# 헛경보가 나고, 정본 이름은 drop 뒤 되살아난 것을 못 봐 '지운 것'으로 남는다.
+RE_RENAME_MATVIEW = re.compile(
+    r"(?im)^alter\s+materialized\s+view\s+(?:if\s+exists\s+)?" + SCHEMA_PREFIX
+    + r"(\w+)\s+rename\s+to\s+(\w+)")
 RE_ADD_COLUMN = re.compile(r"(?im)^\s*add\s+column\s+(?:if\s+not\s+exists\s+)?(\w+)")
 RE_DROP_COLUMN = re.compile(r"(?im)^\s*drop\s+column\s+(?:if\s+exists\s+)?(\w+)")
 
@@ -251,7 +257,7 @@ def test_live_matviews_are_in_schema(schema_sql):
     `create` 바로 뒤가 `materialized` 라 위 뷰 가드(RE_CREATE_VIEW)가 못 본다. 빠지면 이 파일로
     만든 새 환경에서 그 요약표가 아예 없어 검색·지역목록·각주가 통째로 깨진다.
     """
-    alive, _ = replay(RE_CREATE_MATVIEW, RE_DROP_MATVIEW)
+    alive, _ = replay(RE_CREATE_MATVIEW, RE_DROP_MATVIEW, RE_RENAME_MATVIEW)
     missing = sorted(n for n in alive if not schema_has_matview(schema_sql, n))
     assert not missing, (
         "마이그레이션에는 있는데 schema.sql 에 없는 물질화뷰: {}\n"
@@ -317,10 +323,52 @@ def test_replay_actually_sees_the_2026_08_11e_swap():
     assert "v_coverage_stats" in views, "재생이 뷰(v_coverage_stats)를 못 봤습니다"
 
     # 물질화뷰 정규식도 헛돌면 안 된다 — 지금까지 만든 4개가 전부 잡혀야 한다.
-    mvs, _ = replay(RE_CREATE_MATVIEW, RE_DROP_MATVIEW)
+    mvs, _ = replay(RE_CREATE_MATVIEW, RE_DROP_MATVIEW, RE_RENAME_MATVIEW)
     for name in ("mv_search_parcel", "mv_open_sigungu", "mv_sigungu_tx_stats",
                  "mv_coverage_stats"):
         assert name in mvs, "재생이 물질화뷰 {} 를 못 봤습니다".format(name)
+
+
+def test_replay_actually_sees_the_2026_10_07a_matview_swap(schema_sql):
+    """10-07a 의 '_next 로 굽고 → 옛 것 drop → 정본 이름으로 rename'(물질화뷰 셋 + 색인 다섯)을 읽는가.
+
+    ⛔ 되짚기가 물질화뷰 이름 바꾸기를 모르면 _next 가 산 것으로 남고 정본 이름은 '지운 것'으로
+       남는다 — 아래 대조군이 그 상태를 직접 보여 준다(가드가 헛돌지 않는다는 증거).
+    """
+    swapped = ("mv_parcel_store_names", "mv_district_industry_mix", "mv_coverage_stats")
+    mvs, dropped = replay(RE_CREATE_MATVIEW, RE_DROP_MATVIEW, RE_RENAME_MATVIEW)
+    for name in swapped:
+        assert name in mvs and name not in dropped, name
+        assert name + "_next" not in mvs, name + "_next 가 살아 있다고 나옵니다"
+        assert name + "_next" in dropped
+        assert not schema_has_matview(schema_sql, name + "_next"), "정본에 _next 가 남았습니다"
+    # 대조군 — 이름 바꾸기를 빼고 되짚으면 _next 가 산 것으로, 정본 이름이 지운 것으로 남는다.
+    mvs_wo, dropped_wo = replay(RE_CREATE_MATVIEW, RE_DROP_MATVIEW)
+    assert {n + "_next" for n in swapped} <= mvs_wo
+    assert set(swapped) <= dropped_wo
+    idx, idx_dropped = replay(RE_CREATE_INDEX, RE_DROP_INDEX, RE_RENAME_INDEX)
+    for name in ("idx_mpsn_pnu", "idx_mpsn_sigungu", "idx_mpsn_names", "idx_mcs_snapshot_ym",
+                 "mv_district_industry_mix_key"):
+        assert name in idx and name + "_next" not in idx, name
+        assert schema_has_index(schema_sql, name)
+
+
+@pytest.mark.parametrize("sql,expect", [
+    ("alter materialized view mv_a_next rename to mv_a", ("mv_a_next", "mv_a")),          # 흔한 꼴
+    ("ALTER  MATERIALIZED VIEW  public.mv_a_next\n RENAME TO mv_a", ("mv_a_next", "mv_a")),  # 변형 꼴
+    ("alter materialized view if exists mv_a_next rename to mv_a", ("mv_a_next", "mv_a")),
+])
+def test_rename_matview_regex_sees_both_forms(sql, expect):
+    assert [m.groups() for m in RE_RENAME_MATVIEW.finditer("select 1;\n" + sql)] == [expect]
+
+
+@pytest.mark.parametrize("sql", [
+    "-- alter materialized view mv_a_next rename to mv_a",   # 설명 주석 속 인용
+    "alter materialized view mv_a rename column x to y",     # 칸 이름 바꾸기는 표 이름 바꾸기가 아니다
+    "alter view v_a rename to v_b",                          # 일반 뷰
+])
+def test_rename_matview_regex_leaves_the_rest_alone(sql):
+    assert list(RE_RENAME_MATVIEW.finditer("select 1;\n" + sql)) == []
 
 
 def test_replay_actually_sees_the_2026_09_27e_concurrent_swap():

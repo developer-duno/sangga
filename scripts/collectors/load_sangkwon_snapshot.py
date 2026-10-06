@@ -704,6 +704,39 @@ def upsert_batch(base_url, headers, table, rows, batch_size=BATCH_SIZE, sleep=ti
     return sent
 
 
+def should_mark_loaded(prefixes, dry_run):
+    """분기 표지(loaded_ym)를 적을 때인가 — **전국 적재**(빈 접두사 튜플)이고 실제 실행일 때만.
+
+    결정 0035: 서울만·한 구만 넣은 분기를 '다 들어온 분기'로 적으면 post_load 가 그 반쪽을
+    화면에 올린다. 시도·시군구 모드는 표지를 건드리지 않는다(필요하면 사람이
+    publish_snapshot.py --ym 로 적는다).
+    """
+    return (not prefixes) and not dry_run
+
+
+def mark_snapshot_loaded(base_url, headers, snapshot_ym, rows, post=requests.post):
+    """`POST /rest/v1/rpc/mark_snapshot_loaded` 로 표지의 loaded_ym 을 적는다.
+
+    (성공 여부, 응답 dict 또는 실패 사유 글) 을 돌려준다. RPC 는 service_role 전용이고
+    이미 들어온 분기(loaded_ym) 이하는 아무것도 안 바꾸고 지금 표지를 돌려준다(앞으로만 · 옛 분기 백필).
+    ⓘ post 는 시험이 바꿔 끼우는 자리다(네트워크 없이 2xx·실패를 흉내 낸다).
+    """
+    h = dict(headers)
+    h["Content-Type"] = "application/json"
+    try:
+        r = post("{}/rest/v1/rpc/mark_snapshot_loaded".format(base_url),
+                 json={"p_ym": snapshot_ym, "p_rows": rows}, headers=h, timeout=60)
+    except requests.RequestException as e:
+        return False, "요청 실패: {}".format(type(e).__name__)
+    if 200 <= r.status_code < 300:
+        try:
+            body = r.json()
+        except ValueError:
+            body = None
+        return True, body if isinstance(body, dict) else {}
+    return False, "HTTP {} {}".format(r.status_code, (r.text or "")[:200])
+
+
 def rest_count(base_url, headers, table, query):
     """PostgREST HEAD 요청으로 정확한 행 수를 돌려준다 (Content-Range 헤더)."""
     h = dict(headers)
@@ -1023,6 +1056,20 @@ def main():
         print("[에러] REST 교차검증 불일치 — 위 결과를 확인하세요.")
         return 1
 
+    # 분기 표지(결정 0035) — 전국 적재 + 교차검증 일치 뒤에만 '다 들어온 분기'를 적는다.
+    # 화면은 아직 그대로다(보여 주는 분기는 post_load.py 가 요약표를 구운 뒤 올린다).
+    if not should_mark_loaded(scope, opts["dry_run"]):
+        print("표지는 안 올렸습니다(전국 적재가 아니라서) — 올리려면 "
+              "python scripts/publish_snapshot.py --ym {}".format(snapshot_ym))
+        return 0
+    ok, body = mark_snapshot_loaded(base_url, headers, snapshot_ym, ub_count)
+    if not ok:
+        # 넣은 행은 그대로 둔다(append-only) — 표지만 손으로 적으면 된다.
+        print("[에러] 표지를 못 올렸습니다 — python scripts/publish_snapshot.py --ym {} 로 직접 ({})"
+              .format(snapshot_ym, body))
+        return 1
+    print("표지: 다 들어온 분기 {} · 보여 주는 분기 {} — 화면은 이어서 python scripts/post_load.py 가 "
+          "요약표를 구운 뒤 바뀝니다.".format(body.get("loaded_ym"), body.get("published_ym")))
     return 0
 
 

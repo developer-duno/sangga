@@ -609,6 +609,9 @@ def test_main_all_mode_cross_check_query_has_no_sigungu_filter(tmp_path, monkeyp
         return {"parcel": 1, "unit_business": 2}[table]   # parcel 고유 PNU 1 / ub 전체 2
 
     monkeypatch.setattr(target, "rest_count", fake_rest_count)
+    # 전국 모드는 끝에 분기 표지 RPC 를 부른다(결정 0035) — 네트워크 없이 성공으로 흉내.
+    monkeypatch.setattr(target, "mark_snapshot_loaded",
+                        lambda *a, **k: (True, {"loaded_ym": "202603", "published_ym": "202603"}))
 
     assert target.main() == 0
     # 전국 모드 기준값 = unit_business_count(무효 PNU 포함 2). ub_with_pnu_count(1)로
@@ -965,3 +968,125 @@ def test_main_parcel_cross_check_survives_prior_quarter_rows_in_cumulative_table
 
     assert target.main() == 0
     assert len(parcel_calls) == 2  # baseline 1회 + 적재 후 최종 교차검증 1회
+
+
+# ── 분기 표지 RPC (2026-10-07a · 결정 0035) ─────────────────────────────────
+#
+# 전국 적재 + 교차검증 일치 + 실제 실행일 때만 끝에 `rpc/mark_snapshot_loaded` 를 부른다.
+# 시도·시군구 모드에서 '다 들어온 분기'를 적으면 post_load 가 그 반쪽을 화면에 올린다.
+
+
+@pytest.mark.parametrize("prefixes,dry_run,want", [
+    ((), False, True),            # 전국 · 실제 실행 → 적는다
+    ((), True, False),            # 전국이어도 미리보기면 안 적는다
+    (("11", "30"), False, False),  # 서울+대전만 — 반쪽이라 안 적는다
+    (("11680",), False, False),
+])
+def test_should_mark_loaded(prefixes, dry_run, want):
+    assert target.should_mark_loaded(prefixes, dry_run) is want
+
+
+class _Resp:
+    def __init__(self, status, body=None, text=""):
+        self.status_code = status
+        self._body = body
+        self.text = text
+
+    def json(self):
+        if self._body is None:
+            raise ValueError("no json")
+        return self._body
+
+
+def test_mark_snapshot_loaded_posts_the_rpc_with_service_headers():
+    seen = {}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        seen.update(url=url, json=json, headers=headers, timeout=timeout)
+        return _Resp(200, {"loaded_ym": "202609", "published_ym": "202606", "id": 1})
+
+    ok, body = target.mark_snapshot_loaded(
+        "https://x.supabase.co", {"apikey": "k", "Authorization": "Bearer k"},
+        "202609", 2800000, post=fake_post)
+    assert ok is True and body["loaded_ym"] == "202609"
+    assert seen["url"] == "https://x.supabase.co/rest/v1/rpc/mark_snapshot_loaded"
+    assert seen["json"] == {"p_ym": "202609", "p_rows": 2800000}
+    assert seen["headers"]["Content-Type"] == "application/json"
+    assert seen["headers"]["Authorization"] == "Bearer k"
+
+
+@pytest.mark.parametrize("resp,want_in", [
+    (_Resp(403, text='{"message":"permission denied for function mark_snapshot_loaded"}'), "HTTP 403"),
+    (_Resp(400, text='{"message":"점포 표에 202609 분기 행이 없습니다"}'), "HTTP 400"),
+])
+def test_mark_snapshot_loaded_reports_failure(resp, want_in):
+    ok, why = target.mark_snapshot_loaded(
+        "https://x.supabase.co", {"apikey": "k"}, "202609", 1, post=lambda *a, **k: resp)
+    assert ok is False and want_in in why
+
+
+def test_mark_snapshot_loaded_network_error_is_a_failure_without_the_url():
+    def boom(*a, **k):
+        raise target.requests.ConnectionError("https://x.supabase.co/rest/v1/rpc … refused")
+    ok, why = target.mark_snapshot_loaded("https://x.supabase.co", {}, "202609", 1, post=boom)
+    assert ok is False and "ConnectionError" in why and "supabase.co" not in why
+
+
+def test_mark_snapshot_loaded_2xx_without_json_is_still_ok():
+    ok, body = target.mark_snapshot_loaded(
+        "https://x.supabase.co", {}, "202609", 1, post=lambda *a, **k: _Resp(204))
+    assert ok is True and body == {}
+
+
+def _all_mode(tmp_path, monkeypatch, sigungu="all"):
+    write_csv(
+        tmp_path, "소상공인시장진흥공단_상가(상권)정보_서울_202603.csv",
+        [make_row(상가업소번호="M1", 시군구코드="11680", 지번코드="1168010100108230004")],
+    )
+    monkeypatch.setattr(sys, "argv", ["prog", "--dir", str(tmp_path), "--sigungu-code", sigungu])
+    monkeypatch.setattr(target, "get_supabase_config", lambda: ("https://x.supabase.co", "key"))
+    monkeypatch.setattr(
+        target, "upsert_batch",
+        lambda base_url, headers, table, rows, batch_size=target.BATCH_SIZE: len(rows),
+    )
+    counts = {"parcel": [0, 1], "unit_business": [1]}
+    monkeypatch.setattr(target, "rest_count",
+                        lambda base_url, headers, table, query: counts[table].pop(0))
+
+
+def test_main_all_mode_marks_the_flag_after_cross_check(tmp_path, monkeypatch, capsys):
+    _all_mode(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        target, "mark_snapshot_loaded",
+        lambda base_url, headers, ym, rows: calls.append((ym, rows))
+        or (True, {"loaded_ym": ym, "published_ym": "202512"}))
+    assert target.main() == 0
+    assert calls == [("202603", 1)]   # p_rows = REST 교차검증이 센 그 분기 행 수
+    out = capsys.readouterr().out
+    assert "다 들어온 분기 202603" in out and "post_load.py" in out
+
+
+def test_main_all_mode_rpc_failure_returns_1_and_says_how_to_fix(tmp_path, monkeypatch, capsys):
+    _all_mode(tmp_path, monkeypatch)
+    monkeypatch.setattr(target, "mark_snapshot_loaded", lambda *a, **k: (False, "HTTP 403 x"))
+    assert target.main() == 1
+    assert "python scripts/publish_snapshot.py --ym 202603" in capsys.readouterr().out
+
+
+def test_main_sigungu_mode_never_marks_the_flag(tmp_path, monkeypatch, capsys):
+    _all_mode(tmp_path, monkeypatch, sigungu="11680")
+    monkeypatch.setattr(target, "rest_count", lambda base_url, headers, table, query: 1)
+    monkeypatch.setattr(target, "mark_snapshot_loaded",
+                        lambda *a, **k: pytest.fail("시군구 모드가 표지를 적었습니다"))
+    assert target.main() == 0
+    assert "표지는 안 올렸습니다(전국 적재가 아니라서)" in capsys.readouterr().out
+
+
+def test_main_cross_check_mismatch_never_marks_the_flag(tmp_path, monkeypatch):
+    _all_mode(tmp_path, monkeypatch)
+    monkeypatch.setattr(target, "rest_count",
+                        lambda base_url, headers, table, query: 0 if table == "parcel" else 99)
+    monkeypatch.setattr(target, "mark_snapshot_loaded",
+                        lambda *a, **k: pytest.fail("교차검증 불일치인데 표지를 적었습니다"))
+    assert target.main() == 1

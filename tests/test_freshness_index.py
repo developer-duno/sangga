@@ -246,7 +246,10 @@ def test_pairs_really_are_extracted():
     pairs = freshness_pairs(freshness_body(read(SCHEMA)))
     assert len(pairs) >= 10, pairs
     assert ("parcel", "updated_at") in pairs
-    assert ("unit_business", "snapshot_ym") in pairs
+    # ⓘ '점포·업종' 줄은 2026-10-07a(결정 0035)부터 max() 가 아니라 표지 한 줄
+    #    (`select r.published_ym::text from snapshot_release r`)을 읽는다 — 훑을 표가 없다.
+    assert ("unit_business", "snapshot_ym") not in pairs
+    assert ("district_openclose", "quarter") in pairs
 
 
 def test_every_exception_has_a_reason():
