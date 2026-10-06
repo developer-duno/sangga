@@ -49,6 +49,11 @@ import post_load  # noqa: E402
 SCREEN_FNS = post_load.ANON_CALLABLE_NAMES
 SCREEN_VIEWS = post_load.ANON_READABLE_NAMES
 
+# 적재기만 부르는 api 함수(service_role 전용 — 공개 호출 허용 목록 **밖**). 화면 함수와 달리
+# anon 에게 주면 안 되므로 따로 적고 따로 지킨다(아래 TestCollectorFunctions).
+#   mark_snapshot_loaded — 분기 표지 loaded_ym 올리기(2026-10-07a · 결정 0035)
+COLLECTOR_FNS = ("mark_snapshot_loaded",)
+
 # 수집·적재기가 REST 로 쓰는 표 10개(scripts/ 를 훑어 뽑은 목록).
 COLLECTOR_VIEWS = (
     "parcel",
@@ -157,8 +162,8 @@ def parsed_fns(migration):
 class TestScreenFunctions:
     def test_every_screen_function_is_wrapped(self, migration):
         got = set(RE_API_FN.findall(migration))
-        assert got == set(SCREEN_FNS), (
-            "api 래퍼 함수 목록이 화면이 부르는 것과 다릅니다: {}".format(sorted(got))
+        assert got == set(SCREEN_FNS) | set(COLLECTOR_FNS), (
+            "api 래퍼 함수 목록이 화면이 부르는 것(+ 적재기 전용)과 다릅니다: {}".format(sorted(got))
         )
 
     @pytest.mark.parametrize("name", SCREEN_FNS)
@@ -198,6 +203,53 @@ class TestScreenFunctions:
             migration,
             re.IGNORECASE,
         ), "api.{} 의 revoke 가 public 만 회수합니다 — anon·authenticated 도 명시".format(name)
+
+
+def opened_to(sql, name):
+    """`grant execute on function api.<name>(…) to <받는 쪽>` 의 받는 쪽 이름들(소문자 집합).
+
+    ⓘ 가드 본체와 양성 대조가 **같은 함수**를 지난다.
+    ⚠️ 못 보는 것: `grant all on all functions in schema api …` 같은 일괄 grant · 동적 SQL.
+    """
+    out = set()
+    for m in re.finditer(
+        r"(?is)grant\s+(?:execute|all(?:\s+privileges)?)\s+on\s+function\s+api\.{}\s*\([^)]*\)"
+        r"\s+to\s+([^;]+);".format(re.escape(name)),
+        statements(sql),
+    ):
+        out |= {w.strip().lower() for w in m.group(1).split(",")}
+    return out
+
+
+class TestCollectorFunctions:
+    """적재기 전용 api 함수 — security definer · 빈 search_path · 닫고 · **service_role 에게만**."""
+
+    @pytest.mark.parametrize("name", COLLECTOR_FNS)
+    def test_not_in_the_public_allowlist(self, name):
+        assert name not in SCREEN_FNS, "{} 가 공개 호출 허용 목록에 들어 있습니다".format(name)
+
+    @pytest.mark.parametrize("name", COLLECTOR_FNS)
+    def test_is_security_definer_with_empty_search_path(self, parsed_fns, name):
+        head, _ = parsed_fns[name]
+        assert "security definer" in head.lower()
+        assert re.search(r"set\s+search_path\s*=\s*''", head)
+
+    @pytest.mark.parametrize("name", COLLECTOR_FNS)
+    def test_granted_to_service_role_only(self, migration, schema, name):
+        for sql in (migration, schema):
+            assert opened_to(sql, name) == {"service_role"}, opened_to(sql, name)
+            assert re.search(
+                r"revoke\s+all\s+on\s+function\s+api\.{}\s*\([^)]*\)\s+"
+                r"from\s+public,\s*anon,\s*authenticated".format(re.escape(name)),
+                sql, re.IGNORECASE)
+
+    @pytest.mark.parametrize("bad", [
+        "grant execute on function api.mark_snapshot_loaded(text, int) to anon;",               # 흔한 꼴
+        "GRANT EXECUTE ON FUNCTION api.mark_snapshot_loaded (text,int)\n  TO service_role, authenticated;",  # 변형
+    ])
+    def test_detector_sees_an_extra_receiver(self, bad):
+        got = opened_to("select 1;\n" + bad, "mark_snapshot_loaded")
+        assert got != {"service_role"} and got, got
 
 
 class TestViews:
@@ -280,7 +332,8 @@ class TestSchemaSqlHasTheSameThing:
 
     def test_functions(self, schema_stmts):
         got = set(RE_API_FN.findall(schema_stmts))
-        assert got == set(SCREEN_FNS), "정본의 api 함수 목록이 다릅니다: {}".format(sorted(got))
+        assert got == set(SCREEN_FNS) | set(COLLECTOR_FNS), (
+            "정본의 api 함수 목록이 다릅니다: {}".format(sorted(got)))
 
     def test_views(self, schema_stmts):
         got = set(RE_API_VIEW.findall(schema_stmts))

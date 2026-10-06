@@ -311,6 +311,9 @@ QUIET = (
     ("report_slow_functions", lambda: []),
     ("report_canonical_indexes", lambda: []),
     ("report_function_drift", lambda: []),
+    ("report_snapshot_release", lambda *a: (False, False)),
+    ("report_store_names_freshness", lambda: ("", "", False)),
+    ("precheck_snapshot_release", lambda: (False, "202606", "")),
 )
 
 

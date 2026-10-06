@@ -11,14 +11,14 @@
 - **DB 스키마** — `supabase/schema.sql`
 - **부동산 데이터 처리 규격** — `budongsan-data` 스킬 참조 (PNU 조립·층 정규화·API 카탈로그)
 - **현재 Phase** — **Phase 1 통과**(2026-08-09, 조인률 95.92%/96.86%) → 1단계 서비스범위(서울+대전) 확장 완료(결정 0006) → **Phase 2 진행 중**(층별 스택 화면, 눈 검증 2/10). **라이브 https://sangga-one.vercel.app** (Vercel 프로젝트 `sangga`, GitHub 연결이라 **main push 가 곧 배포**. ⛔ **새 배포 주소가 생기면 카카오 콘솔에 그 주소를 등록해야 지도가 뜬다**(미분양아파트 앱 1398824 의 "플랫폼 키 > JS 키 수정 > JavaScript SDK 도메인")). 진행 기록 정본 = `docs/PROGRESS.md` · 결정 = `docs/decisions/`
-- **기능별 경위·⛔ 주의사항** = **`.claude/rules/feature-notes.md`** — 화면 코드(`src/`)·DB 정본(`supabase/`)·`e2e/`·마이그레이션 시험을 열면 자동으로 읽힌다. ⚠️ **파일을 안 열고 기능을 바꾸거나 설명하거나 DB 함수·마이그레이션을 다룰 때는 그 파일을 먼저 직접 연다** — 그 안의 ⛔ 는 어기면 에러 없이 조용히 틀리는 것들이다. 담긴 것(날짜순): 상권 경계·실거래·Stage B(0008·0011~0013) · 둘레의 업종 분포(0014) · 접히는 카드 `SECTION_PLAN` · 첫 배포 · 기본기 3종·의견함(0016·0017) · 주소로 들고 다니기(0019) · 종이로 뽑기(0020) · 국세청 기준시가(0021) · LH 상가 공고(0022) · 곧 올라오는 상가 건물(0023) · 임대 사실 카드·층별 임대료(0024·0031) · 상권→건물 다리(0025) · 성적표 공개 · 자료 신선도(0030) · 넘기기 링크 · 동네 매매 단가 흐름(0027) · 상호명 검색(0028) · 호실 구성표(0032) · 첫 방문 속도(09-27) · 서울 개업·폐업 자료·DB(0033 R1)
+- **기능별 경위·⛔ 주의사항** = **`.claude/rules/feature-notes.md`** — 화면 코드(`src/`)·DB 정본(`supabase/`)·`e2e/`·마이그레이션 시험을 열면 자동으로 읽힌다. ⚠️ **파일을 안 열고 기능을 바꾸거나 설명하거나 DB 함수·마이그레이션을 다룰 때는 그 파일을 먼저 직접 연다** — 그 안의 ⛔ 는 어기면 에러 없이 조용히 틀리는 것들이다. 담긴 것(날짜순): 상권 경계·실거래·Stage B(0008·0011~0013) · 둘레의 업종 분포(0014) · 접히는 카드 `SECTION_PLAN` · 첫 배포 · 기본기 3종·의견함(0016·0017) · 주소로 들고 다니기(0019) · 종이로 뽑기(0020) · 국세청 기준시가(0021) · LH 상가 공고(0022) · 곧 올라오는 상가 건물(0023) · 임대 사실 카드·층별 임대료(0024·0031) · 상권→건물 다리(0025) · 성적표 공개 · 자료 신선도(0030) · 넘기기 링크 · 동네 매매 단가 흐름(0027) · 상호명 검색(0028) · 호실 구성표(0032) · 첫 방문 속도(09-27) · 서울 개업·폐업 자료·DB(0033 R1) · 분기 표지 '다 넣은 뒤 한 번에'(0035)
 
 ### 🔴 운영 7계명 (매 세션 확인 — 어기면 복구 불가하거나 조용히 깨진다)
 
 | | 규칙 | 어기면 |
 |---|---|---|
 | 💾 | **백업은 자동이 아니다.** 새 분기 zip을 받았거나 대량 수집을 마쳤으면 `python scripts/backup_raw.py`를 **직접** 돌린다 | 포털에서 과거분이 내려가면 **재수집 불가**(절대 규칙 6). 건축HUB 일괄 파일도 **최근 3개월치만** 남는다 |
-| 🔎 | **자료를 적재했으면 `python scripts/post_load.py` 한 번.** 이 하나에 vacuum(analyze)·요약표(정본은 스크립트의 `REFRESH_MVS` 목록) 갱신·신선도 점검이 다 들어 있다(요약표만 손으로 갱신하면 나머지가 조용히 빠진다). ⚠️ **권한 점검(공개키가 읽거나 고칠 수 있는 것)과 옛 문(public) 닫힘 유지 확인은 여기서 안 돈다 — `--check` 에서만** 돈다. 적재 뒤에는 `post_load.py` 와 `post_load.py --check` 를 **둘 다** 돌린다. **`--check` 는 그 밖에도 다섯을 더 본다**(2026-09-27 P7 · 별관은 2026-10-05) — 느려짐(지난 점검 이후 평균이 기준을 넘었나 — ⚠️ `--check` 는 돌 때마다 기준점을 그 시각으로 새로 저장한다)·정본 색인 존재/유효·정본↔라이브 함수 일치·새 요약표 낡음(2026-10-03 #199 부터 행수가 아니라 **양쪽 차집합** — 표에만 있는 필지·표에 빠진 필지를 센다 · `--check` 없는 갱신 흐름도 끝에 이 표를 다시 잰다)·**별관(TOAST) 쫓겨남**(별관을 쓰는 public·api 표에서 256바이트 미만 값이 별관에 있으면 [주의] — 큰 옆 칸 탓에 쫓겨난 작은 값이라 그 칸을 훑는 쿼리가 느려진다 · 종료 코드에 영향 없음 · 2026-09-27 #164 의 재발 감시). ✅ **정본 색인 점검은 이제 양쪽을 본다**(2026-10-02 #188) — 정본 색인이 라이브에 없거나 못 쓰거나 **INCLUDE 칸이 다르면 [사고]**, 라이브에만 남은 색인(제약이 만든 것·확장 소유 표의 것은 뺀다)은 **[주의]**(종료 코드에 영향 없음). ⚠️ 색인 열·식·WHERE 조건·색인 방식의 차이는 여전히 못 본다(이름과 INCLUDE 가 같으면 [정상]) · [주의] 줄은 종료 코드 0 이라 **눈으로 본다** | 새로 넣은 건물이 **검색에 안 나온다**. 지도·구 단가·각주 결측률도 옛 자료를 계속 말한다. 전부 에러가 아니라 조용한 누락이라 아무도 모른다 |
+| 🔎 | **자료를 적재했으면 `python scripts/post_load.py` 한 번.** 이 하나에 vacuum(analyze)·요약표(정본은 스크립트의 `REFRESH_MVS` 목록) 갱신·신선도 점검이 다 들어 있다(요약표만 손으로 갱신하면 나머지가 조용히 빠진다). ⚠️ **권한 점검(공개키가 읽거나 고칠 수 있는 것)과 옛 문(public) 닫힘 유지 확인은 여기서 안 돈다 — `--check` 에서만** 돈다. 적재 뒤에는 `post_load.py` 와 `post_load.py --check` 를 **둘 다** 돌린다. **`--check` 는 그 밖에도 다섯을 더 본다**(2026-09-27 P7 · 별관은 2026-10-05) — 느려짐(지난 점검 이후 평균이 기준을 넘었나 — ⚠️ `--check` 는 돌 때마다 기준점을 그 시각으로 새로 저장한다)·정본 색인 존재/유효·정본↔라이브 함수 일치·새 요약표 낡음(2026-10-03 #199 부터 행수가 아니라 **양쪽 차집합** — 표에만 있는 필지·표에 빠진 필지를 센다 · `--check` 없는 갱신 흐름도 끝에 이 표를 다시 잰다)·**별관(TOAST) 쫓겨남**(별관을 쓰는 public·api 표에서 256바이트 미만 값이 별관에 있으면 [주의] — 큰 옆 칸 탓에 쫓겨난 작은 값이라 그 칸을 훑는 쿼리가 느려진다 · 종료 코드에 영향 없음 · 2026-09-27 #164 의 재발 감시). ✅ **정본 색인 점검은 이제 양쪽을 본다**(2026-10-02 #188) — 정본 색인이 라이브에 없거나 못 쓰거나 **INCLUDE 칸이 다르면 [사고]**, 라이브에만 남은 색인(제약이 만든 것·확장 소유 표의 것은 뺀다)은 **[주의]**(종료 코드에 영향 없음). ⚠️ 색인 열·식·WHERE 조건·색인 방식의 차이는 여전히 못 본다(이름과 INCLUDE 가 같으면 [정상]) · [주의] 줄은 종료 코드 0 이라 **눈으로 본다** · **새 상권 분기는 post_load 가 표지(`snapshot_release`)를 올려야 화면에 보인다**(결정 0035) | 새로 넣은 건물이 **검색에 안 나온다**. 지도·구 단가·각주 결측률도 옛 자료를 계속 말한다. 전부 에러가 아니라 조용한 누락이라 아무도 모른다 |
 | 📦 | **패키지 매니저는 `pnpm`.** `npm`으로 돌리지 않는다 (`pnpm-lock.yaml`·CI 기준) | 락파일이 갈라져 CI와 로컬이 다른 의존성을 쓴다 |
 | 🔑 | **키는 `.env`.** 브라우저용 공개키는 `.env.local` — 손으로 만들지 말고 `python scripts/make_env_local.py` | 손으로 만들다 **서비스키를 브라우저에 노출**하는 사고. 이 스크립트는 공개키만 골라 쓴다 |
 | 🐍 | **파이썬 명령은 프로젝트 루트에서.** `cd D:\sangga` 후 실행 | 상대경로(`data/raw/...`)가 어긋나 "파일 없음"으로 조용히 0건 처리된다 |
@@ -102,7 +102,7 @@ main → App → components → lib → types   (단방향 — 역방향 import 
 | 서버 | **없다** — 화면이 Supabase PostgREST·RPC 를 직접 부른다(`api/` 폴더도 서버리스 함수도 **0개** — 2026-08-25 실측). Vercel 은 정적 파일 호스팅과 배포만 맡는다. ⚠️ 그래서 **고칠 서버 코드가 없다** — 서버에서 해야 할 일은 전부 DB 함수(schema.sql)로 간다 |
 | DB | Supabase PostgreSQL + PostGIS (**별도 프로젝트**) |
 | 수집 | ⬜ **여전히 로컬 수동 실행이다** — 받기·적재·백업 전부 사람 손. 다만 **놓치는 것만은 막아 뒀다**: 감시 그물 여섯(분기 스냅샷 `sangkwon-quarterly-watch` · 상권 원천 `district-source-watch` · 라이브 생존 `live-health-watch` · 의견함 주간 알림 `feedback-digest` · LH 상가 공고 `lh-notice-watch` · 지난 날짜 감시 `data-freshness-watch`)이 서로를 전부 본다(`check_watch_heartbeat.py`). ⛔ **새 예약 워크플로를 만들면 그물에도 넣어야 한다** — `DEFAULT_WORKFLOWS` 와 형제들의 `--workflow` 인자 둘 다. 빠뜨리면 테스트가 빨간불로 잡는다(`schedule:` 있는 파일을 훑어 대조한다). ⛔ 알리기만 한다 — 적재는 여전히 사람 손. ⛔ **검색 함수만 고장 난 경우는 여전히 아무도 안 본다**. 적재 후 기준선 상수(`LATEST_KNOWN_QUARTER` · `LATEST_KNOWN_NOTICE_DATE` · 상권 원천 기준선)는 **사람이 올린다**. 각 그물의 비밀값·종료코드·이슈 제목 규칙·못 보는 틈 = **`.claude/rules/watch-nets.md`**(`.github/`·`scripts/check_*.py`·감시 시험을 열면 자동으로 읽힌다 — ⚠️ 감시가 연 이슈를 처리하거나 감시를 고칠 때는 그 파일을 먼저 직접 연다) |
-| 테스트 | 파이썬 **pytest 4,474개** + 프론트 **vitest 960개**(jsdom + @testing-library/react) + **E2E playwright 35개**(`e2e/floor-stack.spec.ts` — 시험별 내용 = **`.claude/rules/e2e-catalog.md`**, `e2e/` 를 열면 자동으로 읽힌다). ⚠️ **E2E 는 같은 35개를 넓은 화면(chromium)과 휴대폰(mobile — Pixel 7 프리셋, 폭 412px·터치)에서 두 번 돌려 총 70회다** — 좁은 폭은 `styles.css` 의 `@media (max-width: 720px)` 가 판을 다시 짜는 자리라 넓은 화면만 보면 못 잡는다(2026-08-22 층별 막대를 모바일에서만 숨긴 사고). 개수를 셀 때 35(시험)와 70(실행)을 헷갈리지 말 것. CI가 셋 다 돌린다(`pnpm test:e2e`). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도. ⛔ **인쇄는 거의 전부가 CSS라 jsdom(vitest)이 원리적으로 못 본다** — 인쇄 매체를 흉내 낼 수 있는 곳은 E2E 뿐이다 |
+| 테스트 | 파이썬 **pytest 4,673개** + 프론트 **vitest 960개**(jsdom + @testing-library/react) + **E2E playwright 35개**(`e2e/floor-stack.spec.ts` — 시험별 내용 = **`.claude/rules/e2e-catalog.md`**, `e2e/` 를 열면 자동으로 읽힌다). ⚠️ **E2E 는 같은 35개를 넓은 화면(chromium)과 휴대폰(mobile — Pixel 7 프리셋, 폭 412px·터치)에서 두 번 돌려 총 70회다** — 좁은 폭은 `styles.css` 의 `@media (max-width: 720px)` 가 판을 다시 짜는 자리라 넓은 화면만 보면 못 잡는다(2026-08-22 층별 막대를 모바일에서만 숨긴 사고). 개수를 셀 때 35(시험)와 70(실행)을 헷갈리지 말 것. CI가 셋 다 돌린다(`pnpm test:e2e`). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도. ⛔ **인쇄는 거의 전부가 CSS라 jsdom(vitest)이 원리적으로 못 본다** — 인쇄 매체를 흉내 낼 수 있는 곳은 E2E 뿐이다 |
 
 **성능 원칙**: 상권(수천 개)은 사전계산 정적 JSON, 호실(수백만)은 Supabase 쿼리.
 정적 JSON 폴백을 호실에는 두지 않는다.
@@ -141,7 +141,7 @@ pnpm exec oxlint                                # 프론트 린트
 ```
 
 ```bash
-python -m pytest tests/ -q                      # 파이썬 테스트 (4,474개 — 원본 자료와 shapely 가 있는 본 폴더 기준 수집 4,474(10-06 밤 실측 · 그 전 4,457 passed 에 안내 가드 +8 · 분기 감시 이슈·md 가드 +9), 워크트리는 원본 자료가 없어 몇 개를 건너뛴다(10-06 #229 워크트리 실측 3 skipped) · CI 는 로컬 PostgreSQL 이 없어 test_district_openclose_migration 의 실행 시험 16개를, shapely 가 없어 test_backtest_openclose 의 도형 시험 1개를 더 건너뛴다 = 4,437 + 20 skipped — 10-06 CI 실측(main 54393ca) · 10-06 #232 뒤 CI 실측 4,445 + 20 · 이번 +9 뒤 기대 4,454 + 20)
+python -m pytest tests/ -q                      # 파이썬 테스트 (4,673개 — 수집 4,673(10-07 결정 0035 워크트리 실측 · 4,670 passed + 3 skipped · 10-06 밤 4,474 에서 +199) · 그 전 본 폴더 기준 수집 4,474(10-06 밤 실측 · 그 전 4,457 passed 에 안내 가드 +8 · 분기 감시 이슈·md 가드 +9), 워크트리는 원본 자료가 없어 몇 개를 건너뛴다(10-06 #229 워크트리 실측 3 skipped) · CI 는 로컬 PostgreSQL 이 없어 test_district_openclose_migration 의 실행 시험 16개를, shapely 가 없어 test_backtest_openclose 의 도형 시험 1개를 더 건너뛴다 = 4,437 + 20 skipped — 10-06 CI 실측(main 54393ca) · 10-06 #232 뒤 CI 실측 4,445 + 20 · 이번 +9 뒤 기대 4,454 + 20 · 결정 0035 뒤 기대 ≈ 4,653 + 20)
 python scripts/check_new_sangkwon_quarter.py    # 새 분기 스냅샷이 떴나 (읽기만, 키 불필요)
 python scripts/check_district_source_update.py  # 상권 원천(서울·소진공) 수정일이 바뀌었나 (읽기만, 키 불필요)
 python scripts/check_watch_heartbeat.py         # 예약 6종이 아직 돌고 있나 (읽기만, 키 불필요 — 멈춤=exit 1 · 조회·판정 실패=2 · 결과 쓰기 실패=4)
@@ -171,7 +171,8 @@ python scripts/collectors/load_vworld_land.py --dry-run          # raw → parce
 python scripts/collectors/load_vworld_bulk.py --dry-run          # 전국 일괄 CSV(zip 17개) → parcel 미리보기(DB 쓰기 0)
 python scripts/collectors/load_vworld_bulk.py                    # 전국 일괄 CSV 적재 — ⚠️ parcel에 있는 PNU만 채운다
 python scripts/collectors/load_sangkwon_snapshot.py --sigungu-code all --dry-run   # 상권정보 전국 모드 미리보기
-python scripts/collectors/load_sangkwon_snapshot.py --sigungu-code 11,30 --dry-run # ★ 1단계 = 서울+대전 (결정 0006)
+python scripts/collectors/load_sangkwon_snapshot.py --sigungu-code all            # ★ 새 분기 적재는 전국 모드로 — 표지는 전국 모드에서만 올라간다(결정 0035 · 시·도 파일이 빠지면 안 올리고 exit 1)
+# ↑ 끝에 '다 들어온 분기' 표지를 적는다(전국 모드만 · 결정 0035) — 화면은 이어서 post_load.py 가 요약표를 구운 뒤 표지를 올려야 바뀐다
 python scripts/collectors/fetch_bldrgst_bulk.py --list             # 건축HUB 일괄 파일 목록 (다운로드 0)
 python scripts/collectors/fetch_bldrgst_bulk.py --kind title --probe  # 크기·형식만 확인 (저장 0)
 python scripts/collectors/fetch_bldrgst_bulk.py --kind title      # 표제부 zip 받기 (646MB, 로그인 불필요)
@@ -223,6 +224,8 @@ python scripts/build_scorecard_json.py                              # ★ 성적
 #      그때 스크립트의 VERSION·출력 파일명·src/lib/appConstants.ts 의 SCORECARD_URL 을 함께 올린다.
 python scripts/post_load.py                     # ★ 적재 후 필수 — vacuum(analyze) + 요약표(REFRESH_MVS 목록이 정본) 갱신 (권한 점검은 안 돈다)
 python scripts/post_load.py --check              # 낡았나 + 공개 롤이 읽거나 **고칠 수** 있는 것 점검 (DB 쓰기 0, 걸리면 exit 1)
+python scripts/publish_snapshot.py --show        # 분기 표지(다 들어온 분기 · 보여 주는 분기) + 점포 표 분기별 행수 + 요약표 셋의 분기 (읽기만)
+python scripts/publish_snapshot.py --ym <분기>   # 표지 두 칸을 그 분기로(되돌리기·RPC 실패 대응 · 점포 표에 있는 분기만) → 이어서 post_load.py
 python scripts/make_env_local.py                # .env → .env.local (브라우저용 공개키만)
 python scripts/setup_git_hooks.py               # ★ 새 컴퓨터에서 한 번 — main 잠금(로컬 알람) 켜기 + 깃헙 잠금 함께 확인
 python scripts/setup_git_hooks.py --check       # 양쪽 잠금이 제자리인가 (아무것도 안 바꿈, 어긋나면 exit 1)

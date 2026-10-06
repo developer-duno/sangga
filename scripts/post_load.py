@@ -52,6 +52,18 @@
     남는 필지가 있으면 [낡음](종료 코드 1 · 2026-10-03 부터 행수가 아니라 양쪽 차집합으로 잰다).
   · 별관 쫓겨남 — 별관(TOAST)을 쓰는 public·api 표에서 256바이트 미만 값이 별관에 있으면(큰 옆 칸
     탓에 쫓겨난 작은 값 — 그 칸을 훑는 쿼리가 느려진다) [주의](종료 코드 1 아님 · 2026-10-05 보탬).
+  · 분기 표지(snapshot_release · 결정 0035 · 2026-10-07 보탬) — 표가 비었거나 보여 주는 분기가
+    점포 표에 0행이면 [사고], 다 들어온 분기 ≠ 보여 주는 분기면 [낡음](둘 다 종료 코드 1) ·
+    점포 표에 표지보다 새 분기가 있거나(적재 중 · 적재기 exit 1) 행 수가 표지 기록과 다르면 [주의](종료 코드 무관).
+  · 가게 이름 요약표 분기(2026-10-07) — mv_parcel_store_names 의 store_snapshot_ym ≠ 표지 loaded_ym 이거나
+    비었으면 [낡음](종료 코드 1).
+
+⭐ 새 상권 분기는 이 스크립트가 **표지를 올려야** 화면에 보인다(결정 0035) — 갱신 흐름(2026-10-07 개정):
+   ① 표지를 먼저 읽는다([사고]면 굽지 않고 멈춤 · 표지 없이 들어온 새 분기가 있으면 [경고] 뒤 끝에 exit 1)
+   → ② vacuum → 분기와 무관한 요약표 다섯 갱신(자동커밋) → 그 판정 넷(검색·지도·실거래 창·이웃 표)
+   → ③ **한 트랜잭션**: 분기 요약표 셋(가게 이름·각주·업종)을 다 들어온 분기(loaded_ym)로 굽고 →
+   셋의 분기 = loaded_ym 인지 대조(아니면 통째 롤백) → 보여 주는 분기(published_ym)를 올림 → commit
+   (이 순간 모든 카드가 함께 바뀐다) → ④ 다시 잰다(분기 판정 셋 + 표지 · "표지 올림 X → Y").
 """
 
 import hashlib
@@ -119,6 +131,13 @@ REFRESH_MVS = (
     "mv_tx_parcel_geog",
 )
 SEARCH_MV = REFRESH_MVS[0]
+
+# 분기와 묶인 요약표 셋 — 표지 loaded_ym(다 들어온 분기)으로 굽는다(결정 0035).
+# ⛔ 이 셋은 위 자동커밋 묶음에서 굽지 않는다 — 표지 올림과 **한 트랜잭션**(build_publish_tx_sql)에서
+#    굽는다. 따로 커밋하면 굽는 1~2분 동안 가게 이름 검색·각주·업종 카드만 먼저 새 분기를 말한다
+#    (2026-10-07 맹점 검사관 🟠1 · 👤 (가)안). 순서는 REFRESH_MVS 와 같다(각주는 mv_open_sigungu 뒤).
+QUARTER_MVS = ("mv_parcel_store_names", "mv_coverage_stats", "mv_district_industry_mix")
+NON_QUARTER_MVS = tuple(m for m in REFRESH_MVS if m not in QUARTER_MVS)
 
 
 def build_analyze_sql(tables=ANALYZE_TABLES):
@@ -325,10 +344,14 @@ def is_industry_mix_stale(mix_ym, latest_ym):
 
 
 def report_industry_mix_freshness():
-    """업종 분포 표의 분기를 점포 자료의 최신 분기와 대조한다."""
+    """업종 분포 표의 분기를 표지 loaded_ym(다 들어온 분기 · 결정 0035)과 대조한다.
+
+    ⓘ 2026-10-07a 전에는 `max(snapshot_ym) from unit_business` 와 견줬다 — 그러면 적재 도중
+       (반쯤 찬 새 분기가 max 인 동안) 이 점검이 '낡음'이라 말했고, 그 말대로 굽으면 반쪽을 구웠다.
+    """
     raw = query_one(
         "select coalesce((select max(snapshot_ym) from mv_district_industry_mix), '')"
-        " || '|' || coalesce((select max(snapshot_ym) from unit_business), '');"
+        " || '|' || coalesce((select loaded_ym from snapshot_release), '');"
     )
     # partition 을 쓴다 — split 은 값에 '|' 가 섞이면 "unpack 3 into 2" 로 죽는다
     # (형제 report_coverage_freshness 와 같은 방식으로 맞춘다).
@@ -339,12 +362,12 @@ def report_industry_mix_freshness():
         if not mix_ym:
             print("[낡음] 업종 분포 표가 비어 있습니다 — 갱신이 필요합니다.")
         else:
-            print("[낡음] 업종 분포 표 {} / 점포 자료 최신 {} — 갱신이 필요합니다."
+            print("[낡음] 업종 분포 표 {} / 다 들어온 분기(표지) {} — 갱신이 필요합니다."
                   .format(mix_ym, latest_ym))
         print("       이대로 두면 층별 화면의 업종 분포만 옛 분기를 말합니다(에러는 안 납니다).")
         print("       python scripts/post_load.py 를 실행하면 최신 분기로 다시 굽습니다.")
     else:
-        print("[신선] 업종 분포 표 {} = 점포 자료 최신 분기.".format(mix_ym or "(자료 없음)"))
+        print("[신선] 업종 분포 표 {} = 다 들어온 분기(표지).".format(mix_ym or "(자료 없음)"))
     return mix_ym, latest_ym, stale
 
 
@@ -362,10 +385,10 @@ def report_industry_mix_freshness():
 
 
 def build_coverage_freshness_sql():
-    """표에 굳은 분기와 원본의 최신 분기를 한 줄로 뽑는다."""
+    """표에 굳은 분기와 표지 loaded_ym(다 들어온 분기 · 결정 0035)을 한 줄로 뽑는다."""
     return (
         "select coalesce((select max(snapshot_ym) from mv_coverage_stats), '') || '|' || "
-        "coalesce((select max(snapshot_ym) from unit_business), '');"
+        "coalesce((select loaded_ym from snapshot_release), '');"
     )
 
 
@@ -393,13 +416,236 @@ def report_coverage_freshness():
         if not mv_ym:
             print("[낡음] 각주 집계 표가 비어 있습니다 — 갱신이 필요합니다.")
         else:
-            print("[낡음] 각주 집계 분기 {} / 점포 원본 최신 분기 {} — 다릅니다."
+            print("[낡음] 각주 집계 분기 {} / 다 들어온 분기(표지) {} — 다릅니다."
                   .format(mv_ym, live_ym or "(없음)"))
         print("       이대로 두면 화면 각주가 옛 분기의 결측률을 계속 말합니다(에러는 안 납니다).")
         print("       python scripts/post_load.py 를 실행하면 오늘 자료 기준으로 다시 잡힙니다.")
     else:
-        print("[신선] 각주 집계 분기 {} = 점포 원본 최신 분기.".format(mv_ym))
+        print("[신선] 각주 집계 분기 {} = 다 들어온 분기(표지).".format(mv_ym))
     return mv_ym, live_ym, stale
+
+
+# ── 분기 표지 snapshot_release (2026-10-07a · 결정 0035 — 굽고, 확인하고, 올린다) ────
+#
+# 화면은 점포 분기를 `max(snapshot_ym)` 이 아니라 표지 한 줄에서 읽는다:
+#   loaded_ym    = 다 들어온 분기(적재기가 전국 적재 + 교차검증 뒤 RPC 로 적는다) — 요약표가 이 칸으로 굽는다
+#   published_ym = 화면이 보는 분기 — **이 스크립트가** 분기와 무관한 판정을 지난 뒤, 분기 요약표 셋 굽기·대조와
+#                  한 트랜잭션에서 올린다(build_publish_tx_sql)
+# 그래서 새 분기는 적재 2시간 동안 화면에 안 새고, 그 트랜잭션의 커밋 순간에 모든 카드가 한순간에 바뀐다.
+# ⛔ 표지가 0줄이면 화면 가게 칸이 **조용히** 빈다(하위질의가 null) — [사고].
+# ⛔ 올리는 일은 갱신 흐름(`--check` 없이)에서만 한다. `--check` 는 DB 쓰기 0.
+
+SNAPSHOT_RELEASE_SQL = (
+    "select coalesce((select r.loaded_ym from snapshot_release r), '') || '|' || "
+    "coalesce((select r.published_ym from snapshot_release r), '') || '|' || "
+    "coalesce((select r.loaded_rows::text from snapshot_release r), '') || '|' || "
+    "coalesce((select max(snapshot_ym) from unit_business), '') || '|' || "
+    "(select count(*) from unit_business u"
+    " where u.snapshot_ym = (select r.published_ym from snapshot_release r))::text || '|' || "
+    "(select count(*) from unit_business u"
+    " where u.snapshot_ym = (select r.loaded_ym from snapshot_release r))::text;"
+)
+
+# 굽고 → 맞춰 보고 → 올린다를 **한 DO 안에서**(2026-10-07 · 👤 (가)안 · 적대 검사관 🟡④ 겸).
+# ⓐ 표지 줄을 `for update` 로 잠근다 — 적재기 RPC(mark_snapshot_loaded)도 같은 줄을 `for update` 로
+#    잡으므로 이 트랜잭션이 끝날 때까지 기다린다(굽는 사이 loaded 가 바뀌면 ⓑ 에서 걸려 통째 롤백).
+# ⓑ 요약표 셋의 분기 = 잠근 loaded 인지 대조 — 하나라도 다르거나 비면 raise → 요약표·표지 옛 그대로.
+# ⓒ 같은 값 v 로만 올린다(앞으로만 — published 가 v 보다 옛것일 때만).
+PUBLISH_DO_SQL = """do $$
+declare
+  v text;
+  s text;
+  c text;
+  m text;
+begin
+  select r.loaded_ym into v from public.snapshot_release r where r.id = 1 for update;
+  if v is null then
+    raise exception 'snapshot_release 가 비었습니다 — 표지를 올리지 않습니다';
+  end if;
+  select max(t.store_snapshot_ym) into s from public.mv_parcel_store_names t;
+  select max(t.snapshot_ym) into c from public.mv_coverage_stats t;
+  select max(t.snapshot_ym) into m from public.mv_district_industry_mix t;
+  if s is distinct from v or c is distinct from v or m is distinct from v then
+    raise exception '요약표 분기가 다 들어온 분기 % 와 다릅니다 — 가게 이름 % · 각주 % · 업종 % (통째 롤백)',
+      v, s, c, m;
+  end if;
+  update public.snapshot_release set published_ym = v, published_at = now()
+   where id = 1 and published_ym < v;
+end $$;"""
+
+
+def build_publish_tx_sql(mvs=QUARTER_MVS):
+    """분기 요약표 셋 굽기 + 분기 대조 + 표지 올림을 **한 트랜잭션**으로 (순수 함수 — 시험이 여기만 본다).
+
+    ⛔ dbx.run_sql 은 psql -f 라 begin/commit 이 없으면 문장마다 자동커밋이다 — 그러면 셋이 하나씩
+       따로 바뀌고 표지는 판정 뒤에야 올라가, 그 1~2분 동안 카드끼리 다른 분기를 말한다(2026-10-07
+       맹점 검사관 🟠1). 묶으면 커밋 전엔 다른 세션이 옛 요약표·옛 표지를 보고(읽기 안 막힘),
+       커밋 순간 넷이 같이 바뀐다(로컬 PostgreSQL 18.4 실측 · `refresh … concurrently` 는 트랜잭션
+       블록 안에서 된다). DO 가 raise 하면 psql 이 ON_ERROR_STOP 으로 멈추고 연결이 끊겨 통째 롤백.
+    """
+    if isinstance(mvs, str):
+        mvs = (mvs,)
+    return ("set statement_timeout = '600s';\n"
+            "begin;\n"
+            + build_refresh_sql(mvs) + "\n"
+            + PUBLISH_DO_SQL + "\n"
+            "commit;\n")
+
+
+def _int_or_none(v):
+    v = str(v if v is not None else "").strip()
+    return int(v) if v.lstrip("-").isdigit() else None
+
+
+def judge_snapshot_release(loaded, published, loaded_rows, max_ub, published_cnt, loaded_cnt):
+    """표지 상태를 판정해 [(수준, 말)…] 을 돌려준다 (순수 함수 — 시험이 여기만 보면 된다).
+
+    수준: "사고"(--check exit 1 · 화면 가게 칸이 빈 상태) · "낡음"(exit 1 · 구웠는데 안 올림) ·
+          "주의"(종료 코드 무관). 문제가 없으면 빈 목록.
+    """
+    loaded = str(loaded or "").strip()
+    published = str(published or "").strip()
+    max_ub = str(max_ub or "").strip()
+    published_cnt = _int_or_none(published_cnt)
+    loaded_cnt = _int_or_none(loaded_cnt)
+    rows = _int_or_none(loaded_rows)
+    if not loaded and not published:
+        return [("사고", "표지(snapshot_release)가 비었습니다 — 화면 가게 칸·각주·업종 카드가 통째로 빈 상태입니다. "
+                       "python scripts/publish_snapshot.py --ym <분기> 로 채운 뒤 python scripts/post_load.py")]
+    out = []
+    if not published_cnt:
+        out.append(("사고", "보여 주는 분기 {} 의 점포 행이 0 입니다 — 화면 가게 칸이 통째로 빈 상태입니다. "
+                           "python scripts/publish_snapshot.py --show 로 확인하세요".format(published or "(없음)")))
+    if loaded != published:
+        out.append(("낡음", "다 들어온 분기 {} ≠ 보여 주는 분기 {} — 요약표를 구웠는데 표지를 안 올렸거나 "
+                           "post_load 를 안 돌렸습니다. python scripts/post_load.py 를 돌리면 올라갑니다"
+                    .format(loaded or "(없음)", published or "(없음)")))
+    if max_ub and loaded and max_ub > loaded:
+        out.append(("주의", "점포 표에 표지보다 새 분기 {0} 가 있습니다(다 들어온 분기 {1}) — 적재 중이거나 "
+                           "적재기가 exit 1 로 끝났습니다. 적재기가 exit 1 로 끝났으면 안내를 따른 뒤 "
+                           "python scripts/publish_snapshot.py --loaded {0} 하고 python scripts/post_load.py"
+                    .format(max_ub, loaded)))
+    if rows != loaded_cnt:
+        out.append(("주의", "표지를 적을 때 센 {} 분기 행 수 {} ≠ 지금 {} — 행이 더 들어왔거나 덜 들어왔습니다"
+                    .format(loaded or "(없음)", "(기록 없음)" if rows is None else rows,
+                            "(없음)" if loaded_cnt is None else loaded_cnt)))
+    return out
+
+
+def read_snapshot_release():
+    """표지를 읽어 판정 함수의 인자 여섯 개를 dict 로. 표가 없거나 못 읽으면 예외."""
+    raw = query_one(SNAPSHOT_RELEASE_SQL)
+    parts = (raw.splitlines()[-1] if raw else "").split("|")
+    if len(parts) != 6:
+        raise ValueError("표지 응답 모양이 다릅니다: {!r}".format(raw[:200]))
+    keys = ("loaded", "published", "loaded_rows", "max_ub", "published_cnt", "loaded_cnt")
+    return dict(zip(keys, (p.strip() for p in parts)))
+
+
+def _print_release_unreadable(exc):
+    print("[사고] 분기 표지(snapshot_release)를 읽지 못했습니다 — {}".format(
+        str(exc).splitlines()[0][:200] if str(exc) else type(exc).__name__))
+    print("       마이그레이션 2026-10-07a 가 적용됐는지 보세요(python scripts/publish_snapshot.py --show).")
+
+
+def report_snapshot_release(before_published=None):
+    """표지를 재서 찍고 (사고 여부, 낡음 여부) 를 돌려준다. 못 읽으면 [사고].
+
+    before_published 를 주면(갱신 흐름 — 트랜잭션 전에 읽어 둔 보여 주는 분기) 그 값과 달라졌을 때
+    "표지 올림 X → Y" 를 먼저 찍는다.
+    """
+    try:
+        st = read_snapshot_release()
+    except Exception as exc:  # noqa: BLE001 — 표가 없거나(마이그레이션 전) 접속 실패
+        _print_release_unreadable(exc)
+        return True, False
+    if before_published and st["published"] and st["published"] != before_published:
+        print("표지 올림 {} → {} — 화면이 이제 {} 분기를 보여 줍니다.".format(
+            before_published, st["published"], st["published"]))
+    found = judge_snapshot_release(**st)
+    for level, msg in found:
+        print("[{}] {}".format(level, msg))
+    if not found:
+        print("[신선] 분기 표지 — 다 들어온 분기 = 보여 주는 분기 = {} ({}행).".format(
+            st["published"], st["published_cnt"]))
+    fatal = any(level == "사고" for level, _ in found)
+    stale = any(level == "낡음" for level, _ in found)
+    return fatal, stale
+
+
+REVERTED_NOTE = ("python scripts/publish_snapshot.py --ym 으로 일부러 되돌려 둔 상태라면 이 경고와 종료 코드 1 은 정상입니다(표지만으로는 '적재기 실패'와 '일부러 되돌림'을 못 가립니다) — 그때는 --loaded 를 하지 마세요.")
+
+
+def precheck_snapshot_release():
+    """갱신 **전에** 표지를 읽는다(2026-10-07 맹점 검사관 🟡2·🟠4).
+
+    (멈출지, 지금 보여 주는 분기, 표지 없이 들어온 새 분기) 를 돌려준다.
+      · [사고](표 0줄·못 읽음·보여 주는 분기 0행)면 멈춘다 — 그대로 갱신하면 요약표 셋을 빈 분기로 굽는다.
+      · 점포 표에 표지보다 새 분기가 있으면 [경고]를 찍고 갱신은 하되 main 이 끝에 1 을 돌려준다 —
+        적재기가 exit 1 로 끝났는데 사람이 다음 줄(post_load)을 돌린 꼴이다. 그대로 0 으로 끝나면
+        새 분기가 몇 주 동안 조용히 안 보인다.
+    [낡음](다 들어온 ≠ 보여 주는)은 여기서 말하지 않는다 — 그게 바로 이번 갱신이 올릴 상태다.
+    """
+    try:
+        st = read_snapshot_release()
+    except Exception as exc:  # noqa: BLE001 — 표가 없거나(마이그레이션 전) 접속 실패
+        _print_release_unreadable(exc)
+        print("       요약표를 굽지 않고 멈춥니다(빈 표지로 구우면 가게 칸·각주·업종 카드가 빈다).")
+        return True, "", ""
+    incidents = [msg for level, msg in judge_snapshot_release(**st) if level == "사고"]
+    for msg in incidents:
+        print("[사고] {}".format(msg))
+    if incidents:
+        print("       요약표를 굽지 않고 멈춥니다(빈 표지로 구우면 가게 칸·각주·업종 카드가 빈다).")
+        return True, st["published"], ""
+    newer = ""
+    if st["max_ub"] and st["loaded"] and st["max_ub"] > st["loaded"]:
+        newer = st["max_ub"]
+        print("[경고] 점포 표에 표지보다 새 분기 {} 가 있는데 '다 들어왔다' 표시가 없습니다(다 들어온 분기 {}) — "
+              "적재기가 exit 1 로 끝났으면 python scripts/publish_snapshot.py --loaded {} "
+              "뒤 다시 python scripts/post_load.py".format(newer, st["loaded"], newer))
+        print("       갱신은 그대로 하되(화면은 {} 그대로) 끝에 종료 코드 1 로 알립니다.".format(st["published"]))
+        print("       ⓘ " + REVERTED_NOTE)
+    return False, st["published"], newer
+
+
+# ── 가게 이름 요약표 분기 (2026-10-07 맹점 검사관 🟠3 — 요약표 셋 중 일곱 번째 판정) ────
+#
+# mv_parcel_store_names 의 store_snapshot_ym(전 행 같은 값)이 표지 loaded_ym 과 같아야 한다.
+# 각주·업종 표처럼 분기를 대조하지 않으면, 이 표만 옛 분기로 남아도 아무도 모른다(새 가게가
+# 조용히 검색에서 빠진다).
+
+STORE_NAMES_FRESHNESS_SQL = (
+    "select coalesce((select max(store_snapshot_ym) from mv_parcel_store_names), '') || '|' || "
+    "coalesce((select loaded_ym from snapshot_release), '');"
+)
+
+
+def is_store_names_stale(names_ym, loaded_ym):
+    """가게 이름 요약표가 낡았는가 (순수 함수) — 다르거나 어느 쪽이든 비면 낡음.
+
+    빈 표지는 [사고]로 따로 잡히지만, 여기서도 '신선'이라 말할 근거가 없으니 낡음이다.
+    """
+    got = str(names_ym or "").strip()
+    want = str(loaded_ym or "").strip()
+    if not got or not want:
+        return True
+    return got != want
+
+
+def report_store_names_freshness():
+    """가게 이름 요약표 분기를 표지 loaded_ym 과 대조해 (표 분기, 다 들어온 분기, 낡음여부)."""
+    names_ym, _, loaded_ym = query_one(STORE_NAMES_FRESHNESS_SQL).partition("|")
+    names_ym, loaded_ym = names_ym.strip(), loaded_ym.strip()
+    stale = is_store_names_stale(names_ym, loaded_ym)
+    if stale:
+        print("[낡음] 가게 이름 요약표 분기 {} / 다 들어온 분기(표지) {} — 다릅니다.".format(
+            names_ym or "(비어 있음)", loaded_ym or "(없음)"))
+        print("       이대로 두면 새 가게가 조용히 검색에서 빠집니다(에러는 안 납니다).")
+        print("       python scripts/post_load.py 를 실행하면 다 들어온 분기로 다시 굽습니다.")
+    else:
+        print("[신선] 가게 이름 요약표 분기 {} = 다 들어온 분기(표지).".format(names_ym))
+    return names_ym, loaded_ym, stale
 
 
 # ── 참고 시세 이웃 요약표 신선도 (2026-09-27 P7 — 사장님 결재) ─────────────────
@@ -1548,6 +1794,8 @@ def main(argv=None):
         _, _, tx_stale = report_tx_window_freshness()
         _, _, cov_stale = report_coverage_freshness()
         _, _, mix_stale = report_industry_mix_freshness()
+        # 가게 이름 요약표 분기(2026-10-07 · 일곱 번째 판정) — 다르거나 비면 exit 1.
+        _, _, names_stale = report_store_names_freshness()
         _, _, geog_stale = report_tx_geog_freshness()
         _, exposed = report_anon_exposure()
         # 읽기와 쓰기는 따로 묻는다 — 허용 목록에 있는 이름이라도 쓰기가 붙어 있으면 사고다.
@@ -1558,8 +1806,17 @@ def main(argv=None):
         report_toast_evictions()
         bad_index = report_canonical_indexes()
         drifted = report_function_drift()
-        return 1 if (stale or map_stale or tx_stale or cov_stale or mix_stale or geog_stale
-                     or exposed or writable or bad_index or drifted) else 0
+        # 분기 표지(2026-10-07a · 결정 0035) — 비었거나 보여 주는 분기가 0행이면 [사고],
+        # 구웠는데 안 올렸으면 [낡음] → 둘 다 exit 1. [주의] 둘은 종료 코드 무관.
+        rel_fatal, rel_stale = report_snapshot_release()
+        return 1 if (stale or map_stale or tx_stale or cov_stale or mix_stale or names_stale
+                     or geog_stale or exposed or writable or bad_index or drifted
+                     or rel_fatal or rel_stale) else 0
+
+    # ① 표지부터 읽는다(2026-10-07) — 비었거나 보여 주는 분기가 0행이면 굽기 전에 멈춘다.
+    halt, published_before, newer_unmarked = precheck_snapshot_release()
+    if halt:
+        return 1
 
     print("통계·가시성 지도를 갱신합니다 (VACUUM ANALYZE {}개 표)…".format(len(ANALYZE_TABLES)))
     rc = dbx.run_sql("set statement_timeout = '600s';\n" + build_analyze_sql(), quiet=True)
@@ -1567,27 +1824,52 @@ def main(argv=None):
         print("[실패] VACUUM ANALYZE 가 실패했습니다.")
         return rc
 
-    print("검색 요약표를 갱신합니다 ({}개)…".format(len(REFRESH_MVS)))
-    rc = dbx.run_sql("set statement_timeout = '600s';\n" + build_refresh_sql(), quiet=True)
+    # ② 분기와 무관한 요약표 다섯 — 지금처럼 문장마다 자동커밋.
+    print("검색 요약표를 갱신합니다 (분기와 무관한 {}개)…".format(len(NON_QUARTER_MVS)))
+    rc = dbx.run_sql("set statement_timeout = '600s';\n" + build_refresh_sql(NON_QUARTER_MVS), quiet=True)
     if rc != 0:
         print("[실패] 요약표 갱신이 실패했습니다.")
         return rc
 
     # 했다고 믿지 않고 다시 잰다.
     _, _, stale = report_freshness()
-
     # 지도 파일은 **여기서 굽지 않는다** — 커밋이 필요한 자산이라 사람이 봐야 한다.
     # 낡았으면 알리고 명령만 안내한다.
     _, map_stale = report_map_freshness()
     # 방금 갱신했으니 창도 오늘 기준이어야 한다 — 했다고 믿지 않고 다시 잰다.
     _, _, tx_stale = report_tx_window_freshness()
-    # 각주 집계도 마찬가지 — 갱신했다고 믿지 않고 원본 최신 분기와 대조한다.
-    _, _, cov_stale = report_coverage_freshness()
-    # 업종 분포 표도 방금 다시 구웠으니 최신 분기여야 한다 — 역시 다시 잰다.
-    _, _, mix_stale = report_industry_mix_freshness()
-    # 참고 시세 이웃 요약표도 REFRESH_MVS 에 있어 방금 다시 구웠다 — 다시 잰다(2026-10-03).
+    # 참고 시세 이웃 요약표도 방금 다시 구웠다 — 다시 잰다(2026-10-03).
     _, _, geog_stale = report_tx_geog_freshness()
-    if stale or map_stale or tx_stale or cov_stale or mix_stale or geog_stale:
+    if stale or map_stale or tx_stale or geog_stale:
+        print("       분기 요약표 셋(가게 이름·각주·업종)과 표지는 이번에 안 건드렸습니다 — "
+              "위 [낡음]을 고친 뒤 python scripts/post_load.py 를 다시 돌리세요.")
+        return 1
+
+    # ③ 분기 요약표 셋 + 분기 대조 + 표지 올림 = 한 트랜잭션(결정 0035 · 2026-10-07 👤 (가)안).
+    #    커밋 순간에 가게 이름 검색·각주·업종 카드·층 목록이 함께 바뀐다. 대조가 어긋나면 통째 롤백.
+    print("분기 요약표 {}개를 굽고 표지를 올립니다 — 한 트랜잭션(커밋 순간에 화면이 함께 바뀝니다)…"
+          .format(len(QUARTER_MVS)))
+    rc = dbx.run_sql(build_publish_tx_sql(), quiet=True)
+    if rc != 0:
+        print("[실패] 분기 요약표 굽기·표지 올림이 통째로 되돌아갔습니다(psql 종료 코드 {}) — "
+              "요약표·표지·화면 모두 그대로 {} 입니다.".format(rc, published_before or "(없음)"))
+        print("       위 psql ERROR 줄을 보세요 — '요약표 분기가 … 다릅니다' 면 굽는 사이 표지가 바뀐 것이니 다시 "
+              "돌리면 됩니다(python scripts/post_load.py).")
+        return 1
+
+    # ④ 했다고 믿지 않고 다시 잰다 — 분기 요약표 셋 + 표지. (앞의 넷은 ② 바로 뒤에 쟀고 ③ 은 그 표들을
+    #    건드리지 않는다.)
+    _, _, cov_stale = report_coverage_freshness()
+    _, _, mix_stale = report_industry_mix_freshness()
+    _, _, names_stale = report_store_names_freshness()
+    rel_fatal, rel_stale = report_snapshot_release(published_before)
+    if cov_stale or mix_stale or names_stale or rel_fatal or rel_stale:
+        return 1
+    if newer_unmarked:
+        print("[경고] 점포 표에 표지보다 새 분기 {} 가 있는데 '다 들어왔다' 표시가 없습니다 — 적재기가 exit 1 로 "
+              "끝났으면 python scripts/publish_snapshot.py --loaded {} 뒤 다시 python scripts/post_load.py"
+              .format(newer_unmarked, newer_unmarked))
+        print("       ⓘ " + REVERTED_NOTE)
         return 1
     # 권한·옛 문·색인·별관은 --check 에서만 돈다 — 성공했을 때만 이어서 돌리라고 알린다(2026-10-06).
     print("  ⓘ 권한·옛 문 닫힘·색인·함수 일치·느려짐·별관 점검은 여기서 안 돕니다 — 이어서 python scripts/post_load.py --check")

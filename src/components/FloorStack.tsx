@@ -771,9 +771,10 @@ export function FloorStack({ building }: Props) {
         공유오피스나 같은 땅의 옆 동 점포가 함께 잡혀 실제보다 많아 보일 수 있습니다.
         <br />
         {/*
-          이 숫자들은 뷰 v_coverage_stats에서 읽어 온다. v_floor_stack의 점포가
-          `snapshot_ym = (select max(snapshot_ym) from unit_business)`로 최신 분기를 자동
-          추종하므로, 각주도 같은 기준으로 따라가야 새 분기 적재 때 화면만 틀려지지 않는다.
+          이 숫자들은 뷰 v_coverage_stats에서 읽어 온다. v_floor_stack의 점포가 분기 표지
+          `snapshot_ym = (select r.published_ym from snapshot_release r)`를 따라가고(결정 0035 —
+          각주 요약표는 같은 분기로 구운 뒤 post_load 가 표지를 올린다), 각주도 같은 기준으로
+          따라가야 새 분기 적재 때 화면만 틀려지지 않는다.
           (예전에는 "32.9%·64,239곳"이 문자열로 박혀 있었다.)
         */}
         {basisPhrase}

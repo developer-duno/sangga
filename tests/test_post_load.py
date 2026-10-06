@@ -100,6 +100,11 @@ def p7_alarms_quiet(monkeypatch):
     monkeypatch.setattr(post_load, "report_tx_geog_freshness", lambda: ("1", "1", False))
     # 별관 경보(2026-10-05)도 같은 까닭으로 뺀다 — 판정은 tests/test_post_load_toast.py.
     monkeypatch.setattr(post_load, "report_toast_evictions", lambda: [])
+    # 분기 표지(2026-10-07a · 결정 0035)도 뺀다 — 판정·배선은 아래 TestSnapshotRelease 가 본다.
+    monkeypatch.setattr(post_load, "report_snapshot_release", lambda *a: (False, False))
+    monkeypatch.setattr(post_load, "precheck_snapshot_release", lambda: (False, "202606", ""))
+    # 가게 이름 요약표 분기(2026-10-07 · 일곱 번째 판정)도 뺀다 — 판정은 아래 TestStoreNamesFreshness.
+    monkeypatch.setattr(post_load, "report_store_names_freshness", lambda: ("202606", "202606", False))
 
 
 # ── 1. ANALYZE 대상 ─────────────────────────────────────────────────────────
@@ -257,7 +262,9 @@ class TestMainFlow:
         monkeypatch.setattr(post_load, "query_one",
                             lambda sql: checked.append(sql) or "200|200")
         assert post_load.main([]) == 0
-        assert len(ran) == 2 and "vacuum (analyze)" in ran[0] and "refresh" in ran[1]
+        # vacuum → 분기와 무관한 다섯(자동커밋) → 분기 셋 + 표지 한 트랜잭션(2026-10-07).
+        assert len(ran) == 3 and "vacuum (analyze)" in ran[0] and "refresh" in ran[1]
+        assert ran[2] == post_load.build_publish_tx_sql()
         assert len(checked) == 1
         out = capsys.readouterr().out
         assert out.rstrip().splitlines()[-1] == "  ⓘ 권한·옛 문 닫힘·색인·함수 일치·느려짐·별관 점검은 여기서 안 돕니다 — 이어서 python scripts/post_load.py --check"
@@ -442,7 +449,9 @@ class TestCoverageStale:
         """엉뚱한 표를 물으면 판정이 통째로 헛돈다."""
         sql = post_load.build_coverage_freshness_sql()
         assert "mv_coverage_stats" in sql
-        assert "unit_business" in sql
+        # 2026-10-07a(결정 0035)부터 원본 max() 가 아니라 표지의 다 들어온 분기와 견준다.
+        assert "loaded_ym from snapshot_release" in sql
+        assert "from unit_business" not in sql
 
     def test_check_returns_1_when_coverage_is_stale(
         self, monkeypatch, map_is_fresh, tx_window_is_fresh, industry_mix_is_fresh,
@@ -1264,3 +1273,341 @@ class TestMapFreshness:
                             lambda *a, **k: None)
         assert post_load.main([]) == 1
         assert "build_district_geojson.py" in capsys.readouterr().out
+
+
+# ── 분기 표지 snapshot_release (2026-10-07a · 결정 0035 — 굽고, 확인하고, 올린다) ──────
+#
+# 위 autouse(p7_alarms_quiet)가 report_snapshot_release · precheck_snapshot_release ·
+# report_store_names_freshness 를 늘 빼 두므로, 여기서는 **진짜** 함수를 import 때 잡아 둔 것으로 되돌려 본다.
+_REAL_REPORT_RELEASE = post_load.report_snapshot_release
+_REAL_PRECHECK = post_load.precheck_snapshot_release
+_REAL_STORE_NAMES = post_load.report_store_names_freshness
+
+FRESH_RELEASE = "202606|202606|2772484|202606|2772484|2772484"
+
+
+def _levels(found):
+    return [level for level, _ in found]
+
+
+class TestJudgeSnapshotRelease:
+    def test_all_good_is_empty(self):
+        assert post_load.judge_snapshot_release(
+            "202606", "202606", "2772484", "202606", "2772484", "2772484") == []
+
+    def test_empty_table_is_an_incident_and_nothing_else(self):
+        """⛔ 0줄이면 화면 가게 칸이 **조용히** 빈다 — 다른 판정은 덧붙이지 않는다."""
+        found = post_load.judge_snapshot_release("", "", "", "202606", "0", "0")
+        assert _levels(found) == ["사고"]
+        assert "publish_snapshot.py --ym" in found[0][1]
+
+    def test_published_quarter_with_zero_rows_is_an_incident(self):
+        found = post_load.judge_snapshot_release(
+            "202603", "202603", "616096", "202606", "0", "0")
+        assert "사고" in _levels(found)
+
+    def test_loaded_ahead_of_published_is_stale(self):
+        found = post_load.judge_snapshot_release(
+            "202609", "202606", "2800000", "202609", "2772484", "2800000")
+        assert _levels(found) == ["낡음"]
+        assert "python scripts/post_load.py" in found[0][1]
+
+    def test_store_table_ahead_of_loaded_is_only_a_caution(self):
+        """적재 중(반쯤 찬 새 분기) — 화면엔 안 샌다. 종료 코드를 바꾸지 않는 [주의]."""
+        found = post_load.judge_snapshot_release(
+            "202606", "202606", "2772484", "202609", "2772484", "2772484")
+        assert _levels(found) == ["주의"]
+        assert "202609" in found[0][1]
+        # 2026-10-07 맹점 검사관 🟠4 — "적재기가 올립니다"는 적재기가 exit 1 로 끝난 경우 거짓이다.
+        assert "적재기가 exit 1 로 끝났" in found[0][1]
+        assert "python scripts/publish_snapshot.py --loaded 202609" in found[0][1]
+
+    def test_row_count_drift_is_only_a_caution(self):
+        found = post_load.judge_snapshot_release(
+            "202606", "202606", "2772484", "202606", "2772490", "2772490")
+        assert _levels(found) == ["주의"]
+        found = post_load.judge_snapshot_release(
+            "202606", "202606", "", "202606", "2772484", "2772484")
+        assert _levels(found) == ["주의"], "행 수 기록이 없으면 대조할 수 없다고 알린다"
+
+    def test_whitespace_from_psql_is_trimmed(self):
+        assert post_load.judge_snapshot_release(
+            " 202606 ", "202606 ", " 2772484", "202606", " 2772484 ", "2772484") == []
+
+
+class TestPublishTxSql:
+    """분기 요약표 셋 + 분기 대조 + 표지 올림 = 한 트랜잭션 (2026-10-07 · 👤 (가)안 · 맹점 검사관 🟠1)."""
+
+    def test_quarter_and_non_quarter_split(self):
+        assert post_load.QUARTER_MVS == (
+            "mv_parcel_store_names", "mv_coverage_stats", "mv_district_industry_mix")
+        assert set(post_load.QUARTER_MVS) | set(post_load.NON_QUARTER_MVS) == set(post_load.REFRESH_MVS)
+        assert not set(post_load.QUARTER_MVS) & set(post_load.NON_QUARTER_MVS)
+        assert len(post_load.NON_QUARTER_MVS) == 5
+
+    def test_wrapped_in_one_transaction(self):
+        sql = post_load.build_publish_tx_sql()
+        lines = [ln.strip() for ln in sql.splitlines() if ln.strip()]
+        assert lines[0] == "set statement_timeout = '600s';"
+        assert lines[1] == "begin;"
+        assert lines[-1] == "commit;"
+        assert sql.count("begin;") == 1 and sql.count("commit;") == 1
+
+    def test_refreshes_exactly_the_three_inside(self):
+        sql = post_load.build_publish_tx_sql()
+        body = sql.split("begin;", 1)[1].split("commit;", 1)[0]
+        for mv in post_load.QUARTER_MVS:
+            assert "refresh materialized view concurrently {};".format(mv) in body, mv
+        for mv in post_load.NON_QUARTER_MVS:
+            assert mv not in body, "분기와 무관한 {} 가 트랜잭션 안에 들어왔습니다".format(mv)
+        assert body.count("refresh materialized view") == 3
+        # 굽기가 대조·올림보다 먼저다.
+        assert body.index("refresh materialized view") < body.index("do $$")
+
+    def test_non_quarter_batch_has_none_of_the_three(self):
+        batch = post_load.build_refresh_sql(post_load.NON_QUARTER_MVS)
+        for mv in post_load.QUARTER_MVS:
+            assert mv not in batch, mv
+        assert "begin" not in batch and "commit" not in batch
+
+    def test_lock_compare_and_update_are_in_one_do_block(self):
+        """F7-4 — 표지 줄을 잠그고(for update) → 셋의 분기 대조 → 같은 값으로 올림이 한 DO 안."""
+        sql = post_load.build_publish_tx_sql()
+        assert sql.count("do $$") == 1 and sql.count("end $$;") == 1
+        do = sql[sql.index("do $$"):sql.index("end $$;")]
+        lock = do.index("from public.snapshot_release r where r.id = 1 for update")
+        assert do.index("select r.loaded_ym into v") < lock
+        cmp_at = do.index("if s is distinct from v or c is distinct from v or m is distinct from v then")
+        upd = do.index("update public.snapshot_release set published_ym = v, published_at = now()")
+        assert lock < cmp_at < upd
+        assert "max(t.store_snapshot_ym) into s from public.mv_parcel_store_names" in do
+        assert "max(t.snapshot_ym) into c from public.mv_coverage_stats" in do
+        assert "max(t.snapshot_ym) into m from public.mv_district_industry_mix" in do
+        assert "raise exception" in do[cmp_at:upd]
+        assert "where id = 1 and published_ym < v;" in do[upd:]
+
+    def test_update_reads_the_locked_value_not_the_column(self):
+        """⛔ `published_ym = loaded_ym` 이면 대조 뒤 바뀐 loaded 가 굽지 않은 채 올라갈 수 있다(적대 🟡④)."""
+        sql = post_load.build_publish_tx_sql()
+        assert "published_ym = loaded_ym" not in sql
+
+
+class TestSnapshotReleaseWiring:
+    def test_sql_reads_the_flag_and_counts_both_quarters(self):
+        sql = post_load.SNAPSHOT_RELEASE_SQL
+        for piece in ("r.loaded_ym from snapshot_release r", "r.published_ym from snapshot_release r",
+                      "r.loaded_rows::text", "max(snapshot_ym) from unit_business"):
+            assert piece in sql, piece
+        assert sql.count("select count(*) from unit_business u") == 2
+
+    def test_industry_mix_check_compares_against_loaded_ym(self, monkeypatch):
+        asked = []
+        monkeypatch.setattr(post_load, "query_one", lambda sql: asked.append(sql) or "202606|202606")
+        post_load.report_industry_mix_freshness()
+        assert "loaded_ym from snapshot_release" in asked[0]
+        assert "from unit_business" not in asked[0]
+
+    def test_report_fresh(self, monkeypatch, capsys):
+        monkeypatch.setattr(post_load, "query_one", lambda sql: FRESH_RELEASE)
+        assert _REAL_REPORT_RELEASE() == (False, False)
+        assert "[신선] 분기 표지" in capsys.readouterr().out
+
+    def test_report_says_when_it_moved(self, monkeypatch, capsys):
+        after = "202609|202609|2800000|202609|2800000|2800000"
+        monkeypatch.setattr(post_load, "query_one", lambda sql: after)
+        assert _REAL_REPORT_RELEASE("202606") == (False, False)
+        assert "표지 올림 202606 → 202609" in capsys.readouterr().out
+        monkeypatch.setattr(post_load, "query_one", lambda sql: FRESH_RELEASE)
+        _REAL_REPORT_RELEASE("202606")
+        assert "표지 올림" not in capsys.readouterr().out
+
+    def test_report_unreadable_is_an_incident(self, monkeypatch, capsys):
+        def boom(sql):
+            raise RuntimeError('relation "snapshot_release" does not exist')
+        monkeypatch.setattr(post_load, "query_one", boom)
+        assert _REAL_REPORT_RELEASE() == (True, False)
+        assert "[사고]" in capsys.readouterr().out
+
+    def test_report_odd_shape_is_an_incident(self, monkeypatch):
+        monkeypatch.setattr(post_load, "query_one", lambda sql: "202606|202606")
+        assert _REAL_REPORT_RELEASE() == (True, False)
+
+    @pytest.mark.parametrize("result", [(True, False), (False, True)])
+    def test_check_exits_1_on_incident_or_stale(
+        self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh,
+        industry_mix_is_fresh, no_anon_writes, result
+    ):
+        monkeypatch.setattr(post_load, "query_one",
+                            lambda sql: "200|200" if "count(" in sql else "")
+        monkeypatch.setattr(post_load, "report_snapshot_release", lambda *a: result)
+        assert post_load.main(["--check"]) == 1
+        monkeypatch.setattr(post_load, "report_snapshot_release", lambda *a: (False, False))
+        assert post_load.main(["--check"]) == 0
+
+    def test_check_never_writes_or_prechecks(
+        self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh,
+        industry_mix_is_fresh, no_anon_writes
+    ):
+        """--check 는 DB 쓰기 0 — 굽기·표지 올림 트랜잭션을 아예 안 탄다."""
+        monkeypatch.setattr(post_load, "query_one",
+                            lambda sql: "200|200" if "count(" in sql else "")
+        monkeypatch.setattr(post_load.dbx, "run_sql",
+                            lambda *a, **k: pytest.fail("--check 가 DB 에 쓰려 했습니다"))
+        post_load.main(["--check"])
+
+
+# ── 가게 이름 요약표 분기 — 일곱 번째 판정 (2026-10-07 맹점 검사관 🟠3) ───────────────
+
+
+class TestStoreNamesFreshness:
+    _REAL = staticmethod(_REAL_STORE_NAMES)
+
+    @pytest.mark.parametrize("names,loaded,want", [
+        ("202606", "202606", False),
+        ("202606", "202609", True),      # 표지는 새 분기인데 표는 옛 분기
+        ("", "202606", True),            # 표가 비었다
+        ("202606", "", True),            # 표지가 비었다 — 신선이라 말할 근거 없음
+        (" 202606 ", "202606", False),
+    ])
+    def test_judge(self, names, loaded, want):
+        assert post_load.is_store_names_stale(names, loaded) is want
+
+    def test_sql_compares_against_the_flag(self):
+        sql = post_load.STORE_NAMES_FRESHNESS_SQL
+        assert "max(store_snapshot_ym) from mv_parcel_store_names" in sql
+        assert "loaded_ym from snapshot_release" in sql
+
+    def test_report(self, monkeypatch, capsys):
+        monkeypatch.setattr(post_load, "query_one", lambda sql: "202606|202609")
+        assert self._REAL() == ("202606", "202609", True)
+        assert "[낡음] 가게 이름 요약표" in capsys.readouterr().out
+        monkeypatch.setattr(post_load, "query_one", lambda sql: "202609|202609")
+        assert self._REAL()[2] is False
+
+    def test_check_exits_1_when_stale(
+        self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh,
+        industry_mix_is_fresh, no_anon_writes
+    ):
+        monkeypatch.setattr(post_load, "query_one",
+                            lambda sql: "200|200" if "count(" in sql else "")
+        monkeypatch.setattr(post_load, "report_store_names_freshness", lambda: ("202606", "202609", True))
+        assert post_load.main(["--check"]) == 1
+
+    def test_apply_exits_1_when_stale_after_the_transaction(self, monkeypatch):
+        code, _ = _apply_flow(monkeypatch, names_stale=True)
+        assert code == 1
+
+
+# ── 갱신 흐름 — 선점검 · 한 트랜잭션 · 다시 재기 (2026-10-07) ────────────────────────
+
+
+def _apply_flow(monkeypatch, pre=(False, "202606", ""), non_quarter_stale=False, names_stale=False,
+                release=(False, False), rc_tx=0):
+    ran = []
+
+    def run_sql(sql, **k):
+        ran.append(sql)
+        return rc_tx if sql == post_load.build_publish_tx_sql() else 0
+    monkeypatch.setattr(post_load.dbx, "run_sql", run_sql)
+    for name, val in (
+        ("precheck_snapshot_release", lambda: pre),
+        ("report_freshness", lambda: ("1", "1", non_quarter_stale)),
+        ("report_map_freshness", lambda: ({}, False)),
+        ("report_tx_window_freshness", lambda: ("", "", False)),
+        ("report_tx_geog_freshness", lambda: ("1", "1", False)),
+        ("report_coverage_freshness", lambda: ("", "", False)),
+        ("report_industry_mix_freshness", lambda: ("", "", False)),
+        ("report_store_names_freshness", lambda: ("", "", names_stale)),
+        ("report_snapshot_release", lambda *a: release),
+    ):
+        monkeypatch.setattr(post_load, name, val)
+    return post_load.main([]), ran
+
+
+class TestApplyFlow:
+    def test_order_vacuum_then_five_then_the_transaction(self, monkeypatch):
+        code, ran = _apply_flow(monkeypatch)
+        assert code == 0
+        assert len(ran) == 3
+        assert "vacuum (analyze)" in ran[0]
+        assert ran[1] == "set statement_timeout = '600s';\n" + post_load.build_refresh_sql(post_load.NON_QUARTER_MVS)
+        assert ran[2] == post_load.build_publish_tx_sql()
+
+    def test_precheck_incident_stops_before_any_refresh(self, monkeypatch):
+        """F4 — 표지가 비었거나 보여 주는 분기가 0행이면 빈 요약표를 굽지 않는다(맹점 🟡2)."""
+        code, ran = _apply_flow(monkeypatch, pre=(True, "", ""))
+        assert code == 1 and ran == []
+
+    def test_precheck_reads_the_flag_before_refresh(self, monkeypatch):
+        """선점검의 표지 읽기 문장이 vacuum·refresh 보다 먼저 돈다(진짜 함수로)."""
+        order = []
+        monkeypatch.setattr(post_load, "query_one", lambda sql: order.append(("q", sql)) or FRESH_RELEASE)
+        monkeypatch.setattr(post_load.dbx, "run_sql", lambda sql, **k: order.append(("w", sql)) or 0)
+        for name, val in (
+            ("report_freshness", lambda: ("1", "1", False)),
+            ("report_map_freshness", lambda: ({}, False)),
+            ("report_tx_window_freshness", lambda: ("", "", False)),
+            ("report_tx_geog_freshness", lambda: ("1", "1", False)),
+            ("report_coverage_freshness", lambda: ("", "", False)),
+            ("report_industry_mix_freshness", lambda: ("", "", False)),
+            ("report_store_names_freshness", lambda: ("", "", False)),
+            ("report_snapshot_release", lambda *a: (False, False)),
+        ):
+            monkeypatch.setattr(post_load, name, val)
+        monkeypatch.setattr(post_load, "precheck_snapshot_release", _REAL_PRECHECK)
+        assert post_load.main([]) == 0
+        assert order[0] == ("q", post_load.SNAPSHOT_RELEASE_SQL)
+        assert all(kind == "w" for kind, _ in order[1:])
+
+    def test_unmarked_newer_quarter_refreshes_but_exits_1(self, monkeypatch, capsys):
+        """F4 — 적재기가 exit 1 로 끝났는데 사람이 다음 줄을 돌린 꼴: 갱신은 하되 끝에 1(맹점 🟠4)."""
+        code, ran = _apply_flow(monkeypatch, pre=(False, "202606", "202609"))
+        assert code == 1 and len(ran) == 3
+        out = capsys.readouterr().out
+        assert "python scripts/publish_snapshot.py --loaded 202609" in out
+
+    def test_non_quarter_stale_stops_before_the_transaction(self, monkeypatch, capsys):
+        code, ran = _apply_flow(monkeypatch, non_quarter_stale=True)
+        assert code == 1 and len(ran) == 2
+        assert "표지는 이번에 안 건드렸습니다" in capsys.readouterr().out
+
+    def test_transaction_failure_says_everything_rolled_back(self, monkeypatch, capsys):
+        code, ran = _apply_flow(monkeypatch, rc_tx=3)
+        assert code == 1 and len(ran) == 3
+        out = capsys.readouterr().out
+        assert "통째로 되돌아갔습니다" in out and "그대로 202606" in out
+
+    @pytest.mark.parametrize("release", [(True, False), (False, True)])
+    def test_exit_1_when_the_flag_is_left_bad(self, monkeypatch, release):
+        assert _apply_flow(monkeypatch, release=release)[0] == 1
+
+
+class TestPrecheck:
+    def _run(self, monkeypatch, answer):
+        monkeypatch.setattr(post_load, "query_one", lambda sql: answer)
+        return _REAL_PRECHECK()
+
+    def test_fresh(self, monkeypatch):
+        assert self._run(monkeypatch, FRESH_RELEASE) == (False, "202606", "")
+
+    def test_loaded_ahead_is_not_a_stop(self, monkeypatch, capsys):
+        """[낡음](다 들어온 ≠ 보여 주는)은 이번 갱신이 올릴 상태라 멈추지도 말하지도 않는다."""
+        got = self._run(monkeypatch, "202609|202606|2800000|202609|2772484|2800000")
+        assert got == (False, "202606", "")
+        assert "[낡음]" not in capsys.readouterr().out
+
+    @pytest.mark.parametrize("answer", ["||||0|0", "202603|202603|616096|202606|0|0"])
+    def test_incident_stops(self, monkeypatch, capsys, answer):
+        assert self._run(monkeypatch, answer)[0] is True
+        assert "[사고]" in capsys.readouterr().out
+
+    def test_unreadable_stops(self, monkeypatch, capsys):
+        def boom(sql):
+            raise RuntimeError("relation does not exist")
+        monkeypatch.setattr(post_load, "query_one", boom)
+        assert _REAL_PRECHECK()[0] is True
+
+    def test_newer_unmarked_quarter_warns(self, monkeypatch, capsys):
+        got = self._run(monkeypatch, "202606|202606|2772484|202609|2772484|2772484")
+        assert got == (False, "202606", "202609")
+        assert "[경고]" in capsys.readouterr().out

@@ -482,6 +482,50 @@ comment on function unit_business_append_only() is
   'unit_business 의 append-only 불변식을 DB 에서 강제한다. 주석으로만 있던 약속을 '
   '실제 방어로 바꾼 것(2026-08-13). 적재기는 ignore-duplicates 만 쓰므로 영향이 없다';
 
+-- ── 4) 분기 표지 snapshot_release — 새 분기는 '다 넣은 뒤 한 번에' (결정 0035 · 2026-10-07a) ──
+-- 화면이 보는 점포 분기를 `max(snapshot_ym)` 이 아니라 이 한 줄짜리 표지판에서 읽는다.
+-- 적재기(load_sangkwon_snapshot.py)는 한 트랜잭션이 아니라 약 2시간 동안 1,000행씩 올리므로,
+-- `max()` 를 보면 첫 1,000행이 들어가는 순간부터 손님이 **반쯤 찬 새 분기**를 본다.
+--   loaded_ym    = 다 들어온 분기. 적재기가 전국 적재 + 교차검증 통과 뒤 api.mark_snapshot_loaded 로 적는다.
+--                  요약표 셋(mv_parcel_store_names · mv_coverage_stats · mv_district_industry_mix)이 이 칸으로 굽는다.
+--   published_ym = 화면이 보는 분기. post_load.py 가 요약표를 loaded_ym 으로 구운 뒤 올린다 —
+--                  이 UPDATE 한 줄에 실시간 셋(v_floor_stack · list_district_buildings · get_data_freshness)과
+--                  요약표가 **한순간에** 같은 분기를 말한다.
+-- ⛔ 0줄이 되면 화면 가게 칸이 **조용히** 빈다(하위질의가 null) — id = 1 한 줄 제약 + 처음 한 줄 +
+--    `post_load.py --check` 의 [사고]가 지킨다. 되돌리기·확인은 scripts/publish_snapshot.py.
+-- ⛔ 읽는 쪽은 함수가 아니라 **스칼라 하위질의**로 읽는다(뷰 안의 함수는 anon 권한으로 검사된다 —
+--    알려진한계 §4). 하위질의는 InitPlan 으로 한 번만 계산돼 예전 max() 와 같은 모양이다.
+create table if not exists snapshot_release (
+  id            int primary key default 1 check (id = 1),
+  loaded_ym     char(6) not null check (loaded_ym ~ '^\d{6}$'),
+  loaded_at     timestamptz not null default now(),
+  loaded_rows   int,
+  published_ym  char(6) not null check (published_ym ~ '^\d{6}$'),
+  published_at  timestamptz not null default now()
+);
+
+comment on table snapshot_release is
+  '결정 0035 분기 표지 — 한 줄뿐(id = 1). loaded_ym = 다 들어온 분기(적재기가 RPC 로 · 요약표가 이 칸으로 굽는다), '
+  'published_ym = 화면이 보는 분기(post_load.py 가 요약표를 구운 뒤 올린다). 0줄이면 화면 가게 칸이 조용히 빈다 — '
+  'post_load.py --check 가 [사고]로 잡는다. 공개키 접근 0(RLS 켬 + 정책 0 + 권한 회수)';
+comment on column snapshot_release.loaded_ym is
+  '다 들어온 분기(YYYYMM). 적재기가 전국 적재 + 교차검증 통과 뒤 api.mark_snapshot_loaded 로 적는다 — loaded_ym 이하인 분기는 무시(앞으로만 — 같은 분기 재실행·옛 분기 백필이 표지를 끌어내리지 않게)';
+comment on column snapshot_release.loaded_rows is
+  '표지를 적을 때 적재기가 센 그 분기 행 수(교차검증 값) — post_load.py --check 가 지금 행 수와 대조해 다르면 [주의]';
+comment on column snapshot_release.published_ym is
+  '화면이 보는 분기(YYYYMM). post_load.py 가 분기와 무관한 판정을 지난 뒤 분기 요약표 셋 굽기·분기 대조와 같은 트랜잭션에서 loaded_ym 으로 올린다(커밋 순간 넷이 함께 바뀜) — 되돌리기는 publish_snapshot.py --ym';
+
+alter table snapshot_release enable row level security;
+
+-- ⛔ Supabase 는 새 표를 anon 에 자동으로 연다(pg_default_acl) — 만든 자리에서 닫는다.
+revoke all on snapshot_release from public, anon, authenticated;
+
+-- 처음 한 줄 = 2026-10-06 라이브 상태(202606 2,772,484행) — 적용 직후 화면은 그대로다.
+-- 이미 있으면 건드리지 않는다(정본을 다시 돌려도 지금 표지를 되돌리지 않게).
+insert into snapshot_release (id, loaded_ym, loaded_at, loaded_rows, published_ym, published_at)
+values (1, '202606', now(), 2772484, '202606', now())
+on conflict (id) do nothing;
+
 -- =====================================================================
 -- L3-b. transaction — 실거래 (매매만. 상가 임대는 데이터가 없음)
 -- =====================================================================
@@ -805,10 +849,11 @@ comment on view v_building_floor_stack is
 --
 -- ⏳ 아직은 안 터지지만 조건이 갖춰지면 조용히 틀리는 것 둘 — 지금 라이브는 단일
 --    분기(202603)·단일 시군구(강남)라 무해하나, 확장 시 반드시 손볼 것:
---   (1) 점포 분기를 (select max(snapshot_ym) from unit_business)로 고른다. 이건
---       **전역 최신 분기**라, 여러 분기가 쌓인 뒤 어떤 지역이 최신 분기에 없으면
---       그 지역 점포가 통째로 안 붙는다(빈 층으로 보임). 지역별 최신 분기로
---       바꾸거나 조회 파라미터로 빼야 한다. Phase 5(분기 누적) 착수 전 필수.
+--   (1) 점포 분기를 표지 published_ym(select r.published_ym from snapshot_release r)으로
+--       고른다(결정 0035 — 예전 max(snapshot_ym) 은 적재 2시간 동안 반쯤 찬 새 분기를
+--       보여 줬다). 여전히 **전역 한 분기**라, 여러 분기가 쌓인 뒤 어떤 지역이 그 분기에
+--       없으면 그 지역 점포가 통째로 안 붙는다(빈 층으로 보임). 지역별 분기로 바꾸거나
+--       조회 파라미터로 빼야 한다. Phase 5(분기 누적) 착수 전 필수.
 --   (2) 점포 lateral이 (pnu, floor_no)로 찾는데 unit_business에는 (pnu, snapshot_ym)
 --       인덱스만 있다. 강남 6.4만 행에선 무해하지만 전국 수백만 행이면
 --       (pnu, floor_no, snapshot_ym) 인덱스가 필요하다.
@@ -871,7 +916,7 @@ left join lateral (
   from unit_business ub
   where ub.pnu = s.pnu
     and ub.floor_no = s.floor_no
-    and ub.snapshot_ym = (select max(snapshot_ym) from unit_business)
+    and ub.snapshot_ym = (select r.published_ym from snapshot_release r)
 ) st on true;
 
 comment on view v_floor_stack is
@@ -1174,10 +1219,12 @@ analyze mv_search_parcel;
 --    검색에서 빠진다(mv_search_parcel 과 똑같은 방식으로, 에러 0).
 create materialized view if not exists mv_parcel_store_names as
 with latest as (
-  -- ⚠️ **전역** 최신 분기 하나다(지역별로 고르지 않는다) — v_floor_stack·mv_coverage_stats
+  -- ⚠️ **전역** 한 분기다(지역별로 고르지 않는다) — v_floor_stack·mv_coverage_stats
   --    와 같은 기준이라, 한 지역만 분기가 밀리면 그 지역 가게가 통째로 안 나오는 알려진
   --    결함을 그대로 물려받는다(결정 0028 결정 1 · 알려진한계 §4). 여기서 한 번만 구한다.
-  select max(u.snapshot_ym) as ym from unit_business u
+  -- ⛔ 표지의 **loaded_ym**(다 들어온 분기)이다 — published 가 아니다(결정 0035). post_load 가
+  --    새 분기로 먼저 굽고 나서 published 를 올려야 화면이 한순간에 바뀐다.
+  select r.loaded_ym as ym from snapshot_release r
 )
 select
   pc.pnu,
@@ -1296,7 +1343,7 @@ select
   round(100.0 * count(*) filter (where ub.floor_no is null)
         / count(*), 1)                                        as floor_missing_pct
 from unit_business ub
-where ub.snapshot_ym = (select max(snapshot_ym) from unit_business)
+where ub.snapshot_ym = (select r.loaded_ym from snapshot_release r)   -- 표지 loaded_ym(결정 0035)
   -- 서비스 지역(화면에서 고를 수 있는 구)만 센다 — 전국을 세면 화면이 보여주지도 않는
   -- 지역까지 섞여 결측률이 15.3%p 과장된다(2026-08-22 실측 50.3% vs 35.0%).
   -- 목록을 여기 베껴 적지 않고 mv_open_sigungu 를 그대로 읽는 이유: 자료가 늘 때
@@ -1315,7 +1362,7 @@ comment on materialized view mv_coverage_stats is
   '대조하느라 순수 실행 2.1~4.9초였고(2026-08-22 실측, 부하에 따라 흔들린다), anon 의 '
   '3초 제한을 넘나들었다. 집계값은 **적재 시점에만** 바뀌므로 그때 한 번 세면 된다. '
   '신선도 = python scripts/post_load.py 를 돌린 시점(적재와 한 세트다 — 그 스크립트의 '
-  '--check 가 원본 최신 분기와 대조해 낡음을 잡는다). '
+  '--check 가 표지 loaded_ym 과 대조해 낡음을 잡는다). 분기 = 표지 loaded_ym(결정 0035). '
   '⚠️ 본문은 2026-08-22a 의 v_coverage_stats select 와 동일하다 — 범위(서비스 지역)나 '
   '분기 기준을 고칠 때는 여기와 supabase/schema.sql 을 함께 고칠 것.';
 
@@ -1335,8 +1382,10 @@ analyze mv_coverage_stats;
 -- ⚠️ **계산은 여기서 안 한다.** 2026-08-22d 부터 미리 계산해 둔 mv_coverage_stats 한 줄을
 --    그대로 내보낸다(실시간 집계는 ~2,100ms 로 anon 3초 제한에 붙어 있었다 — 위 요약표
 --    주석 참조). 화면이 읽는 이름·컬럼은 그대로라 프론트는 이 변경을 모른다.
--- ⚠️ v_floor_stack과 **똑같은** 분기 기준을 쓴다("분기" = snapshot_ym 스냅샷 분기).
---    한쪽만 바꾸면 화면의 점포 목록과 각주가 서로 다른 분기를 말하게 되므로 항상 함께 고칠 것.
+-- ⚠️ v_floor_stack과 **똑같은** 분기를 말한다("분기" = snapshot_ym 스냅샷 분기) — 요약표는
+--    표지 loaded_ym 으로 굽고, post_load 가 구운 뒤 published_ym(화면 기준)을 같은 분기로
+--    올린다(결정 0035). 한쪽만 바꾸면 화면의 점포 목록과 각주가 서로 다른 분기를 말하게
+--    되므로 항상 함께 고칠 것.
 --    2026-08-22a 에서 **지역** 조건이 붙었지만 그 약속은 그대로다 — 바뀐 것은 "어느 지역을
 --    세느냐"뿐이고 "어느 분기를 세느냐"는 손대지 않았다.
 -- ⚠️ 내보내는 것은 집계값뿐이다 — 상호명·좌표·주소는 넣지 않는다(노출면 최소 원칙).
@@ -1351,7 +1400,7 @@ comment on view v_coverage_stats is
   '(2026-08-22d — 실시간 집계는 2.1~4.9초로 anon 3초 제한을 넘나들었다). '
   '★ 범위는 **서비스 지역(mv_open_sigungu = 화면에서 고를 수 있는 구)** 뿐이다(2026-08-22a). '
   '전국을 세면 화면이 보여주지도 않는 지역까지 섞여 결측률이 15.3%p 과장된다(50.3% vs 35.0%). '
-  '분기 기준은 v_floor_stack 과 동일한 전역 최신 snapshot_ym — 둘을 항상 함께 고칠 것. '
+  '분기 기준은 표지 loaded_ym(화면은 published — post_load 가 구운 뒤 올린다 · 결정 0035) — v_floor_stack 과 둘을 항상 함께 고칠 것. '
   'ℹ️ pnu 가 NULL 인 행(실측 1,819)은 지역 특정 불가라 분모에서 빠진다. '
   'ℹ️ 신선도 = python scripts/post_load.py 시점 — 그 스크립트의 --check 가 낡음을 잡는다. '
   '★ 공개 접근: anon/authenticated에게 SELECT **만** 허용(집계값만, 상호명 없음). '
@@ -2670,7 +2719,7 @@ from district d
 join unit_business ub
   on ub.geom is not null
  and st_contains(d.geom, ub.geom)
-where ub.snapshot_ym = (select max(u.snapshot_ym) from unit_business u)
+where ub.snapshot_ym = (select r.loaded_ym from snapshot_release r)   -- 표지 loaded_ym(결정 0035)
 group by 1, 2, 3, 4, 5, 6;
 
 comment on materialized view mv_district_industry_mix is
@@ -2678,7 +2727,7 @@ comment on materialized view mv_district_industry_mix is
   '미리 굽는다(라이브 실측, 굽기 26.7초 · 읽기 0.32ms). 대분류는 이 표를 합쳐서 낸다. '
   '⚠️ 상권이 겹치는 자리의 점포는 **양쪽에 모두** 세어진다(2026-08-22 실측: 상권 안 462,858곳 중 '
   '17,946곳 = 3.9% 가 두 상권에 겹침, 3겹은 0건). 상권끼리 더하면 그만큼 부풀려진다. '
-  '⚠️ 어느 분기가 최신인지는 **구울 때** 굳는다 — 새 분기를 적재하면 `python scripts/post_load.py`. '
+  '⚠️ 어느 분기인지는 **구울 때** 굳는다 — 표지 loaded_ym(다 들어온 분기 · 결정 0035)으로 굽고, post_load.py 가 구운 뒤 화면 기준(published_ym)을 올린다. '
   '⛔ anon 에게 열지 않는다 — 화면은 list_industry_mix 함수로만 읽는다.';
 
 -- `concurrently` 갱신의 전제 조건. 조회(상권 몇 개 + 분기 하나)도 이 인덱스로 탄다(0.32ms).
@@ -2704,7 +2753,7 @@ as $$
     -- (한 화면에서 두 숫자가 다른 기간을 말하는 것이 가장 나쁜 상태다).
     select coalesce(
              (select max(m.snapshot_ym) from mv_district_industry_mix m),
-             (select max(u.snapshot_ym) from unit_business u)) as ym
+             (select r.published_ym from snapshot_release r)) as ym
   ),
   me as (
     -- 좌표가 없으면 아예 답하지 않는다. 여기를 열어 두면 반경 0곳이 "이 동네엔 가게가
@@ -2801,7 +2850,7 @@ as $$
   with snap as (
     select coalesce(
              (select max(m.snapshot_ym) from mv_district_industry_mix m),
-             (select max(u.snapshot_ym) from unit_business u)) as ym
+             (select r.published_ym from snapshot_release r)) as ym
   ),
   me as (
     select p.geom as g, p.geom::geography as gg
@@ -3336,6 +3385,58 @@ grant select, insert, update, delete on api.rent_stat        to service_role;
 grant select, insert, update, delete on api.collect_progress to service_role;
 grant select, insert, update, delete on api.api_quota_log    to service_role;
 grant select, insert, update, delete on api.bjd_code         to service_role;
+
+-- ── 분기 표지 올리기 — 적재기 전용 (결정 0035 · 2026-10-07a) ──────────────────
+-- 적재기(load_sangkwon_snapshot.py)가 **전국 적재 + 교차검증 일치** 뒤 REST
+-- `POST /rest/v1/rpc/mark_snapshot_loaded`(service 키)로 부른다. 표지의 loaded_ym 만 적는다 —
+-- 화면 기준(published_ym)은 post_load.py 가 요약표를 구운 뒤 올린다(이 함수는 안 건드린다).
+-- ⛔ service_role 만 부른다 — 공개 호출 허용 목록(post_load.py --check)에 넣지 않는다.
+-- ⛔ loaded_ym 이하(이미 들어온 분기·같은 분기 재실행·옛 분기 백필 --snapshot-ym 201512)는 **아무것도
+--    안 바꾸고** 지금 표지를 돌려준다 — 앞으로만 간다(loaded ≥ published 가 늘 성립).
+-- ⛔ `set search_path = ''` — 표는 전부 public. 으로 한정한다.
+create or replace function api.mark_snapshot_loaded(p_ym text, p_rows int)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_cur public.snapshot_release;
+begin
+  if p_ym is null or p_ym !~ '^\d{6}$' then
+    raise exception '분기는 YYYYMM 여섯 자리여야 합니다 (받은 값: %)', p_ym
+      using errcode = '22023';
+  end if;
+  if not exists (select 1 from public.unit_business u where u.snapshot_ym = p_ym::char(6)) then
+    raise exception '점포 표(unit_business)에 % 분기 행이 없습니다 — 적재가 끝난 뒤에 부르세요', p_ym
+      using errcode = '22023';
+  end if;
+  select * into v_cur from public.snapshot_release r where r.id = 1 for update;
+  if not found then
+    raise exception '표지(snapshot_release)가 비었습니다 — python scripts/publish_snapshot.py --ym <분기> 로 먼저 채우세요'
+      using errcode = '55000';
+  end if;
+  if p_ym <= v_cur.loaded_ym::text then
+    return to_jsonb(v_cur);
+  end if;
+  update public.snapshot_release r
+     set loaded_ym = p_ym, loaded_at = now(), loaded_rows = p_rows
+   where r.id = 1
+  returning * into v_cur;
+  return to_jsonb(v_cur);
+end
+$$;
+
+comment on function api.mark_snapshot_loaded(text, int) is
+  '결정 0035 — 적재기가 전국 적재 + 교차검증 일치 뒤 부르는 분기 표지 올리기(loaded_ym · loaded_at · loaded_rows). '
+  '분기 모양이 YYYYMM 이 아니거나 점포 표에 그 분기 행이 0 이면 에러. loaded_ym 이하(이미 들어온 분기·같은 분기 '
+  '재실행·옛 분기 백필)는 아무것도 안 바꾸고 지금 표지를 돌려준다(앞으로만 — loaded ≥ published 가 늘 성립). '
+  '화면 기준(published_ym)은 안 건드린다 — '
+  'post_load.py 가 요약표를 구운 뒤 올린다. service_role 전용(공개 호출 허용 목록 밖).';
+
+-- ⛔ 만든 자리에서 닫고 service_role 에게만 준다(공개키는 부르지 못한다).
+revoke all on function api.mark_snapshot_loaded(text, int) from public, anon, authenticated;
+grant execute on function api.mark_snapshot_loaded(text, int) to service_role;
 
 -- =====================================================================
 -- 우편함 — 화면에서 들어오는 짧은 글 한 통 (2026-08-24b)
@@ -4383,7 +4484,7 @@ as $$
     select ub.pnu, count(*)::int as n
     from unit_business ub
     join scope sc on sc.pnu = ub.pnu
-    where ub.snapshot_ym = (select max(u.snapshot_ym) from unit_business u)
+    where ub.snapshot_ym = (select r.published_ym from snapshot_release r)
     group by 1
   ),
   land as (
@@ -5281,7 +5382,7 @@ as $$
     select 1 as ord,
            '점포·업종 (상권정보)'::text as src,
            '분기'::text                 as basis_kind,
-           (select max(t.snapshot_ym)::text from unit_business t) as basis,
+           (select r.published_ym::text from snapshot_release r) as basis,
            'sangkwon'::text             as rule_kind,
            '분기마다 (다음 분기 자료가 공개되면 사람이 적재)'::text as cadence
     union all
