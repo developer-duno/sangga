@@ -429,8 +429,9 @@ def report_coverage_freshness():
 #
 # 화면은 점포 분기를 `max(snapshot_ym)` 이 아니라 표지 한 줄에서 읽는다:
 #   loaded_ym    = 다 들어온 분기(적재기가 전국 적재 + 교차검증 뒤 RPC 로 적는다) — 요약표가 이 칸으로 굽는다
-#   published_ym = 화면이 보는 분기 — **이 스크립트가** 요약표를 굽고 낡음 판정을 다 통과한 뒤 올린다
-# 그래서 새 분기는 적재 2시간 동안 화면에 안 새고, 이 UPDATE 한 줄에 모든 카드가 한순간에 바뀐다.
+#   published_ym = 화면이 보는 분기 — **이 스크립트가** 분기와 무관한 판정을 지난 뒤, 분기 요약표 셋 굽기·대조와
+#                  한 트랜잭션에서 올린다(build_publish_tx_sql)
+# 그래서 새 분기는 적재 2시간 동안 화면에 안 새고, 그 트랜잭션의 커밋 순간에 모든 카드가 한순간에 바뀐다.
 # ⛔ 표지가 0줄이면 화면 가게 칸이 **조용히** 빈다(하위질의가 null) — [사고].
 # ⛔ 올리는 일은 갱신 흐름(`--check` 없이)에서만 한다. `--check` 는 DB 쓰기 0.
 
@@ -572,6 +573,9 @@ def report_snapshot_release(before_published=None):
     return fatal, stale
 
 
+REVERTED_NOTE = ("python scripts/publish_snapshot.py --ym 으로 일부러 되돌려 둔 상태라면 이 경고와 종료 코드 1 은 정상입니다(표지만으로는 '적재기 실패'와 '일부러 되돌림'을 못 가립니다) — 그때는 --loaded 를 하지 마세요.")
+
+
 def precheck_snapshot_release():
     """갱신 **전에** 표지를 읽는다(2026-10-07 맹점 검사관 🟡2·🟠4).
 
@@ -601,6 +605,7 @@ def precheck_snapshot_release():
               "적재기가 exit 1 로 끝났으면 python scripts/publish_snapshot.py --loaded {} "
               "뒤 다시 python scripts/post_load.py".format(newer, st["loaded"], newer))
         print("       갱신은 그대로 하되(화면은 {} 그대로) 끝에 종료 코드 1 로 알립니다.".format(st["published"]))
+        print("       ⓘ " + REVERTED_NOTE)
     return False, st["published"], newer
 
 
@@ -1864,6 +1869,7 @@ def main(argv=None):
         print("[경고] 점포 표에 표지보다 새 분기 {} 가 있는데 '다 들어왔다' 표시가 없습니다 — 적재기가 exit 1 로 "
               "끝났으면 python scripts/publish_snapshot.py --loaded {} 뒤 다시 python scripts/post_load.py"
               .format(newer_unmarked, newer_unmarked))
+        print("       ⓘ " + REVERTED_NOTE)
         return 1
     # 권한·옛 문·색인·별관은 --check 에서만 돈다 — 성공했을 때만 이어서 돌리라고 알린다(2026-10-06).
     print("  ⓘ 권한·옛 문 닫힘·색인·함수 일치·느려짐·별관 점검은 여기서 안 돕니다 — 이어서 python scripts/post_load.py --check")
