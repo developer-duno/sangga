@@ -162,6 +162,30 @@ def test_issue_body_says_post_load_publishes_the_flag():
     assert -1 < load_idx < post_idx < check_idx
 
 
+def test_issue_body_stops_on_loader_exit_1_and_shows_the_flag():
+    """2026-10-07 맹점 검사관 🟠4 — 적재기가 exit 1 인데 다음 줄(post_load)로 넘어가면 post_load 는
+    [신선]으로 0 을 내고 새 분기가 몇 주 동안 조용히 안 보인다. 멈춤 줄 + 눈으로 확인하는 줄."""
+    body = chk.build_issue_body([("20260930", "자료_20260930")])
+    lines = body.splitlines()
+    load_i = next(i for i, ln in enumerate(lines)
+                  if "load_sangkwon_snapshot.py" in ln and ln.rstrip().endswith("--sigungu-code all"))
+    assert "적재기가 exit 1" in lines[load_i + 1] and "멈추" in lines[load_i + 1]
+    assert "다음 줄로 넘어가지 않는다" in lines[load_i + 1]
+    assert lines[load_i + 2].startswith("python scripts/post_load.py ")
+    assert lines[load_i + 3].startswith("python scripts/publish_snapshot.py --show")
+    assert "보여 주는 분기 = 202609" in lines[load_i + 3]
+
+
+def test_issue_body_starts_with_disk_and_same_day_warnings():
+    """결정 0035 「11/2 절차」의 ⛔ 두 줄(맹점 검사관 🟡1) — 명령 블록보다 앞."""
+    body = chk.build_issue_body([("20260930", "자료_20260930")])
+    disk = body.find("⛔ 적재 전 디스크 여유 확인")
+    same_day = body.find("⛔ 서울 개폐업 분기 적재와 같은 날 하지 않는다")
+    todo = body.find("## 할 일")
+    assert -1 < todo < disk < same_day < body.find("```powershell")
+    assert "85%" in body and "+1.4GB" in body
+
+
 def test_issue_body_uses_sigungu_code_all_and_dir():
     """적재 명령이 서울+대전만 좁히는 기본값(강남구)으로 조용히 돌면 안 된다."""
     body = chk.build_issue_body([("20260930", "자료_20260930")])

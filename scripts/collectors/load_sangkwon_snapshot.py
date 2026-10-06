@@ -709,9 +709,31 @@ def should_mark_loaded(prefixes, dry_run):
 
     결정 0035: 서울만·한 구만 넣은 분기를 '다 들어온 분기'로 적으면 post_load 가 그 반쪽을
     화면에 올린다. 시도·시군구 모드는 표지를 건드리지 않는다(필요하면 사람이
-    publish_snapshot.py --ym 로 적는다).
+    publish_snapshot.py --loaded 로 적는다).
     """
     return (not prefixes) and not dry_run
+
+
+# 전국 시·도 파일 수 — 2026-10-07 실측 data/raw/sangkwon_202606/ 의 csv 16개(그 밖에 안내 txt 1개).
+# 2026-07 광주+전남이 '전남광주' 한 파일로 합쳐져 17 → 16 이 됐다. 시·도가 다시 합쳐지거나 갈라져
+# 이 수가 바뀌면 적재기가 표지를 안 올리고 멈춘다 → 폴더를 눈으로 확인한 뒤 이 상수를 고친다.
+EXPECTED_SIDO_FILES = 16
+
+
+def missing_for_mark(result, expected=None):
+    """'다 들어온 분기'로 적으면 안 되는 까닭 목록 — 비어 있어야 표지를 적는다 (순수 함수).
+
+    ⛔ 교차검증은 "훑은 것 = 들어간 것"만 본다 — 시·도 파일 하나가 빈 파일·칸 빠짐으로 건너뛰어졌거나
+       폴더에 아예 없으면 그대로 '일치'다. 그 분기를 다 들어왔다고 적으면 post_load 가 한 시·도 가게
+       칸이 통째로 빈 분기를 화면에 올린다(2026-10-07 적대 검사관).
+    """
+    expected = EXPECTED_SIDO_FILES if expected is None else expected
+    problems = ["{} ({})".format(name, reason) for name, reason in result.get("skipped_files") or []]
+    processed = len(result.get("per_file") or [])
+    total = result.get("files_total")
+    if not (processed == total == expected):
+        problems.append("시·도 파일 수 — 처리 {} · 폴더 {} · 기대 {}".format(processed, total, expected))
+    return problems
 
 
 def mark_snapshot_loaded(base_url, headers, snapshot_ym, rows, post=requests.post):
@@ -1060,12 +1082,18 @@ def main():
     # 화면은 아직 그대로다(보여 주는 분기는 post_load.py 가 요약표를 구운 뒤 올린다).
     if not should_mark_loaded(scope, opts["dry_run"]):
         print("표지는 안 올렸습니다(전국 적재가 아니라서) — 올리려면 "
-              "python scripts/publish_snapshot.py --ym {}".format(snapshot_ym))
+              "python scripts/publish_snapshot.py --loaded {}".format(snapshot_ym))
         return 0
+    missing = missing_for_mark(result)
+    if missing:
+        print("[에러] 표지는 안 올렸습니다 — 빠진 파일 {}개: {}".format(len(missing), " · ".join(missing)))
+        print("       빠진 시·도를 채워 다시 적재하거나, 이대로 다 들어온 게 맞다고 확인했으면 "
+              "python scripts/publish_snapshot.py --loaded {} 뒤 python scripts/post_load.py".format(snapshot_ym))
+        return 1
     ok, body = mark_snapshot_loaded(base_url, headers, snapshot_ym, ub_count)
     if not ok:
         # 넣은 행은 그대로 둔다(append-only) — 표지만 손으로 적으면 된다.
-        print("[에러] 표지를 못 올렸습니다 — python scripts/publish_snapshot.py --ym {} 로 직접 ({})"
+        print("[에러] 표지를 못 올렸습니다 — python scripts/publish_snapshot.py --loaded {} 로 직접 ({})"
               .format(snapshot_ym, body))
         return 1
     print("표지: 다 들어온 분기 {} · 보여 주는 분기 {} — 화면은 이어서 python scripts/post_load.py 가 "

@@ -130,7 +130,7 @@ comment on column snapshot_release.loaded_ym is
 comment on column snapshot_release.loaded_rows is
   '표지를 적을 때 적재기가 센 그 분기 행 수(교차검증 값) — post_load.py --check 가 지금 행 수와 대조해 다르면 [주의]';
 comment on column snapshot_release.published_ym is
-  '화면이 보는 분기(YYYYMM). post_load.py 가 요약표를 굽고 낡음 판정 6종을 통과한 뒤 loaded_ym 으로 올린다 — 되돌리기는 publish_snapshot.py --ym';
+  '화면이 보는 분기(YYYYMM). post_load.py 가 분기와 무관한 판정을 지난 뒤 분기 요약표 셋 굽기·분기 대조와 같은 트랜잭션에서 loaded_ym 으로 올린다(커밋 순간 넷이 함께 바뀜) — 되돌리기는 publish_snapshot.py --ym';
 
 alter table snapshot_release enable row level security;
 

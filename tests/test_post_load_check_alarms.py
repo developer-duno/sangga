@@ -249,9 +249,9 @@ class TestSlowReport:
             ("report_canonical_indexes", lambda: []),
             ("report_function_drift", lambda: []),
     ("report_snapshot_release", lambda: (False, False)),
-    ("publish_snapshot_release_if_ready", lambda: (False, False)),
+    ("report_store_names_freshness", lambda: ("", "", False)),
             ("report_snapshot_release", lambda: (False, False)),
-            ("publish_snapshot_release_if_ready", lambda: (False, False)),
+            ("report_store_names_freshness", lambda: ("", "", False)),
             ("report_toast_evictions", lambda: []),
         ):
             monkeypatch.setattr(post_load, name, val)
@@ -300,9 +300,9 @@ class TestSlowReport:
             ("report_canonical_indexes", lambda: []),
             ("report_function_drift", lambda: []),
     ("report_snapshot_release", lambda: (False, False)),
-    ("publish_snapshot_release_if_ready", lambda: (False, False)),
+    ("report_store_names_freshness", lambda: ("", "", False)),
             ("report_snapshot_release", lambda: (False, False)),
-            ("publish_snapshot_release_if_ready", lambda: (False, False)),
+            ("report_store_names_freshness", lambda: ("", "", False)),
             ("report_toast_evictions", lambda: []),
         ):
             monkeypatch.setattr(post_load, name, val)
@@ -525,7 +525,9 @@ class TestApplyRechecksTxGeog:
             ("report_tx_window_freshness", lambda: ("", "", False)),
             ("report_coverage_freshness", lambda: ("", "", False)),
             ("report_industry_mix_freshness", lambda: ("", "", False)),
-            ("publish_snapshot_release_if_ready", lambda: (False, False)),
+            ("report_store_names_freshness", lambda: ("", "", False)),
+            ("precheck_snapshot_release", lambda: (False, "202606", "")),
+            ("report_snapshot_release", lambda *a: (False, False)),
         ):
             monkeypatch.setattr(post_load, name, val)
         asked = []
@@ -883,9 +885,9 @@ class TestCheckExitCodeForIndexes:
             ("report_slow_functions", lambda: []),
             ("report_function_drift", lambda: []),
     ("report_snapshot_release", lambda: (False, False)),
-    ("publish_snapshot_release_if_ready", lambda: (False, False)),
+    ("report_store_names_freshness", lambda: ("", "", False)),
             ("report_snapshot_release", lambda: (False, False)),
-            ("publish_snapshot_release_if_ready", lambda: (False, False)),
+            ("report_store_names_freshness", lambda: ("", "", False)),
             ("report_toast_evictions", lambda: []),
         ):
             monkeypatch.setattr(post_load, name, val)

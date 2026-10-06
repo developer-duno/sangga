@@ -54,7 +54,21 @@ def test_unknown_or_bad_args_stop(argv):
 def test_main_returns_2_on_bad_args(monkeypatch, capsys):
     monkeypatch.setattr(target, "query_one", lambda sql: pytest.fail("인자가 틀렸는데 DB 를 물었습니다"))
     assert target.main(["--force"]) == 2
-    assert "--show | --ym YYYYMM" in capsys.readouterr().out
+    assert "--show | --loaded YYYYMM | --ym YYYYMM" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("argv", [["--loaded", "202609"], ["--loaded=202609"]])
+def test_loaded(argv):
+    assert target.parse_args(argv) == {"mode": "loaded", "ym": "202609"}
+
+
+@pytest.mark.parametrize("argv", [
+    ["--loaded"], ["--loaded", "2026Q3"], ["--loaded", "202609", "--ym", "202609"],
+    ["--loaded=20269"], ["--loaded", "202609'--"],
+])
+def test_bad_loaded_args_stop(argv):
+    with pytest.raises(ValueError):
+        target.parse_args(argv)
 
 
 # ── 2. SQL ───────────────────────────────────────────────────────────────────
@@ -108,6 +122,67 @@ def test_ym_write_failure_returns_1(monkeypatch):
     monkeypatch.setattr(target, "query_one", lambda sql: "616096")
     monkeypatch.setattr(target.dbx, "run_sql", lambda sql, **k: 3)
     assert target.main(["--ym", "202603"]) == 1
+
+
+# ── 3-2. --loaded 흐름 (2026-10-07 맹점 검사관 🟠2 — 복구 길이 게이트를 건너뛰지 않게) ─────
+
+
+def test_set_loaded_sql_moves_only_the_loaded_columns():
+    sql = target.build_set_loaded_sql("202609")
+    assert sql.startswith("update snapshot_release set loaded_ym = '202609', loaded_at = now(),")
+    assert "loaded_rows = (select count(*) from unit_business where snapshot_ym = '202609')" in sql
+    assert "where id = 1;" in sql
+    assert "published" not in sql, "--loaded 는 보여 주는 분기를 건드리지 않는다"
+    with pytest.raises(ValueError):
+        target.build_set_loaded_sql("2026Q3")
+
+
+def _loaded_answers(monkeypatch, published="202606", count="2800000"):
+    asked, ran = [], []
+    answers = {target.PUBLISHED_SQL: published}
+
+    def q(sql):
+        asked.append(sql)
+        return answers.get(sql, count)
+    monkeypatch.setattr(target, "query_one", q)
+    monkeypatch.setattr(target.dbx, "run_sql", lambda sql, **k: ran.append(sql) or 0)
+    return asked, ran
+
+
+def test_loaded_writes_only_loaded_then_points_to_post_load(monkeypatch, capsys):
+    asked, ran = _loaded_answers(monkeypatch)
+    assert target.main(["--loaded", "202609"]) == 0
+    assert ran == [target.build_set_loaded_sql("202609")]
+    assert target.build_exists_sql("202609") in asked
+    out = capsys.readouterr().out
+    assert "다 들어온 분기 = 202609" in out and "보여 주는 분기는 그대로 202606" in out
+    assert out.rstrip().splitlines()[-1].startswith("이어서 python scripts/post_load.py")
+
+
+def test_loaded_refuses_a_quarter_not_in_the_store_table(monkeypatch, capsys):
+    _, ran = _loaded_answers(monkeypatch, count="0")
+    assert target.main(["--loaded", "202609"]) == 1
+    assert ran == []
+    assert "202609 분기 행이 없습니다" in capsys.readouterr().out
+
+
+def test_loaded_refuses_going_backwards(monkeypatch, capsys):
+    _, ran = _loaded_answers(monkeypatch, published="202606")
+    assert target.main(["--loaded", "202603"]) == 1
+    assert ran == []
+    assert "python scripts/publish_snapshot.py --ym 202603" in capsys.readouterr().out
+
+
+def test_loaded_refuses_an_empty_flag_table(monkeypatch):
+    _, ran = _loaded_answers(monkeypatch, published="")
+    assert target.main(["--loaded", "202609"]) == 1
+    assert ran == []
+
+
+def test_loaded_write_failure_returns_1(monkeypatch):
+    _loaded_answers(monkeypatch)
+    monkeypatch.setattr(target.dbx, "run_sql", lambda sql, **k: 3)
+    assert target.main(["--loaded", "202609"]) == 1
 
 
 # ── 4. --show 흐름 (DB 쓰기 0) ───────────────────────────────────────────────

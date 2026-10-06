@@ -106,6 +106,9 @@ def build_issue_body(new_quarters, latest_known=LATEST_KNOWN_QUARTER):
         "",
         "## 할 일 (내 PC에서)",
         "",
+        "⛔ 적재 전 디스크 여유 확인(분기마다 약 +1.4GB · 85% 넘으면 확장 먼저).",
+        "⛔ 서울 개폐업 분기 적재와 같은 날 하지 않는다.",
+        "",
         "ⓘ 결정 0035: 적재기가 끝에 '다 들어온 분기' 표지를 적고, `post_load.py` 가 요약표를"
         " 구운 뒤 '보여 주는 분기'를 올린다 — 그 전까지 화면 변화 0.",
         "(넣는 약 2시간 동안·적재가 중간에 멈춰도 손님은 지금 분기를 그대로 봅니다 ·"
@@ -121,7 +124,9 @@ def build_issue_body(new_quarters, latest_known=LATEST_KNOWN_QUARTER):
         " data/raw/sangkwon_{} --sigungu-code all --dry-run".format(folder_ym),
         "python scripts/collectors/load_sangkwon_snapshot.py --dir"
         " data/raw/sangkwon_{} --sigungu-code all".format(folder_ym),
+        "# ⛔ 적재기가 exit 1(교차검증 불일치·표지 못 올림)이면 여기서 멈추고 안내대로 — 다음 줄로 넘어가지 않는다",
         "python scripts/post_load.py                   # 요약표 굽기 → 표지 올림(여기서 화면이 한순간에 바뀐다)",
+        "python scripts/publish_snapshot.py --show   # 보여 주는 분기 = {} 인지 눈으로".format(folder_ym),
         "python scripts/post_load.py --check   # 권한(노출)·색인·별관 점검 — 위 줄에서는 안 돈다",
         "python scripts/backup_raw.py                  # 외장 SSD(F:) 연결 필요",
         "python scripts/backup_raw.py --verify",

@@ -81,17 +81,21 @@ def code_only(sql):
 # ── 탐지 함수 — 가드 본체와 양성 대조가 **같은 함수**를 지난다 ──────────────────
 
 RE_MAX_FROM_UB = re.compile(
-    r"(?i)max\s*\(\s*(?:\w+\.)?snapshot_ym\s*\)(?:\s*::\s*\w+)?\s+from\s+(?:public\.)?unit_business\b")
+    r"(?i)max\s*\(\s*(?:\w+\.)?snapshot_ym\s*\)(?:\s*::\s*\w+)?(?:\s+as\s+\w+)?"
+    r"\s+from\s+(?:public\.)?unit_business\b")
 
 
 def max_from_unit_business(sql):
     """코드에 남은 `max(… snapshot_ym) from unit_business` 꼴을 전부 돌려준다.
 
     잡는 꼴: `max(snapshot_ym) from unit_business` · 별칭 `max(u.snapshot_ym) from unit_business u` ·
-    캐스트 `max(t.snapshot_ym)::text from unit_business t` · `public.unit_business` · 대소문자·공백 변형.
-    ⚠️ 못 보는 것: 줄을 넘겨 쪼갠 꼴(`max(snapshot_ym)\\n from` 은 잡지만 `max(\\nsnapshot_ym)` 도 잡는다 —
-       `\\s` 가 줄바꿈을 먹는다 · 단 `--` 를 품은 글 뒤의 같은 줄은 주석으로 잘려 안 본다) ·
-       동적 SQL(`execute '…'`) 안 · `greatest(...)`·`order by … limit 1` 같은 다른 꼴의 '가장 새 분기'.
+    캐스트 `max(t.snapshot_ym)::text from unit_business t` · 열 별칭 `max(u.snapshot_ym) as ym from unit_business u`
+    (PR 전 mv_parcel_store_names 의 원래 꼴 — 2026-10-07 적대 검사관 🟠② 뒤 보탬) · `public.unit_business` ·
+    대소문자·공백 변형.
+    ⚠️ 못 보는 것: `as` 없이 붙인 열 별칭(`max(snapshot_ym) ym from …`) · 따옴표 열 별칭(`as "ym"`) ·
+       줄을 넘겨 쪼갠 꼴 중 `--` 를 품은 글 뒤의 같은 줄(주석으로 잘려 안 본다 — `\\s` 는 줄바꿈을 먹으므로
+       `max(snapshot_ym)\\n from` · `max(\\nsnapshot_ym)` 은 잡는다) · 동적 SQL(`execute '…'`) 안 ·
+       `greatest(...)`·`order by … limit 1` 같은 다른 꼴의 '가장 새 분기'.
     ⓘ `max(t.store_snapshot_ym)`(요약표 칸 집계)·`max(m.snapshot_ym) from mv_…`(요약표)는 대상이 아니다.
     """
     return RE_MAX_FROM_UB.findall(code_only(sql))
@@ -129,6 +133,19 @@ def fn_comment(text, name):
     m = re.search(r"(?ims)^comment\s+on\s+function\s+{}\s*\(.*?';\s*$".format(re.escape(name)), text)
     assert m, "함수 {} 의 comment 를 못 찾았습니다".format(name)
     return m.group(0)
+
+
+RE_RELEASE_COMMENT = re.compile(
+    r"(?ims)^comment\s+on\s+(?:table\s+snapshot_release|column\s+snapshot_release\.\w+)\s+is.*?';\s*$")
+
+
+def release_comments(text):
+    """표지 표·칸의 `comment on … is '…';` 문장들(나온 순서 그대로 · 글자 그대로).
+
+    ⚠️ 못 보는 것: `public.snapshot_release` 처럼 스키마를 붙인 꼴 · 글 안에 `';` + 줄끝이 들어간 comment
+       (첫 `';` 줄끝에서 끊는다) — 둘 다 지금 두 파일에 없다.
+    """
+    return [m.group(0) for m in RE_RELEASE_COMMENT.finditer(text)]
 
 
 def mv_block(text, name, next_suffix=False):
@@ -189,6 +206,19 @@ class TestTableAndSeed:
         a = sql_block(schema, r"^create table if not exists snapshot_release\b")
         b = sql_block(mig, r"^create table if not exists snapshot_release\b")
         assert a == b
+
+    def test_table_and_column_comments_are_the_same(self, schema, mig):
+        """표·칸 comment 넷이 정본과 글자 그대로(2026-10-07 적대 검사관 🟡③ — 함수 comment 대조와 같은 꼴)."""
+        a, b = release_comments(schema), release_comments(mig)
+        assert len(a) == 4, a
+        assert a == b
+
+    def test_mutation_one_letter_in_a_migration_comment_is_red(self, schema, mig):
+        """양성 대조 — 마이그레이션 칸 comment 한 글자를 바꾸면 위 대조(같은 함수)가 다르다고 본다."""
+        target = "comment on column snapshot_release.loaded_rows is\n  '표지를"
+        assert mig.count(target) == 1
+        bad = mig.replace(target, target.replace("표지를", "표지가"), 1)
+        assert release_comments(bad) != release_comments(schema)
 
 
 class TestRpc:
@@ -296,6 +326,8 @@ class TestNoMaxFromUnitBusiness:
         "where ub.snapshot_ym = (select max(u.snapshot_ym) from unit_business u)",        # 별칭 꼴
         "(select max(t.snapshot_ym)::text from unit_business t) as basis,",               # 캐스트 꼴
         "(SELECT MAX( u.snapshot_ym )\n   FROM public.unit_business u)",                  # 대소문자·줄바꿈
+        "  select max(u.snapshot_ym) as ym from unit_business u",                         # PR 전 원래 꼴(열 별칭)
+        "(select max(t.snapshot_ym)::text AS basis\n from unit_business t)",               # 캐스트 + 열 별칭 변형
     ])
     def test_detector_catches(self, bad):
         assert len(max_from_unit_business("select 1;\n" + bad)) == 1
@@ -314,6 +346,13 @@ class TestNoMaxFromUnitBusiness:
         bad = schema.replace(
             "and ub.snapshot_ym = (select r.published_ym from snapshot_release r)",
             "and ub.snapshot_ym = (select max(snapshot_ym) from unit_business)", 1)
+        assert bad != schema and len(max_from_unit_business(bad)) == 1
+
+    def test_mutation_putting_the_original_aliased_form_back_is_red(self, schema):
+        """적대 검사관 🟠② — PR 전 mv_parcel_store_names 의 원래 꼴(`… as ym from unit_business u`)을 되돌려도 잡는다."""
+        bad = schema.replace(
+            "  select r.loaded_ym as ym from snapshot_release r\n",
+            "  select max(u.snapshot_ym) as ym from unit_business u\n", 1)
         assert bad != schema and len(max_from_unit_business(bad)) == 1
 
 
@@ -364,15 +403,33 @@ class TestMirrorsTheSchema:
 # ── 5. 바꿔 끼우기 · 잠금 · 원자성 ───────────────────────────────────────────
 
 
+def session_settings_problems(sql):
+    """세션 설정(lock_timeout·statement_timeout)이 첫 begin 앞에 있는지 — 어긋난 까닭 목록(비면 정상).
+
+    가드 본체와 양성 대조가 **같은 함수**를 지난다(2026-10-07 적대 검사관 🟡⑥).
+    ⚠️ 못 보는 것: 값이 다른 꼴(`'3s'`·`'900s'` 밖의 값은 '없음'으로 본다) · 들여쓴 `set`·`begin`(줄머리 고정).
+    """
+    code = code_only(sql)
+    begin = re.search(r"(?m)^begin;", code)
+    lt = re.search(r"(?m)^set lock_timeout = '2s';", code)
+    st = re.search(r"(?m)^set statement_timeout = '900s';", code)
+    out = []
+    if not begin:
+        out.append("begin 없음")
+    if not lt or not st:
+        out.append("set lock_timeout / statement_timeout 없음")
+    if begin and lt and lt.start() > begin.start():
+        out.append("lock_timeout 이 begin 뒤")
+    if begin and st and st.start() > begin.start():
+        out.append("statement_timeout 이 begin 뒤")
+    if re.search(r"(?im)^set\s+local\b", code):
+        out.append("set local 있음")
+    return out
+
+
 class TestSwapAndLocks:
     def test_lock_timeout_and_statement_timeout_before_the_first_begin(self, mig):
-        code = code_only(mig)
-        begin = re.search(r"(?m)^begin;", code).start()
-        lt = re.search(r"(?m)^set lock_timeout = '2s';", code)
-        st = re.search(r"(?m)^set statement_timeout = '900s';", code)
-        assert lt and st, "set lock_timeout / statement_timeout 이 없습니다"
-        assert lt.start() < begin and st.start() < begin, "세션 설정은 begin 앞이어야 합니다"
-        assert not re.search(r"(?im)^set\s+local\b", code)
+        assert session_settings_problems(mig) == []
 
     def test_begin_commit_notify_order(self, mig):
         code = code_only(mig)
@@ -430,8 +487,7 @@ class TestSwapAndLocks:
         """양성 대조 — lock_timeout 을 begin 뒤로 옮긴 사본은 위 판정에 걸린다."""
         bad = mig.replace("set lock_timeout = '2s';\n\nbegin;", "begin;\nset lock_timeout = '2s';", 1)
         assert bad != mig
-        code = code_only(bad)
-        assert re.search(r"(?m)^set lock_timeout = '2s';", code).start() > re.search(r"(?m)^begin;", code).start()
+        assert session_settings_problems(bad) == ["lock_timeout 이 begin 뒤"]
 
 
 # ── 6. 머리말 — 적용 뒤 확인 목록 ────────────────────────────────────────────

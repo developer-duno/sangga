@@ -612,6 +612,8 @@ def test_main_all_mode_cross_check_query_has_no_sigungu_filter(tmp_path, monkeyp
     # 전국 모드는 끝에 분기 표지 RPC 를 부른다(결정 0035) — 네트워크 없이 성공으로 흉내.
     monkeypatch.setattr(target, "mark_snapshot_loaded",
                         lambda *a, **k: (True, {"loaded_ym": "202603", "published_ym": "202603"}))
+    # 시·도 파일 수 관문(2026-10-07)은 아래 test_main_all_mode_* 가 본다 — 여기선 파일 1개를 '전부'로.
+    monkeypatch.setattr(target, "EXPECTED_SIDO_FILES", 1)
 
     assert target.main() == 0
     # 전국 모드 기준값 = unit_business_count(무효 PNU 포함 2). ub_with_pnu_count(1)로
@@ -1052,6 +1054,8 @@ def _all_mode(tmp_path, monkeypatch, sigungu="all"):
     counts = {"parcel": [0, 1], "unit_business": [1]}
     monkeypatch.setattr(target, "rest_count",
                         lambda base_url, headers, table, query: counts[table].pop(0))
+    # 시험 폴더의 시·도 파일은 1개 — 그 1개를 '전국 전부'로 본다(관문 자체는 아래 시험들이 본다).
+    monkeypatch.setattr(target, "EXPECTED_SIDO_FILES", 1)
 
 
 def test_main_all_mode_marks_the_flag_after_cross_check(tmp_path, monkeypatch, capsys):
@@ -1071,7 +1075,51 @@ def test_main_all_mode_rpc_failure_returns_1_and_says_how_to_fix(tmp_path, monke
     _all_mode(tmp_path, monkeypatch)
     monkeypatch.setattr(target, "mark_snapshot_loaded", lambda *a, **k: (False, "HTTP 403 x"))
     assert target.main() == 1
-    assert "python scripts/publish_snapshot.py --ym 202603" in capsys.readouterr().out
+    # ⛔ --ym 이 아니라 --loaded — --ym 은 보여 주는 분기까지 바로 바꿔 post_load 의 굽기·확인을 건너뛴다.
+    out = capsys.readouterr().out
+    assert "python scripts/publish_snapshot.py --loaded 202603" in out
+    assert "--ym" not in out
+
+
+# ── 빠진 시·도 파일이 있으면 '다 들어왔다'로 적지 않는다 (2026-10-07 적대 검사관 🟠①) ──
+
+
+def test_expected_sido_files_is_the_measured_folder_count():
+    """2026-10-07 실측 data/raw/sangkwon_202606/ csv 16개(광주+전남 통합 뒤)."""
+    assert target.EXPECTED_SIDO_FILES == 16
+
+
+def test_missing_for_mark_cases():
+    ok = {"skipped_files": [], "per_file": [("a", 1), ("b", 2)], "files_total": 2}
+    assert target.missing_for_mark(ok, expected=2) == []
+    skipped = {"skipped_files": [("b.csv", "빈 파일")], "per_file": [("a", 1), ("b.csv", 0)],
+               "files_total": 2}
+    assert target.missing_for_mark(skipped, expected=2) == ["b.csv (빈 파일)"]
+    short = {"skipped_files": [], "per_file": [("a", 1)], "files_total": 1}
+    assert len(target.missing_for_mark(short, expected=2)) == 1
+    assert "기대 2" in target.missing_for_mark(short, expected=2)[0]
+
+
+def test_main_all_mode_skipped_file_never_marks_the_flag(tmp_path, monkeypatch, capsys):
+    _all_mode(tmp_path, monkeypatch)
+    (tmp_path / "소상공인시장진흥공단_상가(상권)정보_경기_202603.csv").write_bytes(b"")
+    monkeypatch.setattr(target, "EXPECTED_SIDO_FILES", 2)
+    monkeypatch.setattr(target, "mark_snapshot_loaded",
+                        lambda *a, **k: pytest.fail("빠진 파일이 있는데 표지를 적었습니다"))
+    assert target.main() == 1
+    out = capsys.readouterr().out
+    assert "표지는 안 올렸습니다 — 빠진 파일 1개" in out and "경기_202603.csv" in out
+    assert "python scripts/publish_snapshot.py --loaded 202603" in out
+
+
+def test_main_all_mode_too_few_files_never_marks_the_flag(tmp_path, monkeypatch, capsys):
+    _all_mode(tmp_path, monkeypatch)
+    monkeypatch.setattr(target, "EXPECTED_SIDO_FILES", 2)   # 폴더엔 1개뿐 — 시·도 하나가 통째로 없다
+    monkeypatch.setattr(target, "mark_snapshot_loaded",
+                        lambda *a, **k: pytest.fail("시·도 파일이 모자란데 표지를 적었습니다"))
+    assert target.main() == 1
+    out = capsys.readouterr().out
+    assert "표지는 안 올렸습니다" in out and "처리 1 · 폴더 1 · 기대 2" in out
 
 
 def test_main_sigungu_mode_never_marks_the_flag(tmp_path, monkeypatch, capsys):
