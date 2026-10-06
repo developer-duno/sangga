@@ -53,8 +53,9 @@ export function buildingFromFloorRows(rows: FloorRow[]): BuildingHit | null {
     pnu: head.pnu,
     bld_nm: head.bld_nm,
     road_addr: head.road_addr,
-    lat: head.lat ?? null,
-    lng: head.lng ?? null,
+    // 칸이 없으면(옛 서버) undefined 그대로 — null 로 바꾸면 `lacksCoord` 가 "좌표 없음"으로 읽는다.
+    lat: head.lat,
+    lng: head.lng,
     bld_cnt_in_pnu: head.bld_cnt_in_pnu,
     floor_cnt: rows.length,
     min_floor: min,
