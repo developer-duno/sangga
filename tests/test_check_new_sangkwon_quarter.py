@@ -133,6 +133,42 @@ def test_issue_body_warns_irreversible():
     assert "다시 받을 수 없" in body
 
 
+def test_issue_body_warns_before_loading_without_the_design():
+    """'다 넣은 뒤 한 번에' 설계가 main 에 들어오기 전엔 적재하지 말라는 경고가
+
+    명령 블록보다 **앞**에 와야 한다 — 뒤에 있으면 이미 명령을 실행한 뒤에야 읽는다.
+    """
+    body = chk.build_issue_body([("20260930", "자료_20260930")])
+    warn_idx = body.find("2026-10-06 (8)")
+    cmd_idx = body.find("```powershell")
+    assert warn_idx != -1, "경고 단락에 PROGRESS 절 가리키는 문자열이 없다"
+    assert cmd_idx != -1
+    assert warn_idx < cmd_idx, "경고가 명령 블록보다 뒤에 있다"
+
+
+def test_issue_body_uses_sigungu_code_all_and_dir():
+    """적재 명령이 서울+대전만 좁히는 기본값(강남구)으로 조용히 돌면 안 된다."""
+    body = chk.build_issue_body([("20260930", "자료_20260930")])
+    assert "--sigungu-code all" in body
+    assert "--dir data/raw/sangkwon_" in body
+
+
+def test_issue_body_runs_post_load_check():
+    body = chk.build_issue_body([("20260930", "자료_20260930")])
+    assert "post_load.py --check" in body
+
+
+def test_issue_body_does_not_call_load_sangkwon_without_args():
+    """인자 없이 부르면 기본값(강남구 하나·옛 202603 CSV)으로 조용히 실행된다."""
+    body = chk.build_issue_body([("20260930", "자료_20260930")])
+    for line in body.splitlines():
+        stripped = line.strip()
+        if stripped.endswith("load_sangkwon_snapshot.py"):
+            raise AssertionError(
+                "인자 없는 load_sangkwon_snapshot.py 줄이 있다: {!r}".format(line)
+            )
+
+
 # ── GITHUB_OUTPUT ────────────────────────────────────────────────────────────
 
 

@@ -31,6 +31,7 @@ python scripts/collectors/load_sbiz_district.py
 python scripts/build_rone_map.py --seed scripts/seeds/district_rone_map.csv   # exit 0 이어야 한다
 python scripts/build_district_geojson.py   # 지도용 파일을 다시 굽고 **커밋**한다
 python scripts/post_load.py
+python scripts/post_load.py --check   # 권한(노출)·색인·별관 점검 — 위 줄에서는 안 돈다
 python scripts/backup_raw.py               # 외장 SSD(F:) 연결 필요
 ```
 
