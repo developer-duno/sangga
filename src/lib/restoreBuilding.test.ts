@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildingFromFloorRows } from './restoreBuilding';
+import { lacksCoord } from './rentStats';
 import type { FloorRow } from '../types';
 
 /**
@@ -108,9 +109,12 @@ describe('buildingFromFloorRows', () => {
     const bare = row(1);
     delete (bare as Partial<FloorRow>).lat;
     delete (bare as Partial<FloorRow>).lng;
+    // "모른다"는 null("좌표 없음")이 아니라 undefined 로 남긴다 — 임대 카드가 칸 없는 옛 답을
+    // "위치 정보가 없어…"로 잘못 적지 않게(`lacksCoord`).
     const hit = buildingFromFloorRows([bare]);
-    expect(hit?.lat).toBeNull();
-    expect(hit?.lng).toBeNull();
+    expect(hit?.lat).toBeUndefined();
+    expect(hit?.lng).toBeUndefined();
+    expect(lacksCoord(hit!)).toBe(false);
   });
 
   it('이름 없는 건물도 되살린다', () => {

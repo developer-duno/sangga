@@ -186,6 +186,7 @@ def build_issue_body(new_notices, latest_known=LATEST_KNOWN_NOTICE_DATE):
         "python scripts/collectors/collect_lh_notices.py --dry-run   # 무엇이 들어올지 먼저 본다",
         "python scripts/collectors/collect_lh_notices.py             # 적재(한 트랜잭션)",
         "python scripts/post_load.py                                 # 요약표 갱신 + 신선도 점검",
+        "python scripts/post_load.py --check                         # 권한(노출) 점검 — 위 줄에서는 안 돈다",
         "```",
         "",
         "적재까지 끝나면 `scripts/check_lh_notices.py` 의 `LATEST_KNOWN_NOTICE_DATE` 를",
