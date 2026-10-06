@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
 import type { RentStat } from '../types';
+import { RENT_NO_COORD_TEXT } from '../lib/rentStats';
 
 /**
  * "상권 임대 동향 (부동산원 조사)" 카드 — 층별 화면의 여섯 번째 카드(결정 0024).
@@ -424,6 +426,34 @@ describe('RentStatSection — 조사 대상이 아닐 때', () => {
     expect(await screen.findByText('상권 임대 동향 (부동산원 조사)')).toBeTruthy();
     expect(container.querySelector('.card__summary')?.textContent).toBe(
       '부동산원 조사 대상 상권이 아닙니다',
+    );
+  });
+
+  it('★ 좌표 없는 건물(noCoord)이면 "상권을 못 찾음" — 개업·폐업 카드와 같은 글 (2026-10-06)', async () => {
+    const { container } = render(<RentStatSection pnu={PNU} noCoord />);
+
+    expect(await screen.findByText('상권 임대 동향 (부동산원 조사)')).toBeTruthy();
+    expect(container.querySelector('.card__summary')?.textContent).toBe(
+      '위치 정보가 없어 속한 상권을 찾지 못했습니다',
+    );
+    await openCard();
+    expect(container.querySelector('.rent__lead')?.textContent).toBe(RENT_NO_COORD_TEXT);
+    // ⛔ "표본에 안 들었다"는 설명은 좌표가 없는 건물에 대한 말이 아니다.
+    expect(screen.queryByText(/정해진 표본 상권/)).toBeNull();
+    expect(screen.getByText('출처: 한국부동산원 상업용부동산 임대동향조사.')).toBeTruthy();
+    // 본문 글은 개업·폐업 카드의 no_coord 글을 그대로 옮긴 것이다 — 한쪽만 바뀌면 빨강.
+    // ⓘ jsdom 의 .tsx 에서는 import.meta.url 이 file: 이 아니다 — 레포 루트 기준 경로로 읽는다
+    //   (DistrictMap.test.tsx 의 styles.css 읽기와 같다).
+    const oc = readFileSync('src/components/OpenCloseSection.tsx', 'utf-8');
+    expect(oc).toContain(`'${RENT_NO_COORD_TEXT}'`);
+  });
+
+  it('noCoord 라도 줄이 왔으면 평소 카드다', async () => {
+    responses.rent = { data: [stat()], error: null };
+    const { container } = render(<RentStatSection pnu={PNU} noCoord />);
+    await screen.findByText('상권 임대 동향 (부동산원 조사)');
+    expect(container.querySelector('.card__summary')?.textContent).toBe(
+      '공실률 · ㎡당 임대료 · 투자수익률 · 2026년 2분기 조사',
     );
   });
 

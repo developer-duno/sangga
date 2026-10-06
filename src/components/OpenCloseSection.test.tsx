@@ -208,7 +208,7 @@ describe('OpenCloseSection — 서울 자료가 있을 때', () => {
     expect(cols[7].querySelector('.oc__bar--open')?.getAttribute('aria-label')).toBe('2026년 2분기 개업률 1.13%');
   });
 
-  it('★ 업종 표는 접혀 있고, 공표 비율 그대로(null 은 –) · 마지막 줄 그 밖 N업종', async () => {
+  it('★ 업종 표는 접혀 있고, 공표 비율 그대로(null 은 –) · 점포 30곳 미만 업종은 비율만 – · 마지막 줄 그 밖 N업종 (더해서 계산)', async () => {
     const { container } = render(<OpenCloseSection pnu={PNU} />);
     await openCard();
     const det = container.querySelector('.oc__ind') as HTMLDetailsElement;
@@ -226,8 +226,41 @@ describe('OpenCloseSection — 서울 자료가 있을 때', () => {
     );
     expect(rows).toEqual([
       ['일반의류', '90곳', '1곳 (1%)', '4곳 (4%)'],
-      ['한식음식점', '1곳', '2곳 (200%)', '0곳 (–)'],
-      ['그 밖 47업종', '172곳', '1곳 (0.58%)', '1곳 (0.58%)'],
+      // 점포 1곳 업종의 공표 비율 200% 는 적지 않는다 — 개수는 그대로(2026-10-06).
+      ['한식음식점', '1곳', '2곳 (–)', '0곳 (–)'],
+      ['그 밖 47업종 (더해서 계산)', '172곳', '1곳 (0.58%)', '1곳 (0.58%)'],
+    ]);
+    // '–' 의 두 뜻을 표 아래 한 줄로 밝힌다(2026-10-06 — 검사관 🟡 · 사장님 결정).
+    expect(det.querySelector('table + .oc__note')?.textContent).toBe(
+      "'–' = 점포(프랜차이즈 포함)가 30곳이 안 되거나 서울시가 비율을 내지 않은 칸입니다.",
+    );
+  });
+
+  it('★ 업종 줄 비율의 경계 — 점포 30곳은 보이고 29곳은 – (카드 위 큰 숫자와 같은 30 · 2026-10-06)', async () => {
+    const ind = (cd: string, similr: number) => ({
+      svc_induty_cd: cd,
+      svc_induty_cd_nm: cd,
+      similr_induty_stor_co: similr,
+      stor_co: similr,
+      frc_stor_co: 0,
+      opbiz_stor_co: 1,
+      clsbiz_stor_co: 6,
+      opbiz_rt: 3.33,
+      clsbiz_rt: 200,
+    });
+    responses.oc = {
+      data: [okRow({ industries: [ind('서른', 30), ind('스물아홉', 29), ind('셋', 3)] })],
+      error: null,
+    };
+    const { container } = render(<OpenCloseSection pnu={PNU} />);
+    await openCard();
+    const rows = [...container.querySelectorAll('.oc__ind tbody tr:not(.oc__other)')].map((tr) =>
+      [...tr.children].map((c) => c.textContent),
+    );
+    expect(rows).toEqual([
+      ['서른', '30곳', '1곳 (3.33%)', '6곳 (200%)'],
+      ['스물아홉', '29곳', '1곳 (–)', '6곳 (–)'],
+      ['셋', '3곳', '1곳 (–)', '6곳 (–)'],
     ]);
   });
 

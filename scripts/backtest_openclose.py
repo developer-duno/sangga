@@ -64,10 +64,11 @@ import io
 import json
 import math
 import os
+import re
 import time
 import zipfile
 from collections import Counter, defaultdict, namedtuple
-from datetime import datetime
+from datetime import date, datetime
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_BEFORE_ZIP = os.path.join(
@@ -419,6 +420,69 @@ def _r(v, digits=3):
     return "-" if v is None else "{:.{}f}".format(v, digits)
 
 
+RE_ZIP_DATE = re.compile(r"_(\d{4})(\d{2})(\d{2})\.zip$", re.IGNORECASE)
+RE_QUARTER = re.compile(r"^(\d{4})([1-4])$")
+QUARTER_LAST_DAY = {1: 31, 2: 30, 3: 30, 4: 31}  # 분기 끝 달(3·6·9·12월)의 마지막 날
+
+
+def snapshot_label(zip_path):
+    """zip 파일 이름 끝 `_YYYYMMDD.zip` → (이름표 YYYYMM, 날짜 date). 날짜가 없으면 (파일 이름, None).
+
+    성적표의 이름표·날짜를 글자로 박지 않고 입력 파일에서 읽는다(2026-10-06 — 다음 분기 사진으로
+    다시 돌리면 옛 날짜가 그대로 찍히던 것)."""
+    name = os.path.basename(zip_path)
+    m = RE_ZIP_DATE.search(name)
+    if not m:
+        return name, None
+    try:
+        day = date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    except ValueError:
+        return name, None
+    return m.group(1) + m.group(2), day
+
+
+def quarter_span(quarters):
+    """공식 분기 코드 모음 → (분기 글, 시작 date, 끝 date). 분기가 **하나**이고 `YYYYQ` 꼴일 때만
+    날짜를 낸다 — 여럿이면 (코드들을 쉼표로, None, None)."""
+    codes = sorted(str(q) for q in quarters)
+    m = RE_QUARTER.match(codes[0]) if len(codes) == 1 else None
+    if not m:
+        return ", ".join(codes), None, None
+    year, q = int(m.group(1)), int(m.group(2))
+    return codes[0], date(year, 3 * q - 2, 1), date(year, 3 * q, QUARTER_LAST_DAY[q])
+
+
+def _md(d):
+    return "{}/{}".format(d.month, d.day)
+
+
+def period_context(before_zip, after_zip, quarters):
+    """build_markdown 의 기간 글감 — 이름표·사진 날짜·분기 달."""
+    before_label, before_day = snapshot_label(before_zip)
+    after_label, after_day = snapshot_label(after_zip)
+    quarter, q_start, q_end = quarter_span(quarters)
+    return {
+        "before_label": before_label, "after_label": after_label, "quarter": quarter,
+        "before_day": before_day, "after_day": after_day, "q_start": q_start, "q_end": q_end,
+    }
+
+
+def _period_lines(ctx):
+    """(기간 어긋남 줄, 한계 줄) — 날짜를 모르면 날짜 글은 뺀다."""
+    bd, ad, qs, qe = ctx.get("before_day"), ctx.get("after_day"), ctx.get("q_start"), ctx.get("q_end")
+    photo = "({} → {})".format(_md(bd), _md(ad)) if bd and ad else ""
+    months = "({}~{}월)".format(qs.month, qe.month) if qs and qe else ""
+    span = "({}~{})".format(_md(qs), _md(qe)) if qs and qe else ""
+    first = "- 기간 어긋남(있는 그대로): 사진은 {} → {}{}, 공식 분기는 {}{}.".format(
+        ctx["before_label"], ctx["after_label"], photo, ctx["quarter"], months)
+    if bd and ad and qs and qe and (qs - bd).days == 1 and ad == qe:
+        gap = "하루 차이지만"
+    else:
+        gap = "기준일이 다를 수 있고"
+    last = "- 사진 기간{}과 분기{}는 {}, 소진공 사진의 실제 기준일·갱신 지연은 알 수 없다.".format(photo, span, gap)
+    return first, last
+
+
 def build_markdown(ctx):
     L = []
     a = L.append
@@ -437,8 +501,8 @@ def build_markdown(ctx):
       "상호명)를 짝지어 뺀 값이다.")
     a("- 업종 범위도 다르다 — 소진공은 전 업종(247), 서울시는 100업종. 그래서 점포 수는 맞대지 않고 CSV 에 "
       "참고 열로만 둔다.")
-    a("- 기간 어긋남(있는 그대로): 사진은 {} → {}(3/31 → 6/30), 공식 분기는 {}(4~6월).".format(
-        ctx["before_label"], ctx["after_label"], ctx["quarter"]))
+    period_first, period_last = _period_lines(ctx)
+    a(period_first)
     a("- ⛔ 이 시험은 **\"대전에 사진 비교를 올려도 되나\"의 근거**이지, 서울 화면에는 쓰지 않는다"
       "(서울은 공표값을 그대로 나른다).")
     a("- 기준선은 여기서 정하지 않는다 — 아래 성적을 보고 사장님이 정한다(Stage B 결정 0013 과 같은 순서).")
@@ -485,7 +549,7 @@ def build_markdown(ctx):
     a("- 셈법 B 의 짝은 (pnu, 상호명) 글자가 똑같을 때만이다 — 띄어쓰기·지점명이 바뀐 이전·간판 변경은 못 묶는다. "
       "반대로 같은 필지의 같은 이름 다른 가게(체인 두 곳 등)를 한 짝으로 묶을 수 있다.")
     a("- 공식 값은 서울시 100업종 안의 점포만 센다. 소진공 247업종 가운데 그 밖 업종의 가게는 우리 쪽에만 들어간다.")
-    a("- 사진 기간(3/31 → 6/30)과 분기(4/1~6/30)는 하루 차이지만, 소진공 사진의 실제 기준일·갱신 지연은 알 수 없다.")
+    a(period_last)
     a("")
     a("## 산출물")
     a("")
@@ -496,14 +560,15 @@ def build_markdown(ctx):
 
 def sample_context_for_tests(metrics):
     """build_markdown 시험용 최소 ctx(숫자는 의미 없음)."""
-    return {
+    ctx = {
         "generated_at": "2000-01-01 00:00", "elapsed_s": 0.0,
-        "before_label": "202603", "after_label": "202606", "quarter": "20262",
         "inputs": [("앞 사진", "a.zip", 1)], "process_rows": [("행", 1)],
         "n_districts": metrics["n_districts"],
         "cells": [(c, metrics) for c in CELLS],
         "invalid_ids": ["X"],
     }
+    ctx.update(period_context(DEFAULT_BEFORE_ZIP, DEFAULT_AFTER_ZIP, {"20262"}))
+    return ctx
 
 
 # ── 실행 ─────────────────────────────────────────────────────────────────────
@@ -605,14 +670,13 @@ def main(argv=None):
     ctx = {
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "elapsed_s": elapsed,
-        "before_label": "202603", "after_label": "202606",
-        "quarter": ", ".join(sorted(quarters)),
         "inputs": inputs,
         "process_rows": process_rows,
         "n_districts": len(district_ids),
         "cells": cells,
         "invalid_ids": invalid,
     }
+    ctx.update(period_context(args.before_zip, args.after_zip, quarters))
     md = build_markdown(ctx)
     words = find_verdict_words(md)
     if words:

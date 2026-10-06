@@ -677,7 +677,7 @@ def main(argv=None):
         return rc
     print()
     print("  적재 완료.")
-    print("  다음: python scripts/post_load.py   (vacuum + 요약표 갱신)")
+    print("  다음: python scripts/post_load.py   그리고   python scripts/post_load.py --check   (vacuum + 요약표 갱신)")
     return 0
 
 

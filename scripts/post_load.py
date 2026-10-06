@@ -965,7 +965,7 @@ def report_slow_functions():
         cur = parse_api_stats(query_one(build_api_stats_sql()))
     except Exception as exc:          # 통계 확장이 없거나 권한이 없으면 — 경보만 못 낸다
         print("[주의] 느려짐 경보를 읽지 못했습니다(pg_stat_statements): {}".format(
-            str(exc).splitlines()[0] if str(exc) else type(exc).__name__))
+            _psql_failure_reason(exc)))
         return []
     # ⚠️ 스냅샷 읽기·비교가 깨져도 --check 전체를 죽이지 않는다 — 경보 하나가 못 도는 것이지
     #    다른 점검의 판정까지 잃을 일은 아니다. 깨진 파일은 기준만 새로 써서 다음부터 되살린다.
@@ -1465,8 +1465,8 @@ def toast_evictions(counts):
     return [row for row in counts if row[3] > 0]
 
 
-def _toast_failure_reason(exc):
-    """실패 이유 한 줄 — psql 실패면 출력에서 `ERROR:`·`FATAL:`·`psql:` 로 시작하는 첫 줄을,
+def _psql_failure_reason(exc):
+    """실패 이유 한 줄(별관 경보·느려짐 경보가 함께 쓴다 — 2026-10-06) — psql 실패면 출력에서 `ERROR:`·`FATAL:`·`psql:` 로 시작하는 첫 줄을,
     그런 줄이 없을 때만 마지막 비어 있지 않은 줄을 고른다.
 
     마지막 줄만 고르면 `ERROR: relation … does not exist` 뒤의 `줄 1: …`(cp949)·`^` 표시나
@@ -1497,7 +1497,7 @@ def report_toast_evictions():
             return []
         counts = parse_toast_scan(query_one(build_toast_scan_sql(targets)), targets)
     except Exception as exc:
-        print("[주의] 별관(TOAST) 점검을 하지 못했습니다: {}".format(_toast_failure_reason(exc)))
+        print("[주의] 별관(TOAST) 점검을 하지 못했습니다: {}".format(_psql_failure_reason(exc)))
         return []
     found = toast_evictions(counts)
     for schema, table, column, n in found:
@@ -1587,7 +1587,11 @@ def main(argv=None):
     _, _, mix_stale = report_industry_mix_freshness()
     # 참고 시세 이웃 요약표도 REFRESH_MVS 에 있어 방금 다시 구웠다 — 다시 잰다(2026-10-03).
     _, _, geog_stale = report_tx_geog_freshness()
-    return 1 if (stale or map_stale or tx_stale or cov_stale or mix_stale or geog_stale) else 0
+    if stale or map_stale or tx_stale or cov_stale or mix_stale or geog_stale:
+        return 1
+    # 권한·옛 문·색인·별관은 --check 에서만 돈다 — 성공했을 때만 이어서 돌리라고 알린다(2026-10-06).
+    print("  ⓘ 권한·옛 문 닫힘·색인·함수 일치·느려짐·별관 점검은 여기서 안 돕니다 — 이어서 python scripts/post_load.py --check")
+    return 0
 
 
 if __name__ == "__main__":

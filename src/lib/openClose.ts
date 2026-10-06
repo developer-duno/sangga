@@ -79,6 +79,18 @@ export function storeTotalText(count: number | null): string {
   return `점포 ${formatStoreCount(count)}(프랜차이즈 포함)`;
 }
 
+/**
+ * 업종 표 한 줄의 비율을 보일 만큼 표본이 되나 — 점포(프랜차이즈 포함) 수가
+ * `OPEN_CLOSE_MIN_SAMPLE` **이상**일 때만(카드 위 큰 숫자의 결정 7 규칙과 같은 상수·같은 비교 ·
+ * ⓘ 날짜를 적지 않는다 — 이 파일은 분기·연도 글자 가드가 훑는다). 서울시는 업종 줄마다 점포 1~5곳에도 '200%' 같은 비율을 공표한다 — 그 줄은
+ * 개수만 둔다. 값이 없으면(null) 표본을 모르므로 보이지 않는다.
+ */
+export function industryRateShown(similrStorCo: number | null | undefined): boolean {
+  if (typeof similrStorCo !== 'number' || !Number.isFinite(similrStorCo)) return false;
+  const smallSample = similrStorCo < OPEN_CLOSE_MIN_SAMPLE; // 큰 숫자 줄의 smallSample 과 같은 비교
+  return !smallSample;
+}
+
 /** 업종 표 한 칸('1곳 (1%)' · 비율이 없으면 '1곳 (–)'). 비율은 공표값 그대로다. */
 export function tableCellText(count: number | null, rate: number | null): string {
   return `${formatStoreCount(count)} (${formatRate(rate) ?? '–'})`;

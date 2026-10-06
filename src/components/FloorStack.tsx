@@ -54,6 +54,7 @@ import {
   oneInEvery,
 } from '../lib/format';
 import { KNOWN_BAND_STATUS } from '../lib/priceBand';
+import { lacksCoord } from '../lib/rentStats';
 import { SECTION_PLAN } from '../lib/sectionCards';
 import { PriceBandSection } from './PriceBandSection';
 import { IndustryMixSection } from './IndustryMixSection';
@@ -731,7 +732,7 @@ export function FloorStack({ building }: Props) {
            속한 상권이다. 두 카드를 나란히 두되 **한 줄에 섞거나 서로 견주는 문구를 쓰지
            않는다**(카드 안의 첫 줄과 등급 문단이 그 경계를 지킨다).
       */}
-      <RentStatSection pnu={building.pnu} prefetch={sidePrefetch} />
+      <RentStatSection pnu={building.pnu} prefetch={sidePrefetch} noCoord={lacksCoord(building)} />
       <OpenCloseSection pnu={building.pnu} prefetch={sidePrefetch} />
       {/*
         ↑ 상권 개업·폐업(결정 0033 — 서울시 공표 그대로). 임대 카드와 같은 뼈대 — 스스로 묻고,

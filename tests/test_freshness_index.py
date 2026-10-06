@@ -42,7 +42,6 @@ MIGRATION = os.path.join(
 EXCEPTIONS = {
     ("district", "computed_at"): "수천 행 이하(1,687개), 11.7ms 실측 2026-09-27",
     ("lh_notice", "collected_at"): "수천 행 이하, 11.2ms 실측 2026-09-27",
-    ("rent_stat", "quarter"): "수천 행 이하(7,232행), 10.4ms 실측 2026-09-27",
     ("price_gate_sigungu", "loaded_at"): "수천 행 이하(구 단위), 10.9ms 실측 2026-09-27",
 }
 
@@ -192,6 +191,10 @@ def problems(schema, exceptions=None):
         if key not in live:
             bad.append("예외 {}.{} 는 정본 get_data_freshness 에 더는 없습니다 — 낡은 예외를 지우세요".format(
                 *key))
+        # 예외는 "색인이 없어도 된다"는 사유다 — 이미 색인·기본키가 받치면 그 사유가 쓸모없다
+        # (2026-10-06 · rent_stat.quarter 가 기본키 첫 칸인데 예외로 남아 있었다).
+        if has_leading_index(schema, *key) or has_leading_primary_key(schema, *key):
+            bad.append("예외 {}.{} 는 이미 색인·기본키가 받칩니다 — 낡은 예외를 지우세요".format(*key))
     return bad
 
 
@@ -473,3 +476,31 @@ def test_primary_key_of_another_table_does_not_count():
     broken = s.replace(OC_PK, "  primary key (district_id, quarter, svc_induty_cd)", 1)
     assert not has_leading_primary_key(broken, "district_openclose", "quarter")
     assert has_leading_primary_key(broken, "rent_stat", "quarter")
+
+
+# ── 5. 2026-10-06 — 이미 받쳐진 쌍을 예외에 두면 낡은 예외 ──────────────────────────
+
+
+@pytest.mark.parametrize("key", [
+    ("rent_stat", "quarter"),     # 흔한 꼴 — 기본키 첫 칸이 받친다
+    ("parcel", "updated_at"),     # 변형 꼴 — create index 가 받친다
+])
+def test_mutation_exception_already_backed_is_noticed(key):
+    """양성 대조 — 받쳐진 쌍을 예외 표에 넣으면 '낡은 예외' 빨강."""
+    s = _schema()
+    assert key in freshness_pairs(freshness_body(s)), "전제: 본문에 그 쌍이 있다"
+    stale = dict(EXCEPTIONS)
+    stale[key] = "옛 사유"
+    bad = problems(s, stale)
+    assert any("예외 {}.{} 는 이미 색인·기본키가 받칩니다".format(*key) in m for m in bad), bad
+
+
+def test_remaining_exceptions_are_not_backed():
+    """남은 예외는 정말 색인·기본키가 없는 쌍이다(새 검사가 오탐하지 않는다)."""
+    s = _schema()
+    assert ("rent_stat", "quarter") not in EXCEPTIONS
+    assert len(EXCEPTIONS) == 3
+    for key in EXCEPTIONS:
+        assert not has_leading_index(s, *key), key
+        assert not has_leading_primary_key(s, *key), key
+    assert not [m for m in problems(s) if "이미 색인·기본키가 받칩니다" in m]

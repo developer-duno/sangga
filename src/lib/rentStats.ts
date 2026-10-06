@@ -224,15 +224,36 @@ export function toRentRows(rows: readonly RentStat[], bldType: string): RentRow[
 }
 
 /**
+ * 좌표 없는 건물인가 — `lat` 또는 `lng` 가 **명시적 null** 일 때만 그렇다(2026-10-06).
+ *
+ * 서버 `list_rent_stats` 는 `parcel.geom` 이 있을 때만 상권을 찾으므로 좌표 없는 필지에도
+ * 빈 배열이 온다 — 그것을 "조사 대상 상권이 아닙니다"라 적으면 틀린 말이다. 건물의
+ * `lat`·`lng` 는 서버가 같은 `parcel.geom` 에서 뽑는다(`types.ts`).
+ * ⓘ `undefined`(칸을 안 주던 옛 서버)는 "모른다"라서 옛 글 그대로 둔다.
+ */
+export function lacksCoord(b: { lat?: number | null; lng?: number | null }): boolean {
+  return b.lat === null || b.lng === null;
+}
+
+/**
+ * 좌표 없는 건물의 빈 카드 글 — 개업·폐업 카드가 같은 사정(`no_coord`)에 쓰는 글을 그대로
+ * 옮겼다(접힌 요약 = `openCloseSummary` · 본문 = `OpenCloseSection`). 시험이 두 글이 같은지 본다.
+ */
+export const RENT_NO_COORD_SUMMARY = '위치 정보가 없어 속한 상권을 찾지 못했습니다';
+export const RENT_NO_COORD_TEXT = '이 건물의 위치 정보가 없어 속한 상권을 찾지 못했습니다.';
+
+/**
  * 접혀 있어도 보이는 한 줄.
  *
  * ⛔ **여기에 값을 적지 않는다.** 접힌 요약은 한정어("이 건물이 아니라 상권", "어느 종류")를
  *    함께 담을 자리가 없는데, 숫자만 요약에 나오면 사람은 그것을 이 건물 값으로 읽는다.
  *    그래서 "무엇이 들어 있는지"와 "언제 것인지"만 말한다.
  * ⓘ 줄이 하나도 없으면 그 사실을 그대로 적는다 — 이 카드에서 가장 흔한 정상 상태다.
+ * ⓘ 단 건물 좌표가 없으면(`noCoord` — `lacksCoord`) 빈 줄은 "조사 대상 아님"이 아니라
+ *   "상권을 못 찾음"이다(2026-10-06).
  */
-export function rentSummary(rows: readonly RentStat[]): string {
-  if (rows.length === 0) return '부동산원 조사 대상 상권이 아닙니다';
+export function rentSummary(rows: readonly RentStat[], noCoord = false): string {
+  if (rows.length === 0) return noCoord ? RENT_NO_COORD_SUMMARY : '부동산원 조사 대상 상권이 아닙니다';
 
   // 소득수익률과 층별 표는 **온 줄에 있을 때만** 이름을 적는다(결정 0031 — 선택 칸이라
   // 옛 함수의 답에는 없다). 없는 것을 요약에 적으면 펼쳤을 때 찾을 수 없는 것을 약속하게 된다.

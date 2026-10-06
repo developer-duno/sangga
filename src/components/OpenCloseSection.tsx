@@ -8,6 +8,7 @@ import {
   countRateText,
   districtName,
   formatStoreCount,
+  industryRateShown,
   industryRows,
   isOpenCloseList,
   latestOf,
@@ -209,17 +210,24 @@ function DistrictBlock({ row, scaleMax }: { row: DistrictOpenClose; scaleMax: nu
               </tr>
             </thead>
             <tbody>
-              {inds.map((i) => (
-                <tr key={i.svc_induty_cd}>
-                  <th scope="row">{i.svc_induty_cd_nm || i.svc_induty_cd}</th>
-                  <td>{formatStoreCount(i.similr_induty_stor_co)}</td>
-                  <td>{tableCellText(i.opbiz_stor_co, i.opbiz_rt)}</td>
-                  <td>{tableCellText(i.clsbiz_stor_co, i.clsbiz_rt)}</td>
-                </tr>
-              ))}
+              {inds.map((i) => {
+                // 점포(프랜차이즈 포함)가 30곳이 안 되는 업종은 비율만 '–'(개수는 그대로) — 서울시는
+                // 점포 1~5곳 업종에도 '200%' 같은 비율을 공표한다(카드 위 큰 숫자와 같은 규칙).
+                const shown = industryRateShown(i.similr_induty_stor_co);
+                return (
+                  <tr key={i.svc_induty_cd}>
+                    <th scope="row">{i.svc_induty_cd_nm || i.svc_induty_cd}</th>
+                    <td>{formatStoreCount(i.similr_induty_stor_co)}</td>
+                    <td>{tableCellText(i.opbiz_stor_co, shown ? i.opbiz_rt : null)}</td>
+                    <td>{tableCellText(i.clsbiz_stor_co, shown ? i.clsbiz_rt : null)}</td>
+                  </tr>
+                );
+              })}
+              {/* 그 밖 줄의 비율은 공표값이 아니라 서버가 업종 합을 나눈 값이다 — 머리에 그렇게 적는다
+                  (서버가 이미 합 30 미만이면 null 로 보낸다). */}
               {other && (
                 <tr className="oc__other">
-                  <th scope="row">{`그 밖 ${other.industry_count}업종`}</th>
+                  <th scope="row">{`그 밖 ${other.industry_count}업종 (더해서 계산)`}</th>
                   <td>{formatStoreCount(other.similr_induty_stor_co)}</td>
                   <td>{tableCellText(other.opbiz_stor_co, other.opbiz_rt)}</td>
                   <td>{tableCellText(other.clsbiz_stor_co, other.clsbiz_rt)}</td>
@@ -227,6 +235,8 @@ function DistrictBlock({ row, scaleMax }: { row: DistrictOpenClose; scaleMax: nu
               )}
             </tbody>
           </table>
+          {/* 표 안 '–' 는 두 뜻이다 — 표본이 작아 우리가 비율을 안 적은 칸 · 서울시가 비율을 안 낸 칸(2026-10-06). */}
+          <p className="oc__note">{`'–' = 점포(프랜차이즈 포함)가 ${OPEN_CLOSE_MIN_SAMPLE}곳이 안 되거나 서울시가 비율을 내지 않은 칸입니다.`}</p>
         </details>
       )}
     </div>
