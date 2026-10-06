@@ -3,7 +3,14 @@ import { supabase } from '../lib/supabase';
 import { RENT_STATS_FN } from '../lib/appConstants';
 import { SECTION_PLAN } from '../lib/sectionCards';
 import { SectionCard } from './SectionCard';
-import { defaultBldType, isRentStatList, rentSummary, toRentRows, typeOptions } from '../lib/rentStats';
+import {
+  defaultBldType,
+  isRentStatList,
+  RENT_NO_COORD_TEXT,
+  rentSummary,
+  toRentRows,
+  typeOptions,
+} from '../lib/rentStats';
 import type { RentStat } from '../types';
 import { takePrefetched, type RpcResult, type SidePrefetch } from '../lib/sidePrefetch';
 
@@ -33,9 +40,15 @@ type Props = {
    * 없으면(다른 필지 것·안 줌) 지금처럼 스스로 묻는다 — `lib/sidePrefetch.ts`.
    */
   prefetch?: SidePrefetch | null;
+  /**
+   * 이 건물의 좌표가 없다(`lacksCoord` — lat/lng 가 명시적 null). 그때 빈 답은 "조사 대상
+   * 아님"이 아니라 "상권을 못 찾음"이다(서버가 좌표 없는 필지에도 빈 배열을 준다 · 2026-10-06).
+   * 안 주면(옛 부모) 지금 글 그대로.
+   */
+  noCoord?: boolean;
 };
 
-export function RentStatSection({ pnu, prefetch }: Props) {
+export function RentStatSection({ pnu, prefetch, noCoord = false }: Props) {
   /**
    * 받아 온 조사값. **아직 못 받았을 때와 못 읽었을 때가 똑같이 null 이다.**
    *
@@ -81,7 +94,7 @@ export function RentStatSection({ pnu, prefetch }: Props) {
   // 아직 안 왔거나 못 읽었다 = 카드 없음(위 주석 참조).
   if (rows === null) return null;
 
-  const summary = rentSummary(rows);
+  const summary = rentSummary(rows, noCoord);
 
   /*
     ⛔ 조사 대상이 아닌 자리에서도 **카드는 선다.** 그냥 사라지면 사람은 "이 서비스는 임대
@@ -89,6 +102,16 @@ export function RentStatSection({ pnu, prefetch }: Props) {
        자체가 정보이고, 그것이 곧 **왜 여기 숫자가 없는지**에 대한 답이다(건물 스펙 4칸을
        "미상"으로 남겨 두는 것과 같은 판단).
   */
+  if (rows.length === 0 && noCoord) {
+    // 좌표가 없어 상권을 못 찾은 것이다 — 개업·폐업 카드의 같은 사정과 같은 글(`rentStats.ts`).
+    return (
+      <SectionCard plan={SECTION_PLAN.rent} className="rent rent--none" summary={summary}>
+        <p className="rent__lead">{RENT_NO_COORD_TEXT}</p>
+        <p className="rent__src">출처: 한국부동산원 상업용부동산 임대동향조사.</p>
+      </SectionCard>
+    );
+  }
+
   if (rows.length === 0) {
     return (
       <SectionCard plan={SECTION_PLAN.rent} className="rent rent--none" summary={summary}>

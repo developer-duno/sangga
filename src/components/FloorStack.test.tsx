@@ -2312,3 +2312,24 @@ describe('FloorStack — 호실 구성표 (결정 0032)', () => {
     }
   });
 });
+
+describe('FloorStack — 임대 카드 · 좌표 없는 건물 (2026-10-06)', () => {
+  it('★ lat/lng 가 명시적 null 이고 빈 답이면 "조사 대상 아님" 이 아니라 "상권을 못 찾음" 이라 적는다', async () => {
+    responses.rent = { data: [], error: null };
+    render(<FloorStack building={building({ lat: null, lng: null })} />);
+    expect(await screen.findByText('위치 정보가 없어 속한 상권을 찾지 못했습니다')).toBeTruthy();
+    expect(screen.queryByText('부동산원 조사 대상 상권이 아닙니다')).toBeNull();
+  });
+
+  it('lat/lng 칸이 없으면(옛 서버 · undefined) 지금 글 그대로', async () => {
+    responses.rent = { data: [], error: null };
+    render(<FloorStack building={building()} />);
+    expect(await screen.findByText('부동산원 조사 대상 상권이 아닙니다')).toBeTruthy();
+  });
+
+  it('좌표가 있는데 빈 답이면 지금 글 그대로 (정말 조사 대상이 아닌 자리)', async () => {
+    responses.rent = { data: [], error: null };
+    render(<FloorStack building={building({ lat: 37.5, lng: 127.03 })} />);
+    expect(await screen.findByText('부동산원 조사 대상 상권이 아닙니다')).toBeTruthy();
+  });
+});

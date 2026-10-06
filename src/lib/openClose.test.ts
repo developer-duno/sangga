@@ -3,7 +3,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { DistrictOpenClose, OpenCloseQuarter } from '../types';
 import {
+  industryRateShown,
   industryRows,
+  OPEN_CLOSE_MIN_SAMPLE,
   isOpenCloseList,
   openCloseQuarterLabel,
   openCloseSummary,
@@ -257,5 +259,22 @@ describe('⛔ 분기·연도 리터럴 가드', () => {
       const src = readFileSync(fileURLToPath(new URL(f, import.meta.url)), 'utf-8');
       expect(findQuarterOrYearLiterals(src), f).toEqual([]);
     }
+  });
+});
+
+describe('industryRateShown — 업종 줄 비율의 표본 규칙 (2026-10-06)', () => {
+  it('점포(프랜차이즈 포함) 30곳 이상이면 보이고, 미만이면 안 보인다 — 큰 숫자 줄과 같은 30', () => {
+    expect(OPEN_CLOSE_MIN_SAMPLE).toBe(30);
+    expect(industryRateShown(30)).toBe(true);
+    expect(industryRateShown(31)).toBe(true);
+    expect(industryRateShown(29)).toBe(false);
+    expect(industryRateShown(3)).toBe(false);
+    expect(industryRateShown(0)).toBe(false);
+  });
+
+  it('표본을 모르면(null·undefined·숫자 아님) 보이지 않는다', () => {
+    expect(industryRateShown(null)).toBe(false);
+    expect(industryRateShown(undefined)).toBe(false);
+    expect(industryRateShown(Number.NaN)).toBe(false);
   });
 });

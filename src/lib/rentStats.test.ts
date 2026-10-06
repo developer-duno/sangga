@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import type { RentStat } from '../types';
+import type { DistrictOpenClose, RentStat } from '../types';
+import { openCloseSummary } from './openClose';
 import {
   BLD_TYPE_ORDER,
   defaultBldType,
@@ -7,7 +8,9 @@ import {
   formatRate,
   formatRentPerM2,
   isRentStatList,
+  lacksCoord,
   quarterLabel,
+  RENT_NO_COORD_SUMMARY,
   rentSummary,
   toRentRows,
   typeOptions,
@@ -189,6 +192,24 @@ describe('rentSummary — 접혀 있어도 보이는 한 줄', () => {
 
   it('★ 줄이 없으면 그렇다고 적는다 (시·도 평균으로 메우지 않는다)', () => {
     expect(rentSummary([])).toBe('부동산원 조사 대상 상권이 아닙니다');
+  });
+
+  it('★ 좌표 없는 건물의 빈 줄은 "상권을 못 찾음" — 개업·폐업 카드(no_coord)와 같은 글 (2026-10-06)', () => {
+    const noCoordRow: DistrictOpenClose = {
+      status: 'no_coord',
+      district_id: null,
+      district_nm: null,
+      district_type: null,
+      latest_quarter: null,
+      quarters: null,
+      industries: null,
+      other_industries: null,
+      window_quarters: [],
+    };
+    expect(rentSummary([], true)).toBe(RENT_NO_COORD_SUMMARY);
+    expect(rentSummary([], true)).toBe(openCloseSummary([noCoordRow], '1168010100100010000'));
+    // 줄이 왔으면 좌표와 상관없이 원래 요약이다.
+    expect(rentSummary([stat()], true)).toBe(rentSummary([stat()]));
   });
 });
 
@@ -376,5 +397,23 @@ describe('isRentStatList — 서버 응답의 모양', () => {
     expect(isRentStatList([stat({ vacancy_rate: '10.08' as unknown as number })])).toBe(false);
     // 조사구역 이름이 없으면 어느 자리의 값인지 말할 수 없다.
     expect(isRentStatList([{ ...stat(), rone_region_nm: undefined }])).toBe(false);
+  });
+});
+
+describe('lacksCoord — 좌표 없는 건물 (2026-10-06)', () => {
+  it('lat 또는 lng 가 명시적 null 일 때만 참이다', () => {
+    expect(lacksCoord({ lat: null, lng: null })).toBe(true);
+    expect(lacksCoord({ lat: null, lng: 127 })).toBe(true);
+    expect(lacksCoord({ lat: 37.5, lng: null })).toBe(true);
+  });
+
+  it('칸이 없으면(옛 서버 · undefined) 모르는 것이라 거짓이다', () => {
+    expect(lacksCoord({})).toBe(false);
+    expect(lacksCoord({ lat: undefined, lng: undefined })).toBe(false);
+  });
+
+  it('좌표가 있으면 거짓이다 (0 도 좌표다)', () => {
+    expect(lacksCoord({ lat: 37.5, lng: 127.03 })).toBe(false);
+    expect(lacksCoord({ lat: 0, lng: 0 })).toBe(false);
   });
 });

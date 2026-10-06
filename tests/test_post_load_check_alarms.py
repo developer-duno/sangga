@@ -263,6 +263,24 @@ class TestSlowReport:
         assert "[주의] 느려짐 경보를 읽지 못했습니다" in capsys.readouterr().out
         assert not (tmp_path / "s.json").exists()
 
+    def test_psql_failure_prints_server_reason_not_connection_args(self, monkeypatch, tmp_path, capsys):
+        """⛔ psql 실패면 서버의 ERROR 줄을 찍고 명령줄(접속 인자)은 찍지 않는다(2026-10-06 ·
+        별관 경보와 같은 도우미 `_psql_failure_reason`)."""
+        import subprocess
+        monkeypatch.setattr(post_load, "API_STATS_SNAPSHOT_PATH", str(tmp_path / "s.json"))
+
+        def boom(sql):
+            raise subprocess.CalledProcessError(
+                1, ["psql", "host=db.example port=5432 user=postgres", "-c", sql],
+                output=b"ERROR:  permission denied for view pg_stat_statements\n")
+        monkeypatch.setattr(post_load, "query_one", boom)
+        assert post_load.report_slow_functions() == []
+        out = capsys.readouterr().out
+        line = [ln for ln in out.splitlines() if "느려짐 경보를 읽지 못했습니다" in ln]
+        assert len(line) == 1, out
+        assert "ERROR:  permission denied for view pg_stat_statements" in line[0]
+        assert "db.example" not in out
+
     def test_slow_alarm_does_not_make_check_exit_1(self, monkeypatch):
         """⛔ 약속: [주의] 는 종료 코드 1 을 만들지 않는다 — 느린 것은 고장이 아니라 신호다."""
         for name, val in (

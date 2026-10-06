@@ -244,10 +244,12 @@ class TestMainFlow:
         assert calls == []
 
     def test_apply_runs_analyze_then_refresh_then_rechecks(
-        self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh,
+        self, monkeypatch, capsys, map_is_fresh, tx_window_is_fresh, coverage_is_fresh,
         industry_mix_is_fresh
     ):
-        """했다고 믿지 않고 **다시 재는지**까지 확인한다."""
+        """했다고 믿지 않고 **다시 재는지**까지 확인한다.
+
+        성공하면 끝에 '--check 도 돌리라' 한 줄(2026-10-06 — 권한·옛 문·색인·별관은 여기서 안 돈다)."""
         ran = []
         monkeypatch.setattr(post_load.dbx, "run_sql",
                             lambda sql, **k: ran.append(sql) or 0)
@@ -257,6 +259,8 @@ class TestMainFlow:
         assert post_load.main([]) == 0
         assert len(ran) == 2 and "vacuum (analyze)" in ran[0] and "refresh" in ran[1]
         assert len(checked) == 1
+        out = capsys.readouterr().out
+        assert out.rstrip().splitlines()[-1] == "  ⓘ 권한·옛 문 닫힘·색인·함수 일치·느려짐·별관 점검은 여기서 안 돕니다 — 이어서 python scripts/post_load.py --check"
 
     def test_output_survives_being_piped_to_a_file(
         self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh,
@@ -292,21 +296,23 @@ class TestMainFlow:
             "파이프로 넘길 때 stdout 을 UTF-8 로 다시 잡지 않으면 한글 출력이 죽는다"
         )
 
-    def test_apply_stops_when_analyze_fails(self, monkeypatch):
+    def test_apply_stops_when_analyze_fails(self, monkeypatch, capsys):
         """앞이 실패했는데 뒤를 계속 돌면 '성공했다'는 착각이 남는다."""
         monkeypatch.setattr(post_load.dbx, "run_sql", lambda sql, **k: 2)
         monkeypatch.setattr(post_load, "query_one",
                             lambda sql: pytest.fail("실패했는데 신선도를 재면 안 됩니다"))
         assert post_load.main([]) == 2
+        assert "--check" not in capsys.readouterr().out
 
     def test_apply_reports_failure_when_still_stale_after_refresh(
-        self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh,
+        self, monkeypatch, capsys, map_is_fresh, tx_window_is_fresh, coverage_is_fresh,
         industry_mix_is_fresh
     ):
         """갱신을 돌렸는데도 안 맞으면 성공으로 끝내면 안 된다."""
         monkeypatch.setattr(post_load.dbx, "run_sql", lambda sql, **k: 0)
         monkeypatch.setattr(post_load, "query_one", lambda sql: "100|200")
         assert post_load.main([]) == 1
+        assert "이어서 python scripts/post_load.py --check" not in capsys.readouterr().out
 
 
 # ── 5-b. 실거래 단가 창 신선도 (2026-08-15 신설 — 결정 0012 Stage A) ────────

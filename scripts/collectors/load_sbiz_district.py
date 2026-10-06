@@ -551,7 +551,7 @@ def main(argv=None):
         return rc
     print()
     print("  적재 완료.")
-    print("  다음: python scripts/post_load.py   (matview 갱신 + 노출 점검)")
+    print("  다음: python scripts/post_load.py   그리고   python scripts/post_load.py --check   (matview 갱신 + 노출 점검)")
     return 0
 
 

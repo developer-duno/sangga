@@ -248,6 +248,69 @@ def test_성적표에_판정_문구가_없다():
     assert "서울 화면에는 쓰지 않는다" in md
 
 
+# ── 성적표 기간 글 — 파일 이름·분기 코드에서 읽는다(2026-10-06) ────────────────
+
+DOCS_MD = os.path.join(os.path.dirname(SCRIPTS_DIR), "docs", "backtest", bo.MD_NAME)
+
+
+def _period_md(before_zip, after_zip, quarters):
+    m = bo.ratio_metrics({"A": 1}, {"A": 2}, ["A"])
+    ctx = bo.sample_context_for_tests(m)
+    ctx.update(bo.period_context(before_zip, after_zip, quarters))
+    return bo.build_markdown(ctx)
+
+
+def test_기본_두_zip과_20262_는_지금_성적표와_같은_글():
+    """고치기 전 글자 그대로 — 지금 커밋된 성적표(실제 실행 결과)의 두 줄과 같다."""
+    md = _period_md(bo.DEFAULT_BEFORE_ZIP, bo.DEFAULT_AFTER_ZIP, {"20262"})
+    with open(DOCS_MD, encoding="utf-8") as fh:
+        committed = fh.read().splitlines()
+    first = "- 기간 어긋남(있는 그대로): 사진은 202603 → 202606(3/31 → 6/30), 공식 분기는 20262(4~6월)."
+    last = "- 사진 기간(3/31 → 6/30)과 분기(4/1~6/30)는 하루 차이지만, 소진공 사진의 실제 기준일·갱신 지연은 알 수 없다."
+    for line in (first, last):
+        assert line in committed, "전제: 커밋된 성적표에 그 줄이 있다"
+        assert line in md.splitlines()
+
+
+def test_다음_분기_사진이면_이름표와_날짜가_따라간다():
+    md = _period_md("x/상가(상권)정보_20250630.zip", "y/상가(상권)정보_20250930.ZIP", {"20253"})
+    assert "사진은 202506 → 202509(6/30 → 9/30), 공식 분기는 20253(7~9월)." in md
+    assert "사진 기간(6/30 → 9/30)과 분기(7/1~9/30)는 하루 차이지만" in md
+    assert "3/31" not in md and "4~6월" not in md
+
+
+def test_4분기는_12월_31일에_끝난다():
+    # 검사관 변이(4분기 끝날 31→30)가 살아남던 자리(2026-10-06).
+    md = _period_md("a_20250930.zip", "b_20251231.zip", {"20254"})
+    assert "사진은 202509 → 202512(9/30 → 12/31), 공식 분기는 20254(10~12월)." in md
+    assert "분기(10/1~12/31)는 하루 차이지만" in md
+
+
+def test_해를_넘는_분기도_하루_차이로_센다():
+    md = _period_md("a_20251231.zip", "b_20260331.zip", {"20261"})
+    assert "사진은 202512 → 202603(12/31 → 3/31), 공식 분기는 20261(1~3월)." in md
+    assert "분기(1/1~3/31)는 하루 차이지만" in md
+
+
+def test_분기가_여럿이면_달_글을_뺀다():
+    md = _period_md(bo.DEFAULT_BEFORE_ZIP, bo.DEFAULT_AFTER_ZIP, {"20262", "20261"})
+    assert "공식 분기는 20261, 20262." in md
+    assert "~6월" not in md and "4/1" not in md
+    assert "사진 기간(3/31 → 6/30)과 분기는 기준일이 다를 수 있고" in md
+
+
+def test_파일_이름에_날짜가_없으면_이름표는_파일_이름_날짜_글은_뺀다():
+    md = _period_md("d/앞사진.zip", "d/뒤사진_2026.zip", {"20262"})
+    assert "사진은 앞사진.zip → 뒤사진_2026.zip, 공식 분기는 20262(4~6월)." in md
+    assert "사진 기간과 분기(4/1~6/30)는 기준일이 다를 수 있고" in md
+    assert "3/31" not in md
+
+
+def test_snapshot_label_은_있을_수_없는_날짜를_날짜로_치지_않는다():
+    assert bo.snapshot_label("a_20260231.zip") == ("a_20260231.zip", None)
+    assert bo.snapshot_label("a_20260331.zip")[0] == "202603"
+
+
 # ── shapely 가 필요한 시험 ───────────────────────────────────────────────────
 
 
