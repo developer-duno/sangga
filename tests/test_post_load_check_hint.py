@@ -5,8 +5,13 @@
 옛 문 닫힘·정본 색인·별관 점검은 `--check` 에서만 돈다(CLAUDE.md 운영 7계명 🔎). 적재기 끝
 안내가 앞의 것만 말하면 사람은 그것만 돌리고 끝낸다.
 
-⛔ 탐지는 이 파일 안의 작은 함수 하나(`missing_check_hints`)로 — 가드 본체와 양성 대조가
-   같은 함수를 지난다(2026-10-02 #190 규칙).
+⛔ 탐지는 이 파일 안의 작은 함수로 — 가드 본체와 양성 대조가 같은 함수를 지난다
+   (2026-10-02 #190 규칙). 세 함수가 서로 다른 꼴을 본다:
+   `missing_check_hints` = 파이썬 `print(` 한 줄짜리 안내.
+   `missing_check_in_command_lists` = 파이썬 따옴표 문자열 목록 꼴(check_lh_notices.py 등).
+   `missing_check_in_markdown_lists` = `.github/*.md` 코드블록 꼴(따옴표 없이 줄머리가
+   바로 명령) — 이슈 본문 md 는 앞 둘의 패턴(줄머리가 따옴표·`print(`)과 모양이 달라
+   둘 다 못 잡으므로 2026-10-06 신설(#233).
 """
 
 import os
@@ -79,11 +84,49 @@ def missing_check_in_command_lists(text):
     return bad
 
 
+RE_MD_POST_LOAD_LINE = re.compile(r'^\s*python\s+scripts/post_load\.py(?=\s|$)')
+
+
+def missing_check_in_markdown_lists(text):
+    """`.github/*.md` 안내문 꼴(따옴표 없이 줄머리가 바로 `python scripts/post_load.py`)에서
+
+    `--check` 짝이 없는 줄을 찾는다. 파이썬 문자열 목록 꼴과 줄머리 모양이 달라
+    `missing_check_in_command_lists` 로는 못 잡으므로 별도 함수로 둔다(양성·음성
+    대조가 이 함수를 그대로 지난다 — 2026-10-02 #190 규칙).
+
+    잡는 꼴: md 코드블록 안 `python scripts/post_load.py` 줄(앞 공백 허용·뒤에 주석)에
+    바로 다음 줄이 `--check` 짝이 아닌 경우.
+    못 보는 것: 목록 기호가 붙은 명령 줄(`- python …`·`1. python …` — 지금 저장소엔 0 · 2026-10-06 검사관 🟡) · 코드블록이 아닌 본문 중 문장 안에 섞인 언급 ·따옴표로 감싼 꼴(그건
+    `missing_check_in_command_lists` 소관) · 짝이 2줄 이상 떨어진 경우(md 안내는 바로
+    다음 줄에 있어야 사람이 짝으로 읽는다).
+    """
+    bad = []
+    lines = text.splitlines()
+    for no, line in enumerate(lines, 1):
+        if not RE_MD_POST_LOAD_LINE.match(line):
+            continue
+        if "--check" in line:
+            continue
+        nxt = lines[no] if no < len(lines) else ""
+        if "post_load.py --check" in nxt:
+            continue
+        bad.append((no, line.strip()))
+    return bad
+
+
 def _script_files():
     for dirpath, dirnames, filenames in os.walk(SCRIPTS_DIR):
         dirnames[:] = [d for d in dirnames if d != "__pycache__"]
         for name in filenames:
             if name.endswith(".py"):
+                yield os.path.join(dirpath, name)
+
+
+def _github_md_files():
+    github_dir = os.path.join(ROOT, ".github")
+    for dirpath, dirnames, filenames in os.walk(github_dir):
+        for name in filenames:
+            if name.endswith(".md"):
                 yield os.path.join(dirpath, name)
 
 
@@ -115,6 +158,21 @@ def test_every_command_list_mentions_check():
         for no, line in missing_check_in_command_lists(text):
             bad.append("{}:{}: {}".format(os.path.relpath(path, ROOT), no, line))
     assert seen >= 3, "전제: 문자열 목록 꼴 post_load.py 줄 3곳 이상을 실제로 훑었다(헛돌기 방지) — {}곳".format(seen)
+    assert bad == [], "\n".join(bad)
+
+
+def test_every_github_md_mentions_check():
+    bad = []
+    seen = 0
+    for path in _github_md_files():
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        for line in text.splitlines():
+            if RE_MD_POST_LOAD_LINE.match(line):
+                seen += 1
+        for no, line in missing_check_in_markdown_lists(text):
+            bad.append("{}:{}: {}".format(os.path.relpath(path, ROOT), no, line))
+    assert seen >= 2, "전제: .github/*.md 의 post_load.py 줄 2곳 이상을 실제로 훑었다(헛돌기 방지) — {}곳".format(seen)
     assert bad == [], "\n".join(bad)
 
 
@@ -181,3 +239,19 @@ def test_positive_control_command_list_variant_shape():
 ])
 def test_negative_controls_command_list_pass(line):
     assert missing_check_in_command_lists(line) == []
+
+
+def test_positive_control_markdown_shape():
+    # md 안내문 꼴 — 따옴표 없이 줄머리가 바로 명령, --check 짝 없음
+    line = "python scripts/post_load.py"
+    assert missing_check_in_markdown_lists(line + "\n") == [(1, line)]
+
+
+@pytest.mark.parametrize("line", [
+    "python scripts/post_load.py                                 # 요약표 갱신 + 신선도 점검\n"
+    "python scripts/post_load.py --check   # 권한(노출)·색인·별관 점검 — 위 줄에서는 안 돈다\n",
+    "python scripts/post_load.py --check\n",
+    "python scripts/collectors/load_seoul_district.py --dry-run\n",
+])
+def test_negative_controls_markdown_pass(line):
+    assert missing_check_in_markdown_lists(line) == []

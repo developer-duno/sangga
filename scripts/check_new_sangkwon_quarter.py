@@ -98,16 +98,31 @@ def build_issue_body(new_quarters, latest_known=LATEST_KNOWN_QUARTER):
     ]
     for d, name in new_quarters:
         lines.append("| {}-{}-{} | `{}` |".format(d[:4], d[4:6], d[6:8], name))
+    last_quarter = new_quarters[-1][0] if new_quarters else latest_known
+    folder_ym = last_quarter[:6]  # 풀 폴더 이름은 연월 6자리(지난 202606 = data/raw/sangkwon_202606, 결정 0005)
     lines += [
         "",
         "지금 기준선(보관 중인 최신 분기)은 `{}` 입니다.".format(latest_known),
         "",
         "## 할 일 (내 PC에서)",
         "",
+        "⛔ 적재 전에 확인 — 새 분기를 '다 넣은 뒤 한 번에' 보이게 하는 변경"
+        "(docs/PROGRESS.md 「2026-10-06 (8)」 정정 줄)이 main 에 들어왔는지."
+        " 아직이면 적재하지 말 것: 지금 화면은 가장 새 분기를 바로 읽어, 넣는 약"
+        " 2시간 동안 건물 대부분의 가게 칸이 비어 보입니다.",
+        "",
         "```powershell",
         r"cd D:\sangga",
         "python scripts/download_sangkwon_history.py   # 새 분기만 이어받는다",
-        "python scripts/collectors/load_sangkwon_snapshot.py",
+        "(Get-ChildItem data\\raw\\sangkwon_zips\\*_{}.zip).Count   # 1 이어야 한다 — 2 이상이면 멈추고 하나만 남긴다".format(last_quarter),
+        "Expand-Archive -Path data\\raw\\sangkwon_zips\\*_{}.zip -DestinationPath"
+        " data\\raw\\sangkwon_{}".format(last_quarter, folder_ym),
+        "python scripts/collectors/load_sangkwon_snapshot.py --dir"
+        " data/raw/sangkwon_{} --sigungu-code all --dry-run".format(folder_ym),
+        "python scripts/collectors/load_sangkwon_snapshot.py --dir"
+        " data/raw/sangkwon_{} --sigungu-code all".format(folder_ym),
+        "python scripts/post_load.py",
+        "python scripts/post_load.py --check   # 권한(노출)·색인·별관 점검 — 위 줄에서는 안 돈다",
         "python scripts/backup_raw.py                  # 외장 SSD(F:) 연결 필요",
         "python scripts/backup_raw.py --verify",
         "```",
