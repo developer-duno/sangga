@@ -2336,6 +2336,7 @@ body {
   font-weight: 400;
   text-align: left;
   white-space: normal;
+  min-width: 5em;
 }
 
 .oc__other th,

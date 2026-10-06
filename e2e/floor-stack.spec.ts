@@ -1943,6 +1943,14 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
     await expect(first.locator('.oc__table')).toBeHidden();
     await first.locator('.oc__ind-sum').click();
     await expect(first.locator('.oc__table tbody tr')).toHaveCount(2);
+    // ⛔ 업종 이름 첫 칸이 좁아 '일/반/의/류'처럼 한 글자씩 세로로 쪼개지면 안 된다
+    // — 그 칸 글자 크기의 4.5배(글자 4~5개 들어갈 폭) 이상을 최소로 본다.
+    const nameCell = first.locator('.oc__table tbody th').first();
+    const nameCellWidth = await nameCell.evaluate((el) => el.getBoundingClientRect().width);
+    const nameCellFontSize = await nameCell.evaluate((el) =>
+      parseFloat(el.ownerDocument.defaultView!.getComputedStyle(el).fontSize),
+    );
+    expect(nameCellWidth).toBeGreaterThanOrEqual(nameCellFontSize * 4.5);
     await expect(first.locator('.oc__other')).toContainText('그 밖 47업종');
     // 발 문구 넷.
     await expect(oc).toContainText(
