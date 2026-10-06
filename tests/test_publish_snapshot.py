@@ -199,6 +199,7 @@ def test_show_prints_flag_quarters_and_summary_tables(monkeypatch, capsys):
     assert target.main(["--show"]) == 0
     out = capsys.readouterr().out
     assert "다 들어온 분기 202606" in out and "보여 주는 분기 202606" in out
+    assert "2772484행" in out  # 행 수가 파이썬에서 그대로 붙는지(2026-10-07 검사관 D 🟡 — 늘 "(기록 없음)" 회귀)
     assert "202603 616096 · 202606 2772484" in out
     assert "각주 202606 · 업종 202606 · 가게 이름 202606" in out
 
@@ -216,3 +217,38 @@ def test_show_sql_reads_only():
         assert low.startswith("select ")
         for word in ("insert", "update ", "delete", "drop ", "alter "):
             assert word not in low, word
+
+
+# ── 5. psql -c 로 가는 SQL 은 ASCII 만 (2026-10-07 라이브 예행연습 실사고) ─────────────────
+#
+# query_one 은 SQL 을 `psql -c <sql>` 인자로 넘긴다. Windows 에서 그 인자는 cp949 로 전달돼
+# 한글이 든 SQL 이 서버에서 `invalid byte sequence for encoding "UTF8"` 로 죽는다 — --show 가
+# `coalesce(…, '(기록 없음)')` 로 실제로 죽었다(pytest 는 query_one 을 바꿔 끼워 못 본다).
+# 한글 표시는 파이썬에서 붙이고, 여기로 가는 SQL 은 전부 ASCII 여야 한다.
+
+
+def non_ascii_chars(sql):
+    """SQL 안의 비ASCII 글자 집합 — 가드 본체와 양성 대조가 같은 함수를 지난다."""
+    return {c for c in sql if ord(c) > 127}
+
+
+def test_sql_sent_through_psql_c_is_ascii():
+    for sql in (target.SHOW_FLAG_SQL, target.SHOW_QUARTERS_SQL, target.SHOW_MVS_SQL,
+                target.PUBLISHED_SQL, target.build_exists_sql("202606")):
+        assert non_ascii_chars(sql) == set(), sql[:80]
+
+
+def test_non_ascii_detector_catches_the_original_bug():
+    assert non_ascii_chars("coalesce(r.loaded_rows::text, '(기록 없음)')")  # 원래 죽었던 꼴
+    assert non_ascii_chars("select 'x' || '\u00a0'")  # 눈에 안 보이는 글자도 잡는다 — 실제 문자로 들어간 경우
+
+
+def test_show_renders_missing_row_count_in_python(monkeypatch, capsys):
+    answers = {
+        target.SHOW_FLAG_SQL: "202606|2026-10-07 10:00||202606|2026-10-07 10:05",
+        target.SHOW_QUARTERS_SQL: "202606:2772484",
+        target.SHOW_MVS_SQL: "202606|202606|202606",
+    }
+    monkeypatch.setattr(target, "query_one", lambda sql: answers[sql])
+    assert target.main(["--show"]) == 0
+    assert "(기록 없음)행" in capsys.readouterr().out
