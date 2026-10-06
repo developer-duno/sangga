@@ -199,6 +199,7 @@ def test_show_prints_flag_quarters_and_summary_tables(monkeypatch, capsys):
     assert target.main(["--show"]) == 0
     out = capsys.readouterr().out
     assert "다 들어온 분기 202606" in out and "보여 주는 분기 202606" in out
+    assert "2772484행" in out  # 행 수가 파이썬에서 그대로 붙는지(2026-10-07 검사관 D 🟡 — 늘 "(기록 없음)" 회귀)
     assert "202603 616096 · 202606 2772484" in out
     assert "각주 202606 · 업종 202606 · 가게 이름 202606" in out
 
