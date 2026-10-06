@@ -43,7 +43,7 @@ USAGE = "쓸 수 있는 것: --show | --loaded YYYYMM | --ym YYYYMM"
 SHOW_FLAG_SQL = (
     "select coalesce(string_agg(concat_ws('|', r.loaded_ym, "
     "to_char(r.loaded_at at time zone 'Asia/Seoul', 'YYYY-MM-DD HH24:MI'), "
-    "coalesce(r.loaded_rows::text, '(기록 없음)'), r.published_ym, "
+    "coalesce(r.loaded_rows::text, ''), r.published_ym, "
     "to_char(r.published_at at time zone 'Asia/Seoul', 'YYYY-MM-DD HH24:MI')), ''), '') "
     "from snapshot_release r;"
 )
@@ -119,7 +119,12 @@ def has_quarter(count_text):
 
 
 def query_one(sql):
-    """값 한 줄만 받아온다 (psql -tA). 실패하면 예외 — post_load.query_one 과 같은 방식."""
+    """값 한 줄만 받아온다 (psql -tA). 실패하면 예외 — post_load.query_one 과 같은 방식.
+
+    ⛔ 여기로 보내는 SQL 은 **ASCII 만** — `-c` 인자는 Windows 에서 cp949 로 넘어가 한글이 든 SQL 이
+       `invalid byte sequence for encoding "UTF8"` 로 죽는다(2026-10-07 라이브 예행연습에서 --show 가
+       '(기록 없음)' 리터럴로 실제로 죽음). 한글 표시는 파이썬에서 붙인다. 파일 경유(dbx.run_sql)는 UTF-8 이라 괜찮다.
+    """
     args, password = dbx.parts()
     env = dict(os.environ)
     env["PGPASSWORD"] = password           # ⚠️ 명령줄 노출 금지 (dbx.py 와 같은 이유)
@@ -136,7 +141,7 @@ def show():
         print("       python scripts/publish_snapshot.py --ym <분기> 로 채운 뒤 python scripts/post_load.py")
     else:
         loaded, loaded_at, rows, published, published_at = (flag.split("|") + [""] * 5)[:5]
-        print("표지  다 들어온 분기 {} ({} · {}행)".format(loaded, loaded_at, rows))
+        print("표지  다 들어온 분기 {} ({} · {}행)".format(loaded, loaded_at, rows or "(기록 없음)"))
         print("      보여 주는 분기 {} ({})".format(published, published_at))
     quarters = query_one(SHOW_QUARTERS_SQL)
     print("점포 표 분기별 행수: {}".format(
