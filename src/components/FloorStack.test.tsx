@@ -1151,7 +1151,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
   });
 
   it('1층은 값 대신 정직 문구를 적고 그 줄에 "표본"이라는 말이 없다', async () => {
-    // 자료가 모자란 게 아니라 자리(코너·골목)를 모르는 것이다 — 다른 이유는 다른 말로.
+    // 자료가 모자란 게 아니라 길·상권까지 맞춰도 오차가 기준선 밖이다 — 다른 이유는 다른 말로.
     responses.floors = floorsDesc(1);
     responses.bands = {
       data: [priceBand({ floor_no: 1, status: 'floor_1f', ...NO_VALUE })],
@@ -1162,6 +1162,10 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
     const none = container.querySelector('.band__none')?.textContent ?? '';
     expect(none).toContain('1층은 내지 않습니다');
     expect(none).not.toContain('표본');
+    // ⛔ 옛 문구의 틀린 말이 다시 들어오지 않는다 — 도로접면·상권 안팎은 자료에 있다
+    //    (docs/backtest/1층-유형축-검증.md). 숫자 대신 첫 화면 성적표 카드로 안내한다.
+    expect(none).not.toContain('공공데이터에 없');
+    expect(none).toContain('「참고 시세는 얼마나 맞나」 카드');
   });
 
   it('지하·옥탑은 줄로 반복하지 않고 각주에서 층 이름을 모아 한 번만 말한다', async () => {

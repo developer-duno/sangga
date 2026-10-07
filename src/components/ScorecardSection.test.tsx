@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
-import { resetScorecardCache } from '../lib/scorecard';
+import { GATE_MDAPE_LIMIT, resetScorecardCache } from '../lib/scorecard';
 import type { PriceGateRow, Scorecard, ScorecardOpsMode } from '../types';
 
 /**
@@ -189,6 +189,89 @@ describe('ScorecardSection — 성적이 있을 때', () => {
     expect(container.querySelector('.grade__badge')?.textContent).toBe('검증 성적 · 원본 성적표 v1');
     expect(container.querySelector('.score__how')?.textContent).toContain('2026년 8월 15일');
     expect(container.querySelectorAll('.score__how-list li')).toHaveLength(4);
+  });
+});
+
+describe('ScorecardSection — 층마다 얼마나 맞나', () => {
+  /** 성적표 파일의 '층대' 줄 셋. 1층 오차는 기준선 위·아래를 갈라 넣는다. */
+  function withFloors(firstFloorMdape: number): Scorecard {
+    return card({
+      ops_modes: [
+        ...card().ops_modes,
+        ops({ kind: '층대', axis_value: '1층', axis_name: '1층', n_estimated: 739, mdape: firstFloorMdape }),
+        ops({ kind: '층대', axis_value: '2층', axis_name: '2층', n_estimated: 527, mdape: 0.25 }),
+        ops({ kind: '층대', axis_value: '3층+', axis_name: '3층+', n_estimated: 1525, mdape: 0.2 }),
+      ],
+    });
+  }
+
+  it('★ 단계 분포 앞에 층별 블록이 서고, 층마다 오차 중앙값과 채점 건수가 나온다', async () => {
+    stubFetchOk(withFloors(0.45));
+    const { container } = render(<ScorecardSection sigungu="11680" />);
+    fireEvent.click(await screen.findByRole('button', { name: /참고 시세는 얼마나 맞나/ }));
+
+    const block = container.querySelector('.score__floors');
+    expect(block?.textContent).toContain('층마다 얼마나 맞나');
+    // 이 구의 성적(①) 뒤, 단계 분포(②) 앞에 선다.
+    const order = Array.from(container.querySelectorAll('.score__mine, .score__floors, .score__stages')).map(
+      (el) => el.className,
+    );
+    expect(order).toEqual(['score__mine', 'score__floors', 'score__stages']);
+
+    const rows = container.querySelectorAll('.score__floors .score__rows li');
+    expect(rows).toHaveLength(3);
+    expect(rows[0].textContent).toContain('1층');
+    expect(rows[0].textContent).toContain('오차 중앙값 45.0%');
+    expect(rows[0].textContent).toContain('739건');
+    expect(rows[2].textContent).toContain('3층 이상');
+    expect(rows[2].textContent).toContain('1,525건');
+  });
+
+  it('★ 1층 오차가 기준선을 넘으면 층별 화면에서 값을 안 내는 이유를 한 줄 적는다', async () => {
+    stubFetchOk(withFloors(GATE_MDAPE_LIMIT + 0.1));
+    const { container } = render(<ScorecardSection sigungu="11680" />);
+    fireEvent.click(await screen.findByRole('button', { name: /참고 시세는 얼마나 맞나/ }));
+
+    const why = container.querySelector('.score__floors .score__why')?.textContent ?? '';
+    expect(why).toContain('1층은 오차가 기준선');
+    expect(why).toContain('층별 화면에서 값을 내지 않습니다');
+  });
+
+  it('1층 오차가 기준선 안이면 그 이유 줄은 없다 (위 시험의 음성 대조)', async () => {
+    stubFetchOk(withFloors(GATE_MDAPE_LIMIT - 0.1));
+    const { container } = render(<ScorecardSection sigungu="11680" />);
+    fireEvent.click(await screen.findByRole('button', { name: /참고 시세는 얼마나 맞나/ }));
+
+    expect(container.querySelector('.score__floors')).not.toBeNull();
+    expect(container.querySelector('.score__floors .score__why')).toBeNull();
+  });
+
+  it('1층 오차가 기준선과 정확히 같으면 기준선 안이다 — 이유 줄 없음 (gateLine 의 `>` 와 같은 경계)', async () => {
+    stubFetchOk(withFloors(GATE_MDAPE_LIMIT));
+    const { container } = render(<ScorecardSection sigungu="11680" />);
+    fireEvent.click(await screen.findByRole('button', { name: /참고 시세는 얼마나 맞나/ }));
+
+    expect(container.querySelector('.score__floors')).not.toBeNull();
+    expect(container.querySelector('.score__floors .score__why')).toBeNull();
+  });
+
+  it('층대 줄이 없는 성적표면 블록을 통째로 안 그린다', async () => {
+    stubFetchOk(card());
+    const { container } = render(<ScorecardSection sigungu="11680" />);
+    fireEvent.click(await screen.findByRole('button', { name: /참고 시세는 얼마나 맞나/ }));
+
+    expect(container.querySelector('.score__stages')).not.toBeNull();
+    expect(container.querySelector('.score__floors')).toBeNull();
+  });
+
+  it('성적표 파일을 못 읽으면 블록을 안 그린다', async () => {
+    stubFetchFails();
+    const { container } = render(<ScorecardSection sigungu="11680" />);
+    fireEvent.click(await screen.findByRole('button', { name: /참고 시세는 얼마나 맞나/ }));
+
+    expect(container.querySelector('.score__mine')?.textContent).toContain('262건');
+    expect(container.querySelector('.score__floors')).toBeNull();
+    expect(container.textContent).not.toContain('층마다 얼마나 맞나');
   });
 });
 

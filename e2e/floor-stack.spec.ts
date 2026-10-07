@@ -566,8 +566,10 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await expect(band.getByText(/거래 15건/)).toBeVisible();
     await expect(band.getByText(/먼 근거/).first()).toBeVisible();
     await expect(band.getByText(/C등급 · 파생 추정/)).toBeVisible();
-    // 1층은 자리를 몰라서, 지하는 검증한 적이 없어서 — 서로 다른 말로 적는다.
+    // 1층은 오차가 기준선 밖이라서, 지하는 검증한 적이 없어서 — 서로 다른 말로 적는다.
     await expect(band.getByText(/1층은 내지 않습니다/)).toBeVisible();
+    // 1층 문구는 층마다의 성적을 볼 자리(첫 화면 성적표 카드)로 안내한다.
+    await expect(band.getByText(/「참고 시세는 얼마나 맞나」 카드에서 볼 수 있습니다/)).toBeVisible();
     await expect(band.getByText(/참고 시세를 내지 않은 층: 지하 1층/)).toBeVisible();
     // 지하는 줄로 반복하지 않는다 — 값 있는 2층 + 1층 두 줄뿐이다.
     await expect(band.locator('.band__row')).toHaveCount(2);
@@ -1371,6 +1373,32 @@ test.describe('입구 — 참고 시세 성적표', () => {
     await page.getByRole('button', { name: /테스트빌딩/ }).click();
     await expect(page.locator('section.stack')).toBeVisible();
     await expect(page.locator('section.score')).toHaveCount(0);
+  });
+
+  test('AK. 펼치면 층마다의 오차 블록이 서고, 1층이 기준선을 넘은 이유가 한 줄 붙는다', async ({
+    page,
+  }) => {
+    await mockOpenSigungu(page);
+    await mockJson(page, PRICE_GATE_PATTERN, priceGate());
+    await mockJson(page, SCORECARD_PATTERN, scorecard());
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    const score = page.locator('section.score');
+    await expect(score).toBeVisible();
+    await openCard(page, /참고 시세는 얼마나 맞나/);
+
+    const floors = score.locator('.score__floors');
+    await expect(floors).toBeVisible();
+    await expect(floors.getByRole('heading', { name: '층마다 얼마나 맞나' })).toBeVisible();
+    const rows = floors.locator('.score__rows li');
+    await expect(rows).toHaveCount(3);
+    await expect(rows.first()).toContainText('1층');
+    await expect(rows.first()).toContainText('오차 중앙값 45.0%');
+    await expect(rows.first()).toContainText('739건');
+    await expect(rows.nth(2)).toContainText('3층 이상');
+    // 1층은 기준선을 넘었다 — 층별 화면에서 값을 안 내는 이유가 이 블록에서 보인다.
+    await expect(floors.locator('.score__why')).toContainText('1층은 오차가 기준선');
   });
 
 });

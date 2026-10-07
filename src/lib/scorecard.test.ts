@@ -5,6 +5,7 @@ import { SCORECARD_URL } from './appConstants';
 import {
   GATE_MDAPE_LIMIT,
   coverageNote,
+  floorBandErrors,
   formatPercent,
   gateLine,
   isPriceGateList,
@@ -204,6 +205,39 @@ describe('stageDistribution — 화면에서 체감하는 분포', () => {
   it('채택단계 줄이 없으면 빈 목록이다 (다른 줄을 대신 쓰지 않는다)', () => {
     const onlyTotal = card({ ops_modes: [ops({ kind: '전체', axis_value: '전체', n_verified: 5 })] });
     expect(stageDistribution(onlyTotal)).toEqual([]);
+  });
+});
+
+describe('floorBandErrors — 층마다 얼마나 맞나', () => {
+  const withFloors = () =>
+    card({
+      ops_modes: [
+        ...card().ops_modes,
+        ops({ kind: '층대', axis_value: '1층', axis_name: '1층', n_estimated: 700, mdape: 0.45 }),
+        ops({ kind: '층대', axis_value: '2층', axis_name: '2층', n_estimated: 500, mdape: 0.29 }),
+        ops({ kind: '층대', axis_value: '3층+', axis_name: '3층+', n_estimated: 1500, mdape: 0.21 }),
+      ],
+    });
+
+  it('층대 줄만 파일 순서대로 돌려준다 — 오차와 채점 건수는 파일 값 그대로', () => {
+    expect(floorBandErrors(withFloors())).toEqual([
+      { code: '1층', label: '1층', mdape: 0.45, n: 700 },
+      { code: '2층', label: '2층', mdape: 0.29, n: 500 },
+      { code: '3층+', label: '3층 이상', mdape: 0.21, n: 1500 },
+    ]);
+  });
+
+  it("이름표 '3층+' 는 화면에 '3층 이상' 으로 적는다 · 모르는 이름표는 그대로 둔다", () => {
+    const odd = card({
+      ops_modes: [ops({ kind: '층대', axis_value: '지하', axis_name: '지하' })],
+    });
+    expect(floorBandErrors(withFloors())[2].label).toBe('3층 이상');
+    expect(floorBandErrors(odd)[0].label).toBe('지하');
+  });
+
+  it('층대 줄이 없으면 빈 목록이다 (다른 줄을 대신 쓰지 않는다)', () => {
+    expect(floorBandErrors(card())).toEqual([]);
+    expect(floorBandErrors(card({ ops_modes: [] }))).toEqual([]);
   });
 });
 

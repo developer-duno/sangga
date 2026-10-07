@@ -36,6 +36,16 @@ export const GATE_MDAPE_LIMIT = 0.3;
 const ADOPTED_STAGE_KIND = '채택단계';
 /** 같은 표에서 전체 합계를 담고 있는 줄의 이름표. */
 const OVERALL_KIND = '전체';
+/** 같은 표에서 채점한 거래 전체를 층으로 나눈 줄들의 이름표. */
+const FLOOR_BAND_KIND = '층대';
+
+/**
+ * 성적표가 쓰는 층대 이름표 → 화면 글자. 모르는 이름표는 그대로 적는다(지어내지 않는다).
+ * ⓘ 숫자가 아니라 **이름표의 표기**다 — 성적표를 다시 뽑아도 '3층+' 의 뜻은 안 변한다.
+ */
+const FLOOR_BAND_LABELS: Record<string, string> = {
+  '3층+': '3층 이상',
+};
 
 /**
  * 단계 코드가 무슨 뜻인지 **사람 말로**.
@@ -68,6 +78,18 @@ export type StageShare = {
   mdape: number | null;
   /** ±20% 안에 맞힌 비율(0~1). */
   hit20: number | null;
+};
+
+/** 화면에 그리는 층별 오차 한 줄. */
+export type FloorBandError = {
+  /** 성적표가 쓰는 이름표 그대로('1층'·'2층'·'3층+'). 1층 줄을 가려낼 때 쓴다. */
+  code: string;
+  /** 화면 글자('3층+' → '3층 이상'). */
+  label: string;
+  /** 그 층에서 잰 오차 중앙값(0~1). 못 읽었으면 null. */
+  mdape: number | null;
+  /** 값을 내서 채점한 거래 수. */
+  n: number | null;
 };
 
 /* ── 서버에서 오는 것(게이트) ────────────────────────────────────────────── */
@@ -279,6 +301,24 @@ export function stageDistribution(scorecard: Scorecard): StageShare[] {
   // 같은 비중이면 코드 순으로 — 순서가 흔들리면 다시 그릴 때마다 줄이 춤춘다.
   out.sort((a, b) => (b.share ?? 0) - (a.share ?? 0) || a.code.localeCompare(b.code));
   return out;
+}
+
+/**
+ * 층마다 얼마나 맞나 — `ops_modes` 의 '층대' 줄을 **파일 순서대로**.
+ *
+ * ⚠️ 구별 성적(게이트)과 **다른 묶음**이다 — 채점한 거래 전체를 층으로만 나눈 것이라 구를
+ *    가르지 않는다. 화면이 그 사실을 글자로 밝힌다.
+ * ⛔ 오차도 건수도 파일에서 읽는다(숫자 복사 금지). 줄이 없으면 빈 목록 — 카드가 블록을 안 그린다.
+ */
+export function floorBandErrors(scorecard: Scorecard): FloorBandError[] {
+  return scorecard.ops_modes
+    .filter((r) => r.kind === FLOOR_BAND_KIND)
+    .map((r) => ({
+      code: r.axis_value,
+      label: FLOOR_BAND_LABELS[r.axis_value] ?? r.axis_value,
+      mdape: r.mdape,
+      n: r.n_estimated,
+    }));
 }
 
 /**
