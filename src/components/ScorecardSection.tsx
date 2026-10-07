@@ -4,7 +4,9 @@ import { PRICE_GATE_FN } from '../lib/appConstants';
 import { ENTRY_SECTION_PLAN } from '../lib/sectionCards';
 import { SectionCard } from './SectionCard';
 import {
+  GATE_MDAPE_LIMIT,
   coverageNote,
+  floorBandErrors,
   formatPercent,
   gateLine,
   isPriceGateList,
@@ -117,6 +119,12 @@ export function ScorecardSection({ sigungu }: Props) {
 
   const stages = card === null ? [] : stageDistribution(card);
   const note = card === null ? null : coverageNote(card);
+  const floors = card === null ? [] : floorBandErrors(card);
+  // 1층 줄의 오차가 기준선을 넘을 때만 "왜 층별 화면에 1층 값이 없나"를 한 줄 적는다.
+  // ⓘ 기준선은 설명용 상수 그대로 — 판정을 다시 하는 것이 아니라 이유를 글자로 옮길 뿐이다.
+  const firstFloor = floors.find((f) => f.code === '1층');
+  const firstFloorOver =
+    firstFloor !== undefined && firstFloor.mdape !== null && firstFloor.mdape > GATE_MDAPE_LIMIT;
 
   return (
     <SectionCard plan={ENTRY_SECTION_PLAN.scorecard} className="score" summary={summary}>
@@ -162,6 +170,37 @@ export function ScorecardSection({ sigungu }: Props) {
           <p className="score__why">{gateLine(mine)}</p>
         )}
       </div>
+
+      {/* ①-2 층마다 — 층별 화면이 1층 값을 안 내는 이유가 여기서 보인다 */}
+      {floors.length > 0 && (
+        <div className="score__floors">
+          <h4 className="score__h">층마다 얼마나 맞나</h4>
+          <p className="score__sub">
+            채점한 거래 전체를 <strong>층으로만</strong> 나눠 본 오차 중앙값입니다. 위의 구별
+            성적과는 다른 묶음이라 구를 가리지 않고 함께 셉니다.
+          </p>
+          <ul className="score__rows">
+            {floors.map((f) => (
+              <li key={f.code}>
+                <span className="score__stage">{f.label}</span>
+                {/* ⛔ 못 읽은 오차를 '0%'로 적지 않는다 — 없는 것과 0 은 다르다. */}
+                {formatPercent(f.mdape) !== null && (
+                  <span className="score__share">오차 중앙값 {formatPercent(f.mdape)}</span>
+                )}
+                {f.n !== null && (
+                  <span className="score__err">({f.n.toLocaleString('ko-KR')}건)</span>
+                )}
+              </li>
+            ))}
+          </ul>
+          {firstFloorOver && (
+            <p className="score__why">
+              1층은 오차가 기준선 {formatPercent(GATE_MDAPE_LIMIT, 0)}를 넘어 층별 화면에서 값을
+              내지 않습니다.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* ② 화면에서 체감하는 단계 분포 */}
       {stages.length > 0 && (

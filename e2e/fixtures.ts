@@ -384,6 +384,10 @@ export function scorecard(over: Partial<Scorecard> = {}): Scorecard {
       opsMode({ kind: '전체', axis_value: '전체', axis_name: '전체', n_verified: 1000, coverage: 0.9 }),
       opsMode({ axis_value: 'L2', axis_name: 'L2', n_verified: 300, mdape: 0.13 }),
       opsMode({ axis_value: 'L6', axis_name: 'L6', n_verified: 600, mdape: 0.4 }),
+      // 층대 셋 — 1층은 기준선을 넘게 지어 둔다(진짜 자료도 그렇다).
+      opsMode({ kind: '층대', axis_value: '1층', axis_name: '1층', n_estimated: 739, mdape: 0.45 }),
+      opsMode({ kind: '층대', axis_value: '2층', axis_name: '2층', n_estimated: 527, mdape: 0.29 }),
+      opsMode({ kind: '층대', axis_value: '3층+', axis_name: '3층+', n_estimated: 1525, mdape: 0.22 }),
     ],
     ...over,
   };
