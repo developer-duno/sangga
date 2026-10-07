@@ -1705,6 +1705,50 @@ test.describe('검색 — 가게 이름으로 찾은 땅', () => {
     await expect(stack.getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
     await expect(stack.locator('.card--floors .floor')).toHaveCount(2);
   });
+
+  test('AJ. 일치 상호가 길면 한 줄로 안 잘리고 두 줄까지 보인다', async ({ page }) => {
+    // 사장님 결정 C(2026-10-07) — .stores__names 는 line-clamp:2 로 두 줄까지 보여준다.
+    // 상호를 넓은 화면에서도 두 줄이 되게 충분히 길게 짓는다(실제 가게 이름 아님).
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit({ bld_nm: '건물로찾은빌딩' })]);
+    await mockJson(page, SEARCH_STORES_PATTERN, [
+      storeHit({
+        matched_names: [
+          '아주긴이름의테스트카페역삼중앙점',
+          '아주긴이름의테스트카페테헤란로점',
+          '아주긴이름의테스트카페강남대로점',
+        ],
+        match_store_cnt: 7,
+        total_parcel_cnt: 3,
+        total_store_cnt: 12,
+      }),
+    ]);
+    await mockFloorStack(page, [], priceBands(), [floorRow({ floor_no: 2 }), floorRow()]);
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '아주긴이름의테스트카페');
+
+    const stores = page.getByRole('region', { name: '가게 이름으로 찾은 땅' });
+    await expect(stores).toBeVisible();
+    const namesLine = stores.locator('.stores__names');
+    await expect(namesLine).toContainText('외 4곳');
+
+    const namesHeight = await namesLine.evaluate((el) => el.getBoundingClientRect().height);
+    // 한 줄 기준 높이 — 같은 카드의 .stores__addr(여전히 한 줄 말줄임)로 잰다.
+    const addrEl = stores.locator('.stores__addr').first();
+    await expect(addrEl).toBeVisible();
+    const oneLineHeight = await addrEl.evaluate((el) => el.getBoundingClientRect().height);
+
+    expect(namesHeight).toBeGreaterThan(oneLineHeight * 1.3);
+    expect(namesHeight).toBeLessThanOrEqual(oneLineHeight * 2 + 2);
+
+    // 양성 대조 — 다른 줄은 여전히 한 줄 말줄임이다.
+    const addrWhiteSpace = await addrEl.evaluate(
+      (el) => el.ownerDocument.defaultView!.getComputedStyle(el).whiteSpace,
+    );
+    expect(addrWhiteSpace).toBe('nowrap');
+  });
 });
 
 test.describe('층별 스택뷰 — 호실 구성표', () => {
