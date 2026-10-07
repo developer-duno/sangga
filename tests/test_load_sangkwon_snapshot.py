@@ -35,6 +35,14 @@ for _p in (_SCRIPTS_DIR, _COLLECTORS_DIR):
 import load_sangkwon_snapshot as target  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _no_real_get(monkeypatch):
+    """⛔ 표지 사전 점검(2026-10-07 (2))의 GET 이 가짜 없이 밖으로 나가면 여기서 실패한다."""
+    def refuse(*_a, **_kw):
+        raise AssertionError("시험이 실제 네트워크(requests.get)로 나가려 했습니다")
+    monkeypatch.setattr(target.requests, "get", refuse)
+
+
 # ── 픽스처 도우미 ─────────────────────────────────────────────────────────────
 
 HEADER = [
@@ -610,6 +618,8 @@ def test_main_all_mode_cross_check_query_has_no_sigungu_filter(tmp_path, monkeyp
 
     monkeypatch.setattr(target, "rest_count", fake_rest_count)
     # 전국 모드는 끝에 분기 표지 RPC 를 부른다(결정 0035) — 네트워크 없이 성공으로 흉내.
+    # 적재 전 사전 점검(2026-10-07 (2))은 '점포 표 비었음'으로 건너뛰게 둔다(그 길은 아래 시험들이 본다).
+    monkeypatch.setattr(target, "oldest_snapshot_ym", lambda base_url, headers, get=None: None)
     monkeypatch.setattr(target, "mark_snapshot_loaded",
                         lambda *a, **k: (True, {"loaded_ym": "202603", "published_ym": "202603"}))
     # 시·도 파일 수 관문(2026-10-07)은 아래 test_main_all_mode_* 가 본다 — 여기선 파일 1개를 '전부'로.
@@ -1040,11 +1050,14 @@ def test_mark_snapshot_loaded_2xx_without_json_is_still_ok():
     assert ok is True and body == {}
 
 
-def _all_mode(tmp_path, monkeypatch, sigungu="all"):
+def _all_mode(tmp_path, monkeypatch, sigungu="all", ym="202603", oldest=None):
+    """전국(또는 시군구) 모드 main 한 벌. oldest = 사전 점검이 읽을 점포 표 가장 옛 분기
+    (None = 점포 표 비었음 → 사전 점검 건너뜀 · 기존 시험들의 길)."""
     write_csv(
-        tmp_path, "소상공인시장진흥공단_상가(상권)정보_서울_202603.csv",
+        tmp_path, "소상공인시장진흥공단_상가(상권)정보_서울_{}.csv".format(ym),
         [make_row(상가업소번호="M1", 시군구코드="11680", 지번코드="1168010100108230004")],
     )
+    monkeypatch.setattr(target, "oldest_snapshot_ym", lambda base_url, headers, get=None: oldest)
     monkeypatch.setattr(sys, "argv", ["prog", "--dir", str(tmp_path), "--sigungu-code", sigungu])
     monkeypatch.setattr(target, "get_supabase_config", lambda: ("https://x.supabase.co", "key"))
     monkeypatch.setattr(
@@ -1138,3 +1151,178 @@ def test_main_cross_check_mismatch_never_marks_the_flag(tmp_path, monkeypatch):
     monkeypatch.setattr(target, "mark_snapshot_loaded",
                         lambda *a, **k: pytest.fail("교차검증 불일치인데 표지를 적었습니다"))
     assert target.main() == 1
+
+
+
+# ── 표지 사전 점검 · 옛 분기 재적재 (2026-10-07 (2) — 결정 0035 노란 지적 A·B) ──────────
+#
+# A: 전국 + 실제 실행이면 첫 upsert **전에** 표지 RPC 를 '무변화'로 한 번 불러 본다(점포 표 가장 옛 분기를
+#    p_ym 으로 — RPC 는 loaded_ym 이하를 받으면 아무것도 안 바꾼다). 실패면 적재 전에 exit 1.
+# B: 이번 분기 <= 사전 점검의 loaded_ym 이면 파일 수 관문·RPC 를 건너뛰고 exit 0(옛 분기 시·도 파일 수가 달라 오경보).
+
+
+class _GetResp:
+    def __init__(self, status, body=None, text=""):
+        self.status_code = status
+        self._body = body
+        self.text = text
+
+    def json(self):
+        if self._body is None:
+            raise ValueError("no json")
+        return self._body
+
+
+def test_precheck_real_functions_call_the_oldest_quarter_then_the_rpc():
+    """진짜 oldest_snapshot_ym + 진짜 mark_snapshot_loaded — 가장 낮은 HTTP 경계(get·post)만 가짜."""
+    seen = []
+
+    def fake_get(url, headers=None, timeout=None):
+        seen.append(("GET", url, headers))
+        return _GetResp(200, [{"snapshot_ym": "202603"}])
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        seen.append(("POST", url, json))
+        return _GetResp(200, {"id": 1, "loaded_ym": "202606", "published_ym": "202606"})
+
+    headers = {"apikey": "k", "Authorization": "Bearer k"}
+    got = target.precheck_flag("https://x.supabase.co", headers, get=fake_get, post=fake_post)
+    assert got == "202606"
+    assert seen[0] == ("GET", "https://x.supabase.co/rest/v1/unit_business"
+                       "?select=snapshot_ym&order=snapshot_ym.asc&limit=1", headers)
+    # 고른 값 = 가장 옛 분기(무변화 호출) · 행 수는 None(만에 하나 올라가도 거짓 행 수를 안 적는다)
+    assert seen[1] == ("POST", "https://x.supabase.co/rest/v1/rpc/mark_snapshot_loaded",
+                       {"p_ym": "202603", "p_rows": None})
+    assert len(seen) == 2
+
+
+@pytest.mark.parametrize("resp", [
+    _GetResp(500, text="boom"),               # HTTP 오류
+    _GetResp(200, [{"snapshot_ym": "2026"}]),  # 분기 모양이 다름
+    _GetResp(200, {"message": "x"}),           # 목록이 아님
+    _GetResp(200, None),                       # JSON 이 아님
+], ids=["http오류", "분기모양", "목록아님", "json아님"])
+def test_oldest_snapshot_ym_failures_raise(resp):
+    with pytest.raises(RuntimeError):
+        target.oldest_snapshot_ym("https://x.supabase.co", {}, get=lambda *a, **k: resp)
+
+
+def test_oldest_snapshot_ym_empty_table_is_none():
+    assert target.oldest_snapshot_ym("https://x.supabase.co", {},
+                                     get=lambda *a, **k: _GetResp(200, [])) is None
+
+
+def test_oldest_snapshot_ym_network_error_hides_the_url():
+    def boom(*a, **k):
+        raise target.requests.ConnectionError("https://x.supabase.co/rest/v1 refused")
+    with pytest.raises(RuntimeError) as e:
+        target.oldest_snapshot_ym("https://x.supabase.co", {}, get=boom)
+    assert "ConnectionError" in str(e.value) and "supabase.co" not in str(e.value)
+
+
+def _never_upsert(monkeypatch):
+    monkeypatch.setattr(target, "upsert_batch",
+                        lambda *a, **k: pytest.fail("사전 점검이 실패했는데 적재했습니다"))
+
+
+def test_main_precheck_ok_prints_the_flag_then_marks_a_new_quarter(tmp_path, monkeypatch, capsys):
+    _all_mode(tmp_path, monkeypatch, ym="202609", oldest="202603")
+    calls = []
+
+    def fake_mark(base_url, headers, ym, rows):
+        calls.append((ym, rows))
+        if ym == "202603":   # 사전 점검 — 무변화
+            return True, {"loaded_ym": "202606", "published_ym": "202606"}
+        return True, {"loaded_ym": ym, "published_ym": "202606"}
+
+    monkeypatch.setattr(target, "mark_snapshot_loaded", fake_mark)
+    assert target.main() == 0
+    assert calls == [("202603", None), ("202609", 1)]
+    out = capsys.readouterr().out
+    assert "표지 사전 점검: 다 들어온 분기 202606 · 보여 주는 분기 202606" in out
+    assert out.index("표지 사전 점검") < out.index("스캔 시작"), "사전 점검은 스캔·적재 전에"
+    assert "다 들어온 분기 202609" in out
+
+
+@pytest.mark.parametrize("answer", [
+    (False, "HTTP 404 PGRST202"),                       # RPC 가 안 된다
+    (True, {}),                                         # 2xx 인데 표지가 안 왔다
+    (True, {"loaded_ym": "202606"}),                    # 칸 하나 빠짐
+    (True, {"loaded_ym": "2026Q2", "published_ym": "202606"}),
+], ids=["rpc실패", "빈응답", "칸빠짐", "모양이상"])
+def test_main_precheck_failure_stops_before_any_upsert(tmp_path, monkeypatch, capsys, answer):
+    _all_mode(tmp_path, monkeypatch, ym="202609", oldest="202603")
+    _never_upsert(monkeypatch)
+    monkeypatch.setattr(target, "mark_snapshot_loaded", lambda *a, **k: answer)
+    assert target.main() == 1
+    out = capsys.readouterr().out
+    assert "[에러] 표지 사전 점검 실패 — 적재 전에 멈춥니다" in out
+    assert "스캔 시작" not in out
+
+
+def test_main_precheck_oldest_lookup_failure_stops_before_any_upsert(tmp_path, monkeypatch, capsys):
+    _all_mode(tmp_path, monkeypatch, ym="202609")
+    _never_upsert(monkeypatch)
+
+    def boom(base_url, headers, get=None):
+        raise RuntimeError("점포 표 가장 옛 분기 조회 실패 (HTTP 401): x")
+    monkeypatch.setattr(target, "oldest_snapshot_ym", boom)
+    monkeypatch.setattr(target, "mark_snapshot_loaded",
+                        lambda *a, **k: pytest.fail("옛 분기를 못 읽었는데 RPC 를 불렀습니다"))
+    assert target.main() == 1
+    assert "[에러] 표지 사전 점검 실패" in capsys.readouterr().out
+
+
+def test_main_precheck_empty_table_warns_and_continues(tmp_path, monkeypatch, capsys):
+    _all_mode(tmp_path, monkeypatch, ym="202609", oldest=None)
+    calls = []
+    monkeypatch.setattr(target, "mark_snapshot_loaded",
+                        lambda base_url, headers, ym, rows: calls.append(ym)
+                        or (True, {"loaded_ym": ym, "published_ym": "202606"}))
+    assert target.main() == 0
+    assert calls == ["202609"], "사전 점검은 건너뛰고 끝 단계만 부른다"
+    assert "[주의] 점포 표가 비어 표지 사전 점검을 건너뜁니다" in capsys.readouterr().out
+
+
+def test_main_dry_run_and_sigungu_mode_skip_the_precheck(tmp_path, monkeypatch):
+    _all_mode(tmp_path, monkeypatch, sigungu="11680", oldest="202603")
+    monkeypatch.setattr(target, "rest_count", lambda base_url, headers, table, query: 1)
+    monkeypatch.setattr(target, "oldest_snapshot_ym",
+                        lambda *a, **k: pytest.fail("시군구 모드가 표지 사전 점검을 했습니다"))
+    monkeypatch.setattr(target, "mark_snapshot_loaded",
+                        lambda *a, **k: pytest.fail("시군구 모드가 표지 RPC 를 불렀습니다"))
+    assert target.main() == 0
+    # dry-run(전국) — '쓰기 함수 호출 0' 약속: 연결 설정조차 안 읽는다(사전 점검도 없다)
+    monkeypatch.setattr(sys, "argv", ["prog", "--dir", str(tmp_path), "--sigungu-code", "all", "--dry-run"])
+    monkeypatch.setattr(target, "get_supabase_config",
+                        lambda: pytest.fail("dry-run 이 Supabase 에 연결했습니다"))
+    assert target.main() == 0
+
+
+@pytest.mark.parametrize("ym", ["201512", "202606"], ids=["옛분기", "같은분기"])
+def test_main_old_or_same_quarter_skips_the_file_gate_and_rpc(tmp_path, monkeypatch, capsys, ym):
+    """B: 옛 분기 전국 재적재(201512 — 시·도 파일 18개)는 파일 수 관문 16 에 걸리던 오경보 → exit 0."""
+    _all_mode(tmp_path, monkeypatch, ym=ym, oldest="201512")
+    monkeypatch.setattr(target, "EXPECTED_SIDO_FILES", 16)   # 폴더엔 1개 — 관문이 돌면 exit 1 이다
+    calls = []
+    monkeypatch.setattr(target, "mark_snapshot_loaded",
+                        lambda base_url, headers, p_ym, rows: calls.append(p_ym)
+                        or (True, {"loaded_ym": "202606", "published_ym": "202606"}))
+    assert target.main() == 0
+    assert calls == ["201512"], "끝 단계 RPC 는 안 부른다(사전 점검 한 번뿐)"
+    out = capsys.readouterr().out
+    assert "표지는 그대로입니다 — {} 은 다 들어온 분기 202606 와 같거나 옛 분기라".format(ym) in out
+    assert "빠진 파일" not in out
+
+
+def test_main_new_quarter_still_goes_through_the_file_gate(tmp_path, monkeypatch, capsys):
+    """B 음성: 새 분기(202609 > loaded 202606)는 지금처럼 관문 16 → 빠지면 exit 1."""
+    _all_mode(tmp_path, monkeypatch, ym="202609", oldest="202603")
+    monkeypatch.setattr(target, "EXPECTED_SIDO_FILES", 16)
+    calls = []
+    monkeypatch.setattr(target, "mark_snapshot_loaded",
+                        lambda base_url, headers, p_ym, rows: calls.append(p_ym)
+                        or (True, {"loaded_ym": "202606", "published_ym": "202606"}))
+    assert target.main() == 1
+    assert calls == ["202603"], "관문에 걸려 끝 단계 RPC 는 안 부른다"
+    assert "처리 1 · 폴더 1 · 기대 16" in capsys.readouterr().out

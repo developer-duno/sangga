@@ -137,9 +137,11 @@ def test_set_loaded_sql_moves_only_the_loaded_columns():
         target.build_set_loaded_sql("2026Q3")
 
 
-def _loaded_answers(monkeypatch, published="202606", count="2800000"):
+def _loaded_answers(monkeypatch, published="202606", count="2800000", loaded=None):
+    """표지 두 칸(loaded|published)과 점포 표 행 수를 흉내 낸다. loaded 를 안 주면 published 와 같다."""
     asked, ran = [], []
-    answers = {target.PUBLISHED_SQL: published}
+    loaded = published if loaded is None else loaded
+    answers = {target.FLAG_YMS_SQL: "{}|{}".format(loaded, published) if (loaded or published) else ""}
 
     def q(sql):
         asked.append(sql)
@@ -183,6 +185,43 @@ def test_loaded_write_failure_returns_1(monkeypatch):
     _loaded_answers(monkeypatch)
     monkeypatch.setattr(target.dbx, "run_sql", lambda sql, **k: 3)
     assert target.main(["--loaded", "202609"]) == 1
+
+
+# ── 3-3. --loaded 는 앞으로만 — 지금 다 들어온 분기 기준 (2026-10-07 (2) · 재검사관 C 🟡) ──────────
+
+
+def test_loaded_refuses_a_quarter_older_than_the_loaded_one(monkeypatch, capsys):
+    """loaded 202606 · published 202603(되돌린 상태) 에 --loaded 202603 → 거부(RPC 의 '앞으로만'과 같은 결)."""
+    asked, ran = _loaded_answers(monkeypatch, published="202603", loaded="202606")
+    assert target.main(["--loaded", "202603"]) == 1
+    assert ran == []
+    assert asked == [target.FLAG_YMS_SQL], "거부하면 행 수도 안 센다"
+    out = capsys.readouterr().out
+    assert "[에러] 202603 은 지금 다 들어온 분기 202606 보다 옛 분기입니다" in out
+    assert "python scripts/publish_snapshot.py --ym 202603" in out
+
+
+def test_loaded_same_quarter_writes_nothing(monkeypatch, capsys):
+    asked, ran = _loaded_answers(monkeypatch, published="202606", loaded="202609")
+    assert target.main(["--loaded", "202609"]) == 0
+    assert ran == [] and asked == [target.FLAG_YMS_SQL]
+    assert "이미 다 들어온 분기가 202609 입니다 — 바꿀 것 없음(쓰기 0)" in capsys.readouterr().out
+
+
+def test_loaded_newer_than_loaded_still_writes(monkeypatch):
+    """음성: loaded 202606 · published 202603 에 --loaded 202609 는 그대로 적는다."""
+    _, ran = _loaded_answers(monkeypatch, published="202603", loaded="202606")
+    assert target.main(["--loaded", "202609"]) == 0
+    assert ran == [target.build_set_loaded_sql("202609")]
+
+
+@pytest.mark.parametrize("answer", ["", "202606|", "|202606", "202606"])
+def test_loaded_refuses_an_unreadable_flag(monkeypatch, answer):
+    ran = []
+    monkeypatch.setattr(target, "query_one", lambda sql: answer)
+    monkeypatch.setattr(target.dbx, "run_sql", lambda sql, **k: ran.append(sql) or 0)
+    assert target.main(["--loaded", "202609"]) == 1
+    assert ran == []
 
 
 # ── 4. --show 흐름 (DB 쓰기 0) ───────────────────────────────────────────────
@@ -234,7 +273,7 @@ def non_ascii_chars(sql):
 
 def test_sql_sent_through_psql_c_is_ascii():
     for sql in (target.SHOW_FLAG_SQL, target.SHOW_QUARTERS_SQL, target.SHOW_MVS_SQL,
-                target.PUBLISHED_SQL, target.build_exists_sql("202606")):
+                target.FLAG_YMS_SQL, target.build_exists_sql("202606")):
         assert non_ascii_chars(sql) == set(), sql[:80]
 
 

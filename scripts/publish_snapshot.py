@@ -15,7 +15,8 @@
 사용
 ----
     python scripts/publish_snapshot.py --show          # 표지 두 칸·시각·행수 + 점포 표 분기별 행수 + 요약표 셋의 분기
-    python scripts/publish_snapshot.py --loaded 202609 # '다 들어온 분기'만 적는다(보여 주는 분기는 그대로)
+    python scripts/publish_snapshot.py --loaded 202609 # '다 들어온 분기'만 적는다(보여 주는 분기는 그대로 · 앞으로만 —
+                                                       #  지금 다 들어온 분기보다 옛 분기는 거부, 같은 분기는 쓰기 0)
     python scripts/publish_snapshot.py --ym 202606     # 되돌리기 전용 — 두 칸을 **모두** 그 분기로(점포 표에 있는 분기만)
     → 이어서 python scripts/post_load.py               # 요약표를 그 분기로 굽고, 확인이 끝나면 표지를 올린다
 
@@ -109,7 +110,9 @@ def build_set_loaded_sql(ym):
     ).format(ym=ym)
 
 
-PUBLISHED_SQL = "select coalesce((select published_ym from snapshot_release where id = 1), '');"
+# '다 들어온 분기|보여 주는 분기' 한 줄 (표지가 비었으면 빈 글자). ⛔ ASCII 만 — query_one 은 psql -c.
+FLAG_YMS_SQL = ("select coalesce((select loaded_ym || '|' || published_ym "
+                "from snapshot_release where id = 1), '');")
 
 
 def has_quarter(count_text):
@@ -167,16 +170,28 @@ def set_quarter(ym):
 
 
 def set_loaded(ym):
-    """적재기가 표지를 못 올렸을 때 — '다 들어온 분기'만 적는다(화면은 그대로)."""
-    published = query_one(PUBLISHED_SQL).strip()
-    if not YM_RE.match(published):
-        print("[에러] 표지(snapshot_release)가 비었거나 보여 주는 분기를 못 읽었습니다({!r}) — "
-              "python scripts/publish_snapshot.py --show 로 확인하세요.".format(published))
+    """적재기가 표지를 못 올렸을 때 — '다 들어온 분기'만 적는다(화면은 그대로).
+
+    ⛔ 앞으로만 — 적재기 RPC(mark_snapshot_loaded)와 같은 결: 지금 다 들어온 분기보다 옛 분기는 거부,
+       같은 분기는 바꿀 것 없음(쓰기 0). 뒤로 가는 길은 --ym(되돌리기)뿐이다(2026-10-07 (2)).
+    """
+    loaded, published = (query_one(FLAG_YMS_SQL).strip().split("|") + ["", ""])[:2]
+    if not (YM_RE.match(loaded) and YM_RE.match(published)):
+        print("[에러] 표지(snapshot_release)가 비었거나 분기를 못 읽었습니다({!r}) — "
+              "python scripts/publish_snapshot.py --show 로 확인하세요.".format("|".join((loaded, published))))
         return 1
     if ym < published:
         print("[에러] {} 은 지금 보여 주는 분기 {} 보다 옛 분기입니다 — --loaded 는 앞으로만 적습니다. "
               "뒤로는 python scripts/publish_snapshot.py --ym {} (되돌리기)".format(ym, published, ym))
         return 1
+    if ym < loaded:
+        print("[에러] {} 은 지금 다 들어온 분기 {} 보다 옛 분기입니다 — --loaded 는 앞으로만 적습니다. "
+              "뒤로는 python scripts/publish_snapshot.py --ym {} (되돌리기)".format(ym, loaded, ym))
+        return 1
+    if ym == loaded:
+        print("이미 다 들어온 분기가 {} 입니다 — 바꿀 것 없음(쓰기 0). 화면 반영이 아직이면 "
+              "python scripts/post_load.py 뒤 python scripts/post_load.py --check".format(ym))
+        return 0
     n = query_one(build_exists_sql(ym))
     if not has_quarter(n):
         print("[에러] 점포 표(unit_business)에 {} 분기 행이 없습니다 — 다 들어온 분기로 적을 수 없습니다.".format(ym))
