@@ -163,8 +163,12 @@ REST_TIMEOUT_SEC = 120
 SELECT_PAGE_SIZE = 1000
 PNU_BATCH = 100          # URL 길이 제한 때문에 in.(...) 는 100개씩 끊는다
 
+# ⛔ 지분 거래(is_share — 건물 일부 몫만 사고판 거래, ㎡당 값이 약 0.39배)는 뺀다(2026-10-08a).
+#    화면의 사다리(list_price_bands L2·L4·L5·L6)가 같은 조건으로 거른다 — 성적표와 화면이 같은
+#    모집단이어야 한다. ⚠️ 마이그레이션 2026-10-08a 전의 DB 에 돌리면 칸이 없어 조회가 실패한다.
 TX_QUERY = (
     "tx_type=eq.집합&pnu=not.is.null&floor_no=not.is.null&unit_price=not.is.null"
+    "&is_share=is.false"
     "&select=tx_id,pnu,sigungu_code,floor_no,unit_price,contract_ym"
 )
 
@@ -1084,7 +1088,7 @@ def build_markdown(ctx):
     # 1. 방법
     add("## 1. 방법")
     add("")
-    add("- **대상**: `transaction` 중 `tx_type='집합'` + PNU·층·단가가 모두 있는 거래 "
+    add("- **대상**: `transaction` 중 `tx_type='집합'` + PNU·층·단가가 모두 있고 지분 거래가 아닌 거래 "
         "**{:,}건**(서울 {:,} · 대전 {:,}).".format(
             ctx["total"], ctx["sido_counts"].get("11", 0), ctx["sido_counts"].get("30", 0)))
     add("- **시간 분할**: 학습 `contract_ym <= {}` **{:,}건** / 검증 `contract_ym >= {}` "

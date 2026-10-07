@@ -43,6 +43,20 @@ MIGRATION = os.path.join(
 MIGRATION_AREA = os.path.join(
     ROOT, "supabase", "migrations", "2026-09-09b_tx_yearly_area.sql")
 SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
+# 지분 거래를 단가·n·면적에서만 뺀 판(2026-10-08a · 👤 결정 — 건수엔 센다). 뷰를 다시 구웠으므로
+# 정본과 같은 모양을 말하는 것은 이제 이 파일이다. filter 모집단만 바뀌었다(아래 UNIT_FILTER).
+MIGRATION_SHARE = os.path.join(
+    ROOT, "supabase", "migrations", "2026-10-08a_transaction_share_flag.sql")
+
+# 단가의 근거(n·분위·면적)를 고르는 filter — 판마다 글자 그대로. n_all 등 건수 칸에는 filter 가 없다.
+UNIT_FILTER_OLD = "(where t.unit_price is not null)"
+UNIT_FILTER_SHARE = "(where t.unit_price is not null and not t.is_share)"
+UNIT_FILTER = {
+    MIGRATION: UNIT_FILTER_OLD,
+    MIGRATION_AREA: UNIT_FILTER_OLD,
+    MIGRATION_SHARE: UNIT_FILTER_SHARE,
+    SCHEMA: UNIT_FILTER_SHARE,
+}
 
 BOTH = [MIGRATION, SCHEMA]
 # 두 판 **모두**에서 참이어야 하는 불변식 — 권한·집합 거래만·읽기 전용 같은 것들.
@@ -215,7 +229,7 @@ class TestTheViewExists:
         n_all(그 해 집합 거래 전부 = 층 미상 비율의 분모)과 짝으로 못 박는다.
         """
         text = flat(read(path))
-        assert "count(*) filter (where t.unit_price is not null)::int as n," in text
+        assert "count(*) filter {}::int as n,".format(UNIT_FILTER[path]) in text
         assert "count(*)::int as n_all," in text
 
     @pytest.mark.parametrize("path", ALL)
@@ -246,7 +260,7 @@ class TestTheViewExists:
 class TestTheAreaColumn:
     """그 해 단가의 근거가 된 거래 **한 건의 크기**(2026-09-09b · 사장님 결재 2026-09-09)."""
 
-    @pytest.mark.parametrize("path", [MIGRATION_AREA, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION_AREA, MIGRATION_SHARE, SCHEMA])
     def test_measured_on_exactly_the_same_rows_as_the_unit_price(self, path):
         """⛔ **filter 가 단가 셋과 글자 그대로 같아야 한다.**
 
@@ -259,7 +273,7 @@ class TestTheAreaColumn:
         text = flat(read(path))
         assert (
             "percentile_cont(0.5) within group (order by t.bld_area_m2) "
-            "filter (where t.unit_price is not null) as median_area_m2," in text
+            "filter {} as median_area_m2,".format(UNIT_FILTER[path]) in text
         )
 
     @pytest.mark.parametrize("path", [MIGRATION_AREA, SCHEMA])

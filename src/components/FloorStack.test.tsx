@@ -793,6 +793,56 @@ describe('FloorStack — 실거래 기록 (Stage A · 결정 0012)', () => {
     expect(screen.getByText('집합')).toBeTruthy();
   });
 
+  // ── 지분 거래 꼬리표(2026-10-08a · 물결 0-2b) ──────────────────────────────
+  // 지분 거래는 목록에서 지우지 않고 '지분' 꼬리표를 단다. 설명 한 줄은 지분 행이 하나라도
+  // 있을 때만 — 경계 짝(0건 = 없음 · 1건 = 있음)으로 못 박는다.
+  const SHARE_NOTE = /지분 = 건물 일부 몫만 사고판 거래라 ㎡당 값이 낮게 나옵니다/;
+
+  it('지분 거래 줄에만 "지분" 꼬리표가 붙는다', async () => {
+    responses.txs = {
+      data: [tx({ is_share: true, price_won: 50_000_000 }), tx({ is_share: false })],
+      error: null,
+    };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText(/이 땅에서 신고된 거래 2건/)).toBeTruthy());
+    const rows = container.querySelectorAll('.tx__list li');
+    expect(rows).toHaveLength(2);
+    expect(rows[0].querySelector('.tx__share')?.textContent).toBe('지분');
+    expect(rows[1].querySelector('.tx__share')).toBeNull();
+    // 지분 거래도 지우지 않는다 — 금액이 그대로 보인다.
+    expect(screen.getByText('5,000만')).toBeTruthy();
+  });
+
+  it('지분 거래가 0건이면 설명 줄이 없다', async () => {
+    // 옛 서버(칸 없음 = undefined)와 false 를 함께 — 둘 다 꼬리표·설명 없음.
+    responses.txs = { data: [tx(), tx({ is_share: false })], error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText(/이 땅에서 신고된 거래 2건/)).toBeTruthy());
+    expect(container.querySelector('.tx__share')).toBeNull();
+    expect(screen.queryByText(SHARE_NOTE)).toBeNull();
+  });
+
+  it('지분 거래가 1건이면 목록 아래 설명 줄이 선다', async () => {
+    responses.txs = { data: [tx(), tx({ is_share: true })], error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText(SHARE_NOTE)).toBeTruthy());
+    expect(container.querySelectorAll('.tx__share')).toHaveLength(1);
+    // 목록 **아래**(같은 블록 안, 목록 뒤)에 선다.
+    const note = container.querySelector('.tx__share-note')!;
+    const list = container.querySelector('.tx__list')!;
+    expect(list.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(note.textContent).toBe(
+      '지분 = 건물 일부 몫만 사고판 거래라 ㎡당 값이 낮게 나옵니다 — 층대별 단가·참고 가격대 계산에서는 뺍니다.',
+    );
+  });
+
+  it('구 층대 단가 출처 줄에 "지분 거래 제외"가 적힌다', async () => {
+    responses.txs = { data: [], error: null };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText(/전체 표본/)).toBeTruthy());
+    expect(screen.getByText(/집계 · 지분 거래 제외 · 전체 표본/)).toBeTruthy();
+  });
+
   it('서버 상한만큼 왔으면 "잘렸다"고 고지하고, 언제부터 보이는지도 함께 적는다', async () => {
     // ⚠️ 두 문구의 숫자는 **서버가 정본**이다(schema.sql 의 `limit 100` · `contract_ym >= '202401'`).
     //    화면은 supabase.ts 의 짝 상수를 쓰는데, 그 모듈은 이 파일이 통째로 흉내 낸다 —
@@ -931,6 +981,15 @@ describe('FloorStack — 실거래 기록 (Stage A · 결정 0012)', () => {
     responses.bands = { data: priceBands(), error: null };
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => expect(screen.getByText(/실거래 기록/)).toBeTruthy());
+    expect(container.querySelector('.tx')?.textContent).not.toContain('시세');
+  });
+
+  it('지분 거래 설명 줄이 선 상태에서도 Stage A 블록 안에 "시세"가 없다', async () => {
+    // 설명 줄은 지분 행이 있을 때만 그려진다 — 지분 없는 거래로만 보면 그 줄을 영영 못 본다.
+    responses.txs = { data: [tx({ is_share: true }), tx()], error: null };
+    responses.bands = { data: priceBands(), error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelector('.tx__share-note')).toBeTruthy());
     expect(container.querySelector('.tx')?.textContent).not.toContain('시세');
   });
 });
@@ -1238,6 +1297,8 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
     expect(src).toContain('2025-01 이후 계약분');
     // 기간을 글자로 박으면 창이 바뀌는 날 문구만 조용히 거짓말이 된다.
     expect(src).not.toContain('24개월');
+    // 모집단 — 서버 사다리 네 갈래가 지분 거래를 뺀다(2026-10-08a).
+    expect(src).toContain('지분 거래 제외');
   });
 
   it('pnu 를 p_pnu 라는 이름으로 보낸다 (라이브 전용 오류를 막는 유일한 가드)', async () => {
