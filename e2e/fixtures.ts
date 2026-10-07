@@ -83,6 +83,8 @@ export function parcelTx(over: Partial<ParcelTransaction> = {}): ParcelTransacti
     price_won: 320_000_000,
     unit_price: 3_800_000,
     tx_type: '집합',
+    // 지분 거래 여부(2026-10-08a) — 서버가 실제로 보내는 boolean. 기본은 일반 거래.
+    is_share: false,
     ...over,
   };
 }

@@ -956,6 +956,10 @@ function TransactionSection({
 
 /** ① 이 땅에서 신고된 거래 목록. */
 function ParcelTxList({ txs }: { txs: ParcelTransaction[] }) {
+  // 지분 거래(2026-10-08a)는 지우지 않고 꼬리표를 단다. 설명 한 줄은 지분 행이 **하나라도
+  // 있을 때만** — 없는 목록에 붙이면 읽을 이유가 없는 글이 된다. `=== true` 인 이유: 옛 서버는
+  // 이 칸을 안 준다(undefined).
+  const hasShare = txs.some((t) => t.is_share === true);
   return (
     <div className="tx__block">
       <h4 className="tx__sub">
@@ -979,9 +983,15 @@ function ParcelTxList({ txs }: { txs: ParcelTransaction[] }) {
               {t.unit_price === null ? '㎡당 —' : `㎡당 ${formatManWon(t.unit_price)}`}
             </span>
             <span className="tx__kind">{t.tx_type || '거래유형 미상'}</span>
+            {t.is_share === true && <span className="tx__share">지분</span>}
           </li>
         ))}
       </ul>
+      {hasShare && (
+        <p className="tx__note tx__share-note">
+          지분 = 건물 일부 몫만 사고판 거래라 ㎡당 값이 낮게 나옵니다 — 층대별 단가·참고 가격대 계산에서는 뺍니다.
+        </p>
+      )}
       <p className="tx__note">
         <strong>{TX_OPEN_SINCE_LABEL} 이후 계약분만 보입니다.</strong> 그 전 거래는 지번이
         가려져 이 땅에 붙일 수 없고, 건물 한 채를 통째로 사고파는 거래도 같은 이유로 빠집니다.{' '}
@@ -1042,7 +1052,7 @@ function SigunguTxBands({ stats }: { stats: SigunguTxStat[] }) {
       <p className="tx__src">
         출처: 국토교통부 상업업무용 부동산 매매 실거래가 ·{' '}
         {guName ? `${guName} ` : ''}집합(구분소유) 거래
-        {from ? ` ${formatYearMonth(from)} 이후 계약분` : ''} 집계 · 전체 표본{' '}
+        {from ? ` ${formatYearMonth(from)} 이후 계약분` : ''} 집계 · 지분 거래 제외 · 전체 표본{' '}
         {total.toLocaleString('ko-KR')}건.
       </p>
     </div>

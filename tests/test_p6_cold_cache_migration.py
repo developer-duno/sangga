@@ -38,6 +38,10 @@ import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
 MIG = os.path.join(ROOT, "supabase", "migrations", "2026-09-27c_p6_cold_cache.sql")
+# 두 함수를 다시 만든 **가장 최근** 판(지분 거래 is_share — 2026-10-08a). 정본과 글자 그대로
+# 같아야 하는 것은 이제 이 파일이다(09-27c 는 적용된 원장이라 그때 모양 그대로 남는다 —
+# 그 판의 불변식(캐스트·이웃 표)은 아래 test_마이그레이션도_같은_불변식을_지킨다 가 계속 본다).
+MIG_LATEST = os.path.join(ROOT, "supabase", "migrations", "2026-10-08a_transaction_share_flag.sql")
 SCRIPTS_DIR = os.path.join(ROOT, "scripts")
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
@@ -153,7 +157,7 @@ def test_마이그레이션이_한_트랜잭션이고_notify_는_뒤():
 
 @pytest.mark.parametrize("name", ["list_parcel_transactions", "list_price_bands"])
 def test_마이그레이션_함수_블록이_정본과_같다(name):
-    assert fn_block(name, read(MIG)) == fn_block(name, read(SCHEMA))
+    assert fn_block(name, read(MIG_LATEST)) == fn_block(name, read(SCHEMA))
 
 
 def test_마이그레이션도_같은_불변식을_지킨다():
@@ -161,6 +165,13 @@ def test_마이그레이션도_같은_불변식을_지킨다():
     assert tx_cast_problems(mig) == []
     assert near_source(mig) == NEW_MV
     assert mv_problems(mig) == []
+
+
+def test_최근_판도_캐스트와_이웃_표를_지킨다():
+    """10-08a 가 두 함수를 다시 만들면서 09-27c 의 처방(캐스트·이웃 표)을 되돌리지 않았나."""
+    mig = read(MIG_LATEST)
+    assert tx_cast_problems(mig) == []
+    assert near_source(mig) == NEW_MV
 
 
 # ── 6) 가드 자신의 시험 — 옛 글자로 되돌린 사본은 빨간불이어야 한다 ──────────

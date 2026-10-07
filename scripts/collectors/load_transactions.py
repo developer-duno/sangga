@@ -255,6 +255,29 @@ def is_canceled(item):
     return s(item.get("cdealType")).upper() == "O"
 
 
+# 지분 거래 표시(shareDealingType)의 '지분' 글자. raw 실측(2026-10-08 · 40파일 336,693줄):
+# 값은 정확히 두 가지 — ' '(공백 한 칸) 317,956 · '지분' 18,737(5.6%). 지분 거래는 건물
+# 일부 몫만 사고판 것이라 ㎡당 단가가 낮게 나온다(docs/research/share-deals-2026-10.md).
+SHARE_DEAL_MARK = "지분"
+
+
+def share_deal_flag(item):
+    """지분 거래인지 — True / False, 모르는 값이면 None.
+
+    공백·빈값·키 없음 = False, '지분'(앞뒤 공백을 뗀 뒤) = True.
+    ⛔ 그 밖의 값은 None 이다 — 조용히 False 로 삼키지 않는다. 호출부(build_transaction)는
+       False 로 저장하되 build_transactions 가 '지분 표시 낯선 값'으로 세고 변환 보고가
+       [경고] 줄과 그 값을 찍는다(형제 is_canceled 의 '해제 거래 제외'처럼 보고에 드러난다).
+       행을 버리지 않는 이유: 거래 자체는 실재하므로 건수(n_all)가 줄면 안 된다.
+    """
+    t = s(item.get("shareDealingType"))
+    if not t:
+        return False
+    if t == SHARE_DEAL_MARK:
+        return True
+    return None
+
+
 def contract_ym(item):
     """계약년월 'YYYYMM'. 만들 수 없으면 None."""
     y, m = to_int(item.get("dealYear")), to_int(item.get("dealMonth"))
@@ -294,6 +317,9 @@ def build_transaction(item, emd_lookup, seq):
         "build_year": to_int(item.get("buildYear")),
         "tx_type": s(item.get("buildingType")) or None,
         "main_use": s(item.get("buildingUse")) or None,
+        # ⓘ tx_id 에는 안 들어간다(make_tx_id 의 열 칸에 shareDealingType 이 없다) — 칸을 더해도
+        #    재적재는 같은 행을 갱신한다. 낯선 값(None)은 False 로 넣고 보고에서 센다.
+        "is_share": share_deal_flag(item) is True,
     }, "적재"
 
 
@@ -415,6 +441,7 @@ def build_transactions(raw_rows, emd_lookup, include_canceled=False):
     """
     stats = Counter()
     reasons = Counter()
+    share_unknown = Counter()   # 지분 표시 칸의 낯선 값 → 몇 번 왔나(보고의 [경고] 줄)
     grouped = defaultdict(list)
 
     for r in raw_rows:
@@ -443,9 +470,14 @@ def build_transactions(raw_rows, emd_lookup, include_canceled=False):
                 stats["PNU 조립 실패"] += 1
             if rec["floor_no"] is not None:
                 stats["층 있음"] += 1
+            if rec["is_share"]:
+                stats["지분 거래"] += 1
+            elif share_deal_flag(item) is None:
+                stats["지분 표시 낯선 값"] += 1
+                share_unknown[s(item.get("shareDealingType"))] += 1
 
     stats["적재 대상"] = len(records)
-    return records, {"counts": stats, "reasons": reasons}
+    return records, {"counts": stats, "reasons": reasons, "share_unknown": share_unknown}
 
 
 def assert_no_zero_floor(records):
@@ -699,6 +731,14 @@ def print_transform_report(raw_path, broken, stats, record_count, records):
         counts["PNU 조립 실패"]))
     print("    층 있음              {:>8,}  ({:.1f}%)".format(
         counts["층 있음"], join_rate(counts["층 있음"], record_count)))
+    print("    지분 거래            {:>8,}  (is_share — 목록엔 나오고 단가 계산에서는 빠진다)".format(
+        counts["지분 거래"]))
+    if counts["지분 표시 낯선 값"]:
+        unknown = stats.get("share_unknown") or Counter()
+        print("  [경고] 지분 표시(shareDealingType)에 처음 보는 값 {:,}건 — is_share=false 로 "
+              "넣었습니다. 값: {}".format(
+                  counts["지분 표시 낯선 값"],
+                  ", ".join("{!r} {:,}".format(k, v) for k, v in unknown.most_common(5))))
 
     by_type = Counter(r["tx_type"] for r in records)
     print("    거래유형: " + " / ".join("{} {:,}".format(k, v) for k, v in by_type.most_common()))

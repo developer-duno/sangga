@@ -533,6 +533,37 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await expect(stack).not.toContainText('가치평가');
   });
 
+  // 지분 거래(2026-10-08a · 물결 0-2b) — 목록에서 지우지 않고 '지분' 꼬리표 + 목록 아래 설명 한 줄.
+  // 좁은 화면(412px)에서 줄이 접혀도 꼬리표가 남는지까지 두 화면에서 본다.
+  test('AL. 지분 거래 줄에 "지분" 꼬리표가 붙고 목록 아래 설명이 선다', async ({ page }) => {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page, [
+      parcelTx({ is_share: true, price_won: 50_000_000, unit_price: 593_000 }),
+      parcelTx(),
+    ]);
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+
+    const list = page.locator('section.stack .tx__list');
+    await expect(list.locator('li')).toHaveCount(2);
+    // 지분 거래도 그대로 보인다 — 금액과 꼬리표가 같은 줄에.
+    const shareRow = list.locator('li').filter({ hasText: '5,000만' });
+    await expect(shareRow.locator('.tx__share')).toHaveText('지분');
+    await expect(shareRow.locator('.tx__share')).toBeVisible();
+    // 일반 거래 줄에는 꼬리표가 없다.
+    await expect(list.locator('li').filter({ hasText: '3억 2,000만' }).locator('.tx__share')).toHaveCount(0);
+    await expect(page.locator('section.stack .tx__share-note')).toHaveText(
+      '지분 = 건물 일부 몫만 사고판 거래라 ㎡당 값이 낮게 나옵니다 — 층대별 단가·참고 가격대 계산에서는 뺍니다.',
+    );
+    // G 의 규칙(Stage A 블록 안에는 '시세'라는 말조차 없다)을 설명 줄이 선 상태에서도 본다 —
+    // G 는 지분 없는 거래뿐이라 이 줄이 그려지는 경우를 못 본다.
+    await expect(page.locator('section.stack section.tx')).not.toContainText('시세');
+  });
+
   // ── 참고 매매 시세 밴드 (Stage B · 결정 0013) ─────────────────────────────
   // 이 화면에서 **추정값이 나오는 유일한 자리**다. 값과 근거가 한 몸으로 나가는지,
   // 안 내는 이유 넷을 각각 다른 말로 하는지를 눈으로 확인한다.
@@ -1495,8 +1526,19 @@ test.describe('입구 — 동네 매매 단가 흐름', () => {
     // 초소형 구획이 무더기로 거래된 해를 기준선 없이 알아보게 하는 사실 한 칸이다.
     await expect(rows.first()).toContainText('한 건 면적 중앙값 46㎡');
     // ② ★ 표본이 모자란 해는 값을 안 적는다(절대 규칙 3).
-    await expect(rows.last()).toContainText('표본 부족');
+    await expect(rows.last()).toContainText('표본 부족 (단가 근거 거래 3건 · 지분 제외)');
     await expect(rows.last()).not.toContainText('㎡당');
+    // 라벨이 길어졌다(2026-10-08a) — 휴대폰 폭에서도 줄이 카드 밖으로 넘치지 않는다.
+    const overflow = await rows.last().evaluate((el) => {
+      const card = el.closest('section.flow')!.getBoundingClientRect();
+      const r = el.getBoundingClientRect();
+      return { right: r.right - card.right, scroll: el.scrollWidth - el.clientWidth };
+    });
+    expect(overflow.right).toBeLessThanOrEqual(1);
+    expect(overflow.scroll).toBeLessThanOrEqual(1);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth),
+    ).toBeLessThanOrEqual(0);
     // 면적도 함께 감춘다 — 단가와 **같은 거래들**을 잰 값이라, 이것만 남기면 감춘 근거를
     // 곁눈으로 말해 주는 셈이 된다.
     await expect(rows.last()).not.toContainText('한 건 면적');

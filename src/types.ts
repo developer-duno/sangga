@@ -158,6 +158,12 @@ export type ParcelTransaction = {
   unit_price: number | null;
   /** '집합'(구분소유) / '일반'(통건물). 통건물은 지번이 마스킹돼 여기 거의 안 온다. */
   tx_type: string | null;
+  /**
+   * 지분 거래(건물 일부 몫만 사고판 거래 — 2026-10-08a). 목록에는 그대로 나오고 화면이
+   * '지분' 꼬리표를 단다(참고 시세·구 단가 계산에서는 서버가 뺀다).
+   * ⓘ 선택 칸 — 마이그레이션 전 서버는 이 칸을 안 준다(undefined = 꼬리표 없음).
+   */
+  is_share?: boolean;
 };
 
 /**

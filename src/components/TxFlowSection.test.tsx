@@ -152,8 +152,7 @@ describe('TxFlowSection — 자료가 있을 때', () => {
     fireEvent.click(await screen.findByRole('button', { name: /동네 매매 단가 흐름/ }));
 
     const last = container.querySelectorAll('.flow__rows li')[1].textContent ?? '';
-    expect(last).toContain('표본 부족');
-    expect(last).toContain('3건'); // 단가가 있는 거래
+    expect(last).toContain('표본 부족 (단가 근거 거래 3건 · 지분 제외)'); // 단가 있고 지분 아닌 거래
     expect(last).toContain('40건'); // 그 해 거래 전부
     expect(last).not.toContain('㎡당');
   });
@@ -229,6 +228,8 @@ describe('TxFlowSection — 자료가 있을 때', () => {
     expect(src).toContain('2017');
     expect(src).toContain('2024년 1월');
     expect(src).toContain('집합');
+    // 모집단 — 단가는 지분 거래를 뺀다(건수는 센다 · 2026-10-08a).
+    expect(src).toContain('해제된 거래 제외 · 단가는 지분 거래 제외');
   });
 
   it('★ 막대는 값을 적는 해끼리만 견준다 — 표본 부족 해는 막대도 0 이다', async () => {

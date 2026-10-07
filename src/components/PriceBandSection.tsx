@@ -219,7 +219,7 @@ export function PriceBandSection({
           </ul>
           <p className="band__src">
             출처: 국토교통부 상업업무용 부동산 매매 실거래가 · 집합(구분소유) 거래
-            {from ? ` ${formatYearMonth(from)} 이후 계약분` : ''}으로 계산.
+            {from ? ` ${formatYearMonth(from)} 이후 계약분` : ''}으로 계산 · 지분 거래 제외.
           </p>
         </>
       )}

@@ -198,6 +198,88 @@ def test_is_canceled_reads_cdeal_type():
     assert target.is_canceled(ITEM) is False
 
 
+# ── 7-1. 지분 거래 표시 (2026-10-08 · 물결 0-2b) ─────────────────────────────
+# raw 실측 값은 정확히 두 가지 — ' '(공백 한 칸)·'지분'. ITEM 픽스처에는 그 키가 아예 없다.
+
+
+@pytest.mark.parametrize("value", [" ", "", None])
+def test_share_flag_blank_is_false(value):
+    assert target.share_deal_flag(dict(ITEM, shareDealingType=value)) is False
+
+
+def test_share_flag_missing_key_is_false():
+    assert "shareDealingType" not in ITEM
+    assert target.share_deal_flag(ITEM) is False
+
+
+@pytest.mark.parametrize("value", ["지분", " 지분 ", "지분\t"])
+def test_share_flag_mark_is_true(value):
+    assert target.share_deal_flag(dict(ITEM, shareDealingType=value)) is True
+
+
+@pytest.mark.parametrize("value", ["일부지분", "지분거래", "Y", "1"])
+def test_share_flag_unknown_value_is_none_not_false(value):
+    """⛔ 처음 보는 값을 조용히 False 로 삼키지 않는다 — None 으로 돌려 보고가 센다."""
+    assert target.share_deal_flag(dict(ITEM, shareDealingType=value)) is None
+
+
+def test_build_transaction_stores_is_share():
+    assert target.build_transaction(dict(ITEM, shareDealingType="지분"), EMD, 0)[0]["is_share"] is True
+    assert target.build_transaction(dict(ITEM, shareDealingType=" "), EMD, 0)[0]["is_share"] is False
+    assert target.build_transaction(ITEM, EMD, 0)[0]["is_share"] is False
+    # 낯선 값은 False 로 넣는다(행은 버리지 않는다 — 건수가 줄면 안 된다).
+    rec, why = target.build_transaction(dict(ITEM, shareDealingType="일부지분"), EMD, 0)
+    assert why == "적재" and rec["is_share"] is False
+
+
+def test_tx_id_ignores_share_flag_but_not_other_fields():
+    """칸을 더해도 tx_id 는 그대로다 → 재적재가 같은 행을 갱신한다(새 행이 생기지 않는다).
+
+    경계 짝: shareDealingType 만 바꾸면 같고, 금액 하나만 바꾸면 다르다.
+    """
+    base = dict(ITEM, shareDealingType=" ")
+    share = dict(ITEM, shareDealingType="지분")
+    assert target.make_tx_id(base, 0) == target.make_tx_id(share, 0)
+    assert target.make_tx_id(ITEM, 0) == target.make_tx_id(share, 0)
+    assert target.make_tx_id(base, 0) != target.make_tx_id(dict(base, dealAmount="200,000"), 0)
+    # build_transactions 를 지나도 같다(한 건짜리 그룹이라 seq 도 0).
+    a = target.build_transactions([raw(base)], EMD)[0][0]["tx_id"]
+    b = target.build_transactions([raw(share)], EMD)[0][0]["tx_id"]
+    assert a == b
+
+
+def test_build_transactions_counts_share_and_unknown_values():
+    rows = [
+        raw(dict(ITEM, shareDealingType="지분")),
+        raw(dict(ITEM, shareDealingType=" ", dealDay=26)),
+        raw(dict(ITEM, shareDealingType="일부지분", dealDay=27)),
+    ]
+    recs, stats = target.build_transactions(rows, EMD)
+    assert len(recs) == 3
+    assert stats["counts"]["지분 거래"] == 1
+    assert stats["counts"]["지분 표시 낯선 값"] == 1
+    assert stats["share_unknown"] == {"일부지분": 1}
+
+
+def test_transform_report_warns_on_unknown_share_value(capsys):
+    rows = [raw(dict(ITEM, shareDealingType="일부지분"))]
+    recs, stats = target.build_transactions(rows, EMD)
+    target.print_transform_report("x.jsonl", 0, stats, len(recs), recs)
+    out = capsys.readouterr().out
+    assert "[경고] 지분 표시(shareDealingType)에 처음 보는 값 1건" in out
+    assert "'일부지분' 1" in out
+
+
+def test_transform_report_has_no_share_warning_for_known_values(capsys):
+    """경계 짝 — 아는 두 값만 오면 [경고] 줄이 없다."""
+    rows = [raw(dict(ITEM, shareDealingType="지분")), raw(dict(ITEM, dealDay=26))]
+    recs, stats = target.build_transactions(rows, EMD)
+    target.print_transform_report("x.jsonl", 0, stats, len(recs), recs)
+    out = capsys.readouterr().out
+    assert "처음 보는 값" not in out
+    assert "지분 거래" in out
+
+
 def test_contract_ym_zero_pads_month():
     assert target.contract_ym(ITEM) == "202606"
     assert target.contract_ym(dict(ITEM, dealMonth=12)) == "202612"

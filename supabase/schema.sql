@@ -569,6 +569,17 @@ create index if not exists idx_tx_floor  on transaction (sigungu_code, floor_no,
 -- pnu·sigungu_code 라 못 받친다 · 2026-09-27 실측 75ms). 마이그레이션 2026-09-27b
 create index if not exists idx_tx_contract_ym on transaction (contract_ym);
 
+-- 지분 거래 표시(2026-10-08a · 물결 0-2b). 국토부 원본 `shareDealingType` 이 '지분'이면 true.
+-- 건물 일부 몫만 사고판 거래라 ㎡당 단가가 같은 구·같은 층 일반 거래의 약 0.39배로 낮게 나온다
+-- (docs/research/share-deals-2026-10.md). 목록(list_parcel_transactions)에는 그대로 나가고,
+-- 단가 계산(참고 시세 L2·L4·L5·L6 · mv_sigungu_tx_stats · mv_sigungu_tx_yearly 의 단가·n·면적)
+-- 에서만 뺀다. 건수(n_all·floor_missing)는 지분도 센다(👤 결정 2026-10-08).
+-- ⓘ tx_id 에는 안 들어간다 — 재적재는 같은 행을 갱신한다(load_transactions.make_tx_id).
+alter table transaction
+  add column if not exists is_share boolean not null default false;
+
+comment on column transaction.is_share is '지분 거래(국토부 shareDealingType=''지분'') — 건물 일부 몫만 사고판 거래라 ㎡당 단가가 낮게 나온다. 목록에는 그대로 내고 단가 계산(참고 시세·구 층대 단가·동네 단가 흐름의 단가·표본·면적 중앙값)에서만 뺀다. 건수는 센다(2026-10-08a)';
+
 -- =====================================================================
 -- L4. district — 상권 (사전계산 대상 ★ 엔진 패턴)
 -- =====================================================================
@@ -2017,6 +2028,8 @@ comment on function api.search_stores(text, int, text, int) is
 -- 100행 상한인 이유: 한 필지에 거래가 **852건**인 곳이 실재한다(라이브 실측 2026-08-15).
 -- ⚠️ 파라미터 `pnu` 가 `transaction.pnu` 와 겹친다 — 함수명으로 한정하지 않으면 컬럼이
 --    이겨 `where t.pnu = t.pnu`(= 전 국토 거래)가 된다(list_building_districts 와 같은 함정).
+-- ⓘ is_share(2026-10-08a): 지분 거래도 **지우지 않고** 그대로 낸다 — 화면이 그 줄에 '지분'
+--    꼬리표를 단다. 단가 계산(참고 시세·구 단가)에서만 빠진다.
 create or replace function list_parcel_transactions(pnu text)
 returns table (
   floor_no     smallint,
@@ -2025,7 +2038,8 @@ returns table (
   bld_area_m2  numeric,
   price_won    bigint,
   unit_price   numeric,
-  tx_type      text
+  tx_type      text,
+  is_share     boolean
 )
 language sql
 stable
@@ -2038,7 +2052,8 @@ as $$
          t.bld_area_m2,
          t.price_won,
          t.unit_price,
-         t.tx_type
+         t.tx_type,
+         t.is_share
   from transaction t
   -- ⛔ `::char(19)` 캐스트를 지우지 말 것(2026-09-27c). pnu 칸이 char(19) 인데 text 와 견주면
   --    **칸 쪽**이 text 로 캐스트돼 idx_tx_pnu 를 못 탄다 — 라이브 실측으로 거래 0건 필지가
@@ -2058,7 +2073,8 @@ comment on function list_parcel_transactions(text) is
   '지번이 공개된 구간(202401 이후)만 나온다: 그 전은 지번이 100% 마스킹돼 필지에 붙지 않는다. '
   '최신순 100행 상한(한 필지 852건인 곳이 실재한다). 없는 pnu 는 빈 결과(에러가 아니다). '
   'security definer — transaction 이 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. '
-  '나가는 것은 층·계약시점·면적·금액·단가·거래유형뿐(상호명·개인정보 없음)';
+  '나가는 것은 층·계약시점·면적·금액·단가·거래유형·지분 여부뿐(상호명·개인정보 없음). '
+  '2026-10-08a: is_share = 지분 거래(건물 일부 몫) — 목록에서 지우지 않고 그대로 낸다(단가 계산에서만 뺀다)';
 
 -- ── ② 구 × 층대 단가 분포 (사전계산) ────────────────────────────────────────
 -- 왜 집합만: 통건물(일반)은 지번이 100% 마스킹되고 건물 한 채 값이라 ㎡당 단가의 성격이
@@ -2072,6 +2088,8 @@ comment on function list_parcel_transactions(text) is
 --    빈 값으로 준다(알려진한계). 지하는 '층미상'에 흡수돼 있다. 칸을 남겨 두는 이유는
 --    자료가 돌아오는 날 화면이 저절로 따라오게 하기 위해서다.
 -- ⚠️ 옥탑(99)은 '3층이상'에 들어간다(결정 0012 의 층대 정의가 ">=3").
+-- ⛔ 지분 거래는 뺀다(2026-10-08a) — 건물 일부 몫만 사고판 거래라 ㎡당 단가가 약 0.39배로 낮게
+--    나와 분포를 끌어내린다. n(표본 수)도 지분을 뺀 수다(단가의 근거 수이므로).
 create materialized view if not exists mv_sigungu_tx_stats as
 with win as (
   select to_char((now() at time zone 'Asia/Seoul') - interval '24 months', 'YYYYMM') as from_ym
@@ -2094,11 +2112,13 @@ from transaction t
 cross join win w
 where t.tx_type = '집합'
   and t.unit_price is not null
+  and not t.is_share
   and t.contract_ym >= w.from_ym
 group by t.sigungu_code, 2;
 
 comment on materialized view mv_sigungu_tx_stats is
   'Stage A(결정 0012) 구×층대 실거래 단가 분포 — 집합(구분소유) 거래만, 갱신 시점 기준 24개월. '
+  '2026-10-08a: 지분 거래(is_share)는 뺀다 — 건물 일부 몫이라 ㎡당 단가가 낮게 나온다. '
   'window_from 은 그 창의 시작 달을 굳혀 둔 것이다(화면이 "최근 24개월"만 적으면 갱신을 미룬 날 '
   '그 문구가 조용히 거짓말이 된다). n 은 단가를 낼 수 있었던 행 수 = 중앙값의 실제 근거 수다. '
   '⚠️ 자료를 새로 넣으면 `python scripts/post_load.py` 로 갱신할 것. '
@@ -2166,24 +2186,27 @@ revoke all on function get_sigungu_tx_stats(text) from public, anon, authenticat
 -- ⚠️ ym_cnt(그 해에 자료가 있는 달 수)·first_ym·last_ym: 자료가 해의 일부뿐인 해를
 --    화면이 "(9~12월분)"이라 적을 수 있게 — 안 적으면 그 해가 유난히 한산해 보인다.
 -- ⚠️ ②의 24개월 창·게이트·성적표는 건드리지 않는다(백필은 그 창 밖이다).
+-- ⛔ 지분 거래(2026-10-08a): 단가 셋·n·median_area_m2 에서는 **빼고**, n_all·floor_missing·
+--    ym_cnt·first_ym·last_ym 에는 **그대로 센다**(👤 결정 — 그 해 거래 N건은 실제로 있던 거래 수다).
+--    그래서 where 가 아니라 filter 다 — where 에 걸면 건수까지 줄어든다.
 create materialized view if not exists mv_sigungu_tx_yearly as
 select
   t.sigungu_code,
   substr(t.contract_ym, 1, 4)                                                   as yr,
   count(*)::int                                                                 as n_all,
-  count(*) filter (where t.unit_price is not null)::int                         as n,
+  count(*) filter (where t.unit_price is not null and not t.is_share)::int      as n,
   percentile_cont(0.5)  within group (order by t.unit_price)
-    filter (where t.unit_price is not null)                                     as median_unit_price,
+    filter (where t.unit_price is not null and not t.is_share)                  as median_unit_price,
   percentile_cont(0.25) within group (order by t.unit_price)
-    filter (where t.unit_price is not null)                                     as p25_unit_price,
+    filter (where t.unit_price is not null and not t.is_share)                  as p25_unit_price,
   percentile_cont(0.75) within group (order by t.unit_price)
-    filter (where t.unit_price is not null)                                     as p75_unit_price,
+    filter (where t.unit_price is not null and not t.is_share)                  as p75_unit_price,
   -- 그 해 단가의 **근거가 된 거래 한 건**이 얼마나 큰 물건이었나(2026-09-09b).
   -- ⛔ filter 를 위 셋과 **똑같이** 둔다 — 다른 모집단에서 재면 두 숫자가 서로 다른 거래를
   --    말하게 된다. `unit_price` 는 `bld_area_m2 > 0` 일 때만 생기는 생성 컬럼이라, 이
   --    filter 하나로 면적이 0·빈 행은 자연히 빠진다(면적 조건을 따로 적을 이유가 없다).
   percentile_cont(0.5)  within group (order by t.bld_area_m2)
-    filter (where t.unit_price is not null)                                     as median_area_m2,
+    filter (where t.unit_price is not null and not t.is_share)                  as median_area_m2,
   count(*) filter (where t.floor_no is null)::int                               as floor_missing,
   count(distinct t.contract_ym)::int                                            as ym_cnt,
   min(t.contract_ym)                                                            as first_ym,
@@ -2198,6 +2221,7 @@ comment on materialized view mv_sigungu_tx_yearly is
   'ym_cnt·first_ym·last_ym 은 자료가 해의 일부뿐인지 화면이 적기 위한 값. '
   '2026-09-09b: median_area_m2 = 그 해 단가의 근거가 된 거래 **한 건**의 건물면적 중앙값(㎡) — '
   '단가와 같은 모집단에서 잰다. 다른 해보다 유난히 작으면 초소형 구획이 무더기로 거래된 해다. '
+  '2026-10-08a: 지분 거래(is_share)는 단가 셋·n·median_area_m2 에서 빼고 n_all·floor_missing·ym_cnt·first_ym·last_ym 에는 센다. '
   '⚠️ 자료를 새로 넣으면 `python scripts/post_load.py` 로 갱신할 것. '
   '⛔ anon 에게 열지 않는다 — 화면은 api.get_sigungu_tx_yearly() 로만 읽는다.';
 
@@ -2606,10 +2630,13 @@ begin
                  filter (where c.bld_area_m2 is not null))
                  ::numeric(10,2)                                           as area_med
           from (
+            -- ⛔ 네 갈래 **모두** 지분 거래(is_share)를 뺀다(2026-10-08a) — 건물 일부 몫만 사고판
+            --    거래라 ㎡당 단가가 약 0.39배로 낮게 나온다. 한 갈래만 빠뜨리면 그 단계의 밴드만
+            --    조용히 내려앉는다(에러 0). 칸 조건이라 색인(idx_tx_pnu·idx_tx_pnu10_ym)은 그대로 탄다.
             -- L2 — 같은 필지 같은 층
             select 'L2'::text as lvl, t.unit_price, t.bld_area_m2
               from transaction t
-             where t.tx_type = '집합' and t.unit_price is not null
+             where t.tx_type = '집합' and t.unit_price is not null and not t.is_share
                and t.contract_ym >= v_from
                and t.pnu = v_pnu and t.floor_no = v_floor
             union all
@@ -2624,14 +2651,14 @@ begin
             --    핵심은 캐스트를 없애 **컬럼과 배열의 타입을 맞추는 것**이다.
             select 'L4', t.unit_price, t.bld_area_m2
               from transaction t
-             where t.tx_type = '집합' and t.unit_price is not null
+             where t.tx_type = '집합' and t.unit_price is not null and not t.is_share
                and t.contract_ym >= v_from
                and t.floor_no = v_floor and t.pnu = any(v_near100)
             union all
             -- L5 — 반경 500m 같은 층
             select 'L5', t.unit_price, t.bld_area_m2
               from transaction t
-             where t.tx_type = '집합' and t.unit_price is not null
+             where t.tx_type = '집합' and t.unit_price is not null and not t.is_share
                and t.contract_ym >= v_from
                and t.floor_no = v_floor and t.pnu = any(v_near500)
             union all
@@ -2640,7 +2667,7 @@ begin
             -- 이름 대조가 조용히 어긋난다(성적표 §1 · 결정 0012 §4).
             select 'L6', t.unit_price, t.bld_area_m2
               from transaction t
-             where t.tx_type = '집합' and t.unit_price is not null
+             where t.tx_type = '집합' and t.unit_price is not null and not t.is_share
                and t.contract_ym >= v_from
                and t.pnu is not null
                and substr(t.pnu, 1, 10) = substr(v_pnu, 1, 10)
@@ -2668,7 +2695,7 @@ end;
 $$;
 
 comment on function list_price_bands(text) is
-  'Stage B(결정 0013) 이 필지의 층별 참고 시세 밴드 — 곁의 실거래(최근 24개월·집합)로 어림한 '
+  'Stage B(결정 0013) 이 필지의 층별 참고 시세 밴드 — 곁의 실거래(최근 24개월·집합·지분 거래 제외 — 2026-10-08a)로 어림한 '
   '추정값이며 감정평가가 아니다. 한 층에 한 줄이고 status 가 그 줄의 성격을 말한다: '
   'gate_fail(이 구는 기준선 미달 — 층 나열 없이 한 줄) / floor_1f(1층 미제공) / '
   'no_evidence(지하·옥탑·층미상 — 백테스트 표본 0건) / no_estimate(표본 부족) / ok(밴드). '
@@ -3241,7 +3268,8 @@ returns table (
   bld_area_m2  numeric,
   price_won    bigint,
   unit_price   numeric,
-  tx_type      text
+  tx_type      text,
+  is_share     boolean
 )
 language sql
 stable
