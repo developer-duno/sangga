@@ -410,7 +410,6 @@ body {
 .stores__addr,
 .stores__meta,
 .stores__jibun,
-.stores__names,
 .stores__note {
   color: var(--muted);
   font-size: 13px;
@@ -424,9 +423,17 @@ body {
   opacity: 0.8;
 }
 
-/* 일치한 상호는 이 줄이 왜 나왔는지를 말하는 값이라 흐리게 두지 않는다. */
+/* 일치한 상호는 이 줄이 왜 나왔는지를 말하는 값이라 흐리게 두지 않고,
+   길면 한 줄로 끊지 않고 두 줄까지 보여준다(사장님 결정 C · 2026-10-07). */
 .stores__names {
   color: var(--text);
+  font-size: 13px;
+  overflow: hidden;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 
 .stores__warn {
