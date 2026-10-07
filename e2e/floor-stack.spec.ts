@@ -1537,7 +1537,7 @@ test.describe('입구 — 동네 매매 단가 흐름', () => {
     expect(overflow.right).toBeLessThanOrEqual(1);
     expect(overflow.scroll).toBeLessThanOrEqual(1);
     expect(
-      await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth),
+      await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth),
     ).toBeLessThanOrEqual(0);
     // 면적도 함께 감춘다 — 단가와 **같은 거래들**을 잰 값이라, 이것만 남기면 감춘 근거를
     // 곁눈으로 말해 주는 셈이 된다.
