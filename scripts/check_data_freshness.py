@@ -35,7 +35,9 @@ YYYY-MM-DD)` 로, 매주 바뀌는 값(며칠 지났나·건수)을 넣지 않�
 **다르면** 고정 제목 `화면 분기가 섞였습니다 — 점포·업종 (상권정보)` 이슈 한 쌍을 같은 폴더에 더 쓴다
 (표지를 `--ym` 으로 되돌린 뒤 post_load 를 안 돌림(또는 요약표를 손으로 갱신함) — `post_load.py --check`
 를 돌려야만 보이던 것. post_load 가 도중에 멈추는 것은 원인이 아니다 — 요약표 셋 굽기와 표지 올림이
-한 트랜잭션이라 멈추면 통째로 되돌아간다). 뷰 조회 실패·0줄·그 줄이 없음은 조회 실패(2)다.
+한 트랜잭션이라 멈추면 통째로 되돌아간다). 뷰 조회 실패·0줄·그 줄이 없음은 조회 실패(2)다 — 단
+그때도 예정일 지남 판정·이슈 파일·GITHUB_OUTPUT 은 그대로 쓰고 끝만 2 로 낸다(2026-10-07 (3) — 각주
+뷰 하나가 죽은 주에 지남 이슈까지 막히지 않게). 신선도 함수 자체가 실패하면 둘 다 못 본다(2).
 
 ⛔ 읽기만 한다 — 창고에 쓰지 않고, 적재도 안 한다(알리기만 한다. 형제 감시와 같은 원칙).
 
@@ -416,8 +418,11 @@ def fetch_coverage_ym(base_url: str, anon_key: str, sleep=None) -> str:
     raise RuntimeError("재시도 루프가 한 번도 돌지 않았습니다 (RETRY_COUNT 확인).")
 
 
-def report(rows, overdue, today: datetime.date, mixed=None) -> None:
-    """사람이 읽는 결과 화면."""
+def report(rows, overdue, today: datetime.date, mixed=None, mixed_unknown: bool = False) -> None:
+    """사람이 읽는 결과 화면.
+
+    mixed_unknown = 화면 분기 대조(각주 뷰)를 못 한 주 — 그때 '섞임 없음'이라고 말하면 거짓이다.
+    """
     with_date = sum(1 for r in rows if parse_date(r.get("next_expected")) is not None)
 
     print("=" * 66)
@@ -440,6 +445,8 @@ def report(rows, overdue, today: datetime.date, mixed=None) -> None:
         print("  → 화면 일부(가게 이름 검색·각주·업종 카드)가 다른 분기 — 표지를 되돌린 뒤 post_load 를 "
               "안 돌림(또는 요약표를 손으로 갱신함) → python scripts/publish_snapshot.py --show 로 보고 "
               "python scripts/post_load.py 뒤 python scripts/post_load.py --check")
+    elif mixed_unknown:
+        print("  화면 분기 섞임           : 확인 못 함(각주 뷰 조회·대조 실패 — '없음' 이 아닙니다)")
     else:
         print("  화면 분기 섞임           : 없음")
     print("=" * 66)
@@ -489,7 +496,6 @@ def main(argv=None) -> int:
     try:
         today = args.today or today_kst()
         rows = fetch_rows(args.url.rstrip("/"), args.anon_key)
-        coverage_ym = fetch_coverage_ym(args.url.rstrip("/"), args.anon_key)
     except Exception as ex:
         print(f"[실패] {type(ex).__name__}: {ex}")
         print("확인을 못 했습니다 — '지난 것 없음'이 아닙니다.")
@@ -497,9 +503,20 @@ def main(argv=None) -> int:
 
     # ⛔ 판정에서 난 예외도 2 다. 놓치면 파이썬 기본값 1 = "지난 줄 있음"으로 읽히는데 이슈
     #    파일도 overdue 기록도 없다(형제 LH 공고 감시·하트비트와 같은 처방).
+    # ⓘ 화면 분기 대조(각주 뷰 조회 `fetch_coverage_ym` · `find_mixed`)만 실패하면 **섞임만 '확인 못 함'**
+    #    으로 두고 지남 판정·이슈 파일·GITHUB_OUTPUT 은 그대로 한 뒤 끝을 2 로 낸다(2026-10-07 (3)) —
+    #    예전엔 각주 뷰 하나가 죽은 주에 '예정일 지남' 이슈까지 통째로 안 열렸다. 안쪽 처리부도
+    #    **어떤 예외든**(Exception 전체) 받는다.
+    mixed_unknown = False
     try:
+        try:
+            coverage_ym = fetch_coverage_ym(args.url.rstrip("/"), args.anon_key)
+            mixed = find_mixed(rows, coverage_ym)
+        except Exception as ex:
+            print(f"[실패] 화면 분기 대조(각주 뷰) {type(ex).__name__}: {ex}")
+            print("화면 분기 섞임은 확인을 못 했습니다 — '섞이지 않음'이 아닙니다. 예정일 지남은 그대로 봅니다.")
+            mixed, mixed_unknown = None, True
         overdue = find_overdue(rows, today)
-        mixed = find_mixed(rows, coverage_ym)
     except Exception as ex:
         print(f"[실패] 판정하는 중 {type(ex).__name__}: {ex} — 응답 모양이 바뀌었을 수 있습니다.")
         print("확인을 못 했습니다 — '지난 것 없음'이 아닙니다.")
@@ -510,12 +527,16 @@ def main(argv=None) -> int:
     #    워크플로가 1 + 이슈 파일만 보고 통과시키는데 overdue 값이 없어 이슈 단계가 건너뛰어져
     #    그 주가 조용히 초록이 된다. 그래서 따로 4 로 끝내 실패 알림으로 보낸다.
     try:
-        report(rows, overdue, today, mixed)
+        report(rows, overdue, today, mixed, mixed_unknown=mixed_unknown)
         write_issue_files(overdue, today, mixed=mixed)
         write_github_output(overdue, mixed)
     except Exception as ex:
         print(f"[실패] 결과를 쓰는 중 {type(ex).__name__}: {ex} — 알림이 안 나갔을 수 있습니다.")
         return EXIT_OUTPUT_FAILED
+    # 섞임 대조만 못 한 주 — 지남 이슈 파일·기록은 위에서 다 썼다. 워크플로가 rc 2 + 그 둘을 보고
+    # 지남 이슈는 열고 이 실패는 실패 이슈로 알린다(결과 쓰기 실패 4 가 이것보다 먼저다).
+    if mixed_unknown:
+        return EXIT_LOOKUP_FAILED
     return EXIT_OVERDUE if (overdue or mixed) else EXIT_OK
 
 

@@ -1398,7 +1398,10 @@ def test_failure_step_is_wired_right_after_the_stale_step(name):
     assert i_new == i_stale[0] + 1, "{}: 새 단계가 stale 단계 바로 뒤가 아닙니다".format(name)
     after = steps[i_new + 1:]
     assert len(after) <= 1, name
-    assert all(s.get("if") == "failure()" for s in after), name
+    allowed = {"failure()"}
+    if name == "data-freshness-watch.yml":  # 각주 뷰만 실패한 주도 실패 이슈를 연다(2026-10-07 (3))
+        allowed.add("${{ failure() || steps.check.outputs.partial == 'true' }}")
+    assert all(s.get("if") in allowed for s in after), name
 
 
 @pytest.mark.parametrize("name", chk.DEFAULT_WORKFLOWS)
