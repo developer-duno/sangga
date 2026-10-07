@@ -124,7 +124,7 @@ def build_issue_body(new_quarters, latest_known=LATEST_KNOWN_QUARTER):
         " data/raw/sangkwon_{} --sigungu-code all --dry-run".format(folder_ym),
         "python scripts/collectors/load_sangkwon_snapshot.py --dir"
         " data/raw/sangkwon_{} --sigungu-code all".format(folder_ym),
-        "# ⛔ 적재기가 exit 1(교차검증 불일치·표지 못 올림)이면 여기서 멈추고 안내대로 — 다음 줄로 넘어가지 않는다",
+        "# ⛔ 적재기가 exit 1(교차검증 불일치·표지 못 올림·표지 사전 점검 실패 = 넣은 것 없음 → 고치고 다시)이면 여기서 멈추고 안내대로 — 다음 줄로 넘어가지 않는다",
         "python scripts/post_load.py                   # 요약표 굽기 → 표지 올림(여기서 화면이 한순간에 바뀐다)",
         "python scripts/publish_snapshot.py --show   # 보여 주는 분기 = {} 인지 눈으로".format(folder_ym),
         "python scripts/post_load.py --check   # 권한(노출)·색인·별관 점검 — 위 줄에서는 안 돈다",

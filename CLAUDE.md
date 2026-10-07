@@ -102,7 +102,7 @@ main → App → components → lib → types   (단방향 — 역방향 import 
 | 서버 | **없다** — 화면이 Supabase PostgREST·RPC 를 직접 부른다(`api/` 폴더도 서버리스 함수도 **0개** — 2026-08-25 실측). Vercel 은 정적 파일 호스팅과 배포만 맡는다. ⚠️ 그래서 **고칠 서버 코드가 없다** — 서버에서 해야 할 일은 전부 DB 함수(schema.sql)로 간다 |
 | DB | Supabase PostgreSQL + PostGIS (**별도 프로젝트**) |
 | 수집 | ⬜ **여전히 로컬 수동 실행이다** — 받기·적재·백업 전부 사람 손. 다만 **놓치는 것만은 막아 뒀다**: 감시 그물 여섯(분기 스냅샷 `sangkwon-quarterly-watch` · 상권 원천 `district-source-watch` · 라이브 생존 `live-health-watch` · 의견함 주간 알림 `feedback-digest` · LH 상가 공고 `lh-notice-watch` · 지난 날짜 감시 `data-freshness-watch`)이 서로를 전부 본다(`check_watch_heartbeat.py`). ⛔ **새 예약 워크플로를 만들면 그물에도 넣어야 한다** — `DEFAULT_WORKFLOWS` 와 형제들의 `--workflow` 인자 둘 다. 빠뜨리면 테스트가 빨간불로 잡는다(`schedule:` 있는 파일을 훑어 대조한다). ⛔ 알리기만 한다 — 적재는 여전히 사람 손. ⛔ **검색 함수만 고장 난 경우는 여전히 아무도 안 본다**. 적재 후 기준선 상수(`LATEST_KNOWN_QUARTER` · `LATEST_KNOWN_NOTICE_DATE` · 상권 원천 기준선)는 **사람이 올린다**. 각 그물의 비밀값·종료코드·이슈 제목 규칙·못 보는 틈 = **`.claude/rules/watch-nets.md`**(`.github/`·`scripts/check_*.py`·감시 시험을 열면 자동으로 읽힌다 — ⚠️ 감시가 연 이슈를 처리하거나 감시를 고칠 때는 그 파일을 먼저 직접 연다) |
-| 테스트 | 파이썬 **pytest 4,673개** + 프론트 **vitest 960개**(jsdom + @testing-library/react) + **E2E playwright 35개**(`e2e/floor-stack.spec.ts` — 시험별 내용 = **`.claude/rules/e2e-catalog.md`**, `e2e/` 를 열면 자동으로 읽힌다). ⚠️ **E2E 는 같은 35개를 넓은 화면(chromium)과 휴대폰(mobile — Pixel 7 프리셋, 폭 412px·터치)에서 두 번 돌려 총 70회다** — 좁은 폭은 `styles.css` 의 `@media (max-width: 720px)` 가 판을 다시 짜는 자리라 넓은 화면만 보면 못 잡는다(2026-08-22 층별 막대를 모바일에서만 숨긴 사고). 개수를 셀 때 35(시험)와 70(실행)을 헷갈리지 말 것. CI가 셋 다 돌린다(`pnpm test:e2e`). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도. ⛔ **인쇄는 거의 전부가 CSS라 jsdom(vitest)이 원리적으로 못 본다** — 인쇄 매체를 흉내 낼 수 있는 곳은 E2E 뿐이다 |
+| 테스트 | 파이썬 **pytest 4,719개** + 프론트 **vitest 960개**(jsdom + @testing-library/react) + **E2E playwright 35개**(`e2e/floor-stack.spec.ts` — 시험별 내용 = **`.claude/rules/e2e-catalog.md`**, `e2e/` 를 열면 자동으로 읽힌다). ⚠️ **E2E 는 같은 35개를 넓은 화면(chromium)과 휴대폰(mobile — Pixel 7 프리셋, 폭 412px·터치)에서 두 번 돌려 총 70회다** — 좁은 폭은 `styles.css` 의 `@media (max-width: 720px)` 가 판을 다시 짜는 자리라 넓은 화면만 보면 못 잡는다(2026-08-22 층별 막대를 모바일에서만 숨긴 사고). 개수를 셀 때 35(시험)와 70(실행)을 헷갈리지 말 것. CI가 셋 다 돌린다(`pnpm test:e2e`). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도. ⛔ **인쇄는 거의 전부가 CSS라 jsdom(vitest)이 원리적으로 못 본다** — 인쇄 매체를 흉내 낼 수 있는 곳은 E2E 뿐이다 |
 
 **성능 원칙**: 상권(수천 개)은 사전계산 정적 JSON, 호실(수백만)은 Supabase 쿼리.
 정적 JSON 폴백을 호실에는 두지 않는다.
@@ -141,13 +141,13 @@ pnpm exec oxlint                                # 프론트 린트
 ```
 
 ```bash
-python -m pytest tests/ -q                      # 파이썬 테스트 (4,673개 — 수집 4,673(10-07 결정 0035 워크트리 실측 · 4,670 passed + 3 skipped · 10-06 밤 4,474 에서 +199) · 그 전 본 폴더 기준 수집 4,474(10-06 밤 실측 · 그 전 4,457 passed 에 안내 가드 +8 · 분기 감시 이슈·md 가드 +9), 워크트리는 원본 자료가 없어 몇 개를 건너뛴다(10-06 #229 워크트리 실측 3 skipped) · CI 는 로컬 PostgreSQL 이 없어 test_district_openclose_migration 의 실행 시험 16개를, shapely 가 없어 test_backtest_openclose 의 도형 시험 1개를 더 건너뛴다 = 4,437 + 20 skipped — 10-06 CI 실측(main 54393ca) · 10-06 #232 뒤 CI 실측 4,445 + 20 · 이번 +9 뒤 기대 4,454 + 20 · 결정 0035 뒤 기대 ≈ 4,653 + 20)
+python -m pytest tests/ -q                      # 파이썬 테스트 (4,719개 — 수집 4,719(10-07 노란 넷 워크트리 수집 실측 · +46) · 그 전 수집 4,673(10-07 결정 0035 워크트리 실측 · 4,670 passed + 3 skipped · 10-06 밤 4,474 에서 +199) · 그 전 본 폴더 기준 수집 4,474(10-06 밤 실측 · 그 전 4,457 passed 에 안내 가드 +8 · 분기 감시 이슈·md 가드 +9), 워크트리는 원본 자료가 없어 몇 개를 건너뛴다(10-06 #229 워크트리 실측 3 skipped) · CI 는 로컬 PostgreSQL 이 없어 test_district_openclose_migration 의 실행 시험 16개를, shapely 가 없어 test_backtest_openclose 의 도형 시험 1개를 더 건너뛴다 = 4,437 + 20 skipped — 10-06 CI 실측(main 54393ca) · 10-06 #232 뒤 CI 실측 4,445 + 20 · 이번 +9 뒤 기대 4,454 + 20 · 결정 0035 뒤 기대 ≈ 4,653 + 20)
 python scripts/check_new_sangkwon_quarter.py    # 새 분기 스냅샷이 떴나 (읽기만, 키 불필요)
 python scripts/check_district_source_update.py  # 상권 원천(서울·소진공) 수정일이 바뀌었나 (읽기만, 키 불필요)
 python scripts/check_watch_heartbeat.py         # 예약 6종이 아직 돌고 있나 (읽기만, 키 불필요 — 멈춤=exit 1 · 조회·판정 실패=2 · 결과 쓰기 실패=4)
 python scripts/check_live_health.py             # 라이브 사이트가 서 있나 (읽기만, 키 불필요 — 반쪽 배포까지 잡는다)
 python scripts/check_lh_notices.py              # 기준선 이후 새 LH 상가 공고가 떴나 (읽기만 — .env 의 MOLIT_KEY 사용, 새 공고면 exit 1 · 조회 실패=2 · 결과 쓰기 실패=4)
-python scripts/check_data_freshness.py          # '다음 갱신 예정'이 지난 자료가 있나 (읽기만 — .env 의 공개키 사용, 지남=exit 1 · 조회 실패=2 · 변수 없음=3 · 결과 쓰기 실패=4)
+python scripts/check_data_freshness.py          # '다음 갱신 예정'이 지난 자료가 있나 (읽기만 — .env 의 공개키 사용, 지남=exit 1 · 화면 분기 섞임=exit 1 · 조회 실패=2 · 변수 없음=3 · 결과 쓰기 실패=4)
 python scripts/collectors/collect_lh_notices.py --dry-run   # LH 상가 공고 수집 미리보기 (DB 쓰기 0)
 python scripts/collectors/collect_lh_notices.py             # LH 상가 공고 적재 (upsert — 끝나면 안내대로 기준선 상수를 올릴 것)
 python scripts/feedback_digest.py               # 의견함에 뭐가 쌓였나 (숫자만 — 내용은 dbx.py 로. .env 자동 사용)

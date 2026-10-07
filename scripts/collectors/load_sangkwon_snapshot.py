@@ -759,6 +759,64 @@ def mark_snapshot_loaded(base_url, headers, snapshot_ym, rows, post=requests.pos
     return False, "HTTP {} {}".format(r.status_code, (r.text or "")[:200])
 
 
+def oldest_snapshot_ym(base_url, headers, get=None):
+    """점포 표의 가장 옛 분기(YYYYMM) — 표가 비었으면 None. 실패하면 RuntimeError.
+
+    `GET /rest/v1/unit_business?select=snapshot_ym&order=snapshot_ym.asc&limit=1` — 색인
+    idx_ub_snapshot_floor_pnu(snapshot_ym, …)의 맨 앞 한 줄이라 빠르다.
+    ⓘ get 은 시험이 바꿔 끼우는 자리다(안 주면 그때의 requests.get).
+    """
+    get = get or requests.get
+    try:
+        r = get("{}/rest/v1/unit_business?select=snapshot_ym&order=snapshot_ym.asc&limit=1".format(base_url),
+                headers=headers, timeout=60)
+    except requests.RequestException as e:
+        raise RuntimeError("점포 표 가장 옛 분기 조회 실패: {}".format(type(e).__name__))
+    if r.status_code != 200:
+        raise RuntimeError("점포 표 가장 옛 분기 조회 실패 (HTTP {}): {}".format(
+            r.status_code, (r.text or "")[:200]))
+    try:
+        body = r.json()
+    except ValueError:
+        body = None
+    if body == []:
+        return None
+    ym = body[0].get("snapshot_ym") if (isinstance(body, list) and len(body) == 1
+                                         and isinstance(body[0], dict)) else None
+    ym = str(ym).strip() if ym is not None else ""
+    if not SNAPSHOT_YM_RE.match(ym):
+        raise RuntimeError("점포 표 가장 옛 분기 응답 모양이 다릅니다: {!r}".format(body))
+    return ym
+
+
+def precheck_flag(base_url, headers, get=None, post=None):
+    """표지 올리기(RPC)가 되는지 적재 **전에** 한 번 '무변화'로 불러 본다 (결정 0035 · 2026-10-07 (2)).
+
+    점포 표의 가장 옛 분기를 p_ym 으로 RPC 를 부른다 — RPC 는 지금 다 들어온 분기(loaded_ym) 이하를
+    받으면 **아무것도 안 바꾸고** 지금 표지를 돌려준다. 그래서 열쇠·권한·함수 이름·노출 스키마가
+    어긋났으면 2시간 적재가 끝난 뒤가 아니라 지금 안다.
+    돌려주는 것: 지금 표지의 loaded_ym (점포 표가 비어 점검을 건너뛰었으면 None).
+    실패(조회·RPC 오류·응답 모양 이상)는 RuntimeError — 부른 쪽이 적재 전에 멈춘다.
+    ⛔ 못 보는 것: 가장 옛 분기가 지금 loaded_ym 보다 **새** 분기면(다 들어온 분기의 행이 점포 표에서
+       지워진 이상한 상태) RPC 가 loaded_ym 을 그 분기로 실제로 올린다 — p_rows 는 None 이라 행 수는
+       '기록 없음'으로 남는다. 정상 운영(옛 분기부터 쌓고 옛 분기만 지운다)에서는 생기지 않는다.
+    """
+    oldest = oldest_snapshot_ym(base_url, headers, get=get)
+    if oldest is None:
+        print("[주의] 점포 표가 비어 표지 사전 점검을 건너뜁니다 — 표지 올리기가 되는지는 적재 끝에 압니다.")
+        return None
+    kwargs = {} if post is None else {"post": post}
+    ok, body = mark_snapshot_loaded(base_url, headers, oldest, None, **kwargs)
+    if not ok:
+        raise RuntimeError("표지 RPC(mark_snapshot_loaded)가 안 됩니다 — {}".format(body))
+    loaded = str((body or {}).get("loaded_ym") or "").strip()
+    published = str((body or {}).get("published_ym") or "").strip()
+    if not (SNAPSHOT_YM_RE.match(loaded) and SNAPSHOT_YM_RE.match(published)):
+        raise RuntimeError("표지 RPC 응답 모양이 다릅니다: {!r}".format(body))
+    print("표지 사전 점검: 다 들어온 분기 {} · 보여 주는 분기 {}".format(loaded, published))
+    return loaded
+
+
 def rest_count(base_url, headers, table, query):
     """PostgREST HEAD 요청으로 정확한 행 수를 돌려준다 (Content-Range 헤더)."""
     h = dict(headers)
@@ -989,6 +1047,18 @@ def main():
             print("[에러] parcel 기준값 조회 실패: {}".format(e))
             return 1
 
+    # 표지 사전 점검(결정 0035 · 2026-10-07 (2)) — 전국 적재 + 실제 실행일 때만, 첫 upsert **전에**.
+    # 표지 RPC 가 안 되면 2시간 적재가 끝난 뒤가 아니라 지금 멈춘다(아무것도 안 넣었다).
+    pre_loaded = None
+    if should_mark_loaded(scope, opts["dry_run"]):
+        try:
+            pre_loaded = precheck_flag(base_url, headers)
+        except RuntimeError as e:
+            print("[에러] 표지 사전 점검 실패 — 적재 전에 멈춥니다(아무것도 안 넣었습니다): {}".format(e))
+            print("       열쇠·주소를 확인한 뒤 같은 명령을 그대로 다시 실행하세요 · "
+                  "표지 상태는 python scripts/publish_snapshot.py --show")
+            return 1
+
     sent = Counter()
 
     def flush_file(parcel_records, unit_business_records):
@@ -1083,6 +1153,14 @@ def main():
     if not should_mark_loaded(scope, opts["dry_run"]):
         print("표지는 안 올렸습니다(전국 적재가 아니라서) — 올리려면 "
               "python scripts/publish_snapshot.py --loaded {}".format(snapshot_ym))
+        return 0
+    # 옛(또는 같은) 분기 재적재 — 표지는 앞으로만 가므로 RPC 를 불러도 그대로다. 옛 분기는 시·도 파일
+    # 수가 지금과 달라(예 201512 는 18개) 파일 수 관문이 오경보를 내므로 둘 다 건너뛴다(2026-10-07 (2)).
+    # ⓘ 사전 점검을 건너뛴 경우(점포 표가 비었음 — pre_loaded 모름)는 아래 원래 길로 간다.
+    if pre_loaded is not None and snapshot_ym <= pre_loaded:
+        print("표지는 그대로입니다 — {} 은 다 들어온 분기 {} 와 같거나 옛 분기라(표지는 앞으로만) "
+              "파일 수 관문·표지 올리기를 건너뜁니다.".format(snapshot_ym, pre_loaded))
+        print("       넣은 행이 있으면 이어서 python scripts/post_load.py · python scripts/post_load.py --check")
         return 0
     missing = missing_for_mark(result)
     if missing:

@@ -101,24 +101,39 @@ def no_real_network(monkeypatch):
     monkeypatch.setattr(cdf.time, "sleep", lambda _s: None)
 
 
-def install_fake_urlopen(monkeypatch, payload):
-    """RPC 응답 하나를 흉내 낸다. 요청(주소·머리·본문)을 기록해 돌려준다.
+def _store_basis(payload):
+    """payload 의 '점포·업종 (상권정보)' 줄 basis — 각주 뷰 기본 답(= 섞이지 않음)으로 쓴다."""
+    if isinstance(payload, list):
+        for r in payload:
+            if isinstance(r, dict) and r.get("src") == cdf.STORE_SRC:
+                return r.get("basis")
+    return "202606"
 
-    payload 가 예외면 urlopen 이 그걸 던지고, FakeResponse 면 그대로 돌려준다.
+
+def install_fake_urlopen(monkeypatch, payload, coverage=None):
+    """RPC 응답과 각주 뷰(`v_coverage_stats`) 응답을 흉내 낸다. 요청(주소·머리·본문)을 기록해 돌려준다.
+
+    payload 가 예외면 urlopen 이 그걸 던지고, FakeResponse 면 그대로 돌려준다(RPC 쪽).
+    coverage 는 각주 뷰의 답 — 안 주면 payload 의 '점포·업종 (상권정보)' 줄 basis 한 줄(= 화면 분기
+    섞이지 않음). 예외·FakeResponse·임의 JSON 도 받는다.
     """
     calls = []
+    if coverage is None:
+        coverage = [{"snapshot_ym": _store_basis(payload)}]
 
     def fake_urlopen(req, timeout=None):
         calls.append({
             "url": req.full_url,
             "headers": {k.lower(): v for k, v in req.header_items()},
             "data": req.data,
+            "method": req.get_method(),
         })
-        if isinstance(payload, Exception):
-            raise payload
-        if isinstance(payload, FakeResponse):
-            return payload
-        return FakeResponse(payload)
+        answer = coverage if cdf.COVERAGE_VIEW in req.full_url else payload
+        if isinstance(answer, Exception):
+            raise answer
+        if isinstance(answer, FakeResponse):
+            return answer
+        return FakeResponse(answer)
 
     monkeypatch.setattr(cdf.fd.urllib.request, "urlopen", fake_urlopen)
     return calls
@@ -331,13 +346,15 @@ def test_one_resolved_next_week_keeps_the_other_title(monkeypatch, tmp_path):
     여기서 제목이 바뀌어 같은 지남에 이슈가 하나 더 열리고 옛 이슈가 남는다.
     """
     set_env(monkeypatch, tmp_path)
-    week1 = [row("건축 인허가", "2026-10-31"), row("상권 임대 동향 (부동산원)", "2026-10-31", basis="2026Q2")]
+    # 점포 줄은 화면 분기 대조에 꼭 있어야 한다(없으면 조회 실패) — 안 지난 예정일로 둔다.
+    store = row(cdf.STORE_SRC, "2027-01-31", basis="202609", basis_kind="분기")
+    week1 = [store, row("건축 인허가", "2026-10-31"), row("상권 임대 동향 (부동산원)", "2026-10-31", basis="2026Q2")]
     install_fake_urlopen(monkeypatch, week1)
     assert cdf.main(["--today", "2026-11-02"]) == 1
     titles_week1 = [t for t, _ in issue_files(tmp_path)]
 
     # 부동산원을 적재해 예정일이 다음 분기로 넘어간 다음 주
-    week2 = [row("건축 인허가", "2026-10-31"), row("상권 임대 동향 (부동산원)", "2027-01-31", basis="2026Q3")]
+    week2 = [store, row("건축 인허가", "2026-10-31"), row("상권 임대 동향 (부동산원)", "2027-01-31", basis="2026Q3")]
     install_fake_urlopen(monkeypatch, week2)
     assert cdf.main(["--today", "2026-11-09"]) == 1
     titles_week2 = [t for t, _ in issue_files(tmp_path)]
@@ -612,7 +629,7 @@ class TestWorkflow:
 
     def test_check_step_separates_overdue_from_failure(self, workflow):
         """1(지남)은 job 을 살리고, 그 밖(2·3)은 job 을 실패시켜 실패 알림으로 보낸다."""
-        step = _step(workflow, "예정일이 지난 자료가 있는지 확인")
+        step = _step(workflow, "예정일 지난 자료 또는 화면 분기 섞임이 있는지 확인")
         run = step["run"]
         assert "python scripts/check_data_freshness.py" in run
         assert '[ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]' in run
@@ -624,13 +641,13 @@ class TestWorkflow:
 
         이 검사가 0·1 통과보다 **먼저** 와야 한다(뒤에 있으면 이미 exit 0 으로 빠져나간다).
         """
-        run = _step(workflow, "예정일이 지난 자료가 있는지 확인")["run"]
+        run = _step(workflow, "예정일 지난 자료 또는 화면 분기 섞임이 있는지 확인")["run"]
         guard = '[ "$rc" -eq 1 ] && ! ls {}/*.md'.format(cdf.ISSUE_DIR)
         assert guard in run
         assert run.index(guard) < run.index('[ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]')
 
     def test_issue_step_loops_over_the_files_the_script_writes(self, workflow):
-        step = _step(workflow, "지난 자료마다 이슈를 연다")
+        step = _step(workflow, "지난 자료·화면 분기 섞임마다 이슈를 연다")
         assert step["if"] == "steps.check.outputs.overdue == 'true'"
         run = step["run"]
         assert "for body in {}/*.md".format(cdf.ISSUE_DIR) in run
@@ -639,7 +656,7 @@ class TestWorkflow:
 
     def test_issue_dedup_looks_at_open_only_per_row(self, workflow):
         """열린 같은 제목이면 **그 자료만** 건너뛴다(continue) — 나머지 자료는 계속 연다."""
-        run = _step(workflow, "지난 자료마다 이슈를 연다")["run"]
+        run = _step(workflow, "지난 자료·화면 분기 섞임마다 이슈를 연다")["run"]
         assert "--state open" in run and "grep -Fxq" in run
         assert "continue" in run
         assert "exit 0" not in run
@@ -754,7 +771,7 @@ exit "$FAKE_RC"
 def test_check_step_runs_for_real(workflow, tmp_path, rc, files, output, expect):
     gh_output = tmp_path / "gh_output"
     gh_output.write_bytes(b"")
-    res = _run_step(workflow, "예정일이 지난 자료가 있는지 확인", tmp_path, {"python": FAKE_PYTHON}, {
+    res = _run_step(workflow, "예정일 지난 자료 또는 화면 분기 섞임이 있는지 확인", tmp_path, {"python": FAKE_PYTHON}, {
         "FAKE_RC": str(rc),
         "FAKE_FILES": "1" if files else "",
         "FAKE_OUTPUT": "1" if output else "",
@@ -799,7 +816,7 @@ def test_issue_step_skips_only_the_open_title_for_real(workflow, tmp_path):
         (folder / (stem + ".md")).write_bytes("본문\n".encode("utf-8"))
     (tmp_path / "open_titles.txt").write_bytes((t1 + "\n다른 이슈 제목\n").encode("utf-8"))
 
-    res = _run_step(workflow, "지난 자료마다 이슈를 연다", tmp_path, {"gh": FAKE_GH}, {
+    res = _run_step(workflow, "지난 자료·화면 분기 섞임마다 이슈를 연다", tmp_path, {"gh": FAKE_GH}, {
         "GH_TOKEN": "fake", "RUN_URL": "https://example.test/run/1",
     })
     said = res.stdout.decode("utf-8", "replace") + res.stderr.decode("utf-8", "replace")
@@ -812,7 +829,7 @@ def test_check_step_says_rc4_is_not_a_lookup_failure(workflow, tmp_path):
     """4 = 조회는 됐는데 결과를 쓰다 실패 — '조회에 실패했습니다'라고 말하면 엉뚱한 곳을 보게 된다."""
     gh_output = tmp_path / "gh_output"
     gh_output.write_bytes(b"")
-    res = _run_step(workflow, "예정일이 지난 자료가 있는지 확인", tmp_path, {"python": FAKE_PYTHON}, {
+    res = _run_step(workflow, "예정일 지난 자료 또는 화면 분기 섞임이 있는지 확인", tmp_path, {"python": FAKE_PYTHON}, {
         "FAKE_RC": "4", "FAKE_FILES": "1", "FAKE_OUTPUT": "", "GITHUB_OUTPUT": "gh_output",
     })
     said = res.stdout.decode("utf-8", "replace") + res.stderr.decode("utf-8", "replace")
@@ -852,3 +869,150 @@ def test_run_step_skips_locally_without_bash(monkeypatch, tmp_path):
     with pytest.raises(BaseException) as caught:
         _run_step(None, "아무 단계", tmp_path, {}, {})
     assert caught.type is pytest.skip.Exception, caught.type
+
+
+
+# ── 화면 분기 섞임 (2026-10-07 (2) — 결정 0035 맹점 B 🟡4) ──────────────────────────
+#
+# 신선도 '점포·업종 (상권정보)' 줄 basis(표지 published) ≠ 각주 뷰 api.v_coverage_stats 의 snapshot_ym
+# (요약표를 구울 때의 분기) 이면 화면 일부만 다른 분기다 — `--ym` 으로 되돌린 뒤 post_load 를 안 돌림
+# (또는 요약표를 손으로 갱신함 · post_load 가 멈추면 한 트랜잭션이라 통째 롤백 — 원인이 아니다). 예전엔 `post_load.py --check` 를 돌려야만 보였다.
+
+MIXED_LIVE = "202603"   # 되돌린 표지(published) — live_like_rows 의 점포 줄 basis 를 이 값으로 바꾼다
+
+
+def _mixed_rows(published=MIXED_LIVE):
+    rows = live_like_rows()
+    rows[0] = dict(rows[0], basis=published)
+    assert rows[0]["src"] == cdf.STORE_SRC
+    return rows
+
+
+def test_coverage_view_real_call_uses_get_and_accept_profile(monkeypatch):
+    """진짜 fetch_coverage_ym — 가장 낮은 HTTP 경계(urlopen)만 가짜. 부른 주소·머리·고른 값을 본다."""
+    calls = install_fake_urlopen(monkeypatch, live_like_rows(), coverage=[{"snapshot_ym": "202606"}])
+    assert cdf.fetch_coverage_ym(URL, KEY) == "202606"
+    assert len(calls) == 1
+    assert calls[0]["url"] == URL + "/rest/v1/v_coverage_stats?select=snapshot_ym"
+    assert calls[0]["method"] == "GET" and calls[0]["data"] is None
+    assert calls[0]["headers"]["accept-profile"] == "api", "옛 문(public)은 노출 스키마에서 빠져 있다"
+    assert calls[0]["headers"]["apikey"] == KEY
+    assert calls[0]["headers"]["authorization"] == "Bearer " + KEY
+
+
+def test_main_reads_both_the_rpc_and_the_view(monkeypatch, tmp_path):
+    set_env(monkeypatch, tmp_path)
+    calls = install_fake_urlopen(monkeypatch, live_like_rows())
+    assert cdf.main(["--today", "2026-10-01"]) == 0
+    assert [c["url"] for c in calls] == [URL + "/rest/v1/rpc/get_data_freshness",
+                                         URL + "/rest/v1/v_coverage_stats?select=snapshot_ym"]
+
+
+def test_same_quarter_is_quiet(monkeypatch, tmp_path, capsys):
+    """음성: 둘 다 202606 → 지금과 같다(exit 0 · 이슈 0)."""
+    out = set_env(monkeypatch, tmp_path)
+    install_fake_urlopen(monkeypatch, live_like_rows(), coverage=[{"snapshot_ym": "202606"}])
+    assert cdf.main(["--today", "2026-10-01"]) == 0
+    assert outputs(out) == {"overdue": "false", "count": "0"}
+    assert issue_files(tmp_path) == []
+    assert "화면 분기 섞임           : 없음" in capsys.readouterr().out
+
+
+def test_mixed_quarters_exit_one_with_one_fixed_title_issue(monkeypatch, tmp_path, capsys):
+    """published 202603 · 각주 202606 → exit 1 + 이슈 1(고정 제목) · 화면에 원인 문장."""
+    out = set_env(monkeypatch, tmp_path)
+    install_fake_urlopen(monkeypatch, _mixed_rows(), coverage=[{"snapshot_ym": "202606"}])
+    assert cdf.main(["--today", "2026-10-01"]) == cdf.EXIT_OVERDUE == 1
+    assert outputs(out) == {"overdue": "true", "count": "1"}, "워크플로 이슈 단계가 이 값 하나로 폴더를 돈다"
+    issues = issue_files(tmp_path)
+    assert [t for t, _ in issues] == ["화면 분기가 섞였습니다 — 점포·업종 (상권정보)"]
+    body = issues[0][1]
+    assert "| 202603 |" in body and "| 202606 |" in body
+    assert "python scripts/publish_snapshot.py --show" in body and "python scripts/post_load.py" in body
+    printed = capsys.readouterr().out
+    assert "화면 기준(표지) 202603 · 각주 202606" in printed
+    assert "표지를 되돌린 뒤 post_load 를 안 돌림(또는 요약표를 손으로 갱신함)" in printed
+    assert "--loaded` 로 새 분기를 다시 올리지 마세요" in body
+
+
+def test_mixed_title_has_no_changing_values():
+    a = {"src": cdf.STORE_SRC, "published": "202603", "coverage": "202606"}
+    b = {"src": cdf.STORE_SRC, "published": "202606", "coverage": "202609"}
+    assert cdf.find_mixed(_mixed_rows("202603"), "202606") == a
+    assert cdf.find_mixed(_mixed_rows("202606"), "202609") == b
+    assert "2026" not in cdf.MIXED_TITLE, "제목에 분기 값을 넣으면 열린 이슈가 있어도 매주 새로 열린다"
+
+
+def test_mixed_and_overdue_together_write_both(monkeypatch, tmp_path):
+    out = set_env(monkeypatch, tmp_path)
+    install_fake_urlopen(monkeypatch, _mixed_rows(), coverage=[{"snapshot_ym": "202606"}])
+    assert cdf.main(["--today", "2026-11-02"]) == 1
+    assert outputs(out) == {"overdue": "true", "count": "4"}
+    titles = [t for t, _ in issue_files(tmp_path)]
+    assert len(titles) == 4 and titles[-1] == cdf.MIXED_TITLE
+
+
+def test_null_store_basis_is_mixed_and_says_no_data(monkeypatch, tmp_path):
+    set_env(monkeypatch, tmp_path)
+    install_fake_urlopen(monkeypatch, _mixed_rows(published=None), coverage=[{"snapshot_ym": "202606"}])
+    assert cdf.main(["--today", "2026-10-01"]) == 1
+    body = issue_files(tmp_path)[0][1]
+    assert "(자료 없음)" in body and "None" not in body
+
+
+@pytest.mark.parametrize("coverage", [
+    [],                                   # 요약표가 빔 — 각주가 조용히 사라진 상태
+    [{"snapshot_ym": "202606"}, {"snapshot_ym": "202603"}],
+    [{"snapshot_ym": "2026Q2"}],
+    [{"store_cnt": 1}],
+    {"message": "oops"},
+], ids=["0줄", "두줄", "분기모양", "칸없음", "목록아님"])
+def test_view_bad_shapes_are_lookup_failures(monkeypatch, tmp_path, capsys, coverage):
+    out = set_env(monkeypatch, tmp_path)
+    install_fake_urlopen(monkeypatch, live_like_rows(), coverage=coverage)
+    _assert_lookup_failed(monkeypatch, tmp_path, capsys, out)
+
+
+def test_view_http_404_is_one_knock_then_lookup_failure(monkeypatch, tmp_path, capsys):
+    out = set_env(monkeypatch, tmp_path)
+    err = urllib.error.HTTPError(URL, 404, "Not Found", None, None)
+    calls = install_fake_urlopen(monkeypatch, live_like_rows(), coverage=err)
+    _assert_lookup_failed(monkeypatch, tmp_path, capsys, out)
+    assert sum(cdf.COVERAGE_VIEW in c["url"] for c in calls) == 1
+
+
+def test_view_connection_failure_retries_then_lookup_failure(monkeypatch, tmp_path, capsys):
+    out = set_env(monkeypatch, tmp_path)
+    calls = install_fake_urlopen(monkeypatch, live_like_rows(), coverage=urllib.error.URLError("down"))
+    _assert_lookup_failed(monkeypatch, tmp_path, capsys, out)
+    assert sum(cdf.COVERAGE_VIEW in c["url"] for c in calls) == cdf.fd.RETRY_COUNT
+
+
+def test_missing_store_row_is_a_lookup_failure_not_quiet(monkeypatch, tmp_path, capsys):
+    """⛔ 서버 줄 이름이 바뀌어 '점포·업종 (상권정보)' 줄이 없으면 대조를 못 한다 — 조용히 넘기지 않는다."""
+    out = set_env(monkeypatch, tmp_path)
+    rows = live_like_rows()[1:]
+    install_fake_urlopen(monkeypatch, rows, coverage=[{"snapshot_ym": "202606"}])
+    _assert_lookup_failed(monkeypatch, tmp_path, capsys, out)
+
+
+def test_mixed_issue_goes_through_the_workflow_issue_step_for_real(monkeypatch, workflow, tmp_path):
+    """워크플로 이슈 단계가 새 이슈(고정 제목)도 그대로 연다 · 열린 같은 제목이면 건너뛴다 — 실제로 돌린다."""
+    set_env(monkeypatch, tmp_path)
+    install_fake_urlopen(monkeypatch, _mixed_rows(), coverage=[{"snapshot_ym": "202606"}])
+    assert cdf.main(["--today", "2026-10-01"]) == 1
+    env = {"GH_TOKEN": "fake", "RUN_URL": "https://example.test/run/1"}
+
+    (tmp_path / "open_titles.txt").write_bytes("다른 이슈 제목\n".encode("utf-8"))
+    res = _run_step(workflow, "지난 자료·화면 분기 섞임마다 이슈를 연다", tmp_path, {"gh": FAKE_GH}, env)
+    said = res.stdout.decode("utf-8", "replace") + res.stderr.decode("utf-8", "replace")
+    assert res.returncode == 0, said
+    assert (tmp_path / "created.txt").read_bytes().decode("utf-8").splitlines() == [cdf.MIXED_TITLE], said
+
+    (tmp_path / "created.txt").unlink()
+    (tmp_path / "open_titles.txt").write_bytes((cdf.MIXED_TITLE + "\n").encode("utf-8"))
+    res = _run_step(workflow, "지난 자료·화면 분기 섞임마다 이슈를 연다", tmp_path, {"gh": FAKE_GH}, env)
+    said = res.stdout.decode("utf-8", "replace") + res.stderr.decode("utf-8", "replace")
+    assert res.returncode == 0, said
+    assert not (tmp_path / "created.txt").exists() or \
+        (tmp_path / "created.txt").read_bytes().decode("utf-8").splitlines() == [], said

@@ -83,8 +83,16 @@ def _install_freshness(mp, mod, scenario):
         "basis": "202608",
         "next_expected": "2000-01-01" if scenario == TELL else "2999-12-31",
         "cadence": "월 1회",
+    }, {
+        # 화면 분기 대조(2026-10-07 (2))가 읽는 줄 — 각주 분기와 같아 '섞이지 않음'.
+        "src": mod.STORE_SRC,
+        "basis_kind": "분기",
+        "basis": "202606",
+        "next_expected": "2999-12-31",
+        "cadence": "분기마다",
     }]
     mp.setattr(mod, "fetch_rows", lambda base_url, anon_key, sleep=None: rows)
+    mp.setattr(mod, "fetch_coverage_ym", lambda base_url, anon_key, sleep=None: "202606")
     # --today 를 주면 today_kst 가 안 불린다 — 일부러 안 주고 시계만 가짜로 고정한다.
     mp.setattr(mod, "today_kst", lambda now=None: datetime.date(2026, 10, 2))
     return lambda: mod.main(["--url", "https://example.invalid", "--anon-key", "anon-fake"])
@@ -178,7 +186,9 @@ TARGETS = {
         calls={
             "today_kst": LOOKUP,
             "fetch_rows": LOOKUP,
+            "fetch_coverage_ym": LOOKUP,
             "find_overdue": LOOKUP,
+            "find_mixed": LOOKUP,
             "report": OUTPUT,
             "write_issue_files": OUTPUT,
             "write_github_output": OUTPUT,

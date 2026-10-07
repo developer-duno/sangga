@@ -30,6 +30,13 @@ YYYY-MM-DD)` 로, 매주 바뀌는 값(며칠 지났나·건수)을 넣지 않�
 **남은 자료의 제목이 그대로**라 그쪽 이슈가 새로 열리지 않는다(워크플로가 열린 같은 제목을 본다).
 자료별 제목·본문은 `data_freshness_issues/` 폴더에 `NN.title`·`NN.md` 쌍으로 쓴다.
 
+화면 분기 섞임도 본다(결정 0035 · 2026-10-07 (2)) — 공개 뷰 `api.v_coverage_stats` 의 snapshot_ym
+(요약표를 구울 때의 분기)을 읽어, 위 표 '점포·업종 (상권정보)' 줄의 기준 분기(표지 published_ym)와
+**다르면** 고정 제목 `화면 분기가 섞였습니다 — 점포·업종 (상권정보)` 이슈 한 쌍을 같은 폴더에 더 쓴다
+(표지를 `--ym` 으로 되돌린 뒤 post_load 를 안 돌림(또는 요약표를 손으로 갱신함) — `post_load.py --check`
+를 돌려야만 보이던 것. post_load 가 도중에 멈추는 것은 원인이 아니다 — 요약표 셋 굽기와 표지 올림이
+한 트랜잭션이라 멈추면 통째로 되돌아간다). 뷰 조회 실패·0줄·그 줄이 없음은 조회 실패(2)다.
+
 ⛔ 읽기만 한다 — 창고에 쓰지 않고, 적재도 안 한다(알리기만 한다. 형제 감시와 같은 원칙).
 
 키가 필요하다
@@ -44,7 +51,7 @@ YYYY-MM-DD)` 로, 매주 바뀌는 값(며칠 지났나·건수)을 넣지 않�
     python scripts/check_data_freshness.py                     # 오늘(한국 날짜) 기준
     python scripts/check_data_freshness.py --today 2026-11-02  # 오늘을 밖에서 넣기(시험·되짚기용)
 
-종료코드: 0 = 지난 줄 없음 / 1 = **지난 줄 있음** / 2 = 조회 실패 / 3 = 주소·공개키 없음 /
+종료코드: 0 = 지난 줄 없음 / 1 = **지난 줄 있음 또는 화면 분기 섞임** / 2 = 조회 실패 / 3 = 주소·공개키 없음 /
           4 = 조회는 됐는데 결과(화면·이슈 파일·GITHUB_OUTPUT)를 쓰다 실패.
   ↳ 1 과 2 를 가르는 이유: "자료가 늦었다"와 "확인을 못 했다"는 서로 다른 사건이다.
     한 코드로 뭉뚱그리면 창고가 죽은 주에 "자료가 늦었습니다"라는 엉뚱한 이슈가 열린다.
@@ -62,9 +69,13 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import json
 import os
+import re
 import sys
 import time
+import urllib.error
+import urllib.request
 from zoneinfo import ZoneInfo
 
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -93,6 +104,17 @@ EXIT_OUTPUT_FAILED = 4
 
 # 서버가 늘 주는 칸. 이 중 하나라도 없으면 함수 모양이 바뀐 것이다 — 조회 실패로 본다.
 REQUIRED_KEYS = ("src", "basis_kind", "basis", "next_expected", "cadence")
+
+# ── 화면 분기 섞임 (결정 0035 · 2026-10-07 (2)) ──
+# 신선도 '점포·업종 (상권정보)' 줄의 basis = 표지 published_ym(화면이 보는 분기). 각주 뷰
+# api.v_coverage_stats 의 snapshot_ym = 요약표를 구울 때의 분기(loaded_ym). 둘이 다르면 화면 일부
+# (가게 이름 검색·각주·업종 카드)만 다른 분기를 말하는 섞인 상태다 — 표지를 `--ym` 으로 되돌린 뒤
+# post_load 를 안 돌림(또는 요약표를 손으로 갱신함). post_load 가 멈추면 한 트랜잭션이라 통째로 되돌아가
+# 섞임을 못 만든다.
+STORE_SRC = "점포·업종 (상권정보)"
+COVERAGE_VIEW = "v_coverage_stats"
+MIXED_TITLE = "화면 분기가 섞였습니다 — " + STORE_SRC
+YM_RE = re.compile(r"^\d{6}$")
 
 
 # ── 순수 함수 (네트워크 없음 — 시험 대상) ─────────────────────────────────────
@@ -169,6 +191,76 @@ def find_overdue(rows, today: datetime.date) -> list:
     return out
 
 
+def check_coverage(result) -> str:
+    """각주 뷰 응답 → 분기(YYYYMM). 정확히 한 줄 · snapshot_ym 여섯 자리가 아니면 CallFailed(= 조회 실패).
+
+    ⓘ 0줄도 조회 실패다 — 요약표가 비면 화면 각주가 조용히 사라진 것이라 '섞이지 않음'으로 넘기지 않는다.
+    """
+    if not (isinstance(result, list) and len(result) == 1 and isinstance(result[0], dict)):
+        raise fd.CallFailed(f"{COVERAGE_VIEW} 응답 모양이 예상과 다릅니다(한 줄이어야 합니다): {result!r}")
+    ym = str(result[0].get("snapshot_ym") or "").strip()
+    if not YM_RE.match(ym):
+        raise fd.CallFailed(f"{COVERAGE_VIEW} 의 snapshot_ym 이 YYYYMM 이 아닙니다: {result!r}")
+    return ym
+
+
+def find_mixed(rows, coverage_ym: str) -> dict | None:
+    """신선도 '점포·업종 (상권정보)' 줄의 기준 분기(표지 published)와 각주 분기가 다르면 그 둘을 돌려준다.
+
+    같으면 None. ⛔ 그 줄이 없으면 판정할 수 없다 — '섞이지 않음'이 아니라 CallFailed(조회 실패):
+       서버 줄 이름이 바뀌었는데 None 으로 넘기면 이 감시가 그날부터 조용히 꺼진다.
+    """
+    store = [r for r in rows if r.get("src") == STORE_SRC]
+    if len(store) != 1:
+        raise fd.CallFailed(
+            f"신선도 표에 '{STORE_SRC}' 줄이 {len(store)}개입니다 — 정확히 하나여야 화면 분기를 대조합니다."
+        )
+    published = store[0].get("basis")
+    published = str(published).strip() if published is not None else None
+    if published == coverage_ym:
+        return None
+    return {"src": STORE_SRC, "published": published, "coverage": coverage_ym}
+
+
+def build_mixed_body(mixed) -> str:
+    """화면 분기 섞임 이슈 본문 — 두 분기 값과 고치는 절차."""
+    lines = [
+        "화면이 보는 점포 분기(표지)와 요약표(가게 이름 검색·각주·업종 카드)의 분기가 **다릅니다** — "
+        "화면 일부만 다른 분기를 말하는 섞인 상태입니다.",
+        "",
+        "| 자리 | 분기 |",
+        "|---|---|",
+        "| 화면 기준 = 표지 보여 주는 분기 (신선도 표 '{}' 줄) | {} |".format(
+            STORE_SRC, mixed["published"] if mixed["published"] is not None else "(자료 없음)"),
+        "| 각주 뷰 `api.{}` (요약표를 구울 때의 분기) | {} |".format(COVERAGE_VIEW, mixed["coverage"]),
+        "",
+        "## 왜 생기나",
+        "",
+        "- 표지를 `publish_snapshot.py --ym` 으로 되돌린 뒤 `post_load.py` 를 안 돌렸습니다"
+        "(또는 요약표를 손으로 갱신했습니다).",
+        "- `post_load.py` 가 도중에 멈춘 것은 원인이 아닙니다 — 요약표 셋 굽기와 표지 올림이 한 트랜잭션이라 "
+        "멈추면 통째로 되돌아갑니다.",
+        "- 일부러 되돌려 둔 상태(`--ym`)라면 `post_load.py` 의 [경고] + exit 1 은 정상입니다 — "
+        "`--loaded` 로 새 분기를 다시 올리지 마세요.",
+        "",
+        "## 할 일",
+        "",
+        "```powershell",
+        r"cd D:\sangga",
+        "python scripts/publish_snapshot.py --show   # 표지 두 칸 · 요약표 셋의 분기를 본다",
+        "python scripts/post_load.py                  # 요약표를 표지 분기로 다시 굽는다",
+        "python scripts/post_load.py --check",
+        "python scripts/check_data_freshness.py       # 이 감시를 내 PC에서 다시 — 섞임이 사라지면 끝",
+        "```",
+        "",
+        "- **고쳤으면 이 이슈를 닫습니다.** 섞인 채 닫으면 다음 주에 다시 열립니다.",
+        "",
+        "*(이 이슈는 지난 날짜 주간 감시 워크플로가 자동으로 열었습니다. 읽기만 하고 창고에는 "
+        "아무것도 쓰지 않습니다.)*",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def build_issue_title(item) -> str:
     """자료 **하나**의 이슈 제목. 매주 바뀌는 값(며칠 지났나·건수)은 넣지 않는다.
 
@@ -228,9 +320,11 @@ def build_issue_body(item, today: datetime.date) -> str:
 # ── 출력 ──────────────────────────────────────────────────────────────────────
 
 
-def write_issue_files(overdue, today: datetime.date, folder: str = ISSUE_DIR) -> list:
+def write_issue_files(overdue, today: datetime.date, folder: str = ISSUE_DIR, mixed=None) -> list:
     """자료별 `NN.title`·`NN.md` 를 폴더에 쓴다. 지난 실행이 남긴 쌍은 먼저 지운다.
 
+    화면 분기가 섞였으면(mixed) 그 이슈 한 쌍을 지난 자료 뒤에 더 쓴다 — 제목은 고정(MIXED_TITLE)이라
+    워크플로가 열린 같은 제목을 보고 건너뛴다(워크플로는 폴더의 쌍을 그대로 돈다 — 고칠 것 0).
     ⓘ 이 폴더는 이 스크립트 전용이다(.gitignore). 남은 쌍을 안 지우면 로컬에서 거듭 돌릴 때
        이미 해결된 자료의 본문이 섞인다.
     """
@@ -246,12 +340,21 @@ def write_issue_files(overdue, today: datetime.date, folder: str = ISSUE_DIR) ->
         with open(stem + ".md", "w", encoding="utf-8") as f:
             f.write(build_issue_body(item, today))
         written.append(stem)
+    if mixed:
+        stem = os.path.join(folder, "{:02d}".format(len(overdue) + 1))
+        with open(stem + ".title", "w", encoding="utf-8") as f:
+            f.write(MIXED_TITLE + "\n")
+        with open(stem + ".md", "w", encoding="utf-8") as f:
+            f.write(build_mixed_body(mixed))
+        written.append(stem)
     return written
 
 
-def write_github_output(overdue) -> bool:
+def write_github_output(overdue, mixed=None) -> bool:
     """GitHub Actions 다음 단계가 읽을 값을 GITHUB_OUTPUT 에 쓴다. 로컬에서는 아무 일도 안 한다.
 
+    `overdue=true` 는 "열 이슈 파일이 있다"는 뜻이다 — 지난 자료든 화면 분기 섞임이든(워크플로의
+    이슈 단계가 이 값 하나로 폴더를 돈다 · 2026-10-07 (2)). count = 이슈 파일 쌍의 수.
     ⓘ 자료 이름(창고가 준 값)은 여기 싣지 않는다 — 워크플로가 `${{ }}` 로 run 에 끼우면 주입
        통로가 된다. 이름은 폴더의 파일로만 넘긴다.
     """
@@ -259,8 +362,8 @@ def write_github_output(overdue) -> bool:
     if not path:
         return False
     with open(path, "a", encoding="utf-8") as fh:
-        fh.write("overdue={}\n".format("true" if overdue else "false"))
-        fh.write("count={}\n".format(len(overdue)))
+        fh.write("overdue={}\n".format("true" if (overdue or mixed) else "false"))
+        fh.write("count={}\n".format(len(overdue) + (1 if mixed else 0)))
     return True
 
 
@@ -270,7 +373,50 @@ def fetch_rows(base_url: str, anon_key: str, sleep=None) -> list:
     return check_rows(result)
 
 
-def report(rows, overdue, today: datetime.date) -> None:
+def fetch_coverage_ym(base_url: str, anon_key: str, sleep=None) -> str:
+    """공개 뷰 `api.v_coverage_stats` 의 snapshot_ym 하나를 읽는다(GET · `Accept-Profile: api`).
+
+    재시도 표준은 의견함 rpc() 와 같다(같은 상수 — 5번 · 지수 백오프 · 401/403/404 는 한 번만).
+    뷰는 RPC 가 아니라 GET 이라 `Content-Profile` 이 아니라 `Accept-Profile` 로 스키마를 고른다
+    (PostgREST — 옛 문(public)은 노출 스키마에서 빠져 있다). 실패·모양 이상은 CallFailed.
+    """
+    sleep = sleep or time.sleep
+    url = f"{base_url}/rest/v1/{COVERAGE_VIEW}?select=snapshot_ym"
+    last = ""
+    for attempt in range(1, fd.RETRY_COUNT + 1):
+        req = urllib.request.Request(
+            url,
+            method="GET",
+            headers={
+                "apikey": anon_key,
+                "Authorization": f"Bearer {anon_key}",
+                "Accept-Profile": "api",
+                "User-Agent": "sangga-data-freshness",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=fd.TIMEOUT_S) as resp:  # noqa: S310
+                return check_coverage(json.loads(resp.read().decode("utf-8")))
+        except urllib.error.HTTPError as ex:
+            detail = ex.read().decode("utf-8", errors="replace") if ex.fp else ""
+            last = f"HTTP {ex.code} — {detail}".strip()
+            if ex.code in fd.NO_RETRY_HTTP_CODES or attempt == fd.RETRY_COUNT:
+                raise fd.CallFailed(f"{COVERAGE_VIEW} 조회에 실패했습니다: {last}") from ex
+        except (urllib.error.URLError, TimeoutError, OSError) as ex:
+            last = f"연결 실패({ex})"
+            if attempt == fd.RETRY_COUNT:
+                raise fd.CallFailed(f"{COVERAGE_VIEW} 조회에 실패했습니다: {last}") from ex
+        except json.JSONDecodeError as ex:
+            last = f"응답이 JSON 이 아닙니다({ex})"
+            if attempt == fd.RETRY_COUNT:
+                raise fd.CallFailed(f"{COVERAGE_VIEW} 조회에 실패했습니다: {last}") from ex
+        wait = fd.RETRY_BACKOFF_SEC * (2 ** (attempt - 1))
+        print(f"  · {COVERAGE_VIEW} {attempt}번째 실패({last}) — {wait}초 뒤 다시 시도합니다")
+        sleep(wait)
+    raise RuntimeError("재시도 루프가 한 번도 돌지 않았습니다 (RETRY_COUNT 확인).")
+
+
+def report(rows, overdue, today: datetime.date, mixed=None) -> None:
     """사람이 읽는 결과 화면."""
     with_date = sum(1 for r in rows if parse_date(r.get("next_expected")) is not None)
 
@@ -288,6 +434,14 @@ def report(rows, overdue, today: datetime.date) -> None:
         print("  → 포털에 새 판이 떴는지 확인 → 떴으면 적재")
     else:
         print("  예정일이 지난 줄         : 없음")
+    if mixed:
+        print("  ★ 화면 분기가 섞였습니다 : 화면 기준(표지) {} · 각주 {}".format(
+            mixed["published"] if mixed["published"] is not None else "(자료 없음)", mixed["coverage"]))
+        print("  → 화면 일부(가게 이름 검색·각주·업종 카드)가 다른 분기 — 표지를 되돌린 뒤 post_load 를 "
+              "안 돌림(또는 요약표를 손으로 갱신함) → python scripts/publish_snapshot.py --show 로 보고 "
+              "python scripts/post_load.py 뒤 python scripts/post_load.py --check")
+    else:
+        print("  화면 분기 섞임           : 없음")
     print("=" * 66)
 
 
@@ -335,6 +489,7 @@ def main(argv=None) -> int:
     try:
         today = args.today or today_kst()
         rows = fetch_rows(args.url.rstrip("/"), args.anon_key)
+        coverage_ym = fetch_coverage_ym(args.url.rstrip("/"), args.anon_key)
     except Exception as ex:
         print(f"[실패] {type(ex).__name__}: {ex}")
         print("확인을 못 했습니다 — '지난 것 없음'이 아닙니다.")
@@ -344,6 +499,7 @@ def main(argv=None) -> int:
     #    파일도 overdue 기록도 없다(형제 LH 공고 감시·하트비트와 같은 처방).
     try:
         overdue = find_overdue(rows, today)
+        mixed = find_mixed(rows, coverage_ym)
     except Exception as ex:
         print(f"[실패] 판정하는 중 {type(ex).__name__}: {ex} — 응답 모양이 바뀌었을 수 있습니다.")
         print("확인을 못 했습니다 — '지난 것 없음'이 아닙니다.")
@@ -354,13 +510,13 @@ def main(argv=None) -> int:
     #    워크플로가 1 + 이슈 파일만 보고 통과시키는데 overdue 값이 없어 이슈 단계가 건너뛰어져
     #    그 주가 조용히 초록이 된다. 그래서 따로 4 로 끝내 실패 알림으로 보낸다.
     try:
-        report(rows, overdue, today)
-        write_issue_files(overdue, today)
-        write_github_output(overdue)
+        report(rows, overdue, today, mixed)
+        write_issue_files(overdue, today, mixed=mixed)
+        write_github_output(overdue, mixed)
     except Exception as ex:
         print(f"[실패] 결과를 쓰는 중 {type(ex).__name__}: {ex} — 알림이 안 나갔을 수 있습니다.")
         return EXIT_OUTPUT_FAILED
-    return EXIT_OVERDUE if overdue else EXIT_OK
+    return EXIT_OVERDUE if (overdue or mixed) else EXIT_OK
 
 
 if __name__ == "__main__":
