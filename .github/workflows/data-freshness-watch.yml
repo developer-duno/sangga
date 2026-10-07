@@ -118,6 +118,16 @@ jobs:
           if [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; then
             exit 0
           fi
+          # 2 인데 이슈 파일과 overdue=true 기록이 **둘 다** 있으면 = 각주 뷰(화면 분기 대조)만 실패한 주다
+          # (2026-10-07 (3)). 여기서 2 로 끝내면 아래 이슈 단계(기본 success())가 건너뛰어져 지남 이슈까지
+          # 막힌다 → 0 으로 끝내 지남 이슈는 열고, partial=true 로 마지막 실패 이슈 단계를 따로 부른다.
+          # ⓘ 실패한 단계가 남긴 출력값을 뒤 단계가 읽는지에 기대지 않으려고 이 단계를 성공으로 끝낸다.
+          if [ "$rc" -eq 2 ] && ls data_freshness_issues/*.md >/dev/null 2>&1 \
+               && grep -Fxq 'overdue=true' "$GITHUB_OUTPUT"; then
+            echo "partial=true" >> "$GITHUB_OUTPUT"
+            echo "화면 분기 대조(각주 뷰)만 실패했습니다 (종료코드 2) — 지남 이슈는 열고 섞임 조회 실패는 실패 이슈로 알린다."
+            exit 0
+          fi
           # 4 = 조회는 됐는데 결과를 쓰다 실패 — 조회 실패(2)와 다른 말로 알린다(LH 공고 감시와 같다).
           if [ "$rc" -eq 4 ]; then
             echo "조회는 됐는데 결과를 쓰다 실패했습니다 (종료코드 4) — 알림이 안 나갔을 수 있습니다."
@@ -247,8 +257,10 @@ jobs:
       # 않으므로, 창고가 죽었거나 함수가 바뀌어도 아무 신호가 없다 — 조용한 실패가
       # 지난 날짜를 다시 "아무도 안 보는" 상태로 되돌리는 두 번째 경로다. 그래서 실패
       # 자체도 이슈로 시끄럽게 만든다(의견함 주간 알림·LH 공고 감시와 같은 형태).
+      # partial = 각주 뷰(화면 분기 대조)만 실패해 check 단계가 일부러 0 으로 끝난 주(2026-10-07 (3)) —
+      # job 은 실패가 아니지만 그 조회 실패도 같은 실패 이슈로 알린다.
       - name: 감시가 실패하면 그 사실을 이슈로 알린다
-        if: failure()
+        if: ${{ failure() || steps.check.outputs.partial == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

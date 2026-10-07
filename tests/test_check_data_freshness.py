@@ -409,6 +409,24 @@ def _assert_lookup_failed(monkeypatch, tmp_path, capsys, out):
     assert issue_files(tmp_path) == []
 
 
+def _assert_mixed_unknown(tmp_path, capsys, out, today="2026-11-02"):
+    """각주 뷰(화면 분기 대조)만 실패한 주 — 지남 판정·이슈 파일·기록은 그대로 하고 끝만 2 (2026-10-07 (3)).
+
+    돌려주는 것: (GITHUB_OUTPUT 값, 이슈 [(제목, 본문)]) — 지난 줄 수는 부르는 쪽이 본다.
+    """
+    assert cdf.main(["--today", today]) == cdf.EXIT_LOOKUP_FAILED == 2
+    said = capsys.readouterr().out
+    assert "[실패] 화면 분기 대조(각주 뷰)" in said
+    assert "화면 분기 섞임           : 없음" not in said, "확인 못 한 섞임을 '없음'이라 말하면 안 된다"
+    assert "화면 분기 섞임           : 확인 못 함" in said
+    got, issues = outputs(out), issue_files(tmp_path)
+    assert cdf.MIXED_TITLE not in [t for t, _ in issues], "확인 못 한 섞임으로 섞임 이슈를 열면 안 된다"
+    assert got.get("count") == str(len(issues))
+    assert got.get("overdue") == ("true" if issues else "false")
+    assert "partial" not in got, "partial 은 워크플로 단계가 쓴다 — 스크립트는 안 쓴다"
+    return got, issues
+
+
 def test_zero_rows_exits_two_not_zero(monkeypatch, tmp_path, capsys):
     """⛔ 0줄을 '지난 것 없음(0)'으로 끝내면 감시가 장님이 된 채 매주 초록불을 켠다."""
     out = set_env(monkeypatch, tmp_path)
@@ -670,7 +688,7 @@ class TestWorkflow:
     def test_failure_step_is_last_and_loud(self, workflow):
         step = _steps(workflow)[-1]
         assert step["name"] == "감시가 실패하면 그 사실을 이슈로 알린다"
-        assert step["if"] == "failure()"
+        assert step["if"] == "${{ failure() || steps.check.outputs.partial == 'true' }}"
         assert "--state open" in step["run"]
         assert ".github/data-freshness-failure-issue.md" in step["run"]
         assert os.path.exists(os.path.join(ROOT, ".github", "data-freshness-failure-issue.md"))
@@ -766,8 +784,12 @@ exit "$FAKE_RC"
     (1, False, False, 1),   # 잡지 못한 예외의 기본값 1
     (0, False, False, 0),   # 지난 것 없음
     (2, False, False, 2),   # 조회 실패 → 실패 알림
+    (2, True, True, 0),     # 각주 뷰만 실패 — 지남 이슈 파일 + overdue=true → 0 + partial=true (2026-10-07 (3))
+    (2, True, False, 2),    # ⛔ 2 인데 기록 없음 → 그대로 실패(partial 없음)
+    (2, False, True, 2),    # ⛔ 2 인데 이슈 파일 없음 → 그대로 실패(partial 없음)
     (4, True, False, 4),    # 결과를 쓰다 실패 → 실패 알림
-], ids=["1-둘다", "1-파일만", "1-기록만", "1-둘다없음", "0", "2", "4"])
+    (4, True, True, 4),     # ⛔ 4 는 파일·기록이 둘 다 있어도 partial 이 아니다(판정이 `-ge 2` 로 넓어지면 잡는다)
+], ids=["1-둘다", "1-파일만", "1-기록만", "1-둘다없음", "0", "2", "2-둘다", "2-파일만", "2-기록만", "4", "4-둘다"])
 def test_check_step_runs_for_real(workflow, tmp_path, rc, files, output, expect):
     gh_output = tmp_path / "gh_output"
     gh_output.write_bytes(b"")
@@ -781,6 +803,39 @@ def test_check_step_runs_for_real(workflow, tmp_path, rc, files, output, expect)
     assert res.returncode == expect, said
     if (rc, files, output) == (1, True, False):
         assert "overdue=true 기록이 없습니다" in said
+    recorded = gh_output.read_bytes().decode("utf-8").splitlines()
+    if (rc, files, output) == (2, True, True):
+        assert "partial=true" in recorded, said
+        assert "지남 이슈는 열고 섞임 조회 실패는 실패 이슈로 알린다" in said, said
+    else:
+        assert not any(line.startswith("partial=") for line in recorded), said
+
+
+def _failure_step_watches_partial(workflow):
+    """마지막 실패 이슈 단계의 if 가 `failure()` **또는** check 단계의 partial 기록을 보나.
+
+    못 보는 것: 표현식의 실제 평가(괄호로 묶은 다른 조건·공백 변형) — 글자만 본다.
+    """
+    cond = str(_steps(workflow)[-1].get("if", ""))
+    return ("failure()" in cond and "steps.check.outputs.partial == 'true'" in cond
+            and "||" in cond and "&&" not in cond)
+
+
+def test_failure_step_also_runs_on_partial(workflow):
+    """(f) 각주 뷰만 실패한 주(check 단계가 0 으로 끝남)에도 실패 이슈가 열린다 — 정적 단언."""
+    assert _failure_step_watches_partial(workflow)
+
+
+@pytest.mark.parametrize("old, new", [
+    (" || steps.check.outputs.partial == 'true'", ""),                       # 흔한 꼴 — 조건을 지움
+    ("steps.check.outputs.partial == 'true'", "steps.check.outputs.overdue == 'true'"),  # 다른 칸을 봄
+    (" || steps.check.outputs.partial", " && steps.check.outputs.partial"),  # 변형 꼴 — 또는 → 그리고
+], ids=["지움", "다른칸", "그리고"])
+def test_failure_step_partial_detector_catches_removal(workflow_text, old, new):
+    """(f) 양성 대조 — partial 조건을 망가뜨린 사본을 같은 탐지 함수가 잡는가."""
+    assert old in workflow_text
+    broken = yaml.safe_load(workflow_text.replace(old, new))
+    assert not _failure_step_watches_partial(broken)
 
 
 FAKE_GH = """#!/bin/sh
@@ -968,32 +1023,99 @@ def test_null_store_basis_is_mixed_and_says_no_data(monkeypatch, tmp_path):
     {"message": "oops"},
 ], ids=["0줄", "두줄", "분기모양", "칸없음", "목록아님"])
 def test_view_bad_shapes_are_lookup_failures(monkeypatch, tmp_path, capsys, coverage):
+    """각주 뷰 모양 이상 = 조회 실패(2) — 단 지남 판정·이슈는 그대로(2026-10-07 (3))."""
     out = set_env(monkeypatch, tmp_path)
     install_fake_urlopen(monkeypatch, live_like_rows(), coverage=coverage)
-    _assert_lookup_failed(monkeypatch, tmp_path, capsys, out)
+    _, issues = _assert_mixed_unknown(tmp_path, capsys, out)
+    assert len(issues) == 3
 
 
 def test_view_http_404_is_one_knock_then_lookup_failure(monkeypatch, tmp_path, capsys):
     out = set_env(monkeypatch, tmp_path)
     err = urllib.error.HTTPError(URL, 404, "Not Found", None, None)
     calls = install_fake_urlopen(monkeypatch, live_like_rows(), coverage=err)
-    _assert_lookup_failed(monkeypatch, tmp_path, capsys, out)
+    _, issues = _assert_mixed_unknown(tmp_path, capsys, out)
+    assert len(issues) == 3
     assert sum(cdf.COVERAGE_VIEW in c["url"] for c in calls) == 1
 
 
 def test_view_connection_failure_retries_then_lookup_failure(monkeypatch, tmp_path, capsys):
     out = set_env(monkeypatch, tmp_path)
     calls = install_fake_urlopen(monkeypatch, live_like_rows(), coverage=urllib.error.URLError("down"))
-    _assert_lookup_failed(monkeypatch, tmp_path, capsys, out)
+    _, issues = _assert_mixed_unknown(tmp_path, capsys, out)
+    assert len(issues) == 3
     assert sum(cdf.COVERAGE_VIEW in c["url"] for c in calls) == cdf.fd.RETRY_COUNT
 
 
 def test_missing_store_row_is_a_lookup_failure_not_quiet(monkeypatch, tmp_path, capsys):
-    """⛔ 서버 줄 이름이 바뀌어 '점포·업종 (상권정보)' 줄이 없으면 대조를 못 한다 — 조용히 넘기지 않는다."""
+    """⛔ 서버 줄 이름이 바뀌어 '점포·업종 (상권정보)' 줄이 없으면 대조를 못 한다 — 조용히 넘기지 않는다.
+
+    (c) find_mixed 예외(그 줄 없음) + 지난 줄 있음 → 각주 뷰 실패와 같다: 2 · 지남 이슈는 그대로.
+    """
     out = set_env(monkeypatch, tmp_path)
     rows = live_like_rows()[1:]
     install_fake_urlopen(monkeypatch, rows, coverage=[{"snapshot_ym": "202606"}])
+    got, issues = _assert_mixed_unknown(tmp_path, capsys, out)
+    assert got == {"overdue": "true", "count": "2"}
+    assert all(t.startswith("갱신 예정일이 지난 자료 — ") for t, _ in issues)
+
+
+# ── 각주 뷰만 실패한 주 — 지남 이슈는 막히지 않는다 (2026-10-07 (3)) ────────────────
+
+
+def test_view_failure_with_overdue_still_writes_overdue_issues(monkeypatch, tmp_path, capsys):
+    """(a) 각주 뷰 조회 실패 + 지난 줄 있음 → 2 · 이슈 파일 생김 · overdue=true · '없음'이라 말하지 않음."""
+    out = set_env(monkeypatch, tmp_path)
+    err = urllib.error.HTTPError(URL, 500, "Server Error", None, None)
+    install_fake_urlopen(monkeypatch, live_like_rows(), coverage=err)
+    got, issues = _assert_mixed_unknown(tmp_path, capsys, out)
+    assert got == {"overdue": "true", "count": "3"}
+    assert [t for t, _ in issues] == [
+        "갱신 예정일이 지난 자료 — 점포·업종 (상권정보) (예정 2026-10-31)",
+        "갱신 예정일이 지난 자료 — 건축 인허가 (예정 2026-10-31)",
+        "갱신 예정일이 지난 자료 — 상권 임대 동향 (부동산원) (예정 2026-10-31)",
+    ]
+
+
+def test_view_failure_without_overdue_writes_no_issue(monkeypatch, tmp_path, capsys):
+    """(b) 각주 뷰 조회 실패 + 지난 줄 없음 → 2 · 이슈 파일 없음 · overdue=false(워크플로는 그대로 실패로 본다)."""
+    out = set_env(monkeypatch, tmp_path)
+    install_fake_urlopen(monkeypatch, live_like_rows(), coverage=urllib.error.URLError("down"))
+    got, issues = _assert_mixed_unknown(tmp_path, capsys, out, today="2026-10-01")
+    assert issues == []
+    assert got == {"overdue": "false", "count": "0"}
+
+
+def test_find_mixed_any_exception_still_writes_overdue_issues(monkeypatch, tmp_path, capsys):
+    """(c) find_mixed 가 CallFailed 가 아닌 예외를 던져도 같다 — 안쪽 처리부도 Exception 전체를 받는다."""
+    out = set_env(monkeypatch, tmp_path)
+    install_fake_urlopen(monkeypatch, live_like_rows())
+
+    def boom(rows, coverage_ym):
+        raise TypeError("칸 모양이 다릅니다")
+
+    monkeypatch.setattr(cdf, "find_mixed", boom)
+    got, issues = _assert_mixed_unknown(tmp_path, capsys, out)
+    assert got == {"overdue": "true", "count": "3"} and len(issues) == 3
+
+
+def test_freshness_rpc_failure_still_blocks_everything(monkeypatch, tmp_path, capsys):
+    """(d) 신선도 함수 자체가 실패 → 지금처럼 2 · 이슈 파일·기록 없음 · 각주 뷰는 부르지도 않는다."""
+    out = set_env(monkeypatch, tmp_path)
+    err = urllib.error.HTTPError(URL, 500, "Server Error", None, None)
+    calls = install_fake_urlopen(monkeypatch, err, coverage=[{"snapshot_ym": "202606"}])
     _assert_lookup_failed(monkeypatch, tmp_path, capsys, out)
+    assert not any(cdf.COVERAGE_VIEW in c["url"] for c in calls)
+
+
+def test_view_failure_then_output_failure_is_four_not_two(monkeypatch, tmp_path, capsys):
+    """결과 쓰기 실패(4)가 섞임 확인 실패(2)보다 먼저다 — 알림이 안 나갔을 수 있다는 쪽이 더 급하다."""
+    set_env(monkeypatch, tmp_path)
+    blocked = tmp_path / "gh_output_is_a_folder"
+    blocked.mkdir()
+    monkeypatch.setenv("GITHUB_OUTPUT", str(blocked))
+    install_fake_urlopen(monkeypatch, live_like_rows(), coverage=urllib.error.URLError("down"))
+    assert cdf.main(["--today", "2026-11-02"]) == cdf.EXIT_OUTPUT_FAILED == 4
 
 
 def test_mixed_issue_goes_through_the_workflow_issue_step_for_real(monkeypatch, workflow, tmp_path):
