@@ -2329,3 +2329,12 @@ pytest **4,457 passed**(본 폴더) · vitest **960 passed** · tsc 0 · oxlint 
 - E2E **AJ**(`e2e/floor-stack.spec.ts` 상호명 묶음): 세 줄 분량의 긴 지어낸 상호 셋 + '외 4곳' → `.stores__names` 높이가 주소 줄 한 줄의 1.3배보다 크고 2배+2px 이하 · 주소 줄 `white-space: nowrap`(양성 대조). 넓은 화면·mobile 둘 다 실측 41.6px(한 줄 20.8px × 2). E2E 35 → **36개(72회)** — CLAUDE.md·e2e-catalog 숫자와 목록 갱신 · feature-notes 0028 줄에 한 구절.
 
 **검증**: E2E 72 passed · vitest 960 · build 0 · oxlint 0. 적대 Sonnet 1명(ui-adversary · 지문 03a4f32833ffc99c) 🔴🟠 0 — 변이 넷(두 줄 제한 통째 삭제 · 3 으로 · 주소 줄도 묶음에서 빼기 · 글자 크기 삭제) 전부 KILLED. 🟡 글자 크기 삭제가 잡힌 것은 높이 상한의 부수효과라 14px 처럼 조금 키우는 회귀는 못 잡을 수 있다(기록만). 그림 두 장 눈 확인 정상 — 시험 상호가 세 줄 분량이라 412px 에서는 둘째 줄 끝 '외 …' 가 말줄임으로 잘린다(결정 C 의 셋째 줄부터 말줄임 그대로).
+- 라이브 확인(머지 #239 → main 8c2c492 뒤 · 강남 '카페' · 1280px·Pixel 7): 첫 카드 92px / 156px · 상호 줄 41.6px(주소 줄 20.8 × 2) · 앞 5줄 잘림 0('외 3곳' 보임) · 가로 넘침 0 · 콘솔 오류 0.
+
+## 2026-10-07 (5) — 보안 알림 #14: source-map-js 1.2.1 → 1.2.2
+
+**왜**: dependabot 알림 #14(GHSA-68fv-2mgg-jv7q · high · 영향 `>= 1.0.0, < 1.2.2` · 첫 고친 판 1.2.2) — 인덱스 소스맵 구간 오프셋으로 이벤트 루프를 멈추게 할 수 있다. 개발용 간접 의존(postcss@8.5.26 → vite · css-tree@3.2.1 → jsdom)이라 손님 화면 묶음에는 안 실린다. 👤 10-07 "지금 고쳐줘".
+
+**한 것**: `pnpm-lock.yaml` 의 source-map-js 판과 integrity 만 손으로 1.2.2 로(5줄). `pnpm update source-map-js` 는 알림과 무관한 `@babel/runtime` 7.29.7 → 7.29.10 까지 끌어와서 되돌렸다. 두 부품의 선언 범위가 `^1.2.1` 이라 package.json·overrides 는 무변경. 1.2.2 는 1.2.1 과 같은 올린 사람(7rulnik)·같은 저장소 · 의존 0 · 설치 스크립트 없음.
+
+**검증**: `pnpm install --frozen-lockfile` 0(설치된 판 1.2.2 하나) · build 0 · vitest 960 · E2E 72 · oxlint 0. 할루 검사관(Sonnet)이 잠금 파일 변경을 사실 대조.
