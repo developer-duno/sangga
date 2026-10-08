@@ -27,10 +27,13 @@ if _SCRIPTS_DIR not in sys.path:
 
 import load_price_gate as L  # noqa: E402
 
-# 결정 0013 §2 가 확정한 통과 구 14곳(서울 10 + 대전 4). 성적표 v1 기준.
+# 결정 0013 §7 이 받은 통과 구 15곳(서울 12 + 대전 3). 성적표 v2 기준(2026-10-08 결재 —
+# 규칙대로: v1 14곳에서 중랑 11260·대전 동구 30110 탈락, 금천 11545·영등포 11560·송파 11710 통과).
+# v1(결정 0013 §2)의 14곳은 11140·11170·11260·11350·11380·11440·11470·11500·11650·11680·
+# 30110·30170·30200·30230 이었다.
 DECISION_0013_PASSED = {
-    "11140", "11170", "11260", "11350", "11380", "11440", "11470", "11500",
-    "11650", "11680", "30110", "30170", "30200", "30230",
+    "11140", "11170", "11350", "11380", "11440", "11470", "11500", "11545",
+    "11560", "11650", "11680", "11710", "30170", "30200", "30230",
 }
 
 
@@ -250,10 +253,10 @@ def test_레포_통과구_CSV가_읽히고_SQL이_된다():
     assert sql.startswith("begin;") and sql.rstrip().endswith("commit;")
 
 
-def test_레포_통과구_CSV가_결정0013과_같은_14곳이다():
-    """★ 결정 0013 §2 가 확정한 목록. 손으로 구를 넣고 빼면 여기서 걸린다.
+def test_레포_통과구_CSV가_결정0013_7과_같은_15곳이다():
+    """★ 결정 0013 §7(성적표 v2)이 받은 목록. 손으로 구를 넣고 빼면 여기서 걸린다.
 
-    성적표 v2 를 뽑아 목록이 정당하게 바뀌는 날에는 이 기대값도 같이 바꾼다 —
+    다음 판(v3)을 뽑아 목록이 정당하게 바뀌는 날에는 이 기대값도 같이 바꾼다 —
     그때 "왜 바뀌었나"를 사람이 한 번은 보게 하는 것이 이 테스트의 목적이다.
     """
     rows = L.read_gate_csv(L.DEFAULT_CSV)
@@ -261,16 +264,37 @@ def test_레포_통과구_CSV가_결정0013과_같은_14곳이다():
     assert passed == DECISION_0013_PASSED
 
 
-def test_레포_통과구_CSV에서_금천구는_탈락이다():
-    """★ 금천구(11545)는 오차 26.0% 로 조건 ①을 통과하지만 구 평균(17.6%)에 진다.
+def test_레포_통과구_CSV는_열린_지역_30구뿐이다():
+    """★ 결정 0013 §7 — 백테스트가 열린 구만 채점한다(전남광주 12 가 섞이면 안 된다)."""
+    codes = [r["sigungu_code"] for r in L.read_gate_csv(L.DEFAULT_CSV)]
+    assert len(codes) == 30
+    assert sorted({c[:2] for c in codes}) == ["11", "30"]
 
-    결정 0013 §2 가 "목록 갱신 때 실수로 되살리지 말 것"이라고 못 박은 유일한 사례다.
+
+def test_레포_통과구_CSV에서_대전_동구는_조건2에서_탈락이다():
+    """★ 대전 동구(30110)는 v2 에서 오차 30% 이하(조건 ①)인데 구 평균에 져서(조건 ②) 빠진다.
+
+    v1 의 금천구(11545)가 맡던 "①은 통과·②에서 진" 사례다 — 이 갈래가 없으면 조건 ②가
+    죽어도 아무 시험도 안 운다.
+    """
+    by_code = {r["sigungu_code"]: r for r in L.read_gate_csv(L.DEFAULT_CSV)}
+    donggu = by_code["30110"]
+    assert donggu["gate_pass"] is False
+    assert donggu["ladder_mdape"] <= 0.30          # 조건 ①은 통과했다
+    assert donggu["ladder_mdape"] > donggu["base_mdape"]   # 조건 ②에서 졌다
+
+
+def test_레포_통과구_CSV에서_금천구는_v2에서_규칙대로_통과다():
+    """★ 금천구(11545)는 v1 에서 구 평균에 져 빠졌지만 v2 에서는 두 조건을 다 넘는다.
+
+    결정 0013 §2 의 "실수로 되살리지 말 것"은 **손으로** 되살리지 말라는 뜻이다 — v2 는
+    같은 규칙의 계산 결과이고 사장님이 '규칙대로 받음'으로 결재했다(결정 0013 §7).
     """
     by_code = {r["sigungu_code"]: r for r in L.read_gate_csv(L.DEFAULT_CSV)}
     gunchon = by_code["11545"]
-    assert gunchon["gate_pass"] is False
-    assert gunchon["ladder_mdape"] <= 0.30          # 조건 ①은 통과했다
-    assert gunchon["ladder_mdape"] > gunchon["base_mdape"]   # 조건 ②에서 졌다
+    assert gunchon["gate_pass"] is True
+    assert gunchon["ladder_mdape"] <= 0.30
+    assert gunchon["ladder_mdape"] < gunchon["base_mdape"]
 
 
 def test_레포_통과구_CSV의_판정이_기준선과_일치한다():

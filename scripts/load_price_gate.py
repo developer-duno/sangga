@@ -176,7 +176,7 @@ def assert_any_pass(rows):
     if not any(r["gate_pass"] for r in rows):
         raise ValueError(
             "통과한 구가 한 곳도 없습니다. 이대로 넣으면 참고 시세가 전 지역에서 "
-            "사라집니다 — 성적표(docs/backtest/성적표-v1.md)가 제대로 나왔는지 먼저 "
+            "사라집니다 — 성적표(docs/backtest/성적표-v2.md)가 제대로 나왔는지 먼저 "
             "확인하세요.")
     return True
 

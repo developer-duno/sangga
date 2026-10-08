@@ -42,7 +42,9 @@ CLAUDE.md 검증 규칙: "미래로 과거를 맞히면 성적이 부풀려진�
 
 출력 (기본 `docs/backtest/`)
 ----------------------------
-- `성적표-v1.md`            — 사람이 읽는 성적표(방법·한계·표·판단 재료)
+- `성적표-v2.md`            — 사람이 읽는 성적표(방법·한계·표·판단 재료). 판 번호는
+                              `SCORECARD_VERSION` 상수. 옛 판(`성적표-v1.md`)은 결정 0013 의
+                              근거라 지우지 않고 남긴다.
 - `단계별지표.csv`          — 단계 × 축(전체/시도/구/층대) 지표
 - `운영모드지표.csv`        — 사다리 걷기 결과(채택 단계 분포·축별 성적)
 - `검증거래별원자료.csv`    — 검증 거래 한 건마다 모든 단계의 추정·표본수·오차
@@ -59,7 +61,7 @@ CLAUDE.md 검증 규칙: "미래로 과거를 맞히면 성적이 부풀려진�
 = 같은 시군구 + 같은 유형 + 같은 층대(최소 5건)** 을 L5 뒤·L6 앞에 끼운다.
 
 ⚠️ 이 모드는 **새 파일 2개만** 쓴다(`1층-유형축-검증.md`·`1층유형별지표.csv`).
-   `성적표-v1.md`·`통과구.csv` 등 기존 4종은 건드리지 않는다 — 결정 0013 의 통과 구
+   `성적표-v2.md`·`통과구.csv` 등 기존 4종은 건드리지 않는다 — 결정 0013 의 통과 구
    목록은 기본 모드의 계산에서만 나오고, 검토용 실험이 그것을 덮어쓰면 화면에 열리는
    구가 소리 없이 바뀐다.
 
@@ -173,6 +175,18 @@ TX_QUERY = (
 )
 
 SIDO_NAMES = {"11": "서울특별시", "30": "대전광역시"}
+
+# 성적표 판. 올리는 것은 사람 손이고 **별건 결재가 선행**한다(결정 0013 §4·§7 — 통과 구가
+# 조용히 바뀔 수 있어서). v2(2026-10-08) = 지분 거래 제외 + 열린 지역만 채점.
+# 화면 쪽 짝: `scripts/build_scorecard_json.py` 의 VERSION · `src/lib/appConstants.ts` 의 SCORECARD_URL.
+SCORECARD_VERSION = "v2"
+SCORECARD_MD = "성적표-{}.md".format(SCORECARD_VERSION)
+
+# ⛔ 열린 지역만 채점한다(결정 0013 §7 — 2026-10-08 사장님 결재). 실거래는 서울·대전 밖
+#    (전남광주통합특별시 12 등)도 들어와 있는데, 화면이 그 구를 열지 않으니 그 구의 성적은
+#    쓰일 곳이 없고 게이트 표만 어지럽힌다. 열린 지역의 진실은 서버 RPC 한 곳뿐이다
+#    (`list_open_sigungu()` — 화면과 같은 문). `mv_open_sigungu` 를 직접 읽지 않는다.
+OPEN_SIGUNGU_RPC = "list_open_sigungu"
 
 
 def log(message):
@@ -634,6 +648,59 @@ def fetch_transactions(base_url, headers):
     return rest_select(base_url, headers, "transaction", TX_QUERY, order="tx_id")
 
 
+def fetch_open_sigungu(base_url):
+    """열린 지역 시군구 코드 집합 — 화면과 같은 RPC(`list_open_sigungu()`)로 읽는다.
+
+    ⚠️ **공개키(ANON)로 부른다.** api 쌍둥이 함수의 실행 권한은 anon 에만 준다
+       (CLAUDE.md 🚪 — 새 함수는 닫힌 채 태어나고 grant 는 anon 에만). 서비스 키로 부르면
+       `permission denied for function list_open_sigungu`(HTTP 403)다 — 2026-10-08 실측.
+    ⛔ 실패하면 멈춘다. 여기서 조용히 넘어가면 전남광주가 섞인 게이트 표가 나온다.
+    """
+    load_dotenv()
+    key = (os.environ.get("SANGGA_SUPABASE_ANON_KEY") or "").strip()
+    if not key:
+        raise RuntimeError(
+            ".env에 SANGGA_SUPABASE_ANON_KEY 가 필요합니다 — 열린 지역 RPC 는 공개키로만 열린다.")
+    headers = {"apikey": key, "Authorization": "Bearer {}".format(key),
+               "Content-Type": "application/json"}
+    url = "{}/rest/v1/rpc/{}".format(base_url, OPEN_SIGUNGU_RPC)
+    r = requests.post(url, headers=headers, json={}, timeout=REST_TIMEOUT_SEC)
+    if r.status_code >= 300:
+        raise RuntimeError("{} 조회 실패 (HTTP {}): {}".format(
+            OPEN_SIGUNGU_RPC, r.status_code, r.text[:300]))
+    return {str(row["sigungu_code"]) for row in r.json() if row.get("sigungu_code")}
+
+
+def filter_open_sigungu(rows, open_codes):
+    """열린 지역의 거래만 남긴다 → (남긴 거래, 시도별 제외 건수 Counter).
+
+    ⛔ 열린 집합이 비면 **멈춘다** — 조용히 0건을 채점하거나(전부 제외) 거르기를 건너뛰면
+       (전부 통과) 둘 다 에러 없이 틀린 성적표가 된다.
+    """
+    open_codes = set(open_codes or ())
+    if not open_codes:
+        raise RuntimeError("열린 지역 목록이 비었습니다 — list_open_sigungu() 결과를 확인하세요.")
+    kept = []
+    excluded = Counter()
+    for r in rows:
+        code = r.get("sigungu_code")
+        if code in open_codes:
+            kept.append(r)
+        else:
+            excluded[(code or "?")[:2]] += 1
+    return kept, excluded
+
+
+def apply_open_filter(base_url, raw):
+    """`fetch_transactions` 직후 공통 단계 — 열린 지역만 남기고 제외 건수를 로그한다."""
+    open_codes = fetch_open_sigungu(base_url)
+    kept, excluded = filter_open_sigungu(raw, open_codes)
+    log("      열린 지역 {}개 구 → 채점 대상 {:,}건".format(len(open_codes), len(kept)))
+    for sido, n in sorted(excluded.items()):
+        log("      열린 지역 밖 제외: 시도 {} {:,}건".format(sido, n))
+    return kept, open_codes, excluded
+
+
 def fetch_parcel_coords(base_url, headers, pnus):
     """필지 좌표를 100개씩 끊어 읽는다 → {pnu: (lat, lng)}."""
     coords = {}
@@ -1009,7 +1076,7 @@ def build_markdown(ctx):
     lines = []
     add = lines.append
 
-    add("# 시세 추정 백테스트 성적표 v1 — 서울 + 대전")
+    add("# 시세 추정 백테스트 성적표 {} — 서울 + 대전".format(SCORECARD_VERSION))
     add("")
     add("> 생성: {} (KST) · 스크립트: `scripts/backtest_price.py` · DB 읽기 전용"
         .format(ctx["generated_at"]))
@@ -1091,6 +1158,11 @@ def build_markdown(ctx):
     add("- **대상**: `transaction` 중 `tx_type='집합'` + PNU·층·단가가 모두 있고 지분 거래가 아닌 거래 "
         "**{:,}건**(서울 {:,} · 대전 {:,}).".format(
             ctx["total"], ctx["sido_counts"].get("11", 0), ctx["sido_counts"].get("30", 0)))
+    add("- **열린 지역(서울·대전 {}개 구)만** 채점한다 — 화면이 여는 구(`list_open_sigungu()`)의 "
+        "거래만 남겼다(결정 0013 §7). 열린 지역 밖 제외: {}.".format(
+            ctx["open_count"],
+            " · ".join("시도 {} {:,}건".format(s, n) for s, n in sorted(ctx["excluded"].items()))
+            or "0건"))
     add("- **시간 분할**: 학습 `contract_ym <= {}` **{:,}건** / 검증 `contract_ym >= {}` "
         "**{:,}건** / 범위 밖 **{:,}건**. 합 {:,} = 전체 {:,}."
         .format(ctx["train_until"], len(ctx["train"]), ctx["test_from"], len(ctx["test"]),
@@ -1320,7 +1392,7 @@ def _paired_row(name, p):
 
 # ── 유형축(L7) 검증 — 별도 산출물 ────────────────────────────────────────────
 #
-# ⚠️ 이 아래 코드는 `성적표-v1.md`·기존 CSV 4종을 **쓰지 않는다**. 결정 0013 의 통과 구
+# ⚠️ 이 아래 코드는 `성적표-v2.md`(SCORECARD_MD)·기존 CSV 4종을 **쓰지 않는다**. 결정 0013 의 통과 구
 #    목록은 그 계산에서만 나오므로, 검토용 실험이 그 파일을 덮어쓰면 화면에 열리는 구가
 #    조용히 바뀔 수 있다. 그래서 파일 이름도 경로도 겹치지 않게 새로 만든다.
 
@@ -1453,8 +1525,8 @@ def build_place_markdown(ctx):
     add("")
     add("> 생성: {} (KST) · 스크립트: `python scripts/backtest_price.py --place-axis` · "
         "DB 읽기 전용".format(ctx["generated_at"]))
-    add("> **기존 성적표(`성적표-v1.md`)와 통과 구 목록(`통과구.csv`)은 이 실행이 "
-        "건드리지 않는다.** 결정 0013 의 게이트는 그 계산에서만 나온다.")
+    add("> **기존 성적표(`{}`)와 통과 구 목록(`통과구.csv`)은 이 실행이 "
+        "건드리지 않는다.** 결정 0013 의 게이트는 그 계산에서만 나온다.".format(SCORECARD_MD))
     add("> 이 문서도 **사실만 적는다.** 1층을 열지 말지는 사장님 결재 사항이다.")
     add("")
 
@@ -1762,6 +1834,7 @@ def run_place(args):
     log("[1/6] 실거래(집합·PNU·층·단가 보유) 읽는 중 …")
     raw = fetch_transactions(base_url, headers)
     log("      {:,}건".format(len(raw)))
+    raw, _, _ = apply_open_filter(base_url, raw)
 
     pnus = [r["pnu"] for r in raw if r.get("pnu")]
 
@@ -1834,6 +1907,7 @@ def run(args):
     log("[1/6] 실거래(집합·PNU·층·단가 보유) 읽는 중 …")
     raw = fetch_transactions(base_url, headers)
     log("      {:,}건".format(len(raw)))
+    raw, open_codes, excluded = apply_open_filter(base_url, raw)
 
     log("[2/6] 필지 좌표 읽는 중 (100개씩) …")
     pnus = [r["pnu"] for r in raw if r.get("pnu")]
@@ -1868,7 +1942,7 @@ def run(args):
     op_csv = os.path.join(args.out_dir, "운영모드지표.csv")
     raw_csv = os.path.join(args.out_dir, "검증거래별원자료.csv")
     gate_csv = os.path.join(args.out_dir, "통과구.csv")
-    md_path = os.path.join(args.out_dir, "성적표-v1.md")
+    md_path = os.path.join(args.out_dir, SCORECARD_MD)
 
     write_stage_csv(stage_csv, scored, sigungu_names)
     write_operating_csv(op_csv, scored, sigungu_names)
@@ -1881,6 +1955,8 @@ def run(args):
         "test": test,
         "outside": outside,
         "total": len(rows),
+        "open_count": len(open_codes),
+        "excluded": excluded,
         "train_until": args.train_until,
         "test_from": args.test_from,
         "sigungu_names": sigungu_names,

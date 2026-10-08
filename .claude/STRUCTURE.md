@@ -20,7 +20,7 @@ src/                     # 프론트 (라우터·상태관리 라이브러리 �
 │   ├── LhNoticeSection.tsx  # LH 상가 분양·입점 공고(결정 0022) — **입구**(구는 골랐고 건물은
 │   │                         #   아직)에 App 이 직접 꽂음. list_lh_notices, ENTRY_SECTION_PLAN
 │   ├── ScorecardSection.tsx # "참고 시세는 얼마나 맞나" 성적표(Wave 4) — 같은 입구 자리.
-│   │                         #   판정은 list_price_gate(), 방법·분포는 구운 /scorecard-v1.json
+│   │                         #   판정은 list_price_gate(), 방법·분포는 구운 /scorecard-v2.json
 │   ├── TxFlowSection.tsx    # 동네 매매 단가 흐름(결정 0027) — 같은 입구 자리의 셋째 카드.
 │   │                         #   get_sigungu_tx_yearly(구×연도). 연도 리터럴 0(주석까지)
 │   ├── DistrictMap.tsx      # 카카오맵 + 상권 폴리곤 (정적 /districts.geojson — Supabase 안 씀)
@@ -73,7 +73,7 @@ src/                     # 프론트 (라우터·상태관리 라이브러리 �
     ├── txFlow.ts        # 동네 매매 단가 흐름 순수 계산(결정 0027) — 요약 문구·부분 해 라벨·
     │                     #   표본 부족 가르기·막대 폭. 연도 리터럴 0(시험이 원문을 훑어 지킴)
     ├── scorecard.ts     # 성적표 순수 계산(Wave 4) — 통계 수치 리터럴 0, 판정은 서버 gate_pass
-    │                     #   그대로. /scorecard-v1.json 을 읽어 방법·단계 분포만 그림
+    │                     #   그대로. /scorecard-v2.json 을 읽어 방법·단계 분포만 그림
     ├── dataFreshness.ts # 자료 기준일 표의 순수 계산 — 날짜·분기·주기가 이 파일에 하나도 없음
     │                     #   (`new Date('YYYY-MM-DD')` 은 UTC 자정이라 안 씀 — 적힌 그대로 적음)
     ├── handoffLinks.ts  # 넘기는 곳 목록·역할별 시작점(결정 0014 §5). 머리말에 **주소 확인 기록** —
@@ -87,7 +87,7 @@ src/                     # 프론트 (라우터·상태관리 라이브러리 �
 
 public/                  # 정적 자산 (Supabase 를 안 거치는 것만)
 ├── districts.geojson    # 상권 경계 1.1MB — build_district_geojson.py 로 굽고 커밋
-├── scorecard-v1.json    # 백테스트 성적표 — build_scorecard_json.py 로 굽고 커밋
+├── scorecard-v2.json    # 백테스트 성적표 — build_scorecard_json.py 로 굽고 커밋
 ├── favicon.svg
 └── icons.svg
 
@@ -113,7 +113,7 @@ scripts/                 # 데이터 파이프라인 전부 21개 (수동 실행
 ├── backtest_openclose.py            # 결정 0033 R3 개업·폐업 정답지(사진 비교 vs 서울시 공표 · docs/backtest/) — DB·외부 호출 0 · shapely 필요
 ├── load_price_gate.py               # 통과구.csv → price_gate_sigungu 적재(관문 3종, 걸리면 롤백)
 ├── build_district_geojson.py        # district → public/districts.geojson (단순화)
-├── build_scorecard_json.py          # 백테스트 CSV 3종 → public/scorecard-v1.json (굽고 커밋 —
+├── build_scorecard_json.py          # 백테스트 CSV 3종 → public/scorecard-v2.json (굽고 커밋 —
 │                                    #   산출물이라 DB 에 안 넣음. 통과 구 정본은 여전히 서버)
 ├── build_rone_map.py / load_rone_map.py  # district↔R-ONE 매핑 후보 생성 / seed 적재(관문 3종)
 ├── seeds/               # district_rone_map.csv (사람이 확정한 매핑 정본)
@@ -174,7 +174,7 @@ docs/                    # 상세계획·알려진한계(조사 전 필독)·PRO
 - **대표 시나리오** (검색→층 스택→가지고 나가기): 첫 그림에서 주소(`?sgg=&bld=`)가 있으면
   `restoreBuilding.ts` 로 검색 없이 건물을 되살리고, 없으면 RegionPicker `list_open_sigungu()` →
   구 선택(이때 입구에 `LhNoticeSection`=`list_lh_notices`, `ScorecardSection`=`list_price_gate`+
-  `/scorecard-v1.json`, `TxFlowSection`=`get_sigungu_tx_yearly` 가 뜬다. 지도에서 상권을 누르면 `DistrictBuildings` 가
+  `/scorecard-v2.json`, `TxFlowSection`=`get_sigungu_tx_yearly` 가 뜬다. 지도에서 상권을 누르면 `DistrictBuildings` 가
   `list_district_buildings`·`list_parcel_buildings` 로 그 안의 땅을 펼친다) →
   BuildingSearch `search_buildings(q, lim, sigungu)`(0건 시 `search_scope`) ∥ `search_stores(q, lim, sigungu, p_offset)`(상호 → 땅, 0028) → 선택 →
   FloorStack 이 8개 질의 동시 발사: `v_coverage_stats`·`v_floor_stack`·`list_building_districts(bld_id)`·

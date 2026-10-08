@@ -48,7 +48,7 @@ function ops(over: Partial<ScorecardOpsMode> = {}): ScorecardOpsMode {
 
 function card(over: Partial<Scorecard> = {}): Scorecard {
   return {
-    version: 'v1',
+    version: 'v2',
     generated_at: '2026-08-15T23:44:00+09:00',
     sources: { '통과구.csv': 'a'.repeat(64) },
     stages: [],
@@ -279,7 +279,7 @@ describe('검증기 — 뜻밖의 답이 렌더로 흘러들지 않게', () => {
 
   it('성적표 파일의 모양을 본다', () => {
     expect(isScorecard(card())).toBe(true);
-    expect(isScorecard({ version: 'v1' })).toBe(false);
+    expect(isScorecard({ version: 'v2' })).toBe(false);
     expect(isScorecard(card({ ops_modes: [{ kind: 1 } as unknown as ScorecardOpsMode] }))).toBe(
       false,
     );
@@ -315,7 +315,7 @@ describe('loadScorecard — 파일 한 번만 받기', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(loadScorecard()).rejects.toThrow();
-    await expect(loadScorecard()).resolves.toMatchObject({ version: 'v1' });
+    await expect(loadScorecard()).resolves.toMatchObject({ version: 'v2' });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 

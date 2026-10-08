@@ -29,7 +29,7 @@ import type { PriceGateRow, Scorecard } from '../types';
  *
  * ⛔ 숫자를 옮겨 적지 않는다
  * --------------------------
- * 판정은 서버(`list_price_gate()`)가, 방법·단계 분포는 구워 둔 파일(`/scorecard-v1.json`)이
+ * 판정은 서버(`list_price_gate()`)가, 방법·단계 분포는 구워 둔 파일(`/scorecard-v2.json`)이
  * 준다. 이 파일에 통계 수치 리터럴은 **한 개도 없다** — 한 번 옮겨 적으면 성적표를 다시
  * 뽑는 날 화면만 옛 성적을 말하고, 그것은 에러가 아니라 조용한 거짓말이다.
  * (`src/lib/scorecard.test.ts` 가 이 두 파일을 정규식으로 훑어 지킨다.)
