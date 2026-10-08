@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { AppFooter } from './components/AppFooter';
 import { BuildingSearch } from './components/BuildingSearch';
 import { DistrictMap } from './components/DistrictMap';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { FloorStack } from './components/FloorStack';
+import { FounderChips } from './components/FounderChips';
 import { LhNoticeSection } from './components/LhNoticeSection';
 import { PrintButton } from './components/PrintButton';
 import { PrintHeader } from './components/PrintHeader';
@@ -14,7 +15,8 @@ import { ShareButton } from './components/ShareButton';
 import { TxFlowSection } from './components/TxFlowSection';
 import { FLOOR_STACK_VIEW } from './lib/appConstants';
 import { buildingFromFloorRows } from './lib/restoreBuilding';
-import type { ViewerRole } from './lib/sectionCards';
+import { FOUNDER_CHIP_ALL, type FounderChip } from './lib/founderChips';
+import { entryBlockOrder, type EntryBlockKey, type ViewerRole } from './lib/sectionCards';
 import { supabase } from './lib/supabase';
 import { buildAppSearch, buildShareUrl, isSameSearch, parseAppUrl } from './lib/urlState';
 import { loadViewerRole, saveViewerRole } from './lib/viewerRoleStore';
@@ -40,9 +42,16 @@ export default function App() {
     ⛔ 주소·의견함에는 싣지 않는다(위 주소 쓰기·아래 `feedbackContext` 에 넣지 말 것).
   */
   const [viewerRole, setViewerRole] = useState<ViewerRole | null>(() => loadViewerRole());
+  /*
+    창업자 업종 칩(결정 0036 결정 18 ④⑤⑨). ⛔ **화면만** — 이 기기 저장·주소·의견함 어디에도 싣지
+    않는다(새로고침 = 전체). 창업자에서 벗어나면 전체로 돌린다 — 다른 역할에 칩 효과가 남지 않게.
+  */
+  const [founderChip, setFounderChip] = useState<FounderChip>(FOUNDER_CHIP_ALL);
+  const activeChip = viewerRole === '창업자' ? founderChip : FOUNDER_CHIP_ALL;
   function handlePickRole(role: ViewerRole | null) {
     setViewerRole(role);
     saveViewerRole(role);
+    if (role !== '창업자') setFounderChip(FOUNDER_CHIP_ALL);
   }
 
   /*
@@ -161,6 +170,65 @@ export default function App() {
     bldId: selected?.bld_id ?? null,
   });
 
+  /*
+    입구 두 덩어리 — 그리는 차례는 아래 `entryBlockOrder` 가 정한다(층별 카드의 `sectionOrder` 와 같은 꼴).
+  */
+  const entryBlocks: Record<EntryBlockKey, ReactNode> = {
+    search: (
+      /*
+        구가 바뀔 때마다 BuildingSearch를 key로 통째로 새로 그린다. 검색어·검색 결과·
+        안내창은 전부 그 컴포넌트 내부 상태라 밖에서 하나씩 비울 수 없고, 다른 구에서
+        찾은 결과가 화면에 남아 있으면 안 되기 때문이다(2026-08-13 사장님 결정).
+
+        onSearchStart 로는 (구를 바꾸지 않고) 같은 구 안에서 새로 검색했을 때 이전
+        선택을 비운다 — 안 그러면 새 검색을 해도 아래 스택이 **이전에 고른 건물**
+        그대로 남는다. "결과가 없습니다"가 뜬 상태에서도 옛 건물 스택이 그대로
+        보였다(2026-08-08 적대검증 라이브 재현).
+      */
+      <BuildingSearch
+        key={sigungu ?? '__no_region__'}
+        onSelect={handleSelectBuilding}
+        onSearchStart={() => {
+          userActedRef.current = true;
+          setSelected(null);
+        }}
+        selectedBldId={selected?.bld_id ?? null}
+        sigungu={sigungu}
+        sigunguName={sigunguName}
+      />
+    ),
+    map: (
+      /*
+        상권 지도(결정 0010). 구를 고르면 **건물을 안 골랐어도** 보인다 — 지도는 이 서비스의
+        첫인상이라 탭이나 건물 선택 뒤에 숨기면 있는 줄도 모른다. 구를 안 골랐을 때는
+        컴포넌트가 스스로 아무것도 그리지 않는다(그릴 범위가 정해지지 않았으므로).
+      */
+      /*
+        ⚠️ key 를 구 코드로 주는 이유 — 그물(ErrorBoundary)은 한 번 오류를 받으면 스스로
+           풀리지 않는다. key 가 없으면 A구 지도에서 한 번 터진 뒤 B구로 옮겨도 **계속**
+           오류 안내만 보인다. 구가 바뀌면 그물을 새로 쳐서 다시 그려 보게 한다.
+        지도는 바깥 지도 SDK 를 태우는 자리라 우리 코드만으로는 터질 자리를 다 못 셈한다.
+      */
+      <ErrorBoundary
+        key={`map:${sigungu ?? '__none__'}`}
+        area="상권 지도"
+        context={{ sigungu, sigungu_nm: sigunguName }}
+      >
+        <DistrictMap
+          sigungu={sigungu}
+          sigunguName={sigunguName}
+          selected={selected}
+          onSelectBuilding={handleSelectBuilding}
+          headExtra={
+            viewerRole === '창업자' ? (
+              <FounderChips chip={founderChip} onChange={setFounderChip} />
+            ) : null
+          }
+        />
+      </ErrorBoundary>
+    ),
+  };
+
   return (
     <div className="app">
       {/*
@@ -195,50 +263,14 @@ export default function App() {
       />
 
       {/*
-        구가 바뀔 때마다 BuildingSearch를 key로 통째로 새로 그린다. 검색어·검색 결과·
-        안내창은 전부 그 컴포넌트 내부 상태라 밖에서 하나씩 비울 수 없고, 다른 구에서
-        찾은 결과가 화면에 남아 있으면 안 되기 때문이다(2026-08-13 사장님 결정).
-
-        onSearchStart 로는 (구를 바꾸지 않고) 같은 구 안에서 새로 검색했을 때 이전
-        선택을 비운다 — 안 그러면 새 검색을 해도 아래 스택이 **이전에 고른 건물**
-        그대로 남는다. "결과가 없습니다"가 뜬 상태에서도 옛 건물 스택이 그대로
-        보였다(2026-08-08 적대검증 라이브 재현).
+        입구 두 덩어리(검색창·상권 지도). 차례는 역할이 정한다 — 창업자만 지도가 위(👤 결정 0036
+        결정 18 ④ · `entryBlockOrder`). ⛔ 조건부 JSX 로 두 자리에 나눠 그리지 않는다 — 이름 key 를
+        단 배열이라 차례가 바뀌어도 **같은 조각이 자리만 옮긴다**(검색어·검색 결과·지도가 다시
+        태어나지 않는다 · `App.test` 가 DOM 조각이 같은 물건인지 본다).
       */}
-      <BuildingSearch
-        key={sigungu ?? '__no_region__'}
-        onSelect={handleSelectBuilding}
-        onSearchStart={() => {
-          userActedRef.current = true;
-          setSelected(null);
-        }}
-        selectedBldId={selected?.bld_id ?? null}
-        sigungu={sigungu}
-        sigunguName={sigunguName}
-      />
-
-      {/*
-        상권 지도(결정 0010). 구를 고르면 **건물을 안 골랐어도** 보인다 — 지도는 이 서비스의
-        첫인상이라 탭이나 건물 선택 뒤에 숨기면 있는 줄도 모른다. 구를 안 골랐을 때는
-        컴포넌트가 스스로 아무것도 그리지 않는다(그릴 범위가 정해지지 않았으므로).
-      */}
-      {/*
-        ⚠️ key 를 구 코드로 주는 이유 — 그물(ErrorBoundary)은 한 번 오류를 받으면 스스로
-           풀리지 않는다. key 가 없으면 A구 지도에서 한 번 터진 뒤 B구로 옮겨도 **계속**
-           오류 안내만 보인다. 구가 바뀌면 그물을 새로 쳐서 다시 그려 보게 한다.
-        지도는 바깥 지도 SDK 를 태우는 자리라 우리 코드만으로는 터질 자리를 다 못 셈한다.
-      */}
-      <ErrorBoundary
-        key={`map:${sigungu ?? '__none__'}`}
-        area="상권 지도"
-        context={{ sigungu, sigungu_nm: sigunguName }}
-      >
-        <DistrictMap
-          sigungu={sigungu}
-          sigunguName={sigunguName}
-          selected={selected}
-          onSelectBuilding={handleSelectBuilding}
-        />
-      </ErrorBoundary>
+      {entryBlockOrder(viewerRole).map((k) => (
+        <Fragment key={k}>{entryBlocks[k]}</Fragment>
+      ))}
 
       {/*
         입구에서만 서는 카드 — LH 상가 분양·입점 공고.
@@ -302,7 +334,7 @@ export default function App() {
             area="층별 화면"
             context={{ bld_id: selected.bld_id, sigungu }}
           >
-            <FloorStack building={selected} viewerRole={viewerRole} />
+            <FloorStack building={selected} viewerRole={viewerRole} founderChip={activeChip} />
           </ErrorBoundary>
         </>
       ) : restoring ? (

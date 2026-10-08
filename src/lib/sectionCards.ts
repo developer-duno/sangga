@@ -147,6 +147,18 @@ export function sectionOrder(role: ViewerRole | null): readonly SectionKey[] {
     : ROLE_SECTION_LAYOUT[role].order;
 }
 
+/** 입구(지역 고르기 아래)의 두 덩어리 — 검색창과 상권 지도. */
+export type EntryBlockKey = 'search' | 'map';
+
+/**
+ * 입구 두 덩어리를 그릴 차례(👤 결정 0036 결정 18 ④). **창업자만** 지도가 검색창 위다 — 창업자는
+ * 건물 이름을 모르고 동네부터 본다. 다른 역할·역할 없음은 지금 차례 그대로(검색 → 지도).
+ * ⓘ App 이 이름 key 를 단 배열로 그린다 — 차례가 바뀌어도 검색어·지도가 다시 태어나지 않는다.
+ */
+export function entryBlockOrder(role: ViewerRole | null): readonly EntryBlockKey[] {
+  return role === '창업자' ? ['map', 'search'] : ['search', 'map'];
+}
+
 /**
  * **입구 화면**(구는 골랐고 건물은 아직 안 고른 상태)의 카드.
  *

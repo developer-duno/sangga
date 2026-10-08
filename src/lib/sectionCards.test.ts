@@ -6,6 +6,7 @@ import {
   SECTION_PLAN,
   VIEWER_ROLES,
   countDefaultOpen,
+  entryBlockOrder,
   isViewerRole,
   plansFromLayout,
   sectionOrder,
@@ -182,5 +183,20 @@ describe('ROLE_SECTION_LAYOUT — 역할 세 벌', () => {
     expect(isViewerRole('공통')).toBe(false);
     expect(isViewerRole('창업자')).toBe(true);
     expect(isViewerRole(null)).toBe(false);
+  });
+});
+
+/**
+ * 입구 두 덩어리(검색창·상권 지도)의 차례(👤 결정 0036 결정 18 ④). 창업자만 지도가 위다.
+ * 다른 역할·역할 없음은 지금 차례 그대로(검색 → 지도) — 양성 대조로 창업자와 짝지어 본다.
+ */
+describe('entryBlockOrder — 입구 차례', () => {
+  it('창업자 = 지도 → 검색', () => {
+    expect([...entryBlockOrder('창업자')]).toEqual(['map', 'search']);
+  });
+  it('투자자·중개사·역할 없음 = 검색 → 지도(지금 그대로)', () => {
+    for (const role of ['투자자', '중개사', null] as const) {
+      expect([...entryBlockOrder(role)]).toEqual(['search', 'map']);
+    }
   });
 });

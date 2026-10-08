@@ -579,3 +579,159 @@ describe('App — 역할 단추 (결정 0036 결정 18)', () => {
     }
   });
 });
+
+/**
+ * 창업자 입구(👤 결정 0036 결정 18 ④⑤⑨ · 물결 1-A2(ii)) — 이어 붙였을 때만 보이는 것:
+ * 창업자면 상권 지도가 검색창 **위**로 오고 지도 제목 줄에 업종 칩이 선다 · 차례를 바꿔도 검색창·
+ * 지도가 **다시 태어나지 않는다** · 칩은 저장하지 않고, 창업자에서 벗어나면 전체로 돌아간다 ·
+ * 칩을 고른 채 건물을 열면 업종 분포 카드가 그 대분류를 미리 고른다.
+ * 칩 줄 하나의 동작은 `FounderChips.test`, 카드 안쪽은 `IndustryMixSection.test`·`OpenCloseSection.test`.
+ */
+describe('App — 창업자 입구 · 업종 칩 (결정 0036 결정 18 ④⑤⑨)', () => {
+  const KEY = 'sangga.viewerRole';
+  afterEach(() => window.localStorage.clear());
+  // 앞 시험이 주소에 남긴 구·건물을 지운다 — 남아 있으면 첫 그림부터 구가 골라져 있다.
+  beforeEach(() => openWith(''));
+
+  const roleBtn = (name: string) =>
+    [...document.querySelectorAll('.role button')].find((b) => b.textContent === name) as HTMLButtonElement;
+  const chipBtn = (name: string) =>
+    [...document.querySelectorAll('.chips button')].find((b) => b.textContent === name) as HTMLButtonElement;
+  const mapEl = () => document.querySelector('section.dmap');
+  const searchEl = () => document.querySelector('section.search');
+  /** 앞의 것이 문서에서 뒤의 것보다 먼저 나오나. */
+  const before = (a: Element | null, b: Element | null) =>
+    !!a && !!b && (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+
+  it('★ 창업자면 지도가 검색창 위 · 지도 제목 줄에 칩 여섯(처음 = 전체) — 투자자는 지금 차례·칩 없음(양성 대조)', async () => {
+    window.localStorage.setItem(KEY, '창업자');
+    render(<App />);
+    await pickGu('서울', '강남구');
+    await waitFor(() => expect(mapEl()).not.toBeNull());
+    expect(before(mapEl(), searchEl())).toBe(true);
+    const chips = mapEl()!.querySelector('.dmap__head .chips');
+    expect(chips).not.toBeNull();
+    expect([...chips!.querySelectorAll('button')].map((b) => b.textContent)).toEqual([
+      '카페',
+      '한식',
+      '미용',
+      '학원',
+      '편의점',
+      '전체',
+    ]);
+    expect(chipBtn('전체').getAttribute('aria-pressed')).toBe('true');
+
+    fireEvent.click(roleBtn('투자자'));
+    expect(before(searchEl(), mapEl())).toBe(true);
+    expect(document.querySelector('.chips')).toBeNull();
+  });
+
+  it('★ F4 창업자 칩 줄 곁에 안내 한 줄 — 투자자엔 없다(양성 대조)', async () => {
+    const NOTE = '건물을 열면 업종 분포·개업·폐업 카드에 반영됩니다';
+    window.localStorage.setItem(KEY, '창업자');
+    render(<App />);
+    await pickGu('서울', '강남구');
+    await waitFor(() => expect(mapEl()).not.toBeNull());
+    expect(screen.getByText(NOTE)).toBeTruthy();
+    fireEvent.click(roleBtn('투자자'));
+    expect(screen.queryByText(NOTE)).toBeNull();
+  });
+
+  it('역할 없음·중개사도 칩 없음 · 검색 → 지도', async () => {
+    render(<App />);
+    await pickGu('서울', '강남구');
+    await waitFor(() => expect(mapEl()).not.toBeNull());
+    expect(before(searchEl(), mapEl())).toBe(true);
+    expect(document.querySelector('.chips')).toBeNull();
+    fireEvent.click(roleBtn('중개사'));
+    expect(before(searchEl(), mapEl())).toBe(true);
+    expect(document.querySelector('.chips')).toBeNull();
+  });
+
+  it('구를 안 골라 지도가 안 그려지면 창업자여도 칩이 없다', async () => {
+    window.localStorage.setItem(KEY, '창업자');
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+    expect(mapEl()).toBeNull();
+    expect(document.querySelector('.chips')).toBeNull();
+  });
+
+  it('★ 역할을 바꿔 차례가 바뀌어도 검색창·지도는 다시 태어나지 않는다(검색어 그대로)', async () => {
+    window.localStorage.setItem(KEY, '창업자');
+    render(<App />);
+    await pickGu('서울', '강남구');
+    await waitFor(() => expect(mapEl()).not.toBeNull());
+    const input = screen.getByLabelText('건물명 또는 주소') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '스타' } });
+    const map = mapEl();
+    const search = searchEl();
+
+    fireEvent.click(roleBtn('투자자'));
+    // 같은 DOM 조각이 자리만 옮겼다 — 새로 만든 것이면 검색어가 비고 요소가 달라진다.
+    expect(screen.getByLabelText('건물명 또는 주소')).toBe(input);
+    expect(input.value).toBe('스타');
+    expect(mapEl()).toBe(map);
+    expect(searchEl()).toBe(search);
+
+    fireEvent.click(roleBtn('창업자'));
+    expect(screen.getByLabelText('건물명 또는 주소')).toBe(input);
+    expect(mapEl()).toBe(map);
+  });
+
+  it('★ 칩은 저장하지 않고, 창업자에서 벗어났다 돌아오면 전체다', async () => {
+    window.localStorage.setItem(KEY, '창업자');
+    render(<App />);
+    await pickGu('서울', '강남구');
+    await waitFor(() => expect(mapEl()).not.toBeNull());
+    const search = currentSearch();
+
+    fireEvent.click(chipBtn('카페'));
+    expect(chipBtn('카페').getAttribute('aria-pressed')).toBe('true');
+    expect(chipBtn('전체').getAttribute('aria-pressed')).toBe('false');
+    // 이 기기 저장에는 역할 하나뿐 · 주소도 그대로(결정 18 ⑨).
+    expect(Object.keys(window.localStorage)).toEqual([KEY]);
+    expect(currentSearch()).toBe(search);
+
+    fireEvent.click(roleBtn('투자자'));
+    fireEvent.click(roleBtn('창업자'));
+    expect(chipBtn('전체').getAttribute('aria-pressed')).toBe('true');
+    expect(chipBtn('카페').getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('★ 칩을 고른 채 건물을 열면 업종 분포 카드가 그 대분류를 미리 고르고, 칩을 바꾸면 따라간다 · 투자자로 바꾸면 풀린다', async () => {
+    const base = rpc.getMockImplementation()!;
+    rpc.mockImplementation((fn: string, args?: unknown) => {
+      if (fn === 'list_industry_mix') {
+        const cats = [
+          { cd: 'I2', nm: '음식', n: 60 },
+          { cd: 'S2', nm: '수리·개인', n: 10 },
+        ];
+        return Promise.resolve({
+          data: { snapshot_ym: '202606', radius_m: 500, districts: [], radius: { total: 70, cats } },
+          error: null,
+        });
+      }
+      return base(fn, args);
+    });
+    window.localStorage.setItem(KEY, '창업자');
+    render(<App />);
+    await pickGu('서울', '강남구');
+    await waitFor(() => expect(mapEl()).not.toBeNull());
+    fireEvent.click(chipBtn('카페'));
+
+    const input = screen.getByLabelText('건물명 또는 주소');
+    fireEvent.change(input, { target: { value: '테헤란로' } });
+    fireEvent.submit(input.closest('form')!);
+    fireEvent.click(await screen.findByRole('button', { name: /테스트빌딩/ }));
+
+    const select = (await screen.findByLabelText('업종 골라보기')) as HTMLSelectElement;
+    expect(select.value).toBe('I2');
+
+    // 건물 화면이 열린 채 칩을 바꾼다 — 첫 렌더 함정이면 옛 대분류가 남는다.
+    fireEvent.click(chipBtn('미용'));
+    expect((screen.getByLabelText('업종 골라보기') as HTMLSelectElement).value).toBe('S2');
+
+    fireEvent.click(roleBtn('투자자'));
+    expect((screen.getByLabelText('업종 골라보기') as HTMLSelectElement).value).toBe('');
+  });
+});

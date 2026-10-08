@@ -26,6 +26,7 @@ import {
 import { formatRate } from '../lib/rentStats';
 import type { DistrictOpenClose } from '../types';
 import { takePrefetched, type RpcResult, type SidePrefetch } from '../lib/sidePrefetch';
+import { FOUNDER_CHIP_ALL, chipMatch, type FounderChip } from '../lib/founderChips';
 
 /**
  * "상권 개업·폐업 (서울시 공표)" 카드 — 결정 0033 R2.
@@ -49,9 +50,19 @@ type Props = {
    * 안 주면 `SECTION_PLAN.openclose` — 역할을 고르기 전 화면 그대로.
    */
   plan?: SectionPlan;
+  /**
+   * 창업자가 고른 업종 칩(결정 0036 결정 18 ⑨). 업종 표에서 짝 업종 줄을 굵게 하고 표를 펼친 채로
+   * 둔다(짝은 `lib/founderChips.ts` 표 한 곳). 안 줌·'전체' = 지금 화면 그대로.
+   */
+  chip?: FounderChip;
 };
 
-export function OpenCloseSection({ pnu, prefetch, plan = SECTION_PLAN.openclose }: Props) {
+export function OpenCloseSection({
+  pnu,
+  prefetch,
+  plan = SECTION_PLAN.openclose,
+  chip = FOUNDER_CHIP_ALL,
+}: Props) {
   /**
    * 받아 온 줄들. **아직 못 받았을 때와 못 읽었을 때가 똑같이 null 이다**(임대 카드와 같은
    * 판단 — 둘 다 아무것도 안 그린다). 함수가 아직 없으면(PGRST202) 이 상태로 남는다 —
@@ -124,7 +135,7 @@ export function OpenCloseSection({ pnu, prefetch, plan = SECTION_PLAN.openclose 
       {scaleMax > 0 && <p className="oc__scale">{`막대가 꽉 차면 ${formatRate(scaleMax)}(분기)`}</p>}
 
       {rows.map((r) => (
-        <DistrictBlock key={r.district_id ?? r.status} row={r} scaleMax={scaleMax} />
+        <DistrictBlock key={r.district_id ?? r.status} row={r} scaleMax={scaleMax} chip={chip} />
       ))}
 
       <ul className="oc__why">
@@ -151,7 +162,15 @@ const SOURCE_TEXT =
   '출처: 서울시 상권분석서비스(점포-상권) · 서울 열린데이터광장 · 공공누리 1유형(출처표시)';
 
 /** 상권 하나의 덩어리. 상권끼리 더하지 않는다. */
-function DistrictBlock({ row, scaleMax }: { row: DistrictOpenClose; scaleMax: number }) {
+function DistrictBlock({
+  row,
+  scaleMax,
+  chip,
+}: {
+  row: DistrictOpenClose;
+  scaleMax: number;
+  chip: FounderChip;
+}) {
   const name = districtName(row);
   const title = row.district_type ? `${name} · ${row.district_type}` : name;
 
@@ -179,6 +198,17 @@ function DistrictBlock({ row, scaleMax }: { row: DistrictOpenClose; scaleMax: nu
   const cells = trendCells(row.window_quarters, row.quarters ?? [], scaleMax);
   const inds = industryRows(row.industries);
   const other = otherIndustries(row.other_industries);
+  // 창업자 칩의 짝 업종(결정 0036 결정 18 ⑨). 짝 줄이 상위 표에 하나도 없으면 그렇다고 한 줄 적는다.
+  const match = chipMatch(chip);
+  const isHit = (cd: string) => match !== null && match.seoul.includes(cd);
+  const hitMissing = match !== null && inds !== null && !inds.some((i) => isHit(i.svc_induty_cd));
+  // 일부만 있으면 빠진 것만 이름으로 적는다(👤 F5 · 이름은 짝짓기 표에서 — 표 차례 그대로).
+  const missingNames =
+    match !== null && inds !== null && !hitMissing
+      ? match.seoul
+          .filter((cd) => !inds.some((i) => i.svc_induty_cd === cd))
+          .map((cd) => match.seoulNm[cd] ?? cd)
+      : [];
 
   return (
     <div className="oc__district">
@@ -202,8 +232,20 @@ function DistrictBlock({ row, scaleMax }: { row: DistrictOpenClose; scaleMax: nu
 
       {cells.length > 0 && <Trend cells={cells} windowLabel={windowText(row.window_quarters)} />}
 
+      {hitMissing && (
+        <p className="oc__note oc__chip-none">{`고른 업종(${chip})은 이 상권 점포 수 상위 업종에 없습니다`}</p>
+      )}
+      {missingNames.length > 0 && (
+        <p className="oc__note oc__chip-part">{`고른 업종 가운데 ${missingNames.join('·')}은 상위 업종에 없습니다`}</p>
+      )}
+      {/*
+        칩을 골랐으면 표를 펼친 채로 둔다 — 굵은 줄이 접힌 표 안에 있으면 안 보인다. 손님이 접고 펴는
+        것은 그대로 되고(같은 값으로 다시 그려도 React 가 건드리지 않는다), 칩이 바뀔 때만 따라간다.
+        ⓘ key 가 칩이라 칩을 바꿀 때마다 표가 새로 선다 — 손님이 접어 둔 뒤 다른 칩을 골라도 다시
+          펼친 채다(같은 값 true → true 는 React 가 안 건드려 접힌 채 남는다 · 검사 뒤 보완 F2).
+      */}
       {inds && (
-        <details className="oc__ind">
+        <details key={chip} className="oc__ind" open={match !== null}>
           <summary className="oc__ind-sum">업종별 표 — {label} · 점포가 많은 순</summary>
           <table className="oc__table">
             <thead>
@@ -220,8 +262,14 @@ function DistrictBlock({ row, scaleMax }: { row: DistrictOpenClose; scaleMax: nu
                 // 점포 1~5곳 업종에도 '200%' 같은 비율을 공표한다(카드 위 큰 숫자와 같은 규칙).
                 const shown = industryRateShown(i.similr_induty_stor_co);
                 return (
-                  <tr key={i.svc_induty_cd}>
-                    <th scope="row">{i.svc_induty_cd_nm || i.svc_induty_cd}</th>
+                  <tr key={i.svc_induty_cd} className={isHit(i.svc_induty_cd) ? 'oc__hit' : undefined}>
+                    <th scope="row">
+                      {isHit(i.svc_induty_cd) ? (
+                        <strong>{i.svc_induty_cd_nm || i.svc_induty_cd}</strong>
+                      ) : (
+                        i.svc_induty_cd_nm || i.svc_induty_cd
+                      )}
+                    </th>
                     <td>{formatStoreCount(i.similr_induty_stor_co)}</td>
                     <td>{tableCellText(i.opbiz_stor_co, shown ? i.opbiz_rt : null)}</td>
                     <td>{tableCellText(i.clsbiz_stor_co, shown ? i.clsbiz_rt : null)}</td>

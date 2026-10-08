@@ -15,6 +15,7 @@ import {
   type MixBar,
 } from '../lib/industryMix';
 import { toPermitLine, type NearbyPermitLine } from '../lib/nearbyPermits';
+import { FOUNDER_CHIP_ALL, chipMatch, type FounderChip } from '../lib/founderChips';
 import { takePrefetched, type RpcResult, type SidePrefetch } from '../lib/sidePrefetch';
 
 /**
@@ -46,17 +47,42 @@ type Props = {
    * 안 주면 `SECTION_PLAN.industry` — 역할을 고르기 전 화면 그대로.
    */
   plan?: SectionPlan;
+  /**
+   * 창업자가 고른 업종 칩(결정 0036 결정 18 ⑨). 고른 칩의 대분류를 **미리 고른 채** 열고 짝 중분류
+   * 줄을 굵게 한다(짝은 `lib/founderChips.ts` 표 한 곳). 안 줌·'전체' = 지금 화면 그대로.
+   */
+  chip?: FounderChip;
 };
 
 // 제목은 `SECTION_PLAN.industry.title` 하나뿐이다 — 여기 또 적으면 카드 머리와 본문이
 // 서로 다른 이름을 말하는 날이 온다.
 
-export function IndustryMixSection({ pnu, prefetch, plan = SECTION_PLAN.industry }: Props) {
+export function IndustryMixSection({
+  pnu,
+  prefetch,
+  plan = SECTION_PLAN.industry,
+  chip = FOUNDER_CHIP_ALL,
+}: Props) {
+  const match = chipMatch(chip);
+  const presetCat = match?.catL ?? null;
   const [mix, setMix] = useState<IndustryMix | null>(null);
   /** 못 읽었나. 못 읽었으면 섹션을 통째로 감춘다 — 마이그레이션 적용 전 라이브가 이 상태다. */
   const [failed, setFailed] = useState(false);
-  /** 고른 대분류 코드. null = 아직 아무것도 안 골랐다(첫 화면). */
-  const [pickedCat, setPickedCat] = useState<string | null>(null);
+  /** 고른 대분류 코드. null = 아직 아무것도 안 골랐다(첫 화면). 칩을 골랐으면 그 대분류로 시작한다. */
+  const [pickedCat, setPickedCat] = useState<string | null>(presetCat);
+  /*
+    필지나 칩이 바뀌면 고른 대분류를 다시 세운다 — 칩의 대분류(없으면 null)로.
+    ⓘ 그리는 도중에 상태를 맞추는 React 공식 꼴이다(`SectionCard` 의 펼침과 같다). effect 로 하면 옛
+      대분류가 한 번 그려지고, `useState` 초기값은 첫 렌더 한 번만 읽혀 칩을 바꿔도 안 따라온다.
+    ⓘ 칩이 그대로면 손님이 카드 안에서 고른 대분류가 이긴다(다시 그려져도 덮지 않는다).
+    ⛔ 대분류가 아니라 **칩 이름**으로 견준다 — 카페·한식은 둘 다 음식(I2)이라 대분류만 보면 칩을
+       바꿔도 다시 안 서고, 손님이 앞서 고른 다른 대분류가 남는다(검사 뒤 보완 F1).
+  */
+  const [pickedFor, setPickedFor] = useState({ pnu, chip });
+  if (pickedFor.pnu !== pnu || pickedFor.chip !== chip) {
+    setPickedFor({ pnu, chip });
+    setPickedCat(presetCat);
+  }
   const [detail, setDetail] = useState<IndustryDetail | null>(null);
   /**
    * 상세를 못 읽었나.
@@ -81,9 +107,9 @@ export function IndustryMixSection({ pnu, prefetch, plan = SECTION_PLAN.industry
     let cancelled = false;
     // 필지가 바뀌면 옛 답을 지운다 — 안 지우면 새 건물 밑에 앞 건물의 분포가 잠깐
     // 붙어 보이고, 그 짧은 순간이 그대로 틀린 정보다(상권 줄과 같은 원칙).
+    // (고른 대분류는 위에서 그리는 도중에 다시 세운다 — 여기서 null 로 지우면 칩이 미리 고른 값이 사라진다.)
     setMix(null);
     setFailed(false);
-    setPickedCat(null);
     setDetail(null);
     setDetailFailed(false);
 
@@ -203,7 +229,10 @@ export function IndustryMixSection({ pnu, prefetch, plan = SECTION_PLAN.industry
 
   const options = catOptions(mix);
   const sources = districtSources(mix.districts);
-  const pickedNm = options.find((o) => o.cd === pickedCat)?.nm ?? null;
+  // 둘레에 그 대분류가 아예 없으면(고르개 목록에 없음) 칩 표의 대분류 이름을 쓴다 — 코드를 적지 않는다.
+  const pickedNm =
+    options.find((o) => o.cd === pickedCat)?.nm ??
+    (match !== null && match.catL === pickedCat ? match.catLNm : null);
 
   // 접혀 있어도 보이는 한 줄 — 몇 곳을 센 것인지.
   // ⚠️ 상권끼리 **더하지 않는다**(겹치는 자리의 가게가 양쪽에 들어간다). 그래서 상권은
@@ -269,6 +298,9 @@ export function IndustryMixSection({ pnu, prefetch, plan = SECTION_PLAN.industry
         </div>
       )}
 
+      {/* 편의점 칩의 설명 한 줄(👤 결정 0036 ⑭) — 칩의 대분류를 보고 있을 때만. */}
+      {match?.note && pickedCat === match.catL && <p className="mix__chip-note">{match.note}</p>}
+
       {pickedCat !== null && (
         <DetailBlocks
           mix={mix}
@@ -276,6 +308,7 @@ export function IndustryMixSection({ pnu, prefetch, plan = SECTION_PLAN.industry
           failed={detailFailed}
           pickedCat={pickedCat}
           pickedNm={pickedNm}
+          hitCds={match !== null && match.catL === pickedCat ? match.catM : []}
         />
       )}
 
@@ -374,11 +407,14 @@ function ScopeBlock({
   );
 }
 
-/** 막대 한 줄. 폭은 순수 CSS 비율이다(층 스택의 `.floor__bar` 와 같은 방식). */
-function MixBarRow({ bar }: { bar: MixBar }) {
+/**
+ * 막대 한 줄. 폭은 순수 CSS 비율이다(층 스택의 `.floor__bar` 와 같은 방식).
+ * `hit` = 창업자 칩의 짝 중분류 줄 — 굵게 한다(결정 0036 결정 18 ⑨).
+ */
+function MixBarRow({ bar, hit = false }: { bar: MixBar; hit?: boolean }) {
   return (
-    <li>
-      <span className="mix__cat">{bar.nm || bar.cd}</span>
+    <li className={hit ? 'mix__hit' : undefined}>
+      <span className="mix__cat">{hit ? <strong>{bar.nm || bar.cd}</strong> : bar.nm || bar.cd}</span>
       <span className="mix__bar">
         {/* 몫이 0 이면 막대를 그리지 않는다. 최소 폭을 강제하면 "0곳"이 "조금 있음"처럼 보인다. */}
         {bar.pct > 0 && <span className="mix__fill" style={{ width: `${bar.pct}%` }} />}
@@ -401,6 +437,7 @@ function DetailBlocks({
   failed,
   pickedCat,
   pickedNm,
+  hitCds,
 }: {
   mix: IndustryMix;
   detail: IndustryDetail | null;
@@ -408,6 +445,8 @@ function DetailBlocks({
   failed: boolean;
   pickedCat: string;
   pickedNm: string | null;
+  /** 굵게 할 중분류 코드(창업자 칩의 짝). 비면 굵은 줄 없음. */
+  hitCds: readonly string[];
 }) {
   const label = pickedNm || pickedCat;
 
@@ -467,7 +506,7 @@ function DetailBlocks({
           ) : (
             <ul className="mix__bars">
               {toBars(b.scope).map((c) => (
-                <MixBarRow key={c.cd} bar={c} />
+                <MixBarRow key={c.cd} bar={c} hit={hitCds.includes(c.cd)} />
               ))}
             </ul>
           )}
