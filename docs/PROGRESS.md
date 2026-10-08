@@ -2414,3 +2414,17 @@ pytest **4,457 passed**(본 폴더) · vitest **960 passed** · tsc 0 · oxlint 
   python scripts/load_price_gate.py --csv <임시>/gate-v1.csv
   ```
 - **적재가 실패하면**(관문에 걸려 통째 롤백 등) 표는 v1 14곳 그대로이니 이 PR 을 되돌려(revert) 카드도 v1 로 맞춘다.
+
+## 2026-10-09 (1) — 건물 검색에 소유 구조 세 칸: 마이그레이션 라이브 적용 (물결 1-A1)
+
+**왜**: 결정 0036 결정 5 — 검색 결과 카드에 "집합건물/일반건물 · 사용승인 · 주차" 한 줄을 보이려면 `search_buildings` 가 그 값을 실어 줘야 한다(결과마다 따로 물으면 왕복 25번).
+
+**한 것**: PR #254(main d35e978 · 검사 적대 Opus 🔴0 🟠0 🟡4) — `search_buildings`·`api.search_buildings` 가 기존 13칸 뒤에 `is_jiphap`·`approve_date`·`parking_cnt`(building 원값 그대로) · 반환 꼴이 바뀌어 drop → 재생성 → api 에만 grant. 화면 표시는 아직 없다(1-A2).
+
+**라이브 적용** ✅ (2026-10-09 03:43 · 👤 허락 뒤 · 본 폴더 main d35e978):
+1. `python scripts/dbx.py -f supabase/migrations/2026-10-09a_search_ownership_cols.sql` → exit 0(DROP 2 · CREATE 2 · COMMENT · REVOKE 2 · GRANT · COMMIT · NOTIFY).
+2. `python scripts/post_load.py --check` → exit 0 · 사고·주의 0 · "정본 함수 57개가 라이브와 언어·본문·설정까지 같습니다".
+3. 공개키(anon)로 RPC 1회(강남 11680 · "테헤란로" · lim 5) → 5행 · **16칸** · 세 칸 값이 옴(예: 테헤란로오피스텔 true · 1991-09-02 · 128 / 대봉 false · 2002-07-31 · 23). 지금 화면은 새 칸을 무시한다(`BuildingHit` 의 선택 칸).
+
+- ⚠️ 1-A2 에 넘기는 것(적대검증 🟡④): 공유 링크로 되살리는 길 `src/lib/restoreBuilding.ts` `buildingFromFloorRows` 는 세 칸을 안 채운다 → 층 행(`FloorRow`)의 같은 칸을 옮겨야 링크로 연 건물도 '미상'이 아니다.
+- ⓘ `--check` 의 함수 대조는 본문·설정만 보고 **반환 꼴은 안 본다**(🟡③) — 반환 칸 수는 위 3번 실측으로 확인했다.
