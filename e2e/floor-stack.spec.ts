@@ -122,7 +122,7 @@ const PRICE_GATE_PATTERN = '**/rest/v1/rpc/list_price_gate*';
 const TX_YEARLY_PATTERN = '**/rest/v1/rpc/get_sigungu_tx_yearly*';
 // 성적표 파일은 **같은 출처**(개발 서버의 public/)라 REST 목과 결이 다르다 — 라우트를
 // 안 걸면 진짜 파일이 그대로 나간다. 스펙 AB 는 작은 판으로 갈아 끼운다.
-const SCORECARD_PATTERN = '**/scorecard-v1.json';
+const SCORECARD_PATTERN = '**/scorecard-v2.json';
 
 const CORS_HEADERS = {
   'access-control-allow-origin': '*',
@@ -1341,7 +1341,7 @@ test.describe('입구 — LH 상가 분양·입점 공고', () => {
 //
 // 두 갈래에서 값이 온다는 것이 이 화면의 특징이고, 그 이음매는 진짜 브라우저에서만 보인다:
 //   · 판정(어느 구가 켜지나) = 서버 함수 `list_price_gate`
-//   · 방법·단계 분포        = **같은 출처의 정적 파일** `/scorecard-v1.json`
+//   · 방법·단계 분포        = **같은 출처의 정적 파일** `/scorecard-v2.json`
 // 단위 시험은 둘 다 흉내로 넣지만, "정말 그 주소를 받아 오나"는 여기서만 확인된다.
 //
 // ⓘ **함수가 없을 때 카드가 조용히 빠지는 경로는 여기 없다** — 그건 이미 위 스펙 X 가
@@ -1372,7 +1372,7 @@ test.describe('입구 — 참고 시세 성적표', () => {
     const summary = score.locator('.card__summary');
     await expect(summary).toContainText('참고 시세 제공');
     await expect(summary).toContainText('262건');
-    await expect(summary).toContainText('성적표 v1');
+    await expect(summary).toContainText('성적표 v2');
     await expect(summary).toContainText('2026년 8월 15일 생성');
     await expect(score.locator('.card__body')).toBeHidden();
 
@@ -1395,7 +1395,7 @@ test.describe('입구 — 참고 시세 성적표', () => {
     await expect(score.locator('.score__all')).toContainText('금천구');
 
     // ④ 방법 + 도장.
-    await expect(score.locator('.grade__badge')).toHaveText('검증 성적 · 원본 성적표 v1');
+    await expect(score.locator('.grade__badge')).toHaveText('검증 성적 · 원본 성적표 v2');
 
     // ⛔ 건물을 고르면 화면의 주제가 그 건물이다 — 입구 카드는 물러난다.
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);

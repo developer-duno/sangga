@@ -351,11 +351,11 @@ export const PRICE_GATE_FN = 'list_price_gate';
  * ⛔ **화면에 통계 수치를 글자로 박지 않기 위한 장치다**(로드맵 Wave 4 "숫자 복사 금지").
  *    단계 분포·커버리지는 전부 이 파일에서 읽고, 화면 코드에는 숫자 리터럴이 하나도 없다
  *    (`src/lib/scorecard.test.ts` 가 정규식으로 지킨다).
- * ⚠️ 파일 이름에 **판 번호가 들어 있다.** 성적표 v2 를 뽑는 것은 별건 결재라(통과 구가
- *    조용히 바뀔 수 있다 — 로드맵 Wave 4), 그때 이 상수와 굽는 스크립트
+ * ⚠️ 파일 이름에 **판 번호가 들어 있다.** 다음 판(v3)을 뽑는 것도 별건 결재라(통과 구가
+ *    조용히 바뀔 수 있다 — 로드맵 Wave 4 · 결정 0013 §7), 그때 이 상수와 굽는 스크립트
  *    (`scripts/build_scorecard_json.py` 의 `VERSION`)를 함께 올린다.
  */
-export const SCORECARD_URL = '/scorecard-v1.json';
+export const SCORECARD_URL = '/scorecard-v2.json';
 
 /**
  * 화면 아래 "이 자료는 언제 것인가" 표. 2026-09-05d.

@@ -48,7 +48,7 @@ function ops(over: Partial<ScorecardOpsMode> = {}): ScorecardOpsMode {
 
 function card(over: Partial<Scorecard> = {}): Scorecard {
   return {
-    version: 'v1',
+    version: 'v2',
     generated_at: '2026-08-15T23:44:00+09:00',
     sources: { '통과구.csv': 'a'.repeat(64) },
     stages: [],
@@ -123,7 +123,7 @@ describe('ScorecardSection — 성적이 있을 때', () => {
     const summary = container.querySelector('.card__summary')?.textContent ?? '';
     expect(summary).toContain('참고 시세 제공');
     expect(summary).toContain('262건');
-    expect(summary).toContain('성적표 v1');
+    expect(summary).toContain('성적표 v2');
     expect(summary).toContain('2026년 8월 15일 생성');
     // ⛔ 입구를 가로막지 않는다 — 접힌 채로 시작한다.
     expect(
@@ -186,7 +186,7 @@ describe('ScorecardSection — 성적이 있을 때', () => {
     const { container } = render(<ScorecardSection sigungu="11680" />);
     fireEvent.click(await screen.findByRole('button', { name: /참고 시세는 얼마나 맞나/ }));
 
-    expect(container.querySelector('.grade__badge')?.textContent).toBe('검증 성적 · 원본 성적표 v1');
+    expect(container.querySelector('.grade__badge')?.textContent).toBe('검증 성적 · 원본 성적표 v2');
     expect(container.querySelector('.score__how')?.textContent).toContain('2026년 8월 15일');
     expect(container.querySelectorAll('.score__how-list li')).toHaveLength(4);
   });

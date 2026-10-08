@@ -507,6 +507,87 @@ def test_통과구_CSV_는_판정없는_구도_적는다(tmp_path):
     assert "11110,,0,,,false" in body
 
 
+# ── 열린 지역만 채점 (결정 0013 §7 — 2026-10-08) ─────────────────────────────
+
+
+def _open_tx(code, tx_id=1):
+    return {"tx_id": tx_id, "sigungu_code": code}
+
+
+def test_열린_지역_밖_거래는_빠지고_시도별로_센다():
+    """양성 대조 — 전남광주(12)가 섞인 입력에서 12 만 빠진다."""
+    rows = [_open_tx("11680", 1), _open_tx("12110", 2), _open_tx("30110", 3), _open_tx("12290", 4)]
+    kept, excluded = bt.filter_open_sigungu(rows, {"11680", "30110"})
+    assert [r["tx_id"] for r in kept] == [1, 3]
+    assert excluded == {"12": 2}
+
+
+def test_열린_지역_안_거래는_그대로_남는다():
+    rows = [_open_tx("11680", 1), _open_tx("30230", 2), _open_tx("11110", 3)]
+    kept, excluded = bt.filter_open_sigungu(rows, {"11680", "30230", "11110", "11740"})
+    assert kept == rows
+    assert not excluded
+
+
+def test_구_코드가_없는_거래는_열린_지역_밖으로_센다():
+    kept, excluded = bt.filter_open_sigungu([_open_tx(None)], {"11680"})
+    assert kept == []
+    assert excluded == {"?": 1}
+
+
+@pytest.mark.parametrize("empty", [set(), None, []])
+def test_열린_지역_목록이_비면_멈춘다(empty):
+    """빈 집합이면 조용히 0건 채점(또는 거르기 건너뛰기)이 아니라 예외."""
+    with pytest.raises(RuntimeError, match="열린 지역"):
+        bt.filter_open_sigungu([_open_tx("11680")], empty)
+
+
+_ORDER_CALLS = ("fetch_transactions(", "apply_open_filter(", "split_by_period(")
+
+
+def _calls_in_order(src, calls=_ORDER_CALLS):
+    """함수 원문에서 호출들이 이 순서로 (각각 처음 나온 자리 기준) 나오는가.
+
+    ⓘ 가드 본체와 양성 대조가 이 함수 하나를 함께 지난다.
+    ⚠️ 못 보는 것: 호출을 주석·문자열 안에 남기고 실제 호출을 지운 꼴 · 다른 이름으로
+       감싼 호출 · 거르기 결과를 버리는 꼴(`apply_open_filter(...)` 뒤 옛 `raw` 를 쓰는 것).
+    """
+    positions = [src.find(c) for c in calls]
+    return all(p >= 0 for p in positions) and positions == sorted(positions)
+
+
+@pytest.mark.parametrize("fn_name", ["run", "run_place"])
+def test_두_모드_모두_읽은_뒤_거르고_나서_나눈다(fn_name):
+    """거르기 호출 줄이 빠지면 전남광주 거래가 다시 채점에 섞인다(결정 0013 §7)."""
+    import inspect
+    src = inspect.getsource(getattr(bt, fn_name))
+    assert _calls_in_order(src), "{}: 읽기 → 열린 구 거르기 → 시간 분할 순서가 아니다".format(fn_name)
+
+
+@pytest.mark.parametrize("fn_name", ["run", "run_place"])
+def test_순서_탐지기는_거르기_줄을_지우면_잡는다(fn_name):
+    """양성 대조 — 원문에서 거르기 줄을 지운 사본, 분할 뒤로 옮긴 사본 둘 다 실패해야 한다."""
+    import inspect
+    src = inspect.getsource(getattr(bt, fn_name))
+    lines = src.splitlines(keepends=True)
+    removed = "".join(ln for ln in lines if "apply_open_filter(" not in ln)
+    assert removed != src
+    assert not _calls_in_order(removed)
+    moved = "".join(ln for ln in lines if "apply_open_filter(" not in ln) \
+        + "".join(ln for ln in lines if "apply_open_filter(" in ln)
+    assert not _calls_in_order(moved)
+
+
+def test_성적표_판은_v2이고_md_이름이_따라간다():
+    assert bt.SCORECARD_VERSION == "v2"
+    assert bt.SCORECARD_MD == "성적표-v2.md"
+
+
+def test_지분_거래_제외_조건은_그대로다():
+    """결재 3 — 지분 포함판은 돌리지 않는다. TX_QUERY 의 지분 제외가 빠지면 v2 의 전제가 깨진다."""
+    assert "&is_share=is.false" in bt.TX_QUERY
+
+
 # ── 금지 표현 (절대 규칙 2) ──────────────────────────────────────────────────
 
 

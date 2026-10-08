@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""백테스트 성적표 CSV 를 화면이 읽는 정적 파일 `public/scorecard-v1.json` 으로 굽는다.
+"""백테스트 성적표 CSV 를 화면이 읽는 정적 파일 `public/scorecard-v2.json` 으로 굽는다.
 
 왜 파일로 굽나 (DB 에 넣지 않고)
 --------------------------------
@@ -24,22 +24,23 @@ CSV 가 원본이고, 그것을 다시 DB 에 넣으면 같은 사실이 두 곳
 
 ⚠️ `generated_at` 은 **이 파일을 구운 시각이 아니다**
 -----------------------------------------------------
-성적표 자체를 뽑은 시각(`docs/backtest/성적표-v1.md` 머리말의 "생성: … (KST)")이다.
+성적표 자체를 뽑은 시각(`docs/backtest/성적표-v2.md` 머리말의 "생성: … (KST)")이다.
 구운 시각을 적으면 자료가 하나도 안 바뀌었는데 다시 구울 때마다 파일이 달라져 git diff
 가 매번 지저분해진다(`build_district_geojson.py` 가 `generated_at` 을 아예 안 넣는 것과
-같은 이유). 화면이 "성적표 v1 · 생성 …"이라고 말할 때 사람이 알고 싶은 것도 **성적을
+같은 이유). 화면이 "성적표 v2 · 생성 …"이라고 말할 때 사람이 알고 싶은 것도 **성적을
 언제 냈나**이지 파일을 언제 구웠나가 아니다.
 
 ⚠️ 판(version)은 손으로 올린다
 ------------------------------
-`v1` 은 성적표 문서의 판 번호다. v2 재생성은 **별건 결재**(통과 구가 조용히 바뀔 수 있어
-사장님 확인이 선행 — 로드맵 Wave 4·결정 0013 §4). 그때는 이 상수와 출력 파일 이름,
-그리고 화면 쪽 `SCORECARD_URL` 을 함께 올린다.
+`v2` 는 성적표 문서의 판 번호다(2026-10-08 결재 — 결정 0013 §7). 다음 판(v3) 재생성도
+**별건 결재**(통과 구가 조용히 바뀔 수 있어 사장님 확인이 선행 — 로드맵 Wave 4·결정 0013 §4).
+그때는 이 상수와 출력 파일 이름, `scripts/backtest_price.py` 의 `SCORECARD_VERSION`,
+그리고 화면 쪽 `SCORECARD_URL` 을 함께 올리고 옛 json 은 지운다(md 는 근거로 남긴다).
 
 쓰는 법
 -------
     python scripts/build_scorecard_json.py --dry-run   # 파일 안 씀 (무엇을 쓸지만 알려준다)
-    python scripts/build_scorecard_json.py             # public/scorecard-v1.json 생성
+    python scripts/build_scorecard_json.py             # public/scorecard-v2.json 생성
 
 ⚠️ 이 파일은 **생성물이지만 git 에 커밋한다**(화면이 정적으로 읽는 자산이라서).
    성적표 CSV 를 다시 뽑았으면 이 명령을 돌리고 결과를 함께 커밋한다.
@@ -59,9 +60,9 @@ PROJECT_ROOT = os.path.dirname(SCRIPTS_DIR)
 BACKTEST_DIR = os.path.join(PROJECT_ROOT, "docs", "backtest")
 
 # 성적표 판. 위 머리말 참조 — 올리는 것은 사람 손이고 별건 결재가 선행한다.
-VERSION = "v1"
+VERSION = "v2"
 
-# 화면이 정적으로 읽는 자리. Vite 는 `public/` 밑을 그대로 서빙한다(`/scorecard-v1.json`).
+# 화면이 정적으로 읽는 자리. Vite 는 `public/` 밑을 그대로 서빙한다(`/scorecard-v2.json`).
 OUT_PATH = os.path.join(PROJECT_ROOT, "public", "scorecard-{}.json".format(VERSION))
 
 # 성적표 문서 — **생성 시각 한 줄만** 여기서 읽는다(숫자는 전부 CSV 에서 온다).
@@ -331,7 +332,7 @@ def build(backtest_dir=BACKTEST_DIR, doc_path=DOC_PATH):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="성적표 CSV → public/scorecard-v1.json")
+    ap = argparse.ArgumentParser(description="성적표 CSV → public/scorecard-{}.json".format(VERSION))
     ap.add_argument("--dry-run", action="store_true",
                     help="파일을 쓰지 않고 무엇을 쓸지만 보여준다")
     args = ap.parse_args(argv)

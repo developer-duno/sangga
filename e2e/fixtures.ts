@@ -369,7 +369,7 @@ function opsMode(over: Partial<ScorecardOpsMode> = {}): ScorecardOpsMode {
 }
 
 /**
- * 구워 둔 성적표 파일(`/scorecard-v1.json`)의 **작은 판**.
+ * 구워 둔 성적표 파일(`/scorecard-v2.json`)의 **작은 판**.
  *
  * ⚠️ 진짜 파일(180+41+30줄)을 그대로 쓰지 않는다 — 스펙이 보려는 것은 "맨 위에 무엇이
  *    오나"이고, 그 판정에 필요한 것은 비중이 다른 줄 두엇뿐이다. 여기서는 L6 이 가장
@@ -378,7 +378,7 @@ function opsMode(over: Partial<ScorecardOpsMode> = {}): ScorecardOpsMode {
  */
 export function scorecard(over: Partial<Scorecard> = {}): Scorecard {
   return {
-    version: 'v1',
+    version: 'v2',
     generated_at: '2026-08-15T23:44:00+09:00',
     sources: { '통과구.csv': 'a'.repeat(64) },
     stages: [],

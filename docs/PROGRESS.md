@@ -2385,3 +2385,32 @@ pytest **4,457 passed**(본 폴더) · vitest **960 passed** · tsc 0 · oxlint 
 **발견 — 적재기 끝의 매칭 보고가 시간 초과로 exit 1**: 첫 구(11110)는 적재·정리를 다 마친 **뒤** `print_join_report` 의 `parcel?pnu=like.11110*` 조회가 `statement timeout`(57014)으로 실패해 종료 코드 1이 났다(데이터는 다 들어감 — 그 뒤 39구는 같은 조회가 통과). `like` 접두 조회가 `parcel_pkey` 를 처음부터 훑는 계획(필지 112만 행 — 전국 시드 뒤로 커짐)이라 찬 캐시면 넘친다. ⚪ 작은 후속: 범위 조회(`pnu=gte.11110&pnu=lt.11111`)로 바꾸면 된다 — 보고용이라 급하지 않다. ⚠️ 그때까지 재적재에서 이 줄만으로 exit 1 이 나면 **'적재 완료' 줄과 `[에러] 매칭 실측 실패` 한 줄뿐인지** 보고 넘어간다.
 
 **남은 것**: PR② 성적표 v2(`backtest_price.py` → 통과 구가 v1 과 달라지면 👤 먼저 → `VERSION`·파일명·`SCORECARD_URL` · `load_price_gate.py` · `build_scorecard_json.py`).
+
+## 2026-10-08 (2) — 성적표 v2: 열린 구만 채점 · 통과 14 → 15 (물결 0-2b PR②)
+
+**왜**: (1) 로 참고 시세 사다리가 지분 거래를 빼게 됐으니 성적표도 같은 모집단으로 다시 뽑아야 한다. 저녁 시험 실행에서 백필로 들어온 전남광주(12) 거래가 채점에 섞여 게이트 표가 40구가 됐고(그중 10구는 화면이 열지 않는다), 열린 구 5곳의 판정이 바뀌었다. 👤 결재 3건(21:4x) = ① 백테스트가 열린 구만 채점 ② 바뀐 5곳은 규칙대로 받음 ③ 지분 포함판은 안 돌림 — 원문·바뀐 5곳 수치는 결정 0013 §7.
+
+**한 것**:
+- `scripts/backtest_price.py` — `fetch_transactions` 바로 뒤에 열린 지역 거르기(`apply_open_filter` → RPC `list_open_sigungu()` + 순수 함수 `filter_open_sigungu` · 시도별 제외 건수 로그 · 목록이 비면 예외). ⚠️ 그 RPC 는 **공개키로** 부른다 — 서비스 키는 실행 권한이 없어 `permission denied for function list_open_sigungu`(HTTP 403 · 10-08 실측). 판 상수 `SCORECARD_VERSION="v2"` → 제목·`성적표-v2.md`. 성적표 §1 에 "열린 지역만" 한 줄. `--place-axis` 모드도 같은 거르기를 탄다(이번엔 안 돌림).
+- `scripts/build_scorecard_json.py` `VERSION="v2"` → `public/scorecard-v2.json` 새로 굽고 `public/scorecard-v1.json` 은 지움 · `SCORECARD_URL='/scorecard-v2.json'` · 화면·E2E 픽스처 'v2'. `성적표-v1.md` 는 결정 0013 §1~§3 의 근거라 남긴다.
+- 시험: 거르기 양성 대조(12 섞인 입력 → 빠짐)·빈 목록 예외·11·30 그대로 · 판 번호 세 곳 맞춰 보기(`TestVersionPins` — 옛 판 json 이 `public/` 에 남아도 빨강) · 레포 `통과구.csv` 기대값을 v2 15곳으로(그 시험 머리말이 "판을 올리는 날 같이 바꾼다"고 정해 둔 자리) · "①은 넘고 ②에서 진" 사례를 금천 → 대전 동구로.
+
+**백테스트 실행**(22:2x · DB 읽기만 · exit 0): 실거래 14,566건 → 열린 지역 30구 12,726건(밖 제외: 시도 12 1,840건) → 학습 9,893 + 검증 **2,833** · 사다리 오차 중앙값 27.6% vs 구 평균 38.3% · 통과 **15/30**. 서울·대전 30구의 게이트 줄은 저녁 시험 실행(거르기 전)의 11·30 줄과 **칸 하나까지 같다**(30행 · 차이 0 — 전남광주 거래는 사다리 어느 단계에서도 서울·대전과 안 섞인다는 예상이 맞았다).
+
+**게이트 적재 미리보기**(`load_price_gate.py --dry-run` · DB 쓰기 0 · exit 0): "구 30개 중 통과 15개" · 통과 시도별 11 = 12 · 30 = 3.
+
+**적재**: 메인이 사장님 허락 뒤 실행(아래 순서 · 결과는 머지 뒤 문서 PR 로 채운다).
+
+**남은 것** (순서 고정):
+1. 이 PR 머지 → Vercel 배포 확인(라이브 성적표 카드 도장이 'v2').
+2. 머지된 main 과 같은 폴더에서 `python scripts/load_price_gate.py --dry-run` → "구 30개 중 통과 15개" 를 눈으로 확인.
+3. 👤 허락 뒤 실적재 `python scripts/load_price_gate.py` → `post_load.py --check`.
+4. 적재 결과(행 수·통과 15·`--check`)는 머지 뒤 **문서 PR** 로 이 절에 채운다.
+
+- ⚠️ **머지부터 적재까지는 틈이 있다** — 카드 도장·방법은 v2 인데 구별 판정(`list_price_gate()` · 참고 시세 켜짐/꺼짐)은 아직 v1 의 14곳이다. 적재가 끝나면 닫힌다.
+- **되돌리기**(적재를 v1 로 돌릴 때 — `--csv` 인자는 `scripts/load_price_gate.py` 에 있다):
+  ```bash
+  MSYS_NO_PATHCONV=1 git show 3a3f24b:docs/backtest/통과구.csv > <임시>/gate-v1.csv
+  python scripts/load_price_gate.py --csv <임시>/gate-v1.csv
+  ```
+- **적재가 실패하면**(관문에 걸려 통째 롤백 등) 표는 v1 14곳 그대로이니 이 PR 을 되돌려(revert) 카드도 v1 로 맞춘다.

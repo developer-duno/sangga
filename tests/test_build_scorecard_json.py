@@ -15,6 +15,7 @@ DB 없이 돈다 — 전부 순수 함수만 본다(tests/test_build_district_ge
 import io
 import json
 import os
+import re
 import sys
 
 import pytest
@@ -62,7 +63,7 @@ def write_fixture_dir(tmp_path):
     ):
         with io.open(str(d / name), "w", encoding="utf-8", newline="\n") as f:
             f.write(BOM + text)          # ⚠️ 진짜 파일처럼 BOM 을 달아 둔다
-    doc = d / "성적표-v1.md"
+    doc = d / "성적표-v2.md"
     with io.open(str(doc), "w", encoding="utf-8", newline="\n") as f:
         f.write(DOC_TEXT)
     return str(d), str(doc)
@@ -186,7 +187,7 @@ class TestSourceHashes:
 
 class TestDocumentShape:
     def test_has_the_three_blocks_and_the_version(self, built):
-        assert built["version"] == "v1"
+        assert built["version"] == "v2"
         assert [r["stage"] for r in built["stages"]] == ["L2", "L6"]
         assert [r["kind"] for r in built["ops_modes"]][0] == "전체"
         assert [r["sigungu_code"] for r in built["gate"]] == ["11680", "11545"]
@@ -227,14 +228,14 @@ class TestDocumentShape:
 
 class TestMain:
     def test_dry_run_writes_nothing(self, tmp_path, monkeypatch, capsys):
-        out = tmp_path / "scorecard-v1.json"
+        out = tmp_path / "scorecard-v2.json"
         monkeypatch.setattr(bsj, "OUT_PATH", str(out))
         assert bsj.main(["--dry-run"]) == 0
         assert not out.exists()
         assert "미리보기" in capsys.readouterr().out
 
     def test_a_real_run_writes_a_readable_document(self, tmp_path, monkeypatch):
-        out = tmp_path / "scorecard-v1.json"
+        out = tmp_path / "scorecard-v2.json"
         monkeypatch.setattr(bsj, "OUT_PATH", str(out))
         assert bsj.main([]) == 0
         with io.open(str(out), encoding="utf-8") as f:
@@ -251,3 +252,48 @@ class TestMain:
         with io.open(bsj.OUT_PATH, encoding="utf-8") as f:
             committed = json.load(f)
         assert committed == bsj.build()
+
+
+class TestVersionPins:
+    """판 번호는 세 곳에 박혀 있다 — 하나만 올리면 화면이 404 를 받거나 옛 판을 읽는다.
+
+    ⓘ 탐지 = `_scorecard_files` · `_url_in_constants` 두 함수. 가드 본체와 양성 대조가
+      같은 함수를 지난다(CLAUDE.md — 탐지는 작은 함수로).
+    ⚠️ 못 보는 것: `SCORECARD_URL` 을 문자열 이어 붙이기·변수로 만든 꼴.
+    """
+
+    @staticmethod
+    def _scorecard_files(public_dir):
+        return sorted(n for n in os.listdir(public_dir)
+                      if re.fullmatch(r"scorecard-v\d+\.json", n))
+
+    @staticmethod
+    def _url_in_constants(text):
+        m = re.search(r"export const SCORECARD_URL\s*=\s*'([^']*)'", text)
+        return m.group(1) if m else None
+
+    def test_three_pins_agree(self):
+        import backtest_price  # noqa: PLC0415  (같은 scripts 폴더 — 위에서 sys.path 에 넣었다)
+
+        assert backtest_price.SCORECARD_VERSION == bsj.VERSION
+        assert os.path.basename(bsj.DOC_PATH) == backtest_price.SCORECARD_MD
+        consts = os.path.join(bsj.PROJECT_ROOT, "src", "lib", "appConstants.ts")
+        with io.open(consts, encoding="utf-8") as f:
+            url = self._url_in_constants(f.read())
+        assert url == "/scorecard-{}.json".format(bsj.VERSION)
+
+    def test_only_the_current_json_is_in_public(self):
+        """옛 판 json 이 남아 있으면 누가 그 주소를 다시 가리켜도 조용히 열린다."""
+        public = os.path.dirname(bsj.OUT_PATH)
+        assert self._scorecard_files(public) == ["scorecard-{}.json".format(bsj.VERSION)]
+
+    def test_detectors_catch_the_bad_shapes(self, tmp_path):
+        """양성 대조 — 옛 판 파일이 섞이면 목록에 나오고, 주소 상수는 공백이 달라도 읽힌다."""
+        for name in ("scorecard-v1.json", "scorecard-v2.json", "scorecard.json", "x.json"):
+            (tmp_path / name).write_text("{}", encoding="utf-8")
+        assert self._scorecard_files(str(tmp_path)) == ["scorecard-v1.json", "scorecard-v2.json"]
+        assert self._url_in_constants("export const SCORECARD_URL = '/scorecard-v1.json';") \
+            == "/scorecard-v1.json"
+        assert self._url_in_constants("export const SCORECARD_URL='/scorecard-v9.json'") \
+            == "/scorecard-v9.json"
+        assert self._url_in_constants("const OTHER = '/x.json';") is None
