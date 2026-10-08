@@ -19,6 +19,8 @@ Index Scan 12,138행·8ms). 그래서 함수마다 두 곳에 `::char(5)` 를 �
   0) 최신 판을 **찾아서** 보고, 그 결과가 핀(`PIN`)과 같은지 확인한다(형제
      test_search_stores_migration.py 의 "핀 + 자동 탐색 + 일치 확인" 관습). 새 판이
      들어오면 핀 대조가 시끄럽게 터진다 — 핀을 올리는 것이 곧 "새 판을 사람이 봤다"다.
+     ⓘ 2026-10-09a(물결 1-A1)부터 두 함수의 최신 판이 **갈린다** — `search_buildings` 만
+       결과 칸 셋을 더해 다시 만들었다. 그래서 핀은 함수마다 하나다.
      이미 적용된 옛 판(2026-09-10a)의 두 함수 블록은 **SHA-256 못**으로 고정한다
      ("적용된 마이그레이션 파일은 고치지 않는다"를 기계가 지킨다).
   1) 두 함수 본문에 `pc.sigungu_code = pat.gu::char(5)` 가 **정확히 두 번씩**,
@@ -34,7 +36,9 @@ Index Scan 12,138행·8ms). 그래서 함수마다 두 곳에 `::char(5)` 를 �
      commit **뒤**, `concurrently` 는 없다(트랜잭션 안에서 못 돈다).
   5) 다시 만든 곳에서 다시 닫는다(이 파일이 보는 두 함수의 revoke — 2026-09-27a 는
      `search_stores` 까지 revoke ×3 이고 그 셋째는 tests/test_search_plpgsql_migration.py 가
-     본다) · public 을 여는 `grant` 는 0개 · api 쌍둥이는 안 건드린다.
+     본다) · public 을 여는 `grant` 는 0개 · api 쌍둥이는 안 건드린다 — 단 결과 칸이
+     바뀌어 쌍둥이를 다시 세워야 했던 판(`API_TWIN_REBUILT`)만은 쌍둥이가 정본과 글자
+     그대로이고 grant 가 **api 쌍둥이에만** 있는지 본다.
   6) 가드 자신의 시험 — 한 군데를 망가뜨린 **사본**에 판정을 돌려 빨간불이 나는지 본다.
 
 ⓘ 도우미(read·norm·statements·fn_block)는 형제 test_search_stores_migration.py 에서
@@ -52,10 +56,20 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MIG_DIR = os.path.join(ROOT, "supabase", "migrations")
 SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
 
-# 이 두 함수를 **마지막으로 다시 만든** 판(결정 0029). ⛔ 새 판을 넣는 사람은 여기도 함께
+# 함수마다 그 함수를 **마지막으로 다시 만든** 판. ⛔ 새 판을 넣는 사람은 여기도 함께
 #    올린다 — 안 올리면 아래 `test_the_finder_agrees_with_the_pin` 이 시끄럽게 터진다
 #    (그 시끄러움이 이 상수의 존재 이유다).
-PIN = os.path.join(MIG_DIR, "2026-09-27a_search_fns_plpgsql.sql")
+#    search_scope = 2026-09-27a(결정 0029) · search_buildings = 2026-10-09a(결과 칸 셋 —
+#    물결 1-A1. 본문의 검색 가지·캐스트·PNU 범위는 27a 그대로다).
+PIN = {
+    "search_scope": os.path.join(MIG_DIR, "2026-09-27a_search_fns_plpgsql.sql"),
+    "search_buildings": os.path.join(MIG_DIR, "2026-10-09a_search_ownership_cols.sql"),
+}
+
+# 결과 칸이 바뀌어 api 쌍둥이까지 다시 세운 판 — `create or replace` 가 거부하므로 drop →
+# 재생성 → grant 가 불가피하다(2026-08-14e 머리말). 이 판들만 쌍둥이·grant 를 허락하되,
+# 쌍둥이가 정본과 글자 그대로이고 grant 가 api 쌍둥이에만 있는지 본다(§4).
+API_TWIN_REBUILT = (PIN["search_buildings"],)
 
 # 이미 라이브에 적용된 옛 판 — 고치지 않는다. 아래 SHA 못이 그것을 지킨다.
 APPLIED_0910A = os.path.join(MIG_DIR, "2026-09-10a_search_gu_index_cond.sql")
@@ -198,9 +212,13 @@ MIGRATIONS = sorted(set(MIG_OF.values()))
 #    통째로 조용히 사라진다. 그래서 산문이 아니라 코드로 못 박는다.
 assert MIGRATIONS, "최신 마이그레이션을 한 개도 못 찾았습니다 — 파일 단위 시험이 안 돕니다"
 
-BOTH = MIGRATIONS + [SCHEMA]
 LABEL = dict((p, "마이그레이션 " + os.path.basename(p)) for p in MIGRATIONS)
 LABEL[SCHEMA] = "정본 schema.sql"
+
+# (경로, 함수) 짝 — 함수마다 **그 함수를 정의한** 최신 판 + 정본. ⛔ 판 × 함수 곱으로 돌리면
+#    판이 갈린 날(2026-10-09a 는 search_buildings 만 정의한다) 남의 함수를 못 찾아 빨개진다.
+SITES = [(MIG_OF[fn], fn) for fn, _ in FUNCS] + [(SCHEMA, fn) for fn, _ in FUNCS]
+SITE_IDS = ["{}-{}".format(os.path.basename(p)[:11], fn) for p, fn in SITES]
 
 
 # 아래 시험들이 쓰는 **판정 한 벌**. 돌연변이 시험(§6)이 이걸 그대로 태워서
@@ -283,6 +301,69 @@ def placement_defects(block):
     return bad
 
 
+RE_GRANT_STMT = re.compile(r"(?is)\bgrant\b[^;]*;")
+RE_API_TWIN_HEAD = re.compile(
+    r"(?im)^create\s+(?:or\s+replace\s+)?function\s+api\.(\w+)\s*\(")
+
+
+def grant_defects(sql, twin_rebuilt):
+    """grant 문을 하나씩 본다(주석 걷고 공백 접은 뒤) — 어긋난 점 목록.
+
+    · 쌍둥이를 다시 세운 판이 아니면 grant 는 0줄이어야 한다.
+    · 다시 세운 판이면 grant 는 전부 `on function api.<이름>(…)` 이어야 한다 — public 원본을
+      여는 grant 는 0줄. 그리고 다시 세운 쌍둥이마다 anon 에게 주는 grant 가 있어야 한다
+      (drop 으로 권한이 사라진다 — 없으면 화면이 permission denied).
+    ⚠️ 못 보는 것: `grant all on all functions in schema …` 같은 묶음 grant 는 대상 이름이
+       없으므로 '이름 없는 grant' 로 빨강이 된다(무는 쪽으로 틀린다).
+    """
+    code = flat(code_only(sql))
+    grants = RE_GRANT_STMT.findall(code)
+    if not twin_rebuilt:
+        return ["grant 가 {}줄 있습니다 — 이 판은 권한을 열지 않습니다".format(len(grants))
+                ] if grants else []
+    bad = []
+    for g in grants:
+        m = re.search(r"(?i)\bon\s+function\s+([\w.]+)\s*\(", g)
+        if m is None or not m.group(1).lower().startswith("api."):
+            bad.append("api 쌍둥이가 아닌 대상에 grant 가 있습니다: `{}`".format(g.strip()))
+    for name in RE_API_TWIN_HEAD.findall(code_only(sql)):
+        want = re.compile(r"(?i)\bgrant\s+execute\s+on\s+function\s+api\." + name
+                          + r"\s*\([^)]*\)\s+to\b[^;]*\banon\b")
+        if not any(want.search(g) for g in grants):
+            bad.append("다시 세운 api.{} 에 anon 실행 권한을 다시 주지 않습니다".format(name))
+    return bad
+
+
+def api_twin_block(sql, name):
+    """`create [or replace] function api.<name>(` 부터 `$$;` 까지 — 첫 줄의 `or replace` 는
+    접는다(마이그레이션은 drop 뒤 `create`, 정본은 `create or replace` 로 쓴다)."""
+    sql = norm(sql)
+    m = re.search(r"(?im)^create\s+(?:or\s+replace\s+)?function\s+api\." + name
+                  + r"\s*\(", sql)
+    if m is None:
+        return None
+    end = sql.index(DOLLAR + ";", m.start())
+    return re.sub(r"(?i)^create\s+or\s+replace\s+function", "create function",
+                  sql[m.start():end])
+
+
+def api_twin_defects(sql, twin_rebuilt, schema_sql):
+    """api 쌍둥이를 건드리는지 — 다시 세운 판이면 정본과 글자 그대로인지."""
+    code = code_only(sql)
+    if not twin_rebuilt:
+        return ["마이그레이션이 api.* 를 건드립니다 — 이 판의 범위 밖입니다"
+                ] if "api." in code else []
+    bad = []
+    names = RE_API_TWIN_HEAD.findall(code)
+    if not names:
+        bad.append("쌍둥이를 다시 세운 판이라는데 api 쌍둥이 정의가 없습니다")
+    for name in names:
+        mine, canon = api_twin_block(sql, name), api_twin_block(schema_sql, name)
+        if canon is None or mine != canon:
+            bad.append("api.{} 가 정본과 글자 그대로가 아닙니다".format(name))
+    return bad
+
+
 # ── 0. 핀 · 적용된 옛 판 ─────────────────────────────────────────────────────
 
 
@@ -290,11 +371,11 @@ def test_the_finder_agrees_with_the_pin():
     """⛔ 탐색기가 옛 파일로 미끄러지면 파일 단위 시험이 **이미 검증 끝난 판**을 다시
     보며 초록이 된다 — 새 판의 grant·notify 는 한 번도 안 읽힌다."""
     for fn, _ in FUNCS:
-        assert MIG_OF[fn] == PIN, (
+        assert MIG_OF[fn] == PIN[fn], (
             "{} 의 최신 판이 {} 로 잡혔습니다 — 기대는 {} 입니다. 새 판이면 PIN 을 올리고 "
             "그 판을 사람이 한 번 읽으세요".format(
-                fn, os.path.basename(MIG_OF[fn]), os.path.basename(PIN)))
-    assert MIGRATIONS == [PIN]
+                fn, os.path.basename(MIG_OF[fn]), os.path.basename(PIN[fn])))
+    assert MIGRATIONS == sorted(set(PIN.values()))
 
 
 @pytest.mark.parametrize("fn", sorted(APPLIED_0910A_SHA))
@@ -319,34 +400,32 @@ def test_the_sha_nail_really_bites():
 
 
 class TestTheCastIsThere:
-    @pytest.mark.parametrize("path", BOTH)
-    @pytest.mark.parametrize("fn", [f for f, _ in FUNCS])
+    @pytest.mark.parametrize("path,fn", SITES, ids=SITE_IDS)
     def test_both_sites_compare_as_char5(self, path, fn):
         """⛔ 캐스트가 빠지면 색인이 Index Cond → Filter 로 떨어진다 — **에러 0**,
         답도 같고 느리기만 하다(그래서 사람이 못 잡는다)."""
         bad = cast_defects(fn_block(read(path), fn))
         assert not bad, "{} 의 {}: {}".format(LABEL[path], fn, " / ".join(bad))
 
-    @pytest.mark.parametrize("path", BOTH)
-    def test_the_finder_really_finds_a_body(self, path):
+    @pytest.mark.parametrize("path,fn", SITES, ids=SITE_IDS)
+    def test_the_finder_really_finds_a_body(self, path, fn):
         """⛔ **파서가 헛돌면 위 시험이 조용히 초록이 된다** — 이 레포가 가장 여러 번
         데인 '가짜 초록'이다. 블록이 진짜 그 함수의 본문인지 못 박아 둔다."""
-        for fn, _ in FUNCS:
-            block = fn_block(read(path), fn)
-            assert "mv_search_parcel" in block, (
-                "{} 의 {} 블록에 mv_search_parcel 이 없습니다 — 엉뚱한 것을 뜯었습니다"
-                .format(LABEL[path], fn))
-            assert not block.lstrip().startswith("create or replace function api."), (
-                "api 쌍둥이를 잡았습니다 — 통과 함수라 본문이 한 줄이고, 그러면 개수 "
-                "세기가 전부 0 이 되어 가드가 있는 척만 합니다")
+        block = fn_block(read(path), fn)
+        assert "mv_search_parcel" in block, (
+            "{} 의 {} 블록에 mv_search_parcel 이 없습니다 — 엉뚱한 것을 뜯었습니다"
+            .format(LABEL[path], fn))
+        assert not re.match(r"(?i)create\s+(or\s+replace\s+)?function\s+api\.",
+                            block.lstrip()), (
+            "api 쌍둥이를 잡았습니다 — 통과 함수라 본문이 한 줄이고, 그러면 개수 "
+            "세기가 전부 0 이 되어 가드가 있는 척만 합니다")
 
 
 # ── 2. 전국 검색 절반은 그대로 · 한 괄호 안에 ─────────────────────────────────
 
 
 class TestNationwideSearchSurvives:
-    @pytest.mark.parametrize("path", BOTH)
-    @pytest.mark.parametrize("fn", [f for f, _ in FUNCS])
+    @pytest.mark.parametrize("path,fn", SITES, ids=SITE_IDS)
     def test_the_null_branch_is_untouched(self, path, fn):
         """⛔ 이 둘은 구를 **안 고른 전국 검색을 일부러 허용**한다(결정 0028 에서 구를
         필수로 둔 `search_stores` 와 다른 점이다). 전국 가지를 지우면 **전국 검색이
@@ -364,8 +443,7 @@ class TestNationwideSearchSurvives:
             "{} 의 {}: 아는 모양에 안 맞는 `{}` 가 있습니다".format(
                 LABEL[path], fn, NATIONWIDE))
 
-    @pytest.mark.parametrize("path", BOTH)
-    @pytest.mark.parametrize("fn", [f for f, _ in FUNCS])
+    @pytest.mark.parametrize("path,fn", SITES, ids=SITE_IDS)
     def test_the_two_halves_sit_in_the_same_condition(self, path, fn):
         """`is null` 가지와 비교가 **한 괄호 안**에 있어야 옛 동작과 같다(개수가 아니라 위치).
 
@@ -445,20 +523,21 @@ class TestItClosesTheDoorAgain:
     @pytest.mark.parametrize("path", MIGRATIONS)
     def test_it_never_opens_the_public_original(self, path):
         """⛔ 화면이 부르는 문은 api 쌍둥이 하나뿐이다 — public 원본은 2026-09-05a 로
-        닫아 둔 그대로여야 한다. grant 가 한 줄이라도 있으면 그 문이 다시 열린다.
+        닫아 둔 그대로여야 한다. grant 가 한 줄이라도 있으면 그 문이 다시 열린다 —
+        쌍둥이를 다시 세운 판(`API_TWIN_REBUILT`)만은 api 쌍둥이에 주는 grant 를 허락한다.
         (api 쌍둥이가 security definer 라 원본을 부르는 주체는 소유자다 — SECURITY DEFINER
          자체는 호출자의 EXECUTE 검사를 면제하지 않는다.)"""
-        code = statements(read(path))
-        assert not re.search(r"(?im)^\s*grant\b", code), (
-            "마이그레이션에 grant 문이 있습니다 — 이 판은 권한을 열지 않습니다")
+        bad = grant_defects(read(path), path in API_TWIN_REBUILT)
+        assert not bad, " / ".join(bad)
 
     @pytest.mark.parametrize("path", MIGRATIONS)
     def test_it_does_not_touch_the_api_twins(self, path):
         """⛔ api 쌍둥이는 본체를 통째로 넘기는 통과 함수라 본문이 안 바뀐다. 여기서
-        다시 만들면 거기 붙은 grant 를 다시 적어야 하는 일이 딸려 온다."""
-        code = statements(read(path))
-        assert "api." not in code, (
-            "마이그레이션이 api.* 를 건드립니다 — 이 판의 범위 밖입니다")
+        다시 만들면 거기 붙은 grant 를 다시 적어야 하는 일이 딸려 온다.
+        결과 칸이 바뀐 판(`API_TWIN_REBUILT`)만은 다시 세운다 — 그때는 쌍둥이가 정본과
+        글자 그대로인지 본다(`create`/`create or replace` 차이만 접는다)."""
+        bad = api_twin_defects(read(path), path in API_TWIN_REBUILT, read(SCHEMA))
+        assert not bad, " / ".join(bad)
 
 
 # ── 6. 가드 자신의 시험 — 죽은 줄을 **진짜로** 잡는가 ────────────────────────
@@ -468,8 +547,7 @@ class TestItClosesTheDoorAgain:
 #   그대로다). 시험이 중간에 죽어도 레포에 부서진 파일이 남지 않는다.
 
 
-@pytest.mark.parametrize("path", BOTH)
-@pytest.mark.parametrize("fn", [f for f, _ in FUNCS])
+@pytest.mark.parametrize("path,fn", SITES, ids=SITE_IDS)
 def test_the_guard_catches_a_removed_cast(path, fn):
     """⛔ **가드가 진짜 무는지**를 시험 안에서 확인한다.
 
@@ -484,8 +562,7 @@ def test_the_guard_catches_a_removed_cast(path, fn):
         "캐스트를 하나 뗐는데도 '정상'이라 합니다 — 이 파일이 아무것도 안 막고 있습니다")
 
 
-@pytest.mark.parametrize("path", BOTH)
-@pytest.mark.parametrize("fn", [f for f, _ in FUNCS])
+@pytest.mark.parametrize("path,fn", SITES, ids=SITE_IDS)
 def test_the_guard_catches_a_removed_nationwide_branch(path, fn):
     """전국 검색 가지를 지우는 반대 방향도 잡아야 한다 — 이쪽은 0건이 되는 쪽이다."""
     block = fn_block(read(path), fn)
@@ -509,8 +586,7 @@ PNU_MUTANTS = (
 )
 
 
-@pytest.mark.parametrize("path", BOTH)
-@pytest.mark.parametrize("fn", [f for f, _ in FUNCS])
+@pytest.mark.parametrize("path,fn", SITES, ids=SITE_IDS)
 @pytest.mark.parametrize("old,new,why", PNU_MUTANTS,
                          ids=["pnu_nationwide", "nines_13", "lower_cast", "upper_cast"])
 def test_the_guard_catches_a_broken_pnu_range(path, fn, old, new, why):
@@ -522,8 +598,7 @@ def test_the_guard_catches_a_broken_pnu_range(path, fn, old, new, why):
     assert cast_defects(tampered), "{} — 그런데도 '정상'이라 합니다".format(why)
 
 
-@pytest.mark.parametrize("path", BOTH)
-@pytest.mark.parametrize("fn", [f for f, _ in FUNCS])
+@pytest.mark.parametrize("path,fn", SITES, ids=SITE_IDS)
 def test_the_placement_guard_catches_split_halves(path, fn):
     """개수는 그럴듯해도 전국 가지가 비교와 **다른 괄호**로 떨어지면 위치 판정이 물어야 한다."""
     block = fn_block(read(path), fn)
@@ -534,8 +609,7 @@ def test_the_placement_guard_catches_split_halves(path, fn):
     assert placement_defects(tampered), "두 절반을 갈랐는데도 '정상'이라 합니다"
 
 
-@pytest.mark.parametrize("path", BOTH)
-@pytest.mark.parametrize("fn", [f for f, _ in FUNCS])
+@pytest.mark.parametrize("path,fn", SITES, ids=SITE_IDS)
 def test_the_placement_guard_catches_split_pnu_bounds(path, fn):
     """PNU 아래·위 경계를 다른 괄호로 떼어 내도 위치 판정이 물어야 한다."""
     code = flat(fn_block(read(path), fn))
@@ -570,8 +644,85 @@ def test_statements_really_strips_comments():
     """⛔ **주석 제거기가 헛돌면 위 시험들이 조용히 가짜 초록이 된다** — 이 파일은 특히
     그렇다. 정본·마이그레이션의 ⛔ 주석에 `pat.gu is null or` 가 **글로** 적혀 있어서,
     안 걷으면 개수 세기가 전부 어긋난다."""
-    text = read(PIN)
+    text = read(PIN["search_scope"])
     line = "revoke all on function search_scope(text, text) from public, anon, authenticated;"
     assert line in flat(text), "전제: 원문에는 그 문장이 살아 있다"
     assert line not in flat(text.replace(line, "-- " + line)), (
         "주석으로 죽인 revoke 가 여전히 '있다'고 읽힙니다 — 주석 제거가 헛돕니다")
+
+
+# ── 7. 쌍둥이를 다시 세운 판(2026-10-09a~)의 grant·쌍둥이 판정 — 양성 대조 ─────────
+
+REBUILT = PIN["search_buildings"]
+API_GRANT = ("grant execute on function api.search_buildings(text, int, text)  "
+             "to anon, authenticated;")
+
+
+def test_the_rebuilt_file_is_clean_as_written():
+    """전제: 다시 세운 판 원문은 두 판정 모두 정상이다(아래 변조가 의미를 갖게)."""
+    assert REBUILT in API_TWIN_REBUILT
+    text = norm(read(REBUILT))
+    assert not grant_defects(text, True)
+    assert not api_twin_defects(text, True, read(SCHEMA))
+
+
+@pytest.mark.parametrize("name,mutate", (
+    # 흔한 꼴 — public 원본을 여는 grant 한 줄
+    ("public_grant", lambda s: s.replace(
+        "\ncommit;\n",
+        "\ngrant execute on function search_buildings(text, int, text) to anon;\ncommit;\n", 1)),
+    # 변형 꼴 — `public.` 으로 수식하고 대문자로
+    ("public_grant_qualified", lambda s: s.replace(
+        "\ncommit;\n",
+        "\nGRANT EXECUTE ON FUNCTION public.search_buildings(text, int, text) TO anon;\n"
+        "commit;\n", 1)),
+    # 쌍둥이 권한을 다시 안 준다(drop 으로 사라진 채)
+    ("api_grant_removed", lambda s: s.replace(API_GRANT, "", 1)),
+    # anon 을 빼고 authenticated 에만
+    ("api_grant_without_anon", lambda s: s.replace(
+        API_GRANT, API_GRANT.replace("to anon, authenticated", "to authenticated"), 1)),
+), ids=["public_grant", "public_grant_qualified", "api_grant_removed",
+        "api_grant_without_anon"])
+def test_the_grant_guard_bites(name, mutate):
+    text = norm(read(REBUILT))
+    broken = mutate(text)
+    assert broken != text, "전제: 사본이 실제로 달라야 한다({})".format(name)
+    assert grant_defects(broken, True), "{} — 그런데도 '정상'이라 합니다".format(name)
+
+
+def test_a_commented_grant_is_not_a_grant():
+    """반대 방향 — 주석으로 적은 public grant 는 grant 가 아니다."""
+    text = norm(read(REBUILT)).replace(
+        "\ncommit;\n",
+        "\n-- grant execute on function search_buildings(text, int, text) to anon;\n"
+        "commit;\n", 1)
+    assert "-- grant execute on function search_buildings" in text
+    assert not grant_defects(text, True)
+
+
+@pytest.mark.parametrize("name,mutate", (
+    ("search_path_removed", lambda s: s.replace(
+        "security definer\nset search_path = ''\nas $$ select * from public.search_buildings",
+        "security definer\nas $$ select * from public.search_buildings", 1)),
+    ("unqualified_body", lambda s: s.replace(
+        "select * from public.search_buildings(", "select * from search_buildings(", 1)),
+    ("column_dropped", lambda s: s.replace(
+        "  approve_date   date,\n  parking_cnt    integer\n)\nlanguage sql",
+        "  approve_date   date\n)\nlanguage sql", 1)),
+), ids=["search_path_removed", "unqualified_body", "column_dropped"])
+def test_the_api_twin_guard_bites(name, mutate):
+    """쌍둥이만 바꾼 사본(정본은 그대로) → 빨간불."""
+    text = norm(read(REBUILT))
+    broken = mutate(text)
+    assert broken != text, "전제: 사본이 실제로 달라야 한다({})".format(name)
+    assert api_twin_defects(broken, True, read(SCHEMA)), (
+        "{} — 그런데도 '정상'이라 합니다".format(name))
+
+
+def test_an_untouched_file_must_not_mention_api():
+    """다시 세운 판이 아닌 파일에 api.* 정의가 끼면 옛 단언 그대로 빨갛다."""
+    text = norm(read(PIN["search_scope"]))
+    assert not api_twin_defects(text, False, read(SCHEMA)), "전제: 27a 는 api 를 안 건드린다"
+    broken = text.replace("\ncommit;\n", "\n" + API_GRANT + "\ncommit;\n", 1)
+    assert api_twin_defects(broken, False, read(SCHEMA))
+    assert grant_defects(broken, False)

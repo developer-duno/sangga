@@ -57,6 +57,20 @@ FUNCS = (
 )
 FN_NAMES = [f for f, _, _ in FUNCS]
 
+# 정본은 27a **뒤의** 판을 따른다 — 2026-10-09a(물결 1-A1)가 `search_buildings` 결과 칸 끝에
+# 셋(is_jiphap·approve_date·parking_cnt)을 더했다. 그래서 서명 대조의 짝이 갈린다:
+#   27a 파일 쪽 = 직전 판(09-10a)과 같은가 · 정본 쪽 = 그 함수의 마지막 판과 같은가.
+# ⛔ 새 판이 서명을 또 바꾸면 여기를 올린다(새 칸의 이름·형·순서는
+#    tests/test_search_ownership_cols_migration.py 가 따로 못 박는다).
+SCHEMA_SIG_FROM = {"search_buildings": "2026-10-09a_search_ownership_cols.sql"}
+
+
+def sig_reference(path, fn, prev):
+    """서명 대조의 짝 파일 이름 — 정본이고 그 뒤 판이 있으면 그 판, 아니면 직전 판."""
+    if path == SCHEMA and fn in SCHEMA_SIG_FROM:
+        return SCHEMA_SIG_FROM[fn]
+    return prev
+
 # 결정 0029 가 기대는 낱말 다섯 — 주석 걷고 공백 한 칸으로 접은 뒤, **있어야 할 자리에서만**
 # 찾는다(2026-09-27 검사관 A — 파일 전체에서 찾으면 줄 끝 주석
 # `set search_path = public -- set plan_cache_mode = force_custom_plan` 이나 본문 안의
@@ -235,10 +249,11 @@ class TestTheSignatureDidNotMove:
         """⛔ `returns table` 칸은 OUT 파라미터라 한 글자만 바뀌어도 `create or replace` 가
         거부하거나(라이브에서 판이 통째로 실패), 순서가 바뀌면 PostgreSQL 이 **자리**로 맞춰
         api 쌍둥이·화면이 칸을 엇갈려 읽는다."""
-        before = signature(fn_block(read(os.path.join(MIG_DIR, prev)), fn))
+        ref = sig_reference(path, fn, prev)
+        before = signature(fn_block(read(os.path.join(MIG_DIR, ref)), fn))
         after = signature(fn_block(read(path), fn))
         assert after == before, "{} 의 {}: 서명·결과 칸이 {} 와 다릅니다".format(
-            LABEL[path], fn, prev)
+            LABEL[path], fn, ref)
 
 
 # ── 3. 파일 단위 ──────────────────────────────────────────────────────────────
@@ -293,7 +308,7 @@ def test_mutation_b_auto_plan_cache_is_noticed(path):
 @pytest.mark.parametrize("fn,args,prev", FUNCS)
 def test_mutation_c_a_moved_signature_is_noticed(path, fn, args, prev):
     """인자 기본값 하나 · 결과 칸 이름 하나를 바꾼 사본 → 서명 대조가 뒤집혀야 한다."""
-    before = signature(fn_block(read(os.path.join(MIG_DIR, prev)), fn))
+    before = signature(fn_block(read(os.path.join(MIG_DIR, sig_reference(path, fn, prev))), fn))
     block = fn_block(read(path), fn)
     assert signature(block) == before, "전제: 원문은 같다"
     # 결과 칸의 첫 이름을 바꾼다(`returns table (` 바로 뒤의 낱말).

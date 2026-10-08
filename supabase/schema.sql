@@ -1546,7 +1546,13 @@ returns table (
   min_floor      smallint,
   max_floor      smallint,
   has_roof       boolean,
-  total_cnt      bigint
+  total_cnt      bigint,
+  -- 소유 구조 세 칸(2026-10-09a · 결정 0036 결정 5) — building 원값 그대로(null 은 null,
+  -- 0 은 0). '미상' 판정은 화면 몫이다. ⛔ 기존 13칸 **뒤에만** 붙인다 — 칸은 자리로
+  -- 맞춰지므로 앞에 끼우면 api 쌍둥이·화면이 칸을 엇갈려 읽는다.
+  is_jiphap      boolean,
+  approve_date   date,
+  parking_cnt    integer
 )
 language plpgsql
 stable
@@ -1659,10 +1665,16 @@ with pat as not materialized (
     st_x(p.geom)::double precision as lng,
     (select count(*)::int from building b2 where b2.pnu = t.pnu) as bld_cnt_in_pnu,
     fs.floor_cnt, fs.min_floor, fs.max_floor, fs.has_roof,
-    t.total_cnt
+    t.total_cnt,
+    bo.is_jiphap, bo.approve_date, bo.parking_cnt
   from top t
   join mv_search_parcel pc on pc.pnu = t.pnu
   join parcel p on p.pnu = t.pnu
+  -- ③ 소유 구조 세 칸(2026-10-09a)은 결과를 줄인 **뒤** 기본키(bld_id)로 한 번 더 읽는다 —
+  --    lim 행(최대 100)번의 색인 조회다. ⛔ 위 hit·nm 가지에 실어 나르지 말 것 — 검색 가지는
+  --    낱말 하나에도 민감하다(가지 2→3 에 763→1,550ms · search_stores 머리말).
+  --    top 의 bld_id 는 building 에서 왔으므로 이 조인은 행을 줄이지 않는다.
+  join building bo on bo.bld_id = t.bld_id
   join lateral (
     select
       count(*)::int                                    as floor_cnt,
@@ -1693,6 +1705,8 @@ comment on function search_buildings(text, int, text) is
   '입력의 % _ \ 는 서버가 리터럴로 이스케이프하고, 빈 검색어는 0건으로 잘라낸다. '
   '이름은 building.display_nm(동명칭 폴백 + 개인 성명 가림)만 본다 — 보이는 것 = 검색되는 것. '
   '주소는 mv_search_parcel(건물이 있는 필지만)을 본다. ⚠️ 자료 적재 후 `python scripts/post_load.py` 필수. '
+  'is_jiphap·approve_date·parking_cnt 는 building 원값 그대로다(2026-10-09a) — null·0 을 '
+  '"미상"으로 읽을지는 화면이 정한다. '
   '⛔ 주소 가지와 이름 가지를 OR로 합치지 말 것 — 두 조인 테이블에 걸친 OR은 gin_trgm 인덱스를 무력화한다';
 
 -- ⚠️ public 원본은 회수만 한다 — 열리는 쪽은 api.* 래퍼뿐(2026-09-05a). Postgres 는 새 함수의 EXECUTE 를 PUBLIC 에 기본 부여한다.
@@ -3228,7 +3242,10 @@ returns table (
   min_floor      smallint,
   max_floor      smallint,
   has_roof       boolean,
-  total_cnt      bigint
+  total_cnt      bigint,
+  is_jiphap      boolean,
+  approve_date   date,
+  parking_cnt    integer
 )
 language sql
 stable
