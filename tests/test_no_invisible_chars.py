@@ -122,7 +122,7 @@ POSITIONS = {
 # 표 밖에서 NUL 이 나오면 빨강(글 파일에 NUL 이 섞였거나 UTF-16 으로 저장된 것일 수 있다),
 # 표에 있는데 사라졌거나 더는 NUL 이 없으면 그것도 빨강(표가 낡지 않게).
 BINARY = (
-    "budongsan-data.skill",
+    "docs/archive/budongsan-data-2026-08-06.skill",  # 쓰지 않는 옛 스킬 원본(2026-10-09 옮김 — CLAUDE.md 13줄)
     "소상공인365 사용자매뉴얼_오픈 API 신청 및 활용.pdf",
 )
 

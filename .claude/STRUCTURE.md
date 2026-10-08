@@ -4,7 +4,7 @@
 > 프론트 = React 19 + Vite(SPA 1화면), 백엔드 = Supabase(PostgREST+RPC) 단독(서버 코드 없음),
 > 수집 = 로컬 파이썬(표준 라이브러리 + requests/dotenv, pandas·numpy 없음).
 > 배포 = Vercel(`https://sangga-one.vercel.app`, GitHub 연결 — main push 가 곧 배포).
-> 실측 갱신: 2026-09-05 (Wave 4 배치 반영)
+> 실측 갱신: 2026-10-09 (결정 0033 개업·폐업 · 0035 분기 표지 · 0036 역할 단추 반영 — 파일 수는 그날 `ls` 실측. 시험 개수는 여기 적지 않는다 — 정본은 루트 `CLAUDE.md` 「명령」)
 
 ## 디렉토리 트리
 
@@ -14,7 +14,9 @@ src/                     # 프론트 (라우터·상태관리 라이브러리 �
 ├── App.tsx              # 유일한 화면·유일한 상태 소유자. 주소(?sgg=&bld=)를 첫 그림에만 읽고,
 │                         #   그 뒤론 화면 상태가 주인 → 주소는 replaceState 로 따라 적히기만 함
 ├── types.ts             # DB 응답 타입 단일 소스 (e2e/fixtures.ts 도 여기서 import)
-├── components/          # 화면 조각 20개 + 각 .test.tsx (hooks/·constants/ 폴더는 없음)
+├── components/          # 화면 조각 22개 + 각 .test.tsx (hooks/·constants/ 폴더는 없음)
+│   ├── RolePicker.tsx       # 첫 화면 `나는 [투자자][창업자][중개사]` 줄(결정 0036 결정 18) — 고르면 층별 카드
+│   │                         #   순서·펼침만 바뀜, 다시 누르면 해제. 지역 고르기 바로 위 · 인쇄에서 빠짐
 │   ├── RegionPicker.tsx     # 시도→구 2단 칩. 목록 진실 = 서버 RPC list_open_sigungu()
 │   ├── BuildingSearch.tsx   # 검색 폼+결과. search_buildings / 0건이면 search_scope 재질의 + search_stores(가게 이름 → 땅 구역, 늘 함께 · 0028)
 │   ├── LhNoticeSection.tsx  # LH 상가 분양·입점 공고(결정 0022) — **입구**(구는 골랐고 건물은
@@ -36,6 +38,8 @@ src/                     # 프론트 (라우터·상태관리 라이브러리 �
 │   ├── PriceBandSection.tsx    # 참고 매매 시세 밴드(Stage B·결정 0013) — FloorStack 안에서 렌더
 │   ├── RentStatSection.tsx     # 상권 임대 동향(결정 0024) — 부동산원 공표값을 그대로 나름
 │   │                         #   (역산 0). list_rent_stats, FloorStack 안에서 렌더
+│   ├── OpenCloseSection.tsx    # 상권 개업·폐업(서울시 공표 · 결정 0033 R2) — 공표값 그대로,
+│   │                         #   list_district_openclose(p_pnu). 대전 등은 "서울 상권만 다룹니다 … 그 자료가 없습니다" 글(`not_seoul`). FloorStack 안에서 렌더
 │   ├── ErrorBoundary.tsx    # 하얀 화면 안전망(결정 0016) — 클래스 컴포넌트(리액트가 훅으로
 │   │                         #   오류를 못 잡게 해서). key 로 구/건물 바뀔 때마다 그물을 새로 침
 │   ├── AppFooter.tsx        # 화면 맨 아래 — 이 자료를 어떻게 믿을지 + 아래 셋을 감쌈
@@ -47,7 +51,7 @@ src/                     # 프론트 (라우터·상태관리 라이브러리 �
 │   ├── ShareButton.tsx      # 지금 화면 주소 복사 버튼(결정 0019, 휴대폰 대응)
 │   ├── PrintButton.tsx      # 종이로 뽑기 버튼(결정 0020) — window.print() 호출, 인쇄의 유일한 길 아님
 │   └── PrintHeader.tsx      # 종이에만 나오는 머리글(건물명·주소·뽑은시각·원본주소) — @media print 전용
-└── lib/                 # 부수효과·순수함수 계층 26개 (components 를 절대 import 안 함)
+└── lib/                 # 부수효과·순수함수 계층 28개 (components 를 절대 import 안 함)
     ├── supabase.ts      # 클라이언트 1개 생성 (env 읽는 유일한 곳 — 그래서 흉내내기 까다로움)
     ├── appConstants.ts  # 서버 함수/뷰 이름·짝수(TX_LIST_CAP·SCORECARD_URL 등) 상수만 모은 순수 모듈
     │                     #   (supabase.ts 와 분리한 이유: 이건 env 를 안 봐서 테스트가 흉내 안 내도 됨)
@@ -79,7 +83,14 @@ src/                     # 프론트 (라우터·상태관리 라이브러리 �
     ├── handoffLinks.ts  # 넘기는 곳 목록·역할별 시작점(결정 0014 §5). 머리말에 **주소 확인 기록** —
     │                     #   여섯 곳 전부 확인됨 — 다섯은 도구(9/5), 네이버는 👤 사장님(9/9, 'PC 서비스 26년 말 종료' 배너 → 2027 초 재확인)
     ├── sectionCards.ts  # 카드 배치 정본 SECTION_PLAN(제목·역할태그·기본펼침) + 펼침 상한 4,
-    │                     #   입구 카드는 별도 표 ENTRY_SECTION_PLAN (섞으면 층별 예산이 줄어듦)
+    │                     #   입구 카드는 별도 표 ENTRY_SECTION_PLAN (섞으면 층별 예산이 줄어듦).
+    │                     #   역할을 고르면 ROLE_SECTION_LAYOUT 세 벌이 순서·펼침을 덮어씀 — 차례는 sectionOrder()
+    ├── viewerRoleStore.ts  # 고른 역할 하나를 이 기기 브라우저 저장소에만(결정 0036) — 막힌 창 예외 삼킴,
+    │                     #   주소·의견함엔 안 실음
+    ├── sidePrefetch.ts  # 곁 카드(업종·인허가·임대·개업폐업) 질의를 건물 고른 순간 먼저 출발(속도 P3) —
+    │                     #   보관 열쇠 = 함수+pnu (그래서 bld_id 단위 질의는 여기 넣지 않음)
+    ├── storeSearch.ts   # 상호명 검색(결정 0028) 순수 계산 — 응답 모양 검사·'외 N곳'·너무 넓은 검색 줄
+    ├── openClose.ts     # 개업·폐업 카드 순수 계산(결정 0033) — 분기 글자·추이 칸·접힌 요약. 비율 재계산 0
     ├── urlState.ts      # 주소(?sgg=&bld=) 조립/파싱 순수 부품(결정 0019) — 물음표 방식, rewrite 불필요
     ├── restoreBuilding.ts  # 링크로 들어온 건물을 v_floor_stack 행에서 되살림(검색 안 거침)
     ├── printStamp.ts    # 종이에 적을 "언제 뽑았나" 문구 생성(결정 0020) — toLocaleString 지역차 회피
@@ -91,7 +102,7 @@ public/                  # 정적 자산 (Supabase 를 안 거치는 것만)
 ├── favicon.svg
 └── icons.svg
 
-scripts/                 # 데이터 파이프라인 전부 21개 (수동 실행 — 자동화는 감시 워크플로우뿐)
+scripts/                 # 데이터 파이프라인 전부 24개 (수동 실행 — 자동화는 감시 워크플로우뿐)
 ├── dbx.py               # psql 감싸기 (SANGGA_DATABASE_URL) — DDL·EXPLAIN·matview 전용 통로
 ├── post_load.py         # ★ 모든 적재 후 필수: VACUUM ANALYZE 6개 표 + 검색 요약표(REFRESH_MVS 목록이 정본) 갱신 + 신선도 점검
 ├── post_load.py --check # 낡음 여부 + anon 권한(읽기/쓰기) 노출 점검 — post_load 본체엔 안 들어 있음
@@ -103,7 +114,9 @@ scripts/                 # 데이터 파이프라인 전부 21개 (수동 실행
 ├── check_district_source_update.py  # 상권 원천(서울·소진공) 수정일 감시
 ├── check_lh_notices.py              # LH 새 상가 공고 감시 — 알리기만 함(적재는 로컬 수집기 몫,
 │                                    #   DB 열쇠를 GitHub 에 안 올리려고). 기준선 LATEST_KNOWN_NOTICE_DATE
-├── check_watch_heartbeat.py         # 감시 워크플로우 5종이 서로의 최근 성공 시각을 확인(전멸 대비)
+├── check_data_freshness.py          # '다음 갱신 예정'이 지난 자료·화면 분기 섞임 감시(그물 6호 · 알리기만)
+├── check_watch_heartbeat.py         # 감시 워크플로우 6종이 서로의 최근 성공 시각을 확인(전멸 대비)
+├── publish_snapshot.py              # 분기 표지(snapshot_release) 보기·되돌리기 전용(결정 0035) — 평소엔 post_load 가 올림
 ├── check_live_health.py             # 라이브(첫 화면+JS 번들+상권 지도)가 밖에서 두드려 서 있나 확인
 ├── feedback_digest.py               # 의견함 주간 알림 — 숫자만(get_feedback_stats), 본문은 안 뽑음
 ├── setup_git_hooks.py               # main 잠금(로컬 훅+GitHub 규칙) 새 컴퓨터에서 1회 세팅/확인
@@ -117,7 +130,7 @@ scripts/                 # 데이터 파이프라인 전부 21개 (수동 실행
 │                                    #   산출물이라 DB 에 안 넣음. 통과 구 정본은 여전히 서버)
 ├── build_rone_map.py / load_rone_map.py  # district↔R-ONE 매핑 후보 생성 / seed 적재(관문 3종)
 ├── seeds/               # district_rone_map.csv (사람이 확정한 매핑 정본)
-└── collectors/          # 원천별 수집기·적재기 20개 (fetch_/collect_ = 받기, load_/convert_ = 적재)
+└── collectors/          # 원천별 수집기·적재기 23개 (fetch_/collect_ = 받기, load_/convert_ = 적재)
     ├── collect_transactions.py / load_transactions.py    # 실거래 (PNU 조립·tx_id 해시 멱등)
     ├── fetch_bldrgst_bulk.py / convert_bldrgst_bulk.py   # 건축HUB 일괄 zip → API 동형 JSONL
     ├── collect_building_ledger.py / load_building_ledger.py  # 건축물대장 → 3층 생성 (최대 적재기)
@@ -131,27 +144,32 @@ scripts/                 # 데이터 파이프라인 전부 21개 (수동 실행
     ├── load_nts_base_price.py                           # 국세청 기준시가 zip → nts_base_price
     │                                                     #   (호실 249만 행·한 트랜잭션, 결정 0021)
     ├── collect_lh_notices.py                            # LH 상가 분양·입점 공고 → lh_notice upsert
+    ├── collect_seoul_openclose.py / load_seoul_openclose.py  # 서울 점포-상권 개업·폐업(OA-15577 API)
+    │                                                     #   → district_openclose 분기 단위 교체(결정 0033)
+    ├── fetch_seoul_openclose_zip.py                     #   위의 대비책 — 연도 zip(인증키 없음)
     └── load_bjd_code.py                                 # 법정동코드 전체자료(code.go.kr) 적재
 
 supabase/
 ├── schema.sql           # 정본 (라이브 반영본 — 마이그레이션과 드리프트 가드로 동기)
-└── migrations/          # 날짜 파일명 70개(2026-10-04c 까지), 라이브 적용 순서 그대로
+└── migrations/          # 날짜 파일명 75개(2026-10-09a 까지), 라이브 적용 순서 그대로
 
-tests/                   # pytest 4,116개(2026-10-04 · 워크트리·CI 4,113 + 3 skipped) — collector/스크립트 1:1 + 드리프트 가드
-e2e/                     # playwright 34개(2파일: fixtures.ts, floor-stack.spec.ts). 넓은화면(chromium)·
-│                         #   휴대폰(mobile, Pixel 7) 2벌로 돌아 실행은 68회. E2E_PORT 로 포트 회피
-.github/workflows/       # ci.yml(test+web) + 감시 5종: district-source-watch·feedback-digest·
-│                         #   live-health-watch·sangkwon-quarterly-watch·lh-notice-watch
-│                         #   (전부 하트비트로 서로 감시. 비밀값은 lh-notice-watch 의 MOLIT_KEY 하나뿐)
-docs/                    # 상세계획·알려진한계(조사 전 필독)·PROGRESS·ROADMAP + decisions/0001~0028 (28개)
+tests/                   # pytest — collector/스크립트 1:1 + 드리프트 가드 (개수 = 루트 CLAUDE.md 「명령」)
+e2e/                     # playwright(2파일: fixtures.ts, floor-stack.spec.ts). 넓은화면(chromium)·
+│                         #   휴대폰(mobile, Pixel 7) 2벌로 돈다(실행 = 시험 × 2). E2E_PORT 로 포트 회피
+│                         #   시험별 내용 = .claude/rules/e2e-catalog.md
+.github/workflows/       # ci.yml(test+web) + 감시 6종: district-source-watch·feedback-digest·
+│                         #   live-health-watch·sangkwon-quarterly-watch·lh-notice-watch·data-freshness-watch
+│                         #   (전부 하트비트로 서로 감시. 비밀값·못 보는 틈 = .claude/rules/watch-nets.md)
+docs/                    # 상세계획·알려진한계(조사 전 필독)·데이터백서(자료 장부 정본)·PROGRESS·ROADMAP
+                         #   + decisions/0001~0036 (36개)
 ```
 
 ## 핵심 모듈 역할
 
 | 모듈 | 책임 (1줄) |
 |---|---|
-| `src/App.tsx` | 상태 6개(주소로 연 값·selected·sigungu·sigunguName·restoring·restoreFailed) 소유·배분. 구 변경 시 `key` 로 BuildingSearch 강제 재마운트(검색 초기화), 지도·층별 화면은 각각 `key` 를 준 `ErrorBoundary` 로 감쌈. 입구 카드(`LhNoticeSection`·`ScorecardSection`·`TxFlowSection`)는 구는 골랐고 건물은 아직일 때만 직접 꽂음 |
-| `src/components/FloorStack.tsx` | 층 스택 + 속한 상권 + 실거래 + 참고 시세 + 기준시가 + 임대 동향 + 업종 분포 섹션. 질의 7개(뷰 2 + RPC 5) 독립 실패 허용, `SectionCard` 로 묶은 카드들의 뼈대 |
+| `src/App.tsx` | 상태(주소로 연 값·selected·sigungu·sigunguName·restoring·restoreFailed + 고른 역할 `viewerRole` — 첫 그림 전에 `viewerRoleStore` 에서 읽고 바뀌면 저장) 소유·배분. 구 변경 시 `key` 로 BuildingSearch 강제 재마운트(검색 초기화), 지도·층별 화면은 각각 `key` 를 준 `ErrorBoundary` 로 감쌈. 입구 카드(`LhNoticeSection`·`ScorecardSection`·`TxFlowSection`)는 구는 골랐고 건물은 아직일 때만 직접 꽂음 |
+| `src/components/FloorStack.tsx` | 층 스택 + 속한 상권 + 실거래 + 참고 시세 + 기준시가 + 임대 동향 + 업종 분포 섹션. 질의 8개(뷰 2 + RPC 6 — 호실 요약 포함, 위 나무와 같은 셈) 독립 실패 허용, `SectionCard` 로 묶은 카드들의 뼈대. 카드는 이름으로 담아 `sectionOrder(viewerRole)` 차례로 그림(key = 카드 이름 — 역할을 바꿔도 자리만 옮김) |
 | `src/components/SectionCard.tsx` | 카드 공통 틀 — 첫 화면 펼침 상한 4장(`sectionCards.ts` 의 `SECTION_PLAN` 이 장수·제목의 정본, 입구 카드는 `ENTRY_SECTION_PLAN`), 접힌 카드도 본문은 그려 두고 `hidden` 만 해서 인쇄가 되살릴 수 있게 함 |
 | `src/lib/supabase.ts` | anon 클라이언트(persistSession:false). 원본 표는 닫혀 있고 함수·뷰만 접근 |
 | `src/lib/appConstants.ts` | 서버 함수/뷰 이름과 짝수(TX_LIST_CAP·FEEDBACK_MAX_LEN·SCORECARD_URL 등)만 모은 순수 모듈 — env 를 안 봐서 테스트가 흉내낼 필요 없음 |
@@ -195,8 +213,8 @@ docs/                    # 상세계획·알려진한계(조사 전 필독)·PRO
 
 - 빌드: `pnpm build` (tsc -b && vite build)
 - 실행: `pnpm dev` (http://localhost:5173)
-- 테스트: `pnpm test`(vitest 891, 41파일) / `python -m pytest tests/ -q`(4,116 — 워크트리·CI 4,113 + 3 skipped) /
-  `E2E_PORT=5273 pnpm test:e2e`(34개 × 2벌 = 68회)
+- 테스트: `pnpm test`(vitest) / `python -m pytest tests/ -q` / `E2E_PORT=5273 pnpm test:e2e`(시험 × 2벌)
+  — 개수는 루트 `CLAUDE.md` 「명령」이 정본(여기 적으면 낡는다 — 2026-10-09 이 줄이 vitest 891·pytest 4,116 으로 한 달 낡아 있었다)
 - 린트: `pnpm exec oxlint` / `python -m ruff check scripts/ tests/`
 - 배포: `main` push → Vercel 자동 배포(`https://sangga-one.vercel.app`). `main` 은 잠겨 있어
   가지→PR→검사(`test`·`web`) 통과→머지 순서로만 들어간다(결정 0018).
