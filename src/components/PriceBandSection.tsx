@@ -1,5 +1,5 @@
 import { TX_BASEMENT_MISSING_SINCE } from '../lib/appConstants';
-import { SECTION_PLAN } from '../lib/sectionCards';
+import { SECTION_PLAN, type SectionPlan } from '../lib/sectionCards';
 import { SectionCard } from './SectionCard';
 import type { BasePrice, FloorRow, PriceBand } from '../types';
 import { pairBasePrices, type BasePriceRow } from '../lib/basePrice';
@@ -53,6 +53,11 @@ type Props = {
   hasTxStats: boolean;
   openFloor: number | null;
   onPickFloor: (floorNo: number) => void;
+  /**
+   * 이 카드의 배치(제목·역할·기본 펼침). 층별 화면이 고른 역할의 표를 준다(결정 0036 결정 18).
+   * 안 주면 `SECTION_PLAN.band` — 역할을 고르기 전 화면 그대로.
+   */
+  plan?: SectionPlan;
 };
 
 // 제목은 `SECTION_PLAN.band.title` 하나뿐이다(카드 머리에 적힌다) — 여기 또 적으면
@@ -78,6 +83,7 @@ export function PriceBandSection({
   hasTxStats,
   openFloor,
   onPickFloor,
+  plan = SECTION_PLAN.band,
 }: Props) {
   // 못 읽었으면 "참고 시세 없음"이라고 적지 않는다 — 없는 것과 모르는 것은 다르다.
   if (failed) return null;
@@ -87,7 +93,7 @@ export function PriceBandSection({
   // 같아 보인다.
   if (bands === null) {
     return (
-      <SectionCard plan={SECTION_PLAN.band} className="band band--wait" summary="불러오는 중…" />
+      <SectionCard plan={plan} className="band band--wait" summary="불러오는 중…" />
     );
   }
   if (bands.length === 0) return null;
@@ -97,7 +103,7 @@ export function PriceBandSection({
   if (bands.some((b) => b.status === 'gate_fail')) {
     return (
       <SectionCard
-        plan={SECTION_PLAN.band}
+        plan={plan}
         className="band"
         // 접혀 있어도 이 한 줄은 보인다 — 아래 본문과 **같은 글자를 쓰지 않는다**(같은 말이
         // 화면에 둘이면 이름으로 찾는 시험이 어느 쪽을 잡았는지 모르게 된다).
@@ -141,7 +147,7 @@ export function PriceBandSection({
     okFloorCnt > 0 ? `값을 낸 층 ${okFloorCnt}개` : '이 건물에서는 값을 낸 층이 없습니다';
 
   return (
-    <SectionCard plan={SECTION_PLAN.band} className="band" summary={summary}>
+    <SectionCard plan={plan} className="band" summary={summary}>
       <p className="band__lead">
         곁에서 실제로 팔린 값으로 어림한 폭입니다.{' '}
         <strong>사고파는 값이고 월세·보증금이 아닙니다.</strong>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { RENT_STATS_FN } from '../lib/appConstants';
-import { SECTION_PLAN } from '../lib/sectionCards';
+import { SECTION_PLAN, type SectionPlan } from '../lib/sectionCards';
 import { SectionCard } from './SectionCard';
 import {
   defaultBldType,
@@ -46,9 +46,19 @@ type Props = {
    * 안 주면(옛 부모) 지금 글 그대로.
    */
   noCoord?: boolean;
+  /**
+   * 이 카드의 배치(제목·역할·기본 펼침). 층별 화면이 고른 역할의 표를 준다(결정 0036 결정 18).
+   * 안 주면 `SECTION_PLAN.rent` — 역할을 고르기 전 화면 그대로.
+   */
+  plan?: SectionPlan;
 };
 
-export function RentStatSection({ pnu, prefetch, noCoord = false }: Props) {
+export function RentStatSection({
+  pnu,
+  prefetch,
+  noCoord = false,
+  plan = SECTION_PLAN.rent,
+}: Props) {
   /**
    * 받아 온 조사값. **아직 못 받았을 때와 못 읽었을 때가 똑같이 null 이다.**
    *
@@ -105,7 +115,7 @@ export function RentStatSection({ pnu, prefetch, noCoord = false }: Props) {
   if (rows.length === 0 && noCoord) {
     // 좌표가 없어 상권을 못 찾은 것이다 — 개업·폐업 카드의 같은 사정과 같은 글(`rentStats.ts`).
     return (
-      <SectionCard plan={SECTION_PLAN.rent} className="rent rent--none" summary={summary}>
+      <SectionCard plan={plan} className="rent rent--none" summary={summary}>
         <p className="rent__lead">{RENT_NO_COORD_TEXT}</p>
         <p className="rent__src">출처: 한국부동산원 상업용부동산 임대동향조사.</p>
       </SectionCard>
@@ -114,7 +124,7 @@ export function RentStatSection({ pnu, prefetch, noCoord = false }: Props) {
 
   if (rows.length === 0) {
     return (
-      <SectionCard plan={SECTION_PLAN.rent} className="rent rent--none" summary={summary}>
+      <SectionCard plan={plan} className="rent rent--none" summary={summary}>
         <p className="rent__lead">
           부동산원 임대동향조사는 전국 모든 상권이 아니라 <strong>정해진 표본 상권</strong>만
           조사합니다. 이 자리가 그 표본에 들지 않았다는 뜻이지, 장사가 안 되는 자리라는 뜻이
@@ -152,7 +162,7 @@ export function RentStatSection({ pnu, prefetch, noCoord = false }: Props) {
   const isOffice = bldType === '오피스';
 
   return (
-    <SectionCard plan={SECTION_PLAN.rent} className="rent" summary={summary}>
+    <SectionCard plan={plan} className="rent" summary={summary}>
       <p className="rent__lead">
         <strong>이 건물의 임대료가 아니라 이 건물이 속한 상권의 조사값입니다.</strong> 한국부동산원이
         분기마다 표본을 조사해 공표한 값을 그대로 옮겨 적었습니다.

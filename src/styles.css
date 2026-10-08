@@ -54,6 +54,59 @@ body {
   color: var(--muted);
 }
 
+/* ── 역할 단추 줄 (결정 0036 결정 18 ⑧ — 지역 고르기 바로 위) ─────────── */
+
+.role {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 0 0 16px;
+}
+
+.role__lead {
+  font-size: 14px;
+  color: var(--text);
+}
+
+.role__list {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+}
+
+/* 지역 칩과 같은 모양 — 눌린 단추만 칠한다(`aria-pressed` 와 같은 뜻). */
+.role__chip {
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.role__chip:hover {
+  border-color: var(--accent);
+}
+
+.role__chip--on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.role__note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 /* ── 지역 (전국 프레임 + 열림/잠김) ─────────────────────────────────── */
 
 .region {
@@ -3132,6 +3185,8 @@ body {
     절반이 검색창·구 칩·버튼이었다(2026-08-25 실측).
   */
   .app__head,
+  /* 역할 단추 줄(결정 0036 결정 18) — 누르는 장치다. */
+  .role,
   .region,
   .search,
   .takeout,

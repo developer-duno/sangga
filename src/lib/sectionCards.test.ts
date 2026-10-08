@@ -1,9 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import {
   ENTRY_SECTION_PLAN,
+  ROLE_SECTION_LAYOUT,
   SECTION_EXPAND_BUDGET,
   SECTION_PLAN,
+  VIEWER_ROLES,
   countDefaultOpen,
+  isViewerRole,
+  plansFromLayout,
+  sectionOrder,
+  sectionPlansFor,
+  type RoleLayout,
+  type SectionKey,
   type SectionPlan,
 } from './sectionCards';
 
@@ -84,5 +92,95 @@ describe('ENTRY_SECTION_PLAN — 입구 카드', () => {
         expect(plan.title.includes(banned)).toBe(false);
       }
     }
+  });
+});
+
+/**
+ * 역할별 카드 순서·펼침 세 벌(👤 결정 0036 결정 18).
+ *
+ * 한 벌이던 상한 가드를 **세 벌 각각**에 건다 — 한 벌만 세면 다른 벌이 5장을 펼쳐도 초록이다.
+ * 순서가 카드를 **빠짐없이 한 번씩** 담는지도 본다 — 빠뜨리면 그 역할에서 카드가 조용히 사라진다.
+ * 탐지는 아래 작은 함수 둘로 빼서, 가드 본체와 양성 대조가 같은 함수를 지나게 한다.
+ */
+
+/** 이 벌이 펼쳐 두는 카드 수. */
+function openCount(layout: RoleLayout): number {
+  return countDefaultOpen(plansFromLayout(layout));
+}
+
+/**
+ * 순서가 층별 화면 카드를 빠짐없이 한 번씩 담나.
+ * 못 보는 것: 차례가 결정 표와 같은지는 안 본다 — 그건 `FloorStack.test.tsx` 의 표 대조가 본다.
+ */
+function isFullOrder(order: readonly string[]): boolean {
+  const all = Object.keys(SECTION_PLAN);
+  return (
+    order.length === all.length &&
+    new Set(order).size === all.length &&
+    all.every((k) => order.includes(k))
+  );
+}
+
+describe('ROLE_SECTION_LAYOUT — 역할 세 벌', () => {
+  for (const role of VIEWER_ROLES) {
+    it(`${role} — 펼쳐 두는 카드가 상한(4장)을 넘지 않는다`, () => {
+      expect(openCount(ROLE_SECTION_LAYOUT[role])).toBeLessThanOrEqual(SECTION_EXPAND_BUDGET);
+      // sectionPlansFor 를 거쳐도 같은 수다(화면이 실제로 쓰는 길).
+      expect(countDefaultOpen(sectionPlansFor(role))).toBe(openCount(ROLE_SECTION_LAYOUT[role]));
+    });
+
+    it(`${role} — 순서가 카드를 빠짐없이 한 번씩 담는다`, () => {
+      expect(isFullOrder(ROLE_SECTION_LAYOUT[role].order)).toBe(true);
+      expect(sectionOrder(role)).toEqual(ROLE_SECTION_LAYOUT[role].order);
+    });
+  }
+
+  it('★ 양성 대조 — 한 벌을 5장 펼친 사본은 상한 가드에 걸린다', () => {
+    const over: RoleLayout = {
+      ...ROLE_SECTION_LAYOUT.창업자,
+      open: [...ROLE_SECTION_LAYOUT.창업자.open, 'tx'],
+    };
+    expect(openCount(over)).toBe(SECTION_EXPAND_BUDGET + 1);
+    expect(openCount(over)).toBeGreaterThan(SECTION_EXPAND_BUDGET);
+  });
+
+  it('★ 양성 대조 — 카드를 빠뜨리거나 겹친 순서는 걸린다', () => {
+    const order = ROLE_SECTION_LAYOUT.투자자.order;
+    expect(isFullOrder(order.slice(1))).toBe(false); // 하나 빠뜨림
+    expect(isFullOrder([order[1], ...order.slice(1)])).toBe(false); // 같은 칸 두 번 + 하나 빠뜨림
+  });
+
+  it('역할을 고르기 전은 SECTION_PLAN 그대로다 (지금 화면 — 결정 18 ①)', () => {
+    expect(sectionPlansFor(null)).toBe(SECTION_PLAN);
+    expect(sectionOrder(null)).toEqual(Object.keys(SECTION_PLAN));
+  });
+
+  it('제목·역할 태그는 역할마다 안 바뀐다 (바뀌는 것은 순서·펼침뿐)', () => {
+    for (const role of VIEWER_ROLES) {
+      const plans = sectionPlansFor(role);
+      for (const k of Object.keys(SECTION_PLAN) as SectionKey[]) {
+        expect(plans[k].title).toBe(SECTION_PLAN[k].title);
+        expect(plans[k].role).toBe(SECTION_PLAN[k].role);
+      }
+    }
+  });
+
+  it('★ 같은 역할이면 같은 객체를 돌려준다 (다시 그릴 때마다 사람이 연 카드가 접히지 않게)', () => {
+    // SectionCard 는 받은 칸이 다른 객체가 되면 펼침을 새로 세운다 — 부를 때마다 새로 만들면
+    // 자료가 도착해 다시 그려질 때마다 연 카드가 도로 접힌다.
+    for (const role of VIEWER_ROLES) {
+      expect(sectionPlansFor(role)).toBe(sectionPlansFor(role));
+      expect(sectionPlansFor(role).floors).toBe(sectionPlansFor(role).floors);
+    }
+    // 역할이 다르면 카드마다 다른 객체다 — 그래야 바꿀 때 펼침이 새 표대로 선다.
+    expect(sectionPlansFor('투자자').district).not.toBe(sectionPlansFor('창업자').district);
+    expect(sectionPlansFor('투자자').district).not.toBe(SECTION_PLAN.district);
+  });
+
+  it('고를 수 있는 역할은 셋이다 (공통은 카드 태그일 뿐)', () => {
+    expect(VIEWER_ROLES).toEqual(['투자자', '창업자', '중개사']);
+    expect(isViewerRole('공통')).toBe(false);
+    expect(isViewerRole('창업자')).toBe(true);
+    expect(isViewerRole(null)).toBe(false);
   });
 });

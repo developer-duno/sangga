@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { INDUSTRY_MIX_FN, INDUSTRY_DETAIL_FN, NEARBY_PERMITS_FN } from '../lib/appConstants';
-import { SECTION_PLAN } from '../lib/sectionCards';
+import { SECTION_PLAN, type SectionPlan } from '../lib/sectionCards';
 import { SectionCard } from './SectionCard';
 import type { IndustryDetail, IndustryMix, IndustryScope } from '../types';
 import { formatQuarter } from '../lib/format';
@@ -41,12 +41,17 @@ type Props = {
    * 없으면(다른 필지 것·안 줌) 지금처럼 스스로 묻는다 — `lib/sidePrefetch.ts`.
    */
   prefetch?: SidePrefetch | null;
+  /**
+   * 이 카드의 배치(제목·역할·기본 펼침). 층별 화면이 고른 역할의 표를 준다(결정 0036 결정 18).
+   * 안 주면 `SECTION_PLAN.industry` — 역할을 고르기 전 화면 그대로.
+   */
+  plan?: SectionPlan;
 };
 
 // 제목은 `SECTION_PLAN.industry.title` 하나뿐이다 — 여기 또 적으면 카드 머리와 본문이
 // 서로 다른 이름을 말하는 날이 온다.
 
-export function IndustryMixSection({ pnu, prefetch }: Props) {
+export function IndustryMixSection({ pnu, prefetch, plan = SECTION_PLAN.industry }: Props) {
   const [mix, setMix] = useState<IndustryMix | null>(null);
   /** 못 읽었나. 못 읽었으면 섹션을 통째로 감춘다 — 마이그레이션 적용 전 라이브가 이 상태다. */
   const [failed, setFailed] = useState(false);
@@ -187,7 +192,7 @@ export function IndustryMixSection({ pnu, prefetch }: Props) {
 
   if (mix === null) {
     return (
-      <SectionCard plan={SECTION_PLAN.industry} className="mix mix--wait" summary="불러오는 중…" />
+      <SectionCard plan={plan} className="mix mix--wait" summary="불러오는 중…" />
     );
   }
 
@@ -215,7 +220,7 @@ export function IndustryMixSection({ pnu, prefetch }: Props) {
     .join(' · ');
 
   return (
-    <SectionCard plan={SECTION_PLAN.industry} className="mix" summary={summary}>
+    <SectionCard plan={plan} className="mix" summary={summary}>
       <p className="mix__lead">
         <strong>이 건물만이 아니라 이 땅 둘레의 가게들입니다.</strong> 무슨 장사가 몇 곳 있는지
         세어 본 것이고, 값이나 매출은 아닙니다.

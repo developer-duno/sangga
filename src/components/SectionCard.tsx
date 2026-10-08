@@ -60,6 +60,18 @@ export function SectionCard({
   const [open, setOpen] = useState(plan.defaultOpen);
   const bodyId = useId();
 
+  /*
+    역할을 바꾸면 카드 표가 **다른 객체**로 온다 — 그때 펼침을 새 표대로 다시 세운다(결정 0036
+    결정 18 · `useState` 초기값은 첫 렌더 한 번만 읽히므로 그냥 두면 옛 역할의 펼침이 남는다).
+    ⓘ 그리는 도중에 상태를 맞추는 React 공식 꼴이다(effect 로 하면 옛 펼침이 한 번 그려진다).
+    ⚠️ 같은 역할이면 같은 객체여야 한다 — `sectionPlansFor` 가 역할마다 한 번만 만들어 둔다.
+  */
+  const [shownPlan, setShownPlan] = useState(plan);
+  if (shownPlan !== plan) {
+    setShownPlan(plan);
+    setOpen(plan.defaultOpen);
+  }
+
   // ⚠️ `Children.count` 를 쓰면 안 된다 — `false`·`null` 같은 "안 그리는 것"도 하나로 센다
   //    (`{cond && <p/>}` 가 거짓일 때가 정확히 그 경우다). `toArray` 는 그것들을 걸러 낸다.
   const hasBody = Children.toArray(children).length > 0;

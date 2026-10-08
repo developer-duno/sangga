@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { supabase } from '../lib/supabase';
 import { startSidePrefetch, type SidePrefetch } from '../lib/sidePrefetch';
 import {
@@ -55,7 +55,14 @@ import {
 } from '../lib/format';
 import { KNOWN_BAND_STATUS } from '../lib/priceBand';
 import { lacksCoord } from '../lib/rentStats';
-import { SECTION_PLAN } from '../lib/sectionCards';
+import {
+  SECTION_PLAN,
+  sectionOrder,
+  sectionPlansFor,
+  type SectionKey,
+  type SectionPlan,
+  type ViewerRole,
+} from '../lib/sectionCards';
 import { PriceBandSection } from './PriceBandSection';
 import { IndustryMixSection } from './IndustryMixSection';
 import { RentStatSection } from './RentStatSection';
@@ -201,9 +208,17 @@ function topCategories(floors: FloorRow[]) {
  *    보이게 만든다).
  */
 
-type Props = { building: BuildingHit };
+type Props = {
+  building: BuildingHit;
+  /**
+   * 첫 화면 역할 단추로 고른 역할(결정 0036 결정 18). 카드 **순서·펼침**만 바뀐다 — 자료는 한 벌.
+   * null·안 줌 = 역할을 고르기 전 화면 그대로.
+   */
+  viewerRole?: ViewerRole | null;
+};
 
-export function FloorStack({ building }: Props) {
+export function FloorStack({ building, viewerRole = null }: Props) {
+  const plans = sectionPlansFor(viewerRole);
   const [floors, setFloors] = useState<FloorRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -249,7 +264,7 @@ export function FloorStack({ building }: Props) {
    */
   // ⚠️ `<boolean>` 을 명시한다. `SECTION_PLAN` 이 `as const` 라 `defaultOpen` 의 타입이
   //    `true`(값 하나짜리 타입)라서, 안 적으면 "true 만 담는 상태"가 되어 접힐 수가 없다.
-  const [floorsCardOpen, setFloorsCardOpen] = useState<boolean>(SECTION_PLAN.floors.defaultOpen);
+  const [floorsCardOpen, setFloorsCardOpen] = useState<boolean>(plans.floors.defaultOpen);
   /**
    * 곁 카드(업종 분포·둘레 인허가·임대 동향·개업·폐업) 요청을 건물을 고른 순간 먼저 보내 둔 것.
    * 카드들은 층 목록이 온 뒤에야 마운트되므로, 여기서 먼저 보내 두면 그만큼 일찍 온다
@@ -507,75 +522,21 @@ export function FloorStack({ building }: Props) {
     ? `근거: ${formatQuarter(stats.snapshot_ym)} 상권정보 중 서비스 지역(지금 볼 수 있는 구) ${stats.store_cnt.toLocaleString('ko-KR')}곳 기준.`
     : '근거: 서비스 지역(지금 볼 수 있는 구)의 상권정보 최신 분기 기준.';
 
-  return (
-    <section className="stack">
-      <header className="stack__head">
-        <h2 className="stack__title">{head.bld_nm || '(이름 없는 건물)'}</h2>
-        <p className="stack__addr">{head.road_addr || '주소 없음'}</p>
-        <dl className="stack__facts">
-          <div>
-            <dt>사용승인</dt>
-            <dd>{formatApproveDate(head.approve_date)}</dd>
-          </div>
-          <div>
-            <dt>건물 종류</dt>
-            <dd>{head.is_jiphap ? '집합건물' : '일반건물'}</dd>
-          </div>
-          <div>
-            <dt>층 수</dt>
-            <dd>{floors.length}개</dd>
-          </div>
-          <div>
-            <dt>점포(참고)</dt>
-            <dd>{totalStores.toLocaleString('ko-KR')}곳</dd>
-          </div>
-          {/*
-            도로접면은 토지특성 원문 그대로다(displayRoadContact 주석 참조). 값이 없거나
-            '맹지'·'지정되지않음'이면 이 칸 자체가 안 생긴다 — 빈 칸을 남기면 "조사했는데
-            아무것도 아니었다"처럼 읽힌다.
-          */}
-          {roadContact && (
-            <div>
-              <dt>도로접면</dt>
-              <dd>{roadContact}</dd>
-            </div>
-          )}
-          {/*
-            건물 스펙 4칸(로드맵 Wave 2 PR-B). 도로접면과 달리 **값이 없어도 칸을 지우지
-            않는다** — 이 넷은 건물을 볼 때 으레 찾는 항목이라, 칸이 없으면 사람은
-            "안 나온다"가 아니라 "이 화면은 그걸 안 보여준다"로 읽고 다른 데를 찾아간다.
-            "미상"이라고 적어 두면 그게 우리가 아는 전부라는 사실 자체가 정보가 된다.
-            ⛔ 0 을 값으로 적지 않는 이유는 UNKNOWN_SPEC 주석 참조(0 = 대장 미기재).
-          */}
-          <div>
-            <dt>연면적</dt>
-            <dd>{describeSpec(head.total_area_m2, formatArea, MAX_TOTAL_AREA_M2)}</dd>
-          </div>
-          <div>
-            <dt>용적률</dt>
-            <dd>{describeSpec(head.far, formatPercent)}</dd>
-          </div>
-          <div>
-            <dt>건폐율</dt>
-            <dd>{describeSpec(head.bcr, formatPercent, MAX_BCR_PCT)}</dd>
-          </div>
-          <div>
-            <dt>주차</dt>
-            <dd>{describeSpec(head.parking_cnt, formatParking)}</dd>
-          </div>
-        </dl>
-      </header>
-
-      {/*
-        여기부터 아래가 **카드 여섯 장**이다(로드맵 Wave 2 『한 장 요약 접힘 틀』).
-        제목·역할 태그·기본 펼침은 전부 `SECTION_PLAN` 한 표에서 온다 — 카드마다 따로
-        정하면 "첫 화면에 몇 장이 펼쳐져 있나"를 아무 데서도 셀 수 없어 상한(4장)이
-        조용히 깨진다.
-      */}
-      <DistrictCard info={districts} />
-
+  /*
+    여기부터가 **층별 화면 카드**다(로드맵 Wave 2 『한 장 요약 접힘 틀』).
+    제목·역할 태그·기본 펼침은 전부 `SECTION_PLAN` 한 표에서 온다 — 카드마다 따로
+    정하면 "첫 화면에 몇 장이 펼쳐져 있나"를 아무 데서도 셀 수 없어 상한(4장)이
+    조용히 깨진다.
+    역할을 고르면 **순서·펼침만** `ROLE_SECTION_LAYOUT` 이 덮어쓴다(결정 0036 결정 18) — 그래서
+    카드를 여기 이름으로 담아 두고, 그리는 차례는 아래 `sectionOrder` 가 정한다.
+    ⓘ 그릴 때 key 를 카드 이름으로 준다 — 역할을 바꿔도 카드는 **자리만 옮기고** 받아 둔
+      자료를 그대로 쓴다(새로 묻지 않는다). 펼침은 `SectionCard` 가 새 표대로 다시 세운다.
+  */
+  const cards: Record<SectionKey, ReactNode> = {
+    district: <DistrictCard info={districts} plan={plans.district} />,
+    floors: (
       <SectionCard
-        plan={SECTION_PLAN.floors}
+        plan={plans.floors}
         className="card--floors"
         summary={`층 ${floors.length}개 · 점포 ${totalStores.toLocaleString('ko-KR')}곳`}
         openSignal={floorsOpenSignal}
@@ -679,22 +640,23 @@ export function FloorStack({ building }: Props) {
           </p>
         )}
       </SectionCard>
+    ),
+    /*
+      둘레의 업종 분포(결정 0014). 자기가 알아서 묻고, 못 읽으면 스스로 사라진다
+      — 마이그레이션 적용 전 라이브에서는 함수가 없어(PGRST202) 그 상태가 된다.
 
-      {/*
-        둘레의 업종 분포(결정 0014). 자기가 알아서 묻고, 못 읽으면 스스로 사라진다
-        — 마이그레이션 적용 전 라이브에서는 함수가 없어(PGRST202) 그 상태가 된다.
-
-        ⚠️ 여기 숫자는 **이 건물만의 점포가 아니다** — 이 땅 둘레(속한 상권 · 반경 500m)의
-           이웃 가게까지 센 것이고 이 건물 것도 그 안에 포함된다. 바로 위 층 목록의 점포
-           칸과 세는 대상이 다르므로 두 숫자를 견주면 안 된다.
-        ⓘ 실제로 층 목록 **바로 아래**에 붙어 있어 눈으로는 이어져 보인다. 그래서 갈라
-           놓는 일은 자리가 아니라 **말**이 한다 — 섹션 제목("둘레의")과 첫 줄("이 건물만이
-           아니라…")이 그 장치다. 자리를 옮겨 해결한 것이 아니니 그 문구를 지우지 말 것.
-      */}
-      <IndustryMixSection pnu={building.pnu} prefetch={sidePrefetch} />
-
-      <TransactionSection txs={txs} stats={txStats} />
-
+      ⚠️ 여기 숫자는 **이 건물만의 점포가 아니다** — 이 땅 둘레(속한 상권 · 반경 500m)의
+         이웃 가게까지 센 것이고 이 건물 것도 그 안에 포함된다. 바로 위 층 목록의 점포
+         칸과 세는 대상이 다르므로 두 숫자를 견주면 안 된다.
+      ⓘ 역할을 고르기 전·창업자 차례에서는 층 목록 **바로 아래**에 붙어 있어 눈으로는
+         이어져 보인다. 그래서 갈라 놓는 일은 자리가 아니라 **말**이 한다 — 섹션 제목("둘레의")과 첫 줄("이 건물만이
+         아니라…")이 그 장치다. 자리를 옮겨 해결한 것이 아니니 그 문구를 지우지 말 것.
+    */
+    industry: (
+      <IndustryMixSection pnu={building.pnu} prefetch={sidePrefetch} plan={plans.industry} />
+    ),
+    tx: <TransactionSection txs={txs} stats={txStats} plan={plans.tx} />,
+    band: (
       <PriceBandSection
         bands={bands}
         basePrices={basePrices}
@@ -721,24 +683,98 @@ export function FloorStack({ building }: Props) {
             document.getElementById(`floor-${no}`)?.scrollIntoView?.({ block: 'nearest' });
           });
         }}
+        plan={plans.band}
       />
+    ),
+    /*
+      상권 임대 동향(결정 0024). 자기가 알아서 묻고, 못 읽으면 스스로 사라진다
+      — 마이그레이션 적용 전 라이브에서는 함수가 없어(PGRST202) 그 상태가 된다.
 
-      {/*
-        상권 임대 동향(결정 0024). 자기가 알아서 묻고, 못 읽으면 스스로 사라진다
-        — 마이그레이션 적용 전 라이브에서는 함수가 없어(PGRST202) 그 상태가 된다.
+      ⚠️ 바로 위 참고 시세(추정)와 **다른 자로 잰 다른 값**이다 — 이쪽은 우리가 어림한
+         것이 아니라 부동산원이 조사해 공표한 값이고, 대상도 이 건물이 아니라 이 건물이
+         속한 상권이다. 두 카드를 나란히 두되 **한 줄에 섞거나 서로 견주는 문구를 쓰지
+         않는다**(카드 안의 첫 줄과 등급 문단이 그 경계를 지킨다).
+    */
+    rent: (
+      <RentStatSection
+        pnu={building.pnu}
+        prefetch={sidePrefetch}
+        noCoord={lacksCoord(building)}
+        plan={plans.rent}
+      />
+    ),
+    /*
+      상권 개업·폐업(결정 0033 — 서울시 공표 그대로). 임대 카드와 같은 뼈대 — 스스로 묻고,
+      못 읽으면(함수 없음 PGRST202·모양 이상) 스스로 사라진다. 서울 밖·상권 밖이면 카드는
+      서서 그렇다고 적는다. ⛔ 이 건물이 아니라 속한 서울시 상권 전체의 값이다.
+    */
+    openclose: (
+      <OpenCloseSection pnu={building.pnu} prefetch={sidePrefetch} plan={plans.openclose} />
+    ),
+  };
 
-        ⚠️ 바로 위 참고 시세(추정)와 **다른 자로 잰 다른 값**이다 — 이쪽은 우리가 어림한
-           것이 아니라 부동산원이 조사해 공표한 값이고, 대상도 이 건물이 아니라 이 건물이
-           속한 상권이다. 두 카드를 나란히 두되 **한 줄에 섞거나 서로 견주는 문구를 쓰지
-           않는다**(카드 안의 첫 줄과 등급 문단이 그 경계를 지킨다).
-      */}
-      <RentStatSection pnu={building.pnu} prefetch={sidePrefetch} noCoord={lacksCoord(building)} />
-      <OpenCloseSection pnu={building.pnu} prefetch={sidePrefetch} />
-      {/*
-        ↑ 상권 개업·폐업(결정 0033 — 서울시 공표 그대로). 임대 카드와 같은 뼈대 — 스스로 묻고,
-        못 읽으면(함수 없음 PGRST202·모양 이상) 스스로 사라진다. 서울 밖·상권 밖이면 카드는
-        서서 그렇다고 적는다. ⛔ 이 건물이 아니라 속한 서울시 상권 전체의 값이다.
-      */}
+  return (
+    <section className="stack">
+      <header className="stack__head">
+        <h2 className="stack__title">{head.bld_nm || '(이름 없는 건물)'}</h2>
+        <p className="stack__addr">{head.road_addr || '주소 없음'}</p>
+        <dl className="stack__facts">
+          <div>
+            <dt>사용승인</dt>
+            <dd>{formatApproveDate(head.approve_date)}</dd>
+          </div>
+          <div>
+            <dt>건물 종류</dt>
+            <dd>{head.is_jiphap ? '집합건물' : '일반건물'}</dd>
+          </div>
+          <div>
+            <dt>층 수</dt>
+            <dd>{floors.length}개</dd>
+          </div>
+          <div>
+            <dt>점포(참고)</dt>
+            <dd>{totalStores.toLocaleString('ko-KR')}곳</dd>
+          </div>
+          {/*
+            도로접면은 토지특성 원문 그대로다(displayRoadContact 주석 참조). 값이 없거나
+            '맹지'·'지정되지않음'이면 이 칸 자체가 안 생긴다 — 빈 칸을 남기면 "조사했는데
+            아무것도 아니었다"처럼 읽힌다.
+          */}
+          {roadContact && (
+            <div>
+              <dt>도로접면</dt>
+              <dd>{roadContact}</dd>
+            </div>
+          )}
+          {/*
+            건물 스펙 4칸(로드맵 Wave 2 PR-B). 도로접면과 달리 **값이 없어도 칸을 지우지
+            않는다** — 이 넷은 건물을 볼 때 으레 찾는 항목이라, 칸이 없으면 사람은
+            "안 나온다"가 아니라 "이 화면은 그걸 안 보여준다"로 읽고 다른 데를 찾아간다.
+            "미상"이라고 적어 두면 그게 우리가 아는 전부라는 사실 자체가 정보가 된다.
+            ⛔ 0 을 값으로 적지 않는 이유는 UNKNOWN_SPEC 주석 참조(0 = 대장 미기재).
+          */}
+          <div>
+            <dt>연면적</dt>
+            <dd>{describeSpec(head.total_area_m2, formatArea, MAX_TOTAL_AREA_M2)}</dd>
+          </div>
+          <div>
+            <dt>용적률</dt>
+            <dd>{describeSpec(head.far, formatPercent)}</dd>
+          </div>
+          <div>
+            <dt>건폐율</dt>
+            <dd>{describeSpec(head.bcr, formatPercent, MAX_BCR_PCT)}</dd>
+          </div>
+          <div>
+            <dt>주차</dt>
+            <dd>{describeSpec(head.parking_cnt, formatParking)}</dd>
+          </div>
+        </dl>
+      </header>
+
+      {sectionOrder(viewerRole).map((k) => (
+        <Fragment key={k}>{cards[k]}</Fragment>
+      ))}
 
       <p className="grade">
         <span className="grade__badge">D등급 · 간접 추론</span>
@@ -799,13 +835,19 @@ export function FloorStack({ building }: Props) {
  *    진흥공단) 코드를 한 줄도 안 고쳤는데 화면이 틀린 말을 하기 때문이다 — 서버가 자료에서
  *    읽어 준 `sources` 를 그대로 보여준다.
  */
-function DistrictCard({ info }: { info: BuildingDistricts | null }) {
+function DistrictCard({
+  info,
+  plan = SECTION_PLAN.district,
+}: {
+  info: BuildingDistricts | null;
+  plan?: SectionPlan;
+}) {
   // 아직 안 왔거나 못 읽었으면 카드 자체를 안 그린다(위 useEffect에서 콘솔 경고만 남긴다).
   if (!info) return null;
 
   return (
     <SectionCard
-      plan={SECTION_PLAN.district}
+      plan={plan}
       className="card--district"
       summary={<DistrictAnswer info={info} />}
     >
@@ -925,9 +967,11 @@ function BizSummary({ floors }: { floors: FloorRow[] }) {
 function TransactionSection({
   txs,
   stats,
+  plan = SECTION_PLAN.tx,
 }: {
   txs: ParcelTransaction[] | null;
   stats: SigunguTxStat[] | null;
+  plan?: SectionPlan;
 }) {
   // 둘 다 아직 안 왔거나 못 읽었으면 섹션 자체를 그리지 않는다(빈 제목만 남기지 않는다).
   const hasHistory = txs !== null && txs.length > 0;
@@ -947,7 +991,7 @@ function TransactionSection({
     .join(' · ');
 
   return (
-    <SectionCard plan={SECTION_PLAN.tx} className="tx" summary={summary}>
+    <SectionCard plan={plan} className="tx" summary={summary}>
       {hasHistory && <ParcelTxList txs={txs!} />}
       {hasStats && <SigunguTxBands stats={stats!} />}
     </SectionCard>

@@ -2110,3 +2110,98 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
     await expect(oc).not.toContainText('코엑스');
   });
 });
+
+// ── 첫 화면 역할 단추 (👤 결정 0036 결정 18) ──────────────────────────────────
+// 역할별 표 세 벌·저장 예외는 단위 시험이 덮는다(`FloorStack.test.tsx`·`viewerRoleStore.test.ts`·
+// `App.test.tsx`). 여기서만 보이는 것은 **진짜 브라우저 저장소로 새로고침 뒤에도 남는가**,
+// 좁은 폭(412px)에서도 같은 차례로 서는가, 종이에서 빠지는가다.
+
+test.describe('첫 화면 — 역할 단추', () => {
+  test('AM. 창업자를 고르면 카드가 그 차례·펼침으로 서고, 새로고침해도 남고, 다시 누르면 지금 차례로', async ({
+    page,
+  }) => {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    // 일곱 장이 전부 서게 한다 — 임대·개업폐업까지 답해야 차례 전체를 견줄 수 있다.
+    await mockFloorStack(
+      page,
+      [parcelTx()],
+      priceBands(),
+      [floorRow({ floor_no: 2 }), floorRow()],
+      industryMix(),
+      undefined,
+      undefined,
+      rentStats(),
+    );
+    // 나중에 등록한 것이 먼저 잡힌다 — mockFloorStack 의 '함수 없음' 위에 덮는다.
+    await mockJson(page, OPEN_CLOSE_PATTERN, openClose());
+
+    const NO_ROLE = [
+      '속한 상권',
+      '층 목록',
+      '둘레의 업종 분포',
+      '실거래 기록',
+      '참고 매매 시세 (추정값)',
+      '상권 임대 동향 (부동산원 조사)',
+      '상권 개업·폐업 (서울시 공표)',
+    ];
+    const FOUNDER = [
+      '속한 상권',
+      '층 목록',
+      '둘레의 업종 분포',
+      '상권 개업·폐업 (서울시 공표)',
+      '실거래 기록',
+      '참고 매매 시세 (추정값)',
+      '상권 임대 동향 (부동산원 조사)',
+    ];
+    // ⚠️ exact — 카드 머리의 역할 태그('창업자')가 버튼 이름 안에 들어 있어 부분 일치로 찾으면 겹친다.
+    const roleBtn = (name: string) => page.locator('.role').getByRole('button', { name, exact: true });
+    const stack = page.locator('section.stack');
+    const titles = stack.locator('.card .card__title');
+    const opened = stack.locator('.card__toggle[aria-expanded="true"]');
+
+    await page.goto('/');
+    for (const name of ['투자자', '창업자', '중개사']) {
+      await expect(roleBtn(name)).toHaveAttribute('aria-pressed', 'false');
+    }
+    await roleBtn('창업자').click();
+    await expect(roleBtn('창업자')).toHaveAttribute('aria-pressed', 'true');
+
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+
+    await expect(titles).toHaveText(FOUNDER);
+    await expect(opened).toHaveCount(4);
+    await expect(stack.locator('section.oc .card__toggle')).toHaveAttribute('aria-expanded', 'true');
+    await expect(stack.locator('section.tx .card__toggle')).toHaveAttribute('aria-expanded', 'false');
+    // 역할은 주소에 안 실린다 — 구·건물 둘뿐(결정 18 ③).
+    expect([...new URL(page.url()).searchParams.keys()].sort()).toEqual(['bld', 'sgg']);
+
+    // 새로고침 — 건물은 주소가(결정 0019), 역할은 이 기기 저장이 되살린다.
+    await page.reload();
+    await expect(roleBtn('창업자')).toHaveAttribute('aria-pressed', 'true');
+    await expect(titles).toHaveText(FOUNDER);
+    await expect(opened).toHaveCount(4);
+
+    // 다시 누르면 해제 — 열린 건물 화면이 그 자리에서 지금 차례로 돌아간다.
+    await roleBtn('창업자').click();
+    await expect(roleBtn('창업자')).toHaveAttribute('aria-pressed', 'false');
+    await expect(titles).toHaveText(NO_ROLE);
+    await expect(opened).toHaveCount(4);
+    await expect(stack.locator('section.oc .card__toggle')).toHaveAttribute('aria-expanded', 'false');
+
+    // 저장도 지웠다 — 새로고침해도 지금 차례.
+    await page.reload();
+    await expect(titles).toHaveText(NO_ROLE);
+    for (const name of ['투자자', '창업자', '중개사']) {
+      await expect(roleBtn(name)).toHaveAttribute('aria-pressed', 'false');
+    }
+
+    // 종이에서는 역할 줄이 빠진다(누르는 장치).
+    await page.emulateMedia({ media: 'print' });
+    await expect(page.locator('.role')).toBeHidden();
+    await page.emulateMedia({ media: null });
+    await expect(page.locator('.role')).toBeVisible();
+  });
+});

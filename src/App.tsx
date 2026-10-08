@@ -8,13 +8,16 @@ import { LhNoticeSection } from './components/LhNoticeSection';
 import { PrintButton } from './components/PrintButton';
 import { PrintHeader } from './components/PrintHeader';
 import { RegionPicker } from './components/RegionPicker';
+import { RolePicker } from './components/RolePicker';
 import { ScorecardSection } from './components/ScorecardSection';
 import { ShareButton } from './components/ShareButton';
 import { TxFlowSection } from './components/TxFlowSection';
 import { FLOOR_STACK_VIEW } from './lib/appConstants';
 import { buildingFromFloorRows } from './lib/restoreBuilding';
+import type { ViewerRole } from './lib/sectionCards';
 import { supabase } from './lib/supabase';
 import { buildAppSearch, buildShareUrl, isSameSearch, parseAppUrl } from './lib/urlState';
+import { loadViewerRole, saveViewerRole } from './lib/viewerRoleStore';
 import type { BuildingHit, FloorRow } from './types';
 
 export default function App() {
@@ -31,6 +34,16 @@ export default function App() {
   /* 링크로 들어온 경우에만 참으로 시작한다(그냥 들어온 사람은 기다릴 것이 없다). */
   const [restoring, setRestoring] = useState(openedWith.bldId !== null);
   const [restoreFailed, setRestoreFailed] = useState(false);
+
+  /*
+    첫 화면에서 고른 역할(결정 0036 결정 18). **이 기기에만** 적어 두고 첫 그림에 한 번 읽는다.
+    ⛔ 주소·의견함에는 싣지 않는다(위 주소 쓰기·아래 `feedbackContext` 에 넣지 말 것).
+  */
+  const [viewerRole, setViewerRole] = useState<ViewerRole | null>(() => loadViewerRole());
+  function handlePickRole(role: ViewerRole | null) {
+    setViewerRole(role);
+    saveViewerRole(role);
+  }
 
   /*
     링크 복원(아래)이 끝나기 전에 사용자가 직접 무언가를 골랐는지 표시하는 깃발.
@@ -172,6 +185,9 @@ export default function App() {
         </p>
       </header>
 
+      {/* 역할 단추 줄 — 지역 고르기 바로 위(👤 결정 0036 결정 18 ⑧). */}
+      <RolePicker role={viewerRole} onChange={handlePickRole} />
+
       <RegionPicker
         selectedSigungu={sigungu}
         onSelectSigungu={handleSelectSigungu}
@@ -286,7 +302,7 @@ export default function App() {
             area="층별 화면"
             context={{ bld_id: selected.bld_id, sigungu }}
           >
-            <FloorStack building={selected} />
+            <FloorStack building={selected} viewerRole={viewerRole} />
           </ErrorBoundary>
         </>
       ) : restoring ? (

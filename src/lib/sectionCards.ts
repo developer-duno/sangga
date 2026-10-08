@@ -35,7 +35,9 @@ export type SectionPlan = {
 };
 
 /**
- * 층별 화면 카드(장수는 이 표가 정본이라 글로 적지 않는다). **순서는 화면에 그리는 순서와 같다**(위 → 아래).
+ * 층별 화면 카드(장수는 이 표가 정본이라 글로 적지 않는다). **순서는 역할을 고르기 전 화면에
+ * 그리는 순서와 같다**(위 → 아래 · `sectionOrder(null)` 이 이 표의 순서를 그대로 쓴다).
+ * 역할을 고르면 순서·펼침만 아래 `ROLE_SECTION_LAYOUT` 이 덮어쓴다(제목·역할 태그는 이 표 그대로).
  *
  * 무엇을 펼쳐 둘지는 자리가 아니라 **역할**로 정했다:
  *   · `공통` 은 누가 오든 먼저 봐야 하므로 전부 펼침 (속한 상권 · 층 목록)
@@ -70,6 +72,80 @@ export const SECTION_PLAN = {
    */
   openclose: { title: '상권 개업·폐업 (서울시 공표)', role: '창업자', defaultOpen: false },
 } as const satisfies Record<string, SectionPlan>;
+
+export type SectionKey = keyof typeof SECTION_PLAN;
+
+/**
+ * 첫 화면 역할 단추로 **고를 수 있는** 역할(결정 0036 결정 18). `공통` 은 카드에 붙는 태그일 뿐
+ * 사람이 고르는 역할이 아니라 뺀다.
+ */
+export type ViewerRole = Exclude<SectionRole, '공통'>;
+
+/** 단추 차례 그대로. */
+export const VIEWER_ROLES: readonly ViewerRole[] = ['투자자', '창업자', '중개사'];
+
+export function isViewerRole(v: unknown): v is ViewerRole {
+  return typeof v === 'string' && (VIEWER_ROLES as readonly string[]).includes(v);
+}
+
+/** 역할 한 벌 — 카드를 그릴 차례(전부 · 빠짐없이)와 펼쳐 둘 카드. */
+export type RoleLayout = {
+  readonly order: readonly SectionKey[];
+  readonly open: readonly SectionKey[];
+};
+
+/**
+ * 역할마다 카드 **순서·펼침**(👤 결정 0036 결정 18 ②). 자료는 한 벌이고 바뀌는 것은 이 둘뿐이다.
+ *
+ * ⛔ `order` 는 위 `SECTION_PLAN` 의 칸을 **전부 한 번씩** 담는다 — 빠뜨리면 그 역할에서 카드가
+ *    조용히 사라진다(`sectionCards.test.ts` 가 지킨다). 펼침 수는 벌마다 `SECTION_EXPAND_BUDGET` 이하.
+ * ⓘ 역할을 고르기 전에는 이 표를 안 쓴다 — `SECTION_PLAN` 의 순서·펼침 그대로다(결정 18 ①).
+ */
+export const ROLE_SECTION_LAYOUT = {
+  투자자: {
+    order: ['district', 'floors', 'tx', 'band', 'rent', 'industry', 'openclose'],
+    open: ['district', 'floors', 'tx', 'band'],
+  },
+  창업자: {
+    order: ['district', 'floors', 'industry', 'openclose', 'tx', 'band', 'rent'],
+    open: ['district', 'floors', 'industry', 'openclose'],
+  },
+  중개사: {
+    order: ['floors', 'tx', 'district', 'band', 'rent', 'industry', 'openclose'],
+    open: ['floors', 'tx', 'district', 'band'],
+  },
+} as const satisfies Record<ViewerRole, RoleLayout>;
+
+/** 한 벌의 펼침을 `SECTION_PLAN` 에 덮어쓴 카드 표(제목·역할 태그는 그대로). */
+export function plansFromLayout(layout: RoleLayout): Record<SectionKey, SectionPlan> {
+  const keys = Object.keys(SECTION_PLAN) as SectionKey[];
+  return Object.fromEntries(
+    keys.map((k) => [k, { ...SECTION_PLAN[k], defaultOpen: layout.open.includes(k) }]),
+  ) as Record<SectionKey, SectionPlan>;
+}
+
+/**
+ * ⛔ 역할마다 **한 번만** 만들어 둔다. `SectionCard` 는 받은 칸이 **다른 객체**로 바뀔 때 펼침을 새
+ *    표대로 다시 세우는데, 부를 때마다 새 객체를 만들면 화면이 다시 그려질 때마다(자료가 도착할
+ *    때마다) 사람이 연 카드가 도로 접힌다.
+ */
+const ROLE_PLANS = Object.fromEntries(
+  VIEWER_ROLES.map((r) => [r, plansFromLayout(ROLE_SECTION_LAYOUT[r])]),
+) as Record<ViewerRole, Record<SectionKey, SectionPlan>>;
+
+/** 이 역할로 그릴 카드 표. 역할이 없으면 `SECTION_PLAN` 그 자체(지금 화면 그대로). */
+export function sectionPlansFor(
+  role: ViewerRole | null,
+): Readonly<Record<SectionKey, SectionPlan>> {
+  return role === null ? SECTION_PLAN : ROLE_PLANS[role];
+}
+
+/** 이 역할로 카드를 그릴 차례. 역할이 없으면 `SECTION_PLAN` 의 칸 순서. */
+export function sectionOrder(role: ViewerRole | null): readonly SectionKey[] {
+  return role === null
+    ? (Object.keys(SECTION_PLAN) as SectionKey[])
+    : ROLE_SECTION_LAYOUT[role].order;
+}
 
 /**
  * **입구 화면**(구는 골랐고 건물은 아직 안 고른 상태)의 카드.

@@ -258,3 +258,51 @@ describe('SectionCard — 밖에서 부르는 신호', () => {
     expect(seen).toEqual([true, false, true]);
   });
 });
+
+describe('SectionCard — 역할을 바꿀 때 (결정 0036 결정 18)', () => {
+  /*
+    역할을 바꾸면 카드 표가 **다른 객체**로 온다 — 그때 펼침이 새 표대로 다시 선다.
+    같은 객체로 다시 그려지면(자료가 와서 다시 그릴 때) 사람이 고른 펼침이 그대로여야 한다.
+  */
+  it('★ 다른 표가 오면 사람이 바꾼 펼침도 새 표대로 다시 선다', () => {
+    const { rerender } = render(
+      <SectionCard plan={CLOSED} className="band" summary="요약">
+        <p>본문입니다</p>
+      </SectionCard>,
+    );
+    const btn = () => screen.getByRole('button');
+    fireEvent.click(btn()); // 사람이 펼친다
+    expect(btn().getAttribute('aria-expanded')).toBe('true');
+
+    // 다른 역할의 표 — 이 카드는 접힘. 사람이 펼쳐 둔 것도 새 표대로 접힌다.
+    rerender(
+      <SectionCard plan={{ ...CLOSED }} className="band" summary="요약">
+        <p>본문입니다</p>
+      </SectionCard>,
+    );
+    expect(btn().getAttribute('aria-expanded')).toBe('false');
+
+    // 또 다른 표 — 이번엔 펼침.
+    rerender(
+      <SectionCard plan={{ ...CLOSED, defaultOpen: true }} className="band" summary="요약">
+        <p>본문입니다</p>
+      </SectionCard>,
+    );
+    expect(btn().getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('같은 표로 다시 그려지면 사람이 바꾼 펼침이 그대로다', () => {
+    const { rerender } = render(
+      <SectionCard plan={CLOSED} className="band" summary="요약">
+        <p>본문입니다</p>
+      </SectionCard>,
+    );
+    fireEvent.click(screen.getByRole('button'));
+    rerender(
+      <SectionCard plan={CLOSED} className="band" summary="새 요약">
+        <p>본문입니다</p>
+      </SectionCard>,
+    );
+    expect(screen.getByRole('button').getAttribute('aria-expanded')).toBe('true');
+  });
+});
