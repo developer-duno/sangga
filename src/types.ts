@@ -696,6 +696,17 @@ export type BuildingHit = {
    * 실어 보낸다 — 목록은 상위 일부만 오므로 "몇 개 중 몇 개"를 정직하게 말하려면 이게 필요하다.
    */
   total_cnt?: number;
+  /**
+   * 소유 구조 세 칸 — `building` 표 원값 그대로(2026-10-09a · 결정 0036 결정 5). 이름·형은
+   * 층별 행(`FloorRow`)의 같은 칸과 같다: 사용승인일은 'YYYY-MM-DD' 글자, null 은 null,
+   * 주차 0 은 0. '미상'으로 읽을지는 화면이 정한다(아직 그리지 않는다 — 다음 PR).
+   *
+   * ⚠️ 선택 필드다 — `jibun_addr`·`lat` 와 같은 이유다. 이 칸을 주는 마이그레이션
+   *    (2026-10-09a_search_ownership_cols)이 라이브에 적용되기 전에는 서버가 안 보낸다.
+   */
+  is_jiphap?: boolean | null;
+  approve_date?: string | null;
+  parking_cnt?: number | null;
 };
 
 /**
