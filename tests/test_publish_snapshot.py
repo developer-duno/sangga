@@ -7,7 +7,7 @@
   2) --ym 은 **점포 표에 있는 분기만** — 없는 분기로 두면 화면 가게 칸이 통째로 빈다.
   3) 표지를 쓰는 SQL 은 두 칸을 **모두** 그 분기로(한 칸만 바꾸면 post_load 가 다시 올리거나
      '낡음'이 영영 안 풀린다) · 표가 비었어도 첫 줄을 만든다(upsert).
-  4) 끝에 post_load.py 를 안내한다(요약표 셋은 그 뒤에야 그 분기로 다시 구워진다).
+  4) 끝에 post_load.py 를 안내한다(요약표 넷은 그 뒤에야 그 분기로 다시 구워진다).
 DB 없이 본다 — query_one·dbx.run_sql 을 바꿔 끼운다.
 """
 
@@ -231,7 +231,7 @@ def test_show_prints_flag_quarters_and_summary_tables(monkeypatch, capsys):
     answers = {
         target.SHOW_FLAG_SQL: "202606|2026-10-07 10:00|2772484|202606|2026-10-07 10:05",
         target.SHOW_QUARTERS_SQL: "202603:616096,202606:2772484",
-        target.SHOW_MVS_SQL: "202606|202606|202606",
+        target.SHOW_MVS_SQL: "202606|202606|202606|202606",
     }
     monkeypatch.setattr(target, "query_one", lambda sql: answers[sql])
     monkeypatch.setattr(target.dbx, "run_sql", lambda *a, **k: pytest.fail("--show 가 DB 에 썼습니다"))
@@ -240,11 +240,11 @@ def test_show_prints_flag_quarters_and_summary_tables(monkeypatch, capsys):
     assert "다 들어온 분기 202606" in out and "보여 주는 분기 202606" in out
     assert "2772484행" in out  # 행 수가 파이썬에서 그대로 붙는지(2026-10-07 검사관 D 🟡 — 늘 "(기록 없음)" 회귀)
     assert "202603 616096 · 202606 2772484" in out
-    assert "각주 202606 · 업종 202606 · 가게 이름 202606" in out
+    assert "각주 202606 · 업종 202606 · 가게 이름 202606 · 층 분포 202606" in out
 
 
 def test_show_empty_flag_is_called_an_incident(monkeypatch, capsys):
-    answers = {target.SHOW_FLAG_SQL: "", target.SHOW_QUARTERS_SQL: "", target.SHOW_MVS_SQL: "||"}
+    answers = {target.SHOW_FLAG_SQL: "", target.SHOW_QUARTERS_SQL: "", target.SHOW_MVS_SQL: "|||"}
     monkeypatch.setattr(target, "query_one", lambda sql: answers[sql])
     assert target.main(["--show"]) == 0
     assert "[사고] 표지(snapshot_release)가 비었습니다" in capsys.readouterr().out
@@ -286,7 +286,7 @@ def test_show_renders_missing_row_count_in_python(monkeypatch, capsys):
     answers = {
         target.SHOW_FLAG_SQL: "202606|2026-10-07 10:00||202606|2026-10-07 10:05",
         target.SHOW_QUARTERS_SQL: "202606:2772484",
-        target.SHOW_MVS_SQL: "202606|202606|202606",
+        target.SHOW_MVS_SQL: "202606|202606|202606|202606",
     }
     monkeypatch.setattr(target, "query_one", lambda sql: answers[sql])
     assert target.main(["--show"]) == 0

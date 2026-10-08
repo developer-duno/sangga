@@ -1,16 +1,31 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { INDUSTRY_MIX_FN, INDUSTRY_DETAIL_FN, NEARBY_PERMITS_FN } from '../lib/appConstants';
+import {
+  INDUSTRY_MIX_FN,
+  INDUSTRY_DETAIL_FN,
+  INDUSTRY_FLOORS_FN,
+  NEARBY_PERMITS_FN,
+} from '../lib/appConstants';
 import { SECTION_PLAN, type SectionPlan } from '../lib/sectionCards';
 import { SectionCard } from './SectionCard';
-import type { IndustryDetail, IndustryMix, IndustryScope } from '../types';
+import type {
+  IndustryDetail,
+  IndustryFloorScope,
+  IndustryFloors,
+  IndustryMix,
+  IndustryScope,
+} from '../types';
 import { formatQuarter } from '../lib/format';
 import {
   catOptions,
   districtLabel,
   districtSources,
+  floorLine,
+  floorScopeByKey,
   isIndustryDetail,
+  isIndustryFloors,
   isIndustryMix,
+  sameCatMs,
   toBars,
   type MixBar,
 } from '../lib/industryMix';
@@ -102,6 +117,16 @@ export function IndustryMixSection({
    *     말하게 된다(이 카드의 다른 자리와 같은 규칙).
    */
   const [permits, setPermits] = useState<NearbyPermitLine | null>(null);
+  /**
+   * 고른 대분류의 층 묶음(물결 2-2) · 창업자 칩이면 그 짝 중분류의 층 묶음.
+   * **null 이면 층 줄만 없다** — 아직 안 왔을 때·실패·모양 이상이 모두 같은 null 이다(인허가 줄과 같은 결 —
+   * "불러오는 중"·"0곳"을 적지 않는다).
+   */
+  const [floors, setFloors] = useState<IndustryFloors | null>(null);
+  const [chipFloors, setChipFloors] = useState<IndustryFloors | null>(null);
+  // 칩의 짝을 effect 의존으로 넘길 원시값 둘(배열을 그대로 넘기면 같은 값이어도 매번 다르다고 본다).
+  const chipCatL = match?.catL ?? null;
+  const chipCatMKey = match ? [...match.catM].sort().join(',') : '';
 
   useEffect(() => {
     let cancelled = false;
@@ -214,6 +239,41 @@ export function IndustryMixSection({
     };
   }, [pnu, pickedCat]);
 
+  /*
+    고른 대분류의 층 묶음 — 상세와 **따로 묻는다**(인허가 줄과 같은 이유: 한 effect 에 묶으면 층 함수가
+    느리거나 없을 때 상세까지 같이 늦거나 사라진다). 창업자 칩의 대분류를 보고 있으면 짝 중분류로 한 번 더.
+  */
+  useEffect(() => {
+    // 앞 업종·앞 건물의 층 줄이 새 업종 밑에 잠깐이라도 붙어 있으면 그 순간이 그대로 틀린 정보다.
+    setFloors(null);
+    setChipFloors(null);
+    if (pickedCat === null) return;
+    let cancelled = false;
+
+    const ask = (catM: string[] | null, keep: (f: IndustryFloors) => void) => {
+      supabase
+        .rpc(INDUSTRY_FLOORS_FN, { p_pnu: pnu, p_cat_l: pickedCat, p_cat_m: catM })
+        .then(({ data, error }) => {
+          if (cancelled) return;
+          if (error || !isIndustryFloors(data)) {
+            // 마이그레이션 적용 전 라이브가 이 상태다(PGRST202). 층 줄만 빠지고 카드·상세는 선다.
+            console.warn('업종 층 분포 조회 실패 — 층 줄 없이 표시합니다', error ?? data);
+            return;
+          }
+          // ⚠️ 늦게 도착한 답은 버린다(상세와 같은 이유) — 물어본 대분류·중분류가 지금 것과 같을 때만.
+          if (data.cat_l_cd !== pickedCat || !sameCatMs(data.cat_m_cds, catM)) return;
+          keep(data);
+        });
+    };
+
+    ask(null, setFloors);
+    if (chipCatL === pickedCat && chipCatMKey !== '') ask(chipCatMKey.split(','), setChipFloors);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pnu, pickedCat, chipCatL, chipCatMKey]);
+
   if (failed) return null;
 
   if (mix === null) {
@@ -233,6 +293,23 @@ export function IndustryMixSection({
   const pickedNm =
     options.find((o) => o.cd === pickedCat)?.nm ??
     (match !== null && match.catL === pickedCat ? match.catLNm : null);
+
+  // 층 줄(물결 2-2) — 상세 블록 열쇠마다 그 범위의 층 묶음. 칩 줄은 칩의 대분류를 보고 있을 때만.
+  const floorScopes = floorScopeByKey(floors);
+  const chipFloorScopes = floorScopeByKey(
+    match !== null && match.catL === pickedCat ? chipFloors : null,
+  );
+  const chipLabel = `${chip}(칩)`;
+  // 층 줄이 하나라도 그려지나 — 그때만 아래 '왜 다를 수 있나'에 「층 모름」을 단다(줄 없이 설명만 남기지 않는다).
+  const floorsShown =
+    pickedCat !== null &&
+    !detailFailed &&
+    detail !== null &&
+    detailBlockKeys(detail).some((k) => {
+      const s = floorScopes.get(k);
+      const c = chipFloorScopes.get(k);
+      return (s !== undefined && floorLine('', s) !== null) || (c !== undefined && floorLine('', c) !== null);
+    });
 
   // 접혀 있어도 보이는 한 줄 — 몇 곳을 센 것인지.
   // ⚠️ 상권끼리 **더하지 않는다**(겹치는 자리의 가게가 양쪽에 들어간다). 그래서 상권은
@@ -309,6 +386,9 @@ export function IndustryMixSection({
           pickedCat={pickedCat}
           pickedNm={pickedNm}
           hitCds={match !== null && match.catL === pickedCat ? match.catM : []}
+          floorScopes={floorScopes}
+          chipFloorScopes={chipFloorScopes}
+          chipLabel={chipLabel}
         />
       )}
 
@@ -326,6 +406,12 @@ export function IndustryMixSection({
           <strong>시차</strong> — 분기마다 한 번 받는 자료라, 그 뒤에 문을 닫았거나 새로 연 가게는
           아직 반영되지 않았습니다.
         </li>
+        {floorsShown && (
+          <li>
+            <strong>층 모름</strong> — 상권정보 원본에 층이 적히지 않은 가게가 있습니다. 그 가게들은
+            층별 숫자에 들어 있지 않습니다.
+          </li>
+        )}
       </ul>
       <p className="mix__src">
         출처: 소상공인시장진흥공단 상가(상권)정보
@@ -425,6 +511,13 @@ function MixBarRow({ bar, hit = false }: { bar: MixBar; hit?: boolean }) {
   );
 }
 
+/** 상세 블록의 열쇠 — 상권은 `district_id`, 반경은 `__radius__`(아래 DetailBlocks 와 같은 열쇠). */
+function detailBlockKeys(detail: IndustryDetail): string[] {
+  const keys = detail.districts.map((d) => d.district_id);
+  if (detail.radius) keys.push('__radius__');
+  return keys;
+}
+
 /**
  * 고른 업종의 상세 — 스코프마다 "같은 업종 N곳"(경쟁 카운트) + 중분류 나눔.
  *
@@ -438,6 +531,9 @@ function DetailBlocks({
   pickedCat,
   pickedNm,
   hitCds,
+  floorScopes,
+  chipFloorScopes,
+  chipLabel,
 }: {
   mix: IndustryMix;
   detail: IndustryDetail | null;
@@ -447,6 +543,11 @@ function DetailBlocks({
   pickedNm: string | null;
   /** 굵게 할 중분류 코드(창업자 칩의 짝). 비면 굵은 줄 없음. */
   hitCds: readonly string[];
+  /** 블록 열쇠 → 고른 대분류의 층 묶음(물결 2-2). 그 열쇠가 없으면 그 블록엔 층 줄이 없다. */
+  floorScopes: Map<string, IndustryFloorScope>;
+  /** 블록 열쇠 → 칩 짝 중분류의 층 묶음. 칩이 아니면 빈 표. */
+  chipFloorScopes: Map<string, IndustryFloorScope>;
+  chipLabel: string;
 }) {
   const label = pickedNm || pickedCat;
 
@@ -491,27 +592,36 @@ function DetailBlocks({
 
   return (
     <div className="mix__detail">
-      {blocks.map((b) => (
-        <div className="mix__block" key={b.key}>
-          <h4 className="mix__sub">
-            {b.heading}{' '}
-            {/* 한 덩어리 글자로 낸다 — 조각으로 쪼개면 화면에는 같아 보여도 "음식 60곳"을
-                한 낱말로 찾는 시험이 못 찾는다(사람이 읽는 단위와 DOM 단위를 맞춘다). */}
-            <strong className="mix__rival">
-              {`${label} ${b.scope.total.toLocaleString('ko-KR')}곳`}
-            </strong>
-          </h4>
-          {b.scope.cats.length === 0 ? (
-            <p className="mix__none">이 안에 {label} 가게가 없습니다.</p>
-          ) : (
-            <ul className="mix__bars">
-              {toBars(b.scope).map((c) => (
-                <MixBarRow key={c.cd} bar={c} hit={hitCds.includes(c.cd)} />
-              ))}
-            </ul>
-          )}
-        </div>
-      ))}
+      {blocks.map((b) => {
+        const fs = floorScopes.get(b.key);
+        const cs = chipFloorScopes.get(b.key);
+        const line = fs ? floorLine(label, fs) : null;
+        const chipLine = cs ? floorLine(chipLabel, cs) : null;
+        return (
+          <div className="mix__block" key={b.key}>
+            <h4 className="mix__sub">
+              {b.heading}{' '}
+              {/* 한 덩어리 글자로 낸다 — 조각으로 쪼개면 화면에는 같아 보여도 "음식 60곳"을
+                  한 낱말로 찾는 시험이 못 찾는다(사람이 읽는 단위와 DOM 단위를 맞춘다). */}
+              <strong className="mix__rival">
+                {`${label} ${b.scope.total.toLocaleString('ko-KR')}곳`}
+              </strong>
+            </h4>
+            {b.scope.cats.length === 0 ? (
+              <p className="mix__none">이 안에 {label} 가게가 없습니다.</p>
+            ) : (
+              <ul className="mix__bars">
+                {toBars(b.scope).map((c) => (
+                  <MixBarRow key={c.cd} bar={c} hit={hitCds.includes(c.cd)} />
+                ))}
+              </ul>
+            )}
+            {/* 층 줄(물결 2-2) — 한 덩어리 글자(조각 금지 · 시험이 한 낱말로 찾는다). */}
+            {line && <p className="mix__floors">{line}</p>}
+            {chipLine && <p className="mix__floors mix__floors--chip">{chipLine}</p>}
+          </div>
+        );
+      })}
       <p className="mix__note">
         <strong>같은 업종이 많다고 나쁜 자리는 아닙니다.</strong> 먹자골목처럼 모여 있어서 손님이
         오는 곳도 있고, 이미 꽉 찬 곳도 있습니다. 이 숫자는 그 판단의 재료일 뿐입니다.

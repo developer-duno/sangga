@@ -14,7 +14,7 @@
 
 사용
 ----
-    python scripts/publish_snapshot.py --show          # 표지 두 칸·시각·행수 + 점포 표 분기별 행수 + 요약표 셋의 분기
+    python scripts/publish_snapshot.py --show          # 표지 두 칸·시각·행수 + 점포 표 분기별 행수 + 요약표 넷의 분기
     python scripts/publish_snapshot.py --loaded 202609 # '다 들어온 분기'만 적는다(보여 주는 분기는 그대로 · 앞으로만 —
                                                        #  지금 다 들어온 분기보다 옛 분기는 거부, 같은 분기는 쓰기 0)
     python scripts/publish_snapshot.py --ym 202606     # 되돌리기 전용 — 두 칸을 **모두** 그 분기로(점포 표에 있는 분기만)
@@ -23,8 +23,8 @@
 ⛔ 새 분기를 손으로 적을 때는 --ym 이 아니라 --loaded 다(2026-10-07 맹점 검사관) — --ym 은 화면
    기준(published_ym)을 **바로** 바꿔, 요약표 굽기·확인(post_load)을 건너뛰고 반쪽 분기도 그대로
    공개한다. --loaded 는 post_load 가 굽고 확인한 뒤에만 화면이 바뀐다.
-⚠️ --ym(되돌리기)은 층 목록·상권 건물 목록·신선도 표가 그 순간 그 분기를 말하고, 요약표 셋(가게
-   이름 검색·각주·업종 카드)은 post_load.py 를 돌릴 때까지 옛 분기를 말한다. 그래서 끝에
+⚠️ --ym(되돌리기)은 층 목록·상권 건물 목록·신선도 표가 그 순간 그 분기를 말하고, 요약표 넷(가게
+   이름 검색·각주·업종 카드·그 층 줄 — 넷째는 2026-10-09 추가)은 post_load.py 를 돌릴 때까지 옛 분기를 말한다. 그래서 끝에
    post_load.py 를 꼭 안내한다(한가한 시간에 한 묶음으로).
 ⓘ DB 는 dbx(psql) 경유 — 비밀값은 출력하지 않는다(접속 정보는 dbx 가 환경변수로 넘긴다).
 """
@@ -55,7 +55,8 @@ SHOW_QUARTERS_SQL = (
 SHOW_MVS_SQL = (
     "select coalesce((select max(snapshot_ym) from mv_coverage_stats), '') || '|' || "
     "coalesce((select max(snapshot_ym) from mv_district_industry_mix), '') || '|' || "
-    "coalesce((select max(store_snapshot_ym) from mv_parcel_store_names), '');"
+    "coalesce((select max(store_snapshot_ym) from mv_parcel_store_names), '') || '|' || "
+    "coalesce((select max(snapshot_ym) from mv_district_industry_floor), '');"
 )
 
 
@@ -149,9 +150,9 @@ def show():
     quarters = query_one(SHOW_QUARTERS_SQL)
     print("점포 표 분기별 행수: {}".format(
         " · ".join(q.replace(":", " ") for q in quarters.split(",") if q) or "(없음)"))
-    cov, mix, names = (query_one(SHOW_MVS_SQL).split("|") + ["", "", ""])[:3]
-    print("요약표 분기: 각주 {} · 업종 {} · 가게 이름 {}".format(
-        cov or "(없음)", mix or "(없음)", names or "(없음)"))
+    cov, mix, names, floor = (query_one(SHOW_MVS_SQL).split("|") + ["", "", "", ""])[:4]
+    print("요약표 분기: 각주 {} · 업종 {} · 가게 이름 {} · 층 분포 {}".format(
+        cov or "(없음)", mix or "(없음)", names or "(없음)", floor or "(없음)"))
     return 0
 
 
@@ -165,7 +166,7 @@ def set_quarter(ym):
         print("[실패] 표지를 바꾸지 못했습니다(psql 종료 코드 {}).".format(rc))
         return 1
     print("표지 = {} (다 들어온 분기 · 보여 주는 분기 둘 다 · {}행).".format(ym, n))
-    print("이어서 python scripts/post_load.py — 요약표(가게 이름 검색·각주·업종 카드)를 그 분기로 다시 굽습니다.")
+    print("이어서 python scripts/post_load.py — 요약표(가게 이름 검색·각주·업종 카드·층 줄)를 그 분기로 다시 굽습니다.")
     return 0
 
 

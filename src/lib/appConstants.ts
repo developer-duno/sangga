@@ -206,6 +206,15 @@ export const INDUSTRY_MIX_FN = 'list_industry_mix';
 export const INDUSTRY_DETAIL_FN = 'list_industry_detail';
 
 /**
+ * 고른 대분류(칩이면 짝 중분류)의 **층 묶음** 분포 — 물결 2-2(결정 0036 결정 18 ⑲~㉑).
+ * 상세와 같이 대분류를 고른 뒤에만 부른다(곁 카드 미리 부르기에 넣지 않는다).
+ *
+ * ⚠️ 인자가 **셋**이다 — `{ p_pnu, p_cat_l, p_cat_m }`(`p_cat_m` 은 null = 대분류 전체 · 배열 = 그 중분류들).
+ *    응답의 `cat_l_cd`·`cat_m_cds` 는 물어본 값을 되돌려 준 것이라 늦게 온 답을 버리는 데 쓴다.
+ */
+export const INDUSTRY_FLOORS_FN = 'list_industry_floors';
+
+/**
  * 이 필지 둘레의 **미준공 상업 계열 건축 인허가** 건물 수. 업종 분포 카드 안의 한 줄.
  *
  * ⚠️ **인자 이름이 `p_pnu` 다**(`list_price_bands` 와 같은 이유 — 컬럼명 `pnu` 와 겹친다).

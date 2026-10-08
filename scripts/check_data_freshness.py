@@ -34,7 +34,7 @@ YYYY-MM-DD)` 로, 매주 바뀌는 값(며칠 지났나·건수)을 넣지 않�
 (요약표를 구울 때의 분기)을 읽어, 위 표 '점포·업종 (상권정보)' 줄의 기준 분기(표지 published_ym)와
 **다르면** 고정 제목 `화면 분기가 섞였습니다 — 점포·업종 (상권정보)` 이슈 한 쌍을 같은 폴더에 더 쓴다
 (표지를 `--ym` 으로 되돌린 뒤 post_load 를 안 돌림(또는 요약표를 손으로 갱신함) — `post_load.py --check`
-를 돌려야만 보이던 것. post_load 가 도중에 멈추는 것은 원인이 아니다 — 요약표 셋 굽기와 표지 올림이
+를 돌려야만 보이던 것. post_load 가 도중에 멈추는 것은 원인이 아니다 — 요약표 넷 굽기와 표지 올림이
 한 트랜잭션이라 멈추면 통째로 되돌아간다). 뷰 조회 실패·0줄·그 줄이 없음은 조회 실패(2)다 — 단
 그때도 예정일 지남 판정·이슈 파일·GITHUB_OUTPUT 은 그대로 쓰고 끝만 2 로 낸다(2026-10-07 (3) — 각주
 뷰 하나가 죽은 주에 지남 이슈까지 막히지 않게). 신선도 함수 자체가 실패하면 둘 다 못 본다(2).
@@ -240,7 +240,7 @@ def build_mixed_body(mixed) -> str:
         "",
         "- 표지를 `publish_snapshot.py --ym` 으로 되돌린 뒤 `post_load.py` 를 안 돌렸습니다"
         "(또는 요약표를 손으로 갱신했습니다).",
-        "- `post_load.py` 가 도중에 멈춘 것은 원인이 아닙니다 — 요약표 셋 굽기와 표지 올림이 한 트랜잭션이라 "
+        "- `post_load.py` 가 도중에 멈춘 것은 원인이 아닙니다 — 요약표 넷 굽기와 표지 올림이 한 트랜잭션이라 "
         "멈추면 통째로 되돌아갑니다.",
         "- 일부러 되돌려 둔 상태(`--ym`)라면 `post_load.py` 의 [경고] + exit 1 은 정상입니다 — "
         "`--loaded` 로 새 분기를 다시 올리지 마세요.",
@@ -249,7 +249,7 @@ def build_mixed_body(mixed) -> str:
         "",
         "```powershell",
         r"cd D:\sangga",
-        "python scripts/publish_snapshot.py --show   # 표지 두 칸 · 요약표 셋의 분기를 본다",
+        "python scripts/publish_snapshot.py --show   # 표지 두 칸 · 요약표 넷의 분기를 본다",
         "python scripts/post_load.py                  # 요약표를 표지 분기로 다시 굽는다",
         "python scripts/post_load.py --check",
         "python scripts/check_data_freshness.py       # 이 감시를 내 PC에서 다시 — 섞임이 사라지면 끝",
