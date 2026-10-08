@@ -423,3 +423,131 @@ describe('IndustryMixSection — 금칙어·노출면', () => {
     );
   });
 });
+
+/**
+ * 창업자 업종 칩(👤 결정 0036 결정 18 ⑨) — 칩을 고른 채 건물을 열면 카드가 그 대분류를 **미리 고른
+ * 채** 열리고, 짝 중분류 줄이 굵다. 칩을 바꾸면 열린 카드도 따라 바뀐다(첫 렌더 함정).
+ */
+describe('IndustryMixSection — 창업자 업종 칩', () => {
+  const PNU = '1168010100100010000';
+  /** 카페 짝 중분류(I212)가 든 상세. */
+  function cafeDetail() {
+    return detail({
+      districts: [
+        {
+          district_id: '3120189',
+          name: '강남역',
+          total: 60,
+          cats: [
+            { cd: 'I201', nm: '한식', n: 40 },
+            { cd: 'I212', nm: '비알코올', n: 20 },
+          ],
+        },
+      ],
+      radius: { total: 150, cats: [{ cd: 'I212', nm: '비알코올', n: 150 }] },
+    });
+  }
+  function hitNames(container: HTMLElement) {
+    return [...container.querySelectorAll('.mix__detail li.mix__hit .mix__cat')].map((e) => e.textContent);
+  }
+
+  it('★ 카페 칩이면 음식(I2)을 미리 고른 채 열리고 비알코올(I212) 줄만 굵다', async () => {
+    responses.detail = { data: cafeDetail(), error: null };
+    const { container } = render(<IndustryMixSection pnu={PNU} chip="카페" />);
+    const select = (await screen.findByLabelText('업종 골라보기')) as HTMLSelectElement;
+    expect(select.value).toBe('I2');
+    await waitFor(() =>
+      expect(rpcCalls.find((c) => c.fn === 'list_industry_detail')?.args).toEqual({ p_pnu: PNU, p_cat: 'I2' }),
+    );
+    await screen.findByText('음식 60곳');
+    expect(hitNames(container)).toEqual(['비알코올', '비알코올']);
+    // 양성 대조 — 짝이 아닌 한식 줄은 굵지 않다(그려져는 있다).
+    expect([...container.querySelectorAll('.mix__detail li .mix__cat')].map((e) => e.textContent)).toContain('한식');
+  });
+
+  it('전체 칩(또는 안 줌)이면 아무것도 미리 고르지 않는다 — 지금 화면 그대로', async () => {
+    const { container } = render(<IndustryMixSection pnu={PNU} chip="전체" />);
+    const select = (await screen.findByLabelText('업종 골라보기')) as HTMLSelectElement;
+    expect(select.value).toBe('');
+    expect(rpcCalls.some((c) => c.fn === 'list_industry_detail')).toBe(false);
+    expect(container.querySelector('.mix__hit')).toBeNull();
+  });
+
+  it('★ 칩을 바꾸면 열린 카드의 고른 대분류도 따라 바뀐다(같은 필지 · 다시 그리기)', async () => {
+    const { rerender } = render(<IndustryMixSection pnu={PNU} chip="카페" />);
+    const select = (await screen.findByLabelText('업종 골라보기')) as HTMLSelectElement;
+    expect(select.value).toBe('I2');
+
+    responses.detail = { data: detail({ cat_l_cd: 'G2' }), error: null };
+    rerender(<IndustryMixSection pnu={PNU} chip="편의점" />);
+    expect((screen.getByLabelText('업종 골라보기') as HTMLSelectElement).value).toBe('G2');
+    await waitFor(() =>
+      expect(rpcCalls.filter((c) => c.fn === 'list_industry_detail').map((c) => (c.args as { p_cat: string }).p_cat)).toContain('G2'),
+    );
+
+    rerender(<IndustryMixSection pnu={PNU} chip="전체" />);
+    expect((screen.getByLabelText('업종 골라보기') as HTMLSelectElement).value).toBe('');
+  });
+
+  it('카드 안에서 손님이 다른 대분류를 고르면 그 선택이 이긴다', async () => {
+    const { rerender } = render(<IndustryMixSection pnu={PNU} chip="카페" />);
+    const select = (await screen.findByLabelText('업종 골라보기')) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: 'G2' } });
+    expect(select.value).toBe('G2');
+    // 칩이 그대로인 채 다시 그려져도(자료 도착 등) 손님 선택이 남는다.
+    rerender(<IndustryMixSection pnu={PNU} chip="카페" />);
+    expect((screen.getByLabelText('업종 골라보기') as HTMLSelectElement).value).toBe('G2');
+  });
+
+  it('★ 편의점 칩일 때만 설명 한 줄 — 카페 칩에는 없다(양성 대조)', async () => {
+    const NOTE = '종합 소매에는 편의점과 슈퍼마켓이 함께 들어 있습니다';
+    const { rerender } = render(<IndustryMixSection pnu={PNU} chip="편의점" />);
+    expect(await screen.findByText(NOTE)).toBeTruthy();
+    rerender(<IndustryMixSection pnu={PNU} chip="카페" />);
+    await screen.findByLabelText('업종 골라보기');
+    expect(screen.queryByText(NOTE)).toBeNull();
+  });
+
+  it('그 필지 둘레에 그 대분류가 없으면 지금 "없음" 처리 그대로 — 이름은 코드가 아니라 대분류 이름', async () => {
+    // 둘레에 교육(P1)이 아예 없다 → 고르개 목록에도 없다. 상세는 빈 답.
+    responses.detail = {
+      data: detail({
+        cat_l_cd: 'P1',
+        districts: [{ district_id: '3120189', name: '강남역', total: 0, cats: [] }],
+        radius: { total: 0, cats: [] },
+      }),
+      error: null,
+    };
+    render(<IndustryMixSection pnu={PNU} chip="학원" />);
+    expect((await screen.findAllByText('이 안에 교육 가게가 없습니다.')).length).toBe(2);
+    expect(screen.queryByText(/P1/)).toBeNull();
+  });
+});
+
+describe('IndustryMixSection — 창업자 업종 칩 (검사 뒤 보완)', () => {
+  const PNU = '1168010100100010000';
+
+  it('★ F1 같은 대분류 칩끼리 바꿔도 칩이 이긴다 — 카페 → 손님이 G2 → 한식 = I2 + 한식(I201) 줄 굵게', async () => {
+    const { container, rerender } = render(<IndustryMixSection pnu={PNU} chip="카페" />);
+    const select = (await screen.findByLabelText('업종 골라보기')) as HTMLSelectElement;
+    responses.detail = { data: detail({ cat_l_cd: 'G2' }), error: null };
+    fireEvent.change(select, { target: { value: 'G2' } });
+    expect(select.value).toBe('G2');
+
+    responses.detail = { data: detail(), error: null };
+    rerender(<IndustryMixSection pnu={PNU} chip="한식" />);
+    expect((screen.getByLabelText('업종 골라보기') as HTMLSelectElement).value).toBe('I2');
+    await screen.findByText('음식 60곳');
+    expect(
+      [...container.querySelectorAll('.mix__detail li.mix__hit .mix__cat')].map((e) => e.textContent),
+    ).toEqual(['한식', '한식']);
+  });
+
+  it('★ F3 편의점 칩이어도 손님이 다른 대분류를 고르면 설명 줄이 없다(고르기 전엔 있다 — 양성 대조)', async () => {
+    const NOTE = '종합 소매에는 편의점과 슈퍼마켓이 함께 들어 있습니다';
+    render(<IndustryMixSection pnu={PNU} chip="편의점" />);
+    expect(await screen.findByText(NOTE)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('업종 골라보기'), { target: { value: 'I2' } });
+    expect(screen.queryByText(NOTE)).toBeNull();
+  });
+});

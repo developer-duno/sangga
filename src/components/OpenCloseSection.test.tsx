@@ -501,3 +501,144 @@ describe('OpenCloseSection — 못 읽었을 때 · 건물이 바뀔 때 · 미�
     expect(rpcCalls).toHaveLength(0);
   });
 });
+
+/**
+ * 창업자 업종 칩(👤 결정 0036 결정 18 ⑨ · ⑮) — 칩을 고르면 업종 표에서 짝 업종 줄을 굵게 하고
+ * 표(`details`)를 펼친 채로 둔다(강조가 안 보이면 의미 없다). 짝 업종이 상위 표에 없으면 한 줄.
+ */
+describe('OpenCloseSection — 창업자 업종 칩', () => {
+  function details(container: HTMLElement) {
+    return [...container.querySelectorAll('details.oc__ind')] as HTMLDetailsElement[];
+  }
+  function hitRows(container: HTMLElement) {
+    return [...container.querySelectorAll('.oc__table tr.oc__hit th')].map((e) => e.textContent);
+  }
+
+  it('★ 한식 칩이면 업종 표가 펼쳐진 채 한식음식점 줄만 굵다', async () => {
+    const { container } = render(<OpenCloseSection pnu={PNU} chip="한식" />);
+    await openCard();
+    const ds = details(container);
+    expect(ds).toHaveLength(2);
+    expect(ds.every((d) => d.open)).toBe(true);
+    expect(hitRows(container)).toEqual(['한식음식점', '한식음식점']);
+    // 양성 대조 — 일반의류 줄은 굵지 않다.
+    expect(container.querySelectorAll('.oc__table tr:not(.oc__hit) th').length).toBeGreaterThan(0);
+    expect(screen.queryByText(/상위 업종에 없습니다/)).toBeNull();
+  });
+
+  it('전체 칩이면 지금 그대로 — 표는 접히고 굵은 줄이 없다', async () => {
+    const { container } = render(<OpenCloseSection pnu={PNU} chip="전체" />);
+    await openCard();
+    expect(details(container).every((d) => !d.open)).toBe(true);
+    expect(container.querySelector('.oc__hit')).toBeNull();
+    expect(screen.queryByText(/상위 업종에 없습니다/)).toBeNull();
+  });
+
+  it('★ 짝 업종이 상위 표에 없으면 표 위에 한 줄(괄호 = 칩 이름) · 표는 그래도 펼친다', async () => {
+    const { container } = render(<OpenCloseSection pnu={PNU} chip="미용" />);
+    await openCard();
+    expect(await screen.findAllByText('고른 업종(미용)은 이 상권 점포 수 상위 업종에 없습니다')).toHaveLength(2);
+    expect(container.querySelector('.oc__hit')).toBeNull();
+    expect(details(container).every((d) => d.open)).toBe(true);
+  });
+
+  it('★ 칩을 바꾸면 열린 카드도 따라 바뀐다', async () => {
+    const { container, rerender } = render(<OpenCloseSection pnu={PNU} chip="전체" />);
+    await openCard();
+    expect(details(container).every((d) => !d.open)).toBe(true);
+    rerender(<OpenCloseSection pnu={PNU} chip="한식" />);
+    expect(details(container).every((d) => d.open)).toBe(true);
+    expect(hitRows(container)).toEqual(['한식음식점', '한식음식점']);
+    rerender(<OpenCloseSection pnu={PNU} chip="전체" />);
+    expect(container.querySelector('.oc__hit')).toBeNull();
+  });
+
+  it('대전(not_seoul)이면 칩을 골라도 지금 글 그대로', async () => {
+    responses.oc = { data: [headRow('not_seoul')], error: null };
+    const { container } = render(<OpenCloseSection pnu={DAEJEON} chip="카페" />);
+    await openCard();
+    expect(container.querySelector('.oc__lead')?.textContent).toBe(
+      '서울시 상권분석서비스는 서울 상권만 다룹니다 — 이 건물(대전)에는 그 자료가 없습니다.',
+    );
+    expect(screen.queryByText(/상위 업종에 없습니다/)).toBeNull();
+  });
+});
+
+describe('OpenCloseSection — 창업자 업종 칩 (검사 뒤 보완)', () => {
+  function ind(cd: string, nm: string) {
+    return {
+      svc_induty_cd: cd,
+      svc_induty_cd_nm: nm,
+      similr_induty_stor_co: 40,
+      stor_co: 40,
+      frc_stor_co: 0,
+      opbiz_stor_co: 1,
+      clsbiz_stor_co: 1,
+      opbiz_rt: 2.5,
+      clsbiz_rt: 2.5,
+    };
+  }
+  const NONE = /고른 업종\(.+\)은 이 상권 점포 수 상위 업종에 없습니다/;
+  const PART = /^고른 업종 가운데 /;
+
+  it('★ F2 칩 사이를 오가면 손님이 접어 둔 업종 표가 다시 펼쳐진다', async () => {
+    const { container, rerender } = render(<OpenCloseSection pnu={PNU} chip="카페" />);
+    await openCard();
+    const d = container.querySelector('details.oc__ind') as HTMLDetailsElement;
+    expect(d.open).toBe(true);
+    d.open = false;
+    rerender(<OpenCloseSection pnu={PNU} chip="미용" />);
+    expect((container.querySelector('details.oc__ind') as HTMLDetailsElement).open).toBe(true);
+  });
+
+  it('★ F5 짝 업종이 일부만 표에 있으면 빠진 것만 이름으로 한 줄 — 하나도 없을 때 문구는 안 뜬다', async () => {
+    responses.oc = {
+      data: [
+        okRow({
+          industries: [
+            ind('CS300011', '일반의류'),
+            ind('CS200001', '일반교습학원'),
+            ind('CS200002', '외국어학원'),
+          ],
+        }),
+      ],
+      error: null,
+    };
+    render(<OpenCloseSection pnu={PNU} chip="학원" />);
+    await openCard();
+    expect(
+      screen.getByText('고른 업종 가운데 예술학원·컴퓨터학원·스포츠 강습은 상위 업종에 없습니다'),
+    ).toBeTruthy();
+    expect(screen.queryByText(NONE)).toBeNull();
+  });
+
+  it('★ F5 짝 업종이 정확히 하나만 빠지면 그 하나만 이름으로 한 줄', async () => {
+    responses.oc = {
+      data: [okRow({ industries: [ind('CS200028', '미용실'), ind('CS200030', '피부관리실')] })],
+      error: null,
+    };
+    render(<OpenCloseSection pnu={PNU} chip="미용" />);
+    await openCard();
+    expect(screen.getByText('고른 업종 가운데 네일숍은 상위 업종에 없습니다')).toBeTruthy();
+    expect(screen.queryByText(NONE)).toBeNull();
+  });
+
+  it('F5 짝 업종이 다 있으면 줄이 없다 · 하나도 없으면 기존 문구만(양성 대조)', async () => {
+    responses.oc = {
+      data: [
+        okRow({
+          industries: [ind('CS200028', '미용실'), ind('CS200029', '네일숍'), ind('CS200030', '피부관리실')],
+        }),
+      ],
+      error: null,
+    };
+    const { rerender } = render(<OpenCloseSection pnu={PNU} chip="미용" />);
+    await openCard();
+    expect(screen.queryByText(PART)).toBeNull();
+    expect(screen.queryByText(NONE)).toBeNull();
+
+    rerender(<OpenCloseSection pnu={PNU} chip="편의점" />);
+    expect(screen.getByText('고른 업종(편의점)은 이 상권 점포 수 상위 업종에 없습니다')).toBeTruthy();
+    expect(screen.queryByText(PART)).toBeNull();
+  });
+});

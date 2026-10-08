@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   CustomOverlayMap,
   Map,
@@ -40,6 +40,11 @@ type Props = {
    *   똑같아야 주소 남기기·인쇄 머리글·지도 마커가 저절로 따라온다.
    */
   onSelectBuilding: (hit: BuildingHit) => void;
+  /**
+   * 제목 줄에 함께 얹을 것 — 창업자의 업종 칩 줄(👤 결정 0036 결정 18 ④). 없으면 지금 머리 그대로.
+   * ⓘ 지도는 칩을 모른다 — 상권 목록을 업종으로 거르는 일은 물결 2-2 몫이다(결정 18 ⑨).
+   */
+  headExtra?: ReactNode;
 };
 
 /**
@@ -82,7 +87,7 @@ function colorOf(type: string | null): string {
 /** 지도를 가리지 않을 만큼만 칠한다 — 겹친 면이 서로 비쳐 보여야 겹침이 눈에 띈다. */
 const FILL_OPACITY = 0.18;
 
-export function DistrictMap({ sigungu, sigunguName, selected, onSelectBuilding }: Props) {
+export function DistrictMap({ sigungu, sigunguName, selected, onSelectBuilding, headExtra }: Props) {
   const [open, setOpen] = useState(true);
 
   if (!sigungu) return null;
@@ -97,6 +102,7 @@ export function DistrictMap({ sigungu, sigunguName, selected, onSelectBuilding }
         <button type="button" className="dmap__toggle" onClick={() => setOpen(!open)}>
           {open ? '지도 접기' : '지도 펴기'}
         </button>
+        {headExtra}
       </header>
 
       {!open ? (

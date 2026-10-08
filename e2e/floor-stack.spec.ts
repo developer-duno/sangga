@@ -2205,3 +2205,84 @@ test.describe('첫 화면 — 역할 단추', () => {
     await expect(page.locator('.role')).toBeVisible();
   });
 });
+
+// ── 창업자 입구 · 업종 칩 (👤 결정 0036 결정 18 ④⑤⑨ · 물결 1-A2(ii)) ──────────────────
+// 칩 표·카드 안 강조·첫 렌더 함정·DOM 조각이 다시 태어나지 않는가는 단위 시험이 덮는다
+// (`founderChips.test.ts`·`IndustryMixSection.test.tsx`·`OpenCloseSection.test.tsx`·`App.test.tsx`).
+// 여기서만 보이는 것은 **실제 배치**(지도가 검색창 위로 오나 · 좁은 폭에서 칩 줄이 안 넘치나)와 종이다.
+
+test.describe('첫 화면 — 창업자 입구 · 업종 칩', () => {
+  test('AN. 창업자면 지도가 검색창 위·칩 여섯 · 카페 칩으로 건물을 열면 두 카드가 따르고, 투자자면 칩 없이 지금 차례', async ({
+    page,
+  }) => {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page, [], priceBands(), [floorRow({ floor_no: 2 }), floorRow()], industryMix());
+    // 나중에 등록한 것이 먼저 잡힌다 — mockFloorStack 의 '함수 없음' 위에 덮는다.
+    await mockJson(page, OPEN_CLOSE_PATTERN, openClose());
+    await mockJson(page, INDUSTRY_DETAIL_PATTERN, {
+      snapshot_ym: '202606',
+      radius_m: 500,
+      cat_l_cd: 'I2',
+      districts: [],
+      radius: {
+        total: 150,
+        cats: [
+          { cd: 'I201', nm: '한식', n: 100 },
+          { cd: 'I212', nm: '비알코올', n: 50 },
+        ],
+      },
+    });
+
+    // ⚠️ exact — 카드 머리의 역할 태그('창업자')가 버튼 이름 안에 들어 있어 부분 일치로 찾으면 겹친다.
+    const roleBtn = (name: string) => page.locator('.role').getByRole('button', { name, exact: true });
+    const chips = page.locator('.dmap__head .chips');
+    const chipBtn = (name: string) => chips.getByRole('button', { name, exact: true });
+    const top = async (sel: string) => (await page.locator(sel).boundingBox())!.y;
+
+    await page.goto('/');
+    await roleBtn('창업자').click();
+    await pickGu(page, '서울', '강남구');
+
+    // 창업자 = 지도가 검색창 위(결정 18 ④) · 지도 제목 줄에 칩 여섯, 처음은 전체.
+    await expect(page.locator('section.dmap')).toBeVisible();
+    expect(await top('section.dmap')).toBeLessThan(await top('section.search'));
+    await expect(chips.getByRole('button')).toHaveText(['카페', '한식', '미용', '학원', '편의점', '전체']);
+    await expect(chipBtn('전체')).toHaveAttribute('aria-pressed', 'true');
+    // 칩 곁 안내 한 줄(👤 F4) — 글자 그대로.
+    await expect(chips.locator('.chips__note')).toHaveText('건물을 열면 업종 분포·개업·폐업 카드에 반영됩니다');
+    // ⛔ 좁은 폭(412px)에서도 칩 줄(안내 한 줄 포함)이 옆으로 넘치지 않는다.
+    expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+
+    await chipBtn('카페').click();
+    await expect(chipBtn('카페')).toHaveAttribute('aria-pressed', 'true');
+    // 칩은 저장하지 않는다 — 주소에도 안 실린다.
+    expect([...new URL(page.url()).searchParams.keys()]).toEqual(['sgg']);
+
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+
+    // 둘레 업종 분포 — 음식(I2)을 미리 고른 채 열리고 짝 중분류(비알코올) 줄이 굵다.
+    const mix = page.locator('section.mix');
+    await expect(mix.locator('select.mix__select')).toHaveValue('I2');
+    await expect(mix.locator('li.mix__hit .mix__cat')).toHaveText(['비알코올']);
+    // 개업·폐업 — 업종 표가 펼쳐져 있고, 짝 업종(커피-음료)이 상위 표에 없으면 그렇다고 한 줄.
+    const oc = page.locator('section.oc');
+    const first = oc.locator('.oc__district').first();
+    await expect(first.locator('.oc__chip-none')).toHaveText('고른 업종(카페)은 이 상권 점포 수 상위 업종에 없습니다');
+    await expect(first.locator('.oc__table')).toBeVisible();
+
+    // 종이에서는 칩 줄이 빠진다(역할 단추 줄과 같은 꼴).
+    await page.emulateMedia({ media: 'print' });
+    await expect(page.locator('.chips')).toBeHidden();
+    await page.emulateMedia({ media: null });
+    await expect(page.locator('.chips')).toBeVisible();
+
+    // 투자자 — 칩 줄이 없고 차례는 지금 그대로(검색 → 지도) · 칩 효과도 풀린다.
+    await roleBtn('투자자').click();
+    await expect(page.locator('.chips')).toHaveCount(0);
+    expect(await top('section.search')).toBeLessThan(await top('section.dmap'));
+    await expect(mix.locator('select.mix__select')).toHaveValue('');
+    await expect(oc.locator('.oc__chip-none')).toHaveCount(0);
+  });
+});

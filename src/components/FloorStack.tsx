@@ -53,6 +53,7 @@ import {
   formatYearMonth,
   oneInEvery,
 } from '../lib/format';
+import { FOUNDER_CHIP_ALL, type FounderChip } from '../lib/founderChips';
 import { KNOWN_BAND_STATUS } from '../lib/priceBand';
 import { lacksCoord } from '../lib/rentStats';
 import {
@@ -215,9 +216,14 @@ type Props = {
    * null·안 줌 = 역할을 고르기 전 화면 그대로.
    */
   viewerRole?: ViewerRole | null;
+  /**
+   * 창업자가 고른 업종 칩(결정 0036 결정 18 ⑨). 업종 분포·개업·폐업 카드에 그대로 내려 준다 —
+   * 짝짓기는 그 카드들이 `lib/founderChips.ts` 의 표로 한다. 안 줌·'전체' = 지금 화면 그대로.
+   */
+  founderChip?: FounderChip;
 };
 
-export function FloorStack({ building, viewerRole = null }: Props) {
+export function FloorStack({ building, viewerRole = null, founderChip = FOUNDER_CHIP_ALL }: Props) {
   const plans = sectionPlansFor(viewerRole);
   const [floors, setFloors] = useState<FloorRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -653,7 +659,12 @@ export function FloorStack({ building, viewerRole = null }: Props) {
          아니라…")이 그 장치다. 자리를 옮겨 해결한 것이 아니니 그 문구를 지우지 말 것.
     */
     industry: (
-      <IndustryMixSection pnu={building.pnu} prefetch={sidePrefetch} plan={plans.industry} />
+      <IndustryMixSection
+        pnu={building.pnu}
+        prefetch={sidePrefetch}
+        plan={plans.industry}
+        chip={founderChip}
+      />
     ),
     tx: <TransactionSection txs={txs} stats={txStats} plan={plans.tx} />,
     band: (
@@ -709,7 +720,12 @@ export function FloorStack({ building, viewerRole = null }: Props) {
       서서 그렇다고 적는다. ⛔ 이 건물이 아니라 속한 서울시 상권 전체의 값이다.
     */
     openclose: (
-      <OpenCloseSection pnu={building.pnu} prefetch={sidePrefetch} plan={plans.openclose} />
+      <OpenCloseSection
+        pnu={building.pnu}
+        prefetch={sidePrefetch}
+        plan={plans.openclose}
+        chip={founderChip}
+      />
     ),
   };
 
