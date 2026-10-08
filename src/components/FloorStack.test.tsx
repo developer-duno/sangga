@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
-import { SECTION_EXPAND_BUDGET, SECTION_PLAN } from '../lib/sectionCards';
+import {
+  SECTION_EXPAND_BUDGET,
+  SECTION_PLAN,
+  VIEWER_ROLES,
+  type ViewerRole,
+} from '../lib/sectionCards';
 import type {
   BasePrice,
   BuildingHit,
@@ -1735,6 +1740,112 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       expect(container.textContent).not.toContain('불러오는 중');
     });
     expect(readCards(container).filter((c) => c.open)).toHaveLength(SECTION_EXPAND_BUDGET);
+  });
+
+  /**
+   * 역할별 카드 순서·펼침(👤 결정 0036 결정 18 ②) — 결정 문서의 표를 **글자 그대로** 옮겼다.
+   * 배치표(`ROLE_SECTION_LAYOUT`)를 돌려 기대값을 만들지 않는다 — 그러면 표가 틀려도 같이 틀린다.
+   * 역할 없음은 위 시험(지금 화면)이 그대로 지킨다.
+   */
+  const ROLE_TABLE: Record<ViewerRole, Array<[string, boolean]>> = {
+    투자자: [
+      ['속한 상권', true],
+      ['층 목록', true],
+      ['실거래 기록', true],
+      ['참고 매매 시세 (추정값)', true],
+      ['상권 임대 동향 (부동산원 조사)', false],
+      ['둘레의 업종 분포', false],
+      ['상권 개업·폐업 (서울시 공표)', false],
+    ],
+    창업자: [
+      ['속한 상권', true],
+      ['층 목록', true],
+      ['둘레의 업종 분포', true],
+      ['상권 개업·폐업 (서울시 공표)', true],
+      ['실거래 기록', false],
+      ['참고 매매 시세 (추정값)', false],
+      ['상권 임대 동향 (부동산원 조사)', false],
+    ],
+    중개사: [
+      ['층 목록', true],
+      ['실거래 기록', true],
+      ['속한 상권', true],
+      ['참고 매매 시세 (추정값)', true],
+      ['상권 임대 동향 (부동산원 조사)', false],
+      ['둘레의 업종 분포', false],
+      ['상권 개업·폐업 (서울시 공표)', false],
+    ],
+  };
+  const NO_ROLE: Array<[string, boolean]> = [
+    ['속한 상권', true],
+    ['층 목록', true],
+    ['둘레의 업종 분포', true],
+    ['실거래 기록', true],
+    ['참고 매매 시세 (추정값)', false],
+    ['상권 임대 동향 (부동산원 조사)', false],
+    ['상권 개업·폐업 (서울시 공표)', false],
+  ];
+
+  async function settledCards(container: HTMLElement) {
+    await waitFor(() => {
+      expect(container.querySelectorAll('.card')).toHaveLength(Object.keys(SECTION_PLAN).length);
+      expect(container.textContent).not.toContain('불러오는 중');
+    });
+    return readCards(container).map((c): [string, boolean] => [c.title, c.open]);
+  }
+
+  for (const role of VIEWER_ROLES) {
+    it(`역할 ${role} — 카드 순서·펼침이 결정 18 표대로다 (펼침은 상한 안)`, async () => {
+      const { container } = render(<FloorStack building={building()} viewerRole={role} />);
+      const cards = await settledCards(container);
+      expect(cards).toEqual(ROLE_TABLE[role]);
+      expect(cards.filter(([, open]) => open).length).toBeLessThanOrEqual(SECTION_EXPAND_BUDGET);
+    });
+  }
+
+  it('역할을 바꾸면 그 자리에서 순서·펼침이 새 표대로 다시 선다 (자료는 다시 묻지 않는다)', async () => {
+    const { container, rerender } = render(
+      <FloorStack building={building()} viewerRole="투자자" />,
+    );
+    await settledCards(container);
+    const calls = rpcCalls.length;
+
+    // 사람이 접힌 카드를 하나 펼쳐 둔다 — 역할을 바꾸면 그 손길까지 새 표대로 다시 선다.
+    fireEvent.click(container.querySelector('.oc .card__toggle')!);
+    expect(container.querySelector('.oc .card__toggle')?.getAttribute('aria-expanded')).toBe(
+      'true',
+    );
+
+    // 자리가 바뀌는 카드(개업·폐업: 투자자 7번째 → 창업자 4번째)의 화면 조각을 쥐어 둔다.
+    // 곁 카드 자료는 보관함에서 다시 나오므로 요청 수로는 '다시 태어남'을 못 본다 — 같은 물건인지 본다.
+    const ocBefore = container.querySelector('.oc');
+    expect(ocBefore).not.toBeNull();
+
+    rerender(<FloorStack building={building()} viewerRole="창업자" />);
+    expect(await settledCards(container)).toEqual(ROLE_TABLE.창업자);
+    expect(container.querySelector('.oc')).toBe(ocBefore);
+
+    rerender(<FloorStack building={building()} viewerRole="중개사" />);
+    expect(await settledCards(container)).toEqual(ROLE_TABLE.중개사);
+
+    // 해제하면 역할을 고르기 전 화면 그대로.
+    rerender(<FloorStack building={building()} viewerRole={null} />);
+    expect(await settledCards(container)).toEqual(NO_ROLE);
+
+    // 카드는 자리만 옮긴다 — 곁 카드가 다시 태어나 서버에 또 묻지 않는다.
+    expect(rpcCalls.length).toBe(calls);
+  });
+
+  it('같은 역할로 다시 그려져도 사람이 연 카드는 그대로다 (자료가 올 때마다 접히지 않는다)', async () => {
+    const { container, rerender } = render(
+      <FloorStack building={building()} viewerRole="투자자" />,
+    );
+    await settledCards(container);
+    fireEvent.click(container.querySelector('.oc .card__toggle')!);
+    rerender(<FloorStack building={building()} viewerRole="투자자" />);
+    expect(container.querySelector('.oc .card__toggle')?.getAttribute('aria-expanded')).toBe(
+      'true',
+    );
   });
 
   it('접힌 카드도 제목과 핵심 한 줄은 보인다 (접힘 ≠ 숨김)', async () => {

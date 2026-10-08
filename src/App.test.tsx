@@ -496,3 +496,86 @@ describe('App — 주소로 들고 다니기', () => {
     expect(await screen.findByRole('button', { name: '링크 복사' })).toBeTruthy();
   });
 });
+
+/**
+ * 역할 단추(👤 결정 0036 결정 18) — 이어 붙였을 때만 보이는 것: 고른 역할이 **이 기기에 저장**되고
+ * 층별 화면이 그 역할 순서로 서며, **주소에는 안 실린다**. 단추 하나의 동작은 `RolePicker.test`,
+ * 저장의 예외 처리는 `viewerRoleStore.test`, 역할별 표는 `FloorStack.test` 가 본다.
+ */
+describe('App — 역할 단추 (결정 0036 결정 18)', () => {
+  const KEY = 'sangga.viewerRole';
+  afterEach(() => window.localStorage.clear());
+
+  /**
+   * 층별 화면 카드 중 이 흉내에서 서는 두 장(속한 상권·층 목록)의 차례. 다른 카드는 응답에 따라
+   * 서거나 사라지므로 이 둘만 본다 — 두 장의 앞뒤는 역할 없음과 중개사에서 뒤바뀐다.
+   */
+  function cardTitles() {
+    return [...document.querySelectorAll('.stack .card .card__title')]
+      .map((el) => el.textContent)
+      .filter((t) => t === '속한 상권' || t === '층 목록');
+  }
+
+  it('저장된 역할이 없으면 아무 단추도 눌려 있지 않고 카드는 지금 순서다', async () => {
+    openWith(`?sgg=11680&bld=${LINK_BLD}`);
+    render(<App />);
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+    for (const name of ['투자자', '창업자', '중개사']) {
+      expect(screen.getByRole('button', { name }).getAttribute('aria-pressed')).toBe('false');
+    }
+    await waitFor(() => expect(cardTitles()).toEqual(['속한 상권', '층 목록']));
+  });
+
+  it('★ 저장된 역할로 첫 그림부터 눌려 있고, 층별 화면이 그 역할 순서로 선다', async () => {
+    window.localStorage.setItem(KEY, '중개사');
+    openWith(`?sgg=11680&bld=${LINK_BLD}`);
+    render(<App />);
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+    expect(screen.getByRole('button', { name: '중개사' }).getAttribute('aria-pressed')).toBe('true');
+    // 중개사는 층 목록이 먼저다(역할 없음은 속한 상권이 먼저).
+    await waitFor(() => expect(cardTitles()).toEqual(['층 목록', '속한 상권']));
+  });
+
+  it('★ 누르면 이 기기에 저장되고, 다시 누르면 지워진다 — 주소에는 안 실린다', async () => {
+    openWith(`?sgg=11680&bld=${LINK_BLD}`);
+    render(<App />);
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+    await waitFor(() => expect(cardTitles()).toEqual(['속한 상권', '층 목록']));
+    const before = currentSearch();
+
+    fireEvent.click(screen.getByRole('button', { name: '중개사' }));
+    expect(window.localStorage.getItem(KEY)).toBe('중개사');
+    expect(screen.getByRole('button', { name: '중개사' }).getAttribute('aria-pressed')).toBe('true');
+    // 건물 화면이 열린 채 바꿔도 바로 따른다.
+    expect(cardTitles()).toEqual(['층 목록', '속한 상권']);
+    expect(currentSearch()).toBe(before);
+
+    fireEvent.click(screen.getByRole('button', { name: '중개사' }));
+    expect(window.localStorage.getItem(KEY)).toBeNull();
+    expect(cardTitles()).toEqual(['속한 상권', '층 목록']);
+    expect(currentSearch()).toBe(before);
+  });
+
+  it('★ 저장이 막힌 창에서도 화면은 고른 역할대로 선다 (저장만 못 한다)', async () => {
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('blocked', 'SecurityError');
+    });
+    const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new DOMException('blocked', 'SecurityError');
+    });
+    try {
+      openWith(`?sgg=11680&bld=${LINK_BLD}`);
+      render(<App />);
+      await screen.findByRole('heading', { name: '테스트빌딩' });
+      fireEvent.click(screen.getByRole('button', { name: '중개사' }));
+      expect(setItem).toHaveBeenCalled();
+      expect(screen.getByRole('button', { name: '중개사' }).getAttribute('aria-pressed')).toBe(
+        'true',
+      );
+      await waitFor(() => expect(cardTitles()).toEqual(['층 목록', '속한 상권']));
+    } finally {
+      setItem.mockRestore();
+      getItem.mockRestore();
+    }
+  });
+});

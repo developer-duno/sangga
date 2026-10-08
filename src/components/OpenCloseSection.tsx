@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { OPEN_CLOSE_FN } from '../lib/appConstants';
-import { SECTION_PLAN } from '../lib/sectionCards';
+import { SECTION_PLAN, type SectionPlan } from '../lib/sectionCards';
 import { SectionCard } from './SectionCard';
 import {
   OPEN_CLOSE_MIN_SAMPLE,
@@ -44,9 +44,14 @@ type Props = {
   pnu: string;
   /** 부모가 건물을 고른 순간 먼저 보내 둔 요청(`lib/sidePrefetch.ts`). 이 pnu 것이면 쓴다. */
   prefetch?: SidePrefetch | null;
+  /**
+   * 이 카드의 배치(제목·역할·기본 펼침). 층별 화면이 고른 역할의 표를 준다(결정 0036 결정 18).
+   * 안 주면 `SECTION_PLAN.openclose` — 역할을 고르기 전 화면 그대로.
+   */
+  plan?: SectionPlan;
 };
 
-export function OpenCloseSection({ pnu, prefetch }: Props) {
+export function OpenCloseSection({ pnu, prefetch, plan = SECTION_PLAN.openclose }: Props) {
   /**
    * 받아 온 줄들. **아직 못 받았을 때와 못 읽었을 때가 똑같이 null 이다**(임대 카드와 같은
    * 판단 — 둘 다 아무것도 안 그린다). 함수가 아직 없으면(PGRST202) 이 상태로 남는다 —
@@ -100,7 +105,7 @@ export function OpenCloseSection({ pnu, prefetch }: Props) {
       text = '이 건물의 위치 정보가 없어 속한 상권을 찾지 못했습니다.';
     }
     return (
-      <SectionCard plan={SECTION_PLAN.openclose} className="oc oc--none" summary={summary}>
+      <SectionCard plan={plan} className="oc oc--none" summary={summary}>
         <p className="oc__lead">{text}</p>
         <p className="oc__src">{SOURCE_TEXT}</p>
       </SectionCard>
@@ -111,7 +116,7 @@ export function OpenCloseSection({ pnu, prefetch }: Props) {
   const scaleMax = trendScaleMax(rows);
 
   return (
-    <SectionCard plan={SECTION_PLAN.openclose} className="oc" summary={summary}>
+    <SectionCard plan={plan} className="oc" summary={summary}>
       <p className="oc__lead">
         <strong>이 건물이 속한 상권의 개업·폐업입니다</strong> — 서울시가 공표한 점포 수 그대로입니다.
       </p>
