@@ -1,14 +1,21 @@
 import { describe, it, expect } from 'vitest';
-import type { IndustryDistrict, IndustryMix, IndustryScope } from '../types';
+import type { IndustryDistrict, IndustryFloors, IndustryMix, IndustryScope } from '../types';
 import {
   catOptions,
   districtLabel,
   districtSources,
+  FLOOR_BAND_LABELS,
+  FLOOR_BAND_ORDER,
+  floorLine,
+  floorScopeByKey,
   isCat,
   isDistrict,
+  isFloorScope,
   isIndustryDetail,
+  isIndustryFloors,
   isIndustryMix,
   isScope,
+  sameCatMs,
   toBars,
 } from './industryMix';
 
@@ -210,5 +217,105 @@ describe('모양 검사 — 화이트스크린 막는 유일한 방어선', () =
 
   it('상세는 cat_l_cd 가 없으면 막는다 — 늦게 온 답을 버리는 유일한 근거다', () => {
     expect(isIndustryDetail(mix())).toBe(false);
+  });
+});
+
+// ── 업종별 층 분포 (물결 2-2) ─────────────────────────────────────────────────
+
+/** 지시서 예시값 그대로 — 지하 4 · 1층 700 · 2층 150 · 3층 이상 80 · 층 미상 300 (총 1,234 → 미상 24%). */
+const BANDS = { b: 4, '1': 700, '2': 150, '3+': 80, na: 300 };
+
+function floors(over: Partial<IndustryFloors> = {}): IndustryFloors {
+  return {
+    snapshot_ym: '202606',
+    radius_m: 500,
+    cat_l_cd: 'I2',
+    cat_m_cds: null,
+    districts: [{ district_id: 'D1', name: '강남역', total: 1234, bands: { ...BANDS } }],
+    radius: { total: 1234, bands: { ...BANDS } },
+    ...over,
+  };
+}
+
+describe('업종별 층 분포 — 층 줄 글자', () => {
+  it('예시값 그대로 한 줄 — 지하부터 위로, 층 미상은 끝에 괄호 %', () => {
+    expect(floorLine('음식', { total: 1234, bands: { ...BANDS } })).toBe(
+      '층별 음식: 지하 4곳 · 1층 700곳 · 2층 150곳 · 3층 이상 80곳 · 층 미상 300곳 (24%)',
+    );
+  });
+
+  it('칩 줄은 이름표만 다르다', () => {
+    expect(floorLine('고른 업종(카페)', { total: 10, bands: { b: 0, '1': 6, '2': 1, '3+': 1, na: 2 } })).toBe(
+      '층별 고른 업종(카페): 지하 0곳 · 1층 6곳 · 2층 1곳 · 3층 이상 1곳 · 층 미상 2곳 (20%)',
+    );
+  });
+
+  it('천 단위 쉼표', () => {
+    expect(floorLine('음식', { total: 12000, bands: { b: 0, '1': 10000, '2': 0, '3+': 0, na: 2000 } })).toContain(
+      '1층 10,000곳',
+    );
+  });
+
+  it('total 0 이면 줄을 안 그린다(null)', () => {
+    expect(floorLine('음식', { total: 0, bands: { b: 0, '1': 0, '2': 0, '3+': 0, na: 0 } })).toBeNull();
+  });
+
+  it('차례·이름표 다섯이 고정이다', () => {
+    expect([...FLOOR_BAND_ORDER]).toEqual(['b', '1', '2', '3+', 'na']);
+    expect(FLOOR_BAND_ORDER.map((k) => FLOOR_BAND_LABELS[k])).toEqual(['지하', '1층', '2층', '3층 이상', '층 미상']);
+  });
+});
+
+describe('업종별 층 분포 — 응답 모양 검사', () => {
+  it('제대로 된 응답 · radius null · 칩 중분류 배열을 통과시킨다', () => {
+    expect(isIndustryFloors(floors())).toBe(true);
+    expect(isIndustryFloors(floors({ radius: null }))).toBe(true);
+    expect(isIndustryFloors(floors({ cat_m_cds: ['I212'] }))).toBe(true);
+  });
+
+  it('열쇠 하나라도 빠지면 막는다 — 빠진 묶음을 0 으로 채우면 모르는 것을 없음이라 적는다', () => {
+    for (const k of FLOOR_BAND_ORDER) {
+      const bands: Record<string, number> = { ...BANDS };
+      delete bands[k];
+      expect(isFloorScope({ total: 1, bands }), k).toBe(false);
+      expect(isIndustryFloors(floors({ radius: { total: 1, bands } as never })), k).toBe(false);
+    }
+  });
+
+  it('음수·소수·글자 개수를 막는다', () => {
+    expect(isFloorScope({ total: 1, bands: { ...BANDS, na: -1 } })).toBe(false);
+    expect(isFloorScope({ total: 1, bands: { ...BANDS, b: 1.5 } })).toBe(false);
+    expect(isFloorScope({ total: '1', bands: { ...BANDS } })).toBe(false);
+    expect(isFloorScope({ total: 1, bands: null })).toBe(false);
+  });
+
+  it('cat_l_cd·cat_m_cds·district_id 가 이상하면 막는다', () => {
+    expect(isIndustryFloors({ ...floors(), cat_l_cd: undefined })).toBe(false);
+    expect(isIndustryFloors({ ...floors(), cat_m_cds: [1] })).toBe(false);
+    expect(isIndustryFloors({ ...floors(), cat_m_cds: 'I212' })).toBe(false);
+    expect(
+      isIndustryFloors(floors({ districts: [{ name: '강남역', total: 1, bands: { ...BANDS } } as never] })),
+    ).toBe(false);
+  });
+
+  it('다른 함수의 응답·오류 객체를 막는다', () => {
+    expect(isIndustryFloors({ code: 'PGRST202', message: 'function does not exist' })).toBe(false);
+    expect(isIndustryFloors({ ...mix(), cat_l_cd: 'I2' })).toBe(false);
+  });
+});
+
+describe('업종별 층 분포 — 늦게 온 답 · 블록 열쇠', () => {
+  it('중분류 목록은 순서와 무관하게 견주고, null 은 null 하고만 같다', () => {
+    expect(sameCatMs(['I212', 'P105'], ['P105', 'I212'])).toBe(true);
+    expect(sameCatMs(null, null)).toBe(true);
+    expect(sameCatMs(null, [])).toBe(false);
+    expect(sameCatMs(['I212'], ['I201'])).toBe(false);
+  });
+
+  it('상권은 district_id, 반경은 __radius__ 열쇠로 찾는다', () => {
+    const m = floorScopeByKey(floors());
+    expect([...m.keys()]).toEqual(['D1', '__radius__']);
+    expect(floorScopeByKey(floors({ radius: null })).has('__radius__')).toBe(false);
+    expect(floorScopeByKey(null).size).toBe(0);
   });
 });

@@ -313,6 +313,8 @@ QUIET = (
     ("report_function_drift", lambda: []),
     ("report_snapshot_release", lambda *a: (False, False)),
     ("report_store_names_freshness", lambda: ("", "", False)),
+    ("report_industry_floor_freshness", lambda: ("", "", False)),
+    ("report_industry_floor_consistency", lambda: ("0", False)),
     ("precheck_snapshot_release", lambda: (False, "202606", "")),
 )
 

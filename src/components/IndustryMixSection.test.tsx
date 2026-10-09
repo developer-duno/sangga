@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
-import type { IndustryDetail, IndustryMix } from '../types';
+import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
+import type { IndustryDetail, IndustryFloors, IndustryMix } from '../types';
 
 /**
  * "둘레의 업종 분포" 섹션 테스트(결정 0014).
@@ -26,6 +26,14 @@ const responses = {
    * 이 파일의 다른 시험들이 보는 화면이 그대로 유지된다(그 줄만 없다).
    */
   permits: { data: null as unknown, error: { message: 'PGRST202' } as unknown },
+  /**
+   * 서버 함수 list_industry_floors 의 응답(물결 2-2 업종별 층 분포). 기본값 = **함수 없음** —
+   * 마이그레이션 적용 전 라이브 상태이고, 다른 시험들이 보는 화면이 그대로다(층 줄만 없다).
+   * 함수를 넣으면 인자로 갈라 답한다 — 대분류 줄과 칩 줄이 다른 답을 받게.
+   */
+  floors: null as null | ((args: { p_cat_l: string; p_cat_m: string[] | null }) => { data: unknown; error: unknown }),
+  /** true 면 층 응답을 영영 안 준다 — "아직 안 옴" 상태. */
+  floorsPending: false,
 };
 
 /** 마지막 rpc 호출들. "인자 이름을 p_pnu·p_cat 으로 보내는가"를 여기서 확인한다. */
@@ -43,6 +51,14 @@ vi.mock('../lib/supabase', () => ({
       // ⚠️ 갈라 답해야 한다. 안 그러면 분포 응답(업종 객체)이 인허가 줄로 흘러들어
       //    "늘 미표시"가 되고, 그 상태로도 아래 시험 대부분이 초록이라 아무도 모른다.
       if (fn === 'count_nearby_permits') return Promise.resolve(responses.permits);
+      if (fn === 'list_industry_floors') {
+        if (responses.floorsPending) return new Promise(() => {});
+        return Promise.resolve(
+          responses.floors
+            ? responses.floors(args as { p_cat_l: string; p_cat_m: string[] | null })
+            : { data: null, error: { message: 'PGRST202' } },
+        );
+      }
       return Promise.resolve(responses.mix);
     },
   },
@@ -105,6 +121,8 @@ beforeEach(() => {
   responses.detail = { data: detail(), error: null };
   responses.detailPending = false;
   responses.permits = { data: null, error: { message: 'PGRST202' } };
+  responses.floors = null;
+  responses.floorsPending = false;
   vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
 
@@ -549,5 +567,217 @@ describe('IndustryMixSection — 창업자 업종 칩 (검사 뒤 보완)', () =
     expect(await screen.findByText(NOTE)).toBeTruthy();
     fireEvent.change(screen.getByLabelText('업종 골라보기'), { target: { value: 'I2' } });
     expect(screen.queryByText(NOTE)).toBeNull();
+  });
+});
+
+// ── 업종별 층 분포 (물결 2-2 · 결정 0036 결정 18 ⑲~㉑) ─────────────────────────
+
+describe('IndustryMixSection — 업종별 층 분포', () => {
+  const PNU = '1168010100100010000';
+  // 대분류 답의 bands 합 = 그 블록 총수(상권 '음식 60곳' · 반경 '150곳') — e2e/fixtures.ts 의 industryFloors() 와 같은 숫자.
+  const LINE_D = '층별 음식: 지하 0곳 · 1층 36곳 · 2층 9곳 · 3층 이상 3곳 · 층 미상 12곳 (20%)';
+  const LINE_R = '층별 음식: 지하 2곳 · 1층 90곳 · 2층 24곳 · 3층 이상 9곳 · 층 미상 25곳 (17%)';
+  const CHIP_D = '층별 고른 업종(카페): 지하 0곳 · 1층 15곳 · 2층 3곳 · 3층 이상 0곳 · 층 미상 2곳 (10%)';
+  const WHY_TEXT =
+    "층 미상 — 원본에 층이 비어 있거나 숫자 없이 '지하'라고만 적힌 가게입니다(지하라고만 적힌 가게는 아직 지하 칸에 세지 못했습니다).";
+  // 층 줄 안의 '층 미상 N곳' 과 섞이지 않게 설명 문장에만 있는 말로 찾는다.
+  const WHY = /원본에 층이 비어 있거나/;
+
+  function floors(catL: string, catM: string[] | null): IndustryFloors {
+    if (catM === null) {
+      return {
+        snapshot_ym: '202606',
+        radius_m: 500,
+        cat_l_cd: catL,
+        cat_m_cds: null,
+        districts: [
+          { district_id: '3120189', name: '강남역', total: 60, bands: { b: 0, '1': 36, '2': 9, '3+': 3, na: 12 } },
+        ],
+        radius: { total: 150, bands: { b: 2, '1': 90, '2': 24, '3+': 9, na: 25 } },
+      };
+    }
+    return {
+      snapshot_ym: '202606',
+      radius_m: 500,
+      cat_l_cd: catL,
+      cat_m_cds: catM,
+      districts: [{ district_id: '3120189', name: '강남역', total: 20, bands: { b: 0, '1': 15, '2': 3, '3+': 0, na: 2 } }],
+      radius: { total: 0, bands: { b: 0, '1': 0, '2': 0, '3+': 0, na: 0 } },
+    };
+  }
+
+  beforeEach(() => {
+    responses.floors = ({ p_cat_l, p_cat_m }) => ({ data: floors(p_cat_l, p_cat_m), error: null });
+  });
+
+  it('★ 대분류를 고르면 상권·반경 블록마다 층 줄 한 줄 + 「층 미상」 설명', async () => {
+    const { container } = render(<IndustryMixSection pnu={PNU} />);
+    // 고르기 전에는 층 함수를 부르지도 않고 설명 줄도 없다.
+    await screen.findByLabelText('업종 골라보기');
+    expect(rpcCalls.some((c) => c.fn === 'list_industry_floors')).toBe(false);
+    expect(screen.queryByText(WHY)).toBeNull();
+
+    fireEvent.change(screen.getByLabelText('업종 골라보기'), { target: { value: 'I2' } });
+    expect(await screen.findByText(LINE_D)).toBeTruthy();
+    expect(screen.getByText(LINE_R)).toBeTruthy();
+    expect(container.querySelectorAll('.mix__detail .mix__block .mix__floors')).toHaveLength(2);
+    expect(container.querySelector('.mix__floors--chip')).toBeNull();
+    // 👤 2026-10-09 08:1x 문구 그대로(원본 탓으로 돌리거나 '층별 숫자에 없다'고 적지 않는다 — 같은 줄에 '층 미상 N곳' 이 있다).
+    expect(container.querySelector('.mix__why li:nth-child(3)')?.textContent).toBe(WHY_TEXT);
+    expect(rpcCalls.filter((c) => c.fn === 'list_industry_floors').map((c) => c.args)).toEqual([
+      { p_pnu: PNU, p_cat_l: 'I2', p_cat_m: null },
+    ]);
+  });
+
+  it('★ 창업자 카페 칩이면 짝 중분류(I212) 층 줄이 한 줄 더 — total 0 인 범위(반경)엔 칩 줄이 없다', async () => {
+    const { container } = render(<IndustryMixSection pnu={PNU} chip="카페" />);
+    expect(await screen.findByText(CHIP_D)).toBeTruthy();
+    expect(await screen.findByText(LINE_D)).toBeTruthy();
+    expect(container.querySelectorAll('.mix__floors--chip')).toHaveLength(1);
+    const asked = rpcCalls.filter((c) => c.fn === 'list_industry_floors').map((c) => c.args);
+    expect(asked).toContainEqual({ p_pnu: PNU, p_cat_l: 'I2', p_cat_m: null });
+    expect(asked).toContainEqual({ p_pnu: PNU, p_cat_l: 'I2', p_cat_m: ['I212'] });
+  });
+
+  it('학원 칩은 짝 코드 여럿을 한 번에 묻는다', async () => {
+    render(<IndustryMixSection pnu={PNU} chip="학원" />);
+    const chipCalls = () =>
+      rpcCalls.filter((c) => c.fn === 'list_industry_floors' && (c.args as { p_cat_m: unknown }).p_cat_m !== null);
+    await waitFor(() => expect(chipCalls()).toHaveLength(1));
+    expect((chipCalls()[0].args as { p_cat_m: string[] }).p_cat_m.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('★ 층 함수가 실패하면 층 줄·설명만 없고 카드·상세는 그대로(0곳·불러오는 중 금지)', async () => {
+    responses.floors = () => ({ data: null, error: { message: 'PGRST202' } });
+    render(<IndustryMixSection pnu={PNU} />);
+    fireEvent.change(await screen.findByLabelText('업종 골라보기'), { target: { value: 'I2' } });
+    expect(await screen.findByText('음식 60곳')).toBeTruthy();
+    await waitFor(() => expect(rpcCalls.some((c) => c.fn === 'list_industry_floors')).toBe(true));
+    expect(screen.queryByText(/층별 음식/)).toBeNull();
+    expect(screen.queryByText(WHY)).toBeNull();
+    expect(screen.queryByText(/층.*불러오는 중/)).toBeNull();
+  });
+
+  it('모양이 어긋난 답(열쇠 빠짐)도 그 답만 버린다', async () => {
+    responses.floors = ({ p_cat_l }) => {
+      const bad = floors(p_cat_l, null) as unknown as { radius: { bands: Record<string, number> } };
+      delete bad.radius.bands.na;
+      return { data: bad, error: null };
+    };
+    render(<IndustryMixSection pnu={PNU} />);
+    fireEvent.change(await screen.findByLabelText('업종 골라보기'), { target: { value: 'I2' } });
+    expect(await screen.findByText('음식 60곳')).toBeTruthy();
+    await waitFor(() => expect(rpcCalls.some((c) => c.fn === 'list_industry_floors')).toBe(true));
+    expect(screen.queryByText(/층별/)).toBeNull();
+  });
+
+  it('★ 다른 업종의 층 답이 늦게 오면 버린다', async () => {
+    // 'G2' 를 물었는데 'I2' 답이 온 꼴 — 그대로 그리면 '소매' 블록 밑에 음식 층 줄이 선다.
+    responses.floors = () => ({ data: floors('I2', null), error: null });
+    responses.detail = { data: detail({ cat_l_cd: 'G2' }), error: null };
+    render(<IndustryMixSection pnu={PNU} />);
+    fireEvent.change(await screen.findByLabelText('업종 골라보기'), { target: { value: 'G2' } });
+    await waitFor(() => expect(rpcCalls.some((c) => c.fn === 'list_industry_floors')).toBe(true));
+    await screen.findByText('소매 60곳');
+    expect(screen.queryByText(/층별/)).toBeNull();
+    expect(screen.queryByText(WHY)).toBeNull();
+  });
+
+  it('칩 짝이 다른 답(중분류 다름)도 버린다', async () => {
+    responses.floors = ({ p_cat_l, p_cat_m }) => ({
+      data: floors(p_cat_l, p_cat_m === null ? null : ['I201']),
+      error: null,
+    });
+    const { container } = render(<IndustryMixSection pnu={PNU} chip="카페" />);
+    expect(await screen.findByText(LINE_D)).toBeTruthy();
+    expect(container.querySelector('.mix__floors--chip')).toBeNull();
+  });
+
+  it('층 답이 아직 안 왔으면 줄도 설명도 없다', async () => {
+    responses.floorsPending = true;
+    render(<IndustryMixSection pnu={PNU} />);
+    fireEvent.change(await screen.findByLabelText('업종 골라보기'), { target: { value: 'I2' } });
+    expect(await screen.findByText('음식 60곳')).toBeTruthy();
+    expect(screen.queryByText(/층별/)).toBeNull();
+    expect(screen.queryByText(WHY)).toBeNull();
+  });
+
+  it('업종 고르기를 풀면 층 줄·설명이 사라진다', async () => {
+    render(<IndustryMixSection pnu={PNU} />);
+    const select = await screen.findByLabelText('업종 골라보기');
+    fireEvent.change(select, { target: { value: 'I2' } });
+    expect(await screen.findByText(LINE_D)).toBeTruthy();
+    fireEvent.change(select, { target: { value: '' } });
+    await waitFor(() => expect(screen.queryByText(LINE_D)).toBeNull());
+    expect(screen.queryByText(WHY)).toBeNull();
+  });
+
+  it('★ 카페 칩을 고른 채 손님이 다른 대분류(G2)를 고르면 칩 줄이 없고 칩 짝(p_cat_m)을 묻지도 않는다', async () => {
+    const { container } = render(<IndustryMixSection pnu={PNU} chip="카페" />);
+    // 양성 대조 — 칩의 대분류(I2)에서는 칩 줄이 선다.
+    expect(await screen.findByText(CHIP_D)).toBeTruthy();
+
+    responses.detail = { data: detail({ cat_l_cd: 'G2' }), error: null };
+    rpcCalls.length = 0;
+    fireEvent.change(screen.getByLabelText('업종 골라보기'), { target: { value: 'G2' } });
+    // 대분류 줄은 소매 이름표로 선다(고른 업종을 따라간다).
+    expect(
+      await screen.findByText('층별 소매: 지하 0곳 · 1층 36곳 · 2층 9곳 · 3층 이상 3곳 · 층 미상 12곳 (20%)'),
+    ).toBeTruthy();
+    expect(container.querySelector('.mix__floors--chip')).toBeNull();
+    expect(screen.queryByText(/고른 업종\(카페\)/)).toBeNull();
+    const asked = rpcCalls.filter((c) => c.fn === 'list_industry_floors').map((c) => c.args);
+    expect(asked).toEqual([{ p_pnu: PNU, p_cat_l: 'G2', p_cat_m: null }]);
+  });
+
+  it('★ 대분류를 바꾼 첫 렌더에도 옛 업종의 층 숫자가 새 이름표로 그려지지 않는다(그릴 때 견줌)', async () => {
+    const { container } = render(<IndustryMixSection pnu={PNU} />);
+    const select = await screen.findByLabelText('업종 골라보기');
+    fireEvent.change(select, { target: { value: 'I2' } });
+    expect(await screen.findByText(LINE_D)).toBeTruthy();
+
+    // 새 답은 영영 안 온다 — 이 사이에 한 번이라도 '층별 소매' 줄이 붙었다 떨어지면 그게 깜빡임이다.
+    // 최종 화면만 보면 effect 가 이미 지운 뒤라 못 본다 → DOM 에 붙은 모든 마디를 기록으로 본다.
+    responses.floorsPending = true;
+    responses.detail = { data: detail({ cat_l_cd: 'G2' }), error: null };
+    // React 는 같은 자리의 글자를 마디 교체가 아니라 글자 바꾸기로 고칠 수 있다 — 붙은 마디·떨어진 마디
+    // (떨어진 마디는 마지막 글자를 쥐고 있다)·바뀐 글자 마디를 모두 본다.
+    const seen: string[] = [];
+    const keep = (recs: MutationRecord[]) => {
+      for (const r of recs) {
+        r.addedNodes.forEach((n) => seen.push(n.textContent ?? ''));
+        r.removedNodes.forEach((n) => seen.push(n.textContent ?? ''));
+        if (r.type === 'characterData') seen.push(r.target.textContent ?? '');
+      }
+    };
+    const obs = new MutationObserver(keep);
+    obs.observe(container, { childList: true, subtree: true, characterData: true });
+    fireEvent.change(select, { target: { value: 'G2' } });
+    await screen.findByText('소매 60곳');
+    keep(obs.takeRecords());
+    obs.disconnect();
+    expect(seen.some((t) => t.includes('층별 소매'))).toBe(false);
+    expect(container.querySelector('.mix__floors')).toBeNull();
+  });
+
+  it('★ 모든 범위가 0곳이면 층 줄이 하나도 없고 「층 미상」 설명도 없다(답은 왔다)', async () => {
+    const zero = { b: 0, '1': 0, '2': 0, '3+': 0, na: 0 };
+    responses.floors = ({ p_cat_l, p_cat_m }) => ({
+      data: {
+        ...floors(p_cat_l, p_cat_m),
+        districts: [{ district_id: '3120189', name: '강남역', total: 0, bands: zero }],
+        radius: { total: 0, bands: zero },
+      },
+      error: null,
+    });
+    const { container } = render(<IndustryMixSection pnu={PNU} />);
+    fireEvent.change(await screen.findByLabelText('업종 골라보기'), { target: { value: 'I2' } });
+    expect(await screen.findByText('음식 60곳')).toBeTruthy();
+    await waitFor(() => expect(rpcCalls.some((c) => c.fn === 'list_industry_floors')).toBe(true));
+    // 답이 상태에 들어갈 때까지 한 박자 기다린다 — 안 기다리면 '아직 안 옴'과 같은 화면이라 이 시험이 아무것도 안 본다.
+    await act(() => new Promise((r) => setTimeout(r, 0)));
+    expect(container.querySelectorAll('.mix__floors')).toHaveLength(0);
+    expect(container.querySelectorAll('.mix__why li')).toHaveLength(2);
+    expect(screen.queryByText(WHY)).toBeNull();
   });
 });

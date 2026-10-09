@@ -477,6 +477,36 @@ export type IndustryDetail = {
   radius: IndustryScope | null;
 };
 
+// ── 업종별 층 분포 (물결 2-2 · 결정 0036 결정 18 ⑲~㉑) ─────────────────────────
+//
+// ⚠️ 위 업종 분포와 같다 — **추정이 아니라** 상권정보에 등록된 점포를 층 묶음으로 센 개수이고,
+//    이 건물이 아니라 이 땅 둘레(상권·반경)의 가게다.
+// ⛔ 상호명은 한 글자도 오지 않는다(서버가 개수만 낸다).
+// ⚠️ `radius` 가 null 인 것(좌표가 없어 못 잼)과 `total: 0` 인 것(재 봤더니 없음)은 다른 말이다.
+
+/**
+ * 층 묶음 다섯 — 서버가 **늘 다섯 열쇠를 다** 준다(없는 묶음은 0).
+ * `b` = 지하 · `'3+'` = 3층 이상(옥탑 포함) · `na` = 층 미상(원본에 층이 비어 있는 가게).
+ */
+export type IndustryFloorBands = { b: number; '1': number; '2': number; '3+': number; na: number };
+
+/** 한 범위(상권 하나 또는 반경)의 층 묶음. `total` = 다섯 묶음의 합(층 미상 포함). */
+export type IndustryFloorScope = { total: number; bands: IndustryFloorBands };
+
+export type IndustryFloorDistrict = IndustryFloorScope & { district_id: string; name: string | null };
+
+/** 함수 `list_industry_floors(p_pnu, p_cat_l, p_cat_m)` 의 응답. */
+export type IndustryFloors = {
+  snapshot_ym: string | null;
+  radius_m: number;
+  /** 물어본 대분류 그대로(늦게 온 답을 버리는 근거). */
+  cat_l_cd: string;
+  /** 물어본 중분류 그대로 — null 이면 대분류 전체. */
+  cat_m_cds: string[] | null;
+  districts: IndustryFloorDistrict[];
+  radius: IndustryFloorScope | null;
+};
+
 /**
  * 함수 `count_nearby_permits(p_pnu)` 의 응답 — 이 땅 둘레의 **미준공 상업 계열 건축 인허가**.
  *

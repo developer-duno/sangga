@@ -403,7 +403,7 @@ create index if not exists idx_ub_unit     on unit_business (unit_id, snapshot_y
 -- ⚠️ 옛 `idx_ub_pnu (pnu, snapshot_ym)` 자리다(2026-08-22c 에서 지웠다). 앞 두 칸이 같고
 --    업종 네 칸이 include 로 더 붙어 있어 **완전한 대체**다 — 옛것을 되살리면 105MB 를
 --    그냥 두 번 쓰게 된다(2026-08-22a 가 idx_ub_snapshot_floor 에 한 정리와 같다).
--- ⛔ include 네 칸을 지우지 말 것. 반경 업종 집계가 이 칸들 때문에 힙에 안 간다.
+-- ⛔ include 칸을 지우지 말 것(업종 네 칸 + 2026-10-09c 의 floor_no). 반경 업종·층 집계가 이 칸들 때문에 힙에 안 간다.
 --    최악 표본(중구 `1114013400101890026` — 이웃 1,414필지·점포 4,433곳)에서 **찬 캐시**
 --    2,383ms → 적용 직후 `list_industry_mix()` 전체 **44.5ms**(반경 집계만 14.7ms ·
 --    **Heap Fetches 0** · Index Only Scan, 2026-08-22 라이브 실측).
@@ -412,8 +412,12 @@ create index if not exists idx_ub_unit     on unit_business (unit_id, snapshot_y
 -- ⓘ 이 파일에서는 문장 순서가 상관없다. 마이그레이션(2026-08-22c)에서는 옛 idx_ub_pnu 를
 --    지우는 문장을 **맨 끝**에 둔다 — drop index 의 ACCESS EXCLUSIVE 락이 커밋까지 유지돼
 --    앞에 두면 물질화뷰 굽는 27초 내내 unit_business 읽기가 줄을 서기 때문이다.
+-- ⛔ 다섯째 include `floor_no` 는 2026-10-09c 에 더했다(물결 2-2 업종별 층 분포) — 반경 층 집계
+--    (list_industry_floors 의 rsub)가 층 칸을 꺼내는데 include 에 없어 Index Scan → 힙 방문이었다
+--    (강남 1168010600109420015 · 음식 I2 · 찬 캐시 3,292ms · read 4,539쪽 / 더운 12ms — 적용 전 실측).
+--    칸 순서는 마이그레이션과 같아야 한다 — post_load --check 의 정본 색인 점검이 INCLUDE 를 순서까지 대조한다.
 create index if not exists idx_ub_pnu_cat  on unit_business (pnu, snapshot_ym)
-  include (cat_l_cd, cat_l_nm, cat_m_cd, cat_m_nm);
+  include (cat_l_cd, cat_l_nm, cat_m_cd, cat_m_nm, floor_no);
 -- ⚠️ 옛 `idx_ub_name (biz_name gin_trgm_ops)` 자리다(2026-09-09c 에서 지웠다 — 결정 0028).
 --    **쓰는 코드가 0건**이었고, 그럴 수밖에 없었다: '카페' 같은 2글자 검색어는 trigram
 --    선별력이 없어 이 색인을 **아예 안 타고** 277만 행을 통째로 훑었다(라이브 실측 7.6초).
@@ -487,7 +491,8 @@ comment on function unit_business_append_only() is
 -- 적재기(load_sangkwon_snapshot.py)는 한 트랜잭션이 아니라 약 2시간 동안 1,000행씩 올리므로,
 -- `max()` 를 보면 첫 1,000행이 들어가는 순간부터 손님이 **반쯤 찬 새 분기**를 본다.
 --   loaded_ym    = 다 들어온 분기. 적재기가 전국 적재 + 교차검증 통과 뒤 api.mark_snapshot_loaded 로 적는다.
---                  요약표 셋(mv_parcel_store_names · mv_coverage_stats · mv_district_industry_mix)이 이 칸으로 굽는다.
+--                  요약표 넷(mv_parcel_store_names · mv_coverage_stats · mv_district_industry_mix ·
+--                  mv_district_industry_floor — 2026-10-09 층 분포 추가)이 이 칸으로 굽는다.
 --   published_ym = 화면이 보는 분기. post_load.py 가 요약표를 loaded_ym 으로 구운 뒤 올린다 —
 --                  이 UPDATE 한 줄에 실시간 셋(v_floor_stack · list_district_buildings · get_data_freshness)과
 --                  요약표가 **한순간에** 같은 분기를 말한다.
@@ -2972,6 +2977,170 @@ revoke all on function list_industry_mix(text) from public, anon, authenticated;
 revoke all on function list_industry_detail(text, text) from public, anon, authenticated;
 
 
+-- ── 업종별 층 분포 (2026-10-09b · 물결 2-2 · 결정 0036 결정 18 ⑲~㉑) ──────────────────
+-- 업종 분포 카드에서 대분류를 고르면 그 대분류(창업자 칩이면 짝 중분류까지) 가게가 몇 층에
+-- 있는지를 한 줄로 보탠다. 범위는 형제 둘과 같다 — 속한 상권 안(미리 굽는다) + 반경 500m(그때그때).
+-- 층 묶음은 다섯으로 고정한다: 지하(b) · 1층(1) · 2층(2) · 3층 이상(3+ — 옥탑 99 포함) · 층 미상(na).
+-- ⛔ 층 미상(NULL)을 빼지 않는다 — 점포 표의 절반쯤(202606 전국 50.3%)이 층이 비어 있어서,
+--    빼면 남은 넷이 그 범위의 전부처럼 읽힌다. 미상은 경고가 아니라 **값**이다.
+-- ⛔ `strict` 를 붙이지 말 것 — strict 면 NULL 입력에 함수가 아예 안 불리고 NULL 을 돌려줘,
+--    층 미상이 'na' 묶음이 아니라 이름 없는 묶음이 된다(화면 열쇠 다섯이 깨진다).
+create or replace function industry_floor_band(p_floor smallint)
+returns text
+language sql
+immutable
+as $$
+  select case
+           when p_floor is null then 'na'
+           when p_floor < 0     then 'b'
+           when p_floor = 1     then '1'
+           when p_floor = 2     then '2'
+           else '3+'
+         end;
+$$;
+
+comment on function industry_floor_band(smallint) is
+  '물결 2-2 업종별 층 분포의 층 묶음 다섯(2026-10-09b) — NULL = ''na''(층 미상) · 음수 = ''b''(지하) · '
+  '1 = ''1'' · 2 = ''2'' · 그 밖 = ''3+''(3층 이상 — 옥탑 99 는 ''3+''). 요약표 mv_district_industry_floor 와 '
+  'list_industry_floors 가 같은 이 함수로 묶는다(두 범위가 다른 자로 묶이지 않게). strict 가 아니다 — NULL 도 묶음이다.';
+
+-- 공개키가 직접 부를 일이 없다 — 요약표·함수 안에서만 쓴다(🚪 닫힌 채 태어나도 한 번 더 닫는다).
+revoke all on function industry_floor_band(smallint) from public, anon, authenticated;
+
+-- 형제 mv_district_industry_mix 의 정의를 그대로 두고 층 묶음 칸 하나만 더했다. 분기도 같은 자 —
+-- 표지 loaded_ym(결정 0035 · published 가 아니다)으로 굽고, post_load.py 가 업종 표와 한 트랜잭션에서
+-- 굽는다. 같은 (상권·분기·중분류)의 n 을 층 묶음끼리 더하면 형제 표의 n 과 같아야 한다 —
+-- post_load.py --check 가 그 합을 대조한다(어긋나면 [낡음]).
+create materialized view if not exists mv_district_industry_floor as
+select d.district_id,
+       ub.snapshot_ym,
+       ub.cat_l_cd, ub.cat_l_nm,
+       ub.cat_m_cd, ub.cat_m_nm,
+       public.industry_floor_band(ub.floor_no) as floor_band,
+       count(*)::int as n
+from district d
+join unit_business ub
+  on ub.geom is not null
+ and st_contains(d.geom, ub.geom)
+where ub.snapshot_ym = (select r.loaded_ym from snapshot_release r)   -- 표지 loaded_ym(결정 0035)
+group by 1, 2, 3, 4, 5, 6, 7;
+
+comment on materialized view mv_district_industry_floor is
+  '상권 × 업종(중분류) × 층 묶음 점포 수 — 최신 분기 한 개만(2026-10-09b · 물결 2-2). '
+  'mv_district_industry_mix 의 층 묶음 판 — 같은 (상권·중분류) 의 n 합이 형제와 같아야 한다(post_load --check 가 대조). '
+  '층 묶음은 industry_floor_band() 다섯(b · 1 · 2 · 3+ · na — 옥탑 99 는 3+, 층 미상은 na 로 그대로 센다). '
+  '⚠️ 상권이 겹치는 자리의 점포는 **양쪽에 모두** 세어진다(형제와 같다 — 상권끼리 더하지 말 것). '
+  '⚠️ 어느 분기인지는 **구울 때** 굳는다 — 표지 loaded_ym(다 들어온 분기 · 결정 0035)으로 굽고, post_load.py 가 구운 뒤 화면 기준(published_ym)을 올린다. '
+  '⛔ anon 에게 열지 않는다 — 화면은 list_industry_floors 함수로만 읽는다.';
+
+-- `concurrently` 갱신의 전제 조건(형제와 같은 꼴 + 층 묶음).
+create unique index if not exists mv_district_industry_floor_key
+  on mv_district_industry_floor (district_id, snapshot_ym, cat_m_cd, floor_band);
+
+analyze mv_district_industry_floor;
+
+-- ⛔ 새 물질화뷰는 anon 에게 자동으로 열린다(pg_default_acl) — 만든 자리에서 닫는다(아래 목록에도 한 번 더).
+revoke all on mv_district_industry_floor from public, anon, authenticated;
+
+-- 대분류를 고른 뒤에만 부른다(첫 화면 미리 부르기에 넣지 않는다). 칸 둘은 형제 list_industry_detail 과
+-- 같은 자를 쓴다 — snap(1순위 요약표 · 2순위 published) · me · hit · near 가 글자 그대로 같다.
+-- p_cat_m 이 null 이면 그 대분류 전체, 배열이면 그 중분류들만(창업자 칩의 짝 — 학원은 코드 둘).
+-- ⛔ `p_cat_l::char(2)` · `p_cat_m::char(4)[]` 캐스트를 지우지 말 것 — 칸이 char 라 text 로 견주면
+--    컬럼 쪽이 캐스트돼 색인이 죽는다(2026-08-16b 와 같은 병).
+-- ⛔ bands 열쇠 다섯은 **늘 다 있다**(없는 묶음은 0) — 화면 검증기가 열쇠 하나라도 빠지면 그 응답을 버린다.
+create or replace function list_industry_floors(p_pnu text, p_cat_l text, p_cat_m text[] default null)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with snap as (
+    select coalesce(
+             (select max(m.snapshot_ym) from mv_district_industry_floor m),
+             (select r.published_ym from snapshot_release r)) as ym
+  ),
+  me as (
+    select p.geom as g, p.geom::geography as gg
+    from parcel p
+    where p.pnu = p_pnu::char(19) and p.geom is not null
+  ),
+  hit as (
+    select d.district_id, d.district_nm, d.area_m2
+    from district d cross join me
+    where st_contains(d.geom, me.g)
+  ),
+  near as (
+    select coalesce(array_agg(p.pnu), '{}'::char(19)[]) as pnus
+    from parcel p cross join me
+    where p.geom is not null
+      and st_dwithin(p.geom::geography, me.gg, 500, false)
+  ),
+  band as (
+    -- 열쇠 다섯 — 순서는 화면이 정한다(FLOOR_BAND_ORDER). 여기서는 빠짐없이 있게만 한다.
+    select v.k from (values ('b'), ('1'), ('2'), ('3+'), ('na')) as v(k)
+  ),
+  dsub as (
+    select h.district_id, m.floor_band, sum(m.n)::int as n
+    from hit h
+    join mv_district_industry_floor m
+      on m.district_id = h.district_id
+     and m.snapshot_ym = (select ym from snap)
+     and m.cat_l_cd = p_cat_l::char(2)
+     and (p_cat_m is null or m.cat_m_cd = any(p_cat_m::char(4)[]))
+    group by 1, 2
+  ),
+  rsub as (
+    select public.industry_floor_band(ub.floor_no) as floor_band, count(*)::int as n
+    from unit_business ub cross join near
+    where ub.snapshot_ym = (select ym from snap)
+      and ub.pnu = any(near.pnus)
+      and ub.cat_l_cd = p_cat_l::char(2)
+      and (p_cat_m is null or ub.cat_m_cd = any(p_cat_m::char(4)[]))
+    group by 1
+  ),
+  dj as (
+    select h.area_m2, h.district_id,
+           jsonb_build_object(
+             'district_id', h.district_id,
+             'name', h.district_nm,
+             'total', coalesce((select sum(s.n) from dsub s
+                                 where s.district_id = h.district_id), 0)::int,
+             'bands', (select jsonb_object_agg(b.k, coalesce(s.n, 0))
+                       from band b
+                       left join dsub s
+                         on s.district_id = h.district_id and s.floor_band = b.k)
+           ) as j
+    from hit h
+  )
+  select jsonb_build_object(
+    'snapshot_ym', (select ym from snap),
+    'radius_m', 500,
+    -- 물어본 업종을 그대로 돌려준다 — 화면이 늦게 도착한 답(그 사이 다른 업종·칩을 고른 경우)을 버린다.
+    'cat_l_cd', p_cat_l,
+    'cat_m_cds', p_cat_m,
+    'districts', coalesce((select jsonb_agg(dj.j order by dj.area_m2 asc, dj.district_id)
+                            from dj), '[]'::jsonb),
+    -- 좌표가 없으면 null — **빈 집계가 아니라 "모른다"** 라서 화면이 그 줄을 안 그린다.
+    'radius', case when exists (select 1 from me) then jsonb_build_object(
+        'total', coalesce((select sum(s.n) from rsub s), 0)::int,
+        'bands', (select jsonb_object_agg(b.k, coalesce(s.n, 0))
+                  from band b
+                  left join rsub s on s.floor_band = b.k)
+      ) else null end
+  );
+$$;
+
+comment on function list_industry_floors(text, text, text[]) is
+  '물결 2-2(2026-10-09b) 고른 대분류(p_cat_m 이 있으면 그 중분류들만)의 층 묶음 분포. districts = 속한 상권마다 '
+  '(좁은 상권 먼저) · radius = 반경 500m(좌표가 없으면 null — 모른다). bands 는 열쇠 다섯(b · 1 · 2 · 3+ · na)이 '
+  '늘 다 있다(없으면 0). cat_l_cd·cat_m_cds 를 그대로 되돌려 준다(늦게 도착한 답을 화면이 버릴 수 있게). '
+  '분기는 형제 list_industry_detail 과 같은 자(1순위 요약표 · 2순위 published). '
+  'security definer — **나가는 것은 개수뿐이다(상호명 없음).**';
+
+revoke all on function list_industry_floors(text, text, text[]) from public, anon, authenticated;
+
+
 -- ── ⛔ 요약표는 공개키에게 열지 않는다 (2026-08-13f) ─────────────────────────
 -- Supabase 는 스키마 public 에 기본 권한을 걸어 두어 **새로 만드는 표·물질화뷰마다
 -- anon 에게 전체 권한을 자동으로 준다.** 2026-08-08 의 `revoke ... on all tables` 는
@@ -2988,6 +3157,8 @@ revoke all on mv_sigungu_tx_stats from public, anon, authenticated;
 revoke all on mv_coverage_stats from public, anon, authenticated;
 -- 상호명은 안 나가더라도 이 표가 열리면 **전국 상권의 업종 구성이 통째로** 긁힌다(2026-08-22c).
 revoke all on mv_district_industry_mix from public, anon, authenticated;
+-- 그 층 묶음 판(2026-10-09b · 물결 2-2). 새 표 블록에도 같은 줄이 있다(이 묶음이 "닫힌 요약표 전부"의 목록).
+revoke all on mv_district_industry_floor from public, anon, authenticated;
 -- 구×연도 단가 요약(2026-09-09a). 이 표는 아래 기본권한 회수보다 **먼저** 만들어지므로,
 -- 새 환경에서 이 줄이 없으면 anon 이 그대로 읽을 수 있다 — 화면은 함수로만 읽는다.
 revoke all on mv_sigungu_tx_yearly from public, anon, authenticated;
@@ -3365,6 +3536,14 @@ security definer
 set search_path = ''
 as $$ select public.list_industry_detail(p_pnu, p_cat) $$;
 
+create or replace function api.list_industry_floors(p_pnu text, p_cat_l text, p_cat_m text[] default null)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$ select public.list_industry_floors(p_pnu, p_cat_l, p_cat_m) $$;
+
 -- Postgres 는 새 함수의 EXECUTE 를 PUBLIC(모든 롤)에게 기본으로 준다. 위 기본값 변경은
 -- anon·authenticated 만 다루므로 PUBLIC 경로가 남는다 — 먼저 회수하고 필요한 롤에만 준다.
 revoke all on function api.search_buildings(text, int, text)  from public, anon, authenticated;
@@ -3377,6 +3556,7 @@ revoke all on function api.get_sigungu_tx_yearly(text)        from public, anon,
 revoke all on function api.list_price_bands(text)             from public, anon, authenticated;
 revoke all on function api.list_industry_mix(text)            from public, anon, authenticated;
 revoke all on function api.list_industry_detail(text, text)   from public, anon, authenticated;
+revoke all on function api.list_industry_floors(text, text, text[]) from public, anon, authenticated;
 
 grant execute on function api.search_buildings(text, int, text)  to anon, authenticated;
 grant execute on function api.search_scope(text, text)           to anon, authenticated;
@@ -3388,6 +3568,7 @@ grant execute on function api.get_sigungu_tx_yearly(text)        to anon, authen
 grant execute on function api.list_price_bands(text)             to anon, authenticated;
 grant execute on function api.list_industry_mix(text)            to anon, authenticated;
 grant execute on function api.list_industry_detail(text, text)   to anon, authenticated;
+grant execute on function api.list_industry_floors(text, text, text[]) to anon, authenticated;
 
 -- ── 수집·적재기가 REST 로 쓰는 표 — pass-through 뷰 ──────────────────────────
 -- 이 목록은 스크립트를 훑어 뽑은 것이다(`/rest/v1/` 와 upsert 대상). 여기 **없는 것**은

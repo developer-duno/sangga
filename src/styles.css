@@ -1715,6 +1715,16 @@ body {
   margin-top: 16px;
 }
 
+/* 업종별 층 분포 한 줄(물결 2-2) — 상세 블록 막대 아래. 모양 손질은 나중(👤 'CSS 는 나중')이라 최소만:
+   작은 글 · 좁은 화면에서 줄바꿈 허용(긴 한 줄이 412px 를 넘지 않게). */
+.mix__floors {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
 .mix__none,
 .mix__note,
 .mix__src {

@@ -8,6 +8,7 @@ import {
   priceBands,
   priceBandGate,
   industryMix,
+  industryFloors,
   nearbyPermits,
   basePrices,
   lhNotice,
@@ -80,6 +81,9 @@ const BASE_PRICE_PATTERN = '**/rest/v1/rpc/list_base_prices*';
 //    (안 막으면 실존하지 않는 도메인으로 요청이 나가 테스트가 DNS 에 좌우된다.)
 const INDUSTRY_MIX_PATTERN = '**/rest/v1/rpc/list_industry_mix*';
 const INDUSTRY_DETAIL_PATTERN = '**/rest/v1/rpc/list_industry_detail*';
+// 업종별 층 분포(물결 2-2) — 대분류를 고른 뒤에만 부른다. 기본은 **함수가 없는 상태**(상세와 같은 이유 —
+// 층 줄만 조용히 빠진다). 층 줄을 보는 것은 스펙 AO(와 AN 의 목업)뿐이다.
+const INDUSTRY_FLOORS_PATTERN = '**/rest/v1/rpc/list_industry_floors*';
 // 둘레에 새로 올라오는 상가 건물(건축 인허가). 업종 분포 카드 **안**에 한 줄로 붙지만
 // 자료는 완전히 다른 것이다(장사 중인 가게 수 ↔ 아직 안 지어진 건물 수).
 // ⚠️ 기본값은 역시 **함수가 없는 상태**다 — 안 막으면 실존하지 않는 도메인으로 요청이
@@ -183,6 +187,7 @@ async function mockFloorStack(
   // 상세는 대분류를 고를 때만 부른다 — 여기서는 늘 없는 상태로 둔다(고르는 흐름은
   // src/components/IndustryMixSection.test.tsx 가 이미 촘촘히 덮는다).
   await mockMissingFunction(page, INDUSTRY_DETAIL_PATTERN);
+  await mockMissingFunction(page, INDUSTRY_FLOORS_PATTERN);
   // 기준시가도 기본이 **함수가 없는 상태**다(위 상수 주석 참조).
   if (bases === undefined) {
     await mockMissingFunction(page, BASE_PRICE_PATTERN);
@@ -1128,6 +1133,7 @@ test.describe('층별 스택뷰 — 종이로 뽑기', () => {
     await mockJson(page, DISTRICT_PATTERN, { covered: true, districts: [], sources: [] });
     await mockMissingFunction(page, INDUSTRY_MIX_PATTERN);
     await mockMissingFunction(page, INDUSTRY_DETAIL_PATTERN);
+    await mockMissingFunction(page, INDUSTRY_FLOORS_PATTERN);
     await mockMissingFunction(page, BASE_PRICE_PATTERN);
     await mockMissingFunction(page, UNIT_SUMMARY_PATTERN);
     await mockMissingFunction(page, FLOOR_UNITS_PATTERN);
@@ -2233,6 +2239,8 @@ test.describe('첫 화면 — 창업자 입구 · 업종 칩', () => {
         ],
       },
     });
+    // 층 분포(물결 2-2)도 답한다 — 층 줄 자체는 AO 가 본다(여기서는 칩 흐름이 층 함수와 함께 서는지만).
+    await mockJson(page, INDUSTRY_FLOORS_PATTERN, industryFloors());
 
     // ⚠️ exact — 카드 머리의 역할 태그('창업자')가 버튼 이름 안에 들어 있어 부분 일치로 찾으면 겹친다.
     const roleBtn = (name: string) => page.locator('.role').getByRole('button', { name, exact: true });
@@ -2284,5 +2292,102 @@ test.describe('첫 화면 — 창업자 입구 · 업종 칩', () => {
     expect(await top('section.search')).toBeLessThan(await top('section.dmap'));
     await expect(mix.locator('select.mix__select')).toHaveValue('');
     await expect(oc.locator('.oc__chip-none')).toHaveCount(0);
+  });
+});
+
+// ── 업종별 층 분포 (👤 결정 0036 결정 18 ⑲~㉑ · 물결 2-2) ──────────────────────────────
+// 층 묶음 계산·늦은 답 버리기·실패 시 줄 없음은 단위 시험(`industryMix.test.ts`·`IndustryMixSection.test.tsx`)이
+// 덮는다. 여기서만 보이는 것은 **실제 줄 글자가 블록 안에 서는지**와 좁은 폭(412px)에서 그 긴 한 줄이 안 넘치는지다.
+
+/** 층 함수 목업 — 물어본 `p_cat_m` 대로 갈라 답한다(대분류 줄과 칩 줄이 다른 답을 받게 · 서버처럼 그대로 되돌림). */
+async function mockIndustryFloors(page: Page) {
+  await page.route(INDUSTRY_FLOORS_PATTERN, async (route) => {
+    if (route.request().method() === 'OPTIONS') {
+      await route.fulfill({ status: 204, headers: CORS_HEADERS });
+      return;
+    }
+    const args = (route.request().postDataJSON() ?? {}) as { p_cat_l?: string; p_cat_m?: string[] | null };
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: CORS_HEADERS,
+      body: JSON.stringify(industryFloors(args.p_cat_l ?? 'I2', args.p_cat_m ?? null)),
+    });
+  });
+}
+
+test.describe('층별 스택뷰 — 업종별 층 분포', () => {
+  test('AO. 대분류를 고르면 블록마다 층 줄(층 미상 칸·%), 창업자 카페 칩이면 고른 업종 줄이 하나 더, 412px 넘침 0', async ({
+    page,
+  }) => {
+    const LINE_D = '층별 음식: 지하 0곳 · 1층 36곳 · 2층 9곳 · 3층 이상 3곳 · 층 미상 12곳 (20%)';
+    const LINE_R = '층별 음식: 지하 2곳 · 1층 90곳 · 2층 24곳 · 3층 이상 9곳 · 층 미상 25곳 (17%)';
+    const CHIP_D = '층별 고른 업종(카페): 지하 0곳 · 1층 15곳 · 2층 3곳 · 3층 이상 0곳 · 층 미상 2곳 (10%)';
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page, [], priceBands(), [floorRow()], industryMix());
+    // 나중에 등록한 것이 먼저 잡힌다 — mockFloorStack 의 '함수 없음' 위에 덮는다.
+    await mockJson(page, INDUSTRY_DETAIL_PATTERN, {
+      snapshot_ym: '202606',
+      radius_m: 500,
+      cat_l_cd: 'I2',
+      districts: [
+        {
+          district_id: '3120189',
+          name: '강남역',
+          total: 60,
+          cats: [
+            { cd: 'I201', nm: '한식', n: 40 },
+            { cd: 'I212', nm: '비알코올', n: 20 },
+          ],
+        },
+      ],
+      radius: { total: 150, cats: [{ cd: 'I201', nm: '한식', n: 100 }, { cd: 'I212', nm: '비알코올', n: 50 }] },
+    });
+    await mockIndustryFloors(page);
+
+    const roleBtn = (name: string) => page.locator('.role').getByRole('button', { name, exact: true });
+    const noOverflow = async () =>
+      expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+
+    // ① 역할 없이 — 대분류를 고르면 상권·반경 블록마다 한 줄 · 칩 줄 없음 · '층 미상' 설명 한 줄.
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+    const mix = page.locator('section.mix');
+    if ((await mix.locator('.card__toggle').getAttribute('aria-expanded')) === 'false') {
+      await mix.locator('.card__toggle').click();
+    }
+    await expect(mix.locator('.mix__floors')).toHaveCount(0);
+    await mix.locator('select.mix__select').selectOption('I2');
+    await expect(mix.locator('.mix__detail .mix__floors')).toHaveText([LINE_D, LINE_R]);
+    await expect(mix.locator('.mix__floors--chip')).toHaveCount(0);
+    await expect(mix.locator('.mix__why li')).toHaveCount(3);
+    await expect(mix.locator('.mix__why li').nth(2)).toContainText(
+      "층 미상 — 원본에 층이 비어 있거나 숫자 없이 '지하'라고만 적힌 가게입니다",
+    );
+    await noOverflow();
+    for (const el of await mix.locator('.mix__floors').all()) {
+      expect(await el.evaluate((e) => e.scrollWidth - e.clientWidth)).toBeLessThanOrEqual(0);
+    }
+
+    // ② 창업자 + 카페 칩 — 같은 대분류가 미리 골라지고 상권 블록에 '고른 업종(카페)' 줄이 하나 더(반경은 칩 0곳이라 없음).
+    await page.goto('/');
+    await roleBtn('창업자').click();
+    await pickGu(page, '서울', '강남구');
+    await page.locator('.dmap__head .chips').getByRole('button', { name: '카페', exact: true }).click();
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+    await expect(mix.locator('select.mix__select')).toHaveValue('I2');
+    if ((await mix.locator('.card__toggle').getAttribute('aria-expanded')) === 'false') {
+      await mix.locator('.card__toggle').click();
+    }
+    await expect(mix.locator('.mix__floors--chip')).toHaveText([CHIP_D]);
+    await expect(mix.locator('.mix__detail .mix__floors:not(.mix__floors--chip)')).toHaveText([LINE_D, LINE_R]);
+    await noOverflow();
+    for (const el of await mix.locator('.mix__floors').all()) {
+      expect(await el.evaluate((e) => e.scrollWidth - e.clientWidth)).toBeLessThanOrEqual(0);
+    }
   });
 });

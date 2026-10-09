@@ -105,6 +105,9 @@ def p7_alarms_quiet(monkeypatch):
     monkeypatch.setattr(post_load, "precheck_snapshot_release", lambda: (False, "202606", ""))
     # 가게 이름 요약표 분기(2026-10-07 · 일곱 번째 판정)도 뺀다 — 판정은 아래 TestStoreNamesFreshness.
     monkeypatch.setattr(post_load, "report_store_names_freshness", lambda: ("202606", "202606", False))
+    # 층 분포 표 분기·합 대조(2026-10-09b · 물결 2-2)도 뺀다 — 판정은 아래 TestIndustryFloorChecks.
+    monkeypatch.setattr(post_load, "report_industry_floor_freshness", lambda: ("202606", "202606", False))
+    monkeypatch.setattr(post_load, "report_industry_floor_consistency", lambda: ("0", False))
 
 
 # ── 1. ANALYZE 대상 ─────────────────────────────────────────────────────────
@@ -516,6 +519,9 @@ class TestAnonExposure:
             "api.list_parcel_transactions", "api.get_sigungu_tx_stats",
             "api.list_price_bands",
             "api.list_industry_mix", "api.list_industry_detail",
+            # 업종별 층 분포(2026-10-09b · 물결 2-2). 요약표 mv_district_industry_floor 와 층 묶음
+            # 함수 industry_floor_band 는 **여기 없다** — 층 묶음 개수만 나간다.
+            "api.list_industry_floors",
             # ⚠️ 유일한 **쓰기** 함수다(2026-08-24b 의견함·오류 기록). 나머지는 전부 읽기.
             "api.submit_feedback",
             # 의견함 주간 알림(2026-08-24c). GitHub Actions 주간 워크플로가 공개키로
@@ -562,8 +568,8 @@ class TestAnonExposure:
             # 없다** — 화면은 이 함수로만 읽는다(상권 합산과 최신 분기 업종 상위 10줄 + 그 밖 합).
             "api.list_district_openclose",
         )
-        # 읽기 4 + 부르기 24 = `--check` 총계 28.
-        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 28
+        # 읽기 4 + 부르기 25 = `--check` 총계 29(2026-10-09b 층 분포로 28 → 29).
+        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 29
 
     def test_pending_list_is_empty_after_2026_09_05a(self):
         """⛔ **비어 있어야 한다** — 잔존 노출 9개는 2026-09-05a 로 닫혔다.
@@ -1336,11 +1342,12 @@ class TestJudgeSnapshotRelease:
 
 
 class TestPublishTxSql:
-    """분기 요약표 셋 + 분기 대조 + 표지 올림 = 한 트랜잭션 (2026-10-07 · 👤 (가)안 · 맹점 검사관 🟠1)."""
+    """분기 요약표 넷 + 분기 대조 + 표지 올림 = 한 트랜잭션 (2026-10-07 · 👤 (가)안 · 맹점 검사관 🟠1)."""
 
     def test_quarter_and_non_quarter_split(self):
         assert post_load.QUARTER_MVS == (
-            "mv_parcel_store_names", "mv_coverage_stats", "mv_district_industry_mix")
+            "mv_parcel_store_names", "mv_coverage_stats", "mv_district_industry_mix",
+            "mv_district_industry_floor")
         assert set(post_load.QUARTER_MVS) | set(post_load.NON_QUARTER_MVS) == set(post_load.REFRESH_MVS)
         assert not set(post_load.QUARTER_MVS) & set(post_load.NON_QUARTER_MVS)
         assert len(post_load.NON_QUARTER_MVS) == 5
@@ -1353,14 +1360,15 @@ class TestPublishTxSql:
         assert lines[-1] == "commit;"
         assert sql.count("begin;") == 1 and sql.count("commit;") == 1
 
-    def test_refreshes_exactly_the_three_inside(self):
+    def test_refreshes_exactly_the_four_inside(self):
         sql = post_load.build_publish_tx_sql()
         body = sql.split("begin;", 1)[1].split("commit;", 1)[0]
         for mv in post_load.QUARTER_MVS:
             assert "refresh materialized view concurrently {};".format(mv) in body, mv
         for mv in post_load.NON_QUARTER_MVS:
             assert mv not in body, "분기와 무관한 {} 가 트랜잭션 안에 들어왔습니다".format(mv)
-        assert body.count("refresh materialized view") == 3
+        assert body.count("refresh materialized view") == 4
+        assert "refresh materialized view concurrently mv_district_industry_floor;" in body
         # 굽기가 대조·올림보다 먼저다.
         assert body.index("refresh materialized view") < body.index("do $$")
 
@@ -1377,12 +1385,15 @@ class TestPublishTxSql:
         do = sql[sql.index("do $$"):sql.index("end $$;")]
         lock = do.index("from public.snapshot_release r where r.id = 1 for update")
         assert do.index("select r.loaded_ym into v") < lock
-        cmp_at = do.index("if s is distinct from v or c is distinct from v or m is distinct from v then")
+        cmp_at = do.index("if s is distinct from v or c is distinct from v or m is distinct from v"
+                          " or f is distinct from v then")
         upd = do.index("update public.snapshot_release set published_ym = v, published_at = now()")
         assert lock < cmp_at < upd
         assert "max(t.store_snapshot_ym) into s from public.mv_parcel_store_names" in do
         assert "max(t.snapshot_ym) into c from public.mv_coverage_stats" in do
         assert "max(t.snapshot_ym) into m from public.mv_district_industry_mix" in do
+        assert "max(t.snapshot_ym) into f from public.mv_district_industry_floor" in do
+        assert "· 층 %" in do and "v, s, c, m, f;" in do
         assert "raise exception" in do[cmp_at:upd]
         assert "where id = 1 and published_ym < v;" in do[upd:]
 
@@ -1390,6 +1401,70 @@ class TestPublishTxSql:
         """⛔ `published_ym = loaded_ym` 이면 대조 뒤 바뀐 loaded 가 굽지 않은 채 올라갈 수 있다(적대 🟡④)."""
         sql = post_load.build_publish_tx_sql()
         assert "published_ym = loaded_ym" not in sql
+
+
+_REAL_FLOOR_FRESHNESS = post_load.report_industry_floor_freshness
+_REAL_FLOOR_CONSISTENCY = post_load.report_industry_floor_consistency
+
+
+class TestIndustryFloorChecks:
+    """층 분포 표(2026-10-09b · 물결 2-2) — 분기는 업종 표와 같은 판정, 합은 업종 표와 대조."""
+
+    @pytest.mark.parametrize("args, stale", [
+        (("0", "62457", "62457"), False),
+        (("0", "0", "0"), False),            # 두 표 다 빔 = 자료 없는 새 환경(업종 표와 같은 판단)
+        ((" 0 ", "3", " 3"), False),         # psql 공백
+        (("1", "62457", "62457"), True),
+        (("62457", "62457", "0"), True),     # 층 표만 빔
+        (("", "", ""), True),                # 못 읽음 — '정상'이라 말할 근거가 없다
+        (("x", "1", "1"), True),
+        ((None, None, None), True),
+    ])
+    def test_judge(self, args, stale):
+        assert post_load.judge_industry_floor_consistency(*args) is stale
+
+    def test_consistency_sql_is_ascii_and_compares_by_the_three_keys(self):
+        sql = post_load.INDUSTRY_FLOOR_CONSISTENCY_SQL
+        assert all(ord(ch) < 128 for ch in sql), "psql -c 로 가는 SQL 에 한글이 있으면 서버에서 죽습니다"
+        assert "full join" in sql and "using (" not in sql
+        # 빈 중분류(NULL) 열쇠도 짝을 찾게 — 그 칸만 is not distinct from (실제 실행은 test_industry_floor_migration).
+        assert "f.district_id = m.district_id and f.snapshot_ym = m.snapshot_ym" in sql
+        assert "f.cat_m_cd is not distinct from m.cat_m_cd" in sql
+        assert "from mv_district_industry_mix" in sql and "from mv_district_industry_floor group by 1, 2, 3" in sql
+        assert "f.n is distinct from m.n" in sql
+
+    def test_freshness_sql_is_ascii_and_reads_loaded_ym(self, monkeypatch):
+        asked = []
+        monkeypatch.setattr(post_load, "query_one", lambda sql: asked.append(sql) or "202606|202606")
+        assert _REAL_FLOOR_FRESHNESS() == ("202606", "202606", False)
+        assert all(ord(ch) < 128 for ch in asked[0])
+        assert "mv_district_industry_floor" in asked[0] and "loaded_ym from snapshot_release" in asked[0]
+
+    @pytest.mark.parametrize("raw, stale, word", [
+        ("202606|202606", False, "[신선] 층 분포 표 202606"),
+        ("202603|202606", True, "[낡음] 층 분포 표 202603 / 다 들어온 분기(표지) 202606"),
+        ("|202606", True, "[낡음] 층 분포 표가 비어 있습니다"),
+        ("|", False, "[신선] 층 분포 표 (자료 없음)"),
+    ])
+    def test_freshness_report(self, monkeypatch, capsys, raw, stale, word):
+        monkeypatch.setattr(post_load, "query_one", lambda sql: raw)
+        assert _REAL_FLOOR_FRESHNESS()[2] is stale
+        assert word in capsys.readouterr().out
+
+    @pytest.mark.parametrize("raw, stale, word", [
+        ("0|62457|62457", False, "[정상] 층 분포 표 합 = 업종 분포 표 (어긋남 0 상권·업종)"),
+        ("12|62457|62460", True, "[낡음] 층 분포 표와 업종 분포 표가 다른 말을 합니다 — post_load.py 를 다시"),
+        ("garbage", True, "[낡음]"),
+    ])
+    def test_consistency_report(self, monkeypatch, capsys, raw, stale, word):
+        monkeypatch.setattr(post_load, "query_one", lambda sql: raw)
+        assert _REAL_FLOOR_CONSISTENCY()[1] is stale
+        assert word in capsys.readouterr().out
+
+    def test_refresh_lists_the_floor_table_right_after_the_mix(self):
+        mvs = post_load.REFRESH_MVS
+        assert mvs.index("mv_district_industry_floor") == mvs.index("mv_district_industry_mix") + 1
+        assert "mv_district_industry_floor" not in post_load.NON_QUARTER_MVS
 
 
 class TestSnapshotReleaseWiring:
@@ -1496,6 +1571,16 @@ class TestStoreNamesFreshness:
     def test_apply_exits_1_when_stale_after_the_transaction(self, monkeypatch):
         code, _ = _apply_flow(monkeypatch, names_stale=True)
         assert code == 1
+
+    @pytest.mark.parametrize("name, val", [
+        ("report_industry_floor_freshness", lambda: ("202603", "202606", True)),
+        ("report_industry_floor_consistency", lambda: ("3", True)),
+    ])
+    def test_apply_rechecks_the_floor_table_after_the_transaction(self, monkeypatch, name, val):
+        """갱신 흐름도 층 분포 표를 다시 잰다(2026-10-09b) — 어긋나면 exit 1."""
+        monkeypatch.setattr(post_load, name, val)
+        code, ran = _apply_flow(monkeypatch)
+        assert code == 1 and ran[-1] == post_load.build_publish_tx_sql()
 
 
 # ── 갱신 흐름 — 선점검 · 한 트랜잭션 · 다시 재기 (2026-10-07) ────────────────────────

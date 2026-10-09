@@ -252,6 +252,8 @@ class TestSlowReport:
     ("report_store_names_freshness", lambda: ("", "", False)),
             ("report_snapshot_release", lambda: (False, False)),
             ("report_store_names_freshness", lambda: ("", "", False)),
+            ("report_industry_floor_freshness", lambda: ("", "", False)),
+            ("report_industry_floor_consistency", lambda: ("0", False)),
             ("report_toast_evictions", lambda: []),
         ):
             monkeypatch.setattr(post_load, name, val)
@@ -303,6 +305,8 @@ class TestSlowReport:
     ("report_store_names_freshness", lambda: ("", "", False)),
             ("report_snapshot_release", lambda: (False, False)),
             ("report_store_names_freshness", lambda: ("", "", False)),
+            ("report_industry_floor_freshness", lambda: ("", "", False)),
+            ("report_industry_floor_consistency", lambda: ("0", False)),
             ("report_toast_evictions", lambda: []),
         ):
             monkeypatch.setattr(post_load, name, val)
@@ -314,6 +318,14 @@ class TestSlowReport:
         assert post_load.main(["--check"]) == 1
         monkeypatch.setattr(post_load, "report_function_drift", lambda: [])
         monkeypatch.setattr(post_load, "report_tx_geog_freshness", lambda: ("4383", "4384", True))
+        assert post_load.main(["--check"]) == 1
+        monkeypatch.setattr(post_load, "report_tx_geog_freshness", lambda: ("1", "1", False))
+        assert post_load.main(["--check"]) == 0
+        # 층 분포 표(2026-10-09b · 물결 2-2) — 분기 낡음·업종 표와의 합 어긋남 둘 다 [낡음] → exit 1.
+        monkeypatch.setattr(post_load, "report_industry_floor_freshness", lambda: ("202603", "202606", True))
+        assert post_load.main(["--check"]) == 1
+        monkeypatch.setattr(post_load, "report_industry_floor_freshness", lambda: ("", "", False))
+        monkeypatch.setattr(post_load, "report_industry_floor_consistency", lambda: ("3", True))
         assert post_load.main(["--check"]) == 1
 
 
@@ -526,6 +538,8 @@ class TestApplyRechecksTxGeog:
             ("report_coverage_freshness", lambda: ("", "", False)),
             ("report_industry_mix_freshness", lambda: ("", "", False)),
             ("report_store_names_freshness", lambda: ("", "", False)),
+            ("report_industry_floor_freshness", lambda: ("", "", False)),
+            ("report_industry_floor_consistency", lambda: ("0", False)),
             ("precheck_snapshot_release", lambda: (False, "202606", "")),
             ("report_snapshot_release", lambda *a: (False, False)),
         ):
@@ -650,7 +664,7 @@ class TestCanonicalIndexIncludes:
         includes = post_load.canonical_index_includes(raw)
         assert set(includes) == set(post_load.canonical_index_names(raw))
         assert {k: v for k, v in includes.items() if v} == {
-            "idx_ub_pnu_cat": ["cat_l_cd", "cat_l_nm", "cat_m_cd", "cat_m_nm"],
+            "idx_ub_pnu_cat": ["cat_l_cd", "cat_l_nm", "cat_m_cd", "cat_m_nm", "floor_no"],
             "idx_arch_permit_pnu": [
                 "loaded_ym", "use_apr_day", "main_purps_cd", "real_stcns_day", "arch_pms_day"],
         }
@@ -888,6 +902,8 @@ class TestCheckExitCodeForIndexes:
     ("report_store_names_freshness", lambda: ("", "", False)),
             ("report_snapshot_release", lambda: (False, False)),
             ("report_store_names_freshness", lambda: ("", "", False)),
+            ("report_industry_floor_freshness", lambda: ("", "", False)),
+            ("report_industry_floor_consistency", lambda: ("0", False)),
             ("report_toast_evictions", lambda: []),
         ):
             monkeypatch.setattr(post_load, name, val)

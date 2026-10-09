@@ -2,6 +2,8 @@ import type {
   IndustryCat,
   IndustryDetail,
   IndustryDistrict,
+  IndustryFloorScope,
+  IndustryFloors,
   IndustryMix,
   IndustryScope,
 } from '../types';
@@ -152,4 +154,83 @@ export function districtSources(districts: IndustryDistrict[]): string[] {
   const out = new Set<string>();
   for (const d of districts) if (d.source_nm) out.add(d.source_nm);
   return [...out].sort();
+}
+
+// ── 업종별 층 분포 (물결 2-2 · 결정 0036 결정 18 ⑲~㉑) ─────────────────────────
+
+/** 층 묶음의 화면 차례 — 지하부터 위로, 층 미상은 맨 끝. 서버는 열쇠만 주고 차례는 여기서 정한다. */
+export const FLOOR_BAND_ORDER = ['b', '1', '2', '3+', 'na'] as const;
+
+export const FLOOR_BAND_LABELS: Record<(typeof FLOOR_BAND_ORDER)[number], string> = {
+  b: '지하',
+  '1': '1층',
+  '2': '2층',
+  '3+': '3층 이상',
+  na: '층 미상',
+};
+
+/** 0 이상 정수인가 — 개수 칸 하나. */
+function isCount(x: unknown): x is number {
+  return typeof x === 'number' && Number.isInteger(x) && x >= 0;
+}
+
+/**
+ * 한 범위의 층 묶음 — total 과 열쇠 다섯이 전부 0 이상 정수여야 한다.
+ * ⚠️ 열쇠 하나라도 빠지면 거른다 — 빠진 묶음을 0 으로 채우면 "모르는 것"을 "없음"이라 적게 된다.
+ */
+export function isFloorScope(x: unknown): x is IndustryFloorScope {
+  if (typeof x !== 'object' || x === null) return false;
+  const s = x as Record<string, unknown>;
+  if (!isCount(s.total)) return false;
+  if (typeof s.bands !== 'object' || s.bands === null) return false;
+  const bands = s.bands as Record<string, unknown>;
+  return FLOOR_BAND_ORDER.every((k) => isCount(bands[k]));
+}
+
+/**
+ * 응답 모양 검사. 걸리면 **이 응답 하나만** 버린다 — 층 줄만 빠지고 카드·상세는 그대로 선다.
+ * `radius` 는 null 이어도 정상(좌표가 없어 못 잼 — 빈 집계와 다르다).
+ */
+export function isIndustryFloors(x: unknown): x is IndustryFloors {
+  if (typeof x !== 'object' || x === null) return false;
+  const m = x as Record<string, unknown>;
+  if (typeof m.radius_m !== 'number' || typeof m.cat_l_cd !== 'string') return false;
+  if (!(m.cat_m_cds === null || (Array.isArray(m.cat_m_cds) && m.cat_m_cds.every((c) => typeof c === 'string')))) {
+    return false;
+  }
+  if (!Array.isArray(m.districts)) return false;
+  const districtsOk = m.districts.every(
+    (d) => isFloorScope(d) && typeof (d as unknown as Record<string, unknown>).district_id === 'string',
+  );
+  if (!districtsOk) return false;
+  return m.radius === null || isFloorScope(m.radius);
+}
+
+/** 중분류 목록 둘이 같은 질문인가(순서 무관 · null 은 null 하고만 같다) — 늦게 온 답을 버릴 때 쓴다. */
+export function sameCatMs(a: readonly string[] | null, b: readonly string[] | null): boolean {
+  if (a === null || b === null) return a === b;
+  return [...a].sort().join(',') === [...b].sort().join(',');
+}
+
+/** 블록 열쇠(상권 `district_id` · 반경 `__radius__`) → 그 범위의 층 묶음. */
+export function floorScopeByKey(floors: IndustryFloors | null): Map<string, IndustryFloorScope> {
+  const out = new Map<string, IndustryFloorScope>();
+  if (floors === null) return out;
+  for (const d of floors.districts) out.set(d.district_id, d);
+  if (floors.radius) out.set('__radius__', floors.radius);
+  return out;
+}
+
+/**
+ * 층 줄 한 줄 — `층별 음식: 지하 4곳 · 1층 700곳 · 2층 150곳 · 3층 이상 80곳 · 층 미상 300곳 (24%)`.
+ *
+ * ⛔ 층 미상은 숨기지 않는다 — 같은 줄의 한 칸 + 괄호 %(그 범위 총수 대비). 빼면 남은 넷이 전부처럼 읽힌다.
+ * total 이 0 이면 null — 줄을 안 그린다("0곳"만 늘어선 줄은 위 "가게가 없습니다"와 같은 말을 두 번 한다).
+ */
+export function floorLine(label: string, scope: IndustryFloorScope): string | null {
+  if (scope.total <= 0) return null;
+  const n = (v: number) => v.toLocaleString('ko-KR');
+  const parts = FLOOR_BAND_ORDER.map((k) => `${FLOOR_BAND_LABELS[k]} ${n(scope.bands[k])}곳`);
+  const naPct = Math.round((100 * scope.bands.na) / scope.total);
+  return `층별 ${label}: ${parts.join(' · ')} (${naPct}%)`;
 }

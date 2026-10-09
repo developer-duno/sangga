@@ -6,6 +6,7 @@ import type {
   DistrictOpenClose,
   FloorRow,
   FloorUnit,
+  IndustryFloors,
   IndustryMix,
   LhNotice,
   NearbyPermits,
@@ -208,6 +209,37 @@ export function industryMix(over: Partial<IndustryMix> = {}): IndustryMix {
       ],
     },
     ...over,
+  };
+}
+
+/**
+ * 업종별 층 분포(함수 list_industry_floors · 물결 2-2). 숫자는 단위 시험
+ * (src/components/IndustryMixSection.test.tsx 의 floors())과 같다 — `catM` 이 null 이면 대분류 전체,
+ * 배열이면 칩 짝 중분류의 답(서버는 물어본 값을 그대로 되돌려 준다).
+ * ⚠️ 대분류 답의 bands 합 = 그 블록의 업종 총수(상권 `음식 60곳` · 반경 `150곳`) — 서버에서는 같은
+ *    (상권·중분류)의 층 묶음 합이 업종 표와 같다(post_load --check 가 대조). 어긋난 픽스처는 화면에
+ *    '음식 60곳' 아래 층 합 1,234 처럼 서로 다른 말을 세운다.
+ */
+export function industryFloors(catL = 'I2', catM: string[] | null = null): IndustryFloors {
+  if (catM === null) {
+    return {
+      snapshot_ym: '202606',
+      radius_m: 500,
+      cat_l_cd: catL,
+      cat_m_cds: null,
+      districts: [
+        { district_id: '3120189', name: '강남역', total: 60, bands: { b: 0, '1': 36, '2': 9, '3+': 3, na: 12 } },
+      ],
+      radius: { total: 150, bands: { b: 2, '1': 90, '2': 24, '3+': 9, na: 25 } },
+    };
+  }
+  return {
+    snapshot_ym: '202606',
+    radius_m: 500,
+    cat_l_cd: catL,
+    cat_m_cds: catM,
+    districts: [{ district_id: '3120189', name: '강남역', total: 20, bands: { b: 0, '1': 15, '2': 3, '3+': 0, na: 2 } }],
+    radius: { total: 0, bands: { b: 0, '1': 0, '2': 0, '3+': 0, na: 0 } },
   };
 }
 
