@@ -16,6 +16,8 @@
 
   ⛔ 사람·봇 모두 같은 HTML — User-Agent 로 가르지 않는다(구글: 동적 렌더링은 '우회책').
   ⛔ 들어온 요청의 cookie 는 **첫 화면 HTML fetch 에만** 넘긴다(미리보기 배포 보호 통과용) — Supabase 로는 안 보낸다.
+  ⛔ 첫 화면 HTML 은 **허용 호스트**(정식 · VERCEL_URL · VERCEL_BRANCH_URL)에서만 받는다 — 남의 호스트면
+     정식 주소 고정 + cookie 0(`homeSource` · 적대 검사 🔴 2026-10-09).
   ⛔ 의존(fetch·env)은 주입받는다 — 시험은 가짜 fetch 로 외부 호출 0.
   ⛔ import 는 `.js` 확장자 — 함수 런타임(Node ESM)은 확장자 없는 상대 import 를 못 찾는다(tsconfig.api.json nodenext 가 잡는다).
 */
@@ -47,20 +49,30 @@ function firstValue(v: string | null): string | null {
   return t ? t : null;
 }
 
-/** 같은 배포의 주소 — x-forwarded-proto + x-forwarded-host, 없으면 요청 주소의 origin. */
-export function siteOrigin(request: Request): string {
-  const proto = firstValue(request.headers.get('x-forwarded-proto'));
-  const host = firstValue(request.headers.get('x-forwarded-host'));
-  if (proto && host && /^https?$/.test(proto) && /^[a-z0-9.-]+(:\d+)?$/i.test(host)) {
-    return `${proto}://${host}`;
-  }
-  return new URL(request.url).origin;
+export const SITE_HOST = 'sangga-one.vercel.app';
+
+/**
+ * 첫 화면 HTML 을 받아 올 곳 — 들어온 호스트가 **허용 목록과 글자 그대로 같을 때만** 그 배포
+ * (`https://<host>`)에서, cookie 를 붙여 받는다. 아니면 정식 주소 고정 + cookie 0.
+ *
+ * 왜(2026-10-09 적대 검사 🔴): 예전엔 `x-forwarded-host` 를 글자 모양으로만 걸러, 남의 호스트
+ * (`evil.example.com`·`169.254.169.254`·`localhost:6379`)로 손님 cookie 를 실어 요청하고 그 HTML 을
+ * CDN 에 하루 굳힐 수 있었다(CDN 캐시 열쇠는 이 헤더를 모른다). Vercel 문서는 x-forwarded-host 를
+ * "identical to the host header" 라고만 하고 덮어쓰기를 보장하지 않는다.
+ * 허용 목록 = 정식 호스트 + `VERCEL_URL`·`VERCEL_BRANCH_URL`(함수 환경에 있을 때만 · Vercel 시스템 환경변수).
+ * 호스트 = `x-forwarded-host` 첫 값, 없으면 요청 주소의 host. 늘 https.
+ */
+export function homeSource(request: Request, env: HandlerDeps['env']): { origin: string; trusted: boolean } {
+  const allowed = new Set([SITE_HOST, env.VERCEL_URL, env.VERCEL_BRANCH_URL].filter((h): h is string => !!h));
+  const host = firstValue(request.headers.get('x-forwarded-host')) ?? new URL(request.url).host;
+  return allowed.has(host) ? { origin: `https://${host}`, trusted: true } : { origin: `https://${SITE_HOST}`, trusted: false };
 }
 
 async function fetchHome(request: Request, deps: HandlerDeps): Promise<string | null> {
-  const cookie = request.headers.get('cookie');
+  const { origin, trusted } = homeSource(request, deps.env);
+  const cookie = trusted ? request.headers.get('cookie') : null;
   try {
-    const res = await deps.fetch(`${siteOrigin(request)}/index.html`, {
+    const res = await deps.fetch(`${origin}/index.html`, {
       headers: cookie ? { cookie } : {},
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });

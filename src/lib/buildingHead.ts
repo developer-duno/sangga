@@ -73,19 +73,25 @@ export function isBldId(s: string | null | undefined): boolean {
   return typeof s === 'string' && BLD_RE.test(s);
 }
 
+/** 용도 글을 나누는 자리 — 쉼표·'·'·'/'·공백(' 및 ' 도 공백으로 갈린다 · 적대 검사 🟡 2026-10-09). */
+const USE_SPLIT_RE = /[,·/\s]+/;
+/** 나눈 뒤 버리는 연결어 — 용도 이름이 아니다. 두 글자 미만 조각도 버린다. */
+const USE_FILLER = new Set(['및', '외', '등', '기타']);
+
 /**
- * 비주거 층이 하나라도 있나 — 행의 `main_use` 와 `uses[].use` 를 쉼표·'·' 로 나눈 조각 가운데
- * 비어 있지 않고 RESIDENTIAL_RE 에 안 걸리는 것이 하나라도 있으면 true.
+ * 비주거 층이 하나라도 있나 — 행의 `main_use` 와 `uses[].use` 를 쉼표·'·'·'/'·공백으로 나눈 조각 가운데
+ * 연결어(및·외·등·기타)·두 글자 미만을 뺀 것이 RESIDENTIAL_RE 에 안 걸리면 true.
  * false 면 머리글은 그 건물 것으로 바꾸되 noindex(카카오톡 미리보기는 건물 것 · 구글은 안 담는다).
  */
 export function isNonResidential(rows: BuildingRow[]): boolean {
   for (const r of rows) {
     const names = [r.main_use, ...(r.uses ?? []).map((u) => u?.use ?? null)];
     for (const name of names) {
-      if (!name) continue;
-      for (const piece of name.split(/[,·]/)) {
+      if (typeof name !== 'string') continue;
+      for (const piece of name.split(USE_SPLIT_RE)) {
         const t = piece.trim();
-        if (t && !RESIDENTIAL_RE.test(t)) return true;
+        if (t.length < 2 || USE_FILLER.has(t)) continue;
+        if (!RESIDENTIAL_RE.test(t)) return true;
       }
     }
   }

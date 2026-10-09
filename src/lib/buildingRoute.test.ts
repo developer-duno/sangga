@@ -8,11 +8,25 @@ const BLD = '1168010600109420015_10241100257870';
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 describe('buildingRewriteTarget — middleware 판정(결정 0037)', () => {
-  it('bld 가 건물 번호 꼴이면 /api/building 으로 · query 그대로', () => {
+  it('bld 가 건물 번호 꼴이면 /api/building 으로 · sgg·bld 를 넘긴다', () => {
     expect(buildingRewriteTarget(`https://sangga-one.vercel.app/?sgg=11680&bld=${BLD}`)).toBe(
       `https://sangga-one.vercel.app/api/building?sgg=11680&bld=${BLD}`,
     );
     expect(buildingRewriteTarget(`https://x.vercel.app/?bld=${BLD}`)).toBe(`https://x.vercel.app/api/building?bld=${BLD}`);
+  });
+
+  it('sgg·bld 두 값만 다시 조립한다 — 낯선 인자는 사라지고 순서는 sgg 먼저', () => {
+    expect(buildingRewriteTarget(`https://sangga-one.vercel.app/?x=123&bld=${BLD}&utm_source=a&sgg=11680`)).toBe(
+      `https://sangga-one.vercel.app/api/building?sgg=11680&bld=${BLD}`,
+    );
+    // sgg 꼴이 틀리면 빼고 bld 만(캐시 열쇠를 늘리지 않는다)
+    expect(buildingRewriteTarget(`https://sangga-one.vercel.app/?sgg=abc&bld=${BLD}`)).toBe(
+      `https://sangga-one.vercel.app/api/building?bld=${BLD}`,
+    );
+    // 같은 bld 를 두 번 적어도 첫 값 하나만
+    expect(buildingRewriteTarget(`https://sangga-one.vercel.app/?bld=${BLD}&bld=${BLD}9`)).toBe(
+      `https://sangga-one.vercel.app/api/building?bld=${BLD}`,
+    );
   });
 
   it('bld 가 없으면 null', () => {

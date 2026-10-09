@@ -299,6 +299,21 @@ describe('비주거 판정 · noindex(👤 2026-10-09 19:1x — 색인 대상 = 
     expect(isNonResidential([row(1, { main_use: null, uses: null }), row(2, { main_use: ' ', uses: [{ use: null }] })])).toBe(false);
   });
 
+  it('구분자 넓힘 — / · 공백 · " 및 " 으로 붙은 근린생활시설도 비주거로 본다(noindex 0)', () => {
+    for (const use of ['아파트/근린생활시설', '공동주택(아파트) 및 근린생활시설', '아파트 근린생활시설']) {
+      expect(isNonResidential([row(1, { main_use: use, uses: [{ use }] })]), use).toBe(true);
+      expect(count(render(tower({ main_use: use, uses: [{ use }] }))), use).toBe(0);
+    }
+  });
+
+  it('연결어(및·외·등·기타)·한 글자 조각은 버린다 — 주거만 있으면 그대로 noindex', () => {
+    for (const use of ['아파트 및 주차장', '공동주택 외', '아파트 등', '기타 아파트', '아파트 / 주차장', '아파트 A']) {
+      expect(isNonResidential([row(1, { main_use: use, uses: [{ use }] })]), use).toBe(false);
+    }
+    // 창고시설만 있는 건물은 대상 밖(noindex) — 산업물류 축을 다룰 때 👤 재확인
+    expect(count(render(tower({ main_use: '창고시설', uses: [{ use: '창고시설' }] })))).toBe(1);
+  });
+
   it('아파트만 있는 건물 → 머리글은 건물 것 · noindex 정확히 1개(</head> 앞)', () => {
     const html = render(tower({ main_use: '아파트', uses: [{ use: '아파트' }] }));
     expect(count(html)).toBe(1);

@@ -11,12 +11,24 @@
 */
 import { isBldId } from './buildingHead.js';
 
-/** 넘길 주소(절대 주소) 또는 null. */
+/** 주소의 `sgg` 꼴 — `src/lib/urlState.ts` 의 SIGUNGU_RE 와 같다. */
+const SGG_RE = /^\d{5}$/;
+
+/**
+ * 넘길 주소(절대 주소) 또는 null.
+ * ⛔ `sgg`·`bld` 두 값만 다시 조립한다(sgg 먼저 · sgg 는 꼴이 맞을 때만) — 낯선 인자(`&x=랜덤`)를
+ *    그대로 넘기면 주소마다 CDN 캐시가 새로 생겨 함수·Supabase 호출이 한도를 쓴다(적대 검사 🟡 2026-10-09).
+ */
 export function buildingRewriteTarget(input: string): string | null {
   const url = new URL(input);
   if (url.pathname !== '/') return null;
-  if (!isBldId(url.searchParams.get('bld'))) return null;
+  const bld = url.searchParams.get('bld');
+  if (!isBldId(bld)) return null;
+  const sgg = url.searchParams.get('sgg');
+  const q = new URLSearchParams();
+  if (sgg !== null && SGG_RE.test(sgg)) q.set('sgg', sgg);
+  q.set('bld', bld as string);
   const dest = new URL('/api/building', url);
-  dest.search = url.search; // ?sgg=…&bld=… 그대로
+  dest.search = q.toString();
   return dest.href;
 }

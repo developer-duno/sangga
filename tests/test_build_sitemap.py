@@ -42,6 +42,7 @@ def locs(xml_text, path):
 
 def test_chunk_boundary_50000():
     assert bs.CHUNK_SIZE == 50000
+    assert [len(c) for c in bs.chunk(list(range(49999)))] == [49999]
     assert [len(c) for c in bs.chunk(list(range(50000)))] == [50000]
     assert [len(c) for c in bs.chunk(list(range(50001)))] == [50000, 1]
     assert [len(c) for c in bs.chunk(list(range(100000)))] == [50000, 50000]
@@ -159,6 +160,27 @@ def test_write_files_removes_old_building_files(tmp_path):
     bs.write_files(bs.build_files(fake_rows(2)), str(tmp_path))
     assert sorted(os.listdir(tmp_path)) == ["keep.txt", "sitemap-buildings-1.xml", "sitemap-home.xml", "sitemap.xml"]
     assert b"\r" not in (tmp_path / "sitemap.xml").read_bytes()
+
+
+def test_main_dry_run_writes_nothing(tmp_path, monkeypatch, capsys):
+    """--dry-run 은 DB 를 읽고 개수만 말한다 — public/ 흉내 폴더에 파일이 하나도 안 생긴다."""
+    public = tmp_path / "public"
+    public.mkdir()
+    monkeypatch.setattr(bs, "PUBLIC_DIR", str(public))
+    monkeypatch.setattr(bs, "fetch_rows", lambda: fake_rows(3))
+    assert bs.main(["--dry-run"]) == 0
+    assert os.listdir(public) == []
+    assert "대상 건물 3동" in capsys.readouterr().out
+
+
+def test_control_main_without_dry_run_does_write(tmp_path, monkeypatch):
+    """양성 대조 — 같은 흉내로 --dry-run 없이 돌리면 파일이 생긴다(위 시험이 '아무것도 안 하는 main' 을 놓치지 않게)."""
+    public = tmp_path / "public"
+    public.mkdir()
+    monkeypatch.setattr(bs, "PUBLIC_DIR", str(public))
+    monkeypatch.setattr(bs, "fetch_rows", lambda: fake_rows(3))
+    assert bs.main([]) == 0
+    assert sorted(os.listdir(public)) == ["sitemap-buildings-1.xml", "sitemap-home.xml", "sitemap.xml"]
 
 
 def test_existing_building_files_sorted_numerically(tmp_path):

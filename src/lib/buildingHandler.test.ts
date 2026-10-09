@@ -11,7 +11,7 @@ import {
   FETCH_TIMEOUT_MS,
   RETRY_AFTER_S,
   handleBuilding,
-  siteOrigin,
+  homeSource,
   type HandlerDeps,
 } from './buildingHandler';
 
@@ -258,17 +258,47 @@ describe('handleBuilding', () => {
   });
 });
 
-describe('siteOrigin', () => {
-  it('x-forwarded-proto + host 를 쓰고 · 없거나 이상하면 요청 주소의 origin', () => {
-    expect(siteOrigin(req('', { 'x-forwarded-proto': 'https', 'x-forwarded-host': 'sangga-git-x.vercel.app' }))).toBe(
-      'https://sangga-git-x.vercel.app',
-    );
-    expect(siteOrigin(req('', { 'x-forwarded-proto': 'https, http', 'x-forwarded-host': 'a.vercel.app, b' }))).toBe(
-      'https://a.vercel.app',
-    );
-    expect(siteOrigin(req(''))).toBe('https://sangga-one.vercel.app');
-    expect(siteOrigin(req('', { 'x-forwarded-proto': 'https', 'x-forwarded-host': 'evil.com/x?' }))).toBe(
-      'https://sangga-one.vercel.app',
-    );
+describe('허용 호스트 — 남의 호스트로 cookie 를 실어 요청하지 않는다(적대 검사 🔴 2026-10-09)', () => {
+  const PREVIEW = { ...ENV, VERCEL_URL: 'sangga-abc123.vercel.app', VERCEL_BRANCH_URL: 'sangga-git-feat-x.vercel.app' };
+
+  async function homeCall(headers: Record<string, string>, env: HandlerDeps['env'] = ENV, url = `https://sangga-one.vercel.app/api/building?bld=${BLD}`) {
+    const f = fakeFetch(() => new Response(JSON.stringify(rows('테헤란빌딩'))));
+    await handleBuilding(new Request(url, { headers }), { fetch: f.fn, env });
+    return f.calls.find((c) => c.url.endsWith('/index.html'))!;
+  }
+
+  it('남의 호스트(x-forwarded-host) → 정식 주소로 요청 · cookie 헤더 없음', async () => {
+    for (const host of ['evil.example.com', '169.254.169.254', 'localhost:6379', 'sangga-one.vercel.app.evil.com', 'SANGGA-ONE.vercel.app']) {
+      const call = await homeCall({ 'x-forwarded-host': host, 'x-forwarded-proto': 'http', cookie: '_vercel_jwt=SECRET' }, PREVIEW);
+      expect(call.url, host).toBe('https://sangga-one.vercel.app/index.html');
+      expect(call.init!.headers, host).toEqual({});
+    }
+  });
+
+  it('요청 주소의 host 가 남의 것이어도 같다(헤더가 없을 때)', async () => {
+    const call = await homeCall({ cookie: 'a=1' }, ENV, `https://evil.example.com/api/building?bld=${BLD}`);
+    expect(call.url).toBe('https://sangga-one.vercel.app/index.html');
+    expect(call.init!.headers).toEqual({});
+  });
+
+  it('허용 호스트(정식 · VERCEL_URL · VERCEL_BRANCH_URL) → 그 배포에서 · cookie 전달 · 늘 https', async () => {
+    for (const host of ['sangga-one.vercel.app', PREVIEW.VERCEL_URL, PREVIEW.VERCEL_BRANCH_URL]) {
+      const call = await homeCall({ 'x-forwarded-host': host, 'x-forwarded-proto': 'http', cookie: '_vercel_jwt=abc' }, PREVIEW);
+      expect(call.url, host).toBe(`https://${host}/index.html`);
+      expect(call.init!.headers, host).toEqual({ cookie: '_vercel_jwt=abc' });
+    }
+  });
+
+  it('VERCEL_URL 이 함수 환경에 없으면 미리보기 호스트도 남의 것으로 친다', async () => {
+    const call = await homeCall({ 'x-forwarded-host': 'sangga-abc123.vercel.app', cookie: 'a=1' }, ENV);
+    expect(call.url).toBe('https://sangga-one.vercel.app/index.html');
+    expect(call.init!.headers).toEqual({});
+  });
+
+  it('homeSource — 여러 값이면 첫 값만 · 허용 여부를 함께 준다', () => {
+    const r = (h: Record<string, string>) => new Request('https://sangga-one.vercel.app/', { headers: h });
+    expect(homeSource(r({ 'x-forwarded-host': 'sangga-one.vercel.app, evil.com' }), ENV)).toEqual({ origin: 'https://sangga-one.vercel.app', trusted: true });
+    expect(homeSource(r({ 'x-forwarded-host': 'evil.com, sangga-one.vercel.app' }), ENV)).toEqual({ origin: 'https://sangga-one.vercel.app', trusted: false });
+    expect(homeSource(r({}), ENV)).toEqual({ origin: 'https://sangga-one.vercel.app', trusted: true });
   });
 });
