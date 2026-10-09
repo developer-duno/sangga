@@ -2516,7 +2516,7 @@ pytest **4,457 passed**(본 폴더) · vitest **960 passed** · tsc 0 · oxlint 
 **안 한 것**:
 - sitemap 에 건물 주소(`?sgg=&bld=`) — 24만 동을 다 싣는 일은 별건(첫 화면 하나만).
 - `llms.txt` — 구글 공식 "안 쓴다".
-- ~~IndexNow~~ → ✅ **2026-10-09 16:5x IndexNow 열쇠 파일 + 알림 스크립트**(`public/12c00fba9aca9a86435817c17a3c8b89.txt` · `scripts/indexnow_ping.py` · 가드 `tests/test_indexnow.py` 6) — 빙·네이버(·Yandex·Seznam·Yep)가 같이 쓰는 "이 주소가 바뀌었다" 알림 규격(공식 https://www.indexnow.org/documentation · 네이버 2023-07 지원 공지). 열쇠는 비밀이 아니다(루트의 `/<key>.txt` 가 주인 표식) · `api.indexnow.org` 한 곳에 보내면 참여 엔진 전부가 나눠 받는다 · **구글은 참여 안 함** · 200 은 '받았다'일 뿐 색인 보장 아님. ⚠️ 네이버가 서치어드바이저 **소유 확인 전**에도 받는지는 공식 안내를 못 열어 미확인(도구가 searchadvisor.naver.com 을 막는다) — 👤 등록 뒤 재전송하면 된다. 쓰는 때 = 첫 HTML·sitemap 이 바뀐 배포 뒤 · 새 분기 적재 뒤.
+- ~~IndexNow~~ → ✅ **2026-10-09 16:5x IndexNow 열쇠 파일 + 알림 스크립트**(`public/12c00fba9aca9a86435817c17a3c8b89.txt` · `scripts/indexnow_ping.py` · 가드 `tests/test_indexnow.py` 6) — 빙·네이버(·Yandex·Seznam·Yep)가 같이 쓰는 "이 주소가 바뀌었다" 알림 규격(공식 https://www.indexnow.org/documentation · 네이버 2023-07 지원 공지). 열쇠는 비밀이 아니다(루트의 `/<key>.txt` 가 주인 표식) · `api.indexnow.org` 한 곳에 보내면 참여 엔진 전부가 나눠 받는다 · **구글은 참여 안 함** · 200 은 '받았다'일 뿐 색인 보장 아님. ⚠️ 네이버가 서치어드바이저 **소유 확인 전**에도 받는지는 공식 안내를 못 열어 미확인(도구가 searchadvisor.naver.com 을 막는다) — 👤 등록 뒤 재전송하면 된다. 쓰는 때 = 첫 HTML·sitemap 이 바뀐 배포 뒤 · 새 분기 적재 뒤. **첫 알림 2026-10-09 17:1x → 응답 202**(받음 · 열쇠 검증은 나중 · #266 main d14a06b 배포 뒤 열쇠 파일 200 text/plain 확인).
 - ⓘ **구글 리치 결과 테스트(2026-10-09 16:5x)**: 「유효한 항목 1개(소프트웨어 앱)」 · 경고 2 = `offers`·`aggregateRating` 누락(**선택사항** — 가짜 값 금지라 그대로 둔다 · 위 ⓘ 예측이 맞았다). PageSpeed 휴대폰(16:47): 성능 98 · 접근성 100 · 권장사항 100 · 검색엔진 최적화 100 · LCP 2.0초 · CLS 0.018 — 고칠 것 없음.
 - FAQPage 구조화 자료 — 폐지.
 - CSP 헤더 — `vercel.json` 은 안 건드렸다(별건 👤).
@@ -2532,9 +2532,9 @@ pytest **4,457 passed**(본 폴더) · vitest **960 passed** · tsc 0 · oxlint 
 | # | 할 일 | 어디서 · 주의 |
 |---|---|---|
 | 1 | ✅ 라이브 `/robots.txt`·`/sitemap.xml`·`/og-image.png` 200 · 첫 HTML 태그 각 1 · 탭 제목 엔진 확인 | Claude 가 14:29 확인 |
-| 2 | 👤 카카오톡 나와의 채팅에 첫 화면 주소 **와 건물 링크 하나**를 보내 미리보기 확인(건물 링크는 og:url 이 첫 화면이라 누르면 어디로 가는지도 본다) · 옛 미리보기면 카카오 개발자 콘솔 「도구 > 카카오톡 URL 메타정보 관리」(https://developers.kakao.com/docs/ko/tool/common)에서 캐시 초기화 · 그림은 JPG/PNG 만 | 카카오톡 |
-| 3 | 👤 구글 서치콘솔 — `vercel.app` 은 우리 도메인이 아니라 DNS 확인이 안 되므로 **URL 접두어 속성**으로 등록 → 확인용 meta 태그(또는 HTML 파일)를 받아 Claude 에게 → **Claude PR → 배포** → 👤 확인 단추 → sitemap 제출 | search.google.com/search-console · 확인 meta 는 `test_seo_head` 개수 가드에 안 걸린다(이름이 다름) |
-| 4 | 👤 네이버 서치어드바이저 — 같은 순서(확인 meta/HTML 파일 → Claude PR → 배포 → 확인) → sitemap 제출(수집요청은 하루 개수 제한) | searchadvisor.naver.com |
+| 2 | 👤 **집에서**(크롬 확장은 카카오 로그인을 대신 못 한다 — 17:0x 로그인 화면에서 멈춤) 카카오톡 나와의 채팅에 첫 화면 주소 **와 건물 링크 하나**를 보내 미리보기 확인(건물 링크는 og:url 이 첫 화면이라 누르면 어디로 가는지도 본다) · 옛 미리보기면 카카오 개발자 콘솔 「도구 > 카카오톡 URL 메타정보 관리」(https://developers.kakao.com/docs/ko/tool/common)에서 캐시 초기화 · 그림은 JPG/PNG 만 | 카카오톡 |
+| 3 | ✅ **2026-10-09 17:2x Claude 가 사장님 크롬으로 끝냄** — 속성(URL 접두어) 생성 → HTML 태그 #265 main bec2416 → 배포 확인(첫 HTML meta 1) → 「소유권이 확인됨」 → `sitemap.xml` 제출(첫 상태 **'가져올 수 없음'** — 제출 직후 흔한 표시 · 다음 세션에 '성공'으로 바뀌었나 재확인) → 첫 화면 「색인 생성 요청」은 **'일일 할당량 초과'**(새 속성 제한 · 사이트맵이 대신한다 · 급하면 내일 한 번). 리치 결과 테스트 = 유효 1(소프트웨어 앱) · 경고 2 선택사항. 원 계획: 👤 구글 서치콘솔 — `vercel.app` 은 우리 도메인이 아니라 DNS 확인이 안 되므로 **URL 접두어 속성**으로 등록 → 확인용 meta 태그(또는 HTML 파일)를 받아 Claude 에게 → **Claude PR → 배포** → 👤 확인 단추 → sitemap 제출 | search.google.com/search-console · 확인 meta 는 `test_seo_head` 개수 가드에 안 걸린다(이름이 다름) |
+| 4 | 👤 **집에서**(크롬 확장이 searchadvisor.naver.com 을 '안전 제한'으로 막는다 — 확장 사이트 권한을 열어 주시거나 직접 「웹마스터 도구 > 사이트 등록 > HTML 태그」의 `naver-site-verification` 한 줄을 Claude 에게) 네이버 서치어드바이저 — 같은 순서(확인 meta/HTML 파일 → Claude PR → 배포 → 확인) → sitemap 제출(수집요청은 하루 개수 제한) | searchadvisor.naver.com |
 | 5 | 👤 빙 웹마스터 — 서치콘솔 가져오기로 등록 가능(계정 몫) | bing.com/webmasters |
 | 6 | 👤 몇 주 뒤 챗GPT·클로드·퍼플렉시티·구글 AI 개요에 "서울 상가 건물 층별 분석" 류로 물어 우리 주소가 출처에 나오는지 · 같은 질문을 몇 주 간격으로 | AI 노출엔 계기판이 없다 |
 | 7 | 👤 몇 주 뒤 서치콘솔 실데이터(노출·클릭·색인·404)로 재점검 — 성과가 낮다고 바로 재작성하지 않기 | 같은 기간·같은 지표 |
