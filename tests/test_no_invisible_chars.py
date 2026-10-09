@@ -130,6 +130,7 @@ BINARY = (
     "public/icon-192.png",
     "public/icon-512.png",
     "public/icon-512-maskable.png",
+    "public/og-image.png",  # 링크 미리보기 그림(H 참고 — scripts/make_og_image.py · 👤 2026-10-09)
 )
 
 # ── UTF-8 로 안 풀리는 추적 파일 (명시 제외) ────────────────────────────────────

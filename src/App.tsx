@@ -19,6 +19,7 @@ import { FOUNDER_CHIP_ALL, type FounderChip } from './lib/founderChips';
 import { entryBlockOrder, type EntryBlockKey, type ViewerRole } from './lib/sectionCards';
 import { supabase } from './lib/supabase';
 import { buildAppSearch, buildShareUrl, isSameSearch, parseAppUrl } from './lib/urlState';
+import { pageTitle } from './lib/seo';
 import { loadViewerRole, saveViewerRole } from './lib/viewerRoleStore';
 import type { BuildingHit, FloorRow } from './types';
 
@@ -161,6 +162,14 @@ export default function App() {
   }, [sigungu, selected, restoring, restoreFailed]);
 
   /*
+    탭 제목 — 건물을 고르면 그 이름, 풀면 첫 화면 제목으로 돌아온다(정본 = `src/lib/seo.ts`).
+    즐겨찾기·탭 여러 개·방문 기록에서 어느 건물인지 보이게 한다.
+  */
+  useEffect(() => {
+    document.title = pageTitle(selected?.bld_nm);
+  }, [selected?.bld_nm]);
+
+  /*
     지금 화면의 온전한 주소. **링크 복사 버튼과 종이 머리글이 같은 값을 쓴다** — 두 곳에서
     따로 만들면 언젠가 한쪽만 고쳐져 "복사한 주소"와 "종이에 적힌 주소"가 갈린다.
     건물을 안 골랐으면 첫 화면 주소가 되는데, 쓰는 자리가 둘 다 `selected` 안이라 무해하다.
@@ -253,101 +262,107 @@ export default function App() {
         </p>
       </header>
 
-      {/* 역할 단추 줄 — 지역 고르기 바로 위(👤 결정 0036 결정 18 ⑧). */}
-      <RolePicker role={viewerRole} onChange={handlePickRole} />
-
-      <RegionPicker
-        selectedSigungu={sigungu}
-        onSelectSigungu={handleSelectSigungu}
-        onSigunguNameResolved={handleSigunguNameResolved}
-      />
-
       {/*
-        입구 두 덩어리(검색창·상권 지도). 차례는 역할이 정한다 — 창업자만 지도가 위(👤 결정 0036
-        결정 18 ④ · `entryBlockOrder`). ⛔ 조건부 JSX 로 두 자리에 나눠 그리지 않는다 — 이름 key 를
-        단 배열이라 차례가 바뀌어도 **같은 조각이 자리만 옮긴다**(검색어·검색 결과·지도가 다시
-        태어나지 않는다 · `App.test` 가 DOM 조각이 같은 물건인지 본다).
+        본문 자리(`<main>` — 검색 봇·화면 읽기 프로그램이 "여기가 본론"을 알게). 머리글·종이 머리글·
+        바닥글은 밖에 둔다. ⓘ CSS 는 안 붙였다 — `.app` 에 자식 선택자가 없어 감싸도 배치가 그대로다.
       */}
-      {entryBlockOrder(viewerRole).map((k) => (
-        <Fragment key={k}>{entryBlocks[k]}</Fragment>
-      ))}
+      <main className="app__main">
+        {/* 역할 단추 줄 — 지역 고르기 바로 위(👤 결정 0036 결정 18 ⑧). */}
+        <RolePicker role={viewerRole} onChange={handlePickRole} />
 
-      {/*
-        입구에서만 서는 카드 — LH 상가 분양·입점 공고.
+        <RegionPicker
+          selectedSigungu={sigungu}
+          onSelectSigungu={handleSelectSigungu}
+          onSigunguNameResolved={handleSigunguNameResolved}
+        />
 
-        ⛔ 조건 셋을 모두 만족할 때만 그린다: **구를 골랐고**(물을 곳이 정해졌다),
-           **건물을 아직 안 골랐고**(고르면 화면의 주제가 그 건물이라 분석을 어지럽히지
-           않는다), **링크로 되살리는 중도 아니다**(곧 건물이 서는데 카드를 먼저 그리면
-           나타났다 사라진다). 건물 선택을 풀면 다시 보인다.
-        ⓘ `key` 를 일부러 안 준다 — 같은 시도 안에서 구만 바꾸면(강남구 → 서초구) 답이
-          같으므로 다시 묻지 않는 것이 맞다. 카드가 시도 코드에만 매여 있다.
-      */}
-      {sigungu !== null && selected === null && !restoring && <LhNoticeSection sigungu={sigungu} />}
+        {/*
+          입구 두 덩어리(검색창·상권 지도). 차례는 역할이 정한다 — 창업자만 지도가 위(👤 결정 0036
+          결정 18 ④ · `entryBlockOrder`). ⛔ 조건부 JSX 로 두 자리에 나눠 그리지 않는다 — 이름 key 를
+          단 배열이라 차례가 바뀌어도 **같은 조각이 자리만 옮긴다**(검색어·검색 결과·지도가 다시
+          태어나지 않는다 · `App.test` 가 DOM 조각이 같은 물건인지 본다).
+        */}
+        {entryBlockOrder(viewerRole).map((k) => (
+          <Fragment key={k}>{entryBlocks[k]}</Fragment>
+        ))}
 
-      {/*
-        입구의 두 번째 카드 — 참고 시세 성적표(로드맵 Wave 4).
+        {/*
+          입구에서만 서는 카드 — LH 상가 분양·입점 공고.
 
-        ⛔ **LH 공고 뒤에 둔다.** 앞의 것은 "지금 무엇이 열려 있나"(할 일)이고 이쪽은
-           "우리 값을 얼마나 믿어도 되나"(읽을거리)라, 순서를 바꾸면 입구에서 먼저 눈에
-           드는 것이 뒤바뀐다.
-        ⓘ 조건은 LH 카드와 **똑같다** — 구를 골랐고, 건물은 아직 안 골랐고, 되살리는
-          중도 아니다. 건물을 고르면 화면의 주제가 그 건물이므로 함께 물러난다.
-        ⓘ `key` 를 일부러 안 준다 — 서버 함수가 열린 구 **전부**를 한 번에 주므로 구를
-          바꿔도 다시 물을 것이 없다(카드가 받아 둔 목록에서 그 구 줄만 골라 쓴다).
-      */}
-      {sigungu !== null && selected === null && !restoring && (
-        <ScorecardSection sigungu={sigungu} />
-      )}
+          ⛔ 조건 셋을 모두 만족할 때만 그린다: **구를 골랐고**(물을 곳이 정해졌다),
+             **건물을 아직 안 골랐고**(고르면 화면의 주제가 그 건물이라 분석을 어지럽히지
+             않는다), **링크로 되살리는 중도 아니다**(곧 건물이 서는데 카드를 먼저 그리면
+             나타났다 사라진다). 건물 선택을 풀면 다시 보인다.
+          ⓘ `key` 를 일부러 안 준다 — 같은 시도 안에서 구만 바꾸면(강남구 → 서초구) 답이
+            같으므로 다시 묻지 않는 것이 맞다. 카드가 시도 코드에만 매여 있다.
+        */}
+        {sigungu !== null && selected === null && !restoring && <LhNoticeSection sigungu={sigungu} />}
 
-      {/*
-        입구의 세 번째 카드 — 동네 매매 단가 흐름(결정 0027).
+        {/*
+          입구의 두 번째 카드 — 참고 시세 성적표(로드맵 Wave 4).
 
-        ⛔ **성적표 뒤에 둔다.** 앞의 것은 "우리 값을 얼마나 믿어도 되나"(믿음의 근거)이고
-           이쪽은 "그래서 흐름은 어땠나"(읽을거리)라, 믿음의 근거가 먼저 오는 편이 맞다.
-        ⓘ 조건은 앞의 두 카드와 **똑같다** — 구를 골랐고, 건물은 아직 안 골랐고, 되살리는
-          중도 아니다. 건물을 고르면 화면의 주제가 그 건물이므로 함께 물러난다.
-        ⓘ `key` 를 일부러 안 준다 — 구가 바뀌면 `sigungu` prop 이 바뀌고 카드가 스스로
-          다시 묻는다(카드 안의 `useEffect` 가 그 값에 매여 있다).
-      */}
-      {sigungu !== null && selected === null && !restoring && <TxFlowSection sigungu={sigungu} />}
+          ⛔ **LH 공고 뒤에 둔다.** 앞의 것은 "지금 무엇이 열려 있나"(할 일)이고 이쪽은
+             "우리 값을 얼마나 믿어도 되나"(읽을거리)라, 순서를 바꾸면 입구에서 먼저 눈에
+             드는 것이 뒤바뀐다.
+          ⓘ 조건은 LH 카드와 **똑같다** — 구를 골랐고, 건물은 아직 안 골랐고, 되살리는
+            중도 아니다. 건물을 고르면 화면의 주제가 그 건물이므로 함께 물러난다.
+          ⓘ `key` 를 일부러 안 준다 — 서버 함수가 열린 구 **전부**를 한 번에 주므로 구를
+            바꿔도 다시 물을 것이 없다(카드가 받아 둔 목록에서 그 구 줄만 골라 쓴다).
+        */}
+        {sigungu !== null && selected === null && !restoring && (
+          <ScorecardSection sigungu={sigungu} />
+        )}
 
-      {selected ? (
-        <>
-          {/*
-            보고 있는 화면을 가지고 나가는 자리. 건물을 고른 뒤에만 보인다 — 고르기
-            전에는 담아 갈 것이 없다.
+        {/*
+          입구의 세 번째 카드 — 동네 매매 단가 흐름(결정 0027).
 
-            링크와 종이를 **한 줄에 둔다.** 둘 다 "다 보고 나서 남기는 방법"이라, 떨어뜨려
-            놓으면 하나만 있는 줄 안다(결정 0020).
-          */}
-          <div className="takeout">
-            <ShareButton url={shareUrl} label={selected.bld_nm} />
-            <PrintButton />
-          </div>
+          ⛔ **성적표 뒤에 둔다.** 앞의 것은 "우리 값을 얼마나 믿어도 되나"(믿음의 근거)이고
+             이쪽은 "그래서 흐름은 어땠나"(읽을거리)라, 믿음의 근거가 먼저 오는 편이 맞다.
+          ⓘ 조건은 앞의 두 카드와 **똑같다** — 구를 골랐고, 건물은 아직 안 골랐고, 되살리는
+            중도 아니다. 건물을 고르면 화면의 주제가 그 건물이므로 함께 물러난다.
+          ⓘ `key` 를 일부러 안 준다 — 구가 바뀌면 `sigungu` prop 이 바뀌고 카드가 스스로
+            다시 묻는다(카드 안의 `useEffect` 가 그 값에 매여 있다).
+        */}
+        {sigungu !== null && selected === null && !restoring && <TxFlowSection sigungu={sigungu} />}
 
-          {/*
-            층별 화면은 이 앱에서 가장 크고(카드 다섯 장) 바깥 자료를 가장 많이 다루는
-            자리다. 여기가 죽어도 위쪽 검색은 살아 있어야 다른 건물로 옮겨 갈 수 있다.
-          */}
-          <ErrorBoundary
-            key={`stack:${selected.bld_id}`}
-            area="층별 화면"
-            context={{ bld_id: selected.bld_id, sigungu }}
-          >
-            <FloorStack building={selected} viewerRole={viewerRole} founderChip={activeChip} />
-          </ErrorBoundary>
-        </>
-      ) : restoring ? (
-        <p className="msg msg--idle">링크에 담긴 건물을 불러오는 중입니다…</p>
-      ) : restoreFailed ? (
-        // 층 자료가 없는 건물(239동)이거나 서버가 잠깐 흔들린 경우다. 어느 쪽이든
-        // 빈 화면을 그리지 않고 다음에 할 일을 알려 준다.
-        <p className="msg msg--idle">
-          링크에 담긴 건물을 찾지 못했습니다. 위에서 건물을 검색해 선택해 주세요.
-        </p>
-      ) : (
-        <p className="msg msg--idle">위에서 건물을 검색해 선택해 주세요.</p>
-      )}
+        {selected ? (
+          <>
+            {/*
+              보고 있는 화면을 가지고 나가는 자리. 건물을 고른 뒤에만 보인다 — 고르기
+              전에는 담아 갈 것이 없다.
+
+              링크와 종이를 **한 줄에 둔다.** 둘 다 "다 보고 나서 남기는 방법"이라, 떨어뜨려
+              놓으면 하나만 있는 줄 안다(결정 0020).
+            */}
+            <div className="takeout">
+              <ShareButton url={shareUrl} label={selected.bld_nm} />
+              <PrintButton />
+            </div>
+
+            {/*
+              층별 화면은 이 앱에서 가장 크고(카드 다섯 장) 바깥 자료를 가장 많이 다루는
+              자리다. 여기가 죽어도 위쪽 검색은 살아 있어야 다른 건물로 옮겨 갈 수 있다.
+            */}
+            <ErrorBoundary
+              key={`stack:${selected.bld_id}`}
+              area="층별 화면"
+              context={{ bld_id: selected.bld_id, sigungu }}
+            >
+              <FloorStack building={selected} viewerRole={viewerRole} founderChip={activeChip} />
+            </ErrorBoundary>
+          </>
+        ) : restoring ? (
+          <p className="msg msg--idle">링크에 담긴 건물을 불러오는 중입니다…</p>
+        ) : restoreFailed ? (
+          // 층 자료가 없는 건물(239동)이거나 서버가 잠깐 흔들린 경우다. 어느 쪽이든
+          // 빈 화면을 그리지 않고 다음에 할 일을 알려 준다.
+          <p className="msg msg--idle">
+            링크에 담긴 건물을 찾지 못했습니다. 위에서 건물을 검색해 선택해 주세요.
+          </p>
+        ) : (
+          <p className="msg msg--idle">위에서 건물을 검색해 선택해 주세요.</p>
+        )}
+      </main>
 
       {/*
         무엇을 보던 중이었는지를 의견함이 함께 실어 보낸다 — 사람이 손으로 적지 않아도
