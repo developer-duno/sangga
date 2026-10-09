@@ -1,0 +1,14 @@
+{
+  "name": "상가 층별 스택뷰",
+  "short_name": "상가 스택뷰",
+  "description": "서울·대전 상가 건물을 층별·업종별로 보는 공공데이터 공간분석",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f7f8",
+  "theme_color": "#2f5fd0",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
