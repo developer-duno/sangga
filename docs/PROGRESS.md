@@ -2468,8 +2468,10 @@ pytest **4,457 passed**(본 폴더) · vitest **960 passed** · tsc 0 · oxlint 
 | OpenAI | OAI-SearchBot | ChatGPT-User | GPTBot |
 | Anthropic | Claude-SearchBot | Claude-User | ClaudeBot |
 | Perplexity | PerplexityBot | Perplexity-User | — |
+| 빙 | bingbot(공식 도움말 페이지는 도구가 못 열어 2차 자료 — 미확인) | — | — |
 
 ⓘ 네이버 Yeti 공식 페이지는 도구가 막혀 못 열었다(미확인) — `User-agent: *` 전부 허용이라 따로 적을 줄은 없다.
+ⓘ 사용자 요청형(ChatGPT-User·Perplexity-User)은 "사람이 시작한 요청이라 robots.txt 가 적용되지 않을 수 있다"(오픈AI)·"대체로 robots.txt 를 무시한다"(퍼플렉시티) — 공식 문서 원문. 막을 수도 없고 막을 이유도 없다. 구글 공식: Google-Extended 는 "별도 user agent 가 없는 제어 토큰 · 검색 포함에 영향 없음".
 
 **무엇**(A~M):
 - `index.html` 머리글 — 제목(A) · 설명(B) · canonical(C) · og 10줄 + twitter 4줄(D · 각 한 번씩) · JSON-LD `WebApplication` 한 덩어리(E — 이름·주소·설명·한국어·무료·분류만 · 평점·후기·조직·가격 0). **CRLF 그대로**.
@@ -2497,7 +2499,7 @@ pytest **4,457 passed**(본 폴더) · vitest **960 passed** · tsc 0 · oxlint 
 | 1 | 라이브 `/robots.txt`·`/sitemap.xml`·`/og-image.png` 가 열리는지 | Claude 가 확인 |
 | 2 | 구글 서치콘솔에 사이트 등록 → sitemap 제출 | search.google.com/search-console |
 | 3 | 네이버 서치어드바이저에 사이트 등록 → sitemap 제출 | searchadvisor.naver.com |
-| 4 | 카카오톡에 주소를 보내 미리보기 그림 확인(옛 미리보기가 남으면 카카오 쪽 캐시 초기화 — 도구 위치는 그때 공식 문서로 확인) | 카카오톡 |
+| 4 | 카카오톡에 주소를 보내 미리보기 그림 확인(옛 미리보기가 남으면 카카오 개발자 콘솔 「도구 > 카카오톡 URL 메타정보 관리」에서 og 값 조회·공유 미리보기·캐시 초기화 — https://developers.kakao.com/docs/ko/tool/common · 그림은 JPG/PNG 만) | 카카오톡 |
 
 ## 2026-10-09 (5) — 파비콘: Vite 기본 번개 → 「건물 둘」 (👤 결정)
 
