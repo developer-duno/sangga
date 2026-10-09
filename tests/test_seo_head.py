@@ -274,3 +274,47 @@ def test_control_robots_disallow_and_wrong_sitemap_are_caught():
 def test_control_png_size_reads_ihdr():
     fake = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\x0dIHDR" + struct.pack(">II", 640, 480) + b"\x08\x02\x00\x00\x00"
     assert png_size(fake) == (640, 480)
+
+# ── 정적 소개문(👤 2026-10-09 초안 B) — JS 를 안 돌리는 봇이 읽는 본문 ────────────────────
+
+INTRO_FIRST = "상가 층별 스택뷰는 서울·대전의 상가 건물을 찾으면"
+INTRO_LAST = "로그인 없이 바로 쓸 수 있습니다."
+_ROOT_RE = re.compile(r'<div id="root">(.*?)</div>', re.S)
+_INTRO_RE = re.compile(r'<p class="seo-intro">(.*?)</p>', re.S)
+
+
+def intro_problems(html):
+    """`#root` 안 정적 소개문의 문제를 글 목록으로 낸다(빈 목록 = 정상).
+    ⚠️ 못 보는 것: `#root` 안에 중첩 div 가 생기면 첫 `</div>` 에서 끊긴다 · 문장 뜻(글자만 본다)."""
+    problems = []
+    root = _ROOT_RE.search(html)
+    if not root:
+        return ["#root 없음"]
+    intros = _INTRO_RE.findall(root.group(1))
+    if len(intros) != 1:
+        problems.append(f"#root 안 seo-intro 개수 {len(intros)}")
+        return problems
+    text = intros[0].strip()
+    if not text.startswith(INTRO_FIRST):
+        problems.append("소개문 첫 문장이 다름")
+    if not text.endswith(INTRO_LAST):
+        problems.append("소개문 끝 문장이 다름")
+    if banned_hits(text):
+        problems.append(f"소개문 금지어: {banned_hits(text)}")
+    if len(_INTRO_RE.findall(html)) != 1:
+        problems.append("seo-intro 가 #root 밖에도 있음")
+    return problems
+
+
+def test_index_root_has_static_intro():
+    assert intro_problems(_index()) == []
+
+
+def test_control_intro_missing_banned_and_outside_are_caught():
+    gone = _fake('<p class="seo-intro">', '<p class="seo-intro-x">')
+    assert any("개수 0" in p for p in intro_problems(gone))
+    banned = _fake('<p class="seo-intro">상가 층별 스택뷰는', '<p class="seo-intro">상가 층별 스택뷰는 감정가 ')
+    assert any("금지어" in p for p in intro_problems(banned))
+    outside = _fake("</body>", '<p class="seo-intro">x</p></body>')
+    assert any("밖에도" in p for p in intro_problems(outside))
+
