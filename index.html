@@ -28,7 +28,10 @@
     <script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebApplication", "name": "상가 층별 스택뷰", "url": "https://sangga-one.vercel.app/", "description": "서울·대전 상가 건물을 찾으면 층마다 용도·면적·점포를 쌓아 보여 주고, 실거래·참고 시세, 둘레의 업종 분포와 개업·폐업, 임대 동향까지 공공데이터로 봅니다. 무료 · 로그인 없음.", "inLanguage": "ko", "isAccessibleForFree": true, "applicationCategory": "BusinessApplication", "operatingSystem": "Any"}</script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- JS 를 안 돌리는 검색·AI 봇을 위한 정적 소개문(👤 2026-10-09 초안 B). React 가 그리면 바로 덮인다 — 사람 화면은 App 이 정본. -->
+      <p class="seo-intro">상가 층별 스택뷰는 서울·대전의 상가 건물을 찾으면 층마다 용도·면적·점포를 쌓아 보여 주는 무료 공공데이터 서비스입니다. 건물을 고르면 실거래 기록, 둘레 500m 와 속한 상권의 업종 분포, 부동산원이 조사한 상권 임대료(조사 대상 상권인 건물만), 서울시가 공표한 상권 개업·폐업(서울만)을 함께 봅니다. 참고 시세는 검증을 통과한 구의 2층 이상에만 표시하고, 추정한 값에는 "추정"과 근거·표본 수를 적습니다. 자료는 건축물대장·소상공인 상권정보·상업용 실거래가·부동산원·서울시 열린데이터광장에서 받아 그대로 나릅니다. 로그인 없이 바로 쓸 수 있습니다.</p>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
