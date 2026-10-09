@@ -36,17 +36,20 @@
 --
 -- 실행 (머지 뒤 · Claude 가 dbx 로)
 -- --------------------------------
+--   ⚠️ 순서 = **2026-10-09c(점포 색인 include) 먼저 → 이 파일**(09c 머리말 — 디스크 % · 배치 창 밖).
 --   python scripts/dbx.py -f supabase/migrations/2026-10-09b_industry_floor.sql
---   → 이어서 python scripts/post_load.py --check (0 이어야 한다 — 층 분포 표 202606 · 합 대조 어긋남 0 ·
---     허용 목록에 api.list_industry_floors · 정본 색인 mv_district_industry_floor_key 있음)
+--   → 이어서 python scripts/post_load.py --check — **09c·09b 둘 다 적용한 뒤 0** 이어야 한다(층 분포 표
+--     202606 · 합 대조 어긋남 0 · 허용 목록에 api.list_industry_floors · 정본 색인 mv_district_industry_floor_key
+--     있음 · 09c 전에는 정본 색인 점검이 idx_ub_pnu_cat 의 INCLUDE 불일치로 [사고]다)
 --
 -- 적용 뒤 확인 (dbx + anon 키로 **화면 요청 그대로**)
 -- ------------------------------------------------
 --   select max(snapshot_ym), count(*) from mv_district_industry_floor;   -- 202606 · 형제보다 몇 배 많은 행
 --   select count(*) from (
 --     select district_id, cat_m_cd, sum(n) n from mv_district_industry_floor group by 1, 2) f
---   full join (select district_id, cat_m_cd, n from mv_district_industry_mix) m using (district_id, cat_m_cd)
---   where f.n is distinct from m.n;                                       -- 0
+--   full join (select district_id, cat_m_cd, n from mv_district_industry_mix) m
+--     on f.district_id = m.district_id and f.cat_m_cd is not distinct from m.cat_m_cd
+--   where f.n is distinct from m.n;                                       -- 0 (빈 중분류 열쇠도 짝을 찾게)
 --   select relname, relacl from pg_class where relname = 'mv_district_industry_floor';   -- anon 없음
 --   anon 키:
 --     POST /rest/v1/rpc/list_industry_floors {"p_pnu":"<강남 필지>","p_cat_l":"I2"}            → 200 · bands 열쇠 다섯

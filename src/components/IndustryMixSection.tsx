@@ -295,12 +295,23 @@ export function IndustryMixSection({
     (match !== null && match.catL === pickedCat ? match.catLNm : null);
 
   // 층 줄(물결 2-2) — 상세 블록 열쇠마다 그 범위의 층 묶음. 칩 줄은 칩의 대분류를 보고 있을 때만.
-  const floorScopes = floorScopeByKey(floors);
-  const chipFloorScopes = floorScopeByKey(
-    match !== null && match.catL === pickedCat ? chipFloors : null,
+  // ⛔ 그릴 때도 물어본 업종과 지금 업종을 견준다 — 대분류를 바꾼 첫 렌더에는 effect 가 아직 옛 답을
+  //    안 지웠으므로, 견주지 않으면 옛 업종의 층 숫자가 새 업종 이름표를 달고 한 번 그려진다.
+  const floorScopes = floorScopeByKey(
+    floors !== null && floors.cat_l_cd === pickedCat ? floors : null,
   );
-  const chipLabel = `${chip}(칩)`;
-  // 층 줄이 하나라도 그려지나 — 그때만 아래 '왜 다를 수 있나'에 「층 모름」을 단다(줄 없이 설명만 남기지 않는다).
+  const chipFloorScopes = floorScopeByKey(
+    match !== null &&
+      match.catL === pickedCat &&
+      chipFloors !== null &&
+      chipFloors.cat_l_cd === pickedCat &&
+      sameCatMs(chipFloors.cat_m_cds, match.catM)
+      ? chipFloors
+      : null,
+  );
+  // 개업·폐업 카드(OpenCloseSection)와 같은 말 — '칩'은 손님 말이 아니다.
+  const chipLabel = `고른 업종(${chip})`;
+  // 층 줄이 하나라도 그려지나 — 그때만 아래 '왜 다를 수 있나'에 「층 미상」을 단다(줄 없이 설명만 남기지 않는다).
   const floorsShown =
     pickedCat !== null &&
     !detailFailed &&
@@ -408,8 +419,8 @@ export function IndustryMixSection({
         </li>
         {floorsShown && (
           <li>
-            <strong>층 모름</strong> — 상권정보 원본에 층이 적히지 않은 가게가 있습니다. 그 가게들은
-            층별 숫자에 들어 있지 않습니다.
+            <strong>층 미상</strong> — 원본에 층이 비어 있거나 숫자 없이 &apos;지하&apos;라고만 적힌
+            가게입니다(지하라고만 적힌 가게는 아직 지하 칸에 세지 못했습니다).
           </li>
         )}
       </ul>

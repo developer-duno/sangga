@@ -540,3 +540,37 @@ class TestRealRun:
         # 202606 의 (상권·중분류) = I201 · I212 · G204 셋 — 202603 행은 두 표 다 안 굽는다.
         assert (mismatch, mix_rows, floor_rows) == ("0", "3", "3")
         assert post_load.judge_industry_floor_consistency(mismatch, mix_rows, floor_rows) is False
+
+    @pytest.mark.parametrize("mix_rows, floor_rows, want", [
+        # 음성 사례 — 층 표에 I212 열쇠가 없다(한쪽에만 있는 열쇠) → 어긋남 1.
+        ([("D1", "202606", "I201", 5), ("D1", "202606", "I212", 2)],
+         [("D1", "202606", "I201", "1", 5)],
+         ("1", "2", "1")),
+        # 빈 중분류(NULL) 열쇠가 양쪽에 같은 합으로 있다 → 짝을 찾아 어긋남 0
+        # (using/= 로 견주면 NULL 끼리 짝을 못 찾아 양쪽 한 줄씩 어긋남 2 로 늘 [낡음]).
+        ([("D1", "202606", None, 3)],
+         [("D1", "202606", None, "na", 1), ("D1", "202606", None, "1", 2)],
+         ("0", "1", "1")),
+        # 같은 NULL 열쇠라도 합이 다르면 잡는다.
+        ([("D1", "202606", None, 3)],
+         [("D1", "202606", None, "na", 1)],
+         ("1", "1", "1")),
+    ])
+    def test_post_load_consistency_sql_on_hand_made_tables(self, pg, mix_rows, floor_rows, want):
+        """합 대조 문장을 손으로 만든 두 표에 — 요약표에는 행을 못 넣으므로 같은 이름의 표를 다른 스키마에 둔다."""
+        c = pg.cursor()
+        c.execute("drop schema if exists consistency_case cascade; create schema consistency_case;"
+                  " set search_path to consistency_case;"
+                  " create table mv_district_industry_mix (district_id text, snapshot_ym char(6),"
+                  " cat_m_cd char(4), n int);"
+                  " create table mv_district_industry_floor (district_id text, snapshot_ym char(6),"
+                  " cat_m_cd char(4), floor_band text, n int);")
+        try:
+            c.executemany("insert into mv_district_industry_mix values (%s, %s, %s, %s)", mix_rows)
+            c.executemany("insert into mv_district_industry_floor values (%s, %s, %s, %s, %s)", floor_rows)
+            c.execute(post_load.INDUSTRY_FLOOR_CONSISTENCY_SQL)
+            got = tuple(c.fetchone()[0].split("|"))
+        finally:
+            c.execute("reset search_path; drop schema consistency_case cascade;")
+        assert got == want
+        assert post_load.judge_industry_floor_consistency(*got) is (got[0] != "0")

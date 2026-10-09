@@ -2317,12 +2317,12 @@ async function mockIndustryFloors(page: Page) {
 }
 
 test.describe('층별 스택뷰 — 업종별 층 분포', () => {
-  test('AO. 대분류를 고르면 블록마다 층 줄(층 미상 칸·%), 창업자 카페 칩이면 (칩) 줄이 하나 더, 412px 넘침 0', async ({
+  test('AO. 대분류를 고르면 블록마다 층 줄(층 미상 칸·%), 창업자 카페 칩이면 고른 업종 줄이 하나 더, 412px 넘침 0', async ({
     page,
   }) => {
-    const LINE_D = '층별 음식: 지하 4곳 · 1층 700곳 · 2층 150곳 · 3층 이상 80곳 · 층 미상 300곳 (24%)';
-    const LINE_R = '층별 음식: 지하 0곳 · 1층 100곳 · 2층 20곳 · 3층 이상 10곳 · 층 미상 20곳 (13%)';
-    const CHIP_D = '층별 카페(칩): 지하 0곳 · 1층 15곳 · 2층 3곳 · 3층 이상 0곳 · 층 미상 2곳 (10%)';
+    const LINE_D = '층별 음식: 지하 0곳 · 1층 36곳 · 2층 9곳 · 3층 이상 3곳 · 층 미상 12곳 (20%)';
+    const LINE_R = '층별 음식: 지하 2곳 · 1층 90곳 · 2층 24곳 · 3층 이상 9곳 · 층 미상 25곳 (17%)';
+    const CHIP_D = '층별 고른 업종(카페): 지하 0곳 · 1층 15곳 · 2층 3곳 · 3층 이상 0곳 · 층 미상 2곳 (10%)';
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
     await mockFloorStack(page, [], priceBands(), [floorRow()], industryMix());
@@ -2350,7 +2350,7 @@ test.describe('층별 스택뷰 — 업종별 층 분포', () => {
     const noOverflow = async () =>
       expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
 
-    // ① 역할 없이 — 대분류를 고르면 상권·반경 블록마다 한 줄 · 칩 줄 없음 · '층 모름' 설명 한 줄.
+    // ① 역할 없이 — 대분류를 고르면 상권·반경 블록마다 한 줄 · 칩 줄 없음 · '층 미상' 설명 한 줄.
     await page.goto('/');
     await pickGu(page, '서울', '강남구');
     await search(page, '테헤란로');
@@ -2364,13 +2364,15 @@ test.describe('층별 스택뷰 — 업종별 층 분포', () => {
     await expect(mix.locator('.mix__detail .mix__floors')).toHaveText([LINE_D, LINE_R]);
     await expect(mix.locator('.mix__floors--chip')).toHaveCount(0);
     await expect(mix.locator('.mix__why li')).toHaveCount(3);
-    await expect(mix.locator('.mix__why li').nth(2)).toContainText('층 모름');
+    await expect(mix.locator('.mix__why li').nth(2)).toContainText(
+      "층 미상 — 원본에 층이 비어 있거나 숫자 없이 '지하'라고만 적힌 가게입니다",
+    );
     await noOverflow();
     for (const el of await mix.locator('.mix__floors').all()) {
       expect(await el.evaluate((e) => e.scrollWidth - e.clientWidth)).toBeLessThanOrEqual(0);
     }
 
-    // ② 창업자 + 카페 칩 — 같은 대분류가 미리 골라지고 상권 블록에 (칩) 줄이 하나 더(반경은 칩 0곳이라 없음).
+    // ② 창업자 + 카페 칩 — 같은 대분류가 미리 골라지고 상권 블록에 '고른 업종(카페)' 줄이 하나 더(반경은 칩 0곳이라 없음).
     await page.goto('/');
     await roleBtn('창업자').click();
     await pickGu(page, '서울', '강남구');

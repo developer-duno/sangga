@@ -400,7 +400,8 @@ INDUSTRY_FLOOR_CONSISTENCY_SQL = (
     " from (select district_id, snapshot_ym, cat_m_cd, n from mv_district_industry_mix) m"
     " full join (select district_id, snapshot_ym, cat_m_cd, sum(n)::int as n"
     " from mv_district_industry_floor group by 1, 2, 3) f"
-    " using (district_id, snapshot_ym, cat_m_cd);"
+    " on f.district_id = m.district_id and f.snapshot_ym = m.snapshot_ym"
+    " and f.cat_m_cd is not distinct from m.cat_m_cd;"
 )
 
 

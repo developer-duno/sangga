@@ -1426,7 +1426,10 @@ class TestIndustryFloorChecks:
     def test_consistency_sql_is_ascii_and_compares_by_the_three_keys(self):
         sql = post_load.INDUSTRY_FLOOR_CONSISTENCY_SQL
         assert all(ord(ch) < 128 for ch in sql), "psql -c 로 가는 SQL 에 한글이 있으면 서버에서 죽습니다"
-        assert "full join" in sql and "using (district_id, snapshot_ym, cat_m_cd)" in sql
+        assert "full join" in sql and "using (" not in sql
+        # 빈 중분류(NULL) 열쇠도 짝을 찾게 — 그 칸만 is not distinct from (실제 실행은 test_industry_floor_migration).
+        assert "f.district_id = m.district_id and f.snapshot_ym = m.snapshot_ym" in sql
+        assert "f.cat_m_cd is not distinct from m.cat_m_cd" in sql
         assert "from mv_district_industry_mix" in sql and "from mv_district_industry_floor group by 1, 2, 3" in sql
         assert "f.n is distinct from m.n" in sql
 
