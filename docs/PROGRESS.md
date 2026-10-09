@@ -2450,6 +2450,57 @@ pytest **4,457 passed**(본 폴더) · vitest **960 passed** · tsc 0 · oxlint 
 
 **라이브 확인** ✅ (2026-10-09 06:17 반영 · playwright 엔진 — 넓은 화면·Pixel 7): 칩 6 · 칩 곁 안내 줄 · 창업자면 지도가 검색창 위 · 투자자면 칩 0 · 역할을 바꿔도 지도가 같은 물건(다시 안 태어남) · 412px 가로 넘침 0 · 미용·학원 칩 강조 · '상위에 없음' 줄. E2E 40 × 2.
 
+## 2026-10-09 (6) — 검색·AI 노출 기본 세팅(SEO/GEO)
+
+**왜**: 라이브 첫 HTML 이 제목 한 줄(473B)뿐이었다 — 설명 글·링크 미리보기(og)·정식 주소(canonical)·구조화 자료(JSON-LD) 0, `/robots.txt`·`/sitemap.xml` 은 404. 카카오톡 미리보기와 대부분의 AI 봇은 JS 를 안 돌려 **첫 HTML 글자만** 읽는다 — 화면이 아무리 좋아도 밖에서는 "상가 층별 스택뷰" 한 줄짜리 사이트였다.
+
+**👤 결정 넷**(2026-10-09 13:5x):
+1. **봇 정책 = 전부 허용** — 검색·AI 검색·사용자 요청형·**학습용까지**(GPTBot·ClaudeBot·Google-Extended 허용). robots.txt 에 Disallow 0.
+2. **설명 글** = 「서울·대전 상가 건물을 찾으면 층마다 용도·면적·점포를 쌓아 보여 주고, 실거래·참고 시세, 둘레의 업종 분포와 개업·폐업, 임대 동향까지 공공데이터로 봅니다. 무료 · 로그인 없음.」(금지어 0 · 화면에 실제로 있는 것만)
+3. **제목 셋** = 첫 화면 `상가 층별 스택뷰 — 서울·대전 상가 건물 층별 공공데이터` · 건물을 고르면 `<건물 이름> — 상가 층별 스택뷰` · 풀면 첫 화면 제목으로.
+4. **미리보기 그림은 직접 그린다** — 파비콘(5)과 같은 「건물 둘」 도형 + 서비스 이름(외부 생성 서비스 0).
+
+**봇 네 부류(공식 문서 요지 · 2026-10-09 메인 확인)** — 모두 robots.txt 의 `User-agent` 이름으로 따로 막을 수 있다(우리는 안 막는다):
+
+| 회사 | 검색·AI 검색 | 사용자 요청형 | 학습용 |
+|---|---|---|---|
+| 구글 | Googlebot | — | Google-Extended(크롤러가 아니라 학습 허락 표시) |
+| OpenAI | OAI-SearchBot | ChatGPT-User | GPTBot |
+| Anthropic | Claude-SearchBot | Claude-User | ClaudeBot |
+| Perplexity | PerplexityBot | Perplexity-User | — |
+| 빙 | bingbot(공식 도움말 페이지는 도구가 못 열어 2차 자료 — 미확인) | — | — |
+
+ⓘ 네이버 Yeti 공식 페이지는 도구가 막혀 못 열었다(미확인) — `User-agent: *` 전부 허용이라 따로 적을 줄은 없다.
+ⓘ 사용자 요청형(ChatGPT-User·Perplexity-User)은 "사람이 시작한 요청이라 robots.txt 가 적용되지 않을 수 있다"(오픈AI)·"대체로 robots.txt 를 무시한다"(퍼플렉시티) — 공식 문서 원문. 막을 수도 없고 막을 이유도 없다. 구글 공식: Google-Extended 는 "별도 user agent 가 없는 제어 토큰 · 검색 포함에 영향 없음".
+
+**무엇**(A~M):
+- `index.html` 머리글 — 제목(A) · 설명(B) · canonical(C) · og 10줄 + twitter 4줄(D · 각 한 번씩) · JSON-LD `WebApplication` 한 덩어리(E — 이름·주소·설명·한국어·무료·분류만 · 평점·후기·조직·가격 0). **CRLF 그대로**.
+- `public/robots.txt`(F — 전부 허용 + Sitemap 줄) · `public/sitemap.xml`(G — 첫 화면 주소 하나 · lastmod 없음).
+- `public/og-image.png` 1200×630 · 68KB(H) — `scripts/make_og_image.py`(PIL · 맑은 고딕 · 로컬 전용). ⓘ 제목은 92px 로는 도형 옆 자리(680px)를 넘어(708px) 스크립트가 **88px** 로 맞췄다.
+- `src/App.tsx` — 역할 단추부터 건물 화면·안내 문구까지를 `<main className="app__main">` 로 감쌌다(I · CSS 0 · 머리글·종이 머리글·바닥글은 밖).
+- `src/lib/seo.ts` — 탭 제목 정본(`SITE_NAME`·`HOME_TITLE`·`pageTitle`) + App 의 `useEffect` 한 줄(J).
+
+**지킴**:
+- `tests/test_seo_head.py`(K) — 태그 각 1개 · 제목·설명 글자 그대로 · 금지어 0 · 주소 전부 정식 주소 · robots Disallow 0 · sitemap `<loc>` 1개 · 그림 1200×630(IHDR 바이트 · Pillow 없이) · `seo.ts` 제목 = `index.html` 제목 · **양성 대조**(금지어 든 설명 · localhost canonical · og:title 두 번 · robots Disallow · PNG 머리)가 같은 탐지 함수를 지난다.
+- `src/lib/seo.test.ts` + `App.test.tsx` 한 건(L — 건물 고르기·풀기로 탭 제목 오감 · 변이 1건으로 빨강 확인).
+- `tests/test_no_invisible_chars.py` `BINARY` 표에 그림 등록(M).
+
+**안 한 것**:
+- sitemap 에 건물 주소(`?sgg=&bld=`) — 24만 동을 다 싣는 일은 별건(첫 화면 하나만).
+- `llms.txt` — 구글 공식 "안 쓴다".
+- FAQPage 구조화 자료 — 폐지.
+- CSP 헤더 — `vercel.json` 은 안 건드렸다(별건 👤).
+- 서치어드바이저(네이버)·서치콘솔(구글) 등록 — 👤 계정 몫.
+
+**👤 다음 할 일**(머지·배포 뒤 · 차례대로):
+
+| # | 할 일 | 어디서 |
+|---|---|---|
+| 1 | 라이브 `/robots.txt`·`/sitemap.xml`·`/og-image.png` 가 열리는지 | Claude 가 확인 |
+| 2 | 구글 서치콘솔에 사이트 등록 → sitemap 제출 | search.google.com/search-console |
+| 3 | 네이버 서치어드바이저에 사이트 등록 → sitemap 제출 | searchadvisor.naver.com |
+| 4 | 카카오톡에 주소를 보내 미리보기 그림 확인(옛 미리보기가 남으면 카카오 개발자 콘솔 「도구 > 카카오톡 URL 메타정보 관리」에서 og 값 조회·공유 미리보기·캐시 초기화 — https://developers.kakao.com/docs/ko/tool/common · 그림은 JPG/PNG 만) | 카카오톡 |
+
 ## 2026-10-09 (5) — 파비콘: Vite 기본 번개 → 「건물 둘」 (👤 결정)
 
 **왜**: 탭 아이콘이 개발 도구(Vite)가 기본으로 넣는 보라색 번개였다 — 서비스와 무관하고 같은 도구로 만든 사이트 수천 곳과 같은 그림(검색·AI 노출 세팅의 "생성기 잔재" 항목). 👤 "웹페이지에 알맞은 파비콘을 추천해서 달아줄래?"(13:0x) → 후보 9가지 그림 페이지(https://claude.ai/artifact/4mxe7GfwqyBsUjmCNNudxm — 층 스택·건물 실루엣·지도 핀·글자 4 + 👤 "상가는 건물이잖아"로 건물형 5) → **👤 G 「건물 둘(높은 것·낮은 상가)」**(13:3x).

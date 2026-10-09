@@ -1,0 +1,6 @@
+# 검색·AI 검색·사용자 요청형·학습용 봇 전부 허용 — 2026-10-09 사장님 결정
+# 막을 것은 robots 가 아니라 DB 권한으로(post_load.py --check)
+User-agent: *
+Allow: /
+
+Sitemap: https://sangga-one.vercel.app/sitemap.xml

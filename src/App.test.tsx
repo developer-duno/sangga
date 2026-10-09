@@ -735,3 +735,29 @@ describe('App — 창업자 입구 · 업종 칩 (결정 0036 결정 18 ④⑤�
     expect((screen.getByLabelText('업종 골라보기') as HTMLSelectElement).value).toBe('');
   });
 });
+
+/**
+ * 탭 제목(👤 2026-10-09 검색·AI 노출 기본 세팅 J) — 건물을 고르면 그 이름, 풀면 첫 화면 제목.
+ * 정본은 `lib/seo.ts`(첫 HTML `<title>` 과의 글자 대조는 `tests/test_seo_head.py`).
+ */
+describe('App — 탭 제목', () => {
+  it('건물을 고르면 "<건물 이름> — 상가 층별 스택뷰", 선택을 풀면 첫 화면 제목으로 돌아온다', async () => {
+    const { HOME_TITLE } = await import('./lib/seo');
+    openWith('');
+    render(<App />);
+    await pickGu('서울', '강남구');
+    expect(document.title).toBe(HOME_TITLE);
+
+    const input = screen.getByLabelText('건물명 또는 주소');
+    fireEvent.change(input, { target: { value: '테헤란로' } });
+    fireEvent.submit(input.closest('form')!);
+    fireEvent.click(await screen.findByRole('button', { name: /테스트빌딩/ }));
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+    expect(document.title).toBe('테스트빌딩 — 상가 층별 스택뷰');
+
+    // 새 검색을 걸면 선택이 풀린다 — 첫 화면 제목으로 돌아온다.
+    fireEvent.change(input, { target: { value: '역삼' } });
+    fireEvent.submit(input.closest('form')!);
+    await waitFor(() => expect(document.title).toBe(HOME_TITLE));
+  });
+});
