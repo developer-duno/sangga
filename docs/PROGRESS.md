@@ -2450,6 +2450,14 @@ pytest **4,457 passed**(본 폴더) · vitest **960 passed** · tsc 0 · oxlint 
 
 **라이브 확인** ✅ (2026-10-09 06:17 반영 · playwright 엔진 — 넓은 화면·Pixel 7): 칩 6 · 칩 곁 안내 줄 · 창업자면 지도가 검색창 위 · 투자자면 칩 0 · 역할을 바꿔도 지도가 같은 물건(다시 안 태어남) · 412px 가로 넘침 0 · 미용·학원 칩 강조 · '상위에 없음' 줄. E2E 40 × 2.
 
+## 2026-10-09 (5) — 파비콘: Vite 기본 번개 → 「건물 둘」 (👤 결정)
+
+**왜**: 탭 아이콘이 개발 도구(Vite)가 기본으로 넣는 보라색 번개였다 — 서비스와 무관하고 같은 도구로 만든 사이트 수천 곳과 같은 그림(검색·AI 노출 세팅의 "생성기 잔재" 항목). 👤 "웹페이지에 알맞은 파비콘을 추천해서 달아줄래?"(13:0x) → 후보 9가지 그림 페이지(https://claude.ai/artifact/4mxe7GfwqyBsUjmCNNudxm — 층 스택·건물 실루엣·지도 핀·글자 4 + 👤 "상가는 건물이잖아"로 건물형 5) → **👤 G 「건물 둘(높은 것·낮은 상가)」**(13:3x).
+
+**무엇**: `public/favicon.svg`(32 격자 · 도형만 · 스크립트·외부 주소 0) + 같은 좌표를 PIL 로 그린 `favicon.ico`(16·32·48)·`apple-touch-icon.png`(180)·`icon-192.png`·`icon-512.png`·`icon-512-maskable.png`(파란 바탕 꽉 채움) + `site.webmanifest`(이름·색·아이콘 셋 — 비밀값 0) · `index.html` 머리글에 ico·svg·apple-touch·manifest·`theme-color`(화면 강조색 #2f5fd0) 다섯 줄. 색 = 화면 강조 파랑 · 바닥 띠 = 지하 색(옅은 모래색). 외부 아이콘 생성 서비스에 올린 것 0(👤 "만들면서 보안도 함께" 13:3x). ⓘ 생성 스크립트는 세션 스크래치(PIL · `SHAPES` 표가 SVG 와 글자 그대로 같은 좌표) — 모양을 바꾸면 SVG 와 PNG 를 함께 다시 그린다.
+
+**지킴**: `tests/test_no_invisible_chars.py` `BINARY` 표에 PNG·ICO 다섯 등록(표 밖이면 빨강) · `pnpm build` 통과(dist 에 8파일 + 머리글 5줄 확인) · 보안 헤더(`vercel.json` — nosniff·X-Frame-Options DENY·Referrer-Policy)는 그대로. 검색 노출(description·og·robots·sitemap)은 **이 PR 밖** — SEO/GEO 작업에서(👤 "DB 적용 뒤 실행").
+
 ## 2026-10-09 (4) — 업종별 층 분포 (물결 2-2)
 
 **왜**: 창업자가 업종 다음에 묻는 것은 "그 가게들이 **몇 층**에 있나"다(1층 카페 동네인지, 2층 이상 학원 동네인지). 점포 표에 층 칸(`unit_business.floor_no`)은 이미 있다 — 다만 절반쯤이 비어 있어(202606 전국 2,772,484행 중 NULL 1,393,405 = 50.3%) 층 미상을 숨기지 않고 함께 센다.

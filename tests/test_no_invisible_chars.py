@@ -124,6 +124,12 @@ POSITIONS = {
 BINARY = (
     "docs/archive/budongsan-data-2026-08-06.skill",  # 쓰지 않는 옛 스킬 원본(2026-10-09 옮김 — CLAUDE.md 13줄)
     "소상공인365 사용자매뉴얼_오픈 API 신청 및 활용.pdf",
+    # 파비콘 세트(2026-10-09 👤 G '건물 둘' — public/favicon.svg 와 같은 좌표를 PIL 로 그린 PNG·ICO · 외부 서비스 0)
+    "public/apple-touch-icon.png",
+    "public/favicon.ico",
+    "public/icon-192.png",
+    "public/icon-512.png",
+    "public/icon-512-maskable.png",
 )
 
 # ── UTF-8 로 안 풀리는 추적 파일 (명시 제외) ────────────────────────────────────
