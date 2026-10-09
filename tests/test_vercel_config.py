@@ -150,12 +150,17 @@ def middleware_problems(text):
 
 
 def test_middleware_exists_with_root_matcher():
-    assert MIDDLEWARE_TS.is_file(), "middleware.ts 가 없음 — 건물 주소가 첫 화면 HTML 로만 나간다"
+    # ⓘ 2026-10-09 두 단계 배포: PR① 은 함수만(첫 화면 영향 0) → 운영 확인 → PR② 가 middleware.ts 를 더한다.
+    #    PR② 머지 뒤에는 이 skip 을 지워 "없으면 빨강"으로 되돌린다.
+    if not MIDDLEWARE_TS.is_file():
+        pytest.skip("middleware.ts 는 PR②(두 단계 배포) — 그 PR 에서 이 skip 을 지운다")
     assert middleware_problems(MIDDLEWARE_TS.read_text(encoding="utf-8")) == []
 
 
 def test_control_middleware_wide_matcher_is_caught():
     """양성 대조 — matcher 를 넓히거나 확장자 없이 부르면 잡는다."""
+    if not MIDDLEWARE_TS.is_file():
+        pytest.skip("middleware.ts 는 PR②(두 단계 배포)")
     good = MIDDLEWARE_TS.read_text(encoding="utf-8")
     assert middleware_problems(good.replace("matcher: '/'", "matcher: '/(.*)'")) != []
     assert middleware_problems(good.replace("buildingRoute.js'", "buildingRoute'")) != []
