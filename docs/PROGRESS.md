@@ -2516,6 +2516,8 @@ pytest **4,457 passed**(본 폴더) · vitest **960 passed** · tsc 0 · oxlint 
 **안 한 것**:
 - sitemap 에 건물 주소(`?sgg=&bld=`) — 24만 동을 다 싣는 일은 별건(첫 화면 하나만).
 - `llms.txt` — 구글 공식 "안 쓴다".
+- ~~IndexNow~~ → ✅ **2026-10-09 16:5x IndexNow 열쇠 파일 + 알림 스크립트**(`public/12c00fba9aca9a86435817c17a3c8b89.txt` · `scripts/indexnow_ping.py` · 가드 `tests/test_indexnow.py` 6) — 빙·네이버(·Yandex·Seznam·Yep)가 같이 쓰는 "이 주소가 바뀌었다" 알림 규격(공식 https://www.indexnow.org/documentation · 네이버 2023-07 지원 공지). 열쇠는 비밀이 아니다(루트의 `/<key>.txt` 가 주인 표식) · `api.indexnow.org` 한 곳에 보내면 참여 엔진 전부가 나눠 받는다 · **구글은 참여 안 함** · 200 은 '받았다'일 뿐 색인 보장 아님. ⚠️ 네이버가 서치어드바이저 **소유 확인 전**에도 받는지는 공식 안내를 못 열어 미확인(도구가 searchadvisor.naver.com 을 막는다) — 👤 등록 뒤 재전송하면 된다. 쓰는 때 = 첫 HTML·sitemap 이 바뀐 배포 뒤 · 새 분기 적재 뒤.
+- ⓘ **구글 리치 결과 테스트(2026-10-09 16:5x)**: 「유효한 항목 1개(소프트웨어 앱)」 · 경고 2 = `offers`·`aggregateRating` 누락(**선택사항** — 가짜 값 금지라 그대로 둔다 · 위 ⓘ 예측이 맞았다). PageSpeed 휴대폰(16:47): 성능 98 · 접근성 100 · 권장사항 100 · 검색엔진 최적화 100 · LCP 2.0초 · CLS 0.018 — 고칠 것 없음.
 - FAQPage 구조화 자료 — 폐지.
 - CSP 헤더 — `vercel.json` 은 안 건드렸다(별건 👤).
 - 서치어드바이저(네이버)·서치콘솔(구글) 등록 — 👤 계정 몫.

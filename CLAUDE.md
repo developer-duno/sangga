@@ -147,6 +147,7 @@ python scripts/check_new_sangkwon_quarter.py    # 새 분기 스냅샷이 떴나
 python scripts/check_district_source_update.py  # 상권 원천(서울·소진공) 수정일이 바뀌었나 (읽기만, 키 불필요)
 python scripts/check_watch_heartbeat.py         # 예약 6종이 아직 돌고 있나 (읽기만, 키 불필요 — 멈춤=exit 1 · 조회·판정 실패=2 · 결과 쓰기 실패=4)
 python scripts/check_live_health.py             # 라이브 사이트가 서 있나 (읽기만, 키 불필요 — 반쪽 배포까지 잡는다)
+python scripts/indexnow_ping.py                 # 첫 HTML·sitemap 이 바뀐 배포 뒤 빙·네이버에 '바뀌었다' 알림(IndexNow · 키 불필요 · 구글은 안 받음 · --dry-run 은 네트워크 0)
 python scripts/check_lh_notices.py              # 기준선 이후 새 LH 상가 공고가 떴나 (읽기만 — .env 의 MOLIT_KEY 사용, 새 공고면 exit 1 · 조회 실패=2 · 결과 쓰기 실패=4)
 python scripts/check_data_freshness.py          # '다음 갱신 예정'이 지난 자료가 있나 (읽기만 — .env 의 공개키 사용, 지남=exit 1 · 화면 분기 섞임=exit 1 · 조회 실패=2 · 변수 없음=3 · 결과 쓰기 실패=4)
 python scripts/collectors/collect_lh_notices.py --dry-run   # LH 상가 공고 수집 미리보기 (DB 쓰기 0)
