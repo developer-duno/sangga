@@ -7,11 +7,21 @@
      `index.html`·`public/og-image.png`(scripts/make_og_image.py)·`public/site.webmanifest` description·`tests/test_seo_head.py`·이 파일을 함께 고친다.
 */
 
+import { shortAddr } from './buildingHead';
+
 export const SITE_NAME = '상가 층별 스택뷰';
 
 export const HOME_TITLE = '상가 층별 스택뷰 — 서울·대전 상가 건물 층별 공공데이터';
 
-/** 건물을 골랐으면 `<건물 이름> — 상가 층별 스택뷰`, 아니면(없음·빈 이름) 첫 화면 제목. */
-export function pageTitle(bldNm: string | null | undefined): string {
-  return bldNm ? `${bldNm} — ${SITE_NAME}` : HOME_TITLE;
+/**
+ * 건물을 골랐으면 서버 조각(결정 0037)의 첫 HTML 제목과 **같은 꼴** —
+ * `<이름> — <도로명에서 시·도를 뗀 것> | 상가 층별 스택뷰`, 도로명이 없으면 `<이름> | 상가 층별 스택뷰`.
+ * 이름이 없으면(없음·빈 이름) 첫 화면 제목.
+ * ⛔ 주소 줄이기는 `buildingHead.ts` 의 `shortAddr` 하나를 함께 쓴다 — 따로 만들면 탭 제목과 첫 HTML 제목이 갈린다.
+ */
+export function pageTitle(bldNm: string | null | undefined, roadAddr?: string | null): string {
+  const name = bldNm?.trim();
+  if (!name) return HOME_TITLE;
+  const road = roadAddr?.trim();
+  return road ? `${name} — ${shortAddr(road)} | ${SITE_NAME}` : `${name} | ${SITE_NAME}`;
 }

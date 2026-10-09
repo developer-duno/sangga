@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.95.1",
+    "@vercel/functions": "^3.9.11",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-kakao-maps-sdk": "^1.2.2"

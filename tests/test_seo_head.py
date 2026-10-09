@@ -213,13 +213,61 @@ def test_robots_allows_all_and_points_to_sitemap():
     assert robots_problems(ROBOTS.read_text(encoding="utf-8")) == []
 
 
-def test_sitemap_has_exactly_one_canonical_loc():
-    ns = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
-    root = ET.parse(SITEMAP).getroot()
-    assert root.tag == "{http://www.sitemaps.org/schemas/sitemap/0.9}urlset"
-    locs = [el.text for el in root.findall("s:url/s:loc", ns)]
-    assert locs == [CANONICAL]
-    assert root.findall("s:url/s:lastmod", ns) == []
+_SM = "{http://www.sitemaps.org/schemas/sitemap/0.9}"
+_SM_NS = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+_BUILDING_SITEMAP_RE = re.compile(r"^sitemap-buildings-\d+\.xml$")
+
+
+def sitemap_problems(public_dir):
+    """`sitemap.xml`(색인) 과 그것이 나열한 파일들의 문제를 글 목록으로 낸다(빈 목록 = 정상 · 결정 0037).
+    ⚠️ 못 보는 것: 건물 주소가 실제로 있는 건물인지(DB 를 안 본다 — scripts/build_sitemap.py 가 고른다) ·
+       색인에 안 실린 채 public/ 에 남은 다른 이름의 xml."""
+    problems = []
+    index = ET.parse(public_dir / "sitemap.xml").getroot()
+    if index.tag != _SM + "sitemapindex":
+        return ["sitemap.xml 이 sitemapindex 가 아님: {}".format(index.tag)]
+    listed = [el.text or "" for el in index.findall("s:sitemap/s:loc", _SM_NS)]
+    if not listed or listed[0] != CANONICAL + "sitemap-home.xml":
+        problems.append("색인 첫 줄이 sitemap-home.xml 이 아님: {}".format(listed[:1]))
+    if index.findall("s:sitemap/s:lastmod", _SM_NS):
+        problems.append("색인에 lastmod 있음")
+    names = []
+    for loc in listed:
+        if not loc.startswith(CANONICAL):
+            problems.append("색인 주소가 정식 주소 아님: {}".format(loc))
+            continue
+        name = loc[len(CANONICAL):]
+        names.append(name)
+        if not (public_dir / name).is_file():
+            problems.append("색인이 나열한 파일이 public/ 에 없음: {}".format(name))
+    on_disk = sorted(p.name for p in public_dir.iterdir() if _BUILDING_SITEMAP_RE.match(p.name))
+    for name in on_disk:
+        if name not in names:
+            problems.append("색인에 안 실린 건물 사이트맵: {}".format(name))
+    for name in names:
+        path = public_dir / name
+        if not path.is_file():
+            continue
+        root = ET.parse(path).getroot()
+        if root.tag != _SM + "urlset":
+            problems.append("{} 이 urlset 이 아님".format(name))
+            continue
+        locs = [el.text or "" for el in root.findall("s:url/s:loc", _SM_NS)]
+        if root.findall("s:url/s:lastmod", _SM_NS):
+            problems.append("{} 에 lastmod 있음".format(name))
+        if name == "sitemap-home.xml" and locs != [CANONICAL]:
+            problems.append("sitemap-home.xml 의 loc 이 첫 화면 하나가 아님: {}".format(locs))
+        if _BUILDING_SITEMAP_RE.match(name):
+            if len(locs) > 50000:
+                problems.append("{} 주소 {}개 — 50,000 초과".format(name, len(locs)))
+            bad = [loc for loc in locs if not loc.startswith(CANONICAL + "?sgg=")]
+            if bad:
+                problems.append("{} 에 정식 건물 주소가 아닌 loc: {}".format(name, bad[:3]))
+    return problems
+
+
+def test_sitemap_index_and_listed_files():
+    assert sitemap_problems(SITEMAP.parent) == []
 
 
 def test_og_image_is_1200x630_and_small():
@@ -269,6 +317,44 @@ def test_control_robots_disallow_and_wrong_sitemap_are_caught():
     assert "Disallow 있음" in robots_problems(good.replace("Allow: /", "disallow : /"))
     bad_map = good.replace(CANONICAL, "http://localhost:5173/")
     assert any(p.startswith("Sitemap 줄") for p in robots_problems(bad_map))
+
+
+def _copy_public_sitemaps(tmp_path):
+    for p in SITEMAP.parent.iterdir():
+        if p.name.startswith("sitemap") and p.suffix == ".xml":
+            (tmp_path / p.name).write_bytes(p.read_bytes())
+    return tmp_path
+
+
+def test_control_sitemap_index_listing_missing_file_is_caught(tmp_path):
+    d = _copy_public_sitemaps(tmp_path)
+    text = (d / "sitemap.xml").read_text(encoding="utf-8")
+    extra = "  <sitemap><loc>{}sitemap-buildings-9.xml</loc></sitemap>\n</sitemapindex>".format(CANONICAL)
+    (d / "sitemap.xml").write_text(text.replace("</sitemapindex>", extra), encoding="utf-8")
+    assert any("public/ 에 없음: sitemap-buildings-9.xml" in p for p in sitemap_problems(d))
+
+
+def test_control_sitemap_urlset_index_and_bad_building_loc_are_caught(tmp_path):
+    d = _copy_public_sitemaps(tmp_path)
+    old = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>{}</loc></url>\n</urlset>\n'.format(CANONICAL)
+    (d / "sitemap.xml").write_text(old, encoding="utf-8")
+    assert any("sitemapindex 가 아님" in p for p in sitemap_problems(d))
+
+    d2 = tmp_path / "b"
+    d2.mkdir()
+    _copy_public_sitemaps(d2)
+    bad = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>http://localhost:5173/?sgg=1&amp;bld=2</loc><lastmod>2026-01-01</lastmod></url>\n</urlset>\n'
+    (d2 / "sitemap-buildings-1.xml").write_text(bad, encoding="utf-8")
+    problems = sitemap_problems(d2)
+    assert any("색인에 안 실린 건물 사이트맵" in p for p in problems)
+    idx = (d2 / "sitemap.xml").read_text(encoding="utf-8")
+    (d2 / "sitemap.xml").write_text(
+        idx.replace("</sitemapindex>", "  <sitemap><loc>{}sitemap-buildings-1.xml</loc></sitemap>\n</sitemapindex>".format(CANONICAL)),
+        encoding="utf-8",
+    )
+    problems = sitemap_problems(d2)
+    assert any("정식 건물 주소가 아닌 loc" in p for p in problems)
+    assert any("lastmod 있음" in p for p in problems)
 
 
 def test_control_png_size_reads_ihdr():

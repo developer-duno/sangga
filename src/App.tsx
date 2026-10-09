@@ -164,10 +164,13 @@ export default function App() {
   /*
     탭 제목 — 건물을 고르면 그 이름, 풀면 첫 화면 제목으로 돌아온다(정본 = `src/lib/seo.ts`).
     즐겨찾기·탭 여러 개·방문 기록에서 어느 건물인지 보이게 한다.
+    ⛔ 되살리는 **중에는 건드리지 않는다** — 그때 selected 는 아직 null 이라, 적으면 서버 조각(결정 0037)이
+       첫 HTML 에 넣어 둔 건물 제목을 첫 화면 제목으로 잠깐 덮는다. 꼴은 서버와 같다(`pageTitle`).
   */
   useEffect(() => {
-    document.title = pageTitle(selected?.bld_nm);
-  }, [selected?.bld_nm]);
+    if (restoring) return;
+    document.title = pageTitle(selected?.bld_nm, selected?.road_addr);
+  }, [selected?.bld_nm, selected?.road_addr, restoring]);
 
   /*
     지금 화면의 온전한 주소. **링크 복사 버튼과 종이 머리글이 같은 값을 쓴다** — 두 곳에서
