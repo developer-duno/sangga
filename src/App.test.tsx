@@ -825,7 +825,7 @@ describe('App — 중개사 최근 뽑은 건물 (결정 0036 결정 18 ⑥⑩)'
     await screen.findByRole('heading', { name: '테스트빌딩' });
   }
 
-  it('★ 중개사가 인쇄 단추를 누르면 인쇄 창 전에 적히고, 검색 덩어리 바로 뒤에 접힌 줄이 선다 · 주소는 그대로', async () => {
+  it('★ 중개사가 인쇄 단추를 누르면 인쇄 창 전에 적히고, 검색 입력칸 바로 아래에 접힌 줄이 선다 · 주소는 그대로', async () => {
     window.localStorage.setItem(KEY, '중개사');
     let atPrint: string | null = null;
     const print = vi.spyOn(window, 'print').mockImplementation(() => {
@@ -840,7 +840,8 @@ describe('App — 중개사 최근 뽑은 건물 (결정 0036 결정 18 ⑥⑩)'
       expect(JSON.parse(atPrint ?? '[]').map((r: BuildingHit) => r.bld_id)).toEqual([LINK_BLD]);
       expect(toggle().textContent).toContain('최근 뽑은 건물 1');
       expect(toggle().getAttribute('aria-expanded')).toBe('false');
-      expect(document.querySelector('section.search')?.nextElementSibling).toBe(recentEl());
+      // 검색 입력칸 바로 아래(같은 `.search` 안 · 폼 바로 뒤) — 차례는 아래 시험이 결과 목록과 함께 본다.
+      expect(document.querySelector('section.search form')?.nextElementSibling).toBe(recentEl());
       // ⛔ 주소에 안 실린다.
       expect(currentSearch()).toBe(before);
       expect(Object.keys(window.localStorage).sort()).toEqual([RKEY, KEY].sort());
@@ -885,8 +886,7 @@ describe('App — 중개사 최근 뽑은 건물 (결정 0036 결정 18 ⑥⑩)'
   });
 
   it('★ 다른 구 건물이면 구도 그 구로 바뀐다 (구 코드 = 저장한 pnu 앞 5자리)', async () => {
-    // bld_id 앞 5자리를 일부러 다른 구(11680)로 둔다 — 구는 bld_id 가 아니라 저장한 pnu 에서 읽는다.
-    const dj = '1168010100100090000_5';
+    const dj = '3017010100100010000_5';
     stored({ bld_id: dj, pnu: '3017010100100010000', bld_nm: '대전빌딩', road_addr: '대전 서구 둔산로 1' });
     window.localStorage.setItem(KEY, '중개사');
     await openLinked();
@@ -897,6 +897,108 @@ describe('App — 중개사 최근 뽑은 건물 (결정 0036 결정 18 ⑥⑩)'
     expect(currentSearch()).not.toContain('sgg=11680');
     // 구 이름은 지역 고르개가 서버 목록에서 채운다.
     expect(await screen.findByRole('heading', { name: /서구 상권 지도/ })).toBeTruthy();
+  });
+
+  it('★ 자리 = 검색 입력칸 → 최근 줄 → 결과 목록 차례 · 구를 바꿔 검색창이 다시 태어나도 목록은 그대로', async () => {
+    stored({ bld_id: '1168010100100020000_1', pnu: '1168010100100020000', bld_nm: '옛빌딩' });
+    window.localStorage.setItem(KEY, '중개사');
+    render(<App />);
+    await pickGu('서울', '강남구');
+    const input = screen.getByLabelText('건물명 또는 주소');
+    fireEvent.change(input, { target: { value: '테헤란로' } });
+    fireEvent.submit(input.closest('form')!);
+    await screen.findByRole('button', { name: /테스트빌딩/ });
+    const hits = document.querySelector('ul.hits');
+    const follows = (a: Element | null, b: Element | null) =>
+      !!a && !!b && (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    expect(follows(input, recentEl())).toBe(true);
+    expect(follows(recentEl(), hits)).toBe(true);
+    // 양성 대조: 결과 목록은 정말 최근 줄 **뒤**다(거꾸로면 거짓).
+    expect(follows(hits, recentEl())).toBe(false);
+
+    await pickGu('대전', '서구');
+    expect(toggle().textContent).toContain('최근 뽑은 건물 1');
+  });
+
+  it('★ 소유 구조 줄은 중개사 검색 결과에만 — 투자자·창업자·역할 없음에는 없다(양성·반대 짝)', async () => {
+    const base = rpc.getMockImplementation()!;
+    rpc.mockImplementation((fn: string, args?: unknown) =>
+      fn === 'search_buildings'
+        ? Promise.resolve({
+            data: [hit({ is_jiphap: true, approve_date: '2003-05-14', parking_cnt: 120 })],
+            error: null,
+          })
+        : base(fn, args),
+    );
+    async function ownLine(role: string | null) {
+      window.localStorage.clear();
+      if (role) window.localStorage.setItem(KEY, role);
+      openWith('');
+      render(<App />);
+      await pickGu('서울', '강남구');
+      const input = screen.getByLabelText('건물명 또는 주소');
+      fireEvent.change(input, { target: { value: '테헤란로' } });
+      fireEvent.submit(input.closest('form')!);
+      await screen.findByRole('button', { name: /테스트빌딩/ });
+      const text = document.querySelector('.hit .hit__own')?.textContent ?? null;
+      cleanup();
+      return text;
+    }
+    expect(await ownLine('중개사')).toBe('집합건물 · 사용승인 2003년 5월 · 주차 120대');
+    for (const role of ['투자자', '창업자', null]) {
+      expect(await ownLine(role), String(role)).toBeNull();
+    }
+  });
+
+  it('★ 링크를 되살리는 도중 최근 목록을 누르면, 뒤늦게 온 되살리기 결과가 그 선택을 덮지 않는다', async () => {
+    const other = '1168010100100020000_777';
+    stored({ bld_id: other, pnu: '1168010100100020000', bld_nm: '옆빌딩' });
+    window.localStorage.setItem(KEY, '중개사');
+    let release: ((r: { data: unknown; error: unknown }) => void) | null = null;
+    const pending = new Promise<{ data: unknown; error: unknown }>((r) => {
+      release = r;
+    });
+    from.mockImplementation((view: string) => {
+      if (view === 'v_coverage_stats') return makeQuery({ data: [], error: null });
+      const q: Record<string, unknown> = {};
+      for (const m of ['select', 'eq', 'order', 'limit']) q[m] = () => q;
+      q.then = (cb: (r: unknown) => unknown) => pending.then(cb);
+      return q;
+    });
+    openWith(`?sgg=11680&bld=${LINK_BLD}`);
+    render(<App />);
+    await screen.findByText('링크에 담긴 건물을 불러오는 중입니다…');
+    fireEvent.click(toggle());
+    fireEvent.click(screen.getByRole('button', { name: /옆빌딩/ }));
+
+    await act(async () => {
+      release!({ data: [floorRow()], error: null });
+      await pending;
+    });
+    await waitFor(() => expect(currentSearch()).toContain(`bld=${other}`));
+    expect(currentSearch()).not.toContain(`bld=${LINK_BLD}`);
+  });
+
+  it('★ 되살리기에 실패한 뒤 최근 목록으로 고르면 실패 상태가 풀린다(새 검색 뒤 실패 안내가 되살아나지 않는다)', async () => {
+    const other = '1168010100100020000_777';
+    stored({ bld_id: other, pnu: '1168010100100020000', bld_nm: '옆빌딩' });
+    window.localStorage.setItem(KEY, '중개사');
+    from.mockImplementation((view: string) =>
+      makeQuery(view === 'v_coverage_stats' ? { data: [], error: null } : { data: [], error: null }),
+    );
+    openWith(`?sgg=11680&bld=${LINK_BLD}`);
+    render(<App />);
+    await screen.findByText(/링크에 담긴 건물을 찾지 못했습니다/); // 양성 대조: 실패 상태로 시작
+    fireEvent.click(toggle());
+    fireEvent.click(screen.getByRole('button', { name: /옆빌딩/ }));
+    await waitFor(() => expect(currentSearch()).toContain(`bld=${other}`));
+
+    // 새 검색 = 선택 해제. 실패 상태가 남아 있으면 여기서 '찾지 못했습니다'가 다시 뜬다.
+    const input = screen.getByLabelText('건물명 또는 주소');
+    fireEvent.change(input, { target: { value: '테헤란로' } });
+    fireEvent.submit(input.closest('form')!);
+    await screen.findByText('위에서 건물을 검색해 선택해 주세요.');
+    expect(screen.queryByText(/링크에 담긴 건물을 찾지 못했습니다/)).toBeNull();
   });
 
   it('「지우기」는 저장소에서도 지우고 줄이 사라진다', async () => {

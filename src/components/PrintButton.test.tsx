@@ -32,6 +32,26 @@ describe('PrintButton', () => {
     print.mockRestore();
   });
 
+  it('onBeforePrint 가 던져도 인쇄 창은 뜬다', () => {
+    const print = vi.spyOn(window, 'print').mockImplementation(() => {});
+    const boom = vi.fn(() => {
+      throw new Error('적기 실패');
+    });
+    // React 는 이벤트 처리기 예외를 window 'error' 로 알린다 — 이 시험에서만 그 알림을 삼킨다
+    // (본론은 print 가 불렸나다 · 삼키지 않으면 vitest 가 처리 안 된 오류로 센다).
+    const swallow = (ev: ErrorEvent) => ev.preventDefault();
+    window.addEventListener('error', swallow);
+    try {
+      render(<PrintButton onBeforePrint={boom} />);
+      fireEvent.click(screen.getByRole('button', { name: /인쇄/ }));
+      expect(boom).toHaveBeenCalledTimes(1);
+      expect(print).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener('error', swallow);
+      print.mockRestore();
+    }
+  });
+
   it('무엇을 하는 버튼인지 이름에 적는다 (PDF 저장도 같은 길이라는 것까지)', () => {
     render(<PrintButton />);
     // "인쇄"만 적으면 종이가 없는 사람은 자기와 상관없다고 읽는다 — 이 버튼 하나로

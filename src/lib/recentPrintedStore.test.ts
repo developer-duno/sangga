@@ -110,9 +110,10 @@ describe('recentPrintedStore', () => {
     delete good2.total_cnt;
     const rows = [
       good1,
-      { ...good1, bld_id: 'x', pnu: '11680' }, // pnu 가 19자리가 아니다
-      { ...good1, bld_id: 'y', floor_cnt: '3' }, // 숫자가 글자
-      { ...good1, bld_id: 'z', is_jiphap: 'Y' }, // 선택 칸이 있는데 모양이 틀림
+      // ⓘ 아래 셋의 bld_id 는 꼴이 맞다 — 각 줄이 **제 결함 하나로만** 빠지는지 본다.
+      { ...good1, bld_id: '1168010100100010000_901', pnu: '11680' }, // pnu 가 19자리가 아니다
+      { ...good1, bld_id: '1168010100100010000_902', floor_cnt: '3' }, // 숫자가 글자
+      { ...good1, bld_id: '1168010100100010000_903', is_jiphap: 'Y' }, // 선택 칸이 있는데 모양이 틀림
       null,
       '빌딩',
       good1, // 같은 건물 두 번 — 첫 줄만
@@ -120,6 +121,24 @@ describe('recentPrintedStore', () => {
     ];
     st.map.set(RECENT_PRINTED_STORAGE_KEY, JSON.stringify(rows));
     expect(loadRecentPrinted(st).map((r) => r.bld_nm)).toEqual(['빌딩1', '빌딩2']);
+  });
+
+  it('★ bld_id 는 `<pnu>_<숫자>` 꼴이고 앞 19자리가 그 줄의 pnu 와 같아야 한다 (구·건물이 갈린 줄은 빠진다)', () => {
+    const st = memoryStorage();
+    const base = { ...hit(1) } as Record<string, unknown>;
+    delete base.total_cnt;
+    const real = { ...base, bld_id: '1168010600109420015_10241100257870', pnu: '1168010600109420015', bld_nm: '진짜' };
+    const rows = [
+      real, // 양성 대조: 실제 꼴은 산다
+      { ...real, bld_id: '3017010100100010000_5', bld_nm: '갈림' }, // 앞 19자리 ≠ pnu
+      { ...real, bld_id: '1168010600109420015', bld_nm: '밑줄없음' },
+      { ...real, bld_id: '1168010600109420015_', bld_nm: '꼬리없음' },
+      { ...real, bld_id: '1168010600109420015_12a', bld_nm: '글자꼬리' },
+      { ...real, bld_id: '1168010600109420015_' + '1'.repeat(33), bld_nm: '너무긴꼬리' },
+      { ...real, bld_id: 'x1168010600109420015_1', bld_nm: '앞에글자' },
+    ];
+    st.map.set(RECENT_PRINTED_STORAGE_KEY, JSON.stringify(rows));
+    expect(loadRecentPrinted(st).map((r) => r.bld_nm)).toEqual(['진짜']);
   });
 
   it('선택 칸(좌표·소유 구조)이 아예 없는 줄도 받는다 — undefined 는 undefined 그대로', () => {

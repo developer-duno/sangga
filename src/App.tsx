@@ -230,28 +230,31 @@ export default function App() {
         그대로 남는다. "결과가 없습니다"가 뜬 상태에서도 옛 건물 스택이 그대로
         보였다(2026-08-08 적대검증 라이브 재현).
       */
-      <>
-        <BuildingSearch
-          key={sigungu ?? '__no_region__'}
-          onSelect={handleSelectBuilding}
-          onSearchStart={() => {
-            userActedRef.current = true;
-            setSelected(null);
-          }}
-          selectedBldId={selected?.bld_id ?? null}
-          sigungu={sigungu}
-          sigunguName={sigunguName}
-          showOwnership={viewerRole === '중개사'}
-        />
-        {/* 중개사만 — 검색창 덩어리 안, 검색 바로 뒤(차례 `entryBlockOrder` 를 깨지 않게 · 결정 0036 결정 18 ⑩). */}
-        {viewerRole === '중개사' && (
-          <RecentPrinted
-            items={recentPrinted}
-            onPick={handlePickRecent}
-            onClear={() => setRecentPrinted(clearRecentPrinted())}
-          />
-        )}
-      </>
+      <BuildingSearch
+        key={sigungu ?? '__no_region__'}
+        onSelect={handleSelectBuilding}
+        onSearchStart={() => {
+          userActedRef.current = true;
+          setSelected(null);
+        }}
+        selectedBldId={selected?.bld_id ?? null}
+        sigungu={sigungu}
+        sigunguName={sigunguName}
+        showOwnership={viewerRole === '중개사'}
+        /*
+          중개사만 — 검색 입력칸 바로 아래·결과 목록 위(👤 결정 0036 결정 18 ⑩ "검색창 바로 아래").
+          ⓘ 목록·지우기 상태는 App 이 쥔다 — 구가 바뀌어 검색창이 key 로 다시 태어나도 목록은 그대로다.
+        */
+        belowInput={
+          viewerRole === '중개사' ? (
+            <RecentPrinted
+              items={recentPrinted}
+              onPick={handlePickRecent}
+              onClear={() => setRecentPrinted(clearRecentPrinted())}
+            />
+          ) : null
+        }
+      />
     ),
     map: (
       /*

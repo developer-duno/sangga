@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { SubmitEvent } from 'react';
+import type { ReactNode, SubmitEvent } from 'react';
 import { supabase } from '../lib/supabase';
 import {
   SEARCH_BUILDINGS_FN,
@@ -89,6 +89,12 @@ type Props = {
    * (결정 0036 결정 5·18 ⑩). ⓘ 가게 이름 구역의 줄은 이 칸을 서버에서 안 받아 해당 없다.
    */
   showOwnership?: boolean;
+  /**
+   * 검색 입력칸 **바로 아래**(결과 목록 위)에 그릴 자리 — App 이 중개사 「최근 뽑은 건물」 줄을 넣는다
+   * (결정 0036 결정 18 ⑩ "검색창 바로 아래"). 그리기만 맡는다 — 목록·지우기 상태의 주인은 App 이라
+   * 구가 바뀌어 이 부품이 key 로 다시 태어나도 목록은 그대로다(접힘만 처음으로 돌아간다).
+   */
+  belowInput?: ReactNode;
 };
 
 export function BuildingSearch({
@@ -98,6 +104,7 @@ export function BuildingSearch({
   sigungu,
   sigunguName,
   showOwnership = false,
+  belowInput,
 }: Props) {
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<BuildingHit[]>([]);
@@ -341,6 +348,8 @@ export function BuildingSearch({
           {loading ? '찾는 중…' : '검색'}
         </button>
       </form>
+
+      {belowInput}
 
       {error && <p className="msg msg--error">{error}</p>}
 

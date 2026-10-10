@@ -34,8 +34,12 @@ export function PrintButton({ onBeforePrint }: Props = {}) {
       type="button"
       className="print__btn"
       onClick={() => {
-        onBeforePrint?.();
-        window.print();
+        // ⛔ 적기가 던져도 인쇄 창은 뜬다 — 기록은 덤이고 본론은 종이다.
+        try {
+          onBeforePrint?.();
+        } finally {
+          window.print();
+        }
       }}
     >
       인쇄 · PDF로 저장

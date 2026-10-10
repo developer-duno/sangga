@@ -38,15 +38,21 @@ const isNullableNum = (x: unknown) => x === null || isNum(x);
 /** 선택 칸 — 아예 없으면(옛 서버에서 받은 줄) 그대로 둔다. 있으면 모양이 맞아야 한다. */
 const optional = (x: unknown, ok: (v: unknown) => boolean) => x === undefined || ok(x);
 
-/** 한 줄의 모양. pnu 는 19자리 숫자여야 한다 — 앞 5자리가 곧 '누르면 갈 구'다. */
+/**
+ * 한 줄의 모양. pnu 는 19자리 숫자여야 한다 — 앞 5자리가 곧 '누르면 갈 구'다.
+ * ⛔ bld_id 는 `<pnu 19자리>_<숫자>` 꼴이고 **앞 19자리가 그 줄의 pnu 와 같아야** 한다(실제 예
+ *    1168010600109420015_10241100257870) — 손댄 줄에서 구(pnu)와 건물(bld_id)이 갈리면 다른 구의
+ *    건물을 엉뚱한 구 화면에 여는 틈이 생긴다.
+ */
 function isRecentPrinted(x: unknown): x is RecentPrinted {
   if (typeof x !== 'object' || x === null || Array.isArray(x)) return false;
   const r = x as Record<string, unknown>;
   return (
-    isStr(r.bld_id) &&
-    r.bld_id !== '' &&
     isStr(r.pnu) &&
     /^\d{19}$/.test(r.pnu) &&
+    isStr(r.bld_id) &&
+    /^\d{19}_\d{1,32}$/.test(r.bld_id) &&
+    r.bld_id.slice(0, 19) === r.pnu &&
     isNullableStr(r.bld_nm) &&
     isNullableStr(r.road_addr) &&
     isNum(r.bld_cnt_in_pnu) &&
