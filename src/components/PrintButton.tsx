@@ -20,9 +20,24 @@
  * ⓘ 왜 인쇄 라이브러리를 안 쓰나 — `styles.css` 의 『종이로 뽑기』 블록 머리말 참조
  *   (사진으로 찍는 방식은 지도 타일을 못 잡고 글자가 그림이 된다).
  */
-export function PrintButton() {
+type Props = {
+  /**
+   * 인쇄 창을 띄우기 **전에** 부른다 — 중개사 「최근 뽑은 건물」을 적는 자리(결정 0036 결정 18 ⑥).
+   * ⛔ 종이의 모양을 바꾸는 데 쓰지 않는다(위 머리말 — Ctrl+P 로 뽑은 사람은 이 호출을 안 거친다).
+   */
+  onBeforePrint?: () => void;
+};
+
+export function PrintButton({ onBeforePrint }: Props = {}) {
   return (
-    <button type="button" className="print__btn" onClick={() => window.print()}>
+    <button
+      type="button"
+      className="print__btn"
+      onClick={() => {
+        onBeforePrint?.();
+        window.print();
+      }}
+    >
       인쇄 · PDF로 저장
     </button>
   );

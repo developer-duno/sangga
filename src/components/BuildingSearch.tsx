@@ -7,7 +7,7 @@ import {
   SEARCH_STORES_FN,
   SEARCH_STORES_PAGE,
 } from '../lib/appConstants';
-import { describeError, describeRange, formatMonthKo } from '../lib/format';
+import { describeError, describeOwnership, describeRange, formatMonthKo } from '../lib/format';
 import {
   hasMoreStores,
   isStoreHitList,
@@ -84,9 +84,21 @@ type Props = {
   sigungu: string | null;
   /** 고른 시군구 이름(화면 표시용). RPC에는 넘기지 않는다. */
   sigunguName: string | null;
+  /**
+   * 건물 결과 줄마다 소유 구조 한 줄(건물 종류 · 사용승인 · 주차)을 더 그리나 — 역할 = 중개사일 때만
+   * (결정 0036 결정 5·18 ⑩). ⓘ 가게 이름 구역의 줄은 이 칸을 서버에서 안 받아 해당 없다.
+   */
+  showOwnership?: boolean;
 };
 
-export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu, sigunguName }: Props) {
+export function BuildingSearch({
+  onSelect,
+  onSearchStart,
+  selectedBldId,
+  sigungu,
+  sigunguName,
+  showOwnership = false,
+}: Props) {
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<BuildingHit[]>([]);
   /** 검색어에 걸린 전체 건물 수(보여주는 수가 아니다). */
@@ -399,6 +411,10 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu
                       <span className="hit__warn"> · 같은 땅에 {h.bld_cnt_in_pnu}동</span>
                     )}
                   </span>
+                  {/* 중개사만 — 소유 구조 한 줄(결정 0036 결정 5·18 ⑩ · null=미상, 칸이 안 오면 줄 없음). */}
+                  {showOwnership && describeOwnership(h) !== null && (
+                    <span className="hit__own">{describeOwnership(h)}</span>
+                  )}
                 </button>
               </li>
             ))}

@@ -562,6 +562,21 @@ describe('FloorStack — 건물 스펙 4칸 (로드맵 Wave 2 PR-B)', () => {
     expect(specValue('용적률')).toBe('1,234.6%');
   });
 
+  it('★ C1 건물 종류 — true 집합건물 · false 일반건물 · null 은 "미상"(일반건물로 단정하지 않는다)', async () => {
+    const cases: Array<[boolean | null, string]> = [
+      [true, '집합건물'],
+      [false, '일반건물'],
+      [null, '미상'],
+    ];
+    for (const [v, want] of cases) {
+      responses.floors = { data: [floor({ is_jiphap: v })], error: null };
+      render(<FloorStack building={building()} />);
+      await waitFor(() => expect(screen.getByText('건물 종류')).toBeTruthy());
+      expect(specValue('건물 종류')).toBe(want);
+      cleanup();
+    }
+  });
+
   it('스펙 칸에는 금칙어(절대 규칙 2)가 한 글자도 없다', async () => {
     responses.floors = { data: [floor()], error: null };
     render(<FloorStack building={building()} />);

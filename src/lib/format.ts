@@ -194,6 +194,72 @@ export function formatApproveDate(date: string | null): string {
 }
 
 /**
+ * 건물 스펙(연면적·용적률·건폐율·주차 · 건물 종류)에서 **값 대신 적는 말**.
+ *
+ * ⛔ 여기서 "0" 을 그대로 적으면 안 된다. 건축물대장은 안 적은 칸을 '0' 으로 준다 —
+ *    롯데월드타워가 주차 0·건폐율 0 으로 들어와 있어 "정말 0" 과 "안 적힘" 을 값으로는
+ *    갈라낼 수 없다. 갈라낼 수 없으면 둘 중 하나로 단정하지 않는 것이 맞다
+ *    (로드맵 Wave 2 PR-B).
+ * ⓘ "NULL 은 0행" 은 **현재 적재분(서울·대전 30개 구)의 관찰값**이지 구조적 보장이
+ *    아니다 — 적재기는 결측을 NULL 로 쓴다(load_building_ledger.py 의 `_to_float`·
+ *    `sum_parking`). [C] 전국 적재 뒤에는 다시 세어 볼 것. `describeSpec` 은 0 과 null 을
+ *    **같은 말**로 돌려주므로, 어느 쪽이 오더라도 이 화면은 그대로 맞다.
+ * ⓘ 층별 화면(FloorStack)과 중개사 검색 결과의 소유 구조 줄(`describeOwnership`)이 함께 쓴다
+ *   (2026-10-11 FloorStack 에서 옮김) — 두 곳이 '미상'을 다르게 판정하면 같은 건물이 두 말을 한다.
+ */
+export const UNKNOWN_SPEC = '미상';
+
+/** 주차 표기. */
+export function formatParking(n: number): string {
+  return `${n.toLocaleString('ko-KR')}대`;
+}
+
+/**
+ * 건물 스펙 한 칸을 사람이 읽는 말로. 값이 아니면 무조건 "미상"이다.
+ *
+ * "값이 아닌 것" 셋을 **같은 말로** 돌려준다 — 없음(null)·미기재(0 이하)·오류(상한 초과).
+ * 셋을 갈라 적으면 화면이 우리도 모르는 것을 아는 척하게 된다(예: 상한을 넘은 79,095%를
+ * "이상값"이라 적으면, 그 건물의 건폐율이 아주 크다는 뜻으로 읽힌다).
+ */
+export function describeSpec(
+  value: number | null | undefined,
+  format: (n: number) => string,
+  max?: number,
+): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return UNKNOWN_SPEC;
+  if (value <= 0) return UNKNOWN_SPEC;
+  if (max !== undefined && value > max) return UNKNOWN_SPEC;
+  return format(value);
+}
+
+/**
+ * 건물 종류 — true '집합건물' · false '일반건물'(👤 2026-10-11 — '통건물' 쓰지 않음) · 그 밖은 null.
+ * ⛔ null 을 '일반건물'로 읽지 않는다(결정 0036 결정 18 ⑦) — 모르는 것은 부르는 쪽이 '미상'으로 적는다.
+ */
+export function formatJiphap(v: boolean | null | undefined): '집합건물' | '일반건물' | null {
+  if (v === true) return '집합건물';
+  if (v === false) return '일반건물';
+  return null;
+}
+
+/**
+ * 중개사 검색 결과의 **소유 구조 줄**(결정 0036 결정 5·18 ⑦⑩) — 「집합건물 · 사용승인 2003년 5월 · 주차 120대」.
+ *
+ * ⛔ null 은 '미상', **undefined(칸이 아예 안 옴 — 옛 서버)는 줄 없음**(null 을 돌려준다). 둘을 섞지 않는다 —
+ *    세 칸 모두 undefined 일 때만 줄을 안 그린다(하나라도 오면 오지 않은 칸도 '미상').
+ * ⓘ 층수는 같은 결과 줄의 `hit__meta` 에 이미 있어 다시 적지 않는다. 승강기·호실 수는 물결 2-1 뒤.
+ */
+export function describeOwnership(h: BuildingHit): string | null {
+  if (h.is_jiphap === undefined && h.approve_date === undefined && h.parking_cnt === undefined) {
+    return null;
+  }
+  const kind = formatJiphap(h.is_jiphap) ?? `건물 종류 ${UNKNOWN_SPEC}`;
+  const approve = h.approve_date ? formatApproveDate(h.approve_date) : UNKNOWN_SPEC;
+  const parking = describeSpec(h.parking_cnt, formatParking);
+  return `${kind} · 사용승인 ${approve} · 주차 ${parking}`;
+}
+
+/**
  * 서버 오류 원문 대신 사람이 읽을 문구로 바꾼다.
  *
  * 원문에는 `permission denied for table building_floor`처럼 내부 표 이름이 섞여 나올 수

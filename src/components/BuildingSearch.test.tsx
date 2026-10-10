@@ -935,3 +935,51 @@ describe('BuildingSearch — 검색창 문구', () => {
     expect(input.getAttribute('aria-label')).toBe('건물명 또는 주소');
   });
 });
+
+describe('BuildingSearch — 중개사 소유 구조 줄 (결정 0036 결정 5·18 ⑩)', () => {
+  async function run(showOwnership: boolean | undefined, rows: BuildingHit[]) {
+    rpc.mockImplementation((fn: string) =>
+      Promise.resolve(fn === 'search_buildings' ? { data: rows, error: null } : { data: [], error: null }),
+    );
+    render(
+      <BuildingSearch
+        onSelect={vi.fn()}
+        onSearchStart={vi.fn()}
+        selectedBldId={null}
+        sigungu="11680"
+        sigunguName="강남구"
+        showOwnership={showOwnership}
+      />,
+    );
+    const input = screen.getByLabelText('건물명 또는 주소') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '테헤란로' } });
+    fireEvent.submit(input.closest('form')!);
+    await screen.findByRole('button', { name: /테스트빌딩/ });
+  }
+
+  const own = (over: Partial<BuildingHit> = {}) =>
+    hit({ is_jiphap: true, approve_date: '2003-05-14', parking_cnt: 120, ...over });
+
+  it('B1 중개사면 결과 줄마다 「건물 종류 · 사용승인 · 주차」 한 줄', async () => {
+    await run(true, [own()]);
+    const line = document.querySelector('.hit .hit__own');
+    expect(line?.textContent).toBe('집합건물 · 사용승인 2003년 5월 · 주차 120대');
+  });
+
+  it('★ 중개사가 아니면(기본값) 같은 결과에도 줄이 없다 — 양성 대조는 위 B1', async () => {
+    await run(undefined, [own()]);
+    expect(document.querySelector('.hit')).not.toBeNull();
+    expect(document.querySelector('.hit__own')).toBeNull();
+  });
+
+  it('B2 빈 칸은 미상 — null 셋이면 「건물 종류 미상 · 사용승인 미상 · 주차 미상」', async () => {
+    await run(true, [own({ is_jiphap: null, approve_date: null, parking_cnt: 0 })]);
+    expect(document.querySelector('.hit__own')?.textContent).toBe('건물 종류 미상 · 사용승인 미상 · 주차 미상');
+  });
+
+  it('B3 세 칸이 아예 안 오면(옛 서버) 중개사여도 줄 없음', async () => {
+    await run(true, [hit()]);
+    expect(document.querySelector('.hit')).not.toBeNull();
+    expect(document.querySelector('.hit__own')).toBeNull();
+  });
+});

@@ -44,10 +44,14 @@ import {
   unitSummaryText,
 } from '../lib/unitTable';
 import {
+  UNKNOWN_SPEC,
+  describeSpec,
   formatArea,
   formatApproveDate,
   formatFloor,
+  formatJiphap,
   formatManWon,
+  formatParking,
   formatQuarter,
   formatWon,
   formatYearMonth,
@@ -98,20 +102,6 @@ const ROAD_CONTACT_HIDDEN = new Set(['맹지', '지정되지않음']);
 const BIZ_TOP_N = 3;
 
 /**
- * 건물 스펙 4칸(연면적·용적률·건폐율·주차)에서 **값 대신 적는 말**.
- *
- * ⛔ 여기서 "0" 을 그대로 적으면 안 된다. 건축물대장은 안 적은 칸을 '0' 으로 준다 —
- *    롯데월드타워가 주차 0·건폐율 0 으로 들어와 있어 "정말 0" 과 "안 적힘" 을 값으로는
- *    갈라낼 수 없다. 갈라낼 수 없으면 둘 중 하나로 단정하지 않는 것이 맞다
- *    (로드맵 Wave 2 PR-B).
- * ⓘ "NULL 은 0행" 은 **현재 적재분(서울·대전 30개 구)의 관찰값**이지 구조적 보장이
- *    아니다 — 적재기는 결측을 NULL 로 쓴다(load_building_ledger.py 의 `_to_float`·
- *    `sum_parking`). [C] 전국 적재 뒤에는 다시 세어 볼 것. `describeSpec` 은 0 과 null 을
- *    **같은 말**로 돌려주므로, 어느 쪽이 오더라도 이 화면은 그대로 맞다.
- */
-const UNKNOWN_SPEC = '미상';
-
-/**
  * 건폐율을 값으로 적는 상한(%).
  *
  * 정의상 0~100 인데 원본에 소스 오류가 섞여 있다 — 2026-08-11 실측으로 24만 행 중
@@ -137,28 +127,10 @@ function formatPercent(n: number): string {
   return `${n.toLocaleString('ko-KR', { maximumFractionDigits: 1 })}%`;
 }
 
-/** 주차 표기. */
-function formatParking(n: number): string {
-  return `${n.toLocaleString('ko-KR')}대`;
-}
-
-/**
- * 건물 스펙 한 칸을 사람이 읽는 말로. 값이 아니면 무조건 "미상"이다.
- *
- * "값이 아닌 것" 셋을 **같은 말로** 돌려준다 — 없음(null)·미기재(0 이하)·오류(상한 초과).
- * 셋을 갈라 적으면 화면이 우리도 모르는 것을 아는 척하게 된다(예: 상한을 넘은 79,095%를
- * "이상값"이라 적으면, 그 건물의 건폐율이 아주 크다는 뜻으로 읽힌다).
- */
-function describeSpec(
-  value: number | null | undefined,
-  format: (n: number) => string,
-  max?: number,
-): string {
-  if (value === null || value === undefined || Number.isNaN(value)) return UNKNOWN_SPEC;
-  if (value <= 0) return UNKNOWN_SPEC;
-  if (max !== undefined && value > max) return UNKNOWN_SPEC;
-  return format(value);
-}
+/*
+  ⓘ `UNKNOWN_SPEC`·`describeSpec`·`formatParking`·`formatJiphap` 은 `lib/format.ts` 로 옮겼다
+    (2026-10-11 · 물결 1-A2(iii)) — 중개사 검색 결과의 소유 구조 줄이 같은 '미상' 규칙을 쓴다.
+*/
 
 /**
  * 도로접면 한 조각. **원문 그대로** 내보낸다.
@@ -741,7 +713,8 @@ export function FloorStack({ building, viewerRole = null, founderChip = FOUNDER_
           </div>
           <div>
             <dt>건물 종류</dt>
-            <dd>{head.is_jiphap ? '집합건물' : '일반건물'}</dd>
+            {/* null 은 '미상'(결정 0036 결정 18 ⑦) — 모르는 것을 '일반건물'로 단정하지 않는다. */}
+            <dd>{formatJiphap(head.is_jiphap) ?? UNKNOWN_SPEC}</dd>
           </div>
           <div>
             <dt>층 수</dt>

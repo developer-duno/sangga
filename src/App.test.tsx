@@ -787,3 +787,167 @@ describe('App — 탭 제목', () => {
     await waitFor(() => expect(document.title).toBe(HOME_TITLE));
   });
 });
+
+/**
+ * 중개사 「최근 뽑은 건물」(👤 결정 0036 결정 18 ⑥⑩ · 물결 1-A2(iii)) — 이어 붙였을 때만 보이는 것:
+ * 인쇄 단추가 적는다(중개사일 때만) · 검색 덩어리 아래 접힌 줄(중개사만) · 누르면 그 건물로(다른 구면
+ * 구도) · 지우기 · 주소·의견함에 안 실린다 · 막힌 창에서도 인쇄는 된다.
+ * 저장 규칙은 `lib/recentPrintedStore.test`, 줄 하나의 그리기는 `RecentPrinted.test`.
+ */
+describe('App — 중개사 최근 뽑은 건물 (결정 0036 결정 18 ⑥⑩)', () => {
+  const KEY = 'sangga.viewerRole';
+  const RKEY = 'sangga.recentPrinted';
+  afterEach(() => window.localStorage.clear());
+  beforeEach(() => openWith(''));
+
+  const recentEl = () => document.querySelector('section.recent');
+  const toggle = () => screen.getByRole('button', { name: /최근 뽑은 건물/ });
+  const roleBtn = (name: string) =>
+    [...document.querySelectorAll('.role button')].find((b) => b.textContent === name) as HTMLButtonElement;
+  const printBtn = () => screen.getByRole('button', { name: '인쇄 · PDF로 저장' });
+
+  function stored(...rows: Array<Partial<BuildingHit>>) {
+    window.localStorage.setItem(
+      RKEY,
+      JSON.stringify(
+        rows.map((over) => {
+          const { total_cnt: _t, ...rest } = hit(over);
+          void _t;
+          return rest;
+        }),
+      ),
+    );
+  }
+
+  async function openLinked() {
+    openWith(`?sgg=11680&bld=${LINK_BLD}`);
+    render(<App />);
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+  }
+
+  it('★ 중개사가 인쇄 단추를 누르면 인쇄 창 전에 적히고, 검색 덩어리 바로 뒤에 접힌 줄이 선다 · 주소는 그대로', async () => {
+    window.localStorage.setItem(KEY, '중개사');
+    let atPrint: string | null = null;
+    const print = vi.spyOn(window, 'print').mockImplementation(() => {
+      atPrint = window.localStorage.getItem(RKEY);
+    });
+    try {
+      await openLinked();
+      expect(recentEl()).toBeNull(); // 처음엔 목록이 비어 줄이 없다
+      const before = currentSearch();
+      fireEvent.click(printBtn());
+      expect(print).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(atPrint ?? '[]').map((r: BuildingHit) => r.bld_id)).toEqual([LINK_BLD]);
+      expect(toggle().textContent).toContain('최근 뽑은 건물 1');
+      expect(toggle().getAttribute('aria-expanded')).toBe('false');
+      expect(document.querySelector('section.search')?.nextElementSibling).toBe(recentEl());
+      // ⛔ 주소에 안 실린다.
+      expect(currentSearch()).toBe(before);
+      expect(Object.keys(window.localStorage).sort()).toEqual([RKEY, KEY].sort());
+    } finally {
+      print.mockRestore();
+    }
+  });
+
+  it('★ 투자자·역할 없음은 인쇄해도 적지 않고 줄도 없다 — 양성 대조: 중개사로 바꾸면 이미 있던 목록이 선다', async () => {
+    stored({ bld_id: '1168010100100020000_1', pnu: '1168010100100020000', bld_nm: '옛빌딩' });
+    window.localStorage.setItem(KEY, '투자자');
+    const print = vi.spyOn(window, 'print').mockImplementation(() => {});
+    try {
+      await openLinked();
+      fireEvent.click(printBtn());
+      expect(print).toHaveBeenCalledTimes(1);
+      expect(recentEl()).toBeNull();
+      expect(JSON.parse(window.localStorage.getItem(RKEY)!)).toHaveLength(1); // 안 쌓였다
+
+      fireEvent.click(roleBtn('투자자')); // 다시 누르면 역할 없음
+      fireEvent.click(printBtn());
+      expect(recentEl()).toBeNull();
+      expect(JSON.parse(window.localStorage.getItem(RKEY)!)).toHaveLength(1);
+
+      fireEvent.click(roleBtn('중개사'));
+      expect(toggle().textContent).toContain('최근 뽑은 건물 1');
+    } finally {
+      print.mockRestore();
+    }
+  });
+
+  it('★ 펼쳐 누르면 그 건물 층별 화면으로 간다 (같은 구)', async () => {
+    const other = '1168010100100020000_777';
+    stored({ bld_id: other, pnu: '1168010100100020000', bld_nm: '옆빌딩' });
+    window.localStorage.setItem(KEY, '중개사');
+    await openLinked();
+    fireEvent.click(toggle());
+    fireEvent.click(screen.getByRole('button', { name: /옆빌딩/ }));
+    await waitFor(() => expect(currentSearch()).toContain(`bld=${other}`));
+    expect(currentSearch()).toContain('sgg=11680');
+    expect(document.querySelector('.stack')).not.toBeNull();
+  });
+
+  it('★ 다른 구 건물이면 구도 그 구로 바뀐다 (구 코드 = 저장한 pnu 앞 5자리)', async () => {
+    // bld_id 앞 5자리를 일부러 다른 구(11680)로 둔다 — 구는 bld_id 가 아니라 저장한 pnu 에서 읽는다.
+    const dj = '1168010100100090000_5';
+    stored({ bld_id: dj, pnu: '3017010100100010000', bld_nm: '대전빌딩', road_addr: '대전 서구 둔산로 1' });
+    window.localStorage.setItem(KEY, '중개사');
+    await openLinked();
+    fireEvent.click(toggle());
+    fireEvent.click(screen.getByRole('button', { name: /대전빌딩/ }));
+    await waitFor(() => expect(currentSearch()).toContain('sgg=30170'));
+    expect(currentSearch()).toContain(`bld=${dj}`);
+    expect(currentSearch()).not.toContain('sgg=11680');
+    // 구 이름은 지역 고르개가 서버 목록에서 채운다.
+    expect(await screen.findByRole('heading', { name: /서구 상권 지도/ })).toBeTruthy();
+  });
+
+  it('「지우기」는 저장소에서도 지우고 줄이 사라진다', async () => {
+    stored({ bld_id: '1168010100100020000_1', pnu: '1168010100100020000', bld_nm: '옛빌딩' });
+    window.localStorage.setItem(KEY, '중개사');
+    await openLinked();
+    fireEvent.click(toggle());
+    fireEvent.click(screen.getByRole('button', { name: '지우기' }));
+    expect(recentEl()).toBeNull();
+    expect(window.localStorage.getItem(RKEY)).toBeNull();
+  });
+
+  it('★ 의견함 문맥에 목록이 실리지 않는다', async () => {
+    stored({ bld_id: '1168010100100020000_1', pnu: '1168010100100020000', bld_nm: '옛빌딩' });
+    window.localStorage.setItem(KEY, '중개사');
+    await openLinked();
+    expect(recentEl()).not.toBeNull(); // 양성 대조: 목록은 있다
+    fireEvent.click(document.querySelector('.fb__open') as HTMLButtonElement);
+    fireEvent.click(document.querySelector('.fb__kinds input') as HTMLInputElement);
+    fireEvent.change(document.querySelector('.fb__input') as HTMLTextAreaElement, {
+      target: { value: '시험 의견' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }));
+    await waitFor(() => expect(rpc.mock.calls.some(([fn]) => fn === 'submit_feedback')).toBe(true));
+    const call = rpc.mock.calls.find(([fn]) => fn === 'submit_feedback')!;
+    const ctx = JSON.stringify((call[1] as { p_context: unknown }).p_context);
+    expect(ctx).toContain(LINK_BLD); // 양성 대조: 보던 건물은 실린다
+    expect(ctx).not.toContain('옛빌딩');
+    expect(ctx).not.toContain('1168010100100020000_1');
+  });
+
+  it('★ 저장이 막힌 창 — 인쇄는 되고 오류 없이 줄만 안 선다', async () => {
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('blocked', 'SecurityError');
+    });
+    const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new DOMException('blocked', 'SecurityError');
+    });
+    const print = vi.spyOn(window, 'print').mockImplementation(() => {});
+    try {
+      await openLinked();
+      fireEvent.click(roleBtn('중개사'));
+      fireEvent.click(printBtn());
+      expect(print).toHaveBeenCalledTimes(1);
+      expect(setItem).toHaveBeenCalled();
+      expect(recentEl()).toBeNull();
+      expect(screen.getByRole('heading', { name: '테스트빌딩' })).toBeTruthy();
+    } finally {
+      setItem.mockRestore();
+      getItem.mockRestore();
+      print.mockRestore();
+    }
+  });
+});

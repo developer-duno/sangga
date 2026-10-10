@@ -23,6 +23,15 @@ describe('PrintButton', () => {
     print.mockRestore();
   });
 
+  it('onBeforePrint 를 주면 인쇄 창을 띄우기 **전에** 부른다 (최근 뽑은 건물 적기 — 결정 0036 결정 18 ⑥)', () => {
+    const order: string[] = [];
+    const print = vi.spyOn(window, 'print').mockImplementation(() => void order.push('print'));
+    render(<PrintButton onBeforePrint={() => order.push('before')} />);
+    fireEvent.click(screen.getByRole('button', { name: /인쇄/ }));
+    expect(order).toEqual(['before', 'print']);
+    print.mockRestore();
+  });
+
   it('무엇을 하는 버튼인지 이름에 적는다 (PDF 저장도 같은 길이라는 것까지)', () => {
     render(<PrintButton />);
     // "인쇄"만 적으면 종이가 없는 사람은 자기와 상관없다고 읽는다 — 이 버튼 하나로
