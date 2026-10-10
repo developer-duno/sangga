@@ -148,6 +148,7 @@ python scripts/check_district_source_update.py  # 상권 원천(서울·소진�
 python scripts/check_watch_heartbeat.py         # 예약 6종이 아직 돌고 있나 (읽기만, 키 불필요 — 멈춤=exit 1 · 조회·판정 실패=2 · 결과 쓰기 실패=4)
 python scripts/check_live_health.py             # 라이브 사이트가 서 있나 (읽기만, 키 불필요 — 반쪽 배포까지 잡는다)
 python scripts/indexnow_ping.py                 # 첫 HTML·sitemap 이 바뀐 배포 뒤 빙·네이버에 '바뀌었다' 알림(IndexNow · 키 불필요 · 구글은 안 받음 · --dry-run 은 네트워크 0)
+python scripts/indexnow_ping.py --from-sitemap public/sitemap-buildings-1.xml   # 건물 주소 전부 — 1만 개씩 나눠 보낸다(400·403·422·429 면 나머지 멈춤)
 python scripts/check_lh_notices.py              # 기준선 이후 새 LH 상가 공고가 떴나 (읽기만 — .env 의 MOLIT_KEY 사용, 새 공고면 exit 1 · 조회 실패=2 · 결과 쓰기 실패=4)
 python scripts/check_data_freshness.py          # '다음 갱신 예정'이 지난 자료가 있나 (읽기만 — .env 의 공개키 사용, 지남=exit 1 · 화면 분기 섞임=exit 1 · 조회 실패=2 · 변수 없음=3 · 결과 쓰기 실패=4)
 python scripts/collectors/collect_lh_notices.py --dry-run   # LH 상가 공고 수집 미리보기 (DB 쓰기 0)
@@ -225,7 +226,7 @@ python scripts/build_scorecard_json.py                              # ★ 성적
 #   ⛔ 검증거래별원자료.csv(개별 실거래)는 **안 읽는다**. 판(v3)을 올리는 것은 별건 결재라
 #      그때 스크립트의 VERSION·backtest_price.py 의 SCORECARD_VERSION·출력 파일명·src/lib/appConstants.ts 의 SCORECARD_URL 을 함께 올린다(옛 json 은 git rm · 셋이 어긋나면 TestVersionPins 가 빨강).
 python scripts/build_sitemap.py --dry-run       # 사이트맵 미리보기 — 대상 건물(이름 + 비주거 층 · 스크립트 맨 위 TARGET_WHERE) 수·파일 수만 (DB 읽기만 · 쓰기 0 · 결정 0037)
-python scripts/build_sitemap.py                 # ★ 건축물대장·호실을 다시 적재했으면(post_load 뒤) → public/sitemap*.xml 다시 굽고 **커밋** → 배포 뒤 indexnow_ping.py
+python scripts/build_sitemap.py                 # ★ 건축물대장·호실을 다시 적재했으면(post_load 뒤) → public/sitemap*.xml 다시 굽고 **커밋** → 배포 뒤 indexnow_ping.py --from-sitemap … (⚠️ 대상 고르기에 찬 캐시 약 10분 — 2026-10-10 실측 · 스크립트가 그 접속만 제한을 15분으로 늘린다)
 python scripts/post_load.py                     # ★ 적재 후 필수 — vacuum(analyze) + 요약표(REFRESH_MVS 목록이 정본) 갱신 (권한 점검은 안 돈다)
 python scripts/post_load.py --check              # 낡았나 + 공개 롤이 읽거나 **고칠 수** 있는 것 점검 (DB 쓰기 0, 걸리면 exit 1)
 python scripts/publish_snapshot.py --show        # 분기 표지(다 들어온 분기 · 보여 주는 분기) + 점포 표 분기별 행수 + 요약표 넷의 분기 (읽기만)
