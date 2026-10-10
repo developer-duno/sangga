@@ -8,6 +8,7 @@ import { FounderChips } from './components/FounderChips';
 import { LhNoticeSection } from './components/LhNoticeSection';
 import { PrintButton } from './components/PrintButton';
 import { PrintHeader } from './components/PrintHeader';
+import { RecentPrinted } from './components/RecentPrinted';
 import { RegionPicker } from './components/RegionPicker';
 import { RolePicker } from './components/RolePicker';
 import { ScorecardSection } from './components/ScorecardSection';
@@ -21,6 +22,12 @@ import { supabase } from './lib/supabase';
 import { buildAppSearch, buildShareUrl, isSameSearch, parseAppUrl } from './lib/urlState';
 import { pageTitle } from './lib/seo';
 import { loadViewerRole, saveViewerRole } from './lib/viewerRoleStore';
+import {
+  clearRecentPrinted,
+  loadRecentPrinted,
+  recordPrinted,
+  type RecentPrinted as RecentPrintedEntry,
+} from './lib/recentPrintedStore';
 import type { BuildingHit, FloorRow } from './types';
 
 export default function App() {
@@ -84,6 +91,32 @@ export default function App() {
     setRestoreFailed(false);
     setSelected(hit);
   }, []);
+
+  /*
+    중개사 「최근 뽑은 건물」(결정 0036 결정 18 ⑥⑩). 목록의 주인은 **이 기기 저장소**이고 이 상태는
+    그것을 비춘다 — 적거나 지운 뒤 저장소를 다시 읽은 값을 받는다(막힌 창이면 빈 목록).
+    ⛔ 적는 곳은 인쇄 단추 하나(`handleBeforePrint`) · 역할 = 중개사일 때만 적고 보인다(다른 역할
+       손님의 기기에 기록을 남기지 않는다) · ⛔ 주소·의견함(`feedbackContext`)에 싣지 않는다.
+  */
+  const [recentPrinted, setRecentPrinted] = useState<RecentPrintedEntry[]>(() => loadRecentPrinted());
+  function handleBeforePrint() {
+    if (viewerRole === '중개사' && selected) setRecentPrinted(recordPrinted(selected));
+  }
+  /*
+    목록에서 고르기 — 그 건물 층별 화면으로 간다. 다른 구 건물이면 구도 그 구로(구 코드 = 저장해 둔
+    건물의 **pnu 앞 5자리** · 이름은 지역 고르개가 서버 목록에서 채운다 — `handleSigunguNameResolved`).
+    ⓘ 구를 바꾸면 검색창은 key 로 새로 선다(다른 구의 검색 결과를 남기지 않는 기존 규칙 그대로).
+  */
+  function handlePickRecent(item: RecentPrintedEntry) {
+    userActedRef.current = true;
+    setRestoreFailed(false);
+    const code = item.pnu.slice(0, 5);
+    if (code !== sigungu) {
+      setSigungu(code);
+      setSigunguName(null);
+    }
+    setSelected({ ...item });
+  }
 
   /*
     링크로 들어온 사람은 구 코드만 갖고 있어 **구 이름을 모른다.** 이름이 없어도
@@ -207,6 +240,20 @@ export default function App() {
         selectedBldId={selected?.bld_id ?? null}
         sigungu={sigungu}
         sigunguName={sigunguName}
+        showOwnership={viewerRole === '중개사'}
+        /*
+          중개사만 — 검색 입력칸 바로 아래·결과 목록 위(👤 결정 0036 결정 18 ⑩ "검색창 바로 아래").
+          ⓘ 목록·지우기 상태는 App 이 쥔다 — 구가 바뀌어 검색창이 key 로 다시 태어나도 목록은 그대로다.
+        */
+        belowInput={
+          viewerRole === '중개사' ? (
+            <RecentPrinted
+              items={recentPrinted}
+              onPick={handlePickRecent}
+              onClear={() => setRecentPrinted(clearRecentPrinted())}
+            />
+          ) : null
+        }
       />
     ),
     map: (
@@ -339,7 +386,7 @@ export default function App() {
             */}
             <div className="takeout">
               <ShareButton url={shareUrl} label={selected.bld_nm} />
-              <PrintButton />
+              <PrintButton onBeforePrint={handleBeforePrint} />
             </div>
 
             {/*

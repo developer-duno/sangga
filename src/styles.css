@@ -458,6 +458,96 @@ body {
   color: var(--under);
 }
 
+/* 중개사 소유 구조 줄(결정 0036 결정 5) — 결과 줄의 맨 아래 한 줄 전체. 줄바꿈은 허용한다
+   (말줄임으로 '주차 …' 가 잘리면 그 칸이 왜 비었는지 모른다). */
+.hit__own {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* ── 중개사 「최근 뽑은 건물」(결정 0036 결정 18 ⑥⑩) ───────────────────────
+   검색 덩어리 안, 검색 결과 뒤의 접힌 줄. 종이에서는 빠진다(아래 인쇄 블록 `.recent`). */
+.recent {
+  margin: 0 0 20px;
+}
+
+.recent__toggle,
+.recent__clear {
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.recent__body {
+  margin-top: 8px;
+}
+
+.recent__list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.recent__row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 12px;
+  align-items: baseline;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.recent__row:hover {
+  border-color: var(--accent);
+}
+
+.recent__name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent__addr {
+  color: var(--muted);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent__note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.recent__clear {
+  margin-top: 8px;
+}
+
+@media (max-width: 720px) {
+  .recent__row {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}
+
 /* ── 가게 이름으로 찾은 땅 (결정 0028) ─────────────────────────────────────
    ⛔ 이 구역은 `.search` **안**에 있다 — `@media print` 가 `.search` 를 통째로 빼므로
       종이에서는 저절로 사라진다(검색창과 같은 조종 장치다).
@@ -3281,6 +3371,9 @@ body {
   .chips,
   .region,
   .search,
+  /* 중개사 「최근 뽑은 건물」 줄(결정 0036 결정 18 ⑥) — 지금은 `.search` 안이지만 자리가 옮겨져도
+     종이에 새지 않게 따로 적어 둔다(누르는 장치). */
+  .recent,
   .takeout,
   .fb,
   .dmap__toggle,

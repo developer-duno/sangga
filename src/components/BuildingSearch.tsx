@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { SubmitEvent } from 'react';
+import type { ReactNode, SubmitEvent } from 'react';
 import { supabase } from '../lib/supabase';
 import {
   SEARCH_BUILDINGS_FN,
@@ -7,7 +7,7 @@ import {
   SEARCH_STORES_FN,
   SEARCH_STORES_PAGE,
 } from '../lib/appConstants';
-import { describeError, describeRange, formatMonthKo } from '../lib/format';
+import { describeError, describeOwnership, describeRange, formatMonthKo } from '../lib/format';
 import {
   hasMoreStores,
   isStoreHitList,
@@ -84,9 +84,28 @@ type Props = {
   sigungu: string | null;
   /** 고른 시군구 이름(화면 표시용). RPC에는 넘기지 않는다. */
   sigunguName: string | null;
+  /**
+   * 건물 결과 줄마다 소유 구조 한 줄(건물 종류 · 사용승인 · 주차)을 더 그리나 — 역할 = 중개사일 때만
+   * (결정 0036 결정 5·18 ⑩). ⓘ 가게 이름 구역의 줄은 이 칸을 서버에서 안 받아 해당 없다.
+   */
+  showOwnership?: boolean;
+  /**
+   * 검색 입력칸 **바로 아래**(결과 목록 위)에 그릴 자리 — App 이 중개사 「최근 뽑은 건물」 줄을 넣는다
+   * (결정 0036 결정 18 ⑩ "검색창 바로 아래"). 그리기만 맡는다 — 목록·지우기 상태의 주인은 App 이라
+   * 구가 바뀌어 이 부품이 key 로 다시 태어나도 목록은 그대로다(접힘만 처음으로 돌아간다).
+   */
+  belowInput?: ReactNode;
 };
 
-export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu, sigunguName }: Props) {
+export function BuildingSearch({
+  onSelect,
+  onSearchStart,
+  selectedBldId,
+  sigungu,
+  sigunguName,
+  showOwnership = false,
+  belowInput,
+}: Props) {
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<BuildingHit[]>([]);
   /** 검색어에 걸린 전체 건물 수(보여주는 수가 아니다). */
@@ -330,6 +349,8 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu
         </button>
       </form>
 
+      {belowInput}
+
       {error && <p className="msg msg--error">{error}</p>}
 
       {/*
@@ -399,6 +420,10 @@ export function BuildingSearch({ onSelect, onSearchStart, selectedBldId, sigungu
                       <span className="hit__warn"> · 같은 땅에 {h.bld_cnt_in_pnu}동</span>
                     )}
                   </span>
+                  {/* 중개사만 — 소유 구조 한 줄(결정 0036 결정 5·18 ⑩ · null=미상, 칸이 안 오면 줄 없음). */}
+                  {showOwnership && describeOwnership(h) !== null && (
+                    <span className="hit__own">{describeOwnership(h)}</span>
+                  )}
                 </button>
               </li>
             ))}

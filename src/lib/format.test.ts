@@ -13,6 +13,10 @@ import {
   formatWon,
   formatYearMonth,
   oneInEvery,
+  describeOwnership,
+  describeSpec,
+  formatJiphap,
+  formatParking,
 } from './format';
 import type { BuildingHit } from '../types';
 
@@ -402,5 +406,49 @@ describe('formatManWonBand — ㎡당 단가의 폭', () => {
 
   it('뒤집힌 입력이 와도 작은 값이 앞에 온다', () => {
     expect(formatManWonBand(19_045_698.84, 7_465_269.63)).toBe('747만~1,905만');
+  });
+});
+
+describe('describeOwnership — 중개사 소유 구조 줄 (결정 0036 결정 5·18 ⑦)', () => {
+  it('B1 세 칸이 다 있으면 「건물 종류 · 사용승인 · 주차」 — 층수는 안 적는다', () => {
+    const line = describeOwnership(hit({ is_jiphap: true, approve_date: '2003-05-14', parking_cnt: 120 }));
+    expect(line).toBe('집합건물 · 사용승인 2003년 5월 · 주차 120대');
+    expect(line).not.toMatch(/층/);
+  });
+
+  it('B2 false 는 「일반건물」(👤 — 통건물 아님)', () => {
+    expect(describeOwnership(hit({ is_jiphap: false, approve_date: '1999-12-01', parking_cnt: 3 }))).toBe(
+      '일반건물 · 사용승인 1999년 12월 · 주차 3대',
+    );
+  });
+
+  it('B2 셋 다 null → 「건물 종류 미상 · 사용승인 미상 · 주차 미상」 (줄표를 내보내지 않는다)', () => {
+    const line = describeOwnership(hit({ is_jiphap: null, approve_date: null, parking_cnt: null }));
+    expect(line).toBe('건물 종류 미상 · 사용승인 미상 · 주차 미상');
+    expect(line).not.toContain('—');
+  });
+
+  it('B2 주차 0·음수는 미기재 = 미상 (층별 화면 describeSpec 과 같은 규칙)', () => {
+    for (const p of [0, -1]) {
+      expect(describeOwnership(hit({ is_jiphap: true, approve_date: '2003-05-14', parking_cnt: p }))).toBe(
+        '집합건물 · 사용승인 2003년 5월 · 주차 미상',
+      );
+      expect(describeSpec(p, formatParking)).toBe('미상');
+    }
+    // 양성 대조: 1대는 값이다.
+    expect(describeSpec(1, formatParking)).toBe('1대');
+  });
+
+  it('B3 세 칸이 모두 undefined(옛 서버)면 줄 없음(null) — null(미상)과 다르게 다룬다', () => {
+    expect(describeOwnership(hit())).toBeNull();
+    // 양성 대조: 한 칸이라도 오면 줄이 서고, 안 온 칸은 미상이다.
+    expect(describeOwnership(hit({ parking_cnt: 5 }))).toBe('건물 종류 미상 · 사용승인 미상 · 주차 5대');
+  });
+
+  it('formatJiphap — true/false 만 이름, 그 밖은 null', () => {
+    expect(formatJiphap(true)).toBe('집합건물');
+    expect(formatJiphap(false)).toBe('일반건물');
+    expect(formatJiphap(null)).toBeNull();
+    expect(formatJiphap(undefined)).toBeNull();
   });
 });
