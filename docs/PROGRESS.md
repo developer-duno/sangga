@@ -2558,3 +2558,13 @@ pytest **4,457 passed**(본 폴더) · vitest **960 passed** · tsc 0 · oxlint 
 **메인이 할 일**: ⓪ **PR② 전에 본 폴더 DB 로 사이트맵 대상(`unit.floor_use`)과 함수 noindex 판정(`main_use`·`uses`)의 차집합이 0인지 센다**(사이트맵에 실렸는데 noindex 면 서치콘솔 '제출한 URL 이 noindex' 오류 · 사이트맵 SQL 은 글 전체에 정규식, 함수는 조각마다라 `아파트/근린생활시설` 같은 꼴에서 갈린다) · ① PR 미리보기 배포에서 건물 주소 하나를 열어 첫 HTML 제목·canonical 이 건물 것인지 · middleware 가 `/` 에서 실제로 함수로 넘기는지 · 함수를 `/api/building?sgg=…&bld=…` 로 직접 불러도 같은지 · 함수 런타임에 `VITE_SUPABASE_URL`·`VITE_SUPABASE_ANON_KEY` 가 보이는지(안 보이면 503 + Retry-After — 상태 코드로 가른다) · 상대 import(`.js` 확장자)가 함수 런타임에서 풀리는지 ② 머지·배포 뒤 라이브에서 같은 확인 + 없는 건물 주소 404 · 아파트 동 noindex · 서치콘솔 URL 검사 '색인 가능' ③ 본 폴더에서 `python scripts/build_sitemap.py --dry-run`(13,324 근처인지) → 실행 → PR② 커밋 → 배포 → `indexnow_ping.py`.
 
 **되돌리기**: 레포 루트 `middleware.ts` 를 지우면 즉시 옛 동작(함수 파일은 남아도 안 불린다).
+
+## 2026-10-10 — 건물별 첫 HTML 운영 켜기(PR② #269) · 건물 사이트맵(PR③)
+
+**PR② #269 main 00923d4**(21:3x 머지): `middleware.ts` 복원(PR① 에서 뺀 판과 글자 같음 — 재검사 1명 🔴🟠🟡 0) + 시험 세 곳의 "파일 없으면 skip" 제거. **운영 실측(21:37)**: `/?sgg=11680&bld=1168010600109420015_10241100257870` → 200 · 제목 「디아이타워 — 강남구 테헤란로82길 15 \| 상가 층별 스택뷰」 · canonical 건물 주소 · noindex 0 · 두 번째 호출 `X-Vercel-Cache: HIT` · 0.12초 / `/` → 200 · 첫 화면 제목 · 소개문 1 · 0.11초 / `/?bld=hello` → 첫 화면 / 없는 번호 → 404 + noindex / 카카오 UA 와 HTML 해시 같음 / 낯선 인자 `&x=1` 붙여도 건물 제목 / 정적 파일(districts.geojson·sitemap.xml·robots.txt) 200 / 엔진(chromium)으로 건물 주소를 열면 층 18줄 · 페이지 오류 0.
+
+**사이트맵 대상 ↔ noindex 차집합**(본 폴더 DB · `v_floor_stack.uses` 는 jsonb 라 `jsonb_array_elements` 로 펴서 함수와 같은 조각 규칙으로): 대상 13,324 중 **2동**만 사이트맵에 실렸는데 noindex — `1144012300105210000_10151100271359`(층 용도 빈 칸) · `1168010800100350017_10241100262051`(다세대주택 · 호실 표에는 비주거 용도가 있다). 0.015% 라 사이트맵 조건은 그대로 두고 서치콘솔 '제출한 URL 에 noindex' 2건은 알려진 것으로 둔다(맞추려면 사이트맵 조건에 층별개요 판정을 더해야 하는데 그 조회만 10분+).
+
+**PR③**: `public/sitemap-buildings-1.xml`(13,324 주소 · 1,418,879바이트) + 색인 `sitemap.xml` 에 한 줄 · `build_sitemap.py` 는 그 접속만 `statement_timeout` 15분 + `psql -q`(찬 캐시 대상 고르기가 기본 2분을 넘어 실패 — 미리보기·실행 각 약 10분 실측) · `indexnow_ping.py --from-sitemap`(사이트맵 `<loc>` 을 읽어 1만 개씩 나눠 POST · 400·403·422·429 면 나머지 멈춤 · 20개 넘으면 첫·끝 주소만 출력 · 시험 실행 6 → 20) · `test_seo_head.py` 양성 대조가 '색인에 건물 파일 없음'을 전제하던 것을 번호 2로.
+
+**안 한 것**: 서치콘솔 URL 검사·Sitemaps 재확인 — 사장님 크롬에 로그인된 구글 계정 셋 모두 이 속성에 '액세스할 수 없습니다'(속성 목록 0 · 10-09 소유 확인은 지금 크롬에 없는 계정이나 다른 프로필로 한 것으로 보인다 · 확인 meta 는 첫 HTML 에 그대로 있다) → 👤 어느 계정으로 다시 확인할지 결정.

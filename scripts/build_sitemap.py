@@ -137,8 +137,10 @@ def fetch_rows():
     os.close(fd)
     try:
         with io.open(path, "w", encoding="utf-8") as f:
-            f.write(TARGET_SQL + ";\n")
-        cmd = ["psql"] + args + ["-t", "-A", "-v", "ON_ERROR_STOP=1", "-f", path]
+            # 찬 캐시에서 대상 고르기가 기본 제한 2분을 넘는다(2026-10-10 실측) — 이 접속에서만 15분.
+            # -q 는 SET 줄을 출력에 안 남긴다(parse_rows 는 'bld|pnu' 줄만 받는다).
+            f.write("set statement_timeout = '900s';\n" + TARGET_SQL + ";\n")
+        cmd = ["psql"] + args + ["-q", "-t", "-A", "-v", "ON_ERROR_STOP=1", "-f", path]
         out = subprocess.check_output(cmd, env=env, stderr=subprocess.STDOUT)
     finally:
         os.unlink(path)

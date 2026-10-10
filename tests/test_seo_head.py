@@ -344,12 +344,13 @@ def test_control_sitemap_urlset_index_and_bad_building_loc_are_caught(tmp_path):
     d2.mkdir()
     _copy_public_sitemaps(d2)
     bad = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>http://localhost:5173/?sgg=1&amp;bld=2</loc><lastmod>2026-01-01</lastmod></url>\n</urlset>\n'
-    (d2 / "sitemap-buildings-1.xml").write_text(bad, encoding="utf-8")
+    # 색인에 아직 없는 번호(2)로 — 실제 색인은 2026-10-10 부터 sitemap-buildings-1.xml 을 싣는다.
+    (d2 / "sitemap-buildings-2.xml").write_text(bad, encoding="utf-8")
     problems = sitemap_problems(d2)
     assert any("색인에 안 실린 건물 사이트맵" in p for p in problems)
     idx = (d2 / "sitemap.xml").read_text(encoding="utf-8")
     (d2 / "sitemap.xml").write_text(
-        idx.replace("</sitemapindex>", "  <sitemap><loc>{}sitemap-buildings-1.xml</loc></sitemap>\n</sitemapindex>".format(CANONICAL)),
+        idx.replace("</sitemapindex>", "  <sitemap><loc>{}sitemap-buildings-2.xml</loc></sitemap>\n</sitemapindex>".format(CANONICAL)),
         encoding="utf-8",
     )
     problems = sitemap_problems(d2)

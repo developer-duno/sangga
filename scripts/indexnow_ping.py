@@ -12,13 +12,16 @@ IndexNow(https://www.indexnow.org/documentation)는 "이 주소가 새로 생겼
 422 주소가 이 호스트가 아님 · 429 너무 잦음. **200 은 "받았다"일 뿐 색인을 보장하지 않는다.**
 
 쓰는 때: 첫 HTML 이 바뀌는 배포 뒤(제목·설명·소개문) · 새 분기 적재 뒤 · sitemap 에 주소를 더한 뒤.
-기본값은 첫 화면 하나. 더 보내려면 인자로 주소를 나열한다(한 번에 1만 개까지 — 규격).
+기본값은 첫 화면 하나. 더 보내려면 인자로 주소를 나열하거나 사이트맵 파일을 준다.
+규격상 POST 한 번에 주소 1만 개까지라서 **1만 개씩 나눠 보낸다**(덩어리 사이 1초 쉼).
 
     python scripts/indexnow_ping.py                                  # 첫 화면 알림
     python scripts/indexnow_ping.py --dry-run                        # 보낼 본문만 출력(네트워크 0)
     python scripts/indexnow_ping.py https://sangga-one.vercel.app/?sgg=11680   # 주소 여러 개
+    python scripts/indexnow_ping.py --from-sitemap public/sitemap-buildings-1.xml   # 사이트맵의 <loc> 전부
 
-종료 코드: 0 = 200/202 · 1 = 그 밖의 응답 · 2 = 연결 실패.
+종료 코드: 0 = 덩어리 전부 200/202 · 1 = 그 밖의 응답 · 2 = 연결 실패(하나라도).
+400·403·422·429 가 나오면 같은 오류를 되풀이하지 않도록 나머지 덩어리는 보내지 않고 멈춘다.
 """
 
 from __future__ import annotations
@@ -26,11 +29,22 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 import urllib.error
 import urllib.request
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 SITE = "https://sangga-one.vercel.app/"
+MAX_PER_POST = 10000  # 규격: POST 한 번에 urlList 1만 개까지
+SITEMAP_NS = "http://www.sitemaps.org/schemas/sitemap/0.9"
+# 이 응답이 나오면 나머지 덩어리를 보내지 않는다(같은 오류 반복 방지)
+STOP_CODES = (400, 403, 422, 429)
+CODE_MEANING = {
+    200: "받음(색인 보장 아님)", 202: "받음 · 열쇠 검증은 나중", 400: "형식 오류",
+    403: "열쇠 불일치(배포가 아직이거나 파일 내용이 다름)", 422: "주소가 이 호스트가 아님",
+    429: "너무 잦음", -1: "연결 실패",
+}
 HOST = "sangga-one.vercel.app"
 ENDPOINT = "https://api.indexnow.org/indexnow"
 # 열쇠 = public/<key>.txt 파일 이름과 내용 — tests/test_indexnow.py 가 셋이 같은지 지킨다.
@@ -68,29 +82,61 @@ def ping(urls: list[str], timeout: float = 20.0) -> int:
         return -1
 
 
+def read_sitemap_urls(path: str | Path) -> list[str]:
+    """사이트맵 XML 의 <loc> 값을 순서대로. `&amp;` 는 파서가 `&` 로 풀어 준다."""
+    root = ET.parse(path).getroot()
+    return [e.text.strip() for e in root.iter(f"{{{SITEMAP_NS}}}loc") if e.text and e.text.strip()]
+
+
+def dedupe(urls: list[str]) -> list[str]:
+    """처음 나온 순서를 지키며 중복 제거."""
+    return list(dict.fromkeys(urls))
+
+
+def chunks(urls: list[str], size: int = MAX_PER_POST) -> list[list[str]]:
+    """size 개씩 나눈다."""
+    return [urls[i:i + size] for i in range(0, len(urls), size)]
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="IndexNow 로 바뀐 주소를 빙·네이버에 알린다")
-    ap.add_argument("urls", nargs="*", default=[SITE], help=f"알릴 주소(기본 {SITE})")
+    ap.add_argument("urls", nargs="*", default=[], help=f"알릴 주소(아무것도 안 주면 {SITE})")
+    ap.add_argument("--from-sitemap", action="append", default=[], metavar="PATH",
+                    help="사이트맵 XML 의 <loc> 을 읽어 보낸다(여러 번 가능 · 1만 개씩 나눠 보냄)")
     ap.add_argument("--dry-run", action="store_true", help="보낼 본문만 출력(네트워크 0)")
     args = ap.parse_args(argv)
 
     if not KEY_FILE.is_file() or KEY_FILE.read_text(encoding="utf-8").strip() != KEY:
         print(f"[사고] 열쇠 파일이 없거나 내용이 다름: {KEY_FILE}", file=sys.stderr)
         return 1
-    body = build_body(args.urls)
-    print(json.dumps(body, ensure_ascii=False, indent=2))
+    urls = list(args.urls)
+    for sm in args.from_sitemap:
+        urls += read_sitemap_urls(sm)
+    urls = dedupe(urls) or [SITE]
+    body = build_body(urls)  # 남의 주소가 하나라도 섞였으면 여기서 멈춘다(보내기 전)
+    parts = chunks(urls)
+    if len(urls) <= 20:
+        print(json.dumps(body, ensure_ascii=False, indent=2))
+    else:
+        print(f"보낼 주소 {len(urls)}개 · 덩어리 {len(parts)}개(1만 개씩)")
+        print(f"첫 주소: {urls[0]}")
+        print(f"끝 주소: {urls[-1]}")
     if args.dry_run:
         print("[dry-run] 보내지 않음")
         return 0
-    code = ping(args.urls)
-    print(f"응답 {code} — " + {
-        200: "받음(색인 보장 아님)", 202: "받음 · 열쇠 검증은 나중", 400: "형식 오류",
-        403: "열쇠 불일치(배포가 아직이거나 파일 내용이 다름)", 422: "주소가 이 호스트가 아님",
-        429: "너무 잦음", -1: "연결 실패",
-    }.get(code, "알 수 없는 응답"))
-    if code in (200, 202):
-        return 0
-    return 2 if code == -1 else 1
+    codes: list[int] = []
+    for i, part in enumerate(parts, 1):
+        code = ping(part)
+        codes.append(code)
+        print(f"덩어리 {i}/{len(parts)}: 응답 {code} — {CODE_MEANING.get(code, '알 수 없는 응답')}")
+        if code in STOP_CODES:
+            print("같은 오류를 되풀이하지 않도록 나머지 덩어리는 보내지 않고 멈춤")
+            break
+        if i < len(parts):
+            time.sleep(1)
+    if -1 in codes:
+        return 2
+    return 0 if all(c in (200, 202) for c in codes) else 1
 
 
 if __name__ == "__main__":
