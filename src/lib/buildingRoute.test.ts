@@ -12,20 +12,29 @@ describe('buildingRewriteTarget — middleware 판정(결정 0037)', () => {
     expect(buildingRewriteTarget(`https://sangga-one.vercel.app/?sgg=11680&bld=${BLD}`)).toBe(
       `https://sangga-one.vercel.app/api/building?sgg=11680&bld=${BLD}`,
     );
-    expect(buildingRewriteTarget(`https://x.vercel.app/?bld=${BLD}`)).toBe(`https://x.vercel.app/api/building?bld=${BLD}`);
+    // sgg 가 없어도 bld 앞 5자리로 채운다
+    expect(buildingRewriteTarget(`https://x.vercel.app/?bld=${BLD}`)).toBe(`https://x.vercel.app/api/building?sgg=11680&bld=${BLD}`);
   });
 
   it('sgg·bld 두 값만 다시 조립한다 — 낯선 인자는 사라지고 순서는 sgg 먼저', () => {
     expect(buildingRewriteTarget(`https://sangga-one.vercel.app/?x=123&bld=${BLD}&utm_source=a&sgg=11680`)).toBe(
       `https://sangga-one.vercel.app/api/building?sgg=11680&bld=${BLD}`,
     );
-    // sgg 꼴이 틀리면 빼고 bld 만(캐시 열쇠를 늘리지 않는다)
-    expect(buildingRewriteTarget(`https://sangga-one.vercel.app/?sgg=abc&bld=${BLD}`)).toBe(
-      `https://sangga-one.vercel.app/api/building?bld=${BLD}`,
-    );
     // 같은 bld 를 두 번 적어도 첫 값 하나만
     expect(buildingRewriteTarget(`https://sangga-one.vercel.app/?bld=${BLD}&bld=${BLD}9`)).toBe(
-      `https://sangga-one.vercel.app/api/building?bld=${BLD}`,
+      `https://sangga-one.vercel.app/api/building?sgg=11680&bld=${BLD}`,
+    );
+  });
+
+  it('받은 sgg 는 버리고 bld 앞 5자리로 — 어떤 sgg 든 넘기는 주소(캐시 칸)는 하나', () => {
+    const want = `https://sangga-one.vercel.app/api/building?sgg=11680&bld=${BLD}`;
+    for (const sgg of ['11680', '30110', '00000', 'abc', '', '116800', '11680&sgg=30110']) {
+      expect(buildingRewriteTarget(`https://sangga-one.vercel.app/?sgg=${sgg}&bld=${BLD}`), sgg).toBe(want);
+    }
+    // 대전 건물도 그 건물의 앞 5자리
+    const dj = '3017011200100120003_10011100012345';
+    expect(buildingRewriteTarget(`https://sangga-one.vercel.app/?sgg=11680&bld=${dj}`)).toBe(
+      `https://sangga-one.vercel.app/api/building?sgg=30170&bld=${dj}`,
     );
   });
 
