@@ -1,4 +1,5 @@
 import type { BuildingHit, DistrictLand, ParcelBuilding } from '../types';
+import { chipMatch, type FounderChip } from './founderChips';
 
 /**
  * 상권 → 건물 목록의 **순수 계산**만 모은다.
@@ -14,6 +15,11 @@ function isNullableString(x: unknown): boolean {
 
 function isNullableNumber(x: unknown): boolean {
   return x === null || x === undefined || typeof x === 'number';
+}
+
+/** 없거나 null 이거나 0 이상의 정수(개수 칸). */
+function isOptionalCount(x: unknown): boolean {
+  return x === null || x === undefined || (Number.isInteger(x) && (x as number) >= 0);
 }
 
 /**
@@ -42,7 +48,9 @@ export function isDistrictLand(x: unknown): x is DistrictLand {
     isNullableNumber(r.lat) &&
     isNullableNumber(r.lng) &&
     isNullableNumber(r.min_floor) &&
-    isNullableNumber(r.max_floor)
+    isNullableNumber(r.max_floor) &&
+    // 업종 칩 점포 수(2026-10-11a) — 선택 칸. 마이그레이션 전 서버는 안 보낸다.
+    isOptionalCount(r.cat_store_cnt)
   );
 }
 
@@ -147,4 +155,52 @@ export function landsSummary(lands: readonly DistrictLand[]): string {
  */
 export function hasMore(lands: readonly DistrictLand[]): boolean {
   return lands.length > 0 && lands.length < lands[0].total_parcel_cnt;
+}
+
+// ── 창업자 업종 칩(2026-10-11a · 물결 2-2b · 결정 0036 결정 18 ⑨·㉒) ─────────────────
+
+/**
+ * 목록 함수에 보낼 인자. 칩을 골랐으면 그 칩의 짝 중분류 코드(`CHIP_MATCH[칩].catM`)를 `p_cat_m` 으로.
+ *
+ * ⛔ 칩 '전체'면 `p_cat_m` 을 **아예 안 넣는다**(null 도 안 보낸다) — 마이그레이션 전 라이브(인자 셋짜리
+ *    함수)에서도 칩 없는 손님의 목록이 그대로 서게. '더 보기'도 같은 인자로 부른다.
+ */
+export function districtLandsArgs(
+  districtId: string,
+  limit: number,
+  offset: number,
+  chip: FounderChip,
+): Record<string, unknown> {
+  const args: Record<string, unknown> = { p_district_id: districtId, p_limit: limit, p_offset: offset };
+  const match = chipMatch(chip);
+  if (match) args.p_cat_m = [...match.catM];
+  return args;
+}
+
+/**
+ * 한 줄의 점포 숫자. 칩을 골랐고 서버가 그 수를 줬으면 **둘 다**(👤 2026-10-11):
+ * `고른 업종(카페) 3곳 · 전체 점포 25곳`. 아니면 지금 글 그대로 `점포 25곳`.
+ * ⓘ '고른 업종(…)' 은 업종 분포·개업·폐업 카드와 같은 말이다('칩'은 손님 말이 아니다).
+ */
+export function landStoreText(land: DistrictLand, chip: FounderChip): string {
+  const all = land.store_cnt.toLocaleString('ko-KR');
+  if (chipMatch(chip) && typeof land.cat_store_cnt === 'number') {
+    return `고른 업종(${chip}) ${land.cat_store_cnt.toLocaleString('ko-KR')}곳 · 전체 점포 ${all}곳`;
+  }
+  return `점포 ${all}곳`;
+}
+
+/** 받침이 있으면 '이', 없으면 '가'. 칩 이름은 전부 한글로 끝난다(`founderChips` 표). */
+function subjectParticle(word: string): string {
+  const code = word.charCodeAt(word.length - 1);
+  return (code - 0xac00) % 28 === 0 ? '가' : '이';
+}
+
+/**
+ * 칩을 골랐는데 그 업종 점포가 있는 땅이 하나도 없을 때. 코드가 둘인 칩(학원)도 칩 이름 하나로 말한다.
+ * 칩 '전체'면 null — 그때는 지금 글('아직 건물 자료가 없습니다') 그대로다.
+ */
+export function noLandText(chip: FounderChip): string | null {
+  if (!chipMatch(chip)) return null;
+  return `이 상권에는 ${chip}${subjectParticle(chip)} 있는 땅이 없습니다.`;
 }

@@ -1,12 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import {
+  districtLandsArgs,
   hasMore,
   isDistrictLandList,
   isParcelBuildingList,
+  landStoreText,
   landToHit,
   landsSummary,
+  noLandText,
   parcelBuildingToHit,
 } from './districtBuildings';
+import { CHIP_MATCH, FOUNDER_CHIPS } from './founderChips';
 import type { DistrictLand, ParcelBuilding } from '../types';
 
 /**
@@ -152,5 +156,51 @@ describe('더 받을 것이 남았나', () => {
 
   it('빈 목록에서는 없다', () => {
     expect(hasMore([])).toBe(false);
+  });
+});
+
+describe('창업자 업종 칩 (2026-10-11a · 물결 2-2b)', () => {
+  it('업종 칸은 선택이다 — 없거나 null 이거나 0 이상의 정수', () => {
+    expect(isDistrictLandList([land()])).toBe(true);
+    expect(isDistrictLandList([land({ cat_store_cnt: null })])).toBe(true);
+    expect(isDistrictLandList([land({ cat_store_cnt: 0 })])).toBe(true);
+    expect(isDistrictLandList([land({ cat_store_cnt: 3 })])).toBe(true);
+  });
+
+  it('업종 칸이 음수·소수·글자면 받지 않는다 — 다른 칸과 같은 결(목록째 실패)', () => {
+    expect(isDistrictLandList([{ ...land(), cat_store_cnt: -1 }])).toBe(false);
+    expect(isDistrictLandList([{ ...land(), cat_store_cnt: 1.5 }])).toBe(false);
+    expect(isDistrictLandList([{ ...land(), cat_store_cnt: '3' }])).toBe(false);
+  });
+
+  it("인자 — 칩 '전체'면 p_cat_m 열쇠가 아예 없다", () => {
+    expect(districtLandsArgs('D1', 50, 0, '전체')).toEqual({ p_district_id: 'D1', p_limit: 50, p_offset: 0 });
+  });
+
+  it('인자 — 칩마다 짝짓기 표의 중분류 코드를 그대로(사본으로) 보낸다', () => {
+    for (const chip of FOUNDER_CHIPS) {
+      if (chip === '전체') continue;
+      const args = districtLandsArgs('D1', 50, 100, chip);
+      expect(args.p_cat_m).toEqual([...CHIP_MATCH[chip].catM]);
+      expect(args.p_cat_m).not.toBe(CHIP_MATCH[chip].catM);
+      expect(args.p_offset).toBe(100);
+    }
+  });
+
+  it('줄 숫자 — 칩을 골랐고 수가 오면 둘 다, 아니면 지금 글', () => {
+    const l = land({ store_cnt: 1234, cat_store_cnt: 3 });
+    expect(landStoreText(l, '카페')).toBe('고른 업종(카페) 3곳 · 전체 점포 1,234곳');
+    expect(landStoreText(l, '전체')).toBe('점포 1,234곳');
+    // 칸이 없는 옛 서버 답이면 지어내지 않는다
+    expect(landStoreText(land({ store_cnt: 5 }), '카페')).toBe('점포 5곳');
+  });
+
+  it("빈 상태 — 칩 이름 하나 + 받침에 맞는 조사 · '전체'면 null", () => {
+    expect(noLandText('카페')).toBe('이 상권에는 카페가 있는 땅이 없습니다.');
+    expect(noLandText('한식')).toBe('이 상권에는 한식이 있는 땅이 없습니다.');
+    expect(noLandText('미용')).toBe('이 상권에는 미용이 있는 땅이 없습니다.');
+    expect(noLandText('학원')).toBe('이 상권에는 학원이 있는 땅이 없습니다.');
+    expect(noLandText('편의점')).toBe('이 상권에는 편의점이 있는 땅이 없습니다.');
+    expect(noLandText('전체')).toBeNull();
   });
 });

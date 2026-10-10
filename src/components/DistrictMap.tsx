@@ -10,6 +10,7 @@ import {
 import { loadDistricts } from '../lib/districts';
 import { labelPointOf, showLabels } from '../lib/districtLabels';
 import { boundsOf, pointInGeometry, polygonsOf, ringsToPath, type Bounds } from '../lib/geo';
+import { FOUNDER_CHIP_ALL, type FounderChip } from '../lib/founderChips';
 import type { BuildingHit, DistrictFeature } from '../types';
 import { DistrictBuildings } from './DistrictBuildings';
 
@@ -42,9 +43,14 @@ type Props = {
   onSelectBuilding: (hit: BuildingHit) => void;
   /**
    * 제목 줄에 함께 얹을 것 — 창업자의 업종 칩 줄(👤 결정 0036 결정 18 ④). 없으면 지금 머리 그대로.
-   * ⓘ 지도는 칩을 모른다 — 상권 목록을 업종으로 거르는 일은 물결 2-2 몫이다(결정 18 ⑨).
+   * ⓘ 칩 줄을 그리는 일은 App 몫이다 — 지도는 고른 칩 값(`chip`)만 받아 상권 목록에 넘긴다.
    */
   headExtra?: ReactNode;
+  /**
+   * 창업자가 고른 업종 칩(App 의 `activeChip` — 다른 역할은 늘 '전체'). 상권 목록(`DistrictBuildings`)이
+   * 그 업종 기준으로 거르고 줄 세운다(2026-10-11a · 물결 2-2b · 결정 18 ⑨·㉒). 지도 면은 안 바뀐다.
+   */
+  chip?: FounderChip;
 };
 
 /**
@@ -87,7 +93,14 @@ function colorOf(type: string | null): string {
 /** 지도를 가리지 않을 만큼만 칠한다 — 겹친 면이 서로 비쳐 보여야 겹침이 눈에 띈다. */
 const FILL_OPACITY = 0.18;
 
-export function DistrictMap({ sigungu, sigunguName, selected, onSelectBuilding, headExtra }: Props) {
+export function DistrictMap({
+  sigungu,
+  sigunguName,
+  selected,
+  onSelectBuilding,
+  headExtra,
+  chip = FOUNDER_CHIP_ALL,
+}: Props) {
   const [open, setOpen] = useState(true);
 
   if (!sigungu) return null;
@@ -118,6 +131,7 @@ export function DistrictMap({ sigungu, sigunguName, selected, onSelectBuilding, 
           sigungu={sigungu}
           selected={selected}
           onSelectBuilding={onSelectBuilding}
+          chip={chip}
         />
       )}
     </section>
@@ -136,11 +150,13 @@ function DistrictMapBody({
   sigungu,
   selected,
   onSelectBuilding,
+  chip,
 }: {
   appkey: string;
   sigungu: string;
   selected: BuildingHit | null;
   onSelectBuilding: (hit: BuildingHit) => void;
+  chip: FounderChip;
 }) {
   const [kakaoLoading, kakaoError] = useKakaoLoader({ appkey });
   const [features, setFeatures] = useState<DistrictFeature[] | null>(null);
@@ -315,6 +331,7 @@ function DistrictMapBody({
           districtNm={openDistrict.properties.district_nm || '(이름 없음)'}
           onSelect={onSelectBuilding}
           selectedBldId={selected?.bld_id ?? null}
+          chip={chip}
         />
       )}
 

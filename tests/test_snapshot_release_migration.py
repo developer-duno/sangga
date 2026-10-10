@@ -45,6 +45,18 @@ SUMMARY_MVS = ("mv_parcel_store_names", "mv_coverage_stats", "mv_district_indust
 SECOND_FNS = ("list_industry_mix", "list_industry_detail")
 # 마이그레이션이 다시 만드는 함수 넷 — 머리·comment·본문이 정본과 글자 그대로
 REBUILT_FNS = SECOND_FNS + LIVE_FNS
+# 10-07a 뒤에 다른 마이그레이션이 다시 만든 함수 → 그 판(정본과 글자 그대로 같아야 하는 쪽).
+# 10-07a 는 적용된 원장이라 고치지 않는다 — 머리·본문·comment 대조는 그 판과 하고, 그 판의 시험이
+# 나머지(인자·거르기·정렬)를 맡는다. 표지 칸(published) 판정은 10-07a 원본에도 그대로 건다.
+RECREATED_LATER = {
+    "list_district_buildings": os.path.join(
+        MIG_DIR, "2026-10-11a_district_buildings_industry.sql"),  # 물결 2-2b 업종 인자
+}
+
+
+def mirror_source(mig, name):
+    """정본과 글자 대조할 마이그레이션 글 — 그 함수를 마지막으로 다시 만든 판."""
+    return read(RECREATED_LATER[name]) if name in RECREATED_LATER else mig
 RENAMED_INDEXES = ("idx_mpsn_pnu", "idx_mpsn_sigungu", "idx_mpsn_names",
                    "idx_mcs_snapshot_ym", "mv_district_industry_mix_key")
 
@@ -363,7 +375,7 @@ class TestMirrorsTheSchema:
     @pytest.mark.parametrize("name", REBUILT_FNS)
     def test_function_head_and_body(self, schema, mig, name):
         """⛔ `create or replace` 는 머리 속성을 새 정의로 덮어쓴다 — 한 글자라도 다르면 라이브가 조용히 바뀐다."""
-        a, b = fn_block(schema, name), fn_block(mig, name)
+        a, b = fn_block(schema, name), fn_block(mirror_source(mig, name), name)
         assert a == b, name
         head = b[: b.index("$$")]
         for needle in ("security definer", "set search_path = public"):
@@ -372,7 +384,7 @@ class TestMirrorsTheSchema:
 
     @pytest.mark.parametrize("name", REBUILT_FNS)
     def test_function_comment(self, schema, mig, name):
-        assert fn_comment(schema, name) == fn_comment(mig, name), name
+        assert fn_comment(schema, name) == fn_comment(mirror_source(mig, name), name), name
 
     @pytest.mark.parametrize("name", REBUILT_FNS)
     def test_function_is_revoked_again(self, mig, name):

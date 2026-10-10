@@ -742,7 +742,7 @@ export type BuildingHit = {
 };
 
 /**
- * 함수 `list_district_buildings(p_district_id, p_limit, p_offset)`의 한 줄 = **땅 하나**.
+ * 함수 `list_district_buildings(p_district_id, p_limit, p_offset[, p_cat_m])`의 한 줄 = **땅 하나**.
  *
  * ⛔ `store_cnt` 는 "이 건물의 점포"가 아니라 **"이 땅의 점포"** 다. 층별 화면의 점포 칸과
  *    **세는 대상이 다르므로**(거기는 그 건물의 층에 붙은 점포) 화면 문구가 이것을 흐리면
@@ -750,8 +750,16 @@ export type BuildingHit = {
  */
 export type DistrictLand = {
   pnu: string;
-  /** 이 **땅**의 점포 수(최신 분기). 0 이 정상일 수 있다. */
+  /** 이 **땅**의 점포 수(최신 분기). 0 이 정상일 수 있다. 업종 칩을 골라도 늘 땅 전체다. */
   store_cnt: number;
+  /**
+   * 그중 창업자가 고른 업종(칩의 짝 중분류 — 인자 `p_cat_m`) 점포 수(2026-10-11a · 물결 2-2b).
+   * 칩 '전체'(인자를 안 보냄)면 null.
+   *
+   * ⚠️ 선택 필드다 — 이 칸을 주는 마이그레이션(2026-10-11a_district_buildings_industry)이 라이브에
+   *    적용되기 전에는 서버가 안 보낸다.
+   */
+  cat_store_cnt?: number | null;
   /** 이 땅에 선 동 수(층 자료가 있는 것만). 1 보다 크면 "같은 땅에 N동"을 적는다. */
   bld_cnt_in_pnu: number;
   /** 대표 동(연면적이 가장 큰 것). 아래 칸들은 검색 결과(`BuildingHit`)와 같은 모양이다. */

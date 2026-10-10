@@ -179,8 +179,16 @@ const landRows = [
   },
 ];
 
+/** 상권 목록 rpc 의 인자 — 지도가 칩을 목록까지 넘기는지 본다(2026-10-11a · 물결 2-2b). */
+const rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
+
 vi.mock('../lib/supabase', () => ({
-  supabase: { rpc: () => Promise.resolve({ data: landRows, error: null }) },
+  supabase: {
+    rpc: (fn: string, args?: Record<string, unknown>) => {
+      rpcCalls.push({ fn, args: args ?? {} });
+      return Promise.resolve({ data: landRows, error: null });
+    },
+  },
 }));
 
 const fetchMock = vi.fn();
@@ -394,6 +402,28 @@ describe('DistrictMap — 상권 이름을 누르면 그 안의 건물', () => {
 
     await clickAt(127.05, 37.55); // 다른 자리(두 상권이 겹치는 곳)
     await waitFor(() => expect(screen.queryByText('역삼빌딩')).toBeNull());
+  });
+
+  it('창업자 칩을 받으면 상권 목록이 그 업종 코드로 묻는다 — 없으면 업종 인자를 안 보낸다', async () => {
+    rpcCalls.length = 0;
+    await renderMap({ chip: '카페' });
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await clickAt(127.09, 37.59);
+    fireEvent.click(screen.getByRole('button', { name: /역삼역/ }));
+    await screen.findByText('역삼빌딩');
+    const withChip = rpcCalls.filter((c) => c.fn === 'list_district_buildings');
+    expect(withChip.at(-1)?.args.p_cat_m).toEqual(['I212']);
+
+    cleanup();
+    rpcCalls.length = 0;
+    await renderMap();
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await clickAt(127.09, 37.59);
+    fireEvent.click(screen.getByRole('button', { name: /역삼역/ }));
+    await screen.findByText('역삼빌딩');
+    const noChip = rpcCalls.filter((c) => c.fn === 'list_district_buildings');
+    expect(noChip.length).toBeGreaterThan(0);
+    expect(noChip.at(-1)?.args).not.toHaveProperty('p_cat_m');
   });
 });
 

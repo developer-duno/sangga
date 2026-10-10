@@ -278,6 +278,7 @@ export default function App() {
           sigunguName={sigunguName}
           selected={selected}
           onSelectBuilding={handleSelectBuilding}
+          chip={activeChip}
           headExtra={
             viewerRole === '창업자' ? (
               <FounderChips chip={founderChip} onChange={setFounderChip} />

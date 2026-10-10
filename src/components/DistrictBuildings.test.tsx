@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
 import type { DistrictLand, ParcelBuilding } from '../types';
+import type { FounderChip } from '../lib/founderChips';
 
 /**
  * "이 상권의 건물" 목록 — 지도를 막다른 길에서 꺼내는 조각.
@@ -98,13 +99,16 @@ function dong(over: Partial<ParcelBuilding> = {}): ParcelBuilding {
   };
 }
 
-function show(over: { onSelect?: (h: unknown) => void; districtId?: string } = {}) {
+function show(
+  over: { onSelect?: (h: unknown) => void; districtId?: string; chip?: FounderChip } = {},
+) {
   return render(
     <DistrictBuildings
       districtId={over.districtId ?? '3001492'}
       districtNm="명동 남대문 관광특구"
       onSelect={over.onSelect ?? (() => {})}
       selectedBldId={null}
+      chip={over.chip}
     />,
   );
 }
@@ -455,6 +459,134 @@ describe('DistrictBuildings — 상권을 바꿨을 때', () => {
 
     give({ data: [land({ bld_nm: '새 건물', pnu: 'p2', bld_id: 'B-2' })], error: null });
     expect(await screen.findByText('새 건물')).toBeTruthy();
+  });
+});
+
+describe('DistrictBuildings — 창업자 업종 칩 (2026-10-11a · 물결 2-2b)', () => {
+  const lastListCall = () => rpcCalls.filter((c) => c.fn === 'list_district_buildings').at(-1);
+
+  it("칩 '전체'(또는 없음)면 업종 인자를 **아예 안 보낸다** — 마이그레이션 전 라이브에서도 그대로 선다", async () => {
+    show();
+    await screen.findByText('롯데호텔 및 백화점');
+    expect(lastListCall()?.args).toEqual({ p_district_id: '3001492', p_limit: 50, p_offset: 0 });
+    cleanup();
+    rpcCalls.length = 0;
+    show({ chip: '전체' });
+    await screen.findByText('롯데호텔 및 백화점');
+    expect(lastListCall()?.args).toEqual({ p_district_id: '3001492', p_limit: 50, p_offset: 0 });
+  });
+
+  it('칩을 고르면 그 칩의 짝 중분류 코드로 묻는다 — 학원은 코드 둘', async () => {
+    show({ chip: '카페' });
+    await screen.findByText('롯데호텔 및 백화점');
+    expect(lastListCall()?.args).toEqual({
+      p_district_id: '3001492',
+      p_limit: 50,
+      p_offset: 0,
+      p_cat_m: ['I212'],
+    });
+    cleanup();
+    show({ chip: '학원' });
+    await screen.findByText('롯데호텔 및 백화점');
+    expect(lastListCall()?.args.p_cat_m).toEqual(['P105', 'P106']);
+  });
+
+  it('줄에 **둘 다** 적는다 — 고른 업종 수와 전체 점포 수', async () => {
+    responses.lands = { data: [land({ store_cnt: 25, cat_store_cnt: 3 })], error: null };
+    show({ chip: '카페' });
+    expect(await screen.findByText(/고른 업종\(카페\) 3곳 · 전체 점포 25곳/)).toBeTruthy();
+  });
+
+  it("칩 '전체'면 줄 글이 지금 그대로다", async () => {
+    responses.lands = { data: [land({ store_cnt: 25, cat_store_cnt: null })], error: null };
+    show();
+    expect(await screen.findByText(/점포 25곳/)).toBeTruthy();
+    expect(screen.queryByText(/고른 업종/)).toBeNull();
+    expect(screen.getByText(/^점포 수가 많은 곳부터입니다\./)).toBeTruthy();
+  });
+
+  it('안내 첫 문장이 고른 업종 기준으로 바뀌고 나머지 설명은 그대로다', async () => {
+    show({ chip: '카페' });
+    await screen.findByText('롯데호텔 및 백화점');
+    expect(screen.getByText(/^고른 업종\(카페\) 점포가 많은 곳부터입니다\./)).toBeTruthy();
+    expect(screen.getByText(/그 땅 전체/)).toBeTruthy();
+    expect(screen.queryByText('종합 소매에는 편의점과 슈퍼마켓이 함께 들어 있습니다')).toBeNull();
+  });
+
+  it('편의점 칩이면 업종 분포 카드와 같은 설명 한 줄을 덧붙인다', async () => {
+    show({ chip: '편의점' });
+    await screen.findByText('롯데호텔 및 백화점');
+    expect(screen.getByText('종합 소매에는 편의점과 슈퍼마켓이 함께 들어 있습니다')).toBeTruthy();
+  });
+
+  it('그 업종이 있는 땅이 없으면 그렇게 말한다 — 건물 자료가 없다고 하지 않는다', async () => {
+    responses.lands = { data: [], error: null };
+    show({ chip: '카페' });
+    expect(await screen.findByText('이 상권에는 카페가 있는 땅이 없습니다.')).toBeTruthy();
+    expect(screen.queryByText(/아직 건물 자료가 없습니다/)).toBeNull();
+    cleanup();
+    show({ chip: '학원' });
+    expect(await screen.findByText('이 상권에는 학원이 있는 땅이 없습니다.')).toBeTruthy();
+  });
+
+  it('더 보기도 같은 업종 인자로 부른다', async () => {
+    responses.lands = {
+      data: Array.from({ length: 50 }, (_, i) =>
+        land({ pnu: `p${i}`, bld_id: `B-${i}`, cat_store_cnt: 1, total_parcel_cnt: 80 }),
+      ),
+      error: null,
+    };
+    show({ chip: '카페' });
+    fireEvent.click(await screen.findByRole('button', { name: '더 보기' }));
+    await waitFor(() => expect(lastListCall()?.args.p_offset).toBe(50));
+    expect(lastListCall()?.args.p_cat_m).toEqual(['I212']);
+  });
+
+  it('★ 목록이 열린 채 칩을 바꾸면 **다시 묻고**, 늦게 온 옛 칩의 답은 버린다', async () => {
+    responses.lands = { data: [land({ bld_nm: '전체 기준 건물' })], error: null };
+    const { rerender } = show();
+    await screen.findByText('전체 기준 건물');
+
+    // 상권은 그대로 두고 칩만 '한식'으로 바꾼다 — 그 요청의 답을 붙들어 둔다.
+    let give: (v: unknown) => void = () => {};
+    hold.next = new Promise((res) => {
+      give = res;
+    });
+    rerender(
+      <DistrictBuildings
+        districtId="3001492"
+        districtNm="명동 남대문 관광특구"
+        onSelect={() => {}}
+        selectedBldId={null}
+        chip="한식"
+      />,
+    );
+    // 붙든 답은 '한식' 요청의 답이다 — 그 사이 또 '카페'로 바꾼다(즉답).
+    responses.lands = { data: [land({ bld_nm: '카페 기준 건물', pnu: 'c1', bld_id: 'C-1' })], error: null };
+    rerender(
+      <DistrictBuildings
+        districtId="3001492"
+        districtNm="명동 남대문 관광특구"
+        onSelect={() => {}}
+        selectedBldId={null}
+        chip="카페"
+      />,
+    );
+    expect(await screen.findByText('카페 기준 건물')).toBeTruthy();
+    expect(lastListCall()?.args.p_cat_m).toEqual(['I212']);
+    expect(rpcCalls.filter((c) => c.fn === 'list_district_buildings').map((c) => c.args.p_cat_m)).toEqual([
+      undefined,
+      ['I201'],
+      ['I212'],
+    ]);
+
+    // 이제서야 '한식'의 답이 도착한다 — 새 칩 아래 붙거나 목록을 바꿔치기하면 안 된다.
+    await act(async () => {
+      give({ data: [land({ bld_nm: '한식 기준 건물', pnu: 'k1', bld_id: 'K-1' })], error: null });
+    });
+    expect(screen.queryByText('한식 기준 건물')).toBeNull();
+    expect(screen.getByText('카페 기준 건물')).toBeTruthy();
+    expect(screen.queryByText('전체 기준 건물')).toBeNull();
   });
 });
 
