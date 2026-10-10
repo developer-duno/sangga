@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -52,8 +52,7 @@ describe('buildingRewriteTarget — middleware 판정(결정 0037)', () => {
     expect(re('buildingHead.ts')).toBe(re('urlState.ts'));
   });
 
-  // ⓘ 2026-10-09 두 단계 배포: PR① 은 함수만 → PR② 가 middleware.ts 를 더하며 이 skip 을 지운다.
-  it.skipIf(!existsSync(resolve(HERE, '../../middleware.ts')))('middleware.ts 는 matcher "/" · 이 판정을 .js 확장자로 부른다', () => {
+  it('middleware.ts 는 matcher "/" · 이 판정을 .js 확장자로 부른다', () => {
     const src = readFileSync(resolve(HERE, '../../middleware.ts'), 'utf-8');
     expect(src).toContain("matcher: '/'");
     expect(src).toContain("from './src/lib/buildingRoute.js'");
