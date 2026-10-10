@@ -9,6 +9,8 @@ import {
   landsSummary,
   noLandText,
   parcelBuildingToHit,
+  toDistrictLands,
+  withSubjectParticle,
 } from './districtBuildings';
 import { CHIP_MATCH, FOUNDER_CHIPS } from './founderChips';
 import type { DistrictLand, ParcelBuilding } from '../types';
@@ -160,17 +162,34 @@ describe('더 받을 것이 남았나', () => {
 });
 
 describe('창업자 업종 칩 (2026-10-11a · 물결 2-2b)', () => {
-  it('업종 칸은 선택이다 — 없거나 null 이거나 0 이상의 정수', () => {
-    expect(isDistrictLandList([land()])).toBe(true);
-    expect(isDistrictLandList([land({ cat_store_cnt: null })])).toBe(true);
-    expect(isDistrictLandList([land({ cat_store_cnt: 0 })])).toBe(true);
-    expect(isDistrictLandList([land({ cat_store_cnt: 3 })])).toBe(true);
+  it('업종 칸은 선택이다 — 없거나 null 이거나 0 이상의 정수는 그대로 둔다', () => {
+    for (const v of [undefined, null, 0, 3]) {
+      const l = land({ cat_store_cnt: v });
+      expect(toDistrictLands([l])).toEqual([l]);
+    }
   });
 
-  it('업종 칸이 음수·소수·글자면 받지 않는다 — 다른 칸과 같은 결(목록째 실패)', () => {
-    expect(isDistrictLandList([{ ...land(), cat_store_cnt: -1 }])).toBe(false);
-    expect(isDistrictLandList([{ ...land(), cat_store_cnt: 1.5 }])).toBe(false);
-    expect(isDistrictLandList([{ ...land(), cat_store_cnt: '3' }])).toBe(false);
+  it('업종 칸이 음수·소수·글자면 **그 칸만** 지운다 — 줄도 목록도 산다(👤 F · floor_rent·LH 교훈)', () => {
+    for (const bad of [-1, 1.5, '3', true]) {
+      const got = toDistrictLands([{ ...land({ store_cnt: 7 }), cat_store_cnt: bad }, land({ pnu: 'p2' })]);
+      expect(got).not.toBeNull();
+      expect(got).toHaveLength(2);
+      expect(got![0]).not.toHaveProperty('cat_store_cnt');
+      expect(got![0].store_cnt).toBe(7);
+      expect(landStoreText(got![0], '카페')).toBe('점포 7곳');
+    }
+  });
+
+  it('다른 칸이 틀리면 지금처럼 목록째 실패다(null)', () => {
+    expect(toDistrictLands([{ ...land(), store_cnt: '317' }])).toBeNull();
+    expect(toDistrictLands({ message: 'PGRST202' })).toBeNull();
+    expect(toDistrictLands([])).toEqual([]);
+  });
+
+  it('조사 — 받침이면 이, 아니면 가(빈 상태 글과 머릿글이 같은 함수)', () => {
+    expect(withSubjectParticle('카페')).toBe('카페가');
+    expect(withSubjectParticle('학원')).toBe('학원이');
+    expect(withSubjectParticle('편의점')).toBe('편의점이');
   });
 
   it("인자 — 칩 '전체'면 p_cat_m 열쇠가 아예 없다", () => {

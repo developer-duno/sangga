@@ -326,7 +326,13 @@ function DistrictMapBody({
       />
 
       {openDistrict && (
+        /*
+          ⛔ key 에 상권과 칩을 함께 둔다(2026-10-11 적대 검사 🟡). 같은 조각을 그대로 두고 칩만 바꾸면
+             effect 가 옛 목록을 비우기 **전 첫 렌더**에 옛 칩의 숫자가 새 칩 이름표로 한 번 그려진다
+             (카페 → 한식 때 「고른 업종(한식) 3곳」). 새로 태어나면 처음부터 '불러오는 중'이다.
+        */
         <DistrictBuildings
+          key={`${openDistrict.properties.district_id}|${chip}`}
           districtId={openDistrict.properties.district_id}
           districtNm={openDistrict.properties.district_nm || '(이름 없음)'}
           onSelect={onSelectBuilding}

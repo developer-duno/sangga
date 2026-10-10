@@ -38,6 +38,11 @@ export type ChipMatch = {
   readonly seoulNm: Readonly<Record<string, string>>;
   /** 업종 분포 카드에 붙일 설명 한 줄(편의점만 — 중분류가 슈퍼마켓까지 함께 센다). */
   readonly note?: string;
+  /**
+   * 지도 상권 목록에 붙일 설명 한 줄(편의점만 · 👤 2026-10-11 — 목록 숫자가 '편의점 수'로 읽히는 자리라
+   * 업종 분포 카드의 `note` 와 말을 달리한다).
+   */
+  readonly listNote?: string;
 };
 
 export const CHIP_MATCH: Readonly<Record<Exclude<FounderChip, '전체'>, ChipMatch>> = {
@@ -85,6 +90,7 @@ export const CHIP_MATCH: Readonly<Record<Exclude<FounderChip, '전체'>, ChipMat
     seoul: ['CS300002'],
     seoulNm: { CS300002: '편의점' },
     note: '종합 소매에는 편의점과 슈퍼마켓이 함께 들어 있습니다',
+    listNote: '편의점 수에는 슈퍼마켓도 함께 들어 있습니다',
   },
 };
 

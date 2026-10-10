@@ -4,13 +4,14 @@ import { DISTRICT_BUILDINGS_FN, DISTRICT_BUILDINGS_PAGE, PARCEL_BUILDINGS_FN } f
 import {
   districtLandsArgs,
   hasMore,
-  isDistrictLandList,
   isParcelBuildingList,
   landStoreText,
   landToHit,
   landsSummary,
   noLandText,
   parcelBuildingToHit,
+  toDistrictLands,
+  withSubjectParticle,
 } from '../lib/districtBuildings';
 import { chipMatch, FOUNDER_CHIP_ALL, type FounderChip } from '../lib/founderChips';
 import { describeRange } from '../lib/format';
@@ -123,13 +124,14 @@ export function DistrictBuildings({
           setLoading(false);
           // ⚠️ 모양까지 본다. 뜻밖의 답이 렌더로 흘러 들어가면 그 자리에서 터지는데, 이
           //    목록은 **지도 안**에 있어 터지면 지도까지 함께 사라진다.
-          if (error || !isDistrictLandList(data)) {
+          const rows = error ? null : toDistrictLands(data);
+          if (rows === null) {
             console.warn('상권 건물 목록 조회 실패', error ?? data);
             setFailed(true);
             return;
           }
           setFailed(false);
-          setLands((prev) => (offset === 0 || prev === null ? data : [...prev, ...data]));
+          setLands((prev) => (offset === 0 || prev === null ? rows : [...prev, ...rows]));
         });
     },
     [districtId, chip],
@@ -148,12 +150,13 @@ export function DistrictBuildings({
       .then(({ data, error }) => {
         if (runId !== latestRun.current) return;
         setLoading(false);
-        if (error || !isDistrictLandList(data)) {
+        const rows = error ? null : toDistrictLands(data);
+        if (rows === null) {
           console.warn('상권 건물 목록 조회 실패', error ?? data);
           setFailed(true);
           return;
         }
-        setLands(data);
+        setLands(rows);
       });
     // ⓘ 정리(cleanup) 함수를 두지 않는다. 상권이 바뀌면 **다음 effect 가 번호를 올리므로**
     //   날아가 있던 옛 요청은 그 순간 저절로 무효가 된다 — 정리에서 한 번 더 올리는 것은
@@ -241,17 +244,26 @@ export function DistrictBuildings({
   return (
     <div className="dbld">
       <p className="dbld__head" id={headId}>
-        <strong>{districtNm}</strong>의 건물 — {landsSummary(lands)}
+        {/* 칩을 골랐으면 무엇을 거른 목록인지 머릿글이 먼저 말한다(👤 2026-10-11 — '명동에서 카페가 있는 땅'). */}
+        {match ? (
+          <>
+            <strong>{districtNm}</strong>에서 {withSubjectParticle(chip)} 있는 땅 — {landsSummary(lands)}
+          </>
+        ) : (
+          <>
+            <strong>{districtNm}</strong>의 건물 — {landsSummary(lands)}
+          </>
+        )}
       </p>
       {/* ⛔ 무엇을 센 숫자인지 밝힌다. 이 값은 그 **땅**의 점포 수라, 한 땅에 여러 동이
           서 있으면 그 동들이 같은 수를 나눠 갖는 것이 아니라 함께 쓴다. */}
       <p className="dbld__note">
         {match ? `고른 업종(${chip}) 점포가 많은 곳부터입니다.` : '점포 수가 많은 곳부터입니다.'}{' '}
-        점포 수는 <strong>그 땅 전체</strong>를 센 것이라, 한 땅에
+        {match ? '두 숫자 모두' : '점포 수는'} <strong>그 땅 전체</strong>를 센 것이라, 한 땅에
         여러 동이 서 있으면 그 동들이 같은 수를 함께 씁니다.
       </p>
-      {/* 편의점 칩 — 업종 분포 카드와 같은 한 줄(founderChips 의 글을 그대로 쓴다). */}
-      {match?.note && <p className="dbld__note">{match.note}</p>}
+      {/* 편의점 칩 — 이 목록만의 한 줄(👤 2026-10-11 · founderChips 의 listNote — 업종 분포 카드의 note 와 다르다). */}
+      {match?.listNote && <p className="dbld__note">{match.listNote}</p>}
 
       {/* ⓘ 목록에 **이름표를 붙인다** — 예전에는 `id` 만 달아 두고 아무도 가리키지 않아
           읽어 주는 기기에는 그냥 "목록"이었다. 머릿글이 이미 "◯◯의 건물 — N곳"이라

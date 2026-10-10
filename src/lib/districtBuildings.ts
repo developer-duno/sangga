@@ -48,15 +48,31 @@ export function isDistrictLand(x: unknown): x is DistrictLand {
     isNullableNumber(r.lat) &&
     isNullableNumber(r.lng) &&
     isNullableNumber(r.min_floor) &&
-    isNullableNumber(r.max_floor) &&
-    // 업종 칩 점포 수(2026-10-11a) — 선택 칸. 마이그레이션 전 서버는 안 보낸다.
-    isOptionalCount(r.cat_store_cnt)
+    isNullableNumber(r.max_floor)
+    // ⓘ 업종 칩 점포 수(cat_store_cnt · 2026-10-11a)는 여기서 안 본다 — 선택 칸이라 이상한 값이어도
+    //   그 줄·그 목록을 버리지 않고 `toDistrictLands` 가 그 칸만 지운다(임대 floor_rent·LH 교훈).
   );
 }
 
 /** ⓘ 빈 배열은 **정상**이다 — 상권 1,687곳 중 10곳은 건물이 한 동도 없다(라이브 실측). */
 export function isDistrictLandList(x: unknown): x is DistrictLand[] {
   return Array.isArray(x) && x.every(isDistrictLand);
+}
+
+/**
+ * 서버 답 → 화면이 쓸 목록. 모양이 틀리면 null(목록째 실패 — 지금 규칙 그대로).
+ *
+ * ⛔ 선택 칸 `cat_store_cnt`(고른 업종 점포 수)만은 이상한 값(음수·소수·글자)이어도 목록을 버리지 않는다 —
+ *    **그 칸만 지운다**. 그러면 그 줄은 `점포 N곳` 꼴로 물러선다(`landStoreText`). 곁 칸 하나 때문에 목록이
+ *    '불러오지 못했습니다'가 되면 안 된다(임대 카드 floor_rent · LH `.every()` 교훈).
+ */
+export function toDistrictLands(x: unknown): DistrictLand[] | null {
+  if (!isDistrictLandList(x)) return null;
+  return x.map((land) => {
+    if (isOptionalCount(land.cat_store_cnt)) return land;
+    const { cat_store_cnt: _bad, ...rest } = land;
+    return rest;
+  });
 }
 
 export function isParcelBuilding(x: unknown): x is ParcelBuilding {
@@ -190,10 +206,13 @@ export function landStoreText(land: DistrictLand, chip: FounderChip): string {
   return `점포 ${all}곳`;
 }
 
-/** 받침이 있으면 '이', 없으면 '가'. 칩 이름은 전부 한글로 끝난다(`founderChips` 표). */
-function subjectParticle(word: string): string {
+/**
+ * 낱말 + 받침에 맞는 '이'/'가'(`카페가` · `학원이`). 칩 이름은 전부 한글로 끝난다(`founderChips` 표).
+ * ⓘ 빈 상태 글(`noLandText`)과 목록 머릿글이 같은 함수를 쓴다 — 두 곳이 다른 조사를 쓰지 않게.
+ */
+export function withSubjectParticle(word: string): string {
   const code = word.charCodeAt(word.length - 1);
-  return (code - 0xac00) % 28 === 0 ? '가' : '이';
+  return word + ((code - 0xac00) % 28 === 0 ? '가' : '이');
 }
 
 /**
@@ -202,5 +221,5 @@ function subjectParticle(word: string): string {
  */
 export function noLandText(chip: FounderChip): string | null {
   if (!chipMatch(chip)) return null;
-  return `이 상권에는 ${chip}${subjectParticle(chip)} 있는 땅이 없습니다.`;
+  return `이 상권에는 ${withSubjectParticle(chip)} 있는 땅이 없습니다.`;
 }

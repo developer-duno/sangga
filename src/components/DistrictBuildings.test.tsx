@@ -505,18 +505,60 @@ describe('DistrictBuildings — 창업자 업종 칩 (2026-10-11a · 물결 2-2b
     expect(screen.getByText(/^점포 수가 많은 곳부터입니다\./)).toBeTruthy();
   });
 
-  it('안내 첫 문장이 고른 업종 기준으로 바뀌고 나머지 설명은 그대로다', async () => {
-    show({ chip: '카페' });
+  it('안내 — 첫 문장은 고른 업종 기준, 둘째 문장은 「두 숫자 모두 그 땅 전체」(👤 G)', async () => {
+    const { container } = show({ chip: '카페' });
     await screen.findByText('롯데호텔 및 백화점');
-    expect(screen.getByText(/^고른 업종\(카페\) 점포가 많은 곳부터입니다\./)).toBeTruthy();
-    expect(screen.getByText(/그 땅 전체/)).toBeTruthy();
+    expect(container.querySelector('.dbld__note')?.textContent?.replace(/\s+/g, ' ')).toBe(
+      '고른 업종(카페) 점포가 많은 곳부터입니다. 두 숫자 모두 그 땅 전체를 센 것이라, 한 땅에 ' +
+        '여러 동이 서 있으면 그 동들이 같은 수를 함께 씁니다.',
+    );
+    expect(screen.queryByText(/슈퍼마켓/)).toBeNull();
+  });
+
+  it("안내 — 칩 '전체'면 지금 글 그대로", async () => {
+    const { container } = show();
+    await screen.findByText('롯데호텔 및 백화점');
+    expect(container.querySelector('.dbld__note')?.textContent?.replace(/\s+/g, ' ')).toBe(
+      '점포 수가 많은 곳부터입니다. 점포 수는 그 땅 전체를 센 것이라, 한 땅에 ' +
+        '여러 동이 서 있으면 그 동들이 같은 수를 함께 씁니다.',
+    );
+  });
+
+  it('편의점 칩이면 이 목록만의 설명 한 줄(👤 C) — 업종 분포 카드 문장은 안 쓴다', async () => {
+    show({ chip: '편의점' });
+    await screen.findByText('롯데호텔 및 백화점');
+    expect(screen.getByText('편의점 수에는 슈퍼마켓도 함께 들어 있습니다')).toBeTruthy();
     expect(screen.queryByText('종합 소매에는 편의점과 슈퍼마켓이 함께 들어 있습니다')).toBeNull();
   });
 
-  it('편의점 칩이면 업종 분포 카드와 같은 설명 한 줄을 덧붙인다', async () => {
-    show({ chip: '편의점' });
+  it('머릿글 — 칩이면 「…에서 카페가 있는 땅 — N곳 · 건물 M동」 · 학원이 · 전체면 지금 글(👤 B)', async () => {
+    const head = (c: HTMLElement) => c.querySelector('.dbld__head')?.textContent;
+    let { container } = show({ chip: '카페' });
     await screen.findByText('롯데호텔 및 백화점');
-    expect(screen.getByText('종합 소매에는 편의점과 슈퍼마켓이 함께 들어 있습니다')).toBeTruthy();
+    expect(head(container)).toBe('명동 남대문 관광특구에서 카페가 있는 땅 — 1곳 · 건물 1동');
+    cleanup();
+    ({ container } = show({ chip: '학원' }));
+    await screen.findByText('롯데호텔 및 백화점');
+    expect(head(container)).toBe('명동 남대문 관광특구에서 학원이 있는 땅 — 1곳 · 건물 1동');
+    cleanup();
+    ({ container } = show());
+    await screen.findByText('롯데호텔 및 백화점');
+    expect(head(container)).toBe('명동 남대문 관광특구의 건물 — 1곳 · 건물 1동');
+  });
+
+  it('업종 칸이 이상한 값이면 목록은 서고 그 줄만 「점포 N곳」으로 물러선다(👤 F)', async () => {
+    responses.lands = {
+      data: [
+        { ...land({ pnu: 'a', bld_id: 'A', bld_nm: '음수 땅', store_cnt: 7 }), cat_store_cnt: -1 },
+        land({ pnu: 'b', bld_id: 'B', bld_nm: '정상 땅', store_cnt: 9, cat_store_cnt: 2, total_parcel_cnt: 2 }),
+      ],
+      error: null,
+    };
+    show({ chip: '카페' });
+    expect(await screen.findByText('음수 땅')).toBeTruthy();
+    expect(screen.queryByText('건물 목록을 불러오지 못했습니다.')).toBeNull();
+    expect(screen.getByText(/^점포 7곳/)).toBeTruthy();
+    expect(screen.getByText(/고른 업종\(카페\) 2곳 · 전체 점포 9곳/)).toBeTruthy();
   });
 
   it('그 업종이 있는 땅이 없으면 그렇게 말한다 — 건물 자료가 없다고 하지 않는다', async () => {
@@ -527,6 +569,29 @@ describe('DistrictBuildings — 창업자 업종 칩 (2026-10-11a · 물결 2-2b
     cleanup();
     show({ chip: '학원' });
     expect(await screen.findByText('이 상권에는 학원이 있는 땅이 없습니다.')).toBeTruthy();
+  });
+
+  it('★ 칩을 바꾼 **뒤** 더 보기도 새 칩의 업종 인자로 부른다(👤 E — 옛 칩을 쥔 load 금지)', async () => {
+    const page = () =>
+      Array.from({ length: 50 }, (_, i) =>
+        land({ pnu: `p${i}`, bld_id: `B-${i}`, cat_store_cnt: 1, total_parcel_cnt: 80 }),
+      );
+    responses.lands = { data: page(), error: null };
+    const { rerender } = show();
+    await screen.findByText(/이 중 50곳/);
+    rerender(
+      <DistrictBuildings
+        districtId="3001492"
+        districtNm="명동 남대문 관광특구"
+        onSelect={() => {}}
+        selectedBldId={null}
+        chip="학원"
+      />,
+    );
+    await waitFor(() => expect(lastListCall()?.args.p_cat_m).toEqual(['P105', 'P106']));
+    fireEvent.click(await screen.findByRole('button', { name: '더 보기' }));
+    await waitFor(() => expect(lastListCall()?.args.p_offset).toBe(50));
+    expect(lastListCall()?.args.p_cat_m).toEqual(['P105', 'P106']);
   });
 
   it('더 보기도 같은 업종 인자로 부른다', async () => {

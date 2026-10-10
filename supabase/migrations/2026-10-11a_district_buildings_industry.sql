@@ -43,10 +43,17 @@
 -- `scripts/dbx.py -f` 는 자동커밋이다. 지운 뒤 끊기면 상권 목록 함수가 없는 채로 남아 지도 목록이
 -- '불러오지 못했습니다'가 된다 — 한 덩어리로 묶는다. `notify pgrst` 는 commit **뒤**.
 --
--- 실행 (머지 뒤 · 👤 허락 뒤 · Claude 가 dbx 로 · 배치 창과 무관 — 표를 안 건드린다)
--- ------------------------------------------------------------------------------
---   python scripts/dbx.py -f supabase/migrations/2026-10-11a_district_buildings_industry.sql
---   → 이어서 python scripts/post_load.py --check — 0 이어야 한다(허용 목록 총계 29 그대로 · 정본↔라이브 함수 일치).
+-- 실행 순서 — ⛔ **DB 먼저 → 그 뒤 화면 머지** (👤 허락 뒤 · 배치 창 01:30~12:00 밖 · Claude 가 dbx 로)
+-- ------------------------------------------------------------------------------------------
+-- 새 서버는 옛 화면과 맞물린다(옛 화면은 인자 셋 이름으로 부르고 넷째는 기본값 null — 옛 결과 그대로).
+-- 거꾸로(화면 먼저) 하면 칩을 고른 손님의 요청(p_cat_m 넷째 인자)을 옛 서버가 못 받아(PGRST202) 상권 목록이
+-- '건물 목록을 불러오지 못했습니다'가 된다(칩 '전체' 손님은 인자를 안 보내 무사).
+--   ① python scripts/dbx.py -f supabase/migrations/2026-10-11a_district_buildings_industry.sql
+--   ② 적용 뒤 확인(아래) — anon 키로 인자 셋 요청이 적용 전과 같은 줄·같은 순서인지 먼저
+--   ③ 화면 PR 머지(→ Vercel 배포) → python scripts/post_load.py --check — 0 이어야 한다
+--      (허용 목록 총계 29 그대로 · 정본↔라이브 함수 일치).
+--   ⓘ ①과 ③ 사이에 **본 폴더(main)** 에서 `--check` 를 돌리면 정본↔라이브 함수 점검이 list_district_buildings 를
+--      [사고](본문 md5 불일치)로 적는 것이 **정상**이다 — main 의 schema.sql 은 아직 옛 정의다. ③ 뒤에 사라진다.
 --
 -- 적용 뒤 확인 (dbx + anon 키로 **화면 요청 그대로**)
 -- ------------------------------------------------
@@ -59,13 +66,13 @@
 --        → 200 · 줄마다 cat_store_cnt ≥ 1 · cat_store_cnt 내림차순 · total_parcel_cnt 가 앞보다 작거나 같다
 --   눈 확인: 창업자 → 칩 '카페' → 지도에서 상권 이름 → '고른 업종(카페) N곳 · 전체 점포 M곳'.
 --
--- 되돌리기
--- --------
--- **새 마이그레이션 파일**로: begin → drop function api.list_district_buildings(text, int, int, text[]) →
--- drop function list_district_buildings(text, int, int, text[]) → 2026-10-07a 의 두 정의(3-인자)·comment·
--- revoke·grant 를 그대로 → commit → notify. 그리고 이 PR revert(정본·화면). 적용된 이 파일은 고치지 않는다(원장).
--- 화면은 칩 '전체'일 때 새 인자를 안 보내므로 옛 함수로 되돌려도 칩 없는 손님은 그대로다
--- (칩을 고른 손님만 PGRST202 → 목록 '불러오지 못했습니다').
+-- 되돌리기 — ⛔ **화면 먼저 → 그 뒤 DB** (실행의 거꾸로)
+-- ---------------------------------------------------
+--   ① 이 PR revert 머지(정본·화면 — 화면이 넷째 인자를 더는 안 보낸다)
+--   ② **새 마이그레이션 파일**로: begin → drop function api.list_district_buildings(text, int, int, text[]) →
+--      drop function list_district_buildings(text, int, int, text[]) → 2026-10-07a 의 두 정의(3-인자)·comment·
+--      revoke·grant 를 그대로 → commit → notify. 적용된 이 파일은 고치지 않는다(원장).
+--   ⓘ 거꾸로(DB 먼저) 하면 그 사이 칩을 고른 손님만 PGRST202 → 목록 '불러오지 못했습니다'(칩 '전체' 손님은 무사).
 
 set statement_timeout = '60s';
 set lock_timeout = '5s';

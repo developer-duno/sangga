@@ -217,7 +217,7 @@ class TestMirrorsTheSchema:
 
     def test_comment_detector_catches_one_letter(self, mig):
         """양성 대조 — comment 한 글자가 바뀌면 대조가 갈린다."""
-        bad = mig.replace("옛 결과 그대로", "옛 결과 그데로", 1)
+        bad = mig.replace("(null 이면 옛 결과 그대로", "(null 이면 옛 결과 그데로", 1)
         assert bad != mig and fn_comment(bad, FN) != fn_comment(mig, FN)
 
     def test_api_twin_passes_the_new_argument(self, mig):
@@ -280,6 +280,48 @@ class TestDropRecreateAndGrants:
             in statements(mig)
         assert "grant execute on function {}{} to anon, authenticated;".format(API_FN, NEW_SIG) \
             in statements(mig)
+
+
+def header_order(sql, title_word):
+    """머리말 `-- <title_word> …` 절의 번호 줄(①②③)을 차례대로 — 주석 머리말만 본다(코드 줄은 안 본다).
+
+    ⓘ 가드 본체와 양성 대조가 이 같은 함수를 지난다.
+    ⚠️ 못 보는 것: 번호 없이 산문으로만 적은 순서 · 절 제목 낱말이 바뀐 꼴.
+    """
+    lines = [ln[2:].strip() for ln in sql.split("\n") if ln.startswith("--")]
+    start = next((i for i, ln in enumerate(lines) if ln.startswith(title_word)), None)
+    if start is None:
+        return []
+    steps = []
+    # 제목 바로 다음 줄은 밑줄(`-----`)이다 — 그다음 밑줄이 나오면 다음 절이 시작된 것이다.
+    for ln in lines[start + 2:]:
+        if ln.startswith("---"):
+            break
+        if ln[:1] and ln[:1] in "①②③":
+            steps.append(ln)
+    return steps
+
+
+class TestHeaderOrder:
+    """👤 2026-10-11 — DB 먼저 → 화면 머지 · 되돌리기는 화면 먼저 → DB(새 서버는 옛 화면과 맞물린다)."""
+
+    def test_apply_db_first_then_screen(self, mig):
+        steps = header_order(mig, "실행 순서")
+        assert len(steps) == 3 and "dbx.py -f" in steps[0] and "화면 PR 머지" in steps[2], steps
+        assert "DB 먼저 → 그 뒤 화면 머지" in mig and "배치 창" in mig
+
+    def test_rollback_screen_first_then_db(self, mig):
+        steps = header_order(mig, "되돌리기")
+        assert len(steps) == 2 and "revert" in steps[0] and "새 마이그레이션 파일" in steps[1], steps
+
+    def test_check_md5_alarm_between_is_written(self, mig):
+        assert "[사고](본문 md5 불일치)로 적는 것이 **정상**" in mig
+
+    def test_detector_sees_a_swapped_order(self, mig):
+        """양성 대조 — 실행 ①·③ 을 맞바꾼 사본은 첫 단계가 dbx 가 아니다."""
+        steps = header_order(mig, "실행 순서")
+        bad = mig.replace(steps[0], "@@").replace(steps[2], steps[0]).replace("@@", steps[2])
+        assert "dbx.py -f" not in header_order(bad, "실행 순서")[0]
 
 
 # ── ② 실행 가드 (로컬 PostgreSQL 이 있을 때만) ──────────────────────────────
