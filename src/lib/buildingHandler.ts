@@ -2,7 +2,7 @@
   건물 주소 요청을 받아 첫 HTML 을 돌려주는 서버 조각의 본체(결정 0037 · `api/building.ts` 가 부른다).
 
   흐름: `/?sgg=&bld=` → 레포 루트 `middleware.ts`(Routing Middleware · bld 가 건물 번호 꼴일 때만 ·
-        `/api/building?<원래 query>`) → 여기. 직접 불러도 똑같이 동작한다(bld 는 요청 주소의 query 에서 읽는다).
+        `/api/building?sgg=<bld 앞 5자리>&bld=<bld>`) → 여기. 직접 불러도 똑같이 동작한다(bld 는 요청 주소의 query 에서 읽는다).
     ① 같은 배포의 `/index.html`(빌드 산출물) ② Supabase REST `api.v_floor_stack` 의 그 건물 행
        — 둘은 서로 기다릴 이유가 없어 함께 보낸다(각 3초 제한)
     ③ `renderBuildingHtml` 로 머리글·소개문만 바꾼다
