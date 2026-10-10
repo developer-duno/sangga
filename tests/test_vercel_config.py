@@ -119,6 +119,73 @@ def test_security_headers_apply_to_all_paths():
         ]
 
 
+CSP_RO = "Content-Security-Policy-Report-Only"
+
+
+# 👤 2026-10-10 결정 그대로의 명단 — 카카오 그림 서버는 *.kakaocdn.net 넓게 · Supabase 는 우리 프로젝트 하나.
+# 스크립트에 인라인·eval 없음(JSON-LD 는 실행되지 않는 데이터 블록 · 카카오 SDK 의 eval 은 try/catch 라
+# 막혀도 지도가 선다 — 엔진 실측). 명단을 바꾸려면 이 표를 함께 고친다(넓히는 변경이 조용히 지나가지 않게).
+EXPECTED_CSP = {
+    "default-src": ["'self'"],
+    "script-src": ["'self'", "https://dapi.kakao.com", "https://*.kakaocdn.net"],
+    "style-src": ["'self'", "'unsafe-inline'"],
+    "img-src": ["'self'", "data:", "blob:", "https://*.kakaocdn.net"],
+    "connect-src": ["'self'", "https://ywwnddwuboosfvwefzlz.supabase.co"],
+    "font-src": ["'self'"],
+    "object-src": ["'none'"],
+    "base-uri": ["'self'"],
+    "form-action": ["'self'"],
+    "frame-ancestors": ["'none'"],
+}
+
+
+def csp_problems(value: str) -> list[str]:
+    """CSP 글이 EXPECTED_CSP 와 다른 곳 — 가드 본체와 양성 대조가 같은 함수를 지난다.
+
+    같은 지시어가 두 번이면 문제다(브라우저는 첫 값을 쓰고 뒤를 버린다 — 헐거운 줄을 앞에 끼우는 꼴).
+    못 보는 것: 실제 브라우저가 이 명단으로 무엇을 어기는지(엔진으로 운영 화면을 열어 콘솔로 본다).
+    """
+    seen: dict[str, list[str]] = {}
+    problems: list[str] = []
+    for part in value.split(";"):
+        words = part.split()
+        if not words:
+            continue
+        name = words[0].lower()
+        if name in seen:
+            problems.append(f"중복 지시어 {name}")
+            continue
+        seen[name] = words[1:]
+    for name in sorted(set(seen) | set(EXPECTED_CSP)):
+        if seen.get(name) != EXPECTED_CSP.get(name):
+            problems.append(f"{name}: {seen.get(name)} != {EXPECTED_CSP.get(name)}")
+    return problems
+
+
+def test_csp_is_report_only_on_all_paths():
+    """CSP 는 아직 '기록만'(👤 2026-10-10 — 위반은 브라우저에만) · 막는 `Content-Security-Policy` 는 0."""
+    config = load_config()
+    for path in ("/", "/index.html", "/api/building", "/assets/index-abc123.js", "/districts.geojson"):
+        values = matched_header_values(config, path, CSP_RO)
+        assert len(values) == 1, path
+        assert matched_header_values(config, path, "Content-Security-Policy") == [], path
+        assert csp_problems(values[0]) == [], path
+
+
+@pytest.mark.parametrize("bad", [
+    "default-src *; script-src 'self' 'unsafe-inline'",
+    "default-src 'self'; script-src 'self' https:",
+    # 헐거운 줄을 앞에 끼움(브라우저는 앞의 것을 쓴다)
+    "script-src *; " + "; ".join(f"{k} {' '.join(v)}" for k, v in EXPECTED_CSP.items()),
+    # 한 지시어만 조금 넓힘
+    "; ".join(f"{k} {' '.join(v)}" for k, v in EXPECTED_CSP.items()).replace("base-uri 'self'", "base-uri *"),
+])
+def test_control_csp_guard_catches_loosened_policy(bad):
+    """양성 대조 — 넓힌 정책·중복 지시어를 같은 함수가 잡는가(맞는 정책은 문제 0)."""
+    assert csp_problems(bad)
+    assert csp_problems("; ".join(f"{k} {' '.join(v)}" for k, v in EXPECTED_CSP.items())) == []
+
+
 def test_no_rewrites_configured():
     """rewrites(SPA 폴백)는 아직 없어야 한다 — 이 앱은 react-router 가 없다.
 

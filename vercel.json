@@ -24,6 +24,10 @@
         {
           "key": "Referrer-Policy",
           "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "Content-Security-Policy-Report-Only",
+          "value": "default-src 'self'; script-src 'self' https://dapi.kakao.com https://*.kakaocdn.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.kakaocdn.net; connect-src 'self' https://ywwnddwuboosfvwefzlz.supabase.co; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
         }
       ]
     }
