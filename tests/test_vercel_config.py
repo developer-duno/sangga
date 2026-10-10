@@ -119,6 +119,50 @@ def test_security_headers_apply_to_all_paths():
         ]
 
 
+CSP_RO = "Content-Security-Policy-Report-Only"
+
+
+def csp_directives(value: str) -> dict[str, list[str]]:
+    """CSP 글을 {지시어: [출처들]} 로 — 가드 본체와 양성 대조가 같은 함수를 지난다."""
+    out: dict[str, list[str]] = {}
+    for part in value.split(";"):
+        words = part.split()
+        if words:
+            out[words[0].lower()] = words[1:]
+    return out
+
+
+def test_csp_is_report_only_on_all_paths():
+    """CSP 는 아직 '기록만'(👤 2026-10-10 — 위반은 브라우저에만) · 막는 `Content-Security-Policy` 는 0.
+
+    못 보는 것: 실제 브라우저가 이 명단으로 무엇을 어기는지(그건 엔진으로 운영 화면을 열어 콘솔로 본다).
+    """
+    config = load_config()
+    for path in ("/", "/index.html", "/assets/index-abc123.js", "/districts.geojson"):
+        values = matched_header_values(config, path, CSP_RO)
+        assert len(values) == 1, path
+        assert matched_header_values(config, path, "Content-Security-Policy") == [], path
+    d = csp_directives(values[0])
+    assert d["default-src"] == ["'self'"]
+    # 👤 결정: 카카오 그림 서버는 *.kakaocdn.net 넓게 · Supabase 는 우리 프로젝트 하나만
+    assert "https://*.kakaocdn.net" in d["script-src"] and "https://dapi.kakao.com" in d["script-src"]
+    assert "https://*.kakaocdn.net" in d["img-src"]
+    assert d["connect-src"] == ["'self'", "https://ywwnddwuboosfvwefzlz.supabase.co"]
+    # 스크립트는 인라인·eval 을 허용하지 않는다(JSON-LD 는 실행되지 않는 데이터 블록이라 별개)
+    assert not {"'unsafe-inline'", "'unsafe-eval'", "*", "https:"} & set(d["script-src"])
+    assert d["object-src"] == ["'none'"] and d["frame-ancestors"] == ["'none'"]
+
+
+@pytest.mark.parametrize("bad", [
+    "default-src *; script-src 'self' 'unsafe-inline'",
+    "default-src 'self'; script-src 'self' https:",
+])
+def test_control_csp_guard_catches_loose_script_src(bad):
+    """양성 대조 — 느슨한 script-src(인라인 허용 · 모든 https)를 같은 함수가 잡는가."""
+    d = csp_directives(bad)
+    assert {"'unsafe-inline'", "'unsafe-eval'", "*", "https:"} & set(d["script-src"])
+
+
 def test_no_rewrites_configured():
     """rewrites(SPA 폴백)는 아직 없어야 한다 — 이 앱은 react-router 가 없다.
 
