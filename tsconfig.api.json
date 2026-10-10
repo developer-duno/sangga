@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.api.tsbuildinfo",
+    "target": "es2023",
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"],
+    "skipLibCheck": true,
+
+    /* Vercel 함수(api/) — 실행은 Vercel 이 변환하므로 여기는 타입 검사만 한다(noEmit).
+       api/ 가 부르는 src/lib/buildingHandler.ts·buildingHead.ts 도 함께 검사된다(node 타입으로).
+       ⛔ nodenext — package.json 이 "type":"module" 이라 함수 런타임은 Node ESM 이다. 확장자 없는
+          상대 import 는 런타임에서 못 찾으므로, 여기서 타입 검사가 먼저 빨강으로 잡게 한다. */
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+
+    /* Linting */
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["api", "middleware.ts", "src/lib/buildingRoute.ts"]
+}

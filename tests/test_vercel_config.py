@@ -129,6 +129,43 @@ def test_no_rewrites_configured():
     assert "rewrites" not in config
 
 
+MIDDLEWARE_TS = Path(__file__).resolve().parent.parent / "middleware.ts"
+
+
+def middleware_problems(text):
+    """레포 루트 middleware.ts(Routing Middleware · 결정 0037)의 문제를 글 목록으로 낸다(빈 목록 = 정상).
+
+    건물 주소(`/?…bld=…`)를 서버 조각으로 보내는 일은 vercel.json rewrite 가 아니라 이 파일이 한다 —
+    Vercel 공식 vercel-json 문서 "The source property should NOT be a file because precedence is given
+    to the filesystem prior to rewrites" — `/` 는 index.html 파일이라 rewrite 가 안 탄다.
+    matcher 가 `/` 가 아니면 정적 파일·함수 주소까지 미들웨어를 탄다(SPA 폴백과 같은 위험).
+    ⚠️ 못 보는 것: 판정 함수의 내용(vitest `src/lib/buildingRoute.test.ts`) · 실제 배포에서 불리는지(운영 실측).
+    """
+    problems = []
+    if "matcher: '/'" not in text:
+        problems.append("matcher 가 '/' 하나가 아님")
+    if "from './src/lib/buildingRoute.js'" not in text:
+        problems.append("판정을 buildingRoute.js(확장자 .js)로 부르지 않음")
+    return problems
+
+
+def test_middleware_exists_with_root_matcher():
+    # ⓘ 2026-10-09 두 단계 배포: PR① 은 함수만(첫 화면 영향 0) → 운영 확인 → PR② 가 middleware.ts 를 더한다.
+    #    PR② 머지 뒤에는 이 skip 을 지워 "없으면 빨강"으로 되돌린다.
+    if not MIDDLEWARE_TS.is_file():
+        pytest.skip("middleware.ts 는 PR②(두 단계 배포) — 그 PR 에서 이 skip 을 지운다")
+    assert middleware_problems(MIDDLEWARE_TS.read_text(encoding="utf-8")) == []
+
+
+def test_control_middleware_wide_matcher_is_caught():
+    """양성 대조 — matcher 를 넓히거나 확장자 없이 부르면 잡는다."""
+    if not MIDDLEWARE_TS.is_file():
+        pytest.skip("middleware.ts 는 PR②(두 단계 배포)")
+    good = MIDDLEWARE_TS.read_text(encoding="utf-8")
+    assert middleware_problems(good.replace("matcher: '/'", "matcher: '/(.*)'")) != []
+    assert middleware_problems(good.replace("buildingRoute.js'", "buildingRoute'")) != []
+
+
 # ── 양성 대조 — 가드가 쓰는 matched_header_values 가 키 대소문자와 무관하게 잡는가 (2026-10-03) ──
 #
 # 위 "붙은 헤더 = []" 단언들은 탐지가 죽어도 초록이다. 가짜 설정을 **같은 함수**에 넣어 본다.

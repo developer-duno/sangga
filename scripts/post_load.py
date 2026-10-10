@@ -1968,6 +1968,8 @@ def main(argv=None):
               .format(newer_unmarked, newer_unmarked))
         print("       ⓘ " + REVERTED_NOTE)
         return 1
+    # 사이트맵은 DB 에서 대상 건물을 다시 읽어 굽는다 — 건축물대장·호실을 다시 넣은 날만(결정 0037).
+    print("  ⓘ 건축물대장·호실을 다시 적재했으면 python scripts/build_sitemap.py 로 사이트맵도 다시 굽고 커밋하세요")
     # 권한·옛 문·색인·별관은 --check 에서만 돈다 — 성공했을 때만 이어서 돌리라고 알린다(2026-10-06).
     print("  ⓘ 권한·옛 문 닫힘·색인·함수 일치·느려짐·별관 점검은 여기서 안 돕니다 — 이어서 python scripts/post_load.py --check")
     return 0

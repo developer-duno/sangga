@@ -741,7 +741,33 @@ describe('App — 창업자 입구 · 업종 칩 (결정 0036 결정 18 ④⑤�
  * 정본은 `lib/seo.ts`(첫 HTML `<title>` 과의 글자 대조는 `tests/test_seo_head.py`).
  */
 describe('App — 탭 제목', () => {
-  it('건물을 고르면 "<건물 이름> — 상가 층별 스택뷰", 선택을 풀면 첫 화면 제목으로 돌아온다', async () => {
+  it('링크로 들어와 되살리는 동안에는 탭 제목을 건드리지 않는다(서버 조각이 넣은 건물 제목을 덮지 않게)', async () => {
+    let release: ((r: { data: unknown; error: unknown }) => void) | null = null;
+    const pending = new Promise<{ data: unknown; error: unknown }>((r) => {
+      release = r;
+    });
+    from.mockImplementation((view: string) => {
+      if (view === 'v_coverage_stats') return makeQuery({ data: [], error: null });
+      const q: Record<string, unknown> = {};
+      for (const m of ['select', 'eq', 'order', 'limit']) q[m] = () => q;
+      q.then = (cb: (r: unknown) => unknown) => pending.then(cb);
+      return q;
+    });
+
+    // 서버 조각(결정 0037)이 첫 HTML 에 넣어 둔 제목인 척.
+    document.title = '테스트빌딩 — 강남구 테헤란로 1 | 상가 층별 스택뷰';
+    openWith(`?sgg=11680&bld=${hit().bld_id}`);
+    render(<App />);
+    await screen.findByText('링크에 담긴 건물을 불러오는 중입니다…');
+    expect(document.title).toBe('테스트빌딩 — 강남구 테헤란로 1 | 상가 층별 스택뷰');
+
+    release!({ data: [floorRow()], error: null });
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+    // 되살린 뒤의 제목은 서버와 같은 꼴(도로명에서 시·도를 뗀 것).
+    expect(document.title).toBe('테스트빌딩 — 강남구 테헤란로 1 | 상가 층별 스택뷰');
+  });
+
+  it('건물을 고르면 "<이름> — <구 도로명> | 상가 층별 스택뷰", 선택을 풀면 첫 화면 제목으로 돌아온다', async () => {
     const { HOME_TITLE } = await import('./lib/seo');
     openWith('');
     render(<App />);
@@ -753,7 +779,7 @@ describe('App — 탭 제목', () => {
     fireEvent.submit(input.closest('form')!);
     fireEvent.click(await screen.findByRole('button', { name: /테스트빌딩/ }));
     await screen.findByRole('heading', { name: '테스트빌딩' });
-    expect(document.title).toBe('테스트빌딩 — 상가 층별 스택뷰');
+    expect(document.title).toBe('테스트빌딩 — 강남구 테헤란로 1 | 상가 층별 스택뷰');
 
     // 새 검색을 걸면 선택이 풀린다 — 첫 화면 제목으로 돌아온다.
     fireEvent.change(input, { target: { value: '역삼' } });
