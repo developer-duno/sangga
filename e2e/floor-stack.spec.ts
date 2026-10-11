@@ -2430,8 +2430,10 @@ test.describe('층별 스택뷰 — 업종별 층 분포', () => {
 // 종이에도 그대로 나오는가(내용이라 숨기지 않는다)다.
 
 test.describe('층별 스택뷰 — 개별공시지가 한 줄', () => {
-  test('AP. 값이 오면 사양 칸 아래 한 줄 — 넘침 0 · 종이에도 그대로', async ({ page }) => {
-    const LINE = '개별공시지가 ㎡당 4,523만원 · 2026년 공시 (땅값만 · 공시가격 — 시세가 아닙니다)';
+  test('AP. 값이 오면 사양 칸 아래 배지 + 한 줄 — 넘침 0 · 종이에도 그대로', async ({ page }) => {
+    // 👤 2026-10-11 문구 · 금액은 가장 긴 꼴(1억 이상 '1억 8,840만원')로 좁은 폭을 시험한다.
+    const TEXT = '개별공시지가 땅 1㎡당 1억 8,840만원 · 2026년 공시 (이 건물이 선 땅 · 공시가격 — 시세가 아닙니다)';
+    const BADGE = 'A등급 · 공식 공시';
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
     await mockFloorStack(page, [], [], [floorRow({ floor_no: 2 }), floorRow()]);
@@ -2447,7 +2449,7 @@ test.describe('층별 스택뷰 — 개별공시지가 한 줄', () => {
         status: 200,
         contentType: 'application/json',
         headers: CORS_HEADERS,
-        body: JSON.stringify([{ land_price: 45_230_000, land_price_year: 2026 }]),
+        body: JSON.stringify([{ land_price: 188_400_000, land_price_year: 2026 }]),
       });
     });
 
@@ -2457,7 +2459,10 @@ test.describe('층별 스택뷰 — 개별공시지가 한 줄', () => {
     await page.getByRole('button', { name: /테스트빌딩/ }).click();
 
     const line = page.locator('section.stack .stack__head .stack__land');
-    await expect(line).toHaveText(LINE);
+    await expect(line.locator('.stack__land-text')).toHaveText(TEXT);
+    // 배지는 기준시가 줄과 같은 `grade__badge` 꼴 · 낱말은 '공시'(기준시가는 '고시').
+    await expect(line.locator('.grade__badge')).toHaveText(BADGE);
+    await expect(line).toHaveText(BADGE + TEXT);
     await expect(line).toBeVisible();
     // 사양 칸(dl) 바로 뒤에 선다.
     expect(
@@ -2469,12 +2474,19 @@ test.describe('층별 스택뷰 — 개별공시지가 한 줄', () => {
     expect(asked.every((a) => JSON.stringify(a) === JSON.stringify({ p_pnu: searchHit().pnu }))).toBe(true);
     // 좁은 폭에서도 줄 안·페이지 가로 넘침이 없다.
     expect(await line.evaluate((e) => e.scrollWidth - e.clientWidth)).toBeLessThanOrEqual(0);
+    // 배지가 줄 상자 오른쪽 밖으로 삐져나가지 않는다(inline-block 이라 통째로 다음 줄로 내려가야 한다).
+    expect(
+      await line.evaluate((e) => {
+        const b = e.querySelector('.grade__badge')!.getBoundingClientRect();
+        return b.right - e.getBoundingClientRect().right;
+      }),
+    ).toBeLessThanOrEqual(0);
     expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
 
     // 종이 — 내용이라 그대로 나온다(조종 장치처럼 빠지지 않는다).
     await page.emulateMedia({ media: 'print' });
     await expect(line).toBeVisible();
-    await expect(line).toHaveText(LINE);
+    await expect(line).toHaveText(BADGE + TEXT);
     await page.emulateMedia({ media: null });
   });
 });

@@ -18,7 +18,7 @@ import {
   FLOOR_UNITS_PAGE,
   LAND_PRICE_FN,
 } from '../lib/appConstants';
-import { landPriceText, parseLandPrice } from '../lib/landPrice';
+import { LAND_PRICE_BADGE, landPriceText, parseLandPrice } from '../lib/landPrice';
 import type {
   BasePrice,
   BuildingDistricts,
@@ -376,6 +376,8 @@ export function FloorStack({ building, viewerRole = null, founderChip = FOUNDER_
   // ── 개별공시지가 한 줄 (결정 0036 결정 7 · 물결 1-C1) ─────────────────────
   //
   // ⓘ 의존은 `[building.pnu]` 다 — 땅값은 필지 값이라 같은 땅 다른 동이면 같은 값이다(호실 요약과 반대).
+  //    ⚠️ 그래도 실제 화면에서는 같은 땅 다른 동으로 옮기면 **다시 부른다** — App 이 건물마다 이 화면을
+  //    새로 만든다(`App.tsx` 의 `key={`stack:${selected.bld_id}`}`). 의존을 pnu 로 둔 것은 자가 맞아서지 아끼려는 게 아니다.
   // ⛔ 곁 카드 미리 부르기(`sidePrefetch`)에 끼우지 않는다 — 카드가 아니라 머리 한 줄이다.
   // ⛔ 실패(함수 없음 PGRST202 포함)·0줄·모양 이상은 전부 줄 없음 — '자료 없음'이라 적지 않는다.
   // ⓘ 늦게 온 옛 필지의 답은 `cancelled` 로 버린다(pnu 가 바뀌면 앞 요청의 then 이 아무것도 안 한다).
@@ -802,7 +804,13 @@ export function FloorStack({ building, viewerRole = null, founderChip = FOUNDER_
           '미상'·'자료 없음'으로 적지 않는다(위 네 칸과 다른 이유: 실패를 없음으로 말하면 거짓이다).
           ⓘ 내용이라 종이에도 그대로 나온다(`.stack__head` 가 통째로 한 장에 머문다).
         */}
-        {landPrice && <p className="stack__land">{landPriceText(landPrice)}</p>}
+        {landPrice && (
+          <p className="stack__land">
+            {/* 👤 2026-10-11 — 기준시가 줄의 「A등급 · 공식 고시」와 같은 꼴 · 이 줄은 '공시'. */}
+            <span className="grade__badge">{LAND_PRICE_BADGE}</span>
+            <span className="stack__land-text">{landPriceText(landPrice)}</span>
+          </p>
+        )}
       </header>
 
       {sectionOrder(viewerRole).map((k) => (

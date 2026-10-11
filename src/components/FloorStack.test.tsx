@@ -2585,7 +2585,7 @@ describe('FloorStack — 임대 카드 · 좌표 없는 건물 (2026-10-06)', ()
 });
 
 describe('FloorStack — 개별공시지가 한 줄 (결정 0036 결정 7)', () => {
-  const LINE = '개별공시지가 ㎡당 4,523만원 · 2026년 공시 (땅값만 · 공시가격 — 시세가 아닙니다)';
+  const LINE = '개별공시지가 땅 1㎡당 4,523만원 · 2026년 공시 (이 건물이 선 땅 · 공시가격 — 시세가 아닙니다)';
 
   function landCalls() {
     return rpcCalls.filter((c) => c.fn === 'get_parcel_land_price');
@@ -2600,6 +2600,10 @@ describe('FloorStack — 개별공시지가 한 줄 (결정 0036 결정 7)', () 
     const line = await screen.findByText(LINE);
     expect(line.closest('.stack__head')).toBeTruthy();
     expect(container.querySelectorAll('.stack__land')).toHaveLength(1);
+    // 배지(👤 2026-10-11) — 기준시가 줄과 같은 `grade__badge` 꼴 · 낱말은 '공시'(기준시가는 '고시').
+    const badge = container.querySelector('.stack__land .grade__badge');
+    expect(badge?.textContent).toBe('A등급 · 공식 공시');
+    expect(line.classList.contains('stack__land-text')).toBe(true);
     expect(landCalls()).toEqual([
       { fn: 'get_parcel_land_price', args: { p_pnu: '1168010100100010000' } },
     ]);
@@ -2623,7 +2627,8 @@ describe('FloorStack — 개별공시지가 한 줄 (결정 0036 결정 7)', () 
     expect(container.textContent).not.toContain('PGRST202');
   });
 
-  it('같은 땅의 다른 동으로 바뀌면 다시 묻지 않는다 — 땅값은 필지 값(의존 [building.pnu])', async () => {
+  // ⓘ 이 컴포넌트 하나 안의 성질이다 — 실제 화면은 App 이 건물마다 FloorStack 을 새로 만들어(key) 다시 부른다.
+  it('같은 컴포넌트에서 같은 땅의 다른 동으로 바뀌면 다시 묻지 않는다 — 의존 [building.pnu]', async () => {
     responses.landPrice = () => ({
       data: [{ land_price: 45_230_000, land_price_year: 2026 }],
       error: null,
@@ -2648,10 +2653,10 @@ describe('FloorStack — 개별공시지가 한 줄 (결정 0036 결정 7)', () 
     rerender(
       <FloorStack building={building({ bld_id: '1168010100-9', pnu: '1168010100100090000' })} />,
     );
-    const NEW = '개별공시지가 ㎡당 8,500원 · 2025년 공시 (땅값만 · 공시가격 — 시세가 아닙니다)';
+    const NEW = '개별공시지가 땅 1㎡당 8,500원 · 2025년 공시 (이 건물이 선 땅 · 공시가격 — 시세가 아닙니다)';
     await screen.findByText(NEW);
     releaseOld({ data: [{ land_price: 45_230_000, land_price_year: 2026 }], error: null });
     await new Promise((r) => setTimeout(r, 0));
-    expect(container.querySelector('.stack__land')?.textContent).toBe(NEW);
+    expect(container.querySelector('.stack__land-text')?.textContent).toBe(NEW);
   });
 });

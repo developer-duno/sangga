@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
 import {
+  LAND_PRICE_BADGE,
   LAND_PRICE_NOTE,
   formatLandPriceAmount,
   landPriceText,
@@ -9,14 +10,22 @@ import {
 } from './landPrice';
 
 describe('formatLandPriceAmount — ㎡당 금액', () => {
+  // 👤 2026-10-11 — 10만원 미만 원 그대로 · 10만~1억 미만 만원 반올림 · 1억 이상 '1억 8,840만원'(만 자리 0 이면 '2억원').
   it.each([
-    [45_230_000, '4,523만원'],
-    [45_235_000, '4,524만원'], // 만원 단위 반올림
-    [10_000, '1만원'],
-    [9_999, '9,999원'], // 1만원 미만은 원 그대로('0만원'이 되지 않게)
-    [8_500, '8,500원'],
     [0, '0원'], // 0 은 값이다
-    [136_100_000, '13,610만원'],
+    [8_500, '8,500원'],
+    [14_999, '14,999원'],
+    [99_999, '99,999원'], // 10만원 미만 = 원 그대로
+    [100_000, '10만원'], // 여기부터 만원
+    [45_230_000, '4,523만원'],
+    [45_235_000, '4,524만원'], // 만원 아래 반올림
+    [99_994_999, '9,999만원'], // 반올림해도 1억 미만 — 만원 그대로
+    [99_995_000, '1억원'], // 반올림하면 1억 — '10,000만원'이 되지 않게
+    [100_000_000, '1억원'],
+    [188_400_000, '1억 8,840만원'],
+    [188_405_000, '1억 8,841만원'], // 억 위에서도 만원 아래 반올림
+    [200_000_000, '2억원'], // 만 자리 0
+    [1_234_567_890, '12억 3,457만원'],
   ])('%d → %s', (won, want) => {
     expect(formatLandPriceAmount(won)).toBe(want);
   });
@@ -25,18 +34,22 @@ describe('formatLandPriceAmount — ㎡당 금액', () => {
 describe('landPriceText — 한 줄', () => {
   it('★ 브리프의 글자 그대로', () => {
     expect(landPriceText({ land_price: 45_230_000, land_price_year: 2026 })).toBe(
-      '개별공시지가 ㎡당 4,523만원 · 2026년 공시 (땅값만 · 공시가격 — 시세가 아닙니다)',
+      '개별공시지가 땅 1㎡당 4,523만원 · 2026년 공시 (이 건물이 선 땅 · 공시가격 — 시세가 아닙니다)',
     );
   });
 
   it('연도는 받은 값 그대로 — 화면이 연도를 지어내지 않는다', () => {
     expect(landPriceText({ land_price: 8_500, land_price_year: 2019 })).toBe(
-      `개별공시지가 ㎡당 8,500원 · 2019년 공시 ${LAND_PRICE_NOTE}`,
+      `개별공시지가 땅 1㎡당 8,500원 · 2019년 공시 ${LAND_PRICE_NOTE}`,
     );
   });
 
+  it("배지 글자 — 기준시가는 '공식 고시', 이 줄은 '공식 공시'", () => {
+    expect(LAND_PRICE_BADGE).toBe('A등급 · 공식 공시');
+  });
+
   it('금지어가 없다(절대 규칙 2)', () => {
-    const text = landPriceText({ land_price: 45_230_000, land_price_year: 2026 });
+    const text = `${LAND_PRICE_BADGE} ${landPriceText({ land_price: 45_230_000, land_price_year: 2026 })}`;
     for (const w of ['적정가', '감정가', '평가액', '가치평가']) expect(text).not.toContain(w);
   });
 });
