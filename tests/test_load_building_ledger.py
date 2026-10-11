@@ -285,6 +285,56 @@ def test_build_building_record_blank_numbers_become_none():
     assert rec["approve_date"] is None
 
 
+# ── 5-1. 물결 2-1 칸 8개 (마이그레이션 2026-10-11c) — 원값 그대로 ─────────────────
+
+SPEC_ITEM = dict(
+    TITLE_ITEM,
+    rideUseElvtCnt="2", emgenUseElvtCnt="1", hoCnt="0",
+    strctCdNm="철근콘크리트구조", rserthqkDsgnApplyYn="1",
+    rserthqkAblty="", engrGrade="1+", gnBldGrade="",
+)
+SPEC_KEYS = ("elevator_ride", "elevator_emgen", "ho_cnt", "strct_nm", "seismic_design",
+             "seismic_ability", "energy_grade", "green_grade")
+
+
+def test_build_building_record_spec_columns_keep_raw_values():
+    """숫자 '0' 은 0(미기재가 섞여 있어도 뜻풀이는 화면 몫) · 빈 문자열은 None."""
+    rec = target.build_building_record(PNU_A, SPEC_ITEM)
+    assert rec["elevator_ride"] == 2
+    assert rec["elevator_emgen"] == 1
+    assert rec["ho_cnt"] == 0                 # '0' -> 0 (None 으로 바꾸지 않는다)
+    assert rec["strct_nm"] == "철근콘크리트구조"
+    assert rec["seismic_design"] is True
+    assert rec["seismic_ability"] is None     # '' -> None
+    assert rec["energy_grade"] == "1+"
+    assert rec["green_grade"] is None
+
+
+def test_build_building_record_spec_columns_blank_become_none():
+    blank = dict(SPEC_ITEM, rideUseElvtCnt="", emgenUseElvtCnt="", hoCnt="", strctCdNm="  ",
+                 rserthqkDsgnApplyYn="", rserthqkAblty="", engrGrade="", gnBldGrade="")
+    rec = target.build_building_record(PNU_A, blank)
+    assert [rec[k] for k in SPEC_KEYS] == [None] * len(SPEC_KEYS)
+
+
+def test_build_building_record_spec_columns_missing_keys_become_none():
+    """옛 raw(칸 자체가 없는 item)도 멈추지 않고 None 으로 담는다."""
+    item = {k: v for k, v in TITLE_ITEM.items() if k != "hoCnt"}
+    rec = target.build_building_record(PNU_A, item)
+    assert [rec[k] for k in SPEC_KEYS] == [None] * len(SPEC_KEYS)
+    assert set(SPEC_KEYS) <= set(rec)         # 칸은 늘 담는다(upsert 칸 목록이 행마다 같게)
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("1", True), ("0", False), ("", None), (" 1 ", True), (None, None),
+    ("Y", None), ("2", None), (1, True),
+])
+def test_seismic_design_mapping(raw, expected):
+    """'1'→true · '0'→false · 빈값·그 밖→None — 모르는 값을 false 로 떨어뜨리지 않는다."""
+    rec = target.build_building_record(PNU_A, dict(SPEC_ITEM, rserthqkDsgnApplyYn=raw))
+    assert rec["seismic_design"] is expected
+
+
 # ── 6. build_buildings (대장PK를 bld_id에 직접 사용 — 크로스-런 안정성) ─────
 
 
@@ -1712,3 +1762,139 @@ def test_main_loads_and_reports(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "적재 완료" in out
     assert "옛 행 정리: building_floor 0행 / unit 0행" in out
+
+
+# ── 12-2. --building-only (물결 2-1 칸 채우기) — 가장 낮은 경계(HTTP)만 흉내 ──────
+
+
+def test_parse_args_building_only_flag():
+    assert target.parse_args([])["building_only"] is False
+    assert target.parse_args(["--building-only", "--raw-dir", "X"])["building_only"] is True
+    assert target.parse_args(["--building-only", "--raw-dir", "X", "--dry-run"])["dry_run"] is True
+
+
+def test_building_only_without_raw_dir_is_an_error(monkeypatch, capsys):
+    """기본 원본(강남 API 시범분)으로 돌면 일괄 파일 값이 옛 원본으로 덮인다 — --raw-dir 없으면 멈춘다."""
+    with pytest.raises(ValueError, match="--raw-dir"):
+        target.parse_args(["--building-only"])
+    with pytest.raises(ValueError, match="--raw-dir"):
+        target.parse_args(["--building-only", "--dry-run"])
+    # 평소 적재는 예전처럼 기본 원본을 쓴다(이 규칙은 --building-only 에만).
+    assert target.parse_args([])["raw_dir"].endswith(os.path.join("bldrgst", "202608"))
+
+    def boom(*a, **kw):
+        raise AssertionError("인자 오류면 아무것도 읽거나 쓰면 안 된다")
+
+    monkeypatch.setattr(target, "transform", boom)
+    monkeypatch.setattr(target, "upsert_batch", boom)
+    monkeypatch.setattr(sys, "argv", ["prog", "--building-only"])
+    assert target.main() == 2
+    assert "--raw-dir" in capsys.readouterr().out
+
+
+def _fake_http(monkeypatch, sink):
+    """requests 의 GET·POST·DELETE·HEAD 만 흉내 낸다(적재기 함수는 하나도 안 바꾼다).
+
+    GET = 빈 목록(표 있음 · collect_progress 0줄) · POST = 201 · DELETE = 204 · HEAD = 0건.
+    sink 에 (방법, 표 이름) 을 차례로 적는다.
+    """
+    def table_of(url):
+        return url.split("/rest/v1/", 1)[1].split("?", 1)[0]
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        sink.append(("GET", table_of(url)))
+        return _FakeResponse(200, payload=[], text="[]")
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        sink.append(("POST", table_of(url)))
+        return _FakeResponse(201)
+
+    def fake_delete(url, params=None, headers=None, timeout=None):
+        sink.append(("DELETE", table_of(url)))
+        return _FakeResponse(204)
+
+    def fake_head(url, headers=None, timeout=None):
+        sink.append(("HEAD", table_of(url)))
+        return _FakeResponse(200, headers={"Content-Range": "*/0"})
+
+    monkeypatch.setattr(target.requests, "get", fake_get)
+    monkeypatch.setattr(target.requests, "post", fake_post)
+    monkeypatch.setattr(target.requests, "delete", fake_delete)
+    monkeypatch.setattr(target.requests, "head", fake_head)
+    monkeypatch.setenv("SANGGA_SUPABASE_URL", "https://x.supabase.co")
+    monkeypatch.setenv("SANGGA_SUPABASE_SERVICE_KEY", "k")
+
+
+def _raw_with_floor_and_unit(tmp_path):
+    return _write_raw(
+        tmp_path,
+        title=[raw_row(PNU_A, SPEC_ITEM)],
+        flr=[raw_row(PNU_A, flr_item())],
+        expos=[raw_row(PNU_A, expos_item())],
+    )
+
+
+def _posted(sink):
+    return [t for m, t in sink if m == "POST"]
+
+
+def test_main_building_only_writes_only_building(tmp_path, monkeypatch, capsys):
+    """⛔ 층·호실 upsert·옛 행 정리를 부르지 않는다 — 쓰기는 building 한 번뿐."""
+    raw_dir = _raw_with_floor_and_unit(tmp_path)
+    sink = []
+    _fake_http(monkeypatch, sink)
+    monkeypatch.setattr(sys, "argv", ["prog", "--raw-dir", raw_dir, "--building-only"])
+
+    assert target.main() == 0
+    assert _posted(sink) == ["building"]
+    assert [t for m, t in sink if m == "DELETE"] == []
+    assert not any(t in ("building_floor", "unit") for _, t in sink), sink
+    out = capsys.readouterr().out
+    # 끝 줄 — 계산한 행 수와 보낸 행 수를 함께 적는다. ⚠️ upsert 가 실패하면 그 전에 예외로 멈추므로
+    #    성공하면 둘은 늘 같다(return=minimal 이라 서버가 실제로 고친 행 수는 모른다 — 2026-10-12 재검사관)
+    assert "적재 완료(--building-only): building 계산 1행 · 올림 1행" in out
+
+
+def test_main_without_building_only_does_write_floor_and_unit(tmp_path, monkeypatch):
+    """양성 대조 — 같은 가짜 HTTP 가 평소 적재의 층·호실 쓰기는 **본다**(위 시험이 헛돌지 않는다)."""
+    raw_dir = _raw_with_floor_and_unit(tmp_path)
+    sink = []
+    _fake_http(monkeypatch, sink)
+    monkeypatch.setattr(sys, "argv", ["prog", "--raw-dir", raw_dir])
+
+    assert target.main() == 0
+    assert _posted(sink) == ["building", "building_floor", "unit"]
+
+
+def test_main_building_only_sends_the_spec_columns(tmp_path, monkeypatch):
+    """보낸 building 행에 새 칸 8개가 원값대로 실린다(가장 낮은 경계에서 본다)."""
+    raw_dir = _raw_with_floor_and_unit(tmp_path)
+    bodies = []
+    _fake_http(monkeypatch, [])
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        bodies.append((url, json))
+        return _FakeResponse(201)
+
+    monkeypatch.setattr(target.requests, "post", fake_post)
+    monkeypatch.setattr(sys, "argv", ["prog", "--raw-dir", raw_dir, "--building-only"])
+
+    assert target.main() == 0
+    assert len(bodies) == 1 and bodies[0][0].endswith("/rest/v1/building")
+    row = bodies[0][1][0]
+    assert [row[k] for k in SPEC_KEYS] == [2, 1, 0, "철근콘크리트구조", True, None, "1+", None]
+    assert "updated_at" not in row            # 기존 레코드에 없는 칸 — 건드리지 않는다
+
+
+def test_main_building_only_dry_run_touches_nothing(tmp_path, monkeypatch, capsys):
+    """--dry-run 과 함께면 쓰기 0 — HTTP 를 한 번도 부르지 않고 건물 수만 찍는다."""
+    raw_dir = _raw_with_floor_and_unit(tmp_path)
+    sink = []
+    _fake_http(monkeypatch, sink)
+    monkeypatch.setattr(sys, "argv", ["prog", "--raw-dir", raw_dir, "--building-only", "--dry-run"])
+
+    assert target.main() == 0
+    assert sink == []
+    out = capsys.readouterr().out
+    assert "building 1행 (would-upsert)" in out
+    assert "building_floor" not in out        # 층·호실 보고를 찍지 않는다

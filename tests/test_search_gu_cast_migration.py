@@ -20,7 +20,7 @@ Index Scan 12,138행·8ms). 그래서 함수마다 두 곳에 `::char(5)` 를 �
      test_search_stores_migration.py 의 "핀 + 자동 탐색 + 일치 확인" 관습). 새 판이
      들어오면 핀 대조가 시끄럽게 터진다 — 핀을 올리는 것이 곧 "새 판을 사람이 봤다"다.
      ⓘ 2026-10-09a(물결 1-A1)부터 두 함수의 최신 판이 **갈린다** — `search_buildings` 만
-       결과 칸 셋을 더해 다시 만들었다. 그래서 핀은 함수마다 하나다.
+       결과 칸 셋을 더해 다시 만들었다(2026-10-11c 가 셋을 또 더했다). 그래서 핀은 함수마다 하나다.
      이미 적용된 옛 판(2026-09-10a)의 두 함수 블록은 **SHA-256 못**으로 고정한다
      ("적용된 마이그레이션 파일은 고치지 않는다"를 기계가 지킨다).
   1) 두 함수 본문에 `pc.sigungu_code = pat.gu::char(5)` 가 **정확히 두 번씩**,
@@ -59,11 +59,12 @@ SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
 # 함수마다 그 함수를 **마지막으로 다시 만든** 판. ⛔ 새 판을 넣는 사람은 여기도 함께
 #    올린다 — 안 올리면 아래 `test_the_finder_agrees_with_the_pin` 이 시끄럽게 터진다
 #    (그 시끄러움이 이 상수의 존재 이유다).
-#    search_scope = 2026-09-27a(결정 0029) · search_buildings = 2026-10-09a(결과 칸 셋 —
-#    물결 1-A1. 본문의 검색 가지·캐스트·PNU 범위는 27a 그대로다).
+#    search_scope = 2026-09-27a(결정 0029) · search_buildings = 2026-10-11c(결과 칸 셋을 또 더함 —
+#    물결 2-1. 그 앞 판 2026-10-09a(물결 1-A1)와 마찬가지로 본문의 검색 가지·캐스트·PNU 범위는
+#    27a 그대로다).
 PIN = {
     "search_scope": os.path.join(MIG_DIR, "2026-09-27a_search_fns_plpgsql.sql"),
-    "search_buildings": os.path.join(MIG_DIR, "2026-10-09a_search_ownership_cols.sql"),
+    "search_buildings": os.path.join(MIG_DIR, "2026-10-11c_building_elevator_ho.sql"),
 }
 
 # 결과 칸이 바뀌어 api 쌍둥이까지 다시 세운 판 — `create or replace` 가 거부하므로 drop →
@@ -302,6 +303,8 @@ def placement_defects(block):
 
 
 RE_GRANT_STMT = re.compile(r"(?is)\bgrant\b[^;]*;")
+# api 스키마의 **뷰**(표)에 주는 grant — `grant … on [table] api.<이름> to …` (함수·묶음 grant 아님).
+RE_API_VIEW_GRANT = re.compile(r"(?is)\bon\s+(?:table\s+)?api\.\w+\s+to\b")
 RE_API_TWIN_HEAD = re.compile(
     r"(?im)^create\s+(?:or\s+replace\s+)?function\s+api\.(\w+)\s*\(")
 
@@ -313,6 +316,10 @@ def grant_defects(sql, twin_rebuilt):
     · 다시 세운 판이면 grant 는 전부 `on function api.<이름>(…)` 이어야 한다 — public 원본을
       여는 grant 는 0줄. 그리고 다시 세운 쌍둥이마다 anon 에게 주는 grant 가 있어야 한다
       (drop 으로 권한이 사라진다 — 없으면 화면이 permission denied).
+    · 다시 세운 판이 **api 뷰**(`on [table] api.<이름>` — 함수가 아니다)에 주는 grant 는 이 가드의
+      대상이 아니라 건너뛴다(2026-10-11c 가 api.building·api.v_floor_stack 을 함께 다시 세운다 —
+      그 grant 는 그 판의 시험 tests/test_building_elevator_ho_migration.py 가 본다). public 쪽 표·뷰에
+      주는 grant(`on building` 등)는 그대로 빨강이다.
     ⚠️ 못 보는 것: `grant all on all functions in schema …` 같은 묶음 grant 는 대상 이름이
        없으므로 '이름 없는 grant' 로 빨강이 된다(무는 쪽으로 틀린다).
     """
@@ -321,6 +328,7 @@ def grant_defects(sql, twin_rebuilt):
     if not twin_rebuilt:
         return ["grant 가 {}줄 있습니다 — 이 판은 권한을 열지 않습니다".format(len(grants))
                 ] if grants else []
+    grants = [g for g in grants if not RE_API_VIEW_GRANT.search(g)]
     bad = []
     for g in grants:
         m = re.search(r"(?i)\bon\s+function\s+([\w.]+)\s*\(", g)
@@ -681,8 +689,13 @@ def test_the_rebuilt_file_is_clean_as_written():
     # anon 을 빼고 authenticated 에만
     ("api_grant_without_anon", lambda s: s.replace(
         API_GRANT, API_GRANT.replace("to anon, authenticated", "to authenticated"), 1)),
+    # api 뷰 grant 를 건너뛰는 규칙(2026-10-11c)이 public 표·뷰 grant 까지 건너뛰면 안 된다 — 흔한 꼴 + 변형 꼴
+    ("public_table_grant", lambda s: s.replace(
+        "\ncommit;\n", "\ngrant select on building to anon;\ncommit;\n", 1)),
+    ("public_view_grant_qualified", lambda s: s.replace(
+        "\ncommit;\n", "\nGRANT SELECT ON TABLE public.v_floor_stack TO anon;\ncommit;\n", 1)),
 ), ids=["public_grant", "public_grant_qualified", "api_grant_removed",
-        "api_grant_without_anon"])
+        "api_grant_without_anon", "public_table_grant", "public_view_grant_qualified"])
 def test_the_grant_guard_bites(name, mutate):
     text = norm(read(REBUILT))
     broken = mutate(text)
@@ -707,8 +720,8 @@ def test_a_commented_grant_is_not_a_grant():
     ("unqualified_body", lambda s: s.replace(
         "select * from public.search_buildings(", "select * from search_buildings(", 1)),
     ("column_dropped", lambda s: s.replace(
-        "  approve_date   date,\n  parking_cnt    integer\n)\nlanguage sql",
-        "  approve_date   date\n)\nlanguage sql", 1)),
+        "  elevator_ride  smallint,\n  elevator_emgen smallint\n)\nlanguage sql",
+        "  elevator_ride  smallint\n)\nlanguage sql", 1)),
 ), ids=["search_path_removed", "unqualified_body", "column_dropped"])
 def test_the_api_twin_guard_bites(name, mutate):
     """쌍둥이만 바꾼 사본(정본은 그대로) → 빨간불."""

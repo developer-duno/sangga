@@ -52,6 +52,13 @@ raw 중복 방어:
   python scripts/collectors/load_building_ledger.py --dry-run
   python scripts/collectors/load_building_ledger.py
   python scripts/collectors/load_building_ledger.py --raw-dir data/raw/bldrgst/202609 --snapshot-ym 202606
+  python scripts/collectors/load_building_ledger.py --raw-dir data/raw/bldrgst_bulk_converted/11680 --snapshot-ym 202606 --building-only
+
+  --building-only : 물결 2-1 칸 채우기용 — 같은 raw 로 다시 돌릴 때만. building 표만 upsert 하고
+                    층(building_floor)·호실(unit) upsert 와 옛 행 정리를 전부 건너뛴다.
+                    --dry-run 과 함께 쓰면 쓰기 0 으로 건물 수만 찍는다.
+                    --raw-dir 을 꼭 준다(없으면 오류 — 기본 원본은 강남 API 시범분이라 값이 덮인다).
+                    ⛔ 마이그레이션 2026-10-11c 를 먼저 적용한다(새 칸이 없으면 PGRST204 로 멈춘다).
 """
 
 import json
@@ -338,11 +345,29 @@ def _is_jiphap(item):
     return str(item.get("regstrGbCd") or "").strip() == REGSTR_GB_JIPHAP
 
 
+def _seismic_yn(raw):
+    """내진 설계 적용 여부(rserthqkDsgnApplyYn) — '1' -> True / '0' -> False / 빈값·그 밖 -> None.
+
+    실측(2026-10-11, 대전 중구 8,672동): '0' 7,087 · '1' 1,528 · '' 57. 모르는 값을 False 로
+    떨어뜨리면 "내진 아님"이라는 없던 사실이 생긴다 — None 으로 둔다.
+    """
+    s = "" if raw is None else str(raw).strip()
+    if s == "1":
+        return True
+    if s == "0":
+        return False
+    return None
+
+
 def build_building_record(pnu, item):
     """표제부 item -> building 테이블 upsert용 dict.
 
     여기서 만드는 bld_id는 base_id(동 단위)일 뿐이다 — build_buildings()가
     대장PK 순번을 반영해 최종 bld_id로 덮어쓴다.
+
+    물결 2-1 칸 8개(마이그레이션 2026-10-11c)는 **원값 그대로** — 숫자 '0' 은 0(대장 미기재가
+    섞여 있지만 뜻풀이는 화면 몫), 빈 문자열은 None. ⛔ 이 칸들이 라이브 표에 생기기 전에
+    적재하면 upsert 가 PGRST204 로 멈춘다(마이그레이션 먼저).
     """
     dong = (item.get("dongNm") or "").strip()
     return {
@@ -359,6 +384,14 @@ def build_building_record(pnu, item):
         "far": _to_float(item.get("vlRat")),
         "parking_cnt": sum_parking(item),
         "is_jiphap": _is_jiphap(item),
+        "elevator_ride": _to_int(item.get("rideUseElvtCnt")),
+        "elevator_emgen": _to_int(item.get("emgenUseElvtCnt")),
+        "ho_cnt": _to_int(item.get("hoCnt")),
+        "strct_nm": (item.get("strctCdNm") or "").strip() or None,
+        "seismic_design": _seismic_yn(item.get("rserthqkDsgnApplyYn")),
+        "seismic_ability": (item.get("rserthqkAblty") or "").strip() or None,
+        "energy_grade": (item.get("engrGrade") or "").strip() or None,
+        "green_grade": (item.get("gnBldGrade") or "").strip() or None,
     }
 
 
@@ -1387,7 +1420,7 @@ def _reject_unknown_args(argv, bool_flags, value_flags):
 def parse_args(argv):
     _reject_unknown_args(
         argv,
-        bool_flags=("--dry-run",),
+        bool_flags=("--dry-run", "--building-only"),
         value_flags=("--raw-dir", "--period-key", "--sigungu-code", "--snapshot-ym"),
     )
     opts = {
@@ -1396,6 +1429,7 @@ def parse_args(argv):
         "sigungu_code": DEFAULT_SIGUNGU_CODE,
         "snapshot_ym": DEFAULT_SNAPSHOT_YM,
         "dry_run": "--dry-run" in argv,
+        "building_only": "--building-only" in argv,
     }
     for flag, key in (
         ("--raw-dir", "raw_dir"),
@@ -1408,6 +1442,11 @@ def parse_args(argv):
             if i + 1 >= len(argv):
                 raise ValueError("{} 뒤에 값이 필요합니다.".format(flag))
             opts[key] = argv[i + 1]
+    # --building-only 는 기본 원본(강남 API 시범분 data/raw/bldrgst/202608)으로 돌면 일괄 파일로 넣은
+    # 건물 값이 그 옛 원본으로 덮인다 — 원본 폴더를 꼭 손으로 고르게 한다(2026-10-11 적대 검사관).
+    if opts["building_only"] and opts["raw_dir"] is None:
+        raise ValueError("--building-only 는 --raw-dir 을 꼭 줘야 합니다 "
+                         "(예: --raw-dir data/raw/bldrgst_bulk_converted/11680).")
     if opts["raw_dir"] is None:
         opts["raw_dir"] = os.path.join(
             PROJECT_ROOT, "data", "raw", "bldrgst", opts["period_key"])
@@ -1549,12 +1588,20 @@ def main():
         print("       먼저 python scripts/collectors/collect_building_ledger.py 를 실행하세요.")
         return 1
 
+    building_only = opts["building_only"]
+
     print("raw 읽는 중: {}".format(raw_dir), flush=True)
     try:
         building_records, unit_records, floor_records, stats = transform(raw_dir)
     except RuntimeError as e:
         print("[에러] {}".format(e))
         return 1
+
+    if building_only and opts["dry_run"]:
+        print("[--building-only] building {:,}행 (would-upsert) — 층·호실은 건드리지 않습니다".format(
+            len(building_records)))
+        print("--dry-run 지정 — DB 적재를 건너뜁니다.")
+        return 0
 
     print_transform_report(raw_dir, stats["broken"], stats["bld_stats"], stats["flr_stats"],
                            stats["floor_stats"], stats["unit_stats"], len(building_records),
@@ -1580,7 +1627,8 @@ def main():
 
     # 아무것도 건드리기 전에 대상 테이블 존재부터 확인한다 — 반쯤 적재된 상태 방지.
     try:
-        assert_tables_exist(base_url, headers, ("building", "building_floor", "unit"))
+        assert_tables_exist(base_url, headers,
+                            ("building",) if building_only else ("building", "building_floor", "unit"))
     except RuntimeError as e:
         print("[에러] {}".format(e))
         return 1
@@ -1597,6 +1645,22 @@ def main():
     except RuntimeError as e:
         print("[에러] {}".format(e))
         return 1
+
+    if building_only:
+        # 물결 2-1 칸 채우기 — building 만. 층·호실 upsert 와 옛 행 정리는 하지 않는다
+        # (같은 raw 로 다시 돌리는 것이라 층·호실은 이미 들어 있는 그대로다).
+        print("적재 시작... (--building-only — building 만, 층·호실·옛 행 정리는 건너뜀)", flush=True)
+        try:
+            bld_sent = upsert_batch(base_url, headers, "building", building_records)
+        except RuntimeError as e:
+            print("[에러] {}".format(e))
+            return 1
+        print("")
+        print("=" * 78)
+        print("적재 완료(--building-only): building 계산 {:,}행 · 올림 {:,}행 — 층·호실은 건드리지 않았습니다"
+              .format(len(building_records), bld_sent))
+        print("=" * 78)
+        return 0
 
     print("적재 시작... (building -> building_floor -> unit 순서, "
           "두 자식 테이블의 bld_id FK 때문에 순서 고정)", flush=True)

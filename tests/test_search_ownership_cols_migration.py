@@ -43,6 +43,12 @@ MIG_DIR = os.path.join(ROOT, "supabase", "migrations")
 SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
 MIG = os.path.join(MIG_DIR, "2026-10-09a_search_ownership_cols.sql")
 PREV = os.path.join(MIG_DIR, "2026-09-27a_search_fns_plpgsql.sql")
+# 정본은 10-09a **뒤의** 판을 따른다 — 2026-10-11c(물결 2-1)가 결과 칸 끝에 셋(ho_cnt·elevator_ride·
+# elevator_emgen)을 더 붙였다. 10-09a 는 적용된 원장이라 고치지 않으므로, 정본과의 글자 대조(§2)는
+# 그 함수를 마지막으로 다시 만든 판(LATEST)과 하고, 정본 쪽 칸 판정(§1)은 앞 16칸이 그대로인지만 본다
+# (끝 셋의 이름·형·순서는 tests/test_building_elevator_ho_migration.py 가 못 박는다).
+# ⛔ 새 판이 이 함수를 또 다시 만들면 LATEST 를 올린다.
+LATEST = os.path.join(MIG_DIR, "2026-10-11c_building_elevator_ho.sql")
 
 DOLLAR = chr(36) * 2
 
@@ -259,11 +265,19 @@ def grant_defects(sql):
 # ── 1. 결과 칸 ──────────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("path", [MIG, SCHEMA], ids=["migration", "schema"])
 @pytest.mark.parametrize("which", ["search_buildings", "api.search_buildings"])
-def test_sixteen_columns_with_the_three_at_the_end(path, which):
-    bad = column_defects(fn_block(read(path), which))
-    assert not bad, "{} 의 {}: {}".format(os.path.basename(path), which, " / ".join(bad))
+def test_sixteen_columns_with_the_three_at_the_end(which):
+    bad = column_defects(fn_block(read(MIG), which))
+    assert not bad, "{} 의 {}: {}".format(os.path.basename(MIG), which, " / ".join(bad))
+
+
+@pytest.mark.parametrize("which", ["search_buildings", "api.search_buildings"])
+def test_schema_keeps_these_sixteen_in_front(which):
+    """정본(= LATEST 판)은 칸이 더 붙었어도 앞 16칸은 10-09a 그대로여야 한다 — 같은 판정 함수를
+    앞 16칸에만 태운다(뒤에 붙은 칸은 LATEST 의 시험 몫)."""
+    cols = returns_cols(fn_block(read(SCHEMA), which))
+    assert len(cols) > len(WANT_COLS), "전제: 정본은 10-09a 뒤 판이라 칸이 더 많다"
+    assert cols[:len(WANT_COLS)] == WANT_COLS, cols[:len(WANT_COLS)]
 
 
 def test_the_old_thirteen_match_the_previous_version():
@@ -276,13 +290,15 @@ def test_the_old_thirteen_match_the_previous_version():
 
 @pytest.mark.parametrize("which", ["search_buildings", "api.search_buildings"])
 def test_function_block_is_the_schema_letter_for_letter(which):
-    """머리 속성·본문·닫는 `$$;` 까지 — `create` 는 머리를 새 정의로 덮어쓴다."""
-    assert fn_block(read(MIG), which) == fn_block(read(SCHEMA), which)
+    """머리 속성·본문·닫는 `$$;` 까지 — `create` 는 머리를 새 정의로 덮어쓴다.
+    대조 짝은 그 함수를 마지막으로 다시 만든 판(LATEST — 위 상수 주석)."""
+    assert fn_block(read(LATEST), which) == fn_block(read(SCHEMA), which)
 
 
 def test_comment_is_the_schema_letter_for_letter():
-    """drop 으로 comment 도 사라진다 — 다시 단 글이 정본과 같아야 한다."""
-    mine, canon = comment_stmt(read(MIG)), comment_stmt(read(SCHEMA))
+    """drop 으로 comment 도 사라진다 — 다시 단 글이 정본과 같아야 한다(대조 짝 = LATEST)."""
+    assert comment_stmt(read(MIG)) is not None, "10-09a 에 comment 가 없습니다"
+    mine, canon = comment_stmt(read(LATEST)), comment_stmt(read(SCHEMA))
     assert mine is not None, "마이그레이션에 comment 가 없습니다 — drop 으로 사라진 채 남습니다"
     assert mine == canon
     assert "is_jiphap" in canon, "전제: 정본 comment 가 새 세 칸을 말한다"

@@ -273,6 +273,46 @@ comment on column building.display_nm is
   '뷰가 함수를 직접 부르면 그 함수를 anon 에게 열어야 하므로, 값을 컬럼에 담아 함수를 닫는다(2026-08-13). '
   '라이브 실측: 242,631행 전부에서 함수 결과와 0건 차이.';
 
+-- ── 건물 사양 칸 8개 (2026-10-11c · 물결 2-1 · 결정 0036) ───────────────────────
+-- 건축물대장 표제부 원값 그대로 — 0 은 0, 빈 문자열은 NULL(적재기 load_building_ledger.py 의
+-- build_building_record · 내진 여부는 '1'→true · '0'→false · 그 밖→NULL). 뜻풀이는 화면 몫이다.
+-- ⚠️ 표 정의부가 아니라 여기 있는 이유: 라이브는 저장 컬럼 둘(display_nm · nm_key) **뒤**에 붙였다
+--    (마이그레이션 2026-10-11c). 정본에서 nm_key 는 아래 §검색 키 절(그 칸이 쓰는 함수 뒤)에 붙고,
+--    이 칸들은 아래 v_floor_stack 이 읽으므로 그 **앞**이어야 한다 — 그래서 새 환경에서는 nm_key 만
+--    이 칸들 뒤로 간다. 칸 차례에 기대는 곳은 없다(api.building 의 `select *` 를 쓰는 적재기는 이름으로 쓴다).
+alter table building
+  add column if not exists elevator_ride   smallint,
+  add column if not exists elevator_emgen  smallint,
+  add column if not exists ho_cnt          integer,
+  add column if not exists strct_nm        text,
+  add column if not exists seismic_design  boolean,
+  add column if not exists seismic_ability text,
+  add column if not exists energy_grade    text,
+  add column if not exists green_grade     text;
+
+comment on column building.elevator_ride is
+  '승용 승강기 대수(건축물대장 표제부 rideUseElvtCnt 원값 · 빈값 NULL). '
+  '0 = 대장 미기재가 섞여 있다(2026-10-11 실측: 강남 지상 11층 이상의 24% 가 승강기 0) — 뜻풀이는 화면 몫(2026-10-11c)';
+comment on column building.elevator_emgen is
+  '비상용 승강기 대수(표제부 emgenUseElvtCnt 원값 · 빈값 NULL). '
+  '0 = 대장 미기재가 섞여 있다(2026-10-11 실측: 강남 지상 11층 이상의 24% 가 승강기 0) — 뜻풀이는 화면 몫(2026-10-11c)';
+comment on column building.ho_cnt is
+  '호수(표제부 hoCnt 원값 · 빈값 NULL). '
+  '0 은 대부분 정상값이다 — 일반건축물은 호 구분이 없어 0 이 정상(2026-10-11 원본 실측: 30개 구 일반건축물 185,540동 중 181,124동 97.6% 가 0)이고, '
+  '집합건물 표제부도 57,091동 중 41,254동(72%)이 0 이다 — 뜻풀이는 화면 몫(2026-10-11c)';
+comment on column building.strct_nm is
+  '구조 이름(표제부 strctCdNm 원값 · 빈값 NULL)(2026-10-11c)';
+comment on column building.seismic_design is
+  '내진 설계 적용 여부(표제부 rserthqkDsgnApplyYn — ''1''=true · ''0''=false · 빈값·그 밖=NULL). '
+  '1988년 전 건물은 거의 다 false — 법이 없던 때이고 미기재와 섞여 있다. 내진 의무 대상이 아닌 작은 건물도 false — '
+  '2010년 이후 지은 건물도 강남 19%·대전 중구 28% 가 false(2026-10-11 원본 실측) · 화면은 true 일 때만 적는다(2026-10-11c)';
+comment on column building.seismic_ability is
+  '내진 능력(표제부 rserthqkAblty 원값 · 빈값 NULL). 채움 0.4~8.5% — 화면에 안 낸다(사장님 결정 2026-10-11 · 2026-10-11c)';
+comment on column building.energy_grade is
+  '에너지 효율 등급(표제부 engrGrade 원값 · 빈값 NULL). 채움 0.4~8.5% — 화면에 안 낸다(사장님 결정 2026-10-11 · 2026-10-11c)';
+comment on column building.green_grade is
+  '녹색 건축 등급(표제부 gnBldGrade 원값 · 빈값 NULL). 채움 0.4~8.5% — 화면에 안 낸다(사장님 결정 2026-10-11 · 2026-10-11c)';
+
 -- 도우미 함수는 공개 롤에게 열지 않는다 — 뷰·검색 함수가 소유자 권한으로 대신 부른다.
 -- ⚠️ `from public`만으로는 부족하다 — PUBLIC은 실제 롤이 아니라 가상 그룹이라,
 --    Supabase가 새 함수 생성 시 anon·authenticated에게 자동으로 거는 **직접
@@ -916,7 +956,21 @@ select
   -- ⓘ 필지 도형의 대표 좌표라 한 땅에 건물이 여럿이면 같은 자리에 찍힌다(검색도 동일).
   --    좌표 없는 필지는 NULL 이고 화면은 마커를 생략한다(0,0 으로 채우지 않는다).
   st_y(p.geom)::double precision as lat,
-  st_x(p.geom)::double precision as lng
+  st_x(p.geom)::double precision as lng,
+  -- ── 2026-10-11c 가 더한 건물 사양 5칸 (물결 2-1 · 결정 0036) ─────────────────
+  -- 위 스펙 4칸과 같은 결 — **건물 한 채**의 값이라 층마다 되풀이되고, 원값 그대로 낸다.
+  -- ⛔ 승강기의 0 에는 대장 미기재가 섞여 있다(2026-10-11 실측: 강남 지상 11층 이상의
+  --    24% 가 승강기 0) — "없음"으로 읽을지는 화면 한 곳이 정한다. 호수 0 은 대부분 정상이다
+  --    (일반건축물은 호 구분이 없다 — 30개 구 일반건축물 97.6% 가 0 · 집합 표제부도 72% 가 0).
+  -- ⛔ 내진 false 에는 1988년 전 건물(법이 없던 때)·내진 의무 대상이 아닌 작은 건물·미기재가 섞여 있다
+  --    (2010년 이후 지은 건물도 강남 19%·대전 중구 28% 가 false) — 화면은 true 일 때만 적는다.
+  -- ⛔ 내진 능력·에너지 효율 등급·녹색 건축 등급은 여기서 **내보내지 않는다**(채움 0.4~8.5% —
+  --    사장님 결정 2026-10-11). 표(building)에만 있다.
+  b.elevator_ride,          -- 승용 승강기 대수 (0 = 미기재 섞임)
+  b.elevator_emgen,         -- 비상용 승강기 대수 (0 = 미기재 섞임)
+  b.ho_cnt,                 -- 호수 (0 = 대부분 정상 — 일반건축물은 호 구분 없음)
+  b.strct_nm,               -- 구조 이름 (빈값 = NULL)
+  b.seismic_design          -- 내진 설계 적용 여부 (false 에 1988년 전·작은 건물·미기재 섞임)
 from v_building_floor_stack s
 join building b on b.bld_id = s.bld_id
 join parcel   p on p.pnu    = s.pnu
@@ -948,6 +1002,10 @@ comment on view v_floor_stack is
   '⚠️ lat·lng 는 **parcel.geom 에서 뽑은** 필지 대표 좌표다(2026-08-25a). parcel 에 있는 lat/lng '
   '칸과는 다른 칸이며, 그 칸을 쓰면 검색·상권판정과 자리가 갈린다(2026-08-14e 규칙). '
   '한 땅에 건물이 여럿이면 같은 자리에 찍힌다 — 검색도 같은 한계다. 좌표 없는 필지는 NULL(마커 생략). '
+  '⚠️ elevator_ride·elevator_emgen·ho_cnt·strct_nm·seismic_design 도 건물 한 채의 원값이다(2026-10-11c). '
+  '승강기 0 에는 대장 미기재가 섞여 있고(호수 0 은 일반건축물에서 정상) seismic_design false 에는 1988년 전 건물·'
+  '내진 의무 밖 작은 건물·미기재가 섞여 있다 — '
+  '뜻풀이는 화면이 한다. 내진 능력·에너지·녹색 등급은 표에만 있고 이 뷰는 내보내지 않는다(채움이 낮다). '
   'ℹ️ 린트 0010(security definer view) 의도적 예외 — security_invoker=true로 되돌리면 원본 표 401 + 상호명·성명 노출 확대. '
   '재검토 방아쇠: 공개 배포일 / 지도·반경 검색(§6.4) 착수일';
 
@@ -1557,7 +1615,12 @@ returns table (
   -- 맞춰지므로 앞에 끼우면 api 쌍둥이·화면이 칸을 엇갈려 읽는다.
   is_jiphap      boolean,
   approve_date   date,
-  parking_cnt    integer
+  parking_cnt    integer,
+  -- 건물 사양 세 칸(2026-10-11c · 물결 2-1) — building 원값 그대로(0 은 0 — 승강기의 0 에는
+  -- 대장 미기재가 섞여 있고 호수 0 은 일반건축물에서 정상이다). ⛔ 기존 16칸 **뒤에만** 붙인다(위 세 칸과 같은 이유).
+  ho_cnt         integer,
+  elevator_ride  smallint,
+  elevator_emgen smallint
 )
 language plpgsql
 stable
@@ -1671,7 +1734,8 @@ with pat as not materialized (
     (select count(*)::int from building b2 where b2.pnu = t.pnu) as bld_cnt_in_pnu,
     fs.floor_cnt, fs.min_floor, fs.max_floor, fs.has_roof,
     t.total_cnt,
-    bo.is_jiphap, bo.approve_date, bo.parking_cnt
+    bo.is_jiphap, bo.approve_date, bo.parking_cnt,
+    bo.ho_cnt, bo.elevator_ride, bo.elevator_emgen
   from top t
   join mv_search_parcel pc on pc.pnu = t.pnu
   join parcel p on p.pnu = t.pnu
@@ -1679,6 +1743,7 @@ with pat as not materialized (
   --    lim 행(최대 100)번의 색인 조회다. ⛔ 위 hit·nm 가지에 실어 나르지 말 것 — 검색 가지는
   --    낱말 하나에도 민감하다(가지 2→3 에 763→1,550ms · search_stores 머리말).
   --    top 의 bld_id 는 building 에서 왔으므로 이 조인은 행을 줄이지 않는다.
+  --    건물 사양 세 칸(2026-10-11c)도 같은 조인에서 꺼낸다 — 조인을 하나 더 두지 않는다.
   join building bo on bo.bld_id = t.bld_id
   join lateral (
     select
@@ -1712,6 +1777,8 @@ comment on function search_buildings(text, int, text) is
   '주소는 mv_search_parcel(건물이 있는 필지만)을 본다. ⚠️ 자료 적재 후 `python scripts/post_load.py` 필수. '
   'is_jiphap·approve_date·parking_cnt 는 building 원값 그대로다(2026-10-09a) — null·0 을 '
   '"미상"으로 읽을지는 화면이 정한다. '
+  'ho_cnt·elevator_ride·elevator_emgen 도 building 원값 그대로다(2026-10-11c) — 승강기 0 에는 대장 미기재가 섞여 있고 '
+  '호수 0 은 일반건축물에서 정상이다. '
   '⛔ 주소 가지와 이름 가지를 OR로 합치지 말 것 — 두 조인 테이블에 걸친 OR은 gin_trgm 인덱스를 무력화한다';
 
 -- ⚠️ public 원본은 회수만 한다 — 열리는 쪽은 api.* 래퍼뿐(2026-09-05a). Postgres 는 새 함수의 EXECUTE 를 PUBLIC 에 기본 부여한다.
@@ -3416,7 +3483,10 @@ returns table (
   total_cnt      bigint,
   is_jiphap      boolean,
   approve_date   date,
-  parking_cnt    integer
+  parking_cnt    integer,
+  ho_cnt         integer,
+  elevator_ride  smallint,
+  elevator_emgen smallint
 )
 language sql
 stable
