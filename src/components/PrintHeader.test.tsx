@@ -75,3 +75,38 @@ describe('PrintHeader — 종이 머리글', () => {
     expect(container.querySelector('.printmeta__app')?.textContent).toBe('상가 층별 스택뷰');
   });
 });
+
+/**
+ * 머리 오른쪽 사무소 상자(결정 0036 결정 3 · 물결 1-C2). 역할 판단은 App 이 한다(중개사일 때만 `office` 를 준다).
+ * 여기서는 ① 빈 칸뿐이면 상자 자체가 없고 ② 채운 칸만 정해진 차례로 찍힌다.
+ */
+describe('PrintHeader — 사무소 상자', () => {
+  const EMPTY = { name: '', rep: '', regNo: '', phone: '', memo: '' };
+
+  it('안 주거나 칸이 전부 비면(공백만이어도) 상자가 없다', () => {
+    const a = render(<PrintHeader name="가" address="나" url={URL_} />);
+    expect(a.container.querySelector('.printmeta__office')).toBeNull();
+    cleanup();
+    const b = render(<PrintHeader name="가" address="나" url={URL_} office={{ ...EMPTY, rep: '   ' }} />);
+    expect(b.container.querySelector('.printmeta__office')).toBeNull();
+  });
+
+  it('채운 칸만 차례대로 — 빈 칸은 줄째 빠진다 · 양성 대조: 한 칸만 채워도 상자가 선다', () => {
+    const { container } = render(
+      <PrintHeader
+        name="가"
+        address="나"
+        url={URL_}
+        office={{ ...EMPTY, name: '역삼공인중개사', phone: '02-0000-0000', memo: '평일 9시~6시\n주차 가능' }}
+      />,
+    );
+    const box = container.querySelector('.printmeta__office')!;
+    expect([...box.querySelectorAll('p')].map((p) => p.textContent)).toEqual([
+      '역삼공인중개사',
+      '전화 02-0000-0000',
+      '평일 9시~6시\n주차 가능',
+    ]);
+    expect(box.textContent).not.toContain('대표');
+    expect(box.textContent).not.toContain('등록번호');
+  });
+});

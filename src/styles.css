@@ -3344,6 +3344,198 @@ body {
   }
 }
 
+/* ── 층 차이 세 잣대 (결정 0036 결정 15 · 물결 1-C2) ─────────────────────────────
+   층마다 한 줄 — 층 이름 + 칸 셋(국세청 · 구 실거래 · 부동산원). 칸마다 짧은 이름표(`.gap__k`)를 늘 달아
+   좁은 화면에서 세 줄로 쌓여도 어느 자료인지 안다. ⛔ 비율·나누기 칸을 더하지 않는다. */
+.gap__heads {
+  margin: 0 0 8px;
+  padding-left: 1.4em;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.gap__head {
+  margin: 2px 0;
+}
+
+.gap__rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gap__row {
+  display: grid;
+  grid-template-columns: 6em repeat(3, minmax(0, 1fr));
+  gap: 4px 10px;
+  align-items: baseline;
+  padding: 5px 0;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.gap__floor {
+  font-weight: 600;
+}
+
+.gap__cell {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.gap__k {
+  margin-right: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.gap__sub {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.gap__foot {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  /* 좁은 폭에서는 칸 셋이 한 줄에 안 들어간다 — 층 이름 아래로 세 줄로 쌓는다. */
+  .gap__row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1px;
+  }
+}
+
+/* ── 종이에 찍을 내 사무소 정보 · 호실 구성표 고르기 (물결 1-C2 · 결정 0036 결정 3·8) ──────────
+   둘 다 `.takeout`(인쇄 단추 줄) 안에 선다 — 종이에서는 그 줄째 빠진다(아래 인쇄 블록). */
+.office,
+.unitpick {
+  flex-basis: 100%;
+  font-size: 13px;
+}
+
+.office__toggle {
+  cursor: pointer;
+  color: var(--accent);
+}
+
+.office__fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
+  margin: 8px 0;
+}
+
+.office__field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.office__field--memo {
+  grid-column: 1 / -1;
+}
+
+.office__field input,
+.office__field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.office__note {
+  margin: 2px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.office__clear {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.unitpick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.unitpick__lead {
+  padding: 0;
+  color: var(--muted);
+}
+
+.unitpick__opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+/* 고른 층의 호 목록(화면·종이 같은 것) — 층 줄 아래. */
+.floor__unitprint {
+  margin: 2px 0 6px 6em;
+  font-size: 12px;
+}
+
+.floor__unitprint-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.floor__unitprint-more,
+.floor__unitprint-cap,
+.floor__unitprint-loading,
+.floor__unitprint-failed {
+  margin: 2px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .office__fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .floor__unitprint {
+    margin-left: 0;
+  }
+}
+
+/* 종이 머리 오른쪽의 사무소 상자 — 화면에서는 머리글째 안 보인다(`.printmeta`). */
+.printmeta__office {
+  margin: 0;
+  font-size: 12px;
+}
+
+.printmeta__office p {
+  margin: 0;
+}
+
+.printmeta__office-memo {
+  white-space: pre-line;
+}
+
 /* ── 종이로 뽑기 (결정 0020) ──────────────────────────────────────────────────
    왜 인쇄 라이브러리를 안 쓰나
    ---------------------------
@@ -3426,13 +3618,43 @@ body {
   /* 빈 카드 셋(결정 0036 결정 2 · 👤 2026-10-11) — "지금은 비어 있음" 뿐이라 종이 자리만 먹는다.
      ⛔ 이름표 `card--empty` 는 **빈 상태일 때만** 붙는다(`EmptySection`) — 자료가 차면 종이에 나온다. */
   .card--empty,
+  /* 종이에 찍을 내 사무소 정보 입력 칸 · 호실 구성표 고르기(물결 1-C2) — `.takeout` 안이지만 자리가
+     옮겨져도 종이에 새지 않게 따로 적어 둔다(누르는·적는 장치). 고른 결과(호 목록)는 종이에 남는다. */
+  .office,
+  .unitpick,
+  /* 호실 목록 '불러오는 중' 한 줄은 화면에만(물결 1-C2 보완) — 못 받은 층 수 줄은 종이에 남는다. */
+  .floor__unitprint-loading,
   .modal__back {
     display: none !important;
   }
 
-  /* 이 종이가 무엇이고 언제 것이며 원본이 어디인지 — 첫 줄에 적는다. */
+  /* 이 종이가 무엇이고 언제 것이며 원본이 어디인지 — 첫 줄에 적는다.
+     오른쪽 = 중개사 사무소 상자(채운 칸이 있을 때만 그려진다 — 결정 0036 결정 3). */
   .printmeta {
-    display: block;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 4px 16px;
+    /* 구분선은 머리 **전체 폭**에 — 오른쪽에 사무소 상자가 서도 선이 왼쪽 덩어리에서 끊기지 않게
+       (물결 1-C2 보완 · 예전엔 `.printmeta__foot` 이 가졌다). */
+    margin-bottom: 14px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .printmeta__main {
+    flex: 1 1 60%;
+    min-width: 0;
+  }
+
+  .printmeta__office {
+    flex: 0 1 auto;
+    padding: 4px 8px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    text-align: right;
+    overflow-wrap: anywhere;
   }
 
   .printmeta__title {
@@ -3453,9 +3675,7 @@ body {
     display: flex;
     flex-wrap: wrap;
     gap: 2px 10px;
-    margin: 6px 0 14px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--line);
+    margin: 6px 0 0;
     color: var(--muted);
     font-size: 11px;
   }
@@ -3572,8 +3792,17 @@ body {
      것인지 모른다. 호 목록 줄도 이름과 면적이 한 줄이라 갈리지 않게 한다. */
   .floor__head,
   .units__list li,
-  .units__mixed {
+  .units__mixed,
+  /* 세 잣대(물결 1-C2) — 층 하나의 세 값이 한 줄이다. ⛔ 카드 통째(`.gap`)에는 걸지 않는다. */
+  .gap__row,
+  /* 고른 층의 호 목록 줄(물결 1-C2) — 이름과 면적이 한 줄. */
+  .floor__unitprint-list li {
     break-inside: avoid;
+  }
+
+  /* ⛔ 호실 구성표를 고른 층도 줄 단위로 끊는다(아래 펼친 층과 같은 이유 — 50줄이면 한 장보다 클 수 있다). */
+  .floor.floor--unitprint {
+    break-inside: auto;
   }
 
   /*

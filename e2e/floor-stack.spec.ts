@@ -13,6 +13,7 @@ import {
   basePrices,
   lhNotice,
   priceGate,
+  rentStat,
   rentStatOld,
   rentStats,
   openClose,
@@ -532,7 +533,8 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await expect(stack.getByText('표본 부족').first()).toBeVisible();
     // 출처표시 의무 + 절대 규칙 3(근거 레벨·표본 수 병기).
     await expect(stack.getByText(/국토교통부 상업업무용 부동산 매매 실거래가/)).toBeVisible();
-    await expect(stack.getByText(/A등급 · 실거래/)).toBeVisible();
+    // 같은 배지가 세 잣대 카드(물결 1-C2) 칸 머리에도 선다 — 실거래 카드 안으로 좁힌다.
+    await expect(stack.locator('section.tx').getByText(/A등급 · 실거래/)).toBeVisible();
     // 절대 규칙 2 — 금칙어 5종은 화면 어디에도 없다.
     // ⚠️ '참고 매매 시세'는 절대 규칙 2 가 정한 **허용 대체어**라 Stage B 섹션이 쓴다.
     //    그래서 '시세' 금지는 화면 전체가 아니라 **Stage A 블록 안**으로 좁힌다 —
@@ -789,7 +791,8 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await page.getByRole('button', { name: /테스트빌딩/ }).click();
 
     const stack = page.locator('section.stack');
-    // 다섯 장 + 늘 서는 빈 카드 셋(결정 0036 결정 2 · 물결 1-B — 아무것도 안 불러서 목업이 없어도 선다).
+    // 다섯 장 + 늘 서는 빈 카드 셋(결정 0036 결정 2 · 물결 1-B — 아무것도 안 불러서 목업이 없어도 선다)
+    // ⓘ 세 잣대(물결 1-C2)는 국세청·부동산원이 둘 다 비면(이 시험의 목업 = 함수 없음) 서지 않는다.
     await expect(stack.locator('.card')).toHaveCount(8);
     await expect(stack.locator('.card__toggle[aria-expanded="true"]')).toHaveCount(4);
 
@@ -1644,8 +1647,8 @@ test.describe('층별 스택뷰 — 상권 임대 동향', () => {
     const rent = stack.locator('section.rent');
     await expect(rent).toBeVisible();
     // 카드가 하나 늘어도 **첫 화면 펼침은 여전히 넷**이다(로드맵 Wave 2 의 예산).
-    // 여섯 장 + 빈 카드 셋(물결 1-B).
-    await expect(stack.locator('.card')).toHaveCount(9);
+    // 여섯 장 + 빈 카드 셋(물결 1-B) + 세 잣대(물결 1-C2 · 접힌 채).
+    await expect(stack.locator('.card')).toHaveCount(10);
     await expect(stack.locator('.card__toggle[aria-expanded="true"]')).toHaveCount(4);
     // 접혀 있어도 무엇·언제는 읽힌다. ⛔ 값은 요약에 없다 — 한정어 없이 이 건물 값으로 읽힌다.
     await expect(rent.locator('.card__summary')).toHaveText(
@@ -1959,11 +1962,12 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
     await expect(list).toHaveCount(100);
     await expect(list.nth(50)).toContainText('3가051호');
 
-    // ② 요청 기록 — 섞인 층의 두 쪽만 나갔다. 35층(주거)을 묻는 요청은 **0번**이다.
+    // ② 요청 기록 — 목록 제공 층(1·3층)의 첫 쪽(호실 구성표 기본값 '지하~3층' — 물결 1-C2 · 👤 2026-10-11)과
+    //    펼친 3층의 둘째 쪽만 나갔다. 35층(주거)을 묻는 요청은 **0번**이다.
     // ⓘ 개발 서버는 StrictMode 라 effect 가 두 번 돌아 첫 쪽 요청이 겹쳐 나갈 수 있다(앞 것은
     //   버려진다) — 그래서 횟수가 아니라 **무엇을 물었나**(층·쪽)의 묶음으로 본다.
-    const asked = [...new Set(unitRequests.map((a) => `${a.p_floor_no}/${a.p_offset}/${a.p_limit}`))];
-    expect(asked).toEqual(['3/0/50', '3/50/50']);
+    const asked = [...new Set(unitRequests.map((a) => `${a.p_floor_no}/${a.p_offset}/${a.p_limit}`))].sort();
+    expect(asked).toEqual(['1/0/50', '3/0/50', '3/50/50']);
     expect(unitRequests.some((a) => a.p_floor_no === 35)).toBe(false);
     expect(unitRequests.every((a) => a.p_bld_id === searchHit().bld_id)).toBe(true);
 
@@ -2173,6 +2177,8 @@ test.describe('첫 화면 — 역할 단추', () => {
       '둘레의 업종 분포',
       '실거래 기록',
       '참고 매매 시세 (추정값)',
+      // 세 잣대(물결 1-C2) — 참고 매매 시세 바로 뒤 · 접힌 채.
+      '층 차이 세 잣대 (공표값 나란히)',
       '상권 임대 동향 (부동산원 조사)',
       '상권 개업·폐업 (서울시 공표)',
       '업종별 추정매출',
@@ -2190,6 +2196,7 @@ test.describe('첫 화면 — 역할 단추', () => {
       '이 자리 가게 이력',
       '실거래 기록',
       '참고 매매 시세 (추정값)',
+      '층 차이 세 잣대 (공표값 나란히)',
       '상권 임대 동향 (부동산원 조사)',
     ];
     // ⚠️ exact — 카드 머리의 역할 태그('창업자')가 버튼 이름 안에 들어 있어 부분 일치로 찾으면 겹친다.
@@ -2487,6 +2494,243 @@ test.describe('층별 스택뷰 — 개별공시지가 한 줄', () => {
     await page.emulateMedia({ media: 'print' });
     await expect(line).toBeVisible();
     await expect(line).toHaveText(BADGE + TEXT);
+    await page.emulateMedia({ media: null });
+  });
+});
+
+// ── 인쇄 한 장 보강 + 세 잣대 (👤 결정 0036 결정 3·8·15 · 물결 1-C2) ─────────────────────────
+// 저장 규칙·칸 모양·짝짓기는 단위 시험이 덮는다(`brokerOfficeStore.test`·`unitPrint.test`·`floorGap.test`·
+// `App.test`·`FloorStack.test`). 여기서만 보이는 것은 **종이**(인쇄 시험 넷 — 결정 0036 「지키는 것」)와
+// 좁은 폭(412px)에서 세 잣대가 넘치지 않는가다.
+
+test.describe('종이 한 장 보강 — 사무소 칸 · 호실 구성표 · 세 잣대', () => {
+  /** 중개사로 저장해 두고(+ 최근 뽑은 건물 한 줄) 건물을 연다 — 저장은 진짜 브라우저 저장소. */
+  async function openAsBroker(page: Page) {
+    const { total_cnt: _t, ...recent } = searchHit({ bld_id: '1168010100100020000_1', pnu: '1168010100100020000', bld_nm: '옛빌딩' });
+    void _t;
+    await page.addInitScript((r) => {
+      // ⚠️ 이 파일의 타입 검사는 브라우저 타입(DOM)을 안 켠다 — 전역을 좁은 모양으로 꺼내 쓴다(시험 T 와 같은 사정).
+      type Kv = { getItem(k: string): string | null; setItem(k: string, v: string): void };
+      const w = globalThis as unknown as { localStorage: Kv; sessionStorage: Kv };
+      // 새로고침 때 다시 심지 않는다 — 시험 중 적은 칸이 새로고침 뒤에도 남는지 보려고.
+      if (w.sessionStorage.getItem('__seeded')) return;
+      w.sessionStorage.setItem('__seeded', '1');
+      w.localStorage.setItem('sangga.viewerRole', '중개사');
+      w.localStorage.setItem('sangga.recentPrinted', JSON.stringify([r]));
+    }, recent);
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page, [], [], [floorRow({ floor_no: 2 }), floorRow()]);
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).first().click();
+    await expect(page.locator('section.stack')).toBeVisible();
+  }
+
+  test('AQ. 중개사 사무소 칸 — 비면 종이 머리 상자 없음 · 채우면 종이에만 · 칸·최근 줄은 종이에서 빠진다', async ({
+    page,
+  }, testInfo) => {
+    await openAsBroker(page);
+    const office = page.locator('details.office');
+    const box = page.locator('.printmeta__office');
+    await expect(office).toBeVisible();
+    await expect(page.locator('section.recent')).toBeVisible();
+
+    // ① 칸이 비면 — 종이 머리 오른쪽 상자가 아예 없다.
+    await page.emulateMedia({ media: 'print' });
+    await expect(page.locator('.printmeta')).toBeVisible();
+    await expect(box).toHaveCount(0);
+    // ④ 입력 칸·고르기는 종이에서 빠진다 · (+) 1-A2(iii) 후속: 「최근 뽑은 건물」 줄도 빠진다.
+    await expect(office).toBeHidden();
+    await expect(page.locator('.unitpick')).toBeHidden();
+    await expect(page.locator('section.recent')).toBeHidden();
+    await page.emulateMedia({ media: null });
+
+    // ② 채우면 — 화면에서는 안 보이고(머리글째 화면에 없다) 종이에만 보인다 · 빈 칸은 줄째 빠진다.
+    await office.locator('summary').click();
+    await expect(office.getByText('이 기기에만 저장 · 서버로 보내지 않음')).toBeVisible();
+    await expect(office.getByText('여럿이 함께 쓰는 컴퓨터라면 다 쓴 뒤 지우기를 눌러 주세요')).toBeVisible();
+    await page.getByLabel('사무소 이름').fill('역삼공인중개사');
+    await page.getByLabel('전화').fill('02-0000-0000');
+    // 접힌 줄 제목에 채움 상태(접어 둬도 무엇이 찍힐지 보인다).
+    await expect(office.locator('summary')).toHaveText('종이에 찍을 내 사무소 정보 — 채워짐(역삼공인중개사)');
+    await expect(box).toHaveCount(1);
+    await expect(box).toBeHidden();
+    // 412px 에서도 입력 칸이 가로로 넘치지 않는다.
+    expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+
+    await page.emulateMedia({ media: 'print' });
+    await expect(box).toBeVisible();
+    await expect(box.locator('p')).toHaveText(['역삼공인중개사', '전화 02-0000-0000']);
+    // 구분선은 머리 전체 폭(상자가 서도 끊기지 않게) — 머리글이 갖고, 왼쪽 덩어리의 발 줄은 안 갖는다.
+    await expect(page.locator('.printmeta')).toHaveCSS('border-bottom-style', 'solid');
+    await expect(page.locator('.printmeta__foot')).toHaveCSS('border-bottom-style', 'none');
+    await expect(office).toBeHidden();
+    await page.locator('.printmeta').screenshot({ path: testInfo.outputPath(`c2-office-print-${testInfo.project.name}.png`) });
+    await page.emulateMedia({ media: null });
+
+    // 새로고침 뒤에도 남는다(이 기기 저장) · 주소에는 sgg·bld 둘뿐.
+    expect([...new URL(page.url()).searchParams.keys()].sort()).toEqual(['bld', 'sgg']);
+    await page.reload();
+    await expect(page.locator('section.stack')).toBeVisible();
+    await expect(page.getByLabel('사무소 이름')).toHaveValue('역삼공인중개사');
+  });
+
+  test('AR. 호실 구성표 「지하~3층」·「전부」가 각각 종이(와 화면)에 그 층 호 목록 줄로 · 고르기 자체는 종이에서 빠진다', async ({
+    page,
+  }, testInfo) => {
+    const unitRequests: Array<Record<string, unknown>> = [];
+    page.on('request', (r) => {
+      if (r.method() === 'POST' && r.url().includes('/rpc/list_floor_units')) {
+        unitRequests.push((r.postDataJSON() ?? {}) as Record<string, unknown>);
+      }
+    });
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page, [], [], [
+      floorRow({ floor_no: 35, main_use: '아파트' }),
+      floorRow({ floor_no: 5 }),
+      floorRow({ floor_no: 4 }),
+      floorRow({ floor_no: 3 }),
+      floorRow({ floor_no: 1 }),
+      floorRow({ floor_no: -1 }),
+    ]);
+    const kind = (floor_no: number, floor_kind: string) => ({
+      floor_no, unit_cnt: 543, median_area_m2: null, min_area_m2: null, max_area_m2: null, floor_kind,
+    });
+    await mockJson(page, UNIT_SUMMARY_PATTERN, [
+      kind(35, 'residential'), kind(5, 'commercial'), kind(4, 'commercial'), kind(3, 'mixed'), kind(1, 'commercial'),
+      kind(-1, 'commercial'),
+    ]);
+    await page.route(FLOOR_UNITS_PATTERN, async (route) => {
+      if (route.request().method() === 'OPTIONS') {
+        await route.fulfill({ status: 204, headers: CORS_HEADERS });
+        return;
+      }
+      const args = (route.request().postDataJSON() ?? {}) as Record<string, number>;
+      // 4층 목록만 서버 오류 — 그 층만 빠지고 다 끝난 뒤 못 받은 층 수 한 줄(화면·종이)이 서는지 본다.
+      if (args.p_floor_no === 4) {
+        await route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          headers: CORS_HEADERS,
+          body: JSON.stringify({ code: 'XX000', message: 'boom', details: null, hint: null }),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: CORS_HEADERS,
+        body: JSON.stringify(floorUnitsPage(args.p_offset ?? 0, args.p_limit ?? 50)),
+      });
+    });
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+    await expect(page.locator('section.stack')).toBeVisible();
+
+    const card = page.locator('.card--floors');
+    const listOf = (no: number) => card.locator(`#floor-${no} .floor__unitprint-list li`);
+    const pick = page.locator('.unitpick');
+    // 기본 = 지하~3층(👤 2026-10-11 · 결정 8 원문) — 건물을 열자마자 화면에서도 지하 1층·1층·3층 아래에
+    // 50호씩 + 남은 수 한 줄(5층·35층은 없다). 받는 동안의 「불러오는 중」 줄은 다 받으면 사라진다.
+    await expect(pick.getByLabel('지하~3층')).toBeChecked();
+    for (const no of [-1, 1, 3]) await expect(listOf(no)).toHaveCount(50);
+    await expect(card.locator('.floor__unitprint-loading')).toHaveCount(0);
+    await expect(card.locator('#floor-5 .floor__unitprint')).toHaveCount(0);
+    await expect(card.locator('#floor-3 .floor__unitprint-more')).toHaveText('이 층은 493호 더 있습니다');
+    await expect(card.locator('.floor__unitprint-failed')).toHaveCount(0);
+
+    await page.emulateMedia({ media: 'print' });
+    await expect(pick).toBeHidden();
+    await expect(listOf(-1).first()).toBeVisible();
+    await expect(listOf(3).nth(49)).toBeVisible();
+    await expect(card.locator('#floor-3 .floor__unitprint-more')).toBeVisible();
+    // 줄 단위로 끊는다 — 고른 층은 통째 avoid 가 아니고, 호 줄 하나하나는 avoid.
+    await expect(card.locator('#floor-3')).toHaveCSS('break-inside', 'auto');
+    await expect(listOf(3).first()).toHaveCSS('break-inside', 'avoid');
+    await card.screenshot({ path: testInfo.outputPath(`c2-units-low-print-${testInfo.project.name}.png`) });
+    await page.emulateMedia({ media: null });
+
+    // 전부 — 5층까지(아래층부터) · 주거 35층은 여전히 없다 · 서버 오류 난 4층만 빠지고 그 수 한 줄.
+    const failed = card.locator('.floor__unitprint-failed');
+    await pick.getByLabel('전부').check();
+    await expect(listOf(5)).toHaveCount(50);
+    await expect(failed).toHaveText('1개 층은 호실 목록을 못 불러왔습니다');
+    await expect(listOf(4)).toHaveCount(0);
+    await page.emulateMedia({ media: 'print' });
+    await expect(listOf(5).first()).toBeVisible();
+    await expect(card.locator('#floor-35 .floor__unitprint')).toHaveCount(0);
+    // 못 받은 층 수 줄은 종이에도 남는다(👤 2026-10-11 — 빠진 층이 있다는 것을 종이를 받는 사람도 안다).
+    await expect(failed).toBeVisible();
+    await page.emulateMedia({ media: null });
+
+    // 넣지 않음 — 화면·종이 모두 목록이 빠진다(선택지로 남는다) · 못 받은 층 줄도 같이 빠진다.
+    await pick.getByLabel('넣지 않음').check();
+    await expect(card.locator('.floor__unitprint')).toHaveCount(0);
+    await expect(failed).toHaveCount(0);
+    await page.emulateMedia({ media: 'print' });
+    await expect(card.locator('.floor__unitprint')).toHaveCount(0);
+    await page.emulateMedia({ media: null });
+
+    // ⛔ 주거 층은 요청조차 안 나간다 · 늘 첫 쪽(offset 0, 50).
+    expect(unitRequests.some((a) => a.p_floor_no === 35)).toBe(false);
+    expect(unitRequests.every((a) => a.p_offset === 0 && a.p_limit === 50)).toBe(true);
+    expect([...new Set(unitRequests.map((a) => a.p_floor_no))].sort()).toEqual([-1, 1, 3, 4, 5]);
+    expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+  });
+
+  test('AS. 세 잣대 — 접힌 카드로 서고 펼치면 층마다 세 값 · 412px 넘침 0 · 종이에서는 줄 단위', async ({
+    page,
+  }, testInfo) => {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(
+      page,
+      [],
+      priceBands(),
+      [floorRow({ floor_no: 2 }), floorRow(), floorRow({ floor_no: -1 })],
+      undefined,
+      basePrices(),
+      undefined,
+      [rentStat()],
+    );
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+
+    const gap = page.locator('section.card--floorgap');
+    await expect(gap.locator('.card__toggle')).toHaveAttribute('aria-expanded', 'false');
+    await expect(gap.locator('.card__summary')).toHaveText('국세청 · 구 실거래 · 부동산원 — 층마다 나란히');
+    // 자리 = 참고 매매 시세 바로 뒤(역할 없음).
+    const titles = await page.locator('section.stack .card .card__title').allTextContents();
+    expect(titles[titles.indexOf('층 차이 세 잣대 (공표값 나란히)') - 1]).toBe('참고 매매 시세 (추정값)');
+
+    await openCard(page, /층 차이 세 잣대/);
+    const val = (no: number, k: string) => gap.locator(`.gap__row[data-floor="${no}"] .gap__cell--${k} .gap__val`);
+    await expect(val(1, 'base')).toHaveText('410만');
+    await expect(val(1, 'tx')).toHaveText('㎡당 2,250만');
+    await expect(val(1, 'rent')).toHaveText('74.6');
+    await expect(val(2, 'tx')).toHaveText('표본 부족 (0건)');
+    await expect(val(-1, 'rent')).toHaveText('16.95');
+    await expect(gap.locator('.gap__row[data-floor="-1"] .gap__cell--rent .gap__sub')).toHaveText(' (상권 평균 · 지하 1층)');
+    await expect(val(-1, 'base')).toHaveText('–');
+    await expect(gap.locator('.gap__head--rent')).toContainText('서울>강남>테헤란로 집합상가 평균 — 이 건물 값 아님');
+    await expect(gap).toContainText('서로 나누거나 비율을 계산하지 않았습니다');
+    await expect(gap).not.toContainText('%');
+    expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+    for (const el of await gap.locator('.gap__row').all()) {
+      expect(await el.evaluate((e) => e.scrollWidth - e.clientWidth)).toBeLessThanOrEqual(0);
+    }
+    await gap.screenshot({ path: testInfo.outputPath(`c2-gap-${testInfo.project.name}.png`) });
+
+    await page.emulateMedia({ media: 'print' });
+    await expect(gap.locator('.gap__row').first()).toHaveCSS('break-inside', 'avoid');
+    await expect(gap).not.toHaveCSS('break-inside', 'avoid');
     await page.emulateMedia({ media: null });
   });
 });

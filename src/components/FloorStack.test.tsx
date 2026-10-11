@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
 import {
   SECTION_EXPAND_BUDGET,
   SECTION_PLAN,
@@ -412,8 +412,9 @@ describe('FloorStack — 본체', () => {
 
   it('지하층은 부호를 떼고 "지하 n층"으로 쌓는다', async () => {
     responses.floors = { data: [floor({ floor_no: -1, floor_label: null })], error: null };
-    render(<FloorStack building={building()} />);
-    await waitFor(() => expect(screen.getByText('지하 1층')).toBeTruthy());
+    const { container } = render(<FloorStack building={building()} />);
+    // 층 이름은 세 잣대 카드(물결 1-C2)의 줄 머리에도 나온다 — 층 목록 카드 안으로 좁혀 본다.
+    await waitFor(() => expect(container.querySelector('.card--floors .floor__label')?.textContent).toBe('지하 1층'));
   });
 
   it('한 땅에 여러 동이 있으면 점포가 섞일 수 있다고 경고한다', async () => {
@@ -985,8 +986,9 @@ describe('FloorStack — 실거래 기록 (Stage A · 결정 0012)', () => {
 
   it('출처(국토교통부)와 A등급 배지를 항상 함께 보여준다', async () => {
     // 절대 규칙 3 — 근거 레벨 + 표본 수 병기.
-    render(<FloorStack building={building()} />);
-    await waitFor(() => expect(screen.getByText(/A등급 · 실거래/)).toBeTruthy());
+    const { container } = render(<FloorStack building={building()} />);
+    // 같은 배지가 세 잣대 카드(물결 1-C2) 칸 머리에도 선다 — 실거래 카드 안으로 좁혀 본다.
+    await waitFor(() => expect(container.querySelector('section.tx')?.textContent).toMatch(/A등급 · 실거래/));
     expect(screen.getByText(/국토교통부 상업업무용 부동산 매매 실거래가/)).toBeTruthy();
     expect(screen.getByText(/전체 표본 213건/)).toBeTruthy();
   });
@@ -995,8 +997,9 @@ describe('FloorStack — 실거래 기록 (Stage A · 결정 0012)', () => {
     // 못 읽었을 때 "거래 없음"이라고 적으면 모르는 것을 아는 것처럼 말하게 된다.
     responses.txs = { data: null, error: { message: 'permission denied' } };
     responses.txStats = { data: null, error: { message: 'permission denied' } };
-    render(<FloorStack building={building()} />);
-    await waitFor(() => expect(screen.getByText('1층')).toBeTruthy());
+    const { container } = render(<FloorStack building={building()} />);
+    // '1층'은 세 잣대 카드(물결 1-C2)의 줄 머리에도 나온다 — 층 목록 카드 안으로 좁혀 본다.
+    await waitFor(() => expect(container.querySelector('.card--floors .floor__label')?.textContent).toBe('1층'));
     expect(screen.queryByText(/실거래 기록/)).toBeNull();
     expect(screen.queryByText(/permission denied/)).toBeNull();
   });
@@ -1692,6 +1695,11 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     responses.industryMix = { data: MIX, error: null };
     responses.txs = { data: [tx()], error: null };
     responses.bands = { data: priceBands(), error: null };
+    // 세 잣대 카드(물결 1-C2)는 국세청·부동산원 중 하나라도 값이 있어야 선다 — 국세청 한 층을 준다.
+    responses.basePrices = {
+      data: [{ floor_no: 1, median_price_per_m2: 4_100_000, ho_cnt: 12, notice_date: '2026-01-01' }],
+      error: null,
+    };
     responses.rent = {
       data: [
         {
@@ -1752,6 +1760,8 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       '둘레의 업종 분포',
       '실거래 기록',
       '참고 매매 시세 (추정값)',
+      // 세 잣대(물결 1-C2 · 👤) — 참고 매매 시세 바로 뒤 · 접힌 채 시작.
+      '층 차이 세 잣대 (공표값 나란히)',
       '상권 임대 동향 (부동산원 조사)',
       '상권 개업·폐업 (서울시 공표)',
       // 빈 카드 셋(결정 0036 결정 2 · 물결 1-B) — 역할 없음 차례에서는 맨 끝.
@@ -1760,14 +1770,14 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       '이 자리 가게 이력',
     ]);
     expect(cards.map((c) => c.role)).toEqual([
-      '공통', '공통', '창업자', '투자자', '투자자', '투자자', '창업자', '창업자', '창업자', '창업자',
+      '공통', '공통', '창업자', '투자자', '투자자', '공통', '투자자', '창업자', '창업자', '창업자', '창업자',
     ]);
     // 공통 둘 + 역할마다 하나씩 = 넷을 펼치고, 투자자의 나머지 둘(추정값·임대)은 접는다.
     // ⛔ 임대 카드의 defaultOpen 이 실수로 true 가 되는 날 여기서 잡힌다(예산 4장 초과).
     // ⛔ 개업·폐업 카드(결정 0033)도 접힌다 — 이 건물이 아니라 상권 전체의 값이다.
     // ⛔ 빈 카드 셋도 접힌 채 시작한다(👤 — 지금은 "비어 있음" 한 줄뿐이다).
     expect(cards.map((c) => c.open)).toEqual([
-      true, true, true, true, false, false, false, false, false, false,
+      true, true, true, true, false, false, false, false, false, false, false,
     ]);
   });
 
@@ -1794,6 +1804,7 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       ['층 목록', true],
       ['실거래 기록', true],
       ['참고 매매 시세 (추정값)', true],
+      ['층 차이 세 잣대 (공표값 나란히)', false],
       ['상권 임대 동향 (부동산원 조사)', false],
       ['둘레의 업종 분포', false],
       ['상권 개업·폐업 (서울시 공표)', false],
@@ -1812,6 +1823,7 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       ['이 자리 가게 이력', false],
       ['실거래 기록', false],
       ['참고 매매 시세 (추정값)', false],
+      ['층 차이 세 잣대 (공표값 나란히)', false],
       ['상권 임대 동향 (부동산원 조사)', false],
     ],
     중개사: [
@@ -1819,6 +1831,7 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       ['실거래 기록', true],
       ['속한 상권', true],
       ['참고 매매 시세 (추정값)', true],
+      ['층 차이 세 잣대 (공표값 나란히)', false],
       ['상권 임대 동향 (부동산원 조사)', false],
       ['둘레의 업종 분포', false],
       ['상권 개업·폐업 (서울시 공표)', false],
@@ -1833,6 +1846,7 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     ['둘레의 업종 분포', true],
     ['실거래 기록', true],
     ['참고 매매 시세 (추정값)', false],
+    ['층 차이 세 잣대 (공표값 나란히)', false],
     ['상권 임대 동향 (부동산원 조사)', false],
     ['상권 개업·폐업 (서울시 공표)', false],
     ['업종별 추정매출', false],
@@ -2009,6 +2023,8 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       '속한 상권 1개 · 반경 500m 이내 402곳',
       '이 땅 거래 1건 · 강남구 층대별 단가',
       '값을 낸 층 1개',
+      // 세 잣대 — 값 없이 무엇이 들어 있는지만(👤 물결 1-C2 · 비율 0).
+      '국세청 · 구 실거래 · 부동산원 — 층마다 나란히',
       // ⛔ 임대 카드는 첫 화면에서 **접혀 있다** — 그래서 이 한 줄이 접은 채로 읽히는
       //    유일한 내용이다(2026-09-01 감사 전까지 이 줄은 한 번도 검사된 적이 없었다).
       '공실률 · ㎡당 임대료 · 투자수익률 · 2026년 2분기 조사',
@@ -2581,6 +2597,241 @@ describe('FloorStack — 임대 카드 · 좌표 없는 건물 (2026-10-06)', ()
     responses.rent = { data: [], error: null };
     render(<FloorStack building={building({ lat: 37.5, lng: 127.03 })} />);
     expect(await screen.findByText('부동산원 조사 대상 상권이 아닙니다')).toBeTruthy();
+  });
+});
+
+/**
+ * 호실 구성표 고르기(결정 0036 결정 8 · 물결 1-C2) — 층별 화면 쪽. 고르기 단추는 App 에 있고, 여기서는
+ * 고른 값(`unitPrintMode`)을 받아 ① 호 목록이 있는 층만 부르는가(주거·오피스텔 요청 0) ② 층 줄 아래에
+ * 목록 + '이 층은 N호 더 있습니다' ③ 이미 펼친 층과 겹치면 한 벌만 ④ 실패한 층만 빠진다 ⑤ 상한 안내.
+ */
+describe('FloorStack — 호실 구성표 고르기 (물결 1-C2)', () => {
+  const kinds: Record<number, string> = { 35: 'residential', 8: 'officetel', 3: 'mixed', 1: 'commercial', [-1]: 'commercial' };
+  function summaryFor(nos: number[]) {
+    return nos.map((n) => ({
+      floor_no: n,
+      unit_cnt: 60,
+      median_area_m2: kinds[n] === 'residential' || kinds[n] === 'officetel' ? null : 4,
+      min_area_m2: null,
+      max_area_m2: null,
+      floor_kind: kinds[n] ?? 'commercial',
+    }));
+  }
+  /** 층마다 첫 쪽 — 3층만 60호(10호 더), 나머지는 2호. */
+  function pageFor(args: Record<string, unknown>) {
+    const no = Number(args.p_floor_no);
+    const total = no === 3 ? 60 : 2;
+    const rows = Array.from({ length: Math.min(50, total) }, (_, i) => ({
+      ho: `${no}-${i + 1}호`,
+      excl_area_m2: 4,
+      total_cnt: total,
+    }));
+    return { data: rows, error: null };
+  }
+  const NOS = [35, 8, 3, 1, -1];
+
+  beforeEach(() => {
+    responses.floors = { data: NOS.map((n) => floor({ floor_no: n })), error: null };
+    responses.unitSummary = { data: summaryFor(NOS), error: null };
+    responses.floorUnits = pageFor;
+  });
+
+  const unitCalls = () => rpcCalls.filter((c) => c.fn === 'list_floor_units').map((c) => c.args as Record<string, unknown>);
+  const listOf = (container: HTMLElement, no: number) =>
+    [...container.querySelectorAll(`#floor-${no} .floor__unitprint-list li`)].map((li) => li.textContent);
+
+  it('넣지 않음(기본)이면 아무 층도 안 부른다', async () => {
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(5));
+    expect(unitCalls()).toHaveLength(0);
+    expect(container.querySelector('.floor__unitprint')).toBeNull();
+  });
+
+  it('★ 전부 — 호 목록이 있는 층만 첫 쪽(offset 0)으로 · 주거·오피스텔은 요청 0 · 50호 넘는 층은 남은 수 한 줄', async () => {
+    const { container } = render(<FloorStack building={building()} unitPrintMode="all" />);
+    await waitFor(() => expect(listOf(container, 3)).toHaveLength(50));
+    await waitFor(() => expect(listOf(container, -1)).toHaveLength(2));
+    expect(listOf(container, 1)).toEqual(['1-1호 4.0㎡', '1-2호 4.0㎡']);
+    const asked = [...new Set(unitCalls().map((a) => `${a.p_floor_no}/${a.p_offset}/${a.p_limit}`))].sort();
+    expect(asked).toEqual(['-1/0/50', '1/0/50', '3/0/50']);
+    expect(unitCalls().some((a) => a.p_floor_no === 35 || a.p_floor_no === 8)).toBe(false);
+    expect(container.querySelector('#floor-3 .floor__unitprint-more')?.textContent).toBe('이 층은 10호 더 있습니다');
+    expect(container.querySelector('#floor-1 .floor__unitprint-more')).toBeNull();
+    // 종이에서 줄 단위로 끊는 이름표.
+    expect(container.querySelector('#floor-3')?.classList.contains('floor--unitprint')).toBe(true);
+  });
+
+  it('지하~3층 — 지하 + 1~3층만', async () => {
+    responses.floors = { data: [floor({ floor_no: 5 }), ...NOS.map((n) => floor({ floor_no: n }))], error: null };
+    responses.unitSummary = { data: summaryFor([5, ...NOS]), error: null };
+    const { container } = render(<FloorStack building={building()} unitPrintMode="low" />);
+    await waitFor(() => expect(listOf(container, -1)).toHaveLength(2));
+    await waitFor(() => expect(listOf(container, 3)).toHaveLength(50));
+    expect(unitCalls().some((a) => a.p_floor_no === 5)).toBe(false);
+  });
+
+  it('★ 이미 펼친 층과 겹치면 목록은 한 벌만(상세 쪽)', async () => {
+    const { container } = render(<FloorStack building={building()} unitPrintMode="all" />);
+    await waitFor(() => expect(listOf(container, 1)).toHaveLength(2));
+    const row = [...container.querySelectorAll<HTMLElement>('.floor__row')].find(
+      (b) => b.querySelector('.floor__label')?.textContent === '1층',
+    )!;
+    fireEvent.click(row);
+    await waitFor(() => expect(container.querySelectorAll('#floor-1 .units__list li')).toHaveLength(2));
+    expect(listOf(container, 1)).toHaveLength(0);
+    // 양성 대조: 다른 층의 고른 목록은 그대로다.
+    expect(listOf(container, -1)).toHaveLength(2);
+  });
+
+  it('★ 실패한 층은 그 층만 조용히 빠지고 다른 층은 선다', async () => {
+    responses.floorUnits = (args) =>
+      Number(args.p_floor_no) === 3 ? { data: null, error: { message: 'boom' } } : pageFor(args);
+    const { container } = render(<FloorStack building={building()} unitPrintMode="all" />);
+    await waitFor(() => expect(listOf(container, 1)).toHaveLength(2));
+    await waitFor(() => expect(listOf(container, -1)).toHaveLength(2));
+    expect(container.querySelector('#floor-3 .floor__unitprint')).toBeNull();
+    expect(container.textContent).not.toContain('불러오지 못했습니다');
+  });
+
+  it('★ 전부 — 호 목록 있는 층이 30개를 넘으면 아래쪽 30개 층만 · 그렇다고 한 줄 · 동시 요청은 4개 이하', async () => {
+    const many = Array.from({ length: 33 }, (_, i) => i + 1);
+    responses.floors = { data: [...many].reverse().map((n) => floor({ floor_no: n })), error: null };
+    responses.unitSummary = { data: summaryFor(many), error: null };
+    let inflight = 0;
+    let peak = 0;
+    responses.floorUnits = ((args: Record<string, unknown>) => {
+      inflight += 1;
+      peak = Math.max(peak, inflight);
+      // ⓘ 타이머 없이 다음 마이크로태스크에 답한다 — 실제로 흐른 시간에 기대지 않는다(전체 시험 부하에서
+      //   setTimeout 판은 1초 안에 30층을 못 채워 흔들렸다). 일꾼 넷이 같은 틱에 요청을 내므로 최고치는 그대로 잰다.
+      return Promise.resolve().then(() => {
+        inflight -= 1;
+        return pageFor(args);
+      }) as unknown as Promise<never>;
+    }) as typeof responses.floorUnits;
+    const { container } = render(<FloorStack building={building()} unitPrintMode="all" />);
+    await waitFor(() => expect(container.querySelectorAll('.floor__unitprint')).toHaveLength(30));
+    expect(container.querySelector('.floor__unitprint-cap')?.textContent).toBe(
+      '호실 목록이 있는 층이 32개라 아래쪽 30개 층만 넣었습니다', // 8층은 오피스텔이라 안 센다
+    );
+    expect(container.querySelector('#floor-31 .floor__unitprint')).not.toBeNull(); // 30번째(8층을 건너뛴다)
+    expect(container.querySelector('#floor-32 .floor__unitprint')).toBeNull();
+    expect(container.querySelector('#floor-8 .floor__unitprint')).toBeNull();
+    expect(peak).toBeLessThanOrEqual(4);
+    expect(peak).toBeGreaterThan(1);
+  });
+});
+
+/**
+ * 호실 구성표 고르기 — 검사 뒤 보완(물결 1-C2 · 👤 2026-10-11): 늦은 답 가드 · 바꿀 때 받은 층 다시 쓰기 ·
+ * 받는 중/못 받은 층 한 줄 · 층 목록 카드는 손님이 직접 고를 때만 펼친다 · 호 목록 있는 층 수 알림.
+ */
+describe('FloorStack — 호실 구성표 고르기 보완 (물결 1-C2)', () => {
+  const NOS = [5, 3, 1, -1];
+  function summary() {
+    return NOS.map((n) => ({
+      floor_no: n,
+      unit_cnt: 2,
+      median_area_m2: 4,
+      min_area_m2: null,
+      max_area_m2: null,
+      floor_kind: 'commercial',
+    }));
+  }
+  function page(args: Record<string, unknown>) {
+    const no = Number(args.p_floor_no);
+    return { data: [{ ho: `${no}-1호`, excl_area_m2: 4, total_cnt: 1 }], error: null };
+  }
+  const calls = () => rpcCalls.filter((c) => c.fn === 'list_floor_units').map((c) => Number((c.args as Record<string, unknown>).p_floor_no));
+  const lists = (container: HTMLElement) => container.querySelectorAll('.floor__unitprint');
+
+  beforeEach(() => {
+    responses.floors = { data: NOS.map((n) => floor({ floor_no: n })), error: null };
+    responses.unitSummary = { data: summary(), error: null };
+    responses.floorUnits = page;
+  });
+
+  it("★ '전부'로 바꾼 뒤 답이 오기 전에 '넣지 않음'으로 돌리면 늦은 답이 목록을 되살리지 않는다", async () => {
+    const pending: Array<() => void> = [];
+    responses.floorUnits = ((args: Record<string, unknown>) =>
+      new Promise((r) => pending.push(() => r(page(args))))) as unknown as typeof responses.floorUnits;
+    const { container, rerender } = render(<FloorStack building={building()} unitPrintMode="all" />);
+    await waitFor(() => expect(pending.length).toBeGreaterThan(0));
+    rerender(<FloorStack building={building()} unitPrintMode="none" />);
+    await act(async () => {
+      for (const go of pending.splice(0)) go();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(lists(container)).toHaveLength(0);
+    expect(container.querySelector('.floor__unitprint-loading')).toBeNull();
+  });
+
+  it("★ '지하~3층' → '전부' — 이미 받은 층은 다시 쓰고 새 층(5층)만 부른다", async () => {
+    const { container, rerender } = render(<FloorStack building={building()} unitPrintMode="low" />);
+    await waitFor(() => expect(lists(container)).toHaveLength(3));
+    expect([...new Set(calls())].sort((a, b) => a - b)).toEqual([-1, 1, 3]);
+    const before = container.querySelector('#floor-1 .floor__unitprint');
+    rpcCalls.length = 0;
+    rerender(<FloorStack building={building()} unitPrintMode="all" />);
+    // 바꾼 그 순간에도 받은 층은 그대로 서 있다(깜빡임 0).
+    expect(lists(container)).toHaveLength(3);
+    await waitFor(() => expect(lists(container)).toHaveLength(4));
+    expect(calls()).toEqual([5]);
+    expect(container.querySelector('#floor-1 .floor__unitprint')).toBe(before);
+  });
+
+  it('★ 받는 동안 「호실 목록 불러오는 중 (N/M층)」 · 끝난 뒤 못 받은 층 수 한 줄', async () => {
+    const pending: Array<() => void> = [];
+    responses.floorUnits = ((args: Record<string, unknown>) =>
+      new Promise((r) =>
+        pending.push(() =>
+          r(Number(args.p_floor_no) === 3 ? { data: null, error: { message: 'boom' } } : page(args)),
+        ),
+      )) as unknown as typeof responses.floorUnits;
+    const { container } = render(<FloorStack building={building()} unitPrintMode="all" />);
+    await waitFor(() =>
+      expect(container.querySelector('.floor__unitprint-loading')?.textContent).toBe('호실 목록 불러오는 중 (0/4층)'),
+    );
+    await act(async () => {
+      for (const go of pending.splice(0)) go();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    await waitFor(() => expect(container.querySelector('.floor__unitprint-loading')).toBeNull());
+    expect(container.querySelector('.floor__unitprint-failed')?.textContent).toBe('1개 층은 호실 목록을 못 불러왔습니다');
+    expect(lists(container)).toHaveLength(3);
+  });
+
+  it('★ 층 목록 카드는 손님이 직접 고를 때(신호)만 펼친다 — 기본 고르기로는 접힌 카드 그대로', async () => {
+    const { container, rerender } = render(
+      <FloorStack building={building()} viewerRole="창업자" unitPrintMode="low" unitPrintOpenSignal={0} />,
+    );
+    await waitFor(() => expect(lists(container)).toHaveLength(3));
+    const toggle = () => container.querySelector('.card--floors .card__toggle')!;
+    // 창업자 표는 층 목록이 펼침이다 — 접어 둔 뒤 기본값만 다시 와도 그대로 접혀 있어야 한다.
+    fireEvent.click(toggle());
+    expect(toggle().getAttribute('aria-expanded')).toBe('false');
+    rerender(<FloorStack building={building()} viewerRole="창업자" unitPrintMode="all" unitPrintOpenSignal={0} />);
+    await waitFor(() => expect(lists(container)).toHaveLength(4));
+    expect(toggle().getAttribute('aria-expanded')).toBe('false');
+    // 접힌 채여도 본문(고른 목록)은 DOM 에 있다 — 종이에 나온다(결정 0020).
+    expect(container.querySelector('.card--floors .card__body')?.hasAttribute('hidden')).toBe(true);
+    // 양성 대조 — 손님이 직접 고르면(신호 +1) 펼친다.
+    rerender(<FloorStack building={building()} viewerRole="창업자" unitPrintMode="all" unitPrintOpenSignal={1} />);
+    await waitFor(() => expect(toggle().getAttribute('aria-expanded')).toBe('true'));
+  });
+
+  it('호 목록이 있는 층 수를 알린다(요약을 받은 뒤 · 고르기와 무관) · 0개도 알린다', async () => {
+    const seen: Array<[string, number]> = [];
+    render(<FloorStack building={building()} unitPrintMode="none" onUnitListedCount={(b, n) => seen.push([b, n])} />);
+    await waitFor(() => expect(seen.at(-1)).toEqual(['1168010100-1', 4]));
+    cleanup();
+    seen.length = 0;
+    responses.unitSummary = {
+      data: [{ floor_no: 1, unit_cnt: 9, median_area_m2: null, min_area_m2: null, max_area_m2: null, floor_kind: 'residential' }],
+      error: null,
+    };
+    render(<FloorStack building={building()} onUnitListedCount={(b, n) => seen.push([b, n])} />);
+    await waitFor(() => expect(seen.at(-1)).toEqual(['1168010100-1', 0]));
   });
 });
 

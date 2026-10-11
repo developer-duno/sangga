@@ -58,6 +58,14 @@ export const SECTION_PLAN = {
   tx: { title: '실거래 기록', role: '투자자', defaultOpen: true },
   band: { title: '참고 매매 시세 (추정값)', role: '투자자', defaultOpen: false },
   /**
+   * 층 차이 세 잣대(결정 0036 결정 15 · 물결 1-C2 · 👤 2026-10-11) — 국세청 기준시가 · 구 실거래 단가 ·
+   * 부동산원 층별 임대료를 이 건물의 층마다 **각자 원래 단위로** 나란히 둔다(비율 계산 0).
+   * 역할 태그는 `공통`이지만 **접힌 채로 시작한다**(위 '공통은 전부 펼침'의 예외 · 👤 결정) — 셋 다
+   * 다른 카드에 이미 있는 값을 모아 놓은 것이라 펼침 상한을 쓸 까닭이 없다. 자리 = 참고 매매 시세 바로 뒤
+   * (역할 없음 · 세 벌 모두).
+   */
+  floorgap: { title: '층 차이 세 잣대 (공표값 나란히)', role: '공통', defaultOpen: false },
+  /**
    * 상권 임대 동향(결정 0024). **접힌 채로 시작한다** — 펼침 상한이 이미 넷이라 그렇기도
    * 하지만, 그것 말고도 이 카드는 **이 건물의 임대료가 아니라 상권 조사값**이라 먼저
    * 눈에 들어오면 사람이 이 건물 값으로 읽는다. 요약 한 줄이 "무엇이 들어 있는지"만
@@ -113,16 +121,17 @@ export type RoleLayout = {
  */
 export const ROLE_SECTION_LAYOUT = {
   // 빈 카드 셋(sales·pop·history)의 자리(👤 2026-10-11): 창업자 = 개업·폐업 바로 뒤 · 다른 두 벌 = 맨 끝.
+  // 세 잣대(floorgap)의 자리(👤 2026-10-11): 세 벌 모두 참고 매매 시세(band) 바로 뒤 · 처음 접힘.
   투자자: {
-    order: ['district', 'floors', 'tx', 'band', 'rent', 'industry', 'openclose', 'sales', 'pop', 'history'],
+    order: ['district', 'floors', 'tx', 'band', 'floorgap', 'rent', 'industry', 'openclose', 'sales', 'pop', 'history'],
     open: ['district', 'floors', 'tx', 'band'],
   },
   창업자: {
-    order: ['district', 'floors', 'industry', 'openclose', 'sales', 'pop', 'history', 'tx', 'band', 'rent'],
+    order: ['district', 'floors', 'industry', 'openclose', 'sales', 'pop', 'history', 'tx', 'band', 'floorgap', 'rent'],
     open: ['district', 'floors', 'industry', 'openclose'],
   },
   중개사: {
-    order: ['floors', 'tx', 'district', 'band', 'rent', 'industry', 'openclose', 'sales', 'pop', 'history'],
+    order: ['floors', 'tx', 'district', 'band', 'floorgap', 'rent', 'industry', 'openclose', 'sales', 'pop', 'history'],
     open: ['floors', 'tx', 'district', 'band'],
   },
 } as const satisfies Record<ViewerRole, RoleLayout>;
