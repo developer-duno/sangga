@@ -315,6 +315,8 @@ QUIET = (
     ("report_store_names_freshness", lambda: ("", "", False)),
     ("report_industry_floor_freshness", lambda: ("", "", False)),
     ("report_industry_floor_consistency", lambda: ("0", False)),
+    ("report_industry_median_freshness", lambda: ("", "", False)),
+    ("report_industry_median_consistency", lambda: ("0", False)),
     ("precheck_snapshot_release", lambda: (False, "202606", "")),
 )
 

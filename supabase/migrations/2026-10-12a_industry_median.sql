@@ -1,0 +1,273 @@
+-- =====================================================================
+-- 2026-10-12a — 업종 비중 비교 (물결 2-3 · 결정 0036 결정 18 ㉓~㉖)
+-- =====================================================================
+--
+-- 왜
+-- --
+-- 층별 화면의 『둘레의 업종 분포』 카드는 속한 상권 안의 업종 비중(음식 30.0% 등)을 막대로 보여 준다.
+-- 그런데 30% 가 많은지 적은지는 **견줄 숫자**가 없으면 읽을 수 없다. 그래서 같은 종류 상권들의
+-- 가운데값을 그 줄 아래에 숫자로만 나란히 적는다(👤 결정 ㉕ — 많다·적다 같은 판단 낱말 0 · 배지 C).
+-- 비교 상대는 같은 시·도의 같은 종류 상권(👤 ㉔ — 서울 골목상권은 서울 골목상권끼리)이고, 그 종류가
+-- 30곳이 안 되면(관광특구 6곳) 그 시·도 상권 전체로 대신한다. 대전은 주요상권 37곳끼리(👤 ㉖).
+--
+-- 무엇이 생기나 (새 객체만 — 기존 객체는 한 글자도 안 바꾼다)
+-- ------------------------------------------------------------
+--   ① 요약표 mv_industry_mix_median — 재료는 mv_district_industry_mix(이미 표지 loaded 분기 하나) × district.
+--      (시·도, 범위 type|all, 상권 종류, 대분류)마다 모집단 상권 수(pop_n)와 업종 비중 가운데값(med_pct).
+--      ⛔ 모집단은 점포 30곳 이상 상권만(서울 골목상권 1,090 → 999 · 2026-10-12 실측).
+--      ⛔ 그 업종이 없는 상권은 0 으로 넣고 센다(빼면 드문 업종의 가운데값이 부푼다 — 골목 숙박 1.8% vs 2.3%).
+--      유일 색인(concurrently 갱신 전제) · analyze · 공개키에 닫힘. 행 약 70 · 굽기 1초 안팎.
+--   ② 함수 list_industry_median(p_pnu) — 형제 list_industry_mix 의 snap·me·hit 를 글자 그대로 쓰고, 속한 상권마다
+--      그 상권 총수 · 고른 모집단 · 대분류별 가운데값을 낸다. 공개키에 닫힘.
+--   ③ api 쌍둥이 api.list_industry_median — security definer · search_path '' · anon·authenticated 에게만 실행.
+--      공개 호출 허용 총계 30 → 31(post_load.py ANON_CALLABLE_ALLOWLIST).
+--   기존 list_industry_mix 의 응답은 **안 바뀐다** — 옛 서버·실패·함수 없음(PGRST202)이면 화면은 비교 글만 빠진다.
+--
+-- 잠금
+-- ----
+-- 새 객체만 만든다 — 기존 표·뷰·함수의 정의를 바꾸지 않으므로 화면이 읽는 객체에 거는 잠금이 없다.
+-- ① 을 굽는 동안 원본(mv_district_industry_mix · district)에 ACCESS SHARE(읽기)만 잡는다 — 화면 읽기와
+-- post_load 갱신(refresh concurrently = EXCLUSIVE · 읽기는 안 막음)을 막지 않는다(갱신과 겹치면 기다릴 뿐).
+-- 그래도 `lock_timeout` 은 형제 관습대로 **begin 앞**(세션 설정)에 둔다 · `statement_timeout = '900s'`.
+--
+-- ⛔ 전부 아니면 전무 — `begin; … commit;`
+-- -----------------------------------------
+-- `scripts/dbx.py -f` 는 자동커밋이다. 중간에 끊기면 api 쌍둥이 없이 원본만 남거나(화면 404) 요약표만
+-- 남는다 — 한 덩어리로 묶는다. `notify pgrst` 는 commit **뒤**.
+--
+-- 실행 (Claude 가 dbx 로 · 디스크 영향 ≈ 0)
+-- ---------------------------------------
+--   python scripts/dbx.py -f supabase/migrations/2026-10-12a_industry_median.sql
+--   → 이어서 python scripts/post_load.py --check — 0 이어야 한다(가운데값 표 202606 · 모집단 수 대조 어긋남 0 ·
+--     허용 목록에 api.list_industry_median · 정본 색인 mv_industry_mix_median_key 있음 · 허용된 31개)
+--   ⚠️ post_load.py 를 이 마이그레이션 **전에** 새 판(REFRESH_MVS 에 이 표가 든 판)으로 돌리면 없는 표를
+--      refresh 하다 통째 롤백한다 — 적용 → 머지 순서를 지킨다(되돌릴 때는 거꾸로).
+--
+-- 적용 뒤 확인 (dbx + anon 키로 **화면 요청 그대로**)
+-- ------------------------------------------------
+--   select max(snapshot_ym), count(*) from mv_industry_mix_median;        -- 202606 · 약 70행
+--   select sido_cd, scope, pop_n from mv_industry_mix_median where cat_l_cd = 'I2' order by 1, 2, 3;
+--     -- 11 all 1502 · 11 type 6/248/249/999 · 30 all 37 · 30 type 37
+--   select relname, relacl from pg_class where relname = 'mv_industry_mix_median';   -- anon 없음
+--   anon 키:
+--     POST /rest/v1/rpc/list_industry_median {"p_pnu":"<강남 골목상권 안 필지>"}   → 200 · min_total 30 · pop.n 999
+--     POST /rest/v1/rpc/list_industry_median {"p_pnu":"<명동 관광특구 안 필지>"}   → 200 · pop.scope "all" · n 1502
+--   눈 확인: 넓은 화면·412px·종이 — 업종 분포 카드의 상권 블록 줄마다 '서울 골목상권 가운데 25.0%'.
+--
+-- 되돌리기
+-- --------
+-- **먼저 이 PR 을 revert 해 머지한다**(정본 · post_load 의 REFRESH_MVS·QUARTER_MVS·PUBLISH_DO_SQL·점검 둘 ·
+-- 허용 목록 31 → 30 · 화면 줄) — post_load 를 먼저 되돌리지 않고 표만 지우면 다음 post_load 가 없는 표를
+-- refresh 하다 통째 롤백한다. 그다음 **새 마이그레이션 파일**로: begin → drop function api.list_industry_median(text)
+-- → drop function list_industry_median(text) → drop materialized view mv_industry_mix_median → commit → notify.
+-- 적용된 이 파일은 고치지 않는다(원장). 화면은 함수가 없으면(PGRST202) 비교 글만 조용히 빠지고 카드는 선다.
+
+set statement_timeout = '900s';
+set lock_timeout = '5s';
+
+begin;
+
+-- ── 업종 비중 비교 (2026-10-12a · 물결 2-3 · 결정 0036 결정 18 ㉓~㉖) ──────────────────
+-- 상권 업종 비중의 견줄 숫자 — 같은 시·도 같은 종류 상권들의 가운데값(대분류만 · 반경 블록은 비교 안 함).
+-- 재료는 형제 요약표 mv_district_industry_mix 라 분기는 그 표의 분기(표지 loaded_ym) 그대로다 —
+-- post_load.py 가 그 표를 구운 **뒤** 같은 트랜잭션에서 이 표를 굽는다(QUARTER_MVS 다섯째).
+-- ⛔ 모집단에서 점포 30곳 미만 상권을 뺀다(having sum(n) >= 30) — 몇 곳뿐인 상권의 비중(1곳이면 100%)이
+--    가운데값을 흔든다. 화면도 30곳 미만 상권에는 비교값을 안 적는다(개업·폐업 카드와 같은 30).
+-- ⛔ 그 업종이 없는 상권은 비중 0 으로 넣는다 — 상권 × 대분류를 cross join 하고 coalesce(n, 0).
+--    빼고 세면 드문 업종(숙박 등)의 가운데값이 부푼다(2026-10-12 실측 서울 골목 숙박 1.8% vs 2.3%).
+-- ⛔ 지역 이름을 여기 박지 않는다 — sido_cd(sigungu_code 앞 2자리)만 두고 화면이 '서울'·'대전'을 붙인다.
+-- ⓘ 범위 'type' = 같은 종류끼리 · 'all' = 그 시·도 상권 전체(종류가 30곳 미만일 때 함수가 이쪽을 고른다).
+-- ⓘ district_type 은 null 대신 '' 를 둔다('all' 줄도 '') — null 이 든 유일 색인은 중복을 못 막는다.
+create materialized view if not exists mv_industry_mix_median as
+with tot as (
+  -- 상권별 총수 — 점포 30곳 이상 상권만 모집단에 든다
+  select m.district_id, m.snapshot_ym, sum(m.n)::int as total
+  from mv_district_industry_mix m
+  group by 1, 2
+  having sum(m.n) >= 30
+),
+pop as (
+  select t.district_id, t.snapshot_ym, t.total,
+         left(d.sigungu_code, 2) as sido_cd,
+         coalesce(d.district_type, '') as district_type
+  from tot t
+  join district d on d.district_id = t.district_id
+),
+cat as (
+  -- 그 분기에 있는 대분류 전부(이름은 코드마다 하나 — min 으로 고른다)
+  select m.snapshot_ym, m.cat_l_cd, min(m.cat_l_nm) as cat_l_nm
+  from mv_district_industry_mix m
+  group by 1, 2
+),
+dcat as (
+  select m.district_id, m.snapshot_ym, m.cat_l_cd, sum(m.n)::int as n
+  from mv_district_industry_mix m
+  group by 1, 2, 3
+),
+share as (
+  -- 모집단 상권 × 대분류(cross join) — 없는 업종은 0
+  select p.snapshot_ym, p.sido_cd, p.district_type, p.district_id, c.cat_l_cd, c.cat_l_nm,
+         coalesce(dc.n, 0)::float8 / p.total as share
+  from pop p
+  cross join cat c
+  left join dcat dc
+    on dc.district_id = p.district_id and dc.snapshot_ym = p.snapshot_ym and dc.cat_l_cd = c.cat_l_cd
+  where c.snapshot_ym = p.snapshot_ym
+)
+select s.snapshot_ym, s.sido_cd, 'type'::text as scope, s.district_type,
+       count(distinct s.district_id)::int as pop_n,
+       s.cat_l_cd, min(s.cat_l_nm) as cat_l_nm,
+       round((percentile_cont(0.5) within group (order by s.share) * 100)::numeric, 1)::numeric(5,1) as med_pct
+from share s
+group by s.snapshot_ym, s.sido_cd, s.district_type, s.cat_l_cd
+union all
+select s.snapshot_ym, s.sido_cd, 'all'::text, ''::text,
+       count(distinct s.district_id)::int,
+       s.cat_l_cd, min(s.cat_l_nm),
+       round((percentile_cont(0.5) within group (order by s.share) * 100)::numeric, 1)::numeric(5,1)
+from share s
+group by s.snapshot_ym, s.sido_cd, s.cat_l_cd;
+
+comment on materialized view mv_industry_mix_median is
+  '상권 업종 비중(대분류)의 가운데값 — 같은 시·도 같은 종류 상권끼리(scope type) + 그 시·도 상권 전체(scope all) · '
+  '분기 하나(2026-10-12a · 물결 2-3). 재료는 mv_district_industry_mix 라 분기는 그 표의 분기(표지 loaded_ym)다 — '
+  'post_load.py 가 그 표 뒤에 같은 트랜잭션에서 굽는다. '
+  '⛔ 모집단은 점포 30곳 이상 상권만(몇 곳뿐인 상권의 비중이 가운데값을 흔든다 · 화면도 30곳 미만 상권엔 비교값을 안 적는다). '
+  '⛔ 그 업종이 없는 상권은 비중 0 으로 넣고 센다(빼면 드문 업종의 가운데값이 부푼다). '
+  'pop_n = 그 묶음의 모집단 상권 수(post_load --check 가 all 줄을 30곳 이상 상권 수와 대조한다). '
+  'district_type 은 null 대신 빈 글자(all 줄도 빈 글자) — null 이 든 유일 색인은 중복을 못 막는다. '
+  '지역 이름은 없다(sido_cd 만 — 화면이 붙인다). '
+  '⛔ anon 에게 열지 않는다 — 화면은 list_industry_median 함수로만 읽는다.';
+
+-- `concurrently` 갱신의 전제 조건 — district_type 이 null 이 아니라('') 평범한 유일 색인으로 된다.
+create unique index if not exists mv_industry_mix_median_key
+  on mv_industry_mix_median (snapshot_ym, sido_cd, scope, district_type, cat_l_cd);
+
+analyze mv_industry_mix_median;
+
+-- ⛔ 새 물질화뷰는 anon 에게 자동으로 열린다(pg_default_acl) — 만든 자리에서 닫는다(아래 목록에도 한 번 더).
+revoke all on mv_industry_mix_median from public, anon, authenticated;
+
+-- 속한 상권마다 업종 비중의 가운데값(비교값)을 낸다. 화면은 업종 분포 카드의 **상권 블록**에만 쓴다
+-- (반경 블록은 비교 상대가 없어 이 함수가 아예 안 낸다). snap·me·hit 는 형제 list_industry_mix 와 글자 그대로
+-- 같다 — 같은 분기·같은 상권을 말하게(시험이 대조한다).
+-- ⛔ 이 상권 점포가 min_total(30) 미만이면 pop 은 null · cats 는 [] — 화면은 비교값 대신 사실 한 줄을 적는다.
+-- ⛔ 모집단 고르기: 같은 sido_cd·같은 종류 묶음의 pop_n 이 min_pop(30) 이상이면 그 묶음(type), 아니면 같은 sido_cd
+--    상권 전체(all) — 이름이 아니라 **수**로 가른다. all 도 30 미만이거나 요약표에 그 묶음이 없으면(낡은 표)
+--    그 상권 줄을 아예 안 낸다 — '30곳이 안 돼' 라고 잘못 말하지 않게.
+-- ⛔ 지역 이름을 내지 않는다(sido_cd 만) · 판단 낱말을 내지 않는다(숫자만).
+create or replace function list_industry_median(p_pnu text)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with lim as (
+    select 30 as min_total, 30 as min_pop
+  ),
+  snap as (
+    select coalesce(
+             (select max(m.snapshot_ym) from mv_district_industry_mix m),
+             (select r.published_ym from snapshot_release r)) as ym
+  ),
+  me as (
+    select p.geom as g, p.geom::geography as gg
+    from parcel p
+    where p.pnu = p_pnu::char(19) and p.geom is not null
+  ),
+  hit as (
+    select d.district_id, d.district_nm, d.district_type, d.source_nm, d.area_m2
+    from district d cross join me
+    where st_contains(d.geom, me.g)
+  ),
+  hd as (
+    -- 상권마다 시·도 코드 + 그 분기 총수(형제 list_industry_mix 의 total 과 같은 셈)
+    select h.district_id, h.area_m2, h.district_type,
+           left(d.sigungu_code, 2) as sido_cd,
+           coalesce((select sum(m.n) from mv_district_industry_mix m
+                      where m.district_id = h.district_id
+                        and m.snapshot_ym = (select ym from snap)), 0)::int as total
+    from hit h
+    join district d on d.district_id = h.district_id
+  ),
+  pick as (
+    -- 모집단 하나 — 같은 종류(type)가 min_pop 이상이면 그것, 아니면 시·도 전체(all)
+    select hd.district_id, g.scope, g.district_type, g.pop_n
+    from hd
+    cross join lateral (
+      select t.scope, t.district_type, t.pop_n
+      from mv_industry_mix_median t
+      where t.snapshot_ym = (select ym from snap)
+        and t.sido_cd = hd.sido_cd
+        and t.pop_n >= (select min_pop from lim)
+        and ((t.scope = 'type' and t.district_type = coalesce(hd.district_type, ''))
+             or t.scope = 'all')
+      order by (t.scope = 'type') desc
+      limit 1
+    ) g
+    where hd.total >= (select min_total from lim)
+  ),
+  dj as (
+    select hd.area_m2, hd.district_id,
+           jsonb_build_object(
+             'district_id', hd.district_id,
+             'type', hd.district_type,
+             'total', hd.total,
+             'pop', case when p.district_id is null then null else jsonb_build_object(
+                      'scope', p.scope,
+                      'sido_cd', hd.sido_cd,
+                      'district_type', nullif(p.district_type, ''),
+                      'n', p.pop_n) end,
+             'cats', coalesce((select jsonb_agg(
+                                        jsonb_build_object('cd', t.cat_l_cd,
+                                                           'nm', t.cat_l_nm,
+                                                           'med_pct', t.med_pct)
+                                        order by t.med_pct desc, t.cat_l_cd)
+                                 from mv_industry_mix_median t
+                                 where p.district_id is not null
+                                   and t.snapshot_ym = (select ym from snap)
+                                   and t.sido_cd = hd.sido_cd
+                                   and t.scope = p.scope
+                                   and t.district_type = p.district_type),
+                              '[]'::jsonb)
+           ) as j
+    from hd
+    left join pick p on p.district_id = hd.district_id
+    where hd.total < (select min_total from lim) or p.district_id is not null
+  )
+  select jsonb_build_object(
+    'snapshot_ym', (select ym from snap),
+    'min_total', (select min_total from lim),
+    'min_pop', (select min_pop from lim),
+    -- 좁은 상권 먼저(형제 list_industry_mix 와 같은 정렬). 좌표가 없으면 [] — 반경 비교는 없다(radius 칸 없음).
+    'districts', coalesce((select jsonb_agg(dj.j order by dj.area_m2 asc, dj.district_id)
+                            from dj), '[]'::jsonb)
+  );
+$$;
+
+comment on function list_industry_median(text) is
+  '물결 2-3(2026-10-12a) 속한 상권마다 업종 비중(대분류) 가운데값 — 비교값. districts = 상권마다 total · pop · cats '
+  '(좁은 상권 먼저 · 좌표가 없으면 []). pop = 고른 모집단(scope type = 같은 시·도 같은 종류 · all = 그 시·도 상권 전체 — '
+  '종류 묶음이 min_pop 미만일 때) · 상권 점포가 min_total 미만이면 pop null · cats []. 둘 다 30(점포 30곳 이상 상권만 '
+  '모집단에 든다). 분기는 형제 list_industry_mix 와 같은 자(1순위 업종 요약표 · 2순위 published). 지역 이름은 없다(sido_cd 만). '
+  'security definer — **나가는 것은 백분율 가운데값과 개수뿐이다(상호명 없음).**';
+
+revoke all on function list_industry_median(text) from public, anon, authenticated;
+
+-- ── api 쌍둥이 — 화면이 부르는 문(🚪 grant 는 여기에만) ─────────────────────────────
+create or replace function api.list_industry_median(p_pnu text)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$ select public.list_industry_median(p_pnu) $$;
+
+-- Postgres 는 새 함수의 EXECUTE 를 PUBLIC 에게 기본으로 준다 — 먼저 회수하고 필요한 롤에만 준다.
+revoke all on function api.list_industry_median(text) from public, anon, authenticated;
+grant execute on function api.list_industry_median(text) to anon, authenticated;
+
+commit;
+
+notify pgrst, 'reload schema';

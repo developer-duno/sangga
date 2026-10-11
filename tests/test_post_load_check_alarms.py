@@ -254,6 +254,8 @@ class TestSlowReport:
             ("report_store_names_freshness", lambda: ("", "", False)),
             ("report_industry_floor_freshness", lambda: ("", "", False)),
             ("report_industry_floor_consistency", lambda: ("0", False)),
+            ("report_industry_median_freshness", lambda: ("", "", False)),
+            ("report_industry_median_consistency", lambda: ("0", False)),
             ("report_toast_evictions", lambda: []),
         ):
             monkeypatch.setattr(post_load, name, val)
@@ -307,6 +309,8 @@ class TestSlowReport:
             ("report_store_names_freshness", lambda: ("", "", False)),
             ("report_industry_floor_freshness", lambda: ("", "", False)),
             ("report_industry_floor_consistency", lambda: ("0", False)),
+            ("report_industry_median_freshness", lambda: ("", "", False)),
+            ("report_industry_median_consistency", lambda: ("0", False)),
             ("report_toast_evictions", lambda: []),
         ):
             monkeypatch.setattr(post_load, name, val)
@@ -326,6 +330,14 @@ class TestSlowReport:
         assert post_load.main(["--check"]) == 1
         monkeypatch.setattr(post_load, "report_industry_floor_freshness", lambda: ("", "", False))
         monkeypatch.setattr(post_load, "report_industry_floor_consistency", lambda: ("3", True))
+        assert post_load.main(["--check"]) == 1
+        monkeypatch.setattr(post_load, "report_industry_floor_consistency", lambda: ("0", False))
+        assert post_load.main(["--check"]) == 0
+        # 업종 가운데값 표(2026-10-12a · 물결 2-3) — 분기 낡음·모집단 수 어긋남 둘 다 [낡음] → exit 1.
+        monkeypatch.setattr(post_load, "report_industry_median_freshness", lambda: ("202603", "202606", True))
+        assert post_load.main(["--check"]) == 1
+        monkeypatch.setattr(post_load, "report_industry_median_freshness", lambda: ("", "", False))
+        monkeypatch.setattr(post_load, "report_industry_median_consistency", lambda: ("1", True))
         assert post_load.main(["--check"]) == 1
 
 
@@ -540,6 +552,8 @@ class TestApplyRechecksTxGeog:
             ("report_store_names_freshness", lambda: ("", "", False)),
             ("report_industry_floor_freshness", lambda: ("", "", False)),
             ("report_industry_floor_consistency", lambda: ("0", False)),
+            ("report_industry_median_freshness", lambda: ("", "", False)),
+            ("report_industry_median_consistency", lambda: ("0", False)),
             ("precheck_snapshot_release", lambda: (False, "202606", "")),
             ("report_snapshot_release", lambda *a: (False, False)),
         ):
@@ -904,6 +918,8 @@ class TestCheckExitCodeForIndexes:
             ("report_store_names_freshness", lambda: ("", "", False)),
             ("report_industry_floor_freshness", lambda: ("", "", False)),
             ("report_industry_floor_consistency", lambda: ("0", False)),
+            ("report_industry_median_freshness", lambda: ("", "", False)),
+            ("report_industry_median_consistency", lambda: ("0", False)),
             ("report_toast_evictions", lambda: []),
         ):
             monkeypatch.setattr(post_load, name, val)

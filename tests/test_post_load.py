@@ -108,6 +108,9 @@ def p7_alarms_quiet(monkeypatch):
     # 층 분포 표 분기·합 대조(2026-10-09b · 물결 2-2)도 뺀다 — 판정은 아래 TestIndustryFloorChecks.
     monkeypatch.setattr(post_load, "report_industry_floor_freshness", lambda: ("202606", "202606", False))
     monkeypatch.setattr(post_load, "report_industry_floor_consistency", lambda: ("0", False))
+    # 업종 가운데값 표 분기·모집단 대조(2026-10-12a · 물결 2-3)도 뺀다 — 판정은 아래 TestIndustryMedianChecks.
+    monkeypatch.setattr(post_load, "report_industry_median_freshness", lambda: ("202606", "202606", False))
+    monkeypatch.setattr(post_load, "report_industry_median_consistency", lambda: ("0", False))
 
 
 # ── 1. ANALYZE 대상 ─────────────────────────────────────────────────────────
@@ -570,9 +573,12 @@ class TestAnonExposure:
             # 개별공시지가 한 줄(2026-10-11b · 결정 0036 결정 7). 표 parcel 은 **여기 없다** —
             # pnu 하나의 숫자 두 개(원/㎡ · 공시 연도)만 나간다.
             "api.get_parcel_land_price",
+            # 업종 비중 비교(2026-10-12a · 물결 2-3). 요약표 mv_industry_mix_median 은 **여기 없다** —
+            # 상권 총수와 업종별 가운데값(백분율)·모집단 수만 나간다.
+            "api.list_industry_median",
         )
-        # 읽기 4 + 부르기 26 = `--check` 총계 30(2026-10-11b 개별공시지가로 29 → 30).
-        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 30
+        # 읽기 4 + 부르기 27 = `--check` 총계 31(2026-10-12a 업종 비중 비교로 30 → 31).
+        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 31
 
     def test_pending_list_is_empty_after_2026_09_05a(self):
         """⛔ **비어 있어야 한다** — 잔존 노출 9개는 2026-09-05a 로 닫혔다.
@@ -1345,12 +1351,12 @@ class TestJudgeSnapshotRelease:
 
 
 class TestPublishTxSql:
-    """분기 요약표 넷 + 분기 대조 + 표지 올림 = 한 트랜잭션 (2026-10-07 · 👤 (가)안 · 맹점 검사관 🟠1)."""
+    """분기 요약표 다섯 + 분기 대조 + 표지 올림 = 한 트랜잭션 (2026-10-07 · 👤 (가)안 · 맹점 검사관 🟠1 · 다섯째 10-12)."""
 
     def test_quarter_and_non_quarter_split(self):
         assert post_load.QUARTER_MVS == (
             "mv_parcel_store_names", "mv_coverage_stats", "mv_district_industry_mix",
-            "mv_district_industry_floor")
+            "mv_district_industry_floor", "mv_industry_mix_median")
         assert set(post_load.QUARTER_MVS) | set(post_load.NON_QUARTER_MVS) == set(post_load.REFRESH_MVS)
         assert not set(post_load.QUARTER_MVS) & set(post_load.NON_QUARTER_MVS)
         assert len(post_load.NON_QUARTER_MVS) == 5
@@ -1363,15 +1369,18 @@ class TestPublishTxSql:
         assert lines[-1] == "commit;"
         assert sql.count("begin;") == 1 and sql.count("commit;") == 1
 
-    def test_refreshes_exactly_the_four_inside(self):
+    def test_refreshes_exactly_the_five_inside(self):
         sql = post_load.build_publish_tx_sql()
         body = sql.split("begin;", 1)[1].split("commit;", 1)[0]
         for mv in post_load.QUARTER_MVS:
             assert "refresh materialized view concurrently {};".format(mv) in body, mv
         for mv in post_load.NON_QUARTER_MVS:
             assert mv not in body, "분기와 무관한 {} 가 트랜잭션 안에 들어왔습니다".format(mv)
-        assert body.count("refresh materialized view") == 4
+        assert body.count("refresh materialized view") == 5
         assert "refresh materialized view concurrently mv_district_industry_floor;" in body
+        # ⛔ 가운데값 표는 업종 표를 재료로 굽는다 — 같은 트랜잭션 안에서 업종 표 **뒤**라야 방금 구운 판을 본다.
+        assert (body.index("refresh materialized view concurrently mv_district_industry_mix;")
+                < body.index("refresh materialized view concurrently mv_industry_mix_median;"))
         # 굽기가 대조·올림보다 먼저다.
         assert body.index("refresh materialized view") < body.index("do $$")
 
@@ -1389,14 +1398,15 @@ class TestPublishTxSql:
         lock = do.index("from public.snapshot_release r where r.id = 1 for update")
         assert do.index("select r.loaded_ym into v") < lock
         cmp_at = do.index("if s is distinct from v or c is distinct from v or m is distinct from v"
-                          " or f is distinct from v then")
+                          " or f is distinct from v\n     or g is distinct from v then")
         upd = do.index("update public.snapshot_release set published_ym = v, published_at = now()")
         assert lock < cmp_at < upd
         assert "max(t.store_snapshot_ym) into s from public.mv_parcel_store_names" in do
         assert "max(t.snapshot_ym) into c from public.mv_coverage_stats" in do
         assert "max(t.snapshot_ym) into m from public.mv_district_industry_mix" in do
         assert "max(t.snapshot_ym) into f from public.mv_district_industry_floor" in do
-        assert "· 층 %" in do and "v, s, c, m, f;" in do
+        assert "max(t.snapshot_ym) into g from public.mv_industry_mix_median" in do
+        assert "· 층 % · 가운데값 %" in do and "v, s, c, m, f, g;" in do
         assert "raise exception" in do[cmp_at:upd]
         assert "where id = 1 and published_ym < v;" in do[upd:]
 
@@ -1468,6 +1478,90 @@ class TestIndustryFloorChecks:
         mvs = post_load.REFRESH_MVS
         assert mvs.index("mv_district_industry_floor") == mvs.index("mv_district_industry_mix") + 1
         assert "mv_district_industry_floor" not in post_load.NON_QUARTER_MVS
+
+
+_REAL_MEDIAN_FRESHNESS = post_load.report_industry_median_freshness
+_REAL_MEDIAN_CONSISTENCY = post_load.report_industry_median_consistency
+
+
+class TestIndustryMedianChecks:
+    """업종 가운데값 표(2026-10-12a · 물결 2-3) — 분기는 업종 표와 같은 판정, 모집단 수는 업종 표와 대조."""
+
+    @pytest.mark.parametrize("args, stale", [
+        (("0", "2", "2"), False),
+        (("0", "0", "0"), False),            # 두 표 다 빔 = 자료 없는 새 환경
+        ((" 0 ", "2", " 2"), False),         # psql 공백
+        (("1", "2", "2"), True),
+        (("2", "0", "2"), True),             # 가운데값 표만 빔
+        (("", "", ""), True),                # 못 읽음 — '정상'이라 말할 근거가 없다
+        (("x", "1", "1"), True),
+        ((None, None, None), True),
+    ])
+    def test_judge(self, args, stale):
+        assert post_load.judge_industry_median_consistency(*args) is stale
+
+    def test_consistency_sql_is_ascii_and_counts_the_30_store_districts_per_sido(self):
+        sql = post_load.INDUSTRY_MEDIAN_CONSISTENCY_SQL
+        assert all(ord(ch) < 128 for ch in sql), "psql -c 로 가는 SQL 에 한글이 있으면 서버에서 죽습니다"
+        assert "full join" in sql and "using (" not in sql
+        assert "from mv_industry_mix_median where scope = 'all' group by 1" in sql
+        # 30 = 요약표 정의의 having 과 같은 수(모집단 = 점포 30곳 이상 상권).
+        assert "from mv_district_industry_mix group by 1 having sum(n) >= 30" in sql
+        assert "left(d.sigungu_code, 2) as sido_cd" in sql
+        assert "on coalesce(a.sido_cd, '') = coalesce(b.sido_cd, '')" in sql
+        assert "a.n is distinct from b.n" in sql
+
+    def test_freshness_sql_is_ascii_and_reads_loaded_ym(self, monkeypatch):
+        asked = []
+        monkeypatch.setattr(post_load, "query_one", lambda sql: asked.append(sql) or "202606|202606")
+        assert _REAL_MEDIAN_FRESHNESS() == ("202606", "202606", False)
+        assert all(ord(ch) < 128 for ch in asked[0])
+        assert "max(snapshot_ym) from mv_industry_mix_median" in asked[0]
+        assert "loaded_ym from snapshot_release" in asked[0]
+
+    @pytest.mark.parametrize("raw, stale, word", [
+        ("202606|202606", False, "[신선] 업종 가운데값 표 202606 = 다 들어온 분기(표지)."),
+        ("202603|202606", True, "[낡음] 업종 가운데값 표 202603 / 다 들어온 분기(표지) 202606"),
+        ("|202606", True, "[낡음] 업종 가운데값 표가 비어 있습니다"),
+        ("|", False, "[신선] 업종 가운데값 표 (자료 없음)"),
+    ])
+    def test_freshness_report(self, monkeypatch, capsys, raw, stale, word):
+        monkeypatch.setattr(post_load, "query_one", lambda sql: raw)
+        assert _REAL_MEDIAN_FRESHNESS()[2] is stale
+        assert word in capsys.readouterr().out
+
+    @pytest.mark.parametrize("raw, stale, word", [
+        ("0|2|2", False, "[정상] 업종 가운데값 표 모집단 수 = 업종 분포 표의 점포 30곳 이상 상권 수 (어긋남 0 시·도)"),
+        ("1|2|2", True, "[낡음] 업종 가운데값 표의 모집단 수가 업종 분포 표와 다릅니다 — post_load.py 를 다시"),
+        ("garbage", True, "[낡음]"),
+    ])
+    def test_consistency_report(self, monkeypatch, capsys, raw, stale, word):
+        monkeypatch.setattr(post_load, "query_one", lambda sql: raw)
+        assert _REAL_MEDIAN_CONSISTENCY()[1] is stale
+        assert word in capsys.readouterr().out
+
+    def test_refresh_lists_the_median_after_its_material(self):
+        """재료(업종 표) 뒤라야 한다 — 앞이면 옛 업종 표로 굽는다(에러 0)."""
+        mvs = post_load.REFRESH_MVS
+        assert mvs.index("mv_industry_mix_median") > mvs.index("mv_district_industry_mix")
+        assert mvs.index("mv_industry_mix_median") == mvs.index("mv_district_industry_floor") + 1
+        q = post_load.QUARTER_MVS
+        assert q.index("mv_industry_mix_median") > q.index("mv_district_industry_mix")
+        assert "mv_industry_mix_median" not in post_load.NON_QUARTER_MVS
+
+    @pytest.mark.parametrize("name, val", [
+        ("report_industry_median_freshness", lambda: ("202603", "202606", True)),
+        ("report_industry_median_consistency", lambda: ("1", True)),
+    ])
+    def test_check_exits_1_when_stale(
+        self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh,
+        industry_mix_is_fresh, no_anon_writes, name, val
+    ):
+        monkeypatch.setattr(post_load, "query_one",
+                            lambda sql: "200|200" if "count(" in sql else "")
+        assert post_load.main(["--check"]) == 0
+        monkeypatch.setattr(post_load, name, val)
+        assert post_load.main(["--check"]) == 1
 
 
 class TestSnapshotReleaseWiring:
@@ -1578,9 +1672,11 @@ class TestStoreNamesFreshness:
     @pytest.mark.parametrize("name, val", [
         ("report_industry_floor_freshness", lambda: ("202603", "202606", True)),
         ("report_industry_floor_consistency", lambda: ("3", True)),
+        ("report_industry_median_freshness", lambda: ("202603", "202606", True)),
+        ("report_industry_median_consistency", lambda: ("1", True)),
     ])
     def test_apply_rechecks_the_floor_table_after_the_transaction(self, monkeypatch, name, val):
-        """갱신 흐름도 층 분포 표를 다시 잰다(2026-10-09b) — 어긋나면 exit 1."""
+        """갱신 흐름도 층 분포 표(2026-10-09b)·가운데값 표(2026-10-12a)를 다시 잰다 — 어긋나면 exit 1."""
         monkeypatch.setattr(post_load, name, val)
         code, ran = _apply_flow(monkeypatch)
         assert code == 1 and ran[-1] == post_load.build_publish_tx_sql()

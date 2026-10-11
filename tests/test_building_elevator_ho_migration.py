@@ -573,8 +573,13 @@ class TestFile:
         assert created_functions(mig) == ["api.search_buildings", "search_buildings"]
 
     def test_allowlist_total_is_still_thirty(self):
-        """새 함수가 없으니 공개 호출 허용 총계(읽기 4 + 호출)는 30 그대로 — 바뀌면 이 PR 범위 밖이다."""
-        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 30
+        """새 함수가 없으니 공개 호출 허용 총계(읽기 4 + 호출)는 30 그대로 — 바뀌면 이 PR 범위 밖이다.
+
+        ⓘ 2026-10-12a(업종 비중 비교 · 물결 2-3)가 api.list_industry_median 하나를 더해 31 이 됐다 — 이 마이그레이션은
+        여전히 새 공개 호출 0 이다(늘어난 하나는 그 PR 몫 · 그 목록은 tests/test_post_load.py 가 통째로 대조한다).
+        """
+        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 31
+        assert "api.list_industry_median" in post_load.ANON_CALLABLE_ALLOWLIST
         assert "api.search_buildings" in post_load.ANON_CALLABLE_ALLOWLIST
 
     def test_header_lists_the_order_and_checks(self, mig):
