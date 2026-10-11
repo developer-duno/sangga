@@ -1043,6 +1043,13 @@ body {
   font-weight: 600;
 }
 
+/* 개별공시지가 한 줄(결정 0036 결정 7) — 사양 칸 바로 아래. 값이 없으면 줄이 없다. */
+.stack__land {
+  margin: -6px 0 18px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 /* "많은 업종" 한 줄. 층 목록 바로 위에 붙되, 위의 동 중복 경고보다는 반드시 아래다
    (FloorStack.tsx 의 그 자리 주석 참조). */
 .stack__biz {

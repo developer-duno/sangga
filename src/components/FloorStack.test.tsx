@@ -92,6 +92,15 @@ const responses = {
   floorUnits: (() => ({ data: [] as unknown, error: null as unknown })) as (
     args: Record<string, unknown>,
   ) => { data: unknown; error: unknown } | Promise<never>,
+  /**
+   * 서버 함수 get_parcel_land_price 의 응답(개별공시지가 한 줄 · 결정 0036 결정 7).
+   * 기본값을 **함수 없음(PGRST202)** 으로 둔다 — 줄이 안 서서 다른 시험의 머리 모양이 그대로다.
+   * ⓘ 함수로 두면 인자(pnu)를 보고 답한다 — 늦게 온 옛 답 시험이 쓴다.
+   */
+  landPrice: (() => ({
+    data: null as unknown,
+    error: { code: 'PGRST202', message: 'function does not exist' } as unknown,
+  })) as (args: Record<string, unknown>) => { data: unknown; error: unknown } | Promise<unknown>,
 };
 
 /** 마지막 rpc 호출의 인자. "구 코드를 pnu 에서 뽑아 보내는가"를 여기서 확인한다. */
@@ -142,6 +151,11 @@ vi.mock('../lib/supabase', () => ({
       if (fn === 'list_unit_floor_summary') return Promise.resolve(responses.unitSummary);
       if (fn === 'list_floor_units') {
         return Promise.resolve(responses.floorUnits((args ?? {}) as Record<string, unknown>));
+      }
+      // 개별공시지가 한 줄(결정 0036 결정 7). 갈라 답하지 않으면 상권 응답(객체)이 흘러들어
+      // 늘 '모양 이상 → 줄 없음'으로 굳는다(거짓 초록).
+      if (fn === 'get_parcel_land_price') {
+        return Promise.resolve(responses.landPrice((args ?? {}) as Record<string, unknown>));
       }
       return Promise.resolve(responses.districts);
     },
@@ -318,6 +332,11 @@ beforeEach(() => {
     error: { code: 'PGRST202', message: 'function does not exist' },
   };
   responses.floorUnits = () => ({ data: [], error: null });
+  // 기본은 함수 없음 = 개별공시지가 줄 미표시. 그 줄을 보는 시험만 덮어쓴다.
+  responses.landPrice = () => ({
+    data: null,
+    error: { code: 'PGRST202', message: 'function does not exist' },
+  });
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
@@ -2562,5 +2581,77 @@ describe('FloorStack — 임대 카드 · 좌표 없는 건물 (2026-10-06)', ()
     responses.rent = { data: [], error: null };
     render(<FloorStack building={building({ lat: 37.5, lng: 127.03 })} />);
     expect(await screen.findByText('부동산원 조사 대상 상권이 아닙니다')).toBeTruthy();
+  });
+});
+
+describe('FloorStack — 개별공시지가 한 줄 (결정 0036 결정 7)', () => {
+  const LINE = '개별공시지가 ㎡당 4,523만원 · 2026년 공시 (땅값만 · 공시가격 — 시세가 아닙니다)';
+
+  function landCalls() {
+    return rpcCalls.filter((c) => c.fn === 'get_parcel_land_price');
+  }
+
+  it('★ 값이 오면 머리의 사양 칸 아래에 한 줄 — 인자는 p_pnu', async () => {
+    responses.landPrice = () => ({
+      data: [{ land_price: 45_230_000, land_price_year: 2026 }],
+      error: null,
+    });
+    const { container } = render(<FloorStack building={building()} />);
+    const line = await screen.findByText(LINE);
+    expect(line.closest('.stack__head')).toBeTruthy();
+    expect(container.querySelectorAll('.stack__land')).toHaveLength(1);
+    expect(landCalls()).toEqual([
+      { fn: 'get_parcel_land_price', args: { p_pnu: '1168010100100010000' } },
+    ]);
+  });
+
+  it.each([
+    ['함수 없음(PGRST202)', { data: null, error: { code: 'PGRST202', message: 'function does not exist' } }],
+    ['그 밖의 오류', { data: null, error: { message: 'boom' } }],
+    ['0줄(값 없는 필지)', { data: [], error: null }],
+    ['모양 이상(값이 글자)', { data: [{ land_price: '45230000', land_price_year: 2026 }], error: null }],
+    ['모양 이상(연도 없음)', { data: [{ land_price: 45_230_000, land_price_year: null }], error: null }],
+  ])('%s 이면 줄 자체가 없다 — "자료 없음"이라 적지 않는다', async (_label, res) => {
+    responses.landPrice = () => res;
+    const { container } = render(<FloorStack building={building()} />);
+    await screen.findByText('테스트빌딩');
+    await waitFor(() => expect(landCalls()).toHaveLength(1));
+    // 응답이 처리될 틈을 준다(then 한 바퀴).
+    await new Promise((r) => setTimeout(r, 0));
+    expect(container.querySelector('.stack__land')).toBeNull();
+    expect(container.textContent).not.toContain('개별공시지가');
+    expect(container.textContent).not.toContain('PGRST202');
+  });
+
+  it('같은 땅의 다른 동으로 바뀌면 다시 묻지 않는다 — 땅값은 필지 값(의존 [building.pnu])', async () => {
+    responses.landPrice = () => ({
+      data: [{ land_price: 45_230_000, land_price_year: 2026 }],
+      error: null,
+    });
+    const { rerender } = render(<FloorStack building={building()} />);
+    await screen.findByText(LINE);
+    rerender(<FloorStack building={building({ bld_id: '1168010100-2' })} />);
+    await screen.findByText(LINE);
+    expect(landCalls()).toHaveLength(1);
+  });
+
+  it('★ 필지가 바뀐 뒤 늦게 온 옛 필지의 답은 버린다', async () => {
+    let releaseOld: (v: { data: unknown; error: unknown }) => void = () => {};
+    responses.landPrice = (args) =>
+      args.p_pnu === '1168010100100010000'
+        ? new Promise((resolve) => {
+            releaseOld = resolve;
+          })
+        : { data: [{ land_price: 8_500, land_price_year: 2025 }], error: null };
+    const { rerender, container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(landCalls()).toHaveLength(1));
+    rerender(
+      <FloorStack building={building({ bld_id: '1168010100-9', pnu: '1168010100100090000' })} />,
+    );
+    const NEW = '개별공시지가 ㎡당 8,500원 · 2025년 공시 (땅값만 · 공시가격 — 시세가 아닙니다)';
+    await screen.findByText(NEW);
+    releaseOld({ data: [{ land_price: 45_230_000, land_price_year: 2026 }], error: null });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(container.querySelector('.stack__land')?.textContent).toBe(NEW);
   });
 });
