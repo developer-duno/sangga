@@ -58,11 +58,13 @@ FUNCS = (
 FN_NAMES = [f for f, _, _ in FUNCS]
 
 # 정본은 27a **뒤의** 판을 따른다 — 2026-10-09a(물결 1-A1)가 `search_buildings` 결과 칸 끝에
-# 셋(is_jiphap·approve_date·parking_cnt)을 더했다. 그래서 서명 대조의 짝이 갈린다:
+# 셋(is_jiphap·approve_date·parking_cnt)을 더했고, 2026-10-11c(물결 2-1)가 셋(ho_cnt·elevator_ride·
+# elevator_emgen)을 또 더했다. 그래서 서명 대조의 짝이 갈린다:
 #   27a 파일 쪽 = 직전 판(09-10a)과 같은가 · 정본 쪽 = 그 함수의 마지막 판과 같은가.
 # ⛔ 새 판이 서명을 또 바꾸면 여기를 올린다(새 칸의 이름·형·순서는
-#    tests/test_search_ownership_cols_migration.py 가 따로 못 박는다).
-SCHEMA_SIG_FROM = {"search_buildings": "2026-10-09a_search_ownership_cols.sql"}
+#    tests/test_search_ownership_cols_migration.py · tests/test_building_elevator_ho_migration.py 가
+#    따로 못 박는다).
+SCHEMA_SIG_FROM = {"search_buildings": "2026-10-11c_building_elevator_ho.sql"}
 
 
 def sig_reference(path, fn, prev):

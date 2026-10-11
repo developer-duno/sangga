@@ -45,17 +45,19 @@ SUMMARY_MVS = ("mv_parcel_store_names", "mv_coverage_stats", "mv_district_indust
 SECOND_FNS = ("list_industry_mix", "list_industry_detail")
 # 마이그레이션이 다시 만드는 함수 넷 — 머리·comment·본문이 정본과 글자 그대로
 REBUILT_FNS = SECOND_FNS + LIVE_FNS
-# 10-07a 뒤에 다른 마이그레이션이 다시 만든 함수 → 그 판(정본과 글자 그대로 같아야 하는 쪽).
+# 10-07a 뒤에 다른 마이그레이션이 다시 만든 함수·뷰 → 그 판(정본과 글자 그대로 같아야 하는 쪽).
 # 10-07a 는 적용된 원장이라 고치지 않는다 — 머리·본문·comment 대조는 그 판과 하고, 그 판의 시험이
 # 나머지(인자·거르기·정렬)를 맡는다. 표지 칸(published) 판정은 10-07a 원본에도 그대로 건다.
 RECREATED_LATER = {
     "list_district_buildings": os.path.join(
         MIG_DIR, "2026-10-11a_district_buildings_industry.sql"),  # 물결 2-2b 업종 인자
+    # 물결 2-1 건물 사양 5칸을 v_floor_stack 끝에 붙였다(표지 칸 published 는 그대로).
+    "v_floor_stack": os.path.join(MIG_DIR, "2026-10-11c_building_elevator_ho.sql"),
 }
 
 
 def mirror_source(mig, name):
-    """정본과 글자 대조할 마이그레이션 글 — 그 함수를 마지막으로 다시 만든 판."""
+    """정본과 글자 대조할 마이그레이션 글 — 그 함수·뷰를 마지막으로 다시 만든 판."""
     return read(RECREATED_LATER[name]) if name in RECREATED_LATER else mig
 RENAMED_INDEXES = ("idx_mpsn_pnu", "idx_mpsn_sigungu", "idx_mpsn_names",
                    "idx_mcs_snapshot_ym", "mv_district_industry_mix_key")
@@ -393,7 +395,7 @@ class TestMirrorsTheSchema:
         assert grant_receivers(mig, name) == set(), "{} 의 public 원본을 열었습니다".format(name)
 
     def test_floor_stack_view(self, schema, mig):
-        assert view_block(schema, LIVE_VIEW) == view_block(mig, LIVE_VIEW)
+        assert view_block(schema, LIVE_VIEW) == view_block(mirror_source(mig, LIVE_VIEW), LIVE_VIEW)
 
     @pytest.mark.parametrize("name", SUMMARY_MVS)
     def test_summary_table_body(self, schema, mig, name):
