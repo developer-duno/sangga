@@ -977,6 +977,13 @@ describe('BuildingSearch — 중개사 소유 구조 줄 (결정 0036 결정 5·
     expect(document.querySelector('.hit__own')?.textContent).toBe('건물 종류 미상 · 사용승인 미상 · 주차 미상');
   });
 
+  it('B4 물결 2-1 — 승강기 합·대장 호수가 줄 뒤에 붙는다', async () => {
+    await run(true, [own({ ho_cnt: 48, elevator_ride: 2, elevator_emgen: 1 })]);
+    expect(document.querySelector('.hit__own')?.textContent).toBe(
+      '집합건물 · 사용승인 2003년 5월 · 주차 120대 · 승강기 3대 · 대장 호수 48호',
+    );
+  });
+
   it('B3 세 칸이 아예 안 오면(옛 서버) 중개사여도 줄 없음', async () => {
     await run(true, [hit()]);
     expect(document.querySelector('.hit')).not.toBeNull();

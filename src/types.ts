@@ -76,6 +76,25 @@ export type FloorRow = {
    */
   parking_cnt: number | null;
   /**
+   * 승강기·호수·구조·내진설계 다섯 칸(2026-10-11c · 물결 2-1) — 위 스펙 칸처럼 **건물 한 채**의 대장 원값이라
+   * 같은 건물의 모든 층 행에 같은 값이 실려 온다. 0 은 0, 빈값은 null 그대로다(승강기 0 에는 대장 미기재가
+   * 섞여 있고, 호수 0 은 호 구분이 없는 일반건물의 정상값이다). 뜻풀이는 `lib/format.ts` 의
+   * `describeElevator`·`describeHoCnt` 와 층별 화면 머리(FloorStack) 한 곳.
+   *
+   * ⚠️ 선택 필드다 — 이 칸을 주는 마이그레이션(2026-10-11c_building_elevator_ho)이 라이브에 적용되기 전에는
+   *    서버가 안 보낸다. 안 오면(undefined) 그 칸 자체가 머리에 안 선다.
+   */
+  /** 승용 승강기 대수. */
+  elevator_ride?: number | null;
+  /** 비상용 승강기 대수 — 승용과 **따로 세는 칸**(비상용이 승용보다 많은 건물도 있다). */
+  elevator_emgen?: number | null;
+  /** 대장 호수(호실 수). 집합건물일 때만 화면에 적는다. */
+  ho_cnt?: number | null;
+  /** 구조 이름(예: 철근콘크리트구조). 빈 글자는 서버가 null 로 준다. */
+  strct_nm?: string | null;
+  /** 내진설계 적용 여부. false 에는 1988년 전 건물·작은 건물·미기재가 섞여 있어 화면은 true 일 때만 적는다. */
+  seismic_design?: boolean | null;
+  /**
    * 이 건물이 선 **필지의 대표 좌표**(2026-08-25a). 지도 마커 자리이자, 링크로 들어온
    * 사람의 건물을 되살릴 때 쓰는 값이다.
    *
@@ -739,6 +758,16 @@ export type BuildingHit = {
   is_jiphap?: boolean | null;
   approve_date?: string | null;
   parking_cnt?: number | null;
+  /**
+   * 대장 호수·승강기 두 칸 — `building` 표 원값 그대로(2026-10-11c · 물결 2-1). 이름·형은 층별 행(`FloorRow`)의
+   * 같은 칸과 같다: 0 은 0, null 은 null. 뜻풀이는 `lib/format.ts` 의 `describeHoCnt`·`describeElevator` 한 곳.
+   *
+   * ⚠️ 선택 필드다 — 이 칸을 주는 마이그레이션(2026-10-11c_building_elevator_ho)이 라이브에 적용되기 전에는
+   *    서버가 안 보낸다(둘 다 안 오면 소유 구조 줄에서 그 조각이 빠진다).
+   */
+  ho_cnt?: number | null;
+  elevator_ride?: number | null;
+  elevator_emgen?: number | null;
 };
 
 /**

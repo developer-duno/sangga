@@ -573,6 +573,74 @@ describe('FloorStack — 건물 스펙 4칸 (로드맵 Wave 2 PR-B)', () => {
     expect(specValue('연면적')).toBe('1,000,000㎡ (302,500평)');
   });
 
+  /** 머리 칸 이름표 차례(`dt` 글자). 칸 자리(주차 바로 뒤)를 본다. */
+  function factLabels(): string[] {
+    return [...document.querySelectorAll('.stack__facts dt')].map((d) => d.textContent ?? '');
+  }
+
+  it('물결 2-1 — 새 칸이 다 있으면 주차 바로 뒤 구조 → 승강기 → 내진설계 → 대장 호수', async () => {
+    responses.floors = {
+      data: [
+        floor({
+          strct_nm: '철근콘크리트구조',
+          elevator_ride: 2,
+          elevator_emgen: 1,
+          seismic_design: true,
+          ho_cnt: 48,
+        }),
+      ],
+      error: null,
+    };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText('승강기')).toBeTruthy());
+    expect(specValue('구조')).toBe('철근콘크리트구조');
+    expect(specValue('승강기')).toBe('3대 (비상용 1대 포함)');
+    expect(specValue('내진설계')).toBe('적용');
+    expect(specValue('대장 호수')).toBe('48호');
+    const labels = factLabels();
+    const at = labels.indexOf('주차');
+    expect(labels.slice(at, at + 5)).toEqual(['주차', '구조', '승강기', '내진설계', '대장 호수']);
+  });
+
+  it('물결 2-1 — 새 칸이 아예 안 오면(옛 서버) 넷 다 칸 없음', async () => {
+    responses.floors = { data: [floor()], error: null };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText('주차')).toBeTruthy());
+    for (const label of ['구조', '승강기', '내진설계', '대장 호수']) {
+      expect(specValue(label), label).toBeNull();
+    }
+    expect(factLabels().at(-1)).toBe('주차');
+  });
+
+  it('물결 2-1 — null·0: 구조·승강기는 미상 · 내진 false·대장 호수 0 은 칸 없음 (미적용·0호라 쓰지 않는다)', async () => {
+    responses.floors = {
+      data: [
+        floor({ strct_nm: null, elevator_ride: 0, elevator_emgen: 0, seismic_design: false, ho_cnt: 0 }),
+      ],
+      error: null,
+    };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText('승강기')).toBeTruthy());
+    expect(specValue('구조')).toBe('미상');
+    expect(specValue('승강기')).toBe('미상');
+    expect(specValue('내진설계')).toBeNull();
+    expect(specValue('대장 호수')).toBeNull();
+    const facts = document.querySelector('.stack__facts')?.textContent ?? '';
+    for (const bad of ['0대', '0호', '미적용']) expect(facts).not.toContain(bad);
+  });
+
+  it('물결 2-1 — 내진 null 도 칸 없음 · 일반건물은 호수가 있어도 대장 호수 칸 없음 · 승강기 하나만 null', async () => {
+    responses.floors = {
+      data: [floor({ is_jiphap: false, seismic_design: null, ho_cnt: 12, elevator_ride: null, elevator_emgen: 2 })],
+      error: null,
+    };
+    render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText('승강기')).toBeTruthy());
+    expect(specValue('내진설계')).toBeNull();
+    expect(specValue('대장 호수')).toBeNull();
+    expect(specValue('승강기')).toBe('2대 (비상용 2대 포함)');
+  });
+
   it('용적률은 100%를 넘어도 정상값이다 (건폐율 상한을 여기 잘못 옮겨 붙이면 안 된다)', async () => {
     // 용적률은 정의상 100%를 훌쩍 넘는다(층을 쌓을수록 커진다). 두 칸의 상한을
     // 같이 두면 고층 건물의 용적률이 통째로 사라진다.

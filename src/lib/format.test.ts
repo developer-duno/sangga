@@ -13,8 +13,11 @@ import {
   formatWon,
   formatYearMonth,
   oneInEvery,
+  describeElevator,
+  describeHoCnt,
   describeOwnership,
   describeSpec,
+  describeStructure,
   formatJiphap,
   formatParking,
 } from './format';
@@ -450,5 +453,93 @@ describe('describeOwnership — 중개사 소유 구조 줄 (결정 0036 결정 
     expect(formatJiphap(false)).toBe('일반건물');
     expect(formatJiphap(null)).toBeNull();
     expect(formatJiphap(undefined)).toBeNull();
+  });
+
+  it('B4 물결 2-1 — 승강기·대장 호수가 뒤에 붙는다(승강기는 합 · 비상용 괄호 없이)', () => {
+    const base = { is_jiphap: true, approve_date: '2003-05-14', parking_cnt: 32 };
+    expect(describeOwnership(hit({ ...base, ho_cnt: 48, elevator_ride: 2, elevator_emgen: 1 }))).toBe(
+      '집합건물 · 사용승인 2003년 5월 · 주차 32대 · 승강기 3대 · 대장 호수 48호',
+    );
+    // 승강기 0·0 / 둘 다 null → 미상 · 대장 호수 0 → 조각 없음
+    expect(describeOwnership(hit({ ...base, ho_cnt: 0, elevator_ride: 0, elevator_emgen: 0 }))).toBe(
+      '집합건물 · 사용승인 2003년 5월 · 주차 32대 · 승강기 미상',
+    );
+    expect(describeOwnership(hit({ ...base, ho_cnt: null, elevator_ride: null, elevator_emgen: null }))).toBe(
+      '집합건물 · 사용승인 2003년 5월 · 주차 32대 · 승강기 미상',
+    );
+    // 새 칸이 아예 안 오면(마이그레이션 전 서버) 옛 줄 그대로
+    expect(describeOwnership(hit(base))).toBe('집합건물 · 사용승인 2003년 5월 · 주차 32대');
+    // 일반건물은 호수가 있어도 대장 호수 조각 없음
+    expect(
+      describeOwnership(hit({ ...base, is_jiphap: false, ho_cnt: 12, elevator_ride: 1, elevator_emgen: 0 })),
+    ).toBe('일반건물 · 사용승인 2003년 5월 · 주차 32대 · 승강기 1대');
+    // 옛 세 칸이 모두 undefined 면 새 칸이 와도 줄 없음 규칙 그대로
+    expect(describeOwnership(hit({ ho_cnt: 48, elevator_ride: 2 }))).toBeNull();
+  });
+});
+
+describe('describeElevator — 승강기 합 (물결 2-1 · 👤 2026-10-12)', () => {
+  it('승용 + 비상용 합 · 비상용 1대 이상이면 머리에서만 괄호', () => {
+    expect(describeElevator(2, 1, true)).toBe('3대 (비상용 1대 포함)');
+    expect(describeElevator(2, 1, false)).toBe('3대');
+    expect(describeElevator(4, 0, true)).toBe('4대');
+  });
+
+  it('비상용이 승용보다 많아도 따로 센 칸이라 그대로 더한다', () => {
+    expect(describeElevator(1, 3, true)).toBe('4대 (비상용 3대 포함)');
+    expect(describeElevator(0, 2, true)).toBe('2대 (비상용 2대 포함)');
+  });
+
+  it('합 0 · 둘 다 null → 미상 (0대라 적지 않는다)', () => {
+    expect(describeElevator(0, 0, true)).toBe('미상');
+    expect(describeElevator(null, null, true)).toBe('미상');
+    expect(describeElevator(null, 0, true)).toBe('미상');
+    expect(describeElevator(0, null, false)).toBe('미상');
+  });
+
+  it('하나만 null 이면 있는 것만 더한다', () => {
+    expect(describeElevator(3, null, true)).toBe('3대');
+    expect(describeElevator(null, 2, true)).toBe('2대 (비상용 2대 포함)');
+  });
+
+  it('둘 다 undefined(옛 서버) → null = 칸 없음 · 하나라도 오면 칸이 선다', () => {
+    expect(describeElevator(undefined, undefined, true)).toBeNull();
+    expect(describeElevator(undefined, undefined, false)).toBeNull();
+    expect(describeElevator(2, undefined, true)).toBe('2대');
+    expect(describeElevator(undefined, null, true)).toBe('미상');
+  });
+
+  it('천 단위 쉼표', () => {
+    expect(describeElevator(1200, 34, false)).toBe('1,234대');
+  });
+});
+
+describe('describeHoCnt — 대장 호수 (물결 2-1 · 👤 그림 ⑥ 가)', () => {
+  it('집합건물 + 1호 이상만 글자', () => {
+    expect(describeHoCnt(true, 48)).toBe('48호');
+    expect(describeHoCnt(true, 1)).toBe('1호');
+    expect(describeHoCnt(true, 1234)).toBe('1,234호');
+  });
+
+  it('0·null·undefined·음수는 칸 없음 — 미상이라고도 쓰지 않는다', () => {
+    for (const n of [0, null, undefined, -1]) {
+      expect(describeHoCnt(true, n)).toBeNull();
+    }
+  });
+
+  it('일반건물·건물 종류 모름이면 호수가 있어도 칸 없음', () => {
+    expect(describeHoCnt(false, 48)).toBeNull();
+    expect(describeHoCnt(null, 48)).toBeNull();
+    expect(describeHoCnt(undefined, 48)).toBeNull();
+  });
+});
+
+describe('describeStructure — 구조 (물결 2-1)', () => {
+  it('글자 그대로 · null·빈 글자는 미상 · undefined 는 칸 없음', () => {
+    expect(describeStructure('철근콘크리트구조')).toBe('철근콘크리트구조');
+    expect(describeStructure(null)).toBe('미상');
+    expect(describeStructure('')).toBe('미상');
+    expect(describeStructure('  ')).toBe('미상');
+    expect(describeStructure(undefined)).toBeNull();
   });
 });
