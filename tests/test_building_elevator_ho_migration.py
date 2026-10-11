@@ -7,7 +7,8 @@
   1) 칸 8개의 이름·형이 정본과 갈리거나, 표 앞쪽에 끼운다 → 새 환경만 다른 모양이 된다.
   2) api.building 을 다시 안 만든다 → `select *` 뷰는 만든 날의 칸으로 굳어, 적재기 upsert
      (profile 헤더 없이 첫 스키마 api 를 탄다)가 새 칸을 못 찾고 PGRST204 로 멈춘다.
-  3) v_floor_stack 끝 5칸이 빠지거나 순서가 바뀐다 · api.v_floor_stack 을 public 뷰보다 먼저
+  3) v_floor_stack 끝 6칸(5칸 + 2026-10-12 PR② 의 bld_main_use)이 빠지거나 순서가 바뀐다 ·
+     api.v_floor_stack 을 public 뷰보다 먼저
      (또는 아예 안) 다시 만든다 → 화면이 새 칸을 영영 못 본다(2026-08-24a 함정).
   4) v_floor_stack 이 **내보내지 않기로 한** 세 칸(내진 능력·에너지 등급·녹색 등급 — 채움 0.4~8.5% ·
      사장님 결정 2026-10-11)을 내보낸다. 「없음」 단언이라 탐지는 아래 작은 함수 하나로 빼고
@@ -67,7 +68,8 @@ NEW_COLS = (
     ("energy_grade", "text"),
     ("green_grade", "text"),
 )
-VIEW_TAIL = ("elevator_ride", "elevator_emgen", "ho_cnt", "strct_nm", "seismic_design")
+# 끝 bld_main_use(= building.main_use)는 2026-10-12 PR② 가 더했다(운영 적용 전 수정 · 주거 건물의 대장 호수 숨김).
+VIEW_TAIL = ("elevator_ride", "elevator_emgen", "ho_cnt", "strct_nm", "seismic_design", "bld_main_use")
 HIDDEN = ("seismic_ability", "energy_grade", "green_grade")
 
 OLD16 = [
@@ -77,13 +79,15 @@ OLD16 = [
     ("max_floor", "smallint"), ("has_roof", "boolean"), ("total_cnt", "bigint"),
     ("is_jiphap", "boolean"), ("approve_date", "date"), ("parking_cnt", "integer"),
 ]
-SEARCH_TAIL = [("ho_cnt", "integer"), ("elevator_ride", "smallint"), ("elevator_emgen", "smallint")]
+SEARCH_TAIL = [("ho_cnt", "integer"), ("elevator_ride", "smallint"), ("elevator_emgen", "smallint"),
+               ("bld_main_use", "text")]
 
 PUBLIC_HEAD = ("language plpgsql", "stable", "security definer", "set search_path = public",
                "set plan_cache_mode = force_custom_plan")
 API_HEAD = ("language sql", "stable", "security definer", "set search_path = ''")
 FINAL_SELECT_MARK = "  -- ② 지번주소 조립·좌표 뽑기는 여기서 처음 한다"
-SPEC_SELECT = "bo.is_jiphap, bo.approve_date, bo.parking_cnt, bo.ho_cnt, bo.elevator_ride, bo.elevator_emgen"
+SPEC_SELECT = ("bo.is_jiphap, bo.approve_date, bo.parking_cnt, bo.ho_cnt, bo.elevator_ride, bo.elevator_emgen, "
+               "bo.main_use")
 
 
 def read(path):
@@ -509,7 +513,7 @@ class TestSearch:
 
 class TestSearchMutations:
     @pytest.mark.parametrize("name,mutate", (
-        ("tail_type", lambda b: b.replace("  elevator_emgen smallint\n)", "  elevator_emgen integer\n)", 1)),
+        ("tail_type", lambda b: b.replace("  elevator_emgen smallint,\n", "  elevator_emgen integer,\n", 1)),
         ("tail_in_front", lambda b: b.replace("returns table (\n  bld_id         text,",
                                               "returns table (\n  ho_cnt         integer,\n  bld_id         text,", 1)),
         ("tail_reordered", lambda b: b.replace("  ho_cnt         integer,\n  elevator_ride  smallint,",
@@ -528,8 +532,9 @@ class TestSearchMutations:
         ("carried_in_branch", lambda b: b.replace(
             "    select b.bld_id, b.pnu, b.nm_key, b.display_nm as bld_nm,\n           a.road_addr",
             "    select b.bld_id, b.pnu, b.nm_key, b.display_nm as bld_nm, b.ho_cnt,\n           a.road_addr", 1)),
-        ("select_dropped", lambda b: b.replace(", bo.elevator_emgen\n", "\n", 1)),
-    ), ids=["second_join", "carried_in_branch", "select_dropped"])
+        ("select_dropped", lambda b: b.replace(", bo.elevator_emgen,\n", ",\n", 1)),
+        ("main_use_dropped", lambda b: b.replace(",\n    bo.main_use\n", "\n", 1)),
+    ), ids=["second_join", "carried_in_branch", "select_dropped", "main_use_dropped"])
     def test_body(self, mig, name, mutate):
         prev = fn_block(read(PREV_SEARCH), False)
         block = fn_block(mig, False)
@@ -665,8 +670,8 @@ insert into snapshot_release values (1, '202606', '202606');
 insert into parcel values ('1168010100108230004', 'G', '테헤란로 1', '정문', '서울특별시', '강남구', '역삼동', '823-4');
 insert into mv_search_parcel values ('1168010100108230004', '11680', '테헤란로 1', '테헤란로1', '역삼동823-4',
   '서울특별시', '강남구', '역삼동', '823-4');
-insert into building (bld_id, pnu, bld_nm, parking_cnt, is_jiphap, display_nm, nm_key)
-  values ('B1', '1168010100108230004', '테스트타워', 120, true, '테스트타워', '테스트타워');
+insert into building (bld_id, pnu, bld_nm, parking_cnt, is_jiphap, display_nm, nm_key, main_use)
+  values ('B1', '1168010100108230004', '테스트타워', 120, true, '테스트타워', '테스트타워', '판매시설');
 insert into building_floor values ('B1', 1), ('B1', 2);
 insert into v_building_floor_stack values
   ('B1', '1168010100108230004', 1, '1층', 100, 110, 1, '근린생활시설', '[]'),
@@ -770,20 +775,22 @@ class TestRealRun:
 
     def test_api_floor_stack_tail_and_no_hidden(self, cur):
         names = [n for n, _ in _cols(cur, "api", "v_floor_stack")]
-        assert tuple(names[-5:]) == VIEW_TAIL
-        assert names[-6] == "lng"
+        assert tuple(names[-len(VIEW_TAIL):]) == VIEW_TAIL
+        assert names[-len(VIEW_TAIL) - 1] == "lng"
         assert not set(HIDDEN) & set(names)
 
     def test_floor_stack_rows_carry_the_values(self, cur):
-        cur.execute("select floor_no, elevator_ride, ho_cnt, seismic_design from api.v_floor_stack "
-                    "where bld_id = 'B1' order by floor_no")
-        assert cur.fetchall() == [(1, 2, 0, True), (2, 2, 0, True)]
+        # bld_main_use 는 건물 주용도(판매시설)다 — 층 줄의 main_use(근린생활시설·업무시설)와 다른 칸.
+        cur.execute("select floor_no, elevator_ride, ho_cnt, seismic_design, main_use, bld_main_use "
+                    "from api.v_floor_stack where bld_id = 'B1' order by floor_no")
+        assert cur.fetchall() == [(1, 2, 0, True, "근린생활시설", "판매시설"),
+                                  (2, 2, 0, True, "업무시설", "판매시설")]
 
-    def test_search_returns_the_three_with_types(self, cur):
-        cur.execute("select bld_id, parking_cnt, ho_cnt, elevator_ride, elevator_emgen, "
-                    "pg_typeof(ho_cnt)::text, pg_typeof(elevator_ride)::text "
+    def test_search_returns_the_tail_with_types(self, cur):
+        cur.execute("select bld_id, parking_cnt, ho_cnt, elevator_ride, elevator_emgen, bld_main_use, "
+                    "pg_typeof(ho_cnt)::text, pg_typeof(elevator_ride)::text, pg_typeof(bld_main_use)::text "
                     "from api.search_buildings('테스트', 25, '11680')")
-        assert cur.fetchall() == [("B1", 120, 0, 2, 1, "integer", "smallint")]
+        assert cur.fetchall() == [("B1", 120, 0, 2, 1, "판매시설", "integer", "smallint", "text")]
 
     def test_twin_works_with_an_empty_search_path(self, cur):
         cur.execute("set search_path to ''")
@@ -802,12 +809,38 @@ class TestRealRun:
         assert cur.fetchone() == (True, False, True, False, True)
 
 
+def _floor_stack_main_use_expr(sql):
+    """v_floor_stack 정의 안에서 `… as bld_main_use` 의 왼쪽 식을 돌려준다(없으면 None).
+
+    못 보는 것: 별칭 `b` 가 정말 building 인지는 안 본다(정의의 `from … building b` 는 형제 시험이 본다).
+    """
+    m = re.search(r"create or replace view v_floor_stack as(.*?);", sql, re.S | re.I)
+    if not m:
+        return None
+    hit = re.search(r"([\w.]+)\s+as\s+bld_main_use\b", m.group(1), re.I)
+    return hit.group(1) if hit else None
+
+
+@pytest.mark.parametrize("path", [MIGRATION, SCHEMA], ids=["mig", "schema"])
+def test_floor_stack_main_use_comes_from_building(path):
+    # 층 행의 주용도(s.main_use)를 쓰면 주상복합 아래층 '근린생활시설'이 건물 주용도로 둔갑해 아파트 대장 호수가 보인다.
+    # 로컬 PostgreSQL 실행 시험만 이것을 잡아(CI 엔 PostgreSQL 이 없다) 글자로도 막는다(2026-10-12 재검사관 🟡-2).
+    assert _floor_stack_main_use_expr(read(path)) == "b.main_use"
+
+
+def test_floor_stack_main_use_guard_catches_floor_alias():
+    # 양성 대조 — 흔한 꼴과 변형 꼴(대문자 AS · 줄바꿈)을 같은 함수로 잡는다.
+    good = read(MIGRATION)
+    assert _floor_stack_main_use_expr(good.replace("b.main_use as bld_main_use", "s.main_use as bld_main_use")) == "s.main_use"
+    assert _floor_stack_main_use_expr(good.replace("b.main_use as bld_main_use", "s.main_use\n  AS bld_main_use")) == "s.main_use"
+
+
 def test_real_run_mismatched_return_type_is_caught(pg):
     """양성 대조 — select 식의 형과 반환 칸 형이 어긋난 사본은 부를 때 죽는다(글자 가드가 못 보는 꼴)."""
     psycopg2 = pytest.importorskip("psycopg2")
     c = _fresh(pg)
-    broken = read(MIGRATION).replace("    bo.ho_cnt, bo.elevator_ride, bo.elevator_emgen\n",
-                                     "    bo.ho_cnt::text, bo.elevator_ride, bo.elevator_emgen\n", 1)
+    broken = read(MIGRATION).replace("    bo.ho_cnt, bo.elevator_ride, bo.elevator_emgen,\n",
+                                     "    bo.ho_cnt::text, bo.elevator_ride, bo.elevator_emgen,\n", 1)
     assert broken != read(MIGRATION)
     c.execute(broken)
     with pytest.raises(psycopg2.Error):

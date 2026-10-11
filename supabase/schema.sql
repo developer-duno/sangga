@@ -970,7 +970,10 @@ select
   b.elevator_emgen,         -- 비상용 승강기 대수 (0 = 미기재 섞임)
   b.ho_cnt,                 -- 호수 (0 = 대부분 정상 — 일반건축물은 호 구분 없음)
   b.strct_nm,               -- 구조 이름 (빈값 = NULL)
-  b.seismic_design          -- 내진 설계 적용 여부 (false 에 1988년 전·작은 건물·미기재 섞임)
+  b.seismic_design,         -- 내진 설계 적용 여부 (false 에 1988년 전·작은 건물·미기재 섞임)
+  -- 건물 주용도(2026-10-12 PR② 가 더함) — 위 s.main_use(그 층에서 면적이 가장 큰 용도)와 다른 칸이라
+  -- 이름을 갈랐다. 화면이 대장 호수를 주거(공동주택·단독주택) 건물에서 숨기는 데 쓴다.
+  b.main_use as bld_main_use -- 건물 주용도 (표제부 mainPurpsCdNm 원값 · 빈값 NULL)
 from v_building_floor_stack s
 join building b on b.bld_id = s.bld_id
 join parcel   p on p.pnu    = s.pnu
@@ -1006,6 +1009,7 @@ comment on view v_floor_stack is
   '승강기 0 에는 대장 미기재가 섞여 있고(호수 0 은 일반건축물에서 정상) seismic_design false 에는 1988년 전 건물·'
   '내진 의무 밖 작은 건물·미기재가 섞여 있다 — '
   '뜻풀이는 화면이 한다. 내진 능력·에너지·녹색 등급은 표에만 있고 이 뷰는 내보내지 않는다(채움이 낮다). '
+  'bld_main_use 는 building.main_use(건물 주용도) 원값이다 — 층 줄의 main_use(그 층 최대 면적 용도)와 다른 칸(2026-10-12). '
   'ℹ️ 린트 0010(security definer view) 의도적 예외 — security_invoker=true로 되돌리면 원본 표 401 + 상호명·성명 노출 확대. '
   '재검토 방아쇠: 공개 배포일 / 지도·반경 검색(§6.4) 착수일';
 
@@ -1620,7 +1624,10 @@ returns table (
   -- 대장 미기재가 섞여 있고 호수 0 은 일반건축물에서 정상이다). ⛔ 기존 16칸 **뒤에만** 붙인다(위 세 칸과 같은 이유).
   ho_cnt         integer,
   elevator_ride  smallint,
-  elevator_emgen smallint
+  elevator_emgen smallint,
+  -- 건물 주용도(2026-10-12 PR②) — building.main_use 원값. 화면이 대장 호수를 주거에서 숨기는 데 쓴다.
+  -- ⛔ 기존 19칸 **뒤에만** 붙인다(위와 같은 이유).
+  bld_main_use   text
 )
 language plpgsql
 stable
@@ -1735,7 +1742,8 @@ with pat as not materialized (
     fs.floor_cnt, fs.min_floor, fs.max_floor, fs.has_roof,
     t.total_cnt,
     bo.is_jiphap, bo.approve_date, bo.parking_cnt,
-    bo.ho_cnt, bo.elevator_ride, bo.elevator_emgen
+    bo.ho_cnt, bo.elevator_ride, bo.elevator_emgen,
+    bo.main_use
   from top t
   join mv_search_parcel pc on pc.pnu = t.pnu
   join parcel p on p.pnu = t.pnu
@@ -1779,6 +1787,7 @@ comment on function search_buildings(text, int, text) is
   '"미상"으로 읽을지는 화면이 정한다. '
   'ho_cnt·elevator_ride·elevator_emgen 도 building 원값 그대로다(2026-10-11c) — 승강기 0 에는 대장 미기재가 섞여 있고 '
   '호수 0 은 일반건축물에서 정상이다. '
+  'bld_main_use 는 building.main_use(건물 주용도) 원값이다(2026-10-12). '
   '⛔ 주소 가지와 이름 가지를 OR로 합치지 말 것 — 두 조인 테이블에 걸친 OR은 gin_trgm 인덱스를 무력화한다';
 
 -- ⚠️ public 원본은 회수만 한다 — 열리는 쪽은 api.* 래퍼뿐(2026-09-05a). Postgres 는 새 함수의 EXECUTE 를 PUBLIC 에 기본 부여한다.
@@ -3486,7 +3495,8 @@ returns table (
   parking_cnt    integer,
   ho_cnt         integer,
   elevator_ride  smallint,
-  elevator_emgen smallint
+  elevator_emgen smallint,
+  bld_main_use   text
 )
 language sql
 stable

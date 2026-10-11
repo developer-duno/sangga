@@ -2747,6 +2747,8 @@ test.describe('건물 머리 새 칸 — 구조 · 승강기 · 내진설계 · 
       elevator_emgen: 1,
       seismic_design: true,
       ho_cnt: 48,
+      // 건물 주용도 — 주거(공동주택·단독주택)가 아니어야 대장 호수가 선다(👤 결정 B).
+      bld_main_use: '제2종근린생활시설',
     };
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
@@ -2782,7 +2784,7 @@ test.describe('건물 머리 새 칸 — 구조 · 승강기 · 내진설계 · 
     await page.emulateMedia({ media: null });
   });
 
-  test('AU. 일반건물·0 인 건물 — 내진설계·대장 호수 칸 없음 · 구조·승강기는 미상', async ({ page }) => {
+  test('AU. 일반건물·0 인 지상 6층 건물 — 내진설계·대장 호수 칸 없음 · 구조·승강기는 미상', async ({ page }) => {
     const spec = {
       is_jiphap: false,
       strct_nm: null,
@@ -2790,10 +2792,12 @@ test.describe('건물 머리 새 칸 — 구조 · 승강기 · 내진설계 · 
       elevator_emgen: 0,
       seismic_design: false,
       ho_cnt: 0,
+      bld_main_use: '업무시설',
     };
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
-    await mockFloorStack(page, [], [], [floorRow({ floor_no: 2, ...spec }), floorRow(spec)]);
+    // 지상 6층 — 승강기 합 0 이 '미상'으로 서는 경계(👤 결정 A · 5층 이하면 칸 없음은 AV).
+    await mockFloorStack(page, [], [], [6, 5, 4, 3, 2, 1].map((no) => floorRow({ floor_no: no, ...spec })));
     await page.goto('/');
     await pickGu(page, '서울', '강남구');
     await search(page, '테헤란로');
@@ -2809,5 +2813,42 @@ test.describe('건물 머리 새 칸 — 구조 · 승강기 · 내진설계 · 
     for (const bad of ['0대', '0호', '미적용']) {
       await expect(facts).not.toContainText(bad);
     }
+  });
+
+  test('AV. 지상 5층 공동주택(집합·호수 48) — 승강기 0 이면 승강기 칸 없음 · 주거라 대장 호수 칸 없음 · 종이도 같다', async ({
+    page,
+  }) => {
+    const spec = {
+      is_jiphap: true,
+      strct_nm: '철근콘크리트구조',
+      elevator_ride: 0,
+      elevator_emgen: 0,
+      seismic_design: true,
+      ho_cnt: 48,
+      bld_main_use: '공동주택',
+    };
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    // 지하 1 + 지상 5 + 옥탑 — 행은 7개지만 지상 최고층은 5(옥탑·지하는 안 센다).
+    await mockFloorStack(page, [], [], [99, 5, 4, 3, 2, 1, -1].map((no) => floorRow({ floor_no: no, ...spec })));
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+
+    const facts = page.locator('section.stack .stack__facts');
+    const cell = (label: string) => facts.locator('div').filter({ has: page.locator('dt', { hasText: new RegExp(`^${label}$`) }) });
+    // 양성 대조: 같은 머리의 다른 새 칸은 선다(칸이 통째로 안 그려진 것이 아니다).
+    await expect(cell('구조').locator('dd')).toHaveText('철근콘크리트구조');
+    await expect(cell('내진설계').locator('dd')).toHaveText('적용');
+    await expect(cell('승강기')).toHaveCount(0);
+    await expect(cell('대장 호수')).toHaveCount(0);
+    await expect(facts).not.toContainText('미상');
+
+    await page.emulateMedia({ media: 'print' });
+    await expect(cell('구조')).toBeVisible();
+    await expect(cell('승강기')).toHaveCount(0);
+    await expect(cell('대장 호수')).toHaveCount(0);
+    await page.emulateMedia({ media: null });
   });
 });

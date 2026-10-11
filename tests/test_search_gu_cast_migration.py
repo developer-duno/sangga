@@ -720,8 +720,8 @@ def test_a_commented_grant_is_not_a_grant():
     ("unqualified_body", lambda s: s.replace(
         "select * from public.search_buildings(", "select * from search_buildings(", 1)),
     ("column_dropped", lambda s: s.replace(
-        "  elevator_ride  smallint,\n  elevator_emgen smallint\n)\nlanguage sql",
-        "  elevator_ride  smallint\n)\nlanguage sql", 1)),
+        "  elevator_emgen smallint,\n  bld_main_use   text\n)\nlanguage sql",
+        "  elevator_emgen smallint\n)\nlanguage sql", 1)),
 ), ids=["search_path_removed", "unqualified_body", "column_dropped"])
 def test_the_api_twin_guard_bites(name, mutate):
     """쌍둥이만 바꾼 사본(정본은 그대로) → 빨간불."""
