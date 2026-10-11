@@ -414,3 +414,16 @@ export const FLOOR_UNITS_FN = 'list_floor_units';
  *    깎인다**. 늘리려면 서버 쪽 상한도 같은 커밋에서 함께 올린다.
  */
 export const FLOOR_UNITS_PAGE = 50;
+
+/**
+ * 이 **땅(필지)** 의 개별공시지가(원/㎡)와 그 공시 기준연도 — 한 줄 또는 0줄. 결정 0036 결정 7 · 물결 1-C1.
+ *
+ * ⚠️ **인자 이름이 `p_pnu` 다**(형제 기준시가와 같다). 목(mock)은 인자 이름을 안 보므로
+ *    `{ pnu: … }` 로 잘못 불러도 vitest·E2E 는 전부 초록이고 **라이브에서만** PGRST202 가 난다.
+ * ⓘ 인자는 pnu 다 — 땅값은 필지 값이라 같은 땅 다른 동이면 같은 값이다(effect 의존도 `[building.pnu]`).
+ *   ⚠️ 그래도 같은 땅 다른 동으로 옮기면 **다시 부른다** — App 이 건물마다 층별 화면을 새로 만든다
+ *   (`App.tsx` 의 `key={`stack:${selected.bld_id}`}`). 의존 `[building.pnu]` 는 그 바깥 사정과 무관하게 맞는 자일 뿐이다.
+ * ⛔ 곁 카드 미리 부르기(`sidePrefetch`)에 넣지 않는다 — 머리 한 줄이라 카드 미리 부르기와 무관하다.
+ * ⛔ 0줄·실패(함수 없음 PGRST202 포함)·모양 이상이면 **줄을 안 그린다** — '자료 없음'이라 적지 않는다.
+ */
+export const LAND_PRICE_FN = 'get_parcel_land_price';

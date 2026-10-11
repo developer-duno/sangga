@@ -567,9 +567,12 @@ class TestAnonExposure:
             # 서울 상권 개업·폐업(2026-10-05b · 결정 0033). 표 district_openclose 는 **여기
             # 없다** — 화면은 이 함수로만 읽는다(상권 합산과 최신 분기 업종 상위 10줄 + 그 밖 합).
             "api.list_district_openclose",
+            # 개별공시지가 한 줄(2026-10-11b · 결정 0036 결정 7). 표 parcel 은 **여기 없다** —
+            # pnu 하나의 숫자 두 개(원/㎡ · 공시 연도)만 나간다.
+            "api.get_parcel_land_price",
         )
-        # 읽기 4 + 부르기 25 = `--check` 총계 29(2026-10-09b 층 분포로 28 → 29).
-        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 29
+        # 읽기 4 + 부르기 26 = `--check` 총계 30(2026-10-11b 개별공시지가로 29 → 30).
+        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 30
 
     def test_pending_list_is_empty_after_2026_09_05a(self):
         """⛔ **비어 있어야 한다** — 잔존 노출 9개는 2026-09-05a 로 닫혔다.

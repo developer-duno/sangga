@@ -16,13 +16,16 @@ import {
   UNIT_FLOOR_SUMMARY_FN,
   FLOOR_UNITS_FN,
   FLOOR_UNITS_PAGE,
+  LAND_PRICE_FN,
 } from '../lib/appConstants';
+import { LAND_PRICE_BADGE, landPriceText, parseLandPrice } from '../lib/landPrice';
 import type {
   BasePrice,
   BuildingDistricts,
   BuildingHit,
   CoverageStats,
   FloorRow,
+  ParcelLandPrice,
   FloorUnit,
   ParcelTransaction,
   PriceBand,
@@ -227,6 +230,11 @@ export function FloorStack({ building, viewerRole = null, founderChip = FOUNDER_
    */
   const [unitSummary, setUnitSummary] = useState<UnitFloorSummary[] | null>(null);
   /**
+   * 이 땅의 개별공시지가(결정 0036 결정 7). null = 아직 안 왔거나 **못 읽음·값 없음** — 셋 다 줄을
+   * 안 그리는 것으로 끝나므로 상태를 가르지 않는다('자료 없음'이라 적지 않는다).
+   */
+  const [landPrice, setLandPrice] = useState<ParcelLandPrice | null>(null);
+  /**
    * 층 목록 카드를 **펼치라고 부르는 신호**. 참고 시세 줄을 누를 때마다 1씩 올린다.
    *
    * ⛔ 이게 없으면 사용자가 층 목록을 접어 둔 상태에서 시세 줄을 눌렀을 때 **아무 일도
@@ -364,6 +372,30 @@ export function FloorStack({ building, viewerRole = null, founderChip = FOUNDER_
       cancelled = true;
     };
   }, [building.bld_id]);
+
+  // ── 개별공시지가 한 줄 (결정 0036 결정 7 · 물결 1-C1) ─────────────────────
+  //
+  // ⓘ 의존은 `[building.pnu]` 다 — 땅값은 필지 값이라 같은 땅 다른 동이면 같은 값이다(호실 요약과 반대).
+  //    ⚠️ 그래도 실제 화면에서는 같은 땅 다른 동으로 옮기면 **다시 부른다** — App 이 건물마다 이 화면을
+  //    새로 만든다(`App.tsx` 의 `key={`stack:${selected.bld_id}`}`). 의존을 pnu 로 둔 것은 자가 맞아서지 아끼려는 게 아니다.
+  // ⛔ 곁 카드 미리 부르기(`sidePrefetch`)에 끼우지 않는다 — 카드가 아니라 머리 한 줄이다.
+  // ⛔ 실패(함수 없음 PGRST202 포함)·0줄·모양 이상은 전부 줄 없음 — '자료 없음'이라 적지 않는다.
+  // ⓘ 늦게 온 옛 필지의 답은 `cancelled` 로 버린다(pnu 가 바뀌면 앞 요청의 then 이 아무것도 안 한다).
+  useEffect(() => {
+    let cancelled = false;
+    setLandPrice(null);
+
+    supabase.rpc(LAND_PRICE_FN, { p_pnu: building.pnu }).then(({ data, error: err }) => {
+      if (cancelled) return;
+      const v = err ? null : parseLandPrice(data);
+      if (err) console.warn('개별공시지가 조회 실패 — 그 줄 없이 표시합니다', err);
+      setLandPrice(v);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [building.pnu]);
 
   // ── 실거래 사실 표시 (Stage A · 결정 0012) ────────────────────────────────
   //
@@ -767,6 +799,18 @@ export function FloorStack({ building, viewerRole = null, founderChip = FOUNDER_
             <dd>{describeSpec(head.parking_cnt, formatParking)}</dd>
           </div>
         </dl>
+        {/*
+          개별공시지가 한 줄(결정 0036 결정 7). 값이 없거나 못 읽었으면 **줄 자체가 없다** —
+          '미상'·'자료 없음'으로 적지 않는다(위 네 칸과 다른 이유: 실패를 없음으로 말하면 거짓이다).
+          ⓘ 내용이라 종이에도 그대로 나온다(`.stack__head` 가 통째로 한 장에 머문다).
+        */}
+        {landPrice && (
+          <p className="stack__land">
+            {/* 👤 2026-10-11 — 기준시가 줄의 「A등급 · 공식 고시」와 같은 꼴 · 이 줄은 '공시'. */}
+            <span className="grade__badge">{LAND_PRICE_BADGE}</span>
+            <span className="stack__land-text">{landPriceText(landPrice)}</span>
+          </p>
+        )}
       </header>
 
       {sectionOrder(viewerRole).map((k) => (

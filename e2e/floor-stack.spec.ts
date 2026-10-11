@@ -103,6 +103,10 @@ const OPEN_CLOSE_PATTERN = '**/rest/v1/rpc/list_district_openclose*';
 //    스펙 AH 의 관심사다(빈 배열로 두면 "호실 자료가 없는 건물"이라는 **다른 답**이 되어 안내가 선다).
 const UNIT_SUMMARY_PATTERN = '**/rest/v1/rpc/list_unit_floor_summary*';
 const FLOOR_UNITS_PATTERN = '**/rest/v1/rpc/list_floor_units*';
+// 개별공시지가 한 줄(결정 0036 결정 7) — 층별 화면 머리의 사양 칸 아래. 건물을 열 때 나간다.
+// ⚠️ 기본값은 **함수가 없는 상태**다 — 그때 줄이 조용히 빠지고 머리 모양이 그대로라 다른 스펙이 영향을
+//    안 받는다. 값을 보는 것은 스펙 AP 뿐이다(안 막으면 실존하지 않는 도메인으로 나가 DNS 에 좌우된다).
+const LAND_PRICE_PATTERN = '**/rest/v1/rpc/get_parcel_land_price*';
 // 의견함(2026-08-24b). 화면에서 창고로 **나가는** 유일한 길이라, 여기만 방향이 반대다.
 const FEEDBACK_PATTERN = '**/rest/v1/rpc/submit_feedback*';
 // LH 상가 분양·입점 공고 — 유일하게 **입구**(건물을 고르기 전)에서 나가는 요청이다.
@@ -214,6 +218,8 @@ async function mockFloorStack(
   // 이 뒤에 자기 응답을 한 번 더 등록한다(나중에 등록한 것이 먼저 잡힌다).
   await mockMissingFunction(page, UNIT_SUMMARY_PATTERN);
   await mockMissingFunction(page, FLOOR_UNITS_PATTERN);
+  // 개별공시지가 한 줄도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 스펙 AP 만 덮어쓴다.
+  await mockMissingFunction(page, LAND_PRICE_PATTERN);
 }
 
 /**
@@ -1148,6 +1154,7 @@ test.describe('층별 스택뷰 — 종이로 뽑기', () => {
     await mockMissingFunction(page, BASE_PRICE_PATTERN);
     await mockMissingFunction(page, UNIT_SUMMARY_PATTERN);
     await mockMissingFunction(page, FLOOR_UNITS_PATTERN);
+    await mockMissingFunction(page, LAND_PRICE_PATTERN);
     await mockMissingFunction(page, OPEN_CLOSE_PATTERN);
 
     await page.goto('/');
@@ -2414,5 +2421,72 @@ test.describe('층별 스택뷰 — 업종별 층 분포', () => {
     for (const el of await mix.locator('.mix__floors').all()) {
       expect(await el.evaluate((e) => e.scrollWidth - e.clientWidth)).toBeLessThanOrEqual(0);
     }
+  });
+});
+
+// ── 개별공시지가 한 줄 (결정 0036 결정 7 · 물결 1-C1) ─────────────────────────
+// 글·모양 검증·실패면 줄 없음은 단위 시험이 덮는다(`landPrice.test.ts`·`FloorStack.test.tsx`).
+// 여기서만 보이는 것은 **진짜 브라우저에서 머리에 서는가**, 좁은 폭(412px)에서 넘치지 않는가,
+// 종이에도 그대로 나오는가(내용이라 숨기지 않는다)다.
+
+test.describe('층별 스택뷰 — 개별공시지가 한 줄', () => {
+  test('AP. 값이 오면 사양 칸 아래 배지 + 한 줄 — 넘침 0 · 종이에도 그대로', async ({ page }) => {
+    // 👤 2026-10-11 문구 · 금액은 가장 긴 꼴(1억 이상 '1억 8,840만원')로 좁은 폭을 시험한다.
+    const TEXT = '개별공시지가 땅 1㎡당 1억 8,840만원 · 2026년 공시 (이 건물이 선 땅 · 공시가격 — 시세가 아닙니다)';
+    const BADGE = 'A등급 · 공식 공시';
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page, [], [], [floorRow({ floor_no: 2 }), floorRow()]);
+    // 나중에 등록한 것이 먼저 잡힌다 — 기본(함수 없음)을 값으로 덮는다.
+    const asked: unknown[] = [];
+    await page.route(LAND_PRICE_PATTERN, async (route) => {
+      if (route.request().method() === 'OPTIONS') {
+        await route.fulfill({ status: 204, headers: CORS_HEADERS });
+        return;
+      }
+      asked.push(route.request().postDataJSON());
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: CORS_HEADERS,
+        body: JSON.stringify([{ land_price: 188_400_000, land_price_year: 2026 }]),
+      });
+    });
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+
+    const line = page.locator('section.stack .stack__head .stack__land');
+    await expect(line.locator('.stack__land-text')).toHaveText(TEXT);
+    // 배지는 기준시가 줄과 같은 `grade__badge` 꼴 · 낱말은 '공시'(기준시가는 '고시').
+    await expect(line.locator('.grade__badge')).toHaveText(BADGE);
+    await expect(line).toHaveText(BADGE + TEXT);
+    await expect(line).toBeVisible();
+    // 사양 칸(dl) 바로 뒤에 선다.
+    expect(
+      await line.evaluate((e) => e.previousElementSibling?.classList.contains('stack__facts') ?? false),
+    ).toBe(true);
+    // 인자는 p_pnu(형제 기준시가와 같다 — 목은 인자 이름을 안 보므로 여기서 본다). 개발 서버는
+    // StrictMode 라 effect 가 두 번 돌아 같은 요청이 두 번 나갈 수 있다(배포판은 한 번).
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked.every((a) => JSON.stringify(a) === JSON.stringify({ p_pnu: searchHit().pnu }))).toBe(true);
+    // 좁은 폭에서도 줄 안·페이지 가로 넘침이 없다.
+    expect(await line.evaluate((e) => e.scrollWidth - e.clientWidth)).toBeLessThanOrEqual(0);
+    // 배지가 줄 상자 오른쪽 밖으로 삐져나가지 않는다(inline-block 이라 통째로 다음 줄로 내려가야 한다).
+    expect(
+      await line.evaluate((e) => {
+        const b = e.querySelector('.grade__badge')!.getBoundingClientRect();
+        return b.right - e.getBoundingClientRect().right;
+      }),
+    ).toBeLessThanOrEqual(0);
+    expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+
+    // 종이 — 내용이라 그대로 나온다(조종 장치처럼 빠지지 않는다).
+    await page.emulateMedia({ media: 'print' });
+    await expect(line).toBeVisible();
+    await expect(line).toHaveText(BADGE + TEXT);
+    await page.emulateMedia({ media: null });
   });
 });
