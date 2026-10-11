@@ -58,6 +58,14 @@ import {
   oneInEvery,
 } from '../lib/format';
 import { FOUNDER_CHIP_ALL, type FounderChip } from '../lib/founderChips';
+import {
+  UNIT_PRINT_CONCURRENCY,
+  runLimited,
+  unitPrintCapText,
+  unitPrintMoreText,
+  unitPrintPlan,
+  type UnitPrintMode,
+} from '../lib/unitPrint';
 import { KNOWN_BAND_STATUS } from '../lib/priceBand';
 import { lacksCoord } from '../lib/rentStats';
 import {
@@ -73,6 +81,7 @@ import { IndustryMixSection } from './IndustryMixSection';
 import { RentStatSection } from './RentStatSection';
 import { OpenCloseSection } from './OpenCloseSection';
 import { EmptySection } from './EmptySection';
+import { FloorGapSection } from './FloorGapSection';
 import { SectionCard } from './SectionCard';
 
 /**
@@ -194,9 +203,22 @@ type Props = {
    * 짝짓기는 그 카드들이 `lib/founderChips.ts` 의 표로 한다. 안 줌·'전체' = 지금 화면 그대로.
    */
   founderChip?: FounderChip;
+  /**
+   * 인쇄 단추 옆 「호실 구성표」 고르기(결정 0036 결정 8 · 물결 1-C2). 고르면 그 층들의 호 목록을 층 줄
+   * 아래에 **화면에서도** 펼친다 — 그래서 Ctrl+P 로 뽑아도 같은 종이다. 안 줌·'none' = 지금 화면 그대로.
+   */
+  unitPrintMode?: UnitPrintMode;
 };
 
-export function FloorStack({ building, viewerRole = null, founderChip = FOUNDER_CHIP_ALL }: Props) {
+/** 고른 층 하나의 첫 쪽 호 목록(받은 줄 + 그 층 전체 호실 수). */
+type PrintedUnits = { units: FloorUnit[]; total: number };
+
+export function FloorStack({
+  building,
+  viewerRole = null,
+  founderChip = FOUNDER_CHIP_ALL,
+  unitPrintMode = 'none',
+}: Props) {
   const plans = sectionPlansFor(viewerRole);
   const [floors, setFloors] = useState<FloorRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -254,6 +276,15 @@ export function FloorStack({ building, viewerRole = null, founderChip = FOUNDER_
    */
   const sidePrefetchRef = useRef<SidePrefetch | null>(null);
   const [sidePrefetch, setSidePrefetch] = useState<SidePrefetch | null>(null);
+  /** 호실 구성표 고르기로 받은 층별 첫 쪽 호 목록(물결 1-C2). 실패한 층은 아예 안 담는다(그 층만 빠진다). */
+  const [printedUnits, setPrintedUnits] = useState<ReadonlyMap<number, PrintedUnits>>(new Map());
+  const unitPlan = unitPrintPlan(
+    unitSummary,
+    floors.map((f) => f.floor_no),
+    unitPrintMode,
+  );
+  // effect 의존을 글자 하나로 — 배열은 그릴 때마다 새 물건이라 그대로 넣으면 끝없이 다시 부른다.
+  const unitPlanKey = unitPlan.floors.join(',');
 
   useEffect(() => {
     let cancelled = false;
@@ -364,6 +395,49 @@ export function FloorStack({ building, viewerRole = null, founderChip = FOUNDER_
       cancelled = true;
     };
   }, [building.bld_id]);
+
+  // ── 호실 구성표 고르기 (결정 0036 결정 8 · 물결 1-C2) ─────────────────────────
+  //
+  // ⛔ 부르는 층은 `unitPrintPlan` 이 정한다 — 호 목록이 있는 층만(주거·오피스텔·미상 층은 요청 0) ·
+  //    층마다 첫 쪽(offset 0) · 동시에 4개까지 · '전부'는 아래층부터 30개 층까지.
+  // ⛔ 실패한 층은 조용히 빠진다(다른 층은 선다) — 사람이 층을 눌러 연 칸이 아니라 고르기로 한꺼번에
+  //    부른 것이라, 층마다 '못 불러왔습니다'를 늘어놓지 않는다.
+  useEffect(() => {
+    setPrintedUnits(new Map());
+    if (unitPlanKey === '') return;
+    let cancelled = false;
+    const targets = unitPlanKey.split(',').map(Number);
+    void runLimited(
+      targets,
+      UNIT_PRINT_CONCURRENCY,
+      async (floorNo) => {
+        const { data, error: err } = await supabase.rpc(FLOOR_UNITS_FN, {
+          p_bld_id: building.bld_id,
+          p_floor_no: floorNo,
+          p_limit: FLOOR_UNITS_PAGE,
+          p_offset: 0,
+        });
+        if (cancelled) return;
+        const rows = err ? null : parseFloorUnits(data);
+        if (rows === null) {
+          console.warn('호실 구성표 — 이 층 목록을 못 받아 빼고 표시합니다', floorNo, err);
+          return;
+        }
+        setPrintedUnits((prev) =>
+          new Map(prev).set(floorNo, { units: rows, total: rows[0]?.total_cnt ?? 0 }),
+        );
+      },
+      () => cancelled,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [building.bld_id, unitPlanKey]);
+
+  // 고르면 층 목록 카드를 펼친다 — 접혀 있으면 고른 목록이 화면에 안 보인다(종이에는 나온다).
+  useEffect(() => {
+    if (unitPrintMode !== 'none') setFloorsOpenSignal((n) => n + 1);
+  }, [unitPrintMode]);
 
   // ── 실거래 사실 표시 (Stage A · 결정 0012) ────────────────────────────────
   //
@@ -537,6 +611,11 @@ export function FloorStack({ building, viewerRole = null, founderChip = FOUNDER_
         */}
         <BizSummary floors={floors} />
 
+        {/* '전부'인데 층이 상한보다 많으면 그렇다고 적는다(종이에도 · 👤 글자). */}
+        {unitPlan.capped && (
+          <p className="floor__unitprint-cap">{unitPrintCapText(unitPlan.listedCount)}</p>
+        )}
+
         <ol className="floors">
           {floors.map((f) => {
             // 면적이 아예 없는 층(그 층이 전부 연면적 제외분 — 전체의 약 3%)에는 막대를
@@ -548,6 +627,8 @@ export function FloorStack({ building, viewerRole = null, founderChip = FOUNDER_
             const unitRow = unitByFloor.get(f.floor_no);
             // 호 목록이 든 채 펼쳐진 층 — 종이에서는 이 층만 줄 단위로 끊는다(50~200줄이면 한 장보다 크다).
             const unitsOpen = isOpen && unitRow !== undefined && hasUnitList(unitRow.floor_kind);
+            // 고르기로 받은 호 목록 — 이미 펼친 층(상세의 호 목록)과 겹치면 한 벌만(상세 쪽).
+            const printed = unitsOpen ? undefined : printedUnits.get(f.floor_no);
             return (
               // 옥탑도 지하와 같은 "근거 없는 층"이라 색으로 갈라 둔다(결정 0001 가드 4).
               // id 는 참고 시세 줄에서 이 층으로 스크롤할 때 쓴다.
@@ -556,7 +637,7 @@ export function FloorStack({ building, viewerRole = null, founderChip = FOUNDER_
                 id={`floor-${f.floor_no}`}
                 className={`floor${
                   f.floor_no < 0 ? ' floor--under' : f.floor_no === 99 ? ' floor--roof' : ''
-                }${unitsOpen ? ' floor--units-open' : ''}`}
+                }${unitsOpen ? ' floor--units-open' : ''}${printed ? ' floor--unitprint' : ''}`}
               >
                 {/*
                   층 줄 + 호실 요약 둘째 줄을 한 덩어리로 묶는다 — 종이에서 둘이 갈리지 않게.
@@ -592,6 +673,8 @@ export function FloorStack({ building, viewerRole = null, founderChip = FOUNDER_
                   </button>
                   {unitRow && <p className="floor__units">{unitSummaryText(unitRow)}</p>}
                 </div>
+
+                {printed && <PrintedUnitList printed={printed} />}
 
                 {isOpen && (
                   <FloorDetail floor={f} bldId={building.bld_id} unitRow={unitRow} />
@@ -668,6 +751,21 @@ export function FloorStack({ building, viewerRole = null, founderChip = FOUNDER_
           });
         }}
         plan={plans.band}
+      />
+    ),
+    /*
+      층 차이 세 잣대(결정 0036 결정 15 · 물결 1-C2). 이미 받은 기준시가·구 단가를 그대로 넘기고,
+      부동산원 조사값은 임대 카드와 같은 미리 보낸 답을 카드가 스스로 받는다. ⛔ 비율 계산 0.
+    */
+    floorgap: (
+      <FloorGapSection
+        floors={floors}
+        basePrices={basePrices}
+        txStats={txStats}
+        pnu={building.pnu}
+        prefetch={sidePrefetch}
+        noCoord={lacksCoord(building)}
+        plan={plans.floorgap}
       />
     ),
     /*
@@ -1096,6 +1194,28 @@ function SigunguTxBands({ stats }: { stats: SigunguTxStat[] }) {
         {from ? ` ${formatYearMonth(from)} 이후 계약분` : ''} 집계 · 지분 거래 제외 · 전체 표본{' '}
         {total.toLocaleString('ko-KR')}건.
       </p>
+    </div>
+  );
+}
+
+/**
+ * 호실 구성표 고르기로 받은 한 층의 호 목록(물결 1-C2) — 층 줄 아래, 화면·종이 같은 것.
+ * 첫 쪽보다 많으면 남은 수를 한 줄로(👤 글자 · 종이에도). 받은 것이 0줄이면 아무것도 안 그린다.
+ */
+function PrintedUnitList({ printed }: { printed: PrintedUnits }) {
+  if (printed.units.length === 0) return null;
+  const rest = printed.total - printed.units.length;
+  return (
+    <div className="floor__unitprint">
+      <ul className="floor__unitprint-list">
+        {printed.units.map((u, i) => (
+          <li key={i}>
+            <span className="detail__name">{unitDisplayName(u.ho)}</span>{' '}
+            <span className="detail__val">{formatUnitArea(u.excl_area_m2)}</span>
+          </li>
+        ))}
+      </ul>
+      {rest > 0 && <p className="floor__unitprint-more">{unitPrintMoreText(rest)}</p>}
     </div>
   );
 }

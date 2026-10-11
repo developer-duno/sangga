@@ -1006,7 +1006,8 @@ describe('App — 중개사 최근 뽑은 건물 (결정 0036 결정 18 ⑥⑩)'
     window.localStorage.setItem(KEY, '중개사');
     await openLinked();
     fireEvent.click(toggle());
-    fireEvent.click(screen.getByRole('button', { name: '지우기' }));
+    // 중개사면 사무소 칸(물결 1-C2)에도 「지우기」가 있다 — 최근 줄 안의 것을 누른다.
+    fireEvent.click(recentEl()!.querySelector('.recent__clear') as HTMLButtonElement);
     expect(recentEl()).toBeNull();
     expect(window.localStorage.getItem(RKEY)).toBeNull();
   });
@@ -1051,5 +1052,168 @@ describe('App — 중개사 최근 뽑은 건물 (결정 0036 결정 18 ⑥⑩)'
       getItem.mockRestore();
       print.mockRestore();
     }
+  });
+});
+
+/**
+ * 인쇄 한 장 보강(👤 결정 0036 결정 3·8 · 물결 1-C2) — 이어 붙였을 때만 보이는 것:
+ * 사무소 칸은 중개사만 · 이 기기에만 저장(주소·의견함 0) · 종이 머리 상자는 중개사 + 채운 칸만 ·
+ * 호실 구성표 고르기는 누구에게나 · 건물이 바뀌면 기본으로 · 고른 층만 목록을 부른다.
+ * 저장 규칙은 `lib/brokerOfficeStore.test`, 층 고르기는 `lib/unitPrint.test`, 종이 모양은 E2E.
+ */
+describe('App — 인쇄 한 장 보강 (결정 0036 결정 3·8 · 물결 1-C2)', () => {
+  const KEY = 'sangga.viewerRole';
+  const OKEY = 'sangga.brokerOffice';
+  afterEach(() => window.localStorage.clear());
+  beforeEach(() => openWith(''));
+
+  const roleBtn = (name: string) =>
+    [...document.querySelectorAll('.role button')].find((b) => b.textContent === name) as HTMLButtonElement;
+  const officeBox = () => document.querySelector('.printmeta__office');
+
+  async function openLinked() {
+    openWith(`?sgg=11680&bld=${LINK_BLD}`);
+    render(<App />);
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+  }
+
+  it('★ 사무소 칸은 중개사만 — 적으면 이 기기에 저장되고 종이 머리 상자에 채운 칸만 · 다른 역할이면 상자 없음(저장은 그대로)', async () => {
+    window.localStorage.setItem(KEY, '중개사');
+    await openLinked();
+    expect(document.querySelector('.office')).not.toBeNull();
+    expect(officeBox()).toBeNull(); // 빈 칸뿐이면 상자 없음
+    expect(document.querySelector('.office')?.textContent).toContain('이 기기에만 저장 · 서버로 보내지 않음');
+    expect(document.querySelector('.office')?.textContent).toContain(
+      '여럿이 함께 쓰는 컴퓨터라면 다 쓴 뒤 지우기를 눌러 주세요',
+    );
+
+    fireEvent.change(screen.getByLabelText('사무소 이름'), { target: { value: '역삼공인중개사' } });
+    fireEvent.change(screen.getByLabelText('전화'), { target: { value: '02-0000-0000' } });
+    expect(JSON.parse(window.localStorage.getItem(OKEY)!)).toMatchObject({
+      name: '역삼공인중개사',
+      phone: '02-0000-0000',
+    });
+    expect([...officeBox()!.querySelectorAll('p')].map((p) => p.textContent)).toEqual([
+      '역삼공인중개사',
+      '전화 02-0000-0000',
+    ]);
+    // ⛔ 주소에 안 실린다.
+    expect(currentSearch()).not.toContain('역삼공인중개사');
+
+    // 투자자로 바꾸면 칸도 상자도 없다 — 저장은 지우지 않는다(양성 대조: 다시 중개사면 되살아난다).
+    fireEvent.click(roleBtn('투자자'));
+    expect(document.querySelector('.office')).toBeNull();
+    expect(officeBox()).toBeNull();
+    expect(window.localStorage.getItem(OKEY)).not.toBeNull();
+    fireEvent.click(roleBtn('중개사'));
+    expect(officeBox()?.textContent).toContain('역삼공인중개사');
+  });
+
+  it('★ 저장해 둔 칸으로 첫 그림부터 · 「지우기」는 저장소에서도 지우고 상자가 사라진다', async () => {
+    window.localStorage.setItem(KEY, '중개사');
+    window.localStorage.setItem(
+      OKEY,
+      JSON.stringify({ name: '역삼', rep: '홍길동', regNo: '', phone: '', memo: '' }),
+    );
+    await openLinked();
+    expect(officeBox()?.textContent).toBe('역삼대표 홍길동');
+    fireEvent.click(document.querySelector('.office__clear') as HTMLButtonElement);
+    expect(window.localStorage.getItem(OKEY)).toBeNull();
+    expect(officeBox()).toBeNull();
+    expect((screen.getByLabelText('사무소 이름') as HTMLInputElement).value).toBe('');
+  });
+
+  it('★ 의견함 문맥에 사무소 칸이 실리지 않는다', async () => {
+    window.localStorage.setItem(KEY, '중개사');
+    window.localStorage.setItem(
+      OKEY,
+      JSON.stringify({ name: '비밀사무소', rep: '김대표', regNo: '', phone: '010-0000-0000', memo: '' }),
+    );
+    await openLinked();
+    expect(officeBox()).not.toBeNull(); // 양성 대조: 칸은 채워져 있다
+    fireEvent.click(document.querySelector('.fb__open') as HTMLButtonElement);
+    fireEvent.click(document.querySelector('.fb__kinds input') as HTMLInputElement);
+    fireEvent.change(document.querySelector('.fb__input') as HTMLTextAreaElement, {
+      target: { value: '시험 의견' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }));
+    await waitFor(() => expect(rpc.mock.calls.some(([fn]) => fn === 'submit_feedback')).toBe(true));
+    const call = rpc.mock.calls.find(([fn]) => fn === 'submit_feedback')!;
+    const ctx = JSON.stringify((call[1] as { p_context: unknown }).p_context);
+    expect(ctx).toContain(LINK_BLD); // 양성 대조: 보던 건물은 실린다
+    for (const v of ['비밀사무소', '김대표', '010-0000-0000']) expect(ctx).not.toContain(v);
+  });
+
+  it('★ 저장이 막힌 창 — 입력·종이 상자는 그대로 되고 오류가 없다', async () => {
+    window.localStorage.setItem(KEY, '중개사');
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('blocked', 'SecurityError');
+    });
+    try {
+      await openLinked();
+      fireEvent.change(screen.getByLabelText('사무소 이름'), { target: { value: '역삼' } });
+      expect(setItem).toHaveBeenCalled();
+      expect(officeBox()?.textContent).toBe('역삼');
+    } finally {
+      setItem.mockRestore();
+    }
+  });
+
+  it('★ 호실 구성표 고르기는 누구에게나 · 기본 = 넣지 않음 · 고르면 그 층만 부르고, 건물이 바뀌면 기본으로', async () => {
+    const base = rpc.getMockImplementation()!;
+    rpc.mockImplementation((fn: string, args?: unknown) => {
+      if (fn === 'list_unit_floor_summary') {
+        return Promise.resolve({
+          data: [
+            {
+              floor_no: 1,
+              unit_cnt: 2,
+              median_area_m2: 10,
+              min_area_m2: 9,
+              max_area_m2: 11,
+              floor_kind: 'commercial',
+            },
+          ],
+          error: null,
+        });
+      }
+      if (fn === 'list_floor_units') {
+        return Promise.resolve({
+          data: [
+            { ho: '101호', excl_area_m2: 10, total_cnt: 2 },
+            { ho: '102호', excl_area_m2: 11, total_cnt: 2 },
+          ],
+          error: null,
+        });
+      }
+      return base(fn, args);
+    });
+    await openLinked(); // 역할 없음
+    const radio = (label: string) => screen.getByLabelText(label) as HTMLInputElement;
+    expect(radio('넣지 않음').checked).toBe(true);
+    expect(rpc.mock.calls.some(([fn]) => fn === 'list_floor_units')).toBe(false);
+
+    fireEvent.click(radio('지하~3층'));
+    await waitFor(() => expect(document.querySelectorAll('.floor__unitprint-list li')).toHaveLength(2));
+    const asked = rpc.mock.calls.filter(([fn]) => fn === 'list_floor_units').map(([, a]) => a);
+    expect(asked[0]).toEqual({ p_bld_id: LINK_BLD, p_floor_no: 1, p_limit: 50, p_offset: 0 });
+    // ⛔ 주소·저장소에 안 실린다.
+    expect(currentSearch()).toBe(`?sgg=11680&bld=${LINK_BLD}`);
+    expect(Object.keys(window.localStorage)).toEqual([]);
+
+    // 다른 건물로 가면 기본으로(목록도 없다).
+    const other = hit({ bld_id: '1168010100100020000_9', pnu: '1168010100100020000', bld_nm: '옆빌딩' });
+    const searchImpl = rpc.getMockImplementation()!;
+    rpc.mockImplementation((fn: string, args?: unknown) =>
+      fn === 'search_buildings' ? Promise.resolve({ data: [other], error: null }) : searchImpl(fn, args),
+    );
+    const input = screen.getByLabelText('건물명 또는 주소');
+    fireEvent.change(input, { target: { value: '옆빌딩' } });
+    fireEvent.submit(input.closest('form')!);
+    fireEvent.click(await screen.findByRole('button', { name: /옆빌딩/ }));
+    await waitFor(() => expect(currentSearch()).toContain('bld=1168010100100020000_9'));
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+    expect(radio('넣지 않음').checked).toBe(true);
+    expect(document.querySelectorAll('.floor__unitprint-list li')).toHaveLength(0);
   });
 });

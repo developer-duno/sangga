@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { printStamp } from '../lib/printStamp';
+import { BROKER_OFFICE_FIELDS, hasBrokerOffice, type BrokerOffice } from '../lib/brokerOfficeStore';
 
 /**
  * **종이에만 나오는 머리글.** 화면에서는 아예 안 보인다(`@media print` 에서만 편다).
@@ -24,9 +25,14 @@ type Props = {
   address: string | null;
   /** 이 화면의 온전한 주소 — `ShareButton` 이 복사해 주는 것과 같은 값이다. */
   url: string;
+  /**
+   * 중개사가 적어 둔 내 사무소 정보(결정 0036 결정 3 · 물결 1-C2) — 머리 오른쪽 상자.
+   * ⛔ App 이 역할 = 중개사일 때만 준다 · 한 칸이라도 채워졌을 때만 상자가 서고, 빈 칸은 줄째 뺀다.
+   */
+  office?: BrokerOffice | null;
 };
 
-export function PrintHeader({ name, address, url }: Props) {
+export function PrintHeader({ name, address, url, office = null }: Props) {
   const [stamp, setStamp] = useState(() => printStamp(new Date()));
 
   /*
@@ -50,13 +56,30 @@ export function PrintHeader({ name, address, url }: Props) {
 
   return (
     <div className="printmeta">
-      <p className="printmeta__title">{name || '(이름 없는 건물)'}</p>
-      <p className="printmeta__addr">{address || '주소 없음'}</p>
-      <p className="printmeta__foot">
-        <span className="printmeta__app">상가 층별 스택뷰</span>
-        <span className="printmeta__when">{stamp} 뽑음</span>
-        <span className="printmeta__url">{url}</span>
-      </p>
+      <div className="printmeta__main">
+        <p className="printmeta__title">{name || '(이름 없는 건물)'}</p>
+        <p className="printmeta__addr">{address || '주소 없음'}</p>
+        <p className="printmeta__foot">
+          <span className="printmeta__app">상가 층별 스택뷰</span>
+          <span className="printmeta__when">{stamp} 뽑음</span>
+          <span className="printmeta__url">{url}</span>
+        </p>
+      </div>
+      {office && hasBrokerOffice(office) && <OfficeBox office={office} />}
+    </div>
+  );
+}
+
+/** 머리 오른쪽 사무소 상자 — 채운 칸만, 정해진 차례로. 이름은 굵게 · 나머지는 '대표 홍길동' 꼴 · 메모는 줄바꿈 그대로. */
+function OfficeBox({ office }: { office: BrokerOffice }) {
+  return (
+    <div className="printmeta__office">
+      {BROKER_OFFICE_FIELDS.filter(([k]) => office[k].trim() !== '').map(([k, label]) => {
+        const v = office[k].trim();
+        if (k === 'name') return <p key={k} className="printmeta__office-name"><strong>{v}</strong></p>;
+        if (k === 'memo') return <p key={k} className="printmeta__office-memo">{v}</p>;
+        return <p key={k} className={`printmeta__office-${k}`}>{`${label} ${v}`}</p>;
+      })}
     </div>
   );
 }
