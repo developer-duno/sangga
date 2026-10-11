@@ -5584,6 +5584,71 @@ grant execute on function api.list_district_openclose(text) to anon, authenticat
 -- ⛔ public.list_district_openclose 는 끝까지 닫아 둔다 — 통과 함수가 security definer 다.
 
 -- =====================================================================
+-- 함수: get_parcel_land_price — 이 땅의 개별공시지가 (2026-10-11b · 결정 0036 결정 7)
+-- =====================================================================
+-- 마이그레이션 supabase/migrations/2026-10-11b_parcel_land_price.sql 머리말 참조.
+-- 층별 화면의 건물 기본 사양 자리에 '개별공시지가 땅 1㎡당 N만원 · YYYY년 공시' 한 줄을 그린다(결정 0036 결정 7).
+-- 칸은 브이월드 토지특성 적재 때 이미 채워져 있었는데(parcel.land_price · land_price_year) 화면이 부르는
+-- 함수 중 이 칸을 내주는 곳이 없었다. 땅값은 **필지** 값이라 인자는 pnu 다(같은 땅 다른 동이면 같은 값).
+-- 값이 없으면 **줄이 아예 없다**(0행) — 0 을 만들어 내지 않는다. 화면도 0행·실패를 '자료 없음'으로 적지 않고
+-- 그 줄을 그리지 않는다(실패를 없음으로 말하면 거짓이다).
+-- ⓘ land_price 0 은 값이다(적재기가 원본 '0' 을 0 으로 담는다 — 결측과 안 섞는다). 걸러 내지 않는다.
+-- ⚠️ 파라미터를 p_ 로 시작하는 이유: 반환 칸 이름(land_price)과 표 칸이 겹쳐도 인자가 섞이지 않게.
+create or replace function get_parcel_land_price(p_pnu text)
+returns table (
+  land_price      integer,
+  land_price_year smallint
+)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  -- ⛔ **파라미터를 그대로 쓰지 말 것.** 서명은 text 인데 pnu 칸은 char(19) 다.
+  --    `char칸 = text파라미터` 는 칸 쪽이 text 로 캐스트돼 **기본키 색인이 무력해진다**
+  --    (2026-08-16b 라이브 실측: 459.8ms ↔ 0.796ms). 안에서 char(19) 로 받아 쓴다.
+  v_pnu char(19) := p_pnu;
+begin
+  -- ⓘ 반환 칸 이름이 plpgsql 변수가 되므로 표 칸은 늘 별칭(p.)을 붙여 읽는다(이름 충돌 오류 방지).
+  return query
+    select p.land_price, p.land_price_year
+      from parcel p
+     where p.pnu = v_pnu
+       and p.land_price is not null
+       and p.land_price_year is not null;
+end;
+$$;
+
+comment on function get_parcel_land_price(text) is
+  '이 필지의 개별공시지가(원/㎡)와 그 공시 기준연도 — 한 줄 또는 0줄(값이나 연도가 없으면 줄이 없다 · '
+  '0 을 만들지 않는다). 브이월드 토지특성(parcel.land_price · land_price_year)을 그대로 나른다 — '
+  '땅값만이고 공시가격이지 시세가 아니다. 결정 0036 결정 7 · 2026-10-11b. '
+  'security definer (parcel 이 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. 나가는 것은 숫자 두 개뿐이다).';
+
+-- ⚠️ create or replace 는 권한을 유지하지만, 대시보드가 같은 함수를 다시 만들면
+--    Supabase 기본 권한이 anon 을 자동으로 붙인다. 만든 자리에서 다시 닫는다.
+revoke all on function get_parcel_land_price(text) from public, anon, authenticated;
+
+-- 화면이 실제로 부르는 것. public 은 REST 노출에서 빠져 있어(2026-08-24 옛 문 닫기)
+-- api 쪽에 통과 함수가 없으면 화면에서 못 부른다.
+create or replace function api.get_parcel_land_price(p_pnu text)
+returns table (
+  land_price      integer,
+  land_price_year smallint
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$ select * from public.get_parcel_land_price(p_pnu) $$;
+
+revoke all on function api.get_parcel_land_price(text) from public, anon, authenticated;
+grant execute on function api.get_parcel_land_price(text) to anon, authenticated;
+
+-- ⛔ public.get_parcel_land_price 는 끝까지 닫아 둔다 — 통과 함수가 security definer 다.
+
+-- =====================================================================
 -- 함수: get_data_freshness — 이 자료는 언제 것인가 (2026-09-05d)
 -- =====================================================================
 -- 마이그레이션 2026-09-05d. 화면 아래 푸터의 표 한 장이 이 함수 하나만 부른다.
