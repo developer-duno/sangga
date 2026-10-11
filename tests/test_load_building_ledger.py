@@ -1769,8 +1769,27 @@ def test_main_loads_and_reports(tmp_path, monkeypatch, capsys):
 
 def test_parse_args_building_only_flag():
     assert target.parse_args([])["building_only"] is False
-    assert target.parse_args(["--building-only"])["building_only"] is True
-    assert target.parse_args(["--building-only", "--dry-run"])["dry_run"] is True
+    assert target.parse_args(["--building-only", "--raw-dir", "X"])["building_only"] is True
+    assert target.parse_args(["--building-only", "--raw-dir", "X", "--dry-run"])["dry_run"] is True
+
+
+def test_building_only_without_raw_dir_is_an_error(monkeypatch, capsys):
+    """기본 원본(강남 API 시범분)으로 돌면 일괄 파일 값이 옛 원본으로 덮인다 — --raw-dir 없으면 멈춘다."""
+    with pytest.raises(ValueError, match="--raw-dir"):
+        target.parse_args(["--building-only"])
+    with pytest.raises(ValueError, match="--raw-dir"):
+        target.parse_args(["--building-only", "--dry-run"])
+    # 평소 적재는 예전처럼 기본 원본을 쓴다(이 규칙은 --building-only 에만).
+    assert target.parse_args([])["raw_dir"].endswith(os.path.join("bldrgst", "202608"))
+
+    def boom(*a, **kw):
+        raise AssertionError("인자 오류면 아무것도 읽거나 쓰면 안 된다")
+
+    monkeypatch.setattr(target, "transform", boom)
+    monkeypatch.setattr(target, "upsert_batch", boom)
+    monkeypatch.setattr(sys, "argv", ["prog", "--building-only"])
+    assert target.main() == 2
+    assert "--raw-dir" in capsys.readouterr().out
 
 
 def _fake_http(monkeypatch, sink):
@@ -1831,7 +1850,9 @@ def test_main_building_only_writes_only_building(tmp_path, monkeypatch, capsys):
     assert [t for m, t in sink if m == "DELETE"] == []
     assert not any(t in ("building_floor", "unit") for _, t in sink), sink
     out = capsys.readouterr().out
-    assert "--building-only" in out and "building 1행" in out
+    # 끝 줄 — 계산한 행 수와 보낸 행 수를 함께 적는다. ⚠️ upsert 가 실패하면 그 전에 예외로 멈추므로
+    #    성공하면 둘은 늘 같다(return=minimal 이라 서버가 실제로 고친 행 수는 모른다 — 2026-10-12 재검사관)
+    assert "적재 완료(--building-only): building 계산 1행 · 올림 1행" in out
 
 
 def test_main_without_building_only_does_write_floor_and_unit(tmp_path, monkeypatch):

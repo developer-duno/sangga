@@ -57,6 +57,7 @@ raw 중복 방어:
   --building-only : 물결 2-1 칸 채우기용 — 같은 raw 로 다시 돌릴 때만. building 표만 upsert 하고
                     층(building_floor)·호실(unit) upsert 와 옛 행 정리를 전부 건너뛴다.
                     --dry-run 과 함께 쓰면 쓰기 0 으로 건물 수만 찍는다.
+                    --raw-dir 을 꼭 준다(없으면 오류 — 기본 원본은 강남 API 시범분이라 값이 덮인다).
                     ⛔ 마이그레이션 2026-10-11c 를 먼저 적용한다(새 칸이 없으면 PGRST204 로 멈춘다).
 """
 
@@ -1441,6 +1442,11 @@ def parse_args(argv):
             if i + 1 >= len(argv):
                 raise ValueError("{} 뒤에 값이 필요합니다.".format(flag))
             opts[key] = argv[i + 1]
+    # --building-only 는 기본 원본(강남 API 시범분 data/raw/bldrgst/202608)으로 돌면 일괄 파일로 넣은
+    # 건물 값이 그 옛 원본으로 덮인다 — 원본 폴더를 꼭 손으로 고르게 한다(2026-10-11 적대 검사관).
+    if opts["building_only"] and opts["raw_dir"] is None:
+        raise ValueError("--building-only 는 --raw-dir 을 꼭 줘야 합니다 "
+                         "(예: --raw-dir data/raw/bldrgst_bulk_converted/11680).")
     if opts["raw_dir"] is None:
         opts["raw_dir"] = os.path.join(
             PROJECT_ROOT, "data", "raw", "bldrgst", opts["period_key"])
@@ -1651,8 +1657,8 @@ def main():
             return 1
         print("")
         print("=" * 78)
-        print("적재 완료(--building-only): building {:,}행 — 층·호실은 건드리지 않았습니다".format(
-            bld_sent))
+        print("적재 완료(--building-only): building 계산 {:,}행 · 올림 {:,}행 — 층·호실은 건드리지 않았습니다"
+              .format(len(building_records), bld_sent))
         print("=" * 78)
         return 0
 

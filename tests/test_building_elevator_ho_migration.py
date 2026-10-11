@@ -361,14 +361,32 @@ class TestColumns:
         assert a == comment_of(schema, COL_COMMENT.format(name))
         assert "2026-10-11c" in a
 
-    @pytest.mark.parametrize("name", ["elevator_ride", "elevator_emgen", "ho_cnt"])
+    @pytest.mark.parametrize("name", ["elevator_ride", "elevator_emgen"])
     def test_zero_is_unrecorded_warning(self, mig, name):
         assert "0 = 대장 미기재가 섞여 있다" in comment_of(mig, COL_COMMENT.format(name))
         assert "24%" in comment_of(mig, COL_COMMENT.format(name))
 
+    def test_ho_zero_is_mostly_normal(self, mig, schema):
+        """호수 0 은 일반건축물에서 정상이다(호 구분 없음) — 승강기 실측(11층+ 24%)을 근거로 끌어오지 않는다.
+        파일 어디에도 '호수 0 = 미기재' 꼴의 옛 문장이 남지 않는다."""
+        c = comment_of(mig, COL_COMMENT.format("ho_cnt"))
+        assert "일반건축물은 호 구분이 없어 0 이 정상" in c and "97.6%" in c and "72%" in c
+        assert "미기재" not in c and "승강기" not in c
+        for text in (mig, schema):
+            assert "승강기·호수의 0" not in text and "승강기·호수 0" not in text
+            assert "-- 호수 (0 = 미기재 섞임)" not in text
+
     def test_seismic_comment(self, mig):
         c = comment_of(mig, COL_COMMENT.format("seismic_design"))
         assert "1988년 전 건물은 거의 다 false" in c and "true 일 때만" in c
+        assert "내진 의무 대상이 아닌 작은 건물도 false" in c and "강남 19%·대전 중구 28%" in c
+
+    def test_header_has_the_reload_done_checks(self, mig):
+        """재적재 완료 판정(구마다 NULL · 앞뒤 max(updated_at)) + 디스크 멈춤선이 머리말에 있다."""
+        head = mig[:mig.index("set lock_timeout")]
+        assert "count(*) filter (where elevator_ride is null) as nulls" in head and "group by 1 order by 1" in head
+        assert "select max(updated_at), count(*) from building;" in head
+        assert "84% 이상이면 멈춘다" in head
 
     @pytest.mark.parametrize("name", HIDDEN)
     def test_low_fill_columns_say_not_on_screen(self, mig, name):
