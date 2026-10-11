@@ -4,9 +4,12 @@ import type {
   IndustryDistrict,
   IndustryFloorScope,
   IndustryFloors,
+  IndustryMedian,
+  IndustryMedianPop,
   IndustryMix,
   IndustryScope,
 } from '../types';
+import { SIDOS } from './regions';
 
 /**
  * 업종 분포 화면의 순수 계산만 모은다(결정 0014).
@@ -233,4 +236,131 @@ export function floorLine(label: string, scope: IndustryFloorScope): string | nu
   const parts = FLOOR_BAND_ORDER.map((k) => `${FLOOR_BAND_LABELS[k]} ${n(scope.bands[k])}곳`);
   const naPct = Math.round((100 * scope.bands.na) / scope.total);
   return `층별 ${label}: ${parts.join(' · ')} (${naPct}%)`;
+}
+
+// ── 업종 비중 비교 (물결 2-3 · 결정 0036 결정 18 ㉓~㉖) ─────────────────────────
+//
+// ⛔ 숫자만 나란히 — 많다·적다·높다·낮다·%p 차이·배수를 쓰지 않는다(👤 ㉕ · 판단처럼 읽히면 안 된다).
+// ⛔ 30(점포 기준)은 서버 `min_total` 값을 쓴다 — 여기 30 을 박지 않는다.
+// ⛔ 지역 이름은 서버가 안 준다 — `sido_cd` 로 `SIDOS` 에서 찾고, 없으면 지역 글자를 뺀다.
+
+/** 비교 글 옆 배지 — 사실(A)이 아니라 견줄 숫자(C)다(상세계획 §7.4 C·D 시각 구분). */
+export const MEDIAN_BADGE = 'C등급 · 비교값';
+
+/** 시·도 코드 두 자리 → 짧은 이름('서울'). 표에 없으면 null(그때는 지역 글자를 뺀다). */
+export function sidoNameOf(code: string): string | null {
+  return SIDOS.find((s) => s.code === code)?.name ?? null;
+}
+
+/** 모집단의 이름 — 같은 종류면 그 종류 이름(DB 값 그대로), 시·도 전체면 '상권 전체'. */
+function popKind(pop: IndustryMedianPop): string {
+  return pop.scope === 'type' && pop.district_type ? pop.district_type : '상권 전체';
+}
+
+function popWho(sidoName: string | null, pop: IndustryMedianPop): string {
+  return sidoName ? `${sidoName} ${popKind(pop)}` : popKind(pop);
+}
+
+/** 막대 줄 아래 둘째 줄 — `서울 골목상권 가운데 25.0%` · `서울 상권 전체 가운데 25.9%` · `대전 주요상권 가운데 36.2%`. */
+export function medianLine(sidoName: string | null, pop: IndustryMedianPop, medPct: number): string {
+  return `${popWho(sidoName, pop)} 가운데 ${medPct.toFixed(1)}%`;
+}
+
+/** 블록 머리 아래 설명 한 줄(배지 뒤에 붙는 글) — 모집단 곳 수와 30(서버 값)을 밝힌다(절대 규칙 3 표본 병기). */
+export function medianNote(sidoName: string | null, pop: IndustryMedianPop, minTotal: number): string {
+  const n = (v: number) => v.toLocaleString('ko-KR');
+  return (
+    `가운데값은 ${popWho(sidoName, pop)} ${n(pop.n)}곳(점포 ${n(minTotal)}곳 이상 상권)의 업종 비중을 ` +
+    `크기순으로 세웠을 때 한가운데 값입니다 — 비교용 숫자입니다.`
+  );
+}
+
+/**
+ * 이 상권 점포가 기준에 못 미칠 때의 사실 한 줄 — `점포 12곳 — 30곳이 안 돼 비교값은 적지 않습니다.`
+ * 0곳이면 null(블록에 이미 '등록된 점포가 없습니다'가 선다 — 같은 말을 두 번 하지 않는다) · 기준 이상이면 null.
+ */
+export function medianTooSmall(total: number, minTotal: number): string | null {
+  if (total <= 0 || total >= minTotal) return null;
+  const n = (v: number) => v.toLocaleString('ko-KR');
+  return `점포 ${n(total)}곳 — ${n(minTotal)}곳이 안 돼 비교값은 적지 않습니다.`;
+}
+
+function isPosInt(x: unknown): x is number {
+  return typeof x === 'number' && Number.isInteger(x) && x > 0;
+}
+
+function isMedianPop(x: unknown): x is IndustryMedianPop {
+  if (typeof x !== 'object' || x === null) return false;
+  const p = x as Record<string, unknown>;
+  if (typeof p.sido_cd !== 'string' || !isPosInt(p.n)) return false;
+  // 같은 종류(type)면 종류 이름이 있어야 한다 — 없으면 'null 가운데' 같은 글이 선다.
+  if (p.scope === 'type') return typeof p.district_type === 'string' && p.district_type !== '';
+  return p.scope === 'all' && p.district_type === null;
+}
+
+function isMedianCat(x: unknown): boolean {
+  if (typeof x !== 'object' || x === null) return false;
+  const c = x as Record<string, unknown>;
+  return (
+    typeof c.cd === 'string' &&
+    (c.nm === null || c.nm === undefined || typeof c.nm === 'string') &&
+    typeof c.med_pct === 'number' &&
+    Number.isFinite(c.med_pct) &&
+    c.med_pct >= 0 &&
+    c.med_pct <= 100
+  );
+}
+
+/**
+ * 응답 모양 검사. 걸리면 **이 응답 통째로** 버린다 — 비교 글·설명 줄만 없고 카드·막대·총수는 그대로 선다.
+ * ⓘ pop 이 null 이면 cats 는 비어 있어야 한다(서버 약속 — 어긋나면 그 응답을 믿지 않는다).
+ */
+export function isIndustryMedian(x: unknown): x is IndustryMedian {
+  if (typeof x !== 'object' || x === null) return false;
+  const m = x as Record<string, unknown>;
+  if (!(m.snapshot_ym === null || typeof m.snapshot_ym === 'string')) return false;
+  if (!isPosInt(m.min_total) || !isPosInt(m.min_pop)) return false;
+  if (!Array.isArray(m.districts)) return false;
+  return m.districts.every((d) => {
+    if (typeof d !== 'object' || d === null) return false;
+    const r = d as Record<string, unknown>;
+    if (typeof r.district_id !== 'string' || !isCount(r.total)) return false;
+    if (!(r.type === null || typeof r.type === 'string')) return false;
+    if (!Array.isArray(r.cats) || !r.cats.every(isMedianCat)) return false;
+    if (r.pop === null) return r.cats.length === 0;
+    return isMedianPop(r.pop);
+  });
+}
+
+/** 상권 블록 하나에 붙일 글 묶음. */
+export type MedianView = {
+  /** 대분류 코드 → 그 줄 둘째 줄 글. 없는 코드는 그 줄만 비교 글 없음. */
+  lines: Map<string, string>;
+  /** 블록 머리 아래 설명(배지 뒤 글) — 모집단이 있을 때만. */
+  note: string | null;
+  /** 점포가 기준 미만일 때의 사실 한 줄. */
+  tooSmall: string | null;
+};
+
+/**
+ * 응답에서 상권 하나의 글 묶음을 만든다. 그 상권 줄이 응답에 없으면 null(비교 글 0 — 서버가 모집단을 못 골랐다).
+ * ⛔ 분기가 업종 분포와 다르면(`mixYm` ≠ 응답 분기) 통째로 null — 막대와 비교 글이 서로 다른 분기를 말하지 않게.
+ */
+export function medianViewOf(
+  median: IndustryMedian | null,
+  districtId: string,
+  mixYm: string | null,
+): MedianView | null {
+  if (median === null || median.snapshot_ym !== mixYm) return null;
+  const d = median.districts.find((x) => x.district_id === districtId);
+  if (!d) return null;
+  if (d.pop === null) {
+    const tooSmall = medianTooSmall(d.total, median.min_total);
+    return tooSmall === null ? null : { lines: new Map(), note: null, tooSmall };
+  }
+  const pop = d.pop;
+  const sido = sidoNameOf(pop.sido_cd);
+  const lines = new Map<string, string>();
+  for (const c of d.cats) lines.set(c.cd, medianLine(sido, pop, c.med_pct));
+  return { lines, note: medianNote(sido, pop, median.min_total), tooSmall: null };
 }

@@ -4,6 +4,7 @@ import {
   INDUSTRY_MIX_FN,
   INDUSTRY_DETAIL_FN,
   INDUSTRY_FLOORS_FN,
+  INDUSTRY_MEDIAN_FN,
   NEARBY_PERMITS_FN,
 } from '../lib/appConstants';
 import { SECTION_PLAN, type SectionPlan } from '../lib/sectionCards';
@@ -12,6 +13,7 @@ import type {
   IndustryDetail,
   IndustryFloorScope,
   IndustryFloors,
+  IndustryMedian,
   IndustryMix,
   IndustryScope,
 } from '../types';
@@ -24,9 +26,13 @@ import {
   floorScopeByKey,
   isIndustryDetail,
   isIndustryFloors,
+  isIndustryMedian,
   isIndustryMix,
+  MEDIAN_BADGE,
+  medianViewOf,
   sameCatMs,
   toBars,
+  type MedianView,
   type MixBar,
 } from '../lib/industryMix';
 import { toPermitLine, type NearbyPermitLine } from '../lib/nearbyPermits';
@@ -118,6 +124,12 @@ export function IndustryMixSection({
    */
   const [permits, setPermits] = useState<NearbyPermitLine | null>(null);
   /**
+   * 속한 상권의 업종 비중 가운데값(물결 2-3) — 물어본 필지와 함께 둔다(그릴 때 지금 필지와 견준다).
+   * **null 이면 비교 글·설명 줄만 없다** — 아직 안 왔을 때·실패·함수 없음(PGRST202)·모양 이상이 모두 같은 null 이다
+   * (인허가 줄과 같은 결 — "불러오는 중"·"0%" 를 적지 않는다).
+   */
+  const [median, setMedian] = useState<{ pnu: string; data: IndustryMedian } | null>(null);
+  /**
    * 고른 대분류의 층 묶음(물결 2-2) · 창업자 칩이면 그 짝 중분류의 층 묶음.
    * **null 이면 층 줄만 없다** — 아직 안 왔을 때·실패·모양 이상이 모두 같은 null 이다(인허가 줄과 같은 결 —
    * "불러오는 중"·"0곳"을 적지 않는다).
@@ -195,6 +207,34 @@ export function IndustryMixSection({
       // 모양 검사·0동 거르기·산수는 전부 `toPermitLine` 안에 있다 — 못 적을 값이면 null 이
       // 오고, 그때 화면은 그 줄을 아예 안 그린다.
       setPermits(toPermitLine(data));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pnu, prefetch]);
+
+  /*
+    상권 블록의 비교 글(물결 2-3) — **따로 묻는다**(인허가 줄과 같은 이유: 한 effect 에 묶으면 이 함수가 느리거나
+    없을 때 카드 본문까지 같이 늦거나 사라진다). 실패·없음·모양 이상이면 비교 글만 빠지고 카드는 그대로 선다.
+  */
+  useEffect(() => {
+    let cancelled = false;
+    // 앞 건물의 비교 글이 새 건물 밑에 잠깐이라도 붙어 있으면 그 순간이 그대로 틀린 정보다.
+    setMedian(null);
+
+    const req: PromiseLike<RpcResult> =
+      takePrefetched(prefetch, INDUSTRY_MEDIAN_FN, pnu) ??
+      supabase.rpc(INDUSTRY_MEDIAN_FN, { p_pnu: pnu });
+    req.then(({ data, error }) => {
+      // 늦게 온 다른 필지의 답은 버린다(필지가 바뀌면 cancelled).
+      if (cancelled) return;
+      if (error || !isIndustryMedian(data)) {
+        // 마이그레이션 적용 전 라이브가 이 상태다(PGRST202). 비교 글만 빠지고 카드는 선다.
+        console.warn('업종 비중 비교 조회 실패 — 비교 글 없이 표시합니다', error ?? data);
+        return;
+      }
+      setMedian({ pnu, data });
     });
 
     return () => {
@@ -350,6 +390,12 @@ export function IndustryMixSection({
             heading={`${districtLabel(d)} 안`}
             scope={d}
             emptyNote="이 상권 안에 등록된 점포가 없습니다."
+            // 비교 글(물결 2-3)은 상권 블록에만 — 반경 블록엔 견줄 상대가 없다. 물어본 필지·분기가 지금 것일 때만.
+            med={medianViewOf(
+              median !== null && median.pnu === pnu ? median.data : null,
+              d.district_id,
+              mix.snapshot_ym,
+            )}
           />
         ))}
 
@@ -405,7 +451,8 @@ export function IndustryMixSection({
 
       <p className="grade">
         <span className="grade__badge">A등급 · 실측 집계</span>
-        어림한 값이 아니라 <strong>등록된 점포를 그대로 센 값</strong>입니다. 다만 아래 두 가지
+        {/* 👤 2026-10-12 06:2x — A등급의 범위를 막대와 곳 수로 좁힌다(같은 카드의 가운데값 비교 글은 C등급). */}
+        <strong>막대와 곳 수</strong>는 어림한 값이 아니라 <strong>등록된 점포를 그대로 센 값</strong>입니다(가운데값은 C등급 · 비교값). 다만 아래 두 가지
         때문에 실제와 다를 수 있습니다.
       </p>
       <ul className="mix__why">
@@ -479,10 +526,16 @@ function ScopeBlock({
   heading,
   scope,
   emptyNote,
+  med = null,
 }: {
   heading: string;
   scope: IndustryScope;
   emptyNote: string;
+  /**
+   * 업종 비중 비교 글(물결 2-3) — 상권 블록에만 준다. null 이면 비교 글·설명 줄 없이 지금 그대로.
+   * ⛔ 숫자만 나란히 적는다(많다·적다 같은 판단 낱말 0 · 👤 결정 ㉕).
+   */
+  med?: MedianView | null;
 }) {
   const bars = toBars(scope);
 
@@ -491,12 +544,21 @@ function ScopeBlock({
       <h4 className="mix__sub">
         {heading} <span className="mix__total">{scope.total.toLocaleString('ko-KR')}곳</span>
       </h4>
+      {/* 비교값 설명 한 줄 — 배지 C(견줄 숫자 · 사실 A 와 색으로 가른다) + 모집단 곳 수(절대 규칙 3). */}
+      {med?.note && (
+        <p className="mix__med-note">
+          <span className="grade__badge grade__badge--est">{MEDIAN_BADGE}</span>
+          {med.note}
+        </p>
+      )}
+      {/* 점포가 기준에 못 미치면 비교값 대신 사실 한 줄(변명 문구 금지 — 개업·폐업 카드의 표본 문장과 같은 결). */}
+      {med?.tooSmall && bars.length > 0 && <p className="mix__med-note">{med.tooSmall}</p>}
       {bars.length === 0 ? (
         <p className="mix__none">{emptyNote}</p>
       ) : (
         <ul className="mix__bars">
           {bars.map((b) => (
-            <MixBarRow key={b.cd} bar={b} />
+            <MixBarRow key={b.cd} bar={b} med={med?.lines.get(b.cd) ?? null} />
           ))}
         </ul>
       )}
@@ -507,10 +569,12 @@ function ScopeBlock({
 /**
  * 막대 한 줄. 폭은 순수 CSS 비율이다(층 스택의 `.floor__bar` 와 같은 방식).
  * `hit` = 창업자 칩의 짝 중분류 줄 — 굵게 한다(결정 0036 결정 18 ⑨).
+ * `med` = 업종 비중 비교 글(물결 2-3) — 같은 줄(`li`) 안의 둘째 줄이라 종이에서도 갈리지 않는다.
  */
-function MixBarRow({ bar, hit = false }: { bar: MixBar; hit?: boolean }) {
+function MixBarRow({ bar, hit = false, med = null }: { bar: MixBar; hit?: boolean; med?: string | null }) {
+  const cls = [hit ? 'mix__hit' : null, med ? 'mix__row--med' : null].filter(Boolean).join(' ');
   return (
-    <li className={hit ? 'mix__hit' : undefined}>
+    <li className={cls || undefined}>
       <span className="mix__cat">{hit ? <strong>{bar.nm || bar.cd}</strong> : bar.nm || bar.cd}</span>
       <span className="mix__bar">
         {/* 몫이 0 이면 막대를 그리지 않는다. 최소 폭을 강제하면 "0곳"이 "조금 있음"처럼 보인다. */}
@@ -518,6 +582,8 @@ function MixBarRow({ bar, hit = false }: { bar: MixBar; hit?: boolean }) {
       </span>
       <span className="mix__n">{bar.n.toLocaleString('ko-KR')}곳</span>
       <span className="mix__pct">{bar.pct.toFixed(1)}%</span>
+      {/* 한 덩어리 글자(조각 금지 — 시험이 한 낱말로 찾는다). */}
+      {med && <span className="mix__med">{med}</span>}
     </li>
   );
 }

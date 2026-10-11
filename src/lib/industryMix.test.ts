@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import type { IndustryDistrict, IndustryFloors, IndustryMix, IndustryScope } from '../types';
+import type {
+  IndustryDistrict,
+  IndustryFloors,
+  IndustryMedian,
+  IndustryMedianPop,
+  IndustryMix,
+  IndustryScope,
+} from '../types';
 import {
   catOptions,
   districtLabel,
@@ -13,9 +20,16 @@ import {
   isFloorScope,
   isIndustryDetail,
   isIndustryFloors,
+  isIndustryMedian,
   isIndustryMix,
   isScope,
+  MEDIAN_BADGE,
+  medianLine,
+  medianNote,
+  medianTooSmall,
+  medianViewOf,
   sameCatMs,
+  sidoNameOf,
   toBars,
 } from './industryMix';
 
@@ -317,5 +331,148 @@ describe('업종별 층 분포 — 늦게 온 답 · 블록 열쇠', () => {
     expect([...m.keys()]).toEqual(['D1', '__radius__']);
     expect(floorScopeByKey(floors({ radius: null })).has('__radius__')).toBe(false);
     expect(floorScopeByKey(null).size).toBe(0);
+  });
+});
+
+// ── 업종 비중 비교 (물결 2-3 · 결정 0036 결정 18 ㉓~㉖) ─────────────────────────
+
+const GOL: IndustryMedianPop = { scope: 'type', sido_cd: '11', district_type: '골목상권', n: 999 };
+const SEOUL_ALL: IndustryMedianPop = { scope: 'all', sido_cd: '11', district_type: null, n: 1502 };
+const DJ: IndustryMedianPop = { scope: 'type', sido_cd: '30', district_type: '주요상권', n: 37 };
+
+function median(over: Partial<IndustryMedian> = {}): IndustryMedian {
+  return {
+    snapshot_ym: '202606',
+    min_total: 30,
+    min_pop: 30,
+    districts: [
+      {
+        district_id: 'D1',
+        type: '골목상권',
+        total: 215,
+        pop: GOL,
+        cats: [
+          { cd: 'I2', nm: '음식', med_pct: 25 },
+          { cd: 'I1', nm: '숙박', med_pct: 1.8 },
+        ],
+      },
+      { district_id: 'D2', type: '전통시장', total: 12, pop: null, cats: [] },
+    ],
+    ...over,
+  };
+}
+
+describe('업종 비중 비교 — 글 함수(예시값 글자 그대로)', () => {
+  it('같은 종류 · 시·도 전체 · 대전', () => {
+    expect(medianLine('서울', GOL, 25)).toBe('서울 골목상권 가운데 25.0%');
+    expect(medianLine('서울', SEOUL_ALL, 25.9)).toBe('서울 상권 전체 가운데 25.9%');
+    expect(medianLine('대전', DJ, 36.2)).toBe('대전 주요상권 가운데 36.2%');
+    expect(medianLine('서울', GOL, 1.8)).toBe('서울 골목상권 가운데 1.8%');
+  });
+
+  it('지역 표에 없는 sido_cd 면 지역 글자를 뺀다', () => {
+    expect(sidoNameOf('11')).toBe('서울');
+    expect(sidoNameOf('30')).toBe('대전');
+    expect(sidoNameOf('99')).toBeNull();
+    expect(medianLine(null, { ...GOL, sido_cd: '99' }, 25)).toBe('골목상권 가운데 25.0%');
+    expect(medianNote(null, { ...SEOUL_ALL, sido_cd: '99' }, 30)).toContain('가운데값은 상권 전체 1,502곳');
+  });
+
+  it('설명 줄은 모집단 곳 수와 서버의 기준(30)을 적는다', () => {
+    expect(medianNote('대전', DJ, 30)).toBe(
+      '가운데값은 대전 주요상권 37곳(점포 30곳 이상 상권)의 업종 비중을 크기순으로 세웠을 때 한가운데 값입니다 — 비교용 숫자입니다.',
+    );
+    expect(medianNote('서울', SEOUL_ALL, 30)).toContain('서울 상권 전체 1,502곳(점포 30곳 이상 상권)');
+    // 기준은 서버 값 — 화면에 30 을 박지 않는다.
+    expect(medianNote('서울', GOL, 40)).toContain('(점포 40곳 이상 상권)');
+    expect(MEDIAN_BADGE).toBe('C등급 · 비교값');
+  });
+
+  it('점포가 기준 미만이면 사실 한 줄 · 0곳·기준 이상이면 없음', () => {
+    expect(medianTooSmall(12, 30)).toBe('점포 12곳 — 30곳이 안 돼 비교값은 적지 않습니다.');
+    expect(medianTooSmall(29, 30)).not.toBeNull();
+    expect(medianTooSmall(30, 30)).toBeNull();
+    expect(medianTooSmall(0, 30)).toBeNull();
+    expect(medianTooSmall(12, 40)).toBe('점포 12곳 — 40곳이 안 돼 비교값은 적지 않습니다.');
+  });
+
+  it('판단 낱말·금칙어가 글 함수에 없다', () => {
+    const texts = [
+      medianLine('서울', GOL, 25),
+      medianLine('서울', SEOUL_ALL, 25.9),
+      medianNote('서울', GOL, 30),
+      medianTooSmall(12, 30) ?? '',
+      MEDIAN_BADGE,
+    ].join(' ');
+    for (const w of ['많', '적다', '적습', '높', '낮', '%p', '배', '적정가', '감정가', '평가액']) {
+      expect(texts).not.toContain(w);
+    }
+  });
+});
+
+describe('업종 비중 비교 — 모양 검사(틀리면 통째로 버림)', () => {
+  it('정상 응답 · 빈 상권 목록', () => {
+    expect(isIndustryMedian(median())).toBe(true);
+    expect(isIndustryMedian(median({ districts: [] }))).toBe(true);
+    expect(isIndustryMedian(median({ snapshot_ym: null }))).toBe(true);
+  });
+
+  it.each([
+    ['null', null],
+    ['배열', []],
+    ['min_total 없음', { ...median(), min_total: undefined }],
+    ['min_total 0', { ...median(), min_total: 0 }],
+    ['min_pop 소수', { ...median(), min_pop: 30.5 }],
+    ['districts 객체', { ...median(), districts: {} }],
+  ])('겉모양 이상: %s', (_name, x) => {
+    expect(isIndustryMedian(x)).toBe(false);
+  });
+
+  const bad = (patch: Record<string, unknown>) =>
+    median({ districts: [{ ...median().districts[0], ...patch } as never] });
+
+  it.each([
+    ['med_pct 글자', { cats: [{ cd: 'I2', nm: '음식', med_pct: '25.0' }] }],
+    ['med_pct 음수', { cats: [{ cd: 'I2', nm: '음식', med_pct: -1 }] }],
+    ['med_pct 100 초과', { cats: [{ cd: 'I2', nm: '음식', med_pct: 100.1 }] }],
+    ['med_pct NaN', { cats: [{ cd: 'I2', nm: '음식', med_pct: Number.NaN }] }],
+    ['cd 없음', { cats: [{ nm: '음식', med_pct: 25 }] }],
+    ['cats 없음', { cats: undefined }],
+    ['total 소수', { total: 12.5 }],
+    ['district_id 숫자', { district_id: 7 }],
+    ['pop 이상한 범위', { pop: { ...GOL, scope: 'radius' } }],
+    ['type 인데 종류 없음', { pop: { ...GOL, district_type: null } }],
+    ['type 인데 종류 빈 글자', { pop: { ...GOL, district_type: '' } }],
+    ['all 인데 종류 있음', { pop: { ...SEOUL_ALL, district_type: '골목상권' } }],
+    ['pop n 0', { pop: { ...GOL, n: 0 } }],
+    ['pop null 인데 cats 있음', { pop: null }],
+  ])('상권 줄 이상: %s', (_name, patch) => {
+    expect(isIndustryMedian(bad(patch))).toBe(false);
+  });
+});
+
+describe('업종 비중 비교 — 상권 블록 글 묶음', () => {
+  it('모집단이 있으면 줄마다 글 + 설명 줄', () => {
+    const v = medianViewOf(median(), 'D1', '202606')!;
+    expect(v.lines.get('I2')).toBe('서울 골목상권 가운데 25.0%');
+    expect(v.lines.get('I1')).toBe('서울 골목상권 가운데 1.8%');
+    expect(v.lines.has('G2')).toBe(false); // 가운데값 줄이 없는 업종은 그 줄만 비교 글 없음
+    expect(v.note).toContain('서울 골목상권 999곳(점포 30곳 이상 상권)');
+    expect(v.tooSmall).toBeNull();
+  });
+
+  it('점포가 기준 미만이면 사실 한 줄만', () => {
+    const v = medianViewOf(median(), 'D2', '202606')!;
+    expect(v.lines.size).toBe(0);
+    expect(v.note).toBeNull();
+    expect(v.tooSmall).toBe('점포 12곳 — 30곳이 안 돼 비교값은 적지 않습니다.');
+  });
+
+  it('응답 없음 · 그 상권 줄 없음 · 분기 다름 · 점포 0곳이면 null(비교 글 0)', () => {
+    expect(medianViewOf(null, 'D1', '202606')).toBeNull();
+    expect(medianViewOf(median(), 'D9', '202606')).toBeNull();
+    expect(medianViewOf(median(), 'D1', '202603')).toBeNull();
+    const zero = median({ districts: [{ district_id: 'D3', type: '골목상권', total: 0, pop: null, cats: [] }] });
+    expect(medianViewOf(zero, 'D3', '202606')).toBeNull();
   });
 });

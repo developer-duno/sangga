@@ -59,14 +59,16 @@
     비었으면 [낡음](종료 코드 1).
   · 층 분포 표(2026-10-09 · 물결 2-2) — mv_district_industry_floor 의 분기 ≠ 표지 loaded_ym 이면 [낡음],
     (상권·분기·중분류)마다 층 묶음 합이 업종 분포 표의 n 과 다른 열쇠가 하나라도 있으면 [낡음](둘 다 종료 코드 1).
+  · 업종 가운데값 표(2026-10-12 · 물결 2-3) — mv_industry_mix_median 의 분기 ≠ 표지 loaded_ym 이면 [낡음],
+    시·도마다 'all' 줄의 모집단 수가 업종 분포 표의 점포 30곳 이상 상권 수와 다르면 [낡음](둘 다 종료 코드 1).
 
 ⭐ 새 상권 분기는 이 스크립트가 **표지를 올려야** 화면에 보인다(결정 0035) — 갱신 흐름(2026-10-07 개정):
    ① 표지를 먼저 읽는다([사고]면 굽지 않고 멈춤 · 표지 없이 들어온 새 분기가 있으면 [경고] 뒤 끝에 exit 1)
    → ② vacuum → 분기와 무관한 요약표 다섯 갱신(자동커밋) → 그 판정 넷(검색·지도·실거래 창·이웃 표)
-   → ③ **한 트랜잭션**: 분기 요약표 넷(가게 이름·각주·업종·층 — 2026-10-09 층 분포 추가)을 다 들어온
-   분기(loaded_ym)로 굽고 → 넷의 분기 = loaded_ym 인지 대조(아니면 통째 롤백) → 보여 주는 분기(published_ym)를
-   올림 → commit (이 순간 모든 카드가 함께 바뀐다) → ④ 다시 잰다(분기 판정 넷 + 층 합 대조 + 표지 ·
-   "표지 올림 X → Y").
+   → ③ **한 트랜잭션**: 분기 요약표 다섯(가게 이름·각주·업종·층·가운데값 — 2026-10-09 층 분포 · 2026-10-12
+   가운데값 추가)을 다 들어온 분기(loaded_ym)로 굽고 → 다섯의 분기 = loaded_ym 인지 대조(아니면 통째 롤백) →
+   보여 주는 분기(published_ym)를 올림 → commit (이 순간 모든 카드가 함께 바뀐다) → ④ 다시 잰다(분기 판정 다섯 +
+   층 합 대조 + 가운데값 모집단 대조 + 표지 · "표지 올림 X → Y").
 """
 
 import hashlib
@@ -134,17 +136,22 @@ REFRESH_MVS = (
     # 직접 굽는다) 짝으로 보이게 바로 뒤에 둔다. 빠지면 층 줄만 옛 분기를 말한다(에러 0) — 아래
     # report_industry_floor_freshness() 가 분기를, report_industry_floor_consistency() 가 업종 표와의 합을 잡는다.
     "mv_district_industry_floor",
+    # 업종 비중 가운데값(2026-10-12a · 물결 2-3) — ⛔ 위 업종 표(mv_district_industry_mix)를 **재료로** 굽는다.
+    # 그래서 반드시 그 뒤다(앞에 두면 옛 업종 표로 굽는다 — 에러 0). 빠지면 비교 글만 옛 분기를 말한다 —
+    # 아래 report_industry_median_freshness() 가 분기를, report_industry_median_consistency() 가 모집단 수를 잡는다.
+    "mv_industry_mix_median",
     # 참고 시세의 반경 이웃 찾기 전용(2026-09-27c) — 빠지면 새 거래 필지가 이웃에서 조용히 빠진다.
     "mv_tx_parcel_geog",
 )
 SEARCH_MV = REFRESH_MVS[0]
 
-# 분기와 묶인 요약표 넷 — 표지 loaded_ym(다 들어온 분기)으로 굽는다(결정 0035 · 넷째 층 분포는 2026-10-09 추가).
-# ⛔ 이 넷은 위 자동커밋 묶음에서 굽지 않는다 — 표지 올림과 **한 트랜잭션**(build_publish_tx_sql)에서
+# 분기와 묶인 요약표 다섯 — 표지 loaded_ym(다 들어온 분기)으로 굽는다(결정 0035 · 넷째 층 분포는 2026-10-09 ·
+# 다섯째 가운데값은 2026-10-12 추가 — 다섯째는 셋째(업종 표)를 재료로 굽는다, 같은 트랜잭션 안이라 방금 구운 판을 본다).
+# ⛔ 이 다섯은 위 자동커밋 묶음에서 굽지 않는다 — 표지 올림과 **한 트랜잭션**(build_publish_tx_sql)에서
 #    굽는다. 따로 커밋하면 굽는 1~2분 동안 가게 이름 검색·각주·업종 카드만 먼저 새 분기를 말한다
 #    (2026-10-07 맹점 검사관 🟠1 · 👤 (가)안). 순서는 REFRESH_MVS 와 같다(각주는 mv_open_sigungu 뒤).
 QUARTER_MVS = ("mv_parcel_store_names", "mv_coverage_stats", "mv_district_industry_mix",
-               "mv_district_industry_floor")
+               "mv_district_industry_floor", "mv_industry_mix_median")
 NON_QUARTER_MVS = tuple(m for m in REFRESH_MVS if m not in QUARTER_MVS)
 
 
@@ -385,7 +392,7 @@ def report_industry_mix_freshness():
 #   ① 분기 — 갱신을 잊으면 층 줄만 옛 분기를 말한다(업종 표와 같은 병 · 같은 판정 is_industry_mix_stale).
 #   ② 합 — 같은 (상권·분기·중분류)의 층 묶음 n 을 더하면 업종 표의 n 과 같아야 한다. 다르면 두 줄이 한
 #      카드 안에서 다른 숫자를 말한다(한쪽만 다시 굽혔거나 정의가 갈렸다).
-# 둘 다 [낡음] · 종료 코드 1 · 처방은 post_load.py 다시(한 트랜잭션에서 넷을 함께 굽는다).
+# 둘 다 [낡음] · 종료 코드 1 · 처방은 post_load.py 다시(한 트랜잭션에서 다섯을 함께 굽는다).
 
 INDUSTRY_FLOOR_FRESHNESS_SQL = (
     "select coalesce((select max(snapshot_ym) from mv_district_industry_floor), '')"
@@ -457,6 +464,92 @@ def report_industry_floor_consistency():
     return mismatch, stale
 
 
+# ── 업종 가운데값 표 (2026-10-12a · 물결 2-3) — 분기 + 모집단 수 ─────────────────────
+#
+# mv_industry_mix_median 은 업종 표(mv_district_industry_mix)를 재료로 굽는다. 두 가지로 낡는다:
+#   ① 분기 — 갱신을 잊으면 비교 글만 옛 분기를 말한다(업종 표와 같은 판정 is_industry_mix_stale).
+#   ② 모집단 수 — 시·도마다 'all' 줄의 pop_n 은 그 분기 업종 표에서 점포 30곳 이상 상권 수와 같아야 한다.
+#      다르면 업종 표만 다시 굽혔거나(가운데값 표를 업종 표 앞에서 구움) 정의가 갈렸다.
+# 둘 다 [낡음] · 종료 코드 1 · 처방은 post_load.py 다시(한 트랜잭션에서 다섯을 함께 굽는다 — 업종 표 뒤에).
+
+INDUSTRY_MEDIAN_FRESHNESS_SQL = (
+    "select coalesce((select max(snapshot_ym) from mv_industry_mix_median), '')"
+    " || '|' || coalesce((select loaded_ym from snapshot_release), '');"
+)
+
+# ⛔ ASCII 만 — query_one 은 psql -c 라 한글이 cp949 로 깨진다(2026-10-07). 한글은 파이썬에서 붙인다.
+# 열쇠 = 시·도 코드(빈 sigungu_code 도 짝을 찾게 coalesce — ⛔ full join 에 is not distinct from 만 두면
+# PostgreSQL 이 'FULL JOIN is only supported with merge-joinable …' 로 거부한다 · 로컬 PG 실행 시험이 잡았다)
+# · 30 은 요약표 정의의 having 과 같은 수.
+# · 분기로 나눠 센다(2026-10-12 적대 검사 🟡) — 업종 표 쪽은 가운데값 표에 있는 분기만, 열쇠도 (분기, 시·도).
+#   업종 표에 두 분기가 섞여 있으면(적재 중) 상권이 두 번 세어져 [낡음] 오탐이 났다. 가운데값 표의 분기가
+#   표지와 다른 것은 report_industry_median_freshness() 가 따로 잡는다.
+INDUSTRY_MEDIAN_CONSISTENCY_SQL = (
+    "select count(*) filter (where a.n is distinct from b.n)::text || '|' ||"
+    " count(a.n)::text || '|' || count(b.n)::text"
+    " from (select snapshot_ym, sido_cd, max(pop_n) as n from mv_industry_mix_median"
+    " where scope = 'all' group by 1, 2) a"
+    " full join (select t.snapshot_ym, left(d.sigungu_code, 2) as sido_cd, count(*)::int as n"
+    " from (select snapshot_ym, district_id from mv_district_industry_mix"
+    " where snapshot_ym in (select snapshot_ym from mv_industry_mix_median)"
+    " group by 1, 2 having sum(n) >= 30) t"
+    " join district d on d.district_id = t.district_id group by 1, 2) b"
+    " on a.snapshot_ym = b.snapshot_ym and coalesce(a.sido_cd, '') = coalesce(b.sido_cd, '');"
+)
+
+
+def report_industry_median_freshness():
+    """가운데값 표의 분기를 표지 loaded_ym 과 대조한다 — 판정은 업종 표와 같은 is_industry_mix_stale.
+
+    ⓘ 두 표가 다 비면(자료 없는 새 환경) 업종 표와 같이 '낡지 않음'이다 — 비교 글은 스스로 사라진다.
+    """
+    med_ym, _, latest_ym = query_one(INDUSTRY_MEDIAN_FRESHNESS_SQL).partition("|")
+    med_ym, latest_ym = med_ym.strip(), latest_ym.strip()
+    stale = is_industry_mix_stale(med_ym, latest_ym)
+    if stale:
+        if not med_ym:
+            print("[낡음] 업종 가운데값 표가 비어 있습니다 — 갱신이 필요합니다.")
+        else:
+            print("[낡음] 업종 가운데값 표 {} / 다 들어온 분기(표지) {} — 갱신이 필요합니다."
+                  .format(med_ym, latest_ym))
+        print("       이대로 두면 업종 분포 카드의 비교 글(… 가운데 x%)만 옛 분기를 말합니다(에러는 안 납니다).")
+        print("       python scripts/post_load.py 를 실행하면 최신 분기로 다시 굽습니다.")
+    else:
+        print("[신선] 업종 가운데값 표 {} = 다 들어온 분기(표지).".format(med_ym or "(자료 없음)"))
+    return med_ym, latest_ym, stale
+
+
+def judge_industry_median_consistency(mismatch_cnt, median_sidos, mix_sidos):
+    """가운데값 표의 모집단 수가 업종 표와 어긋났는가 (순수 함수 — 낡음이면 True).
+
+    · 어긋난 시·도 0 → 정상(두 표 다 비어도 정상 — 자료 없는 새 환경).
+    · 1 이상 → 낡음.
+    · 숫자가 아닌 답 → 낡음 — '정상'이라 말할 근거가 없다.
+    """
+    try:
+        mismatch = int(str(mismatch_cnt).strip())
+        int(str(median_sidos).strip())
+        int(str(mix_sidos).strip())
+    except (TypeError, ValueError):
+        return True
+    return mismatch != 0
+
+
+def report_industry_median_consistency():
+    """가운데값 표의 시·도별 모집단 수('all' 줄)를 업종 표의 점포 30곳 이상 상권 수와 견준다 → (어긋남 수, 낡음여부)."""
+    raw = query_one(INDUSTRY_MEDIAN_CONSISTENCY_SQL)
+    parts = [p.strip() for p in str(raw).split("|")]
+    mismatch, median_sidos, mix_sidos = (parts + ["", "", ""])[:3]
+    stale = judge_industry_median_consistency(mismatch, median_sidos, mix_sidos)
+    if stale:
+        print("[낡음] 업종 가운데값 표의 모집단 수가 업종 분포 표와 다릅니다 — post_load.py 를 다시 돌리세요.")
+        print("       (어긋난 시·도 {} · 가운데값 표 {}곳 · 업종 표 {}곳 — 가운데값 표가 업종 표보다 먼저 구워졌거나 정의가 갈렸습니다)"
+              .format(mismatch or "?", median_sidos or "?", mix_sidos or "?"))
+    else:
+        print("[정상] 업종 가운데값 표 모집단 수 = 업종 분포 표의 점포 30곳 이상 상권 수 (어긋남 0 시·도).")
+    return mismatch, stale
+
+
 # ── 각주 집계 신선도 (2026-08-22d 신설 — 사전계산의 유일한 대가) ─────────────
 #
 # mv_coverage_stats 는 **갱신하는 순간 계산돼 그대로 굳는다.** 미리 계산해 두는 값이
@@ -515,7 +608,7 @@ def report_coverage_freshness():
 #
 # 화면은 점포 분기를 `max(snapshot_ym)` 이 아니라 표지 한 줄에서 읽는다:
 #   loaded_ym    = 다 들어온 분기(적재기가 전국 적재 + 교차검증 뒤 RPC 로 적는다) — 요약표가 이 칸으로 굽는다
-#   published_ym = 화면이 보는 분기 — **이 스크립트가** 분기와 무관한 판정을 지난 뒤, 분기 요약표 넷 굽기·대조와
+#   published_ym = 화면이 보는 분기 — **이 스크립트가** 분기와 무관한 판정을 지난 뒤, 분기 요약표 다섯 굽기·대조와
 #                  한 트랜잭션에서 올린다(build_publish_tx_sql)
 # 그래서 새 분기는 적재 2시간 동안 화면에 안 새고, 그 트랜잭션의 커밋 순간에 모든 카드가 한순간에 바뀐다.
 # ⛔ 표지가 0줄이면 화면 가게 칸이 **조용히** 빈다(하위질의가 null) — [사고].
@@ -535,7 +628,7 @@ SNAPSHOT_RELEASE_SQL = (
 # 굽고 → 맞춰 보고 → 올린다를 **한 DO 안에서**(2026-10-07 · 👤 (가)안 · 적대 검사관 🟡④ 겸).
 # ⓐ 표지 줄을 `for update` 로 잠근다 — 적재기 RPC(mark_snapshot_loaded)도 같은 줄을 `for update` 로
 #    잡으므로 이 트랜잭션이 끝날 때까지 기다린다(굽는 사이 loaded 가 바뀌면 ⓑ 에서 걸려 통째 롤백).
-# ⓑ 요약표 넷의 분기 = 잠근 loaded 인지 대조 — 하나라도 다르거나 비면 raise → 요약표·표지 옛 그대로.
+# ⓑ 요약표 다섯의 분기 = 잠근 loaded 인지 대조 — 하나라도 다르거나 비면 raise → 요약표·표지 옛 그대로.
 # ⓒ 같은 값 v 로만 올린다(앞으로만 — published 가 v 보다 옛것일 때만).
 PUBLISH_DO_SQL = """do $$
 declare
@@ -544,6 +637,7 @@ declare
   c text;
   m text;
   f text;
+  g text;
 begin
   select r.loaded_ym into v from public.snapshot_release r where r.id = 1 for update;
   if v is null then
@@ -553,9 +647,11 @@ begin
   select max(t.snapshot_ym) into c from public.mv_coverage_stats t;
   select max(t.snapshot_ym) into m from public.mv_district_industry_mix t;
   select max(t.snapshot_ym) into f from public.mv_district_industry_floor t;
-  if s is distinct from v or c is distinct from v or m is distinct from v or f is distinct from v then
-    raise exception '요약표 분기가 다 들어온 분기 % 와 다릅니다 — 가게 이름 % · 각주 % · 업종 % · 층 % (통째 롤백)',
-      v, s, c, m, f;
+  select max(t.snapshot_ym) into g from public.mv_industry_mix_median t;
+  if s is distinct from v or c is distinct from v or m is distinct from v or f is distinct from v
+     or g is distinct from v then
+    raise exception '요약표 분기가 다 들어온 분기 % 와 다릅니다 — 가게 이름 % · 각주 % · 업종 % · 층 % · 가운데값 % (통째 롤백)',
+      v, s, c, m, f, g;
   end if;
   update public.snapshot_release set published_ym = v, published_at = now()
    where id = 1 and published_ym < v;
@@ -563,12 +659,12 @@ end $$;"""
 
 
 def build_publish_tx_sql(mvs=QUARTER_MVS):
-    """분기 요약표 넷 굽기 + 분기 대조 + 표지 올림을 **한 트랜잭션**으로 (순수 함수 — 시험이 여기만 본다).
+    """분기 요약표 다섯 굽기 + 분기 대조 + 표지 올림을 **한 트랜잭션**으로 (순수 함수 — 시험이 여기만 본다).
 
     ⛔ dbx.run_sql 은 psql -f 라 begin/commit 이 없으면 문장마다 자동커밋이다 — 그러면 셋이 하나씩
        따로 바뀌고 표지는 판정 뒤에야 올라가, 그 1~2분 동안 카드끼리 다른 분기를 말한다(2026-10-07
        맹점 검사관 🟠1). 묶으면 커밋 전엔 다른 세션이 옛 요약표·옛 표지를 보고(읽기 안 막힘),
-       커밋 순간 넷이 같이 바뀐다(로컬 PostgreSQL 18.4 실측 · `refresh … concurrently` 는 트랜잭션
+       커밋 순간 다섯이 같이 바뀐다(로컬 PostgreSQL 18.4 실측 · `refresh … concurrently` 는 트랜잭션
        블록 안에서 된다). DO 가 raise 하면 psql 이 ON_ERROR_STOP 으로 멈추고 연결이 끊겨 통째 롤백.
     """
     if isinstance(mvs, str):
@@ -668,7 +764,7 @@ def precheck_snapshot_release():
     """갱신 **전에** 표지를 읽는다(2026-10-07 맹점 검사관 🟡2·🟠4).
 
     (멈출지, 지금 보여 주는 분기, 표지 없이 들어온 새 분기) 를 돌려준다.
-      · [사고](표 0줄·못 읽음·보여 주는 분기 0행)면 멈춘다 — 그대로 갱신하면 요약표 넷을 빈 분기로 굽는다.
+      · [사고](표 0줄·못 읽음·보여 주는 분기 0행)면 멈춘다 — 그대로 갱신하면 요약표 다섯을 빈 분기로 굽는다.
       · 점포 표에 표지보다 새 분기가 있으면 [경고]를 찍고 갱신은 하되 main 이 끝에 1 을 돌려준다 —
         적재기가 exit 1 로 끝났는데 사람이 다음 줄(post_load)을 돌린 꼴이다. 그대로 0 으로 끝나면
         새 분기가 몇 주 동안 조용히 안 보인다.
@@ -895,6 +991,9 @@ ANON_CALLABLE_ALLOWLIST = (
     # 개별공시지가 한 줄(2026-10-11b · 결정 0036 결정 7). 표 parcel 은 **여기 없다** — 열리면 전국 111만
     # 필지의 좌표·땅값이 통째로 긁힌다. 이 함수는 pnu 하나의 숫자 두 개(원/㎡ · 공시 연도)만 내보낸다.
     "api.get_parcel_land_price",
+    # 업종 비중 비교(2026-10-12a · 물결 2-3). 요약표 mv_industry_mix_median 은 **여기 없다** — 화면은 이 함수
+    # 하나로만 읽고, 나가는 것은 이 필지가 속한 상권의 총수와 업종별 가운데값(백분율)·모집단 수뿐이다.
+    "api.list_industry_median",
 )
 
 # ── 공개키가 아직 못 닫은 "대기" 함수 — 지금은 비어 있다 ─────────────────
@@ -1893,6 +1992,9 @@ def main(argv=None):
         # 층 분포 표(2026-10-09b · 물결 2-2) — 분기 + 업종 표와의 합. 둘 다 [낡음]이면 exit 1.
         _, _, floor_stale = report_industry_floor_freshness()
         _, floor_mismatch = report_industry_floor_consistency()
+        # 업종 가운데값 표(2026-10-12a · 물결 2-3) — 분기 + 모집단 수. 둘 다 [낡음]이면 exit 1.
+        _, _, median_stale = report_industry_median_freshness()
+        _, median_mismatch = report_industry_median_consistency()
         _, _, geog_stale = report_tx_geog_freshness()
         _, exposed = report_anon_exposure()
         # 읽기와 쓰기는 따로 묻는다 — 허용 목록에 있는 이름이라도 쓰기가 붙어 있으면 사고다.
@@ -1907,7 +2009,7 @@ def main(argv=None):
         # 구웠는데 안 올렸으면 [낡음] → 둘 다 exit 1. [주의] 둘은 종료 코드 무관.
         rel_fatal, rel_stale = report_snapshot_release()
         return 1 if (stale or map_stale or tx_stale or cov_stale or mix_stale or names_stale
-                     or floor_stale or floor_mismatch
+                     or floor_stale or floor_mismatch or median_stale or median_mismatch
                      or geog_stale or exposed or writable or bad_index or drifted
                      or rel_fatal or rel_stale) else 0
 
@@ -1939,11 +2041,11 @@ def main(argv=None):
     # 참고 시세 이웃 요약표도 방금 다시 구웠다 — 다시 잰다(2026-10-03).
     _, _, geog_stale = report_tx_geog_freshness()
     if stale or map_stale or tx_stale or geog_stale:
-        print("       분기 요약표 넷(가게 이름·각주·업종·층)과 표지는 이번에 안 건드렸습니다 — "
+        print("       분기 요약표 다섯(가게 이름·각주·업종·층·가운데값)과 표지는 이번에 안 건드렸습니다 — "
               "위 [낡음]을 고친 뒤 python scripts/post_load.py 를 다시 돌리세요.")
         return 1
 
-    # ③ 분기 요약표 넷 + 분기 대조 + 표지 올림 = 한 트랜잭션(결정 0035 · 2026-10-07 👤 (가)안 · 넷째 층 분포 10-09).
+    # ③ 분기 요약표 다섯 + 분기 대조 + 표지 올림 = 한 트랜잭션(결정 0035 · 2026-10-07 👤 (가)안 · 넷째 층 분포 10-09 · 다섯째 가운데값 10-12).
     #    커밋 순간에 가게 이름 검색·각주·업종 카드(층 줄 포함)·층 목록이 함께 바뀐다. 대조가 어긋나면 통째 롤백.
     print("분기 요약표 {}개를 굽고 표지를 올립니다 — 한 트랜잭션(커밋 순간에 화면이 함께 바뀝니다)…"
           .format(len(QUARTER_MVS)))
@@ -1955,15 +2057,18 @@ def main(argv=None):
               "돌리면 됩니다(python scripts/post_load.py).")
         return 1
 
-    # ④ 했다고 믿지 않고 다시 잰다 — 분기 요약표 넷 + 층 합 대조 + 표지. (앞의 넷은 ② 바로 뒤에 쟀고 ③ 은
+    # ④ 했다고 믿지 않고 다시 잰다 — 분기 요약표 다섯 + 층 합 대조 + 가운데값 모집단 대조 + 표지. (앞의 넷은 ② 바로 뒤에 쟀고 ③ 은
     #    그 표들을 건드리지 않는다.)
     _, _, cov_stale = report_coverage_freshness()
     _, _, mix_stale = report_industry_mix_freshness()
     _, _, names_stale = report_store_names_freshness()
     _, _, floor_stale = report_industry_floor_freshness()
     _, floor_mismatch = report_industry_floor_consistency()
+    _, _, median_stale = report_industry_median_freshness()
+    _, median_mismatch = report_industry_median_consistency()
     rel_fatal, rel_stale = report_snapshot_release(published_before)
-    if cov_stale or mix_stale or names_stale or floor_stale or floor_mismatch or rel_fatal or rel_stale:
+    if (cov_stale or mix_stale or names_stale or floor_stale or floor_mismatch
+            or median_stale or median_mismatch or rel_fatal or rel_stale):
         return 1
     if newer_unmarked:
         print("[경고] 점포 표에 표지보다 새 분기 {} 가 있는데 '다 들어왔다' 표시가 없습니다 — 적재기가 exit 1 로 "
