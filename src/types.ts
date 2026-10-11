@@ -531,6 +531,44 @@ export type IndustryFloors = {
   radius: IndustryFloorScope | null;
 };
 
+// ── 업종 비중 비교 (물결 2-3 · 결정 0036 결정 18 ㉓~㉖) ─────────────────────────
+//
+// ⚠️ 이 숫자는 **판단이 아니라 견줄 숫자**다 — 같은 시·도 같은 종류 상권들(점포 30곳 이상)의 업종 비중을
+//    크기순으로 세웠을 때 한가운데 값(배지 C · 비교값). 화면은 많다·적다를 말하지 않고 나란히 적기만 한다.
+// ⛔ 지역 이름은 오지 않는다(`sido_cd` 두 자리만) — 화면이 `SIDOS`(regions.ts)로 붙인다.
+// ⛔ 반경 블록 비교는 없다(비교 상대가 없다) — 응답에 radius 칸이 없다.
+
+/** 고른 모집단. `scope` 'type' = 같은 종류끼리(`district_type`) · 'all' = 그 시·도 상권 전체(`district_type` null). */
+export type IndustryMedianPop = {
+  scope: 'type' | 'all';
+  sido_cd: string;
+  district_type: string | null;
+  /** 모집단 상권 수(점포 30곳 이상 상권). */
+  n: number;
+};
+
+/** 대분류 하나의 가운데값(%, 소수 첫째 자리). */
+export type IndustryMedianCat = { cd: string; nm: string | null; med_pct: number };
+
+/** 속한 상권 하나. `pop` null = 이 상권 점포가 `min_total` 미만이라 비교값을 안 낸다(그때 `cats` 는 빈 배열). */
+export type IndustryMedianDistrict = {
+  district_id: string;
+  type: string | null;
+  total: number;
+  pop: IndustryMedianPop | null;
+  cats: IndustryMedianCat[];
+};
+
+/** 함수 `list_industry_median(p_pnu)` 의 응답. */
+export type IndustryMedian = {
+  snapshot_ym: string | null;
+  /** 이 상권 점포가 이 수 미만이면 비교값을 안 적는다(서버 값 — 화면에 30 을 박지 않는다). */
+  min_total: number;
+  /** 모집단 상권이 이 수 미만인 종류는 시·도 전체로 대신한다. */
+  min_pop: number;
+  districts: IndustryMedianDistrict[];
+};
+
 /**
  * 함수 `count_nearby_permits(p_pnu)` 의 응답 — 이 땅 둘레의 **미준공 상업 계열 건축 인허가**.
  *

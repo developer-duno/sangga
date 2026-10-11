@@ -2,7 +2,7 @@ import { StrictMode } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, waitFor, act } from '@testing-library/react';
 import { SECTION_PLAN } from '../lib/sectionCards';
-import type { BuildingHit, DistrictOpenClose, FloorRow, IndustryMix, RentStat } from '../types';
+import type { BuildingHit, DistrictOpenClose, FloorRow, IndustryMedian, IndustryMix, RentStat } from '../types';
 
 /**
  * 곁 카드 요청을 건물을 고른 순간 먼저 보내는가(로드맵 속도 P3 · `lib/sidePrefetch.ts`).
@@ -28,6 +28,8 @@ const SIDE_FNS = [
   'count_nearby_permits',
   'list_rent_stats',
   'list_district_openclose',
+  // 업종 비중 비교(물결 2-3) — 업종 분포 카드의 상권 블록 비교 글. 인자 `{ p_pnu }` 하나라 함께 미리 보낸다.
+  'list_industry_median',
 ] as const;
 type SideFn = (typeof SIDE_FNS)[number];
 
@@ -193,8 +195,28 @@ function openCloseOf(pnu: string): DistrictOpenClose[] {
   ];
 }
 
+/** 업종 비중 가운데값(물결 2-3) — 필지마다 다른 값(가 11.1 · 나 22.2). 상권 열쇠는 mixOf 와 같다. */
+function medianOf(pnu: string): IndustryMedian {
+  const tag = pnu === A.pnu ? '가' : '나';
+  return {
+    snapshot_ym: '202606',
+    min_total: 30,
+    min_pop: 30,
+    districts: [
+      {
+        district_id: `d-${tag}`,
+        type: '발달상권',
+        total: pnu === A.pnu ? 111 : 222,
+        pop: { scope: 'type', sido_cd: '11', district_type: '발달상권', n: 249 },
+        cats: [{ cd: 'I2', nm: '음식', med_pct: pnu === A.pnu ? 11.1 : 22.2 }],
+      },
+    ],
+  };
+}
+
 function okSide(fn: SideFn, pnu: string): Res {
   if (fn === 'list_industry_mix') return { data: mixOf(pnu), error: null };
+  if (fn === 'list_industry_median') return { data: medianOf(pnu), error: null };
   if (fn === 'list_rent_stats') return { data: rentOf(pnu), error: null };
   if (fn === 'list_district_openclose') return { data: openCloseOf(pnu), error: null };
   const total = pnu === A.pnu ? 3 : 7;
@@ -219,7 +241,7 @@ afterEach(() => {
 });
 
 describe('FloorStack — 곁 카드 요청을 먼저 보낸다 (P3)', () => {
-  it('(a) 층 목록이 아직 안 왔는데도 네 요청은 이미 출발했다', async () => {
+  it('(a) 층 목록이 아직 안 왔는데도 다섯 요청은 이미 출발했다', async () => {
     // 층 목록은 영영 안 온다(state.floors 비어 있음).
     render(<FloorStack building={building(A)} />);
     expect(screen.getByText('층 정보를 불러오는 중…')).toBeTruthy();
@@ -259,6 +281,9 @@ describe('FloorStack — 곁 카드 요청을 먼저 보낸다 (P3)', () => {
     expect(text).not.toContain('개폐업상권가');
     expect(text).not.toContain('111곳');
     expect(text).not.toContain('상가 건물 3동');
+    // 비교 글(물결 2-3)도 B 것만.
+    expect(text).toContain('서울 발달상권 가운데 22.2%');
+    expect(text).not.toContain('가운데 11.1%');
   });
 
   it('(c) 미리 보낸 요청이 실패하면 카드는 지금의 실패 화면과 같다 — 다시 묻지 않는다', async () => {
@@ -293,7 +318,7 @@ describe('FloorStack — 곁 카드 요청을 먼저 보낸다 (P3)', () => {
     expect(screen.queryByText(/새로 올라오는 상가 건물/)).toBeNull();
   });
 
-  it('(d) 건물 한 번 보는 데 네 함수 각각 정확히 1회', async () => {
+  it('(d) 건물 한 번 보는 데 다섯 함수 각각 정확히 1회', async () => {
     state.floors.set(A.bld_id, floorsOf(A));
     render(<FloorStack building={building(A)} />);
     await screen.findByText('임대상권가');
@@ -337,10 +362,19 @@ describe('곁 카드 — 다른 필지의 미리 보낸 답은 받지 않는다 
   it('업종 분포 카드: A 몫을 받은 채 B 로 그려지면 B 를 스스로 묻고 B 값만 보인다', async () => {
     const { container } = render(<IndustryMixSection pnu={B.pnu} prefetch={prefetchOfA()} />);
     await screen.findByText('새로 올라오는 상가 건물 7동');
+    await screen.findByText('서울 발달상권 가운데 22.2%');
     const text = container.textContent ?? '';
     expect(text).toContain('반경 500m 이내 222곳');
     expect(text).not.toContain('111곳');
+    expect(text).not.toContain('가운데 11.1%');
     expect(countFetches('list_industry_mix', B.pnu)).toBe(1);
+    expect(countFetches('list_industry_median', B.pnu)).toBe(1);
+  });
+
+  it('업종 분포 카드: 이 필지 몫을 미리 받았으면 비교 글도 그 답을 쓰고 다시 묻지 않는다', async () => {
+    render(<IndustryMixSection pnu={A.pnu} prefetch={prefetchOfA()} />);
+    expect(await screen.findByText('서울 발달상권 가운데 11.1%')).toBeTruthy();
+    expect(countFetches('list_industry_median')).toBe(0);
   });
 
   it('임대 동향 카드: A 몫을 받은 채 B 로 그려지면 B 값만 보인다', async () => {

@@ -1822,6 +1822,29 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* 업종 비중 비교(물결 2-3) — 상권 블록 막대 줄의 둘째 줄 + 블록 머리 아래 설명. 모양 손질은 나중(👤 'CSS 는 나중')이라
+   최소만: 작은 글 · 줄 전체 폭(격자 네 칸을 가로지른다) · 좁은 화면에서 줄바꿈 허용(412px 넘침 0).
+   ⓘ 둘째 줄이 같은 `li` 안이라 인쇄의 `.mix__bars li` 줄 단위 avoid 가 그대로 지킨다(종이에도 그대로 나온다). */
+.mix__bars li.mix__row--med {
+  row-gap: 2px;
+}
+
+.mix__med {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.mix__med-note {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
 .mix__none,
 .mix__note,
 .mix__src {

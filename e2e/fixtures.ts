@@ -7,6 +7,7 @@ import type {
   FloorRow,
   FloorUnit,
   IndustryFloors,
+  IndustryMedian,
   IndustryMix,
   LhNotice,
   NearbyPermits,
@@ -241,6 +242,63 @@ export function industryFloors(catL = 'I2', catM: string[] | null = null): Indus
     districts: [{ district_id: '3120189', name: '강남역', total: 20, bands: { b: 0, '1': 15, '2': 3, '3+': 0, na: 2 } }],
     radius: { total: 0, bands: { b: 0, '1': 0, '2': 0, '3+': 0, na: 0 } },
   };
+}
+
+/**
+ * 업종 비중 비교(함수 list_industry_median · 물결 2-3). 상권 둘 — 골목상권(점포 215곳 · 같은 종류 999곳 모집단)과
+ * 전통시장(점포 12곳 — 30곳 미만이라 pop null · cats []). 숫자는 2026-10-12 운영 실측 가운데값(서울 골목 음식 25.0 ·
+ * 소매 19.3)에서 땄다. 상권 열쇠는 아래 `industryMixTwoDistricts()` 와 같아야 한다(화면이 열쇠로 짝짓는다).
+ */
+export function industryMedian(over: Partial<IndustryMedian> = {}): IndustryMedian {
+  return {
+    snapshot_ym: '202606',
+    min_total: 30,
+    min_pop: 30,
+    districts: [
+      {
+        district_id: '3110001',
+        type: '골목상권',
+        total: 215,
+        pop: { scope: 'type', sido_cd: '11', district_type: '골목상권', n: 999 },
+        cats: [
+          { cd: 'I2', nm: '음식', med_pct: 25.0 },
+          { cd: 'G2', nm: '소매', med_pct: 19.3 },
+        ],
+      },
+      { district_id: '3130001', type: '전통시장', total: 12, pop: null, cats: [] },
+    ],
+    ...over,
+  };
+}
+
+/** 업종 분포(대분류) — 위 `industryMedian()` 과 짝인 상권 둘 + 반경. 총수는 cats 합과 같다. */
+export function industryMixTwoDistricts(): IndustryMix {
+  return industryMix({
+    districts: [
+      {
+        district_id: '3110001',
+        name: '역삼골목',
+        type: '골목상권',
+        source_nm: '서울특별시 상권분석서비스',
+        total: 215,
+        cats: [
+          { cd: 'I2', nm: '음식', n: 120 },
+          { cd: 'G2', nm: '소매', n: 95 },
+        ],
+      },
+      {
+        district_id: '3130001',
+        name: '역삼시장',
+        type: '전통시장',
+        source_nm: '서울특별시 상권분석서비스',
+        total: 12,
+        cats: [
+          { cd: 'I2', nm: '음식', n: 7 },
+          { cd: 'G2', nm: '소매', n: 5 },
+        ],
+      },
+    ],
+  });
 }
 
 /**

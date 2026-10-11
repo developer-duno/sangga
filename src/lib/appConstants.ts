@@ -215,6 +215,16 @@ export const INDUSTRY_DETAIL_FN = 'list_industry_detail';
 export const INDUSTRY_FLOORS_FN = 'list_industry_floors';
 
 /**
+ * 속한 상권의 **업종 비중 가운데값**(비교값) — 물결 2-3(결정 0036 결정 18 ㉓~㉖). 업종 분포 카드의 상권 블록 줄마다
+ * 「서울 골목상권 가운데 25.0%」 한 줄을 붙인다(반경 블록엔 없다).
+ *
+ * ⚠️ 인자는 `{ p_pnu }` 하나 — 곁 카드 미리 부르기(`sidePrefetch`)의 다섯째로 함께 보낸다.
+ * ⓘ 함수가 없거나(PGRST202) 실패·모양 이상이면 화면은 **비교 글만** 빼고 카드는 그대로 선다.
+ *   기존 `list_industry_mix` 의 응답은 이 함수 때문에 바뀌지 않는다.
+ */
+export const INDUSTRY_MEDIAN_FN = 'list_industry_median';
+
+/**
  * 이 필지 둘레의 **미준공 상업 계열 건축 인허가** 건물 수. 업종 분포 카드 안의 한 줄.
  *
  * ⚠️ **인자 이름이 `p_pnu` 다**(`list_price_bands` 와 같은 이유 — 컬럼명 `pnu` 와 겹친다).
