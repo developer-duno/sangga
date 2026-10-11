@@ -3318,6 +3318,12 @@ body {
     gap: 2px;
   }
 
+  /* 칩을 고르면 점포수 칸이 「고른 업종(카페) 5곳 · 전체 점포 175곳 · 지하 7층 ~ 10층」으로 길어져
+     한 줄 말줄임에 층 범위가 가려졌다(2026-10-11 2-2b 운영 엔진 412px 캡처) — 좁은 폭에서만 줄을 넘긴다. */
+  .dbld__meta {
+    white-space: normal;
+  }
+
   .dbld__dong {
     flex-direction: column;
     gap: 2px;
