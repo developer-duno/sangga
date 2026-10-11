@@ -531,8 +531,8 @@ comment on function unit_business_append_only() is
 -- 적재기(load_sangkwon_snapshot.py)는 한 트랜잭션이 아니라 약 2시간 동안 1,000행씩 올리므로,
 -- `max()` 를 보면 첫 1,000행이 들어가는 순간부터 손님이 **반쯤 찬 새 분기**를 본다.
 --   loaded_ym    = 다 들어온 분기. 적재기가 전국 적재 + 교차검증 통과 뒤 api.mark_snapshot_loaded 로 적는다.
---                  요약표 넷(mv_parcel_store_names · mv_coverage_stats · mv_district_industry_mix ·
---                  mv_district_industry_floor — 2026-10-09 층 분포 추가)이 이 칸으로 굽는다.
+--                  요약표 다섯(mv_parcel_store_names · mv_coverage_stats · mv_district_industry_mix ·
+--                  mv_district_industry_floor — 2026-10-09 층 분포 추가 · mv_industry_mix_median — 2026-10-12 가운데값 추가)이 이 칸으로 굽는다.
 --   published_ym = 화면이 보는 분기. post_load.py 가 요약표를 loaded_ym 으로 구운 뒤 올린다 —
 --                  이 UPDATE 한 줄에 실시간 셋(v_floor_stack · list_district_buildings · get_data_freshness)과
 --                  요약표가 **한순간에** 같은 분기를 말한다.
