@@ -1,4 +1,5 @@
 import type { BuildingHit, DistrictLand, ParcelBuilding } from '../types';
+import { chipMatch, type FounderChip } from './founderChips';
 
 /**
  * 상권 → 건물 목록의 **순수 계산**만 모은다.
@@ -14,6 +15,11 @@ function isNullableString(x: unknown): boolean {
 
 function isNullableNumber(x: unknown): boolean {
   return x === null || x === undefined || typeof x === 'number';
+}
+
+/** 없거나 null 이거나 0 이상의 정수(개수 칸). */
+function isOptionalCount(x: unknown): boolean {
+  return x === null || x === undefined || (Number.isInteger(x) && (x as number) >= 0);
 }
 
 /**
@@ -43,12 +49,30 @@ export function isDistrictLand(x: unknown): x is DistrictLand {
     isNullableNumber(r.lng) &&
     isNullableNumber(r.min_floor) &&
     isNullableNumber(r.max_floor)
+    // ⓘ 업종 칩 점포 수(cat_store_cnt · 2026-10-11a)는 여기서 안 본다 — 선택 칸이라 이상한 값이어도
+    //   그 줄·그 목록을 버리지 않고 `toDistrictLands` 가 그 칸만 지운다(임대 floor_rent·LH 교훈).
   );
 }
 
 /** ⓘ 빈 배열은 **정상**이다 — 상권 1,687곳 중 10곳은 건물이 한 동도 없다(라이브 실측). */
 export function isDistrictLandList(x: unknown): x is DistrictLand[] {
   return Array.isArray(x) && x.every(isDistrictLand);
+}
+
+/**
+ * 서버 답 → 화면이 쓸 목록. 모양이 틀리면 null(목록째 실패 — 지금 규칙 그대로).
+ *
+ * ⛔ 선택 칸 `cat_store_cnt`(고른 업종 점포 수)만은 이상한 값(음수·소수·글자)이어도 목록을 버리지 않는다 —
+ *    **그 칸만 지운다**. 그러면 그 줄은 `점포 N곳`(칩이 있으면 `전체 점포 N곳`) 꼴로 물러선다(`landStoreText`). 곁 칸 하나 때문에 목록이
+ *    '불러오지 못했습니다'가 되면 안 된다(임대 카드 floor_rent · LH `.every()` 교훈).
+ */
+export function toDistrictLands(x: unknown): DistrictLand[] | null {
+  if (!isDistrictLandList(x)) return null;
+  return x.map((land) => {
+    if (isOptionalCount(land.cat_store_cnt)) return land;
+    const { cat_store_cnt: _bad, ...rest } = land;
+    return rest;
+  });
 }
 
 export function isParcelBuilding(x: unknown): x is ParcelBuilding {
@@ -147,4 +171,59 @@ export function landsSummary(lands: readonly DistrictLand[]): string {
  */
 export function hasMore(lands: readonly DistrictLand[]): boolean {
   return lands.length > 0 && lands.length < lands[0].total_parcel_cnt;
+}
+
+// ── 창업자 업종 칩(2026-10-11a · 물결 2-2b · 결정 0036 결정 18 ⑨·㉒) ─────────────────
+
+/**
+ * 목록 함수에 보낼 인자. 칩을 골랐으면 그 칩의 짝 중분류 코드(`CHIP_MATCH[칩].catM`)를 `p_cat_m` 으로.
+ *
+ * ⛔ 칩 '전체'면 `p_cat_m` 을 **아예 안 넣는다**(null 도 안 보낸다) — 마이그레이션 전 라이브(인자 셋짜리
+ *    함수)에서도 칩 없는 손님의 목록이 그대로 서게. '더 보기'도 같은 인자로 부른다.
+ */
+export function districtLandsArgs(
+  districtId: string,
+  limit: number,
+  offset: number,
+  chip: FounderChip,
+): Record<string, unknown> {
+  const args: Record<string, unknown> = { p_district_id: districtId, p_limit: limit, p_offset: offset };
+  const match = chipMatch(chip);
+  if (match) args.p_cat_m = [...match.catM];
+  return args;
+}
+
+/**
+ * 한 줄의 점포 숫자. 칩을 골랐고 서버가 그 수를 줬으면 **둘 다**(👤 2026-10-11):
+ * `고른 업종(카페) 3곳 · 전체 점포 25곳`. 아니면 지금 글 그대로 `점포 25곳`.
+ * ⓘ '고른 업종(…)' 은 업종 분포·개업·폐업 카드와 같은 말이다('칩'은 손님 말이 아니다).
+ */
+export function landStoreText(land: DistrictLand, chip: FounderChip): string {
+  const all = land.store_cnt.toLocaleString('ko-KR');
+  if (chipMatch(chip)) {
+    // ⛔ 칩을 골랐는데 업종 수가 없으면(옛 서버 · 이상한 값을 지운 줄) `전체 점포 N곳` — 맨 `점포 N곳` 이면
+    //    머릿글 「카페가 있는 땅」·안내 「두 숫자 모두」 옆에서 카페 수로 읽힌다(2026-10-11 재검사 🟡).
+    return typeof land.cat_store_cnt === 'number'
+      ? `고른 업종(${chip}) ${land.cat_store_cnt.toLocaleString('ko-KR')}곳 · 전체 점포 ${all}곳`
+      : `전체 점포 ${all}곳`;
+  }
+  return `점포 ${all}곳`;
+}
+
+/**
+ * 낱말 + 받침에 맞는 '이'/'가'(`카페가` · `학원이`). 칩 이름은 전부 한글로 끝난다(`founderChips` 표).
+ * ⓘ 빈 상태 글(`noLandText`)과 목록 머릿글이 같은 함수를 쓴다 — 두 곳이 다른 조사를 쓰지 않게.
+ */
+export function withSubjectParticle(word: string): string {
+  const code = word.charCodeAt(word.length - 1);
+  return word + ((code - 0xac00) % 28 === 0 ? '가' : '이');
+}
+
+/**
+ * 칩을 골랐는데 그 업종 점포가 있는 땅이 하나도 없을 때. 코드가 둘인 칩(학원)도 칩 이름 하나로 말한다.
+ * 칩 '전체'면 null — 그때는 지금 글('아직 건물 자료가 없습니다') 그대로다.
+ */
+export function noLandText(chip: FounderChip): string | null {
+  if (!chipMatch(chip)) return null;
+  return `이 상권에는 ${withSubjectParticle(chip)} 있는 땅이 없습니다.`;
 }

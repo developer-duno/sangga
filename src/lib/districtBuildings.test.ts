@@ -1,12 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import {
+  districtLandsArgs,
   hasMore,
   isDistrictLandList,
   isParcelBuildingList,
+  landStoreText,
   landToHit,
   landsSummary,
+  noLandText,
   parcelBuildingToHit,
+  toDistrictLands,
+  withSubjectParticle,
 } from './districtBuildings';
+import { CHIP_MATCH, FOUNDER_CHIPS } from './founderChips';
 import type { DistrictLand, ParcelBuilding } from '../types';
 
 /**
@@ -152,5 +158,71 @@ describe('더 받을 것이 남았나', () => {
 
   it('빈 목록에서는 없다', () => {
     expect(hasMore([])).toBe(false);
+  });
+});
+
+describe('창업자 업종 칩 (2026-10-11a · 물결 2-2b)', () => {
+  it('업종 칸은 선택이다 — 없거나 null 이거나 0 이상의 정수는 그대로 둔다', () => {
+    for (const v of [undefined, null, 0, 3]) {
+      const l = land({ cat_store_cnt: v });
+      expect(toDistrictLands([l])).toEqual([l]);
+    }
+  });
+
+  it('업종 칸이 음수·소수·글자면 **그 칸만** 지운다 — 줄도 목록도 산다(👤 F · floor_rent·LH 교훈)', () => {
+    for (const bad of [-1, 1.5, '3', true]) {
+      const got = toDistrictLands([{ ...land({ store_cnt: 7 }), cat_store_cnt: bad }, land({ pnu: 'p2' })]);
+      expect(got).not.toBeNull();
+      expect(got).toHaveLength(2);
+      expect(got![0]).not.toHaveProperty('cat_store_cnt');
+      expect(got![0].store_cnt).toBe(7);
+      // 칩이 있으면 「전체 점포」— 머릿글 「카페가 있는 땅」 옆에서 카페 수로 읽히지 않게 · 칩 '전체'면 지금 글
+      expect(landStoreText(got![0], '카페')).toBe('전체 점포 7곳');
+      expect(landStoreText(got![0], '전체')).toBe('점포 7곳');
+    }
+  });
+
+  it('다른 칸이 틀리면 지금처럼 목록째 실패다(null)', () => {
+    expect(toDistrictLands([{ ...land(), store_cnt: '317' }])).toBeNull();
+    expect(toDistrictLands({ message: 'PGRST202' })).toBeNull();
+    expect(toDistrictLands([])).toEqual([]);
+  });
+
+  it('조사 — 받침이면 이, 아니면 가(빈 상태 글과 머릿글이 같은 함수)', () => {
+    expect(withSubjectParticle('카페')).toBe('카페가');
+    expect(withSubjectParticle('학원')).toBe('학원이');
+    expect(withSubjectParticle('편의점')).toBe('편의점이');
+  });
+
+  it("인자 — 칩 '전체'면 p_cat_m 열쇠가 아예 없다", () => {
+    expect(districtLandsArgs('D1', 50, 0, '전체')).toEqual({ p_district_id: 'D1', p_limit: 50, p_offset: 0 });
+  });
+
+  it('인자 — 칩마다 짝짓기 표의 중분류 코드를 그대로(사본으로) 보낸다', () => {
+    for (const chip of FOUNDER_CHIPS) {
+      if (chip === '전체') continue;
+      const args = districtLandsArgs('D1', 50, 100, chip);
+      expect(args.p_cat_m).toEqual([...CHIP_MATCH[chip].catM]);
+      expect(args.p_cat_m).not.toBe(CHIP_MATCH[chip].catM);
+      expect(args.p_offset).toBe(100);
+    }
+  });
+
+  it('줄 숫자 — 칩을 골랐고 수가 오면 둘 다, 아니면 지금 글', () => {
+    const l = land({ store_cnt: 1234, cat_store_cnt: 3 });
+    expect(landStoreText(l, '카페')).toBe('고른 업종(카페) 3곳 · 전체 점포 1,234곳');
+    expect(landStoreText(l, '전체')).toBe('점포 1,234곳');
+    // 칸이 없는 옛 서버 답이면 지어내지 않는다
+    expect(landStoreText(land({ store_cnt: 5 }), '카페')).toBe('전체 점포 5곳');
+    expect(landStoreText(land({ store_cnt: 5 }), '전체')).toBe('점포 5곳');
+  });
+
+  it("빈 상태 — 칩 이름 하나 + 받침에 맞는 조사 · '전체'면 null", () => {
+    expect(noLandText('카페')).toBe('이 상권에는 카페가 있는 땅이 없습니다.');
+    expect(noLandText('한식')).toBe('이 상권에는 한식이 있는 땅이 없습니다.');
+    expect(noLandText('미용')).toBe('이 상권에는 미용이 있는 땅이 없습니다.');
+    expect(noLandText('학원')).toBe('이 상권에는 학원이 있는 땅이 없습니다.');
+    expect(noLandText('편의점')).toBe('이 상권에는 편의점이 있는 땅이 없습니다.');
+    expect(noLandText('전체')).toBeNull();
   });
 });

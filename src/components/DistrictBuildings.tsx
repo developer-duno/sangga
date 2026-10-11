@@ -2,13 +2,18 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { DISTRICT_BUILDINGS_FN, DISTRICT_BUILDINGS_PAGE, PARCEL_BUILDINGS_FN } from '../lib/appConstants';
 import {
+  districtLandsArgs,
   hasMore,
-  isDistrictLandList,
   isParcelBuildingList,
+  landStoreText,
   landToHit,
   landsSummary,
+  noLandText,
   parcelBuildingToHit,
+  toDistrictLands,
+  withSubjectParticle,
 } from '../lib/districtBuildings';
+import { chipMatch, FOUNDER_CHIP_ALL, type FounderChip } from '../lib/founderChips';
 import { describeRange } from '../lib/format';
 import type { BuildingHit, DistrictLand, ParcelBuilding } from '../types';
 
@@ -40,6 +45,12 @@ type Props = {
   /** 건물을 고르면 검색 결과를 골랐을 때와 **똑같은 길**로 들어간다(App 의 같은 handler). */
   onSelect: (hit: BuildingHit) => void;
   selectedBldId: string | null;
+  /**
+   * 창업자가 고른 업종 칩(2026-10-11a · 물결 2-2b). 칩을 골랐으면 그 업종 점포가 있는 땅만, 그 업종 점포
+   * 많은 순으로 받는다. 없거나 '전체'면 지금 목록 그대로(서버에 업종 인자를 안 보낸다).
+   * ⓘ App 의 `activeChip` 만 따른다 — 다른 역할은 늘 '전체'다.
+   */
+  chip?: FounderChip;
 };
 
 /**
@@ -53,7 +64,14 @@ type Expanded =
   | { at: 'done'; rows: ParcelBuilding[] }
   | { at: 'failed' };
 
-export function DistrictBuildings({ districtId, districtNm, onSelect, selectedBldId }: Props) {
+export function DistrictBuildings({
+  districtId,
+  districtNm,
+  onSelect,
+  selectedBldId,
+  chip = FOUNDER_CHIP_ALL,
+}: Props) {
+  const match = chipMatch(chip);
   const [lands, setLands] = useState<DistrictLand[] | null>(null);
   const [loading, setLoading] = useState(true);
   /**
@@ -89,6 +107,8 @@ export function DistrictBuildings({ districtId, districtNm, onSelect, selectedBl
    *    바뀌었다**(이어 붙기가 아니라 바꿔치기).
    * ⓘ 방식은 BuildingSearch 의 `latestRun` 과 **글자 그대로 같다** — 이 레포가 이미 쓰는
    *   패턴을 재사용한다(경합 가드를 화면마다 다르게 만들면 어느 쪽이 옳은지 흐려진다).
+   * ⛔ **업종 칩도 상권과 같은 신호다**(2026-10-11a) — 아래 effect 가 칩이 바뀔 때도 번호를 올린다.
+   *    안 그러면 옛 칩(또는 '전체')의 답이 늦게 닿아 새 칩 이름 아래 붙는다.
    */
   const latestRun = useRef(0);
 
@@ -98,57 +118,51 @@ export function DistrictBuildings({ districtId, districtNm, onSelect, selectedBl
       const runId = ++latestRun.current;
       setLoading(true);
       return supabase
-        .rpc(DISTRICT_BUILDINGS_FN, {
-          p_district_id: districtId,
-          p_limit: DISTRICT_BUILDINGS_PAGE,
-          p_offset: offset,
-        })
+        .rpc(DISTRICT_BUILDINGS_FN, districtLandsArgs(districtId, DISTRICT_BUILDINGS_PAGE, offset, chip))
         .then(({ data, error }) => {
           if (runId !== latestRun.current) return; // 그새 상권이 바뀌었다
           setLoading(false);
           // ⚠️ 모양까지 본다. 뜻밖의 답이 렌더로 흘러 들어가면 그 자리에서 터지는데, 이
           //    목록은 **지도 안**에 있어 터지면 지도까지 함께 사라진다.
-          if (error || !isDistrictLandList(data)) {
+          const rows = error ? null : toDistrictLands(data);
+          if (rows === null) {
             console.warn('상권 건물 목록 조회 실패', error ?? data);
             setFailed(true);
             return;
           }
           setFailed(false);
-          setLands((prev) => (offset === 0 || prev === null ? data : [...prev, ...data]));
+          setLands((prev) => (offset === 0 || prev === null ? rows : [...prev, ...rows]));
         });
     },
-    [districtId],
+    [districtId, chip],
   );
 
   useEffect(() => {
-    // 다른 상권을 누르면 앞의 것을 통째로 비운다 — 안 그러면 새 목록을 기다리는 동안
-    // **옛 상권의 건물들이 새 상권 이름 아래** 서 있다.
+    // 다른 상권을 누르면(또는 칩을 바꾸면) 앞의 것을 통째로 비운다 — 안 그러면 새 목록을 기다리는
+    // 동안 **옛 상권(옛 칩)의 건물들이 새 이름 아래** 서 있다.
     setLands(null);
     setExpanded({});
     setFailed(false);
     const runId = ++latestRun.current;
     setLoading(true);
     supabase
-      .rpc(DISTRICT_BUILDINGS_FN, {
-        p_district_id: districtId,
-        p_limit: DISTRICT_BUILDINGS_PAGE,
-        p_offset: 0,
-      })
+      .rpc(DISTRICT_BUILDINGS_FN, districtLandsArgs(districtId, DISTRICT_BUILDINGS_PAGE, 0, chip))
       .then(({ data, error }) => {
         if (runId !== latestRun.current) return;
         setLoading(false);
-        if (error || !isDistrictLandList(data)) {
+        const rows = error ? null : toDistrictLands(data);
+        if (rows === null) {
           console.warn('상권 건물 목록 조회 실패', error ?? data);
           setFailed(true);
           return;
         }
-        setLands(data);
+        setLands(rows);
       });
     // ⓘ 정리(cleanup) 함수를 두지 않는다. 상권이 바뀌면 **다음 effect 가 번호를 올리므로**
     //   날아가 있던 옛 요청은 그 순간 저절로 무효가 된다 — 정리에서 한 번 더 올리는 것은
     //   같은 일을 두 번 하는 셈이다. 이 목록이 통째로 사라질 때(언마운트) 늦은 응답이
     //   닿는 경우는 React 18 부터 아무 일도 일어나지 않는다(setState 가 무시된다).
-  }, [districtId]);
+  }, [districtId, chip]);
 
   /** "같은 땅에 N동"을 펼친다. 이미 받아 뒀으면 접는다(다시 묻지 않는다). */
   function toggle(land: DistrictLand) {
@@ -219,9 +233,10 @@ export function DistrictBuildings({ districtId, districtNm, onSelect, selectedBl
   if (lands.length === 0) {
     // ⓘ 상권 1,687곳 중 10곳은 실제로 건물이 한 동도 없다(라이브 실측). 빈 목록을 띄우고
     //   "왜 아무것도 없지?" 하게 두는 대신, 자료가 없다고 말한다(지도의 빈 구와 같은 규칙).
+    // ⓘ 칩을 골랐으면 그 업종이 있는 땅이 없다는 뜻이다 — 건물 자료가 없다고 말하지 않는다.
     return (
       <p className="dbld__msg" role="status">
-        이 상권에는 아직 건물 자료가 없습니다.
+        {noLandText(chip) ?? '이 상권에는 아직 건물 자료가 없습니다.'}
       </p>
     );
   }
@@ -229,14 +244,26 @@ export function DistrictBuildings({ districtId, districtNm, onSelect, selectedBl
   return (
     <div className="dbld">
       <p className="dbld__head" id={headId}>
-        <strong>{districtNm}</strong>의 건물 — {landsSummary(lands)}
+        {/* 칩을 골랐으면 무엇을 거른 목록인지 머릿글이 먼저 말한다(👤 2026-10-11 — '명동에서 카페가 있는 땅'). */}
+        {match ? (
+          <>
+            <strong>{districtNm}</strong>에서 {withSubjectParticle(chip)} 있는 땅 — {landsSummary(lands)}
+          </>
+        ) : (
+          <>
+            <strong>{districtNm}</strong>의 건물 — {landsSummary(lands)}
+          </>
+        )}
       </p>
       {/* ⛔ 무엇을 센 숫자인지 밝힌다. 이 값은 그 **땅**의 점포 수라, 한 땅에 여러 동이
           서 있으면 그 동들이 같은 수를 나눠 갖는 것이 아니라 함께 쓴다. */}
       <p className="dbld__note">
-        점포 수가 많은 곳부터입니다. 점포 수는 <strong>그 땅 전체</strong>를 센 것이라, 한 땅에
+        {match ? `고른 업종(${chip}) 점포가 많은 곳부터입니다.` : '점포 수가 많은 곳부터입니다.'}{' '}
+        {match ? '두 숫자 모두' : '점포 수는'} <strong>그 땅 전체</strong>를 센 것이라, 한 땅에
         여러 동이 서 있으면 그 동들이 같은 수를 함께 씁니다.
       </p>
+      {/* 편의점 칩 — 이 목록만의 한 줄(👤 2026-10-11 · founderChips 의 listNote — 업종 분포 카드의 note 와 다르다). */}
+      {match?.listNote && <p className="dbld__note">{match.listNote}</p>}
 
       {/* ⓘ 목록에 **이름표를 붙인다** — 예전에는 `id` 만 달아 두고 아무도 가리키지 않아
           읽어 주는 기기에는 그냥 "목록"이었다. 머릿글이 이미 "◯◯의 건물 — N곳"이라
@@ -265,7 +292,7 @@ export function DistrictBuildings({ districtId, districtNm, onSelect, selectedBl
                 <span className="dbld__name">{land.bld_nm || '(이름 없는 건물)'}</span>
                 <span className="dbld__addr">{land.road_addr || '주소 없음'}</span>
                 <span className="dbld__meta">
-                  점포 {land.store_cnt.toLocaleString('ko-KR')}곳 · {describeRange(landToHit(land))}
+                  {landStoreText(land, chip)} · {describeRange(landToHit(land))}
                   {many && <span className="dbld__warn"> · 같은 땅에 {land.bld_cnt_in_pnu}동</span>}
                 </span>
               </button>

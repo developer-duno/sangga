@@ -4659,14 +4659,23 @@ notify pgrst, 'reload schema';
 --
 -- 미리 굽지 않는다. 형제 mv_district_industry_mix 는 **전 상권 x 전 점포**라 12.5초였고,
 --    여기는 상권 하나만 본다 — 최대 상권도 찬 캐시 0.5초 / 더운 35ms(2026-08-31 실측).
+--
+-- 업종 인자 p_cat_m(2026-10-11a · 물결 2-2b · 결정 0036 결정 18 ⑨·㉒) — 창업자가 업종 칩을 고르면
+--    화면이 그 칩의 짝 중분류 코드(founderChips.ts CHIP_MATCH[칩].catM)를 넘긴다. 그러면 그 업종 점포가
+--    1곳 이상인 땅만, 그 업종 점포 수 많은 순으로 준다(새 칸 cat_store_cnt). store_cnt 는 늘 땅 전체.
+--    ⛔ p_cat_m 이 null(칩 '전체' — 화면은 아예 안 보낸다)이면 행·순서·칸 값이 옛 3-인자 함수와 같다
+--       (cat_store_cnt 만 null 로 더 붙는다). 반환 칸이 바뀌어 create or replace 로는 못 바꾼다 —
+--       마이그레이션은 옛 3-인자 둘(api·public)을 지우고 다시 만든다.
 create or replace function list_district_buildings(
   p_district_id text,
   p_limit       int default 50,
-  p_offset      int default 0
+  p_offset      int default 0,
+  p_cat_m       text[] default null
 )
 returns table (
   pnu              char(19),
   store_cnt        int,        -- 이 **땅**의 점포 수(최신 분기)
+  cat_store_cnt    int,        -- 그중 고른 업종(p_cat_m) 점포 수 · p_cat_m 이 null 이면 null
   bld_cnt_in_pnu   int,        -- 1 보다 크면 화면이 "같은 땅에 N동"을 적는다
   bld_id           text,       -- 대표 동 = 연면적 최대. 아래 칸들은 검색 결과와 같은 모양
   bld_nm           text,
@@ -4707,7 +4716,11 @@ as $$
     )
   ),
   stores as (
-    select ub.pnu, count(*)::int as n
+    -- 고른 업종 점포도 같은 훑기 한 번에 센다 — cat_m_cd 는 색인 idx_ub_pnu_cat 의 include 칸이라
+    -- 힙에 안 간다. ⛔ `p_cat_m::char(4)[]` 캐스트를 지우지 말 것(형제 list_industry_floors 와 같은 자 —
+    -- 칸이 char(4) 라 text 로 견주면 컬럼 쪽이 캐스트된다). p_cat_m 이 null 이면 cat_n 은 0(아래에서 null 로).
+    select ub.pnu, count(*)::int as n,
+           (count(*) filter (where ub.cat_m_cd = any(p_cat_m::char(4)[])))::int as cat_n
     from unit_business ub
     join scope sc on sc.pnu = ub.pnu
     where ub.snapshot_ym = (select r.published_ym from snapshot_release r)
@@ -4718,27 +4731,34 @@ as $$
     --    sum(count(*)) over () = 동 수. 둘을 한 번에 얻으려고 이 모양을 쓴다.
     select e.pnu,
            coalesce(max(s.n), 0)::int as store_cnt,
+           (case when p_cat_m is not null then coalesce(max(s.cat_n), 0) end)::int as cat_store_cnt,
            count(*)::int              as bld_cnt_in_pnu,
            count(*)      over ()      as total_parcel_cnt,
            sum(count(*)) over ()      as total_bld_cnt
     from elig e
     left join stores s on s.pnu = e.pnu
     group by e.pnu
+    -- 업종을 골랐으면 그 업종 점포가 1곳 이상인 땅만(👤 2026-10-11). ⓘ having 은 창 함수 **앞에** 돈다 —
+    -- 그래서 total_parcel_cnt·total_bld_cnt 는 거른 뒤의 규모다('더 보기'가 거른 목록 끝에서 멈춘다).
+    having p_cat_m is null or coalesce(max(s.cat_n), 0) > 0
   ),
   page as (
     -- ⛔ 무거운 조인(주소 조립·좌표·층 집계) 전에 **상한을 먼저** 건다.
     --    검색 함수가 "25행에만 필요하다"며 쓰는 것과 같은 수법이다.
     -- 정렬 tie-break 에 pnu 를 둔다 — 없으면 같은 점포 수끼리 순서가 흔들려
     -- '더 보기'가 이미 본 줄을 다시 가져오거나 건너뛴다.
+    -- 업종을 골랐으면 그 업종 점포 수가 먼저 · p_cat_m 이 null 이면 cat_store_cnt 가 전부 null 이라
+    -- 첫 열쇠가 아무것도 가르지 않는다(옛 순서 store_cnt desc, pnu 그대로).
     select *
     from land
-    order by store_cnt desc, pnu
+    order by cat_store_cnt desc nulls last, store_cnt desc, pnu
     limit  greatest(1, least(coalesce(p_limit, 50), 200))
     offset greatest(0, coalesce(p_offset, 0))
   )
   select
     pg.pnu,
     pg.store_cnt,
+    pg.cat_store_cnt,
     pg.bld_cnt_in_pnu,
     rep.bld_id,
     rep.display_nm as bld_nm,
@@ -4770,18 +4790,20 @@ as $$
     from v_building_floor_stack s
     where s.bld_id = rep.bld_id
   ) fs on true
-  order by pg.store_cnt desc, pg.pnu;
+  order by pg.cat_store_cnt desc nulls last, pg.store_cnt desc, pg.pnu;
 $$;
 
-comment on function list_district_buildings(text, int, int) is
+comment on function list_district_buildings(text, int, int, text[]) is
   '상권 하나에 속한 **땅(필지)** 목록을 점포 많은 순으로. 정방향 list_building_districts 와 '
   '같은 판정(st_contains + parcel.geom)을 써야 두 화면이 같은 말을 한다. '
   'store_cnt 는 **그 땅**의 점포 수다(건물별로는 영영 못 가른다 — unit_business.unit_id 전량 NULL). '
-  '한 땅에 여러 동이면 대표 동(연면적 최대) 한 채만 싣고 bld_cnt_in_pnu 로 몇 동인지 알린다.';
+  '한 땅에 여러 동이면 대표 동(연면적 최대) 한 채만 싣고 bld_cnt_in_pnu 로 몇 동인지 알린다. '
+  'p_cat_m(업종 중분류 코드 배열 · 2026-10-11a)을 주면 그 업종 점포가 1곳 이상인 땅만 그 업종 점포 많은 순으로 '
+  '주고 cat_store_cnt 에 그 수를 싣는다(null 이면 옛 결과 그대로 · cat_store_cnt 는 null).';
 
 -- Supabase 는 새 함수를 anon 에게 자동으로 연다(pg_default_acl) — 만든 자리에서 닫는다.
 -- 2026-08-31 실측: 이 줄 없이 만드니 anon 실행 권한이 곧바로 t 였다.
-revoke all on function list_district_buildings(text, int, int) from public, anon, authenticated;
+revoke all on function list_district_buildings(text, int, int, text[]) from public, anon, authenticated;
 
 -- 한 땅의 동 목록 — 목록에서 "같은 땅에 N동"을 **펼칠 때만** 부른다.
 -- 목록에 동을 전부 실으면 대전역 상권에서 606동이 딸려 오는데, 필지의 94%
@@ -4843,11 +4865,13 @@ revoke all on function list_parcel_buildings(text) from public, anon, authentica
 create or replace function api.list_district_buildings(
   p_district_id text,
   p_limit       int default 50,
-  p_offset      int default 0
+  p_offset      int default 0,
+  p_cat_m       text[] default null
 )
 returns table (
   pnu              char(19),
   store_cnt        int,
+  cat_store_cnt    int,
   bld_cnt_in_pnu   int,
   bld_id           text,
   bld_nm           text,
@@ -4866,10 +4890,10 @@ language sql
 stable
 security definer
 set search_path = ''
-as $$ select * from public.list_district_buildings(p_district_id, p_limit, p_offset) $$;
+as $$ select * from public.list_district_buildings(p_district_id, p_limit, p_offset, p_cat_m) $$;
 
-revoke all on function api.list_district_buildings(text, int, int) from public, anon, authenticated;
-grant execute on function api.list_district_buildings(text, int, int) to anon, authenticated;
+revoke all on function api.list_district_buildings(text, int, int, text[]) from public, anon, authenticated;
+grant execute on function api.list_district_buildings(text, int, int, text[]) to anon, authenticated;
 
 create or replace function api.list_parcel_buildings(p_pnu text)
 returns table (

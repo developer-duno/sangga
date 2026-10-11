@@ -179,8 +179,19 @@ const landRows = [
   },
 ];
 
+/** 상권 목록 rpc 의 인자 — 지도가 칩을 목록까지 넘기는지 본다(2026-10-11a · 물결 2-2b). */
+const rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
+/** 이 시험만의 답 — 있으면 기본 답(landRows) 대신 쓴다. 칩마다 다른 답·영영 안 오는 답을 만든다. */
+const rpcPlan: { answer: ((args: Record<string, unknown>) => Promise<unknown>) | null } = { answer: null };
+
 vi.mock('../lib/supabase', () => ({
-  supabase: { rpc: () => Promise.resolve({ data: landRows, error: null }) },
+  supabase: {
+    rpc: (fn: string, args?: Record<string, unknown>) => {
+      rpcCalls.push({ fn, args: args ?? {} });
+      if (rpcPlan.answer) return rpcPlan.answer(args ?? {});
+      return Promise.resolve({ data: landRows, error: null });
+    },
+  },
 }));
 
 const fetchMock = vi.fn();
@@ -199,6 +210,7 @@ function okJson(body: unknown) {
 }
 
 beforeEach(() => {
+  rpcPlan.answer = null;
   kakao.mapProps = null;
   kakao.setBounds.mockReset();
   kakao.panTo.mockReset();
@@ -394,6 +406,66 @@ describe('DistrictMap — 상권 이름을 누르면 그 안의 건물', () => {
 
     await clickAt(127.05, 37.55); // 다른 자리(두 상권이 겹치는 곳)
     await waitFor(() => expect(screen.queryByText('역삼빌딩')).toBeNull());
+  });
+
+  it('창업자 칩을 받으면 상권 목록이 그 업종 코드로 묻는다 — 없으면 업종 인자를 안 보낸다', async () => {
+    rpcCalls.length = 0;
+    await renderMap({ chip: '카페' });
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await clickAt(127.09, 37.59);
+    fireEvent.click(screen.getByRole('button', { name: /역삼역/ }));
+    await screen.findByText('역삼빌딩');
+    const withChip = rpcCalls.filter((c) => c.fn === 'list_district_buildings');
+    expect(withChip.at(-1)?.args.p_cat_m).toEqual(['I212']);
+
+    cleanup();
+    rpcCalls.length = 0;
+    await renderMap();
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await clickAt(127.09, 37.59);
+    fireEvent.click(screen.getByRole('button', { name: /역삼역/ }));
+    await screen.findByText('역삼빌딩');
+    const noChip = rpcCalls.filter((c) => c.fn === 'list_district_buildings');
+    expect(noChip.length).toBeGreaterThan(0);
+    expect(noChip.at(-1)?.args).not.toHaveProperty('p_cat_m');
+  });
+
+  it('★ 목록이 열린 채 칩만 바꾼 첫 렌더에도 옛 칩의 숫자가 새 칩 이름표로 그려지지 않는다', async () => {
+    // 카페는 바로 3곳 · 한식은 답이 영영 안 온다 — 그 사이에 한 번이라도 「고른 업종(한식) 3곳」이 붙으면 깜빡임이다.
+    rpcPlan.answer = (args) => {
+      const codes = args.p_cat_m as string[] | undefined;
+      if (codes?.includes('I201')) return new Promise(() => {});
+      return Promise.resolve({ data: [{ ...landRows[0], cat_store_cnt: 3 }], error: null });
+    };
+    const DistrictMap = await load();
+    const view = (chip: '카페' | '한식') => (
+      <DistrictMap sigungu="11680" sigunguName="강남구" selected={null} onSelectBuilding={() => {}} chip={chip} />
+    );
+    const { container, rerender } = render(view('카페'));
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await clickAt(127.09, 37.59);
+    fireEvent.click(screen.getByRole('button', { name: /역삼역/ }));
+    expect(await screen.findByText(/고른 업종\(카페\) 3곳/)).toBeTruthy();
+
+    // 최종 화면만 보면 effect 가 이미 비운 뒤라 못 본다 → 붙은·떨어진·바뀐 마디를 전부 기록한다
+    // (IndustryMixSection.test 의 같은 꼴).
+    const seen: string[] = [];
+    const keep = (recs: MutationRecord[]) => {
+      for (const r of recs) {
+        r.addedNodes.forEach((n) => seen.push(n.textContent ?? ''));
+        r.removedNodes.forEach((n) => seen.push(n.textContent ?? ''));
+        if (r.type === 'characterData') seen.push(r.target.textContent ?? '');
+      }
+    };
+    const obs = new MutationObserver(keep);
+    obs.observe(container, { childList: true, subtree: true, characterData: true });
+    rerender(view('한식'));
+    expect(await screen.findByText(/불러오는 중/)).toBeTruthy();
+    keep(obs.takeRecords());
+    obs.disconnect();
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.some((t) => t.includes('고른 업종(한식)'))).toBe(false);
+    expect(screen.queryByText(/고른 업종\(카페\)/)).toBeNull();
   });
 });
 
