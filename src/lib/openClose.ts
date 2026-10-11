@@ -18,6 +18,9 @@ import { formatRate } from './rentStats';
  * ⛔ **비율을 다시 계산하지 않는다.** 상권 전체 비율은 서버가 서울시 산식(개업·폐업 점포 ÷
  *    유사 업종 점포 × 100)으로 내고, 업종 비율은 서울시 공표값 그대로 온다. 여기서 하는 산수는
  *    추이 막대의 **높이**(그 상권 창 안 최댓값에 대한 비례)뿐이다 — 값이 아니라 그림의 크기다.
+ *    ⓘ **예외 하나 — 프랜차이즈 비중**(`franchiseText` · 👤 결정 · 물결 1-B — 날짜는 이 파일을 훑는 연도 가드 때문에 안 적는다): 서울시가 비중을
+ *      공표하지 않아 화면이 **공표 개수 둘**(프랜차이즈 점포 ÷ 점포(프랜차이즈 포함))을 나눈다.
+ *      이 밖의 나누기를 더하지 않는다.
  * ⛔ **분기·연도 글자를 박지 않는다.** 어느 분기를 그릴지는 서버의 창(`window_quarters`)이
  *    정한다 — 박아 두면 다음 분기가 적재되는 날부터 이 파일만 옛말을 한다(가드 시험이 본다).
  */
@@ -77,6 +80,23 @@ export function countRateText(label: string, count: number | null, rate: number 
 /** 큰 숫자 줄의 점포 수 — 👤 화면 낱말은 '점포(프랜차이즈 포함)'(서울시 이름은 유사 업종 점포 수). */
 export function storeTotalText(count: number | null): string {
   return `점포 ${formatStoreCount(count)}(프랜차이즈 포함)`;
+}
+
+/**
+ * 큰 숫자 줄의 프랜차이즈 한 칸 — '프랜차이즈 120곳 (점포의 18.05%)'(👤 결정 · 물결 1-B).
+ *
+ * ⛔ 「비율을 다시 계산하지 않는다」의 **유일한 예외**다 — 서울시가 프랜차이즈 비중을 공표하지 않아
+ *    공표 개수 둘을 화면이 나눈다(파일 머리말).
+ * ⛔ **분모는 점포(프랜차이즈 포함) = `similr_induty_stor_co`** 다 — `stor_co`(프랜차이즈 뺀 점포)로
+ *    나누면 그럴듯하게 더 큰 비중이 나온다(개업·폐업 비율의 분모와 같은 칸).
+ * ⛔ 분모가 `OPEN_CLOSE_MIN_SAMPLE` 미만이면 비율 없이 개수만(개업·폐업 큰 숫자와 같은 규칙).
+ * ⓘ 비율 표기는 개업·폐업과 같은 자(`formatRate` — 소수 둘째 자리까지).
+ */
+export function franchiseText(frcStorCo: number, similrStorCo: number): string {
+  const count = `프랜차이즈 ${formatStoreCount(frcStorCo)}`;
+  if (similrStorCo < OPEN_CLOSE_MIN_SAMPLE) return count;
+  const r = formatRate((frcStorCo / similrStorCo) * 100);
+  return r === null ? count : `${count} (점포의 ${r})`;
 }
 
 /**

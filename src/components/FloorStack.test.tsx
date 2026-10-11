@@ -1735,14 +1735,21 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       '참고 매매 시세 (추정값)',
       '상권 임대 동향 (부동산원 조사)',
       '상권 개업·폐업 (서울시 공표)',
+      // 빈 카드 셋(결정 0036 결정 2 · 물결 1-B) — 역할 없음 차례에서는 맨 끝.
+      '업종별 추정매출',
+      '유동인구',
+      '이 자리 가게 이력',
     ]);
     expect(cards.map((c) => c.role)).toEqual([
-      '공통', '공통', '창업자', '투자자', '투자자', '투자자', '창업자',
+      '공통', '공통', '창업자', '투자자', '투자자', '투자자', '창업자', '창업자', '창업자', '창업자',
     ]);
     // 공통 둘 + 역할마다 하나씩 = 넷을 펼치고, 투자자의 나머지 둘(추정값·임대)은 접는다.
     // ⛔ 임대 카드의 defaultOpen 이 실수로 true 가 되는 날 여기서 잡힌다(예산 4장 초과).
     // ⛔ 개업·폐업 카드(결정 0033)도 접힌다 — 이 건물이 아니라 상권 전체의 값이다.
-    expect(cards.map((c) => c.open)).toEqual([true, true, true, true, false, false, false]);
+    // ⛔ 빈 카드 셋도 접힌 채 시작한다(👤 — 지금은 "비어 있음" 한 줄뿐이다).
+    expect(cards.map((c) => c.open)).toEqual([
+      true, true, true, true, false, false, false, false, false, false,
+    ]);
   });
 
   it('첫 화면에 펼쳐진 카드가 상한(4장)을 넘지 않는다', async () => {
@@ -1771,12 +1778,19 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       ['상권 임대 동향 (부동산원 조사)', false],
       ['둘레의 업종 분포', false],
       ['상권 개업·폐업 (서울시 공표)', false],
+      ['업종별 추정매출', false],
+      ['유동인구', false],
+      ['이 자리 가게 이력', false],
     ],
     창업자: [
       ['속한 상권', true],
       ['층 목록', true],
       ['둘레의 업종 분포', true],
       ['상권 개업·폐업 (서울시 공표)', true],
+      // 빈 카드 셋은 창업자 벌에서 개업·폐업 바로 뒤(👤 2026-10-11).
+      ['업종별 추정매출', false],
+      ['유동인구', false],
+      ['이 자리 가게 이력', false],
       ['실거래 기록', false],
       ['참고 매매 시세 (추정값)', false],
       ['상권 임대 동향 (부동산원 조사)', false],
@@ -1789,6 +1803,9 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       ['상권 임대 동향 (부동산원 조사)', false],
       ['둘레의 업종 분포', false],
       ['상권 개업·폐업 (서울시 공표)', false],
+      ['업종별 추정매출', false],
+      ['유동인구', false],
+      ['이 자리 가게 이력', false],
     ],
   };
   const NO_ROLE: Array<[string, boolean]> = [
@@ -1799,6 +1816,9 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     ['참고 매매 시세 (추정값)', false],
     ['상권 임대 동향 (부동산원 조사)', false],
     ['상권 개업·폐업 (서울시 공표)', false],
+    ['업종별 추정매출', false],
+    ['유동인구', false],
+    ['이 자리 가게 이력', false],
   ];
 
   async function settledCards(container: HTMLElement) {
@@ -1975,7 +1995,27 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       '공실률 · ㎡당 임대료 · 투자수익률 · 2026년 2분기 조사',
       // 개업·폐업 카드는 상권 이름과 언제까지의 자료인지만 — 값은 적지 않는다(결정 0033 · 👤).
       '역삼역 · 2026년 2분기까지 서울시 공표',
+      // 빈 카드 셋 — 서울 건물이면 셋 다 이 한 줄(👤 결정 0036 결정 2 · 물결 1-B).
+      '지금은 비어 있음',
+      '지금은 비어 있음',
+      '지금은 비어 있음',
     ]);
+  });
+
+  it('★ 빈 카드 셋은 아무것도 부르지 않는다 · 대전 건물이면 매출·유동인구 요약이 그 사실 한 줄', async () => {
+    const { container } = render(<FloorStack building={building({ pnu: '3011010700108770000' })} />);
+    await waitFor(() => {
+      expect(container.querySelectorAll('.card')).toHaveLength(Object.keys(SECTION_PLAN).length);
+      expect(container.textContent).not.toContain('불러오는 중');
+    });
+    const summaryOf = (cls: string) => container.querySelector(`.${cls} .card__summary`)?.textContent;
+    expect(summaryOf('card--sales')).toBe('대전은 아직 받지 않았습니다');
+    expect(summaryOf('card--pop')).toBe('대전은 아직 받지 않았습니다');
+    expect(summaryOf('card--history')).toBe('지금은 비어 있음');
+    // 빈 카드 셋은 종이에서 빠지는 이름표를 단다(인쇄 규칙은 E2E 가 본다).
+    expect(container.querySelectorAll('.card--empty')).toHaveLength(3);
+    // ⛔ 부른 함수는 원래 카드들 것뿐이다 — 빈 카드용 함수 이름이 하나도 없다.
+    for (const c of rpcCalls) expect(c.fn).not.toMatch(/sales|pop|history|empty/i);
   });
 
   it('구 이름을 모르면 그 조각을 빼고 적는다 ("null 층대별 단가"가 되지 않게)', async () => {

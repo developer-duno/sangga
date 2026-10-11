@@ -783,7 +783,8 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await page.getByRole('button', { name: /테스트빌딩/ }).click();
 
     const stack = page.locator('section.stack');
-    await expect(stack.locator('.card')).toHaveCount(5);
+    // 다섯 장 + 늘 서는 빈 카드 셋(결정 0036 결정 2 · 물결 1-B — 아무것도 안 불러서 목업이 없어도 선다).
+    await expect(stack.locator('.card')).toHaveCount(8);
     await expect(stack.locator('.card__toggle[aria-expanded="true"]')).toHaveCount(4);
 
     const band = stack.locator('section.band');
@@ -1042,6 +1043,10 @@ test.describe('층별 스택뷰 — 종이로 뽑기', () => {
     // 화면에서는 — 버튼이 있고 머리글은 없다.
     await expect(page.getByRole('button', { name: '인쇄 · PDF로 저장' })).toBeVisible();
     await expect(page.locator('.printmeta')).toBeHidden();
+    // 빈 카드 셋은 화면에서는 선다(접힌 채 제목 + 요약 한 줄) — 아래 종이에서만 빠진다.
+    for (const k of ['sales', 'pop', 'history']) {
+      await expect(page.locator(`section.card--${k} .card__summary`)).toHaveText('지금은 비어 있음');
+    }
 
     await page.emulateMedia({ media: 'print' });
 
@@ -1058,6 +1063,12 @@ test.describe('층별 스택뷰 — 종이로 뽑기', () => {
     await expect(page.locator('.links')).toBeHidden();
     // 형제 사이트 링크 구역도 같은 이유로 빠진다(2026-10-06).
     await expect(page.locator('.family')).toBeHidden();
+    // 빈 카드 셋도 종이에서 빠진다(👤 물결 1-B — "지금은 비어 있음" 뿐이라 종이 자리만 먹는다).
+    // ⓘ 빼는 이름표는 빈 상태일 때만 붙는 `card--empty` 다 — 자료가 차면 그때부터 종이에 나온다.
+    await expect(page.locator('section.card--empty')).toHaveCount(3);
+    for (const k of ['sales', 'pop', 'history']) {
+      await expect(page.locator(`section.card--${k}`)).toBeHidden();
+    }
 
     // ② 이 종이가 무슨 건물이고 언제 것이며 원본이 어디인지.
     const meta = page.locator('.printmeta');
@@ -1626,7 +1637,8 @@ test.describe('층별 스택뷰 — 상권 임대 동향', () => {
     const rent = stack.locator('section.rent');
     await expect(rent).toBeVisible();
     // 카드가 하나 늘어도 **첫 화면 펼침은 여전히 넷**이다(로드맵 Wave 2 의 예산).
-    await expect(stack.locator('.card')).toHaveCount(6);
+    // 여섯 장 + 빈 카드 셋(물결 1-B).
+    await expect(stack.locator('.card')).toHaveCount(9);
     await expect(stack.locator('.card__toggle[aria-expanded="true"]')).toHaveCount(4);
     // 접혀 있어도 무엇·언제는 읽힌다. ⛔ 값은 요약에 없다 — 한정어 없이 이 건물 값으로 읽힌다.
     await expect(rent.locator('.card__summary')).toHaveText(
@@ -2035,6 +2047,8 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
     const first = oc.locator('.oc__district').first();
     await expect(first.locator('.oc__latest .oc__num')).toHaveText([
       '점포 441곳(프랜차이즈 포함)',
+      // 프랜차이즈 비중(👤 물결 1-B) — 63 ÷ 441(점포(프랜차이즈 포함)) · stor_co 378 이 분모가 아니다.
+      '프랜차이즈 63곳 (점포의 14.29%)',
       '개업 5곳 · 개업률(분기) 1.13%',
       '폐업 9곳 · 폐업률(분기) 2.04%',
     ]);
@@ -2108,6 +2122,10 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
     await page.getByRole('button', { name: /대전빌딩/ }).click();
     // ⓘ 층 목록 목업은 그대로라 머리 제목은 앞 건물 이름이다 — 카드 요약이 바뀐 것으로 본다.
     await expect(oc.locator('.card__summary')).toHaveText('서울 상권만 다루는 자료라 이 건물(대전)에는 없습니다');
+    // 빈 카드 — 대전 건물의 매출·유동인구는 그 사실 한 줄, 가게 이력은 지역과 무관(👤 물결 1-B).
+    await expect(stack.locator('section.card--sales .card__summary')).toHaveText('대전은 아직 받지 않았습니다');
+    await expect(stack.locator('section.card--pop .card__summary')).toHaveText('대전은 아직 받지 않았습니다');
+    await expect(stack.locator('section.card--history .card__summary')).toHaveText('지금은 비어 있음');
     await openCard(page, /상권 개업·폐업/);
     await expect(oc.locator('.oc__lead')).toHaveText(
       '서울시 상권분석서비스는 서울 상권만 다룹니다 — 이 건물(대전)에는 그 자료가 없습니다.',
@@ -2128,7 +2146,7 @@ test.describe('첫 화면 — 역할 단추', () => {
   }) => {
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
-    // 일곱 장이 전부 서게 한다 — 임대·개업폐업까지 답해야 차례 전체를 견줄 수 있다.
+    // 카드가 전부 서게 한다 — 임대·개업폐업까지 답해야 차례 전체를 견줄 수 있다(빈 카드 셋은 늘 선다).
     await mockFloorStack(
       page,
       [parcelTx()],
@@ -2150,12 +2168,19 @@ test.describe('첫 화면 — 역할 단추', () => {
       '참고 매매 시세 (추정값)',
       '상권 임대 동향 (부동산원 조사)',
       '상권 개업·폐업 (서울시 공표)',
+      '업종별 추정매출',
+      '유동인구',
+      '이 자리 가게 이력',
     ];
+    // 빈 카드 셋은 창업자 차례에서 개업·폐업 바로 뒤(👤 물결 1-B).
     const FOUNDER = [
       '속한 상권',
       '층 목록',
       '둘레의 업종 분포',
       '상권 개업·폐업 (서울시 공표)',
+      '업종별 추정매출',
+      '유동인구',
+      '이 자리 가게 이력',
       '실거래 기록',
       '참고 매매 시세 (추정값)',
       '상권 임대 동향 (부동산원 조사)',

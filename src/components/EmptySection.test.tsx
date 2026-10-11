@@ -1,0 +1,74 @@
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+
+/**
+ * 빈 카드 하나(결정 0036 결정 2 · 물결 1-B).
+ *
+ * 여기서 특히 지키는 것
+ *  ① 접힌 채 서고 요약 한 줄이 보인다(접힘 ≠ 숨김) · 본문은 그려 두고 감춘다(인쇄 규칙 결정 0020)
+ *  ② **아무것도 부르지 않는다** — 서버 함수 0
+ *  ③ 빈 상태 이름표 `card--empty`(종이에서 빠지는 이름표)가 붙는다
+ */
+
+const rpcCalls: string[] = [];
+vi.mock('../lib/supabase', () => ({
+  supabase: {
+    rpc: (fn: string) => {
+      rpcCalls.push(fn);
+      return Promise.resolve({ data: null, error: null });
+    },
+    from: (t: string) => {
+      rpcCalls.push(`from:${t}`);
+      throw new Error('빈 카드는 아무것도 부르지 않는다');
+    },
+  },
+}));
+
+const { EmptySection } = await import('./EmptySection');
+
+afterEach(() => {
+  cleanup();
+  rpcCalls.length = 0;
+});
+
+describe('EmptySection', () => {
+  it('★ 접힌 채 서고 제목·역할·요약이 보이며, 본문은 감춰져 있다', () => {
+    const { container } = render(<EmptySection kind="sales" pnu="1168010500101590000" />);
+    const card = container.querySelector('section.card')!;
+    expect(card.querySelector('.card__title')?.textContent).toBe('업종별 추정매출');
+    expect(card.querySelector('.card__role')?.textContent).toBe('창업자');
+    expect(card.querySelector('.card__summary')?.textContent).toBe('지금은 비어 있음');
+    expect(screen.getByRole('button').getAttribute('aria-expanded')).toBe('false');
+    expect(card.querySelector('.card__body')?.hasAttribute('hidden')).toBe(true);
+
+    fireEvent.click(screen.getByRole('button'));
+    expect(card.querySelector('.empty__body')?.textContent).toBe(
+      '지금은 비어 있음 — 서울시가 상권마다 공표하는 업종별 추정매출을 받으면 이 자리에 그대로 싣습니다',
+    );
+  });
+
+  it('★ 빈 상태 이름표 card--empty 와 카드 이름표가 붙는다(종이에서 빠지는 길)', () => {
+    for (const kind of ['sales', 'pop', 'history'] as const) {
+      const { container, unmount } = render(<EmptySection kind={kind} pnu="1168010500101590000" />);
+      const cls = container.querySelector('section.card')!.classList;
+      expect(cls.contains('card--empty')).toBe(true);
+      expect(cls.contains(`card--${kind}`)).toBe(true);
+      unmount();
+    }
+  });
+
+  it('★ 아무것도 부르지 않는다(서버 함수 0)', async () => {
+    render(<EmptySection kind="pop" pnu="3011010700108770000" />);
+    render(<EmptySection kind="history" pnu="3011010700108770000" />);
+    await Promise.resolve();
+    expect(rpcCalls).toEqual([]);
+  });
+
+  it('대전 건물의 유동인구는 그 사실 한 줄(요약·본문)', () => {
+    const { container } = render(<EmptySection kind="pop" pnu="3011010700108770000" />);
+    expect(container.querySelector('.card__summary')?.textContent).toBe('대전은 아직 받지 않았습니다');
+    expect(container.querySelector('.empty__body')?.textContent).toBe(
+      '서울시 자료는 서울만 — 대전은 아직 받지 않았습니다',
+    );
+  });
+});
