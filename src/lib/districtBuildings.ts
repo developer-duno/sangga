@@ -63,7 +63,7 @@ export function isDistrictLandList(x: unknown): x is DistrictLand[] {
  * 서버 답 → 화면이 쓸 목록. 모양이 틀리면 null(목록째 실패 — 지금 규칙 그대로).
  *
  * ⛔ 선택 칸 `cat_store_cnt`(고른 업종 점포 수)만은 이상한 값(음수·소수·글자)이어도 목록을 버리지 않는다 —
- *    **그 칸만 지운다**. 그러면 그 줄은 `점포 N곳` 꼴로 물러선다(`landStoreText`). 곁 칸 하나 때문에 목록이
+ *    **그 칸만 지운다**. 그러면 그 줄은 `점포 N곳`(칩이 있으면 `전체 점포 N곳`) 꼴로 물러선다(`landStoreText`). 곁 칸 하나 때문에 목록이
  *    '불러오지 못했습니다'가 되면 안 된다(임대 카드 floor_rent · LH `.every()` 교훈).
  */
 export function toDistrictLands(x: unknown): DistrictLand[] | null {
@@ -200,8 +200,12 @@ export function districtLandsArgs(
  */
 export function landStoreText(land: DistrictLand, chip: FounderChip): string {
   const all = land.store_cnt.toLocaleString('ko-KR');
-  if (chipMatch(chip) && typeof land.cat_store_cnt === 'number') {
-    return `고른 업종(${chip}) ${land.cat_store_cnt.toLocaleString('ko-KR')}곳 · 전체 점포 ${all}곳`;
+  if (chipMatch(chip)) {
+    // ⛔ 칩을 골랐는데 업종 수가 없으면(옛 서버 · 이상한 값을 지운 줄) `전체 점포 N곳` — 맨 `점포 N곳` 이면
+    //    머릿글 「카페가 있는 땅」·안내 「두 숫자 모두」 옆에서 카페 수로 읽힌다(2026-10-11 재검사 🟡).
+    return typeof land.cat_store_cnt === 'number'
+      ? `고른 업종(${chip}) ${land.cat_store_cnt.toLocaleString('ko-KR')}곳 · 전체 점포 ${all}곳`
+      : `전체 점포 ${all}곳`;
   }
   return `점포 ${all}곳`;
 }

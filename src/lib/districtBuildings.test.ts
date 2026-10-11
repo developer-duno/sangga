@@ -176,7 +176,9 @@ describe('창업자 업종 칩 (2026-10-11a · 물결 2-2b)', () => {
       expect(got).toHaveLength(2);
       expect(got![0]).not.toHaveProperty('cat_store_cnt');
       expect(got![0].store_cnt).toBe(7);
-      expect(landStoreText(got![0], '카페')).toBe('점포 7곳');
+      // 칩이 있으면 「전체 점포」— 머릿글 「카페가 있는 땅」 옆에서 카페 수로 읽히지 않게 · 칩 '전체'면 지금 글
+      expect(landStoreText(got![0], '카페')).toBe('전체 점포 7곳');
+      expect(landStoreText(got![0], '전체')).toBe('점포 7곳');
     }
   });
 
@@ -211,7 +213,8 @@ describe('창업자 업종 칩 (2026-10-11a · 물결 2-2b)', () => {
     expect(landStoreText(l, '카페')).toBe('고른 업종(카페) 3곳 · 전체 점포 1,234곳');
     expect(landStoreText(l, '전체')).toBe('점포 1,234곳');
     // 칸이 없는 옛 서버 답이면 지어내지 않는다
-    expect(landStoreText(land({ store_cnt: 5 }), '카페')).toBe('점포 5곳');
+    expect(landStoreText(land({ store_cnt: 5 }), '카페')).toBe('전체 점포 5곳');
+    expect(landStoreText(land({ store_cnt: 5 }), '전체')).toBe('점포 5곳');
   });
 
   it("빈 상태 — 칩 이름 하나 + 받침에 맞는 조사 · '전체'면 null", () => {

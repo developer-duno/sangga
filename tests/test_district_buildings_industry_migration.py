@@ -285,8 +285,9 @@ class TestDropRecreateAndGrants:
 def header_order(sql, title_word):
     """머리말 `-- <title_word> …` 절의 번호 줄(①②③)을 차례대로 — 주석 머리말만 본다(코드 줄은 안 본다).
 
-    ⓘ 가드 본체와 양성 대조가 이 같은 함수를 지난다.
-    ⚠️ 못 보는 것: 번호 없이 산문으로만 적은 순서 · 절 제목 낱말이 바뀐 꼴.
+    ⓘ 가드 본체와 양성 대조가 이 같은 함수를 지난다. 번호 글자가 ①②③… 차례인지는 `step_numbers` 로 따로 본다.
+    ⚠️ 못 보는 것: 번호 없이 산문으로만 적은 순서 · ①~⑨ 밖의 번호 꼴(`1.`·`(1)`) · 절 제목 낱말이 바뀐 꼴 ·
+       단계 안 글이 다른 단계로 넘어간 꼴(단계마다 핵심 낱말 하나만 본다).
     """
     lines = [ln[2:].strip() for ln in sql.split("\n") if ln.startswith("--")]
     start = next((i for i, ln in enumerate(lines) if ln.startswith(title_word)), None)
@@ -297,9 +298,17 @@ def header_order(sql, title_word):
     for ln in lines[start + 2:]:
         if ln.startswith("---"):
             break
-        if ln[:1] and ln[:1] in "①②③":
+        if ln[:1] and ln[:1] in CIRCLED:
             steps.append(ln)
     return steps
+
+
+CIRCLED = "①②③④⑤⑥⑦⑧⑨"
+
+
+def step_numbers(steps):
+    """단계 줄들의 번호 글자 — ①②③… 차례여야 한다(줄은 그대로 두고 번호 글자만 맞바꾼 꼴을 잡는다)."""
+    return [s[0] for s in steps]
 
 
 class TestHeaderOrder:
@@ -308,11 +317,13 @@ class TestHeaderOrder:
     def test_apply_db_first_then_screen(self, mig):
         steps = header_order(mig, "실행 순서")
         assert len(steps) == 3 and "dbx.py -f" in steps[0] and "화면 PR 머지" in steps[2], steps
+        assert step_numbers(steps) == list(CIRCLED[:3]), steps
         assert "DB 먼저 → 그 뒤 화면 머지" in mig and "배치 창" in mig
 
     def test_rollback_screen_first_then_db(self, mig):
         steps = header_order(mig, "되돌리기")
         assert len(steps) == 2 and "revert" in steps[0] and "새 마이그레이션 파일" in steps[1], steps
+        assert step_numbers(steps) == list(CIRCLED[:2]), steps
 
     def test_check_md5_alarm_between_is_written(self, mig):
         assert "[사고](본문 md5 불일치)로 적는 것이 **정상**" in mig
@@ -322,6 +333,14 @@ class TestHeaderOrder:
         steps = header_order(mig, "실행 순서")
         bad = mig.replace(steps[0], "@@").replace(steps[2], steps[0]).replace("@@", steps[2])
         assert "dbx.py -f" not in header_order(bad, "실행 순서")[0]
+
+    def test_detector_sees_swapped_number_glyphs(self, mig):
+        """양성 대조 — 줄은 그대로 두고 ①·③ 번호 글자만 맞바꾼 사본(내용 단언은 그대로 초록이 되는 꼴)."""
+        steps = header_order(mig, "실행 순서")
+        bad = mig.replace(steps[0], "③" + steps[0][1:], 1).replace(steps[2], "①" + steps[2][1:], 1)
+        got = header_order(bad, "실행 순서")
+        assert "dbx.py -f" in got[0] and "화면 PR 머지" in got[2]   # 내용 단언만으로는 못 잡는다
+        assert step_numbers(got) == ["③", "②", "①"] != list(CIRCLED[:3])
 
 
 # ── ② 실행 가드 (로컬 PostgreSQL 이 있을 때만) ──────────────────────────────

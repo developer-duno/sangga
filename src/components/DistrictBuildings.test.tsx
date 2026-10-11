@@ -546,7 +546,7 @@ describe('DistrictBuildings — 창업자 업종 칩 (2026-10-11a · 물결 2-2b
     expect(head(container)).toBe('명동 남대문 관광특구의 건물 — 1곳 · 건물 1동');
   });
 
-  it('업종 칸이 이상한 값이면 목록은 서고 그 줄만 「점포 N곳」으로 물러선다(👤 F)', async () => {
+  it('업종 칸이 이상한 값이면 목록은 서고 그 줄만 「전체 점포 N곳」으로 물러선다(👤 F · 재검사 🟡)', async () => {
     responses.lands = {
       data: [
         { ...land({ pnu: 'a', bld_id: 'A', bld_nm: '음수 땅', store_cnt: 7 }), cat_store_cnt: -1 },
@@ -557,8 +557,21 @@ describe('DistrictBuildings — 창업자 업종 칩 (2026-10-11a · 물결 2-2b
     show({ chip: '카페' });
     expect(await screen.findByText('음수 땅')).toBeTruthy();
     expect(screen.queryByText('건물 목록을 불러오지 못했습니다.')).toBeNull();
-    expect(screen.getByText(/^점포 7곳/)).toBeTruthy();
+    // ⛔ 맨 「점포 7곳」이면 머릿글 「카페가 있는 땅」 옆에서 카페 7곳으로 읽힌다.
+    expect(screen.getByText(/^전체 점포 7곳/)).toBeTruthy();
+    expect(screen.queryByText(/^점포 7곳/)).toBeNull();
     expect(screen.getByText(/고른 업종\(카페\) 2곳 · 전체 점포 9곳/)).toBeTruthy();
+  });
+
+  it("칩 '전체'면 이상한 업종 칸이 와도 줄 글은 지금 그대로 「점포 N곳」", async () => {
+    responses.lands = {
+      data: [{ ...land({ pnu: 'a', bld_id: 'A', bld_nm: '음수 땅', store_cnt: 7 }), cat_store_cnt: -1 }],
+      error: null,
+    };
+    show();
+    expect(await screen.findByText('음수 땅')).toBeTruthy();
+    expect(screen.getByText(/^점포 7곳/)).toBeTruthy();
+    expect(screen.queryByText(/전체 점포/)).toBeNull();
   });
 
   it('그 업종이 있는 땅이 없으면 그렇게 말한다 — 건물 자료가 없다고 하지 않는다', async () => {
