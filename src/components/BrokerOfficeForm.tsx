@@ -2,6 +2,7 @@ import {
   BROKER_OFFICE_FIELDS,
   BROKER_OFFICE_MAX,
   clampOfficeField,
+  officeToggleText,
   type BrokerOffice,
 } from '../lib/brokerOfficeStore';
 
@@ -21,7 +22,7 @@ type Props = {
 export function BrokerOfficeForm({ value, onChange, onClear }: Props) {
   return (
     <details className="office">
-      <summary className="office__toggle">종이에 찍을 내 사무소 정보</summary>
+      <summary className="office__toggle">{officeToggleText(value)}</summary>
       <p className="office__note">이 기기에만 저장 · 서버로 보내지 않음</p>
       <div className="office__fields">
         {BROKER_OFFICE_FIELDS.map(([k, label]) => {

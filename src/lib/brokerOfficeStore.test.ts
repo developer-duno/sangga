@@ -6,6 +6,7 @@ import {
   clearBrokerOffice,
   hasBrokerOffice,
   loadBrokerOffice,
+  officeToggleText,
   saveBrokerOffice,
 } from './brokerOfficeStore';
 
@@ -85,6 +86,12 @@ describe('brokerOfficeStore', () => {
     expect(() => saveBrokerOffice(FULL, st)).not.toThrow();
     expect(loadBrokerOffice(st)).toEqual(EMPTY_BROKER_OFFICE);
     expect(clearBrokerOffice(st)).toEqual(EMPTY_BROKER_OFFICE);
+  });
+
+  it('officeToggleText — 비면 제목만 · 채우면 「— 채워짐(이름)」 · 이름이 비면 「— 채워짐」', () => {
+    expect(officeToggleText(EMPTY_BROKER_OFFICE)).toBe('종이에 찍을 내 사무소 정보');
+    expect(officeToggleText(FULL)).toBe('종이에 찍을 내 사무소 정보 — 채워짐(역삼공인중개사)');
+    expect(officeToggleText({ ...EMPTY_BROKER_OFFICE, phone: '02' })).toBe('종이에 찍을 내 사무소 정보 — 채워짐');
   });
 
   it('hasBrokerOffice — 공백만이면 빈 칸 · 한 칸이라도 채우면 참', () => {

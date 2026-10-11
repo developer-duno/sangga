@@ -786,8 +786,8 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
 
     const stack = page.locator('section.stack');
     // 다섯 장 + 늘 서는 빈 카드 셋(결정 0036 결정 2 · 물결 1-B — 아무것도 안 불러서 목업이 없어도 선다)
-    // + 세 잣대(물결 1-C2 — 구 단가가 오면 선다 · 접힌 채).
-    await expect(stack.locator('.card')).toHaveCount(9);
+    // ⓘ 세 잣대(물결 1-C2)는 국세청·부동산원이 둘 다 비면(이 시험의 목업 = 함수 없음) 서지 않는다.
+    await expect(stack.locator('.card')).toHaveCount(8);
     await expect(stack.locator('.card__toggle[aria-expanded="true"]')).toHaveCount(4);
 
     const band = stack.locator('section.band');
@@ -1955,11 +1955,12 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
     await expect(list).toHaveCount(100);
     await expect(list.nth(50)).toContainText('3가051호');
 
-    // ② 요청 기록 — 섞인 층의 두 쪽만 나갔다. 35층(주거)을 묻는 요청은 **0번**이다.
+    // ② 요청 기록 — 목록 제공 층(1·3층)의 첫 쪽(호실 구성표 기본값 '지하~3층' — 물결 1-C2 · 👤 2026-10-11)과
+    //    펼친 3층의 둘째 쪽만 나갔다. 35층(주거)을 묻는 요청은 **0번**이다.
     // ⓘ 개발 서버는 StrictMode 라 effect 가 두 번 돌아 첫 쪽 요청이 겹쳐 나갈 수 있다(앞 것은
     //   버려진다) — 그래서 횟수가 아니라 **무엇을 물었나**(층·쪽)의 묶음으로 본다.
-    const asked = [...new Set(unitRequests.map((a) => `${a.p_floor_no}/${a.p_offset}/${a.p_limit}`))];
-    expect(asked).toEqual(['3/0/50', '3/50/50']);
+    const asked = [...new Set(unitRequests.map((a) => `${a.p_floor_no}/${a.p_offset}/${a.p_limit}`))].sort();
+    expect(asked).toEqual(['1/0/50', '3/0/50', '3/50/50']);
     expect(unitRequests.some((a) => a.p_floor_no === 35)).toBe(false);
     expect(unitRequests.every((a) => a.p_bld_id === searchHit().bld_id)).toBe(true);
 
@@ -2478,6 +2479,8 @@ test.describe('종이 한 장 보강 — 사무소 칸 · 호실 구성표 · �
     await expect(office.getByText('여럿이 함께 쓰는 컴퓨터라면 다 쓴 뒤 지우기를 눌러 주세요')).toBeVisible();
     await page.getByLabel('사무소 이름').fill('역삼공인중개사');
     await page.getByLabel('전화').fill('02-0000-0000');
+    // 접힌 줄 제목에 채움 상태(접어 둬도 무엇이 찍힐지 보인다).
+    await expect(office.locator('summary')).toHaveText('종이에 찍을 내 사무소 정보 — 채워짐(역삼공인중개사)');
     await expect(box).toHaveCount(1);
     await expect(box).toBeHidden();
     // 412px 에서도 입력 칸이 가로로 넘치지 않는다.
@@ -2486,6 +2489,9 @@ test.describe('종이 한 장 보강 — 사무소 칸 · 호실 구성표 · �
     await page.emulateMedia({ media: 'print' });
     await expect(box).toBeVisible();
     await expect(box.locator('p')).toHaveText(['역삼공인중개사', '전화 02-0000-0000']);
+    // 구분선은 머리 전체 폭(상자가 서도 끊기지 않게) — 머리글이 갖고, 왼쪽 덩어리의 발 줄은 안 갖는다.
+    await expect(page.locator('.printmeta')).toHaveCSS('border-bottom-style', 'solid');
+    await expect(page.locator('.printmeta__foot')).toHaveCSS('border-bottom-style', 'none');
     await expect(office).toBeHidden();
     await page.locator('.printmeta').screenshot({ path: testInfo.outputPath(`c2-office-print-${testInfo.project.name}.png`) });
     await page.emulateMedia({ media: null });
@@ -2543,13 +2549,11 @@ test.describe('종이 한 장 보강 — 사무소 칸 · 호실 구성표 · �
     const card = page.locator('.card--floors');
     const listOf = (no: number) => card.locator(`#floor-${no} .floor__unitprint-list li`);
     const pick = page.locator('.unitpick');
-    // 기본 = 넣지 않음 · 목록 요청 0.
-    await expect(pick.getByLabel('넣지 않음')).toBeChecked();
-    await expect(card.locator('.floor__unitprint')).toHaveCount(0);
-
-    // 지하~3층 — 화면에서도 지하 1층·1층·3층 아래에 50호씩 + 남은 수 한 줄(5층·35층은 없다).
-    await pick.getByLabel('지하~3층').check();
+    // 기본 = 지하~3층(👤 2026-10-11 · 결정 8 원문) — 건물을 열자마자 화면에서도 지하 1층·1층·3층 아래에
+    // 50호씩 + 남은 수 한 줄(5층·35층은 없다). 받는 동안의 「불러오는 중」 줄은 다 받으면 사라진다.
+    await expect(pick.getByLabel('지하~3층')).toBeChecked();
     for (const no of [-1, 1, 3]) await expect(listOf(no)).toHaveCount(50);
+    await expect(card.locator('.floor__unitprint-loading')).toHaveCount(0);
     await expect(card.locator('#floor-5 .floor__unitprint')).toHaveCount(0);
     await expect(card.locator('#floor-3 .floor__unitprint-more')).toHaveText('이 층은 493호 더 있습니다');
 
@@ -2570,6 +2574,13 @@ test.describe('종이 한 장 보강 — 사무소 칸 · 호실 구성표 · �
     await page.emulateMedia({ media: 'print' });
     await expect(listOf(5).first()).toBeVisible();
     await expect(card.locator('#floor-35 .floor__unitprint')).toHaveCount(0);
+    await page.emulateMedia({ media: null });
+
+    // 넣지 않음 — 화면·종이 모두 목록이 빠진다(선택지로 남는다).
+    await pick.getByLabel('넣지 않음').check();
+    await expect(card.locator('.floor__unitprint')).toHaveCount(0);
+    await page.emulateMedia({ media: 'print' });
+    await expect(card.locator('.floor__unitprint')).toHaveCount(0);
     await page.emulateMedia({ media: null });
 
     // ⛔ 주거 층은 요청조차 안 나간다 · 늘 첫 쪽(offset 0, 50).
@@ -2609,10 +2620,11 @@ test.describe('종이 한 장 보강 — 사무소 칸 · 호실 구성표 · �
     await openCard(page, /층 차이 세 잣대/);
     const val = (no: number, k: string) => gap.locator(`.gap__row[data-floor="${no}"] .gap__cell--${k} .gap__val`);
     await expect(val(1, 'base')).toHaveText('410만');
-    await expect(val(1, 'tx')).toHaveText('2,250만');
+    await expect(val(1, 'tx')).toHaveText('㎡당 2,250만');
     await expect(val(1, 'rent')).toHaveText('74.6');
     await expect(val(2, 'tx')).toHaveText('표본 부족 (0건)');
     await expect(val(-1, 'rent')).toHaveText('16.95');
+    await expect(gap.locator('.gap__row[data-floor="-1"] .gap__cell--rent .gap__sub')).toHaveText(' (상권 평균 · 지하 1층)');
     await expect(val(-1, 'base')).toHaveText('–');
     await expect(gap.locator('.gap__head--rent')).toContainText('서울>강남>테헤란로 집합상가 평균 — 이 건물 값 아님');
     await expect(gap).toContainText('서로 나누거나 비율을 계산하지 않았습니다');

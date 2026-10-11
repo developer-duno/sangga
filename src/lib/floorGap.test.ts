@@ -6,6 +6,7 @@ import {
   GAP_NONE,
   floorGapHeads,
   floorGapRows,
+  floorGapShowable,
   pickRentRow,
   rentKeysOf,
   txBandOf,
@@ -107,23 +108,23 @@ describe('floorGapRows — 층마다 세 칸', () => {
 
     const one = rows.find((r) => r.floorNo === 1)!;
     expect(one.base).toEqual({ value: '500만', sub: '호 12개 가운데값' });
-    expect(one.tx).toEqual({ value: '380만', sub: '1층 · 213건' });
-    expect(one.rent).toEqual({ value: '74.6', sub: '1층' });
+    expect(one.tx).toEqual({ value: '㎡당 380만', sub: '1층 · 213건' });
+    expect(one.rent).toEqual({ value: '74.6', sub: '상권 평균 · 1층' });
 
     // 2층 — 구 실거래 표본 4건이라 값 대신 표본 부족(기존 실거래 카드와 같은 상수 5).
     const two = rows.find((r) => r.floorNo === 2)!;
     expect(two.base.value).toBe('381만');
     expect(two.tx).toEqual({ value: '표본 부족 (4건)', sub: null });
-    expect(two.rent).toEqual({ value: '50.5', sub: '2층' });
+    expect(two.rent).toEqual({ value: '50.5', sub: '상권 평균 · 2층' });
 
     // 7층 — 6-10 열쇠 · 12층 — 11+ 열쇠 · 둘 다 3층이상 층대.
-    expect(rows.find((r) => r.floorNo === 7)!.rent).toEqual({ value: '33.2', sub: '6~10층' });
-    expect(rows.find((r) => r.floorNo === 12)!.rent).toEqual({ value: '30.1', sub: '11층 이상' });
-    expect(rows.find((r) => r.floorNo === 12)!.tx.value).toBe('210만');
+    expect(rows.find((r) => r.floorNo === 7)!.rent).toEqual({ value: '33.2', sub: '상권 평균 · 6~10층' });
+    expect(rows.find((r) => r.floorNo === 12)!.rent).toEqual({ value: '30.1', sub: '상권 평균 · 11층 이상' });
+    expect(rows.find((r) => r.floorNo === 12)!.tx.value).toBe('㎡당 210만');
 
     // 옥탑 — 실거래는 3층이상 층대 · 부동산원은 구간이 없어 '–'.
     const roof = rows.find((r) => r.floorNo === 99)!;
-    expect(roof.tx.value).toBe('210만');
+    expect(roof.tx.value).toBe('㎡당 210만');
     expect(roof.rent.value).toBe(GAP_NONE);
 
     // 지하 2층 — 부동산원 구간 없음 · 기준시가 없음 · 실거래 지하 0건 → 표본 부족.
@@ -136,8 +137,8 @@ describe('floorGapRows — 층마다 세 칸', () => {
   it('6-10 열쇠가 없는 상가 조사면 6+ 로', () => {
     const rows = floorGapRows([floor(8), floor(15)], null, null, [rent({ floor_rent: { '6+': 41, '1': 70 } })]);
     expect(rows.map((r) => r.rent)).toEqual([
-      { value: '41', sub: '6층 이상' },
-      { value: '41', sub: '6층 이상' },
+      { value: '41', sub: '상권 평균 · 6층 이상' },
+      { value: '41', sub: '상권 평균 · 6층 이상' },
     ]);
   });
 
@@ -179,18 +180,23 @@ describe('floorGapHeads — 칸 머리(서버 값으로만)', () => {
 
 /**
  * ⛔ 비율 금지 가드(결정 15 · 0031) — 탐지는 이 작은 함수 하나로, 가드 본체와 양성 대조가 같은 함수를 지난다.
- * 못 보는 것: 글자로 풀어 쓴 '몇 배'·'반값' 같은 말(값 글자 단언이 대신 지킨다).
+ * 잡는 꼴: `%`·`％`·'퍼센트' · 숫자 뒤 '배'(「1.8배」「2 배」).
+ * 못 보는 것: 나누기 기호(`÷`·`/`)로 적은 식 · 숫자 없이 글자로 쓴 비교('절반'·'반값'·'두 배') — 값 글자를
+ * 정확히 단언하는 시험(위 floorGapRows)이 나누기가 끼면 값이 바뀌어 대신 잡는다.
  */
-function hasPercent(text: string): boolean {
-  return /[%％]|퍼센트/.test(text);
+function hasRatio(text: string): boolean {
+  return /[%％]|퍼센트|\d\s*배/.test(text);
 }
 
-describe('⛔ 비율 표기 0 — % 가 안 나온다', () => {
+describe('⛔ 비율 표기 0 — %·배 가 안 나온다', () => {
   it('양성 대조 — 탐지 함수가 흔한 꼴과 변형 꼴을 실제로 잡는다', () => {
-    expect(hasPercent('2층은 1층의 68%')).toBe(true);
-    expect(hasPercent('2층은 1층의 68％')).toBe(true);
-    expect(hasPercent('68 퍼센트')).toBe(true);
-    expect(hasPercent('380만 (1층 · 213건)')).toBe(false);
+    expect(hasRatio('2층은 1층의 68%')).toBe(true);
+    expect(hasRatio('2층은 1층의 68％')).toBe(true);
+    expect(hasRatio('68 퍼센트')).toBe(true);
+    expect(hasRatio('1층은 2층의 1.8배')).toBe(true);
+    expect(hasRatio('2 배')).toBe(true);
+    // 반대 짝 — 정상 글은 안 걸린다('배지'·'B등급' 같은 낱말 포함).
+    expect(hasRatio('㎡당 380만 (1층 · 213건) · A등급 배지')).toBe(false);
   });
 
   it('요약·발·머리·칸 글 어디에도 % 가 없다', () => {
@@ -204,10 +210,47 @@ describe('⛔ 비율 표기 0 — % 가 안 나온다', () => {
       h.rent,
       ...rows.flatMap((r) => [r.base, r.tx, r.rent].flatMap((c) => [c.value, c.sub ?? ''])),
     ].join('\n');
-    expect(hasPercent(all)).toBe(false);
+    expect(hasRatio(all)).toBe(false);
   });
 
   it('접힌 요약에는 값(숫자)이 없다', () => {
     expect(/[0-9]/.test(FLOOR_GAP_SUMMARY)).toBe(false);
+  });
+});
+
+describe('경계 — 부동산원 열쇠 6·10·11층 · 표본 n=5(=TX_MIN_SAMPLE)', () => {
+  const FR = { '11+': 30.1, '6-10': 33.2, '6+': 41, '5': 40 };
+  it('6층·10층은 6-10 · 11층은 11+ (5층은 5)', () => {
+    const rows = floorGapRows([floor(11), floor(10), floor(6), floor(5)], null, null, [rent({ floor_rent: FR })]);
+    expect(rows.map((r) => [r.floorNo, r.rent.sub])).toEqual([
+      [11, '상권 평균 · 11층 이상'],
+      [10, '상권 평균 · 6~10층'],
+      [6, '상권 평균 · 6~10층'],
+      [5, '상권 평균 · 5층'],
+    ]);
+  });
+
+  it('표본 5건이면 값을 적고 4건이면 표본 부족', () => {
+    const five = floorGapRows([floor(1)], null, [tx('1층', 5, 1_000_000)], null)[0].tx;
+    const four = floorGapRows([floor(1)], null, [tx('1층', 4, 1_000_000)], null)[0].tx;
+    expect(five).toEqual({ value: '㎡당 100만', sub: '1층 · 5건' });
+    expect(four).toEqual({ value: '표본 부족 (4건)', sub: null });
+  });
+});
+
+describe('floorGapShowable — 값 든 칸이 둘 이상 · 그중 하나는 국세청·부동산원', () => {
+  it('구 실거래만 있으면 숨김 · 국세청이나 부동산원이 하나라도 있으면 선다', () => {
+    expect(floorGapShowable(floorGapRows([floor(1)], null, TX, null))).toBe(false);
+    expect(floorGapShowable(floorGapRows([floor(1)], [], TX, []))).toBe(false); // 빈 배열 = null 처럼
+    expect(floorGapShowable(floorGapRows([floor(1)], [base(1, 5_000_000)], TX, null))).toBe(true);
+    expect(floorGapShowable(floorGapRows([floor(1)], null, TX, [rent()]))).toBe(true);
+  });
+
+  it('모든 층이 – 인 칸은 빈 칸으로 친다 · 국세청 한 칸만으로는 안 선다', () => {
+    // 옥탑만 있는 건물 — 부동산원은 구간이 없어 전부 '–'.
+    expect(floorGapShowable(floorGapRows([floor(99)], null, null, [rent()]))).toBe(false);
+    expect(floorGapShowable(floorGapRows([floor(1)], [base(1, 5_000_000)], null, null))).toBe(false);
+    // 표본 부족뿐인 실거래는 값이 아니다.
+    expect(floorGapShowable(floorGapRows([floor(2)], [base(2, 5_000_000)], TX, null))).toBe(false);
   });
 });

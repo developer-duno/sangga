@@ -65,6 +65,14 @@ export function hasBrokerOffice(o: BrokerOffice | null | undefined): boolean {
   return !!o && BROKER_OFFICE_FIELDS.some(([k]) => o[k].trim() !== '');
 }
 
+/** 접힌 줄 제목 — 채워져 있으면 그 사실과 사무소 이름(👤 2026-10-11 글자). 접어 둬도 무엇이 찍힐지 보인다. */
+export function officeToggleText(value: BrokerOffice): string {
+  const base = '종이에 찍을 내 사무소 정보';
+  if (!hasBrokerOffice(value)) return base;
+  const name = value.name.trim();
+  return `${base} — 채워짐${name ? `(${name})` : ''}`;
+}
+
 /** 적어 둔 사무소 정보. 없거나 깨졌거나 못 읽으면 빈 칸들. 모양이 틀린 칸은 그 칸만 빈다. */
 export function loadBrokerOffice(storage: OfficeStorage | null = browserStorage()): BrokerOffice {
   if (!storage) return { ...EMPTY_BROKER_OFFICE };

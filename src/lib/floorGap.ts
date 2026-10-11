@@ -110,7 +110,7 @@ export function floorGapRows(
       const n = s.n.toLocaleString('ko-KR');
       tx =
         s.n >= TX_MIN_SAMPLE && s.median_unit_price !== null
-          ? { value: formatManWon(s.median_unit_price), sub: `${s.floor_band} · ${n}건` }
+          ? { value: `㎡당 ${formatManWon(s.median_unit_price)}`, sub: `${s.floor_band} · ${n}건` }
           : { value: `표본 부족 (${n}건)`, sub: null };
     }
 
@@ -119,7 +119,8 @@ export function floorGapRows(
       const line = rentLines.find((l) => l.key === key);
       const v = rentSrc[key];
       if (line && typeof v === 'number') {
-        rent = { value: formatThousandWon(v), sub: line.label };
+        // 줄마다 '이 건물 값 아님'이 읽히게 작은 글에 '상권 평균'을 박는다(검사관 🟠).
+        rent = { value: formatThousandWon(v), sub: `상권 평균 · ${line.label}` };
         break;
       }
     }
@@ -155,6 +156,17 @@ export function floorGapHeads(
   }
 
   return { base: '국세청 기준시가 · 원/㎡ · 이 건물', tx, rent };
+}
+
+/**
+ * 카드를 세울 만한가 — **값이 든 칸(자료)이 둘 이상**이고 그중 하나는 국세청·부동산원이어야 한다(👤 2026-10-11).
+ * 구 실거래는 거의 늘 오므로, 국세청·부동산원이 둘 다 비면(실패·null·빈 배열·모든 층 '–') 그 한 칸만으로
+ * '나란히'가 성립하지 않는다 — 카드째 숨긴다. 칸에 값이 들었다 = 작은 글(`sub`)이 있다(표본 부족·'–' 은 없다).
+ */
+export function floorGapShowable(rows: readonly GapRow[]): boolean {
+  const has = (k: 'base' | 'tx' | 'rent') => rows.some((r) => r[k].sub !== null);
+  const filled = (['base', 'tx', 'rent'] as const).filter(has).length;
+  return filled >= 2 && (has('base') || has('rent'));
 }
 
 /** 구 실거래 표본 전체(배지 옆 건수). 못 받았으면 null. */

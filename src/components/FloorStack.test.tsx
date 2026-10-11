@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
 import {
   SECTION_EXPAND_BUDGET,
   SECTION_PLAN,
@@ -1676,6 +1676,11 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     responses.industryMix = { data: MIX, error: null };
     responses.txs = { data: [tx()], error: null };
     responses.bands = { data: priceBands(), error: null };
+    // 세 잣대 카드(물결 1-C2)는 국세청·부동산원 중 하나라도 값이 있어야 선다 — 국세청 한 층을 준다.
+    responses.basePrices = {
+      data: [{ floor_no: 1, median_price_per_m2: 4_100_000, ho_cnt: 12, notice_date: '2026-01-01' }],
+      error: null,
+    };
     responses.rent = {
       data: [
         {
@@ -2695,5 +2700,118 @@ describe('FloorStack — 호실 구성표 고르기 (물결 1-C2)', () => {
     expect(container.querySelector('#floor-8 .floor__unitprint')).toBeNull();
     expect(peak).toBeLessThanOrEqual(4);
     expect(peak).toBeGreaterThan(1);
+  });
+});
+
+/**
+ * 호실 구성표 고르기 — 검사 뒤 보완(물결 1-C2 · 👤 2026-10-11): 늦은 답 가드 · 바꿀 때 받은 층 다시 쓰기 ·
+ * 받는 중/못 받은 층 한 줄 · 층 목록 카드는 손님이 직접 고를 때만 펼친다 · 호 목록 있는 층 수 알림.
+ */
+describe('FloorStack — 호실 구성표 고르기 보완 (물결 1-C2)', () => {
+  const NOS = [5, 3, 1, -1];
+  function summary() {
+    return NOS.map((n) => ({
+      floor_no: n,
+      unit_cnt: 2,
+      median_area_m2: 4,
+      min_area_m2: null,
+      max_area_m2: null,
+      floor_kind: 'commercial',
+    }));
+  }
+  function page(args: Record<string, unknown>) {
+    const no = Number(args.p_floor_no);
+    return { data: [{ ho: `${no}-1호`, excl_area_m2: 4, total_cnt: 1 }], error: null };
+  }
+  const calls = () => rpcCalls.filter((c) => c.fn === 'list_floor_units').map((c) => Number((c.args as Record<string, unknown>).p_floor_no));
+  const lists = (container: HTMLElement) => container.querySelectorAll('.floor__unitprint');
+
+  beforeEach(() => {
+    responses.floors = { data: NOS.map((n) => floor({ floor_no: n })), error: null };
+    responses.unitSummary = { data: summary(), error: null };
+    responses.floorUnits = page;
+  });
+
+  it("★ '전부'로 바꾼 뒤 답이 오기 전에 '넣지 않음'으로 돌리면 늦은 답이 목록을 되살리지 않는다", async () => {
+    const pending: Array<() => void> = [];
+    responses.floorUnits = ((args: Record<string, unknown>) =>
+      new Promise((r) => pending.push(() => r(page(args))))) as unknown as typeof responses.floorUnits;
+    const { container, rerender } = render(<FloorStack building={building()} unitPrintMode="all" />);
+    await waitFor(() => expect(pending.length).toBeGreaterThan(0));
+    rerender(<FloorStack building={building()} unitPrintMode="none" />);
+    await act(async () => {
+      for (const go of pending.splice(0)) go();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(lists(container)).toHaveLength(0);
+    expect(container.querySelector('.floor__unitprint-loading')).toBeNull();
+  });
+
+  it("★ '지하~3층' → '전부' — 이미 받은 층은 다시 쓰고 새 층(5층)만 부른다", async () => {
+    const { container, rerender } = render(<FloorStack building={building()} unitPrintMode="low" />);
+    await waitFor(() => expect(lists(container)).toHaveLength(3));
+    expect([...new Set(calls())].sort((a, b) => a - b)).toEqual([-1, 1, 3]);
+    const before = container.querySelector('#floor-1 .floor__unitprint');
+    rpcCalls.length = 0;
+    rerender(<FloorStack building={building()} unitPrintMode="all" />);
+    // 바꾼 그 순간에도 받은 층은 그대로 서 있다(깜빡임 0).
+    expect(lists(container)).toHaveLength(3);
+    await waitFor(() => expect(lists(container)).toHaveLength(4));
+    expect(calls()).toEqual([5]);
+    expect(container.querySelector('#floor-1 .floor__unitprint')).toBe(before);
+  });
+
+  it('★ 받는 동안 「호실 목록 불러오는 중 (N/M층)」 · 끝난 뒤 못 받은 층 수 한 줄', async () => {
+    const pending: Array<() => void> = [];
+    responses.floorUnits = ((args: Record<string, unknown>) =>
+      new Promise((r) =>
+        pending.push(() =>
+          r(Number(args.p_floor_no) === 3 ? { data: null, error: { message: 'boom' } } : page(args)),
+        ),
+      )) as unknown as typeof responses.floorUnits;
+    const { container } = render(<FloorStack building={building()} unitPrintMode="all" />);
+    await waitFor(() =>
+      expect(container.querySelector('.floor__unitprint-loading')?.textContent).toBe('호실 목록 불러오는 중 (0/4층)'),
+    );
+    await act(async () => {
+      for (const go of pending.splice(0)) go();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    await waitFor(() => expect(container.querySelector('.floor__unitprint-loading')).toBeNull());
+    expect(container.querySelector('.floor__unitprint-failed')?.textContent).toBe('1개 층은 호실 목록을 못 불러왔습니다');
+    expect(lists(container)).toHaveLength(3);
+  });
+
+  it('★ 층 목록 카드는 손님이 직접 고를 때(신호)만 펼친다 — 기본 고르기로는 접힌 카드 그대로', async () => {
+    const { container, rerender } = render(
+      <FloorStack building={building()} viewerRole="창업자" unitPrintMode="low" unitPrintOpenSignal={0} />,
+    );
+    await waitFor(() => expect(lists(container)).toHaveLength(3));
+    const toggle = () => container.querySelector('.card--floors .card__toggle')!;
+    // 창업자 표는 층 목록이 펼침이다 — 접어 둔 뒤 기본값만 다시 와도 그대로 접혀 있어야 한다.
+    fireEvent.click(toggle());
+    expect(toggle().getAttribute('aria-expanded')).toBe('false');
+    rerender(<FloorStack building={building()} viewerRole="창업자" unitPrintMode="all" unitPrintOpenSignal={0} />);
+    await waitFor(() => expect(lists(container)).toHaveLength(4));
+    expect(toggle().getAttribute('aria-expanded')).toBe('false');
+    // 접힌 채여도 본문(고른 목록)은 DOM 에 있다 — 종이에 나온다(결정 0020).
+    expect(container.querySelector('.card--floors .card__body')?.hasAttribute('hidden')).toBe(true);
+    // 양성 대조 — 손님이 직접 고르면(신호 +1) 펼친다.
+    rerender(<FloorStack building={building()} viewerRole="창업자" unitPrintMode="all" unitPrintOpenSignal={1} />);
+    await waitFor(() => expect(toggle().getAttribute('aria-expanded')).toBe('true'));
+  });
+
+  it('호 목록이 있는 층 수를 알린다(요약을 받은 뒤 · 고르기와 무관) · 0개도 알린다', async () => {
+    const seen: Array<[string, number]> = [];
+    render(<FloorStack building={building()} unitPrintMode="none" onUnitListedCount={(b, n) => seen.push([b, n])} />);
+    await waitFor(() => expect(seen.at(-1)).toEqual(['1168010100-1', 4]));
+    cleanup();
+    seen.length = 0;
+    responses.unitSummary = {
+      data: [{ floor_no: 1, unit_cnt: 9, median_area_m2: null, min_area_m2: null, max_area_m2: null, floor_kind: 'residential' }],
+      error: null,
+    };
+    render(<FloorStack building={building()} onUnitListedCount={(b, n) => seen.push([b, n])} />);
+    await waitFor(() => expect(seen.at(-1)).toEqual(['1168010100-1', 0]));
   });
 });

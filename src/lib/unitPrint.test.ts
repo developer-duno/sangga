@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 import type { UnitFloorSummary } from '../types';
 import {
   UNIT_PRINT_CONCURRENCY,
+  UNIT_PRINT_DEFAULT,
   UNIT_PRINT_FLOOR_CAP,
   runLimited,
   unitPrintCapText,
+  unitPrintFailedText,
+  unitPrintLoadingText,
   unitPrintMoreText,
   unitPrintPlan,
 } from './unitPrint';
@@ -61,6 +64,12 @@ describe('unitPrintPlan', () => {
 
   it('남은 호 한 줄', () => {
     expect(unitPrintMoreText(1234)).toBe('이 층은 1,234호 더 있습니다');
+  });
+
+  it('받는 중·못 받은 층 한 줄(👤 글자) · 기본값 = 지하~3층', () => {
+    expect(unitPrintLoadingText(12, 30)).toBe('호실 목록 불러오는 중 (12/30층)');
+    expect(unitPrintFailedText(2)).toBe('2개 층은 호실 목록을 못 불러왔습니다');
+    expect(UNIT_PRINT_DEFAULT).toBe('low');
   });
 });
 

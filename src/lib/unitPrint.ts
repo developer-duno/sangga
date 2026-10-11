@@ -4,13 +4,17 @@ import { hasUnitList } from './unitTable';
 /**
  * 호실 구성표 고르기(결정 0036 결정 8 · 물결 1-C2 · 👤 2026-10-11) — **누구에게나** 인쇄 단추 옆에 서고,
  * 고르면 화면에서도 그 층들의 호 목록을 층 줄 아래에 펼친다(그래서 Ctrl+P 로 뽑아도 같은 종이 —
- * 결정 0020 원칙). 저장하지 않고, 건물이 바뀌면 '넣지 않음'으로 돌아간다(App 이 건물 번호로 묶는다).
+ * 결정 0020 원칙). 저장하지 않고, 기본값과 건물이 바뀔 때 돌아가는 값은 '지하~3층'(👤 2026-10-11 · 결정 8 원문 —
+ * `UNIT_PRINT_DEFAULT` · App 이 건물 번호로 묶는다). 호 목록이 있는 층이 0개인 건물에서는 고르기 줄이 숨는다.
  *
  * ⛔ **호 목록이 있는 층(`hasUnitList` — 상가·섞인 층)만** 부른다. 주거·오피스텔·미상 층은 요청조차 안
  *    보낸다(결정 0032 — 층을 펼칠 때와 같은 규칙).
  * ⛔ 층마다 첫 쪽(50호 = `FLOOR_UNITS_PAGE`, offset 0)만 · 동시에 4개까지 · 전부 = 아래층부터 30개 층까지.
  */
 export type UnitPrintMode = 'none' | 'low' | 'all';
+
+/** 손님 화면의 기본값 — 지하~3층(👤 2026-10-11 · 결정 8 원문). '넣지 않음'은 선택지로 남는다. */
+export const UNIT_PRINT_DEFAULT: UnitPrintMode = 'low';
 
 /** 고르기 단추 차례와 글자(👤 결정 글자 그대로). */
 export const UNIT_PRINT_OPTIONS: ReadonlyArray<readonly [UnitPrintMode, string]> = [
@@ -65,6 +69,16 @@ export function unitPrintPlan(
 /** 상한 안내(👤 글자). */
 export function unitPrintCapText(listedCount: number): string {
   return `호실 목록이 있는 층이 ${listedCount.toLocaleString('ko-KR')}개라 아래쪽 ${UNIT_PRINT_FLOOR_CAP}개 층만 넣었습니다`;
+}
+
+/** 받는 동안 화면에만 서는 한 줄(👤 2026-10-11 글자 · 종이에서 빠진다). */
+export function unitPrintLoadingText(done: number, total: number): string {
+  return `호실 목록 불러오는 중 (${done}/${total}층)`;
+}
+
+/** 다 받은 뒤 못 받은 층이 있을 때 한 줄(👤 2026-10-11 글자 · 화면·종이 둘 다). */
+export function unitPrintFailedText(failed: number): string {
+  return `${failed}개 층은 호실 목록을 못 불러왔습니다`;
 }
 
 /** 첫 쪽보다 많을 때의 한 줄(👤 글자 · 종이에도). */

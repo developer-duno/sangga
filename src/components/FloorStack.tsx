@@ -62,6 +62,8 @@ import {
   UNIT_PRINT_CONCURRENCY,
   runLimited,
   unitPrintCapText,
+  unitPrintFailedText,
+  unitPrintLoadingText,
   unitPrintMoreText,
   unitPrintPlan,
   type UnitPrintMode,
@@ -206,8 +208,20 @@ type Props = {
   /**
    * 인쇄 단추 옆 「호실 구성표」 고르기(결정 0036 결정 8 · 물결 1-C2). 고르면 그 층들의 호 목록을 층 줄
    * 아래에 **화면에서도** 펼친다 — 그래서 Ctrl+P 로 뽑아도 같은 종이다. 안 줌·'none' = 지금 화면 그대로.
+   * ⓘ 손님 화면의 기본값('지하~3층')은 App 이 정한다 — 이 부품의 기본값은 시험·옛 부모용 'none'.
    */
   unitPrintMode?: UnitPrintMode;
+  /**
+   * 손님이 **직접** 고를 때마다 1씩 오르는 신호 — 그때만 층 목록 카드를 펼친다(👤 2026-10-11). 기본값으로
+   * 정해진 고르기는 카드를 강제로 펼치지 않는다(펼침 상한 4 · 역할별 접힘 그대로 — 접힌 카드도 본문은 DOM 에
+   * 있어 종이에 나온다, 결정 0020). 0·안 줌 = 펼치지 않는다.
+   */
+  unitPrintOpenSignal?: number;
+  /**
+   * 이 건물에서 호 목록이 있는 층 수를 알린다(요약을 받은 뒤 한 번) — App 이 0개면 고르기 줄을 숨긴다.
+   * 요약을 못 받았으면 부르지 않는다(App 은 모름 = 숨김으로 읽는다).
+   */
+  onUnitListedCount?: (bldId: string, count: number) => void;
 };
 
 /** 고른 층 하나의 첫 쪽 호 목록(받은 줄 + 그 층 전체 호실 수). */
@@ -218,6 +232,8 @@ export function FloorStack({
   viewerRole = null,
   founderChip = FOUNDER_CHIP_ALL,
   unitPrintMode = 'none',
+  unitPrintOpenSignal = 0,
+  onUnitListedCount,
 }: Props) {
   const plans = sectionPlansFor(viewerRole);
   const [floors, setFloors] = useState<FloorRow[]>([]);
@@ -278,6 +294,13 @@ export function FloorStack({
   const [sidePrefetch, setSidePrefetch] = useState<SidePrefetch | null>(null);
   /** 호실 구성표 고르기로 받은 층별 첫 쪽 호 목록(물결 1-C2). 실패한 층은 아예 안 담는다(그 층만 빠진다). */
   const [printedUnits, setPrintedUnits] = useState<ReadonlyMap<number, PrintedUnits>>(new Map());
+  /**
+   * 고른 층들을 받는 진행 — 전체 층 수 · 끝난 층 수(이미 받아 둔 층 포함) · 못 받은 층 수.
+   * 화면에만 「불러오는 중 (12/30층)」, 끝난 뒤 실패가 있으면 그 수를 한 줄(화면·종이).
+   */
+  const [unitLoad, setUnitLoad] = useState({ total: 0, done: 0, failed: 0 });
+  /** effect 안에서 '이미 받아 둔 층'을 읽는 거울 — 바꾼 고르기에서 받은 층을 버리지 않고 다시 쓴다(깜빡임 0). */
+  const printedRef = useRef<ReadonlyMap<number, PrintedUnits>>(new Map());
   const unitPlan = unitPrintPlan(
     unitSummary,
     floors.map((f) => f.floor_no),
@@ -400,32 +423,50 @@ export function FloorStack({
   //
   // ⛔ 부르는 층은 `unitPrintPlan` 이 정한다 — 호 목록이 있는 층만(주거·오피스텔·미상 층은 요청 0) ·
   //    층마다 첫 쪽(offset 0) · 동시에 4개까지 · '전부'는 아래층부터 30개 층까지.
-  // ⛔ 실패한 층은 조용히 빠진다(다른 층은 선다) — 사람이 층을 눌러 연 칸이 아니라 고르기로 한꺼번에
-  //    부른 것이라, 층마다 '못 불러왔습니다'를 늘어놓지 않는다.
+  // ⛔ 실패한 층은 그 층만 빠진다(다른 층은 선다) — 층마다 '못 불러왔습니다'를 늘어놓지 않고, 다 끝난 뒤
+  //    못 받은 층 수만 한 줄로 적는다(화면·종이 · 👤 2026-10-11).
+  // ⓘ 고르기를 바꿔도(지하~3층 → 전부) 이미 받은 층은 버리지 않고 다시 쓴다 — 새 계획에 없는 층만 지운다.
+  // ⛔ 늦은 답 가드 `cancelled` — 고르기를 바꾼 뒤 옛 고르기의 답이 오면 버린다(지우면 '넣지 않음'으로 돌린
+  //    뒤에도 목록이 되살아난다 · FloorStack.test 가 잡는다).
   useEffect(() => {
-    setPrintedUnits(new Map());
-    if (unitPlanKey === '') return;
+    const targets = unitPlanKey === '' ? [] : unitPlanKey.split(',').map(Number);
+    const keep = new Map([...printedRef.current].filter(([no]) => targets.includes(no)));
+    printedRef.current = keep;
+    setPrintedUnits(keep);
+    const toFetch = targets.filter((no) => !keep.has(no));
+    setUnitLoad({ total: targets.length, done: targets.length - toFetch.length, failed: 0 });
+    if (toFetch.length === 0) return;
     let cancelled = false;
-    const targets = unitPlanKey.split(',').map(Number);
     void runLimited(
-      targets,
+      toFetch,
       UNIT_PRINT_CONCURRENCY,
       async (floorNo) => {
-        const { data, error: err } = await supabase.rpc(FLOOR_UNITS_FN, {
-          p_bld_id: building.bld_id,
-          p_floor_no: floorNo,
-          p_limit: FLOOR_UNITS_PAGE,
-          p_offset: 0,
-        });
-        if (cancelled) return;
-        const rows = err ? null : parseFloorUnits(data);
-        if (rows === null) {
-          console.warn('호실 구성표 — 이 층 목록을 못 받아 빼고 표시합니다', floorNo, err);
-          return;
+        let ok = false;
+        try {
+          const { data, error: err } = await supabase.rpc(FLOOR_UNITS_FN, {
+            p_bld_id: building.bld_id,
+            p_floor_no: floorNo,
+            p_limit: FLOOR_UNITS_PAGE,
+            p_offset: 0,
+          });
+          if (cancelled) return;
+          const rows = err ? null : parseFloorUnits(data);
+          if (rows === null) {
+            console.warn('호실 구성표 — 이 층 목록을 못 받아 빼고 표시합니다', floorNo, err);
+            return;
+          }
+          ok = true;
+          const next = new Map(printedRef.current).set(floorNo, {
+            units: rows,
+            total: rows[0]?.total_cnt ?? 0,
+          });
+          printedRef.current = next;
+          setPrintedUnits(next);
+        } finally {
+          if (!cancelled) {
+            setUnitLoad((l) => ({ ...l, done: l.done + 1, failed: l.failed + (ok ? 0 : 1) }));
+          }
         }
-        setPrintedUnits((prev) =>
-          new Map(prev).set(floorNo, { units: rows, total: rows[0]?.total_cnt ?? 0 }),
-        );
       },
       () => cancelled,
     );
@@ -434,10 +475,19 @@ export function FloorStack({
     };
   }, [building.bld_id, unitPlanKey]);
 
-  // 고르면 층 목록 카드를 펼친다 — 접혀 있으면 고른 목록이 화면에 안 보인다(종이에는 나온다).
+  // 손님이 직접 고를 때만 층 목록 카드를 펼친다(기본값으로는 안 펼친다 — 위 prop 머리말).
   useEffect(() => {
-    if (unitPrintMode !== 'none') setFloorsOpenSignal((n) => n + 1);
-  }, [unitPrintMode]);
+    if (unitPrintOpenSignal > 0) setFloorsOpenSignal((n) => n + 1);
+  }, [unitPrintOpenSignal]);
+
+  // 호 목록이 있는 층 수를 App 에 알린다(0개면 고르기 줄을 숨긴다). 요약을 못 받았으면 알리지 않는다.
+  const listedCount =
+    unitSummary === null
+      ? null
+      : unitPrintPlan(unitSummary, floors.map((f) => f.floor_no), 'all').listedCount;
+  useEffect(() => {
+    if (listedCount !== null) onUnitListedCount?.(building.bld_id, listedCount);
+  }, [building.bld_id, listedCount, onUnitListedCount]);
 
   // ── 실거래 사실 표시 (Stage A · 결정 0012) ────────────────────────────────
   //
@@ -614,6 +664,13 @@ export function FloorStack({
         {/* '전부'인데 층이 상한보다 많으면 그렇다고 적는다(종이에도 · 👤 글자). */}
         {unitPlan.capped && (
           <p className="floor__unitprint-cap">{unitPrintCapText(unitPlan.listedCount)}</p>
+        )}
+        {/* 받는 동안 화면에만(종이에서 빠진다) · 끝난 뒤 못 받은 층이 있으면 그 수(화면·종이). */}
+        {unitLoad.done < unitLoad.total && (
+          <p className="floor__unitprint-loading">{unitPrintLoadingText(unitLoad.done, unitLoad.total)}</p>
+        )}
+        {unitLoad.done >= unitLoad.total && unitLoad.failed > 0 && (
+          <p className="floor__unitprint-failed">{unitPrintFailedText(unitLoad.failed)}</p>
         )}
 
         <ol className="floors">

@@ -36,7 +36,7 @@ import {
   saveBrokerOffice,
   type BrokerOffice,
 } from './lib/brokerOfficeStore';
-import type { UnitPrintMode } from './lib/unitPrint';
+import { UNIT_PRINT_DEFAULT, type UnitPrintMode } from './lib/unitPrint';
 import type { BuildingHit, FloorRow } from './types';
 
 export default function App() {
@@ -124,16 +124,29 @@ export default function App() {
   }
 
   /*
-    호실 구성표 고르기(결정 0036 결정 8 · 물결 1-C2) — 누구에게나. ⛔ 저장하지 않는다 · 건물이 바뀌면 '넣지 않음'
-    (고른 값을 그 건물 번호에 묶어 두고, 지금 건물과 다르면 기본값으로 읽는다 — effect 로 지우면 새 건물에서
-    옛 고르기로 한 번 그려져 요청이 샌다).
+    호실 구성표 고르기(결정 0036 결정 8 · 물결 1-C2) — 누구에게나. ⛔ 저장하지 않는다 · 기본값 = 「지하~3층」
+    (👤 2026-10-11 · 결정 8 원문) · **건물이 바뀔 때마다 기본값으로**(다른 건물에 갔다 돌아와도 옛 고르기가 살아나지
+    않는다). 고른 값을 그 건물 번호에 묶어 두고, 건물이 바뀌면 그리는 도중에 기본값으로 다시 세운다(React 공식
+    꼴 — effect 로 지우면 새 건물에서 옛 고르기로 한 번 그려져 요청이 샌다).
+    `opened` = 손님이 직접 고른 횟수 — 그때만 층 목록 카드를 펼친다(기본값은 카드를 강제로 펼치지 않는다).
   */
-  const [unitPick, setUnitPick] = useState<{ bldId: string | null; mode: UnitPrintMode }>({
+  const [unitPick, setUnitPick] = useState<{ bldId: string | null; mode: UnitPrintMode; opened: number }>({
     bldId: null,
-    mode: 'none',
+    mode: UNIT_PRINT_DEFAULT,
+    opened: 0,
   });
+  if (selected !== null && unitPick.bldId !== selected.bld_id) {
+    setUnitPick({ bldId: selected.bld_id, mode: UNIT_PRINT_DEFAULT, opened: 0 });
+  }
   const unitPrintMode: UnitPrintMode =
-    selected !== null && unitPick.bldId === selected.bld_id ? unitPick.mode : 'none';
+    selected !== null && unitPick.bldId === selected.bld_id ? unitPick.mode : UNIT_PRINT_DEFAULT;
+  /* 이 건물에서 호 목록이 있는 층 수(층별 화면이 요약을 받은 뒤 알려 준다) — 0개거나 아직 모르면 고르기 줄을 숨긴다. */
+  const [unitListed, setUnitListed] = useState<{ bldId: string; count: number } | null>(null);
+  const handleUnitListedCount = useCallback((bldId: string, count: number) => {
+    setUnitListed({ bldId, count });
+  }, []);
+  const showUnitPicker =
+    selected !== null && unitListed !== null && unitListed.bldId === selected.bld_id && unitListed.count > 0;
 
   /*
     목록에서 고르기 — 그 건물 층별 화면으로 간다. 다른 구 건물이면 구도 그 구로(구 코드 = 저장해 둔
@@ -426,10 +439,18 @@ export default function App() {
             <div className="takeout">
               <ShareButton url={shareUrl} label={selected.bld_nm} />
               <PrintButton onBeforePrint={handleBeforePrint} />
-              <UnitPrintPicker
-                mode={unitPrintMode}
-                onChange={(mode) => setUnitPick({ bldId: selected.bld_id, mode })}
-              />
+              {showUnitPicker && (
+                <UnitPrintPicker
+                  mode={unitPrintMode}
+                  onChange={(mode) =>
+                    setUnitPick((p) => ({
+                      bldId: selected.bld_id,
+                      mode,
+                      opened: mode === 'none' ? p.opened : p.opened + 1,
+                    }))
+                  }
+                />
+              )}
               {viewerRole === '중개사' && (
                 <BrokerOfficeForm
                   value={office}
@@ -453,6 +474,8 @@ export default function App() {
                 viewerRole={viewerRole}
                 founderChip={activeChip}
                 unitPrintMode={unitPrintMode}
+                unitPrintOpenSignal={unitPick.bldId === selected.bld_id ? unitPick.opened : 0}
+                onUnitListedCount={handleUnitListedCount}
               />
             </ErrorBoundary>
           </>

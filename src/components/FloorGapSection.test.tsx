@@ -90,9 +90,9 @@ describe('FloorGapSection', () => {
     await waitFor(() => expect(cellText(container, 1, 'rent')).toBe('74.6'));
     expect([...container.querySelectorAll('.gap__row')].map((r) => r.getAttribute('data-floor'))).toEqual(['2', '1']);
     expect(cellText(container, 1, 'base')).toBe('500만');
-    expect(cellText(container, 1, 'tx')).toBe('380만');
+    expect(cellText(container, 1, 'tx')).toBe('㎡당 380만');
     expect(cellText(container, 2, 'base')).toBe('–');
-    expect(cellText(container, 2, 'tx')).toBe('250만');
+    expect(cellText(container, 2, 'tx')).toBe('㎡당 250만');
     expect(container.textContent).toContain('서로 나누거나 비율을 계산하지 않았습니다');
     expect(container.textContent).toContain('세무 기준가격 — 시세가 아닙니다');
     expect(container.textContent).toContain('A등급 · 공식 고시');
@@ -113,11 +113,19 @@ describe('FloorGapSection', () => {
 
   it('조사 대상 아님이면 그 칸 머리에 임대 카드와 같은 글', async () => {
     responses.rent = { data: [], error: null };
-    const { container } = render(<FloorGapSection floors={[floor(1)]} basePrices={null} txStats={null} pnu={PNU} />);
+    const { container } = render(<FloorGapSection floors={[floor(1)]} basePrices={BASES} txStats={TX} pnu={PNU} />);
     await waitFor(() =>
       expect(container.querySelector('.gap__head--rent')?.textContent).toContain('부동산원 조사 대상 상권이 아닙니다'),
     );
     expect(cellText(container, 1, 'rent')).toBe('–');
+  });
+
+  it('★ 국세청·부동산원이 둘 다 비면 구 실거래가 있어도 카드째 숨긴다(빈 배열도 null 처럼)', async () => {
+    responses.rent = { data: [], error: null };
+    const { container } = render(<FloorGapSection floors={[floor(1)]} basePrices={[]} txStats={TX} pnu={PNU} />);
+    await waitFor(() => expect(rpcCalls).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(container.querySelector('.gap')).toBeNull();
   });
 
   it('세 재료가 모두 없으면 카드째 숨긴다', async () => {
@@ -136,7 +144,7 @@ describe('FloorGapSection', () => {
     const shared = Promise.resolve({ data: [rent()], error: null });
     const prefetch: SidePrefetch = { pnu: PNU, results: new Map([['list_rent_stats', shared]]) };
     const { container } = render(
-      <FloorGapSection floors={[floor(1)]} basePrices={null} txStats={null} pnu={PNU} prefetch={prefetch} />,
+      <FloorGapSection floors={[floor(1)]} basePrices={null} txStats={TX} pnu={PNU} prefetch={prefetch} />,
     );
     await waitFor(() => expect(cellText(container, 1, 'rent')).toBe('74.6'));
     expect(rpcCalls).toHaveLength(0);

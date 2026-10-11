@@ -10,6 +10,7 @@ import {
   FLOOR_GAP_SUMMARY,
   floorGapHeads,
   floorGapRows,
+  floorGapShowable,
   txTotal,
   type GapCell,
 } from '../lib/floorGap';
@@ -27,7 +28,9 @@ import { SectionCard } from './SectionCard';
  * ⛔ 재료 셋은 층별 화면이 이미 받는 것을 그대로 쓴다 — 기준시가·구 단가는 부모가 받은 것,
  *    부동산원은 임대 카드와 **같은 미리 보낸 답**(`takePrefetched` 는 같은 Promise 를 몇 번이든
  *    내준다 — 꺼내 가도 비지 않는다). 새 서버 함수 0.
- * ⛔ 재료 하나가 실패하면 그 칸만 '–' · 셋 다 없으면 카드째 숨긴다 · 층이 0줄이어도 숨긴다.
+ * ⛔ 재료 하나가 실패하면 그 칸만 '–' · 국세청·부동산원이 **둘 다** 비면(실패·null·빈 배열·모든 층 '–')
+ *    카드째 숨긴다 — 값 든 칸이 둘 이상이어야 '나란히'다(👤 2026-10-11 · `floorGapShowable`) · 층 0줄도 숨긴다.
+ * ⓘ 부동산원은 미리 보낸 답이 없을 때만 한 번 직접 묻는다(아래 폴백 — 지금 층별 화면은 늘 미리 보낸다).
  */
 type Props = {
   floors: FloorRow[];
@@ -73,9 +76,9 @@ export function FloorGapSection({
   }, [pnu, prefetch]);
 
   if (floors.length === 0) return null;
-  if (basePrices === null && txStats === null && rentRows === null) return null;
 
   const rows = floorGapRows(floors, basePrices, txStats, rentRows);
+  if (!floorGapShowable(rows)) return null;
   const heads = floorGapHeads(txStats, rentRows, noCoord);
   const total = txTotal(txStats);
 

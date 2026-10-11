@@ -3497,7 +3497,9 @@ body {
 }
 
 .floor__unitprint-more,
-.floor__unitprint-cap {
+.floor__unitprint-cap,
+.floor__unitprint-loading,
+.floor__unitprint-failed {
   margin: 2px 0;
   color: var(--muted);
   font-size: 12px;
@@ -3613,6 +3615,8 @@ body {
      옮겨져도 종이에 새지 않게 따로 적어 둔다(누르는·적는 장치). 고른 결과(호 목록)는 종이에 남는다. */
   .office,
   .unitpick,
+  /* 호실 목록 '불러오는 중' 한 줄은 화면에만(물결 1-C2 보완) — 못 받은 층 수 줄은 종이에 남는다. */
+  .floor__unitprint-loading,
   .modal__back {
     display: none !important;
   }
@@ -3625,6 +3629,11 @@ body {
     align-items: flex-start;
     justify-content: space-between;
     gap: 4px 16px;
+    /* 구분선은 머리 **전체 폭**에 — 오른쪽에 사무소 상자가 서도 선이 왼쪽 덩어리에서 끊기지 않게
+       (물결 1-C2 보완 · 예전엔 `.printmeta__foot` 이 가졌다). */
+    margin-bottom: 14px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--line);
   }
 
   .printmeta__main {
@@ -3659,9 +3668,7 @@ body {
     display: flex;
     flex-wrap: wrap;
     gap: 2px 10px;
-    margin: 6px 0 14px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--line);
+    margin: 6px 0 0;
     color: var(--muted);
     font-size: 11px;
   }

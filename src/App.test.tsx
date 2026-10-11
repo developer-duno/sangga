@@ -1082,6 +1082,8 @@ describe('App — 인쇄 한 장 보강 (결정 0036 결정 3·8 · 물결 1-C2)
     await openLinked();
     expect(document.querySelector('.office')).not.toBeNull();
     expect(officeBox()).toBeNull(); // 빈 칸뿐이면 상자 없음
+    const toggleText = () => document.querySelector('.office__toggle')?.textContent;
+    expect(toggleText()).toBe('종이에 찍을 내 사무소 정보');
     expect(document.querySelector('.office')?.textContent).toContain('이 기기에만 저장 · 서버로 보내지 않음');
     expect(document.querySelector('.office')?.textContent).toContain(
       '여럿이 함께 쓰는 컴퓨터라면 다 쓴 뒤 지우기를 눌러 주세요',
@@ -1089,6 +1091,7 @@ describe('App — 인쇄 한 장 보강 (결정 0036 결정 3·8 · 물결 1-C2)
 
     fireEvent.change(screen.getByLabelText('사무소 이름'), { target: { value: '역삼공인중개사' } });
     fireEvent.change(screen.getByLabelText('전화'), { target: { value: '02-0000-0000' } });
+    expect(toggleText()).toBe('종이에 찍을 내 사무소 정보 — 채워짐(역삼공인중개사)');
     expect(JSON.parse(window.localStorage.getItem(OKEY)!)).toMatchObject({
       name: '역삼공인중개사',
       phone: '02-0000-0000',
@@ -1117,6 +1120,9 @@ describe('App — 인쇄 한 장 보강 (결정 0036 결정 3·8 · 물결 1-C2)
     );
     await openLinked();
     expect(officeBox()?.textContent).toBe('역삼대표 홍길동');
+    // 이름을 지워도 다른 칸이 차 있으면 '채워짐'(이름 없이).
+    fireEvent.change(screen.getByLabelText('사무소 이름'), { target: { value: '' } });
+    expect(document.querySelector('.office__toggle')?.textContent).toBe('종이에 찍을 내 사무소 정보 — 채워짐');
     fireEvent.click(document.querySelector('.office__clear') as HTMLButtonElement);
     expect(window.localStorage.getItem(OKEY)).toBeNull();
     expect(officeBox()).toBeNull();
@@ -1159,8 +1165,9 @@ describe('App — 인쇄 한 장 보강 (결정 0036 결정 3·8 · 물결 1-C2)
     }
   });
 
-  it('★ 호실 구성표 고르기는 누구에게나 · 기본 = 넣지 않음 · 고르면 그 층만 부르고, 건물이 바뀌면 기본으로', async () => {
+  it('★ 호실 구성표 고르기는 누구에게나 · 기본 = 지하~3층(곧장 그 층을 부른다) · 다른 건물에 갔다 와도 기본으로', async () => {
     const base = rpc.getMockImplementation()!;
+    const other = hit({ bld_id: '1168010100100020000_9', pnu: '1168010100100020000', bld_nm: '옆빌딩' });
     rpc.mockImplementation((fn: string, args?: unknown) => {
       if (fn === 'list_unit_floor_summary') {
         return Promise.resolve({
@@ -1186,14 +1193,13 @@ describe('App — 인쇄 한 장 보강 (결정 0036 결정 3·8 · 물결 1-C2)
           error: null,
         });
       }
+      if (fn === 'search_buildings') return Promise.resolve({ data: [other, hit()], error: null });
       return base(fn, args);
     });
     await openLinked(); // 역할 없음
     const radio = (label: string) => screen.getByLabelText(label) as HTMLInputElement;
-    expect(radio('넣지 않음').checked).toBe(true);
-    expect(rpc.mock.calls.some(([fn]) => fn === 'list_floor_units')).toBe(false);
-
-    fireEvent.click(radio('지하~3층'));
+    await screen.findByLabelText('지하~3층');
+    expect(radio('지하~3층').checked).toBe(true);
     await waitFor(() => expect(document.querySelectorAll('.floor__unitprint-list li')).toHaveLength(2));
     const asked = rpc.mock.calls.filter(([fn]) => fn === 'list_floor_units').map(([, a]) => a);
     expect(asked[0]).toEqual({ p_bld_id: LINK_BLD, p_floor_no: 1, p_limit: 50, p_offset: 0 });
@@ -1201,19 +1207,32 @@ describe('App — 인쇄 한 장 보강 (결정 0036 결정 3·8 · 물결 1-C2)
     expect(currentSearch()).toBe(`?sgg=11680&bld=${LINK_BLD}`);
     expect(Object.keys(window.localStorage)).toEqual([]);
 
-    // 다른 건물로 가면 기본으로(목록도 없다).
-    const other = hit({ bld_id: '1168010100100020000_9', pnu: '1168010100100020000', bld_nm: '옆빌딩' });
-    const searchImpl = rpc.getMockImplementation()!;
-    rpc.mockImplementation((fn: string, args?: unknown) =>
-      fn === 'search_buildings' ? Promise.resolve({ data: [other], error: null }) : searchImpl(fn, args),
-    );
-    const input = screen.getByLabelText('건물명 또는 주소');
-    fireEvent.change(input, { target: { value: '옆빌딩' } });
-    fireEvent.submit(input.closest('form')!);
-    fireEvent.click(await screen.findByRole('button', { name: /옆빌딩/ }));
-    await waitFor(() => expect(currentSearch()).toContain('bld=1168010100100020000_9'));
-    await screen.findByRole('heading', { name: '테스트빌딩' });
-    expect(radio('넣지 않음').checked).toBe(true);
-    expect(document.querySelectorAll('.floor__unitprint-list li')).toHaveLength(0);
+    // '넣지 않음'은 선택지로 남는다.
+    fireEvent.click(radio('넣지 않음'));
+    await waitFor(() => expect(document.querySelectorAll('.floor__unitprint-list li')).toHaveLength(0));
+
+    // 옆 건물 → 다시 이 건물 — 돌아와도 옛 고르기('넣지 않음')가 아니라 기본(지하~3층)이다.
+    const goTo = async (name: RegExp, bld: string) => {
+      const input = screen.getByLabelText('건물명 또는 주소');
+      fireEvent.change(input, { target: { value: '테헤란로' } });
+      fireEvent.submit(input.closest('form')!);
+      fireEvent.click(await screen.findByRole('button', { name }));
+      await waitFor(() => expect(currentSearch()).toContain(`bld=${bld}`));
+      await screen.findByLabelText('지하~3층');
+    };
+    await goTo(/옆빌딩/, '1168010100100020000_9');
+    expect(radio('지하~3층').checked).toBe(true);
+    await goTo(/테스트빌딩/, LINK_BLD);
+    expect(radio('지하~3층').checked).toBe(true);
+    await waitFor(() => expect(document.querySelectorAll('.floor__unitprint-list li')).toHaveLength(2));
+  });
+
+  it('★ 호 목록이 있는 층이 0개인 건물이면 고르기 줄이 없고 목록 요청도 0', async () => {
+    // 기본 흉내는 요약에 빈 배열을 준다(= 호실 자료가 없는 건물).
+    await openLinked();
+    await waitFor(() => expect(rpc.mock.calls.some(([fn]) => fn === 'list_unit_floor_summary')).toBe(true));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(document.querySelector('.unitpick')).toBeNull();
+    expect(rpc.mock.calls.some(([fn]) => fn === 'list_floor_units')).toBe(false);
   });
 });
