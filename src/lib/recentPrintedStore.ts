@@ -65,7 +65,12 @@ function isRecentPrinted(x: unknown): x is RecentPrinted {
     optional(r.lng, isNullableNum) &&
     optional(r.is_jiphap, (v) => v === null || typeof v === 'boolean') &&
     optional(r.approve_date, isNullableStr) &&
-    optional(r.parking_cnt, isNullableNum)
+    optional(r.parking_cnt, isNullableNum) &&
+    // 물결 2-1(2026-10-11c) 세 칸 — 그 전에 적힌 줄에는 없으므로 선택 칸이다.
+    optional(r.ho_cnt, isNullableNum) &&
+    optional(r.elevator_ride, isNullableNum) &&
+    optional(r.elevator_emgen, isNullableNum) &&
+    optional(r.bld_main_use, isNullableStr)
   );
 }
 

@@ -1,6 +1,8 @@
 -- =====================================================================
 -- 2026-10-11c — 건물 표에 승강기·호수·구조·내진·에너지 칸을 싣는다 (물결 2-1 PR① · 결정 0036)
 -- =====================================================================
+-- ⓘ 2026-10-12 PR② 에서 bld_main_use 를 더함 · 운영 적용 전 수정 — v_floor_stack 끝과 search_buildings
+--   결과 끝에 건물 주용도(building.main_use 원값) 한 칸씩(👤 2026-10-12 — 주거 건물은 대장 호수를 숨긴다).
 -- 왜
 -- --
 -- 건축물대장 표제부 원본(`data/raw/bldrgst_bulk_converted/<구>/title.jsonl` 의 item)에는 승강기 대수
@@ -25,9 +27,11 @@
 --      (api)** 를 탄다(2026-08-22e 머리말 · pgrst.db_schemas = 'api, graphql_public'). `select *` 뷰는 만든
 --      날의 칸으로 굳어 있어, 안 고치면 적재기 upsert 가 새 칸을 못 찾는다(PGRST204 — 2026-10-08a 와 같은 일).
 --   ③ v_floor_stack 맨 뒤에 5칸(elevator_ride · elevator_emgen · ho_cnt · strct_nm · seismic_design) +
+--      그 뒤 bld_main_use(= building.main_use · 2026-10-12 PR②) +
 --      api.v_floor_stack 재생성(2026-08-24a 꼴). ⛔ 내진 능력·에너지 등급·녹색 등급은 **내보내지 않는다**
 --      (채움 0.4~8.5% — 사장님 결정 2026-10-11). 표에만 둔다.
---   ④ search_buildings + api 쌍둥이 — 기존 16칸 **뒤에** ho_cnt · elevator_ride · elevator_emgen
+--   ④ search_buildings + api 쌍둥이 — 기존 16칸 **뒤에** ho_cnt · elevator_ride · elevator_emgen ·
+--      bld_main_use(2026-10-12 PR②)
 --      (2026-10-09a 꼴: 결과를 lim 행으로 줄인 뒤 마지막 select 에서 building 을 기본키로 읽는 그 조인
 --      `bo` 에서 꺼낸다 — 검색 가지는 한 글자도 안 바꾼다).
 --
@@ -86,7 +90,8 @@
 --    where table_schema = 'api' and table_name = 'v_floor_stack'
 --      and column_name in ('elevator_ride','elevator_emgen','ho_cnt','strct_nm','seismic_design',
 --                          'seismic_ability','energy_grade','green_grade') order by 1;          -- 5줄(능력·등급 둘 없음)
---   select ho_cnt, elevator_ride, elevator_emgen from api.search_buildings('타워', 3, '11680'); -- 3칸 · 오류 0
+--   select ho_cnt, elevator_ride, elevator_emgen, bld_main_use from api.search_buildings('타워', 3, '11680'); -- 4칸 · 오류 0
+--   select bld_main_use, main_use from api.v_floor_stack limit 3;   -- 건물 주용도 · 층 주용도 두 칸이 따로 나온다
 --   (② 뒤) select count(*) filter (where elevator_ride is not null), count(*) filter (where seismic_design)
 --          from building;                                                                      -- 0 보다 크다
 --   (② 완료 판정 — ★ PR② 머지 조건) 구마다 비었나:
@@ -207,7 +212,10 @@ select
   b.elevator_emgen,         -- 비상용 승강기 대수 (0 = 미기재 섞임)
   b.ho_cnt,                 -- 호수 (0 = 대부분 정상 — 일반건축물은 호 구분 없음)
   b.strct_nm,               -- 구조 이름 (빈값 = NULL)
-  b.seismic_design          -- 내진 설계 적용 여부 (false 에 1988년 전·작은 건물·미기재 섞임)
+  b.seismic_design,         -- 내진 설계 적용 여부 (false 에 1988년 전·작은 건물·미기재 섞임)
+  -- 건물 주용도(2026-10-12 PR② 가 더함) — 위 s.main_use(그 층에서 면적이 가장 큰 용도)와 다른 칸이라
+  -- 이름을 갈랐다. 화면이 대장 호수를 주거(공동주택·단독주택) 건물에서 숨기는 데 쓴다.
+  b.main_use as bld_main_use -- 건물 주용도 (표제부 mainPurpsCdNm 원값 · 빈값 NULL)
 from v_building_floor_stack s
 join building b on b.bld_id = s.bld_id
 join parcel   p on p.pnu    = s.pnu
@@ -246,6 +254,7 @@ comment on view v_floor_stack is
   '승강기 0 에는 대장 미기재가 섞여 있고(호수 0 은 일반건축물에서 정상) seismic_design false 에는 1988년 전 건물·'
   '내진 의무 밖 작은 건물·미기재가 섞여 있다 — '
   '뜻풀이는 화면이 한다. 내진 능력·에너지·녹색 등급은 표에만 있고 이 뷰는 내보내지 않는다(채움이 낮다). '
+  'bld_main_use 는 building.main_use(건물 주용도) 원값이다 — 층 줄의 main_use(그 층 최대 면적 용도)와 다른 칸(2026-10-12). '
   'ℹ️ 린트 0010(security definer view) 의도적 예외 — security_invoker=true로 되돌리면 원본 표 401 + 상호명·성명 노출 확대. '
   '재검토 방아쇠: 공개 배포일 / 지도·반경 검색(§6.4) 착수일';
 
@@ -288,7 +297,10 @@ returns table (
   -- 대장 미기재가 섞여 있고 호수 0 은 일반건축물에서 정상이다). ⛔ 기존 16칸 **뒤에만** 붙인다(위 세 칸과 같은 이유).
   ho_cnt         integer,
   elevator_ride  smallint,
-  elevator_emgen smallint
+  elevator_emgen smallint,
+  -- 건물 주용도(2026-10-12 PR②) — building.main_use 원값. 화면이 대장 호수를 주거에서 숨기는 데 쓴다.
+  -- ⛔ 기존 19칸 **뒤에만** 붙인다(위와 같은 이유).
+  bld_main_use   text
 )
 language plpgsql
 stable
@@ -403,7 +415,8 @@ with pat as not materialized (
     fs.floor_cnt, fs.min_floor, fs.max_floor, fs.has_roof,
     t.total_cnt,
     bo.is_jiphap, bo.approve_date, bo.parking_cnt,
-    bo.ho_cnt, bo.elevator_ride, bo.elevator_emgen
+    bo.ho_cnt, bo.elevator_ride, bo.elevator_emgen,
+    bo.main_use
   from top t
   join mv_search_parcel pc on pc.pnu = t.pnu
   join parcel p on p.pnu = t.pnu
@@ -447,12 +460,13 @@ comment on function search_buildings(text, int, text) is
   '"미상"으로 읽을지는 화면이 정한다. '
   'ho_cnt·elevator_ride·elevator_emgen 도 building 원값 그대로다(2026-10-11c) — 승강기 0 에는 대장 미기재가 섞여 있고 '
   '호수 0 은 일반건축물에서 정상이다. '
+  'bld_main_use 는 building.main_use(건물 주용도) 원값이다(2026-10-12). '
   '⛔ 주소 가지와 이름 가지를 OR로 합치지 말 것 — 두 조인 테이블에 걸친 OR은 gin_trgm 인덱스를 무력화한다';
 
 -- ⛔ public 원본에는 grant 를 주지 않는다 — 화면은 api 쌍둥이로만 들어온다(CLAUDE.md 🚪).
 revoke all on function search_buildings(text, int, text) from public, anon, authenticated;
 
--- api 쌍둥이 — 같은 19칸 · security definer · 빈 search_path · public. 완전수식(정본 그대로).
+-- api 쌍둥이 — 같은 20칸 · security definer · 빈 search_path · public. 완전수식(정본 그대로).
 create or replace function api.search_buildings(q text, lim int default 25, sigungu text default null)
 returns table (
   bld_id         text,
@@ -473,7 +487,8 @@ returns table (
   parking_cnt    integer,
   ho_cnt         integer,
   elevator_ride  smallint,
-  elevator_emgen smallint
+  elevator_emgen smallint,
+  bld_main_use   text
 )
 language sql
 stable

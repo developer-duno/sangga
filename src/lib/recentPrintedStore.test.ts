@@ -123,6 +123,45 @@ describe('recentPrintedStore', () => {
     expect(loadRecentPrinted(st).map((r) => r.bld_nm)).toEqual(['빌딩1', '빌딩2']);
   });
 
+  it('물결 2-1 세 칸(대장 호수·승강기) — 옛 줄(칸 없음)·새 줄은 산다 · 모양이 틀린 줄만 빠진다', () => {
+    const st = memoryStorage();
+    const old = { ...hit(1) } as Record<string, unknown>;
+    delete old.total_cnt; // 새 칸이 아예 없는 옛 저장분
+    const fresh = {
+      ...old,
+      bld_id: '1168010100100010000_2',
+      bld_nm: '새줄',
+      ho_cnt: 48,
+      elevator_ride: 2,
+      elevator_emgen: 1,
+      bld_main_use: '판매시설',
+    };
+    const nulls = {
+      ...old,
+      bld_id: '1168010100100010000_3',
+      bld_nm: '빈값',
+      ho_cnt: null,
+      elevator_ride: null,
+      elevator_emgen: 0,
+      bld_main_use: null,
+    };
+    const rows = [
+      old,
+      fresh,
+      nulls,
+      { ...fresh, bld_id: '1168010100100010000_901', bld_nm: '호수글자', ho_cnt: '48' },
+      { ...fresh, bld_id: '1168010100100010000_902', bld_nm: '승용글자', elevator_ride: '2' },
+      { ...fresh, bld_id: '1168010100100010000_903', bld_nm: '비상참', elevator_emgen: true },
+      { ...fresh, bld_id: '1168010100100010000_904', bld_nm: '용도숫자', bld_main_use: 2 },
+    ];
+    st.map.set(RECENT_PRINTED_STORAGE_KEY, JSON.stringify(rows));
+    const list = loadRecentPrinted(st);
+    expect(list.map((r) => r.bld_nm)).toEqual(['빌딩1', '새줄', '빈값']);
+    expect('ho_cnt' in list[0]).toBe(false); // 옛 줄에 칸을 지어 넣지 않는다
+    expect(list[1]).toMatchObject({ ho_cnt: 48, elevator_ride: 2, elevator_emgen: 1, bld_main_use: '판매시설' });
+    expect(list[2]).toMatchObject({ ho_cnt: null, elevator_ride: null, elevator_emgen: 0, bld_main_use: null });
+  });
+
   it('★ bld_id 는 `<pnu>_<숫자>` 꼴이고 앞 19자리가 그 줄의 pnu 와 같아야 한다 (구·건물이 갈린 줄은 빠진다)', () => {
     const st = memoryStorage();
     const base = { ...hit(1) } as Record<string, unknown>;

@@ -48,7 +48,10 @@ import {
 } from '../lib/unitTable';
 import {
   UNKNOWN_SPEC,
+  describeElevator,
+  describeHoCnt,
   describeSpec,
+  describeStructure,
   formatArea,
   formatApproveDate,
   formatFloor,
@@ -73,6 +76,7 @@ import {
 } from '../lib/unitPrint';
 import { KNOWN_BAND_STATUS } from '../lib/priceBand';
 import { lacksCoord } from '../lib/rentStats';
+import { buildingFromFloorRows } from '../lib/restoreBuilding';
 import {
   SECTION_PLAN,
   sectionOrder,
@@ -610,6 +614,12 @@ export function FloorStack({
 
   const head = floors[0];
   const roadContact = displayRoadContact(head.road_contact);
+  // 물결 2-1 머리 칸(2026-10-12). null 이면 칸을 안 그린다 — 뜻풀이는 lib/format.ts 한 곳.
+  const structure = describeStructure(head.strct_nm);
+  // 승강기 합 0 의 갈림(6층 이상만 '미상')에 쓰는 지상 최고층 — 검색·링크 되살리기와 같은 규칙(옥탑 99 제외).
+  const topFloor = buildingFromFloorRows(floors)?.max_floor ?? null;
+  const elevator = describeElevator(head.elevator_ride, head.elevator_emgen, true, topFloor);
+  const ledgerHo = describeHoCnt(head.is_jiphap, head.ho_cnt, head.bld_main_use);
   const maxArea = Math.max(...floors.map((f) => f.floor_area_m2 ?? 0), 1);
   const totalStores = floors.reduce((sum, f) => sum + (f.store_cnt ?? 0), 0);
 
@@ -953,6 +963,39 @@ export function FloorStack({
             <dt>주차</dt>
             <dd>{describeSpec(head.parking_cnt, formatParking)}</dd>
           </div>
+          {/*
+            물결 2-1(2026-10-12 · 👤) — 주차 바로 뒤 구조 → 승강기 → 내진설계 → 대장 호수.
+            ⛔ 칸이 아예 안 오면(undefined — 마이그레이션 2026-10-11c 전 서버) 넷 다 칸 없음.
+            ⛔ 승강기는 승용 + 비상용 합 · 합 0 이나 둘 다 null 이면 지상 최고층 6층 이상만 '미상', 5층 이하·모름은 칸 없음(👤 결정 A).
+            ⛔ 내진설계는 true 일 때만 칸 — '미적용'이라 쓰지 않는다(false 에 1988년 전·작은 건물·미기재가 섞여 있다).
+            ⛔ 대장 호수는 집합건물이고 1호 이상이고 건물 주용도가 주거(공동주택·단독주택)가 아닐 때만 칸(👤 결정 B ·
+               주용도를 모르면 칸 없음) — 0 은 대부분 호실이 없는 건물이라 '미상'도 안 쓴다.
+               이름표 '대장 호수'는 층 목록의 「호실 N칸」(우리 호실 표로 센 것)과 구분하려는 것이다.
+          */}
+          {structure !== null && (
+            <div>
+              <dt>구조</dt>
+              <dd>{structure}</dd>
+            </div>
+          )}
+          {elevator !== null && (
+            <div>
+              <dt>승강기</dt>
+              <dd>{elevator}</dd>
+            </div>
+          )}
+          {head.seismic_design === true && (
+            <div>
+              <dt>내진설계</dt>
+              <dd>적용</dd>
+            </div>
+          )}
+          {ledgerHo !== null && (
+            <div>
+              <dt>대장 호수</dt>
+              <dd>{ledgerHo}</dd>
+            </div>
+          )}
         </dl>
         {/*
           개별공시지가 한 줄(결정 0036 결정 7). 값이 없거나 못 읽었으면 **줄 자체가 없다** —

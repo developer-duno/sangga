@@ -243,11 +243,85 @@ export function formatJiphap(v: boolean | null | undefined): '집합건물' | '�
 }
 
 /**
+ * 승강기 대수 — **승용 + 비상용의 합**(물결 2-1 · 👤 2026-10-12). 층별 화면 머리 「승강기」 칸과
+ * 중개사 소유 구조 줄이 함께 쓴다(두 곳이 다르게 세면 같은 건물이 두 말을 한다).
+ *
+ * ⛔ 둘은 **따로 세는 칸**이다 — 원본에 비상용이 승용보다 많은 건물이 있다(비상용이 승용의 일부가 아니다).
+ *    하나만 null 이면 있는 것만 더한다.
+ * ⛔ **합이 0 이거나 둘 다 null 이면 지상 최고층(`topFloor` — 옥탑 제외)으로 가른다**(👤 2026-10-12 결정 A
+ *    「5층 이하는 숨김, 6층 이상은 미상」): `ELEVATOR_UNKNOWN_MIN_FLOOR`(6) 이상이면 '미상'(그 높이에 승강기가
+ *    없을 리 없으니 대장 미기재로 본다), 5층 이하이거나 최고층을 모르면 **null = 칸·조각 없음**(작은 건물은
+ *    정말 없는 경우가 흔해 '미상'이 오히려 틀린 말이 된다 · '0대'라고도 적지 않는다).
+ * ⛔ **둘 다 undefined(칸이 아예 안 옴 — 마이그레이션 2026-10-11c 전 서버)면 null** = 칸·조각 없음.
+ * ⓘ `withEmgen` 이면 비상용이 1대 이상일 때 뒤에 「(비상용 M대 포함)」(층별 화면 머리만 — 검색 줄은 짧게).
+ * ⓘ 최고층은 화면이 이미 쓰는 값이다 — 층별 화면은 층 행에서 `buildingFromFloorRows` 규칙으로(옥탑 99 제외),
+ *   검색 줄은 `BuildingHit.max_floor`(서버의 같은 규칙). `floor_cnt`(옥탑까지 센 행 수)를 쓰지 않는다.
+ */
+export const ELEVATOR_UNKNOWN_MIN_FLOOR = 6;
+
+export function describeElevator(
+  ride: number | null | undefined,
+  emgen: number | null | undefined,
+  withEmgen: boolean,
+  topFloor: number | null | undefined,
+): string | null {
+  if (ride === undefined && emgen === undefined) return null;
+  const isCount = (v: number | null | undefined): v is number =>
+    typeof v === 'number' && Number.isFinite(v);
+  const total = (isCount(ride) ? ride : 0) + (isCount(emgen) ? emgen : 0);
+  if (total <= 0) {
+    return isCount(topFloor) && topFloor >= ELEVATOR_UNKNOWN_MIN_FLOOR ? UNKNOWN_SPEC : null;
+  }
+  const base = `${total.toLocaleString('ko-KR')}대`;
+  if (withEmgen && isCount(emgen) && emgen >= 1) {
+    return `${base} (비상용 ${emgen.toLocaleString('ko-KR')}대 포함)`;
+  }
+  return base;
+}
+
+/**
+ * 구조 이름(물결 2-1) — 대장 글자 그대로(「철근콘크리트구조」). null·빈 글자는 '미상'(같은 머리 다른 칸과 같은 말) ·
+ * **undefined(칸이 아예 안 옴 — 옛 서버)면 null** = 칸 없음.
+ */
+export function describeStructure(v: string | null | undefined): string | null {
+  if (v === undefined) return null;
+  if (v === null || v.trim() === '') return UNKNOWN_SPEC;
+  return v;
+}
+
+/**
+ * 대장 호수 — 「48호」(물결 2-1 · 👤 그림 ⑥ 「가」). **집합건물이고 1호 이상일 때만** 글자, 그 밖은 null = 칸 없음.
+ *
+ * ⛔ 0 은 '미상'도 '기재 없음'도 아니고 **칸을 안 그린다** — 호수 0 은 대부분 호실이 없는 일반건물의 정상값이다.
+ * ⛔ 일반건물·null·undefined 도 칸 없음(일반건물에 호수가 적혀 있어도 안 보인다).
+ * ⛔ **건물 주용도(`mainUse` = `bld_main_use`)가 주거(공동주택·단독주택)면 칸 없음**(👤 2026-10-12 결정 B
+ *    「아파트는 숨기기」 — 아파트의 호수는 세대 수라 상가 호실로 읽힌다) · 주용도를 모르면(null·undefined)도
+ *    칸 없음(모르면 안 보인다). 이름은 건축물대장 원문 `mainPurpsCdNm` 철자 그대로(`RESIDENTIAL_MAIN_USES`).
+ * ⓘ 이름표는 꼭 '대장 호수' — 층 목록의 「호실 N칸」(우리 호실 표로 센 것)과 세는 대상이 다르다.
+ */
+export const RESIDENTIAL_MAIN_USES: readonly string[] = ['공동주택', '단독주택'];
+
+export function describeHoCnt(
+  isJiphap: boolean | null | undefined,
+  hoCnt: number | null | undefined,
+  mainUse: string | null | undefined,
+): string | null {
+  if (isJiphap !== true) return null;
+  if (typeof mainUse !== 'string' || mainUse.trim() === '') return null;
+  if (RESIDENTIAL_MAIN_USES.includes(mainUse.trim())) return null;
+  if (typeof hoCnt !== 'number' || !Number.isFinite(hoCnt) || hoCnt <= 0) return null;
+  return `${hoCnt.toLocaleString('ko-KR')}호`;
+}
+
+/**
  * 중개사 검색 결과의 **소유 구조 줄**(결정 0036 결정 5·18 ⑦⑩) — 「집합건물 · 사용승인 2003년 5월 · 주차 120대」.
  *
  * ⛔ null 은 '미상', **undefined(칸이 아예 안 옴 — 옛 서버)는 줄 없음**(null 을 돌려준다). 둘을 섞지 않는다 —
  *    세 칸 모두 undefined 일 때만 줄을 안 그린다(하나라도 오면 오지 않은 칸도 '미상').
- * ⓘ 층수는 같은 결과 줄의 `hit__meta` 에 이미 있어 다시 적지 않는다. 승강기·호실 수는 물결 2-1 뒤.
+ * ⓘ 층수는 같은 결과 줄의 `hit__meta` 에 이미 있어 다시 적지 않는다.
+ * ⓘ 물결 2-1(2026-10-12): 뒤에 「· 승강기 3대」(합 · 비상용 괄호 없이 · 합 0 이면 `max_floor` 6층 이상만
+ *   「승강기 미상」 · 두 칸 다 안 오면 조각 없음)와 「· 대장 호수 48호」(`describeHoCnt` 가 글자를 줄 때만 —
+ *   주거 주용도면 없음)를 붙인다. 줄을 세울지는 여전히 옛 세 칸만 본다.
  */
 export function describeOwnership(h: BuildingHit): string | null {
   if (h.is_jiphap === undefined && h.approve_date === undefined && h.parking_cnt === undefined) {
@@ -256,7 +330,12 @@ export function describeOwnership(h: BuildingHit): string | null {
   const kind = formatJiphap(h.is_jiphap) ?? `건물 종류 ${UNKNOWN_SPEC}`;
   const approve = h.approve_date ? formatApproveDate(h.approve_date) : UNKNOWN_SPEC;
   const parking = describeSpec(h.parking_cnt, formatParking);
-  return `${kind} · 사용승인 ${approve} · 주차 ${parking}`;
+  const parts = [kind, `사용승인 ${approve}`, `주차 ${parking}`];
+  const elevator = describeElevator(h.elevator_ride, h.elevator_emgen, false, h.max_floor);
+  if (elevator !== null) parts.push(`승강기 ${elevator}`);
+  const ho = describeHoCnt(h.is_jiphap, h.ho_cnt, h.bld_main_use);
+  if (ho !== null) parts.push(`대장 호수 ${ho}`);
+  return parts.join(' · ');
 }
 
 /**
