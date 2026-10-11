@@ -481,15 +481,20 @@ INDUSTRY_MEDIAN_FRESHNESS_SQL = (
 # 열쇠 = 시·도 코드(빈 sigungu_code 도 짝을 찾게 coalesce — ⛔ full join 에 is not distinct from 만 두면
 # PostgreSQL 이 'FULL JOIN is only supported with merge-joinable …' 로 거부한다 · 로컬 PG 실행 시험이 잡았다)
 # · 30 은 요약표 정의의 having 과 같은 수.
+# · 분기로 나눠 센다(2026-10-12 적대 검사 🟡) — 업종 표 쪽은 가운데값 표에 있는 분기만, 열쇠도 (분기, 시·도).
+#   업종 표에 두 분기가 섞여 있으면(적재 중) 상권이 두 번 세어져 [낡음] 오탐이 났다. 가운데값 표의 분기가
+#   표지와 다른 것은 report_industry_median_freshness() 가 따로 잡는다.
 INDUSTRY_MEDIAN_CONSISTENCY_SQL = (
     "select count(*) filter (where a.n is distinct from b.n)::text || '|' ||"
     " count(a.n)::text || '|' || count(b.n)::text"
-    " from (select sido_cd, max(pop_n) as n from mv_industry_mix_median"
-    " where scope = 'all' group by 1) a"
-    " full join (select left(d.sigungu_code, 2) as sido_cd, count(*)::int as n"
-    " from (select district_id from mv_district_industry_mix group by 1 having sum(n) >= 30) t"
-    " join district d on d.district_id = t.district_id group by 1) b"
-    " on coalesce(a.sido_cd, '') = coalesce(b.sido_cd, '');"
+    " from (select snapshot_ym, sido_cd, max(pop_n) as n from mv_industry_mix_median"
+    " where scope = 'all' group by 1, 2) a"
+    " full join (select t.snapshot_ym, left(d.sigungu_code, 2) as sido_cd, count(*)::int as n"
+    " from (select snapshot_ym, district_id from mv_district_industry_mix"
+    " where snapshot_ym in (select snapshot_ym from mv_industry_mix_median)"
+    " group by 1, 2 having sum(n) >= 30) t"
+    " join district d on d.district_id = t.district_id group by 1, 2) b"
+    " on a.snapshot_ym = b.snapshot_ym and coalesce(a.sido_cd, '') = coalesce(b.sido_cd, '');"
 )
 
 

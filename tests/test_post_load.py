@@ -1496,6 +1496,9 @@ class TestIndustryMedianChecks:
         (("", "", ""), True),                # 못 읽음 — '정상'이라 말할 근거가 없다
         (("x", "1", "1"), True),
         ((None, None, None), True),
+        # 업종 표에 두 분기가 섞인 적재 중 — SQL 이 가운데값 표의 분기만 세므로 어긋남 0 이 온다 → 정상
+        # (실제 PostgreSQL 실행은 test_industry_median_migration.py 의 손으로 만든 두 분기 표).
+        (("0", "2", "2"), False),
     ])
     def test_judge(self, args, stale):
         assert post_load.judge_industry_median_consistency(*args) is stale
@@ -1504,12 +1507,17 @@ class TestIndustryMedianChecks:
         sql = post_load.INDUSTRY_MEDIAN_CONSISTENCY_SQL
         assert all(ord(ch) < 128 for ch in sql), "psql -c 로 가는 SQL 에 한글이 있으면 서버에서 죽습니다"
         assert "full join" in sql and "using (" not in sql
-        assert "from mv_industry_mix_median where scope = 'all' group by 1" in sql
+        assert "from mv_industry_mix_median where scope = 'all' group by 1, 2" in sql
         # 30 = 요약표 정의의 having 과 같은 수(모집단 = 점포 30곳 이상 상권).
-        assert "from mv_district_industry_mix group by 1 having sum(n) >= 30" in sql
+        assert "group by 1, 2 having sum(n) >= 30" in sql
         assert "left(d.sigungu_code, 2) as sido_cd" in sql
-        assert "on coalesce(a.sido_cd, '') = coalesce(b.sido_cd, '')" in sql
         assert "a.n is distinct from b.n" in sql
+
+    def test_consistency_sql_splits_by_quarter(self):
+        """업종 표 쪽은 가운데값 표에 있는 분기만 · 열쇠는 (분기, 시·도) — 두 분기 섞인 적재 중 [낡음] 오탐 방지."""
+        sql = post_load.INDUSTRY_MEDIAN_CONSISTENCY_SQL
+        assert "where snapshot_ym in (select snapshot_ym from mv_industry_mix_median)" in sql
+        assert "on a.snapshot_ym = b.snapshot_ym and coalesce(a.sido_cd, '') = coalesce(b.sido_cd, '')" in sql
 
     def test_freshness_sql_is_ascii_and_reads_loaded_ym(self, monkeypatch):
         asked = []

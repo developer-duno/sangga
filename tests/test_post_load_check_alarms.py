@@ -1059,3 +1059,39 @@ class TestCanonicalFunctions:
         n = post_load._norm_config
         assert n("search_path = public, extensions, pg_temp") == n("search_path=public, extensions, pg_temp")
         assert n("search_path = ''") == n('search_path=""')
+
+
+def test_median_consistency_with_two_quarters_in_mix_stays_green(monkeypatch, capsys):
+    """업종 표에 두 분기가 섞인 적재 중(2026-10-12 적대 검사 🟡) — 모집단 대조 SQL 은 가운데값 표의 분기만 세므로
+    psql 이 '0|2|2' 를 준다 → [정상] · --check exit 0. (SQL 이 분기로 나누는지는 test_post_load ·
+    실제 실행은 test_industry_median_migration 의 손으로 만든 두 분기 표가 본다.)"""
+    asked = []
+
+    def query_one(sql):
+        asked.append(sql)
+        return "0|2|2" if sql == post_load.INDUSTRY_MEDIAN_CONSISTENCY_SQL else ""
+    monkeypatch.setattr(post_load, "query_one", query_one)
+    for name, val in (
+        ("report_freshness", lambda: ("1", "1", False)),
+        ("report_map_freshness", lambda: ({}, False)),
+        ("report_tx_window_freshness", lambda: ("", "", False)),
+        ("report_coverage_freshness", lambda: ("", "", False)),
+        ("report_industry_mix_freshness", lambda: ("", "", False)),
+        ("report_tx_geog_freshness", lambda: ("1", "1", False)),
+        ("report_anon_exposure", lambda: ([], [])),
+        ("report_write_exposure", lambda: []),
+        ("report_slow_functions", lambda: []),
+        ("report_canonical_indexes", lambda: []),
+        ("report_function_drift", lambda: []),
+        ("report_snapshot_release", lambda: (False, False)),
+        ("report_store_names_freshness", lambda: ("", "", False)),
+        ("report_industry_floor_freshness", lambda: ("", "", False)),
+        ("report_industry_floor_consistency", lambda: ("0", False)),
+        ("report_industry_median_freshness", lambda: ("202606", "202606", False)),
+        ("report_toast_evictions", lambda: []),
+    ):
+        monkeypatch.setattr(post_load, name, val)
+    assert post_load.main(["--check"]) == 0
+    assert post_load.INDUSTRY_MEDIAN_CONSISTENCY_SQL in asked
+    assert "where snapshot_ym in (select snapshot_ym from mv_industry_mix_median)" in post_load.INDUSTRY_MEDIAN_CONSISTENCY_SQL
+    assert "[정상] 업종 가운데값 표 모집단 수" in capsys.readouterr().out

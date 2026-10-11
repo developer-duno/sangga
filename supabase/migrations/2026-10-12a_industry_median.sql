@@ -27,7 +27,8 @@
 -- ----
 -- 새 객체만 만든다 — 기존 표·뷰·함수의 정의를 바꾸지 않으므로 화면이 읽는 객체에 거는 잠금이 없다.
 -- ① 을 굽는 동안 원본(mv_district_industry_mix · district)에 ACCESS SHARE(읽기)만 잡는다 — 화면 읽기와
--- post_load 갱신(refresh concurrently = EXCLUSIVE · 읽기는 안 막음)을 막지 않는다(갱신과 겹치면 기다릴 뿐).
+-- post_load 갱신(refresh concurrently = EXCLUSIVE)을 막지 않는다 — EXCLUSIVE 는 ACCESS SHARE 와 충돌하지 않아
+-- 겹쳐도 서로 기다리지 않는다(PostgreSQL 공식 문서 explicit-locking 의 잠금 충돌 표).
 -- 그래도 `lock_timeout` 은 형제 관습대로 **begin 앞**(세션 설정)에 둔다 · `statement_timeout = '900s'`.
 --
 -- ⛔ 전부 아니면 전무 — `begin; … commit;`

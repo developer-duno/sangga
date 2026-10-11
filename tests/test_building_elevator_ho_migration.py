@@ -572,7 +572,7 @@ class TestFile:
     def test_only_search_buildings_is_created(self, mig):
         assert created_functions(mig) == ["api.search_buildings", "search_buildings"]
 
-    def test_allowlist_total_is_still_thirty(self):
+    def test_allowlist_total_is_thirty_one_without_this_migration_adding_any(self):
         """새 함수가 없으니 공개 호출 허용 총계(읽기 4 + 호출)는 30 그대로 — 바뀌면 이 PR 범위 밖이다.
 
         ⓘ 2026-10-12a(업종 비중 비교 · 물결 2-3)가 api.list_industry_median 하나를 더해 31 이 됐다 — 이 마이그레이션은

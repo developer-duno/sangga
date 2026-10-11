@@ -513,3 +513,35 @@ class TestRealRun:
         assert post_load.judge_industry_median_consistency(*got) is False
         cur.execute(post_load.INDUSTRY_MEDIAN_FRESHNESS_SQL)
         assert cur.fetchone()[0] == "202606|202606"
+
+    @pytest.mark.parametrize("mix_rows, median_rows, want", [
+        # 업종 표에 두 분기가 섞인 적재 중(202606 + 202609) — 가운데값 표 분기(202606)만 센다 → 어긋남 0.
+        # (분기로 안 나누면 상권이 두 번 세어져 서울 2곳 ≠ 1곳 — [낡음] 오탐.)
+        ([("A", "202606", 40), ("B", "202606", 20), ("A", "202609", 40), ("C", "202609", 50)],
+         [("202606", "11", "all", 1)],
+         ("0", "1", "1")),
+        # 같은 분기인데 모집단 수가 다르면 잡는다.
+        ([("A", "202606", 40), ("C", "202606", 50)],
+         [("202606", "11", "all", 1)],
+         ("1", "1", "1")),
+        # 두 표 다 빔 = 새 환경.
+        ([], [], ("0", "0", "0")),
+    ])
+    def test_post_load_consistency_sql_on_hand_made_tables(self, pg, mix_rows, median_rows, want):
+        """모집단 대조 문장을 손으로 만든 표에 — 요약표에는 행을 못 넣으므로 같은 이름의 표를 다른 스키마에 둔다."""
+        c = pg.cursor()
+        c.execute("drop schema if exists median_case cascade; create schema median_case;"
+                  " set search_path to median_case;"
+                  " create table mv_district_industry_mix (district_id text, snapshot_ym char(6), n int);"
+                  " create table mv_industry_mix_median (snapshot_ym char(6), sido_cd text, scope text, pop_n int);"
+                  " create table district (district_id text, sigungu_code char(5));"
+                  " insert into district values ('A', '11680'), ('B', '11680'), ('C', '11140');")
+        try:
+            c.executemany("insert into mv_district_industry_mix values (%s, %s, %s)", mix_rows)
+            c.executemany("insert into mv_industry_mix_median values (%s, %s, %s, %s)", median_rows)
+            c.execute(post_load.INDUSTRY_MEDIAN_CONSISTENCY_SQL)
+            got = tuple(c.fetchone()[0].split("|"))
+        finally:
+            c.execute("reset search_path; drop schema median_case cascade;")
+        assert got == want
+        assert post_load.judge_industry_median_consistency(*got) is (got[0] != "0")
