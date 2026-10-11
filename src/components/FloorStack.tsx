@@ -72,6 +72,7 @@ import { PriceBandSection } from './PriceBandSection';
 import { IndustryMixSection } from './IndustryMixSection';
 import { RentStatSection } from './RentStatSection';
 import { OpenCloseSection } from './OpenCloseSection';
+import { EmptySection } from './EmptySection';
 import { SectionCard } from './SectionCard';
 
 /**
@@ -699,6 +700,13 @@ export function FloorStack({ building, viewerRole = null, founderChip = FOUNDER_
         chip={founderChip}
       />
     ),
+    /*
+      빈 카드 셋(결정 0036 결정 2 · 물결 1-B). ⛔ 아무것도 부르지 않는다 — `sidePrefetch` 도 안 받는다.
+      자료가 들어오면 그 카드만 제 컴포넌트로 바꾼다.
+    */
+    sales: <EmptySection kind="sales" pnu={building.pnu} plan={plans.sales} />,
+    pop: <EmptySection kind="pop" pnu={building.pnu} plan={plans.pop} />,
+    history: <EmptySection kind="history" pnu={building.pnu} plan={plans.history} />,
   };
 
   return (

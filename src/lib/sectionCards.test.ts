@@ -187,6 +187,37 @@ describe('ROLE_SECTION_LAYOUT — 역할 세 벌', () => {
 });
 
 /**
+ * 빈 카드 셋(결정 0036 결정 2 · 물결 1-B · 👤 자리 결정). 자료가 오기 전부터 서는 카드라
+ * 펼침 상한을 쓰지 않는다 — 셋 다 접힌 채 시작하고 어느 벌에서도 펼치지 않는다.
+ */
+describe('빈 카드 셋 — sales · pop · history', () => {
+  const EMPTY = ['sales', 'pop', 'history'] as const;
+
+  it('셋 다 창업자 태그이고 접힌 채 시작한다 (세 벌 어디서도 펼치지 않는다)', () => {
+    for (const k of EMPTY) {
+      expect(SECTION_PLAN[k].role).toBe('창업자');
+      expect(SECTION_PLAN[k].defaultOpen).toBe(false);
+      for (const role of VIEWER_ROLES) {
+        expect(ROLE_SECTION_LAYOUT[role].open as readonly string[], `${role} 의 ${k}`).not.toContain(k);
+      }
+    }
+  });
+
+  it('★ 자리 — 창업자 벌은 개업·폐업 바로 뒤에 셋, 투자자·중개사 벌과 역할 없음은 맨 끝에 셋', () => {
+    const founder = ROLE_SECTION_LAYOUT.창업자.order as readonly string[];
+    const at = founder.indexOf('openclose');
+    expect(founder.slice(at + 1, at + 4)).toEqual([...EMPTY]);
+    for (const order of [
+      ROLE_SECTION_LAYOUT.투자자.order as readonly string[],
+      ROLE_SECTION_LAYOUT.중개사.order as readonly string[],
+      sectionOrder(null) as readonly string[],
+    ]) {
+      expect(order.slice(-3)).toEqual([...EMPTY]);
+    }
+  });
+});
+
+/**
  * 입구 두 덩어리(검색창·상권 지도)의 차례(👤 결정 0036 결정 18 ④). 창업자만 지도가 위다.
  * 다른 역할·역할 없음은 지금 차례 그대로(검색 → 지도) — 양성 대조로 창업자와 짝지어 본다.
  */

@@ -149,6 +149,8 @@ describe('OpenCloseSection — 서울 자료가 있을 때', () => {
     const first = container.querySelectorAll('.oc__district')[0];
     expect([...first.querySelectorAll('.oc__latest .oc__num')].map((n) => n.textContent)).toEqual([
       '점포 441곳(프랜차이즈 포함)',
+      // 프랜차이즈 비중(👤 물결 1-B) — 분모는 점포(프랜차이즈 포함) 441 · stor_co(378)면 16.67% 가 된다.
+      '프랜차이즈 63곳 (점포의 14.29%)',
       '개업 5곳 · 개업률(분기) 1.13%',
       '폐업 9곳 · 폐업률(분기) 2.04%',
     ]);
@@ -277,7 +279,7 @@ describe('OpenCloseSection — 서울 자료가 있을 때', () => {
       data: [
         okRow({
           quarters: [
-            q({ quarter: '20262', similr_induty_stor_co: 22, opbiz_stor_co: 1, clsbiz_stor_co: 2, opbiz_rt: null, clsbiz_rt: null }),
+            q({ quarter: '20262', similr_induty_stor_co: 22, frc_stor_co: 4, opbiz_stor_co: 1, clsbiz_stor_co: 2, opbiz_rt: null, clsbiz_rt: null }),
           ],
         }),
       ],
@@ -287,6 +289,8 @@ describe('OpenCloseSection — 서울 자료가 있을 때', () => {
     await openCard();
     expect([...container.querySelectorAll('.oc__latest .oc__num')].map((n) => n.textContent)).toEqual([
       '점포 22곳(프랜차이즈 포함)',
+      // 분모가 30곳이 안 되면 프랜차이즈도 비율 없이 개수만.
+      '프랜차이즈 4곳',
       '개업 1곳',
       '폐업 2곳',
     ]);
@@ -308,7 +312,10 @@ describe('OpenCloseSection — 서울 자료가 있을 때', () => {
     // 큰 숫자 아래 표본 문장(.oc__note)이 없다 — 추이 칸 설명의 '표본' 낱말과는 다르다.
     expect(container.textContent).not.toContain('표본 45곳');
     expect([...container.querySelectorAll('.oc__district > .oc__note')]).toHaveLength(0);
-    expect(container.querySelector('.oc__latest')?.textContent).not.toContain('%');
+    // 개업·폐업 칸에 비율이 없다(프랜차이즈 비중은 점포 45곳이라 따로 선다 — 다른 칸이다).
+    for (const sel of ['.oc__num--open', '.oc__num--close']) {
+      expect(container.querySelector(`.oc__latest ${sel}`)?.textContent).not.toContain('%');
+    }
   });
 
   it('★ 막대 눈금은 카드 하나에 하나 — 두 상권이 같은 눈금이고, 눈금 글이 보인다(F4)', async () => {
@@ -377,6 +384,47 @@ describe('OpenCloseSection — 서울 자료가 있을 때', () => {
     await openCard();
     expect(container.textContent).toContain('이 상권 자료는 2026년 1분기까지입니다.');
     expect(container.querySelector('.oc__quarter')?.textContent).toBe('2026년 1분기');
+  });
+});
+
+describe('OpenCloseSection — 프랜차이즈 비중 (👤 물결 1-B)', () => {
+  it('★ ok 상권 줄마다 최신 분기 큰 숫자 줄에 서고, 접힌 요약에는 없다', async () => {
+    responses.oc = {
+      data: [
+        okRow(),
+        okRow({
+          district_id: '3001496',
+          district_nm: '강남 마이스 관광특구',
+          quarters: [q({ quarter: '20262', similr_induty_stor_co: 665, stor_co: 545, frc_stor_co: 120 })],
+        }),
+      ],
+      error: null,
+    };
+    const { container } = render(<OpenCloseSection pnu={PNU} />);
+    await openCard();
+    expect([...container.querySelectorAll('.oc__latest .oc__num--frc')].map((n) => n.textContent)).toEqual([
+      '프랜차이즈 63곳 (점포의 14.29%)',
+      '프랜차이즈 120곳 (점포의 18.05%)',
+    ]);
+    // ⛔ 요약에는 값을 적지 않는다(기존 결정) — 프랜차이즈도 마찬가지.
+    expect(container.querySelector('.card__summary')?.textContent).not.toContain('프랜차이즈');
+  });
+
+  it('★ 빈 상태(서울 밖 · 창 안 자료 없음)에는 프랜차이즈 줄이 없다', async () => {
+    responses.oc = { data: [headRow('not_seoul')], error: null };
+    const { container, unmount } = render(<OpenCloseSection pnu={DAEJEON} />);
+    await openCard();
+    expect(container.querySelector('.oc__num--frc')).toBeNull();
+    expect(container.textContent).not.toContain('프랜차이즈 ');
+    unmount();
+
+    responses.oc = {
+      data: [okRow({ status: 'no_data', latest_quarter: null, quarters: null, industries: null, other_industries: null })],
+      error: null,
+    };
+    const second = render(<OpenCloseSection pnu={PNU} />);
+    await openCard();
+    expect(second.container.querySelector('.oc__num--frc')).toBeNull();
   });
 });
 

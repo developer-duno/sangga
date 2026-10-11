@@ -8,6 +8,7 @@ import {
   countRateText,
   districtName,
   formatStoreCount,
+  franchiseText,
   industryRateShown,
   industryRows,
   isOpenCloseList,
@@ -33,7 +34,8 @@ import { FOUNDER_CHIP_ALL, chipMatch, type FounderChip } from '../lib/founderChi
  *
  * ⛔ **공표값 그대로다.** 서울시 상권분석서비스(점포-상권)가 분기마다 공표한 점포 수·개업·
  *    폐업을 서버가 상권마다 더해 준다. 상권 전체 비율도 서버가 서울시 산식으로 낸다 —
- *    이 화면에는 나누기가 하나도 없다(추이 막대의 높이 비례만 `lib/openClose.ts` 에서 한다).
+ *    이 화면의 나누기는 추이 막대의 높이 비례와 **프랜차이즈 비중 하나뿐**이다(둘 다 `lib/openClose.ts` ·
+ *    비중은 서울시가 공표하지 않아 공표 개수 둘을 나눈 예외 — 👤 결정 · 물결 1-B).
  * ⛔ **이 건물의 값이 아니다.** 이 건물이 속한 **서울시 상권 전체**의 값이다 — 첫 줄과 발
  *    문구가 같은 말을 한다. 상권이 여럿이면 **합치지 않고** 상권마다 한 덩어리다(겹치는 자리의
  *    가게가 양쪽에 세어진다).
@@ -215,6 +217,10 @@ function DistrictBlock({
       <p className="oc__name">{title}</p>
       <p className="oc__latest">
         <strong className="oc__num">{storeTotalText(latest.similr_induty_stor_co)}</strong>
+        {/* 프랜차이즈 비중 — 이 카드에서 화면이 나누는 유일한 값(👤 결정 · `franchiseText`). */}
+        <strong className="oc__num oc__num--frc">
+          {franchiseText(latest.frc_stor_co, latest.similr_induty_stor_co)}
+        </strong>
         <strong className="oc__num oc__num--open">
           {countRateText('개업', latest.opbiz_stor_co, noRate ? null : latest.opbiz_rt)}
         </strong>

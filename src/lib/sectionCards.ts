@@ -71,6 +71,16 @@ export const SECTION_PLAN = {
    * 이미 공통 둘과 역할별 하나씩이 쓰고 있다 — 창업자 몫은 업종 분포가 펼쳐 둔다.
    */
   openclose: { title: '상권 개업·폐업 (서울시 공표)', role: '창업자', defaultOpen: false },
+  /*
+    빈 카드 셋(결정 0036 결정 2 · 물결 1-B · 👤 2026-10-11). 창업자가 펼쳐 보는 빈칸 — 업종별 추정매출 ·
+    유동인구 · 이 자리 가게 이력 — 을 **자료가 오기 전부터 카드로 세워 둔다**(없는 칸을 숨기면 "이 화면은
+    그걸 안 다룬다"로 읽힌다). 셋 다 **접힌 채로 시작**한다 — 지금은 "비어 있음" 한 줄뿐이라 펼침 상한을 쓸
+    까닭이 없다. 문구·지역 판정은 `lib/emptyCards.ts` 한 곳.
+    ⛔ 빈 카드는 **아무것도 부르지 않는다**(서버 함수 0 · `sidePrefetch` 에도 안 넣는다).
+  */
+  sales: { title: '업종별 추정매출', role: '창업자', defaultOpen: false },
+  pop: { title: '유동인구', role: '창업자', defaultOpen: false },
+  history: { title: '이 자리 가게 이력', role: '창업자', defaultOpen: false },
 } as const satisfies Record<string, SectionPlan>;
 
 export type SectionKey = keyof typeof SECTION_PLAN;
@@ -102,16 +112,17 @@ export type RoleLayout = {
  * ⓘ 역할을 고르기 전에는 이 표를 안 쓴다 — `SECTION_PLAN` 의 순서·펼침 그대로다(결정 18 ①).
  */
 export const ROLE_SECTION_LAYOUT = {
+  // 빈 카드 셋(sales·pop·history)의 자리(👤 2026-10-11): 창업자 = 개업·폐업 바로 뒤 · 다른 두 벌 = 맨 끝.
   투자자: {
-    order: ['district', 'floors', 'tx', 'band', 'rent', 'industry', 'openclose'],
+    order: ['district', 'floors', 'tx', 'band', 'rent', 'industry', 'openclose', 'sales', 'pop', 'history'],
     open: ['district', 'floors', 'tx', 'band'],
   },
   창업자: {
-    order: ['district', 'floors', 'industry', 'openclose', 'tx', 'band', 'rent'],
+    order: ['district', 'floors', 'industry', 'openclose', 'sales', 'pop', 'history', 'tx', 'band', 'rent'],
     open: ['district', 'floors', 'industry', 'openclose'],
   },
   중개사: {
-    order: ['floors', 'tx', 'district', 'band', 'rent', 'industry', 'openclose'],
+    order: ['floors', 'tx', 'district', 'band', 'rent', 'industry', 'openclose', 'sales', 'pop', 'history'],
     open: ['floors', 'tx', 'district', 'band'],
   },
 } as const satisfies Record<ViewerRole, RoleLayout>;
