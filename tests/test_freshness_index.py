@@ -24,6 +24,9 @@ max() 한다 ② 누가 받치던 색인을 지운다. 둘 다 에러가 안 나
 ⓔ 돌연변이 — 위 판정기가 실제로 빨강을 내는지 사본 문자열로 확인한다
 
 ⛔ 주석 안의 `create index …` 는 색인으로 치지 않는다(설명에 인용한 글이 색인 대신 초록을 낸다).
+ⓘ 2026-10-12b(사장님 결정)부터 필지 줄은 `max(t.land_price_year) from parcel t` 를 읽는다 — 받치는 색인은
+   idx_parcel_land_price_year 이고, 아래 돌연변이 시험의 "parcel 줄" 도 그 색인으로 옮겼다. 옛 updated_at
+   색인(2026-09-27b)은 정본에 그대로 있고 ⓓ 마이그레이션 규칙 검사도 그대로다.
 ⓘ 도우미는 다른 시험 파일에서 import 하지 않는다 — 시험끼리 얽히면 한쪽 고장이 다른 쪽을 가린다.
 """
 
@@ -245,7 +248,9 @@ def test_pairs_really_are_extracted():
     """ⓐ 가짜 초록 방지 — 열 갈래 중 max 를 쓰는 줄이 실제로 뽑혀 나오는가."""
     pairs = freshness_pairs(freshness_body(read(SCHEMA)))
     assert len(pairs) >= 10, pairs
-    assert ("parcel", "updated_at") in pairs
+    # 2026-10-12b — 필지 줄은 받아 둔 날(updated_at)이 아니라 공시 연도를 읽는다.
+    assert ("parcel", "land_price_year") in pairs
+    assert ("parcel", "updated_at") not in pairs
     # ⓘ '점포·업종' 줄은 2026-10-07a(결정 0035)부터 max() 가 아니라 표지 한 줄
     #    (`select r.published_ym::text from snapshot_release r`)을 읽는다 — 훑을 표가 없다.
     assert ("unit_business", "snapshot_ym") not in pairs
@@ -261,13 +266,19 @@ def test_parcel_updated_at_is_indexed_in_schema():
     assert has_leading_index(read(SCHEMA), "parcel", "updated_at")
 
 
+def test_parcel_land_price_year_is_indexed_in_schema():
+    """2026-10-12b — 필지 줄의 max(land_price_year) 를 받친다(색인 전 라이브 2,174ms · Seq Scan)."""
+    assert has_leading_index(read(SCHEMA), "parcel", "land_price_year")
+
+
 def test_migration_is_concurrent_and_unwrapped():
     assert migration_problems(read(MIGRATION)) == []
 
 
 # ── 2. 돌연변이 — 판정기가 실제로 빨강을 내는가 ─────────────────────────────
 
-PARCEL_IDX = "create index if not exists idx_parcel_updated_at on parcel (updated_at);"
+# 2026-10-12b 부터 필지 줄이 읽는 칸 = land_price_year → 그것을 받치는 색인이 돌연변이의 대상이다.
+PARCEL_IDX = "create index if not exists idx_parcel_land_price_year on parcel (land_price_year);"
 PARCEL_MAX_LINE = "from parcel t),"
 
 
@@ -293,13 +304,13 @@ def test_mutation_removing_parcel_index_is_noticed():
     broken = _schema().replace(PARCEL_IDX + "\n", "", 1)
     assert PARCEL_IDX not in broken, "지우기가 안 됐습니다"
     bad = problems(broken)
-    assert any("parcel.updated_at" in m for m in bad), bad
+    assert any("parcel.land_price_year" in m for m in bad), bad
 
 
 def test_mutation_commented_index_does_not_count():
     broken = _schema().replace(PARCEL_IDX, "-- " + PARCEL_IDX, 1)
     bad = problems(broken)
-    assert any("parcel.updated_at" in m for m in bad), bad
+    assert any("parcel.land_price_year" in m for m in bad), bad
 
 
 def test_mutation_new_unindexed_column_on_parcel_is_noticed():
@@ -331,9 +342,9 @@ def test_mutation_missing_function_is_noticed():
 def test_mutation_non_btree_index_does_not_count():
     broken = _schema().replace(
         PARCEL_IDX,
-        "create index if not exists idx_parcel_updated_at on parcel using brin (updated_at);", 1)
+        "create index if not exists idx_parcel_land_price_year on parcel using brin (land_price_year);", 1)
     bad = problems(broken)
-    assert any("parcel.updated_at" in m for m in bad), bad
+    assert any("parcel.land_price_year" in m for m in bad), bad
 
 
 def _mig_stmt(name, table, col):
@@ -385,28 +396,28 @@ def test_mutation_removing_new_schema_index_is_noticed(table, col, line):
 
 # ── 3. 2026-09-27 P11 — 부분 색인·min() 구멍 ─────────────────────────────────
 
-PARCEL_IDX_HEAD = "create index if not exists idx_parcel_updated_at on parcel (updated_at)"
+PARCEL_IDX_HEAD = "create index if not exists idx_parcel_land_price_year on parcel (land_price_year)"
 
 
 @pytest.mark.parametrize("where", [
     "where pnu like '11%'",
-    "where updated_at > '2026-01-01'",
-    "where updated_at is not null and pnu like '11%'",
-    "where updated_at is null",
+    "where land_price_year > 2020",
+    "where land_price_year is not null and pnu like '11%'",
+    "where land_price_year is null",
     "where pnu is not null",
 ])
 def test_mutation_partial_index_does_not_count(where):
-    """부분 색인은 표 전체의 max 를 못 받친다 → parcel.updated_at 빨간불."""
+    """부분 색인은 표 전체의 max 를 못 받친다 → parcel.land_price_year 빨간불."""
     broken = _schema().replace(PARCEL_IDX, PARCEL_IDX_HEAD + "\n  " + where + ";", 1)
     assert where in broken, "바꾸기가 안 됐습니다"
     bad = problems(broken)
-    assert any("parcel.updated_at" in m for m in bad), bad
+    assert any("parcel.land_price_year" in m for m in bad), bad
 
 
 @pytest.mark.parametrize("where", [
-    "where updated_at is not null",
-    "where (updated_at is not null)",
-    'WHERE "updated_at"  IS NOT NULL',
+    "where land_price_year is not null",
+    "where (land_price_year is not null)",
+    'WHERE "land_price_year"  IS NOT NULL',
 ])
 def test_partial_index_on_not_null_only_still_counts(where):
     """조건이 `칸 is not null` 뿐이면 planagg 가 같은 조건을 붙이므로 받친다 → 초록."""
@@ -486,7 +497,7 @@ def test_primary_key_of_another_table_does_not_count():
 
 @pytest.mark.parametrize("key", [
     ("rent_stat", "quarter"),     # 흔한 꼴 — 기본키 첫 칸이 받친다
-    ("parcel", "updated_at"),     # 변형 꼴 — create index 가 받친다
+    ("parcel", "land_price_year"),  # 변형 꼴 — create index 가 받친다(2026-10-12b)
 ])
 def test_mutation_exception_already_backed_is_noticed(key):
     """양성 대조 — 받쳐진 쌍을 예외 표에 넣으면 '낡은 예외' 빨강."""
