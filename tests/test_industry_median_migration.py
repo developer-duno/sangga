@@ -635,10 +635,15 @@ class TestRealRun:
     """
     # 대분류가 빈 점포 줄(운영 0 · 2026-10-12 마무리 검사관 🟡) — 요약표에 cat_l_cd null 줄이 생긴다.
     # 두 계산법 모두 대분류를 = 로 이어 그 줄 비중은 양쪽 다 0 이라 값은 맞고, 맞대기 열쇠만 null 을 짝지어야 한다.
+    # 부산(26) 상권 셋 모두 빈 대분류 점포(15·17·19/35)가 있다 — 다시 세기의 sh 만 is not distinct from 으로
+    # 바꾸면 가운데 48.6% 대 요약표 0 으로 갈려 빨강(빈 대분류가 소수인 판이면 가운데가 0 으로 남아 못 가른다).
     _NULL_CAT = """
-        insert into district (district_id, district_type, sigungu_code) values ('C1', '골목상권', '11680');
-        insert into mv_district_industry_mix values ('C1', '202606', 'I2', '음식', 'I201', '한식', 20),
-                                                    ('C1', '202606', null, null, null, null, 15);
+        insert into district (district_id, district_type, sigungu_code)
+          values ('C1', '골목상권', '26140'), ('C2', '골목상권', '26140'), ('C3', '골목상권', '26140');
+        insert into mv_district_industry_mix values
+          ('C1', '202606', 'I2', '음식', 'I201', '한식', 20), ('C1', '202606', null, null, null, null, 15),
+          ('C2', '202606', 'I2', '음식', 'I201', '한식', 18), ('C2', '202606', null, null, null, null, 17),
+          ('C3', '202606', 'I2', '음식', 'I201', '한식', 16), ('C3', '202606', null, null, null, null, 19);
     """
 
     @pytest.mark.parametrize("extra, check", [
@@ -647,7 +652,7 @@ class TestRealRun:
         # ② 가운데값이 둥글지 않은 정상 판 — 차이가 0 < d < 0.051 인 줄이 실제로 있어야 이 경우가 뜻을 갖는다.
         (_ROUGH_MEDIAN, "select count(*) from mv_industry_mix_median where sido_cd = '26' and cat_l_cd = 'I2'"
                         " and med_pct = 36.7"),
-        # ③ 대분류가 빈 줄 — 열쇠·줄 수 세기가 cat_l_cd 로 짝을 가르면 1|n|n-1 꼴 거짓 [낡음].
+        # ③ 대분류가 빈 줄 — 열쇠·줄 수 세기가 cat_l_cd 로 짝을 가르면 2k|n-k|n-k 꼴 거짓 [낡음](k = 빈 대분류 줄 수).
         (_NULL_CAT, "select count(*) from mv_industry_mix_median where cat_l_cd is null"),
     ], ids=["null-sido", "rough-median", "null-cat"])
     def test_post_load_recompute_sql_stays_green_on_freshly_baked_boards(self, pg, cur, extra, check):
