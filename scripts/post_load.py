@@ -511,6 +511,11 @@ INDUSTRY_MEDIAN_CONSISTENCY_SQL = (
 #    · 짝짓기 열쇠의 sido_cd 는 coalesce(…, '') — 구 코드가 빈 상권은 sido_cd 가 null 이라 using 이면
 #      양쪽이 짝을 못 찾아 늘 거짓 [낡음]이 된다(2026-10-12 검사관 재현 8|14|14 · 모집단 대조와 같은 처방).
 #    · 분기는 가운데값 표에 있는 분기만(모집단 대조와 같은 까닭 — 적재 중 업종 표에 섞인 새 분기 오탐 방지).
+#    · 대분류가 빈 줄(cat_l_cd null · 운영 0)도 짝을 찾는다 — 열쇠는 coalesce(…, ''), '한쪽에만 있음'·줄 수는
+#      늘 차 있는 snapshot_ym 으로 가른다(cat_l_cd 로 가르면 그 줄이 양쪽 다 '한쪽에만'으로 세어진다).
+#      ⛔ sh 의 대분류 비교(x.cat_l_cd = c.cat_l_cd)는 요약표 정의(schema.sql dcat 이음)와 같은 = 로 둔다 —
+#      그래서 빈 대분류 줄의 비중은 양쪽 다 0 이다. 이쪽만 is not distinct from 으로 바꾸면 post_load 를
+#      다시 돌려도 안 풀리는 [낡음]이 된다(바꾸려면 요약표 정의와 함께).
 #    ⛔ ASCII 만(psql -c).
 INDUSTRY_MEDIAN_RECOMPUTE_SQL = (
     "with snap as (select distinct snapshot_ym from mv_industry_mix_median),"
@@ -542,13 +547,14 @@ INDUSTRY_MEDIAN_RECOMPUTE_SQL = (
     " select snapshot_ym, sido_cd, scope, district_type, cat_l_cd, max(cnt)::int as pop_n,"
     " avg(share) filter (where rn in ((cnt + 1) / 2, (cnt + 2) / 2)) * 100 as med"
     " from ranked group by 1, 2, 3, 4, 5)"
-    " select count(*) filter (where a.cat_l_cd is null or b.cat_l_cd is null"
+    " select count(*) filter (where a.snapshot_ym is null or b.snapshot_ym is null"
     " or a.pop_n <> b.pop_n or abs(a.med_pct - b.med) > 0.051)::text"
-    " || '|' || count(a.cat_l_cd)::text || '|' || count(b.cat_l_cd)::text"
+    " || '|' || count(a.snapshot_ym)::text || '|' || count(b.snapshot_ym)::text"
     " from mv_industry_mix_median a"
     " full join re b on a.snapshot_ym = b.snapshot_ym"
     " and coalesce(a.sido_cd, '') = coalesce(b.sido_cd, '')"
-    " and a.scope = b.scope and a.district_type = b.district_type and a.cat_l_cd = b.cat_l_cd;"
+    " and a.scope = b.scope and a.district_type = b.district_type"
+    " and coalesce(a.cat_l_cd, '') = coalesce(b.cat_l_cd, '');"
 )
 
 
