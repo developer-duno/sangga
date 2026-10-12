@@ -229,7 +229,7 @@ python scripts/build_sitemap.py --dry-run       # 사이트맵 미리보기 — 
 python scripts/build_sitemap.py                 # ★ 건축물대장·호실을 다시 적재했으면(post_load 뒤) → public/sitemap*.xml 다시 굽고 **커밋** → 배포 뒤 indexnow_ping.py --from-sitemap … (⚠️ 대상 고르기에 찬 캐시 약 10분 — 2026-10-10 실측 · 스크립트가 그 접속만 제한을 15분으로 늘린다)
 python scripts/post_load.py                     # ★ 적재 후 필수 — vacuum(analyze) + 요약표(REFRESH_MVS 목록이 정본) 갱신 (권한 점검은 안 돈다)
 python scripts/post_load.py --check              # 낡았나 + 공개 롤이 읽거나 **고칠 수** 있는 것 점검 (DB 쓰기 0, 걸리면 exit 1)
-python scripts/publish_snapshot.py --show        # 분기 표지(다 들어온 분기 · 보여 주는 분기) + 점포 표 분기별 행수 + 요약표 다섯의 분기 (읽기만)
+python scripts/publish_snapshot.py --show        # 분기 표지(다 들어온 분기 · 보여 주는 분기) + 점포 표 분기별 행수 + 요약표 여섯의 분기 (읽기만)
 python scripts/publish_snapshot.py --ym <분기>   # 표지 두 칸을 그 분기로(되돌리기·RPC 실패 대응 · 점포 표에 있는 분기만) → 이어서 post_load.py
 python scripts/make_env_local.py                # .env → .env.local (브라우저용 공개키만)
 python scripts/setup_git_hooks.py               # ★ 새 컴퓨터에서 한 번 — main 잠금(로컬 알람) 켜기 + 깃헙 잠금 함께 확인
