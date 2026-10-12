@@ -184,6 +184,10 @@ def test_issue_body_starts_with_disk_and_same_day_warnings():
     todo = body.find("## 할 일")
     assert -1 < todo < disk < same_day < body.find("```powershell")
     assert "85%" in body and "+1.4GB" in body
+    # 판정은 적재 '뒤' 최고점 기준(10-12 맹점 검사관 🟠) — 직전 % 만 보는 옛 문구로 돌아가면 빨강
+    disk_line = body[disk:body.index("\n", disk)]
+    assert "지금 사용량" in disk_line and "이번 적재 증가" in disk_line
+    assert "WAL" in disk_line and "85% 미만" in disk_line
 
 
 def test_issue_body_uses_sigungu_code_all_and_dir():
