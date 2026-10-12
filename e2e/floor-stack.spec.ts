@@ -2883,7 +2883,21 @@ test.describe('층별 스택뷰 — 업종 비중 비교', () => {
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
     await mockFloorStack(page, [], priceBands(), [floorRow()], industryMixTwoDistricts());
     // 나중에 등록한 것이 먼저 잡힌다 — mockFloorStack 의 '함수 없음' 위에 덮는다.
-    await mockJson(page, INDUSTRY_MEDIAN_PATTERN, industryMedian());
+    // 받은 요청 주소를 모은다(⑥) — 이 처리기가 중분류 함수 요청까지 잡으면 대분류 패턴이 넓어진 것이다.
+    const medianUrls: string[] = [];
+    await page.route(INDUSTRY_MEDIAN_PATTERN, async (route) => {
+      medianUrls.push(route.request().url());
+      if (route.request().method() === 'OPTIONS') {
+        await route.fulfill({ status: 204, headers: CORS_HEADERS });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: CORS_HEADERS,
+        body: JSON.stringify(industryMedian()),
+      });
+    });
 
     await page.goto('/');
     await pickGu(page, '서울', '강남구');
@@ -2929,6 +2943,17 @@ test.describe('층별 스택뷰 — 업종 비중 비교', () => {
     await expect(gol.locator('.mix__med-note')).toBeVisible();
     await expect(market.locator('.mix__med-note')).toBeVisible();
     await page.emulateMedia({ media: null });
+
+    // ⑥ 대분류 목업 패턴은 대분류 함수만 잡는다 — 대분류를 골라 중분류 함수 요청을 실제로 내보낸 뒤(그 응답까지 기다린다 ·
+    //    기본 '함수 없음' 목업이 답한다), 위 처리기가 받은 주소가 전부 `/rpc/list_industry_median` 로 끝나는지 본다.
+    //    패턴 끝에 `*` 를 붙이면(INDUSTRY_MEDIAN_PATTERN 주석의 ⛔) 중분류 요청이 이 처리기로 와 빨강.
+    const medianMAnswered = page.waitForResponse(
+      (r) => r.url().endsWith('/rpc/list_industry_median_m') && r.request().method() === 'POST',
+    );
+    await mix.locator('select.mix__select').selectOption('I2');
+    await medianMAnswered;
+    expect(medianUrls.length).toBeGreaterThan(0);
+    for (const url of medianUrls) expect(url).toMatch(/\/rpc\/list_industry_median$/);
   });
 });
 
