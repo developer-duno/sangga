@@ -125,7 +125,8 @@ create index if not exists idx_parcel_geom    on parcel using gist (geom);
 -- 2026-09-27 라이브 실측 2.2~3.1초(anon 제한 3초) → 이 색인. 마이그레이션 2026-09-27b
 -- (라이브는 concurrently 로 만들었다 — 정본은 새 창고용이라 그냥 만든다).
 -- ⓘ 2026-10-12b 부터 그 필지 줄은 updated_at 이 아니라 land_price_year 를 읽는다(바로 아래 색인) —
---   이 색인이 받치는 신선도 줄은 이제 없다. 지울지는 다른 쓰임을 실측한 뒤 별건으로.
+--   이 색인이 받치는 신선도 줄은 이제 없다 — 10-12b 를 되돌릴 때(옛 updated_at 판정) 쓰는 되돌리기용이다.
+--   되돌리기 창이 지나면 지울 후보(지금은 지우지 않는다 · 다른 쓰임은 지울 때 실측).
 create index if not exists idx_parcel_updated_at on parcel (updated_at);
 -- get_data_freshness 의 `max(t.land_price_year) from parcel t` 를 받친다(2026-10-12b — 필지 줄의
 -- 기준을 공시 연도로 · 사장님 결정 2026-10-12). 색인 전 라이브 실측 2,174ms(Parallel Seq Scan ·
