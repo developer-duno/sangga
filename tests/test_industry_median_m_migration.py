@@ -128,6 +128,7 @@ def mv_problems(block):
     · 몫의 분모 = 그 상권의 그 대분류 가게 수(`/ p.cat_total`) — 👤 ㉘
     · 없는 중분류 = 0(`cross join` + `coalesce(…, 0)`) · 빈 중분류는 목록에서 뺀다(`cat_m_cd is not null`)
     · 재료 = 업종 요약표만(점포 표·표지를 직접 안 읽는다 — 분기는 재료의 분기 그대로)
+    · 분모 cat_total 에는 빈 중분류 가게도 든다(tot 를 denominator_problems 가 본다)
     ⚠️ 못 보는 것: 30 을 상수·함수로 감싼 꼴 · coalesce 를 case 로 바꾼 같은 뜻의 꼴 · tot 를 다른 이름으로 바꾼 꼴
        (그때는 이 함수를 넓힌다).
     """
@@ -135,10 +136,7 @@ def mv_problems(block):
     out = []
     if not re.search(r"having\s+sum\s*\(\s*(?:\w+\.)?n\s*\)\s*>=\s*30\b", code):
         out.append("30곳 미만 상권을 안 뺌")
-    tot = re.search(r"\btot\s+as\s*\((.*?)\)\s*,\s*\n\s*pop\s+as", code, flags=re.S)
-    if not tot or not re.search(r"\bcat_l_cd\b", tot.group(1)) or not re.search(r"group\s+by\s+1\s*,\s*2\s*,\s*3\b",
-                                                                              tot.group(1)):
-        out.append("모집단을 대분류마다 고르지 않음(상권 전체 점포로 셈)")
+    out += denominator_problems(code)
     if not re.search(r"/\s*p\.cat_total\b", code):
         out.append("몫의 분모가 그 대분류 가게 수가 아님")
     if not re.search(r"coalesce\s*\(\s*(?:\w+\.)?n\s*,\s*0\s*\)", code):
@@ -151,6 +149,53 @@ def mv_problems(block):
         out.append("점포 표를 직접 읽음")
     if "published_ym" in code or "snapshot_release" in code:
         out.append("표지를 직접 읽음")
+    return out
+
+
+def denominator_problems(code):
+    """분모 cat_total 을 만드는 `tot` CTE 의 어긋난 까닭(비면 정상 · `code` 는 소문자 SQL).
+
+    요약표 정의(mv_problems)와 post_load 다시 세기(INDUSTRY_MEDIAN_M_RECOMPUTE_SQL)가 이 **같은 함수**를 지나고,
+    양성 대조도 이 함수를 지난다.
+    · 모집단은 대분류마다(`tot` 가 cat_l_cd 를 품고 `group by 1, 2, 3`) — 👤 ㉙
+    · 빈 중분류 가게도 분모에 든다 — `tot` 안에 `cat_m_cd` 라는 이름이 한 번도 안 나와야 한다(`where … is not null` ·
+      `filter (where …)` · `coalesce(…, '') <> ''` 어느 꼴로 거르든 그 칸 이름은 나온다). 빼면 중분류 몫이 화면 막대
+      (분모 = 그 대분류 가게 전부)와 다른 수로 나뉜다 — 요약표만 바꾸면 다시 세기와 같이 틀리지 않아 `--check` 도 못 본다.
+    ⚠️ 못 보는 것: `tot` 를 다른 이름으로 바꾼 꼴 · `tot` 가 이미 걸러 둔 다른 CTE·뷰를 읽는 꼴(그 이름이 `tot` 안에
+       안 나온다) · cat_m_cd 를 별칭·위치 번호로 부르는 꼴 · `)` 다음 `, pop as` 로 끝을 찾으므로 `tot` 와 `pop` 사이에
+       다른 CTE 를 끼운 꼴(정규식이 끼운 CTE 까지 `tot` 본문으로 삼켜, 그 CTE 에 cat_m_cd 가 없으면 못 보고
+       있으면 거짓 빨강이 난다 — 2026-10-13 검사관 실측).
+    """
+    out = []
+    tot = re.search(r"\btot\s+as\s*\((.*?)\)\s*,\s*pop\s+as", code, flags=re.S)
+    if not tot or not re.search(r"\bcat_l_cd\b", tot.group(1)) or not re.search(r"group\s+by\s+1\s*,\s*2\s*,\s*3\b",
+                                                                              tot.group(1)):
+        out.append("모집단을 대분류마다 고르지 않음(상권 전체 점포로 셈)")
+    if tot and re.search(r"\bcat_m_cd\b", tot.group(1)):
+        out.append("분모(cat_total)에서 빈 중분류를 뺌(화면 막대 분모와 갈린다)")
+    return out
+
+
+def consistency_problems(sql):
+    """post_load 모집단 대조(INDUSTRY_MEDIAN_M_CONSISTENCY_SQL)의 업종 표 쪽(b)이 요약표와 같은 규칙으로 세는가(비면 정상).
+
+    가드 본체와 양성 대조가 이 같은 함수를 지난다.
+    · 빈 대분류를 뺀다(`cat_l_cd is not null`) — 요약표의 `=` 이음이 떨어뜨리는 것과 같게.
+    · **중분류가 있는 대분류만** — (분기, 대분류)에 cat_m_cd 가 찬 줄이 어느 상권에든 하나라도 있으면(요약표 cat CTE ·
+      다시 세기 cats 와 같은 범위). 업종 표에서 (snapshot_ym, coalesce(cat_l_cd, '')) 를 `cat_m_cd is not null` 줄의 같은
+      두 칸과 `in` 으로 견주는 꼴만 받는다 — 상권(district_id)까지 묶으면 범위가 좁아져 걸린다.
+    ⚠️ 못 보는 것: `exists (…)` 처럼 같은 뜻의 다른 꼴(그때는 거짓 빨강 — 이 함수를 넓힌다) · 조건이 b 안에 있되 `or` 로
+       무력해진 꼴 · 업종 표 대신 이미 걸러진 다른 재료를 읽는 꼴. b 는 `full join` 뒤 글자로 자른다.
+    """
+    code = re.sub(r"\s+", " ", sql.lower())
+    b = code.split("full join", 1)[1] if "full join" in code else ""
+    out = []
+    if " and cat_l_cd is not null" not in b:
+        out.append("빈 대분류를 업종 표 쪽에서 안 뺌")
+    if not re.search(r"\(\s*snapshot_ym\s*,\s*coalesce\s*\(\s*cat_l_cd\s*,\s*''\s*\)\s*\)\s+in\s+\(\s*select\s+snapshot_ym"
+                     r"\s*,\s*coalesce\s*\(\s*cat_l_cd\s*,\s*''\s*\)\s+from\s+mv_district_industry_mix\s+where\s+cat_m_cd"
+                     r"\s+is\s+not\s+null\s*\)", b):
+        out.append("중분류가 없는 대분류까지 셈(요약표엔 그 줄이 안 생긴다)")
     return out
 
 
@@ -218,9 +263,14 @@ class TestSummaryTable:
         ("from mv_district_industry_mix m\n  group by 1, 2, 3\n  having", "from unit_business m\n  group by 1, 2, 3\n  having"),
         ("  join district d on d.district_id = t.district_id\n),",
          "  join district d on d.district_id = t.district_id\n  join snapshot_release r on true\n),"),
+        # 분모(cat_total)에서 빈 중분류를 뺌 — 흔한 꼴(tot 에 where 한 줄) + 변형 꼴(집계 filter).
+        ("  from mv_district_industry_mix m\n  group by 1, 2, 3\n  having",
+         "  from mv_district_industry_mix m\n  where m.cat_m_cd is not null\n  group by 1, 2, 3\n  having"),
+        ("sum(m.n)::int as cat_total", "sum(m.n) filter (where m.cat_m_cd is not null)::int as cat_total"),
     ))
     def test_mutations_are_noticed(self, mig, old, new):
-        """양성 대조 — 30 을 지운·상권 전체로 고른·분모를 바꾼·0 을 뺀·cross join 을 없앤·점포 표·표지를 읽는 사본이 걸린다."""
+        """양성 대조 — 30 을 지운·상권 전체로 고른·분모를 바꾼·0 을 뺀·cross join 을 없앤·점포 표·표지를 읽는·
+        분모에서 빈 중분류를 뺀 사본이 걸린다."""
         block = mv_block(mig, MV)
         assert old in block, old
         assert mv_problems(block.replace(old, new, 1))
@@ -387,6 +437,20 @@ class TestPostLoadWiring:
         # 빈 중분류는 요약표 cat CTE 와 같은 규칙으로 중분류 목록에서 뺀다(분모 cat_total 에는 든다).
         assert "join snap s using (snapshot_ym) where m.cat_m_cd is not null)," in sql
 
+    def test_recompute_denominator_keeps_null_middle(self):
+        """다시 세기의 분모(tot)도 요약표처럼 빈 중분류 가게를 품는다 — 요약표 정의와 같은 탐지 함수."""
+        assert denominator_problems(post_load.INDUSTRY_MEDIAN_M_RECOMPUTE_SQL.lower()) == []
+
+    @pytest.mark.parametrize("old, new", (
+        ("join snap s using (snapshot_ym) group by 1, 2, 3 having",
+         "join snap s using (snapshot_ym) where m.cat_m_cd is not null group by 1, 2, 3 having"),
+        ("sum(m.n) as cat_total", "sum(m.n) filter (where m.cat_m_cd is not null) as cat_total"),
+    ))
+    def test_recompute_denominator_mutations_are_noticed(self, old, new):
+        sql = post_load.INDUSTRY_MEDIAN_M_RECOMPUTE_SQL
+        assert old in sql, old
+        assert denominator_problems(sql.replace(old, new, 1).lower())
+
     def test_consistency_keys_and_null_major(self):
         sql = post_load.INDUSTRY_MEDIAN_M_CONSISTENCY_SQL
         assert "full join" in sql and "using (" not in sql
@@ -394,6 +458,26 @@ class TestPostLoadWiring:
         assert "coalesce(a.cat_l_cd, '') = coalesce(b.cat_l_cd, '')" in sql
         assert "and cat_l_cd is not null" in sql
         assert "where snapshot_ym in (select snapshot_ym from mv_industry_mix_median_m)" in sql
+
+    def test_consistency_counts_only_majors_with_middles(self):
+        """모집단 대조의 업종 표 쪽도 요약표처럼 중분류가 있는 대분류만 센다(빈 대분류도 뺀다)."""
+        assert consistency_problems(post_load.INDUSTRY_MEDIAN_M_CONSISTENCY_SQL) == []
+
+    _MIDDLE_RULE = (" and (snapshot_ym, coalesce(cat_l_cd, '')) in (select snapshot_ym, coalesce(cat_l_cd, '')"
+                    " from mv_district_industry_mix where cat_m_cd is not null)")
+
+    @pytest.mark.parametrize("old, new", (
+        (_MIDDLE_RULE, ""),                                                          # 흔한 꼴 — 조건을 통째로 지움
+        (" from mv_district_industry_mix where cat_m_cd is not null)",              # 변형 — 안쪽 거름만 지움
+         " from mv_district_industry_mix)"),
+        ("(snapshot_ym, coalesce(cat_l_cd, '')) in (select snapshot_ym, coalesce(cat_l_cd, '')",  # 변형 — 상권마다로 좁힘
+         "(snapshot_ym, district_id, coalesce(cat_l_cd, '')) in (select snapshot_ym, district_id, coalesce(cat_l_cd, '')"),
+        (" and cat_l_cd is not null", ""),                                           # 빈 대분류 규칙을 지움
+    ))
+    def test_consistency_mutations_are_noticed(self, old, new):
+        sql = post_load.INDUSTRY_MEDIAN_M_CONSISTENCY_SQL
+        assert old in sql, old
+        assert consistency_problems(sql.replace(old, new, 1))
 
 
 class TestMigrationShape:
@@ -749,10 +833,18 @@ class TestRealRun:
     """
     # 대분류까지 빈 줄(운영 0) — 30곳이 넘어도 요약표 정의(= 이음)에서 모집단이 떨어진다. 모집단 대조가 업종 표 쪽에서
     # 같은 규칙(cat_l_cd is not null)으로 안 빼면 (부산, 빈 대분류) 묶음이 한쪽에만 있어 거짓 [낡음].
+    # 빈 대분류 줄에 중분류 코드를 넣어 둔다 — 비면 '중분류 있는 대분류만' 조건이 덩달아 빼 버려 이 규칙만 지운 변이가 안 걸린다.
     _NULL_CAT_L = """
         insert into district (district_id, district_type, sigungu_code) values ('E1', '골목상권', '26170');
-        insert into mv_district_industry_mix values ('E1', '202606', null, null, null, null, 40),
+        insert into mv_district_industry_mix values ('E1', '202606', null, null, 'X101', 'x', 40),
                                                     ('E1', '202606', 'I2', '음식', 'I201', '한식', 35);
+    """
+    # 가게가 전부 빈 중분류인 대분류(운영 0) — 30곳이 넘어도 그 분기 그 대분류에 중분류가 하나도 없어 요약표 cat CTE 와
+    # 이어지지 않아 줄이 안 생긴다. 모집단 대조가 '중분류 있는 대분류만'으로 안 세면 (부산, L1) 묶음이 한쪽에만 있어 거짓 [낡음].
+    _MIDDLE_LESS_MAJOR = """
+        insert into district (district_id, district_type, sigungu_code) values ('F1', '골목상권', '26200');
+        insert into mv_district_industry_mix values ('F1', '202606', 'L1', '부동산', null, null, 40),
+                                                    ('F1', '202606', 'I2', '음식', 'I201', '한식', 35);
     """
 
     def _bake(self, pg, extra):
@@ -776,7 +868,11 @@ class TestRealRun:
         (_NULL_CAT_M, "select count(*) from mv_industry_mix_median_m where sido_cd = '26' and cat_m_cd = 'I201'"
                       " and med_pct = 51.4"),
         (_NULL_CAT_L, "select count(*) from mv_industry_mix_median_m where sido_cd = '26' and cat_l_cd = 'I2'"),
-    ], ids=["null-sido", "rough-median", "null-cat-m", "null-cat-l"])
+        # 중분류 없는 대분류 — 그 대분류 줄은 요약표에 없고(아래 count) 같은 상권의 음식 줄은 있다.
+        (_MIDDLE_LESS_MAJOR, "select count(*) filter (where cat_l_cd = 'I2')"
+                             " * (1 - least(count(*) filter (where cat_l_cd = 'L1'), 1))"
+                             " from mv_industry_mix_median_m where sido_cd = '26'"),
+    ], ids=["null-sido", "rough-median", "null-cat-m", "null-cat-l", "middle-less-major"])
     def test_post_load_m_sqls_stay_green_on_freshly_baked_boards(self, pg, cur, extra, check):
         c = self._bake(pg, extra)
         try:
@@ -806,7 +902,12 @@ class TestRealRun:
          _NULL_SIDO),
         # 모집단 대조에서 빈 대분류를 안 빼면 거짓 [낡음].
         ("INDUSTRY_MEDIAN_M_CONSISTENCY_SQL", " and cat_l_cd is not null", "", _NULL_CAT_L),
-    ], ids=["mv-keeps-null-cat-m", "recompute-keeps-null-cat-m", "key-plain-equals", "pop-keeps-null-major"])
+        # 모집단 대조가 중분류 없는 대분류까지 세면 거짓 [낡음].
+        ("INDUSTRY_MEDIAN_M_CONSISTENCY_SQL",
+         " and (snapshot_ym, coalesce(cat_l_cd, '')) in (select snapshot_ym, coalesce(cat_l_cd, '')"
+         " from mv_district_industry_mix where cat_m_cd is not null)", "", _MIDDLE_LESS_MAJOR),
+    ], ids=["mv-keeps-null-cat-m", "recompute-keeps-null-cat-m", "key-plain-equals", "pop-keeps-null-major",
+            "pop-keeps-middle-less-major"])
     def test_one_sided_null_rule_mutations_go_red(self, pg, cur, target, old, new, extra):
         mv = mv_block(read(MIGRATION), MV)
         sql = post_load.INDUSTRY_MEDIAN_M_RECOMPUTE_SQL if target == "mv" else getattr(post_load, target)

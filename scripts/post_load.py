@@ -668,6 +668,12 @@ INDUSTRY_MEDIAN_M_FRESHNESS_SQL = (
 # · 업종 표 쪽은 가운데값 표에 있는 분기만(적재 중 섞인 새 분기 오탐 방지 — 형제와 같다).
 # · 빈 대분류(cat_l_cd null · 운영 0)는 업종 표 쪽에서 뺀다 — 요약표 정의는 대분류를 = 로 이어(c.cat_l_cd = p.cat_l_cd)
 #   빈 대분류 모집단이 떨어진다. 같은 규칙으로 세지 않으면 빈 대분류 30곳 이상 상권이 생기는 날 거짓 [낡음]이다.
+# · 중분류가 있는 대분류만 센다 — 요약표 정의는 (상권, 대분류)를 그 분기 그 대분류의 중분류 목록(cat CTE ·
+#   cat_m_cd is not null)과 이어, 그 분기에 중분류가 하나도 없는 대분류(가게가 전부 빈 중분류)는 줄이 안 생긴다.
+#   판정 범위도 cat CTE·다시 세기 cats 와 같다 — (분기, 대분류)에 cat_m_cd 가 찬 줄이 **어느 상권에든** 하나라도 있으면.
+#   안 빼면 그런 대분류 30곳 이상 상권이 생기는 날 업종 표 쪽에만 묶음이 있어 거짓 [낡음]이다(운영 0 · 2026-10-13).
+#   대분류는 coalesce(…, '') 로 견준다 — 빈 대분류는 바로 위 규칙(cat_l_cd is not null)이 맡고, 이 조건이 그것까지
+#   덩달아 빼지 않게 둘을 따로 둔다(한쪽을 지우면 그쪽 시험만 빨강).
 INDUSTRY_MEDIAN_M_CONSISTENCY_SQL = (
     "select count(*) filter (where a.n is distinct from b.n)::text || '|' ||"
     " count(a.n)::text || '|' || count(b.n)::text"
@@ -676,6 +682,8 @@ INDUSTRY_MEDIAN_M_CONSISTENCY_SQL = (
     " full join (select t.snapshot_ym, left(d.sigungu_code, 2) as sido_cd, t.cat_l_cd, count(*)::int as n"
     " from (select snapshot_ym, district_id, cat_l_cd from mv_district_industry_mix"
     " where snapshot_ym in (select snapshot_ym from mv_industry_mix_median_m) and cat_l_cd is not null"
+    " and (snapshot_ym, coalesce(cat_l_cd, '')) in (select snapshot_ym, coalesce(cat_l_cd, '')"
+    " from mv_district_industry_mix where cat_m_cd is not null)"
     " group by 1, 2, 3 having sum(n) >= 30) t"
     " join district d on d.district_id = t.district_id group by 1, 2, 3) b"
     " on a.snapshot_ym = b.snapshot_ym and coalesce(a.sido_cd, '') = coalesce(b.sido_cd, '')"
