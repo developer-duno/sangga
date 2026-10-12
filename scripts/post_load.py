@@ -686,8 +686,9 @@ INDUSTRY_MEDIAN_M_CONSISTENCY_SQL = (
 #    · 출력 = 어긋남 | 표 줄 수 | 다시 센 줄 수 · 허용 오차 0.051(형제와 같은 까닭).
 #    · 맞대기 열쇠 sido_cd·cat_l_cd·cat_m_cd 는 coalesce(…, '') · '한쪽에만'·줄 수는 늘 차 있는 snapshot_ym 으로.
 #    ⛔ 대분류·중분류 비교(cats 이음 · sh 의 x.cat_l_cd = c.cat_l_cd · x.cat_m_cd = c.cat_m_cd)는 요약표 정의와 같은 = 다 —
-#      빈 대분류는 양쪽 다 모집단에서 떨어지고 빈 중분류 줄의 몫은 양쪽 다 0 이다. 이쪽만 is not distinct from 으로
-#      바꾸면 post_load 를 다시 돌려도 안 풀리는 [낡음]이 된다(바꾸려면 요약표 정의와 함께).
+#      빈 대분류는 양쪽 다 모집단에서 떨어진다. 빈 중분류는 중분류 목록(cats)에서 양쪽 다 뺀다(where m.cat_m_cd is not null —
+#      요약표 cat CTE 와 같은 규칙 · 분모 cat_total 에는 든다). 이쪽만 규칙을 바꾸면(is not distinct from ·
+#      빼는 조건 삭제) post_load 를 다시 돌려도 안 풀리는 [낡음]이 된다(바꾸려면 요약표 정의와 함께).
 #    ⛔ ASCII 만(psql -c).
 INDUSTRY_MEDIAN_M_RECOMPUTE_SQL = (
     "with snap as (select distinct snapshot_ym from mv_industry_mix_median_m),"
@@ -699,7 +700,8 @@ INDUSTRY_MEDIAN_M_RECOMPUTE_SQL = (
     " select t.*, left(d.sigungu_code, 2) as sido_cd, coalesce(d.district_type, '') as district_type"
     " from tot t join district d using (district_id)),"
     " cats as (select distinct m.snapshot_ym, m.cat_l_cd, m.cat_m_cd"
-    " from mv_district_industry_mix m join snap s using (snapshot_ym)),"
+    " from mv_district_industry_mix m join snap s using (snapshot_ym)"
+    " where m.cat_m_cd is not null),"
     " sh as ("
     " select p.snapshot_ym, p.sido_cd, p.district_type, p.cat_l_cd, c.cat_m_cd,"
     " coalesce((select sum(x.n) from mv_district_industry_mix x"

@@ -19,7 +19,8 @@
   6) 순서 — `set lock_timeout` 이 begin 앞 · begin/commit 한 쌍 · notify 는 commit 뒤 · api 먼저 drop.
   7) 권한 — 함수 grant 는 api 쌍둥이에만(anon·authenticated) · api.building 은 service_role 만 ·
      api.v_floor_stack 은 anon·authenticated 읽기만 · public 객체 grant 0.
-  8) 새 함수 0 — 공개 호출 허용 총계(post_load.py --check) 30 그대로.
+  8) 새 함수 0 — 이 마이그레이션은 공개 호출 허용 총계(post_load.py --check)를 늘리지 않는다(적용 때 30 · 지금 32 —
+     2026-10-12a 가 31, 2026-10-13a 가 32 로 늘렸다 · 아래 시험이 지금 총계를 본다).
 
 ② 실행 가드(로컬 PostgreSQL 이 있을 때만): 흉내 판에 **적용 전 라이브 모양**(10-07a 의 v_floor_stack ·
    10-09a 의 search_buildings 16칸 · 옛 api.building)을 세우고 이 마이그레이션 **파일 통째**를 돌린다 —

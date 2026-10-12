@@ -1124,6 +1124,41 @@ describe('IndustryMixSection — 업종 비중 비교 · 중분류 (물결 2-3b)
     expect(warn.mock.calls.some((c) => String(c[0]).includes('업종 중분류 비중 비교 조회 실패'))).toBe(warns);
   });
 
+  it('★ 중분류 비교만 실패해도 층 줄·「층 미상」 설명은 그대로 선다(층 함수는 답했다)', async () => {
+    // 층 함수는 답하고(대분류 줄만 — 상권·반경 블록 각각), 중분류 비교만 함수 없음(PGRST202).
+    responses.floors = ({ p_cat_l }) => ({
+      data: {
+        snapshot_ym: '202606',
+        radius_m: 500,
+        cat_l_cd: p_cat_l,
+        cat_m_cds: null,
+        districts: [
+          { district_id: '3120189', name: '강남역', total: 60, bands: { b: 0, '1': 36, '2': 9, '3+': 3, na: 12 } },
+        ],
+        radius: { total: 150, bands: { b: 2, '1': 90, '2': 24, '3+': 9, na: 25 } },
+      },
+      error: null,
+    });
+    // 실패는 층 답보다 **늦게** 온다 — 먼저 오면 지워 봐야 지울 층 줄이 아직 없어 아무것도 못 본다.
+    responses.medianM = () =>
+      new Promise((r) => setTimeout(() => r({ data: null, error: { message: 'PGRST202' } }), 30)) as Promise<unknown>;
+    const warn = vi.mocked(console.warn);
+    warn.mockClear();
+    const { container } = render(<IndustryMixSection pnu={PNU} />);
+    fireEvent.change(await screen.findByLabelText('업종 골라보기'), { target: { value: 'I2' } });
+    expect(
+      await screen.findByText('층별 음식: 지하 0곳 · 1층 36곳 · 2층 9곳 · 3층 이상 3곳 · 층 미상 12곳 (20%)'),
+    ).toBeTruthy();
+    // 늦은 실패가 실제로 도착한 뒤에 본다.
+    await waitFor(() =>
+      expect(warn.mock.calls.some((c) => String(c[0]).includes('업종 중분류 비중 비교 조회 실패'))).toBe(true),
+    );
+    await act(() => new Promise((r) => setTimeout(r, 0)));
+    expect(container.querySelectorAll('.mix__detail .mix__floors')).toHaveLength(2);
+    expect(container.querySelectorAll('.mix__why li')).toHaveLength(3);
+    expect(container.querySelectorAll('.mix__med, .mix__med-note')).toHaveLength(0);
+  });
+
   it('★ 다른 대분류로 바꾼 뒤 늦게 온 앞 대분류의 답은 버린다', async () => {
     let resolveI2!: (r: unknown) => void;
     const lateI2 = new Promise((r) => {

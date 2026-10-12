@@ -91,10 +91,10 @@ const INDUSTRY_DETAIL_PATTERN = '**/rest/v1/rpc/list_industry_detail*';
 const INDUSTRY_FLOORS_PATTERN = '**/rest/v1/rpc/list_industry_floors*';
 // 업종 비중 비교(물결 2-3) — 업종 분포 카드의 상권 블록 비교 글. 건물을 열 때 곁 카드와 함께 미리 나간다.
 // 기본은 **함수가 없는 상태**(비교 글만 조용히 빠진다 — 다른 스펙의 카드 글자가 그대로다). 비교 글을 보는 것은 스펙 AW 뿐이다.
-const INDUSTRY_MEDIAN_PATTERN = '**/rest/v1/rpc/list_industry_median*';
+// ⛔ 끝에 `*` 를 붙이지 않는다 — 붙이면 중분류 함수(`list_industry_median_m`)까지 잡는다(rpc 는 POST 라 주소 뒤에 물음표 인자가 없다).
+const INDUSTRY_MEDIAN_PATTERN = '**/rest/v1/rpc/list_industry_median';
 // 업종 비중 비교 · 중분류(물결 2-3b) — 대분류를 고른 뒤 상세와 따로 부른다. 기본은 **함수가 없는 상태**(중분류 비교 글만
 // 조용히 빠진다). 비교 글을 보는 것은 스펙 AX 뿐이다.
-// ⚠️ 위 대분류 패턴(`list_industry_median*`)도 이 이름을 잡는다 — 이 목업은 늘 그것 **뒤에** 등록한다(나중 것이 먼저 잡힌다).
 const INDUSTRY_MEDIAN_M_PATTERN = '**/rest/v1/rpc/list_industry_median_m*';
 // 둘레에 새로 올라오는 상가 건물(건축 인허가). 업종 분포 카드 **안**에 한 줄로 붙지만
 // 자료는 완전히 다른 것이다(장사 중인 가게 수 ↔ 아직 안 지어진 건물 수).
@@ -206,7 +206,7 @@ async function mockFloorStack(
   await mockMissingFunction(page, INDUSTRY_FLOORS_PATTERN);
   // 업종 비중 비교(물결 2-3)도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 스펙 AW 만 덮어쓴다.
   await mockMissingFunction(page, INDUSTRY_MEDIAN_PATTERN);
-  // 중분류(물결 2-3b)도 — 대분류 패턴 뒤에 등록해야 이쪽이 잡는다. 스펙 AX 만 덮어쓴다.
+  // 중분류(물결 2-3b)도 기본이 **함수가 없는 상태**다. 스펙 AX 만 덮어쓴다.
   await mockMissingFunction(page, INDUSTRY_MEDIAN_M_PATTERN);
   // 기준시가도 기본이 **함수가 없는 상태**다(위 상수 주석 참조).
   if (bases === undefined) {

@@ -3424,8 +3424,10 @@ revoke all on function list_industry_median(text) from public, anon, authenticat
 -- ⛔ 지역 이름을 여기 박지 않는다 — sido_cd(sigungu_code 앞 2자리)만 두고 화면이 '서울'·'대전'을 붙인다.
 -- ⓘ 범위 'type' = 같은 종류끼리 · 'all' = 그 시·도 상권 전체(종류가 30곳 미만일 때 함수가 이쪽을 고른다).
 -- ⓘ district_type 은 null 대신 '' 를 둔다('all' 줄도 '') — null 이 든 유일 색인은 중복을 못 막는다.
--- ⓘ 대분류·중분류 코드는 재료 그대로 둔다(빈 값 운영 0 · 2026-10-13 실측 0/62,457) — 이음은 형제와 같은 = 라
---    빈 대분류는 모집단에서 떨어지고 빈 중분류 줄의 몫은 0 이다. post_load --check 의 다시 세기가 같은 규칙으로 센다.
+-- ⓘ 대분류·중분류 코드의 빈 값은 운영 0(2026-10-13 실측 0/62,457) — 이음은 형제와 같은 = 라 빈 대분류는 모집단에서 떨어진다.
+-- ⛔ 빈 중분류는 중분류 목록(cat)에서 뺀다(cat_m_cd is not null) — 안 빼면 cd 가 null 인 몫 0.0 줄이 생기고 함수 cats 에
+--    cd null 이 실린다. 분모(cat_total)에는 그대로 든다 — 빈 중분류 가게도 그 대분류 가게라 화면 막대 분모와 같게.
+--    post_load --check 의 다시 세기가 같은 규칙으로 센다.
 create materialized view if not exists mv_industry_mix_median_m as
 with tot as (
   -- (상권, 분기, 대분류)마다 그 대분류 가게 수 — 그 대분류 가게 30곳 이상 상권만 모집단에 든다
@@ -3445,6 +3447,7 @@ cat as (
   -- 그 분기 그 대분류에 있는 중분류 전부(이름은 코드마다 하나 — min 으로 고른다)
   select m.snapshot_ym, m.cat_l_cd, m.cat_m_cd, min(m.cat_m_nm) as cat_m_nm
   from mv_district_industry_mix m
+  where m.cat_m_cd is not null
   group by 1, 2, 3
 ),
 dcat as (
@@ -3486,7 +3489,7 @@ comment on materialized view mv_industry_mix_median_m is
   '⛔ 그 중분류가 없는 상권은 몫 0 으로 넣고 센다(그 분기 그 대분류의 중분류 전부 — 빼면 드문 중분류의 가운데값이 부푼다). '
   'pop_n = 그 묶음·그 대분류의 모집단 상권 수(post_load --check 가 all 줄을 그 대분류 30곳 이상 상권 수와 대조하고 값을 다시 센다). '
   'district_type 은 null 대신 빈 글자(all 줄도 빈 글자) — null 이 든 유일 색인은 중복을 못 막는다. '
-  '대분류·중분류 코드의 빈 값은 운영 0(2026-10-13 실측) — 재료 그대로 둔다. '
+  '대분류·중분류 코드의 빈 값은 운영 0(2026-10-13 실측) · 빈 중분류는 중분류 줄로 내지 않는다(분모인 그 대분류 가게 수에는 든다). '
   '지역 이름은 없다(sido_cd 만 — 화면이 붙인다). '
   '⛔ anon 에게 열지 않는다 — 화면은 list_industry_median_m 함수로만 읽는다.';
 

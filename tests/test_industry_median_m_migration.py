@@ -126,7 +126,7 @@ def mv_problems(block):
 
     · 모집단 = **그 대분류** 가게 30곳 이상 상권(tot 가 대분류로 묶고 `having sum(…) >= 30`) — 👤 ㉙
     · 몫의 분모 = 그 상권의 그 대분류 가게 수(`/ p.cat_total`) — 👤 ㉘
-    · 없는 중분류 = 0(`cross join` + `coalesce(…, 0)`)
+    · 없는 중분류 = 0(`cross join` + `coalesce(…, 0)`) · 빈 중분류는 목록에서 뺀다(`cat_m_cd is not null`)
     · 재료 = 업종 요약표만(점포 표·표지를 직접 안 읽는다 — 분기는 재료의 분기 그대로)
     ⚠️ 못 보는 것: 30 을 상수·함수로 감싼 꼴 · coalesce 를 case 로 바꾼 같은 뜻의 꼴 · tot 를 다른 이름으로 바꾼 꼴
        (그때는 이 함수를 넓힌다).
@@ -143,6 +143,8 @@ def mv_problems(block):
         out.append("몫의 분모가 그 대분류 가게 수가 아님")
     if not re.search(r"coalesce\s*\(\s*(?:\w+\.)?n\s*,\s*0\s*\)", code):
         out.append("없는 중분류를 0 으로 안 넣음")
+    if not re.search(r"\bcat_m_cd\s+is\s+not\s+null\b", code):
+        out.append("빈 중분류를 중분류 목록에서 안 뺌(cd null 줄이 생긴다)")
     if not re.search(r"\bcross\s+join\b", code):
         out.append("(상권, 대분류) × 중분류 cross join 없음")
     if re.search(r"\bfrom\s+unit_business\b|\bjoin\s+unit_business\b", code):
@@ -211,6 +213,7 @@ class TestSummaryTable:
          "  from mv_district_industry_mix m\n  group by 1, 2\n"),
         ("coalesce(dc.n, 0)::float8 / p.cat_total", "coalesce(dc.n, 0)::float8 / p.total"),   # 분모를 상권 전체로
         ("coalesce(dc.n, 0)::float8", "dc.n::float8"),                            # 없는 중분류를 빼고 셈
+        ("  where m.cat_m_cd is not null\n", ""),                                # 빈 중분류 줄을 남김
         ("  cross join cat c\n  left join dcat dc", "  join dcat dc on true\n  left join cat c on true\n  left join dcat dx"),
         ("from mv_district_industry_mix m\n  group by 1, 2, 3\n  having", "from unit_business m\n  group by 1, 2, 3\n  having"),
         ("  join district d on d.district_id = t.district_id\n),",
@@ -381,6 +384,8 @@ class TestPostLoadWiring:
         # sh 의 비교는 요약표 정의와 같은 = (빈 값 규칙을 한쪽만 바꾸지 않게).
         assert "and x.cat_l_cd = c.cat_l_cd and x.cat_m_cd = c.cat_m_cd), 0)::float8 / p.cat_total as share" in sql
         assert "on c.snapshot_ym = p.snapshot_ym and c.cat_l_cd = p.cat_l_cd" in sql
+        # 빈 중분류는 요약표 cat CTE 와 같은 규칙으로 중분류 목록에서 뺀다(분모 cat_total 에는 든다).
+        assert "join snap s using (snapshot_ym) where m.cat_m_cd is not null)," in sql
 
     def test_consistency_keys_and_null_major(self):
         sql = post_load.INDUSTRY_MEDIAN_M_CONSISTENCY_SQL
@@ -731,9 +736,9 @@ class TestRealRun:
           ('B2', '202606', 'I2', '음식', 'I212', '비알코올', 11), ('B2', '202606', 'I2', '음식', 'I201', '한식', 19),
           ('B3', '202606', 'I2', '음식', 'I212', '비알코올', 13), ('B3', '202606', 'I2', '음식', 'I201', '한식', 17);
     """
-    # 중분류가 빈 음식 줄(운영 0) — 요약표에 cat_m_cd null 줄이 생긴다. 두 계산법 모두 중분류를 = 로 이어 그 줄 몫은
-    # 양쪽 다 0 이라 값은 맞고, 맞대기 열쇠만 null 을 짝지어야 한다. 부산(26) 상권 셋 모두 빈 중분류가 다수(15·17·19/35)라
-    # 다시 세기의 sh 만 is not distinct from 으로 바꾸면 가운데 48.6% 대 요약표 0 으로 갈려 빨강(아래 변이 시험).
+    # 중분류가 빈 음식 줄(운영 0) — 빈 중분류는 중분류 목록에서 빠져 요약표에 cat_m_cd null 줄이 **안** 생긴다(함수 cats 에
+    # cd null 이 실리지 않게). 분모(그 대분류 가게 수)에는 그대로 든다 — 부산(26) 상권 셋의 한식 몫 = 20·18·16 / 35 →
+    # 가운데 18/35 = 51.4%(빈 중분류를 분모에서도 빼면 100.0). 빼는 조건을 한쪽만 지우면 빨강(아래 변이 시험).
     _NULL_CAT_M = """
         insert into district (district_id, district_type, sigungu_code)
           values ('C1', '골목상권', '26140'), ('C2', '골목상권', '26140'), ('C3', '골목상권', '26140');
@@ -750,24 +755,36 @@ class TestRealRun:
                                                     ('E1', '202606', 'I2', '음식', 'I201', '한식', 35);
     """
 
-    @pytest.mark.parametrize("extra, check", [
-        (_NULL_SIDO, "select count(*) from mv_industry_mix_median_m where sido_cd is null"),
-        (_ROUGH_MEDIAN, "select count(*) from mv_industry_mix_median_m where sido_cd = '26' and cat_m_cd = 'I212'"
-                        " and med_pct = 36.7"),
-        (_NULL_CAT_M, "select count(*) from mv_industry_mix_median_m where cat_m_cd is null"),
-        (_NULL_CAT_L, "select count(*) from mv_industry_mix_median_m where sido_cd = '26' and cat_l_cd = 'I2'"),
-    ], ids=["null-sido", "rough-median", "null-cat-m", "null-cat-l"])
-    def test_post_load_m_sqls_stay_green_on_freshly_baked_boards(self, pg, cur, extra, check):
+    def _bake(self, pg, extra):
         c = pg.cursor()
         c.execute("drop schema if exists median_m_bake cascade; create schema median_m_bake;"
                   " create table median_m_bake.mv_district_industry_mix as select * from public.mv_district_industry_mix;"
                   " create table median_m_bake.district as select * from public.district;"
                   " set search_path to median_m_bake;")
+        c.execute(extra)
+        return c
+
+    @staticmethod
+    def _unbake(c):
+        c.execute("reset search_path; drop schema median_m_bake cascade;")
+
+    @pytest.mark.parametrize("extra, check", [
+        (_NULL_SIDO, "select count(*) from mv_industry_mix_median_m where sido_cd is null"),
+        (_ROUGH_MEDIAN, "select count(*) from mv_industry_mix_median_m where sido_cd = '26' and cat_m_cd = 'I212'"
+                        " and med_pct = 36.7"),
+        # 빈 중분류 — 줄은 안 생기고(아래 시험) 분모에는 들어 한식 51.4.
+        (_NULL_CAT_M, "select count(*) from mv_industry_mix_median_m where sido_cd = '26' and cat_m_cd = 'I201'"
+                      " and med_pct = 51.4"),
+        (_NULL_CAT_L, "select count(*) from mv_industry_mix_median_m where sido_cd = '26' and cat_l_cd = 'I2'"),
+    ], ids=["null-sido", "rough-median", "null-cat-m", "null-cat-l"])
+    def test_post_load_m_sqls_stay_green_on_freshly_baked_boards(self, pg, cur, extra, check):
+        c = self._bake(pg, extra)
         try:
-            c.execute(extra)
             c.execute(mv_block(read(MIGRATION), MV))
             c.execute(check)
             assert c.fetchone()[0] >= 1, "흉내 낸 경우가 요약표에 실제로 들어갔어야 한다"
+            c.execute("select count(*) from mv_industry_mix_median_m where cat_m_cd is null")
+            assert c.fetchone()[0] == 0, "빈 중분류 줄은 요약표에 안 생긴다(함수 cats 에 cd null 이 실리지 않게)"
             c.execute("select count(*) from mv_industry_mix_median_m")
             n = c.fetchone()[0]
             c.execute(post_load.INDUSTRY_MEDIAN_M_RECOMPUTE_SQL)
@@ -775,35 +792,37 @@ class TestRealRun:
             c.execute(post_load.INDUSTRY_MEDIAN_M_CONSISTENCY_SQL)
             got_pop = c.fetchone()[0].split("|")[0]
         finally:
-            c.execute("reset search_path; drop schema median_m_bake cascade;")
+            self._unbake(c)
         assert got_re == "0|{0}|{0}".format(n)
         assert got_pop == "0"
 
-    @pytest.mark.parametrize("old, new, sql_name, extra", [
-        # 다시 세기의 sh 만 null-safe 로 — 요약표는 빈 중분류 몫 0, 다시 센 쪽은 48.6 → 빨강.
-        ("and x.cat_m_cd = c.cat_m_cd)", "and x.cat_m_cd is not distinct from c.cat_m_cd)",
-         "INDUSTRY_MEDIAN_M_RECOMPUTE_SQL", _NULL_CAT_M),
-        # 맞대기 열쇠를 = 로 — 빈 중분류 줄이 양쪽 다 '한쪽에만'으로 세어져 빨강.
-        ("coalesce(a.cat_m_cd, '') = coalesce(b.cat_m_cd, '')", "a.cat_m_cd = b.cat_m_cd",
-         "INDUSTRY_MEDIAN_M_RECOMPUTE_SQL", _NULL_CAT_M),
+    @pytest.mark.parametrize("target, old, new, extra", [
+        # 요약표만 빈 중분류를 남긴다 — 표에만 있는 cd null 줄 → 빨강.
+        ("mv", "  where m.cat_m_cd is not null\n", "", _NULL_CAT_M),
+        # 다시 세기만 빈 중분류를 남긴다 — 다시 센 쪽에만 있는 줄 → 빨강.
+        ("INDUSTRY_MEDIAN_M_RECOMPUTE_SQL", " where m.cat_m_cd is not null)", ")", _NULL_CAT_M),
+        # 맞대기 열쇠를 = 로 — 빈 시·도 줄이 양쪽 다 '한쪽에만'으로 세어져 빨강.
+        ("INDUSTRY_MEDIAN_M_RECOMPUTE_SQL", "coalesce(a.sido_cd, '') = coalesce(b.sido_cd, '')", "a.sido_cd = b.sido_cd",
+         _NULL_SIDO),
         # 모집단 대조에서 빈 대분류를 안 빼면 거짓 [낡음].
-        (" and cat_l_cd is not null", "", "INDUSTRY_MEDIAN_M_CONSISTENCY_SQL", _NULL_CAT_L),
-    ], ids=["sh-null-safe-one-side", "key-plain-equals", "pop-keeps-null-major"])
-    def test_one_sided_null_rule_mutations_go_red(self, pg, cur, old, new, sql_name, extra):
-        sql = getattr(post_load, sql_name)
-        assert old in sql, old
-        c = pg.cursor()
-        c.execute("drop schema if exists median_m_mut cascade; create schema median_m_mut;"
-                  " create table median_m_mut.mv_district_industry_mix as select * from public.mv_district_industry_mix;"
-                  " create table median_m_mut.district as select * from public.district;"
-                  " set search_path to median_m_mut;")
+        ("INDUSTRY_MEDIAN_M_CONSISTENCY_SQL", " and cat_l_cd is not null", "", _NULL_CAT_L),
+    ], ids=["mv-keeps-null-cat-m", "recompute-keeps-null-cat-m", "key-plain-equals", "pop-keeps-null-major"])
+    def test_one_sided_null_rule_mutations_go_red(self, pg, cur, target, old, new, extra):
+        mv = mv_block(read(MIGRATION), MV)
+        sql = post_load.INDUSTRY_MEDIAN_M_RECOMPUTE_SQL if target == "mv" else getattr(post_load, target)
+        assert old in (mv if target == "mv" else sql), old
+        c = self._bake(pg, extra)
         try:
-            c.execute(extra)
-            c.execute(mv_block(read(MIGRATION), MV))
+            c.execute(mv)
             c.execute(sql)
             assert c.fetchone()[0].split("|")[0] == "0", "고치기 전 문장은 초록이어야 변이가 뜻을 갖는다"
-            c.execute(sql.replace(old, new, 1))
+            if target == "mv":
+                c.execute("drop materialized view mv_industry_mix_median_m;")
+                c.execute(mv.replace(old, new, 1))
+                c.execute(sql)
+            else:
+                c.execute(sql.replace(old, new, 1))
             got = c.fetchone()[0].split("|")[0]
         finally:
-            c.execute("reset search_path; drop schema median_m_mut cascade;")
+            self._unbake(c)
         assert got != "0"
