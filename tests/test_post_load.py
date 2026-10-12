@@ -1566,7 +1566,9 @@ class TestIndustryMedianChecks:
         assert all(ord(ch) < 128 for ch in sql), "psql -c 로 가는 SQL 에 한글이 있으면 서버에서 죽습니다"
         assert "percentile_cont" not in sql, "요약표와 같은 함수로 세면 같은 실수를 같이 한다"
         assert "row_number() over" in sql and "rn in ((cnt + 1) / 2, (cnt + 2) / 2)" in sql
-        assert "full join re b using (snapshot_ym, sido_cd, scope, district_type, cat_l_cd)" in sql
+        assert "full join re b on a.snapshot_ym = b.snapshot_ym" in sql
+        # 구 코드가 빈 상권(sido_cd null)도 짝을 찾게 — using 이면 늘 거짓 [낡음](로컬 PG 시험이 실행으로 본다).
+        assert "coalesce(a.sido_cd, '') = coalesce(b.sido_cd, '')" in sql and "using (snapshot_ym, sido_cd" not in sql
         assert "abs(a.med_pct - b.med) > 0.051" in sql
         # 30 = 요약표 정의의 having 과 같은 수 · 없는 업종 0 포함(coalesce … 0).
         assert "having sum(m.n) >= 30" in sql and "), 0)::float8 / p.total as share" in sql

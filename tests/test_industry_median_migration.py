@@ -616,3 +616,46 @@ class TestRealRun:
         bad, d_med, d_re = want
         assert got == (bad, str(n + d_med), str(n + d_re))
         assert post_load.judge_industry_median_recompute(*got) is True
+
+    # 정상 판을 새로 굽는다 — 재료 사본에 상권을 더한 뒤 마이그레이션의 요약표 정의를 그대로 실행한다.
+    _NULL_SIDO = """
+        insert into district (district_id, district_type, sigungu_code) values ('N1', '골목상권', null);
+        insert into mv_district_industry_mix values ('N1', '202606', 'I2', '음식', 'I201', '한식', 25),
+                                                    ('N1', '202606', 'G2', '소매', 'G204', '종합 소매', 15);
+    """
+    # 부산(26) 상권 셋 — 음식 비중 10/30 · 11/30 · 13/30 → 가운데 36.666…% 를 표는 36.7 로 반올림한다.
+    # 정상 판인데 두 계산법 차이가 0 보다 크고 0.051 미만 — 허용 오차를 0 으로 좁히면 거짓 [낡음].
+    _ROUGH_MEDIAN = """
+        insert into district (district_id, district_type, sigungu_code)
+          values ('B1', '골목상권', '26110'), ('B2', '골목상권', '26110'), ('B3', '골목상권', '26110');
+        insert into mv_district_industry_mix values
+          ('B1', '202606', 'I2', '음식', 'I201', '한식', 10), ('B1', '202606', 'G2', '소매', 'G204', '종합 소매', 20),
+          ('B2', '202606', 'I2', '음식', 'I201', '한식', 11), ('B2', '202606', 'G2', '소매', 'G204', '종합 소매', 19),
+          ('B3', '202606', 'I2', '음식', 'I201', '한식', 13), ('B3', '202606', 'G2', '소매', 'G204', '종합 소매', 17);
+    """
+
+    @pytest.mark.parametrize("extra, check", [
+        # ① 구 코드가 빈 상권(점포 40곳) — sido_cd null 줄도 짝을 찾아야 한다(using 이면 8|14|14 꼴 거짓 [낡음]).
+        (_NULL_SIDO, "select count(*) from mv_industry_mix_median where sido_cd is null"),
+        # ② 가운데값이 둥글지 않은 정상 판 — 차이가 0 < d < 0.051 인 줄이 실제로 있어야 이 경우가 뜻을 갖는다.
+        (_ROUGH_MEDIAN, "select count(*) from mv_industry_mix_median where sido_cd = '26' and cat_l_cd = 'I2'"
+                        " and med_pct = 36.7"),
+    ], ids=["null-sido", "rough-median"])
+    def test_post_load_recompute_sql_stays_green_on_freshly_baked_boards(self, pg, cur, extra, check):
+        c = pg.cursor()
+        c.execute("drop schema if exists median_bake cascade; create schema median_bake;"
+                  " create table median_bake.mv_district_industry_mix as select * from public.mv_district_industry_mix;"
+                  " create table median_bake.district as select * from public.district;"
+                  " set search_path to median_bake;")
+        try:
+            c.execute(extra)
+            c.execute(mv_block(read(MIGRATION), MV))
+            c.execute(check)
+            assert c.fetchone()[0] >= 1, "흉내 낸 경우가 요약표에 실제로 들어갔어야 한다"
+            c.execute("select count(*) from mv_industry_mix_median")
+            n = c.fetchone()[0]
+            c.execute(post_load.INDUSTRY_MEDIAN_RECOMPUTE_SQL)
+            got = c.fetchone()[0]
+        finally:
+            c.execute("reset search_path; drop schema median_bake cascade;")
+        assert got == "0|{0}|{0}".format(n)

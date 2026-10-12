@@ -506,7 +506,10 @@ INDUSTRY_MEDIAN_CONSISTENCY_SQL = (
 #    평균. 표 줄 전부(운영 70줄 · 1.4초)를 맞댄다 — 한쪽에만 있는 줄(full join 의 null)도 어긋남.
 #    · 출력 = 어긋남 | 표 줄 수 | 다시 센 줄 수.
 #    · 허용 오차 0.051 — 요약표는 소수 한 자리로 반올림(±0.05)하고 다시 센 값은 반올림 전이다.
-#      두 계산법의 부동소수 끝자리 차이로 .x5 경계가 갈리는 것만 흡수하고, 반올림 한 칸(0.1)은 잡는다.
+#      두 계산법의 부동소수 끝자리 차이로 .x5 경계가 갈리는 것만 흡수하고, 거의 모든 한 칸(0.1) 차이를
+#      잡는다(참값이 .x5 경계 0.001 안쪽이면 놓칠 수 있다).
+#    · 짝짓기 열쇠의 sido_cd 는 coalesce(…, '') — 구 코드가 빈 상권은 sido_cd 가 null 이라 using 이면
+#      양쪽이 짝을 못 찾아 늘 거짓 [낡음]이 된다(2026-10-12 검사관 재현 8|14|14 · 모집단 대조와 같은 처방).
 #    · 분기는 가운데값 표에 있는 분기만(모집단 대조와 같은 까닭 — 적재 중 업종 표에 섞인 새 분기 오탐 방지).
 #    ⛔ ASCII 만(psql -c).
 INDUSTRY_MEDIAN_RECOMPUTE_SQL = (
@@ -543,7 +546,9 @@ INDUSTRY_MEDIAN_RECOMPUTE_SQL = (
     " or a.pop_n <> b.pop_n or abs(a.med_pct - b.med) > 0.051)::text"
     " || '|' || count(a.cat_l_cd)::text || '|' || count(b.cat_l_cd)::text"
     " from mv_industry_mix_median a"
-    " full join re b using (snapshot_ym, sido_cd, scope, district_type, cat_l_cd);"
+    " full join re b on a.snapshot_ym = b.snapshot_ym"
+    " and coalesce(a.sido_cd, '') = coalesce(b.sido_cd, '')"
+    " and a.scope = b.scope and a.district_type = b.district_type and a.cat_l_cd = b.cat_l_cd;"
 )
 
 
