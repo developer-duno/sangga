@@ -3,6 +3,7 @@ import type {
   IndustryDistrict,
   IndustryFloors,
   IndustryMedian,
+  IndustryMedianM,
   IndustryMedianPop,
   IndustryMix,
   IndustryScope,
@@ -21,10 +22,14 @@ import {
   isIndustryDetail,
   isIndustryFloors,
   isIndustryMedian,
+  isIndustryMedianM,
   isIndustryMix,
   isScope,
   MEDIAN_BADGE,
   medianLine,
+  medianMNote,
+  medianMTooSmall,
+  medianMViewOf,
   medianNote,
   medianTooSmall,
   medianViewOf,
@@ -474,5 +479,122 @@ describe('업종 비중 비교 — 상권 블록 글 묶음', () => {
     expect(medianViewOf(median(), 'D1', '202603')).toBeNull();
     const zero = median({ districts: [{ district_id: 'D3', type: '골목상권', total: 0, pop: null, cats: [] }] });
     expect(medianViewOf(zero, 'D3', '202606')).toBeNull();
+  });
+});
+
+// ── 업종 비중 비교 · 중분류 (물결 2-3b · 결정 0036 결정 18 ㉗~㉚) ─────────────────────
+
+const GOL_I2: IndustryMedianPop = { scope: 'type', sido_cd: '11', district_type: '골목상권', n: 526 };
+
+function medianM(over: Partial<IndustryMedianM> = {}): IndustryMedianM {
+  return {
+    snapshot_ym: '202606',
+    cat_l_cd: 'I2',
+    min_total: 30,
+    min_pop: 30,
+    districts: [
+      {
+        district_id: 'D1',
+        type: '골목상권',
+        total: 120,
+        pop: GOL_I2,
+        cats: [
+          { cd: 'I201', nm: '한식', med_pct: 38.1 },
+          { cd: 'I210', nm: '기타 간이', med_pct: 20.6 },
+          { cd: 'I212', nm: '비알코올', med_pct: 15.2 },
+          { cd: 'I205', nm: '동남아시아', med_pct: 0 },
+        ],
+      },
+      { district_id: 'D2', type: '전통시장', total: 12, pop: null, cats: [] },
+    ],
+    ...over,
+  };
+}
+
+describe('업종 비중 비교 · 중분류 — 글 함수(👤 ㉚ 미리보기 글자 그대로)', () => {
+  it('설명 줄 — 그 대분류 30곳 이상 상권 곳 수와 대분류 이름', () => {
+    expect(medianMNote('서울', GOL_I2, '음식', 30)).toBe(
+      '가운데값은 서울 골목상권 가운데 음식 가게가 30곳 이상인 526곳의 음식 안 업종 비중을 크기순으로 세웠을 때 한가운데 값입니다 — 비교용 숫자입니다.',
+    );
+    // 종류가 30곳 미만이면 시·도 전체 — '상권 전체'(형제 medianLine·medianNote 와 같은 규칙).
+    expect(medianMNote('서울', { ...SEOUL_ALL, n: 540 }, '음식', 30)).toBe(
+      '가운데값은 서울 상권 전체 가운데 음식 가게가 30곳 이상인 540곳의 음식 안 업종 비중을 크기순으로 세웠을 때 한가운데 값입니다 — 비교용 숫자입니다.',
+    );
+    // 기준은 서버 값 · 지역 표에 없으면 지역 글자를 뺀다 · 천 단위 쉼표.
+    expect(medianMNote(null, { ...GOL_I2, sido_cd: '99', n: 1234 }, '소매', 40)).toBe(
+      '가운데값은 골목상권 가운데 소매 가게가 40곳 이상인 1,234곳의 소매 안 업종 비중을 크기순으로 세웠을 때 한가운데 값입니다 — 비교용 숫자입니다.',
+    );
+  });
+
+  it('줄마다의 비교 글은 형제 medianLine 그대로', () => {
+    expect(medianLine('서울', GOL_I2, 15.2)).toBe('서울 골목상권 가운데 15.2%');
+    expect(medianLine('서울', GOL_I2, 0)).toBe('서울 골목상권 가운데 0.0%');
+  });
+
+  it('그 대분류 가게가 기준 미만이면 사실 한 줄 · 0곳·기준 이상이면 없음', () => {
+    expect(medianMTooSmall('음식', 12, 30)).toBe('음식 12곳 — 30곳이 안 돼 비교값은 적지 않습니다.');
+    expect(medianMTooSmall('음식', 29, 30)).not.toBeNull();
+    expect(medianMTooSmall('음식', 30, 30)).toBeNull();
+    expect(medianMTooSmall('음식', 0, 30)).toBeNull();
+    expect(medianMTooSmall('숙박', 1200, 1500)).toBe('숙박 1,200곳 — 1,500곳이 안 돼 비교값은 적지 않습니다.');
+  });
+
+  it('판단 낱말·금칙어가 글 함수에 없다', () => {
+    const texts = [
+      medianMNote('서울', GOL_I2, '음식', 30),
+      medianMNote('서울', SEOUL_ALL, '음식', 30),
+      medianMTooSmall('음식', 12, 30) ?? '',
+    ].join(' ');
+    for (const w of ['많', '적다', '적습', '높', '낮', '%p', '배', '적정가', '감정가', '평가액']) {
+      expect(texts).not.toContain(w);
+    }
+  });
+});
+
+describe('업종 비중 비교 · 중분류 — 모양 검사(틀리면 통째로 버림)', () => {
+  it('정상 응답 · 빈 상권 목록', () => {
+    expect(isIndustryMedianM(medianM())).toBe(true);
+    expect(isIndustryMedianM(medianM({ districts: [] }))).toBe(true);
+  });
+
+  it.each([
+    ['cat_l_cd 없음', { ...medianM(), cat_l_cd: undefined }],
+    ['cat_l_cd 숫자', { ...medianM(), cat_l_cd: 2 }],
+    ['형제 모양 이상(min_total 0)', { ...medianM(), min_total: 0 }],
+    ['형제 모양 이상(med_pct 100 초과)', medianM({ districts: [{ ...medianM().districts[0], cats: [{ cd: 'I201', nm: '한식', med_pct: 101 }] }] })],
+    ['pop null 인데 cats 있음', medianM({ districts: [{ ...medianM().districts[0], pop: null }] })],
+  ])('이상: %s', (_name, x) => {
+    expect(isIndustryMedianM(x)).toBe(false);
+  });
+});
+
+describe('업종 비중 비교 · 중분류 — 상세 상권 블록 글 묶음', () => {
+  it('모집단이 있으면 중분류 줄마다 글 + 설명 줄', () => {
+    const v = medianMViewOf(medianM(), 'D1', '202606', 'I2', '음식')!;
+    expect(v.lines.get('I212')).toBe('서울 골목상권 가운데 15.2%');
+    expect(v.lines.get('I201')).toBe('서울 골목상권 가운데 38.1%');
+    expect(v.lines.get('I205')).toBe('서울 골목상권 가운데 0.0%'); // 0 포함 — 0 도 값이다
+    expect(v.lines.has('I299')).toBe(false); // 가운데값 줄이 없는 중분류는 그 줄만 비교 글 없음
+    expect(v.note).toBe(
+      '가운데값은 서울 골목상권 가운데 음식 가게가 30곳 이상인 526곳의 음식 안 업종 비중을 크기순으로 세웠을 때 한가운데 값입니다 — 비교용 숫자입니다.',
+    );
+    expect(v.tooSmall).toBeNull();
+  });
+
+  it('그 대분류 가게가 기준 미만이면 사실 한 줄만', () => {
+    const v = medianMViewOf(medianM(), 'D2', '202606', 'I2', '음식')!;
+    expect(v.lines.size).toBe(0);
+    expect(v.note).toBeNull();
+    expect(v.tooSmall).toBe('음식 12곳 — 30곳이 안 돼 비교값은 적지 않습니다.');
+  });
+
+  it('응답 없음 · 상권 줄 없음 · 분기 다름 · 대분류 다름 · 0곳이면 null(비교 글 0)', () => {
+    expect(medianMViewOf(null, 'D1', '202606', 'I2', '음식')).toBeNull();
+    expect(medianMViewOf(medianM(), 'D9', '202606', 'I2', '음식')).toBeNull();
+    expect(medianMViewOf(medianM(), 'D1', '202603', 'I2', '음식')).toBeNull();
+    // 대분류를 바꾼 첫 렌더 — 옛 대분류(I2)의 답이 새 대분류(G2) 블록에 서지 않는다.
+    expect(medianMViewOf(medianM(), 'D1', '202606', 'G2', '소매')).toBeNull();
+    const zero = medianM({ districts: [{ district_id: 'D3', type: '골목상권', total: 0, pop: null, cats: [] }] });
+    expect(medianMViewOf(zero, 'D3', '202606', 'I2', '음식')).toBeNull();
   });
 });

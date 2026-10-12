@@ -14,7 +14,7 @@
 
 사용
 ----
-    python scripts/publish_snapshot.py --show          # 표지 두 칸·시각·행수 + 점포 표 분기별 행수 + 요약표 다섯의 분기
+    python scripts/publish_snapshot.py --show          # 표지 두 칸·시각·행수 + 점포 표 분기별 행수 + 요약표 여섯의 분기
     python scripts/publish_snapshot.py --loaded 202609 # '다 들어온 분기'만 적는다(보여 주는 분기는 그대로 · 앞으로만 —
                                                        #  지금 다 들어온 분기보다 옛 분기는 거부, 같은 분기는 쓰기 0)
     python scripts/publish_snapshot.py --ym 202606     # 되돌리기 전용 — 두 칸을 **모두** 그 분기로(점포 표에 있는 분기만)
@@ -23,8 +23,9 @@
 ⛔ 새 분기를 손으로 적을 때는 --ym 이 아니라 --loaded 다(2026-10-07 맹점 검사관) — --ym 은 화면
    기준(published_ym)을 **바로** 바꿔, 요약표 굽기·확인(post_load)을 건너뛰고 반쪽 분기도 그대로
    공개한다. --loaded 는 post_load 가 굽고 확인한 뒤에만 화면이 바뀐다.
-⚠️ --ym(되돌리기)은 층 목록·상권 건물 목록·신선도 표가 그 순간 그 분기를 말하고, 요약표 다섯(가게
-   이름 검색·각주·업종 카드·그 층 줄·비교 글 — 넷째는 2026-10-09 · 다섯째는 2026-10-12 추가)은 post_load.py 를 돌릴 때까지 옛 분기를 말한다. 그래서 끝에
+⚠️ --ym(되돌리기)은 층 목록·상권 건물 목록·신선도 표가 그 순간 그 분기를 말하고, 요약표 여섯(가게
+   이름 검색·각주·업종 카드·그 층 줄·비교 글·중분류 비교 글 — 넷째는 2026-10-09 · 다섯째는 2026-10-12 · 여섯째는
+   2026-10-13 추가)은 post_load.py 를 돌릴 때까지 옛 분기를 말한다. 그래서 끝에
    post_load.py 를 꼭 안내한다(한가한 시간에 한 묶음으로).
 ⓘ DB 는 dbx(psql) 경유 — 비밀값은 출력하지 않는다(접속 정보는 dbx 가 환경변수로 넘긴다).
 """
@@ -57,7 +58,8 @@ SHOW_MVS_SQL = (
     "coalesce((select max(snapshot_ym) from mv_district_industry_mix), '') || '|' || "
     "coalesce((select max(store_snapshot_ym) from mv_parcel_store_names), '') || '|' || "
     "coalesce((select max(snapshot_ym) from mv_district_industry_floor), '') || '|' || "
-    "coalesce((select max(snapshot_ym) from mv_industry_mix_median), '');"
+    "coalesce((select max(snapshot_ym) from mv_industry_mix_median), '') || '|' || "
+    "coalesce((select max(snapshot_ym) from mv_industry_mix_median_m), '');"
 )
 
 
@@ -151,9 +153,10 @@ def show():
     quarters = query_one(SHOW_QUARTERS_SQL)
     print("점포 표 분기별 행수: {}".format(
         " · ".join(q.replace(":", " ") for q in quarters.split(",") if q) or "(없음)"))
-    cov, mix, names, floor, median = (query_one(SHOW_MVS_SQL).split("|") + ["", "", "", "", ""])[:5]
-    print("요약표 분기: 각주 {} · 업종 {} · 가게 이름 {} · 층 분포 {} · 가운데값 {}".format(
-        cov or "(없음)", mix or "(없음)", names or "(없음)", floor or "(없음)", median or "(없음)"))
+    cov, mix, names, floor, median, median_m = (query_one(SHOW_MVS_SQL).split("|") + [""] * 6)[:6]
+    print("요약표 분기: 각주 {} · 업종 {} · 가게 이름 {} · 층 분포 {} · 가운데값 {} · 중분류 가운데값 {}".format(
+        cov or "(없음)", mix or "(없음)", names or "(없음)", floor or "(없음)", median or "(없음)",
+        median_m or "(없음)"))
     return 0
 
 

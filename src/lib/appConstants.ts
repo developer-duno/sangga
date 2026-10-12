@@ -225,6 +225,16 @@ export const INDUSTRY_FLOORS_FN = 'list_industry_floors';
 export const INDUSTRY_MEDIAN_FN = 'list_industry_median';
 
 /**
+ * 고른 대분류 **안** 중분류 몫의 가운데값(비교값) — 물결 2-3b(결정 0036 결정 18 ㉗~㉚). 업종 분포 카드에서 대분류를
+ * 고른 뒤 나오는 상세 블록 중 **상권 블록**의 중분류 줄마다 「서울 골목상권 가운데 15.2%」 한 줄(반경 블록엔 없다).
+ *
+ * ⚠️ 인자는 `{ p_pnu, p_cat_l }` — 대분류를 고른 뒤에만 상세와 **따로** 부른다(`sidePrefetch` 에 넣지 않는다 · 층 줄
+ *    `INDUSTRY_FLOORS_FN` 과 같은 꼴). 응답의 `cat_l_cd` 는 물어본 값을 되돌려 준 것이라 늦게 온 답을 버리는 데 쓴다.
+ * ⓘ 함수가 없거나(PGRST202) 실패·모양 이상이면 화면은 **중분류 비교 글만** 빼고 상세 블록은 그대로 선다.
+ */
+export const INDUSTRY_MEDIAN_M_FN = 'list_industry_median_m';
+
+/**
  * 이 필지 둘레의 **미준공 상업 계열 건축 인허가** 건물 수. 업종 분포 카드 안의 한 줄.
  *
  * ⚠️ **인자 이름이 `p_pnu` 다**(`list_price_bands` 와 같은 이유 — 컬럼명 `pnu` 와 겹친다).

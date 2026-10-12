@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
-import type { IndustryDetail, IndustryFloors, IndustryMedian, IndustryMix } from '../types';
+import type { IndustryDetail, IndustryFloors, IndustryMedian, IndustryMedianM, IndustryMix } from '../types';
 
 /**
  * "둘레의 업종 분포" 섹션 테스트(결정 0014).
@@ -42,6 +42,14 @@ const responses = {
     data: unknown;
     error: unknown;
   },
+  /**
+   * 서버 함수 list_industry_median_m 의 응답(물결 2-3b 중분류 비교). 기본값 = **함수 없음** — 마이그레이션 적용 전
+   * 라이브 상태이고, 다른 시험들이 보는 상세 블록이 그대로다(중분류 비교 글만 없다). 인자로 갈라 답할 수 있게 함수로 둔다.
+   */
+  medianM: (() => ({ data: null, error: { message: 'PGRST202' } })) as (args: {
+    p_pnu: string;
+    p_cat_l: string;
+  }) => Promise<unknown> | { data: unknown; error: unknown },
 };
 
 /** 마지막 rpc 호출들. "인자 이름을 p_pnu·p_cat 으로 보내는가"를 여기서 확인한다. */
@@ -61,6 +69,9 @@ vi.mock('../lib/supabase', () => ({
       if (fn === 'count_nearby_permits') return Promise.resolve(responses.permits);
       if (fn === 'list_industry_median') {
         return Promise.resolve(responses.median((args as { p_pnu: string }).p_pnu));
+      }
+      if (fn === 'list_industry_median_m') {
+        return Promise.resolve(responses.medianM(args as { p_pnu: string; p_cat_l: string }));
       }
       if (fn === 'list_industry_floors') {
         if (responses.floorsPending) return new Promise(() => {});
@@ -135,6 +146,7 @@ beforeEach(() => {
   responses.floors = null;
   responses.floorsPending = false;
   responses.median = () => ({ data: null, error: { message: 'PGRST202' } });
+  responses.medianM = () => ({ data: null, error: { message: 'PGRST202' } });
   vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
 
@@ -987,5 +999,284 @@ describe('IndustryMixSection — 업종 비중 비교 (물결 2-3)', () => {
     expect(grade.textContent).toBe(
       'A등급 · 실측 집계막대와 곳 수는 어림한 값이 아니라 등록된 점포를 그대로 센 값입니다(가운데값은 C등급 · 비교값). 다만 아래 두 가지 때문에 실제와 다를 수 있습니다.',
     );
+  });
+});
+
+// ── 업종 비중 비교 · 중분류 (물결 2-3b · 결정 0036 결정 18 ㉗~㉚) ─────────────────────
+
+/** 서버가 내는 중분류 가운데값 응답 — 기본은 '강남역(발달상권)' 음식 60곳 · 같은 종류 음식 30곳 이상 241곳. */
+function medianM(over: Partial<IndustryMedianM> = {}): IndustryMedianM {
+  return {
+    snapshot_ym: '202606',
+    cat_l_cd: 'I2',
+    min_total: 30,
+    min_pop: 30,
+    districts: [
+      {
+        district_id: '3120189',
+        type: '발달상권',
+        total: 60,
+        pop: { scope: 'type', sido_cd: '11', district_type: '발달상권', n: 241 },
+        cats: [
+          { cd: 'I201', nm: '한식', med_pct: 37.3 },
+          { cd: 'I202', nm: '중식', med_pct: 3.8 },
+        ],
+      },
+    ],
+    ...over,
+  };
+}
+
+const NOTE_M =
+  '가운데값은 서울 발달상권 가운데 음식 가게가 30곳 이상인 241곳의 음식 안 업종 비중을 크기순으로 세웠을 때 한가운데 값입니다 — 비교용 숫자입니다.';
+
+/** 상세 블록마다 — [블록 제목, 그 블록의 .mix__med 글들, 설명 줄 글들]. */
+function detailMedTexts(container: HTMLElement) {
+  return [...container.querySelectorAll('.mix__detail .mix__block')].map((b) => [
+    b.querySelector('.mix__sub')?.textContent ?? '',
+    [...b.querySelectorAll('.mix__med')].map((e) => e.textContent),
+    [...b.querySelectorAll('.mix__med-note')].map((e) => e.textContent),
+  ]);
+}
+
+describe('IndustryMixSection — 업종 비중 비교 · 중분류 (물결 2-3b)', () => {
+  const PNU = '1168010100100010000';
+
+  it('★ 대분류를 고르면 상세 상권 블록 중분류 줄마다 비교 글 + 배지 C 설명 줄 · 반경 블록엔 없다 · 인자 {p_pnu, p_cat_l}', async () => {
+    responses.medianM = () => ({ data: medianM(), error: null });
+    const { container } = render(<IndustryMixSection pnu={PNU} />);
+    // 고르기 전에는 부르지도 않는다(따로 부름 — 대분류를 골라야 인자가 정해진다).
+    await screen.findByLabelText('업종 골라보기');
+    expect(rpcCalls.some((c) => c.fn === 'list_industry_median_m')).toBe(false);
+
+    fireEvent.change(screen.getByLabelText('업종 골라보기'), { target: { value: 'I2' } });
+    expect(await screen.findByText('서울 발달상권 가운데 37.3%')).toBeTruthy();
+    expect(detailMedTexts(container)).toEqual([
+      ['강남역(발달상권) 안 음식 60곳', ['서울 발달상권 가운데 37.3%', '서울 발달상권 가운데 3.8%'], [`C등급 · 비교값${NOTE_M}`]],
+      ['반경 500m 안 음식 150곳', [], []],
+    ]);
+    const badge = container.querySelector('.mix__detail .mix__med-note .grade__badge');
+    expect(badge?.textContent).toBe('C등급 · 비교값');
+    expect(badge?.classList.contains('grade__badge--est')).toBe(true);
+    // 비교 글은 그 중분류 막대 줄(li) 안 — 종이에서 줄과 갈리지 않는다.
+    expect(screen.getByText('서울 발달상권 가운데 37.3%').closest('li')?.querySelector('.mix__cat')?.textContent).toBe('한식');
+    expect(rpcCalls.filter((c) => c.fn === 'list_industry_median_m').map((c) => c.args)).toEqual([
+      { p_pnu: PNU, p_cat_l: 'I2' },
+    ]);
+  });
+
+  it('그 대분류 가게가 기준 미만인 상권은 사실 한 줄만 — 기준은 서버 값(min_total)', async () => {
+    responses.detail = {
+      data: detail({ districts: [{ district_id: '3120189', name: '강남역', total: 12, cats: [{ cd: 'I201', nm: '한식', n: 12 }] }] }),
+      error: null,
+    };
+    responses.medianM = () => ({
+      data: medianM({ min_total: 40, districts: [{ district_id: '3120189', type: '발달상권', total: 12, pop: null, cats: [] }] }),
+      error: null,
+    });
+    const { container } = render(<IndustryMixSection pnu={PNU} />);
+    fireEvent.change(await screen.findByLabelText('업종 골라보기'), { target: { value: 'I2' } });
+    expect(await screen.findByText('음식 12곳 — 40곳이 안 돼 비교값은 적지 않습니다.')).toBeTruthy();
+    expect(container.querySelectorAll('.mix__detail .mix__med')).toHaveLength(0);
+    expect(container.querySelector('.mix__detail .grade__badge--est')).toBeNull();
+  });
+
+  it('가운데값 줄이 없는 중분류는 그 줄만 비교 글이 없다', async () => {
+    const m = medianM();
+    m.districts[0].cats = [{ cd: 'I201', nm: '한식', med_pct: 37.3 }];
+    responses.medianM = () => ({ data: m, error: null });
+    const { container } = render(<IndustryMixSection pnu={PNU} />);
+    fireEvent.change(await screen.findByLabelText('업종 골라보기'), { target: { value: 'I2' } });
+    expect(await screen.findByText('서울 발달상권 가운데 37.3%')).toBeTruthy();
+    const rows = container.querySelectorAll('.mix__detail .mix__block')[0].querySelectorAll('.mix__bars li');
+    expect([...rows].map((li) => li.querySelector('.mix__med')?.textContent ?? null)).toEqual([
+      '서울 발달상권 가운데 37.3%',
+      null,
+    ]);
+  });
+
+  it.each([
+    ['함수 없음(PGRST202)', () => ({ data: null, error: { message: 'PGRST202' } }), true],
+    ['모양 이상(cat_l_cd 없음)', () => ({ data: { ...medianM(), cat_l_cd: undefined }, error: null }), true],
+    ['분기가 상세와 다름', () => ({ data: medianM({ snapshot_ym: '202603' }), error: null }), false],
+    ['물어본 것과 다른 대분류의 답', () => ({ data: medianM({ cat_l_cd: 'G2' }), error: null }), false],
+  ])('★ %s → 중분류 비교 글·설명 줄 0 · 상세 블록·막대·총수는 지금 그대로', async (_name, answer, warns) => {
+    // 기준 화면(비교 글 없는 지금 상세)의 글자를 먼저 잰다.
+    const base = render(<IndustryMixSection pnu={PNU} />);
+    fireEvent.change(await screen.findByLabelText('업종 골라보기'), { target: { value: 'I2' } });
+    await screen.findByText('음식 60곳');
+    await act(() => new Promise((r) => setTimeout(r, 0)));
+    const before = base.container.textContent;
+    base.unmount();
+
+    responses.medianM = answer as typeof responses.medianM;
+    const warn = vi.mocked(console.warn);
+    warn.mockClear();
+    rpcCalls.length = 0;
+    const { container } = render(<IndustryMixSection pnu={PNU} />);
+    fireEvent.change(await screen.findByLabelText('업종 골라보기'), { target: { value: 'I2' } });
+    await screen.findByText('음식 60곳');
+    await waitFor(() => expect(rpcCalls.some((c) => c.fn === 'list_industry_median_m')).toBe(true));
+    await act(() => new Promise((r) => setTimeout(r, 0)));
+    expect(container.querySelectorAll('.mix__med, .mix__med-note')).toHaveLength(0);
+    expect(container.textContent).toBe(before);
+    expect(container.textContent).not.toContain('불러오는 중');
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('업종 중분류 비중 비교 조회 실패'))).toBe(warns);
+  });
+
+  it('★ 중분류 비교만 실패해도 층 줄·「층 미상」 설명은 그대로 선다(층 함수는 답했다)', async () => {
+    // 층 함수는 답하고(대분류 줄만 — 상권·반경 블록 각각), 중분류 비교만 함수 없음(PGRST202).
+    responses.floors = ({ p_cat_l }) => ({
+      data: {
+        snapshot_ym: '202606',
+        radius_m: 500,
+        cat_l_cd: p_cat_l,
+        cat_m_cds: null,
+        districts: [
+          { district_id: '3120189', name: '강남역', total: 60, bands: { b: 0, '1': 36, '2': 9, '3+': 3, na: 12 } },
+        ],
+        radius: { total: 150, bands: { b: 2, '1': 90, '2': 24, '3+': 9, na: 25 } },
+      },
+      error: null,
+    });
+    // 실패는 층 답보다 **늦게** 온다 — 먼저 오면 지워 봐야 지울 층 줄이 아직 없어 아무것도 못 본다.
+    responses.medianM = () =>
+      new Promise((r) => setTimeout(() => r({ data: null, error: { message: 'PGRST202' } }), 30)) as Promise<unknown>;
+    const warn = vi.mocked(console.warn);
+    warn.mockClear();
+    const { container } = render(<IndustryMixSection pnu={PNU} />);
+    fireEvent.change(await screen.findByLabelText('업종 골라보기'), { target: { value: 'I2' } });
+    expect(
+      await screen.findByText('층별 음식: 지하 0곳 · 1층 36곳 · 2층 9곳 · 3층 이상 3곳 · 층 미상 12곳 (20%)'),
+    ).toBeTruthy();
+    // 늦은 실패가 실제로 도착한 뒤에 본다.
+    await waitFor(() =>
+      expect(warn.mock.calls.some((c) => String(c[0]).includes('업종 중분류 비중 비교 조회 실패'))).toBe(true),
+    );
+    await act(() => new Promise((r) => setTimeout(r, 0)));
+    expect(container.querySelectorAll('.mix__detail .mix__floors')).toHaveLength(2);
+    expect(container.querySelectorAll('.mix__why li')).toHaveLength(3);
+    expect(container.querySelectorAll('.mix__med, .mix__med-note')).toHaveLength(0);
+  });
+
+  it('★ 다른 대분류로 바꾼 뒤 늦게 온 앞 대분류의 답은 버린다', async () => {
+    let resolveI2!: (r: unknown) => void;
+    const lateI2 = new Promise((r) => {
+      resolveI2 = r;
+    });
+    responses.medianM = ({ p_cat_l }) =>
+      p_cat_l === 'I2' ? (lateI2 as Promise<unknown>) : { data: null, error: { message: 'PGRST202' } };
+    const { container } = render(<IndustryMixSection pnu={PNU} />);
+    const select = await screen.findByLabelText('업종 골라보기');
+    fireEvent.change(select, { target: { value: 'I2' } });
+    await waitFor(() => expect(rpcCalls.some((c) => c.fn === 'list_industry_median_m')).toBe(true));
+    responses.detail = { data: detail({ cat_l_cd: 'G2' }), error: null };
+    fireEvent.change(select, { target: { value: 'G2' } });
+    await screen.findByText('소매 60곳');
+    await act(async () => {
+      resolveI2({ data: medianM(), error: null });
+    });
+    await act(() => new Promise((r) => setTimeout(r, 0)));
+    expect(container.textContent).not.toContain('37.3%');
+    expect(container.querySelectorAll('.mix__detail .mix__med, .mix__detail .mix__med-note')).toHaveLength(0);
+  });
+
+  it('★ 필지가 바뀐 뒤 늦게 온 앞 필지의 답은 버린다', async () => {
+    const B = '1111010100100010000';
+    let resolveA!: (r: unknown) => void;
+    const lateA = new Promise((r) => {
+      resolveA = r;
+    });
+    responses.medianM = ({ p_pnu }) =>
+      p_pnu === PNU
+        ? (lateA as Promise<unknown>)
+        : {
+            data: medianM({ districts: [{ ...medianM().districts[0], cats: [{ cd: 'I201', nm: '한식', med_pct: 22.2 }] }] }),
+            error: null,
+          };
+    const { container, rerender } = render(<IndustryMixSection pnu={PNU} />);
+    fireEvent.change(await screen.findByLabelText('업종 골라보기'), { target: { value: 'I2' } });
+    await waitFor(() => expect(rpcCalls.some((c) => c.fn === 'list_industry_median_m')).toBe(true));
+    rerender(<IndustryMixSection pnu={B} />);
+    fireEvent.change(await screen.findByLabelText('업종 골라보기'), { target: { value: 'I2' } });
+    expect(await screen.findByText('서울 발달상권 가운데 22.2%')).toBeTruthy();
+    await act(async () => {
+      resolveA({ data: medianM(), error: null });
+    });
+    expect(container.textContent).not.toContain('37.3%');
+    expect(container.textContent).toContain('서울 발달상권 가운데 22.2%');
+  });
+
+  it('★ 대분류를 바꾼 첫 렌더에도 옛 대분류의 비교 글이 새 블록에 그려지지 않는다(그릴 때 견줌)', async () => {
+    responses.medianM = ({ p_cat_l }) =>
+      p_cat_l === 'I2' ? { data: medianM(), error: null } : (new Promise(() => {}) as Promise<unknown>);
+    const { container } = render(<IndustryMixSection pnu={PNU} />);
+    const select = await screen.findByLabelText('업종 골라보기');
+    fireEvent.change(select, { target: { value: 'I2' } });
+    expect(await screen.findByText('서울 발달상권 가운데 37.3%')).toBeTruthy();
+
+    // 소매 상세도 같은 중분류 코드(I201)를 갖는다 — 그릴 때 견주지 않으면 옛 음식 가운데값이 소매 블록 줄에 붙는다.
+    responses.detail = { data: detail({ cat_l_cd: 'G2' }), error: null };
+    const seen: string[] = [];
+    const keep = (recs: MutationRecord[]) => {
+      for (const r of recs) {
+        r.addedNodes.forEach((n) => seen.push(n.textContent ?? ''));
+        r.removedNodes.forEach((n) => seen.push(n.textContent ?? ''));
+        if (r.type === 'characterData') seen.push(r.target.textContent ?? '');
+      }
+    };
+    const obs = new MutationObserver(keep);
+    obs.observe(container, { childList: true, subtree: true, characterData: true });
+    fireEvent.change(select, { target: { value: 'G2' } });
+    await screen.findByText('소매 60곳');
+    keep(obs.takeRecords());
+    obs.disconnect();
+    // 떨어져 나간 옛 마디(음식 상세)는 옛 글을 쥐고 있다 — '소매' 블록과 함께 붙은 마디만 본다.
+    expect(seen.some((t) => t.includes('소매 60곳') && t.includes('37.3%'))).toBe(false);
+    expect(seen.some((t) => t.includes('소매 가게가 30곳 이상인'))).toBe(false);
+    expect(container.querySelectorAll('.mix__detail .mix__med, .mix__detail .mix__med-note')).toHaveLength(0);
+  });
+
+  it('창업자 카페 칩 — 짝 중분류(I212) 줄이 굵은 채로 비교 글도 같은 줄 안에', async () => {
+    responses.detail = {
+      data: detail({
+        districts: [
+          {
+            district_id: '3120189',
+            name: '강남역',
+            total: 60,
+            cats: [
+              { cd: 'I201', nm: '한식', n: 40 },
+              { cd: 'I212', nm: '비알코올', n: 20 },
+            ],
+          },
+        ],
+      }),
+      error: null,
+    };
+    responses.medianM = () => ({
+      data: medianM({ districts: [{ ...medianM().districts[0], cats: [{ cd: 'I212', nm: '비알코올', med_pct: 16 }] }] }),
+      error: null,
+    });
+    render(<IndustryMixSection pnu={PNU} chip="카페" />);
+    const line = await screen.findByText('서울 발달상권 가운데 16.0%');
+    const li = line.closest('li')!;
+    expect(li.classList.contains('mix__hit')).toBe(true);
+    expect(li.querySelector('.mix__cat strong')?.textContent).toBe('비알코올');
+  });
+
+  it('비교 글에 판단 낱말·금칙어가 없다 · 접힌 요약에는 값을 안 넣는다', async () => {
+    responses.medianM = () => ({ data: medianM(), error: null });
+    const { container } = render(<IndustryMixSection pnu={PNU} />);
+    fireEvent.change(await screen.findByLabelText('업종 골라보기'), { target: { value: 'I2' } });
+    await screen.findByText('서울 발달상권 가운데 37.3%');
+    const texts = [...container.querySelectorAll('.mix__detail .mix__med, .mix__detail .mix__med-note')]
+      .map((e) => e.textContent)
+      .join(' ');
+    expect(texts).toContain('가운데값은');
+    for (const w of ['많', '적다', '적습', '높', '낮', '%p', '배', '적정가', '감정가', '평가액']) {
+      expect(texts).not.toContain(w);
+    }
+    expect(container.querySelector('.card__summary')!.textContent).not.toContain('가운데');
   });
 });

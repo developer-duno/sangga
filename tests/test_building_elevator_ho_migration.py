@@ -19,7 +19,8 @@
   6) 순서 — `set lock_timeout` 이 begin 앞 · begin/commit 한 쌍 · notify 는 commit 뒤 · api 먼저 drop.
   7) 권한 — 함수 grant 는 api 쌍둥이에만(anon·authenticated) · api.building 은 service_role 만 ·
      api.v_floor_stack 은 anon·authenticated 읽기만 · public 객체 grant 0.
-  8) 새 함수 0 — 공개 호출 허용 총계(post_load.py --check) 30 그대로.
+  8) 새 함수 0 — 이 마이그레이션은 공개 호출 허용 총계(post_load.py --check)를 늘리지 않는다(적용 때 30 · 지금 32 —
+     2026-10-12a 가 31, 2026-10-13a 가 32 로 늘렸다 · 아래 시험이 지금 총계를 본다).
 
 ② 실행 가드(로컬 PostgreSQL 이 있을 때만): 흉내 판에 **적용 전 라이브 모양**(10-07a 의 v_floor_stack ·
    10-09a 의 search_buildings 16칸 · 옛 api.building)을 세우고 이 마이그레이션 **파일 통째**를 돌린다 —
@@ -572,14 +573,16 @@ class TestFile:
     def test_only_search_buildings_is_created(self, mig):
         assert created_functions(mig) == ["api.search_buildings", "search_buildings"]
 
-    def test_allowlist_total_is_thirty_one_without_this_migration_adding_any(self):
-        """새 함수가 없으니 공개 호출 허용 총계(읽기 4 + 호출)는 31 그대로(이 마이그레이션은 더하지 않는다) — 바뀌면 이 PR 범위 밖이다.
+    def test_allowlist_total_is_thirty_two_without_this_migration_adding_any(self):
+        """새 함수가 없으니 공개 호출 허용 총계(읽기 4 + 호출)는 32 그대로(이 마이그레이션은 더하지 않는다) — 바뀌면 이 PR 범위 밖이다.
 
-        ⓘ 2026-10-12a(업종 비중 비교 · 물결 2-3)가 api.list_industry_median 하나를 더해 31 이 됐다 — 이 마이그레이션은
-        여전히 새 공개 호출 0 이다(늘어난 하나는 그 PR 몫 · 그 목록은 tests/test_post_load.py 가 통째로 대조한다).
+        ⓘ 2026-10-12a(업종 비중 비교 · 물결 2-3)가 api.list_industry_median 하나를 더해 31, 2026-10-13a(중분류 · 물결 2-3b)가
+        api.list_industry_median_m 하나를 더해 32 가 됐다 — 이 마이그레이션은 여전히 새 공개 호출 0 이다(늘어난 둘은 그 PR 몫 ·
+        그 목록은 tests/test_post_load.py 가 통째로 대조한다).
         """
-        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 31
+        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 32
         assert "api.list_industry_median" in post_load.ANON_CALLABLE_ALLOWLIST
+        assert "api.list_industry_median_m" in post_load.ANON_CALLABLE_ALLOWLIST
         assert "api.search_buildings" in post_load.ANON_CALLABLE_ALLOWLIST
 
     def test_header_lists_the_order_and_checks(self, mig):

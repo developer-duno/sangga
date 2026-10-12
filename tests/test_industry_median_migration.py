@@ -276,7 +276,8 @@ class TestFunction:
 class TestPermissions:
     def test_only_the_api_twin_is_granted(self, mig, schema):
         assert grant_targets(mig) == [API_FN]
-        assert [t for t in grant_targets(schema) if "industry_median" in t] == [API_FN]
+        # 중분류 형제(2026-10-13a · api.list_industry_median_m)는 이름 끝으로 가른다 — 그쪽은 test_industry_median_m_migration.
+        assert [t for t in grant_targets(schema) if t.endswith("industry_median")] == [API_FN]
 
     @pytest.mark.parametrize("bad", (
         "grant execute on function list_industry_median(text) to anon;",

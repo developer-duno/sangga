@@ -5,6 +5,7 @@ import type {
   IndustryFloorScope,
   IndustryFloors,
   IndustryMedian,
+  IndustryMedianM,
   IndustryMedianPop,
   IndustryMix,
   IndustryScope,
@@ -363,4 +364,73 @@ export function medianViewOf(
   const lines = new Map<string, string>();
   for (const c of d.cats) lines.set(c.cd, medianLine(sido, pop, c.med_pct));
   return { lines, note: medianNote(sido, pop, median.min_total), tooSmall: null };
+}
+
+// ── 업종 비중 비교 · 중분류 (물결 2-3b · 결정 0036 결정 18 ㉗~㉚) ─────────────────────
+//
+// 대분류를 고른 뒤 나오는 상세 블록 중 **상권 블록**에만 붙는다(반경 블록엔 견줄 상대가 없다).
+// 줄마다의 글은 형제 `medianLine` 그대로(👤 ㉚ 어제 틀 그대로) · 설명 줄과 30 미만 문장만 '그 대분류 안' 으로 바뀐다.
+// ⛔ 몫은 고른 대분류 안의 몫이다(👤 ㉘ — 바로 위 막대와 같은 분모) · 모집단은 그 대분류 가게 30곳 이상 상권(👤 ㉙).
+// ⛔ 30 은 서버 `min_total` · 지역 이름은 `SIDOS` · 판단 낱말 0(형제와 같은 규칙).
+
+/**
+ * 상세 상권 블록 머리 아래 설명 한 줄(배지 뒤 글) —
+ * `가운데값은 서울 골목상권 가운데 음식 가게가 30곳 이상인 526곳의 음식 안 업종 비중을 크기순으로 세웠을 때 한가운데 값입니다 — 비교용 숫자입니다.`
+ */
+export function medianMNote(
+  sidoName: string | null,
+  pop: IndustryMedianPop,
+  catNm: string,
+  minTotal: number,
+): string {
+  const n = (v: number) => v.toLocaleString('ko-KR');
+  return (
+    `가운데값은 ${popWho(sidoName, pop)} 가운데 ${catNm} 가게가 ${n(minTotal)}곳 이상인 ${n(pop.n)}곳의 ` +
+    `${catNm} 안 업종 비중을 크기순으로 세웠을 때 한가운데 값입니다 — 비교용 숫자입니다.`
+  );
+}
+
+/**
+ * 이 상권의 그 대분류 가게가 기준에 못 미칠 때의 사실 한 줄 — `음식 12곳 — 30곳이 안 돼 비교값은 적지 않습니다.`
+ * 0곳이면 null(상세 블록에 이미 '이 안에 … 가게가 없습니다'가 선다) · 기준 이상이면 null.
+ */
+export function medianMTooSmall(catNm: string, total: number, minTotal: number): string | null {
+  if (total <= 0 || total >= minTotal) return null;
+  const n = (v: number) => v.toLocaleString('ko-KR');
+  return `${catNm} ${n(total)}곳 — ${n(minTotal)}곳이 안 돼 비교값은 적지 않습니다.`;
+}
+
+/**
+ * 응답 모양 검사 — 형제 `isIndustryMedian` 의 모양 + 되돌려 준 대분류 `cat_l_cd`. 걸리면 **이 응답 통째로** 버린다
+ * (중분류 비교 글·설명 줄만 없고 상세 블록·막대·총수·층 줄은 그대로 선다).
+ */
+export function isIndustryMedianM(x: unknown): x is IndustryMedianM {
+  if (!isIndustryMedian(x)) return false;
+  return typeof (x as unknown as Record<string, unknown>).cat_l_cd === 'string';
+}
+
+/**
+ * 응답에서 상세 상권 블록 하나의 글 묶음을 만든다. 그 상권 줄이 응답에 없으면 null(서버가 모집단을 못 골랐다 · 0곳).
+ * ⛔ 분기가 상세와 다르거나(`detailYm`) 물어본 대분류가 지금 고른 것과 다르면(`catL`) 통째로 null —
+ *    막대와 비교 글이 서로 다른 분기·다른 대분류를 말하지 않게(대분류를 바꾼 첫 렌더에 옛 답이 새 이름표로 서지 않게).
+ */
+export function medianMViewOf(
+  median: IndustryMedianM | null,
+  districtId: string,
+  detailYm: string | null,
+  catL: string,
+  catNm: string,
+): MedianView | null {
+  if (median === null || median.snapshot_ym !== detailYm || median.cat_l_cd !== catL) return null;
+  const d = median.districts.find((x) => x.district_id === districtId);
+  if (!d) return null;
+  if (d.pop === null) {
+    const tooSmall = medianMTooSmall(catNm, d.total, median.min_total);
+    return tooSmall === null ? null : { lines: new Map(), note: null, tooSmall };
+  }
+  const pop = d.pop;
+  const sido = sidoNameOf(pop.sido_cd);
+  const lines = new Map<string, string>();
+  for (const c of d.cats) lines.set(c.cd, medianLine(sido, pop, c.med_pct));
+  return { lines, note: medianMNote(sido, pop, catNm, median.min_total), tooSmall: null };
 }
