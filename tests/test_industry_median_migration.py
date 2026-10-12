@@ -545,3 +545,117 @@ class TestRealRun:
             c.execute("reset search_path; drop schema median_case cascade;")
         assert got == want
         assert post_load.judge_industry_median_consistency(*got) is (got[0] != "0")
+
+    def test_post_load_recompute_sql_agrees_on_the_canonical_board(self, cur):
+        """--check 의 값 다시 세기(순번으로 가운데 고르기)를 정본 정의로 구운 흉내 판에 — 어긋남 0 · 줄 수 같음.
+        (순번을 cnt/2 하나로 줄이면 골목 31곳 음식이 15번째 0% 를 골라 10.0 과 갈린다.)"""
+        cur.execute("set search_path to public")
+        cur.execute("select count(*) from mv_industry_mix_median")
+        n = str(cur.fetchone()[0])
+        cur.execute(post_load.INDUSTRY_MEDIAN_RECOMPUTE_SQL)
+        got = tuple(cur.fetchone()[0].split("|"))
+        assert n != "0" and got == ("0", n, n)
+        assert post_load.judge_industry_median_recompute(*got) is False
+
+    # 손으로 만든 사본 — 요약표에는 행을 못 고치므로 같은 이름의 보통 표를 다른 스키마에 둔다.
+    # (재료 업종 표·district 도 같이 베껴 와 search_path 하나로 셋 다 사본을 보게 한다.)
+    _ZERO_EXCLUDED = """
+        update mv_industry_mix_median m set med_pct = s.med
+        from (select x.snapshot_ym, left(d.sigungu_code, 2) as sido_cd, coalesce(d.district_type, '') as dt,
+                     x.cat_l_cd,
+                     round((percentile_cont(0.5) within group (order by x.n::float8 / t.total) * 100)::numeric, 1)
+                       as med
+              from (select district_id, snapshot_ym, sum(n) as total from mv_district_industry_mix
+                    group by 1, 2 having sum(n) >= 30) t
+              join district d using (district_id)
+              join (select district_id, snapshot_ym, cat_l_cd, sum(n) as n from mv_district_industry_mix
+                    group by 1, 2, 3) x using (district_id, snapshot_ym)
+              group by grouping sets ((1, 2, 3, 4), (1, 2, 4))) s
+        where m.snapshot_ym = s.snapshot_ym and m.sido_cd = s.sido_cd and m.cat_l_cd = s.cat_l_cd
+          and ((m.scope = 'type' and s.dt is not null and m.district_type = s.dt)
+               or (m.scope = 'all' and s.dt is null));
+    """
+
+    @pytest.mark.parametrize("tamper, want", [
+        # ② 양성 대조 — 한 줄을 0.2 틀리게(반올림 한 칸 넘게). 허용 오차를 1.0 으로 늘리면 놓친다.
+        ("update mv_industry_mix_median set med_pct = med_pct + 0.2"
+         " where scope = 'type' and district_type = '골목상권' and cat_l_cd = 'I2'", ("1", 0, 0)),
+        # 모집단 수만 틀린 줄도.
+        ("update mv_industry_mix_median set pop_n = pop_n + 1"
+         " where scope = 'all' and sido_cd = '11' and cat_l_cd = 'G2'", ("1", 0, 0)),
+        # ③ 정의 갈림 — 없는 업종을 빼고(0 미포함) 센 값으로 구웠다: 골목 음식 10.0 → 17.5 · 서울 전체 음식 11.0 → 18.5.
+        (_ZERO_EXCLUDED, ("2", 0, 0)),
+        # ④ 한쪽에만 있는 줄 — 표에서 한 줄이 빠졌다(inner join 으로 바꾸면 놓친다).
+        ("delete from mv_industry_mix_median where scope = 'all' and sido_cd = '11' and cat_l_cd = 'G2'",
+         ("1", -1, 0)),
+        # ④ 표에만 있는 줄 — 재료에 없는 업종.
+        ("insert into mv_industry_mix_median (snapshot_ym, sido_cd, scope, district_type, pop_n, cat_l_cd,"
+         " cat_l_nm, med_pct) values ('202606', '11', 'all', '', 33, 'Z9', 'x', 1.0)", ("1", 1, 0)),
+    ])
+    def test_post_load_recompute_sql_catches_tampered_copies(self, pg, cur, tamper, want):
+        c = pg.cursor()
+        c.execute("drop schema if exists median_re cascade; create schema median_re;"
+                  " create table median_re.mv_district_industry_mix as select * from public.mv_district_industry_mix;"
+                  " create table median_re.district as select * from public.district;"
+                  " create table median_re.mv_industry_mix_median as select * from public.mv_industry_mix_median;"
+                  " set search_path to median_re;")
+        try:
+            c.execute("select count(*) from mv_industry_mix_median")
+            n = c.fetchone()[0]
+            c.execute(post_load.INDUSTRY_MEDIAN_RECOMPUTE_SQL)
+            assert c.fetchone()[0] == "0|{0}|{0}".format(n), "손대기 전 사본은 어긋남 0 이어야 한다"
+            c.execute(tamper)
+            if tamper is self._ZERO_EXCLUDED:
+                c.execute("select med_pct::text from mv_industry_mix_median where cat_l_cd = 'I2' and sido_cd = '11'"
+                          " and scope in ('type', 'all') and district_type in ('골목상권', '') order by scope")
+                assert [r[0] for r in c.fetchall()] == ["18.5", "17.5"], "0 을 빼면 부푼다(정의 갈림 흉내 확인)"
+            c.execute(post_load.INDUSTRY_MEDIAN_RECOMPUTE_SQL)
+            got = tuple(c.fetchone()[0].split("|"))
+        finally:
+            c.execute("reset search_path; drop schema median_re cascade;")
+        bad, d_med, d_re = want
+        assert got == (bad, str(n + d_med), str(n + d_re))
+        assert post_load.judge_industry_median_recompute(*got) is True
+
+    # 정상 판을 새로 굽는다 — 재료 사본에 상권을 더한 뒤 마이그레이션의 요약표 정의를 그대로 실행한다.
+    _NULL_SIDO = """
+        insert into district (district_id, district_type, sigungu_code) values ('N1', '골목상권', null);
+        insert into mv_district_industry_mix values ('N1', '202606', 'I2', '음식', 'I201', '한식', 25),
+                                                    ('N1', '202606', 'G2', '소매', 'G204', '종합 소매', 15);
+    """
+    # 부산(26) 상권 셋 — 음식 비중 10/30 · 11/30 · 13/30 → 가운데 36.666…% 를 표는 36.7 로 반올림한다.
+    # 정상 판인데 두 계산법 차이가 0 보다 크고 0.051 미만 — 허용 오차를 0 으로 좁히면 거짓 [낡음].
+    _ROUGH_MEDIAN = """
+        insert into district (district_id, district_type, sigungu_code)
+          values ('B1', '골목상권', '26110'), ('B2', '골목상권', '26110'), ('B3', '골목상권', '26110');
+        insert into mv_district_industry_mix values
+          ('B1', '202606', 'I2', '음식', 'I201', '한식', 10), ('B1', '202606', 'G2', '소매', 'G204', '종합 소매', 20),
+          ('B2', '202606', 'I2', '음식', 'I201', '한식', 11), ('B2', '202606', 'G2', '소매', 'G204', '종합 소매', 19),
+          ('B3', '202606', 'I2', '음식', 'I201', '한식', 13), ('B3', '202606', 'G2', '소매', 'G204', '종합 소매', 17);
+    """
+
+    @pytest.mark.parametrize("extra, check", [
+        # ① 구 코드가 빈 상권(점포 40곳) — sido_cd null 줄도 짝을 찾아야 한다(using 이면 8|14|14 꼴 거짓 [낡음]).
+        (_NULL_SIDO, "select count(*) from mv_industry_mix_median where sido_cd is null"),
+        # ② 가운데값이 둥글지 않은 정상 판 — 차이가 0 < d < 0.051 인 줄이 실제로 있어야 이 경우가 뜻을 갖는다.
+        (_ROUGH_MEDIAN, "select count(*) from mv_industry_mix_median where sido_cd = '26' and cat_l_cd = 'I2'"
+                        " and med_pct = 36.7"),
+    ], ids=["null-sido", "rough-median"])
+    def test_post_load_recompute_sql_stays_green_on_freshly_baked_boards(self, pg, cur, extra, check):
+        c = pg.cursor()
+        c.execute("drop schema if exists median_bake cascade; create schema median_bake;"
+                  " create table median_bake.mv_district_industry_mix as select * from public.mv_district_industry_mix;"
+                  " create table median_bake.district as select * from public.district;"
+                  " set search_path to median_bake;")
+        try:
+            c.execute(extra)
+            c.execute(mv_block(read(MIGRATION), MV))
+            c.execute(check)
+            assert c.fetchone()[0] >= 1, "흉내 낸 경우가 요약표에 실제로 들어갔어야 한다"
+            c.execute("select count(*) from mv_industry_mix_median")
+            n = c.fetchone()[0]
+            c.execute(post_load.INDUSTRY_MEDIAN_RECOMPUTE_SQL)
+            got = c.fetchone()[0]
+        finally:
+            c.execute("reset search_path; drop schema median_bake cascade;")
+        assert got == "0|{0}|{0}".format(n)

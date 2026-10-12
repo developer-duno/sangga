@@ -138,7 +138,7 @@ REFRESH_MVS = (
     "mv_district_industry_floor",
     # 업종 비중 가운데값(2026-10-12a · 물결 2-3) — ⛔ 위 업종 표(mv_district_industry_mix)를 **재료로** 굽는다.
     # 그래서 반드시 그 뒤다(앞에 두면 옛 업종 표로 굽는다 — 에러 0). 빠지면 비교 글만 옛 분기를 말한다 —
-    # 아래 report_industry_median_freshness() 가 분기를, report_industry_median_consistency() 가 모집단 수를 잡는다.
+    # 아래 report_industry_median_freshness() 가 분기를, report_industry_median_consistency() 가 모집단 수·값을 잡는다.
     "mv_industry_mix_median",
     # 참고 시세의 반경 이웃 찾기 전용(2026-09-27c) — 빠지면 새 거래 필지가 이웃에서 조용히 빠진다.
     "mv_tx_parcel_geog",
@@ -470,7 +470,9 @@ def report_industry_floor_consistency():
 #   ① 분기 — 갱신을 잊으면 비교 글만 옛 분기를 말한다(업종 표와 같은 판정 is_industry_mix_stale).
 #   ② 모집단 수 — 시·도마다 'all' 줄의 pop_n 은 그 분기 업종 표에서 점포 30곳 이상 상권 수와 같아야 한다.
 #      다르면 업종 표만 다시 굽혔거나(가운데값 표를 업종 표 앞에서 구움) 정의가 갈렸다.
-# 둘 다 [낡음] · 종료 코드 1 · 처방은 post_load.py 다시(한 트랜잭션에서 다섯을 함께 굽는다 — 업종 표 뒤에).
+#   ③ 값 — 표 줄 전부의 med_pct 를 다른 계산법으로 다시 센 값과 맞댄다(아래 INDUSTRY_MEDIAN_RECOMPUTE_SQL ·
+#      ②와 같은 report 함수 안에서 함께 돈다).
+# 셋 다 [낡음] · 종료 코드 1 · 처방은 post_load.py 다시(한 트랜잭션에서 다섯을 함께 굽는다 — 업종 표 뒤에).
 
 INDUSTRY_MEDIAN_FRESHNESS_SQL = (
     "select coalesce((select max(snapshot_ym) from mv_industry_mix_median), '')"
@@ -495,6 +497,58 @@ INDUSTRY_MEDIAN_CONSISTENCY_SQL = (
     " group by 1, 2 having sum(n) >= 30) t"
     " join district d on d.district_id = t.district_id group by 1, 2) b"
     " on a.snapshot_ym = b.snapshot_ym and coalesce(a.sido_cd, '') = coalesce(b.sido_cd, '');"
+)
+
+
+# ③ 값 다시 세기(2026-10-12 · 물결 2-3 후속 · 결정 0036 「남은 것」 med_pct 대조) — 모집단 수만 맞아도
+#    med_pct 값 자체가 정의대로인지는 아무도 안 봤다. 같은 정의(점포 30곳 이상 상권 · 없는 업종 0 포함 ·
+#    scope type/all)를 다른 길로 다시 센다: percentile_cont 대신 순번(row_number)으로 가운데 한두 값을 골라
+#    평균. 표 줄 전부(운영 70줄 · 1.4초)를 맞댄다 — 한쪽에만 있는 줄(full join 의 null)도 어긋남.
+#    · 출력 = 어긋남 | 표 줄 수 | 다시 센 줄 수.
+#    · 허용 오차 0.051 — 요약표는 소수 한 자리로 반올림(±0.05)하고 다시 센 값은 반올림 전이다.
+#      두 계산법의 부동소수 끝자리 차이로 .x5 경계가 갈리는 것만 흡수하고, 거의 모든 한 칸(0.1) 차이를
+#      잡는다(참값이 .x5 경계 0.001 안쪽이면 놓칠 수 있다).
+#    · 짝짓기 열쇠의 sido_cd 는 coalesce(…, '') — 구 코드가 빈 상권은 sido_cd 가 null 이라 using 이면
+#      양쪽이 짝을 못 찾아 늘 거짓 [낡음]이 된다(2026-10-12 검사관 재현 8|14|14 · 모집단 대조와 같은 처방).
+#    · 분기는 가운데값 표에 있는 분기만(모집단 대조와 같은 까닭 — 적재 중 업종 표에 섞인 새 분기 오탐 방지).
+#    ⛔ ASCII 만(psql -c).
+INDUSTRY_MEDIAN_RECOMPUTE_SQL = (
+    "with snap as (select distinct snapshot_ym from mv_industry_mix_median),"
+    " tot as ("
+    " select m.district_id, m.snapshot_ym, sum(m.n) as total"
+    " from mv_district_industry_mix m join snap s using (snapshot_ym)"
+    " group by 1, 2 having sum(m.n) >= 30),"
+    " pop as ("
+    " select t.*, left(d.sigungu_code, 2) as sido_cd, coalesce(d.district_type, '') as district_type"
+    " from tot t join district d using (district_id)),"
+    " cats as (select distinct m.snapshot_ym, m.cat_l_cd"
+    " from mv_district_industry_mix m join snap s using (snapshot_ym)),"
+    " sh as ("
+    " select p.snapshot_ym, p.sido_cd, p.district_type, c.cat_l_cd,"
+    " coalesce((select sum(x.n) from mv_district_industry_mix x"
+    " where x.district_id = p.district_id and x.snapshot_ym = p.snapshot_ym"
+    " and x.cat_l_cd = c.cat_l_cd), 0)::float8 / p.total as share"
+    " from pop p join cats c on c.snapshot_ym = p.snapshot_ym),"
+    " grp as ("
+    " select snapshot_ym, sido_cd, 'type'::text as scope, district_type, cat_l_cd, share from sh"
+    " union all"
+    " select snapshot_ym, sido_cd, 'all', '', cat_l_cd, share from sh),"
+    " ranked as ("
+    " select g.*, row_number() over (partition by snapshot_ym, sido_cd, scope, district_type, cat_l_cd"
+    " order by share) as rn,"
+    " count(*) over (partition by snapshot_ym, sido_cd, scope, district_type, cat_l_cd) as cnt"
+    " from grp g),"
+    " re as ("
+    " select snapshot_ym, sido_cd, scope, district_type, cat_l_cd, max(cnt)::int as pop_n,"
+    " avg(share) filter (where rn in ((cnt + 1) / 2, (cnt + 2) / 2)) * 100 as med"
+    " from ranked group by 1, 2, 3, 4, 5)"
+    " select count(*) filter (where a.cat_l_cd is null or b.cat_l_cd is null"
+    " or a.pop_n <> b.pop_n or abs(a.med_pct - b.med) > 0.051)::text"
+    " || '|' || count(a.cat_l_cd)::text || '|' || count(b.cat_l_cd)::text"
+    " from mv_industry_mix_median a"
+    " full join re b on a.snapshot_ym = b.snapshot_ym"
+    " and coalesce(a.sido_cd, '') = coalesce(b.sido_cd, '')"
+    " and a.scope = b.scope and a.district_type = b.district_type and a.cat_l_cd = b.cat_l_cd;"
 )
 
 
@@ -535,11 +589,35 @@ def judge_industry_median_consistency(mismatch_cnt, median_sidos, mix_sidos):
     return mismatch != 0
 
 
-def report_industry_median_consistency():
-    """가운데값 표의 시·도별 모집단 수('all' 줄)를 업종 표의 점포 30곳 이상 상권 수와 견준다 → (어긋남 수, 낡음여부)."""
-    raw = query_one(INDUSTRY_MEDIAN_CONSISTENCY_SQL)
+def judge_industry_median_recompute(bad, med_rows, re_rows):
+    """가운데값 표 값이 다른 계산법으로 다시 센 값과 어긋났는가 (순수 함수 — 낡음이면 True).
+
+    · 어긋난 줄 0 → 정상(두 표 다 비어 0|0|0 이어도 정상 — 자료 없는 새 환경).
+    · 1 이상 → 낡음.
+    · 숫자가 아닌 답 → 낡음 — '정상'이라 말할 근거가 없다.
+    """
+    try:
+        mismatch = int(str(bad).strip())
+        int(str(med_rows).strip())
+        int(str(re_rows).strip())
+    except (TypeError, ValueError):
+        return True
+    return mismatch != 0
+
+
+def _split3(raw):
     parts = [p.strip() for p in str(raw).split("|")]
-    mismatch, median_sidos, mix_sidos = (parts + ["", "", ""])[:3]
+    return tuple((parts + ["", "", ""])[:3])
+
+
+def report_industry_median_consistency():
+    """가운데값 표를 두 번 견준다 → (모집단 어긋남 수, 낡음여부 — 둘 중 하나라도 걸리면 True).
+
+    ① 시·도별 모집단 수('all' 줄)를 업종 표의 점포 30곳 이상 상권 수와.
+    ② 표 줄 전부의 pop_n·med_pct 를 같은 정의를 다른 길로 다시 센 값과(INDUSTRY_MEDIAN_RECOMPUTE_SQL).
+    ⓘ 새 report 함수를 따로 두지 않는다 — 시험 여러 곳이 이 함수를 통째로 바꿔 낀다.
+    """
+    mismatch, median_sidos, mix_sidos = _split3(query_one(INDUSTRY_MEDIAN_CONSISTENCY_SQL))
     stale = judge_industry_median_consistency(mismatch, median_sidos, mix_sidos)
     if stale:
         print("[낡음] 업종 가운데값 표의 모집단 수가 업종 분포 표와 다릅니다 — post_load.py 를 다시 돌리세요.")
@@ -547,7 +625,15 @@ def report_industry_median_consistency():
               .format(mismatch or "?", median_sidos or "?", mix_sidos or "?"))
     else:
         print("[정상] 업종 가운데값 표 모집단 수 = 업종 분포 표의 점포 30곳 이상 상권 수 (어긋남 0 시·도).")
-    return mismatch, stale
+    bad, med_rows, re_rows = _split3(query_one(INDUSTRY_MEDIAN_RECOMPUTE_SQL))
+    re_stale = judge_industry_median_recompute(bad, med_rows, re_rows)
+    if re_stale:
+        print("[낡음] 업종 가운데값 표 값이 다시 센 값과 다릅니다 — post_load.py 를 다시 돌리세요.")
+        print("       (어긋난 줄 {} · 표 {}줄 · 다시 센 {}줄 — 정의가 갈렸거나 재료 표보다 먼저 구워졌습니다)"
+              .format(bad or "?", med_rows or "?", re_rows or "?"))
+    else:
+        print("[정상] 업종 가운데값 표 {}줄 = 다른 계산법으로 다시 센 값 (어긋남 0).".format(med_rows))
+    return mismatch, stale or re_stale
 
 
 # ── 각주 집계 신선도 (2026-08-22d 신설 — 사전계산의 유일한 대가) ─────────────
@@ -1992,7 +2078,7 @@ def main(argv=None):
         # 층 분포 표(2026-10-09b · 물결 2-2) — 분기 + 업종 표와의 합. 둘 다 [낡음]이면 exit 1.
         _, _, floor_stale = report_industry_floor_freshness()
         _, floor_mismatch = report_industry_floor_consistency()
-        # 업종 가운데값 표(2026-10-12a · 물결 2-3) — 분기 + 모집단 수. 둘 다 [낡음]이면 exit 1.
+        # 업종 가운데값 표(2026-10-12a · 물결 2-3) — 분기 + 모집단 수·값 다시 세기. 어느 것이든 [낡음]이면 exit 1.
         _, _, median_stale = report_industry_median_freshness()
         _, median_mismatch = report_industry_median_consistency()
         _, _, geog_stale = report_tx_geog_freshness()

@@ -1548,6 +1548,59 @@ class TestIndustryMedianChecks:
         assert _REAL_MEDIAN_CONSISTENCY()[1] is stale
         assert word in capsys.readouterr().out
 
+    @pytest.mark.parametrize("args, stale", [
+        (("0", "70", "70"), False),
+        (("0", "0", "0"), False),            # 두 표 다 빔 = 자료 없는 새 환경
+        ((" 0 ", "70", " 70"), False),       # psql 공백
+        (("1", "70", "70"), True),           # 한 줄만 어긋나도 — 판정을 '> 1' 로 늦추면 여기서 잡힌다
+        (("3", "70", "70"), True),
+        (("x", "70", "70"), True),
+        (("", "", ""), True),                # 못 읽음 — '정상'이라 말할 근거가 없다
+        ((None, None, None), True),
+    ])
+    def test_judge_recompute(self, args, stale):
+        assert post_load.judge_industry_median_recompute(*args) is stale
+
+    def test_recompute_sql_is_ascii_and_takes_the_other_road(self):
+        sql = post_load.INDUSTRY_MEDIAN_RECOMPUTE_SQL
+        assert all(ord(ch) < 128 for ch in sql), "psql -c 로 가는 SQL 에 한글이 있으면 서버에서 죽습니다"
+        assert "percentile_cont" not in sql, "요약표와 같은 함수로 세면 같은 실수를 같이 한다"
+        assert "row_number() over" in sql and "rn in ((cnt + 1) / 2, (cnt + 2) / 2)" in sql
+        assert "full join re b on a.snapshot_ym = b.snapshot_ym" in sql
+        # 구 코드가 빈 상권(sido_cd null)도 짝을 찾게 — using 이면 늘 거짓 [낡음](로컬 PG 시험이 실행으로 본다).
+        assert "coalesce(a.sido_cd, '') = coalesce(b.sido_cd, '')" in sql and "using (snapshot_ym, sido_cd" not in sql
+        assert "abs(a.med_pct - b.med) > 0.051" in sql
+        # 30 = 요약표 정의의 having 과 같은 수 · 없는 업종 0 포함(coalesce … 0).
+        assert "having sum(m.n) >= 30" in sql and "), 0)::float8 / p.total as share" in sql
+        assert "with snap as (select distinct snapshot_ym from mv_industry_mix_median)" in sql
+
+    @pytest.mark.parametrize("pop_raw, re_raw, stale, words", [
+        ("0|2|2", "0|70|70", False,
+         ["[정상] 업종 가운데값 표 모집단 수", "[정상] 업종 가운데값 표 70줄 = 다른 계산법으로 다시 센 값 (어긋남 0)."]),
+        ("0|2|2", "0|12|12", False, ["[정상] 업종 가운데값 표 12줄 = 다른 계산법으로 다시 센 값 (어긋남 0)."]),
+        ("0|2|2", "3|70|69", True,
+         ["[정상] 업종 가운데값 표 모집단 수",
+          "[낡음] 업종 가운데값 표 값이 다시 센 값과 다릅니다 — post_load.py 를 다시 돌리세요.",
+          "(어긋난 줄 3 · 표 70줄 · 다시 센 69줄 — 정의가 갈렸거나 재료 표보다 먼저 구워졌습니다)"]),
+        ("0|2|2", "garbage", True, ["[낡음] 업종 가운데값 표 값이 다시 센 값과 다릅니다"]),
+        ("1|2|2", "0|70|70", True,
+         ["[낡음] 업종 가운데값 표의 모집단 수", "[정상] 업종 가운데값 표 70줄"]),
+    ])
+    def test_report_runs_both_and_either_makes_it_stale(self, monkeypatch, capsys, pop_raw, re_raw, stale, words):
+        """두 대조는 한 함수 안에서 차례로 돈다 — 반환 모양 (모집단 어긋남, 낡음) 그대로 · 하나라도 걸리면 낡음."""
+        asked = []
+
+        def query_one(sql):
+            asked.append(sql)
+            return re_raw if sql == post_load.INDUSTRY_MEDIAN_RECOMPUTE_SQL else pop_raw
+        monkeypatch.setattr(post_load, "query_one", query_one)
+        got = _REAL_MEDIAN_CONSISTENCY()
+        assert got == (pop_raw.split("|")[0], stale)
+        assert asked == [post_load.INDUSTRY_MEDIAN_CONSISTENCY_SQL, post_load.INDUSTRY_MEDIAN_RECOMPUTE_SQL]
+        out = capsys.readouterr().out
+        for w in words:
+            assert w in out, w
+
     def test_refresh_lists_the_median_after_its_material(self):
         """재료(업종 표) 뒤라야 한다 — 앞이면 옛 업종 표로 굽는다(에러 0)."""
         mvs = post_load.REFRESH_MVS
