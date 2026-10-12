@@ -39,10 +39,20 @@ DB 없이 SQL 글자만 본다(CI 에는 DB 가 없다) — 대신 아래는 글
    'YYYYQ' 다섯 자리)가 생겼다. 10-01a 도 이제 라이브에 적용된 **원장**이라 고칠 수 없다 — 그래서
    본문 불변식·규칙 검사의 두 벌을 (정본, 10-01a) 에서 **(정본, 10-05b)** 로 옮겼고, 10-01a 는
    "열 줄 그대로 남아 있나"(test_the_10_01a_ledger_is_left_as_applied)만 따로 본다.
+
+ⓘ 2026-10-12b(사장님 결정 2026-10-12)에 10번째 줄 '필지 (토지 특성)'의 기준이 받아 둔 날(updated_at)에서
+   **공시 연도**(max(land_price_year))로, 다음 갱신 예정이 null 에서 **다음 해 6월 30일**(새 규칙 갈래
+   'land_year')로 바뀌었다. 10-05b 도 이제 원장이라 본문 불변식·규칙 검사의 두 벌을 **(정본, 10-12b)** 로
+   옮겼고, 10-05b 는 "옛 필지 줄 그대로 남아 있나"(test_the_10_05b_ledger_is_left_as_applied)만 따로 본다.
+   새 규칙의 날짜는 로컬 PostgreSQL 이 있으면 실제로 돌려 본다(TestLandYearRealRun — CI 는 건너뛴다).
 """
 
 import os
 import re
+import shutil
+import socket
+import subprocess
+import time
 
 import pytest
 
@@ -54,6 +64,9 @@ PERMIT_MIGRATION = os.path.join(
 # 11번째 줄(서울 개업·폐업)과 norm 셋째 갈래를 더한 마이그레이션(2026-10-05b · 결정 0033).
 OPENCLOSE_MIGRATION = os.path.join(
     ROOT, "supabase", "migrations", "2026-10-05b_district_openclose.sql")
+# 10번째 줄(필지)의 기준을 공시 연도로 바꾼 마이그레이션(2026-10-12b · 사장님 결정 2026-10-12).
+LAND_MIGRATION = os.path.join(
+    ROOT, "supabase", "migrations", "2026-10-12b_freshness_land_price_year.sql")
 SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
 
 FN = "get_data_freshness"
@@ -77,7 +90,8 @@ SOURCE_LABELS = (
 )
 
 # `timestamptz` 를 날짜로 자르는 자리 — 전부 한국 시각으로 옮긴 뒤 잘라야 한다.
-TIMESTAMPTZ_TABLES = ("building", "district", "lh_notice", "price_gate_sigungu", "parcel")
+# ⓘ parcel 은 2026-10-12b 부터 timestamptz 가 아니라 공시 연도(smallint)를 읽는다 — 이 목록에서 뺐다.
+TIMESTAMPTZ_TABLES = ("building", "district", "lh_notice", "price_gate_sigungu")
 
 
 def read(path):
@@ -143,7 +157,7 @@ def function_body(sql, name):
     return m.group(1)
 
 
-@pytest.fixture(scope="module", params=(SCHEMA, OPENCLOSE_MIGRATION), ids=("schema", "2026-10-05b"))
+@pytest.fixture(scope="module", params=(SCHEMA, LAND_MIGRATION), ids=("schema", "2026-10-12b"))
 def public_body(request):
     """public 함수의 본문에서 **주석을 걷어낸 실제 SQL**.
 
@@ -154,7 +168,7 @@ def public_body(request):
     ⓘ **지금 정본(schema.sql)과 가장 최근에 이 함수를 다시 만든 마이그레이션 두 벌**을 본다 —
        05d·10-01a 는 라이브에 적용된 날짜 원장이라 그때의 정의를 그대로 간직해야 하므로
        (test_the_old_ledger_is_left_as_applied · test_the_10_01a_ledger_is_left_as_applied),
-       이 fixture 의 대상에서 뺐다(2026-10-05b 로 10-01a → 10-05b 이동).
+       이 fixture 의 대상에서 뺐다(2026-10-05b 로 10-01a → 10-05b 이동 · 2026-10-12b 로 10-05b → 10-12b 이동).
     """
     return statements(function_body(read(request.param), FN))
 
@@ -262,11 +276,11 @@ class TestForbiddenSource:
 
 
 class TestNextExpectedRules:
-    @pytest.mark.parametrize("path", (SCHEMA, OPENCLOSE_MIGRATION), ids=("schema", "2026-10-05b"))
+    @pytest.mark.parametrize("path", (SCHEMA, LAND_MIGRATION), ids=("schema", "2026-10-12b"))
     def test_each_rule_is_written_exactly_once(self, path):
         """규칙이 두 벌이면 한쪽만 고쳐지는 날 두 자료가 서로 다른 주기를 말한다.
 
-        ⛔ 05d·10-01a 원장이 아니라 **지금 정본과 그것을 라이브에 올리는 2026-10-05b** 를 본다.
+        ⛔ 05d·10-01a·10-05b 원장이 아니라 **지금 정본과 그것을 라이브에 올리는 2026-10-12b** 를 본다.
            월간 = 기준월 + 3개월 - 하루(다음 판이 공개되는 달의 말일 — 사장님 결정 2026-10-01).
            옛 '2 months' 가 한 글자라도 남으면 매달 1일~20일 무렵 지난 날짜가 화면에 선다.
         """
@@ -276,9 +290,10 @@ class TestNextExpectedRules:
         assert body.count("interval '2 months'") == 0, (
             "옛 월간 규칙(+2개월)이 남아 있습니다 — 지금 판이 게시된 달의 말일을 띄워 "
             "매달 초 이미 지난 날짜가 화면에 섭니다")
-        assert body.count("make_date(") == 1, "연 1회 규칙이 한 번이 아닙니다"
+        # 연 1회 규칙은 둘이다 — 국세청(다음 해 3월 31일)·필지 공시 연도(다음 해 6월 30일, 2026-10-12b).
+        assert body.count("make_date(") == 2, "연 1회 규칙(국세청·필지)이 두 자리가 아닙니다"
 
-    @pytest.mark.parametrize("path", (SCHEMA, OPENCLOSE_MIGRATION), ids=("schema", "2026-10-05b"))
+    @pytest.mark.parametrize("path", (SCHEMA, LAND_MIGRATION), ids=("schema", "2026-10-12b"))
     def test_the_monthly_rule_belongs_to_permit(self, path):
         """+3개월 이 **인허가 줄**의 규칙인지 본다 — 숫자만 세면 다른 갈래로 옮겨 가도 초록이다."""
         body = statements(function_body(read(path), FN))
@@ -305,6 +320,7 @@ class TestNextExpectedRules:
         assert r"^\d{4}Q[1-4]$" in public_body, "부동산원 분기 모양 검사가 없습니다"
         assert r"^\d{4}[1-4]$" in public_body, "서울시 분기(YYYYQ 다섯 자리) 모양 검사가 없습니다"
         assert r"^\d{4}-\d{2}-\d{2}$" in public_body, "고시일 모양 검사가 없습니다"
+        assert r"^\d{4}$" in public_body, "공시 연도(네 자리) 모양 검사가 없습니다"
 
 
 class TestPermissions:
@@ -446,8 +462,8 @@ class TestPermitRuleMigration:
         assert begin.start() < create.start() < revoke.start() < commit.start() < notify, (
             "begin → create → revoke → commit → notify 순서가 아닙니다")
 
-    @pytest.mark.parametrize("path", (PERMIT_MIGRATION, OPENCLOSE_MIGRATION),
-                             ids=("2026-10-01a", "2026-10-05b"))
+    @pytest.mark.parametrize("path", (PERMIT_MIGRATION, OPENCLOSE_MIGRATION, LAND_MIGRATION),
+                             ids=("2026-10-01a", "2026-10-05b", "2026-10-12b"))
     def test_function_head_matches_the_schema(self, path, schema):
         """함수 머리(`returns table`·`language sql`·`stable`·`security definer`·`search_path`)가
 
@@ -482,10 +498,11 @@ class TestPermitRuleMigration:
         assert re.search(r"(?im)^stable\s*$", migration_head), "stable 한 줄이 없습니다"
 
     def test_comment_matches_the_schema(self, schema):
-        r"""`comment on function … is '…';` 문자열이 정본과 **가장 최근 마이그레이션(10-05b)** 에서 같아야 한다.
+        r"""`comment on function … is '…';` 문자열이 정본과 **가장 최근 마이그레이션(10-12b)** 에서 같아야 한다.
 
         ⓘ 2026-10-05b 로 comment 가 '열한 갈래'로 바뀌었다 — 10-01a 의 comment 는 원장이라 옛 글
-        그대로 남고(test_the_10_01a_ledger_is_left_as_applied), 정본과 대조하는 쪽은 10-05b 다.
+        그대로 남고(test_the_10_01a_ledger_is_left_as_applied), 정본과 대조하는 쪽은 10-05b 였다.
+        2026-10-12b 로 필지 공시 연도 규칙 한 구절이 더해져 대조 쪽이 10-12b 로 옮겼다.
 
         본문과 머리는 같은데 comment 만 다르면 `pg_description`(라이브 설명)이 schema.sql
         의 서술과 갈라진다 — 다음 사람이 schema.sql 을 읽고 다른 설명을 믿게 된다.
@@ -504,9 +521,9 @@ class TestPermitRuleMigration:
             return m.group(0).replace("\r\n", "\n")
 
         schema_comment = extract_comment(schema)
-        migration_comment = extract_comment(read(OPENCLOSE_MIGRATION))
+        migration_comment = extract_comment(read(LAND_MIGRATION))
         assert migration_comment == schema_comment, (
-            "10-05b 의 comment 가 정본(schema.sql)과 글자가 다릅니다 — 라이브 설명이 "
+            "10-12b 의 comment 가 정본(schema.sql)과 글자가 다릅니다 — 라이브 설명이 "
             "schema.sql 의 서술과 갈라집니다"
         )
 
@@ -561,3 +578,319 @@ class TestSeoulOpenCloseRule:
         y, m = int(ym[:4]), int(ym[4:]) + 5
         y, m = y + (m - 1) // 12, (m - 1) % 12 + 1
         assert datetime.date(y, m, 1) - datetime.timedelta(days=1) == datetime.date(2026, 10, 31)
+
+
+# ── 2026-10-12b — 필지 줄의 기준 = 공시 연도 · 다음 갱신 = 다음 해 6월 30일 ──────────────
+
+def parcel_row_columns(body):
+    """10번째 줄(필지)이 parcel 에서 집계하는 칸 이름들(적힌 순서 · 소문자).
+
+    잡는 꼴: `max(t.<칸>)` · `min(t.<칸>)` 뒤에 무엇이 붙든(`at time zone …`·`::date::text`) 그 줄 안의
+    `from parcel t`. 그 줄은 `select 10, '필지 (토지 특성)'` 부터 다음 `union all` 까지로 자른다.
+    ⚠️ 못 보는 것: 별칭이 t 가 아닌 꼴(`from parcel p`) · 스키마를 붙인 꼴(`public.parcel`) — 지금 판은
+       모두 `from parcel t` 다. 줄을 못 찾으면 None(가드가 빨강을 낸다).
+    """
+    m = re.search(r"(?s)select\s+10,\s*'필지 \(토지 특성\)'(.*?)union\s+all", body)
+    if not m:
+        return None
+    return [c.lower() for c in re.findall(
+        r"(?is)\b(?:max|min)\(\s*t\.(\w+)\s*\).*?\bfrom\s+parcel\s+t\b", m.group(1))]
+
+
+LAND_BRANCH = re.compile(
+    r"when\s+n\.rule_kind\s*=\s*'land_year'\s+and\s+n\.basis\s*~\s*'(?P<re>[^']*)'\s*\n"
+    r"\s*then\s+make_date\(n\.basis::int\s*\+\s*(?P<plus>\d+),\s*(?P<month>\d+),\s*(?P<day>\d+)\)")
+
+
+def land_branch(body):
+    """land_year 갈래의 (정규식, 더하는 해, 달, 날). 갈래가 없거나 꼴이 다르면 None."""
+    m = LAND_BRANCH.search(body)
+    if not m:
+        return None
+    return m.group("re"), int(m.group("plus")), int(m.group("month")), int(m.group("day"))
+
+
+EXPECTED_BRANCH = (r"^\d{4}$", 1, 6, 30)
+
+
+class TestLandYearRule:
+    """2026-10-12b — 👤 결정: 기준 = '공시 연도'(max(land_price_year)) · 다음 갱신 = 다음 해 6월 30일."""
+
+    def test_the_row_reads_the_notice_year(self, public_body):
+        assert re.search(
+            r"select\s+10,\s*'필지 \(토지 특성\)',\s*'공시 연도',\s*\n\s*"
+            r"\(select max\(t\.land_price_year\)::text from parcel t\),\s*\n\s*'land_year',\s*\n\s*"
+            r"'연 1회 \(브이월드\)'",
+            public_body), "10번째 줄이 '공시 연도' · max(land_price_year) · land_year 규칙이 아닙니다"
+
+    def test_the_row_no_longer_reads_updated_at(self, public_body):
+        """⛔ 받아 둔 날(updated_at)이 아니라 공시 연도만 읽는다."""
+        assert parcel_row_columns(public_body) == ["land_price_year"]
+
+    def test_detector_sees_the_old_updated_at_row(self):
+        """양성 대조 — 같은 탐지 함수에 옛 판(10-05b 원장)을 넣으면 updated_at 을 잡는다."""
+        old = statements(function_body(read(OPENCLOSE_MIGRATION), FN))
+        assert parcel_row_columns(old) == ["updated_at"]
+
+    @pytest.mark.parametrize("snippet", [
+        "(select (max(t.updated_at) at time zone 'Asia/Seoul')::date::text from parcel t)",
+        "(select min(t.updated_at)::text from parcel t)",
+        "(select MAX( t.updated_at )::text\n              from parcel t)",
+    ])
+    def test_detector_catches_updated_at_put_back(self, public_body, snippet):
+        """양성 대조(흔한 꼴 + 변형 꼴) — 기준을 updated_at 으로 되돌리면 같은 함수가 잡는다."""
+        good = "(select max(t.land_price_year)::text from parcel t)"
+        assert good in public_body, "전제: 지금 판의 필지 줄 꼴"
+        broken = public_body.replace(good, snippet, 1)
+        assert parcel_row_columns(broken) == ["updated_at"]
+
+    def test_branch_is_next_year_june_30_for_four_digits_only(self, public_body):
+        assert land_branch(public_body) == EXPECTED_BRANCH, (
+            "land_year 갈래가 '네 자리 연도일 때만 다음 해 6월 30일'이 아닙니다(👤 2026-10-12 결정)")
+
+    @pytest.mark.parametrize("old,new", [
+        ("make_date(n.basis::int + 1, 6, 30)", "make_date(n.basis::int + 1, 5, 31)"),
+        ("make_date(n.basis::int + 1, 6, 30)", "make_date(n.basis::int, 6, 30)"),
+        (r"n.basis ~ '^\d{4}$'", r"n.basis ~ '\d{4}'"),
+        (r"n.basis ~ '^\d{4}$'", r"n.basis ~ '^\d+$'"),
+    ])
+    def test_mutation_of_the_branch_is_noticed(self, public_body, old, new):
+        assert old in public_body, "전제: 그 글자가 지금 판에 있다"
+        assert land_branch(public_body.replace(old, new, 1)) != EXPECTED_BRANCH
+
+    def test_the_date_for_2026_is_2027_06_30(self):
+        """정본의 갈래 숫자를 그대로 읽어 파이썬으로 셈한다: make_date(연도 + 1, 6, 30)."""
+        import datetime
+        branch = land_branch(statements(function_body(read(SCHEMA), FN)))
+        assert branch
+        _, plus, month, day = branch
+        assert datetime.date(2026 + plus, month, day) == datetime.date(2027, 6, 30)
+
+    @pytest.mark.parametrize("basis", ["2026Q2", "202606", "26", "", "2026-06-30", "20262"])
+    def test_other_shapes_do_not_match_the_branch(self, basis):
+        """모양이 다르면 그 갈래가 안 걸린다(→ next_expected null) — 정본의 정규식 그대로 본다.
+
+        ⓘ PostgreSQL `~ '^\\d{4}$'` 와 파이썬 re.search 는 이 꼴(앵커 둘·숫자 넷)에서 같은 뜻이다.
+           실제 PostgreSQL 판정은 TestLandYearRealRun 이 본다(로컬에서만).
+        """
+        branch = land_branch(statements(function_body(read(SCHEMA), FN)))
+        assert branch
+        assert re.search(branch[0], basis) is None
+        assert re.search(branch[0], "2026") is not None   # 양성 대조
+
+    def test_the_10_05b_ledger_is_left_as_applied(self):
+        """⛔ 10-05b 는 라이브에 적용된 원장이다 — 옛 필지 줄('갱신일' · updated_at · 'none') 그대로."""
+        text = read(OPENCLOSE_MIGRATION)
+        body = statements(function_body(text, FN))
+        assert "'갱신일'" in body
+        assert "land_price_year" not in body
+        assert "land_year" not in body
+        assert "2026-10-12b" not in text
+
+
+@pytest.fixture(scope="module")
+def land_migration():
+    return read(LAND_MIGRATION)
+
+
+class TestLandYearMigrationShape:
+    """2026-10-12b 의 순서 — 색인(concurrently · begin 밖) → 관문 → begin → 함수 → commit → notify."""
+
+    INDEX_RE = re.compile(
+        r"(?im)^create\s+index\s+concurrently\s+if\s+not\s+exists\s+idx_parcel_land_price_year\s+"
+        r"on\s+parcel\s*\(\s*land_price_year\s*\)\s*;")
+
+    def test_order(self, land_migration):
+        code = statements(land_migration)
+        timeout = re.search(r"(?im)^set\s+statement_timeout\s*=\s*'900s'\s*;", code)
+        index = self.INDEX_RE.search(code)
+        gate = re.search(r"(?im)^do\s+\$\$", code)
+        lock = re.search(r"(?im)^set\s+lock_timeout\s*=\s*'\d+s'\s*;", code)
+        begin = re.search(r"(?im)^begin\s*;", code)
+        create = re.search(r"(?im)^create\s+or\s+replace\s+function\s+get_data_freshness\s*\(", code)
+        revoke = re.search(r"(?im)^revoke\s+all\s+on\s+function\s+get_data_freshness\s*\(", code)
+        commit = re.search(r"(?im)^commit\s*;", code)
+        notify = code.find("notify pgrst, 'reload schema';")
+        assert all((timeout, index, gate, lock, begin, create, revoke, commit)) and notify != -1
+        assert (timeout.start() < index.start() < gate.start() < lock.start() < begin.start()
+                < create.start() < revoke.start() < commit.start() < notify), (
+            "statement_timeout → 색인 → 관문 → lock_timeout → begin → 함수 → revoke → commit → notify "
+            "순서가 아닙니다")
+
+    def test_gate_checks_the_index_is_valid(self, land_migration):
+        gate = re.search(r"(?ims)^do\s+\$\$(.*?)\$\$\s*;", statements(land_migration))
+        assert gate, "관문(do 블록)이 없습니다"
+        assert "idx_parcel_land_price_year" in gate.group(1)
+        assert re.search(r"(?i)\bi\.indisvalid\b", gate.group(1))
+        assert re.search(r"(?i)\braise\s+exception\b", gate.group(1))
+
+    def test_no_concurrently_inside_the_transaction(self, land_migration):
+        code = statements(land_migration)
+        b = re.search(r"(?im)^begin\s*;", code).start()
+        c = re.search(r"(?im)^commit\s*;", code).start()
+        assert "concurrently" not in code[b:c].lower()
+
+    def test_only_the_public_function_is_recreated(self, land_migration):
+        """api 쌍둥이는 본문이 그대로라 다시 만들지 않는다 — 만들면 grant 를 다시 줘야 한다."""
+        made = re.findall(r"(?im)^create\s+(?:or\s+replace\s+)?function\s+([\w.]+)\s*\(",
+                          statements(land_migration))
+        assert made == [FN], made
+
+    def test_no_grant_at_all(self, land_migration):
+        assert not re.search(r"(?im)^\s*grant\s", statements(land_migration))
+        assert grant_targets(land_migration) == []
+
+    def test_public_original_is_revoked_again(self, land_migration):
+        assert re.search(
+            r"(?im)^revoke\s+all\s+on\s+function\s+{}\s*\(\s*\)\s+"
+            r"from\s+public,\s*anon,\s*authenticated\s*;".format(FN),
+            statements(land_migration))
+
+    def test_function_text_equals_the_schema(self, land_migration, schema):
+        """머리·본문·comment·revoke 덩어리가 정본과 글자 그대로 — 드리프트 가드는 본문만 본다."""
+        def block(sql):
+            m = re.search(
+                r"(?ms)^create\s+or\s+replace\s+function\s+get_data_freshness\s*\(.*?"
+                r"^revoke\s+all\s+on\s+function\s+get_data_freshness\s*\(\)[^\n]*;",
+                sql.replace("\r\n", "\n"))
+            assert m, "덩어리를 못 찾았습니다"
+            return m.group(0)
+        assert block(land_migration) == block(schema)
+
+    def test_schema_has_the_index(self, schema):
+        assert re.search(
+            r"(?im)^create\s+index\s+if\s+not\s+exists\s+idx_parcel_land_price_year\s+"
+            r"on\s+parcel\s*\(\s*land_price_year\s*\)\s*;", statements(schema))
+
+    def test_comment_names_the_new_rule(self, land_migration):
+        m = re.search(r"(?ims)^comment\s+on\s+function\s+{}\s*\(\s*\)\s+is(.*?);\s*$".format(FN),
+                      land_migration)
+        assert m
+        assert "공시 연도의 다음 해 6월 30일" in m.group(1)
+        assert "2026-10-12b" in m.group(1)
+        assert "갱신일" not in m.group(1)
+
+
+# ── 로컬 PostgreSQL 이 있을 때만 — 새 규칙을 실제로 돌린다 ─────────────────────────────
+
+LAND_SHIM = """
+create table snapshot_release (published_ym text);
+create table transaction (contract_ym text);
+create table building (updated_at timestamptz);
+create table district (computed_at timestamptz);
+create table lh_notice (collected_at timestamptz);
+create table arch_permit (loaded_ym text);
+create table nts_base_price (notice_date date);
+create table rent_stat (quarter char(6));
+create table price_gate_sigungu (loaded_at timestamptz);
+create table parcel (pnu char(19) primary key, land_price_year smallint, updated_at timestamptz);
+create table district_openclose (quarter text);
+-- 모양 시험용 — 필지 줄의 basis 를 아무 글자로나 바꿔 넣는 자리(실제 함수에는 없다).
+create table land_basis_override (v text);
+"""
+
+PARCEL_BASIS = "(select max(t.land_price_year)::text from parcel t)"
+
+
+@pytest.fixture(scope="module")
+def pg(tmp_path_factory):
+    psycopg2 = pytest.importorskip("psycopg2")
+    initdb, pg_ctl = shutil.which("initdb"), shutil.which("pg_ctl")
+    if not initdb or not pg_ctl:
+        pytest.skip("로컬 PostgreSQL(initdb·pg_ctl)이 없다 — CI 는 글자 가드만 본다")
+    data = str(tmp_path_factory.mktemp("pgdata"))
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    subprocess.run([initdb, "-D", data, "-U", "postgres", "-A", "trust", "-E", "UTF8",
+                    "--no-locale"], check=True, capture_output=True)
+    log = os.path.join(data, "log.txt")
+    # ⛔ capture_output 금지 — 서버 자식이 파이프를 물려받아 run() 이 끝없이 기다린다(Windows 실측).
+    subprocess.run([pg_ctl, "-D", data, "-l", log, "-w", "-t", "60", "-o",
+                    "-p {} -c listen_addresses=127.0.0.1".format(port), "start"],
+                   check=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                   stderr=subprocess.DEVNULL, timeout=120)
+    try:
+        conn = None
+        for _ in range(30):
+            try:
+                conn = psycopg2.connect(host="127.0.0.1", port=port, user="postgres", dbname="postgres")
+                break
+            except psycopg2.OperationalError:
+                time.sleep(0.5)
+        assert conn is not None, "로컬 PostgreSQL 에 못 붙었다"
+        conn.autocommit = True
+        yield conn
+        conn.close()
+    finally:
+        subprocess.run([pg_ctl, "-D", data, "-m", "fast", "-w", "stop"], stdin=subprocess.DEVNULL,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
+
+
+def _create_fn_sql(sql):
+    """`create or replace function get_data_freshness()` 부터 그 `$$;` 까지(줄머리 고정)."""
+    m = re.search(r"(?ms)^create\s+or\s+replace\s+function\s+get_data_freshness\s*\(.*?^\$\$;",
+                  sql.replace("\r\n", "\n"))
+    assert m, "함수 문장을 못 찾았습니다"
+    return m.group(0)
+
+
+def _land_row(conn, fn_sql, parcel_years=(), override=None):
+    """흉내 판 위에 함수를 만들고 필지 줄 (basis_kind, basis, next_expected) 를 돌려준다."""
+    cur = conn.cursor()
+    cur.execute("drop schema if exists public cascade; create schema public;")
+    cur.execute(LAND_SHIM)
+    if override is not None:
+        assert PARCEL_BASIS in fn_sql, "전제: 필지 줄의 basis 꼴"
+        fn_sql = fn_sql.replace(PARCEL_BASIS, "(select v from land_basis_override)", 1)
+        cur.execute("insert into land_basis_override values (%s)", (override,))
+    cur.execute(fn_sql)
+    for i, y in enumerate(parcel_years):
+        cur.execute("insert into parcel values (%s, %s, now())", ("{:019d}".format(i + 1), y))
+    cur.execute("select src, basis_kind, basis, next_expected from get_data_freshness()")
+    rows = cur.fetchall()
+    assert len(rows) == 11, "열한 줄이 아닙니다: {}".format(len(rows))
+    land = [r for r in rows if r[0] == "필지 (토지 특성)"]
+    assert len(land) == 1
+    return land[0][1:]
+
+
+class TestLandYearRealRun:
+    @pytest.mark.parametrize("path", (SCHEMA, LAND_MIGRATION), ids=("schema", "2026-10-12b"))
+    def test_2026_is_due_2027_06_30(self, pg, path):
+        kind, basis, nxt = _land_row(pg, _create_fn_sql(read(path)), (2026, 2025, None, 2018))
+        assert (kind, basis, str(nxt)) == ("공시 연도", "2026", "2027-06-30")
+
+    def test_no_parcel_rows_keeps_the_row_with_nulls(self, pg):
+        assert _land_row(pg, _create_fn_sql(read(SCHEMA)), ()) == ("공시 연도", None, None)
+
+    def test_only_null_years_keeps_the_row_with_nulls(self, pg):
+        assert _land_row(pg, _create_fn_sql(read(SCHEMA)), (None, None)) == ("공시 연도", None, None)
+
+    @pytest.mark.parametrize("bad", ["2026Q2", "202606", "26", "20262", "2026-06-30", ""])
+    def test_other_shapes_give_null_not_an_error(self, pg, bad):
+        """⛔ 모양이 안 맞으면 계산하지 않는다 — `::int` 가 터지면 표가 통째로 사라진다."""
+        _, basis, nxt = _land_row(pg, _create_fn_sql(read(SCHEMA)), override=bad)
+        assert basis == bad and nxt is None
+
+    def test_override_shim_really_feeds_the_branch(self, pg):
+        """양성 대조 — 같은 흉내 길로 '2030' 을 넣으면 2031-06-30 이 나온다(흉내가 헛돌지 않는다)."""
+        _, basis, nxt = _land_row(pg, _create_fn_sql(read(SCHEMA)), override="2030")
+        assert (basis, str(nxt)) == ("2030", "2031-06-30")
+
+    @pytest.mark.parametrize("old,new", [
+        ("make_date(n.basis::int + 1, 6, 30)", "make_date(n.basis::int + 1, 5, 31)"),
+        ("make_date(n.basis::int + 1, 6, 30)", "make_date(n.basis::int, 6, 30)"),
+    ])
+    def test_mutation_of_the_date_is_noticed(self, pg, old, new):
+        fn = _create_fn_sql(read(SCHEMA))
+        assert old in fn
+        _, _, nxt = _land_row(pg, fn.replace(old, new, 1), (2026,))
+        assert str(nxt) != "2027-06-30"
+
+    def test_mutation_loose_shape_check_is_noticed(self, pg):
+        """정규식을 앵커 없이 느슨하게 하면 '26' 에서 지어낸 날짜(0027-06-30)가 나온다."""
+        fn = _create_fn_sql(read(SCHEMA)).replace(r"n.basis ~ '^\d{4}$'", r"n.basis ~ '\d+'", 1)
+        assert r"n.basis ~ '\d+'" in fn
+        _, _, nxt = _land_row(pg, fn, override="26")
+        assert nxt is not None

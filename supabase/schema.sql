@@ -124,7 +124,13 @@ create index if not exists idx_parcel_geom    on parcel using gist (geom);
 -- get_data_freshness 의 `max(t.updated_at) from parcel t` 를 받친다(없으면 111만 행 전수).
 -- 2026-09-27 라이브 실측 2.2~3.1초(anon 제한 3초) → 이 색인. 마이그레이션 2026-09-27b
 -- (라이브는 concurrently 로 만들었다 — 정본은 새 창고용이라 그냥 만든다).
+-- ⓘ 2026-10-12b 부터 그 필지 줄은 updated_at 이 아니라 land_price_year 를 읽는다(바로 아래 색인) —
+--   이 색인이 받치는 신선도 줄은 이제 없다. 지울지는 다른 쓰임을 실측한 뒤 별건으로.
 create index if not exists idx_parcel_updated_at on parcel (updated_at);
+-- get_data_freshness 의 `max(t.land_price_year) from parcel t` 를 받친다(2026-10-12b — 필지 줄의
+-- 기준을 공시 연도로 · 사장님 결정 2026-10-12). 색인 전 라이브 실측 2,174ms(Parallel Seq Scan ·
+-- anon 제한 3초). 라이브는 concurrently 로 만든다 — 정본은 새 창고용이라 그냥 만든다.
+create index if not exists idx_parcel_land_price_year on parcel (land_price_year);
 -- 주소 검색용 인덱스는 parcel 에 없다 — 검색은 parcel 이 아니라 검색 전용 요약표
 -- mv_search_parcel 을 읽고, 그 표의 idx_msp_road_key·idx_msp_jibun_key 가 받친다
 -- (아래 §검색 전용 요약표). parcel 위의 같은 색인 둘(idx_parcel_road_key·
@@ -5940,9 +5946,10 @@ grant execute on function api.get_parcel_land_price(text) to anon, authenticated
 --    거짓말을 한다(코드는 한 줄도 안 고쳤는데 화면이 옛 분기를 말한다). 기준일은 창고에서
 --    읽고, "다음 갱신 예정"은 **규칙으로 계산**한다 — 어느 쪽도 사람이 적는 숫자가 아니다.
 --
--- 규칙은 셋뿐이고 함수 안에 한 번씩만 적혀 있다: 분기 자료는 분기말 + 5개월 - 하루(다음
+-- 규칙은 넷뿐이고 함수 안에 한 번씩만 적혀 있다: 분기 자료는 분기말 + 5개월 - 하루(다음
 --    분기가 공개되는 달의 말일), 월간 자료는 기준월 + 3개월 - 하루(다음 판이 공개되는 달의
---    말일), 국세청 기준시가는 고시일의 다음 해 3월 31일. 주기가 없는 자료는 null 이다 —
+--    말일), 국세청 기준시가는 고시일의 다음 해 3월 31일, 필지(개별공시지가)는 공시 연도의
+--    다음 해 6월 30일(2026-10-12b · 사장님 결정). 주기가 없는 자료는 null 이다 —
 --    없는 주기를 지어내면 "늦었다"는 거짓 신호가 화면에 뜬다.
 --
 -- ⓘ 월간 규칙은 2026-10-01a 에 바뀌었다(사장님 결정 2026-10-01). 옛 규칙(기준월 + 2개월 - 하루)은
@@ -6022,9 +6029,11 @@ as $$
            'none',
            '재생성 때 (결재 사항)'
     union all
-    select 10, '필지 (토지 특성)', '갱신일',
-           (select (max(t.updated_at) at time zone 'Asia/Seoul')::date::text from parcel t),
-           'none',
+    -- 2026-10-12b — 기준은 우리가 받아 둔 날(updated_at)이 아니라 개별공시지가의 공시 연도다
+    --   (사장님 결정 2026-10-12). smallint 라 '2026' 네 자리로 나온다.
+    select 10, '필지 (토지 특성)', '공시 연도',
+           (select max(t.land_price_year)::text from parcel t),
+           'land_year',
            '연 1회 (브이월드)'
     union all
     -- 결정 0033 — 서울시 상권분석서비스 개업·폐업. 분기 꼴이 'YYYYQ' 다섯 자리(Q 없음)다.
@@ -6063,6 +6072,10 @@ as $$
            -- 연 1회: 다음 해 3월 31일(국세청 고시가 매년 3월).
            when n.rule_kind = 'nts' and n.basis ~ '^\d{4}-\d{2}-\d{2}$'
              then make_date(left(n.basis, 4)::int + 1, 3, 31)
+           -- 연 1회: 개별공시지가는 공시 연도의 다음 해 6월 30일(사장님 결정 2026-10-12).
+           --   네 자리 연도일 때만 — 모양이 다르면 ::int 가 터져 표가 통째로 사라진다.
+           when n.rule_kind = 'land_year' and n.basis ~ '^\d{4}$'
+             then make_date(n.basis::int + 1, 6, 30)
          end as next_expected,
          n.cadence
   from norm n
@@ -6071,12 +6084,13 @@ $$;
 
 comment on function get_data_freshness() is
   '화면 아래 "이 자료는 언제 것인가" 표. 열한 갈래 자료의 가장 최근 도장(분기·계약월·적재일·'
-  '계산일·수집일·기준월·고시일·갱신일)을 창고에서 읽어 한 줄씩 준다. '
+  '계산일·수집일·기준월·고시일·공시 연도)을 창고에서 읽어 한 줄씩 준다. '
   '⛔ 숫자를 화면에 박지 않기 위한 함수다 — 신선도를 글자로 적어 두면 적재하는 순간부터 '
   '그 글자만 거짓말을 한다. next_expected 도 사람이 적는 값이 아니라 규칙으로 계산한다: '
   '분기 자료는 분기말 달 + 5개월 - 하루(다음 분기가 공개되는 달의 말일 — 분기 꼴 셋 '
   '''YYYYMM''·''YYYYQn''·''YYYYQ''(서울시 다섯 자리)를 같은 분기말 달로 맞춘 뒤 한 번만 계산), 월간 자료는 '
-  '기준월 + 3개월 - 하루(다음 판이 공개되는 달의 말일), 국세청 기준시가는 고시일의 다음 해 3월 31일. '
+  '기준월 + 3개월 - 하루(다음 판이 공개되는 달의 말일), 국세청 기준시가는 고시일의 다음 해 3월 31일, '
+  '필지(개별공시지가)는 공시 연도의 다음 해 6월 30일(기준값이 네 자리 연도일 때만). '
   '주기가 없는 자료는 null 이다 — 없는 주기를 지어내면 "늦었다"는 거짓 신호가 뜬다. '
   '기준값이 그 모양이 아니면 계산하지 않고 그 칸만 비운다(to_date 가 터지면 표가 통째로 '
   '사라진다). timestamptz 는 전부 Asia/Seoul 로 옮겨 날짜를 자른다 — 이 DB 가 UTC 라 '
@@ -6086,7 +6100,7 @@ comment on function get_data_freshness() is
   '줄을 빼면 "그런 자료를 안 쓴다"로 읽힌다). '
   'security definer (열한 표가 전부 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. '
   '나가는 것은 집계 도장 열한 개뿐이고 원본 행은 한 줄도 안 나간다). 2026-09-05d · 월간 규칙 2026-10-01a · '
-  '서울 개업·폐업 2026-10-05b';
+  '서울 개업·폐업 2026-10-05b · 필지 공시 연도 2026-10-12b';
 
 -- ⚠️ create or replace 는 권한을 유지하지만, 대시보드가 같은 함수를 다시 만들면
 --    Supabase 기본 권한이 anon 을 자동으로 붙인다. 만든 자리에서 다시 닫는다.

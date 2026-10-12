@@ -92,6 +92,24 @@ describe('basisText — 기준값을 사람이 읽는 글자로', () => {
   it('앞뒤 공백은 털어낸다 — 서버가 char 칸을 그대로 주면 공백이 붙는다', () => {
     expect(basisText(row({ basis_kind: '분기', basis: ' 202606 ' }))).toBe('2026년 2분기');
   });
+
+  it("필지 공시 연도 '2026'(네 자리)은 '2026년'으로 적는다 (2026-10-12b)", () => {
+    expect(basisText(row({ basis_kind: '공시 연도', basis: '2026' }))).toBe('2026년');
+    expect(basisText(row({ basis_kind: '공시 연도', basis: '2018' }))).toBe('2018년');
+    // 종류와 무관하게 모양으로 가른다 — 네 자리 연도는 다른 갈래와 겹치지 않는다.
+    expect(basisText(row({ basis_kind: '분기', basis: '2026' }))).toBe('2026년');
+  });
+
+  it('⛔ 네 자리가 아닌 숫자는 연도 갈래에 안 걸린다 — 원본 그대로이거나 원래 갈래 그대로', () => {
+    expect(basisText(row({ basis_kind: '공시 연도', basis: '26' }))).toBe('26');
+    expect(basisText(row({ basis_kind: '공시 연도', basis: '202' }))).toBe('202');
+    expect(basisText(row({ basis_kind: '공시 연도', basis: '2026년' }))).toBe('2026년');
+    expect(basisText(row({ basis_kind: '공시 연도', basis: '02026' }))).toBe('02026');
+    // 기존 꼴(분기·달·날짜)은 결과가 그대로다.
+    expect(basisText(row({ basis_kind: '분기', basis: '20262' }))).toBe('2026년 2분기');
+    expect(basisText(row({ basis_kind: '계약월', basis: '202606' }))).toBe('2026년 6월');
+    expect(basisText(row({ basis_kind: '고시일', basis: '2026-01-01' }))).toBe('2026년 1월 1일');
+  });
 });
 
 describe('nextText — 다음 갱신 예정', () => {

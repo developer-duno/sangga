@@ -104,11 +104,12 @@ function tenRows(): DataFreshnessRow[] {
       next_expected: null,
       cadence: '재생성 때 (결재 사항)',
     }),
+    // 2026-10-12b — 기준 = 공시 연도(네 자리) · 다음 갱신 = 공시 연도의 다음 해 6월 30일.
     row({
       src: '필지 (토지 특성)',
-      basis_kind: '갱신일',
-      basis: '2026-08-29',
-      next_expected: null,
+      basis_kind: '공시 연도',
+      basis: '2026',
+      next_expected: '2027-06-30',
       cadence: '연 1회 (브이월드)',
     }),
   ];
@@ -158,6 +159,19 @@ describe('DataFreshness — 서버가 답할 때', () => {
     expect(screen.getByText('2026년 8월 28일')).toBeTruthy(); // 수집일
   });
 
+  it("필지 줄은 기준 칸에 '공시 연도 2026년' 이라 적는다 (2026-10-12b)", async () => {
+    const { container } = render(<DataFreshness today="2026-10-12" />);
+
+    const th = await screen.findByText('필지 (토지 특성)');
+    const tr = th.closest('tr');
+    expect(tr).not.toBeNull();
+    const cells = tr!.querySelectorAll('td');
+    // 기준 칸 = 종류 + 값 — 사람이 읽는 글 그대로.
+    expect(cells[0].textContent).toBe('공시 연도 2026년');
+    expect(cells[1].textContent).toBe('2027년 6월 30일 무렵');
+    expect(container.querySelectorAll('.fresh__table tbody tr').length).toBe(10);
+  });
+
   it('다음 갱신 예정이 없는 자료는 그렇게 적는다 — 없는 주기를 지어내지 않는다', async () => {
     // ⛔ 오늘을 못 박는다 — 실제 오늘에 기대면 2026-10-31 이 지나는 날 저절로 빨개진다.
     render(<DataFreshness today="2026-10-01" />);
@@ -165,8 +179,9 @@ describe('DataFreshness — 서버가 답할 때', () => {
     // 분기 자료 둘은 같은 날 함께 갱신된다(같은 규칙을 쓰므로) — 그래서 두 줄이다.
     expect(await screen.findAllByText('2026년 10월 31일 무렵')).toHaveLength(2);
     expect(screen.getByText('2027년 3월 31일 무렵')).toBeTruthy();
-    // 열 줄 중 여섯 줄이 주기가 없다(실거래·건축물대장·상권 경계·LH·성적표·필지).
-    expect(screen.getAllByText('정해진 주기 없음')).toHaveLength(6);
+    expect(screen.getByText('2027년 6월 30일 무렵')).toBeTruthy(); // 필지 공시 연도 2026 → 다음 해 6월 30일
+    // 열 줄 중 다섯 줄이 주기가 없다(실거래·건축물대장·상권 경계·LH·성적표 — 필지는 2026-10-12b 부터 있다).
+    expect(screen.getAllByText('정해진 주기 없음')).toHaveLength(5);
     // 인허가의 예정일(8월 31일)은 이 '오늘'보다 앞이다 — 지났다고 적는다.
     expect(screen.getByText('2026년 8월 31일 무렵 — 지났습니다, 갱신 전')).toBeTruthy();
   });
