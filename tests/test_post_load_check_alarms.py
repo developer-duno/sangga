@@ -1069,6 +1069,8 @@ def test_median_consistency_with_two_quarters_in_mix_stays_green(monkeypatch, ca
 
     def query_one(sql):
         asked.append(sql)
+        if sql == post_load.INDUSTRY_MEDIAN_RECOMPUTE_SQL:
+            return "0|70|70"   # 값 다시 세기(같은 report 함수 안 둘째 질의) — 정상
         return "0|2|2" if sql == post_load.INDUSTRY_MEDIAN_CONSISTENCY_SQL else ""
     monkeypatch.setattr(post_load, "query_one", query_one)
     for name, val in (
@@ -1094,4 +1096,7 @@ def test_median_consistency_with_two_quarters_in_mix_stays_green(monkeypatch, ca
     assert post_load.main(["--check"]) == 0
     assert post_load.INDUSTRY_MEDIAN_CONSISTENCY_SQL in asked
     assert "where snapshot_ym in (select snapshot_ym from mv_industry_mix_median)" in post_load.INDUSTRY_MEDIAN_CONSISTENCY_SQL
-    assert "[정상] 업종 가운데값 표 모집단 수" in capsys.readouterr().out
+    assert post_load.INDUSTRY_MEDIAN_RECOMPUTE_SQL in asked
+    out = capsys.readouterr().out
+    assert "[정상] 업종 가운데값 표 모집단 수" in out
+    assert "[정상] 업종 가운데값 표 70줄 = 다른 계산법으로 다시 센 값 (어긋남 0)." in out
