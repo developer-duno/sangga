@@ -111,6 +111,8 @@ def p7_alarms_quiet(monkeypatch):
     # 업종 가운데값 표 분기·모집단 대조(2026-10-12a · 물결 2-3)도 뺀다 — 판정은 아래 TestIndustryMedianChecks.
     monkeypatch.setattr(post_load, "report_industry_median_freshness", lambda: ("202606", "202606", False))
     monkeypatch.setattr(post_load, "report_industry_median_consistency", lambda: ("0", False))
+    monkeypatch.setattr(post_load, "report_industry_median_m_freshness", lambda: ("202606", "202606", False))
+    monkeypatch.setattr(post_load, "report_industry_median_m_consistency", lambda: ("0", False))
 
 
 # ── 1. ANALYZE 대상 ─────────────────────────────────────────────────────────
@@ -576,9 +578,12 @@ class TestAnonExposure:
             # 업종 비중 비교(2026-10-12a · 물결 2-3). 요약표 mv_industry_mix_median 은 **여기 없다** —
             # 상권 총수와 업종별 가운데값(백분율)·모집단 수만 나간다.
             "api.list_industry_median",
+            # 업종 비중 비교 중분류(2026-10-13a · 물결 2-3b). 요약표 mv_industry_mix_median_m 은 **여기 없다** —
+            # 그 상권의 그 대분류 가게 수와 중분류별 가운데값(백분율)·모집단 수만 나간다.
+            "api.list_industry_median_m",
         )
-        # 읽기 4 + 부르기 27 = `--check` 총계 31(2026-10-12a 업종 비중 비교로 30 → 31).
-        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 31
+        # 읽기 4 + 부르기 28 = `--check` 총계 32(2026-10-12a 업종 비중 비교로 30 → 31 · 2026-10-13a 중분류로 31 → 32).
+        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 32
 
     def test_pending_list_is_empty_after_2026_09_05a(self):
         """⛔ **비어 있어야 한다** — 잔존 노출 9개는 2026-09-05a 로 닫혔다.
@@ -1351,12 +1356,12 @@ class TestJudgeSnapshotRelease:
 
 
 class TestPublishTxSql:
-    """분기 요약표 다섯 + 분기 대조 + 표지 올림 = 한 트랜잭션 (2026-10-07 · 👤 (가)안 · 맹점 검사관 🟠1 · 다섯째 10-12)."""
+    """분기 요약표 여섯 + 분기 대조 + 표지 올림 = 한 트랜잭션 (2026-10-07 · 👤 (가)안 · 맹점 검사관 🟠1 · 다섯째 10-12 · 여섯째 10-13)."""
 
     def test_quarter_and_non_quarter_split(self):
         assert post_load.QUARTER_MVS == (
             "mv_parcel_store_names", "mv_coverage_stats", "mv_district_industry_mix",
-            "mv_district_industry_floor", "mv_industry_mix_median")
+            "mv_district_industry_floor", "mv_industry_mix_median", "mv_industry_mix_median_m")
         assert set(post_load.QUARTER_MVS) | set(post_load.NON_QUARTER_MVS) == set(post_load.REFRESH_MVS)
         assert not set(post_load.QUARTER_MVS) & set(post_load.NON_QUARTER_MVS)
         assert len(post_load.NON_QUARTER_MVS) == 5
@@ -1369,18 +1374,20 @@ class TestPublishTxSql:
         assert lines[-1] == "commit;"
         assert sql.count("begin;") == 1 and sql.count("commit;") == 1
 
-    def test_refreshes_exactly_the_five_inside(self):
+    def test_refreshes_exactly_the_six_inside(self):
         sql = post_load.build_publish_tx_sql()
         body = sql.split("begin;", 1)[1].split("commit;", 1)[0]
         for mv in post_load.QUARTER_MVS:
             assert "refresh materialized view concurrently {};".format(mv) in body, mv
         for mv in post_load.NON_QUARTER_MVS:
             assert mv not in body, "분기와 무관한 {} 가 트랜잭션 안에 들어왔습니다".format(mv)
-        assert body.count("refresh materialized view") == 5
+        assert body.count("refresh materialized view") == 6
         assert "refresh materialized view concurrently mv_district_industry_floor;" in body
         # ⛔ 가운데값 표는 업종 표를 재료로 굽는다 — 같은 트랜잭션 안에서 업종 표 **뒤**라야 방금 구운 판을 본다.
         assert (body.index("refresh materialized view concurrently mv_district_industry_mix;")
                 < body.index("refresh materialized view concurrently mv_industry_mix_median;"))
+        assert (body.index("refresh materialized view concurrently mv_district_industry_mix;")
+                < body.index("refresh materialized view concurrently mv_industry_mix_median_m;"))
         # 굽기가 대조·올림보다 먼저다.
         assert body.index("refresh materialized view") < body.index("do $$")
 
@@ -1398,15 +1405,16 @@ class TestPublishTxSql:
         lock = do.index("from public.snapshot_release r where r.id = 1 for update")
         assert do.index("select r.loaded_ym into v") < lock
         cmp_at = do.index("if s is distinct from v or c is distinct from v or m is distinct from v"
-                          " or f is distinct from v\n     or g is distinct from v then")
+                          " or f is distinct from v\n     or g is distinct from v or h is distinct from v then")
         upd = do.index("update public.snapshot_release set published_ym = v, published_at = now()")
         assert lock < cmp_at < upd
         assert "max(t.store_snapshot_ym) into s from public.mv_parcel_store_names" in do
         assert "max(t.snapshot_ym) into c from public.mv_coverage_stats" in do
         assert "max(t.snapshot_ym) into m from public.mv_district_industry_mix" in do
         assert "max(t.snapshot_ym) into f from public.mv_district_industry_floor" in do
-        assert "max(t.snapshot_ym) into g from public.mv_industry_mix_median" in do
-        assert "· 층 % · 가운데값 %" in do and "v, s, c, m, f, g;" in do
+        assert "max(t.snapshot_ym) into g from public.mv_industry_mix_median t;" in do
+        assert "max(t.snapshot_ym) into h from public.mv_industry_mix_median_m t;" in do
+        assert "· 층 % · 가운데값 % · 중분류 가운데값 %" in do and "v, s, c, m, f, g, h;" in do
         assert "raise exception" in do[cmp_at:upd]
         assert "where id = 1 and published_ym < v;" in do[upd:]
 
@@ -1613,6 +1621,8 @@ class TestIndustryMedianChecks:
     @pytest.mark.parametrize("name, val", [
         ("report_industry_median_freshness", lambda: ("202603", "202606", True)),
         ("report_industry_median_consistency", lambda: ("1", True)),
+        ("report_industry_median_m_freshness", lambda: ("202603", "202606", True)),
+        ("report_industry_median_m_consistency", lambda: ("1", True)),
     ])
     def test_check_exits_1_when_stale(
         self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh,
@@ -1735,6 +1745,8 @@ class TestStoreNamesFreshness:
         ("report_industry_floor_consistency", lambda: ("3", True)),
         ("report_industry_median_freshness", lambda: ("202603", "202606", True)),
         ("report_industry_median_consistency", lambda: ("1", True)),
+        ("report_industry_median_m_freshness", lambda: ("202603", "202606", True)),
+        ("report_industry_median_m_consistency", lambda: ("1", True)),
     ])
     def test_apply_rechecks_the_floor_table_after_the_transaction(self, monkeypatch, name, val):
         """갱신 흐름도 층 분포 표(2026-10-09b)·가운데값 표(2026-10-12a)를 다시 잰다 — 어긋나면 exit 1."""
