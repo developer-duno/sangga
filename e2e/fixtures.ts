@@ -563,8 +563,10 @@ export function dataFreshness(): DataFreshnessRow[] {
     },
     {
       // 자료가 아직 한 행도 없는 갈래도 **줄은 나온다**(화면이 '자료 없음'이라 적는다).
+      // 2026-10-12b 서버 모양 — 기준 종류 '공시 연도'. 자료가 0행이면 basis 가 null 이고, 서버 규칙은
+      // 네 자리 연도일 때만 날짜를 내므로 next_expected 도 null 이다(값이 있으면 '2026' · '2027-06-30').
       src: '필지 (토지 특성)',
-      basis_kind: '갱신일',
+      basis_kind: '공시 연도',
       basis: null,
       next_expected: null,
       cadence: '연 1회 (브이월드)',
