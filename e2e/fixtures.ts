@@ -6,8 +6,10 @@ import type {
   DistrictOpenClose,
   FloorRow,
   FloorUnit,
+  IndustryDetail,
   IndustryFloors,
   IndustryMedian,
+  IndustryMedianM,
   IndustryMix,
   LhNotice,
   NearbyPermits,
@@ -266,6 +268,71 @@ export function industryMedian(over: Partial<IndustryMedian> = {}): IndustryMedi
         ],
       },
       { district_id: '3130001', type: '전통시장', total: 12, pop: null, cats: [] },
+    ],
+    ...over,
+  };
+}
+
+/**
+ * 업종 상세(함수 list_industry_detail) — 음식(I2)을 고른 뒤의 상세 블록 셋. 상권 열쇠는 `industryMixTwoDistricts()` 와 같다.
+ * 골목 음식 120곳(카페 = 비알코올 26곳 → 막대 21.7% · 👤 ㉘ 예시) · 전통시장 음식 7곳 · 반경 음식 150곳. 총수 = cats 합.
+ */
+export function industryDetailTwoDistricts(): IndustryDetail {
+  return {
+    snapshot_ym: '202606',
+    radius_m: 500,
+    cat_l_cd: 'I2',
+    districts: [
+      {
+        district_id: '3110001',
+        name: '역삼골목',
+        total: 120,
+        cats: [
+          { cd: 'I201', nm: '한식', n: 46 },
+          { cd: 'I212', nm: '비알코올', n: 26 },
+          { cd: 'I210', nm: '기타 간이', n: 24 },
+          { cd: 'I211', nm: '주점', n: 24 },
+        ],
+      },
+      { district_id: '3130001', name: '역삼시장', total: 7, cats: [{ cd: 'I201', nm: '한식', n: 7 }] },
+    ],
+    radius: {
+      total: 150,
+      cats: [
+        { cd: 'I201', nm: '한식', n: 100 },
+        { cd: 'I212', nm: '비알코올', n: 50 },
+      ],
+    },
+  };
+}
+
+/**
+ * 업종 비중 비교 · 중분류(함수 list_industry_median_m · 물결 2-3b) — 위 상세와 짝. 골목(음식 120곳 · 같은 종류 음식 30곳
+ * 이상 526곳 모집단)과 전통시장(음식 7곳 — 30곳 미만이라 pop null · cats []). 숫자는 2026-10-13 운영 실측 서울 골목 음식 안
+ * 가운데값(한식 38.1 · 기타 간이 20.6 · 비알코올 15.2 · 주점 9.8 · 동남아시아 0.0)에서 땄다 — 동남아시아는 상세에 없는
+ * 중분류라 화면에 줄이 없다(가운데값만 있고 막대가 없는 줄은 그리지 않는다).
+ */
+export function industryMedianM(over: Partial<IndustryMedianM> = {}): IndustryMedianM {
+  return {
+    snapshot_ym: '202606',
+    cat_l_cd: 'I2',
+    min_total: 30,
+    min_pop: 30,
+    districts: [
+      {
+        district_id: '3110001',
+        type: '골목상권',
+        total: 120,
+        pop: { scope: 'type', sido_cd: '11', district_type: '골목상권', n: 526 },
+        cats: [
+          { cd: 'I201', nm: '한식', med_pct: 38.1 },
+          { cd: 'I210', nm: '기타 간이', med_pct: 20.6 },
+          { cd: 'I212', nm: '비알코올', med_pct: 15.2 },
+          { cd: 'I211', nm: '주점', med_pct: 9.8 },
+          { cd: 'I205', nm: '동남아시아', med_pct: 0.0 },
+        ],
+      },
+      { district_id: '3130001', type: '전통시장', total: 7, pop: null, cats: [] },
     ],
     ...over,
   };

@@ -5,6 +5,7 @@ import {
   INDUSTRY_DETAIL_FN,
   INDUSTRY_FLOORS_FN,
   INDUSTRY_MEDIAN_FN,
+  INDUSTRY_MEDIAN_M_FN,
   NEARBY_PERMITS_FN,
 } from '../lib/appConstants';
 import { SECTION_PLAN, type SectionPlan } from '../lib/sectionCards';
@@ -14,6 +15,7 @@ import type {
   IndustryFloorScope,
   IndustryFloors,
   IndustryMedian,
+  IndustryMedianM,
   IndustryMix,
   IndustryScope,
 } from '../types';
@@ -27,8 +29,10 @@ import {
   isIndustryDetail,
   isIndustryFloors,
   isIndustryMedian,
+  isIndustryMedianM,
   isIndustryMix,
   MEDIAN_BADGE,
+  medianMViewOf,
   medianViewOf,
   sameCatMs,
   toBars,
@@ -129,6 +133,11 @@ export function IndustryMixSection({
    * (인허가 줄과 같은 결 — "불러오는 중"·"0%" 를 적지 않는다).
    */
   const [median, setMedian] = useState<{ pnu: string; data: IndustryMedian } | null>(null);
+  /**
+   * 고른 대분류 안 중분류 몫의 가운데값(물결 2-3b) — 물어본 필지·대분류와 함께 둔다(그릴 때 지금 것과 견준다).
+   * **null 이면 상세 상권 블록의 중분류 비교 글·설명 줄만 없다** — 아직 안 옴·실패·함수 없음·모양 이상이 모두 같은 null.
+   */
+  const [medianM, setMedianM] = useState<{ pnu: string; cat: string; data: IndustryMedianM } | null>(null);
   /**
    * 고른 대분류의 층 묶음(물결 2-2) · 창업자 칩이면 그 짝 중분류의 층 묶음.
    * **null 이면 층 줄만 없다** — 아직 안 왔을 때·실패·모양 이상이 모두 같은 null 이다(인허가 줄과 같은 결 —
@@ -272,6 +281,35 @@ export function IndustryMixSection({
         //      지금 고른 업종의 답은 아직 오는 중이다.
         if (data.cat_l_cd !== pickedCat) return;
         setDetail(data);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pnu, pickedCat]);
+
+  /*
+    상세 상권 블록의 중분류 비교 글(물결 2-3b) — 대분류를 고른 뒤 상세와 **따로 묻는다**(층 줄과 같은 꼴 · `sidePrefetch`
+    에 넣지 않는다 — 대분류를 골라야 인자가 정해진다). 실패·없음·모양 이상이면 비교 글만 빠지고 상세 블록은 그대로 선다.
+  */
+  useEffect(() => {
+    // 앞 대분류·앞 건물의 비교 글이 새 대분류 밑에 잠깐이라도 붙어 있으면 그 순간이 그대로 틀린 정보다.
+    setMedianM(null);
+    if (pickedCat === null) return;
+    let cancelled = false;
+
+    supabase
+      .rpc(INDUSTRY_MEDIAN_M_FN, { p_pnu: pnu, p_cat_l: pickedCat })
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error || !isIndustryMedianM(data)) {
+          // 마이그레이션 적용 전 라이브가 이 상태다(PGRST202). 중분류 비교 글만 빠지고 상세 블록은 선다.
+          console.warn('업종 중분류 비중 비교 조회 실패 — 비교 글 없이 표시합니다', error ?? data);
+          return;
+        }
+        // ⚠️ 늦게 도착한 답은 버린다(상세·층 줄과 같은 이유) — 물어본 대분류가 지금 것과 같을 때만.
+        if (data.cat_l_cd !== pickedCat) return;
+        setMedianM({ pnu, cat: pickedCat, data });
       });
 
     return () => {
@@ -446,6 +484,9 @@ export function IndustryMixSection({
           floorScopes={floorScopes}
           chipFloorScopes={chipFloorScopes}
           chipLabel={chipLabel}
+          // ⛔ 그릴 때도 물어본 필지·대분류와 지금 것을 견준다(층 줄과 같은 결) — 대분류를 바꾼 첫 렌더에는 effect 가
+          //    아직 옛 답을 안 지웠으므로, 견주지 않으면 옛 대분류의 비교 글이 새 대분류 블록에 한 번 그려진다.
+          medianM={medianM !== null && medianM.pnu === pnu && medianM.cat === pickedCat ? medianM.data : null}
         />
       )}
 
@@ -611,6 +652,7 @@ function DetailBlocks({
   floorScopes,
   chipFloorScopes,
   chipLabel,
+  medianM,
 }: {
   mix: IndustryMix;
   detail: IndustryDetail | null;
@@ -625,6 +667,11 @@ function DetailBlocks({
   /** 블록 열쇠 → 칩 짝 중분류의 층 묶음. 칩이 아니면 빈 표. */
   chipFloorScopes: Map<string, IndustryFloorScope>;
   chipLabel: string;
+  /**
+   * 고른 대분류 안 중분류 몫의 가운데값(물결 2-3b) — 상권 블록에만 쓴다(반경 블록엔 없다). null 이면 비교 글 없이 지금 그대로.
+   * ⛔ 숫자만 나란히 적는다(판단 낱말 0 · 👤 ㉚ 어제 틀 그대로).
+   */
+  medianM: IndustryMedianM | null;
 }) {
   const label = pickedNm || pickedCat;
 
@@ -647,7 +694,7 @@ function DetailBlocks({
     );
   }
 
-  const blocks: Array<{ key: string; heading: string; scope: IndustryScope }> = [];
+  const blocks: Array<{ key: string; heading: string; scope: IndustryScope; med: MedianView | null }> = [];
   for (const d of detail.districts) {
     // 이름표는 대분류 응답 쪽이 더 자세하다(상권 종류가 거기에만 온다).
     const named = mix.districts.find((x) => x.district_id === d.district_id);
@@ -655,6 +702,8 @@ function DetailBlocks({
       key: d.district_id,
       heading: `${named ? districtLabel(named) : d.name || '(이름 없는 상권)'} 안`,
       scope: d,
+      // 중분류 비교 글(물결 2-3b)은 상권 블록에만 — 분기가 상세와 같고 물어본 대분류가 지금 것일 때만.
+      med: medianMViewOf(medianM, d.district_id, detail.snapshot_ym, pickedCat, label),
     });
   }
   if (detail.radius) {
@@ -662,6 +711,8 @@ function DetailBlocks({
       key: '__radius__',
       heading: `반경 ${detail.radius_m.toLocaleString('ko-KR')}m 안`,
       scope: detail.radius,
+      // 반경 블록엔 비교 글이 없다 — 견줄 상대가 없다(형제 물결 2-3 과 같은 결정 ㉓).
+      med: null,
     });
   }
 
@@ -684,12 +735,26 @@ function DetailBlocks({
                 {`${label} ${b.scope.total.toLocaleString('ko-KR')}곳`}
               </strong>
             </h4>
+            {/* 중분류 비교값 설명 한 줄(물결 2-3b) — 배지 C + 모집단 곳 수(절대 규칙 3) · 상권 블록만. */}
+            {b.med?.note && (
+              <p className="mix__med-note">
+                <span className="grade__badge grade__badge--est">{MEDIAN_BADGE}</span>
+                {b.med.note}
+              </p>
+            )}
+            {/* 그 대분류 가게가 기준에 못 미치면 비교값 대신 사실 한 줄(변명 문구 금지). */}
+            {b.med?.tooSmall && b.scope.cats.length > 0 && <p className="mix__med-note">{b.med.tooSmall}</p>}
             {b.scope.cats.length === 0 ? (
               <p className="mix__none">이 안에 {label} 가게가 없습니다.</p>
             ) : (
               <ul className="mix__bars">
                 {toBars(b.scope).map((c) => (
-                  <MixBarRow key={c.cd} bar={c} hit={hitCds.includes(c.cd)} />
+                  <MixBarRow
+                    key={c.cd}
+                    bar={c}
+                    hit={hitCds.includes(c.cd)}
+                    med={b.med?.lines.get(c.cd) ?? null}
+                  />
                 ))}
               </ul>
             )}

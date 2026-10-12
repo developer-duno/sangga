@@ -10,6 +10,8 @@ import {
   industryMix,
   industryFloors,
   industryMedian,
+  industryMedianM,
+  industryDetailTwoDistricts,
   industryMixTwoDistricts,
   nearbyPermits,
   basePrices,
@@ -90,6 +92,10 @@ const INDUSTRY_FLOORS_PATTERN = '**/rest/v1/rpc/list_industry_floors*';
 // 업종 비중 비교(물결 2-3) — 업종 분포 카드의 상권 블록 비교 글. 건물을 열 때 곁 카드와 함께 미리 나간다.
 // 기본은 **함수가 없는 상태**(비교 글만 조용히 빠진다 — 다른 스펙의 카드 글자가 그대로다). 비교 글을 보는 것은 스펙 AW 뿐이다.
 const INDUSTRY_MEDIAN_PATTERN = '**/rest/v1/rpc/list_industry_median*';
+// 업종 비중 비교 · 중분류(물결 2-3b) — 대분류를 고른 뒤 상세와 따로 부른다. 기본은 **함수가 없는 상태**(중분류 비교 글만
+// 조용히 빠진다). 비교 글을 보는 것은 스펙 AX 뿐이다.
+// ⚠️ 위 대분류 패턴(`list_industry_median*`)도 이 이름을 잡는다 — 이 목업은 늘 그것 **뒤에** 등록한다(나중 것이 먼저 잡힌다).
+const INDUSTRY_MEDIAN_M_PATTERN = '**/rest/v1/rpc/list_industry_median_m*';
 // 둘레에 새로 올라오는 상가 건물(건축 인허가). 업종 분포 카드 **안**에 한 줄로 붙지만
 // 자료는 완전히 다른 것이다(장사 중인 가게 수 ↔ 아직 안 지어진 건물 수).
 // ⚠️ 기본값은 역시 **함수가 없는 상태**다 — 안 막으면 실존하지 않는 도메인으로 요청이
@@ -200,6 +206,8 @@ async function mockFloorStack(
   await mockMissingFunction(page, INDUSTRY_FLOORS_PATTERN);
   // 업종 비중 비교(물결 2-3)도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 스펙 AW 만 덮어쓴다.
   await mockMissingFunction(page, INDUSTRY_MEDIAN_PATTERN);
+  // 중분류(물결 2-3b)도 — 대분류 패턴 뒤에 등록해야 이쪽이 잡는다. 스펙 AX 만 덮어쓴다.
+  await mockMissingFunction(page, INDUSTRY_MEDIAN_M_PATTERN);
   // 기준시가도 기본이 **함수가 없는 상태**다(위 상수 주석 참조).
   if (bases === undefined) {
     await mockMissingFunction(page, BASE_PRICE_PATTERN);
@@ -1162,6 +1170,7 @@ test.describe('층별 스택뷰 — 종이로 뽑기', () => {
     await mockMissingFunction(page, INDUSTRY_DETAIL_PATTERN);
     await mockMissingFunction(page, INDUSTRY_FLOORS_PATTERN);
     await mockMissingFunction(page, INDUSTRY_MEDIAN_PATTERN);
+    await mockMissingFunction(page, INDUSTRY_MEDIAN_M_PATTERN);
     await mockMissingFunction(page, BASE_PRICE_PATTERN);
     await mockMissingFunction(page, UNIT_SUMMARY_PATTERN);
     await mockMissingFunction(page, FLOOR_UNITS_PATTERN);
@@ -2911,6 +2920,99 @@ test.describe('층별 스택뷰 — 업종 비중 비교', () => {
     // ④ 412px — 페이지·줄 각각 넘침 0.
     expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
     for (const el of await mix.locator('.mix__med, .mix__med-note, .mix__bars li').all()) {
+      expect(await el.evaluate((e) => e.scrollWidth - e.clientWidth)).toBeLessThanOrEqual(0);
+    }
+
+    // ⑤ 종이에도 그대로(내용이라 숨기지 않는다).
+    await page.emulateMedia({ media: 'print' });
+    await expect(gol.locator('.mix__med').first()).toBeVisible();
+    await expect(gol.locator('.mix__med-note')).toBeVisible();
+    await expect(market.locator('.mix__med-note')).toBeVisible();
+    await page.emulateMedia({ media: null });
+  });
+});
+
+// ── 업종 비중 비교 · 중분류 (물결 2-3b · 결정 0036 결정 18 ㉗~㉚) ─────────────────────
+// 글·모양 검증·실패면 글 0·늦은 답 버리기는 단위 시험이 덮는다(`industryMix.test.ts`·`IndustryMixSection.test.tsx`).
+// 여기서만 보이는 것은 진짜 브라우저에서 대분류를 고른 뒤 **상세의 상권 블록**에 서는가, 반경 블록엔 없는가,
+// 412px 에서 넘치지 않는가, 종이에도 그대로 나오는가다.
+
+test.describe('층별 스택뷰 — 업종 비중 비교 · 중분류', () => {
+  test('AX. 대분류를 고르면 상세 상권 블록 중분류 줄마다 「서울 골목상권 가운데 15.2%」 · 배지 C 설명 줄 · 30곳 미만 상권은 사실 한 줄 · 반경엔 없음 · 412px 넘침 0 · 종이에도', async ({
+    page,
+  }) => {
+    const NOTE =
+      'C등급 · 비교값가운데값은 서울 골목상권 가운데 음식 가게가 30곳 이상인 526곳의 음식 안 업종 비중을 크기순으로 세웠을 때 한가운데 값입니다 — 비교용 숫자입니다.';
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page, [], priceBands(), [floorRow()], industryMixTwoDistricts());
+    // 나중에 등록한 것이 먼저 잡힌다 — mockFloorStack 의 '함수 없음' 위에 덮는다.
+    await mockJson(page, INDUSTRY_DETAIL_PATTERN, industryDetailTwoDistricts());
+    const asked: unknown[] = [];
+    await page.route(INDUSTRY_MEDIAN_M_PATTERN, async (route) => {
+      if (route.request().method() === 'OPTIONS') {
+        await route.fulfill({ status: 204, headers: CORS_HEADERS });
+        return;
+      }
+      asked.push(route.request().postDataJSON());
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: CORS_HEADERS,
+        body: JSON.stringify(industryMedianM()),
+      });
+    });
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+    const mix = page.locator('section.mix');
+    if ((await mix.locator('.card__toggle').getAttribute('aria-expanded')) === 'false') {
+      await mix.locator('.card__toggle').click();
+    }
+    // 고르기 전에는 묻지도 않는다(따로 부름) · 대분류 블록엔 대분류 비교 함수가 없어(기본 목업) 비교 글 0.
+    await expect(mix.locator('.mix__detail')).toHaveCount(0);
+    expect(asked).toHaveLength(0);
+    await mix.locator('select.mix__select').selectOption('I2');
+
+    const detail = mix.locator('.mix__detail');
+    const block = (heading: string) =>
+      detail.locator('.mix__block').filter({ has: page.getByRole('heading', { name: heading }) });
+    const gol = block('역삼골목(골목상권) 안 음식 120곳');
+    const market = block('역삼시장(전통시장) 안 음식 7곳');
+    const radius = block('반경 500m 안 음식 150곳');
+
+    // ① 골목 — 중분류 줄마다 비교 글(막대 차례 그대로 · 같은 li 안) + 블록 머리 아래 배지 C 설명 줄.
+    await expect(gol.locator('.mix__med')).toHaveText([
+      '서울 골목상권 가운데 38.1%',
+      '서울 골목상권 가운데 15.2%',
+      '서울 골목상권 가운데 20.6%',
+      '서울 골목상권 가운데 9.8%',
+    ]);
+    // 카페(비알코올) 줄 — 막대는 대분류 안 몫 21.7%(26/120 · 👤 ㉘), 둘째 줄은 가운데값.
+    const cafe = gol.locator('.mix__bars li').filter({ hasText: '비알코올' });
+    await expect(cafe.locator('.mix__pct')).toHaveText('21.7%');
+    await expect(cafe.locator('.mix__med')).toHaveText('서울 골목상권 가운데 15.2%');
+    await expect(gol.locator('.mix__med-note .grade__badge--est')).toHaveText('C등급 · 비교값');
+    await expect(gol.locator('.mix__med-note')).toHaveText(NOTE);
+    // ② 전통시장(음식 7곳) — 비교값 대신 사실 한 줄 · 줄마다 비교 글 0.
+    await expect(market.locator('.mix__med-note')).toHaveText(['음식 7곳 — 30곳이 안 돼 비교값은 적지 않습니다.']);
+    await expect(market.locator('.mix__med')).toHaveCount(0);
+    // ③ 반경 블록엔 견줄 상대가 없다.
+    await expect(radius).toHaveCount(1);
+    await expect(radius).not.toContainText('가운데');
+    await expect(radius.locator('.mix__med, .mix__med-note')).toHaveCount(0);
+    // 판단 낱말 0(숫자만 나란히 — 👤 ㉚ 어제 틀 그대로).
+    for (const t of await detail.locator('.mix__med, .mix__med-note').allTextContents()) {
+      expect(t).not.toMatch(/많|적다|적습|높|낮|%p|배/);
+    }
+    // 인자는 { p_pnu, p_cat_l } — 대분류를 고른 뒤 한 번(개발 서버 StrictMode 라 두 번 나갈 수 있어 개수는 안 본다).
+    expect(asked[0]).toEqual({ p_pnu: searchHit().pnu, p_cat_l: 'I2' });
+
+    // ④ 412px — 페이지·줄 각각 넘침 0.
+    expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+    for (const el of await detail.locator('.mix__med, .mix__med-note, .mix__bars li').all()) {
       expect(await el.evaluate((e) => e.scrollWidth - e.clientWidth)).toBeLessThanOrEqual(0);
     }
 
