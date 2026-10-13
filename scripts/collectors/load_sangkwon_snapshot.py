@@ -783,7 +783,7 @@ def basement_gate_problems(result):
 
     ⛔ unit_business 는 append-only 라 '지하인데 층 모름' 칸을 틀리게 넣으면 그 분기는 영영 못 고친다
        (플랜 v2 🟠4). 그래서 만든 행의 칸 true 수가 원본 층정보 '지'(공백 뗀 값) 수와 시·도마다 같아야
-       한다 — 원본에 새 꼴('지하'·'B' 등)이 나타나거나 판정 함수가 바뀌면 여기서 멈춘다.
+       한다 — 원본에 새 꼴('지하'·'지하층' 등)이 나타나거나 판정 함수가 바뀌면 여기서 멈춘다.
     """
     return ["{} 칸 true {:,} · 원본 '지' {:,}".format(_sido_label(s), f, r)
             for s, f, r, same in basement_gate_rows(result) if not same]
@@ -1178,7 +1178,8 @@ def main():
             print("[에러] 적재 전 관문 불일치 — 적재 전에 멈춥니다(아무것도 안 넣었습니다): {}".format(
                 " · ".join(gate_problems)))
             print("       원본 층정보에 새 꼴이 생겼는지(--dry-run 의 층정보 분포) 보고 "
-                  "normalize_floor.is_basement_without_number 를 먼저 맞추세요.")
+                  "normalize_floor.is_basement_without_number 를 먼저 맞추세요 "
+                  "(판정 함수가 이미 지하로 보는 새 꼴('지하' 등) 때문이면 원본 '지' 세는 줄을 맞춥니다).")
             return 1
 
     print("스캔 시작: {} (시군구코드={}, 기준월={})".format(

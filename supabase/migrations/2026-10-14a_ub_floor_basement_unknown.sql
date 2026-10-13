@@ -68,7 +68,7 @@
 --   ⓘ 덩어리(begin … commit) 안에서 실패하면 통째로 되돌아간다 → 원인을 없애고 이 파일을 그대로 다시 돌린다.
 --   ⓘ commit 뒤 VALIDATE 에서 실패하면(시간 초과 등) 칸·제약·뷰는 이미 들어가 있다 — 이 파일을 다시 돌리면
 --     add constraint 가 "이미 있다"로 덩어리째 되돌아가므로(아무것도 안 바뀐다) **VALIDATE 줄만** 다시 돌린다:
---       python scripts/dbx.py -c "set statement_timeout = '900s'; alter table unit_business validate constraint chk_ub_basement_unknown;"
+--       python scripts/dbx.py -c "set statement_timeout = '900s'; alter table unit_business validate constraint chk_ub_basement_unknown; notify pgrst, 'reload schema';"
 --
 -- 적용 뒤 확인
 -- ------------
