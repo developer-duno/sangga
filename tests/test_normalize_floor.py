@@ -15,7 +15,9 @@ SCRIPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
-from normalize_floor import ROOFTOP, floor_label, normalize_floor  # noqa: E402
+import normalize_floor as _nf_module  # noqa: E402
+from normalize_floor import (  # noqa: E402
+    ROOFTOP, floor_label, is_basement_without_number, normalize_floor)
 
 
 # ── 1. 규격 기본 케이스 (지상 / 지하 / 옥탑 / 불명) ──────────────────────────
@@ -242,3 +244,24 @@ class TestFloorLabel:
         assert floor_label(1) == "1층"
         assert floor_label(-1) == "지하 1층"
         assert floor_label(ROOFTOP) == "옥탑"
+
+
+# ── 7. is_basement_without_number — 지하인데 층 모름 (물결 2-2c · unit_business.floor_basement_unknown) ──
+
+
+class TestBasementWithoutNumber:
+    @pytest.mark.parametrize("raw", ["지", " 지 ", "지하", "지하층"])
+    def test_positive(self, raw):
+        assert is_basement_without_number(raw) is True
+        assert normalize_floor(raw) is None, "층 번호는 그대로 비워 둔다(절대 규칙 4)"
+
+    @pytest.mark.parametrize("raw", ["", None, "B", "B동", "B1", "지상", "지1", "101", "1층"])
+    def test_negative(self, raw):
+        assert is_basement_without_number(raw) is False
+
+    def test_doctests_in_the_module_pass(self):
+        """모듈의 doctest(새 함수 예시 포함)가 실제로 돈다 — 실패 0 · 시도 0 이 아님."""
+        import doctest
+        res = doctest.testmod(_nf_module, verbose=False)
+        assert res.failed == 0
+        assert res.attempted >= 9

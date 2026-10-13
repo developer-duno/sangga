@@ -17,7 +17,10 @@ Phase 1 ③ 강남구 2026Q1 적재. `docs/상세계획.md` §5.6(품질 지표)
      호실 축(unit/building)은 건축물대장 전유부가 있어야 채울 수 있다(§5.1
      의존순서). 그 규모 산정은 --dry-run 출력의 "건축물대장 다음 단계" 참고.
   4. 층정보는 scripts/normalize_floor.py의 normalize_floor()로 정규화한다
-     (재구현 금지 — 이 프로젝트의 정본).
+     (재구현 금지 — 이 프로젝트의 정본). 숫자 없이 지하 표시만 있는 값(실측 '지')은 층을
+     비워 둔 채 floor_basement_unknown=true 로 따로 적는다(같은 파일의 is_basement_without_number ·
+     물결 2-2c). 실적재는 시·도별 'true 수 = 원본 '지' 수' 관문을 첫 upsert 전에 통과해야 하고,
+     새 분기 전국 적재 뒤에는 그 분기 null 행 0 을 확인한 뒤에만 표지를 올린다.
 
 이어받기(collect_progress)를 쓰지 않는 이유:
   이 스크립트는 이미 로컬에 받아둔 CSV를 한 번 훑어 적재하는 로컬 배치 작업이라
@@ -73,7 +76,7 @@ _SCRIPTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
-from normalize_floor import normalize_floor  # noqa: E402
+from normalize_floor import is_basement_without_number, normalize_floor  # noqa: E402
 from check_data_quality import (  # noqa: E402
     ENCODING_CANDIDATES,
     PNU_RE,
@@ -370,6 +373,9 @@ def build_unit_business_record(row, idx, snapshot_ym, floor_no):
 
     unit_id는 이 단계에서 항상 None(건축물대장 전유부 매칭은 다음 단계).
     pnu는 19자리 형식일 때만 채우고, 아니면 None(스키마가 허용하는 매칭 실패).
+    floor_basement_unknown 은 늘 true/false 다(null 아님 — 마이그레이션 2026-10-14a ·
+    물결 2-2c). 원본 층정보가 숫자 없이 지하 표시만(실측 '지')이면 true. 판정은 정본
+    normalize_floor.is_basement_without_number 하나로 한다(재구현 금지).
     """
     raw_pnu = row[idx["지번코드"]].strip()
     pnu = raw_pnu if PNU_RE.match(raw_pnu) else None
@@ -379,6 +385,7 @@ def build_unit_business_record(row, idx, snapshot_ym, floor_no):
         "unit_id": None,
         "pnu": pnu,
         "floor_no": floor_no,
+        "floor_basement_unknown": bool(is_basement_without_number(row[idx["층정보"]])),
         "ho": row[idx["호정보"]].strip() or None,
         "biz_name": row[idx["상호명"]].strip() or None,
         "branch_nm": row[idx["지점명"]].strip() or None,
@@ -452,7 +459,10 @@ def _process_one_file(path, encoding, prefixes, snapshot_ym):
     "성공 시에만 반환" 패턴과 동일).
 
     반환 dict: matched, col_mismatch_skipped, parcel_by_pnu(dict), unit_business_records
-               (list), floor_counter(Counter), invalid_pnu_reasons(Counter).
+               (list), floor_counter(Counter), invalid_pnu_reasons(Counter),
+               basement_flag_by_sido(Counter — 만든 행의 floor_basement_unknown=true 수),
+               raw_ji_by_sido(Counter — 원본 층정보 strip == '지' 수). 두 Counter 의 열쇠 =
+               시군구코드 앞 2자리(적재 전 관문 basement_gate_problems 가 나란히 견준다).
     """
     name = os.path.basename(path)
     matched = 0
@@ -461,6 +471,8 @@ def _process_one_file(path, encoding, prefixes, snapshot_ym):
     unit_business_records = []
     floor_counter = Counter()
     invalid_pnu_reasons = Counter()
+    basement_flag_by_sido = Counter()
+    raw_ji_by_sido = Counter()
 
     with open(path, encoding=encoding, newline="") as fp:
         reader = csv.reader(fp)
@@ -493,9 +505,15 @@ def _process_one_file(path, encoding, prefixes, snapshot_ym):
             else:
                 invalid_pnu_reasons[classify_invalid_pnu(raw_pnu)] += 1
 
-            unit_business_records.append(
-                build_unit_business_record(row, idx, snapshot_ym, floor_no)
-            )
+            ub_rec = build_unit_business_record(row, idx, snapshot_ym, floor_no)
+            unit_business_records.append(ub_rec)
+            # 적재 전 관문 재료 — '칸 true 수'는 **실제로 만든 행**에서 세고, 견줄 쪽은 원본 글자
+            # 그대로 센다(판정 함수를 거치지 않는다). 둘이 다르면 판정이 원본과 어긋난 것이다.
+            sido = row[i_sgg].strip()[:2]
+            if ub_rec["floor_basement_unknown"] is True:
+                basement_flag_by_sido[sido] += 1
+            if floor_raw.strip() == "지":
+                raw_ji_by_sido[sido] += 1
 
     return {
         "matched": matched,
@@ -504,6 +522,8 @@ def _process_one_file(path, encoding, prefixes, snapshot_ym):
         "unit_business_records": unit_business_records,
         "floor_counter": floor_counter,
         "invalid_pnu_reasons": invalid_pnu_reasons,
+        "basement_flag_by_sido": basement_flag_by_sido,
+        "raw_ji_by_sido": raw_ji_by_sido,
     }
 
 
@@ -528,6 +548,7 @@ def scan_and_build(data_dir, sigungu_code, snapshot_ym, on_file_done=None):
       floor_counter   Counter(원본 층정보 값 -> 건수)
       invalid_pnu_reasons  Counter(사유 -> 건수)
       col_mismatch_skipped  int(헤더와 칸 수 달라 스킵한 행 총합)
+      basement_flag_by_sido / raw_ji_by_sido  Counter(시·도 2자리 -> 건수 · 적재 전 관문용)
     """
     limit = raise_field_size_limit()
     files = collect_csv_files(data_dir)
@@ -546,6 +567,8 @@ def scan_and_build(data_dir, sigungu_code, snapshot_ym, on_file_done=None):
     ub_with_pnu_count = 0
     floor_counter = Counter()
     invalid_pnu_reasons = Counter()
+    basement_flag_by_sido = Counter()
+    raw_ji_by_sido = Counter()
     per_file = []
     skipped_files = []
     col_mismatch_skipped = 0
@@ -581,6 +604,8 @@ def scan_and_build(data_dir, sigungu_code, snapshot_ym, on_file_done=None):
                     on_file_done(new_parcels, file_ub)   # 넘긴 뒤 버퍼는 여기서 버려진다
                 floor_counter.update(file_result["floor_counter"])
                 invalid_pnu_reasons.update(file_result["invalid_pnu_reasons"])
+                basement_flag_by_sido.update(file_result["basement_flag_by_sido"])
+                raw_ji_by_sido.update(file_result["raw_ji_by_sido"])
                 processed = True
                 break
             except UnicodeDecodeError as e:
@@ -612,6 +637,8 @@ def scan_and_build(data_dir, sigungu_code, snapshot_ym, on_file_done=None):
         "floor_counter": floor_counter,
         "invalid_pnu_reasons": invalid_pnu_reasons,
         "col_mismatch_skipped": col_mismatch_skipped,
+        "basement_flag_by_sido": basement_flag_by_sido,
+        "raw_ji_by_sido": raw_ji_by_sido,
     }
 
 
@@ -736,6 +763,53 @@ def missing_for_mark(result, expected=None):
     return problems
 
 
+def basement_gate_rows(result):
+    """시·도(시군구코드 앞 2자리)별 (시·도, 칸 true 수, 원본 '지' 수, 같은가) 목록 (순수 함수).
+
+    둘 중 하나라도 0 이 아닌 시·도만 낸다. 물결 2-2c — floor_basement_unknown 적재 전 관문.
+    """
+    flag = result.get("basement_flag_by_sido") or Counter()
+    raw = result.get("raw_ji_by_sido") or Counter()
+    rows = []
+    for sido in sorted(set(flag) | set(raw)):
+        f, r = flag.get(sido, 0), raw.get(sido, 0)
+        if f or r:
+            rows.append((sido, f, r, f == r))
+    return rows
+
+
+def basement_gate_problems(result):
+    """적재 전 관문에 걸린 시·도 목록 — 비어 있어야 적재한다 (순수 함수).
+
+    ⛔ unit_business 는 append-only 라 '지하인데 층 모름' 칸을 틀리게 넣으면 그 분기는 영영 못 고친다
+       (플랜 v2 🟠4). 그래서 만든 행의 칸 true 수가 원본 층정보 '지'(공백 뗀 값) 수와 시·도마다 같아야
+       한다 — 원본에 새 꼴('지하'·'B' 등)이 나타나거나 판정 함수가 바뀌면 여기서 멈춘다.
+    """
+    return ["{} 칸 true {:,} · 원본 '지' {:,}".format(_sido_label(s), f, r)
+            for s, f, r, same in basement_gate_rows(result) if not same]
+
+
+def _sido_label(sido):
+    return "{}({})".format(SIDO_NAMES.get(sido, "?"), sido or "코드 없음")
+
+
+def print_basement_gate(result):
+    """적재 전 관문 표를 찍고, 걸린 시·도 목록을 돌려준다(비면 통과)."""
+    rows = basement_gate_rows(result)
+    print("")
+    print("[ 적재 전 관문 — 지하인데 층 모름(floor_basement_unknown) ] 시·도별 칸 true 수 vs 원본 층정보 '지' 수")
+    if not rows:
+        print("    (둘 다 0 — 원본에 '지' 가 없습니다)")
+    for sido, f, r, same in rows:
+        print("    {:<10} 칸 true {:>8,}  원본 '지' {:>8,}  [{}]".format(
+            _sido_label(sido), f, r, "일치" if same else "불일치"))
+    problems = basement_gate_problems(result)
+    print("  합계 칸 true {:,} · 원본 '지' {:,}  [{}]".format(
+        sum(f for _s, f, _r, _ in rows), sum(r for _s, _f, r, _ in rows),
+        "통과" if not problems else "불일치 {}곳".format(len(problems))))
+    return problems
+
+
 def mark_snapshot_loaded(base_url, headers, snapshot_ym, rows, post=requests.post):
     """`POST /rest/v1/rpc/mark_snapshot_loaded` 로 표지의 loaded_ym 을 적는다.
 
@@ -830,6 +904,18 @@ def rest_count(base_url, headers, table, query):
     if "/" not in content_range:
         raise RuntimeError("{}: Content-Range 헤더 형식 이상: {!r}".format(table, content_range))
     return int(content_range.split("/")[-1])
+
+
+def basement_unknown_null_count(base_url, headers, snapshot_ym, count=None):
+    """그 분기 행 중 floor_basement_unknown 이 null 인 행 수 (적재 직후 확인 · 물결 2-2c).
+
+    새 적재기가 넣은 행은 늘 true/false 다 — null 이 있으면 칸이 생기기 전 적재기(또는 칸 없는
+    api 뷰)로 일부를 넣다 이어 넣어 한 분기 안에 섞인 것이다. 그 분기 하나만 센다(전 분기 훑기 아님 ·
+    `--check` 에는 넣지 않는다). ⓘ count 는 시험이 바꿔 끼우는 자리다(안 주면 그때의 rest_count).
+    """
+    count = count or rest_count
+    return count(base_url, headers, "unit_business",
+                 "select=biz_no&snapshot_ym=eq.{}&floor_basement_unknown=is.null".format(snapshot_ym))
 
 
 # ── 보고 출력 ────────────────────────────────────────────────────────────────
@@ -1075,6 +1161,26 @@ def main():
             sent["unit_business"] += upsert_batch(
                 base_url, headers, "unit_business", unit_business_records)
 
+    # 적재 전 관문(물결 2-2c) — 적재는 시·도 파일 하나를 읽을 때마다 바로 upsert 한다(위 flush_file).
+    # 그래서 '첫 upsert 전에' 시·도별 칸 true 수를 알려면 원본을 **한 번 먼저** 훑어야 한다 — dry-run 과
+    # 같은 길(쓰기 0 · 파일마다 버퍼를 버린다). 걸리면 아무것도 안 넣고 멈춘다(append-only — 틀리게 넣으면
+    # 그 분기는 영영 못 고친다). 실적재 시간이 원본 훑기 한 번만큼 는다.
+    if not opts["dry_run"]:
+        print("적재 전 관문: 원본을 먼저 한 번 훑습니다(쓰기 0)...", flush=True)
+        try:
+            pre = scan_and_build(opts["dir"], opts["sigungu_code"], snapshot_ym,
+                                 on_file_done=lambda _p, _u: None)
+        except RuntimeError as e:
+            print("[에러] {}".format(e))
+            return 1
+        gate_problems = print_basement_gate(pre)
+        if gate_problems:
+            print("[에러] 적재 전 관문 불일치 — 적재 전에 멈춥니다(아무것도 안 넣었습니다): {}".format(
+                " · ".join(gate_problems)))
+            print("       원본 층정보에 새 꼴이 생겼는지(--dry-run 의 층정보 분포) 보고 "
+                  "normalize_floor.is_basement_without_number 를 먼저 맞추세요.")
+            return 1
+
     print("스캔 시작: {} (시군구코드={}, 기준월={})".format(
         opts["dir"], opts["sigungu_code"], snapshot_ym), flush=True)
     try:
@@ -1084,10 +1190,15 @@ def main():
         print("[에러] {}".format(e))
         return 1
     print_scan_report(result, opts["sigungu_code"], opts["gu_name"], snapshot_ym)
+    gate_problems = print_basement_gate(result)
 
     if opts["dry_run"]:
         print("")
         print("--dry-run 지정 — DB 적재는 건너뜁니다.")
+        if gate_problems:
+            print("[경고] 적재 전 관문 불일치 — 이대로 실적재하면 첫 upsert 전에 거부됩니다: {}".format(
+                " · ".join(gate_problems)))
+            return 1
         return 0
 
     if not result["parcel_count"] and not result["unit_business_count"]:
@@ -1162,6 +1273,21 @@ def main():
               "파일 수 관문·표지 올리기를 건너뜁니다.".format(snapshot_ym, pre_loaded))
         print("       넣은 행이 있으면 이어서 python scripts/post_load.py · python scripts/post_load.py --check")
         return 0
+    # 적재 직후 확인(물결 2-2c) — 새 분기 전국 적재에서 그 분기 floor_basement_unknown 이 null 인 행이 있으면
+    # 칸이 생기기 전 적재기로 일부를 넣다 이어 넣은 섞인 분기다. 표지를 올리지 않는다(올리면 post_load 가 그
+    # 분기를 화면에 낸다). ⓘ 옛·같은 분기 재적재(위)는 건너뛴다 — 옛 분기는 null 이 정상이다(👤 D1 append only).
+    try:
+        null_rows = basement_unknown_null_count(base_url, headers, snapshot_ym)
+    except RuntimeError as e:
+        print("[에러] 적재 직후 확인(지하인데 층 모름 칸 null 수) 조회 실패: {}".format(e))
+        return 1
+    print("  floor_basement_unknown null {:,}행 (기대 0)  [{}]".format(
+        null_rows, "일치" if null_rows == 0 else "섞임 — 확인 필요"))
+    if null_rows != 0:
+        print("[경고] {} 분기에 '지하인데 층 모름' 칸이 빈 행이 {:,}개 있습니다 — 칸이 생기기 전 적재기로 일부를 "
+              "넣은 분기에 이어 넣은 것으로 보입니다. 표지는 안 올렸습니다(append-only 라 그 행은 못 고칩니다 — "
+              "어떻게 할지 먼저 정하세요).".format(snapshot_ym, null_rows))
+        return 1
     missing = missing_for_mark(result)
     if missing:
         print("[에러] 표지는 안 올렸습니다 — 빠진 파일 {}개: {}".format(len(missing), " · ".join(missing)))

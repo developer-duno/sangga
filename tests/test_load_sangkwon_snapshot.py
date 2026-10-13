@@ -617,6 +617,7 @@ def test_main_all_mode_cross_check_query_has_no_sigungu_filter(tmp_path, monkeyp
         return {"parcel": 1, "unit_business": 2}[table]   # parcel 고유 PNU 1 / ub 전체 2
 
     monkeypatch.setattr(target, "rest_count", fake_rest_count)
+    monkeypatch.setattr(target, "basement_unknown_null_count", lambda *a, **k: 0)   # 물결 2-2c
     # 전국 모드는 끝에 분기 표지 RPC 를 부른다(결정 0035) — 네트워크 없이 성공으로 흉내.
     # 적재 전 사전 점검(2026-10-07 (2))은 '점포 표 비었음'으로 건너뛰게 둔다(그 길은 아래 시험들이 본다).
     monkeypatch.setattr(target, "oldest_snapshot_ym", lambda base_url, headers, get=None: None)
@@ -1067,6 +1068,8 @@ def _all_mode(tmp_path, monkeypatch, sigungu="all", ym="202603", oldest=None):
     counts = {"parcel": [0, 1], "unit_business": [1]}
     monkeypatch.setattr(target, "rest_count",
                         lambda base_url, headers, table, query: counts[table].pop(0))
+    # 적재 직후 null 확인(물결 2-2c)은 '섞이지 않음(0)'으로 — 그 갈래는 아래 2-2c 시험들이 본다.
+    monkeypatch.setattr(target, "basement_unknown_null_count", lambda *a, **k: 0)
     # 시험 폴더의 시·도 파일은 1개 — 그 1개를 '전국 전부'로 본다(관문 자체는 아래 시험들이 본다).
     monkeypatch.setattr(target, "EXPECTED_SIDO_FILES", 1)
 
@@ -1326,3 +1329,158 @@ def test_main_new_quarter_still_goes_through_the_file_gate(tmp_path, monkeypatch
     assert target.main() == 1
     assert calls == ["202603"], "관문에 걸려 끝 단계 RPC 는 안 부른다"
     assert "처리 1 · 폴더 1 · 기대 16" in capsys.readouterr().out
+
+
+# ── 물결 2-2c — 지하인데 층 모름(floor_basement_unknown) · 적재 전 관문 · 적재 직후 null 확인 ──
+
+
+def test_build_unit_business_record_basement_flag_is_always_a_bool():
+    idx = target.build_col_index(HEADER, "t.csv")
+    for raw, want in (("지", True), (" 지 ", True), ("지하", True),
+                      ("3층", False), ("", False), ("지1", False), ("B", False)):
+        rec = target.build_unit_business_record(
+            make_row(층정보=raw), idx, "202609", target.normalize_floor(raw))
+        assert rec["floor_basement_unknown"] is want, raw   # null 이 아니라 늘 true/false
+        if want:
+            assert rec["floor_no"] is None, "층 번호는 지어내지 않는다(DB 제약 chk_ub_basement_unknown)"
+
+
+def _basement_rows():
+    """서울 '지' 2 · 서울 지하1층 1 · 서울 '지1' 1 · 대전 '지' 1 · 대전 3층 1."""
+    return [
+        make_row(상가업소번호="S1", 시군구코드="11680", 층정보="지"),
+        make_row(상가업소번호="S2", 시군구코드="11680", 층정보=" 지 "),
+        make_row(상가업소번호="S3", 시군구코드="11680", 층정보="지하1층"),
+        make_row(상가업소번호="S4", 시군구코드="11680", 층정보="지1"),
+        make_row(상가업소번호="D1", 시군구코드="30140", 지번코드="3014010100100010000", 층정보="지"),
+        make_row(상가업소번호="D2", 시군구코드="30140", 지번코드="3014010100100020000", 층정보="3층"),
+    ]
+
+
+def test_scan_and_build_counts_the_basement_gate_per_sido(tmp_path):
+    write_csv(tmp_path, "소상공인시장진흥공단_상가(상권)정보_서울_202609.csv", _basement_rows())
+    result = target.scan_and_build(str(tmp_path), "all", "202609")
+    assert result["basement_flag_by_sido"] == {"11": 2, "30": 1}
+    assert result["raw_ji_by_sido"] == {"11": 2, "30": 1}
+    assert target.basement_gate_rows(result) == [("11", 2, 2, True), ("30", 1, 1, True)]
+    assert target.basement_gate_problems(result) == []
+    flags = {r["biz_no"]: r["floor_basement_unknown"] for r in result["unit_business_records"]}
+    assert flags == {"S1": True, "S2": True, "S3": False, "S4": False, "D1": True, "D2": False}
+
+
+@pytest.mark.parametrize("fake", [
+    lambda raw: False,                                    # 판정이 '지'를 놓친다
+    lambda raw: str(raw or "").strip().startswith("지"),  # 판정이 '지1'·'지하1층'까지 넓어진다
+], ids=["좁아짐", "넓어짐"])
+def test_basement_gate_catches_a_swapped_judge(tmp_path, monkeypatch, fake):
+    """양성 대조 — 판정 함수를 바꿔 끼우면 관문이 시·도를 짚는다."""
+    write_csv(tmp_path, "소상공인시장진흥공단_상가(상권)정보_서울_202609.csv", _basement_rows())
+    monkeypatch.setattr(target, "is_basement_without_number", fake)
+    result = target.scan_and_build(str(tmp_path), "all", "202609")
+    problems = target.basement_gate_problems(result)
+    assert problems and any(p.startswith("서울(11)") for p in problems)
+
+
+def test_basement_gate_rows_skip_zero_sido_and_label():
+    result = {"basement_flag_by_sido": {"11": 1, "26": 0}, "raw_ji_by_sido": {"11": 2}}
+    assert target.basement_gate_rows(result) == [("11", 1, 2, False)]
+    assert target.basement_gate_problems(result) == ["서울(11) 칸 true 1 · 원본 '지' 2"]
+
+
+def _gate_main(tmp_path, monkeypatch, args):
+    write_csv(tmp_path, "소상공인시장진흥공단_상가(상권)정보_서울_202609.csv", _basement_rows())
+    monkeypatch.setattr(sys, "argv", ["prog", "--dir", str(tmp_path)] + args)
+    monkeypatch.setattr(target, "get_supabase_config", lambda: ("https://x.supabase.co", "key"))
+
+
+def test_main_gate_mismatch_refuses_before_any_upsert(tmp_path, monkeypatch, capsys):
+    _gate_main(tmp_path, monkeypatch, ["--sigungu-code", "11,30"])
+    monkeypatch.setattr(target, "rest_count", lambda base_url, headers, table, query: 0)
+    monkeypatch.setattr(target, "is_basement_without_number", lambda raw: False)
+    monkeypatch.setattr(target, "upsert_batch",
+                        lambda *a, **k: pytest.fail("관문이 불일치인데 적재했습니다"))
+    assert target.main() == 1
+    out = capsys.readouterr().out
+    assert "[에러] 적재 전 관문 불일치 — 적재 전에 멈춥니다" in out
+    assert "서울(11) 칸 true 0 · 원본 '지' 2" in out and "대전(30) 칸 true 0 · 원본 '지' 1" in out
+    assert "스캔 시작" not in out
+
+
+def test_main_gate_match_loads_bools_only(tmp_path, monkeypatch, capsys):
+    _gate_main(tmp_path, monkeypatch, ["--sigungu-code", "11,30"])
+    sent = []
+
+    def fake_upsert(base_url, headers, table, rows, batch_size=target.BATCH_SIZE):
+        if table == "unit_business":
+            sent.extend(rows)
+        return len(rows)
+
+    monkeypatch.setattr(target, "upsert_batch", fake_upsert)
+    counts = {"parcel": [0, 3], "unit_business": [6]}
+    monkeypatch.setattr(target, "rest_count",
+                        lambda base_url, headers, table, query: counts[table].pop(0))
+    assert target.main() == 0
+    assert len(sent) == 6 and all(r["floor_basement_unknown"] in (True, False) for r in sent)
+    assert sum(r["floor_basement_unknown"] for r in sent) == 3
+    out = capsys.readouterr().out
+    assert out.index("적재 전 관문: 원본을 먼저 한 번 훑습니다") < out.index("스캔 시작")
+    assert "합계 칸 true 3 · 원본 '지' 3  [통과]" in out
+
+
+def test_main_dry_run_gate_mismatch_warns_and_exits_nonzero(tmp_path, monkeypatch, capsys):
+    _gate_main(tmp_path, monkeypatch, ["--sigungu-code", "all", "--dry-run"])
+    monkeypatch.setattr(target, "get_supabase_config",
+                        lambda: pytest.fail("dry-run 이 Supabase 에 연결했습니다"))
+    assert target.main() == 0          # 일치 — 지금처럼 0
+    monkeypatch.setattr(target, "is_basement_without_number", lambda raw: False)
+    assert target.main() == 1          # 불일치 — 경고 + 0 아님
+    assert "[경고] 적재 전 관문 불일치" in capsys.readouterr().out
+
+
+def test_basement_unknown_null_count_asks_one_quarter_only():
+    seen = []
+
+    def fake_count(base_url, headers, table, query):
+        seen.append((table, query))
+        return 7
+
+    assert target.basement_unknown_null_count("https://x", {}, "202609", count=fake_count) == 7
+    assert seen == [("unit_business",
+                     "select=biz_no&snapshot_ym=eq.202609&floor_basement_unknown=is.null")]
+
+
+@pytest.mark.parametrize("nulls, want", [(0, 0), (1, 1)], ids=["섞임없음", "섞임"])
+def test_main_null_check_after_a_new_national_quarter(tmp_path, monkeypatch, capsys, nulls, want):
+    _all_mode(tmp_path, monkeypatch, ym="202609", oldest="202603")
+    asked = []
+    monkeypatch.setattr(target, "basement_unknown_null_count",
+                        lambda base_url, headers, ym: asked.append(ym) or nulls)
+    marks = []
+    monkeypatch.setattr(target, "mark_snapshot_loaded",
+                        lambda base_url, headers, p_ym, rows: marks.append(p_ym)
+                        or (True, {"loaded_ym": "202606" if p_ym == "202603" else p_ym,
+                                   "published_ym": "202606"}))
+    assert target.main() == want
+    assert asked == ["202609"]
+    out = capsys.readouterr().out
+    if nulls:
+        assert marks == ["202603"], "섞인 분기는 표지를 안 올린다(사전 점검 한 번뿐)"
+        assert "칸이 빈 행이 1개" in out and "표지는 안 올렸습니다" in out
+    else:
+        assert marks == ["202603", "202609"]
+        assert "floor_basement_unknown null 0행 (기대 0)  [일치]" in out
+
+
+def test_main_null_check_skipped_for_old_quarter_and_sigungu_mode(tmp_path, monkeypatch):
+    """옛·같은 분기 재적재는 null 이 정상(👤 D1 — 거슬러 채우지 않는다) · 시군구 모드는 표지와 무관."""
+    _all_mode(tmp_path, monkeypatch, ym="202606", oldest="202603")
+    monkeypatch.setattr(target, "basement_unknown_null_count",
+                        lambda *a, **k: pytest.fail("옛·같은 분기에서 null 확인을 했습니다"))
+    monkeypatch.setattr(target, "mark_snapshot_loaded",
+                        lambda *a, **k: (True, {"loaded_ym": "202606", "published_ym": "202606"}))
+    assert target.main() == 0
+    monkeypatch.setattr(sys, "argv", ["prog", "--dir", str(tmp_path), "--sigungu-code", "11680"])
+    monkeypatch.setattr(target, "rest_count", lambda base_url, headers, table, query: 1)
+    monkeypatch.setattr(target, "mark_snapshot_loaded",
+                        lambda *a, **k: pytest.fail("시군구 모드가 표지 RPC 를 불렀습니다"))
+    assert target.main() == 0
