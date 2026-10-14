@@ -21,6 +21,7 @@ import type {
 } from '../types';
 import { formatQuarter } from '../lib/format';
 import {
+  basementUnknownCounted,
   catOptions,
   districtLabel,
   districtSources,
@@ -375,18 +376,19 @@ export function IndustryMixSection({
   // 층 줄(물결 2-2) — 상세 블록 열쇠마다 그 범위의 층 묶음. 칩 줄은 칩의 대분류를 보고 있을 때만.
   // ⛔ 그릴 때도 물어본 업종과 지금 업종을 견준다 — 대분류를 바꾼 첫 렌더에는 effect 가 아직 옛 답을
   //    안 지웠으므로, 견주지 않으면 옛 업종의 층 숫자가 새 업종 이름표를 달고 한 번 그려진다.
-  const floorScopes = floorScopeByKey(
-    floors !== null && floors.cat_l_cd === pickedCat ? floors : null,
-  );
-  const chipFloorScopes = floorScopeByKey(
+  const floorsNow = floors !== null && floors.cat_l_cd === pickedCat ? floors : null;
+  const chipFloorsNow =
     match !== null &&
-      match.catL === pickedCat &&
-      chipFloors !== null &&
-      chipFloors.cat_l_cd === pickedCat &&
-      sameCatMs(chipFloors.cat_m_cds, match.catM)
+    match.catL === pickedCat &&
+    chipFloors !== null &&
+    chipFloors.cat_l_cd === pickedCat &&
+    sameCatMs(chipFloors.cat_m_cds, match.catM)
       ? chipFloors
-      : null,
-  );
+      : null;
+  const floorScopes = floorScopeByKey(floorsNow);
+  const chipFloorScopes = floorScopeByKey(chipFloorsNow);
+  // 물결 2-2c — 그 분기가 '지'(숫자 없는 지하)를 지하 칸에 센 분기인가. 그릴 층 줄의 응답으로만 본다.
+  const basementCounted = basementUnknownCounted(floorsNow) || basementUnknownCounted(chipFloorsNow);
   // 개업·폐업 카드(OpenCloseSection)와 같은 말 — '칩'은 손님 말이 아니다.
   const chipLabel = `고른 업종(${chip})`;
   // 층 줄이 하나라도 그려지나 — 그때만 아래 '왜 다를 수 있나'에 「층 미상」을 단다(줄 없이 설명만 남기지 않는다).
@@ -505,7 +507,19 @@ export function IndustryMixSection({
           <strong>시차</strong> — 분기마다 한 번 받는 자료라, 그 뒤에 문을 닫았거나 새로 연 가게는
           아직 반영되지 않았습니다.
         </li>
-        {floorsShown && (
+        {/* 👤 2026-10-13 D2' — '지'를 지하 칸에 센 분기(basement_unknown_counted === true)만 새 두 항목.
+            아니면(옛 분기·옛 서버) 2026-10-09 문구 그대로 — 그 분기에는 그 말이 사실이다. */}
+        {floorsShown && basementCounted && (
+          <>
+            <li>
+              <strong>층 미상</strong> — 원본에 층이 비어 있거나 읽을 수 없는 가게입니다.
+            </li>
+            <li>
+              <strong>지하</strong> — 몇 층인지 없이 &apos;지하&apos;라고만 적힌 가게도 지하에 셉니다.
+            </li>
+          </>
+        )}
+        {floorsShown && !basementCounted && (
           <li>
             <strong>층 미상</strong> — 원본에 층이 비어 있거나 숫자 없이 &apos;지하&apos;라고만 적힌
             가게입니다(지하라고만 적힌 가게는 아직 지하 칸에 세지 못했습니다).

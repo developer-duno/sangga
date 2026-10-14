@@ -207,7 +207,17 @@ export function isIndustryFloors(x: unknown): x is IndustryFloors {
     (d) => isFloorScope(d) && typeof (d as unknown as Record<string, unknown>).district_id === 'string',
   );
   if (!districtsOk) return false;
+  // ⓘ basement_unknown_counted(2026-10-14b)는 여기서 보지 않는다 — 선택 칸이라 없거나 모양이 틀려도 응답을
+  //    버리지 않는다(층 줄은 그대로 서고, 설명 문구만 옛 판 · basementUnknownCounted).
   return m.radius === null || isFloorScope(m.radius);
+}
+
+/**
+ * 숫자 없이 '지하'라고만 적힌 가게가 지하 칸에 들어 있는 응답인가(물결 2-2c · 👤 2026-10-13 D2').
+ * **정확히 `true` 일 때만** 참 — 칸이 없거나(옛 서버·옛 분기) boolean 이 아니면 거짓(옛 설명 문구 그대로).
+ */
+export function basementUnknownCounted(floors: IndustryFloors | null): boolean {
+  return floors !== null && floors.basement_unknown_counted === true;
 }
 
 /** 중분류 목록 둘이 같은 질문인가(순서 무관 · null 은 null 하고만 같다) — 늦게 온 답을 버릴 때 쓴다. */

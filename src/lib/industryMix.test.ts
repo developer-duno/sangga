@@ -9,6 +9,7 @@ import type {
   IndustryScope,
 } from '../types';
 import {
+  basementUnknownCounted,
   catOptions,
   districtLabel,
   districtSources,
@@ -320,6 +321,24 @@ describe('업종별 층 분포 — 응답 모양 검사', () => {
   it('다른 함수의 응답·오류 객체를 막는다', () => {
     expect(isIndustryFloors({ code: 'PGRST202', message: 'function does not exist' })).toBe(false);
     expect(isIndustryFloors({ ...mix(), cat_l_cd: 'I2' })).toBe(false);
+  });
+
+  // 물결 2-2c — basement_unknown_counted 는 선택 칸: 없거나 모양이 틀려도 응답을 버리지 않고, 정확히 true 일 때만 참.
+  it.each([
+    ['없음', undefined, false],
+    ['true', true, true],
+    ['false', false, false],
+    ['null', null, false],
+    ["'true'(글자)", 'true', false],
+    ['1(숫자)', 1, false],
+  ])('2-2c counted %s → 응답은 통과 · basementUnknownCounted = %s', (_label, value, want) => {
+    const x = value === undefined ? floors() : { ...floors(), basement_unknown_counted: value };
+    expect(isIndustryFloors(x)).toBe(true);
+    expect(basementUnknownCounted(x as IndustryFloors)).toBe(want);
+  });
+
+  it('2-2c basementUnknownCounted(null) 은 거짓', () => {
+    expect(basementUnknownCounted(null)).toBe(false);
   });
 });
 

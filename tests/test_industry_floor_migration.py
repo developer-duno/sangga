@@ -73,22 +73,10 @@ def fn_block(sql, name):
     return m.group(0)
 
 
-def fn_comment(sql, name):
-    m = re.search(r"(?ms)^comment\s+on\s+function\s+" + re.escape(name) + r"\s*\(.*?';\s*$", sql)
-    assert m, "{} 의 comment 를 못 찾았습니다".format(name)
-    return m.group(0)
-
-
 def mv_block(sql, name):
     m = re.search(r"(?ms)^create\s+materialized\s+view\s+if\s+not\s+exists\s+" + re.escape(name)
                   + r"\s+as\b.*?;", sql)
     assert m, "{} 의 정의를 못 찾았습니다".format(name)
-    return m.group(0)
-
-
-def mv_comment(sql, name):
-    m = re.search(r"(?ms)^comment\s+on\s+materialized\s+view\s+" + re.escape(name) + r"\s+is.*?';\s*$", sql)
-    assert m, "{} 의 comment 를 못 찾았습니다".format(name)
     return m.group(0)
 
 
@@ -145,26 +133,20 @@ def strict_problems(block):
 
 
 class TestMirrorsTheSchema:
-    @pytest.mark.parametrize("name", (BAND_FN, LIST_FN, API_FN))
+    # ⓘ 층 묶음 함수·list 함수·요약표는 2026-10-14b(물결 2-2c)가 다시 만들었다 — 정본과의 글자 대조는
+    #    이제 tests/test_industry_floor_basement_migration.py 가 14b 와 한다. 여기는 그대로인 api 쌍둥이만.
+    @pytest.mark.parametrize("name", (API_FN,))
     def test_head_and_body_are_the_same_text(self, mig, schema, name):
         assert fn_block(mig, name) == fn_block(schema, name), (
             "{} 가 정본과 글자가 다릅니다 — 새 환경만 다른 모양이 됩니다".format(name))
 
-    @pytest.mark.parametrize("name", (BAND_FN, LIST_FN))
-    def test_comment_is_the_same_text(self, mig, schema, name):
-        assert fn_comment(mig, name) == fn_comment(schema, name), name
-
-    def test_summary_table_is_the_same_text(self, mig, schema):
-        assert mv_block(mig, MV) == mv_block(schema, MV)
-        assert mv_comment(mig, MV) == mv_comment(schema, MV)
-
     def test_summary_table_is_the_sibling_plus_one_column(self, schema):
-        """형제 정의 그대로 + 층 묶음 칸 하나 + group by 일곱 칸 — 그래야 합 대조가 성립한다."""
+        """형제 정의 그대로 + 층 묶음 칸 하나 + group by 일곱 칸 — 그래야 합 대조가 성립한다(묶음은 2026-10-14b 두 인자 판)."""
         mix = mv_block(schema, MIX).replace(MIX, MV, 1)
         expected = (mix.replace(
             "       ub.cat_m_cd, ub.cat_m_nm,\n",
             "       ub.cat_m_cd, ub.cat_m_nm,\n"
-            "       public.industry_floor_band(ub.floor_no) as floor_band,\n", 1)
+            "       public.industry_floor_band(ub.floor_no, ub.floor_basement_unknown) as floor_band,\n", 1)
             .replace("group by 1, 2, 3, 4, 5, 6;", "group by 1, 2, 3, 4, 5, 6, 7;", 1))
         assert mv_block(schema, MV) == expected
 
@@ -340,6 +322,8 @@ class TestMigrationShape:
 
 INDEX_MIGRATION = os.path.join(ROOT, "supabase", "migrations", "2026-10-09c_ub_pnu_cat_include_floor.sql")
 UB_INCLUDE = ["cat_l_cd", "cat_l_nm", "cat_m_cd", "cat_m_nm", "floor_no"]
+# 정본은 2026-10-14c 가 여섯째 칸을 더했다(물결 2-2c) — 09c 원장은 다섯 칸 그대로다.
+UB_INCLUDE_SCHEMA = UB_INCLUDE + ["floor_basement_unknown"]
 
 
 @pytest.fixture(scope="module")
@@ -364,20 +348,22 @@ def ub_pnu_cat_include(sql, name="idx_ub_pnu_cat"):
 
 class TestUbPnuCatInclude:
     def test_schema_and_migration_have_floor_no_in_the_same_order(self, schema, index_mig):
-        assert ub_pnu_cat_include(schema) == UB_INCLUDE
+        # 정본은 2026-10-14c 판(여섯 칸 — floor_no 다음에 floor_basement_unknown) · 09c 원장은 다섯 칸.
+        assert ub_pnu_cat_include(schema) == UB_INCLUDE_SCHEMA
         assert ub_pnu_cat_include(index_mig, "idx_ub_pnu_cat_next") == UB_INCLUDE
         # post_load 의 정본 색인 해석기로도 같은 답이어야 한다(--check 가 실제로 쓰는 쪽).
-        assert post_load.canonical_index_includes(schema)["idx_ub_pnu_cat"] == UB_INCLUDE
+        assert post_load.canonical_index_includes(schema)["idx_ub_pnu_cat"] == UB_INCLUDE_SCHEMA
 
     @pytest.mark.parametrize("old, new", (
         ("cat_m_nm, floor_no)", "cat_m_nm)"),                       # floor_no 빠짐
         ("(cat_l_cd, cat_l_nm, cat_m_cd, cat_m_nm, floor_no)",
          "(floor_no, cat_l_cd, cat_l_nm, cat_m_cd, cat_m_nm)"),     # 순서 바뀜
     ))
-    def test_detector_catches_missing_or_reordered(self, schema, old, new):
-        """양성 대조 — floor_no 가 빠지거나 순서가 바뀐 정본 사본이 걸린다."""
-        assert old in schema
-        assert ub_pnu_cat_include(schema.replace(old, new, 1)) != UB_INCLUDE
+    def test_detector_catches_missing_or_reordered(self, index_mig, old, new):
+        """양성 대조 — floor_no 가 빠지거나 순서가 바뀐 09c 사본이 걸린다."""
+        assert old in index_mig
+        # 머리말 주석에도 같은 글자가 있어(적용 뒤 확인 ①) 전부 바꾼다 — 탐지는 주석을 걷어 내고 본다.
+        assert ub_pnu_cat_include(index_mig.replace(old, new), "idx_ub_pnu_cat_next") != UB_INCLUDE
 
     def test_detector_sees_the_concurrent_uppercase_form(self):
         sql = ("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ub_pnu_cat ON unit_business (pnu, snapshot_ym)\n"
