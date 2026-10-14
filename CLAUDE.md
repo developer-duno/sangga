@@ -155,6 +155,7 @@ python scripts/collectors/collect_lh_notices.py --dry-run   # LH 상가 공고 �
 python scripts/collectors/collect_lh_notices.py             # LH 상가 공고 적재 (upsert — 끝나면 안내대로 기준선 상수를 올릴 것)
 python scripts/feedback_digest.py               # 의견함에 뭐가 쌓였나 (숫자만 — 내용은 dbx.py 로. .env 자동 사용)
 python scripts/collectors/collect_transactions.py --sigungu-code <구> --months 216 --end-ym 202408   # 과거 백필(2006-09~2024-08) — 2026-09-09 서울·대전 30구 완료, 재실행은 이어받기
+# ⚠️ 최근 달은 신고(30일)가 덜 끝난 채 'done' 으로 굳는다 → 다시 받으려면 collect_progress 의 그 달을 pending 으로 되돌린 뒤 수집(2026-10-14 · 6개월 재수집 5,323건) · 적재기 load_transactions.py 는 `--sigungu-code` 가 없으면 **강남만** 적재한다(구마다 돌릴 것)
 # ⚠️ `--dry-run` 도 `collect_progress` 에 pending 시드를 **쓴다**(형제 수집기의 "DB 쓰기 0" 미리보기와 다르다 — `seed_progress` 가 dry_run 분기 **앞**에 있다, collect_transactions.py:735-746). 시드는 멱등(있는 행 보존)이라 무해하지만 미리보기에도 DB 열쇠가 필요하다.
 python scripts/backtest_price.py                # Stage B 백테스트 성적표 재생성 (DB 읽기 전용 → docs/backtest/, 통과구.csv 포함)
 python scripts/backtest_price.py --place-axis   # 1층 유형축(L7=도로등급×상권등급) 검증 — 새 파일 2개만 쓴다(기존 성적표·통과구.csv 안 건드림). psql 필요
@@ -180,7 +181,7 @@ python scripts/collectors/fetch_bldrgst_bulk.py --list             # 건축HUB �
 python scripts/collectors/fetch_bldrgst_bulk.py --kind title --probe  # 크기·형식만 확인 (저장 0)
 python scripts/collectors/fetch_bldrgst_bulk.py --kind title      # 표제부 zip 받기 (646MB, 로그인 불필요)
 python scripts/collectors/convert_bldrgst_bulk.py --dry-run       # zip → raw JSONL 변환 미리보기(쓰기 0)
-python scripts/collectors/convert_bldrgst_bulk.py                 # 변환 (기본 범위 11,30 = 서울+대전)
+python scripts/collectors/convert_bldrgst_bulk.py                 # 변환 (기본 범위 11,30 = 서울+대전) — ⚠️ 기본 입력 폴더가 202606 으로 박혀 있다 → 새 판은 `--src-dir data/raw/bldrgst_bulk/<YYYYMM> --out-dir data/raw/bldrgst_bulk_converted_<YYYYMM>`(2026-10-14)
 # ↑ 변환 후에는 기존 적재기를 시군구 폴더마다 돌린다 (코드 수정 0):
 #   python scripts/collectors/load_building_ledger.py --raw-dir data/raw/bldrgst_bulk_converted/11680 --snapshot-ym 202606
 python scripts/collectors/fetch_bldrgst_bulk.py --kind permit-basis   # ★ 건축인허가 기본개요 zip 받기 (438MB, 분류 01 — 월간·3개월만 보관)
