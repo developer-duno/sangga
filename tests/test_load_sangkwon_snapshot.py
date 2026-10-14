@@ -1437,6 +1437,53 @@ def test_main_dry_run_gate_mismatch_warns_and_exits_nonzero(tmp_path, monkeypatc
     assert "[경고] 적재 전 관문 불일치" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("changed", [True, False], ids=["사이에바뀜", "그대로"])
+def test_main_gate_rechecked_after_the_real_scan(tmp_path, monkeypatch, capsys, changed):
+    """적대 검사 🟡3 — 사전 관문 통과 뒤 원본이 바뀌어 본 스캔 관문이 어긋나면 교차검증·표지 전에 exit 1.
+
+    '사이에바뀜': 본 스캔 직전 원본에 '지하' 행이 생긴다(판정 함수는 지하로 보고 원본 '지' 세기는 안 센다
+    → 본 스캔 관문 불일치). '그대로'(양성 대조): 두 관문 다 통과 → 지금 흐름대로 교차검증·표지.
+    """
+    _all_mode(tmp_path, monkeypatch, ym="202609", oldest="202603")
+    real_scan = target.scan_and_build
+    scans = []
+
+    def scan(*a, **k):
+        scans.append(1)
+        if changed and len(scans) == 2:   # 사전 스캔(1) 뒤 · 본 스캔(2) 직전에 원본이 바뀐다
+            write_csv(tmp_path, "소상공인시장진흥공단_상가(상권)정보_서울_202609.csv", [
+                make_row(상가업소번호="M1", 시군구코드="11680", 지번코드="1168010100108230004"),
+                make_row(상가업소번호="M2", 시군구코드="11680", 지번코드="1168010100108230004", 층정보="지하"),
+            ])
+        return real_scan(*a, **k)
+
+    monkeypatch.setattr(target, "scan_and_build", scan)
+    counted = []
+    counts = {"parcel": [0, 1], "unit_business": [1]}
+    monkeypatch.setattr(target, "rest_count",
+                        lambda base_url, headers, table, query: counted.append(table) or counts[table].pop(0))
+    marks = []
+    monkeypatch.setattr(target, "mark_snapshot_loaded",
+                        lambda base_url, headers, p_ym, rows: marks.append(p_ym)
+                        or (True, {"loaded_ym": "202606" if p_ym == "202603" else p_ym,
+                                   "published_ym": "202606"}))
+    out_rc = target.main()
+    out = capsys.readouterr().out
+    assert len(scans) == 2
+    if changed:
+        assert out_rc == 1
+        assert "[에러] 본 스캔 관문 불일치 — 서울(11) 칸 true 1 · 원본 '지' 0" in out
+        assert "본 스캔 도중 행은 이미 들어갔습니다 · 표지는 올리지 않습니다" in out
+        assert counted == ["parcel"], "REST 교차검증은 안 부른다(적재 전 기준값 한 번뿐)"
+        assert marks == ["202603"], "표지 RPC 는 안 부른다(사전 점검 한 번뿐)"
+        assert "REST 교차 확인 중" not in out
+    else:
+        assert out_rc == 0
+        assert "본 스캔 관문 불일치" not in out
+        assert counted == ["parcel", "parcel", "unit_business"]
+        assert marks == ["202603", "202609"]
+
+
 def test_basement_unknown_null_count_asks_one_quarter_only():
     seen = []
 

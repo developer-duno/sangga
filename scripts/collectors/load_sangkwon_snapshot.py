@@ -1202,6 +1202,15 @@ def main():
             return 1
         return 0
 
+    # 본 스캔 관문 재결과(물결 2-2c 적대 검사 🟡3) — 사전 관문을 통과했어도 두 번 훑는 사이에 원본이 바뀌면
+    # 본 스캔 관문이 어긋날 수 있다. 본 스캔은 파일마다 바로 upsert 하므로(flush_file) 행은 이미 들어갔다 —
+    # 조용히 지나가지 않고 교차검증·표지 올리기 **전에** 멈춘다(표지를 안 올리면 화면은 그 분기를 안 낸다).
+    if gate_problems:
+        print("[에러] 본 스캔 관문 불일치 — {}".format(" · ".join(gate_problems)))
+        print("       본 스캔 도중 행은 이미 들어갔습니다 · 표지는 올리지 않습니다 · "
+              "원본 파일이 사전 관문 뒤에 바뀌었는지 확인한 뒤 다시 돌리세요.")
+        return 1
+
     if not result["parcel_count"] and not result["unit_business_count"]:
         print("[에러] 적재할 행이 없습니다. --sigungu-code/--dir 를 확인하세요.")
         return 1

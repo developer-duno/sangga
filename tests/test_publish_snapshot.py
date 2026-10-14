@@ -137,14 +137,21 @@ def test_set_loaded_sql_moves_only_the_loaded_columns():
         target.build_set_loaded_sql("2026Q3")
 
 
-def _loaded_answers(monkeypatch, published="202606", count="2800000", loaded=None):
-    """표지 두 칸(loaded|published)과 점포 표 행 수를 흉내 낸다. loaded 를 안 주면 published 와 같다."""
+def _loaded_answers(monkeypatch, published="202606", count="2800000", loaded=None, col="1", nulls="0"):
+    """표지 두 칸(loaded|published)과 점포 표 행 수를 흉내 낸다. loaded 를 안 주면 published 와 같다.
+
+    col·nulls = '지하인데 층 모름' 칸 있음('1'/'0')과 그 분기 null 수(물결 2-2c) — 기본은 '칸 있음 · null 0'.
+    """
     asked, ran = [], []
     loaded = published if loaded is None else loaded
-    answers = {target.FLAG_YMS_SQL: "{}|{}".format(loaded, published) if (loaded or published) else ""}
+    answers = {target.FLAG_YMS_SQL: "{}|{}".format(loaded, published) if (loaded or published) else "",
+               target.BASEMENT_COL_SQL: col}
 
     def q(sql):
         asked.append(sql)
+        if sql.startswith("select count(*) from unit_business where snapshot_ym = ") and \
+                "floor_basement_unknown is null" in sql:
+            return nulls
         return answers.get(sql, count)
     monkeypatch.setattr(target, "query_one", q)
     monkeypatch.setattr(target.dbx, "run_sql", lambda sql, **k: ran.append(sql) or 0)
@@ -224,6 +231,68 @@ def test_loaded_refuses_an_unreadable_flag(monkeypatch, answer):
     assert ran == []
 
 
+# ── 3-4. --loaded 의 '지하인데 층 모름' null 확인 (물결 2-2c 적대 검사 🟡5) ───────────────────────
+#
+# 시·도 접두 모드로 나눠 넣은 뒤 손으로 표지를 올리면 적재기의 적재 직후 null 확인을 거치지 않던 틈.
+# 칸 없음(2026-10-14a 전) → [주의] 뒤 진행 · null 0 → 진행 · null 1 이상 → 거부 · 조회 이상 → 거부.
+
+
+def test_basement_null_sql_asks_one_quarter_and_refuses_odd_quarters():
+    assert target.build_basement_null_sql("202609") == (
+        "select count(*) from unit_business where snapshot_ym = '202609' "
+        "and floor_basement_unknown is null;")
+    for bad in ("", "2026Q3", "202609'--", None):
+        with pytest.raises(ValueError):
+            target.build_basement_null_sql(bad)
+    low = target.BASEMENT_COL_SQL
+    assert "table_name = 'unit_business'" in low and "column_name = 'floor_basement_unknown'" in low
+
+
+def test_loaded_without_the_column_warns_and_still_writes(monkeypatch, capsys):
+    asked, ran = _loaded_answers(monkeypatch, col="0")
+    assert target.main(["--loaded", "202609"]) == 0
+    assert ran == [target.build_set_loaded_sql("202609")]
+    assert not any("floor_basement_unknown is null" in s for s in asked), "칸이 없으면 null 을 세지 않는다"
+    assert "[주의] '지하인데 층 모름' 칸이 없는 DB(2026-10-14a 전)라 null 확인을 건너뜁니다." in \
+        capsys.readouterr().out
+
+
+def test_loaded_with_zero_nulls_writes(monkeypatch, capsys):
+    asked, ran = _loaded_answers(monkeypatch, col="1", nulls="0")
+    assert target.main(["--loaded", "202609"]) == 0
+    assert ran == [target.build_set_loaded_sql("202609")]
+    assert target.build_basement_null_sql("202609") in asked
+    assert asked.index(target.build_exists_sql("202609")) < asked.index(target.BASEMENT_COL_SQL)
+    assert "floor_basement_unknown null 0행 (기대 0)  [일치]" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("nulls", ["1", "3"])
+def test_loaded_with_nulls_refuses_and_writes_nothing(monkeypatch, capsys, nulls):
+    _, ran = _loaded_answers(monkeypatch, col="1", nulls=nulls)
+    assert target.main(["--loaded", "202609"]) == 1
+    assert ran == []
+    out = capsys.readouterr().out
+    assert "[에러] 202609 분기에 '지하인데 층 모름' 칸이 빈 행이 {}개 있습니다".format(nulls) in out
+    assert "표지를 올리지 않습니다" in out
+
+
+@pytest.mark.parametrize("col, nulls", [
+    ("", "0"), ("x", "0"), ("2", "0"),      # 칸 조회가 이상하다
+    ("1", ""), ("1", "ERROR"), ("1", "-1"),  # null 수 조회가 이상하다
+], ids=["칸빈출력", "칸숫자아님", "칸2", "null빈출력", "null숫자아님", "null음수"])
+def test_loaded_refuses_when_the_null_check_cannot_be_read(monkeypatch, capsys, col, nulls):
+    _, ran = _loaded_answers(monkeypatch, col=col, nulls=nulls)
+    assert target.main(["--loaded", "202609"]) == 1
+    assert ran == []
+    assert "조회 실패" in capsys.readouterr().out
+
+
+def test_loaded_same_quarter_does_not_run_the_null_check(monkeypatch):
+    asked, ran = _loaded_answers(monkeypatch, published="202606", loaded="202609", nulls="5")
+    assert target.main(["--loaded", "202609"]) == 0
+    assert asked == [target.FLAG_YMS_SQL] and ran == []
+
+
 # ── 4. --show 흐름 (DB 쓰기 0) ───────────────────────────────────────────────
 
 
@@ -276,7 +345,8 @@ def non_ascii_chars(sql):
 
 def test_sql_sent_through_psql_c_is_ascii():
     for sql in (target.SHOW_FLAG_SQL, target.SHOW_QUARTERS_SQL, target.SHOW_MVS_SQL,
-                target.FLAG_YMS_SQL, target.build_exists_sql("202606")):
+                target.FLAG_YMS_SQL, target.build_exists_sql("202606"),
+                target.BASEMENT_COL_SQL, target.build_basement_null_sql("202606")):
         assert non_ascii_chars(sql) == set(), sql[:80]
 
 
