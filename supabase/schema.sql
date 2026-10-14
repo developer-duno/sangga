@@ -488,8 +488,11 @@ create index if not exists idx_ub_unit     on unit_business (unit_id, snapshot_y
 --    (list_industry_floors 의 rsub)가 층 칸을 꺼내는데 include 에 없어 Index Scan → 힙 방문이었다
 --    (강남 1168010600109420015 · 음식 I2 · 찬 캐시 3,292ms · read 4,539쪽 / 더운 12ms — 적용 전 실측).
 --    칸 순서는 마이그레이션과 같아야 한다 — post_load --check 의 정본 색인 점검이 INCLUDE 를 순서까지 대조한다.
+-- ⛔ 여섯째 include `floor_basement_unknown` 은 2026-10-14c 에 더했다(물결 2-2c) — 반경 층 집계가 층 묶음을
+--    (floor_no, floor_basement_unknown) 둘로 정하게 되어(2026-10-14b) 꺼내는 칸이 하나 늘었다. 빠지면 09c 가
+--    고친 힙 방문(찬 캐시 3초대)이 돌아온다. 적용 순서 = 14a(칸) → 14c(이 색인) → 14b(함수).
 create index if not exists idx_ub_pnu_cat  on unit_business (pnu, snapshot_ym)
-  include (cat_l_cd, cat_l_nm, cat_m_cd, cat_m_nm, floor_no);
+  include (cat_l_cd, cat_l_nm, cat_m_cd, cat_m_nm, floor_no, floor_basement_unknown);
 -- ⚠️ 옛 `idx_ub_name (biz_name gin_trgm_ops)` 자리다(2026-09-09c 에서 지웠다 — 결정 0028).
 --    **쓰는 코드가 0건**이었고, 그럴 수밖에 없었다: '카페' 같은 2글자 검색어는 trigram
 --    선별력이 없어 이 색인을 **아예 안 타고** 277만 행을 통째로 훑었다(라이브 실측 7.6초).
@@ -3089,17 +3092,24 @@ revoke all on function list_industry_detail(text, text) from public, anon, authe
 -- ── 업종별 층 분포 (2026-10-09b · 물결 2-2 · 결정 0036 결정 18 ⑲~㉑) ──────────────────
 -- 업종 분포 카드에서 대분류를 고르면 그 대분류(창업자 칩이면 짝 중분류까지) 가게가 몇 층에
 -- 있는지를 한 줄로 보탠다. 범위는 형제 둘과 같다 — 속한 상권 안(미리 굽는다) + 반경 500m(그때그때).
--- 층 묶음은 다섯으로 고정한다: 지하(b) · 1층(1) · 2층(2) · 3층 이상(3+ — 옥탑 99 포함) · 층 미상(na).
+-- ⓘ 옛 한 인자 판 industry_floor_band(smallint)(2026-10-09b) 자리다 — 2026-10-14b 가 두 인자 판으로 바꾸고 옛 판을
+--    지웠다(같은 이름이 둘 남으면 post_load --check 함수 대조가 [사고]). 되살리지 말 것.
+-- 업종별 층 줄의 층 묶음 다섯 — 지하(b) · 1층(1) · 2층(2) · 3층 이상(3+ — 옥탑 99 포함) · 층 미상(na).
+-- 2026-10-14b(물결 2-2c): floor_no 가 NULL 이어도 '지하인데 층 모름' 칸(unit_business.floor_basement_unknown)이
+-- true 면 지하(b)로 센다 — 층 번호는 지어내지 않고(절대 규칙 4) 묶음만 지하로 옮긴다.
 -- ⛔ 층 미상(NULL)을 빼지 않는다 — 점포 표의 절반쯤(202606 전국 50.3%)이 층이 비어 있어서,
 --    빼면 남은 넷이 그 범위의 전부처럼 읽힌다. 미상은 경고가 아니라 **값**이다.
 -- ⛔ `strict` 를 붙이지 말 것 — strict 면 NULL 입력에 함수가 아예 안 불리고 NULL 을 돌려줘,
---    층 미상이 'na' 묶음이 아니라 이름 없는 묶음이 된다(화면 열쇠 다섯이 깨진다).
-create or replace function industry_floor_band(p_floor smallint)
+--    층 미상이 'na' 묶음이 아니라 이름 없는 묶음이 된다(화면 열쇠 다섯이 깨진다). 칸이 NULL 인
+--    옛 분기 행(👤 D1 — 거슬러 채우지 않는다)도 그래서 'na' 로 간다.
+-- ⛔ 칸 검사는 `is true` 로 — `= true`·`coalesce` 를 빼면 NULL 칸이 'b' 로도 'na' 로도 안 가는 갈래가 생긴다.
+create or replace function industry_floor_band(p_floor smallint, p_basement_unknown boolean)
 returns text
 language sql
 immutable
 as $$
   select case
+           when p_floor is null and p_basement_unknown is true then 'b'
            when p_floor is null then 'na'
            when p_floor < 0     then 'b'
            when p_floor = 1     then '1'
@@ -3108,24 +3118,26 @@ as $$
          end;
 $$;
 
-comment on function industry_floor_band(smallint) is
-  '물결 2-2 업종별 층 분포의 층 묶음 다섯(2026-10-09b) — NULL = ''na''(층 미상) · 음수 = ''b''(지하) · '
-  '1 = ''1'' · 2 = ''2'' · 그 밖 = ''3+''(3층 이상 — 옥탑 99 는 ''3+''). 요약표 mv_district_industry_floor 와 '
-  'list_industry_floors 가 같은 이 함수로 묶는다(두 범위가 다른 자로 묶이지 않게). strict 가 아니다 — NULL 도 묶음이다.';
+comment on function industry_floor_band(smallint, boolean) is
+  '업종별 층 분포의 층 묶음 다섯(2026-10-09b · 두 인자 판 2026-10-14b) — 층 NULL 이고 지하인데 층 모름 칸이 true 면 ''b''(지하) · '
+  '그 밖의 NULL = ''na''(층 미상 — 칸 NULL 인 옛 분기 포함) · 음수 = ''b''(지하) · 1 = ''1'' · 2 = ''2'' · '
+  '그 밖 = ''3+''(3층 이상 — 옥탑 99 는 ''3+''). 요약표 mv_district_industry_floor 와 list_industry_floors 가 '
+  '같은 이 함수로 묶는다(두 범위가 다른 자로 묶이지 않게). strict 가 아니다 — NULL 도 묶음이다.';
 
 -- 공개키가 직접 부를 일이 없다 — 요약표·함수 안에서만 쓴다(🚪 닫힌 채 태어나도 한 번 더 닫는다).
-revoke all on function industry_floor_band(smallint) from public, anon, authenticated;
+revoke all on function industry_floor_band(smallint, boolean) from public, anon, authenticated;
 
 -- 형제 mv_district_industry_mix 의 정의를 그대로 두고 층 묶음 칸 하나만 더했다. 분기도 같은 자 —
 -- 표지 loaded_ym(결정 0035 · published 가 아니다)으로 굽고, post_load.py 가 업종 표와 한 트랜잭션에서
 -- 굽는다. 같은 (상권·분기·중분류)의 n 을 층 묶음끼리 더하면 형제 표의 n 과 같아야 한다 —
 -- post_load.py --check 가 그 합을 대조한다(어긋나면 [낡음]).
+-- 2026-10-14b(물결 2-2c): 층 묶음을 두 인자 판으로 다시 구웠다(_next → 바꿔 끼우기 · 유일 색인 이름까지 되돌림).
 create materialized view if not exists mv_district_industry_floor as
 select d.district_id,
        ub.snapshot_ym,
        ub.cat_l_cd, ub.cat_l_nm,
        ub.cat_m_cd, ub.cat_m_nm,
-       public.industry_floor_band(ub.floor_no) as floor_band,
+       public.industry_floor_band(ub.floor_no, ub.floor_basement_unknown) as floor_band,
        count(*)::int as n
 from district d
 join unit_business ub
@@ -3135,9 +3147,10 @@ where ub.snapshot_ym = (select r.loaded_ym from snapshot_release r)   -- 표지 
 group by 1, 2, 3, 4, 5, 6, 7;
 
 comment on materialized view mv_district_industry_floor is
-  '상권 × 업종(중분류) × 층 묶음 점포 수 — 최신 분기 한 개만(2026-10-09b · 물결 2-2). '
+  '상권 × 업종(중분류) × 층 묶음 점포 수 — 최신 분기 한 개만(2026-10-09b · 물결 2-2 · 두 인자 묶음 2026-10-14b). '
   'mv_district_industry_mix 의 층 묶음 판 — 같은 (상권·중분류) 의 n 합이 형제와 같아야 한다(post_load --check 가 대조). '
-  '층 묶음은 industry_floor_band() 다섯(b · 1 · 2 · 3+ · na — 옥탑 99 는 3+, 층 미상은 na 로 그대로 센다). '
+  '층 묶음은 industry_floor_band(floor_no, floor_basement_unknown) 다섯(b · 1 · 2 · 3+ · na — 옥탑 99 는 3+, '
+  '숫자 없이 지하라고만 적힌 가게는 칸이 채워진 분기부터 b, 층 미상은 na 로 그대로 센다). '
   '⚠️ 상권이 겹치는 자리의 점포는 **양쪽에 모두** 세어진다(형제와 같다 — 상권끼리 더하지 말 것). '
   '⚠️ 어느 분기인지는 **구울 때** 굳는다 — 표지 loaded_ym(다 들어온 분기 · 결정 0035)으로 굽고, post_load.py 가 구운 뒤 화면 기준(published_ym)을 올린다. '
   '⛔ anon 에게 열지 않는다 — 화면은 list_industry_floors 함수로만 읽는다.';
@@ -3157,6 +3170,8 @@ revoke all on mv_district_industry_floor from public, anon, authenticated;
 -- ⛔ `p_cat_l::char(2)` · `p_cat_m::char(4)[]` 캐스트를 지우지 말 것 — 칸이 char 라 text 로 견주면
 --    컬럼 쪽이 캐스트돼 색인이 죽는다(2026-08-16b 와 같은 병).
 -- ⛔ bands 열쇠 다섯은 **늘 다 있다**(없는 묶음은 0) — 화면 검증기가 열쇠 하나라도 빠지면 그 응답을 버린다.
+-- 2026-10-14b(물결 2-2c): 반경 집계도 요약표와 같은 두 인자 묶음 · 응답에 basement_unknown_counted —
+--    그 분기가 '지하인데 층 모름' 칸이 채워진 분기인가(화면이 설명 문구 두 벌을 가른다 · 👤 D2').
 create or replace function list_industry_floors(p_pnu text, p_cat_l text, p_cat_m text[] default null)
 returns jsonb
 language sql
@@ -3189,6 +3204,17 @@ as $$
     -- 열쇠 다섯 — 순서는 화면이 정한다(FLOOR_BAND_ORDER). 여기서는 빠짐없이 있게만 한다.
     select v.k from (values ('b'), ('1'), ('2'), ('3+'), ('na')) as v(k)
   ),
+  counted as (
+    -- 그 분기 점포 행 하나(기본키 차례 첫 행 — 색인 한 번)의 '지하인데 층 모름' 칸이 채워졌나.
+    -- 칸은 2026-10-14a 뒤 적재한 분기만 true/false 이고 옛 분기는 NULL 이다(👤 D1 · 적재기가 한 분기 안
+    -- NULL 0 을 확인한다). 분기에 행이 없으면 false — 화면은 옛 문구를 그대로 둔다.
+    select coalesce((
+             select ub.floor_basement_unknown is not null
+             from unit_business ub
+             where ub.snapshot_ym = (select ym from snap)
+             order by ub.biz_no
+             limit 1), false) as v
+  ),
   dsub as (
     select h.district_id, m.floor_band, sum(m.n)::int as n
     from hit h
@@ -3200,7 +3226,7 @@ as $$
     group by 1, 2
   ),
   rsub as (
-    select public.industry_floor_band(ub.floor_no) as floor_band, count(*)::int as n
+    select public.industry_floor_band(ub.floor_no, ub.floor_basement_unknown) as floor_band, count(*)::int as n
     from unit_business ub cross join near
     where ub.snapshot_ym = (select ym from snap)
       and ub.pnu = any(near.pnus)
@@ -3228,6 +3254,8 @@ as $$
     -- 물어본 업종을 그대로 돌려준다 — 화면이 늦게 도착한 답(그 사이 다른 업종·칩을 고른 경우)을 버린다.
     'cat_l_cd', p_cat_l,
     'cat_m_cds', p_cat_m,
+    -- true 면 숫자 없이 '지하'라고만 적힌 가게가 지하(b)에 들어 있다 — 화면 설명 문구가 바뀐다.
+    'basement_unknown_counted', (select v from counted),
     'districts', coalesce((select jsonb_agg(dj.j order by dj.area_m2 asc, dj.district_id)
                             from dj), '[]'::jsonb),
     -- 좌표가 없으면 null — **빈 집계가 아니라 "모른다"** 라서 화면이 그 줄을 안 그린다.
@@ -3245,6 +3273,8 @@ comment on function list_industry_floors(text, text, text[]) is
   '(좁은 상권 먼저) · radius = 반경 500m(좌표가 없으면 null — 모른다). bands 는 열쇠 다섯(b · 1 · 2 · 3+ · na)이 '
   '늘 다 있다(없으면 0). cat_l_cd·cat_m_cds 를 그대로 되돌려 준다(늦게 도착한 답을 화면이 버릴 수 있게). '
   '분기는 형제 list_industry_detail 과 같은 자(1순위 요약표 · 2순위 published). '
+  '2026-10-14b(물결 2-2c): 층 묶음은 두 인자 판(숫자 없이 지하라고만 적힌 가게 → b) · basement_unknown_counted = '
+  '그 분기가 지하인데 층 모름 칸이 채워진 분기인가(옛 분기 false — 화면 설명 문구 두 벌). '
   'security definer — **나가는 것은 개수뿐이다(상호명 없음).**';
 
 revoke all on function list_industry_floors(text, text, text[]) from public, anon, authenticated;
