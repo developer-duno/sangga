@@ -157,6 +157,7 @@ function unfoldEntry() {
 
 describe('App — 구를 바꾸면 이전 결과가 사라진다', () => {
   it('검색 결과·선택 건물·검색어가 구를 바꾸는 순간 함께 사라진다', async () => {
+    openWith(''); // 앞 시험이 남긴 건물 주소로 시작하면 입구가 접혀 지역 칩이 숨는다(순서 섞기 seed 2·3).
     render(<App />);
 
     await pickGu('서울', '강남구');
