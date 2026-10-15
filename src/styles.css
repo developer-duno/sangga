@@ -3336,6 +3336,66 @@ body {
   }
 }
 
+/* ── 휴대폰 층 줄 = 세 줄 (S2 후속 · 👤 2026-10-16 시안 「나」) ─────────────────────────
+   위 묶음은 층 줄 칸 일곱을 한 칸씩 세로로 쌓아 한 줄이 214px 였다(운영 실측 · 10줄 카드 2,525px).
+   좁은 화면에서만 세 줄로 묶는다: ① 층 이름 + 용도 … ▼ ② 막대(폭 전체) ③ 면적 … 점포 · 거래 N건.
+   ⓘ 버튼 안 칸의 순서(DOM)는 그대로 두고 그리드 자리(grid-area)만 옮긴다 — 시험이 버튼 이름으로 찾고, 낭독 순서도 같다.
+   ⛔ **화면에서만**(`screen and`) — 넓은 화면은 위 기본 규칙, 종이는 지금 모양 그대로 둔다(크롬 A4 PDF 에는
+      위 `max-width: 720px` 묶음이 안 걸린다 — 10-16 실측. 다른 브라우저·종이 크기에서도 종이에 새지 않게 묶는다).
+   ⓘ 용도 이름이 길면 첫 줄 안에서만 줄을 바꾼다(가로 넘침 0 — E2E 「BC」). */
+@media screen and (max-width: 720px) {
+  .floor__row {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      'label use use caret'
+      'bar bar bar bar'
+      'area area stores tx';
+    gap: 4px 8px;
+  }
+
+  .floor__label {
+    grid-area: label;
+  }
+
+  .floor__use {
+    grid-area: use;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .floor__caret {
+    grid-area: caret;
+    justify-self: end;
+  }
+
+  .floor__bar {
+    grid-area: bar;
+  }
+
+  .floor__area {
+    grid-area: area;
+  }
+
+  .floor__stores {
+    grid-area: stores;
+    justify-self: end;
+  }
+
+  .floor__tx {
+    grid-area: tx;
+    justify-self: end;
+  }
+
+  /* 거래가 없는 층(뱃지 칸이 빈 글)은 점포가 셋째 줄 오른쪽 끝까지 간다 — 빈 칸 자리만큼 안쪽에 서면 줄마다 점포 글자가 흔들린다. */
+  .floor__row:has(> .floor__tx:empty) .floor__stores {
+    grid-column-end: -1;
+  }
+
+  .floor__tx:empty {
+    display: none;
+  }
+}
+
 /* ── 가지고 나가기(링크 복사) ──────────────────────────────────────────────
    층별 화면 바로 위 한 줄. 주된 행동이 아니라 테두리만 있는 가벼운 버튼이다 —
    여기서 눈에 띄는 색을 쓰면 "이걸 먼저 눌러야 하나" 싶어 본 내용에서 눈이 흩어진다. */
@@ -3873,7 +3933,9 @@ body {
 @media screen {
   /* ⚠️ 목록 이름까지 붙여 무게를 올린다 — `.tx__list li { display: flex }`(무게 0,1,1)가 이름표 하나(0,1,0)를 이긴다. */
   .floors > li.list__folded,
-  .tx__list > li.list__folded {
+  .tx__list > li.list__folded,
+  /* 지분 설명 줄 — 지분이 숨은 줄에만 있을 때 이 이름표가 붙는다(FloorStack.tsx 의 shownShare · 👤 2026-10-16). */
+  .tx__share-note.list__folded {
     display: none;
   }
 
