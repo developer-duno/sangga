@@ -1,6 +1,7 @@
 /// <reference types="node" />
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, act, waitFor } from '@testing-library/react';
+import { useState } from 'react';
 import type { BuildingHit, DistrictFeature, DistrictGeoJson, Ring } from '../types';
 
 /**
@@ -614,5 +615,82 @@ describe('DistrictMap — 접기와 캐시', () => {
 
     // 파일 하나에 전국이 다 들어 있다 — 구별로 거르기만 하면 된다.
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── 다시 그려져도 누른 상권·목록 되살리기 (👤 2026-10-15 G1) ─────────────────────────────
+// 입구가 접히면(S1) 지도는 안 그려진다. App 이 기억(`pick`)을 쥐고 넘기면, 다시 그릴 때 아까 누른 상권과 펼친 건물
+// 목록이 그대로 선다. ⓘ E2E 는 지도 키가 비어 알맹이가 안 그려지므로 이 가짜 SDK 시험이 대신한다.
+describe('DistrictMap — 다시 그려져도 누른 상권·목록 되살리기 (G1)', () => {
+  async function clickAt(lng: number, lat: number) {
+    await act(async () => {
+      kakao.mapProps?.onClick?.(null, { latLng: { getLat: () => lat, getLng: () => lng } });
+    });
+  }
+
+  it('★ 위가 기억을 쥐면, 지도를 치웠다 다시 그려도 누른 상권과 펼친 건물 목록이 그대로 선다', async () => {
+    const DistrictMap = await load();
+    const { EMPTY_MAP_PICK } = await import('../lib/districtMapPick');
+    type Pick = typeof EMPTY_MAP_PICK;
+    const seen: Pick[] = [];
+    function Host({ show }: { show: boolean }) {
+      const [pick, setPick] = useState<Pick>(EMPTY_MAP_PICK);
+      return show ? (
+        <DistrictMap
+          sigungu="11680"
+          sigunguName="강남구"
+          selected={null}
+          onSelectBuilding={() => {}}
+          pick={pick}
+          onPickChange={(next) => {
+            seen.push(next);
+            setPick(next);
+          }}
+        />
+      ) : null;
+    }
+    const { rerender } = render(<Host show />);
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await clickAt(127.09, 37.59);
+    fireEvent.click(screen.getByRole('button', { name: /역삼역/ }));
+    await screen.findByText('역삼빌딩');
+    // 기억에는 구와 상권 **번호**만 실린다.
+    expect(seen.at(-1)).toEqual({ sigungu: '11680', pickedIds: ['big'], openId: 'big' });
+
+    rerender(<Host show={false} />);
+    expect(screen.queryByTestId('map')).toBeNull();
+    rerender(<Host show />);
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    expect(screen.getByRole('button', { name: /역삼역/ }).getAttribute('aria-expanded')).toBe('true');
+    expect(await screen.findByText('역삼빌딩')).toBeTruthy();
+  });
+
+  it('양성 대조 — 기억을 안 넘기면(스스로 쥐면) 다시 그릴 때 처음부터다', async () => {
+    const DistrictMap = await load();
+    function Host({ show }: { show: boolean }) {
+      return show ? (
+        <DistrictMap sigungu="11680" sigunguName="강남구" selected={null} onSelectBuilding={() => {}} />
+      ) : null;
+    }
+    const { rerender } = render(<Host show />);
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await clickAt(127.09, 37.59);
+    expect(screen.getByRole('button', { name: /역삼역/ })).toBeTruthy();
+    rerender(<Host show={false} />);
+    rerender(<Host show />);
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: /역삼역/ })).toBeNull();
+    expect(screen.getByText(/지도를 누르면 그 자리의 상권을 알려드립니다/)).toBeTruthy();
+  });
+
+  it('⛔ 다른 구에서 누른 기억은 쓰지 않는다 — 처음 안내가 선다', async () => {
+    await renderMap({
+      pick: { sigungu: '30170', pickedIds: ['big'], openId: 'big' },
+      onPickChange: () => {},
+    });
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: /역삼역/ })).toBeNull();
+    expect(screen.queryByText('역삼빌딩')).toBeNull();
+    expect(screen.getByText(/지도를 누르면 그 자리의 상권을 알려드립니다/)).toBeTruthy();
   });
 });

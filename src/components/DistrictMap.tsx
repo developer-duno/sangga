@@ -11,6 +11,7 @@ import { loadDistricts } from '../lib/districts';
 import { labelPointOf, showLabels } from '../lib/districtLabels';
 import { boundsOf, pointInGeometry, polygonsOf, ringsToPath, type Bounds } from '../lib/geo';
 import { FOUNDER_CHIP_ALL, type FounderChip } from '../lib/founderChips';
+import { EMPTY_MAP_PICK, type DistrictMapPick } from '../lib/districtMapPick';
 import type { BuildingHit, DistrictFeature } from '../types';
 import { DistrictBuildings } from './DistrictBuildings';
 
@@ -51,6 +52,14 @@ type Props = {
    * 그 업종 기준으로 거르고 줄 세운다(2026-10-11a · 물결 2-2b · 결정 18 ⑨·㉒). 지도 면은 안 바뀐다.
    */
   chip?: FounderChip;
+  /**
+   * 누른 자리의 상권·펼친 상권 목록(👤 2026-10-15 G1 「다시 펴면 그대로 되살리기」). 주면 그 값을 쓰고 바뀌면 알린다 —
+   * App 이 쥐어, 입구가 접혀 지도가 안 그려졌다가(S1) 다시 그려져도 아까 누른 상권과 건물 목록이 그대로 선다.
+   * 안 주면 지도가 스스로 쥔다(다시 그려지면 처음부터).
+   * ⛔ 화면 상태만 — 이 기기 저장·주소·의견함에 싣지 않는다 · 구가 다르면 없는 것으로 본다.
+   */
+  pick?: DistrictMapPick;
+  onPickChange?: (next: DistrictMapPick) => void;
 };
 
 /**
@@ -100,6 +109,8 @@ export function DistrictMap({
   onSelectBuilding,
   headExtra,
   chip = FOUNDER_CHIP_ALL,
+  pick,
+  onPickChange,
 }: Props) {
   const [open, setOpen] = useState(true);
 
@@ -132,6 +143,8 @@ export function DistrictMap({
           selected={selected}
           onSelectBuilding={onSelectBuilding}
           chip={chip}
+          pick={pick}
+          onPickChange={onPickChange}
         />
       )}
     </section>
@@ -151,25 +164,28 @@ function DistrictMapBody({
   selected,
   onSelectBuilding,
   chip,
+  pick: pickProp,
+  onPickChange,
 }: {
   appkey: string;
   sigungu: string;
   selected: BuildingHit | null;
   onSelectBuilding: (hit: BuildingHit) => void;
   chip: FounderChip;
+  pick?: DistrictMapPick;
+  onPickChange?: (next: DistrictMapPick) => void;
 }) {
   const [kakaoLoading, kakaoError] = useKakaoLoader({ appkey });
   const [features, setFeatures] = useState<DistrictFeature[] | null>(null);
   const [fileError, setFileError] = useState(false);
-  /** 마지막으로 누른 자리에 걸친 상권들. null이면 아직 아무 데도 안 눌렀다는 뜻이다. */
-  const [picked, setPicked] = useState<DistrictFeature[] | null>(null);
-  /**
-   * 건물 목록을 펼쳐 둔 상권. 누른 자리에 여럿이 걸치면 그중 **하나만** 연다.
-   *
-   * ⛔ 지도를 다시 누르면 비운다 — 안 비우면 새로 누른 자리 아래에 **옛 상권의 건물들**이
-   *    그대로 서 있어, 방금 누른 곳의 목록으로 읽힌다.
-   */
-  const [openDistrict, setOpenDistrict] = useState<DistrictFeature | null>(null);
+  /*
+    누른 자리·펼친 상권(`DistrictMapPick`). 위(App)가 주면 그것을, 안 주면 스스로 쥔다.
+    ⛔ 다른 구에서 누른 기억은 없는 것으로 본다 — 안 그러면 다른 구의 상권이 그대로 남는다.
+  */
+  const [ownPick, setOwnPick] = useState<DistrictMapPick>(EMPTY_MAP_PICK);
+  const pickNow = pickProp ?? ownPick;
+  const setPick = onPickChange ?? setOwnPick;
+  const mine = pickNow.sigungu === sigungu ? pickNow : EMPTY_MAP_PICK;
   /**
    * 지금 확대 수준. 이름표를 켤지 말지에만 쓴다.
    *
@@ -197,17 +213,28 @@ function DistrictMapBody({
     };
   }, []);
 
-  // 구가 바뀌면 이전 구에서 누른 목록을 지운다 — 안 지우면 다른 구의 상권이 그대로 남는다.
-  useEffect(() => {
-    setPicked(null);
-  }, [sigungu]);
-
   // ⛔ 정렬하지 않는다. 파일 순서(면적 내림차순)가 곧 겹침 규칙이다.
   const shown = useMemo(
     () => (features ?? []).filter((f) => f.properties.sigungu_code === sigungu),
     [features, sigungu],
   );
   const bounds = useMemo(() => boundsOf(shown), [shown]);
+  /** 마지막으로 누른 자리에 걸친 상권들. null이면 아직 아무 데도 안 눌렀다는 뜻이다. */
+  const picked = useMemo(
+    () =>
+      mine.pickedIds === null
+        ? null
+        : mine.pickedIds.flatMap((id) => shown.filter((f) => f.properties.district_id === id)),
+    [mine.pickedIds, shown],
+  );
+  /**
+   * 건물 목록을 펼쳐 둔 상권. 누른 자리에 여럿이 걸치면 그중 **하나만** 연다.
+   *
+   * ⛔ 지도를 다시 누르면 비운다 — 안 비우면 새로 누른 자리 아래에 **옛 상권의 건물들**이
+   *    그대로 서 있어, 방금 누른 곳의 목록으로 읽힌다.
+   */
+  const openDistrict =
+    mine.openId === null ? null : (shown.find((f) => f.properties.district_id === mine.openId) ?? null);
   /** 그려진 면들의 출처만 모은다 — 안 쓴 출처를 덧붙이는 것은 지어낸 출처다(2026-08-14d와 같은 규칙). */
   const sources = useMemo(
     () => [...new Set(shown.map((f) => f.properties.source_nm).filter(Boolean))],
@@ -256,8 +283,13 @@ function DistrictMapBody({
           onClick={(_map, mouseEvent) => {
             const lat = mouseEvent.latLng.getLat();
             const lng = mouseEvent.latLng.getLng();
-            setPicked(shown.filter((f) => pointInGeometry(lng, lat, f.geometry)));
-            setOpenDistrict(null);
+            setPick({
+              sigungu,
+              pickedIds: shown
+                .filter((f) => pointInGeometry(lng, lat, f.geometry))
+                .map((f) => f.properties.district_id),
+              openId: null,
+            });
           }}
           onZoomChanged={(map) => setLevel(map.getLevel())}
         >
@@ -319,9 +351,11 @@ function DistrictMapBody({
         picked={picked}
         openId={openDistrict?.properties.district_id ?? null}
         onPick={(f) =>
-          setOpenDistrict((cur) =>
-            cur?.properties.district_id === f.properties.district_id ? null : f,
-          )
+          setPick({
+            ...mine,
+            sigungu,
+            openId: mine.openId === f.properties.district_id ? null : f.properties.district_id,
+          })
         }
       />
 

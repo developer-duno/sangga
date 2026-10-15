@@ -17,6 +17,7 @@ import { ShareButton } from './components/ShareButton';
 import { TxFlowSection } from './components/TxFlowSection';
 import { UnitPrintPicker } from './components/UnitPrintPicker';
 import { FLOOR_STACK_VIEW } from './lib/appConstants';
+import { EMPTY_MAP_PICK, type DistrictMapPick } from './lib/districtMapPick';
 import { buildingFromFloorRows } from './lib/restoreBuilding';
 import { FOUNDER_CHIP_ALL, type FounderChip } from './lib/founderChips';
 import { entryBlockOrder, type EntryBlockKey, type ViewerRole } from './lib/sectionCards';
@@ -66,6 +67,12 @@ export default function App() {
   */
   const [founderChip, setFounderChip] = useState<FounderChip>(FOUNDER_CHIP_ALL);
   const activeChip = viewerRole === '창업자' ? founderChip : FOUNDER_CHIP_ALL;
+  /*
+    지도에서 누른 상권·펼친 상권 목록(👤 2026-10-15 G1). 입구가 접히면(S1) 지도는 안 그려지는데, 다시 펼쳐 새로 그릴 때
+    아까 누른 상권과 건물 목록이 그대로 서게 여기서 쥔다(다음 건물로 바로 넘어가게).
+    ⛔ **화면만** — 이 기기 저장·주소·의견함에 싣지 않는다 · 구가 바뀌면 비운다(`handleSelectSigungu`·`handlePickRecent`).
+  */
+  const [mapPick, setMapPick] = useState<DistrictMapPick>(EMPTY_MAP_PICK);
   function handlePickRole(role: ViewerRole | null) {
     setViewerRole(role);
     saveViewerRole(role);
@@ -150,6 +157,7 @@ export default function App() {
     setRestoreFailed(false);
     setSigungu(code);
     setSigunguName(code ? (name ?? null) : null);
+    setMapPick(EMPTY_MAP_PICK);
     setSelected(null);
   }
 
@@ -220,6 +228,7 @@ export default function App() {
     if (code !== sigungu) {
       setSigungu(code);
       setSigunguName(null);
+      setMapPick(EMPTY_MAP_PICK);
     }
     setSelected({ ...item });
     foldEntry(true);
@@ -388,6 +397,8 @@ export default function App() {
             selected={selected}
             onSelectBuilding={handleSelectBuilding}
             chip={activeChip}
+            pick={mapPick}
+            onPickChange={setMapPick}
             headExtra={
               viewerRole === '창업자' ? (
                 <FounderChips chip={founderChip} onChange={setFounderChip} />
@@ -450,6 +461,10 @@ export default function App() {
         {folded ? (
           <div className="entrybar">
             {placeLabel && <span className="entrybar__place">{placeLabel}</span>}
+            {/* 창업자가 고른 업종(👤 2026-10-15 G2) — 카드의 굵은 줄이 왜 굵은지 접힌 채로도 보이게. '전체'면 안 적는다. */}
+            {activeChip !== FOUNDER_CHIP_ALL && (
+              <span className="entrybar__chip">업종: {activeChip}</span>
+            )}
             <button
               type="button"
               className="entrybar__btn"

@@ -2350,6 +2350,13 @@ test.describe('첫 화면 — 창업자 입구 · 업종 칩', () => {
     await search(page, '테헤란로');
     await page.getByRole('button', { name: /테스트빌딩/ }).click();
 
+    // 접힌 바에 고른 업종 글자(👤 G2 · 단추 아님) — 카드의 굵은 줄이 왜 굵은지 접힌 채로도 보인다. 종이에선 바째 빠진다.
+    // ⓘ 지도 기억 되살리기(G1)는 E2E 에서 지도 알맹이가 안 그려져(키 없음) 볼 수 없다 — `DistrictMap.test` 「G1」·`App.mapPick.test` 가 본다.
+    await expect(page.locator('.entrybar .entrybar__chip')).toHaveText('업종: 카페');
+    await page.emulateMedia({ media: 'print' });
+    await expect(page.locator('.entrybar__chip')).toBeHidden();
+    await page.emulateMedia({ media: null });
+
     // 둘레 업종 분포 — 음식(I2)을 미리 고른 채 열리고 짝 중분류(비알코올) 줄이 굵다.
     const mix = page.locator('section.mix');
     await expect(mix.locator('select.mix__select')).toHaveValue('I2');

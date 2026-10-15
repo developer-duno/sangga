@@ -83,6 +83,10 @@ body {
   font-weight: 700;
 }
 
+.entrybar__chip {
+  color: var(--muted);
+}
+
 .entrybar__btn {
   font: inherit;
   font-size: 14px;

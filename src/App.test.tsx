@@ -1441,4 +1441,49 @@ describe('App — 입구 접기 (S1)', () => {
     expect(bar()).toBeNull();
     expect(document.querySelector('section.dmap')).not.toBeNull();
   });
+
+  it('★ G2 창업자가 칩을 고른 채 건물을 열면 바에 「업종: 카페」(글자 · 단추 아님) — 전체·투자자면 없다', async () => {
+    const chipBtn = (name: string) =>
+      [...document.querySelectorAll('.chips button')].find((b) => b.textContent === name) as HTMLButtonElement;
+    const chipText = () => bar()?.querySelector('.entrybar__chip')?.textContent ?? null;
+
+    // ① 창업자 + 카페 → 적는다.
+    window.localStorage.setItem(KEY, '창업자');
+    render(<App />);
+    await pickGu('서울', '강남구');
+    fireEvent.click(chipBtn('카페'));
+    let input = screen.getByLabelText('건물명 또는 주소');
+    fireEvent.change(input, { target: { value: '테헤란로' } });
+    fireEvent.submit(input.closest('form')!);
+    fireEvent.click(await screen.findByRole('button', { name: /테스트빌딩/ }));
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+    expect(chipText()).toBe('업종: 카페');
+    expect(bar()!.querySelector('.entrybar__chip')!.tagName).toBe('SPAN');
+    expect([...bar()!.querySelectorAll('button')].map((b) => b.textContent)).toEqual([
+      '← 다른 건물 찾기',
+      '상권 지도 보기',
+      '나는 창업자 ▾',
+    ]);
+    cleanup();
+    openWith('');
+
+    // ② 창업자 + 전체(처음 값) → 안 적는다.
+    render(<App />);
+    await pickGu('서울', '강남구');
+    input = screen.getByLabelText('건물명 또는 주소');
+    fireEvent.change(input, { target: { value: '테헤란로' } });
+    fireEvent.submit(input.closest('form')!);
+    fireEvent.click(await screen.findByRole('button', { name: /테스트빌딩/ }));
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+    expect(bar()).not.toBeNull();
+    expect(chipText()).toBeNull();
+    cleanup();
+    openWith('');
+
+    // ③ 투자자 → 칩이 없으니 안 적는다.
+    window.localStorage.setItem(KEY, '투자자');
+    await openBuildingBySearch();
+    expect(bar()).not.toBeNull();
+    expect(chipText()).toBeNull();
+  });
 });
