@@ -312,6 +312,7 @@ QUIET = (
     ("report_canonical_indexes", lambda: []),
     ("report_function_drift", lambda: []),
     ("report_snapshot_release", lambda *a: (False, False)),
+    ("report_ledger_release", lambda: False),
     ("report_store_names_freshness", lambda: ("", "", False)),
     ("report_industry_floor_freshness", lambda: ("", "", False)),
     ("report_industry_floor_consistency", lambda: ("0", False)),

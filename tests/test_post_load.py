@@ -102,6 +102,8 @@ def p7_alarms_quiet(monkeypatch):
     monkeypatch.setattr(post_load, "report_toast_evictions", lambda: [])
     # 분기 표지(2026-10-07a · 결정 0035)도 뺀다 — 판정·배선은 아래 TestSnapshotRelease 가 본다.
     monkeypatch.setattr(post_load, "report_snapshot_release", lambda *a: (False, False))
+    # 건축물대장 판 표지(2026-10-15a)도 뺀다 — 판정·진짜 배선은 tests/test_freshness_monthly_rules_migration.py.
+    monkeypatch.setattr(post_load, "report_ledger_release", lambda: False)
     monkeypatch.setattr(post_load, "precheck_snapshot_release", lambda: (False, "202606", ""))
     # 가게 이름 요약표 분기(2026-10-07 · 일곱 번째 판정)도 뺀다 — 판정은 아래 TestStoreNamesFreshness.
     monkeypatch.setattr(post_load, "report_store_names_freshness", lambda: ("202606", "202606", False))

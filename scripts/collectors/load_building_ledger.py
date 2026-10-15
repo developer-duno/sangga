@@ -65,7 +65,7 @@ import json
 import os
 import sys
 from collections import Counter, defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 
 import requests
 from dotenv import load_dotenv
@@ -152,6 +152,14 @@ TABLE_UPSERT_RESOLUTION = {
     "unit": "merge-duplicates",
     "building_floor": "merge-duplicates",
 }
+
+# building 행에 실어 보내는 적재 시각(이 실행 전체에 한 값 · UTC 명시 — load_bjd_code.py 와 같은 꼴).
+# merge-duplicates 는 JSON 에 없는 칸을 SET 하지 않아 default now() 가 새 행에만 찍힌다 — 그러면
+# 이미 있던 건물을 다시 넣어도 updated_at 이 옛 값 그대로라, 대장 판 표지 명령
+# (scripts/publish_ledger_release.py)의 "열린 구 전부가 지난 표지 뒤에 적재됐나" 판정이 영영 못 지난다
+# (2026-10-15 실측 — 10-14 8월 판 30구 적재에서 새 건물은 99동뿐). ⚠️ 그래서 --building-only 칸 채우기
+# 재적재도 '적재됨'으로 센다 — 그 뒤에는 판을 올리지 말 것(판이 바뀐 게 아니다).
+RUN_LOADED_AT = datetime.now(timezone.utc).isoformat()
 
 
 # ── 순수 로직 (네트워크·DB 없음 — 테스트 대상) ─────────────────────────────────
@@ -392,6 +400,8 @@ def build_building_record(pnu, item):
         "seismic_ability": (item.get("rserthqkAblty") or "").strip() or None,
         "energy_grade": (item.get("engrGrade") or "").strip() or None,
         "green_grade": (item.get("gnBldGrade") or "").strip() or None,
+        # 갱신 행도 적재 시각이 바뀌게 명시로 싣는다(RUN_LOADED_AT 주석 — 2026-10-15a 대장 판 표지)
+        "updated_at": RUN_LOADED_AT,
     }
 
 

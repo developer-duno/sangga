@@ -155,7 +155,8 @@ python scripts/collectors/collect_lh_notices.py --dry-run   # LH 상가 공고 �
 python scripts/collectors/collect_lh_notices.py             # LH 상가 공고 적재 (upsert — 끝나면 안내대로 기준선 상수를 올릴 것)
 python scripts/feedback_digest.py               # 의견함에 뭐가 쌓였나 (숫자만 — 내용은 dbx.py 로. .env 자동 사용)
 python scripts/collectors/collect_transactions.py --sigungu-code <구> --months 216 --end-ym 202408   # 과거 백필(2006-09~2024-08) — 2026-09-09 서울·대전 30구 완료, 재실행은 이어받기
-# ⚠️ 최근 달은 신고(30일)가 덜 끝난 채 'done' 으로 굳는다 → 다시 받으려면 collect_progress 의 그 달을 pending 으로 되돌린 뒤 수집(2026-10-14 · 6개월 재수집 5,323건) · 적재기 load_transactions.py 는 `--sigungu-code` 가 없으면 **강남만** 적재한다(구마다 돌릴 것)
+# ⚠️ 최근 달은 신고(30일)가 덜 끝난 채 'done' 으로 굳는다 → 아래 `--recollect-months` 로 매달 다시 받는다(2026-10-14 손으로 6개월 재수집 5,323건 → 2026-10-15 F5 옵션) · 적재기 load_transactions.py 는 `--sigungu-code` 가 없으면 **강남만** 적재한다(구마다 돌릴 것)
+python scripts/collectors/collect_transactions.py --sigungu-code <구> --recollect-months 6 --end-ym <이번 달>   # ★ 매달 — 최근 6개월 중 done 칸만 pending 으로 되돌려 다시 받는다(failed 는 --retry-failed 몫 · attempts 그대로 · N 1~24 · --dry-run 은 되돌리지 않고 '다시 받을 달 N개(그중 done M개)'만 · F5 2026-10-15)
 # ⚠️ `--dry-run` 도 `collect_progress` 에 pending 시드를 **쓴다**(형제 수집기의 "DB 쓰기 0" 미리보기와 다르다 — `seed_progress` 가 dry_run 분기 **앞**에 있다, collect_transactions.py:735-746). 시드는 멱등(있는 행 보존)이라 무해하지만 미리보기에도 DB 열쇠가 필요하다.
 python scripts/backtest_price.py                # Stage B 백테스트 성적표 재생성 (DB 읽기 전용 → docs/backtest/, 통과구.csv 포함)
 python scripts/backtest_price.py --place-axis   # 1층 유형축(L7=도로등급×상권등급) 검증 — 새 파일 2개만 쓴다(기존 성적표·통과구.csv 안 건드림). psql 필요
@@ -232,6 +233,9 @@ python scripts/post_load.py                     # ★ 적재 후 필수 — vacu
 python scripts/post_load.py --check              # 낡았나 + 공개 롤이 읽거나 **고칠 수** 있는 것 점검 (DB 쓰기 0, 걸리면 exit 1)
 python scripts/publish_snapshot.py --show        # 분기 표지(다 들어온 분기 · 보여 주는 분기) + 점포 표 분기별 행수 + 요약표 여섯의 분기 (읽기만)
 python scripts/publish_snapshot.py --ym <분기>   # 표지 두 칸을 그 분기로(되돌리기·RPC 실패 대응 · 점포 표에 있는 분기만) → 이어서 post_load.py
+python scripts/publish_ledger_release.py --show             # 건축물대장 판 표지(판·적은 시각) + 열린 구마다 '표지 뒤에 적재됐나' (읽기만 · 2026-10-15a)
+python scripts/publish_ledger_release.py --ym <판> --dry-run # 판정만(쓰기 0) — ⓐ 모양 ⓑ 앞으로만(같은 판이면 쓰기 0 · exit 0) ⓒ 지난달까지 ⓓ 열린 구 전부의 max(building.updated_at) 이 지금 표지를 적은 시각 뒤
+python scripts/publish_ledger_release.py --ym <판>          # ★ 대장 새 판을 30구 다 넣은 뒤 — 신선도 표 건축물대장 줄이 이 판을 말한다(판 + 3개월 − 하루). ⛔ `--building-only` 칸 채우기 재적재 뒤에는 올리지 말 것(판이 바뀐 게 아니다 — 적재기가 갱신 행에도 적재 시각을 싣기 때문에 ⓓ 가 지나간다)
 python scripts/make_env_local.py                # .env → .env.local (브라우저용 공개키만)
 python scripts/setup_git_hooks.py               # ★ 새 컴퓨터에서 한 번 — main 잠금(로컬 알람) 켜기 + 깃헙 잠금 함께 확인
 python scripts/setup_git_hooks.py --check       # 양쪽 잠금이 제자리인가 (아무것도 안 바꿈, 어긋나면 exit 1)
@@ -239,6 +243,10 @@ python scripts/backup_raw.py --dry-run          # 원본 백업 대상 확인 (�
 python scripts/backup_raw.py                    # data/raw → F:\sangga-raw-backup (외장 SSD 연결 필요)
 python scripts/backup_raw.py --verify           # 백업본을 다시 읽어 SHA-256 대조
 ```
+
+> 📅 **매달 할 일**(F3·F5 · 2026-10-15) — 신선도 표가 두 줄에 날짜를 건다(실거래 = 계약월 + 2개월 − 하루 · 건축물대장 = 판 + 3개월 − 하루). 넘기면 그물 6호가 이슈를 연다.
+> ① **실거래**: 30구 `collect_transactions.py --sigungu-code <구> --recollect-months 6 --end-ym <이번 달>` → 30구 `load_transactions.py --sigungu-code <구>`(⚠️ 구 인자가 없으면 강남만 적재) → `post_load.py`.
+> ② **건축물대장**: 매달 20일 무렵 새 판(N월 판 = (N+1)월 20일 게시) → `fetch_bldrgst_bulk.py --kind title` · `flr_ouln` · `expos_area` → `convert_bldrgst_bulk.py --src-dir data/raw/bldrgst_bulk/<판> --out-dir data/raw/bldrgst_bulk_converted_<판>` → 30구 `load_building_ledger.py --raw-dir …/<구> --snapshot-ym <상권 분기>` → `publish_ledger_release.py --ym <판>` → `post_load.py` · `post_load.py --check` → `backup_raw.py`(포털은 최근 3개월치만 남긴다).
 
 > 💾 **원본 백업은 자동이 아니다.** 새 분기 zip을 받았거나 대량 수집을 마쳤으면 `backup_raw.py`를
 > 직접 한 번 돌린다. 과거 분기 zip은 포털에서 내려가면 **재수집이 불가능**하다(절대 규칙 6).
