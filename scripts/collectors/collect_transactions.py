@@ -634,7 +634,7 @@ def print_dry_run_report(sigungu_code, months, raw_dir, pending, counts, verdict
     print("    남은 예산     {:>6,}건".format(verdict["remaining"]))
     if recollect_extra:
         # --recollect-months 와 함께면 dry-run 은 되돌리지 않으므로 pending 에 그 달들이 안 들어 있다 — 따로 적는다.
-        print("    계획 호출     {:>6,}건 (pending {:,}개월 + 다시 받을 달 {:,}개월 x 1콜 가정)".format(
+        print("    계획 호출     {:>6,}건 (pending {:,}개월 + 되돌릴 done 달 {:,}개월 x 1콜 가정)".format(
             verdict["planned"], len(pending), recollect_extra))
     else:
         print("    계획 호출     {:>6,}건 (pending {:,}개월 x 1콜 가정)".format(

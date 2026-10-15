@@ -159,6 +159,7 @@ TABLE_UPSERT_RESOLUTION = {
 # (scripts/publish_ledger_release.py)의 "열린 구 전부가 지난 표지 뒤에 적재됐나" 판정이 영영 못 지난다
 # (2026-10-15 실측 — 10-14 8월 판 30구 적재에서 새 건물은 99동뿐). ⓘ --building-only 칸 채우기 재적재는
 # 이 칸을 **싣지 않는다**(without_loaded_at) — 판이 바뀐 게 아니라 표지 명령 ⓓ 를 지나가면 안 된다.
+# 단 DB 에 없던 건물이 새로 들어가면 그 행엔 기본값(지금 시각)이 찍혀 그 구는 넣음으로 보인다.
 RUN_LOADED_AT = datetime.now(timezone.utc).isoformat()
 
 

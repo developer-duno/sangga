@@ -235,7 +235,7 @@ python scripts/publish_snapshot.py --show        # 분기 표지(다 들어온 �
 python scripts/publish_snapshot.py --ym <분기>   # 표지 두 칸을 그 분기로(되돌리기·RPC 실패 대응 · 점포 표에 있는 분기만) → 이어서 post_load.py
 python scripts/publish_ledger_release.py --show             # 건축물대장 판 표지(판·적은 시각) + 열린 구마다 '표지 뒤에 적재됐나' (읽기만 · 2026-10-15a)
 python scripts/publish_ledger_release.py --ym <판> --dry-run # 판정만(쓰기 0) — ⓐ 모양 ⓑ 앞으로만(같은 판이면 쓰기 0 · exit 0) ⓒ 지난달까지 ⓓ 열린 구 전부의 max(building.updated_at) 이 지금 표지를 적은 시각 뒤
-python scripts/publish_ledger_release.py --ym <판>          # ★ 대장 새 판을 30구 다 넣은 뒤 — 신선도 표 건축물대장 줄이 이 판을 말한다(판 + 3개월 − 하루). ⚠️ ⓓ 는 손대지 않은 구가 남았는지만 본다 — 한 구 도중 실패는 못 보니 30구 적재가 모두 exit 0 인지 먼저 본다(`--building-only` 칸 채우기는 적재 시각을 안 실어 ⓓ 를 지나가지 않는다)
+python scripts/publish_ledger_release.py --ym <판>          # ★ 대장 새 판을 30구 다 넣은 뒤 — 신선도 표 건축물대장 줄이 이 판을 말한다(판 + 3개월 − 하루). ⚠️ ⓓ 는 손대지 않은 구가 남았는지만 본다 — 한 구 도중 실패는 못 보니 30구 적재가 모두 exit 0 인지 먼저 본다(`--building-only` 칸 채우기는 적재 시각을 안 실어 ⓓ 를 지나가지 않는다 — 단 DB 에 없던 건물이 새로 들어가면 그 행엔 기본값(지금 시각)이 찍혀 그 구는 넣음으로 보인다)
 python scripts/make_env_local.py                # .env → .env.local (브라우저용 공개키만)
 python scripts/setup_git_hooks.py               # ★ 새 컴퓨터에서 한 번 — main 잠금(로컬 알람) 켜기 + 깃헙 잠금 함께 확인
 python scripts/setup_git_hooks.py --check       # 양쪽 잠금이 제자리인가 (아무것도 안 바꿈, 어긋나면 exit 1)
