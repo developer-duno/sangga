@@ -235,12 +235,23 @@ type Props = {
 type PrintedUnits = { units: FloorUnit[]; total: number };
 
 /**
- * 긴 목록 창(S2 · 👤 2026-10-15) — 층 목록·이 땅 거래 목록은 처음 이만큼만 **화면에** 보이고
- * 나머지는 「전부 보기」로 펼친다. 이 줄 수 이하면 단추도 없다(지금 그대로).
+ * 긴 목록 창(S2 · 👤 2026-10-15) — 이만큼만 **화면에** 보이고 나머지는 「전부 보기」로 펼친다.
+ * 이 줄 수 이하면 단추도 없다(지금 그대로).
+ *  · 층 목록 = **아래 10줄**(👤 검사 뒤 다시 여쭘 — 지하·1층·2층이 바로 보이게). 서버 순서(위층부터)는
+ *    그대로 두고 앞쪽(위층) 줄을 숨긴다 · 단추는 목록 맨 위. → `floorFoldCut`
+ *  · 이 땅 거래 목록 = 처음 10건 · 단추는 목록 아래.
  * ⛔ 줄은 늘 전부 그린다 — 넘치는 줄에는 `list__folded` 이름표만 붙고, 숨김은 styles.css 의
  *    `@media screen` 규칙이 한다. 그래서 종이에는 늘 전부 나오고 `floor-N` id 도 늘 있다.
  */
 const LIST_FOLD_AT = 10;
+
+/**
+ * 층 목록에서 화면에 숨는 줄의 수 — 서버 순서(위층부터)의 **앞쪽** 이만큼(index < 이 값)이 숨는다.
+ * 펼쳤거나 10줄 이하면 0. 건너뛰기·호실 고르기·접기 정리가 모두 이 한 곳으로 '숨은 줄인가'를 판다.
+ */
+function floorFoldCut(count: number, all: boolean): number {
+  return all ? 0 : Math.max(0, count - LIST_FOLD_AT);
+}
 
 /** 다음 그림이 그려진 뒤에 부른다(jsdom 처럼 requestAnimationFrame 이 없으면 setTimeout). */
 function afterPaint(cb: () => void) {
@@ -305,6 +316,14 @@ export function FloorStack({
   /** 층 목록을 「전부 보기」로 펼쳤나(S2). 건물이 바뀌면 다시 처음 10줄 — 주소·이 기기에 남기지 않는다. */
   const [floorsAll, setFloorsAll] = useState(false);
   const floorsListId = useId();
+  /** 지금 화면에서 숨은 위층 줄의 수(앞쪽 index < 이 값). */
+  const floorCut = floorFoldCut(floors.length, floorsAll);
+  /** 그 층이 **접힌 창**에서 숨는 줄인가(지금 펼쳐져 있어도 접힌 기준으로 판다). null·없는 층 = 아니다. */
+  const isFloorFolded = (no: number | null) => {
+    if (no === null) return false;
+    const idx = floors.findIndex((f) => f.floor_no === no);
+    return idx >= 0 && idx < floorFoldCut(floors.length, false);
+  };
   /** 각주에 쓸 집계. 건물과 무관하므로 처음 한 번만 읽는다. */
   const [stats, setStats] = useState<CoverageStats | null>(null);
   /** 이 건물이 속한 상권. 못 읽으면 null로 남고, 그때는 그 줄을 아예 그리지 않는다. */
@@ -550,6 +569,17 @@ export function FloorStack({
   useEffect(() => {
     if (unitPrintOpenSignal > 0) setFloorsOpenSignal((n) => n + 1);
   }, [unitPrintOpenSignal]);
+  /*
+    손님이 직접 고른 순간(신호가 바뀐 그림) 고른 층 중 하나라도 숨은 위층이면 층 목록을 '전부'로 — 안 그러면 받은 호
+    목록이 숨은 줄에 붙어 화면에서 안 보인다(S2 검사 맹점 B · 종이에는 늘 나온다). 신호와 고르기는 App 이 한 번에 바꾸므로
+    같은 그림의 고르기를 읽는다. ⓘ 그리는 도중에 상태를 맞추는 React 공식 꼴(SectionCard 와 같은 꼴) — 층·고르기가 바뀔
+    때마다 다시 펼치지 않고 신호가 바뀐 그 한 번만 판다.
+  */
+  const [seenUnitSignal, setSeenUnitSignal] = useState(unitPrintOpenSignal);
+  if (seenUnitSignal !== unitPrintOpenSignal) {
+    setSeenUnitSignal(unitPrintOpenSignal);
+    if (unitPrintOpenSignal > 0 && unitPlan.floors.some((no) => isFloorFolded(no))) setFloorsAll(true);
+  }
 
   // 호 목록이 있는 층 수를 App 에 알린다(0개면 고르기 줄을 숨긴다). 요약을 못 받았으면 알리지 않는다.
   const listedCount =
@@ -774,6 +804,21 @@ export function FloorStack({
           <p className="floor__unitprint-failed">{unitPrintFailedText(unitLoad.failed)}</p>
         )}
 
+        {/* 아래 10줄 창의 단추는 목록 **맨 위**(숨은 위층이 단추 바로 아래에서 펼쳐진다 · 👤 그림). */}
+        {floors.length > LIST_FOLD_AT && (
+          <ListFoldButton
+            expanded={floorsAll}
+            controls={floorsListId}
+            moreText={`위층 전부 보기 (${(floors.length - LIST_FOLD_AT).toLocaleString('ko-KR')}개 층 더)`}
+            lessText="층 목록 접기"
+            onToggle={(next) => {
+              setFloorsAll(next);
+              // 접으면 숨는 줄에 열린 층이 있으면 닫는다 — 안 그러면 참고 시세 줄이 안 보이는 층을
+              // '펼쳐져 있음'이라 말한다(검사 맹점 C).
+              if (!next && isFloorFolded(openFloor)) setOpenFloor(null);
+            }}
+          />
+        )}
         <ol className="floors" id={floorsListId}>
           {floors.map((f, i) => {
             // 면적이 아예 없는 층(그 층이 전부 연면적 제외분 — 전체의 약 3%)에는 막대를
@@ -796,8 +841,8 @@ export function FloorStack({
                 className={`floor${
                   f.floor_no < 0 ? ' floor--under' : f.floor_no === 99 ? ' floor--roof' : ''
                 }${unitsOpen ? ' floor--units-open' : ''}${printed ? ' floor--unitprint' : ''}${
-                  // 11번째 줄부터는 펼치기 전까지 화면에서만 숨는다(S2 — 종이에는 늘 전부).
-                  !floorsAll && i >= LIST_FOLD_AT ? ' list__folded' : ''
+                  // 아래 10줄만 남기고 위층 줄은 펼치기 전까지 화면에서만 숨는다(S2 — 종이에는 늘 전부).
+                  i < floorCut ? ' list__folded' : ''
                 }`}
               >
                 {/*
@@ -844,15 +889,6 @@ export function FloorStack({
             );
           })}
         </ol>
-        {floors.length > LIST_FOLD_AT && (
-          <ListFoldButton
-            expanded={floorsAll}
-            controls={floorsListId}
-            moreText={`층 전부 보기 (${floors.length}층)`}
-            lessText="층 목록 접기"
-            onToggle={setFloorsAll}
-          />
-        )}
 
         {/*
           호실 구성표의 카드 맨 아래 줄들(결정 0032).
@@ -907,8 +943,8 @@ export function FloorStack({
           setOpenFloor(no);
           // 층 목록을 접어 뒀더라도 다시 펼친다 — 안 그러면 눌러도 화면이 안 변한다.
           setFloorsOpenSignal((n) => n + 1);
-          // 그 층이 처음 10줄 밖이면 층 목록을 '전부'로 펼친다(S2) — 숨은 줄로는 굴러가도 안 보인다.
-          if (floors.findIndex((f) => f.floor_no === no) >= LIST_FOLD_AT) setFloorsAll(true);
+          // 그 층이 아래 10줄 밖(숨은 위층)이면 층 목록을 '전부'로 펼친다(S2) — 숨은 줄로는 굴러가도 안 보인다.
+          if (isFloorFolded(no)) setFloorsAll(true);
           // ⚠️ 스크롤은 **다음 그림이 그려진 뒤**로 미룬다. 카드가 접혀 있었다면 이 순간
           //    그 층은 아직 화면에 없어서, 지금 찾으면 못 찾는다.
           // ⚠️ getElementById 로 찾는다 — 지하 층의 id 는 "floor--1" 이라

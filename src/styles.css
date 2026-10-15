@@ -3861,6 +3861,12 @@ body {
   .tx__list > li.list__folded {
     display: none;
   }
+
+  /* 접힌 동안 거래 목록의 보이는 마지막 줄(10번째) 아래 점선을 지운다 — 원래 `:last-child` 가 지우는 선인데,
+     숨은 줄이 뒤에 있어 마지막 줄이 아니게 된다. ⓘ 층 목록은 줄 사이가 선이 아니라 틈(gap)이라 해당 없다. */
+  .tx__list > li:has(+ li.list__folded) {
+    border-bottom: none;
+  }
 }
 
 @media print {

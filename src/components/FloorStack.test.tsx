@@ -3038,6 +3038,8 @@ describe('FloorStack — 개별공시지가 한 줄 (결정 0036 결정 7)', () 
 
 /**
  * 긴 카드 창(S2 · 👤 2026-10-15 "처음 10줄만 먼저 보여 주고 「전부 보기」로 펼친다" · "펼친 뒤 다시 짧게 접는 단추도 둔다").
+ * 층 목록은 검사 뒤 다시 여쭤 **「아래 10줄」**(👤 2026-10-15 저녁) — 서버 순서(위층부터)는 그대로, 앞쪽 위층 줄이 숨고
+ * 단추 「위층 전부 보기 (N개 층 더)」는 목록 맨 위. 거래 목록은 처음 10건 + 아래 단추 그대로.
  * ⓘ jsdom 은 styles.css 를 안 읽으므로 '화면에서 숨음'은 이름표 `list__folded` 로 본다 — 실제로 숨는지·종이에
  *   전부 나오는지는 E2E 「BB」가 본다. 줄은 늘 전부 DOM 에 있다(`floor-N` id 가 늘 있어야 건너뛰기가 된다).
  */
@@ -3046,11 +3048,13 @@ describe('FloorStack — 긴 카드 창 (S2)', () => {
   function stackOf(n: number) {
     return { data: Array.from({ length: n }, (_, i) => floor({ floor_no: n - i })), error: null };
   }
-  const floorFold = (c: HTMLElement) => c.querySelector<HTMLButtonElement>('.floors ~ .list__fold');
+  const floorFold = (c: HTMLElement) => c.querySelector<HTMLButtonElement>('.card--floors .list__fold');
   const txFold = (c: HTMLElement) => c.querySelector<HTMLButtonElement>('.tx__list ~ .list__fold');
   /** 화면에 보이는(숨김 이름표가 없는) 층 줄의 id. */
   const shownFloors = (c: HTMLElement) =>
     [...c.querySelectorAll('.floors > li:not(.list__folded)')].map((li) => li.id);
+  const foldedFloors = (c: HTMLElement) =>
+    [...c.querySelectorAll('.floors > li.list__folded')].map((li) => li.id);
   const shownTx = (c: HTMLElement) => c.querySelectorAll('.tx__list > li:not(.list__folded)').length;
 
   let scrolled: Element[];
@@ -3069,24 +3073,24 @@ describe('FloorStack — 긴 카드 창 (S2)', () => {
     delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
   });
 
-  it('★ 층이 11줄 이상이면 처음 10줄만 보이고 「층 전부 보기 (N층)」 단추 — 줄은 전부 DOM 에', async () => {
+  it('★ 층이 11줄 이상이면 아래 10줄만 보이고 목록 맨 위에 「위층 전부 보기 (N개 층 더)」 — 줄은 전부 DOM 에', async () => {
     responses.floors = stackOf(12);
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => expect(container.querySelectorAll('.floors > li')).toHaveLength(12));
-    // 위층부터 10줄 — 서버 순서 그대로.
-    expect(shownFloors(container)).toEqual(Array.from({ length: 10 }, (_, i) => `floor-${12 - i}`));
-    expect([...container.querySelectorAll('.floors > li.list__folded')].map((li) => li.id)).toEqual([
-      'floor-2',
-      'floor-1',
-    ]);
+    // 아래 10줄 — 서버 순서(위층부터) 그대로, 앞쪽 위층 둘이 숨는다.
+    expect(shownFloors(container)).toEqual(Array.from({ length: 10 }, (_, i) => `floor-${10 - i}`));
+    expect(foldedFloors(container)).toEqual(['floor-12', 'floor-11']);
     const btn = floorFold(container)!;
-    expect(btn.textContent).toBe('층 전부 보기 (12층)');
+    expect(btn.textContent).toBe('위층 전부 보기 (2개 층 더)');
     expect(btn.getAttribute('aria-expanded')).toBe('false');
-    expect(btn.getAttribute('aria-controls')).toBe(container.querySelector('.floors')!.id);
-    expect(document.getElementById(btn.getAttribute('aria-controls')!)).toBe(container.querySelector('.floors'));
+    const list = container.querySelector('.floors')!;
+    expect(btn.getAttribute('aria-controls')).toBe(list.id);
+    expect(document.getElementById(btn.getAttribute('aria-controls')!)).toBe(list);
+    // 단추는 목록 **위**(👤 그림).
+    expect(btn.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('★ 전부 보기 → 전부 · 다시 접기 → 처음 10줄 + 층 목록 카드 머리로 굴린다', async () => {
+  it('★ 위층 전부 보기 → 전부 · 다시 접기 → 아래 10줄 + 층 목록 카드 머리로 굴린다', async () => {
     responses.floors = stackOf(12);
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => expect(floorFold(container)).toBeTruthy());
@@ -3098,13 +3102,13 @@ describe('FloorStack — 긴 카드 창 (S2)', () => {
     expect(scrolled).toHaveLength(0);
 
     fireEvent.click(floorFold(container)!);
-    expect(shownFloors(container)).toHaveLength(10);
-    expect(floorFold(container)!.textContent).toBe('층 전부 보기 (12층)');
+    expect(foldedFloors(container)).toEqual(['floor-12', 'floor-11']);
+    expect(floorFold(container)!.textContent).toBe('위층 전부 보기 (2개 층 더)');
     await waitFor(() => expect(scrolled).toHaveLength(1));
     expect(scrolled[0]).toBe(container.querySelector('.card--floors .card__h'));
   });
 
-  it('★ 경계 — 10줄이면 단추도 숨김도 없고(지금 그대로), 11줄이면 단추가 선다(양성 대조)', async () => {
+  it('★ 경계 — 10줄이면 단추도 숨김도 없고(지금 그대로), 11줄이면 맨 위 한 줄이 숨고 단추가 선다(양성 대조)', async () => {
     responses.floors = stackOf(10);
     const first = render(<FloorStack building={building()} />);
     await waitFor(() => expect(first.container.querySelectorAll('.floors > li')).toHaveLength(10));
@@ -3115,11 +3119,11 @@ describe('FloorStack — 긴 카드 창 (S2)', () => {
     responses.floors = stackOf(11);
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => expect(container.querySelectorAll('.floors > li')).toHaveLength(11));
-    expect(floorFold(container)?.textContent).toBe('층 전부 보기 (11층)');
-    expect(container.querySelectorAll('.floors > li.list__folded')).toHaveLength(1);
+    expect(floorFold(container)?.textContent).toBe('위층 전부 보기 (1개 층 더)');
+    expect(foldedFloors(container)).toEqual(['floor-11']);
   });
 
-  it('★ 다른 건물을 열면 층 목록은 다시 처음 10줄', async () => {
+  it('★ 다른 건물을 열면 층 목록은 다시 아래 10줄', async () => {
     responses.floors = stackOf(12);
     const { container, rerender } = render(<FloorStack building={building()} />);
     await waitFor(() => expect(floorFold(container)).toBeTruthy());
@@ -3130,6 +3134,12 @@ describe('FloorStack — 긴 카드 창 (S2)', () => {
     expect(floorFold(container)!.getAttribute('aria-expanded')).toBe('false');
   });
 
+  /** 12층~1층 + 지하 1층 = 13줄 — 숨는 줄은 앞쪽 셋(12·11·10층). */
+  const WITH_BASEMENT = {
+    data: [...Array.from({ length: 12 }, (_, i) => floor({ floor_no: 12 - i })), floor({ floor_no: -1 })],
+    error: null,
+  };
+
   /** 참고 시세 카드를 펼치고 그 줄을 누른다. */
   async function pickBand(container: HTMLElement) {
     const toggle = await screen.findByRole('button', { name: /참고 매매 시세/ });
@@ -3138,26 +3148,101 @@ describe('FloorStack — 긴 카드 창 (S2)', () => {
     fireEvent.click(container.querySelector('.band__hit')!);
   }
 
-  it('★ 참고 시세에서 11번째 이후 층을 고르면 층 목록이 전부로 펼쳐지고 그 층이 펼쳐진다', async () => {
-    responses.floors = stackOf(12);
-    responses.bands = { data: [priceBand({ floor_no: 2 })], error: null }; // 2층 = 11번째 줄
+  it('★ 참고 시세에서 숨은 위층을 고르면 층 목록이 전부로 펼쳐지고 그 층이 펼쳐진다', async () => {
+    responses.floors = WITH_BASEMENT;
+    responses.bands = { data: [priceBand({ floor_no: 11 })], error: null }; // 11층 = 숨은 줄
     const { container } = render(<FloorStack building={building()} />);
-    await waitFor(() => expect(shownFloors(container)).toHaveLength(10));
+    await waitFor(() => expect(foldedFloors(container)).toEqual(['floor-12', 'floor-11', 'floor-10']));
     await pickBand(container);
-    expect(shownFloors(container)).toHaveLength(12);
+    expect(shownFloors(container)).toHaveLength(13);
     expect(floorFold(container)!.getAttribute('aria-expanded')).toBe('true');
-    expect(container.querySelector('#floor-2 .detail')).toBeTruthy();
-    await waitFor(() => expect(scrolled).toContain(document.getElementById('floor-2')));
+    expect(container.querySelector('#floor-11 .detail')).toBeTruthy();
+    await waitFor(() => expect(scrolled).toContain(document.getElementById('floor-11')));
   });
 
-  it('참고 시세에서 처음 10줄 안의 층을 고르면 층 목록은 접힌 그대로(양성 대조)', async () => {
-    responses.floors = stackOf(12);
-    responses.bands = { data: [priceBand({ floor_no: 3 })], error: null }; // 3층 = 10번째 줄
+  it('참고 시세에서 보이는 지하층을 고르면 층 목록은 접힌 그대로(양성 대조)', async () => {
+    responses.floors = WITH_BASEMENT;
+    responses.bands = { data: [priceBand({ floor_no: -1 })], error: null }; // 지하 1층 = 보이는 마지막 줄
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => expect(shownFloors(container)).toHaveLength(10));
     await pickBand(container);
-    expect(container.querySelector('#floor-3 .detail')).toBeTruthy();
-    expect(shownFloors(container)).toHaveLength(10);
+    // ⚠️ getElementById — '#floor--1' 는 잘못된 선택자다.
+    expect(document.getElementById('floor--1')!.querySelector('.detail')).toBeTruthy();
+    expect(foldedFloors(container)).toEqual(['floor-12', 'floor-11', 'floor-10']);
+  });
+
+  /** 층마다 호 목록이 있는 상가 층 요약 + 한 쪽짜리 호 목록(호실 구성표 고르기용). */
+  function unitsFor(nos: number[]) {
+    responses.unitSummary = {
+      data: nos.map((n) => ({
+        floor_no: n,
+        unit_cnt: 2,
+        median_area_m2: 4,
+        min_area_m2: null,
+        max_area_m2: null,
+        floor_kind: 'commercial',
+      })),
+      error: null,
+    };
+    responses.floorUnits = (args) => ({
+      data: [{ ho: `${Number(args.p_floor_no)}-1호`, excl_area_m2: 4, total_cnt: 1 }],
+      error: null,
+    });
+  }
+  const NOS_WITH_BASEMENT = [...Array.from({ length: 12 }, (_, i) => 12 - i), -1];
+
+  it('★ 호실 구성표를 직접 골랐는데 고른 층 중 숨은 위층이 있으면 층 목록을 전부로 펼친다(맹점 B)', async () => {
+    responses.floors = WITH_BASEMENT;
+    unitsFor(NOS_WITH_BASEMENT);
+    const { container, rerender } = render(
+      <FloorStack building={building()} unitPrintMode="low" unitPrintOpenSignal={0} />,
+    );
+    await waitFor(() => expect(foldedFloors(container)).toHaveLength(3));
+    // '전부' = 12층까지 — 숨은 12·11·10층이 고른 층에 든다.
+    rerender(<FloorStack building={building()} unitPrintMode="all" unitPrintOpenSignal={1} />);
+    await waitFor(() => expect(foldedFloors(container)).toHaveLength(0));
+    expect(floorFold(container)!.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('호실 구성표를 직접 골라도 고른 층이 다 보이는 줄이면 층 목록은 접힌 그대로(양성 대조)', async () => {
+    responses.floors = WITH_BASEMENT;
+    unitsFor(NOS_WITH_BASEMENT);
+    const { container, rerender } = render(
+      <FloorStack building={building()} unitPrintMode="none" unitPrintOpenSignal={0} />,
+    );
+    await waitFor(() => expect(foldedFloors(container)).toHaveLength(3));
+    // '지하~3층' = 지하 1·1·2·3층 — 전부 보이는 아래 10줄 안.
+    rerender(<FloorStack building={building()} unitPrintMode="low" unitPrintOpenSignal={1} />);
+    await waitFor(() => expect(container.querySelectorAll('.floor__unitprint')).toHaveLength(4));
+    expect(foldedFloors(container)).toEqual(['floor-12', 'floor-11', 'floor-10']);
+  });
+
+  /** 그 층의 줄 단추를 눌러 펼친다. */
+  const openRow = (no: number) =>
+    fireEvent.click(document.getElementById(`floor-${no}`)!.querySelector('.floor__row')!);
+
+  it('★ 접으면 숨는 줄에 열린 층이 있으면 닫는다(맹점 C)', async () => {
+    responses.floors = stackOf(12);
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(floorFold(container)).toBeTruthy());
+    fireEvent.click(floorFold(container)!);
+    openRow(12);
+    expect(container.querySelector('#floor-12 .detail')).toBeTruthy();
+    fireEvent.click(floorFold(container)!);
+    expect(container.querySelector('.floors .detail')).toBeNull();
+    // 접기가 부른 굴리기를 이 시험 안에서 끝낸다(안 기다리면 다음 시험의 기록에 섞인다).
+    await waitFor(() => expect(scrolled).toHaveLength(1));
+  });
+
+  it('접어도 보이는 줄에 열린 층은 그대로(양성 대조)', async () => {
+    responses.floors = stackOf(12);
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(floorFold(container)).toBeTruthy());
+    fireEvent.click(floorFold(container)!);
+    openRow(1);
+    fireEvent.click(floorFold(container)!);
+    expect(container.querySelector('#floor-1 .detail')).toBeTruthy();
+    await waitFor(() => expect(scrolled).toHaveLength(1));
   });
 
   it('★ 거래가 11건 이상이면 처음 10건 + 「거래 전부 보기 (N건)」 · 전부 · 다시 접기', async () => {
@@ -3196,8 +3281,10 @@ describe('FloorStack — 긴 카드 창 (S2)', () => {
     expect(container.querySelectorAll('.tx__list > li.list__folded')).toHaveLength(1);
   });
 
-  it('★ 같은 땅의 다른 동으로 넘어가도 거래 목록은 다시 처음 10건', async () => {
-    // 거래는 땅(pnu) 단위로 받아 같은 땅이면 다시 받지 않는다 — 그래도 펼침은 건물마다 새로.
+  it('★ 다른 건물을 열면(같은 땅의 다른 동이라도) 거래 목록은 다시 처음 10건 — 동작만 본다', async () => {
+    // ⓘ 무엇이 되돌리는지는 가리지 않는다 — 이 시험에서는 새 건물의 층을 받는 동안 카드가 내려갔다 다시 서며 되돌아가고,
+    //   실제 화면은 App 이 건물마다 FloorStack 을 새로 만든다(`key`). `ParcelTxList` 의 `key={bldId}` 는 그 둘이 없어져도
+    //   남는 덧댐이라 빼도 이 시험은 초록이다(검사 M6) — 그 열쇠 자체를 지키는 시험이 아니다.
     responses.txs = { data: Array.from({ length: 12 }, () => tx()), error: null };
     const { container, rerender } = render(<FloorStack building={building()} />);
     await waitFor(() => expect(txFold(container)).toBeTruthy());
