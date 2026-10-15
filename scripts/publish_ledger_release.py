@@ -16,13 +16,16 @@
 --ym 이 올리기 전에 보는 넷(하나라도 걸리면 쓰기 0):
   ⓐ 모양 — 여섯 자리 숫자 · 달 01~12 (아니면 exit 2)
   ⓑ 앞으로만 — 지금 판보다 작으면 거부(exit 1) · 같으면 바꿀 것 없음(exit 0 · 쓰기 0)
-  ⓒ 지난달까지만 — 한국 시각 이번 달 이상이면 거부(exit 1 · N월 판은 (N+1)월 20일 무렵 게시된다)
+  ⓒ 지난달까지만 — 한국 시각 이번 달 이상이면 거부(exit 1 · N월 판은 (N+1)월 20일 무렵 게시된다).
+     한국 날짜가 20일 전인데 지난달 판이면 [주의] 한 줄만(거부 아님 · 종료 코드 무관 — 정말 받은 판인지 확인)
   ⓓ 다 넣었나 — 열린 구(mv_open_sigungu) **전부**의 max(building.updated_at) 이 지금 표지를 적은 시각
-     (loaded_at) 뒤여야 한다. 아니면 안 된 구 코드를 찍고 거부(exit 1) — 반쯤 넣고 새 판이라 적는 일을 막는다.
-     (대장 적재기는 2026-10-15 부터 갱신 행에도 적재 시각을 싣는다 — 그 전 판의 적재기로 넣으면 새 건물이
-      없는 구가 '안 됨'으로 남는다.)
+     (loaded_at) 뒤여야 한다. 아니면 안 된 구 코드를 찍고 거부(exit 1) — 손대지 않은 구가 남은 채 새 판이라
+     적는 일을 막는다. ⚠️ 한 구 도중 실패는 못 본다(그 구도 첫 배치부터 시각이 바뀐다): 30개 구 적재가 모두
+     exit 0 인지 먼저 본다.
+     (대장 적재기는 2026-10-15 부터 평소 적재의 갱신 행에도 적재 시각을 싣는다 — 그 전 판의 적재기로 넣으면
+      새 건물이 없는 구가 '안 됨'으로 남는다.)
 
-⚠️ --building-only 칸 채우기 재적재도 '적재됨'으로 센다 — 그 뒤에는 판을 올리지 말 것(판이 바뀐 게 아니다).
+ⓘ --building-only 칸 채우기 재적재는 적재 시각을 싣지 않는다(2026-10-15 보완) — 그래서 ⓓ 를 지나가지 않는다.
 ⚠️ 열린 구 목록은 mv_open_sigungu(요약표)라 post_load.py 가 갱신한다 — 새 구를 처음 넣었으면 post_load 뒤에.
 ⓘ DB 는 dbx(psql) 경유 — 비밀값은 출력하지 않는다. `-c` 로 보내는 SQL 은 ASCII 만(한글 표시는 파이썬에서).
 """
@@ -78,8 +81,10 @@ def parse_args(argv):
 
 
 def parse_flag(text):
-    """FLAG_SQL 의 답 → (판, loaded_at epoch Decimal, 한국 시각 글자). 비었거나 모양이 다르면 None."""
-    parts = str(text or "").strip().split(";")
+    """FLAG_SQL 의 답 → (판, loaded_at epoch Decimal, 한국 시각 글자). 비었거나 모양이 다르면 None.
+
+    마지막 줄만 읽는다(앞에 psql 경고 줄이 섞여도)."""
+    parts = last_line(text).split(";")
     if len(parts) != 3 or not re.match(r"^\d{6}$", parts[0]):
         return None
     try:
@@ -91,7 +96,7 @@ def parse_flag(text):
 def parse_gu_rows(text):
     """GU_SQL 의 답 → [(구 코드, max epoch Decimal 또는 None, 한국 시각 글자)]."""
     out = []
-    for item in str(text or "").strip().split(","):
+    for item in last_line(text).split(","):
         if not item:
             continue
         code, epoch, kst = (item.split(";") + ["", ""])[:3]
@@ -111,15 +116,42 @@ def not_loaded_gu(gu_rows, loaded_at):
     return [code for code, ep, _ in gu_rows if ep is None or not ep > loaded_at]
 
 
-def judge(ym, flag, this_month, gu_rows):
+PUBLISH_DAY = 20   # 건축HUB 는 N월 판을 (N+1)월 20일 무렵 올린다(2026-10-15 실측 — 8월 판 OPN20260920…)
+
+
+def prev_month(ym):
+    """'YYYYMM' 의 앞 달."""
+    y, m = int(ym[:4]), int(ym[4:])
+    return "{:04d}{:02d}".format(y - 1, 12) if m == 1 else "{:04d}{:02d}".format(y, m - 1)
+
+
+def early_month_warning(ym, this_month, today_day):
+    """ⓒ 보강(경고만 · 종료 코드 무관) — 한국 날짜가 20일 전인데 지난달 판이면 [주의] 한 줄, 아니면 None."""
+    if today_day is None or today_day >= PUBLISH_DAY or ym != prev_month(this_month):
+        return None
+    return ("[주의] ⓒ 오늘은 {}일입니다 — 건축HUB 는 N월 판을 N+1월 {}일 무렵 올립니다. {} 판을 정말 받았는지 "
+            "확인하세요(fetch_bldrgst_bulk.py --list 의 파일 id 날짜).".format(today_day, PUBLISH_DAY, ym))
+
+
+def judge(ym, flag, this_month, gu_rows, today_day=None):
     """--ym 판정 ⓐ~ⓓ (순수 함수 — 본체와 시험이 이 함수 하나를 지난다).
 
     ym        : 올리려는 판 글자
     flag      : parse_flag 결과(None = 표지가 비었거나 못 읽음)
     this_month: 한국 시각 이번 달 'YYYYMM'
     gu_rows   : parse_gu_rows 결과
+    today_day : 한국 시각 오늘 날짜(1~31 · 밖에서 넣는다) — 20일 전 지난달 판 [주의](거부 아님)
     돌려주는 것: (종료 코드, 찍을 줄 목록, 쓸지 여부)
     """
+    code, lines, write = _judge(ym, flag, this_month, gu_rows)
+    warn = None
+    same_as_now = flag is not None and ym == flag[0]     # 같은 판 = 쓰기 0 이라 경고할 일이 없다
+    if code != 2 and not same_as_now:                    # code 2 = 모양이 틀림(달을 셈할 수 없다)
+        warn = early_month_warning(ym, this_month, today_day)
+    return code, ([warn] if warn else []) + lines, write
+
+
+def _judge(ym, flag, this_month, gu_rows):
     if not YM_RE.match(str(ym or "")):
         return 2, ["[에러] ⓐ 판은 YYYYMM 여섯 자리 숫자이고 달이 01~12 여야 합니다: {!r}".format(ym)], False
     if flag is None:
@@ -173,6 +205,17 @@ def kst_this_month(now=None):
     return (now or datetime.now(KST)).astimezone(KST).strftime("%Y%m")
 
 
+def kst_today_day(now=None):
+    """한국 시각 오늘 날짜(1~31)."""
+    return (now or datetime.now(KST)).astimezone(KST).day
+
+
+def last_line(text):
+    """psql 출력의 마지막 줄 — 앞에 경고(WARNING·NOTICE) 줄이 섞여도 값만 읽는다(2026-10-15 검사관 지적)."""
+    lines = [ln for ln in str(text or "").strip().splitlines() if ln.strip()]
+    return lines[-1].strip() if lines else ""
+
+
 def show():
     flag = parse_flag(query_one(FLAG_SQL))
     if flag is None:
@@ -180,20 +223,22 @@ def show():
         print("       마이그레이션 2026-10-15a 를 다시 돌리면 처음 한 줄이 들어갑니다.")
         return 1
     current, loaded_at, loaded_kst = flag
-    print("대장 표지  판 {} (적은 시각 {})".format(current, loaded_kst))
+    print("대장 표지  판 {} (적은 시각 {}) — 지금 화면은 이 판을 말합니다.".format(current, loaded_kst))
     rows = parse_gu_rows(query_one(GU_SQL))
     missing = set(not_loaded_gu(rows, loaded_at))
+    print("열린 구마다 '표지를 적은 뒤 다시 넣었나'(= 다음 판을 넣었나 · {} 판은 이미 다 들어 있다):".format(current))
     for code, _, kst in rows:
         print("  {}  max(updated_at) {}  {}".format(
-            code, kst or "(건물 없음)", "표지 뒤 적재" if code not in missing else "표지 전(아직)"))
-    print("열린 구 {}개 중 표지 뒤 적재 {}개".format(len(rows), len(rows) - len(missing)))
+            code, kst or "(건물 없음)", "다음 판 넣음" if code not in missing else "다음 판 아직"))
+    print("열린 구 {}개 중 다음 판을 넣은 구 {}개 — 30개가 다 차야 --ym <다음 판> 이 지나간다".format(
+        len(rows), len(rows) - len(missing)))
     return 0
 
 
 def publish(ym, dry_run):
     flag = parse_flag(query_one(FLAG_SQL))
     rows = parse_gu_rows(query_one(GU_SQL)) if flag is not None else []
-    code, lines, write = judge(ym, flag, kst_this_month(), rows)
+    code, lines, write = judge(ym, flag, kst_this_month(), rows, kst_today_day())
     for ln in lines:
         print(ln)
     if not write:
@@ -201,7 +246,7 @@ def publish(ym, dry_run):
     if dry_run:
         print("(--dry-run) 쓰기 0 — 판정만 했습니다.")
         return 0
-    n = query_one(build_update_sql(ym)).strip()
+    n = last_line(query_one(build_update_sql(ym)))     # 바뀐 줄 수는 마지막 줄만(앞의 경고 줄은 건너뛴다)
     if n != "1":
         print("[실패] 표지를 바꾸지 못했습니다(바뀐 줄 {!r}) — 그 사이 다른 판이 올라갔을 수 있습니다. "
               "--show 로 확인하세요.".format(n))

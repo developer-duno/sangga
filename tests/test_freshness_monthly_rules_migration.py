@@ -37,6 +37,7 @@ for _p in (SCRIPTS, COLLECTORS):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+import check_data_freshness  # noqa: E402
 import collect_transactions  # noqa: E402
 import post_load  # noqa: E402
 import publish_ledger_release as plr  # noqa: E402
@@ -565,6 +566,7 @@ class TestPublishMain:
 
         monkeypatch.setattr(plr, "query_one", fake)
         monkeypatch.setattr(plr, "kst_this_month", lambda now=None: "202610")
+        monkeypatch.setattr(plr, "kst_today_day", lambda now=None: 25)   # 20일 뒤 — 경고 없음(날짜에 안 기댄다)
         return sent
 
     def _updates(self, sent):
@@ -600,6 +602,94 @@ class TestPublishMain:
     def test_update_that_changed_nothing_is_a_failure(self, monkeypatch):
         self._fake(monkeypatch, update_answer="0")
         assert plr.main(["--ym", "202609"]) == 1
+
+    def test_warning_line_before_the_count_is_still_success(self, monkeypatch, capsys):
+        """#3 — psql 경고 줄 + '1' 이면 성공이다(바뀐 줄 수는 마지막 줄만 읽는다)."""
+        self._fake(monkeypatch, update_answer="WARNING:  there is no transaction in progress\n1")
+        assert plr.main(["--ym", "202609"]) == 0
+        assert "대장 표지 = 202609" in capsys.readouterr().out
+
+    def test_last_line_positive_control(self):
+        assert plr.last_line("WARNING: x\n\n1\n") == "1"
+        assert plr.last_line("") == ""
+        assert plr.parse_flag("NOTICE: y\n202608;1760424480;2026-10-14 15:48") is not None
+
+    def test_show_does_not_read_as_empty_release(self, monkeypatch, capsys):
+        """#2 — DB 적용 직후(8월 판이 다 들어 있고 다음 판은 아무 구도 안 넣음)에 '판이 없다'로 읽히지 않는다."""
+        self._fake(monkeypatch, gu_text="11110;1760000000;2026-10-09 10:00,11680;1760000001;2026-10-09 10:00")
+        assert plr.main(["--show"]) == 0
+        out = capsys.readouterr().out
+        assert "판 202608" in out and "202608 판은 이미 다 들어 있다" in out
+        assert "다음 판 아직" in out and "다음 판을 넣은 구 0개" in out
+        assert "표지 전" not in out
+
+
+class TestEarlyMonthWarning:
+    """#4 — ⓒ 보강은 경고만(거부 아님 · 종료 코드 무관) · 19일/20일 경계."""
+
+    @pytest.mark.parametrize("day,warns", [(1, True), (19, True), (20, False), (31, False)])
+    def test_boundary(self, day, warns):
+        code, lines, write = plr.judge("202609", FLAG, "202610", ALL_AFTER, today_day=day)
+        assert (code, write) == (0, True)                     # 판정은 그대로 — 경고는 종료 코드에 영향 없음
+        assert any(ln.startswith("[주의] ⓒ") for ln in lines) is warns
+
+    def test_only_last_month(self):
+        """지지난달 판(이미 게시됐을 판)은 경고하지 않는다."""
+        flag = ("202607", LOADED, "x")
+        code, lines, write = plr.judge("202608", flag, "202610", ALL_AFTER, today_day=5)
+        assert write and not any("[주의]" in ln for ln in lines)
+
+    def test_no_warning_for_same_or_bad_shape(self):
+        assert not any("[주의]" in ln for ln in plr.judge("202608", FLAG, "202609", ALL_AFTER, today_day=5)[1])
+        assert plr.judge("2026-09", FLAG, "202610", ALL_AFTER, today_day=5)[0] == 2
+
+    def test_warning_does_not_hide_a_refusal(self):
+        code, lines, write = plr.judge("202609", FLAG, "202610", gu(("11110", None)), today_day=5)
+        assert (code, write) == (1, False)
+        assert lines[0].startswith("[주의] ⓒ") and any("ⓓ" in ln for ln in lines)
+
+    def test_prev_month_wraps_the_year(self):
+        assert plr.prev_month("202701") == "202612"
+        assert plr.early_month_warning("202612", "202701", 3) is not None
+
+
+# ── 5-1b. 그물 6호 이슈 본문의 자료별 할 일 ─────────────────────────────────────
+
+
+class TestFreshnessIssueHint:
+    """#8 — 지난 줄이 건축물대장·실거래면 그 자료만의 할 일 한 줄. 다른 자료엔 안 나온다(양성·음성 대조)."""
+
+    ROWS = [
+        {"src": "실거래 (매매)", "basis_kind": "계약월", "basis": "202610", "next_expected": "2026-11-30"},
+        {"src": "건축물대장", "basis_kind": "판", "basis": "202608", "next_expected": "2026-10-31"},
+        {"src": "건축 인허가", "basis_kind": "기준월", "basis": "202608", "next_expected": "2026-10-31"},
+    ]
+
+    def _bodies(self, today):
+        items = check_data_freshness.find_overdue(self.ROWS, today)
+        return {i["src"]: check_data_freshness.build_issue_body(i, today) for i in items}
+
+    def test_hint_only_for_its_own_row(self):
+        bodies = self._bodies(datetime.date(2026, 12, 7))
+        assert "publish_ledger_release.py --ym <판>" in bodies["건축물대장"]
+        assert "--recollect-months 6" in bodies["실거래 (매매)"]
+        assert "publish_ledger_release" not in bodies["실거래 (매매)"]
+        assert "--recollect-months" not in bodies["건축물대장"]
+        assert not any(k in bodies["건축 인허가"] for k in ("publish_ledger_release", "--recollect-months"))
+
+    def test_hint_only_when_overdue(self):
+        """실거래가 아직 안 지났으면(같은 날) 실거래 이슈 자체가 없다 — 대장만 나온다."""
+        bodies = self._bodies(datetime.date(2026, 11, 30))
+        assert set(bodies) == {"건축물대장", "건축 인허가"}
+
+    def test_hint_keys_match_the_server_labels(self):
+        """열쇠 글자가 서버 함수의 src 와 같아야 한다 — 다르면 안내가 조용히 안 나온다."""
+        body = fn_body(read(SCHEMA))
+        for key in check_data_freshness.SOURCE_HINTS:
+            assert "'{}'".format(key) in body, key
+
+    def test_mutation_wrong_key_is_noticed(self):
+        assert check_data_freshness.source_hint("건축물 대장") is None      # 양성 대조 — 한 글자 틀리면 None
 
 
 # ── 5-2. 실거래 수집기 --recollect-months ──────────────────────────────────────
@@ -659,7 +749,10 @@ class TestRecollectMain:
         assert collect_transactions.main() == 0
         assert log["upsert"] == []
         assert len(log["seed"]) == 1            # 기존 시드 한 번뿐 — 다시 받을 달 시드는 안 한다
-        assert "다시 받을 달 6개(그중 done 2개)" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "다시 받을 달 6개(그중 done 2개)" in out
+        # #9 — 예산 안내의 계획 호출에도 되돌릴 달 수가 따로 적힌다(pending 0 + 다시 받을 달 2)
+        assert "계획 호출          2건 (pending 0개월 + 다시 받을 달 2개월 x 1콜 가정)" in out
 
     def test_run_reverts_done_months(self, monkeypatch):
         log = self._stub(monkeypatch, ["--months", "6", "--end-ym", "202610", "--recollect-months", "6"])

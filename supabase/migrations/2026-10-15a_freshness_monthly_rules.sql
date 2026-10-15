@@ -8,7 +8,8 @@
 --
 -- 무엇을 하나 (한 begin/commit 안 — 표와 함수가 함께 바뀌거나 함께 안 바뀐다):
 --   ① 새 한 줄 표 ledger_release(건축물대장 판 표지) — 처음 한 줄 = 2026년 8월 판
---      (10-14 대장 8월 판 30개 구 적재가 15:48 KST 에 끝났다 — docs/PROGRESS.md 「2026-10-14」)
+--      (운영 DB 실측 2026-10-15: 10-14 낮 새로 들어온 건물 99동의 마지막 updated_at = 15:46:41 KST ·
+--       적재 끝 15:48 은 그 세션 기록)
 --   ② get_data_freshness() 다시 만들기 — 2번 줄(실거래)·3번 줄(건축물대장)만 바뀐다
 --   ⓘ api.get_data_freshness 는 다시 만들지 않는다 — public 원본을 부르기만 하는 통과 함수라 본문이
 --     그대로이고, 다시 만들면 grant 를 다시 줘야 한다(그 줄이 빠지는 날 화면이 permission denied).
@@ -27,7 +28,9 @@
 --   · 표지를 따로 두는 이유: building 표에는 판 칸이 없고(load_building_ledger.py --snapshot-ym 은 상권
 --     조인률 보고용이라 저장하지 않는다), max(updated_at) 은 적재가 반쯤 끝난 순간에도 '오늘'이 된다.
 --     표지는 30개 구를 다 넣은 뒤 사람이 `python scripts/publish_ledger_release.py --ym <판>` 으로 올린다
---     (그 명령이 열린 구 전부의 max(building.updated_at) 이 지난 표지 뒤인지 본 뒤에만 올린다).
+--     (그 명령이 열린 구 전부의 max(building.updated_at) 이 지난 표지 뒤인지 본 뒤에만 올린다 — 손대지 않은
+--     구가 남은 채 새 판이라 적는 일을 막는다. ⚠️ 한 구 도중 실패는 못 본다: 30개 구 적재가 모두 exit 0
+--     인지 먼저 본다).
 --
 -- 모양이 안 맞으면 계산하지 않는다: 두 갈래 다 basis 가 `^\d{4}(0[1-9]|1[0-2])$` 일 때만 to_date 를
 --   부른다. 그 밖(null·'2026-10'·'20261')은 next_expected 가 null — to_date 가 터지면 표가 통째로
@@ -86,7 +89,8 @@ alter table ledger_release enable row level security;
 -- ⛔ Supabase 는 새 표를 anon 에 자동으로 연다(pg_default_acl) — 만든 자리에서 닫는다.
 revoke all on ledger_release from public, anon, authenticated;
 
--- 처음 한 줄 = 10-14 대장 8월 판 30개 구 적재가 끝난 시각. 이미 있으면 건드리지 않는다
+-- 처음 한 줄 = 10-14 대장 8월 판 30개 구 적재가 끝난 시각(운영 DB 실측 2026-10-15: 새 건물 99동의 마지막
+-- updated_at = 15:46:41 KST · 15:48 은 그 세션 기록). 이미 있으면 건드리지 않는다
 -- (정본을 다시 돌려도 지금 표지를 되돌리지 않게).
 insert into ledger_release (id, release_ym, loaded_at)
 values (1, '202608', '2026-10-14 15:48:00+09')

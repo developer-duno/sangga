@@ -17,7 +17,8 @@
 -----------
 공개키로 `api.get_data_freshness()` 를 한 번 불러, `next_expected` 가 **한국 날짜의 오늘보다
 앞선** 줄을 고른다(같은 날은 아직 안 지난 것이다 — 예정일은 "그날 말일까지"라는 뜻이라).
-  · `next_expected` 가 null 인 줄(주기가 없는 자료 다섯 줄 — 필지는 2026-10-12b 부터 주기가 있다)은 건너뛴다 — 없는 주기를 두고
+  · `next_expected` 가 null 인 줄(주기가 없는 자료 세 줄 — 상권 경계·LH·성적표 · 필지는 2026-10-12b,
+    실거래·건축물대장은 2026-10-15a 부터 주기가 있다)은 건너뛴다 — 없는 주기를 두고
     "늦었다"고 하면 거짓 신호다(서버 함수가 null 을 주는 이유와 같다).
   · ⛔ 아래 셋은 "지난 것 없음"이 아니라 **조회 실패**다. 어느 것이든 "없음"으로 끝내면
     그날부터 감시가 장님이 된 채 매주 초록불만 켠다.
@@ -274,9 +275,26 @@ def build_issue_title(item) -> str:
     return "갱신 예정일이 지난 자료 — {} (예정 {})".format(name, item["next_expected"])
 
 
+# 자료별로 '적재만으로는 경보가 안 빠지는' 할 일 한 줄(2026-10-15a · 검사관 지적). 열쇠 = 서버 함수의 src 글자.
+SOURCE_HINTS = {
+    "건축물대장": ("**건축물대장은 30개 구를 다 적재한 뒤 `python scripts/publish_ledger_release.py --ym <판>` "
+                  "으로 판 표지를 올려야 이 경보가 빠집니다**(적재만으로는 표의 판이 안 바뀝니다 · "
+                  "먼저 `--ym <판> --dry-run`)."),
+    "실거래 (매매)": ("**실거래는 30개 구 `collect_transactions.py --sigungu-code <구> --recollect-months 6 "
+                    "--end-ym <이번 달>` 수집 → 30개 구 `load_transactions.py --sigungu-code <구>` 적재 → "
+                    "`post_load.py`** 순서입니다(구 인자가 없으면 강남만 적재)."),
+}
+
+
+def source_hint(src) -> str | None:
+    """그 자료만의 할 일 한 줄(없으면 None)."""
+    return SOURCE_HINTS.get(str(src))
+
+
 def build_issue_body(item, today: datetime.date) -> str:
     """자료 하나의 이슈 본문 — 사람이 그대로 따라 할 수 있게."""
     basis = item["basis"] if item["basis"] is not None else "(자료 없음)"
+    hint = source_hint(item["src"])
     lines = [
         "화면 아래 **\"이 자료는 언제 것인가\"** 표에서, 다음 갱신 예정일이 지났는데 "
         "아직 옛 자료입니다.",
@@ -296,6 +314,7 @@ def build_issue_body(item, today: datetime.date) -> str:
         "",
         "## 할 일",
         "",
+    ] + ([hint, ""] if hint else []) + [
         "**포털에 새 판이 떴는지 확인 → 떴으면 적재**합니다. 받기·적재 명령은 "
         "`CLAUDE.md` 의 명령 표에 있습니다. 적재한 뒤에는 늘 하던 대로:",
         "",

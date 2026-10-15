@@ -1914,9 +1914,38 @@ def test_main_building_only_sends_the_spec_columns(tmp_path, monkeypatch):
     assert len(bodies) == 1 and bodies[0][0].endswith("/rest/v1/building")
     row = bodies[0][1][0]
     assert [row[k] for k in SPEC_KEYS] == [2, 1, 0, "철근콘크리트구조", True, None, "1+", None]
-    # 2026-10-15a 부터 적재 시각을 명시로 싣는다(갱신 행도 updated_at 이 바뀌게 — 대장 판 표지 ⓓ 판정).
-    # 옛 단언은 `"updated_at" not in row`(10-11c 칸 채우기 때 기준일을 안 바꾸려던 것)였다.
-    assert row["updated_at"] == target.RUN_LOADED_AT
+    assert "updated_at" not in row            # 기존 레코드에 없는 칸 — 건드리지 않는다
+    # ⓘ 2026-10-15 — 평소 적재는 updated_at 을 싣지만 칸 채우기는 뺀다(대장 판 표지 ⓓ 를 속이지 않게 ·
+    #   평소 경로는 아래 test_main_normal_load_sends_run_loaded_at 이 본다).
+
+
+def _posted_building_row(tmp_path, monkeypatch, argv):
+    raw_dir = _raw_with_floor_and_unit(tmp_path)
+    bodies = []
+    _fake_http(monkeypatch, [])
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        bodies.append((url, json))
+        return _FakeResponse(201)
+
+    monkeypatch.setattr(target.requests, "post", fake_post)
+    monkeypatch.setattr(sys, "argv", ["prog", "--raw-dir", raw_dir] + argv)
+    assert target.main() == 0
+    rows = [json for url, json in bodies if url.endswith("/rest/v1/building")]
+    assert len(rows) == 1
+    return rows[0][0]
+
+
+def test_main_normal_load_sends_run_loaded_at(tmp_path, monkeypatch):
+    """평소 적재(판 적재)는 갱신 행도 updated_at 이 바뀌게 RUN_LOADED_AT 을 싣는다(2026-10-15a ⓓ 의 전제)."""
+    assert _posted_building_row(tmp_path, monkeypatch, [])["updated_at"] == target.RUN_LOADED_AT
+
+
+def test_without_loaded_at_leaves_the_input_alone():
+    rec = target.build_building_record(PNU_A, TITLE_ITEM)
+    out = target.without_loaded_at([rec])
+    assert "updated_at" not in out[0] and "updated_at" in rec
+    assert {k: v for k, v in rec.items() if k != "updated_at"} == out[0]
 
 
 def test_main_building_only_dry_run_touches_nothing(tmp_path, monkeypatch, capsys):

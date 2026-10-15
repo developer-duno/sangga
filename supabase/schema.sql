@@ -181,9 +181,9 @@ comment on column building.bcr is
 create index if not exists idx_building_pnu on building (pnu);
 create index if not exists idx_building_nm  on building using gin (bld_nm gin_trgm_ops);
 -- 마이그레이션 2026-09-27b — get_data_freshness 의 `max(t.updated_at) from building t` 를 받치려고 걸었다
--- (2026-09-27 실측 64ms). ⓘ 2026-10-15a 부터 그 건축물대장 줄은 updated_at 이 아니라 판 표지
---   (ledger_release.release_ym)를 읽는다 — 이 색인이 받치는 신선도 줄은 이제 없다. 표지 명령
---   (publish_ledger_release.py)의 구별 max(updated_at) 확인과 10-15a 를 되돌릴 때 쓴다. 지울지는 별건.
+-- (2026-09-27 실측 64ms). ⓘ 2026-10-15a 부터 신선도 함수는 이 칸을 안 읽는다(건축물대장 줄 = 판 표지
+--   ledger_release.release_ym). 표지 명령(publish_ledger_release.py)도 구로 묶어 building 전체를 훑으므로
+--   이 색인을 안 쓴다 — 지금 이 색인을 쓰는 곳은 없다(10-15a 를 되돌리면 다시 쓴다). 지울지는 별건.
 create index if not exists idx_building_updated_at on building (updated_at);
 
 -- ── 건축물대장 판 표지 ledger_release (2026-10-15a) ──────────────────────────────
@@ -212,7 +212,8 @@ alter table ledger_release enable row level security;
 -- ⛔ Supabase 는 새 표를 anon 에 자동으로 연다(pg_default_acl) — 만든 자리에서 닫는다.
 revoke all on ledger_release from public, anon, authenticated;
 
--- 처음 한 줄 = 10-14 대장 8월 판 30개 구 적재가 끝난 시각. 이미 있으면 건드리지 않는다
+-- 처음 한 줄 = 10-14 대장 8월 판 30개 구 적재가 끝난 시각(운영 DB 실측 2026-10-15: 새 건물 99동의 마지막
+-- updated_at = 15:46:41 KST · 15:48 은 그 세션 기록). 이미 있으면 건드리지 않는다
 -- (정본을 다시 돌려도 지금 표지를 되돌리지 않게).
 insert into ledger_release (id, release_ym, loaded_at)
 values (1, '202608', '2026-10-14 15:48:00+09')

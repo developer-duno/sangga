@@ -103,7 +103,7 @@ main → App → components → lib → types   (단방향 — 역방향 import 
 | 서버 | **`api/building.ts` 하나**(건물별 첫 HTML · 결정 0037 — 건물 주소의 첫 HTML 머리글·소개문만 그 건물 것으로 바꾼다 · 본체 `src/lib/buildingHandler.ts` · 레포 루트 `middleware.ts`(Routing Middleware)가 `/?…bld=…` 만 넘긴다 · 되돌리기 = `middleware.ts` 삭제 · 2026-10-09). **나머지는 그대로 DB 함수** — 화면이 Supabase PostgREST·RPC 를 직접 부르고(2026-08-25 실측 때는 서버리스 함수 0개), Vercel 은 정적 파일 호스팅·배포와 이 함수 하나만 맡는다. ⚠️ 화면 로직에 고칠 서버 코드는 없다 — 서버에서 해야 할 일은 전부 DB 함수(schema.sql)로 간다 |
 | DB | Supabase PostgreSQL + PostGIS (**별도 프로젝트**) |
 | 수집 | ⬜ **여전히 로컬 수동 실행이다** — 받기·적재·백업 전부 사람 손. 다만 **놓치는 것만은 막아 뒀다**: 감시 그물 여섯(분기 스냅샷 `sangkwon-quarterly-watch` · 상권 원천 `district-source-watch` · 라이브 생존 `live-health-watch` · 의견함 주간 알림 `feedback-digest` · LH 상가 공고 `lh-notice-watch` · 지난 날짜 감시 `data-freshness-watch`)이 서로를 전부 본다(`check_watch_heartbeat.py`). ⛔ **새 예약 워크플로를 만들면 그물에도 넣어야 한다** — `DEFAULT_WORKFLOWS` 와 형제들의 `--workflow` 인자 둘 다. 빠뜨리면 테스트가 빨간불로 잡는다(`schedule:` 있는 파일을 훑어 대조한다). ⛔ 알리기만 한다 — 적재는 여전히 사람 손. ⛔ **검색 함수만 고장 난 경우는 여전히 아무도 안 본다**. 적재 후 기준선 상수(`LATEST_KNOWN_QUARTER` · `LATEST_KNOWN_NOTICE_DATE` · 상권 원천 기준선)는 **사람이 올린다**. 각 그물의 비밀값·종료코드·이슈 제목 규칙·못 보는 틈 = **`.claude/rules/watch-nets.md`**(`.github/`·`scripts/check_*.py`·감시 시험을 열면 자동으로 읽힌다 — ⚠️ 감시가 연 이슈를 처리하거나 감시를 고칠 때는 그 파일을 먼저 직접 연다) |
-| 테스트 | 파이썬 **pytest 5,468개** + 프론트 **vitest 1,412개**(jsdom + @testing-library/react) + **E2E playwright 50개**(`e2e/floor-stack.spec.ts` — 시험별 내용 = **`.claude/rules/e2e-catalog.md`**, `e2e/` 를 열면 자동으로 읽힌다). ⚠️ **E2E 는 같은 50개를 넓은 화면(chromium)과 휴대폰(mobile — Pixel 7 프리셋, 폭 412px·터치)에서 두 번 돌려 총 100회다** — 좁은 폭은 `styles.css` 의 `@media (max-width: 720px)` 가 판을 다시 짜는 자리라 넓은 화면만 보면 못 잡는다(2026-08-22 층별 막대를 모바일에서만 숨긴 사고). 개수를 셀 때 50(시험)과 100(실행)을 헷갈리지 말 것. CI가 셋 다 돌린다(`pnpm test:e2e`). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도. ⛔ **인쇄는 거의 전부가 CSS라 jsdom(vitest)이 원리적으로 못 본다** — 인쇄 매체를 흉내 낼 수 있는 곳은 E2E 뿐이다 |
+| 테스트 | 파이썬 **pytest 5,603개** + 프론트 **vitest 1,412개**(jsdom + @testing-library/react) + **E2E playwright 50개**(`e2e/floor-stack.spec.ts` — 시험별 내용 = **`.claude/rules/e2e-catalog.md`**, `e2e/` 를 열면 자동으로 읽힌다). ⚠️ **E2E 는 같은 50개를 넓은 화면(chromium)과 휴대폰(mobile — Pixel 7 프리셋, 폭 412px·터치)에서 두 번 돌려 총 100회다** — 좁은 폭은 `styles.css` 의 `@media (max-width: 720px)` 가 판을 다시 짜는 자리라 넓은 화면만 보면 못 잡는다(2026-08-22 층별 막대를 모바일에서만 숨긴 사고). 개수를 셀 때 50(시험)과 100(실행)을 헷갈리지 말 것. CI가 셋 다 돌린다(`pnpm test:e2e`). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도. ⛔ **인쇄는 거의 전부가 CSS라 jsdom(vitest)이 원리적으로 못 본다** — 인쇄 매체를 흉내 낼 수 있는 곳은 E2E 뿐이다 |
 
 **성능 원칙**: 상권(수천 개)은 사전계산 정적 JSON, 호실(수백만)은 Supabase 쿼리.
 정적 JSON 폴백을 호실에는 두지 않는다.
@@ -142,7 +142,7 @@ pnpm exec oxlint                                # 프론트 린트
 ```
 
 ```bash
-python -m pytest tests/ -q                      # 파이썬 테스트 (5,468개 — 10-13 #300 판 수집 실측(--collect-only · vitest 1,412 는 #298 판 전체 실행 통과) · 워크트리는 원본 자료가 없어 몇 개를 건너뛴다(10-06 실측 3) · CI 는 로컬 PostgreSQL·shapely 가 없어 약 30개를 더 건너뛴다(test_district_openclose_migration 실행 시험 16 · test_industry_median_migration 실행 시험 11 · test_backtest_openclose 도형 1 등) · 지난 개수 이력은 git log -p CLAUDE.md)
+python -m pytest tests/ -q                      # 파이썬 테스트 (5,603개 — 10-15 #309 판 수집 실측(--collect-only · vitest 1,412 는 #298 판 전체 실행 통과) · 워크트리는 원본 자료가 없어 몇 개를 건너뛴다(10-06 실측 3) · CI 는 로컬 PostgreSQL·shapely 가 없어 약 30개를 더 건너뛴다(test_district_openclose_migration 실행 시험 16 · test_industry_median_migration 실행 시험 11 · test_backtest_openclose 도형 1 등) · 지난 개수 이력은 git log -p CLAUDE.md)
 python scripts/check_new_sangkwon_quarter.py    # 새 분기 스냅샷이 떴나 (읽기만, 키 불필요)
 python scripts/check_district_source_update.py  # 상권 원천(서울·소진공) 수정일이 바뀌었나 (읽기만, 키 불필요)
 python scripts/check_watch_heartbeat.py         # 예약 6종이 아직 돌고 있나 (읽기만, 키 불필요 — 멈춤=exit 1 · 조회·판정 실패=2 · 결과 쓰기 실패=4)
@@ -235,7 +235,7 @@ python scripts/publish_snapshot.py --show        # 분기 표지(다 들어온 �
 python scripts/publish_snapshot.py --ym <분기>   # 표지 두 칸을 그 분기로(되돌리기·RPC 실패 대응 · 점포 표에 있는 분기만) → 이어서 post_load.py
 python scripts/publish_ledger_release.py --show             # 건축물대장 판 표지(판·적은 시각) + 열린 구마다 '표지 뒤에 적재됐나' (읽기만 · 2026-10-15a)
 python scripts/publish_ledger_release.py --ym <판> --dry-run # 판정만(쓰기 0) — ⓐ 모양 ⓑ 앞으로만(같은 판이면 쓰기 0 · exit 0) ⓒ 지난달까지 ⓓ 열린 구 전부의 max(building.updated_at) 이 지금 표지를 적은 시각 뒤
-python scripts/publish_ledger_release.py --ym <판>          # ★ 대장 새 판을 30구 다 넣은 뒤 — 신선도 표 건축물대장 줄이 이 판을 말한다(판 + 3개월 − 하루). ⛔ `--building-only` 칸 채우기 재적재 뒤에는 올리지 말 것(판이 바뀐 게 아니다 — 적재기가 갱신 행에도 적재 시각을 싣기 때문에 ⓓ 가 지나간다)
+python scripts/publish_ledger_release.py --ym <판>          # ★ 대장 새 판을 30구 다 넣은 뒤 — 신선도 표 건축물대장 줄이 이 판을 말한다(판 + 3개월 − 하루). ⚠️ ⓓ 는 손대지 않은 구가 남았는지만 본다 — 한 구 도중 실패는 못 보니 30구 적재가 모두 exit 0 인지 먼저 본다(`--building-only` 칸 채우기는 적재 시각을 안 실어 ⓓ 를 지나가지 않는다)
 python scripts/make_env_local.py                # .env → .env.local (브라우저용 공개키만)
 python scripts/setup_git_hooks.py               # ★ 새 컴퓨터에서 한 번 — main 잠금(로컬 알람) 켜기 + 깃헙 잠금 함께 확인
 python scripts/setup_git_hooks.py --check       # 양쪽 잠금이 제자리인가 (아무것도 안 바꿈, 어긋나면 exit 1)
@@ -246,7 +246,7 @@ python scripts/backup_raw.py --verify           # 백업본을 다시 읽어 SHA
 
 > 📅 **매달 할 일**(F3·F5 · 2026-10-15) — 신선도 표가 두 줄에 날짜를 건다(실거래 = 계약월 + 2개월 − 하루 · 건축물대장 = 판 + 3개월 − 하루). 넘기면 그물 6호가 이슈를 연다.
 > ① **실거래**: 30구 `collect_transactions.py --sigungu-code <구> --recollect-months 6 --end-ym <이번 달>` → 30구 `load_transactions.py --sigungu-code <구>`(⚠️ 구 인자가 없으면 강남만 적재) → `post_load.py`.
-> ② **건축물대장**: 매달 20일 무렵 새 판(N월 판 = (N+1)월 20일 게시) → `fetch_bldrgst_bulk.py --kind title` · `flr_ouln` · `expos_area` → `convert_bldrgst_bulk.py --src-dir data/raw/bldrgst_bulk/<판> --out-dir data/raw/bldrgst_bulk_converted_<판>` → 30구 `load_building_ledger.py --raw-dir …/<구> --snapshot-ym <상권 분기>` → `publish_ledger_release.py --ym <판>` → `post_load.py` · `post_load.py --check` → `backup_raw.py`(포털은 최근 3개월치만 남긴다).
+> ② **건축물대장**: 매달 20일 무렵 새 판(N월 판 = (N+1)월 20일 게시) → 적재 **전** 디스크 판정(지금 사용량 + 약 +320MB(10-14 실측 5,464 → 5,783MB) + WAL 여유 1GB 가 디스크의 85% 미만일 때만 — 넘으면 확장부터) → `fetch_bldrgst_bulk.py --kind title` · `flr_ouln` · `expos_area` → `convert_bldrgst_bulk.py --src-dir data/raw/bldrgst_bulk/<판> --out-dir data/raw/bldrgst_bulk_converted_<판>` → 30구 `load_building_ledger.py --raw-dir …/<구> --snapshot-ym <상권 분기>`(30구 모두 exit 0 인지 본다) → `publish_ledger_release.py --ym <판>` → `post_load.py` · `post_load.py --check` → `build_sitemap.py` → 커밋 → 배포 뒤 `indexnow_ping.py --from-sitemap public/sitemap-buildings-1.xml` → `backup_raw.py`(포털은 최근 3개월치만 남긴다).
 
 > 💾 **원본 백업은 자동이 아니다.** 새 분기 zip을 받았거나 대량 수집을 마쳤으면 `backup_raw.py`를
 > 직접 한 번 돌린다. 과거 분기 zip은 포털에서 내려가면 **재수집이 불가능**하다(절대 규칙 6).

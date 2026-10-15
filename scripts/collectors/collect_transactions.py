@@ -618,7 +618,7 @@ def maybe_flush_quota_log(base_url, headers, log_date, baseline, session_calls,
 # ── 보고 ─────────────────────────────────────────────────────────────────────
 
 
-def print_dry_run_report(sigungu_code, months, raw_dir, pending, counts, verdict, budget):
+def print_dry_run_report(sigungu_code, months, raw_dir, pending, counts, verdict, budget, recollect_extra=0):
     print("=" * 78)
     print("상업업무용 실거래가 수집 — dry-run")
     print("=" * 78)
@@ -632,8 +632,13 @@ def print_dry_run_report(sigungu_code, months, raw_dir, pending, counts, verdict
     print("")
     print("  [ 오늘 예산 ] 일 {:,}건 (API별 한도 10,000 - 여유)".format(budget))
     print("    남은 예산     {:>6,}건".format(verdict["remaining"]))
-    print("    계획 호출     {:>6,}건 (pending {:,}개월 x 1콜 가정)".format(
-        verdict["planned"], len(pending)))
+    if recollect_extra:
+        # --recollect-months 와 함께면 dry-run 은 되돌리지 않으므로 pending 에 그 달들이 안 들어 있다 — 따로 적는다.
+        print("    계획 호출     {:>6,}건 (pending {:,}개월 + 다시 받을 달 {:,}개월 x 1콜 가정)".format(
+            verdict["planned"], len(pending), recollect_extra))
+    else:
+        print("    계획 호출     {:>6,}건 (pending {:,}개월 x 1콜 가정)".format(
+            verdict["planned"], len(pending)))
     if verdict["fits"]:
         print("    -> 오늘 안에 끝날 것으로 보입니다.")
     else:
@@ -812,7 +817,7 @@ def main():
 
     if opts["dry_run"]:
         print_dry_run_report(sigungu, months, opts["raw_dir"], pending, counts,
-                             verdict, opts["daily_budget"])
+                             verdict, opts["daily_budget"], recollect_extra)
         return 0
 
     if not pending:
