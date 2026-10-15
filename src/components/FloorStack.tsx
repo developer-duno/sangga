@@ -1354,6 +1354,9 @@ function ParcelTxList({ txs }: { txs: ParcelTransaction[] }) {
   const hasShare = txs.some((t) => t.is_share === true);
   // 처음 10건만 화면에(S2) — 펼침은 이 목록의 상태라 건물이 바뀌면(key) 다시 접힌다.
   const [all, setAll] = useState(false);
+  // 설명 줄은 **화면에 보이는 줄**에 지분이 있을 때만 화면에 선다(👤 2026-10-16) — 숨은 줄에만 있으면
+  // 줄은 그리되 숨은 줄과 같은 이름표를 달아 `@media screen` 에서만 숨긴다(종이에는 줄이 전부 나오니 설명도 늘).
+  const shownShare = all ? hasShare : txs.slice(0, LIST_FOLD_AT).some((t) => t.is_share === true);
   const listId = useId();
   return (
     <div className="tx__block">
@@ -1392,7 +1395,7 @@ function ParcelTxList({ txs }: { txs: ParcelTransaction[] }) {
         />
       )}
       {hasShare && (
-        <p className="tx__note tx__share-note">
+        <p className={`tx__note tx__share-note${shownShare ? '' : ' list__folded'}`}>
           지분 = 건물 일부 몫만 사고판 거래라 ㎡당 값이 낮게 나옵니다 — 층대별 단가·참고 가격대 계산에서는 뺍니다.
         </p>
       )}

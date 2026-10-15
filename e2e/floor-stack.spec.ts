@@ -3302,7 +3302,8 @@ test.describe('긴 카드 창', () => {
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
     await mockFloorStack(
       page,
-      Array.from({ length: 12 }, () => parcelTx()),
+      // 지분 거래는 숨는 12번째 줄에만 — 접힌 화면엔 설명 줄이 없고 펼치거나 종이면 선다(👤 2026-10-16).
+      Array.from({ length: 12 }, (_, i) => parcelTx({ is_share: i === 11 })),
       [],
       Array.from({ length: 12 }, (_, i) => floorRow({ floor_no: 12 - i })),
     );
@@ -3340,25 +3341,144 @@ test.describe('긴 카드 창', () => {
       await expect(btn).toHaveCSS('font-size', '13px');
     }
 
-    // 펼치면 전부 → 같은 자리 단추로 다시 접으면 10줄 + 층 목록 카드 머리가 화면 안에.
+    // 지분은 숨은 12번째 줄에만 — 접힌 화면엔 설명 줄이 안 보인다(줄은 DOM 에 있다 · 종이용).
+    const shareNote = page.locator('section.tx .tx__share-note');
+    await expect(shareNote).toHaveCount(1);
+    await expect(shareNote).toBeHidden();
+
+    // 펼치면 전부 → 같은 자리 단추로 다시 접으면 10줄 + 그 카드 머리가 화면 안으로 굴러온다.
+    // ⓘ 접기 전에 단추를 화면 맨 위로 올려 카드 머리를 화면 **밖**으로 내보낸다 — 머리가 처음부터 화면 안이면
+    //   「굴렀나」를 못 가른다(S2 검사 🟡). 그래서 '밖이다'를 먼저 단언하고 누른다.
+    const floorsHead = floorsCard.locator('.card__h');
+    const txHead = page.locator('section.tx .card__h');
     await floorFold.click();
     await expect(floorsCard.locator('.floors > li:visible')).toHaveCount(12);
     await expect(floorFold).toHaveText('층 목록 접기');
+    await floorFold.evaluate((el) => el.scrollIntoView({ block: 'start' }));
+    await expect(floorsHead).not.toBeInViewport();
     await floorFold.click();
     await expect(floorsCard.locator('.floors > li:visible')).toHaveCount(10);
-    await expect(floorsCard.locator('.card__h')).toBeInViewport();
+    await expect(floorsHead).toBeInViewport({ ratio: 0.9 });
     await txFold.click();
     await expect(page.locator('section.tx .tx__list > li:visible')).toHaveCount(12);
     await expect(txFold).toHaveText('거래 목록 접기');
+    await expect(shareNote).toBeVisible();
+    await txFold.evaluate((el) => el.scrollIntoView({ block: 'start' }));
+    await expect(txHead).not.toBeInViewport();
     await txFold.click();
     await expect(page.locator('section.tx .tx__list > li:visible')).toHaveCount(10);
+    await expect(txHead).toBeInViewport({ ratio: 0.9 });
+    await expect(shareNote).toBeHidden();
 
-    // ⛔ 종이에는 늘 전부(접힌 상태에서 뽑아도) — 단추는 누르는 장치라 빠진다.
+    // ⛔ 종이에는 늘 전부(접힌 상태에서 뽑아도) — 단추는 누르는 장치라 빠진다. 지분 설명 줄도 종이엔 늘 선다.
     await page.emulateMedia({ media: 'print' });
     await expect(floorsCard.locator('.floors > li:visible')).toHaveCount(12);
     await expect(page.locator('section.tx .tx__list > li:visible')).toHaveCount(12);
     await expect(floorFold).toBeHidden();
     await expect(txFold).toBeHidden();
+    await expect(shareNote).toBeVisible();
+    await page.emulateMedia({ media: null });
+  });
+});
+
+// 휴대폰 층 줄 = 세 줄(S2 후속 · 👤 2026-10-16 시안 「나」) — 좁은 화면에서 층 줄 칸 일곱이 한 칸씩 세로로 쌓여 한 줄이
+// 214px 였다(운영 실측). `@media screen and (max-width: 720px)` 의 그리드 자리로 세 줄에 묶는다. CSS 라 jsdom 은 못 본다.
+test.describe('휴대폰 층 줄', () => {
+  test('BC. 휴대폰 폭에서 층 줄은 세 줄(층 이름·용도·▼ / 막대 / 면적·점포·거래) · 긴 용도는 첫 줄 안에서만 줄바꿈 · 넓은 화면과 종이는 그대로', async ({
+    page,
+  }, testInfo) => {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(
+      page,
+      [parcelTx({ floor_no: 2 }), parcelTx({ floor_no: 2 })],
+      [],
+      [
+        floorRow({ floor_no: 2, main_use: '기타제1종근린생활시설', floor_area_m2: 2116.2, store_cnt: 8 }),
+        // 용도 이름이 긴 층 — 좁은 화면에서 첫 줄 안에서만 줄을 바꾼다(가로 넘침 0).
+        floorRow({ floor_no: 1, main_use: '제2종근린생활시설(일반음식점·휴게음식점·제과점) 및 업무시설(일반업무시설)' }),
+        floorRow({ floor_no: -1, main_use: '주차장', store_cnt: null }),
+      ],
+    );
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+
+    const card = page.locator('.card--floors');
+    await expect(card.locator('.floor__row')).toHaveCount(3);
+    const mobile = testInfo.project.name === 'mobile';
+
+    /** 층 줄 하나의 칸 자리(뷰포트 기준). */
+    const shapeOf = (no: number) =>
+      card.locator(`#floor-${no} .floor__row`).evaluate((row) => {
+        const r = (sel: string) => {
+          const b = (sel === '' ? row : row.querySelector(sel)!).getBoundingClientRect();
+          return { top: b.top, bottom: b.bottom, left: b.left, right: b.right, h: b.height, w: b.width, mid: (b.top + b.bottom) / 2 };
+        };
+        return {
+          row: r(''),
+          label: r('.floor__label'),
+          bar: r('.floor__bar'),
+          use: r('.floor__use'),
+          area: r('.floor__area'),
+          stores: r('.floor__stores'),
+          tx: r('.floor__tx'),
+          caret: r('.floor__caret'),
+          over: row.scrollWidth - row.clientWidth,
+          areas: row.ownerDocument.defaultView!.getComputedStyle(row).gridTemplateAreas,
+        };
+      });
+
+    for (const no of [2, 1, -1]) {
+      const s = await shapeOf(no);
+      expect(s.over, `${no}층 줄 가로 넘침`).toBeLessThanOrEqual(0);
+      if (mobile) {
+        // 세 줄 — 한 줄 높이는 지금(214px)의 절반도 안 된다(긴 용도 층은 아래에서 따로 본다).
+        if (no !== 1) expect(s.row.h, `${no}층 줄 높이`).toBeLessThan(120);
+        // ① 층 이름 · 용도 · ▼ 가 같은 첫 줄(가운데가 같다) — ▼ 는 오른쪽 끝.
+        expect(Math.abs(s.label.mid - s.caret.mid)).toBeLessThan(2);
+        expect(s.use.left).toBeGreaterThan(s.label.right);
+        expect(s.caret.left).toBeGreaterThan(s.use.right);
+        // ② 막대는 첫 줄 아래, 폭 전체.
+        expect(s.bar.top).toBeGreaterThanOrEqual(Math.max(s.label.bottom, s.use.bottom, s.caret.bottom));
+        expect(s.bar.w).toBeGreaterThan(s.row.w * 0.8);
+        // ③ 면적(왼쪽) · 점포(오른쪽)는 막대 아래 같은 줄.
+        expect(s.area.top).toBeGreaterThanOrEqual(s.bar.bottom);
+        expect(Math.abs(s.area.mid - s.stores.mid)).toBeLessThan(2);
+        expect(s.stores.left).toBeGreaterThan(s.area.right);
+        // 거래가 없는 층(2층만 거래가 있다)은 점포가 ▼ 와 같은 오른쪽 끝에 선다(빈 뱃지 칸만큼 안쪽에 서지 않게).
+        if (no !== 2) expect(Math.abs(s.stores.right - s.caret.right)).toBeLessThan(2);
+      } else {
+        // 넓은 화면은 그대로 — 한 줄 44px(바꾸기 전 실측) · 그리드 자리 이름 없음.
+        expect(s.row.h, `${no}층 줄 높이`).toBe(44);
+        expect(s.areas).toBe('none');
+      }
+    }
+    if (mobile) {
+      // 거래가 있는 층은 「거래 N건」이 점포 오른쪽 같은 줄.
+      const two = await shapeOf(2);
+      expect(Math.abs(two.tx.mid - two.stores.mid)).toBeLessThan(2);
+      expect(two.tx.left).toBeGreaterThan(two.stores.right);
+      // 긴 용도는 첫 줄 안에서 줄을 바꾼다(양성 대조 — 이 픽스처가 실제로 줄바꿈을 일으키는지).
+      const one = await shapeOf(1);
+      expect(one.use.h).toBeGreaterThan(one.label.h * 1.5);
+      // 늘어난 높이는 용도 칸이 늘어난 만큼뿐이다(막대·면적 줄은 그대로).
+      expect(Math.abs(one.row.h - two.row.h - (one.use.h - two.use.h))).toBeLessThan(2);
+    }
+    expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+    await card.screenshot({ path: testInfo.outputPath(`bc-floors-${testInfo.project.name}.png`) });
+
+    // ⛔ 종이는 그대로 — 새 규칙은 `screen` 안에만 있다(그리드 자리 이름 없음 · 칸 수도 지금 그대로).
+    await page.emulateMedia({ media: 'print' });
+    const printed = await card
+      .locator('#floor-2 .floor__row')
+      .evaluate((el) => {
+        const cs = el.ownerDocument.defaultView!.getComputedStyle(el);
+        return { areas: cs.gridTemplateAreas, cols: cs.gridTemplateColumns.split(' ').length };
+      });
+    expect(printed).toEqual({ areas: 'none', cols: mobile ? 1 : 7 });
     await page.emulateMedia({ media: null });
   });
 });

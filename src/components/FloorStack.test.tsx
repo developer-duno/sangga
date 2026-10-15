@@ -3294,4 +3294,54 @@ describe('FloorStack — 긴 카드 창 (S2)', () => {
     await waitFor(() => expect(shownTx(container)).toBe(10));
     expect(txFold(container)!.getAttribute('aria-expanded')).toBe('false');
   });
+
+  // 지분 설명 줄(👤 2026-10-16) — 화면에 보이는 줄에 지분이 있을 때만 화면에. 줄 자체는 지분이 하나라도 있으면 늘 DOM 에 있고
+  // (종이에는 줄이 전부 나오니 설명도 늘 나온다), 숨은 줄에만 있으면 `list__folded` 이름표로 화면에서만 숨는다.
+  // ⓘ jsdom 은 CSS 를 못 보니 이름표만 본다 — 실제로 숨는지는 E2E 「BB」.
+  const shareNote = (c: HTMLElement) => c.querySelector('.tx__share-note');
+  const txsWithShareAt = (n: number, at: number[]) =>
+    Array.from({ length: n }, (_, i) => tx({ is_share: at.includes(i) }));
+
+  it('★ 지분이 숨은 줄(11번째 이후)에만 있으면 접힌 화면에선 설명 줄에 숨김 이름표 · 펼치면 떼고 · 다시 접으면 다시 붙는다', async () => {
+    responses.txs = { data: txsWithShareAt(14, [11, 12]), error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(txFold(container)).toBeTruthy());
+    // 줄은 DOM 에 있다(종이용) — 화면에서만 숨는 이름표.
+    expect(shareNote(container)).not.toBeNull();
+    expect(shareNote(container)!.classList.contains('list__folded')).toBe(true);
+
+    fireEvent.click(txFold(container)!);
+    expect(shareNote(container)!.classList.contains('list__folded')).toBe(false);
+
+    fireEvent.click(txFold(container)!);
+    expect(shareNote(container)!.classList.contains('list__folded')).toBe(true);
+  });
+
+  it('★ 경계 — 지분이 11번째 줄(첫 숨은 줄)에만 있으면 접힌 화면에선 숨김 이름표 · 펼치면 뗀다', async () => {
+    responses.txs = { data: txsWithShareAt(14, [10]), error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(txFold(container)).toBeTruthy());
+    expect(shareNote(container)!.classList.contains('list__folded')).toBe(true);
+    fireEvent.click(txFold(container)!);
+    expect(shareNote(container)!.classList.contains('list__folded')).toBe(false);
+  });
+
+  it('보이는 줄(처음 10건)에 지분이 있으면 접혀 있어도 펼쳐도 설명 줄이 보인다(양성 대조)', async () => {
+    responses.txs = { data: txsWithShareAt(14, [9]), error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(txFold(container)).toBeTruthy());
+    expect(shareNote(container)).not.toBeNull();
+    expect(shareNote(container)!.classList.contains('list__folded')).toBe(false);
+    fireEvent.click(txFold(container)!);
+    expect(shareNote(container)!.classList.contains('list__folded')).toBe(false);
+  });
+
+  it('지분이 아예 없으면 11건 이상이어도 설명 줄이 없다 — 접혀 있어도 펼쳐도', async () => {
+    responses.txs = { data: txsWithShareAt(14, []), error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(txFold(container)).toBeTruthy());
+    expect(shareNote(container)).toBeNull();
+    fireEvent.click(txFold(container)!);
+    expect(shareNote(container)).toBeNull();
+  });
 });
