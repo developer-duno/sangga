@@ -65,6 +65,17 @@ def fn_block(sql):
     return m.group(0)
 
 
+def server_src_labels(body):
+    """신선도 함수 본문에서 실제 줄의 src 글자 모음 — 주석(`--` 뒤)은 빼고 센다.
+
+    잡는 꼴: `select N, '<src>',` 와 첫 줄의 `'<src>'::text as src`.
+    못 보는 것: 문자열 안에 `--` 가 든 src(지금 0) · 다른 꼴로 적은 줄.
+    """
+    code = re.sub(r"--[^\n]*", "", body)
+    return set(re.findall(r"select\s+\d+,\s*'([^']*)'", code)) | set(
+        re.findall(r"'([^']*)'::text\s+as\s+src\b", code))
+
+
 def fn_body(sql):
     """public 함수의 `$$ … $$` 본문(줄 주석 걷음)."""
     m = re.search(r"(?ms)^create\s+or\s+replace\s+function\s+get_data_freshness\s*\(.*?\$\$(.*?)\$\$;", sql)
@@ -549,6 +560,12 @@ class TestPublishParsing:
         utc = datetime.datetime(2026, 10, 31, 16, 0, tzinfo=datetime.timezone.utc)   # 한국 11월 1일 01시
         assert plr.kst_this_month(utc) == "202611"
 
+    @pytest.mark.parametrize("utc_hm, day", [((16, 0), 1), ((14, 59), 31)])
+    def test_kst_today_day(self, utc_hm, day):
+        """표지 명령의 20일 경고가 기대는 '오늘 며칠' — UTC 10-31 16:00 은 한국 11월 1일, 14:59 는 아직 31일."""
+        utc = datetime.datetime(2026, 10, 31, *utc_hm, tzinfo=datetime.timezone.utc)
+        assert plr.kst_today_day(utc) == day
+
 
 class TestPublishMain:
     def _fake(self, monkeypatch, gu_text="11110;1760500000;x,11680;1760500001;y", update_answer="1"):
@@ -684,9 +701,19 @@ class TestFreshnessIssueHint:
 
     def test_hint_keys_match_the_server_labels(self):
         """열쇠 글자가 서버 함수의 src 와 같아야 한다 — 다르면 안내가 조용히 안 나온다."""
-        body = fn_body(read(SCHEMA))
+        labels = server_src_labels(fn_body(read(SCHEMA)))
+        assert len(labels) == 11                                       # 신선도 표 11줄
         for key in check_data_freshness.SOURCE_HINTS:
-            assert "'{}'".format(key) in body, key
+            assert key in labels, key
+
+    def test_src_labels_skip_comments(self):
+        """양성 대조 — 주석에만 있는 이름은 src 로 안 센다(흔한 꼴 + 첫 줄의 `::text as src` 꼴)."""
+        body = """-- select 9, '건축물대장', '판',
+select 1, '실거래 (매매)', '계약월',   -- select 8, '건축 인허가', '기준월',
+  '점포·업종 (상권정보)'::text as src,
+  -- '필지 (토지 특성)'::text as src,
+"""
+        assert server_src_labels(body) == {"실거래 (매매)", "점포·업종 (상권정보)"}
 
     def test_mutation_wrong_key_is_noticed(self):
         assert check_data_freshness.source_hint("건축물 대장") is None      # 양성 대조 — 한 글자 틀리면 None
@@ -751,8 +778,8 @@ class TestRecollectMain:
         assert len(log["seed"]) == 1            # 기존 시드 한 번뿐 — 다시 받을 달 시드는 안 한다
         out = capsys.readouterr().out
         assert "다시 받을 달 6개(그중 done 2개)" in out
-        # #9 — 예산 안내의 계획 호출에도 되돌릴 달 수가 따로 적힌다(pending 0 + 다시 받을 달 2)
-        assert "계획 호출          2건 (pending 0개월 + 다시 받을 달 2개월 x 1콜 가정)" in out
+        # #9 — 예산 안내의 계획 호출에도 되돌릴 done 달 수가 따로 적힌다(pending 0 + 되돌릴 done 달 2)
+        assert "계획 호출          2건 (pending 0개월 + 되돌릴 done 달 2개월 x 1콜 가정)" in out
 
     def test_run_reverts_done_months(self, monkeypatch):
         log = self._stub(monkeypatch, ["--months", "6", "--end-ym", "202610", "--recollect-months", "6"])
