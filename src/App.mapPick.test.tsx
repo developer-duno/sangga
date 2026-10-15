@@ -170,4 +170,36 @@ describe('App — 지도에서 누른 상권 기억 (G1)', () => {
     await pickGu('서울', '강남구');
     expect(pickShown()).toEqual({ sigungu: null, pickedIds: null, openId: null });
   });
+
+  it('★ 최근 뽑은 건물로 다른 구에 갔다가 다시 돌아와도 옛 기억은 없다 — 지도가 처음부터', async () => {
+    // 중개사 + 이 기기에 저장된 최근 건물 둘(강남·대전). 저장 꼴은 검색 결과에서 total_cnt 만 뺀 것.
+    const recent = [
+      hit({ bld_id: '1168010100100020000_1', pnu: '1168010100100020000', bld_nm: '강남빌딩' }),
+      hit({ bld_id: '3017010100100010000_5', pnu: '3017010100100010000', bld_nm: '대전빌딩', road_addr: '대전 서구 둔산로 1' }),
+    ].map(({ total_cnt: _t, ...rest }) => {
+      void _t;
+      return rest;
+    });
+    window.localStorage.setItem('sangga.viewerRole', '중개사');
+    window.localStorage.setItem('sangga.recentPrinted', JSON.stringify(recent));
+    const pickRecent = async (name: RegExp) => {
+      fireEvent.click(await screen.findByRole('button', { name: /최근 뽑은 건물/ }));
+      fireEvent.click(await screen.findByRole('button', { name }));
+      await screen.findByRole('button', { name: '상권 지도 보기' }); // 고르면 다시 접힌다
+    };
+
+    render(<App />);
+    await pickGu('서울', '강남구');
+    fireEvent.click(screen.getByRole('button', { name: '상권 누르기' }));
+    expect(pickShown()?.sigungu).toBe('11680');
+
+    // 강남 → (최근 건물) 대전 서구 → (펼쳐서 최근 건물) 다시 강남.
+    await pickRecent(/대전빌딩/);
+    fireEvent.click(screen.getByRole('button', { name: '다른 건물 찾기' }));
+    await pickRecent(/강남빌딩/);
+    expect(window.location.search).toContain('sgg=11680');
+
+    fireEvent.click(screen.getByRole('button', { name: '상권 지도 보기' }));
+    expect(pickShown()).toEqual({ sigungu: null, pickedIds: null, openId: null });
+  });
 });
