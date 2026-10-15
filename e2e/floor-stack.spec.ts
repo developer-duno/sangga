@@ -3291,3 +3291,74 @@ test.describe('누르는 것 44px · 글자 13px', () => {
     await expect(page.getByRole('button', { name: '다른 건물 찾기' })).toBeFocused();
   });
 });
+
+// 긴 카드 창(S2 · 👤 2026-10-15) — 층 목록은 아래 10줄(단추는 목록 위)·이 땅 거래 목록은 처음 10줄만 화면에, 「전부 보기」로 펼치고 같은 자리에서
+// 다시 접는다. 숨김은 `@media screen` 안 규칙이라 jsdom(vitest)은 못 본다 — 실제로 숨는지·종이에는 전부 나오는지는 여기서만.
+test.describe('긴 카드 창', () => {
+  test('BB. 층·거래가 11줄 이상이면 화면엔 10줄(층은 아래 10줄 · 단추는 목록 위) + 「전부 보기」 단추(44px · 13px) · 펼치고 다시 접기 · 종이에는 늘 전부 나오고 단추는 없다', async ({
+    page,
+  }) => {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(
+      page,
+      Array.from({ length: 12 }, () => parcelTx()),
+      [],
+      Array.from({ length: 12 }, (_, i) => floorRow({ floor_no: 12 - i })),
+    );
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+
+    const floorsCard = page.locator('.card--floors');
+    const floorRows = floorsCard.locator('.floors > li');
+    const txRows = page.locator('section.tx .tx__list > li');
+    const floorFold = floorsCard.locator('.list__fold');
+    const txFold = page.locator('section.tx .list__fold');
+
+    // 줄은 전부 그려져 있고(12) 화면엔 아래 10줄만 — 숨는 것은 맨 위층 둘(👤 「아래 10줄」).
+    await expect(floorRows).toHaveCount(12);
+    await expect(floorsCard.locator('.floors > li:visible')).toHaveCount(10);
+    await expect(floorsCard.locator('#floor-12')).toBeHidden();
+    await expect(floorsCard.locator('#floor-11')).toBeHidden();
+    await expect(floorsCard.locator('#floor-10')).toBeVisible();
+    await expect(floorsCard.locator('#floor-1')).toBeVisible();
+    await expect(txRows).toHaveCount(12);
+    await expect(page.locator('section.tx .tx__list > li:visible')).toHaveCount(10);
+
+    await expect(floorFold).toHaveText('위층 전부 보기 (2개 층 더)');
+    // 층 단추는 목록 **위** — 보이는 첫 줄(10층)보다 위에 선다.
+    expect((await floorFold.boundingBox())!.y).toBeLessThan((await floorsCard.locator('#floor-10').boundingBox())!.y);
+    // 접힌 동안 거래 목록의 보이는 마지막 줄 아래 점선이 없다(그 뒤 줄이 숨어 있어도).
+    await expect(page.locator('section.tx .tx__list > li:visible').last()).toHaveCSS('border-bottom-style', 'none');
+    await expect(txFold).toHaveText('거래 전부 보기 (12건)');
+    for (const btn of [floorFold, txFold]) {
+      expect((await btn.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      // 글자 13px(화면 하한) — 이 파일은 DOM 타입을 안 싣는다(getComputedStyle 대신 toHaveCSS).
+      await expect(btn).toHaveCSS('font-size', '13px');
+    }
+
+    // 펼치면 전부 → 같은 자리 단추로 다시 접으면 10줄 + 층 목록 카드 머리가 화면 안에.
+    await floorFold.click();
+    await expect(floorsCard.locator('.floors > li:visible')).toHaveCount(12);
+    await expect(floorFold).toHaveText('층 목록 접기');
+    await floorFold.click();
+    await expect(floorsCard.locator('.floors > li:visible')).toHaveCount(10);
+    await expect(floorsCard.locator('.card__h')).toBeInViewport();
+    await txFold.click();
+    await expect(page.locator('section.tx .tx__list > li:visible')).toHaveCount(12);
+    await expect(txFold).toHaveText('거래 목록 접기');
+    await txFold.click();
+    await expect(page.locator('section.tx .tx__list > li:visible')).toHaveCount(10);
+
+    // ⛔ 종이에는 늘 전부(접힌 상태에서 뽑아도) — 단추는 누르는 장치라 빠진다.
+    await page.emulateMedia({ media: 'print' });
+    await expect(floorsCard.locator('.floors > li:visible')).toHaveCount(12);
+    await expect(page.locator('section.tx .tx__list > li:visible')).toHaveCount(12);
+    await expect(floorFold).toBeHidden();
+    await expect(txFold).toBeHidden();
+    await page.emulateMedia({ media: null });
+  });
+});
