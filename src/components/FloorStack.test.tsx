@@ -3035,3 +3035,176 @@ describe('FloorStack — 개별공시지가 한 줄 (결정 0036 결정 7)', () 
     expect(container.querySelector('.stack__land-text')?.textContent).toBe(NEW);
   });
 });
+
+/**
+ * 긴 카드 창(S2 · 👤 2026-10-15 "처음 10줄만 먼저 보여 주고 「전부 보기」로 펼친다" · "펼친 뒤 다시 짧게 접는 단추도 둔다").
+ * ⓘ jsdom 은 styles.css 를 안 읽으므로 '화면에서 숨음'은 이름표 `list__folded` 로 본다 — 실제로 숨는지·종이에
+ *   전부 나오는지는 E2E 「BB」가 본다. 줄은 늘 전부 DOM 에 있다(`floor-N` id 가 늘 있어야 건너뛰기가 된다).
+ */
+describe('FloorStack — 긴 카드 창 (S2)', () => {
+  /** 층을 서버 순서(내림차순)로 n개 — n층부터 1층까지. */
+  function stackOf(n: number) {
+    return { data: Array.from({ length: n }, (_, i) => floor({ floor_no: n - i })), error: null };
+  }
+  const floorFold = (c: HTMLElement) => c.querySelector<HTMLButtonElement>('.floors ~ .list__fold');
+  const txFold = (c: HTMLElement) => c.querySelector<HTMLButtonElement>('.tx__list ~ .list__fold');
+  /** 화면에 보이는(숨김 이름표가 없는) 층 줄의 id. */
+  const shownFloors = (c: HTMLElement) =>
+    [...c.querySelectorAll('.floors > li:not(.list__folded)')].map((li) => li.id);
+  const shownTx = (c: HTMLElement) => c.querySelectorAll('.tx__list > li:not(.list__folded)').length;
+
+  let scrolled: Element[];
+  beforeEach(() => {
+    scrolled = [];
+    // jsdom 에는 scrollIntoView 가 없다 — 어느 요소로 굴렀는지만 적어 둔다.
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      writable: true,
+      value: function (this: Element) {
+        scrolled.push(this);
+      },
+    });
+  });
+  afterEach(() => {
+    delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+
+  it('★ 층이 11줄 이상이면 처음 10줄만 보이고 「층 전부 보기 (N층)」 단추 — 줄은 전부 DOM 에', async () => {
+    responses.floors = stackOf(12);
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelectorAll('.floors > li')).toHaveLength(12));
+    // 위층부터 10줄 — 서버 순서 그대로.
+    expect(shownFloors(container)).toEqual(Array.from({ length: 10 }, (_, i) => `floor-${12 - i}`));
+    expect([...container.querySelectorAll('.floors > li.list__folded')].map((li) => li.id)).toEqual([
+      'floor-2',
+      'floor-1',
+    ]);
+    const btn = floorFold(container)!;
+    expect(btn.textContent).toBe('층 전부 보기 (12층)');
+    expect(btn.getAttribute('aria-expanded')).toBe('false');
+    expect(btn.getAttribute('aria-controls')).toBe(container.querySelector('.floors')!.id);
+    expect(document.getElementById(btn.getAttribute('aria-controls')!)).toBe(container.querySelector('.floors'));
+  });
+
+  it('★ 전부 보기 → 전부 · 다시 접기 → 처음 10줄 + 층 목록 카드 머리로 굴린다', async () => {
+    responses.floors = stackOf(12);
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(floorFold(container)).toBeTruthy());
+    fireEvent.click(floorFold(container)!);
+    expect(shownFloors(container)).toHaveLength(12);
+    expect(floorFold(container)!.textContent).toBe('층 목록 접기');
+    expect(floorFold(container)!.getAttribute('aria-expanded')).toBe('true');
+    // 펼칠 때는 굴리지 않는다.
+    expect(scrolled).toHaveLength(0);
+
+    fireEvent.click(floorFold(container)!);
+    expect(shownFloors(container)).toHaveLength(10);
+    expect(floorFold(container)!.textContent).toBe('층 전부 보기 (12층)');
+    await waitFor(() => expect(scrolled).toHaveLength(1));
+    expect(scrolled[0]).toBe(container.querySelector('.card--floors .card__h'));
+  });
+
+  it('★ 경계 — 10줄이면 단추도 숨김도 없고(지금 그대로), 11줄이면 단추가 선다(양성 대조)', async () => {
+    responses.floors = stackOf(10);
+    const first = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(first.container.querySelectorAll('.floors > li')).toHaveLength(10));
+    expect(floorFold(first.container)).toBeNull();
+    expect(first.container.querySelector('.list__folded')).toBeNull();
+    first.unmount();
+
+    responses.floors = stackOf(11);
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelectorAll('.floors > li')).toHaveLength(11));
+    expect(floorFold(container)?.textContent).toBe('층 전부 보기 (11층)');
+    expect(container.querySelectorAll('.floors > li.list__folded')).toHaveLength(1);
+  });
+
+  it('★ 다른 건물을 열면 층 목록은 다시 처음 10줄', async () => {
+    responses.floors = stackOf(12);
+    const { container, rerender } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(floorFold(container)).toBeTruthy());
+    fireEvent.click(floorFold(container)!);
+    expect(shownFloors(container)).toHaveLength(12);
+    rerender(<FloorStack building={building({ bld_id: '1168010100-9' })} />);
+    await waitFor(() => expect(shownFloors(container)).toHaveLength(10));
+    expect(floorFold(container)!.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  /** 참고 시세 카드를 펼치고 그 줄을 누른다. */
+  async function pickBand(container: HTMLElement) {
+    const toggle = await screen.findByRole('button', { name: /참고 매매 시세/ });
+    if (toggle.getAttribute('aria-expanded') === 'false') fireEvent.click(toggle);
+    await waitFor(() => expect(container.querySelector('.band__hit')).toBeTruthy());
+    fireEvent.click(container.querySelector('.band__hit')!);
+  }
+
+  it('★ 참고 시세에서 11번째 이후 층을 고르면 층 목록이 전부로 펼쳐지고 그 층이 펼쳐진다', async () => {
+    responses.floors = stackOf(12);
+    responses.bands = { data: [priceBand({ floor_no: 2 })], error: null }; // 2층 = 11번째 줄
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(shownFloors(container)).toHaveLength(10));
+    await pickBand(container);
+    expect(shownFloors(container)).toHaveLength(12);
+    expect(floorFold(container)!.getAttribute('aria-expanded')).toBe('true');
+    expect(container.querySelector('#floor-2 .detail')).toBeTruthy();
+    await waitFor(() => expect(scrolled).toContain(document.getElementById('floor-2')));
+  });
+
+  it('참고 시세에서 처음 10줄 안의 층을 고르면 층 목록은 접힌 그대로(양성 대조)', async () => {
+    responses.floors = stackOf(12);
+    responses.bands = { data: [priceBand({ floor_no: 3 })], error: null }; // 3층 = 10번째 줄
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(shownFloors(container)).toHaveLength(10));
+    await pickBand(container);
+    expect(container.querySelector('#floor-3 .detail')).toBeTruthy();
+    expect(shownFloors(container)).toHaveLength(10);
+  });
+
+  it('★ 거래가 11건 이상이면 처음 10건 + 「거래 전부 보기 (N건)」 · 전부 · 다시 접기', async () => {
+    responses.txs = { data: Array.from({ length: 12 }, (_, i) => tx({ price_won: (i + 1) * 10_000_000 })), error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(txFold(container)).toBeTruthy());
+    expect(container.querySelectorAll('.tx__list > li')).toHaveLength(12);
+    expect(shownTx(container)).toBe(10);
+    const btn = txFold(container)!;
+    expect(btn.textContent).toBe('거래 전부 보기 (12건)');
+    expect(btn.getAttribute('aria-expanded')).toBe('false');
+    expect(document.getElementById(btn.getAttribute('aria-controls')!)).toBe(container.querySelector('.tx__list'));
+
+    fireEvent.click(btn);
+    expect(shownTx(container)).toBe(12);
+    expect(txFold(container)!.textContent).toBe('거래 목록 접기');
+    expect(txFold(container)!.getAttribute('aria-expanded')).toBe('true');
+
+    fireEvent.click(txFold(container)!);
+    expect(shownTx(container)).toBe(10);
+    await waitFor(() => expect(scrolled).toHaveLength(1));
+    expect(scrolled[0]).toBe(container.querySelector('section.tx .card__h'));
+  });
+
+  it('★ 거래 경계 — 10건이면 단추·숨김 없음, 11건이면 단추(양성 대조)', async () => {
+    responses.txs = { data: Array.from({ length: 10 }, () => tx()), error: null };
+    const first = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(first.container.querySelectorAll('.tx__list > li')).toHaveLength(10));
+    expect(txFold(first.container)).toBeNull();
+    expect(first.container.querySelector('.tx__list > li.list__folded')).toBeNull();
+    first.unmount();
+
+    responses.txs = { data: Array.from({ length: 11 }, () => tx()), error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(txFold(container)?.textContent).toBe('거래 전부 보기 (11건)'));
+    expect(container.querySelectorAll('.tx__list > li.list__folded')).toHaveLength(1);
+  });
+
+  it('★ 같은 땅의 다른 동으로 넘어가도 거래 목록은 다시 처음 10건', async () => {
+    // 거래는 땅(pnu) 단위로 받아 같은 땅이면 다시 받지 않는다 — 그래도 펼침은 건물마다 새로.
+    responses.txs = { data: Array.from({ length: 12 }, () => tx()), error: null };
+    const { container, rerender } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(txFold(container)).toBeTruthy());
+    fireEvent.click(txFold(container)!);
+    expect(shownTx(container)).toBe(12);
+    rerender(<FloorStack building={building({ bld_id: '1168010100-2' })} />);
+    await waitFor(() => expect(shownTx(container)).toBe(10));
+    expect(txFold(container)!.getAttribute('aria-expanded')).toBe('false');
+  });
+});

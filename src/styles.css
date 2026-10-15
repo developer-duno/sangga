@@ -1273,6 +1273,21 @@ body {
   cursor: pointer;
 }
 
+/* 긴 목록(층 목록 · 이 땅 거래)의 「전부 보기」/「접기」 단추(S2 · 👤 2026-10-15).
+   넘치는 줄을 숨기는 규칙과 종이에서 빼는 규칙은 아래 `@media screen`·`@media print` 에 있다. */
+.list__fold {
+  display: block;
+  margin-top: 8px;
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  font: inherit;
+  font-size: 13px;
+  color: var(--accent);
+  cursor: pointer;
+}
+
 /* ── 한 장 요약 카드 틀 (로드맵 Wave 2) ──────────────────────────────── */
 /*
    층별 화면의 섹션 다섯 장이 공유하는 겉틀이다. `.tx`(사실)·`.band`(추정)·`.mix`(둘레)는
@@ -3812,7 +3827,8 @@ body {
   .share__btn,
   .print__btn,
   .office__clear,
-  .unitpick__opt {
+  .unitpick__opt,
+  .list__fold {
     min-height: 44px;
   }
 
@@ -3830,6 +3846,20 @@ body {
   .office__toggle {
     min-height: 44px;
     padding-block: 12px;
+  }
+}
+
+/* ── 긴 목록 창 (S2 · 👤 2026-10-15) ──────────────────────────────────────────────
+   층 목록·이 땅 거래 목록은 처음 10줄만 화면에 보이고 나머지는 「전부 보기」로 펼친다 — 넘치는 줄에는
+   `list__folded` 이름표가 붙는다(FloorStack.tsx 의 LIST_FOLD_AT).
+   ⛔ **화면에서만**(`@media screen`) 숨긴다 — 종이에는 늘 전부 나와야 장수가 그대로다. 이 묶음 밖으로
+      옮기면 종이에서 11번째 줄부터 사라진다(E2E 「BB」가 본다).
+   ⓘ `display: none` 이라 낭독기에도 숨는다(눈과 귀가 같은 목록을 본다). 줄은 DOM 에 있어 `floor-N` id 는 늘 있다. */
+@media screen {
+  /* ⚠️ 목록 이름까지 붙여 무게를 올린다 — `.tx__list li { display: flex }`(무게 0,1,1)가 이름표 하나(0,1,0)를 이긴다. */
+  .floors > li.list__folded,
+  .tx__list > li.list__folded {
+    display: none;
   }
 }
 
@@ -3902,6 +3932,8 @@ body {
   .unitpick,
   /* 호실 목록 '불러오는 중' 한 줄은 화면에만(물결 1-C2 보완) — 못 받은 층 수 줄은 종이에 남는다. */
   .floor__unitprint-loading,
+  /* 긴 목록의 「전부 보기」/「접기」(S2) — 누르는 장치다. 줄은 종이에 늘 전부 나온다. */
+  .list__fold,
   .modal__back {
     display: none !important;
   }
