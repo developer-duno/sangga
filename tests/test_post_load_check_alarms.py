@@ -251,6 +251,7 @@ class TestSlowReport:
     ("report_snapshot_release", lambda: (False, False)),
     ("report_store_names_freshness", lambda: ("", "", False)),
             ("report_snapshot_release", lambda: (False, False)),
+            ("report_ledger_release", lambda: False),
             ("report_store_names_freshness", lambda: ("", "", False)),
             ("report_industry_floor_freshness", lambda: ("", "", False)),
             ("report_industry_floor_consistency", lambda: ("0", False)),
@@ -308,6 +309,7 @@ class TestSlowReport:
     ("report_snapshot_release", lambda: (False, False)),
     ("report_store_names_freshness", lambda: ("", "", False)),
             ("report_snapshot_release", lambda: (False, False)),
+            ("report_ledger_release", lambda: False),
             ("report_store_names_freshness", lambda: ("", "", False)),
             ("report_industry_floor_freshness", lambda: ("", "", False)),
             ("report_industry_floor_consistency", lambda: ("0", False)),
@@ -570,6 +572,7 @@ class TestApplyRechecksTxGeog:
             ("report_industry_median_m_consistency", lambda: ("0", False)),
             ("precheck_snapshot_release", lambda: (False, "202606", "")),
             ("report_snapshot_release", lambda *a: (False, False)),
+            ("report_ledger_release", lambda: False),
         ):
             monkeypatch.setattr(post_load, name, val)
         asked = []
@@ -929,6 +932,7 @@ class TestCheckExitCodeForIndexes:
     ("report_snapshot_release", lambda: (False, False)),
     ("report_store_names_freshness", lambda: ("", "", False)),
             ("report_snapshot_release", lambda: (False, False)),
+            ("report_ledger_release", lambda: False),
             ("report_store_names_freshness", lambda: ("", "", False)),
             ("report_industry_floor_freshness", lambda: ("", "", False)),
             ("report_industry_floor_consistency", lambda: ("0", False)),
@@ -1102,6 +1106,7 @@ def test_median_consistency_with_two_quarters_in_mix_stays_green(monkeypatch, ca
         ("report_canonical_indexes", lambda: []),
         ("report_function_drift", lambda: []),
         ("report_snapshot_release", lambda: (False, False)),
+        ("report_ledger_release", lambda: False),
         ("report_store_names_freshness", lambda: ("", "", False)),
         ("report_industry_floor_freshness", lambda: ("", "", False)),
         ("report_industry_floor_consistency", lambda: ("0", False)),

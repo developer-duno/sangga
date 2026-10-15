@@ -39,6 +39,11 @@
   python scripts/collectors/collect_transactions.py                   # 파일럿: 강남 20년
   python scripts/collectors/collect_transactions.py --sigungu-code 11440
   python scripts/collectors/collect_transactions.py --retry-failed
+  python scripts/collectors/collect_transactions.py --sigungu-code 11680 --recollect-months 6 --end-ym 202610
+      # ↑ 매달 할 일(2026-10-15 F5) — 최근 6개월(202605~202610)을 다시 받는다. 그 달들 중 done 칸만
+      #   pending 으로 되돌리고(failed 는 --retry-failed 몫 · attempts 는 그대로) 평소 흐름을 탄다.
+      #   신고 기한(계약일로부터 30일) 탓에 최근 달은 덜 찬 채 done 으로 굳기 때문이다(10-14 실측 —
+      #   8월 400 → 1,600건). N 은 1~24. --dry-run 이면 되돌리지 않고 "다시 받을 달 N개(그중 done M개)"만.
 """
 
 import json
@@ -536,6 +541,40 @@ def retry_failed(base_url, headers, sigungu_code, max_attempts=RETRY_FAILED_MAX_
     return len(targets)
 
 
+RECOLLECT_MAX_MONTHS = 24
+
+
+def recollect_plan(end_ym, n, progress_rows):
+    """--recollect-months N (순수 함수) — (다시 받을 달 목록, 그중 pending 으로 되돌릴 done 달 목록).
+
+    progress_rows: 그 구의 collect_progress 행들({"period_key", "status"}).
+    ⛔ done 만 되돌린다 — failed 는 --retry-failed 몫(attempts 상한을 거기서 본다), pending 은 이미 받을 차례.
+    """
+    if not 1 <= int(n) <= RECOLLECT_MAX_MONTHS:
+        raise ValueError("--recollect-months 는 1~{} 이어야 합니다: {}".format(RECOLLECT_MAX_MONTHS, n))
+    months = month_range(end_ym, int(n))
+    status = {r.get("period_key"): r.get("status") for r in progress_rows}
+    return months, [ym for ym in months if status.get(ym) == "done"]
+
+
+def build_revert_rows(sigungu_code, months):
+    """done → pending 으로 되돌릴 collect_progress 행(merge-duplicates 로 보낸다).
+
+    ⛔ attempts 칸은 **안 싣는다** — merge-duplicates 는 JSON 에 없는 칸을 SET 하지 않으므로 그대로 남는다.
+    """
+    return [{"collector": COLLECTOR, "scope_key": sigungu_code, "period_key": ym,
+             "status": "pending", "error_msg": None} for ym in months]
+
+
+def fetch_progress_rows(base_url, headers, sigungu_code, months):
+    """그 구의 그 달들 collect_progress 행(period_key·status)."""
+    return rest_select(
+        base_url, headers, "collect_progress",
+        "select=period_key,status&collector=eq.{}&scope_key=eq.{}&period_key=in.({})".format(
+            COLLECTOR, sigungu_code, ",".join(months)),
+        order="period_key")
+
+
 def read_quota_baseline(base_url, headers, log_date):
     rows = rest_select(
         base_url, headers, "api_quota_log",
@@ -579,7 +618,7 @@ def maybe_flush_quota_log(base_url, headers, log_date, baseline, session_calls,
 # ── 보고 ─────────────────────────────────────────────────────────────────────
 
 
-def print_dry_run_report(sigungu_code, months, raw_dir, pending, counts, verdict, budget):
+def print_dry_run_report(sigungu_code, months, raw_dir, pending, counts, verdict, budget, recollect_extra=0):
     print("=" * 78)
     print("상업업무용 실거래가 수집 — dry-run")
     print("=" * 78)
@@ -593,8 +632,13 @@ def print_dry_run_report(sigungu_code, months, raw_dir, pending, counts, verdict
     print("")
     print("  [ 오늘 예산 ] 일 {:,}건 (API별 한도 10,000 - 여유)".format(budget))
     print("    남은 예산     {:>6,}건".format(verdict["remaining"]))
-    print("    계획 호출     {:>6,}건 (pending {:,}개월 x 1콜 가정)".format(
-        verdict["planned"], len(pending)))
+    if recollect_extra:
+        # --recollect-months 와 함께면 dry-run 은 되돌리지 않으므로 pending 에 그 달들이 안 들어 있다 — 따로 적는다.
+        print("    계획 호출     {:>6,}건 (pending {:,}개월 + 다시 받을 달 {:,}개월 x 1콜 가정)".format(
+            verdict["planned"], len(pending), recollect_extra))
+    else:
+        print("    계획 호출     {:>6,}건 (pending {:,}개월 x 1콜 가정)".format(
+            verdict["planned"], len(pending)))
     if verdict["fits"]:
         print("    -> 오늘 안에 끝날 것으로 보입니다.")
     else:
@@ -652,7 +696,7 @@ def parse_args(argv):
         argv,
         bool_flags=("--dry-run", "--retry-failed"),
         value_flags=("--sigungu-code", "--months", "--end-ym", "--raw-dir",
-                      "--daily-budget", "--limit"),
+                      "--daily-budget", "--limit", "--recollect-months"),
     )
     opts = {
         "sigungu_code": DEFAULT_SIGUNGU_CODE,
@@ -663,6 +707,7 @@ def parse_args(argv):
         "dry_run": "--dry-run" in argv,
         "retry_failed": "--retry-failed" in argv,
         "limit": None,
+        "recollect_months": None,
     }
     for flag, key, cast in (
         ("--sigungu-code", "sigungu_code", str),
@@ -671,12 +716,16 @@ def parse_args(argv):
         ("--raw-dir", "raw_dir", str),
         ("--daily-budget", "daily_budget", int),
         ("--limit", "limit", int),
+        ("--recollect-months", "recollect_months", int),
     ):
         if flag in argv:
             i = argv.index(flag)
             if i + 1 >= len(argv):
                 raise ValueError("{} 뒤에 값이 필요합니다.".format(flag))
             opts[key] = cast(argv[i + 1])
+    rm = opts["recollect_months"]
+    if rm is not None and not 1 <= rm <= RECOLLECT_MAX_MONTHS:
+        raise ValueError("--recollect-months 는 1~{} 이어야 합니다: {}".format(RECOLLECT_MAX_MONTHS, rm))
     if opts["raw_dir"] is None:
         opts["raw_dir"] = default_raw_dir()
     if opts["end_ym"] is None:
@@ -736,16 +785,39 @@ def main():
           flush=True)
     seed_progress(base_url, headers, sigungu, months)
 
+    wanted = set(months)
+    recollect_extra = 0   # dry-run 에서만 — 되돌리지 않은 done 달 수를 예산 계획에 더한다
+    if opts["recollect_months"]:
+        re_months = month_range(opts["end_ym"], opts["recollect_months"])
+        if not opts["dry_run"]:
+            seed_progress(base_url, headers, sigungu, re_months)   # 멱등 — 있는 행은 보존
+        _, revert = recollect_plan(opts["end_ym"], opts["recollect_months"],
+                                   fetch_progress_rows(base_url, headers, sigungu, re_months))
+        wanted |= set(re_months)
+        if opts["dry_run"]:
+            recollect_extra = len(revert)
+            print("--recollect-months {}: 다시 받을 달 {}개(그중 done {}개) {} ~ {} — "
+                  "--dry-run 이라 되돌리지 않았습니다.".format(
+                      opts["recollect_months"], len(re_months), len(revert), re_months[0], re_months[-1]),
+                  flush=True)
+        else:
+            if revert:
+                upsert_batch(base_url, headers, "collect_progress",
+                             build_revert_rows(sigungu, revert), "merge-duplicates")
+            print("--recollect-months {}: 다시 받을 달 {}개 {} ~ {} — done {}개를 pending 으로 되돌림".format(
+                opts["recollect_months"], len(re_months), re_months[0], re_months[-1], len(revert)),
+                flush=True)
+
     pending = [(ym, at) for ym, at in fetch_pending(base_url, headers, sigungu)
-               if ym in set(months)]
+               if ym in wanted]
     counts = progress_status_counts(base_url, headers, sigungu)
     log_date = today_kst()
     baseline = read_quota_baseline(base_url, headers, log_date)
-    verdict = budget_verdict(baseline, len(pending), opts["daily_budget"])
+    verdict = budget_verdict(baseline, len(pending) + recollect_extra, opts["daily_budget"])
 
     if opts["dry_run"]:
         print_dry_run_report(sigungu, months, opts["raw_dir"], pending, counts,
-                             verdict, opts["daily_budget"])
+                             verdict, opts["daily_budget"], recollect_extra)
         return 0
 
     if not pending:

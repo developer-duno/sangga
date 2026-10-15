@@ -55,6 +55,8 @@
   · 분기 표지(snapshot_release · 결정 0035 · 2026-10-07 보탬) — 표가 비었거나 보여 주는 분기가
     점포 표에 0행이면 [사고], 다 들어온 분기 ≠ 보여 주는 분기면 [낡음](둘 다 종료 코드 1) ·
     점포 표에 표지보다 새 분기가 있거나(적재 중 · 적재기 exit 1) 행 수가 표지 기록과 다르면 [주의](종료 코드 무관).
+  · 건축물대장 판 표지(ledger_release · 2026-10-15a) — 표가 비었거나 못 읽으면 [사고](종료 코드 1) ·
+    정상이면 [정상] 한 줄(판·적은 시각). 표지를 올리는 일은 scripts/publish_ledger_release.py --ym.
   · 가게 이름 요약표 분기(2026-10-07) — mv_parcel_store_names 의 store_snapshot_ym ≠ 표지 loaded_ym 이거나
     비었으면 [낡음](종료 코드 1).
   · 층 분포 표(2026-10-09 · 물결 2-2) — mv_district_industry_floor 의 분기 ≠ 표지 loaded_ym 이면 [낡음],
@@ -998,6 +1000,53 @@ def report_snapshot_release(before_published=None):
 
 
 REVERTED_NOTE = ("python scripts/publish_snapshot.py --ym 으로 일부러 되돌려 둔 상태라면 이 경고와 종료 코드 1 은 정상입니다(표지만으로는 '적재기 실패'와 '일부러 되돌림'을 못 가립니다) — 그때는 --loaded 를 하지 마세요.")
+
+
+# ── 건축물대장 판 표지 ledger_release (2026-10-15a · F3) ────────────────────────
+# 신선도 표 건축물대장 줄의 기준(판)이 이 한 줄을 읽는다. 0줄이면 그 줄의 기준이 **조용히** 빈다(하위질의가
+# null — 화면은 '자료 없음') — [사고]. 올리는 일은 사람이 scripts/publish_ledger_release.py --ym 으로 한다
+# (이 스크립트는 읽기만 · --check 에서만 돈다). ⛔ ASCII 만 — query_one 은 psql -c.
+LEDGER_RELEASE_SQL = (
+    "select coalesce((select r.release_ym || '|' || "
+    "to_char(r.loaded_at at time zone 'Asia/Seoul', 'YYYY-MM-DD HH24:MI') "
+    "from ledger_release r where r.id = 1), '');"
+)
+
+
+def judge_ledger_release(release_ym, loaded_at):
+    """대장 표지 판정 — [(수준, 말)…] (순수 함수 — 시험이 여기만 보면 된다). 문제가 없으면 빈 목록."""
+    if not str(release_ym or "").strip():
+        return [("사고", "대장 표지(ledger_release)가 비었습니다 — 신선도 표 건축물대장 줄의 기준이 빈 상태입니다. "
+                       "마이그레이션 2026-10-15a 를 다시 돌리면 처음 한 줄이 들어갑니다(on conflict do nothing) — "
+                       "python scripts/publish_ledger_release.py --show 로 확인하세요")]
+    return []
+
+
+def read_ledger_release():
+    """대장 표지를 읽어 판정 함수의 인자 dict 로. 표가 없거나 못 읽으면 예외. 0줄이면 두 칸 다 빈 글자."""
+    raw = query_one(LEDGER_RELEASE_SQL)
+    line = raw.splitlines()[-1] if raw else ""
+    parts = line.split("|") if line else ["", ""]
+    if len(parts) != 2:
+        raise ValueError("대장 표지 응답 모양이 다릅니다: {!r}".format(raw[:200]))
+    return {"release_ym": parts[0].strip(), "loaded_at": parts[1].strip()}
+
+
+def report_ledger_release():
+    """대장 표지를 재서 찍고 사고 여부를 돌려준다. 표가 없거나 못 읽으면 [사고]."""
+    try:
+        st = read_ledger_release()
+    except Exception as exc:  # noqa: BLE001 — 표가 없거나(마이그레이션 전) 접속 실패
+        print("[사고] 대장 표지(ledger_release)를 읽지 못했습니다 — {}".format(
+            str(exc).splitlines()[0][:200] if str(exc) else type(exc).__name__))
+        print("       마이그레이션 2026-10-15a 가 적용됐는지 보세요(python scripts/publish_ledger_release.py --show).")
+        return True
+    found = judge_ledger_release(**st)
+    for level, msg in found:
+        print("[{}] {}".format(level, msg))
+    if not found:
+        print("[정상] 대장 표지 — 판 {} (적은 시각 {})".format(st["release_ym"], st["loaded_at"]))
+    return any(level == "사고" for level, _ in found)
 
 
 def precheck_snapshot_release():
@@ -2254,10 +2303,12 @@ def main(argv=None):
         # 분기 표지(2026-10-07a · 결정 0035) — 비었거나 보여 주는 분기가 0행이면 [사고],
         # 구웠는데 안 올렸으면 [낡음] → 둘 다 exit 1. [주의] 둘은 종료 코드 무관.
         rel_fatal, rel_stale = report_snapshot_release()
+        # 건축물대장 판 표지(2026-10-15a · F3) — 비었거나 못 읽으면 [사고] → exit 1.
+        ledger_fatal = report_ledger_release()
         return 1 if (stale or map_stale or tx_stale or cov_stale or mix_stale or names_stale
                      or floor_stale or floor_mismatch or median_stale or median_mismatch
                      or median_m_stale or median_m_mismatch or geog_stale or exposed or writable or bad_index or drifted
-                     or rel_fatal or rel_stale) else 0
+                     or rel_fatal or rel_stale or ledger_fatal) else 0
 
     # ① 표지부터 읽는다(2026-10-07) — 비었거나 보여 주는 분기가 0행이면 굽기 전에 멈춘다.
     halt, published_before, newer_unmarked = precheck_snapshot_release()

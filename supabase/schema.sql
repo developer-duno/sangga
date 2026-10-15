@@ -180,9 +180,44 @@ comment on column building.bcr is
 
 create index if not exists idx_building_pnu on building (pnu);
 create index if not exists idx_building_nm  on building using gin (bld_nm gin_trgm_ops);
--- get_data_freshness 의 `max(t.updated_at) from building t` 를 받친다(2026-09-27 실측 64ms —
--- 지금은 체감 없음, 전국 확장 때 조용히 느려지는 자리라 미리 건다). 마이그레이션 2026-09-27b
+-- 마이그레이션 2026-09-27b — get_data_freshness 의 `max(t.updated_at) from building t` 를 받치려고 걸었다
+-- (2026-09-27 실측 64ms). ⓘ 2026-10-15a 부터 신선도 함수는 이 칸을 안 읽는다(건축물대장 줄 = 판 표지
+--   ledger_release.release_ym). 표지 명령(publish_ledger_release.py)도 구로 묶어 building 전체를 훑으므로
+--   이 색인을 안 쓴다 — 지금 이 색인을 쓰는 곳은 없다(10-15a 를 되돌리면 다시 쓴다). 지울지는 별건.
 create index if not exists idx_building_updated_at on building (updated_at);
+
+-- ── 건축물대장 판 표지 ledger_release (2026-10-15a) ──────────────────────────────
+-- 신선도 표 건축물대장 줄의 기준(판 YYYYMM)을 읽는 한 줄 표지. building 표엔 판 칸이 없고
+-- max(updated_at) 은 적재가 반쯤 끝난 순간에도 '오늘'이 된다 — 그래서 30개 구를 다 넣은 뒤
+-- 사람이 scripts/publish_ledger_release.py --ym <판> 으로 올린다. get_data_freshness 보다 **앞**에 둔다.
+create table if not exists ledger_release (
+  id          int primary key default 1 check (id = 1),
+  release_ym  char(6) not null check (release_ym ~ '^\d{6}$'),
+  loaded_at   timestamptz not null default now()
+);
+
+comment on table ledger_release is
+  '건축물대장 판 표지 — 한 줄뿐(id = 1 · 2026-10-15a). 신선도 표 건축물대장 줄의 기준(판)이 이 칸을 읽는다. '
+  '30개 구를 다 넣은 뒤 사람이 python scripts/publish_ledger_release.py --ym <판> 으로 올린다(앞으로만 · '
+  '열린 구 전부가 지난 표지 뒤에 적재됐을 때만). 0줄이면 신선도 줄의 기준이 비고 post_load.py --check 가 '
+  '[사고]로 잡는다. 공개키 접근 0(RLS 켬 + 정책 0 + 권한 회수)';
+comment on column ledger_release.release_ym is
+  '지금 다 들어 있는 건축물대장 판(YYYYMM — 건축HUB 일괄 파일의 기준월). N월 판은 (N+1)월 20일 무렵 게시된다';
+comment on column ledger_release.loaded_at is
+  '표지를 적은 시각. publish_ledger_release.py 가 다음 판을 올릴 때 열린 구마다 max(building.updated_at) 이 '
+  '이 시각 뒤인지 본다(대장 적재기가 갱신 행에도 적재 시각을 싣는다 — 2026-10-15)';
+
+alter table ledger_release enable row level security;
+
+-- ⛔ Supabase 는 새 표를 anon 에 자동으로 연다(pg_default_acl) — 만든 자리에서 닫는다.
+revoke all on ledger_release from public, anon, authenticated;
+
+-- 처음 한 줄 = 10-14 대장 8월 판 30개 구 적재가 끝난 시각(운영 DB 실측 2026-10-15: 새 건물 99동의 마지막
+-- updated_at = 15:46:41 KST · 15:48 은 그 세션 기록). 이미 있으면 건드리지 않는다
+-- (정본을 다시 돌려도 지금 표지를 되돌리지 않게).
+insert into ledger_release (id, release_ym, loaded_at)
+values (1, '202608', '2026-10-14 15:48:00+09')
+on conflict (id) do nothing;
 
 -- =====================================================================
 -- 건물 표시명 — 동명칭 폴백 + 개인 성명 가리기 (2026-08-08e)
@@ -6165,11 +6200,12 @@ grant execute on function api.get_parcel_land_price(text) to anon, authenticated
 --    거짓말을 한다(코드는 한 줄도 안 고쳤는데 화면이 옛 분기를 말한다). 기준일은 창고에서
 --    읽고, "다음 갱신 예정"은 **규칙으로 계산**한다 — 어느 쪽도 사람이 적는 숫자가 아니다.
 --
--- 규칙은 넷뿐이고 함수 안에 한 번씩만 적혀 있다: 분기 자료는 분기말 + 5개월 - 하루(다음
---    분기가 공개되는 달의 말일), 월간 자료는 기준월 + 3개월 - 하루(다음 판이 공개되는 달의
---    말일), 국세청 기준시가는 고시일의 다음 해 3월 31일, 필지(개별공시지가)는 공시 연도의
---    다음 해 6월 30일(2026-10-12b · 사장님 결정). 주기가 없는 자료는 null 이다 —
---    없는 주기를 지어내면 "늦었다"는 거짓 신호가 화면에 뜬다.
+-- 규칙은 다섯뿐이고 함수 안에 한 번씩만 적혀 있다: 분기 자료는 분기말 + 5개월 - 하루(다음
+--    분기가 공개되는 달의 말일), 월간 자료(인허가 기준월 · 건축물대장 판 — 2026-10-15a)는
+--    기준월 + 3개월 - 하루(다음 판이 공개되는 달의 말일), 실거래는 계약월 + 2개월 - 하루
+--    (2026-10-15a · 사장님 결정 — 매달 최근 6개월을 다시 받는다), 국세청 기준시가는 고시일의
+--    다음 해 3월 31일, 필지(개별공시지가)는 공시 연도의 다음 해 6월 30일(2026-10-12b · 사장님
+--    결정). 주기가 없는 자료는 null 이다 — 없는 주기를 지어내면 "늦었다"는 거짓 신호가 화면에 뜬다.
 --
 -- ⓘ 월간 규칙은 2026-10-01a 에 바뀌었다(사장님 결정 2026-10-01). 옛 규칙(기준월 + 2개월 - 하루)은
 --    **지금 들어 있는 판이 게시된 달**의 말일을 띄웠다 — 건축HUB 인허가 월간 파일은 그 달 다음 달
@@ -6207,14 +6243,17 @@ as $$
            'sangkwon'::text             as rule_kind,
            '분기마다 (다음 분기 자료가 공개되면 사람이 적재)'::text as cadence
     union all
+    -- 2026-10-15a — 실거래는 매달 최근 6개월을 다시 받는다(사장님 결정 2026-10-15 · 규칙 'tx').
     select 2, '실거래 (매매)', '계약월',
            (select max(t.contract_ym)::text from transaction t),
-           'none',
-           '수시 (서울·대전 전부 활성화 뒤 확대)'
+           'tx',
+           '월 1회 (최근 6개월 다시 받기)'
     union all
-    select 3, '건축물대장', '적재일',
-           (select (max(t.updated_at) at time zone 'Asia/Seoul')::date::text from building t),
-           'none',
+    -- 2026-10-15a — 기준은 적재일(max(building.updated_at))이 아니라 표지의 판이다(30개 구를 다 넣은 뒤
+    --   사람이 올린다). 규칙은 인허가와 같은 월간 갈래 — 건축HUB 일괄 파일도 다음 달 20일 무렵 게시된다.
+    select 3, '건축물대장', '판',
+           (select r.release_ym::text from ledger_release r),
+           'permit',
            '월간 파일 (사람이 적재)'
     union all
     select 4, '상권 경계', '계산일',
@@ -6285,9 +6324,12 @@ as $$
            -- 분기 자료: 다음 분기가 **공개되는 달**의 말일(분기말 + 5개월 - 하루).
            when n.q_ym is not null
              then (to_date(n.q_ym, 'YYYYMM') + interval '5 months' - interval '1 day')::date
-           -- 월간 자료: 다음 판이 **공개되는 달**의 말일(기준월 + 3개월 - 하루).
+           -- 월간 자료(인허가 기준월 · 건축물대장 판): 다음 판이 **공개되는 달**의 말일(기준월 + 3개월 - 하루).
            when n.rule_kind = 'permit' and n.basis ~ '^\d{4}(0[1-9]|1[0-2])$'
              then (to_date(n.basis, 'YYYYMM') + interval '3 months' - interval '1 day')::date
+           -- 실거래: 계약월 + 2개월 - 하루(사장님 결정 2026-10-15 — 매달 최근 6개월을 다시 받는다).
+           when n.rule_kind = 'tx' and n.basis ~ '^\d{4}(0[1-9]|1[0-2])$'
+             then (to_date(n.basis, 'YYYYMM') + interval '2 months' - interval '1 day')::date
            -- 연 1회: 다음 해 3월 31일(국세청 고시가 매년 3월).
            when n.rule_kind = 'nts' and n.basis ~ '^\d{4}-\d{2}-\d{2}$'
              then make_date(left(n.basis, 4)::int + 1, 3, 31)
@@ -6302,13 +6344,14 @@ as $$
 $$;
 
 comment on function get_data_freshness() is
-  '화면 아래 "이 자료는 언제 것인가" 표. 열한 갈래 자료의 가장 최근 도장(분기·계약월·적재일·'
+  '화면 아래 "이 자료는 언제 것인가" 표. 열한 갈래 자료의 가장 최근 도장(분기·계약월·판·적재일·'
   '계산일·수집일·기준월·고시일·공시 연도)을 창고에서 읽어 한 줄씩 준다. '
   '⛔ 숫자를 화면에 박지 않기 위한 함수다 — 신선도를 글자로 적어 두면 적재하는 순간부터 '
   '그 글자만 거짓말을 한다. next_expected 도 사람이 적는 값이 아니라 규칙으로 계산한다: '
   '분기 자료는 분기말 달 + 5개월 - 하루(다음 분기가 공개되는 달의 말일 — 분기 꼴 셋 '
-  '''YYYYMM''·''YYYYQn''·''YYYYQ''(서울시 다섯 자리)를 같은 분기말 달로 맞춘 뒤 한 번만 계산), 월간 자료는 '
-  '기준월 + 3개월 - 하루(다음 판이 공개되는 달의 말일), 국세청 기준시가는 고시일의 다음 해 3월 31일, '
+  '''YYYYMM''·''YYYYQn''·''YYYYQ''(서울시 다섯 자리)를 같은 분기말 달로 맞춘 뒤 한 번만 계산), 월간 자료'
+  '(인허가 기준월·건축물대장 판)는 기준월 + 3개월 - 하루(다음 판이 공개되는 달의 말일), 실거래는 계약월 + '
+  '2개월 - 하루(매달 최근 6개월을 다시 받는다), 국세청 기준시가는 고시일의 다음 해 3월 31일, '
   '필지(개별공시지가)는 공시 연도의 다음 해 6월 30일(기준값이 네 자리 연도일 때만). '
   '주기가 없는 자료는 null 이다 — 없는 주기를 지어내면 "늦었다"는 거짓 신호가 뜬다. '
   '기준값이 그 모양이 아니면 계산하지 않고 그 칸만 비운다(to_date 가 터지면 표가 통째로 '
@@ -6319,7 +6362,7 @@ comment on function get_data_freshness() is
   '줄을 빼면 "그런 자료를 안 쓴다"로 읽힌다). '
   'security definer (열한 표가 전부 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. '
   '나가는 것은 집계 도장 열한 개뿐이고 원본 행은 한 줄도 안 나간다). 2026-09-05d · 월간 규칙 2026-10-01a · '
-  '서울 개업·폐업 2026-10-05b · 필지 공시 연도 2026-10-12b';
+  '서울 개업·폐업 2026-10-05b · 필지 공시 연도 2026-10-12b · 실거래·대장 판 월간 규칙 2026-10-15a';
 
 -- ⚠️ create or replace 는 권한을 유지하지만, 대시보드가 같은 함수를 다시 만들면
 --    Supabase 기본 권한이 anon 을 자동으로 붙인다. 만든 자리에서 다시 닫는다.

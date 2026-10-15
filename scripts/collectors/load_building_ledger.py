@@ -65,7 +65,7 @@ import json
 import os
 import sys
 from collections import Counter, defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 
 import requests
 from dotenv import load_dotenv
@@ -152,6 +152,14 @@ TABLE_UPSERT_RESOLUTION = {
     "unit": "merge-duplicates",
     "building_floor": "merge-duplicates",
 }
+
+# building 행에 실어 보내는 적재 시각(이 실행 전체에 한 값 · UTC 명시 — load_bjd_code.py 와 같은 꼴).
+# merge-duplicates 는 JSON 에 없는 칸을 SET 하지 않아 default now() 가 새 행에만 찍힌다 — 그러면
+# 이미 있던 건물을 다시 넣어도 updated_at 이 옛 값 그대로라, 대장 판 표지 명령
+# (scripts/publish_ledger_release.py)의 "열린 구 전부가 지난 표지 뒤에 적재됐나" 판정이 영영 못 지난다
+# (2026-10-15 실측 — 10-14 8월 판 30구 적재에서 새 건물은 99동뿐). ⓘ --building-only 칸 채우기 재적재는
+# 이 칸을 **싣지 않는다**(without_loaded_at) — 판이 바뀐 게 아니라 표지 명령 ⓓ 를 지나가면 안 된다.
+RUN_LOADED_AT = datetime.now(timezone.utc).isoformat()
 
 
 # ── 순수 로직 (네트워크·DB 없음 — 테스트 대상) ─────────────────────────────────
@@ -392,7 +400,19 @@ def build_building_record(pnu, item):
         "seismic_ability": (item.get("rserthqkAblty") or "").strip() or None,
         "energy_grade": (item.get("engrGrade") or "").strip() or None,
         "green_grade": (item.get("gnBldGrade") or "").strip() or None,
+        # 갱신 행도 적재 시각이 바뀌게 명시로 싣는다(RUN_LOADED_AT 주석 — 2026-10-15a 대장 판 표지)
+        # ⚠️ --building-only 경로는 without_loaded_at() 으로 이 칸을 뺀 뒤 보낸다.
+        "updated_at": RUN_LOADED_AT,
     }
+
+
+def without_loaded_at(records):
+    """--building-only(칸 채우기) 용 — building 행에서 updated_at 칸을 뺀 새 목록(원본 행은 안 바꾼다).
+
+    merge-duplicates 는 JSON 에 없는 칸을 SET 하지 않으므로 기존 행의 updated_at 이 그대로 남는다
+    (새로 생긴 행만 default now()). 그래야 칸 채우기 재적재가 대장 판 표지 명령 ⓓ 를 지나가지 않는다.
+    """
+    return [{k: v for k, v in r.items() if k != "updated_at"} for r in records]
 
 
 def read_jsonl(path):
@@ -1651,7 +1671,9 @@ def main():
         # (같은 raw 로 다시 돌리는 것이라 층·호실은 이미 들어 있는 그대로다).
         print("적재 시작... (--building-only — building 만, 층·호실·옛 행 정리는 건너뜀)", flush=True)
         try:
-            bld_sent = upsert_batch(base_url, headers, "building", building_records)
+            # ⛔ 칸 채우기는 새 판 적재가 아니다 — updated_at 을 싣지 않아 기존 값을 그대로 둔다
+            #    (실으면 대장 판 표지 명령 ⓓ 가 '30개 구 다 넣음'으로 속는다 · 2026-10-15 검사관 지적).
+            bld_sent = upsert_batch(base_url, headers, "building", without_loaded_at(building_records))
         except RuntimeError as e:
             print("[에러] {}".format(e))
             return 1
