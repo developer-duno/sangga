@@ -414,7 +414,8 @@ describe('App — 주소로 들고 다니기', () => {
 
     expect(await screen.findByText('링크에 담긴 건물을 불러오는 중입니다…')).toBeTruthy();
 
-    // 그 사이 사용자가 검색으로 다른 건물을 고른다.
+    // 그 사이 사용자가 검색으로 다른 건물을 고른다(되살리는 동안도 입구는 접혀 있다 — 바에서 펼친다).
+    unfoldEntry();
     const input = screen.getByLabelText('건물명 또는 주소');
     fireEvent.change(input, { target: { value: '테헤란로' } });
     fireEvent.submit(input.closest('form')!);
@@ -907,6 +908,9 @@ describe('App — 중개사 최근 뽑은 건물 (결정 0036 결정 18 ⑥⑩)'
     await waitFor(() => expect(currentSearch()).toContain(`bld=${other}`));
     expect(currentSearch()).toContain('sgg=11680');
     expect(document.querySelector('.stack')).not.toBeNull();
+    // 펼친 채(openLinked) 같은 구의 최근 건물을 고르면 다시 한 줄로 접힌다(S1 · 검사 🟡 10-15).
+    expect((document.querySelector('.entry') as HTMLElement).hidden).toBe(true);
+    expect(document.querySelector('.entrybar:not(.entrybar--open)')).not.toBeNull();
   });
 
   it('★ 다른 구 건물이면 구도 그 구로 바뀐다 (구 코드 = 저장한 pnu 앞 5자리)', async () => {
@@ -992,6 +996,7 @@ describe('App — 중개사 최근 뽑은 건물 (결정 0036 결정 18 ⑥⑩)'
     openWith(`?sgg=11680&bld=${LINK_BLD}`);
     render(<App />);
     await screen.findByText('링크에 담긴 건물을 불러오는 중입니다…');
+    unfoldEntry(); // 되살리는 동안도 입구는 접혀 있다(검사 🟡 10-15)
     fireEvent.click(toggle());
     fireEvent.click(screen.getByRole('button', { name: /옆빌딩/ }));
 
@@ -1303,13 +1308,22 @@ describe('App — 입구 접기 (S1)', () => {
     expect(bar()).not.toBeNull();
     expect(entry().hidden).toBe(true);
     expect(document.querySelector('.app--folded')).not.toBeNull();
-    // 바 내용 — 지금 구(서버가 준 이름 + 짧은 이름표) · 단추 셋(역할 없음 = '역할 고르기').
+    // 바 내용 — 지금 구(서버가 준 이름 + 짧은 이름표) · 단추 셋(역할 없음 = '역할 고르기'). 보이는 글자 그대로.
     expect(bar()!.querySelector('.entrybar__place')!.textContent).toBe('서울 강남구');
     expect([...bar()!.querySelectorAll('button')].map((b) => b.textContent)).toEqual([
       '← 다른 건물 찾기',
       '상권 지도 보기',
       '나는 역할 고르기 ▾',
     ]);
+    // 낭독기에는 기호 없이 읽힌다 · 펼침 상태(닫힘)와 무엇을 펼치는지(위 칸)를 알린다.
+    expect(entry().id).toBe('entry-panel');
+    for (const name of ['다른 건물 찾기', '상권 지도 보기', '나는 역할 고르기']) {
+      const btn = barBtn(name);
+      expect(btn.getAttribute('aria-expanded')).toBe('false');
+      expect(btn.getAttribute('aria-controls')).toBe('entry-panel');
+    }
+    // 건물을 고르면 커서는 바의 첫 단추로(고른 결과 줄이 숨어 커서가 문서 맨 앞으로 날아가지 않게).
+    expect(document.activeElement).toBe(barBtn('다른 건물 찾기'));
     // 지도는 접힌 동안 그리지 않는다(종이에도 안 나온다 — 👤 10-15).
     expect(document.querySelector('section.dmap')).toBeNull();
     // 제목(h1)은 그대로 있다 — 크기만 CSS 가 줄인다.
@@ -1318,7 +1332,7 @@ describe('App — 입구 접기 (S1)', () => {
 
   it('★ 「다른 건물 찾기」= 위 덩어리만 펼치고 입력칸에 커서 · 검색어·결과·보던 건물 그대로 · 새 건물을 고르면 다시 접힌다', async () => {
     const input = await openBuildingBySearch();
-    fireEvent.click(barBtn('← 다른 건물 찾기'));
+    fireEvent.click(barBtn('다른 건물 찾기'));
 
     expect(entry().hidden).toBe(false);
     expect(bar()).toBeNull();
@@ -1329,16 +1343,22 @@ describe('App — 입구 접기 (S1)', () => {
     // 검색 결과도 그대로 · 보던 건물도 아래 그대로.
     expect(screen.getByRole('button', { name: /테헤란로 1/ })).toBeTruthy();
     expect(screen.getByRole('heading', { name: '테스트빌딩' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: '▲ 위 칸 접기' })).toBeTruthy();
+    // 「위 칸 접기」는 바가 있던 자리 = 펼친 덩어리 **맨 위**(위를 보는 사람이 찾게) · 펼침 상태(열림)를 알린다.
+    const fold = barBtn('위 칸 접기');
+    expect(fold.textContent).toBe('▲ 위 칸 접기');
+    expect(fold.getAttribute('aria-expanded')).toBe('true');
+    expect(fold.getAttribute('aria-controls')).toBe('entry-panel');
+    expect(fold.compareDocumentPosition(entry()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
-    // 결과에서 건물을 고르면 다시 한 줄로.
+    // 결과에서 건물을 고르면 다시 한 줄로 · 커서는 바의 첫 단추.
     fireEvent.click(screen.getByRole('button', { name: /테헤란로 1/ }));
     expect(entry().hidden).toBe(true);
     expect(bar()).not.toBeNull();
-    expect(screen.queryByRole('button', { name: '▲ 위 칸 접기' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '위 칸 접기' })).toBeNull();
+    expect(document.activeElement).toBe(barBtn('다른 건물 찾기'));
   });
 
-  it('★ 「상권 지도 보기」= 펼치고 지도로 옮긴다(지도는 새로 그린다) · 「위 칸 접기」로 다시 접으면 지도는 빠지고 검색어는 남는다', async () => {
+  it('★ 「상권 지도 보기」= 펼치고 지도로 옮기며 지도 머리에 커서(지도는 새로 그린다) · 「위 칸 접기」로 접으면 지도는 빠지고 검색어는 남고 커서는 바로', async () => {
     const scrolled: Element[] = [];
     Element.prototype.scrollIntoView = vi.fn(function (this: Element) {
       scrolled.push(this);
@@ -1350,27 +1370,31 @@ describe('App — 입구 접기 (S1)', () => {
     const map = document.querySelector('section.dmap');
     expect(map).not.toBeNull();
     expect(scrolled).toEqual([map]);
+    expect(document.activeElement).toBe(map!.querySelector('.dmap__toggle'));
 
-    fireEvent.click(screen.getByRole('button', { name: '▲ 위 칸 접기' }));
+    fireEvent.click(barBtn('위 칸 접기'));
     expect(entry().hidden).toBe(true);
     expect(document.querySelector('section.dmap')).toBeNull();
     expect(screen.getByLabelText('건물명 또는 주소')).toBe(input);
     expect(input.value).toBe('테헤란로');
+    expect(document.activeElement).toBe(barBtn('다른 건물 찾기'));
     // @ts-expect-error — jsdom 원래 상태(없음)로 되돌린다.
     delete Element.prototype.scrollIntoView;
   });
 
-  it('★ 역할이 있으면 「나는 투자자 ▾」 — 누르면 펼치고 역할 줄로 옮긴다', async () => {
+  it('★ 역할이 있으면 「나는 투자자 ▾」 — 누르면 펼치고 역할 줄로 옮기며 첫 역할 단추에 커서', async () => {
     const scrolled: Element[] = [];
     Element.prototype.scrollIntoView = vi.fn(function (this: Element) {
       scrolled.push(this);
     });
     window.localStorage.setItem(KEY, '투자자');
     await openBuildingBySearch();
-    fireEvent.click(barBtn('나는 투자자 ▾'));
+    expect(barBtn('나는 투자자').textContent).toBe('나는 투자자 ▾');
+    fireEvent.click(barBtn('나는 투자자'));
 
     expect(entry().hidden).toBe(false);
     expect(scrolled).toEqual([document.querySelector('section.role')]);
+    expect(document.activeElement).toBe(document.querySelector('section.role .role__chip'));
     expect(screen.getByRole('button', { name: '투자자' }).getAttribute('aria-pressed')).toBe('true');
     // @ts-expect-error — jsdom 원래 상태(없음)로 되돌린다.
     delete Element.prototype.scrollIntoView;
@@ -1384,5 +1408,37 @@ describe('App — 입구 접기 (S1)', () => {
     // 지역 고르개는 숨겨져 있어도 살아 있어 서버 목록에서 구 이름을 채운다.
     await waitFor(() => expect(bar()!.querySelector('.entrybar__place')!.textContent).toBe('서울 강남구'));
     expect(document.querySelector('section.dmap')).toBeNull();
+  });
+
+  it('★ 되살리는 동안에도 접힌 모양(입구·지도를 그렸다 접지 않는다) · 되살리기에 실패하면 펼친 화면', async () => {
+    // 층 목록 응답을 붙잡아 둔 채 '되살리는 중'을 본다.
+    let release: ((r: { data: unknown; error: unknown }) => void) | null = null;
+    const pending = new Promise<{ data: unknown; error: unknown }>((r) => {
+      release = r;
+    });
+    from.mockImplementation((view: string) => {
+      if (view === 'v_coverage_stats') return makeQuery({ data: [], error: null });
+      const q: Record<string, unknown> = {};
+      for (const m of ['select', 'eq', 'order', 'limit']) q[m] = () => q;
+      q.then = (cb: (r: unknown) => unknown) => pending.then(cb);
+      return q;
+    });
+    openWith(`?sgg=11680&bld=${LINK_BLD}`);
+    render(<App />);
+    await screen.findByText('링크에 담긴 건물을 불러오는 중입니다…');
+    expect(entry().hidden).toBe(true);
+    expect(bar()).not.toBeNull();
+    // 지도는 그리지 않는다 — 지도 스크립트도 안 부른다.
+    expect(document.querySelector('section.dmap')).toBeNull();
+
+    // 층이 한 줄도 없는 건물 = 되살리기 실패 → 펼친 화면(바 없음 · 검색창 보임 · 지도 그림).
+    await act(async () => {
+      release!({ data: [], error: null });
+      await pending;
+    });
+    expect(await screen.findByText(/링크에 담긴 건물을 찾지 못했습니다/)).toBeTruthy();
+    expect(entry().hidden).toBe(false);
+    expect(bar()).toBeNull();
+    expect(document.querySelector('section.dmap')).not.toBeNull();
   });
 });

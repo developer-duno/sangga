@@ -86,18 +86,21 @@ export default function App() {
   const userActedRef = useRef(false);
 
   /*
-    입구 접기(S1 · 👤 2026-10-14·15). 건물을 연 동안에는 위 덩어리(소개 한 줄·역할 줄·지역 고르개·검색·지도)를
-    한 줄 바로 접어 건물이 첫 화면에 오게 한다. 건물이 없으면 늘 지금 화면 그대로다(결정 0036 결정 18 ①).
+    입구 접기(S1 · 👤 2026-10-14 승인 · 10-15 결정 둘). 건물을 연 동안에는 위 덩어리(소개 한 줄·역할 줄·지역 고르개·
+    검색·지도)를 한 줄 바로 접어 건물이 첫 화면에 오게 한다. 건물이 없으면 지금 화면 그대로다.
     `entryOpen` = 건물을 연 채 손님이 바에서 위 칸을 펼쳤나 — **새 건물을 고르면 다시 접는다**
-    (`handleSelectBuilding`·`handlePickRecent` — 링크로 되살린 건물은 처음부터 접힌 채).
+    (`handleSelectBuilding`·`handlePickRecent` → `foldAfterPick`).
+    링크로 들어온 건물은 **되살리는 동안에도** 접힌 모양으로 선다 — 입구 전체·지도가 그려졌다 접히며 화면이 뛰고
+    지도 스크립트까지 받기 시작하던 것을 막는다(검사 🟡 10-15). 되살리기에 실패하면 펼친 화면 그대로다.
     ⛔ 접어도 검색창·지역 고르개는 숨기기만 한다(다시 태어나면 검색어·결과가 날아가고, 링크로 연 건물의
        구 이름 되살리기도 끊긴다). 지도만 접힌 동안 그리지 않는다 — 그래서 종이에도 안 나온다(👤 10-15).
     `entryFocusRef` = 펼친 뒤 옮겨 갈 자리(바의 어느 단추로 펼쳤나) — 그리기와 상관없어 ref 다.
   */
   const [entryOpen, setEntryOpen] = useState(false);
   const entryRef = useRef<HTMLDivElement>(null);
+  const barFirstRef = useRef<HTMLButtonElement>(null);
   const entryFocusRef = useRef<'search' | 'map' | 'role' | null>(null);
-  const folded = selected !== null && !entryOpen;
+  const folded = (selected !== null || restoring) && !entryOpen;
   function openEntry(target: 'search' | 'map' | 'role') {
     entryFocusRef.current = target;
     setEntryOpen(true);
@@ -110,11 +113,35 @@ export default function App() {
     if (target === 'search') {
       // 입력칸에 커서 — focus 가 그 자리로 화면도 옮긴다.
       root.querySelector<HTMLInputElement>('.search__input')?.focus();
-    } else {
-      // jsdom 에는 scrollIntoView 가 없다(시험에서 터지지 않게).
-      root.querySelector(target === 'map' ? '.dmap' : '.role')?.scrollIntoView?.({ block: 'start' });
+      return;
     }
+    // 키보드·낭독기 손님도 그 자리에 서게 — 지도는 머리의 접기 단추, 역할은 첫 역할 단추에 커서(검사 🟡 10-15).
+    // ⓘ 화면은 덩어리 맨 위로 옮긴다(커서 자리로 옮기면 지도 제목이 위로 잘린다). jsdom 에는 scrollIntoView 가 없다.
+    const block = root.querySelector(target === 'map' ? '.dmap' : '.role');
+    block
+      ?.querySelector<HTMLButtonElement>(target === 'map' ? '.dmap__toggle' : '.role__chip')
+      ?.focus({ preventScroll: true });
+    block?.scrollIntoView?.({ block: 'start' });
   }, [entryOpen]);
+
+  /*
+    접힌 뒤 — 커서를 바의 첫 단추로(고른 결과 줄·'위 칸 접기' 단추가 숨거나 사라져 커서가 문서 맨 앞으로 날아가지
+    않게). 건물을 **고른** 뒤에는 화면도 맨 위로 — 검색 결과를 내려 고르면 위 칸이 접히며 건물 이름이 화면 위로
+    지나가 버린다(검사 🟠 10-15). 링크 되살리기는 여기를 거치지 않는다(처음부터 맨 위다).
+  */
+  const [foldSignal, setFoldSignal] = useState<{ seq: number; toTop: boolean }>({ seq: 0, toTop: false });
+  function foldEntry(toTop: boolean) {
+    setEntryOpen(false);
+    setFoldSignal((p) => ({ seq: p.seq + 1, toTop }));
+  }
+  useEffect(() => {
+    if (foldSignal.seq === 0) return;
+    if (foldSignal.toTop) {
+      const root = document.scrollingElement;
+      if (root) root.scrollTop = 0;
+    }
+    barFirstRef.current?.focus({ preventScroll: true });
+  }, [foldSignal]);
 
   // 구가 바뀌면 이전 구의 선택 건물은 더는 맞지 않는다(스택이 다른 구 건물을 계속
   // 그리면 안 된다). 검색어·검색 결과는 BuildingSearch 쪽 key로 함께 비운다(아래).
@@ -131,7 +158,7 @@ export default function App() {
     userActedRef.current = true;
     setRestoreFailed(false);
     setSelected(hit);
-    setEntryOpen(false);
+    foldEntry(true); // 첫 그림의 것을 쥐어도 된다 — setState 둘만 부른다
   }, []);
 
   /*
@@ -195,7 +222,7 @@ export default function App() {
       setSigunguName(null);
     }
     setSelected({ ...item });
-    setEntryOpen(false);
+    foldEntry(true);
   }
 
   /*
@@ -372,10 +399,10 @@ export default function App() {
     ),
   };
 
-  /* 바에 적는 지금 구 — 시도 짧은 이름표 + 서버가 준 구 이름(둘 다 모르면 안 적는다). */
-  const placeLabel = [SIDOS.find((s) => s.code === sigungu?.slice(0, 2))?.name, sigunguName]
-    .filter(Boolean)
-    .join(' ');
+  /* 바에 적는 지금 구 — 시도 짧은 이름표 + 서버가 준 구 이름. 구 이름을 아직 모르면(되살리는 중 등) 비워 둔다. */
+  const placeLabel = sigunguName
+    ? [SIDOS.find((s) => s.code === sigungu?.slice(0, 2))?.name, sigunguName].filter(Boolean).join(' ')
+    : '';
 
   return (
     <div className={`app${folded ? ' app--folded' : ''}`}>
@@ -415,29 +442,64 @@ export default function App() {
           접힌 입구의 한 줄 바(S1 · 시안 Qjdr1GXX). 건물을 연 동안에만 선다 — 누르면 위 칸을 펼치고 그 자리로
           옮긴다. ⓘ 종이에서는 빠진다(`@media print` · 누르는 장치).
         */}
-        {folded && (
+        {/*
+          접힌 입구의 한 줄 바(S1 · 시안 Qjdr1GXX). 건물을 연 동안(되살리는 동안 포함)에만 선다 — 누르면 위 칸을 펼치고
+          그 자리로 옮긴다. 펼친 동안은 같은 자리(펼친 덩어리 맨 위)에 '위 칸 접기' 하나 — 위를 보는 사람이 찾게.
+          ⓘ 기호(←·▾·▲)는 낭독기가 기호 이름으로 읽지 않게 따로 감춘다(`aria-hidden`) · 종이에서는 빠진다.
+        */}
+        {folded ? (
           <div className="entrybar">
             {placeLabel && <span className="entrybar__place">{placeLabel}</span>}
-            <button type="button" className="entrybar__btn" onClick={() => openEntry('search')}>
-              ← 다른 건물 찾기
+            <button
+              type="button"
+              className="entrybar__btn"
+              ref={barFirstRef}
+              aria-expanded={false}
+              aria-controls="entry-panel"
+              onClick={() => openEntry('search')}
+            >
+              <span aria-hidden="true">← </span>다른 건물 찾기
             </button>
             {sigungu !== null && (
-              <button type="button" className="entrybar__btn" onClick={() => openEntry('map')}>
+              <button
+                type="button"
+                className="entrybar__btn"
+                aria-expanded={false}
+                aria-controls="entry-panel"
+                onClick={() => openEntry('map')}
+              >
                 상권 지도 보기
               </button>
             )}
             <button
               type="button"
               className="entrybar__btn entrybar__role"
+              aria-expanded={false}
+              aria-controls="entry-panel"
               onClick={() => openEntry('role')}
             >
-              나는 {viewerRole ?? '역할 고르기'} ▾
+              나는 {viewerRole ?? '역할 고르기'}
+              <span aria-hidden="true"> ▾</span>
             </button>
           </div>
+        ) : (
+          (selected !== null || restoring) && (
+            <div className="entrybar entrybar--open">
+              <button
+                type="button"
+                className="entrybar__btn"
+                aria-expanded={true}
+                aria-controls="entry-panel"
+                onClick={() => foldEntry(false)}
+              >
+                <span aria-hidden="true">▲ </span>위 칸 접기
+              </button>
+            </div>
+          )
         )}
 
         {/* ⓘ 접힌 동안 `hidden` 으로 숨기기만 한다 — 안의 검색창·지역 고르개가 다시 태어나지 않게(위 `entryOpen`). */}
-        <div className="entry" ref={entryRef} hidden={folded}>
+        <div className="entry" id="entry-panel" ref={entryRef} hidden={folded}>
           {/* 역할 단추 줄 — 지역 고르기 바로 위(👤 결정 0036 결정 18 ⑧). */}
           <RolePicker role={viewerRole} onChange={handlePickRole} />
 
@@ -458,14 +520,6 @@ export default function App() {
           ))}
         </div>
 
-        {/* 건물을 연 채 위 칸을 펼쳤으면 다시 접는 단추 하나(S1-4). */}
-        {selected !== null && entryOpen && (
-          <div className="entrybar entrybar--open">
-            <button type="button" className="entrybar__btn" onClick={() => setEntryOpen(false)}>
-              ▲ 위 칸 접기
-            </button>
-          </div>
-        )}
 
         {/*
           입구에서만 서는 카드 — LH 상가 분양·입점 공고.

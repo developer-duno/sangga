@@ -332,10 +332,11 @@ async function search(page: Page, text: string) {
 }
 
 /**
- * 건물을 연 동안 한 줄 바로 접힌 입구(S1)를 바의 단추로 펼친다. 접힌 동안 역할 줄·지역 고르개·검색창은 숨고
+ * 건물을 연 동안 한 줄 바로 접힌 입구(S1)를 바의 단추로 펼친다. 단추 이름은 낭독기가 읽는 이름이다 — 기호(←·▾)는
+ * `aria-hidden` 이라 빠진다(보이는 글자는 '← 다른 건물 찾기'·'나는 창업자 ▾'). 접힌 동안 역할 줄·지역 고르개·검색창은 숨고
  * 지도는 아예 안 그려지므로, 건물을 연 뒤 그것들을 만지는 시험은 먼저 이것을 부른다.
  */
-async function unfoldEntry(page: Page, button: string | RegExp = '← 다른 건물 찾기') {
+async function unfoldEntry(page: Page, button: string | RegExp = '다른 건물 찾기') {
   await page.locator('.entrybar').getByRole('button', { name: button }).click();
 }
 
@@ -2258,13 +2259,15 @@ test.describe('첫 화면 — 역할 단추', () => {
 
     // 새로고침 — 건물은 주소가(결정 0019), 역할은 이 기기 저장이 되살린다.
     await page.reload();
-    await expect(roleBtn('창업자')).toHaveAttribute('aria-pressed', 'true');
+    // ⓘ 링크로 되살린 건물은 입구가 접힌 채(되살리는 동안도 — S1) — 되살아난 역할은 바 단추 글자로 먼저 본다.
+    await expect(page.locator('.entrybar').getByRole('button', { name: '나는 창업자' })).toBeVisible();
     await expect(titles).toHaveText(FOUNDER);
     await expect(opened).toHaveCount(4);
 
     // 다시 누르면 해제 — 열린 건물 화면이 그 자리에서 지금 차례로 돌아간다.
     // ⓘ 건물을 연 동안 입구가 접혀 있다(S1) — 바의 역할 단추로 역할 줄을 펼친다.
-    await unfoldEntry(page, '나는 창업자 ▾');
+    await unfoldEntry(page, '나는 창업자');
+    await expect(roleBtn('창업자')).toHaveAttribute('aria-pressed', 'true');
     await roleBtn('창업자').click();
     await expect(roleBtn('창업자')).toHaveAttribute('aria-pressed', 'false');
     await expect(titles).toHaveText(NO_ROLE);
@@ -2275,7 +2278,7 @@ test.describe('첫 화면 — 역할 단추', () => {
     await page.reload();
     await expect(titles).toHaveText(NO_ROLE);
     // 새로고침으로 다시 접혔다(S1) — 역할 없음이면 바 단추가 '역할 고르기'다. 펼쳐 역할 줄을 본다.
-    await unfoldEntry(page, '나는 역할 고르기 ▾');
+    await unfoldEntry(page, '나는 역할 고르기');
     for (const name of ['투자자', '창업자', '중개사']) {
       await expect(roleBtn(name)).toHaveAttribute('aria-pressed', 'false');
     }
@@ -3117,6 +3120,8 @@ test.describe('첫 화면 — 건물을 열면 입구가 한 줄로 접힌다', 
     await expect(page.locator('.region')).toBeHidden();
     await expect(page.locator('.search')).toBeHidden();
     await expect(page.locator('section.dmap')).toHaveCount(0);
+    // 소개 한 줄도 접힌 동안 빠진다(제목만 작게 남는다) — 펼치면 다시 보인다(아래 ④에서 대조).
+    await expect(page.locator('.app__sub')).toBeHidden();
     // 좁은 폭(412px)에서도 바가 옆으로 넘치지 않는다.
     expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
 
@@ -3131,7 +3136,8 @@ test.describe('첫 화면 — 건물을 열면 입구가 한 줄로 접힌다', 
     await unfoldEntry(page);
     await expect(page.getByLabel('건물명 또는 주소')).toBeFocused();
     await expect(head).toBeVisible();
-    const fold = page.getByRole('button', { name: '▲ 위 칸 접기' });
+    await expect(page.locator('.app__sub')).toBeVisible();
+    const fold = page.getByRole('button', { name: '위 칸 접기' });
     expect((await fold.boundingBox())!.height).toBeGreaterThanOrEqual(44);
     await fold.click();
     await expect(page.locator('.search')).toBeHidden();
@@ -3145,5 +3151,136 @@ test.describe('첫 화면 — 건물을 열면 입구가 한 줄로 접힌다', 
     await expect(page.locator('.entrybar')).toBeHidden();
     await expect(page.locator('.dmap__toggle')).toBeHidden();
     await page.emulateMedia({ media: null });
+  });
+});
+
+// ── 누르는 것 44px · 글자 13px (S4 · 👤 2026-10-14) ───────────────────────────────────────────
+// styles.css 의 `@media screen` 두 묶음(글자 13px · 누르는 것 44px)을 지키는 시험. 새 단추·새 글자 칸이 묶음에서 빠지면 여기서 빨강.
+// 재는 것: 보이는 단추·펼침 머리(summary)·고르개(select)·입력칸·라디오/체크 이름표 + **따로 서 있는 링크 줄**(넘기기 링크
+// `.links__a` · 형제 사이트 `.family__a`). ⛔ 문장 속 링크(글 안의 `a`)는 재지 않는다 — 글 줄 높이가 곧 링크 높이라 44px 를
+// 주면 문단이 벌어진다(지시서 S4-1 "문장 속 글자 링크는 제외"). 글자는 글자를 직접 담은 보이는 요소 전부.
+
+/**
+ * 지금 화면에서 44px 미만 누르는 것 · 13px 미만 글자를 이름별로 센다(브라우저 안에서 잰다).
+ * ⓘ 이 파일의 타입 검사는 브라우저 타입(DOM)을 안 켠다 — 그래서 잴 코드를 **글자로** 넘긴다(브라우저에서만 돈다).
+ */
+const MEASURE_TARGETS_JS = `(() => {
+  const vis = (el) => {
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden';
+  };
+  const name = (el) => el.tagName.toLowerCase() + '.' + [...el.classList].join('.');
+  const sel =
+    'button, summary, select, input:not([type=hidden]):not([type=radio]):not([type=checkbox]), ' +
+    'label:has(input[type=radio]), label:has(input[type=checkbox]), a.links__a, a.family__a';
+  const small = [];
+  let targets = 0;
+  for (const el of document.querySelectorAll(sel)) {
+    if (!vis(el)) continue;
+    targets += 1;
+    const h = el.getBoundingClientRect().height;
+    if (h < 44 - 0.01) small.push(name(el) + ' ' + Math.round(h) + 'px');
+  }
+  const tiny = [];
+  let texts = 0;
+  for (const el of document.querySelectorAll('body *')) {
+    if (!vis(el)) continue;
+    if (![...el.childNodes].some((c) => c.nodeType === 3 && (c.textContent || '').trim())) continue;
+    texts += 1;
+    const fs = parseFloat(getComputedStyle(el).fontSize);
+    if (fs < 13 - 0.01) tiny.push(name(el) + ' ' + fs + 'px');
+  }
+  return { targets, small, texts, tiny };
+})()`;
+
+async function measureTargets(page: Page) {
+  return (await page.evaluate(MEASURE_TARGETS_JS)) as { targets: number; small: string[]; texts: number; tiny: string[] };
+}
+
+test.describe('누르는 것 44px · 글자 13px', () => {
+  test('AZ. 건물 화면의 누르는 것은 44px 이상 · 글자는 13px 이상(기본 · 카드 다 펼침) — 종이에서는 이 높이가 안 먹는다', async ({
+    page,
+  }) => {
+    await mockOpenSigungu(page);
+    await mockJson(page, DATA_FRESHNESS_PATTERN, dataFreshness());
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(
+      page,
+      [parcelTx()],
+      priceBands(),
+      [floorRow({ floor_no: 2 }), floorRow()],
+      industryMix(),
+      undefined,
+      undefined,
+      rentStats(),
+    );
+    await mockJson(page, OPEN_CLOSE_PATTERN, openClose());
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    // 입구(검색 결과까지 선 화면)도 잰다 — 역할·지역 칩·결과 줄.
+    await expect(page.getByRole('button', { name: /테스트빌딩/ })).toBeVisible();
+    const entry = await measureTargets(page);
+    expect(entry.small).toEqual([]);
+    expect(entry.tiny).toEqual([]);
+
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+    await expect(page.locator('section.stack')).toBeVisible();
+    await expect(page.locator('section.oc')).toBeVisible();
+    const first = await measureTargets(page);
+    expect(first.targets).toBeGreaterThan(10); // 재는 것이 실제로 있었다(빈 측정으로 초록이 되지 않게)
+    expect(first.small).toEqual([]);
+    expect(first.tiny).toEqual([]);
+
+    // 접힌 카드를 다 펼친다 — 펼쳐야 서는 단추(업종 고르개·더 보기)와 작은 글자까지.
+    const closed = page.locator('.card__toggle[aria-expanded="false"]');
+    for (let i = 0; i < 20 && (await closed.count()) > 0; i += 1) await closed.first().click();
+    // 위 칸을 펼쳐 지도 머리·역할 줄까지 선 화면도.
+    await unfoldEntry(page, '상권 지도 보기');
+    await expect(page.locator('section.dmap')).toBeVisible();
+    const all = await measureTargets(page);
+    expect(all.targets).toBeGreaterThan(first.targets);
+    expect(all.small).toEqual([]);
+    expect(all.tiny).toEqual([]);
+
+    // ⛔ 종이에서는 44px 이 안 먹는다(`@media screen` 안) — 카드 머리 단추는 화면 44px · 종이는 원래 높이.
+    const toggle = page.locator('.card__toggle').first();
+    expect((await toggle.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await page.emulateMedia({ media: 'print' });
+    expect((await toggle.boundingBox())!.height).toBeLessThan(44);
+    await page.emulateMedia({ media: null });
+  });
+
+  test('BA. 검색 결과를 내려 아래쪽 건물을 고르면 위 칸이 접히며 화면이 맨 위로 — 바와 건물 이름이 화면 안', async ({
+    page,
+  }) => {
+    await mockOpenSigungu(page);
+    const hits = Array.from({ length: 12 }, (_, i) =>
+      searchHit({ bld_id: `1168010100100${String(i + 10).padStart(2, '0')}0000_1`, bld_nm: `결과빌딩${i + 1}` }),
+    );
+    await mockJson(page, SEARCH_PATTERN, hits);
+    await mockFloorStack(page, [], [], [floorRow({ floor_no: 2 }), floorRow()]);
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    const last = page.getByRole('button', { name: /결과빌딩12/ });
+    await expect(last).toBeVisible();
+    // 손님이 결과 목록을 끝까지 내린 상태(문서 맨 아래로 굴린다).
+    await page.evaluate('window.scrollTo(0, document.documentElement.scrollHeight)');
+    // 정말 아래로 내려온 상태에서 고른다(이 전제가 없으면 시험이 아무것도 안 본다).
+    expect(await page.evaluate(() => (globalThis as unknown as { scrollY: number }).scrollY)).toBeGreaterThan(200);
+    await last.click();
+
+    const head = page.locator('.stack__head');
+    await expect(head).toBeVisible();
+    const vh = page.viewportSize()!.height;
+    await expect(page.locator('.entrybar')).toBeInViewport();
+    const title = (await head.getByRole('heading').first().boundingBox())!;
+    expect(title.y).toBeGreaterThanOrEqual(0);
+    expect(title.y + title.height).toBeLessThanOrEqual(vh);
+    // 커서는 바의 첫 단추(고른 결과 줄이 숨어 커서가 문서 맨 앞으로 날아가지 않게).
+    await expect(page.getByRole('button', { name: '다른 건물 찾기' })).toBeFocused();
   });
 });
