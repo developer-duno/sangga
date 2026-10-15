@@ -553,7 +553,9 @@ export function scorecard(over: Partial<Scorecard> = {}): Scorecard {
 }
 
 /**
- * 화면 아래 신선도 표. 라이브와 같은 **열 줄**을 준다(2026-09-05d).
+ * 화면 아래 신선도 표. 라이브와 같은 **열한 줄**을 준다(2026-09-05d · 2026-10-16 운영 모양 — 실거래·건축물대장은
+ * 2026-10-15a 부터 규칙으로 날짜를 주고 건축물대장 기준 종류는 '판' · 서울시 개업·폐업 줄은 결정 0033).
+ * ⓘ 카드 머리 날짜 줄(S3)도 이 표에서 읽는다 — 기준값은 2026-10-16 운영 값 그대로라 시안 글자와 같다.
  *
  * ⚠️ 값을 손으로 계산해 적지 않는다 — 여기 적힌 `next_expected` 는 서버가 규칙으로 계산해
  *    주는 값을 흉내 낸 것이고, 규칙이 맞는지는 파이썬 가드와 라이브가 본다. 여기서는
@@ -575,35 +577,36 @@ export function dataFreshness(): DataFreshnessRow[] {
     {
       src: '실거래 (매매)',
       basis_kind: '계약월',
-      basis: '202608',
-      next_expected: null,
-      cadence: '수시 (서울·대전 전부 활성화 뒤 확대)',
+      basis: '202610',
+      next_expected: '2099-11-30',
+      cadence: '월 1회 (최근 6개월 다시 받기)',
     },
     {
       src: '건축물대장',
-      basis_kind: '적재일',
-      basis: '2026-06-30',
-      next_expected: null,
+      basis_kind: '판',
+      basis: '202608',
+      next_expected: '2099-10-31',
       cadence: '월간 파일 (사람이 적재)',
     },
     {
       src: '상권 경계',
       basis_kind: '계산일',
-      basis: '2026-08-15',
+      basis: '2026-09-08',
       next_expected: null,
       cadence: '비정기 (원천이 바뀌면)',
     },
     {
       src: 'LH 상가 공고',
       basis_kind: '수집일',
-      basis: '2026-08-28',
+      basis: '2026-10-12',
       next_expected: null,
       cadence: '주 1회 감시 · 적재는 사람',
     },
     {
+      // ⓘ 이 줄만 일부러 확실한 과거 예정일이다('지났습니다, 갱신 전' 을 보려고 — 운영 값은 202608 · 2026-10-31).
       src: '건축 인허가',
       basis_kind: '기준월',
-      basis: '202607',
+      basis: '202608',
       next_expected: '2026-08-31',
       cadence: '월 1회',
     },
@@ -624,7 +627,7 @@ export function dataFreshness(): DataFreshnessRow[] {
     {
       src: '참고 시세 성적표',
       basis_kind: '적재일',
-      basis: '2026-08-16',
+      basis: '2026-10-08',
       next_expected: null,
       cadence: '재생성 때 (결재 사항)',
     },
@@ -637,6 +640,14 @@ export function dataFreshness(): DataFreshnessRow[] {
       basis: null,
       next_expected: null,
       cadence: '연 1회 (브이월드)',
+    },
+    {
+      // 결정 0033 — 서울시 분기 꼴은 Q 없는 다섯 자리('20262').
+      src: '상권 개업·폐업 (서울시)',
+      basis_kind: '분기',
+      basis: '20262',
+      next_expected: '2099-12-31',
+      cadence: '분기마다',
     },
   ];
 }

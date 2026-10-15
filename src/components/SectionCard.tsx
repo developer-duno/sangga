@@ -1,5 +1,8 @@
 import { Children, useEffect, useId, useState, type ReactNode } from 'react';
+import { cardSourceLine, type CardSourceKey } from '../lib/dataFreshness';
+import { loadDataFreshness } from '../lib/loadDataFreshness';
 import type { SectionPlan } from '../lib/sectionCards';
+import type { DataFreshnessRow } from '../types';
 
 /**
  * 층별 화면 섹션을 감싸는 **공통 카드 틀** — 로드맵 Wave 2 『한 장 요약 접힘 틀』.
@@ -9,6 +12,7 @@ import type { SectionPlan } from '../lib/sectionCards';
  *  ② 접기/펼치기 — 버튼 시맨틱(`aria-expanded`·`aria-controls`)이라 키보드·읽어 주는
  *     기기에서도 눌린다
  *  ③ **접혀 있어도 핵심 한 줄(`summary`)은 그대로 보인다**
+ *  (+ 표에 `sources` 가 있으면 제목 바로 아래 '자료: … 날짜' 한 줄 — S3 · 👤 2026-10-16 · 아래 `CardSourceLine`)
  *
  * ⚠️ ③이 이 틀의 존재 이유다. 접힘이 "숨김"이 되면 한 장 요약이 아니라 그냥 잠긴 서랍이
  *    된다 — 접힌 카드에서도 "몇 건인지 · 무엇이 있는지"는 읽을 수 있어야 한다.
@@ -121,6 +125,8 @@ export function SectionCard({
         )}
       </h3>
 
+      {plan.sources && plan.sources.length > 0 && <CardSourceLine sources={plan.sources} />}
+
       {summary !== null && summary !== undefined && <p className="card__summary">{summary}</p>}
 
       {/*
@@ -146,4 +152,28 @@ export function SectionCard({
       )}
     </section>
   );
+}
+
+/**
+ * 제목 바로 아래 '자료: 이름 날짜 · …' 한 줄(S3 · 👤 2026-10-16 · 결정 ① 글 꼴 「자료 이름 + 날짜」 · ③ 13px 회색).
+ *
+ * ⛔ 날짜는 서버 신선도 표에서만 온다(`loadDataFreshness` — 맨 아래 표와 **같은 한 번의 요청**). 코드에 날짜를 적지 않는다.
+ * ⛔ 표를 못 받았거나 그 자료 줄이 없으면 **그리지 않는다**(카드는 그대로 — 맨 아래 표가 실패를 따로 안내한다).
+ * ⓘ 접혀 있어도 보인다(요약 줄과 같은 자리 성격) · 종이에도 나온다. 13px 은 `@media screen` 묶음에만 있다.
+ */
+function CardSourceLine({ sources }: { sources: readonly CardSourceKey[] }) {
+  const [rows, setRows] = useState<DataFreshnessRow[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadDataFreshness().then((data) => {
+      if (!cancelled) setRows(data);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const line = cardSourceLine(sources, rows);
+  return line === null ? null : <p className="card__src">{line}</p>;
 }

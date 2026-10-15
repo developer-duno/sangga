@@ -68,7 +68,7 @@ describe('LhNoticeSection — 공고가 있을 때', () => {
     // 제목은 배치표(ENTRY_SECTION_PLAN)에서 온다 — 컴포넌트가 따로 적지 않는다.
     expect(await screen.findByText('LH 상가 분양·입점 공고')).toBeTruthy();
     expect(container.querySelector('.card__summary')?.textContent).toBe(
-      '2건 · 8월 27일 수집 기준',
+      '2건 · 2026년 8월 27일 수집 기준',
     );
     // ⛔ 입구를 가로막지 않는다 — 접힌 채로 시작한다.
     expect(screen.getByRole('button').getAttribute('aria-expanded')).toBe('false');
@@ -257,7 +257,7 @@ describe("LhNoticeSection — LH 가 지역을 '전국'으로 적은 공고 (결
     expect(container.querySelectorAll('.lh__list')).toHaveLength(1);
     expect(container.querySelector('.lh__more')).toBeNull();
     expect(container.querySelector('.card__summary')?.textContent).toBe(
-      '2건 · 8월 27일 수집 기준',
+      '2건 · 2026년 8월 27일 수집 기준',
     );
   });
 
@@ -274,7 +274,7 @@ describe("LhNoticeSection — LH 가 지역을 '전국'으로 적은 공고 (결
     await screen.findByText('LH 상가 분양·입점 공고');
 
     expect(container.querySelector('.card__summary')?.textContent).toBe(
-      '1건 · 전국 표시 2건 · 8월 27일 수집 기준',
+      '1건 · 전국 표시 2건 · 2026년 8월 27일 수집 기준',
     );
   });
 

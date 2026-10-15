@@ -1,3 +1,5 @@
+import type { CardSourceKey } from './dataFreshness';
+
 /**
  * 층별 화면의 "한 장 요약" 카드 배치 — 로드맵 Wave 2 『한 장 요약 접힘 틀』.
  *
@@ -32,6 +34,12 @@ export type SectionPlan = {
   readonly role: SectionRole;
   /** 첫 화면에서 펼쳐 둘까. 합계는 SECTION_EXPAND_BUDGET 을 넘을 수 없다. */
   readonly defaultOpen: boolean;
+  /**
+   * 이 카드가 쓰는 자료 — 제목 바로 아래 '자료: … 날짜' 한 줄의 차례 그대로(S3 · 👤 2026-10-16 · 결정 ② 「자료 있는
+   * 카드 11개」 → B2 로 LH 공고·성적표를 빼 9개). 날짜는 서버 신선도 표에서 온다(`cardSourceLine`). 없으면(빈 카드 셋 ·
+   * LH 공고 · 성적표) 줄이 없다.
+   */
+  readonly sources?: readonly CardSourceKey[];
 };
 
 /**
@@ -52,11 +60,12 @@ export type SectionPlan = {
  *    (`SectionCard`). 요약까지 감추면 "안 보여 준다"가 되어 정보 우선 방침과 어긋난다.
  */
 export const SECTION_PLAN = {
-  district: { title: '속한 상권', role: '공통', defaultOpen: true },
-  floors: { title: '층 목록', role: '공통', defaultOpen: true },
-  industry: { title: '둘레의 업종 분포', role: '창업자', defaultOpen: true },
-  tx: { title: '실거래 기록', role: '투자자', defaultOpen: true },
-  band: { title: '참고 매매 시세 (추정값)', role: '투자자', defaultOpen: false },
+  district: { title: '속한 상권', role: '공통', defaultOpen: true, sources: ['district'] },
+  // 실거래는 층 줄의 거래 칸 때문(👤 2026-10-16 B3 「실거래도 넣기」).
+  floors: { title: '층 목록', role: '공통', defaultOpen: true, sources: ['ledger', 'sangkwon', 'tx'] },
+  industry: { title: '둘레의 업종 분포', role: '창업자', defaultOpen: true, sources: ['sangkwon', 'permit'] },
+  tx: { title: '실거래 기록', role: '투자자', defaultOpen: true, sources: ['tx'] },
+  band: { title: '참고 매매 시세 (추정값)', role: '투자자', defaultOpen: false, sources: ['tx', 'nts'] },
   /**
    * 층 차이 세 잣대(결정 0036 결정 15 · 물결 1-C2 · 👤 2026-10-11) — 국세청 기준시가 · 구 실거래 단가 ·
    * 부동산원 층별 임대료를 이 건물의 층마다 **각자 원래 단위로** 나란히 둔다(비율 계산 0).
@@ -64,27 +73,38 @@ export const SECTION_PLAN = {
    * 다른 카드에 이미 있는 값을 모아 놓은 것이라 펼침 상한을 쓸 까닭이 없다. 자리 = 참고 매매 시세 바로 뒤
    * (역할 없음 · 세 벌 모두).
    */
-  floorgap: { title: '층 차이 세 잣대 (공표값 나란히)', role: '공통', defaultOpen: false },
+  floorgap: {
+    title: '층 차이 세 잣대 (공표값 나란히)',
+    role: '공통',
+    defaultOpen: false,
+    sources: ['nts', 'tx', 'rone'],
+  },
   /**
    * 상권 임대 동향(결정 0024). **접힌 채로 시작한다** — 펼침 상한이 이미 넷이라 그렇기도
    * 하지만, 그것 말고도 이 카드는 **이 건물의 임대료가 아니라 상권 조사값**이라 먼저
    * 눈에 들어오면 사람이 이 건물 값으로 읽는다. 요약 한 줄이 "무엇이 들어 있는지"만
    * 말하고, 값은 펼쳐서 그 한정어와 함께 읽게 한다.
    */
-  rent: { title: '상권 임대 동향 (부동산원 조사)', role: '투자자', defaultOpen: false },
+  rent: { title: '상권 임대 동향 (부동산원 조사)', role: '투자자', defaultOpen: false, sources: ['rone'] },
   /**
    * 상권 개업·폐업(결정 0033). **접힌 채로 시작한다** — 임대 동향과 같은 이유다. 이 카드의
    * 숫자는 **이 건물이 아니라 이 건물이 속한 서울시 상권 전체**의 공표값이라, 한정어 없이
    * 먼저 눈에 들어오면 이 건물의 개업·폐업으로 읽힌다. 그리고 첫 화면 펼침 상한(4장)은
    * 이미 공통 둘과 역할별 하나씩이 쓰고 있다 — 창업자 몫은 업종 분포가 펼쳐 둔다.
    */
-  openclose: { title: '상권 개업·폐업 (서울시 공표)', role: '창업자', defaultOpen: false },
+  openclose: {
+    title: '상권 개업·폐업 (서울시 공표)',
+    role: '창업자',
+    defaultOpen: false,
+    sources: ['openclose'],
+  },
   /*
     빈 카드 셋(결정 0036 결정 2 · 물결 1-B · 👤 2026-10-11). 창업자가 펼쳐 보는 빈칸 — 업종별 추정매출 ·
     유동인구 · 이 자리 가게 이력 — 을 **자료가 오기 전부터 카드로 세워 둔다**(없는 칸을 숨기면 "이 화면은
     그걸 안 다룬다"로 읽힌다). 셋 다 **접힌 채로 시작**한다 — 지금은 "비어 있음" 한 줄뿐이라 펼침 상한을 쓸
     까닭이 없다. 문구·지역 판정은 `lib/emptyCards.ts` 한 곳.
     ⛔ 빈 카드는 **아무것도 부르지 않는다**(서버 함수 0 · `sidePrefetch` 에도 안 넣는다).
+    ⛔ 자료가 없으니 날짜 줄(`sources`)도 없다(S3 · 👤 결정 ②).
   */
   sales: { title: '업종별 추정매출', role: '창업자', defaultOpen: false },
   pop: { title: '유동인구', role: '창업자', defaultOpen: false },
@@ -199,6 +219,7 @@ export const ENTRY_SECTION_PLAN = {
    * 것이라 한쪽으로 못 정한다. 역할 태그는 하나만 붙일 수 있으므로, 반쪽만 부르는
    * 대신 아무도 안 내치는 쪽을 골랐다.
    */
+  // ⓘ 날짜 줄(sources) 없음 — 👤 2026-10-16 B2 「두 카드는 날짜 줄 빼기」.
   lhNotice: { title: 'LH 상가 분양·입점 공고', role: '공통', defaultOpen: false },
   /**
    * 참고 시세 성적표(로드맵 Wave 4 — 성적표 공개 + 방법 공개).
@@ -210,6 +231,7 @@ export const ENTRY_SECTION_PLAN = {
    * ⛔ 요약 한 줄이 **고른 구의 판정**을 말한다 — 접힌 채로도 "우리 구는 받나 못 받나"는
    *    읽힌다. 접힘이 숨김이 아니라는 규칙(SectionCard)이 여기서 특히 중요하다.
    */
+  // ⓘ 날짜 줄(sources) 없음 — 👤 2026-10-16 B2 「두 카드는 날짜 줄 빼기」.
   scorecard: { title: '참고 시세는 얼마나 맞나', role: '투자자', defaultOpen: false },
   /**
    * 동네 매매 단가 흐름(결정 0027 · 로드맵 Wave 5).
@@ -223,7 +245,7 @@ export const ENTRY_SECTION_PLAN = {
    * ⛔ 접힌 채로 시작한다(입구 카드 규칙). 요약 한 줄이 **언제부터 언제까지 몇 건인지**를
    *    말하므로, 접혀 있어도 "볼 것이 있나 없나"는 읽힌다.
    */
-  txFlow: { title: '동네 매매 단가 흐름 (실거래)', role: '투자자', defaultOpen: false },
+  txFlow: { title: '동네 매매 단가 흐름 (실거래)', role: '투자자', defaultOpen: false, sources: ['tx'] },
 } as const satisfies Record<string, SectionPlan>;
 
 /** 첫 화면에 펼쳐지는 카드 수. 상한을 지키는지 세는 데 쓴다. */

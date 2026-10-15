@@ -4,6 +4,7 @@ import {
   describeRange,
   formatArea,
   formatApproveDate,
+  formatDayKo,
   formatEokBand,
   formatFloor,
   formatManWon,
@@ -162,6 +163,24 @@ describe('formatMonthKo — 기준월', () => {
     expect(formatMonthKo('2026-07')).toBeNull();
     expect(formatMonthKo('202600')).toBeNull();
     expect(formatMonthKo('202613')).toBeNull();
+  });
+});
+
+describe('formatDayKo — 고시일 같은 날짜 (F3 · 2026-10-16)', () => {
+  it('사람이 읽는 연·월·일로, 앞 0 을 뗀다', () => {
+    expect(formatDayKo('2026-01-01')).toBe('2026년 1월 1일');
+    expect(formatDayKo('2026-10-12')).toBe('2026년 10월 12일');
+  });
+
+  it('읽을 수 없으면 null — 부르는 쪽이 원본을 쓸지 고른다', () => {
+    expect(formatDayKo(null)).toBeNull();
+    expect(formatDayKo(undefined)).toBeNull();
+    expect(formatDayKo('')).toBeNull();
+    expect(formatDayKo('20260101')).toBeNull();
+    expect(formatDayKo('2026-13-01')).toBeNull();
+    expect(formatDayKo('2026-01-00')).toBeNull();
+    // 시각이 붙은 값은 여기서 읽지 않는다(시간대를 따지는 일은 `lhNotices` 몫이다).
+    expect(formatDayKo('2026-01-01T00:00:00Z')).toBeNull();
   });
 });
 

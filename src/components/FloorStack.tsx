@@ -57,6 +57,7 @@ import {
   formatFloor,
   formatJiphap,
   formatManWon,
+  formatMonthKo,
   formatParking,
   formatQuarter,
   formatWon,
@@ -1455,7 +1456,8 @@ function SigunguTxBands({ stats }: { stats: SigunguTxStat[] }) {
       <p className="tx__src">
         출처: 국토교통부 상업업무용 부동산 매매 실거래가 ·{' '}
         {guName ? `${guName} ` : ''}집합(구분소유) 거래
-        {from ? ` ${formatYearMonth(from)} 이후 계약분` : ''} 집계 · 지분 거래 제외 · 전체 표본{' '}
+        {/* 날짜 말투는 카드 머리 날짜 줄과 같은 '2024년 10월'(F1 · 👤 2026-10-16 ④) — 못 읽으면 원본 그대로. */}
+        {from ? ` ${formatMonthKo(from) ?? from} 이후 계약분` : ''} 집계 · 지분 거래 제외 · 전체 표본{' '}
         {total.toLocaleString('ko-KR')}건.
       </p>
     </div>

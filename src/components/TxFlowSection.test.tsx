@@ -29,6 +29,13 @@ vi.mock('../lib/supabase', () => ({
 }));
 
 const { TxFlowSection } = await import('./TxFlowSection');
+const { resetDataFreshnessCache } = await import('../lib/loadDataFreshness');
+
+/**
+ * 이 카드가 부른 것만 — 카드 머리 날짜 줄(S3)의 신선도 요청은 뺀다(맨 아래 표와 나눠 쓰는 한 번의 요청이라
+ * 이 카드의 질문이 아니다). ⓘ 그 요청은 시험마다 새로 나간다(아래 beforeEach 가 보관을 비운다) — 시험 차례에 기대지 않게.
+ */
+const cardCalls = () => rpcCalls.filter((c) => c.fn !== 'get_data_freshness');
 
 function yearlyRow(over: Partial<SigunguTxYearly> = {}): SigunguTxYearly {
   return {
@@ -80,6 +87,7 @@ function yearlyRows(): SigunguTxYearly[] {
 
 beforeEach(() => {
   rpcCalls.length = 0;
+  resetDataFreshnessCache();
   responses.yearly = { data: yearlyRows(), error: null };
   vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
@@ -111,9 +119,9 @@ describe('TxFlowSection — 자료가 있을 때', () => {
   it('★ 서버를 부를 때 인자 이름이 `sigungu` 다', async () => {
     render(<TxFlowSection sigungu="11680" />);
     await screen.findByText('동네 매매 단가 흐름 (실거래)');
-    expect(rpcCalls).toHaveLength(1);
-    expect(rpcCalls[0].fn).toBe('get_sigungu_tx_yearly');
-    expect(rpcCalls[0].args).toEqual({ sigungu: '11680' });
+    expect(cardCalls()).toHaveLength(1);
+    expect(cardCalls()[0].fn).toBe('get_sigungu_tx_yearly');
+    expect(cardCalls()[0].args).toEqual({ sigungu: '11680' });
   });
 
   it('펼치면 해마다 한 줄씩 — 해의 일부와 표본 부족을 정직하게 적는다', async () => {

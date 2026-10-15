@@ -35,6 +35,13 @@ vi.mock('../lib/supabase', () => ({
 }));
 
 const { RentStatSection } = await import('./RentStatSection');
+const { resetDataFreshnessCache } = await import('../lib/loadDataFreshness');
+
+/**
+ * 이 카드가 부른 것만 — 카드 머리 날짜 줄(S3)의 신선도 요청은 뺀다(맨 아래 표와 나눠 쓰는 한 번의 요청이라
+ * 이 카드의 질문이 아니다). ⓘ 그 요청은 시험마다 새로 나간다(아래 beforeEach 가 보관을 비운다) — 시험 차례에 기대지 않게.
+ */
+const cardCalls = () => rpcCalls.filter((c) => c.fn !== 'get_data_freshness');
 
 function stat(over: Partial<RentStat> = {}): RentStat {
   return {
@@ -53,6 +60,7 @@ const PNU = '1168010100100010000';
 
 beforeEach(() => {
   rpcCalls.length = 0;
+  resetDataFreshnessCache();
   responses.rent = { data: [stat()], error: null };
 });
 
@@ -119,7 +127,7 @@ describe('RentStatSection — 조사값이 있을 때', () => {
     render(<RentStatSection pnu={PNU} />);
     await screen.findByText('상권 임대 동향 (부동산원 조사)');
 
-    expect(rpcCalls).toEqual([{ fn: 'list_rent_stats', args: { p_pnu: PNU } }]);
+    expect(cardCalls()).toEqual([{ fn: 'list_rent_stats', args: { p_pnu: PNU } }]);
   });
 });
 
@@ -475,7 +483,7 @@ describe('RentStatSection — 못 읽었을 때', () => {
     responses.rent = { data: null, error: { code: 'PGRST202' } };
     const { container } = render(<RentStatSection pnu={PNU} />);
 
-    await waitFor(() => expect(rpcCalls).toHaveLength(1));
+    await waitFor(() => expect(cardCalls()).toHaveLength(1));
     // "조사값 없음"이라 적지 않는다 — 없는 것과 모르는 것은 다르다.
     expect(container.querySelector('.rent')).toBeNull();
     expect(container.textContent).toBe('');
@@ -486,7 +494,7 @@ describe('RentStatSection — 못 읽었을 때', () => {
     responses.rent = { data: { code: 'PGRST202', message: 'x' }, error: null };
     const { container } = render(<RentStatSection pnu={PNU} />);
 
-    await waitFor(() => expect(rpcCalls).toHaveLength(1));
+    await waitFor(() => expect(cardCalls()).toHaveLength(1));
     expect(container.textContent).toBe('');
   });
 
@@ -497,7 +505,7 @@ describe('RentStatSection — 못 읽었을 때', () => {
     };
     const { container } = render(<RentStatSection pnu={PNU} />);
 
-    await waitFor(() => expect(rpcCalls).toHaveLength(1));
+    await waitFor(() => expect(cardCalls()).toHaveLength(1));
     expect(container.textContent).toBe('');
   });
 });
@@ -513,7 +521,7 @@ describe('RentStatSection — 건물이 바뀔 때', () => {
     rerender(<RentStatSection pnu="1168010100100020000" />);
 
     await waitFor(() => expect(container.querySelector('.rent')).toBeNull());
-    expect(rpcCalls.map((c) => c.args)).toEqual([
+    expect(cardCalls().map((c) => c.args)).toEqual([
       { p_pnu: PNU },
       { p_pnu: '1168010100100020000' },
     ]);

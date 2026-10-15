@@ -9,7 +9,8 @@ import {
   formatFloor,
   formatManWon,
   formatManWonBand,
-  formatYearMonth,
+  formatDayKo,
+  formatMonthKo,
 } from '../lib/format';
 import {
   describeStage,
@@ -225,7 +226,8 @@ export function PriceBandSection({
           </ul>
           <p className="band__src">
             출처: 국토교통부 상업업무용 부동산 매매 실거래가 · 집합(구분소유) 거래
-            {from ? ` ${formatYearMonth(from)} 이후 계약분` : ''}으로 계산 · 지분 거래 제외.
+            {/* 날짜 말투는 카드 머리 날짜 줄과 같은 '2024년 10월'(F1 · 👤 2026-10-16 ④) — 못 읽으면 원본 그대로. */}
+            {from ? ` ${formatMonthKo(from) ?? from} 이후 계약분` : ''}으로 계산 · 지분 거래 제외.
           </p>
         </>
       )}
@@ -283,7 +285,8 @@ function BasePriceBlock({ rows }: { rows: BasePriceRow[] }) {
             */}
             <span className="band__base-sub">
               호 {r.base.ho_cnt.toLocaleString('ko-KR')}개 가운데값
-              {r.base.notice_date ? ` · ${r.base.notice_date} 고시` : ''}
+              {/* 「2026년 1월 1일 고시」(F3 · 👤 2026-10-16 ④ 말투 맞춤) — 못 읽으면 서버 글자 그대로. */}
+              {r.base.notice_date ? ` · ${formatDayKo(r.base.notice_date) ?? r.base.notice_date} 고시` : ''}
             </span>
           </li>
         ))}
