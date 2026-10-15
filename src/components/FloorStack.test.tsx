@@ -3317,6 +3317,15 @@ describe('FloorStack — 긴 카드 창 (S2)', () => {
     expect(shareNote(container)!.classList.contains('list__folded')).toBe(true);
   });
 
+  it('★ 경계 — 지분이 11번째 줄(첫 숨은 줄)에만 있으면 접힌 화면에선 숨김 이름표 · 펼치면 뗀다', async () => {
+    responses.txs = { data: txsWithShareAt(14, [10]), error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(txFold(container)).toBeTruthy());
+    expect(shareNote(container)!.classList.contains('list__folded')).toBe(true);
+    fireEvent.click(txFold(container)!);
+    expect(shareNote(container)!.classList.contains('list__folded')).toBe(false);
+  });
+
   it('보이는 줄(처음 10건)에 지분이 있으면 접혀 있어도 펼쳐도 설명 줄이 보인다(양성 대조)', async () => {
     responses.txs = { data: txsWithShareAt(14, [9]), error: null };
     const { container } = render(<FloorStack building={building()} />);

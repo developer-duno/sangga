@@ -3390,10 +3390,6 @@ body {
   .floor__row:has(> .floor__tx:empty) .floor__stores {
     grid-column-end: -1;
   }
-
-  .floor__tx:empty {
-    display: none;
-  }
 }
 
 /* ── 가지고 나가기(링크 복사) ──────────────────────────────────────────────
