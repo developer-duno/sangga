@@ -54,6 +54,69 @@ body {
   color: var(--muted);
 }
 
+/* ── 접힌 입구 (S1 · 시안 Qjdr1GXX — 건물을 연 동안 위 덩어리를 한 줄 바로) ──────────
+   제목은 작게, 소개 한 줄은 뺀다. 역할 줄·지역 고르개·검색은 `App` 이 `.entry[hidden]` 으로 숨기고
+   지도는 아예 안 그린다. ⓘ h1 은 그대로 있다(크기만). */
+.app--folded .app__title {
+  font-size: 1.05rem;
+  margin: 0;
+}
+
+.app--folded .app__sub {
+  display: none;
+}
+
+.entrybar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  font-size: 14px;
+}
+
+.entrybar__place {
+  font-weight: 700;
+}
+
+.entrybar__chip {
+  color: var(--muted);
+}
+
+.entrybar__btn {
+  font: inherit;
+  font-size: 14px;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.entrybar__btn:hover {
+  border-color: var(--accent);
+}
+
+/* 역할 단추는 오른쪽 끝 · 강조색(시안 그대로). */
+.entrybar__role {
+  margin-left: auto;
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* 펼친 동안의 '위 칸 접기' 줄 — 테두리 없이 단추 하나만. */
+.entrybar--open {
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
 /* ── 역할 단추 줄 (결정 0036 결정 18 ⑧ — 지역 고르기 바로 위) ─────────── */
 
 .role {
@@ -3580,6 +3643,196 @@ body {
    ⛔ **접어 둔 지도는 종이에도 안 나온다** — 접으면 지도를 아예 그리지 않기 때문이고,
       사용자가 일부러 접은 것이므로 그 뜻을 존중한다(카드의 접힘과는 다른 경우다).
    ──────────────────────────────────────────────────────────────────────────── */
+/* ── 화면 글자는 13px 이상 (S4 · 👤 2026-10-14) ─────────────────────────────────
+   위쪽 기본 규칙에서 13px 보다 작게 둔 글자를 **화면에서만** 13px 로 올린다.
+   ⛔ 기본 규칙의 값은 일부러 그대로 둔다 — 종이(`@media print`)는 그 값을 써야 장수가 안 바뀐다(검사 🟠 2026-10-15).
+   ⛔ 이 묶음은 원래 규칙들보다 **뒤**(인쇄 구역 바로 앞)에 있어야 같은 무게의 옛 값을 이긴다.
+   ⓘ 새 글자 칸은 처음부터 13px 이상으로 쓴다 — 여기에 더하지 않는다(E2E 「AZ」가 건물 화면의 13px 미만 글자를 0으로 잰다). */
+@media screen {
+  .role__note,
+  .chips__note,
+  .region__clear,
+  .region__gu-cnt,
+  .region__retry,
+  .hit__jibun,
+  .hit__own,
+  .recent__note,
+  .stores__jibun,
+  .stores__src,
+  .dmap__legend,
+  .dmap__picked-key,
+  .dmap__picked-ty,
+  .dmap__label,
+  .dmap__src,
+  .dbld__note,
+  .dbld__dong-meta,
+  .dbld__src,
+  .stack__district-src,
+  .stack__facts dt,
+  .stack__biz-etc,
+  .floor__tx,
+  .floor__caret,
+  .floor__units,
+  .floor__units-orphan,
+  .floor__units-note,
+  .floor__units-none,
+  .units__mixed,
+  .units__more,
+  .card__role,
+  .card__caret,
+  .card__note,
+  .tx__share,
+  .tx__n,
+  .tx__note,
+  .tx__src,
+  .band__lead,
+  .band__sub,
+  .band__none,
+  .band__none-note,
+  .band__src,
+  .band__alt,
+  .band__why,
+  .band__base-sub,
+  .detail__sub,
+  .detail__none,
+  .detail__note,
+  .mix__lead,
+  .mix__chip-note,
+  .mix__permits-note,
+  .mix__floors,
+  .mix__med,
+  .mix__med-note,
+  .mix__none,
+  .mix__note,
+  .mix__src,
+  .mix__why,
+  .lh__lead,
+  .lh__kind,
+  .lh__more-btn,
+  .lh__more-lead,
+  .lh__src,
+  .score__lead,
+  .score__sub,
+  .score__honest,
+  .score__why,
+  .score__none,
+  .score__how-list,
+  .flow__lead,
+  .flow__src,
+  .flow__part,
+  .flow__spread,
+  .flow__area,
+  .flow__n,
+  .rent__lead,
+  .rent__note,
+  .rent__pick-label,
+  .rent__scope,
+  .rent__quarter,
+  .rent__floors,
+  .rent__floors-cap,
+  .rent__floor-note,
+  .rent__none,
+  .rent__src,
+  .rent__why,
+  .oc__lead,
+  .oc__scale,
+  .oc__quarter,
+  .oc__note,
+  .oc__none,
+  .oc__src,
+  .oc__trend-cap,
+  .oc__gap,
+  .oc__tick,
+  .oc__ind-sum,
+  .oc__table,
+  .oc__table thead th,
+  .oc__why,
+  .empty__body,
+  .grade,
+  .grade__badge,
+  .fresh__table,
+  .fresh__kind,
+  .fresh__note,
+  .fb__count,
+  .share__label,
+  .gap__heads,
+  .gap__k,
+  .gap__sub,
+  .gap__foot,
+  .office__note,
+  .office__clear,
+  .floor__unitprint,
+  .floor__unitprint-more,
+  .floor__unitprint-cap,
+  .floor__unitprint-loading,
+  .floor__unitprint-failed,
+  .printmeta__office {
+    font-size: 13px;
+  }
+}
+
+/* ── 누르는 것은 44px 이상 (S4 · 👤 2026-10-14) ─────────────────────────────────
+   손가락으로 누르는 단추·칩·고르개·접기 단추의 높이를 44px 이상으로 둔다(시안 P3). 문장 속 글자 링크는 뺀다.
+   ⛔ **화면에서만**(`@media screen`) — 종이(`@media print`)는 높이가 늘면 장수가 바뀐다.
+   ⓘ 새 단추를 만들면 여기에 이름을 더한다 — E2E 「AZ. 건물 화면의 누르는 것은 44px 이상 · 글자는 13px 이상」이
+     건물 화면(기본 · 카드 다 펼침)에서 재고, 종이에서는 이 높이가 안 먹는지도 본다. */
+@media screen {
+  .role__chip,
+  .chips__chip,
+  .region__chip,
+  .region__clear,
+  .region__gu-chip,
+  .region__retry,
+  .modal__close,
+  .search__input,
+  .search__btn,
+  .hit,
+  .recent__toggle,
+  .recent__clear,
+  .recent__row,
+  .stores__row,
+  .stores__more,
+  .dmap__toggle,
+  .dmap__picked-btn,
+  .dbld__row,
+  .dbld__dong,
+  .dbld__more,
+  .card__toggle,
+  .floor__row,
+  .units__more,
+  .band__hit,
+  .mix__select,
+  .rent__select,
+  .lh__more-btn,
+  .errbox__btn,
+  .links__guide-btn,
+  .fb__open,
+  .fb__kind,
+  .fb__btn,
+  .share__btn,
+  .print__btn,
+  .office__clear,
+  .unitpick__opt {
+    min-height: 44px;
+  }
+
+  /* 따로 서 있는 링크 줄(넘기기 링크 · 형제 사이트)도 손가락으로 누르는 것이다 — 줄 글자 링크라 높이를 주려면
+     안쪽 상자로 바꾼다(부모가 flex 라 배치는 그대로). 문장 속 링크는 넣지 않는다. */
+  .links__a,
+  .family__a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+
+  /* 펼침 머리(summary)는 표시 삼각형을 지키려고 list-item 그대로 두고 위아래 여백으로 키운다. */
+  .oc__ind-sum,
+  .office__toggle {
+    min-height: 44px;
+    padding-block: 12px;
+  }
+}
+
 @media print {
   /*
     ⛔ **종이 여백을 우리가 못 박는다.**
@@ -3607,6 +3860,8 @@ body {
   .chips,
   .region,
   .search,
+  /* 접힌 입구의 한 줄 바·'위 칸 접기'(S1) — 누르는 장치다. */
+  .entrybar,
   /* 중개사 「최근 뽑은 건물」 줄(결정 0036 결정 18 ⑥) — 지금은 `.search` 안이지만 자리가 옮겨져도
      종이에 새지 않게 따로 적어 둔다(누르는 장치). */
   .recent,

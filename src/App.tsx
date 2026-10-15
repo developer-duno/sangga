@@ -17,12 +17,14 @@ import { ShareButton } from './components/ShareButton';
 import { TxFlowSection } from './components/TxFlowSection';
 import { UnitPrintPicker } from './components/UnitPrintPicker';
 import { FLOOR_STACK_VIEW } from './lib/appConstants';
+import { EMPTY_MAP_PICK, type DistrictMapPick } from './lib/districtMapPick';
 import { buildingFromFloorRows } from './lib/restoreBuilding';
 import { FOUNDER_CHIP_ALL, type FounderChip } from './lib/founderChips';
 import { entryBlockOrder, type EntryBlockKey, type ViewerRole } from './lib/sectionCards';
 import { supabase } from './lib/supabase';
 import { buildAppSearch, buildShareUrl, isSameSearch, parseAppUrl } from './lib/urlState';
 import { pageTitle } from './lib/seo';
+import { SIDOS } from './lib/regions';
 import { loadViewerRole, saveViewerRole } from './lib/viewerRoleStore';
 import {
   clearRecentPrinted,
@@ -65,6 +67,12 @@ export default function App() {
   */
   const [founderChip, setFounderChip] = useState<FounderChip>(FOUNDER_CHIP_ALL);
   const activeChip = viewerRole === '창업자' ? founderChip : FOUNDER_CHIP_ALL;
+  /*
+    지도에서 누른 상권·펼친 상권 목록(👤 2026-10-15 G1). 입구가 접히면(S1) 지도는 안 그려지는데, 다시 펼쳐 새로 그릴 때
+    아까 누른 상권과 건물 목록이 그대로 서게 여기서 쥔다(다음 건물로 바로 넘어가게).
+    ⛔ **화면만** — 이 기기 저장·주소·의견함에 싣지 않는다 · 구가 바뀌면 비운다(`handleSelectSigungu`·`handlePickRecent`).
+  */
+  const [mapPick, setMapPick] = useState<DistrictMapPick>(EMPTY_MAP_PICK);
   function handlePickRole(role: ViewerRole | null) {
     setViewerRole(role);
     saveViewerRole(role);
@@ -84,6 +92,64 @@ export default function App() {
   */
   const userActedRef = useRef(false);
 
+  /*
+    입구 접기(S1 · 👤 2026-10-14 승인 · 10-15 결정 둘). 건물을 연 동안에는 위 덩어리(소개 한 줄·역할 줄·지역 고르개·
+    검색·지도)를 한 줄 바로 접어 건물이 첫 화면에 오게 한다. 건물이 없으면 지금 화면 그대로다.
+    `entryOpen` = 건물을 연 채 손님이 바에서 위 칸을 펼쳤나 — **새 건물을 고르면 다시 접는다**
+    (`handleSelectBuilding`·`handlePickRecent` → `foldAfterPick`).
+    링크로 들어온 건물은 **되살리는 동안에도** 접힌 모양으로 선다 — 입구 전체·지도가 그려졌다 접히며 화면이 뛰고
+    지도 스크립트까지 받기 시작하던 것을 막는다(검사 🟡 10-15). 되살리기에 실패하면 펼친 화면 그대로다.
+    ⛔ 접어도 검색창·지역 고르개는 숨기기만 한다(다시 태어나면 검색어·결과가 날아가고, 링크로 연 건물의
+       구 이름 되살리기도 끊긴다). 지도만 접힌 동안 그리지 않는다 — 그래서 종이에도 안 나온다(👤 10-15).
+    `entryFocusRef` = 펼친 뒤 옮겨 갈 자리(바의 어느 단추로 펼쳤나) — 그리기와 상관없어 ref 다.
+  */
+  const [entryOpen, setEntryOpen] = useState(false);
+  const entryRef = useRef<HTMLDivElement>(null);
+  const barFirstRef = useRef<HTMLButtonElement>(null);
+  const entryFocusRef = useRef<'search' | 'map' | 'role' | null>(null);
+  const folded = (selected !== null || restoring) && !entryOpen;
+  function openEntry(target: 'search' | 'map' | 'role') {
+    entryFocusRef.current = target;
+    setEntryOpen(true);
+  }
+  useEffect(() => {
+    const target = entryFocusRef.current;
+    const root = entryRef.current;
+    if (!entryOpen || target === null || root === null) return;
+    entryFocusRef.current = null;
+    if (target === 'search') {
+      // 입력칸에 커서 — focus 가 그 자리로 화면도 옮긴다.
+      root.querySelector<HTMLInputElement>('.search__input')?.focus();
+      return;
+    }
+    // 키보드·낭독기 손님도 그 자리에 서게 — 지도는 머리의 접기 단추, 역할은 첫 역할 단추에 커서(검사 🟡 10-15).
+    // ⓘ 화면은 덩어리 맨 위로 옮긴다(커서 자리로 옮기면 지도 제목이 위로 잘린다). jsdom 에는 scrollIntoView 가 없다.
+    const block = root.querySelector(target === 'map' ? '.dmap' : '.role');
+    block
+      ?.querySelector<HTMLButtonElement>(target === 'map' ? '.dmap__toggle' : '.role__chip')
+      ?.focus({ preventScroll: true });
+    block?.scrollIntoView?.({ block: 'start' });
+  }, [entryOpen]);
+
+  /*
+    접힌 뒤 — 커서를 바의 첫 단추로(고른 결과 줄·'위 칸 접기' 단추가 숨거나 사라져 커서가 문서 맨 앞으로 날아가지
+    않게). 건물을 **고른** 뒤에는 화면도 맨 위로 — 검색 결과를 내려 고르면 위 칸이 접히며 건물 이름이 화면 위로
+    지나가 버린다(검사 🟠 10-15). 링크 되살리기는 여기를 거치지 않는다(처음부터 맨 위다).
+  */
+  const [foldSignal, setFoldSignal] = useState<{ seq: number; toTop: boolean }>({ seq: 0, toTop: false });
+  function foldEntry(toTop: boolean) {
+    setEntryOpen(false);
+    setFoldSignal((p) => ({ seq: p.seq + 1, toTop }));
+  }
+  useEffect(() => {
+    if (foldSignal.seq === 0) return;
+    if (foldSignal.toTop) {
+      const root = document.scrollingElement;
+      if (root) root.scrollTop = 0;
+    }
+    barFirstRef.current?.focus({ preventScroll: true });
+  }, [foldSignal]);
+
   // 구가 바뀌면 이전 구의 선택 건물은 더는 맞지 않는다(스택이 다른 구 건물을 계속
   // 그리면 안 된다). 검색어·검색 결과는 BuildingSearch 쪽 key로 함께 비운다(아래).
   function handleSelectSigungu(code: string | null, name?: string | null) {
@@ -91,6 +157,7 @@ export default function App() {
     setRestoreFailed(false);
     setSigungu(code);
     setSigunguName(code ? (name ?? null) : null);
+    setMapPick(EMPTY_MAP_PICK);
     setSelected(null);
   }
 
@@ -99,6 +166,7 @@ export default function App() {
     userActedRef.current = true;
     setRestoreFailed(false);
     setSelected(hit);
+    foldEntry(true); // 첫 그림의 것을 쥐어도 된다 — setState 둘만 부른다
   }, []);
 
   /*
@@ -160,8 +228,10 @@ export default function App() {
     if (code !== sigungu) {
       setSigungu(code);
       setSigunguName(null);
+      setMapPick(EMPTY_MAP_PICK);
     }
     setSelected({ ...item });
+    foldEntry(true);
   }
 
   /*
@@ -313,30 +383,40 @@ export default function App() {
            풀리지 않는다. key 가 없으면 A구 지도에서 한 번 터진 뒤 B구로 옮겨도 **계속**
            오류 안내만 보인다. 구가 바뀌면 그물을 새로 쳐서 다시 그려 보게 한다.
         지도는 바깥 지도 SDK 를 태우는 자리라 우리 코드만으로는 터질 자리를 다 못 셈한다.
+        ⛔ 입구가 접힌 동안(건물을 연 채)에는 그리지 않는다 — 종이에도 안 나온다(👤 2026-10-15). 펼치면 새로 그린다.
       */
-      <ErrorBoundary
-        key={`map:${sigungu ?? '__none__'}`}
-        area="상권 지도"
-        context={{ sigungu, sigungu_nm: sigunguName }}
-      >
-        <DistrictMap
-          sigungu={sigungu}
-          sigunguName={sigunguName}
-          selected={selected}
-          onSelectBuilding={handleSelectBuilding}
-          chip={activeChip}
-          headExtra={
-            viewerRole === '창업자' ? (
-              <FounderChips chip={founderChip} onChange={setFounderChip} />
-            ) : null
-          }
-        />
-      </ErrorBoundary>
+      folded ? null : (
+        <ErrorBoundary
+          key={`map:${sigungu ?? '__none__'}`}
+          area="상권 지도"
+          context={{ sigungu, sigungu_nm: sigunguName }}
+        >
+          <DistrictMap
+            sigungu={sigungu}
+            sigunguName={sigunguName}
+            selected={selected}
+            onSelectBuilding={handleSelectBuilding}
+            chip={activeChip}
+            pick={mapPick}
+            onPickChange={setMapPick}
+            headExtra={
+              viewerRole === '창업자' ? (
+                <FounderChips chip={founderChip} onChange={setFounderChip} />
+              ) : null
+            }
+          />
+        </ErrorBoundary>
+      )
     ),
   };
 
+  /* 바에 적는 지금 구 — 시도 짧은 이름표 + 서버가 준 구 이름. 구 이름을 아직 모르면(되살리는 중 등) 비워 둔다. */
+  const placeLabel = sigunguName
+    ? [SIDOS.find((s) => s.code === sigungu?.slice(0, 2))?.name, sigunguName].filter(Boolean).join(' ')
+    : '';
+
   return (
-    <div className="app">
+    <div className={`app${folded ? ' app--folded' : ''}`}>
       {/*
         종이에만 나오는 머리글(결정 0020). 화면에서는 보이지 않는다 — 맨 위에 두는 이유는
         인쇄물의 첫 줄이 "무슨 서류인가"여야 하기 때문이다. 지도가 그 아래에 오므로, 여기에
@@ -369,24 +449,92 @@ export default function App() {
         바닥글은 밖에 둔다. ⓘ CSS 는 안 붙였다 — `.app` 에 자식 선택자가 없어 감싸도 배치가 그대로다.
       */}
       <main className="app__main">
-        {/* 역할 단추 줄 — 지역 고르기 바로 위(👤 결정 0036 결정 18 ⑧). */}
-        <RolePicker role={viewerRole} onChange={handlePickRole} />
-
-        <RegionPicker
-          selectedSigungu={sigungu}
-          onSelectSigungu={handleSelectSigungu}
-          onSigunguNameResolved={handleSigunguNameResolved}
-        />
-
         {/*
-          입구 두 덩어리(검색창·상권 지도). 차례는 역할이 정한다 — 창업자만 지도가 위(👤 결정 0036
-          결정 18 ④ · `entryBlockOrder`). ⛔ 조건부 JSX 로 두 자리에 나눠 그리지 않는다 — 이름 key 를
-          단 배열이라 차례가 바뀌어도 **같은 조각이 자리만 옮긴다**(검색어·검색 결과·지도가 다시
-          태어나지 않는다 · `App.test` 가 DOM 조각이 같은 물건인지 본다).
+          접힌 입구의 한 줄 바(S1 · 시안 Qjdr1GXX). 건물을 연 동안에만 선다 — 누르면 위 칸을 펼치고 그 자리로
+          옮긴다. ⓘ 종이에서는 빠진다(`@media print` · 누르는 장치).
         */}
-        {entryBlockOrder(viewerRole).map((k) => (
-          <Fragment key={k}>{entryBlocks[k]}</Fragment>
-        ))}
+        {/*
+          접힌 입구의 한 줄 바(S1 · 시안 Qjdr1GXX). 건물을 연 동안(되살리는 동안 포함)에만 선다 — 누르면 위 칸을 펼치고
+          그 자리로 옮긴다. 펼친 동안은 같은 자리(펼친 덩어리 맨 위)에 '위 칸 접기' 하나 — 위를 보는 사람이 찾게.
+          ⓘ 기호(←·▾·▲)는 낭독기가 기호 이름으로 읽지 않게 따로 감춘다(`aria-hidden`) · 종이에서는 빠진다.
+        */}
+        {folded ? (
+          <div className="entrybar">
+            {placeLabel && <span className="entrybar__place">{placeLabel}</span>}
+            {/* 창업자가 고른 업종(👤 2026-10-15 G2) — 카드의 굵은 줄이 왜 굵은지 접힌 채로도 보이게. '전체'면 안 적는다. */}
+            {activeChip !== FOUNDER_CHIP_ALL && (
+              <span className="entrybar__chip">업종: {activeChip}</span>
+            )}
+            <button
+              type="button"
+              className="entrybar__btn"
+              ref={barFirstRef}
+              aria-expanded={false}
+              aria-controls="entry-panel"
+              onClick={() => openEntry('search')}
+            >
+              <span aria-hidden="true">← </span>다른 건물 찾기
+            </button>
+            {sigungu !== null && (
+              <button
+                type="button"
+                className="entrybar__btn"
+                aria-expanded={false}
+                aria-controls="entry-panel"
+                onClick={() => openEntry('map')}
+              >
+                상권 지도 보기
+              </button>
+            )}
+            <button
+              type="button"
+              className="entrybar__btn entrybar__role"
+              aria-expanded={false}
+              aria-controls="entry-panel"
+              onClick={() => openEntry('role')}
+            >
+              나는 {viewerRole ?? '역할 고르기'}
+              <span aria-hidden="true"> ▾</span>
+            </button>
+          </div>
+        ) : (
+          (selected !== null || restoring) && (
+            <div className="entrybar entrybar--open">
+              <button
+                type="button"
+                className="entrybar__btn"
+                aria-expanded={true}
+                aria-controls="entry-panel"
+                onClick={() => foldEntry(false)}
+              >
+                <span aria-hidden="true">▲ </span>위 칸 접기
+              </button>
+            </div>
+          )
+        )}
+
+        {/* ⓘ 접힌 동안 `hidden` 으로 숨기기만 한다 — 안의 검색창·지역 고르개가 다시 태어나지 않게(위 `entryOpen`). */}
+        <div className="entry" id="entry-panel" ref={entryRef} hidden={folded}>
+          {/* 역할 단추 줄 — 지역 고르기 바로 위(👤 결정 0036 결정 18 ⑧). */}
+          <RolePicker role={viewerRole} onChange={handlePickRole} />
+
+          <RegionPicker
+            selectedSigungu={sigungu}
+            onSelectSigungu={handleSelectSigungu}
+            onSigunguNameResolved={handleSigunguNameResolved}
+          />
+
+          {/*
+            입구 두 덩어리(검색창·상권 지도). 차례는 역할이 정한다 — 창업자만 지도가 위(👤 결정 0036
+            결정 18 ④ · `entryBlockOrder`). ⛔ 조건부 JSX 로 두 자리에 나눠 그리지 않는다 — 이름 key 를
+            단 배열이라 차례가 바뀌어도 **같은 조각이 자리만 옮긴다**(검색어·검색 결과·지도가 다시
+            태어나지 않는다 · `App.test` 가 DOM 조각이 같은 물건인지 본다).
+          */}
+          {entryBlockOrder(viewerRole).map((k) => (
+            <Fragment key={k}>{entryBlocks[k]}</Fragment>
+          ))}
+        </div>
+
 
         {/*
           입구에서만 서는 카드 — LH 상가 분양·입점 공고.
