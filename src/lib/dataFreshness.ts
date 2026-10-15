@@ -72,9 +72,9 @@ export function basisText(row: DataFreshnessRow): string {
 /**
  * 다음 갱신 예정을 사람이 읽는 글자로.
  *
- * ⛔ 값이 없으면 **'정해진 주기 없음'** 이다. 실거래·건축물대장·상권 경계·LH·성적표는
- *    정해진 주기가 없어 서버가 일부러 null 을 준다(필지는 2026-10-12b 부터 서버가 규칙으로 날짜를 준다) — 여기에 아무 날짜나 적으면 "늦었다"는
- *    거짓 신호가 화면에 뜬다.
+ * ⛔ 값이 없으면 **'정해진 주기 없음'** 이다. 상권 경계·LH·성적표는 정해진 주기가 없어
+ *    서버가 일부러 null 을 준다(필지는 2026-10-12b · 실거래·건축물대장은 2026-10-15a 부터 서버가
+ *    규칙으로 날짜를 준다) — 여기에 아무 날짜나 적으면 "늦었다"는 거짓 신호가 화면에 뜬다.
  *
  * ⚠️ **'무렵'을 붙인다.** 이 값은 규칙으로 계산한 예정일이지 약속된 날이 아니다. 자료가
  *    하루 이틀 늦게 올라오는 일이 흔한데, 딱 떨어지는 날짜로 적으면 그날 안 바뀐 것이
@@ -154,4 +154,51 @@ export function isDataFreshnessRow(x: unknown): x is DataFreshnessRow {
 /** ⓘ 빈 배열도 모양으로는 맞다 — 그때 화면은 표를 통째로 생략한다(빈 표는 소음이다). */
 export function isDataFreshnessList(x: unknown): x is DataFreshnessRow[] {
   return Array.isArray(x) && x.every(isDataFreshnessRow);
+}
+
+/* ── 카드마다 '자료 이름 + 날짜' 한 줄 (S3 · 👤 2026-10-16) ─────────────────────────────── */
+
+/**
+ * 카드 제목 아래 한 줄이 가리키는 자료 갈래. 서버 표의 한 줄(`src`)과 짝이다.
+ *
+ * ⛔ 날짜·분기·판은 여기 없다 — 이름과 끝말만 있다. 값은 서버 줄의 `basis` 를 `basisText` 로 읽는다.
+ * ⓘ 필지(토지 특성)는 어느 카드에도 안 붙어 여기 없다(개별공시지가는 카드가 아니라 건물 머리 한 줄이다).
+ */
+export const CARD_SOURCES = {
+  sangkwon: { src: '점포·업종 (상권정보)', label: '상권정보', ending: '' },
+  tx: { src: '실거래 (매매)', label: '국토부 실거래', ending: ' 계약분까지' },
+  ledger: { src: '건축물대장', label: '건축물대장', ending: ' 판' },
+  district: { src: '상권 경계', label: '상권 경계', ending: ' 계산' },
+  lh: { src: 'LH 상가 공고', label: 'LH 공고', ending: ' 수집' },
+  permit: { src: '건축 인허가', label: '건축 인허가', ending: ' 기준' },
+  nts: { src: '국세청 기준시가', label: '국세청 기준시가', ending: ' 고시' },
+  rone: { src: '상권 임대 동향 (부동산원)', label: '부동산원', ending: ' 조사' },
+  scorecard: { src: '참고 시세 성적표', label: '참고 시세 성적표', ending: ' 생성' },
+  openclose: { src: '상권 개업·폐업 (서울시)', label: '서울시 상권분석서비스', ending: '' },
+} as const satisfies Record<string, { src: string; label: string; ending: string }>;
+
+export type CardSourceKey = keyof typeof CARD_SOURCES;
+
+/**
+ * 카드 한 장의 날짜 줄 — '자료: 건축물대장 2026년 8월 판 · 상권정보 2026년 2분기'.
+ *
+ * ⛔ 표를 못 받았으면(null) **줄이 없다**(null). 모르는 것을 '자료 없음'이라 적지 않는다 — 맨 아래 표가
+ *    이미 그 경우 통째로 빠진다(같은 규칙).
+ * ⛔ 서버 표에 그 자료 줄이 없으면 **그 조각만** 뺀다. 조각이 하나도 안 남으면 줄이 없다.
+ * ⓘ 줄은 있는데 기준값이 비었으면 맨 아래 표처럼 '자료 없음'(끝말은 안 붙인다 — '자료 없음 판'이 된다).
+ */
+export function cardSourceLine(
+  keys: readonly CardSourceKey[] | undefined,
+  rows: readonly DataFreshnessRow[] | null,
+): string | null {
+  if (!keys || keys.length === 0 || rows === null) return null;
+  const pieces: string[] = [];
+  for (const key of keys) {
+    const s = CARD_SOURCES[key];
+    const row = rows.find((r) => r.src === s.src);
+    if (!row) continue;
+    const has = Boolean(row.basis?.trim());
+    pieces.push(`${s.label} ${basisText(row)}${has ? s.ending : ''}`);
+  }
+  return pieces.length > 0 ? `자료: ${pieces.join(' · ')}` : null;
 }

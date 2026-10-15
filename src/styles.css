@@ -1365,6 +1365,16 @@ body {
   font-size: 13px;
 }
 
+/*
+   제목 바로 아래 '자료: 이름 날짜' 한 줄(S3 · 👤 2026-10-16 · 13px 회색). 접혀 있어도 남고 종이에도 나온다.
+   ⛔ 여기(기본 규칙)는 12px — 화면의 13px 는 아래 `@media screen` 글자 묶음이 올린다(종이 글자는 그대로 두려고).
+*/
+.card__src {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .card__note {
   margin: 10px 0 0;
   color: var(--muted);
@@ -3696,6 +3706,7 @@ body {
   .card__role,
   .card__caret,
   .card__note,
+  .card__src,
   .tx__share,
   .tx__n,
   .tx__note,

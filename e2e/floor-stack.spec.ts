@@ -910,7 +910,7 @@ test.describe('화면 아래 — 어디까지 믿을지와 한마디 남기는 �
     //    화면에 박아 두면 적재하는 순간부터 그 글자만 거짓말을 한다.
     const fresh = foot.locator('section.fresh');
     await expect(fresh.getByRole('heading', { name: '이 자료는 언제 것인가' })).toBeVisible();
-    await expect(fresh.locator('tbody tr')).toHaveCount(10);
+    await expect(fresh.locator('tbody tr')).toHaveCount(11);
     await expect(fresh.getByText('점포·업종 (상권정보)')).toBeVisible();
     // '202606' 이 사람 말로 바뀌어 실린다(원본을 그대로 찍지 않는다).
     await expect(fresh.getByText('2026년 2분기').first()).toBeVisible();
@@ -1266,7 +1266,7 @@ test.describe('층별 스택뷰 — 국세청 기준시가', () => {
     // 값만 떼어 내보내지 않는다 — 이 값은 그 층 호실들의 가운데값이다(절대 규칙 3).
     await expect(rows.first()).toContainText('2층');
     await expect(rows.first()).toContainText('㎡당 300만');
-    await expect(rows.first()).toContainText('호 12개 가운데값 · 2026-01-01 고시');
+    await expect(rows.first()).toContainText('호 12개 가운데값 · 2026년 1월 1일 고시');
     // 세무 기준가격이라는 사실을 카드 안에서 한 번 못 박는다.
     await expect(band.getByText(/시세가 아닙니다/)).toBeVisible();
     await expect(band.getByText(/A등급 · 공식 고시/)).toBeVisible();
@@ -1333,7 +1333,7 @@ test.describe('입구 — LH 상가 분양·입점 공고', () => {
     // 접혀 있어도 건수와 **수집일**은 읽힌다 — 마감이 있는 자료라 낡음을 감추지 않는다.
     // 접어 둔 것(전국 표시)도 세어서 밝힌다 — 감추는 것과 없는 척하는 것은 다르다.
     await expect(lh.locator('.card__summary')).toHaveText(
-      '2건 · 전국 표시 1건 · 8월 27일 수집 기준',
+      '2건 · 전국 표시 1건 · 2026년 8월 27일 수집 기준',
     );
     await expect(lh.locator('.card__body')).toBeHidden();
 

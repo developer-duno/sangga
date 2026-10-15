@@ -1,7 +1,7 @@
 import type { BasePrice, FloorRow, RentStat, SigunguTxStat } from '../types';
 import { pairBasePrices } from './basePrice';
 import { TX_MIN_SAMPLE } from './appConstants';
-import { formatFloor, formatManWon, formatYearMonth } from './format';
+import { formatFloor, formatManWon, formatMonthKo } from './format';
 import { defaultBldType, floorRentLines, quarterLabel, rentSummary } from './rentStats';
 
 /**
@@ -140,7 +140,8 @@ export function floorGapHeads(
 ): GapHeads {
   const guName = txStats?.find((s) => s.sigungu_nm)?.sigungu_nm ?? null;
   const from = txStats?.find((s) => s.window_from)?.window_from ?? null;
-  const tx = ['구 실거래 단가', guName, from ? `${formatYearMonth(from)}부터` : null]
+  // 날짜 말투는 카드 머리 날짜 줄과 같은 '2024년 10월'(F2 · 👤 2026-10-16 ④) — 못 읽으면 원본 그대로.
+  const tx = ['구 실거래 단가', guName, from ? `${formatMonthKo(from) ?? from}부터` : null]
     .filter((x): x is string => x !== null)
     .join(' · ');
 

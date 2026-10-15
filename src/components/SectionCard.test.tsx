@@ -1,8 +1,53 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { useState } from 'react';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { SectionCard } from './SectionCard';
-import type { SectionPlan } from '../lib/sectionCards';
+import { DataFreshness } from './DataFreshness';
+import { resetDataFreshnessCache } from '../lib/loadDataFreshness';
+import { SECTION_PLAN, ENTRY_SECTION_PLAN, type SectionPlan } from '../lib/sectionCards';
+import type { DataFreshnessRow } from '../types';
+
+/**
+ * 카드 머리 날짜 줄(S3)이 신선도 표를 묻는다 — 서버 대신 이 답을 준다.
+ * ⓘ 표와 카드가 나눠 쓰는 한 번의 요청(`loadDataFreshness`)을 시험마다 비운다(아래 beforeEach).
+ */
+const fresh = vi.hoisted(() => ({
+  response: { data: null as unknown, error: null as unknown },
+  calls: [] as string[],
+}));
+
+vi.mock('../lib/supabase', () => ({
+  supabase: {
+    rpc: (fn: string) => {
+      fresh.calls.push(fn);
+      return Promise.resolve(fresh.response);
+    },
+  },
+}));
+
+/** 2026-10-16 운영 값(기준값만). */
+function freshRows(): DataFreshnessRow[] {
+  const r = (src: string, basis_kind: string, basis: string): DataFreshnessRow => ({
+    src,
+    basis_kind,
+    basis,
+    next_expected: null,
+    cadence: '-',
+  });
+  return [
+    r('점포·업종 (상권정보)', '분기', '202606'),
+    r('실거래 (매매)', '계약월', '202610'),
+    r('건축물대장', '판', '202608'),
+    r('상권 경계', '계산일', '2026-09-08'),
+    r('국세청 기준시가', '고시일', '2026-01-01'),
+  ];
+}
+
+beforeEach(() => {
+  resetDataFreshnessCache();
+  fresh.calls.length = 0;
+  fresh.response = { data: freshRows(), error: null };
+});
 
 /**
  * 공통 카드 틀 — 로드맵 Wave 2 『한 장 요약 접힘 틀』.
@@ -304,5 +349,149 @@ describe('SectionCard — 역할을 바꿀 때 (결정 0036 결정 18)', () => {
       </SectionCard>,
     );
     expect(screen.getByRole('button').getAttribute('aria-expanded')).toBe('true');
+  });
+});
+
+describe('SectionCard — 제목 아래 날짜 줄 (S3 · 👤 2026-10-16)', () => {
+  it('자료 칸이 있으면 제목 **바로 아래**에 \'자료: 이름 날짜\' 한 줄 — 접혀 있어도 보인다', async () => {
+    const { container } = render(
+      <SectionCard plan={SECTION_PLAN.band} className="band" summary="요약 한 줄">
+        <p>본문</p>
+      </SectionCard>,
+    );
+    const line = await waitFor(() => {
+      const el = container.querySelector('.card__src');
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    expect(line.textContent).toBe('자료: 국토부 실거래 2026년 10월 계약분까지 · 국세청 기준시가 2026년 1월 1일 고시');
+    // 자리 — 제목(h3) 바로 다음, 요약 줄 앞.
+    expect(line.previousElementSibling?.tagName).toBe('H3');
+    expect(line.nextElementSibling?.className).toBe('card__summary');
+    // 접힌 카드(참고 매매 시세는 처음 접힘)에서도 숨지 않는다 — 본문 칸 밖이다.
+    expect(screen.getByRole('button').getAttribute('aria-expanded')).toBe('false');
+    expect(line.closest('[hidden]')).toBeNull();
+  });
+
+  it('⛔ 빈 카드(자료 칸 없음)에는 줄이 없고 묻지도 않는다 — 양성 대조: 같은 자리에 자료 칸을 주면 줄이 선다', async () => {
+    const { container, unmount } = render(
+      <SectionCard plan={SECTION_PLAN.sales} className="card--empty" summary="비어 있음" />,
+    );
+    // 다른 카드가 물었다면 답이 왔을 시간을 준다.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(container.querySelector('.card__src')).toBeNull();
+    expect(fresh.calls).toEqual([]);
+    unmount();
+
+    const withSrc = { ...SECTION_PLAN.sales, sources: ['tx'] } as const satisfies SectionPlan;
+    const again = render(<SectionCard plan={withSrc} className="card--empty" summary="비어 있음" />);
+    await waitFor(() => expect(again.container.querySelector('.card__src')).not.toBeNull());
+  });
+
+  it('⛔ 신선도 요청이 실패하면 날짜 줄만 없다 — 카드는 그대로', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    fresh.response = { data: null, error: { code: 'PGRST202', message: 'function does not exist' } };
+    const { container } = render(
+      <SectionCard plan={SECTION_PLAN.floors} className="card--floors" summary="층 3개">
+        <p>본문입니다</p>
+      </SectionCard>,
+    );
+    await waitFor(() => expect(warn).toHaveBeenCalled());
+    expect(container.querySelector('.card__src')).toBeNull();
+    expect(screen.getByText('층 3개')).toBeTruthy();
+    expect(screen.getByText('본문입니다')).toBeTruthy();
+    warn.mockRestore();
+  });
+
+  it('⛔ 그 자료 줄이 서버 표에 없으면 그 조각만 빠진다(LH 줄 없음 → LH 카드는 줄 없음)', async () => {
+    const { container } = render(
+      <>
+        <SectionCard plan={ENTRY_SECTION_PLAN.lhNotice} className="lh" summary="3건" />
+        <SectionCard plan={SECTION_PLAN.floors} className="card--floors" summary="층 3개" />
+      </>,
+    );
+    // 층 목록 카드는 줄이 선다(같은 표를 받았다는 양성 대조).
+    await waitFor(() => expect(container.querySelectorAll('.card__src')).toHaveLength(1));
+    expect(container.querySelector('.card--floors .card__src')?.textContent).toBe(
+      '자료: 건축물대장 2026년 8월 판 · 상권정보 2026년 2분기',
+    );
+    expect(container.querySelector('.lh .card__src')).toBeNull();
+  });
+
+  it('⛔ 카드 여러 장과 맨 아래 표가 **같은 한 번의 요청**을 나눠 쓴다', async () => {
+    const { container } = render(
+      <>
+        <SectionCard plan={SECTION_PLAN.district} className="card--district" summary="a" />
+        <SectionCard plan={SECTION_PLAN.floors} className="card--floors" summary="b" />
+        <SectionCard plan={SECTION_PLAN.tx} className="tx" summary="c" />
+        <DataFreshness today="2026-10-16" />
+      </>,
+    );
+    await waitFor(() => expect(container.querySelectorAll('.card__src')).toHaveLength(3));
+    expect(await screen.findByText('이 자료는 언제 것인가')).toBeTruthy();
+    expect(fresh.calls).toEqual(['get_data_freshness']);
+  });
+});
+
+/**
+ * styles.css 에서 `@media screen { … }` 묶음들의 **안쪽 글**만 모은다(중괄호 짝을 세어 묶음 끝을 찾는다).
+ * ⓘ jsdom 은 CSS 를 적용하지 않으므로 규칙 자체를 본다(`DistrictMap.test` 와 같은 수법 — `?raw` 는 빈 글이 온다).
+ * 못 보는 것: 주석 안의 중괄호(지금 styles.css 의 screen 묶음 주석에는 없다) · `@media screen and (…)` 꼴.
+ */
+function screenBlocks(css: string): string[] {
+  const out: string[] = [];
+  let at = css.indexOf('@media screen {');
+  while (at >= 0) {
+    const open = css.indexOf('{', at);
+    let depth = 0;
+    let i = open;
+    for (; i < css.length; i += 1) {
+      if (css[i] === '{') depth += 1;
+      else if (css[i] === '}') {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+    out.push(css.slice(open + 1, i));
+    at = css.indexOf('@media screen {', i);
+  }
+  return out;
+}
+
+/** 묶음 글에서 `font-size: 13px` 규칙의 고르개 목록(이름들). */
+function screen13pxSelectors(css: string): string[] {
+  const names: string[] = [];
+  for (const block of screenBlocks(css)) {
+    for (const m of block.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if (/font-size:\s*13px/.test(m[2])) names.push(...m[1].split(',').map((x) => x.trim()));
+    }
+  }
+  return names;
+}
+
+describe('날짜 줄 글자 13px 은 화면에서만 (S3 · ⛔ 종이 글자는 그대로)', () => {
+  it('양성 대조 — 묶음 안 규칙은 잡고, 묶음 밖 같은 규칙은 안 잡는다', () => {
+    const sample = [
+      '.x { font-size: 13px; }',
+      '@media screen {',
+      '  .a,',
+      '  .b { font-size: 13px; }',
+      '  .c { min-height: 44px; }',
+      '}',
+      '@media print { .d { font-size: 13px; } }',
+    ].join('\n');
+    expect(screen13pxSelectors(sample)).toEqual(['.a', '.b']);
+  });
+
+  it('`.card__src` 는 화면 13px 묶음에 있고, 기본 규칙은 13px 이 아니다', async () => {
+    const { readFileSync } = await import('node:fs');
+    const css = readFileSync('src/styles.css', 'utf8');
+    const names = screen13pxSelectors(css);
+    expect(names).toContain('.card__note'); // 기존 칸 — 묶음을 제대로 읽었다는 표시
+    expect(names).toContain('.card__src');
+    const base = css.slice(css.indexOf('.card__src {'));
+    const rule = base.slice(0, base.indexOf('}'));
+    expect(rule).toMatch(/font-size:\s*12px/);
+    expect(rule).not.toMatch(/font-size:\s*13px/);
   });
 });

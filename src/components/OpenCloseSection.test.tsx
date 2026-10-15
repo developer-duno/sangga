@@ -138,7 +138,10 @@ describe('OpenCloseSection — 서울 자료가 있을 때', () => {
     expect(summary).not.toMatch(/(개업|폐업|점포)\s*[\d,]+곳/);
     expect(screen.getByRole('button').getAttribute('aria-expanded')).toBe('false');
     expect(container.querySelector('.card__body')?.hasAttribute('hidden')).toBe(true);
-    expect(rpcCalls).toEqual([{ fn: 'list_district_openclose', args: { p_pnu: PNU } }]);
+    // ⓘ 카드 머리 날짜 줄(S3)이 신선도 표를 묻는 것은 뺀다 — 맨 아래 표와 나눠 쓰는 한 번의 요청이라 이 카드의 질문이 아니다.
+    expect(rpcCalls.filter((c) => c.fn !== 'get_data_freshness')).toEqual([
+      { fn: 'list_district_openclose', args: { p_pnu: PNU } },
+    ]);
   });
 
   it('펼치면 상권마다 이름·유형·큰 숫자·분기 도장, 그리고 발 문구 넷', async () => {

@@ -185,6 +185,20 @@ export function formatMonthKo(ym: string | null | undefined): string | null {
   return `${m[1]}년 ${month}월`;
 }
 
+/**
+ * 날짜 '2026-01-01' → '2026년 1월 1일'. **읽을 수 없으면 null**(`formatMonthKo` 와 같은 결 — 부르는 쪽이 원본을
+ * 쓸지 문구를 뺄지 고른다). ⛔ `new Date()` 로 읽지 않는다 — UTC 자정으로 읽혀 뒤진 시간대에서 하루 밀린다.
+ */
+export function formatDayKo(date: string | null | undefined): string | null {
+  if (!date) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date.trim());
+  if (!m) return null;
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  return `${m[1]}년 ${month}월 ${day}일`;
+}
+
 /** 사용승인일 '2003-05-14' → '2003년 5월'. 없으면 '—'. */
 export function formatApproveDate(date: string | null): string {
   if (!date) return '—';

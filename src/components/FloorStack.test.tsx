@@ -1094,7 +1094,7 @@ describe('FloorStack — 실거래 기록 (Stage A · 결정 0012)', () => {
     };
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => expect(screen.getByText(/유성구 층대별 거래 단가/)).toBeTruthy());
-    expect(screen.getByText(/2025-01 이후 계약분/)).toBeTruthy();
+    expect(screen.getByText(/2025년 1월 이후 계약분/)).toBeTruthy();
     // ⚠️ '강남구'는 이 건물 주소에도 들어 있다 — 실거래 블록 안만 본다.
     expect(container.querySelector('.tx')?.textContent).not.toContain('강남구');
     // 기간을 글자로 박으면 창이 바뀌는 날 문구만 조용히 거짓말이 된다(밴드 출처 줄과 같은 가드).
@@ -1460,7 +1460,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
     await waitFor(() => expect(container.querySelector('.band__src')).toBeTruthy());
     const src = container.querySelector('.band__src')?.textContent ?? '';
     expect(src).toContain('국토교통부 상업업무용 부동산 매매 실거래가');
-    expect(src).toContain('2025-01 이후 계약분');
+    expect(src).toContain('2025년 1월 이후 계약분');
     // 기간을 글자로 박으면 창이 바뀌는 날 문구만 조용히 거짓말이 된다.
     expect(src).not.toContain('24개월');
     // 모집단 — 서버 사다리 네 갈래가 지분 거래를 뺀다(2026-10-08a).
@@ -1602,7 +1602,7 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
       // 값만 떼어 내보내지 않는다 — 이 값은 그 층 호실들의 가운데값이다.
       const sub = block.querySelector('.band__base-sub')?.textContent ?? '';
       expect(sub).toContain('호 12개 가운데값');
-      expect(sub).toContain('2026-01-01 고시');
+      expect(sub).toContain('2026년 1월 1일 고시');
     });
 
     it('아주 싼 층(1만 원 미만)도 단위가 겹치지 않게 적는다', async () => {
