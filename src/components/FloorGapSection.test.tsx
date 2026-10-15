@@ -22,6 +22,13 @@ vi.mock('../lib/supabase', () => ({
 }));
 
 const { FloorGapSection } = await import('./FloorGapSection');
+const { resetDataFreshnessCache } = await import('../lib/loadDataFreshness');
+
+/**
+ * 이 카드가 부른 것만 — 카드 머리 날짜 줄(S3)의 신선도 요청은 뺀다(맨 아래 표와 나눠 쓰는 한 번의 요청이라
+ * 이 카드의 질문이 아니다). ⓘ 그 요청은 시험마다 새로 나간다(아래 beforeEach 가 보관을 비운다) — 시험 차례에 기대지 않게.
+ */
+const cardCalls = () => rpcCalls.filter((c) => c.fn !== 'get_data_freshness');
 
 const PNU = '1168010100100010000';
 
@@ -71,6 +78,7 @@ function rent(): RentStat {
 
 beforeEach(() => {
   rpcCalls.length = 0;
+  resetDataFreshnessCache();
   responses.rent = { data: [rent()], error: null };
 });
 afterEach(() => cleanup());
@@ -106,7 +114,7 @@ describe('FloorGapSection', () => {
       <FloorGapSection floors={[floor(1)]} basePrices={BASES} txStats={TX} pnu={PNU} />,
     );
     await screen.findByRole('button', { name: /층 차이 세 잣대/ });
-    await waitFor(() => expect(rpcCalls).toHaveLength(1));
+    await waitFor(() => expect(cardCalls()).toHaveLength(1));
     expect(cellText(container, 1, 'rent')).toBe('–');
     expect(cellText(container, 1, 'base')).toBe('500만');
   });
@@ -123,7 +131,7 @@ describe('FloorGapSection', () => {
   it('★ 국세청·부동산원이 둘 다 비면 구 실거래가 있어도 카드째 숨긴다(빈 배열도 null 처럼)', async () => {
     responses.rent = { data: [], error: null };
     const { container } = render(<FloorGapSection floors={[floor(1)]} basePrices={[]} txStats={TX} pnu={PNU} />);
-    await waitFor(() => expect(rpcCalls).toHaveLength(1));
+    await waitFor(() => expect(cardCalls()).toHaveLength(1));
     await new Promise((r) => setTimeout(r, 0));
     expect(container.querySelector('.gap')).toBeNull();
   });
@@ -131,7 +139,7 @@ describe('FloorGapSection', () => {
   it('세 재료가 모두 없으면 카드째 숨긴다', async () => {
     responses.rent = { data: null, error: { code: 'PGRST202' } };
     const { container } = render(<FloorGapSection floors={[floor(1)]} basePrices={null} txStats={null} pnu={PNU} />);
-    await waitFor(() => expect(rpcCalls).toHaveLength(1));
+    await waitFor(() => expect(cardCalls()).toHaveLength(1));
     expect(container.querySelector('.gap')).toBeNull();
   });
 
@@ -147,6 +155,6 @@ describe('FloorGapSection', () => {
       <FloorGapSection floors={[floor(1)]} basePrices={null} txStats={TX} pnu={PNU} prefetch={prefetch} />,
     );
     await waitFor(() => expect(cellText(container, 1, 'rent')).toBe('74.6'));
-    expect(rpcCalls).toHaveLength(0);
+    expect(cardCalls()).toHaveLength(0);
   });
 });

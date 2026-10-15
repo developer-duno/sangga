@@ -162,18 +162,20 @@ export function isDataFreshnessList(x: unknown): x is DataFreshnessRow[] {
  * 카드 제목 아래 한 줄이 가리키는 자료 갈래. 서버 표의 한 줄(`src`)과 짝이다.
  *
  * ⛔ 날짜·분기·판은 여기 없다 — 이름과 끝말만 있다. 값은 서버 줄의 `basis` 를 `basisText` 로 읽는다.
+ * ⛔ 서버 줄을 **자료 이름 글자(`src`)로** 찾는다 — 서버(`get_data_freshness`)에서 이름을 바꾸면 그 조각이
+ *    에러 없이 말없이 빠진다. 지키는 것은 `dataFreshness.test.ts` 의 정본(schema.sql) 이름 대조 시험이다.
  * ⓘ 필지(토지 특성)는 어느 카드에도 안 붙어 여기 없다(개별공시지가는 카드가 아니라 건물 머리 한 줄이다).
+ *   LH 공고·참고 시세 성적표도 없다 — 그 두 카드는 날짜 줄을 빼기로 했다(👤 2026-10-16 B2 「두 카드는 날짜 줄 빼기」).
  */
 export const CARD_SOURCES = {
   sangkwon: { src: '점포·업종 (상권정보)', label: '상권정보', ending: '' },
-  tx: { src: '실거래 (매매)', label: '국토부 실거래', ending: ' 계약분까지' },
+  // 👤 2026-10-16 B1 — 최근 두 달은 신고(30일)가 덜 끝난 채 들어 있다는 것을 끝말에 밝힌다(맨 아래 표 글은 그대로).
+  tx: { src: '실거래 (매매)', label: '국토부 실거래', ending: ' 계약분까지 (최근 두 달은 신고 중)' },
   ledger: { src: '건축물대장', label: '건축물대장', ending: ' 판' },
   district: { src: '상권 경계', label: '상권 경계', ending: ' 계산' },
-  lh: { src: 'LH 상가 공고', label: 'LH 공고', ending: ' 수집' },
   permit: { src: '건축 인허가', label: '건축 인허가', ending: ' 기준' },
   nts: { src: '국세청 기준시가', label: '국세청 기준시가', ending: ' 고시' },
   rone: { src: '상권 임대 동향 (부동산원)', label: '부동산원', ending: ' 조사' },
-  scorecard: { src: '참고 시세 성적표', label: '참고 시세 성적표', ending: ' 생성' },
   openclose: { src: '상권 개업·폐업 (서울시)', label: '서울시 상권분석서비스', ending: '' },
 } as const satisfies Record<string, { src: string; label: string; ending: string }>;
 

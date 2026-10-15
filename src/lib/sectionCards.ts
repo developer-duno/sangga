@@ -36,7 +36,8 @@ export type SectionPlan = {
   readonly defaultOpen: boolean;
   /**
    * 이 카드가 쓰는 자료 — 제목 바로 아래 '자료: … 날짜' 한 줄의 차례 그대로(S3 · 👤 2026-10-16 · 결정 ② 「자료 있는
-   * 카드 11개」). 날짜는 서버 신선도 표에서 온다(`cardSourceLine`). 없으면(빈 카드 셋) 줄이 없다.
+   * 카드 11개」 → B2 로 LH 공고·성적표를 빼 9개). 날짜는 서버 신선도 표에서 온다(`cardSourceLine`). 없으면(빈 카드 셋 ·
+   * LH 공고 · 성적표) 줄이 없다.
    */
   readonly sources?: readonly CardSourceKey[];
 };
@@ -60,7 +61,8 @@ export type SectionPlan = {
  */
 export const SECTION_PLAN = {
   district: { title: '속한 상권', role: '공통', defaultOpen: true, sources: ['district'] },
-  floors: { title: '층 목록', role: '공통', defaultOpen: true, sources: ['ledger', 'sangkwon'] },
+  // 실거래는 층 줄의 거래 칸 때문(👤 2026-10-16 B3 「실거래도 넣기」).
+  floors: { title: '층 목록', role: '공통', defaultOpen: true, sources: ['ledger', 'sangkwon', 'tx'] },
   industry: { title: '둘레의 업종 분포', role: '창업자', defaultOpen: true, sources: ['sangkwon', 'permit'] },
   tx: { title: '실거래 기록', role: '투자자', defaultOpen: true, sources: ['tx'] },
   band: { title: '참고 매매 시세 (추정값)', role: '투자자', defaultOpen: false, sources: ['tx', 'nts'] },
@@ -217,7 +219,8 @@ export const ENTRY_SECTION_PLAN = {
    * 것이라 한쪽으로 못 정한다. 역할 태그는 하나만 붙일 수 있으므로, 반쪽만 부르는
    * 대신 아무도 안 내치는 쪽을 골랐다.
    */
-  lhNotice: { title: 'LH 상가 분양·입점 공고', role: '공통', defaultOpen: false, sources: ['lh'] },
+  // ⓘ 날짜 줄(sources) 없음 — 👤 2026-10-16 B2 「두 카드는 날짜 줄 빼기」.
+  lhNotice: { title: 'LH 상가 분양·입점 공고', role: '공통', defaultOpen: false },
   /**
    * 참고 시세 성적표(로드맵 Wave 4 — 성적표 공개 + 방법 공개).
    *
@@ -228,7 +231,8 @@ export const ENTRY_SECTION_PLAN = {
    * ⛔ 요약 한 줄이 **고른 구의 판정**을 말한다 — 접힌 채로도 "우리 구는 받나 못 받나"는
    *    읽힌다. 접힘이 숨김이 아니라는 규칙(SectionCard)이 여기서 특히 중요하다.
    */
-  scorecard: { title: '참고 시세는 얼마나 맞나', role: '투자자', defaultOpen: false, sources: ['scorecard'] },
+  // ⓘ 날짜 줄(sources) 없음 — 👤 2026-10-16 B2 「두 카드는 날짜 줄 빼기」.
+  scorecard: { title: '참고 시세는 얼마나 맞나', role: '투자자', defaultOpen: false },
   /**
    * 동네 매매 단가 흐름(결정 0027 · 로드맵 Wave 5).
    *

@@ -26,6 +26,13 @@ vi.mock('../lib/supabase', () => ({
 }));
 
 const { OpenCloseSection } = await import('./OpenCloseSection');
+const { resetDataFreshnessCache } = await import('../lib/loadDataFreshness');
+
+/**
+ * 이 카드가 부른 것만 — 카드 머리 날짜 줄(S3)의 신선도 요청은 뺀다(맨 아래 표와 나눠 쓰는 한 번의 요청이라
+ * 이 카드의 질문이 아니다). ⓘ 그 요청은 시험마다 새로 나간다(아래 beforeEach 가 보관을 비운다) — 시험 차례에 기대지 않게.
+ */
+const ocCalls = () => rpcCalls.filter((c) => c.fn !== 'get_data_freshness');
 
 const PNU = '1168010500101590000';
 const DAEJEON = '3011010700108770000';
@@ -111,6 +118,7 @@ function headRow(status: DistrictOpenClose['status']): DistrictOpenClose {
 
 beforeEach(() => {
   rpcCalls.length = 0;
+  resetDataFreshnessCache();
   responses.oc = {
     data: [okRow(), okRow({ district_id: '3001496', district_nm: '강남 마이스 관광특구', district_type: '관광특구' })],
     error: null,
@@ -491,7 +499,7 @@ describe('OpenCloseSection — 못 읽었을 때 · 건물이 바뀔 때 · 미�
   it('★ 함수가 아직 없으면(PGRST202) 카드를 통째로 생략한다', async () => {
     responses.oc = { data: null, error: { code: 'PGRST202' } };
     const { container } = render(<OpenCloseSection pnu={PNU} />);
-    await waitFor(() => expect(rpcCalls).toHaveLength(1));
+    await waitFor(() => expect(ocCalls()).toHaveLength(1));
     await Promise.resolve();
     expect(container.textContent).toBe('');
   });
@@ -499,7 +507,7 @@ describe('OpenCloseSection — 못 읽었을 때 · 건물이 바뀔 때 · 미�
   it('★ 응답에 error 가 있으면 data 모양이 맞아도 카드를 세우지 않는다', async () => {
     responses.oc = { data: [okRow()], error: { message: 'boom' } };
     const { container } = render(<OpenCloseSection pnu={PNU} />);
-    await waitFor(() => expect(rpcCalls).toHaveLength(1));
+    await waitFor(() => expect(ocCalls()).toHaveLength(1));
     await Promise.resolve();
     expect(container.textContent).toBe('');
   });
@@ -507,7 +515,7 @@ describe('OpenCloseSection — 못 읽었을 때 · 건물이 바뀔 때 · 미�
   it('★ 상권 줄인데 창이 비어 있으면 카드를 숨긴다(F6 — "최근 0분기"를 지어내지 않는다)', async () => {
     responses.oc = { data: [okRow({ window_quarters: [] })], error: null };
     const { container } = render(<OpenCloseSection pnu={PNU} />);
-    await waitFor(() => expect(rpcCalls).toHaveLength(1));
+    await waitFor(() => expect(ocCalls()).toHaveLength(1));
     await Promise.resolve();
     expect(container.textContent).toBe('');
     expect(console.warn).toHaveBeenCalled();
@@ -517,7 +525,7 @@ describe('OpenCloseSection — 못 읽었을 때 · 건물이 바뀔 때 · 미�
     const { stor_co: _drop, ...noStor } = q({ quarter: '20262' });
     responses.oc = { data: [okRow({ quarters: [noStor as OpenCloseQuarter] })], error: null };
     const { container } = render(<OpenCloseSection pnu={PNU} />);
-    await waitFor(() => expect(rpcCalls).toHaveLength(1));
+    await waitFor(() => expect(ocCalls()).toHaveLength(1));
     await Promise.resolve();
     expect(container.textContent).toBe('');
   });
@@ -525,7 +533,7 @@ describe('OpenCloseSection — 못 읽었을 때 · 건물이 바뀔 때 · 미�
   it('뜻밖의 모양이면 카드만 사라진다', async () => {
     responses.oc = { data: [{ status: 'closed', window_quarters: [] }], error: null };
     const { container } = render(<OpenCloseSection pnu={PNU} />);
-    await waitFor(() => expect(rpcCalls).toHaveLength(1));
+    await waitFor(() => expect(ocCalls()).toHaveLength(1));
     await Promise.resolve();
     expect(container.textContent).toBe('');
   });
@@ -536,7 +544,7 @@ describe('OpenCloseSection — 못 읽었을 때 · 건물이 바뀔 때 · 미�
     responses.oc = { data: null, error: null };
     rerender(<OpenCloseSection pnu="1168010100100020000" />);
     await waitFor(() => expect(container.querySelector('.oc')).toBeNull());
-    expect(rpcCalls.map((c) => c.args)).toEqual([{ p_pnu: PNU }, { p_pnu: '1168010100100020000' }]);
+    expect(ocCalls().map((c) => c.args)).toEqual([{ p_pnu: PNU }, { p_pnu: '1168010100100020000' }]);
   });
 
   it('★ 미리 보낸 이 pnu 의 답이 있으면 그것을 쓰고 다시 묻지 않는다', async () => {
@@ -549,7 +557,7 @@ describe('OpenCloseSection — 못 읽었을 때 · 건물이 바뀔 때 · 미�
     const { container } = render(<OpenCloseSection pnu={DAEJEON} prefetch={prefetch} />);
     await screen.findByText('상권 개업·폐업 (서울시 공표)');
     expect(container.querySelector('.card__summary')?.textContent).toContain('대전');
-    expect(rpcCalls).toHaveLength(0);
+    expect(ocCalls()).toHaveLength(0);
   });
 });
 

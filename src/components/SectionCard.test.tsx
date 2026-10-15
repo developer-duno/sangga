@@ -4,7 +4,7 @@ import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/re
 import { SectionCard } from './SectionCard';
 import { DataFreshness } from './DataFreshness';
 import { resetDataFreshnessCache } from '../lib/loadDataFreshness';
-import { SECTION_PLAN, ENTRY_SECTION_PLAN, type SectionPlan } from '../lib/sectionCards';
+import { SECTION_PLAN, type SectionPlan } from '../lib/sectionCards';
 import type { DataFreshnessRow } from '../types';
 
 /**
@@ -364,7 +364,9 @@ describe('SectionCard — 제목 아래 날짜 줄 (S3 · 👤 2026-10-16)', () 
       expect(el).not.toBeNull();
       return el!;
     });
-    expect(line.textContent).toBe('자료: 국토부 실거래 2026년 10월 계약분까지 · 국세청 기준시가 2026년 1월 1일 고시');
+    expect(line.textContent).toBe(
+      '자료: 국토부 실거래 2026년 10월 계약분까지 (최근 두 달은 신고 중) · 국세청 기준시가 2026년 1월 1일 고시',
+    );
     // 자리 — 제목(h3) 바로 다음, 요약 줄 앞.
     expect(line.previousElementSibling?.tagName).toBe('H3');
     expect(line.nextElementSibling?.className).toBe('card__summary');
@@ -403,19 +405,19 @@ describe('SectionCard — 제목 아래 날짜 줄 (S3 · 👤 2026-10-16)', () 
     warn.mockRestore();
   });
 
-  it('⛔ 그 자료 줄이 서버 표에 없으면 그 조각만 빠진다(LH 줄 없음 → LH 카드는 줄 없음)', async () => {
+  it('⛔ 그 자료 줄이 서버 표에 없으면 그 조각만 빠진다(부동산원 줄 없음 → 임대 동향 카드는 줄 없음)', async () => {
     const { container } = render(
       <>
-        <SectionCard plan={ENTRY_SECTION_PLAN.lhNotice} className="lh" summary="3건" />
+        <SectionCard plan={SECTION_PLAN.rent} className="rent" summary="상권 1곳" />
         <SectionCard plan={SECTION_PLAN.floors} className="card--floors" summary="층 3개" />
       </>,
     );
     // 층 목록 카드는 줄이 선다(같은 표를 받았다는 양성 대조).
     await waitFor(() => expect(container.querySelectorAll('.card__src')).toHaveLength(1));
     expect(container.querySelector('.card--floors .card__src')?.textContent).toBe(
-      '자료: 건축물대장 2026년 8월 판 · 상권정보 2026년 2분기',
+      '자료: 건축물대장 2026년 8월 판 · 상권정보 2026년 2분기 · 국토부 실거래 2026년 10월 계약분까지 (최근 두 달은 신고 중)',
     );
-    expect(container.querySelector('.lh .card__src')).toBeNull();
+    expect(container.querySelector('.rent .card__src')).toBeNull();
   });
 
   it('⛔ 카드 여러 장과 맨 아래 표가 **같은 한 번의 요청**을 나눠 쓴다', async () => {
@@ -493,5 +495,7 @@ describe('날짜 줄 글자 13px 은 화면에서만 (S3 · ⛔ 종이 글자는
     const rule = base.slice(0, base.indexOf('}'));
     expect(rule).toMatch(/font-size:\s*12px/);
     expect(rule).not.toMatch(/font-size:\s*13px/);
+    // 휴대폰 폭에서 낱말 가운데서 끊기지 않게('부동/산원') — 화면·종이 공통 규칙에(C2 · 2026-10-16).
+    expect(rule).toMatch(/word-break:\s*keep-all/);
   });
 });
