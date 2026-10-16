@@ -675,7 +675,8 @@ function FloorBandBar({ scope }: { scope: IndustryFloorScope }) {
           key={c.key}
           className="mix__stack-cell"
           data-band={c.key}
-          style={{ width: `${c.pct}%`, background: cssVar(c.tone) }}
+          // ⛔ `background` 줄임 속성 금지 — 층 미상 칸의 빗금(CSS background-image)을 덮어쓴다.
+          style={{ width: `${c.pct}%`, backgroundColor: cssVar(c.tone) }}
         />
       ))}
     </div>

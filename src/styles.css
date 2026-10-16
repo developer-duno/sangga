@@ -28,7 +28,10 @@
   --fact-2: #e0b45a;
   --fact-3: #b9842a;
   --fact-4: #7d5414;
+  /* 층 미상 = 옅은 회색 + 흰 빗금(`.mix__stack-cell[data-band='na']`) — 흑백 밝기는 1층 칸(--fact-2)과 비슷해서 밝기가 아니라 무늬로 가른다.
+     ⓘ 짙은 회색으로 밝기를 가르면 '모르는 칸'이 막대에서 가장 무거워 보인다(👤 메인 10-17 판단). */
   --viz-na: #b4b7bf;
+  --viz-na-hatch: #f4f5f7;
 
   color-scheme: light;
 }
@@ -2058,6 +2061,16 @@ body {
 .mix__stack-cell {
   display: block;
   height: 100%;
+}
+
+/* 층 미상 칸만 흰 사선 빗금 — 흑백 종이에서 밝기가 비슷한 1층 칸과 무늬로 갈린다(종이 색은 `*` 의 print-color-adjust 가 지킨다).
+   ⓘ 칸 색은 인라인 `background-color` 로만 준다 — 인라인 `background` 줄임 속성이면 이 무늬를 덮어쓴다. */
+.mix__stack-cell[data-band='na'] {
+  background-image: repeating-linear-gradient(
+    135deg,
+    var(--viz-na-hatch) 0 2px,
+    transparent 2px 5px
+  );
 }
 
 /* 이웃 칸이 같은 계열 색이라 사이에 흰 줄 하나(폭은 % 안에 든다 — box-sizing: border-box). */
@@ -4355,6 +4368,16 @@ body {
   */
   .floor.floor--units-open {
     break-inside: auto;
+  }
+
+  /* 그림과 그 글이 두 장에 갈리지 않게(결정 0038 §2-9) — 쌓은 막대는 아래 층 줄 글과, 띠 눈금 글은 위 띠 목록과 같은 장에.
+     ⛔ 카드 통째(`.mix`·`.band`)에는 걸지 않는다(위 설명 참조 — 장수가 늘고 흰 종이가 남는다). */
+  .mix__stack {
+    break-after: avoid;
+  }
+
+  .band__axis {
+    break-before: avoid;
   }
 
   /* 제목만 페이지 끝에 혼자 남는 것을 막는다. */

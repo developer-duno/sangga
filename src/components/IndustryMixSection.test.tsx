@@ -1402,7 +1402,7 @@ describe('IndustryMixSection — 그림 층 묶음 쌓은 막대 (결정 0038 E)
     return [...bar.querySelectorAll<HTMLElement>('.mix__stack-cell')].map((c) => [
       c.dataset.band,
       c.style.width,
-      c.style.background,
+      c.style.backgroundColor,
     ]);
   }
 

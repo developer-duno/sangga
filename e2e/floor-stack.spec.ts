@@ -3547,6 +3547,26 @@ test.describe('그림 — 둘레의 업종 분포 (결정 0038 E)', () => {
       }
       return out;
     };
+    /**
+     * ▲ 가 정말 눈에 보이나 — 가운데 점을 눌렀을 때 맨 위에 있는 것이 그 ▲ 인가(`elementFromPoint`).
+     * ⓘ `toBeVisible()` 은 상자 크기만 봐서, 부모가 `overflow: hidden` 으로 ▲ 를 잘라도 초록이다(검사관 변이 실측).
+     *   잘리면 그 점에서 잡히는 것은 줄(li) 같은 다른 상자다.
+     * ⛔ ▲ 자신을 `scrollIntoView` 하지 않는다 — `overflow: hidden` 칸도 스크립트로는 굴러가서, 잘린 ▲ 를 칸 안으로 끌어올려
+     *   이 단언이 초록이 된다(실측: 변이에서 2 passed). 페이지만 굴리게 **줄(li)** 을 화면에 들인다(막대 칸은 줄의 조상이 아니다).
+     */
+    const expectMarksOnTop = async (root: ReturnType<Page['locator']>) => {
+      const marks = await root.locator('.mix__mark').all();
+      expect(marks.length).toBeGreaterThan(0);
+      for (const m of marks) {
+        const hit = await m.evaluate((e) => {
+          e.closest('li')!.scrollIntoView({ block: 'center' });
+          const r = e.getBoundingClientRect();
+          const at = e.ownerDocument.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+          return at === e || (at !== null && e.contains(at)) ? 'mark' : at === null ? 'none' : at.className;
+        });
+        expect(hit).toBe('mark');
+      }
+    };
     const checkMarks = async () => {
       // ① 대분류 상권 블록 — 골목 음식 25.0 · 소매 19.3(픽스처 med_pct) · 전통시장(30곳 미만)·반경엔 없음.
       const g = await markPcts(gol);
@@ -3562,6 +3582,7 @@ test.describe('그림 — 둘레의 업종 분포 (결정 0038 E)', () => {
       expect(Math.abs(mb.y - (bb.y + bb.height))).toBeLessThan(1.5);
       expect(mb.height).toBeGreaterThan(3);
       expect(await mark.evaluate((e) => e.ownerDocument.defaultView!.getComputedStyle(e).borderBottomColor)).toBe(inkRgb);
+      await expectMarksOnTop(gol);
     };
     await checkMarks();
 
@@ -3576,6 +3597,7 @@ test.describe('그림 — 둘레의 업종 분포 (결정 0038 E)', () => {
       const d = await markPcts(dGol);
       expect(d.map((v) => Math.round(v!))).toEqual([38, 15, 21, 10]);
       expect(await markPcts(dRadius)).toEqual([null, null]);
+      await expectMarksOnTop(dGol);
 
       // ③ 쌓은 막대 — 층 줄 글 바로 위 · 칸 수 = 0 아닌 묶음 수 · 칸 폭 합 ≈ 막대 폭 · 칸 폭 ∝ 곳 수.
       const steps = await Promise.all(['--fact-1', '--fact-2', '--fact-3', '--fact-4', '--viz-na'].map((n) => tokenRgb(page, n)));
@@ -3596,6 +3618,10 @@ test.describe('그림 — 둘레의 업종 분포 (결정 0038 E)', () => {
           expect((cb.width / sb.width) * 100).toBeCloseTo((c.n / sum) * 100, 0);
           // ④ 색 = 토큰 값(지하 → 3층 이상 호박 4단 · 층 미상 회색).
           expect(await cells.nth(k).evaluate((e) => e.ownerDocument.defaultView!.getComputedStyle(e).backgroundColor)).toBe(steps[c.i]);
+          // 층 미상 칸만 흰 사선 빗금(흑백 밝기가 1층과 비슷해 무늬로 가른다) — 화면과 종이 둘 다.
+          const img = await cells.nth(k).evaluate((e) => e.ownerDocument.defaultView!.getComputedStyle(e).backgroundImage);
+          if (c.i === 4) expect(img).toContain('repeating-linear-gradient');
+          else expect(img).toBe('none');
         }
         expect(Math.abs(total - sb.width)).toBeLessThan(1);
       };
