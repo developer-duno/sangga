@@ -785,11 +785,110 @@ body {
 
 /* 지도는 부모 높이를 채운다 — 카카오 지도는 컨테이너 높이가 0이면 아무것도 안 보인다. */
 .dmap__canvas {
+  /* 화면 밖 표지(`.dmap__off`)를 지도 가장자리에 띄우는 기준(결정 0039 W1). */
+  position: relative;
   height: 420px;
   margin: 14px 0 0;
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
+}
+
+/*
+  화면 밖 표지 — 「↙ 이름 등 3곳」(결정 0039 Q4 · W1). 지금 화면 밖 상권을 방향마다 묶어 그쪽 가장자리에 단다.
+  누르면 그쪽으로 옮긴다. ⓘ 지도 위에 떠야 하므로 카카오 지도 칸(형제)보다 높은 층에 둔다.
+  ⓘ 휴대폰(720px 이하)은 이름을 숨기고 44px 높이 — 아래 `@media screen and (max-width: 720px)` 묶음.
+  ⛔ 종이에서는 뺀다(누르는 장치 — 인쇄 감춤 목록).
+*/
+.dmap__off {
+  position: absolute;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(50% - 16px);
+  min-height: 32px;
+  padding: 2px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+}
+
+.dmap__off:hover,
+.dmap__off:focus-visible {
+  border-color: currentColor;
+}
+
+/* 긴 상권 이름(대전 서구 「가수원육교.가수원시장 정류장」)은 한 줄로 두고 넘치면 …로 줄인다. */
+.dmap__off-nm {
+  max-width: 8em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dmap__off--n,
+.dmap__off--s {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.dmap__off--w,
+.dmap__off--e {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.dmap__off--nw,
+.dmap__off--n,
+.dmap__off--ne {
+  top: 8px;
+}
+
+.dmap__off--sw,
+.dmap__off--s,
+.dmap__off--se {
+  bottom: 8px;
+}
+
+.dmap__off--nw,
+.dmap__off--w,
+.dmap__off--sw {
+  left: 8px;
+}
+
+.dmap__off--ne,
+.dmap__off--e,
+.dmap__off--se {
+  right: 8px;
+}
+
+/*
+  멀리서는 점 + 이름(결정 0039 W1) — 이름은 지금 이름표(`.dmap__label`)를 그대로 쓴다(화면·종이 대접이 같다).
+  ⛔ **누르기를 넘긴다**(`pointer-events: none`) — `DistrictMap.tsx` 의 `clickable={false}` 와 짝이다(이름표와 같은 두 겹).
+  ⓘ 점(8px)의 가운데가 상권의 이름표 점에 오도록 왼쪽으로 4px 당긴다 — `lib/districtMapView.ts` 의 겹침 어림(이름은 8px 오른쪽부터)과 맞춘다.
+*/
+.dmap__far {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: -4px;
+  pointer-events: none;
+}
+
+.dmap__dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid #fff;
+  border-radius: 50%;
+  background: var(--muted);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
 }
 
 .dmap__legend {
@@ -3556,6 +3655,16 @@ body {
   .floor__row:has(> .floor__tx:empty) .floor__stores {
     grid-column-end: -1;
   }
+
+  /* 지도 화면 밖 표지(결정 0039 W1) — 좁은 지도에서는 이름을 숨겨 「↙ 3곳」만, 손가락으로 누르기 좋게 44px. */
+  .dmap__off {
+    min-height: 44px;
+  }
+
+  .dmap__off-nm,
+  .dmap__off-etc {
+    display: none;
+  }
 }
 
 /* ── 가지고 나가기(링크 복사) ──────────────────────────────────────────────
@@ -4144,6 +4253,8 @@ body {
   .fb,
   .dmap__toggle,
   .dmap__picked--idle,
+  /* 지도 화면 밖 표지(결정 0039 W1) — 누르는 장치다. */
+  .dmap__off,
   .dbld,
   .mix__pick,
   /* ⛔ 고르개만 빼고 **고른 결과는 남긴다** — `.rent__now` 가 어느 종류를 보는 중인지
