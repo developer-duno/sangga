@@ -26,12 +26,14 @@ import {
   districtSources,
   floorLine,
   floorScopeByKey,
+  floorStack,
   isIndustryDetail,
   isIndustryFloors,
   isIndustryMedian,
   isIndustryMedianM,
   isIndustryMix,
   MEDIAN_BADGE,
+  medianMarkPct,
   medianMViewOf,
   medianViewOf,
   sameCatMs,
@@ -40,6 +42,7 @@ import {
   type MixBar,
 } from '../lib/industryMix';
 import { toPermitLine, type NearbyPermitLine } from '../lib/nearbyPermits';
+import { cssVar, VIZ_TONES } from '../lib/viz';
 import { FOUNDER_CHIP_ALL, chipMatch, type FounderChip } from '../lib/founderChips';
 import { takePrefetched, type RpcResult, type SidePrefetch } from '../lib/sidePrefetch';
 
@@ -599,7 +602,12 @@ function ScopeBlock({
       ) : (
         <ul className="mix__bars">
           {bars.map((b) => (
-            <MixBarRow key={b.cd} bar={b} med={med?.lines.get(b.cd) ?? null} />
+            <MixBarRow
+              key={b.cd}
+              bar={b}
+              med={med?.lines.get(b.cd) ?? null}
+              medPct={med?.pcts.get(b.cd) ?? null}
+            />
           ))}
         </ul>
       )}
@@ -612,20 +620,65 @@ function ScopeBlock({
  * `hit` = 창업자 칩의 짝 중분류 줄 — 굵게 한다(결정 0036 결정 18 ⑨).
  * `med` = 업종 비중 비교 글(물결 2-3) — 같은 줄(`li`) 안의 둘째 줄이라 종이에서도 갈리지 않는다.
  */
-function MixBarRow({ bar, hit = false, med = null }: { bar: MixBar; hit?: boolean; med?: string | null }) {
-  const cls = [hit ? 'mix__hit' : null, med ? 'mix__row--med' : null].filter(Boolean).join(' ');
+function MixBarRow({
+  bar,
+  hit = false,
+  med = null,
+  medPct = null,
+}: {
+  bar: MixBar;
+  hit?: boolean;
+  med?: string | null;
+  /** 같은 줄 비교 글의 가운데값 숫자(결정 0038 E) — 비교 글이 있을 때만 준다. ▲ 자리에만 쓴다. */
+  medPct?: number | null;
+}) {
+  // ▲ 는 비교 글이 선 줄에만(글 없는 ▲ 0 · 반경 블록은 med 가 늘 null).
+  const mark = med ? medianMarkPct(medPct) : null;
+  const cls = [hit ? 'mix__hit' : null, med ? 'mix__row--med' : null, mark !== null ? 'mix__row--mark' : null]
+    .filter(Boolean)
+    .join(' ');
   return (
     <li className={cls || undefined}>
       <span className="mix__cat">{hit ? <strong>{bar.nm || bar.cd}</strong> : bar.nm || bar.cd}</span>
-      <span className="mix__bar">
+      <span className={mark !== null ? 'mix__bar mix__bar--mark' : 'mix__bar'}>
         {/* 몫이 0 이면 막대를 그리지 않는다. 최소 폭을 강제하면 "0곳"이 "조금 있음"처럼 보인다. */}
         {bar.pct > 0 && <span className="mix__fill" style={{ width: `${bar.pct}%` }} />}
+        {/* 가운데값 ▲(결정 0038 E) — 막대와 같은 0~100 자 · 추정 색 · 아래 둘째 줄 글과 같은 내용이라 낭독기에서 뺀다. */}
+        {mark !== null && (
+          <span
+            className="mix__mark"
+            aria-hidden="true"
+            style={{ left: `${mark}%`, borderBottomColor: cssVar(VIZ_TONES.est.ink) }}
+          />
+        )}
       </span>
       <span className="mix__n">{bar.n.toLocaleString('ko-KR')}곳</span>
       <span className="mix__pct">{bar.pct.toFixed(1)}%</span>
       {/* 한 덩어리 글자(조각 금지 — 시험이 한 낱말로 찾는다). */}
       {med && <span className="mix__med">{med}</span>}
     </li>
+  );
+}
+
+/**
+ * 층별 다섯 묶음 쌓은 막대 한 줄(결정 0038 E) — 바로 아래 층 줄 글과 같은 숫자를 길이로만 보인다.
+ * 지하 → 3층 이상 = 호박 진하기 4단 · 층 미상 = 회색 · 차례 고정 · 0곳 묶음은 칸 없음 · 칸 안 글자 0.
+ * 옆(아래) 글과 같은 내용이라 낭독기에서 뺀다(§2-1 — 두 번 읽히지 않게).
+ */
+function FloorBandBar({ scope }: { scope: IndustryFloorScope }) {
+  const cells = floorStack(scope);
+  if (cells === null) return null;
+  return (
+    <div className="mix__stack" aria-hidden="true">
+      {cells.map((c) => (
+        <span
+          key={c.key}
+          className="mix__stack-cell"
+          data-band={c.key}
+          style={{ width: `${c.pct}%`, background: cssVar(c.tone) }}
+        />
+      ))}
+    </div>
   );
 }
 
@@ -754,12 +807,15 @@ function DetailBlocks({
                     bar={c}
                     hit={hitCds.includes(c.cd)}
                     med={b.med?.lines.get(c.cd) ?? null}
+                    medPct={b.med?.pcts.get(c.cd) ?? null}
                   />
                 ))}
               </ul>
             )}
-            {/* 층 줄(물결 2-2) — 한 덩어리 글자(조각 금지 · 시험이 한 낱말로 찾는다). */}
+            {/* 층 줄(물결 2-2) — 한 덩어리 글자(조각 금지 · 시험이 한 낱말로 찾는다). 바로 위에 같은 숫자의 쌓은 막대(결정 0038 E). */}
+            {line && fs && <FloorBandBar scope={fs} />}
             {line && <p className="mix__floors">{line}</p>}
+            {chipLine && cs && <FloorBandBar scope={cs} />}
             {chipLine && <p className="mix__floors mix__floors--chip">{chipLine}</p>}
           </div>
         );
