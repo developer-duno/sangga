@@ -11,6 +11,7 @@ import type {
   IndustryScope,
 } from '../types';
 import { SIDOS } from './regions';
+import { pctOf, stackPct, VIZ_TONES } from './viz';
 
 /**
  * 업종 분포 화면의 순수 계산만 모은다(결정 0014).
@@ -337,6 +338,11 @@ export function isIndustryMedian(x: unknown): x is IndustryMedian {
 export type MedianView = {
   /** 대분류 코드 → 그 줄 둘째 줄 글. 없는 코드는 그 줄만 비교 글 없음. */
   lines: Map<string, string>;
+  /**
+   * 코드 → 가운데값 숫자(0~100 · 서버 `med_pct` 그대로) — 막대 칸 위 ▲ 자리에만 쓴다(결정 0038 E · 글자로 내지 않는다).
+   * ⛔ `lines` 와 같은 열쇠만 든다 — 비교 글이 없는 줄에 ▲ 만 서지 않게(한 반복에서 함께 채운다).
+   */
+  pcts: Map<string, number>;
   /** 블록 머리 아래 설명(배지 뒤 글) — 모집단이 있을 때만. */
   note: string | null;
   /** 점포가 기준 미만일 때의 사실 한 줄. */
@@ -357,13 +363,17 @@ export function medianViewOf(
   if (!d) return null;
   if (d.pop === null) {
     const tooSmall = medianTooSmall(d.total, median.min_total);
-    return tooSmall === null ? null : { lines: new Map(), note: null, tooSmall };
+    return tooSmall === null ? null : { lines: new Map(), pcts: new Map(), note: null, tooSmall };
   }
   const pop = d.pop;
   const sido = sidoNameOf(pop.sido_cd);
   const lines = new Map<string, string>();
-  for (const c of d.cats) lines.set(c.cd, medianLine(sido, pop, c.med_pct));
-  return { lines, note: medianNote(sido, pop, median.min_total), tooSmall: null };
+  const pcts = new Map<string, number>();
+  for (const c of d.cats) {
+    lines.set(c.cd, medianLine(sido, pop, c.med_pct));
+    pcts.set(c.cd, c.med_pct);
+  }
+  return { lines, pcts, note: medianNote(sido, pop, median.min_total), tooSmall: null };
 }
 
 // ── 업종 비중 비교 · 중분류 (물결 2-3b · 결정 0036 결정 18 ㉗~㉚) ─────────────────────
@@ -426,11 +436,51 @@ export function medianMViewOf(
   if (!d) return null;
   if (d.pop === null) {
     const tooSmall = medianMTooSmall(catNm, d.total, median.min_total);
-    return tooSmall === null ? null : { lines: new Map(), note: null, tooSmall };
+    return tooSmall === null ? null : { lines: new Map(), pcts: new Map(), note: null, tooSmall };
   }
   const pop = d.pop;
   const sido = sidoNameOf(pop.sido_cd);
   const lines = new Map<string, string>();
-  for (const c of d.cats) lines.set(c.cd, medianLine(sido, pop, c.med_pct));
-  return { lines, note: medianMNote(sido, pop, catNm, median.min_total), tooSmall: null };
+  const pcts = new Map<string, number>();
+  for (const c of d.cats) {
+    lines.set(c.cd, medianLine(sido, pop, c.med_pct));
+    pcts.set(c.cd, c.med_pct);
+  }
+  return { lines, pcts, note: medianMNote(sido, pop, catNm, median.min_total), tooSmall: null };
+}
+
+// ── 그림 (결정 0038 E · 화면만 · 서버 0) ─────────────────────────────────────────────
+
+/**
+ * ▲ 눈금의 자리(막대 칸 0~100 위 %) — 막대 폭(`bar.pct`)과 **같은 자**(그 블록 안 몫 0~100)라 그대로 놓는다.
+ * 가운데값이 없거나(비교 글 없는 줄 · 반경 블록) 0~100 밖이면 null(▲ 없음).
+ * 못 보는 것: 서버가 준 `med_pct` 의 분모가 막대 분모와 같은지(👤 ㉘ 같은 분모 — 서버 시험이 지킨다)는 여기서 모른다.
+ */
+export function medianMarkPct(medPct: number | null | undefined): number | null {
+  if (medPct === null || medPct === undefined || medPct > 100) return null;
+  return pctOf(medPct, 100);
+}
+
+/** 층 묶음 색 — 지하 → 3층 이상은 사실 호박의 진하기 4단(옅음 → 짙음), 층 미상은 회색(결정 0038 E · §2-7). */
+export const FLOOR_BAND_TONE: Record<(typeof FLOOR_BAND_ORDER)[number], string> = {
+  b: VIZ_TONES.fact.steps[0],
+  '1': VIZ_TONES.fact.steps[1],
+  '2': VIZ_TONES.fact.steps[2],
+  '3+': VIZ_TONES.fact.steps[3],
+  na: VIZ_TONES.na,
+};
+
+/**
+ * 층 줄(`floorLine`) 위 쌓은 막대 한 줄의 칸들 — 차례 = `FLOOR_BAND_ORDER` 고정 · 폭 = 그 묶음 곳 수 ÷ 다섯 묶음 합.
+ * 0곳 묶음은 칸 없음 · 합 0(줄도 안 서는 범위)이면 null.
+ * ⛔ 폭에만 쓴다 — 칸 안에 비율 글자를 쓰지 않는다(같은 줄 글이 이미 곳 수를 말한다 · 결정 0033).
+ * 못 보는 것: 다섯 묶음 합과 `total` 이 다른 응답(서버 `--check` 합 대조 몫)은 합 기준으로 그린다.
+ */
+export function floorStack(
+  scope: IndustryFloorScope,
+): Array<{ key: (typeof FLOOR_BAND_ORDER)[number]; pct: number; tone: string }> | null {
+  if (scope.total <= 0) return null;
+  const cells = stackPct(FLOOR_BAND_ORDER.map((k) => ({ key: k, n: scope.bands[k] })));
+  if (cells === null) return null;
+  return cells.map((c) => ({ ...c, tone: FLOOR_BAND_TONE[c.key] }));
 }

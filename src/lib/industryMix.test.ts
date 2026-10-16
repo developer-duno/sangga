@@ -14,8 +14,10 @@ import {
   districtSources,
   FLOOR_BAND_LABELS,
   FLOOR_BAND_ORDER,
+  FLOOR_BAND_TONE,
   floorLine,
   floorScopeByKey,
+  floorStack,
   isCat,
   isDistrict,
   isFloorScope,
@@ -27,6 +29,7 @@ import {
   isScope,
   MEDIAN_BADGE,
   medianLine,
+  medianMarkPct,
   medianMNote,
   medianMTooSmall,
   medianMViewOf,
@@ -596,5 +599,72 @@ describe('업종 비중 비교 · 중분류 — 상세 상권 블록 글 묶음'
     expect(medianMViewOf(medianM(), 'D1', '202606', 'G2', '소매')).toBeNull();
     const zero = medianM({ districts: [{ district_id: 'D3', type: '골목상권', total: 0, pop: null, cats: [] }] });
     expect(medianMViewOf(zero, 'D3', '202606', 'I2', '음식')).toBeNull();
+  });
+});
+
+// ── 그림 (결정 0038 E) ─────────────────────────────────────────────────────────
+
+describe('그림 — 가운데값 ▲ 자리', () => {
+  it('글 묶음에 숫자(pcts)가 글(lines)과 같은 열쇠로 든다 — 대분류·중분류 둘 다', () => {
+    const v = medianViewOf(median(), 'D1', '202606')!;
+    expect([...v.pcts.keys()]).toEqual([...v.lines.keys()]);
+    expect(v.pcts.get('I2')).toBe(25.0);
+    const m = medianMViewOf(medianM(), 'D1', '202606', 'I2', '음식')!;
+    expect([...m.pcts.keys()]).toEqual([...m.lines.keys()]);
+    expect(m.pcts.get('I212')).toBe(15.2);
+    expect(m.pcts.get('I205')).toBe(0); // 0 도 값이다(▲ 는 0% 자리)
+  });
+
+  it('점포가 기준 미만인 상권은 숫자도 없다(▲ 0)', () => {
+    expect(medianViewOf(median(), 'D2', '202606')!.pcts.size).toBe(0);
+    expect(medianMViewOf(medianM(), 'D2', '202606', 'I2', '음식')!.pcts.size).toBe(0);
+  });
+
+  it('medianMarkPct — 막대와 같은 0~100 자 · 없음·범위 밖이면 null', () => {
+    expect(medianMarkPct(25)).toBe(25);
+    expect(medianMarkPct(0)).toBe(0);
+    expect(medianMarkPct(100)).toBe(100);
+    expect(medianMarkPct(null)).toBeNull();
+    expect(medianMarkPct(undefined)).toBeNull();
+    expect(medianMarkPct(Number.NaN)).toBeNull();
+    expect(medianMarkPct(-0.1)).toBeNull();
+    expect(medianMarkPct(100.1)).toBeNull();
+  });
+});
+
+describe('그림 — 층 묶음 쌓은 막대', () => {
+  const sc = (bands: Record<string, number>, total = Object.values(bands).reduce((a, b) => a + b, 0)) =>
+    ({ total, bands }) as unknown as Parameters<typeof floorStack>[0];
+
+  it('차례는 FLOOR_BAND_ORDER 고정 · 폭 = 곳 수 ÷ 합 · 합 100', () => {
+    const cells = floorStack(sc({ na: 25, '3+': 9, '2': 24, '1': 90, b: 2 }))!;
+    expect(cells.map((c) => c.key)).toEqual(['b', '1', '2', '3+', 'na']);
+    expect(cells.map((c) => Number(c.pct.toFixed(4)))).toEqual([1.3333, 60, 16, 6, 16.6667]);
+    expect(cells.reduce((a, c) => a + c.pct, 0)).toBeCloseTo(100, 9);
+  });
+
+  it('지하 → 3층 이상은 호박 진하기 4단(옅음 → 짙음) · 층 미상은 회색', () => {
+    const cells = floorStack(sc({ b: 1, '1': 1, '2': 1, '3+': 1, na: 1 }))!;
+    expect(cells.map((c) => c.tone)).toEqual(['--fact-1', '--fact-2', '--fact-3', '--fact-4', '--viz-na']);
+    expect(FLOOR_BAND_TONE.na).toBe('--viz-na');
+  });
+
+  it('0곳 묶음은 칸 없음(최소 폭 강제 금지) · 한 묶음뿐이면 100%', () => {
+    expect(floorStack(sc({ b: 0, '1': 36, '2': 9, '3+': 3, na: 12 }))!.map((c) => c.key)).toEqual([
+      '1',
+      '2',
+      '3+',
+      'na',
+    ]);
+    expect(floorStack(sc({ b: 0, '1': 0, '2': 0, '3+': 0, na: 7 }))).toEqual([
+      { key: 'na', pct: 100, tone: '--viz-na' },
+    ]);
+  });
+
+  it('total 0 이거나 다섯 묶음 합 0 이면 null(층 줄도 안 서는 범위)', () => {
+    const zero = { b: 0, '1': 0, '2': 0, '3+': 0, na: 0 };
+    expect(floorStack(sc(zero))).toBeNull();
+    expect(floorStack(sc(zero, 5))).toBeNull();
+    expect(floorStack(sc({ b: 1, '1': 1, '2': 1, '3+': 1, na: 1 }, 0))).toBeNull();
   });
 });

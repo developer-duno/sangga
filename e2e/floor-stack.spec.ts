@@ -3482,3 +3482,265 @@ test.describe('휴대폰 층 줄', () => {
     await page.emulateMedia({ media: null });
   });
 });
+
+// ── 그림 (결정 0038 V1 — E ▲ 눈금·층 묶음 쌓은 막대 · A 참고 시세 띠) ─────────────────────
+// 값 → 자리·폭 계산은 단위 시험(`viz.test.ts`·`industryMix.test.ts`·`priceBand.test.ts`)이, 서는 경우/안 서는 경우는 컴포넌트 시험이 덮는다.
+// 여기서만 보이는 것은 **실제로 그려진 자리**(브라우저가 배치한 상자의 비율이 픽스처 숫자와 맞나) · 색이 토큰 값인가 ·
+// 넓은 화면·휴대폰·종이에서 같은 그림이 서는가다(그림이 깨져도 글자 시험은 초록이다 — 결정 0038 §2-10).
+
+/** `:root` 의 색 토큰 → `rgb(r, g, b)`(계산된 스타일과 견주려고). */
+async function tokenRgb(page: Page, name: string) {
+  const hex = await page
+    .locator('html')
+    .evaluate((el, n) => el.ownerDocument.defaultView!.getComputedStyle(el).getPropertyValue(n).trim(), name);
+  expect(hex, name).toMatch(/^#[0-9a-f]{6}$/i);
+  const n = (i: number) => parseInt(hex.slice(i, i + 2), 16);
+  return `rgb(${n(1)}, ${n(3)}, ${n(5)})`;
+}
+
+/** 상자 a 의 가운데(또는 왼쪽 끝)가 상자 b 의 폭에서 몇 % 자리인가. */
+async function pctIn(a: ReturnType<Page['locator']>, b: ReturnType<Page['locator']>, at: 'center' | 'left' = 'center') {
+  const x = (await a.boundingBox())!;
+  const y = (await b.boundingBox())!;
+  const px = at === 'center' ? x.x + x.width / 2 : x.x;
+  return ((px - y.x) / y.width) * 100;
+}
+
+test.describe('그림 — 둘레의 업종 분포 (결정 0038 E)', () => {
+  test('BD. 상권 막대 줄마다 ▲(가운데값 자리 · 추정 잉크색) · 반경엔 없음 · 층 줄 위 쌓은 막대(칸 수 = 0 아닌 묶음 · 폭 합 100% · 호박 진하기 + 회색) · 412px 넘침 0 · 종이에도 그대로', async ({
+    page,
+  }) => {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page, [], priceBands(), [floorRow()], industryMixTwoDistricts());
+    // 나중에 등록한 것이 먼저 잡힌다 — mockFloorStack 의 '함수 없음' 위에 덮는다.
+    await mockJson(page, INDUSTRY_MEDIAN_PATTERN, industryMedian());
+    await mockJson(page, INDUSTRY_MEDIAN_M_PATTERN, industryMedianM());
+    await mockJson(page, INDUSTRY_DETAIL_PATTERN, industryDetailTwoDistricts());
+    // 층 묶음 — 골목(지하 0곳 → 칸 넷)과 반경(다섯 묶음 다 → 칸 다섯). 합 = 그 블록 업종 총수(120 · 150).
+    const fl = industryFloors();
+    await mockJson(page, INDUSTRY_FLOORS_PATTERN, {
+      ...fl,
+      districts: [{ district_id: '3110001', name: '역삼골목', total: 120, bands: { b: 0, '1': 78, '2': 18, '3+': 6, na: 18 } }],
+    });
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+    const mix = page.locator('section.mix');
+    if ((await mix.locator('.card__toggle').getAttribute('aria-expanded')) === 'false') {
+      await mix.locator('.card__toggle').click();
+    }
+    const block = (root: ReturnType<Page['locator']>, heading: string) =>
+      root.locator('.mix__block').filter({ has: page.getByRole('heading', { name: heading }) });
+    const gol = block(mix, '역삼골목(골목상권) 안 215곳');
+    await expect(gol.locator('.mix__med')).toHaveCount(2);
+
+    const inkRgb = await tokenRgb(page, '--est-ink');
+    /** 블록의 막대 줄마다 ▲ 가운데의 막대 칸 안 자리(%) — 없으면 null. */
+    const markPcts = async (root: ReturnType<Page['locator']>) => {
+      const out: Array<number | null> = [];
+      for (const li of await root.locator('.mix__bars li').all()) {
+        const mark = li.locator('.mix__mark');
+        out.push((await mark.count()) === 0 ? null : await pctIn(mark, li.locator('.mix__bar')));
+      }
+      return out;
+    };
+    /**
+     * ▲ 가 정말 눈에 보이나 — 가운데 점을 눌렀을 때 맨 위에 있는 것이 그 ▲ 인가(`elementFromPoint`).
+     * ⓘ `toBeVisible()` 은 상자 크기만 봐서, 부모가 `overflow: hidden` 으로 ▲ 를 잘라도 초록이다(검사관 변이 실측).
+     *   잘리면 그 점에서 잡히는 것은 줄(li) 같은 다른 상자다.
+     * ⛔ ▲ 자신을 `scrollIntoView` 하지 않는다 — `overflow: hidden` 칸도 스크립트로는 굴러가서, 잘린 ▲ 를 칸 안으로 끌어올려
+     *   이 단언이 초록이 된다(실측: 변이에서 2 passed). 페이지만 굴리게 **줄(li)** 을 화면에 들인다(막대 칸은 줄의 조상이 아니다).
+     */
+    const expectMarksOnTop = async (root: ReturnType<Page['locator']>) => {
+      const marks = await root.locator('.mix__mark').all();
+      expect(marks.length).toBeGreaterThan(0);
+      for (const m of marks) {
+        const hit = await m.evaluate((e) => {
+          e.closest('li')!.scrollIntoView({ block: 'center' });
+          const r = e.getBoundingClientRect();
+          const at = e.ownerDocument.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+          return at === e || (at !== null && e.contains(at)) ? 'mark' : at === null ? 'none' : at.className;
+        });
+        expect(hit).toBe('mark');
+      }
+    };
+    const checkMarks = async () => {
+      // ① 대분류 상권 블록 — 골목 음식 25.0 · 소매 19.3(픽스처 med_pct) · 전통시장(30곳 미만)·반경엔 없음.
+      const g = await markPcts(gol);
+      expect(g).toHaveLength(2);
+      expect(g[0]!).toBeCloseTo(25.0, 0);
+      expect(g[1]!).toBeCloseTo(19.3, 0);
+      expect(await markPcts(block(mix, '역삼시장(전통시장) 안 12곳'))).toEqual([null, null]);
+      expect(await markPcts(block(mix, '반경 500m 안 200곳'))).toEqual([null, null]);
+      // ▲ 는 막대 바로 아래에서 위를 가리킨다(꼭짓점이 막대 아래 변에 닿는다) · 추정 잉크색.
+      const mark = gol.locator('.mix__mark').first();
+      const mb = (await mark.boundingBox())!;
+      const bb = (await gol.locator('.mix__bars li').first().locator('.mix__bar').boundingBox())!;
+      expect(Math.abs(mb.y - (bb.y + bb.height))).toBeLessThan(1.5);
+      expect(mb.height).toBeGreaterThan(3);
+      expect(await mark.evaluate((e) => e.ownerDocument.defaultView!.getComputedStyle(e).borderBottomColor)).toBe(inkRgb);
+      await expectMarksOnTop(gol);
+    };
+    await checkMarks();
+
+    // 대분류를 고르면 상세 — 중분류 ▲(골목 한식 38.1 · 비알코올 15.2 · 기타 간이 20.6 · 주점 9.8) + 층 묶음 막대.
+    await mix.locator('select.mix__select').selectOption('I2');
+    const detail = mix.locator('.mix__detail');
+    const dGol = block(detail, '역삼골목(골목상권) 안 음식 120곳');
+    const dRadius = block(detail, '반경 500m 안 음식 150곳');
+    await expect(dGol.locator('.mix__med')).toHaveCount(4);
+    await expect(detail.locator('.mix__floors')).toHaveCount(2);
+    const checkDetail = async () => {
+      const d = await markPcts(dGol);
+      expect(d.map((v) => Math.round(v!))).toEqual([38, 15, 21, 10]);
+      expect(await markPcts(dRadius)).toEqual([null, null]);
+      await expectMarksOnTop(dGol);
+
+      // ③ 쌓은 막대 — 층 줄 글 바로 위 · 칸 수 = 0 아닌 묶음 수 · 칸 폭 합 ≈ 막대 폭 · 칸 폭 ∝ 곳 수.
+      const steps = await Promise.all(['--fact-1', '--fact-2', '--fact-3', '--fact-4', '--viz-na'].map((n) => tokenRgb(page, n)));
+      const checkStack = async (root: ReturnType<Page['locator']>, bands: number[]) => {
+        const stack = root.locator('.mix__stack');
+        await expect(stack).toHaveCount(1);
+        // 글 줄 바로 앞 형제다.
+        expect(await root.locator('.mix__floors').evaluate((p) => p.previousElementSibling?.className)).toBe('mix__stack');
+        const sb = (await stack.boundingBox())!;
+        const cells = stack.locator('.mix__stack-cell');
+        const want = bands.map((n, i) => ({ n, i })).filter((c) => c.n > 0);
+        await expect(cells).toHaveCount(want.length);
+        const sum = bands.reduce((a, b) => a + b, 0);
+        let total = 0;
+        for (const [k, c] of want.entries()) {
+          const cb = (await cells.nth(k).boundingBox())!;
+          total += cb.width;
+          expect((cb.width / sb.width) * 100).toBeCloseTo((c.n / sum) * 100, 0);
+          // ④ 색 = 토큰 값(지하 → 3층 이상 호박 4단 · 층 미상 회색).
+          expect(await cells.nth(k).evaluate((e) => e.ownerDocument.defaultView!.getComputedStyle(e).backgroundColor)).toBe(steps[c.i]);
+          // 층 미상 칸만 흰 사선 빗금(흑백 밝기가 1층과 비슷해 무늬로 가른다) — 화면과 종이 둘 다.
+          const img = await cells.nth(k).evaluate((e) => e.ownerDocument.defaultView!.getComputedStyle(e).backgroundImage);
+          if (c.i === 4) expect(img).toContain('repeating-linear-gradient');
+          else expect(img).toBe('none');
+        }
+        expect(Math.abs(total - sb.width)).toBeLessThan(1);
+      };
+      await checkStack(dGol, [0, 78, 18, 6, 18]);
+      await checkStack(dRadius, [2, 90, 24, 9, 25]);
+    };
+    await checkDetail();
+    // 글 줄은 그대로(층 줄 글자 대조).
+    await expect(dGol.locator('.mix__floors')).toHaveText('층별 음식: 지하 0곳 · 1층 78곳 · 2층 18곳 · 3층 이상 6곳 · 층 미상 18곳 (15%)');
+
+    // 412px — 페이지·막대 줄 넘침 0.
+    expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+    for (const el of await mix.locator('.mix__bars li, .mix__stack').all()) {
+      expect(await el.evaluate((e) => e.scrollWidth - e.clientWidth)).toBeLessThanOrEqual(0);
+    }
+
+    // ⑤ 종이 — 같은 그림 · 같은 자리 · 같은 색(`print-color-adjust: exact`).
+    await page.emulateMedia({ media: 'print' });
+    await expect(gol.locator('.mix__mark').first()).toBeVisible();
+    await expect(dGol.locator('.mix__stack')).toBeVisible();
+    await checkMarks();
+    await checkDetail();
+    expect(await gol.locator('.mix__mark').first().evaluate((e) => e.ownerDocument.defaultView!.getComputedStyle(e).printColorAdjust)).toBe('exact');
+    await page.emulateMedia({ media: null });
+  });
+});
+
+test.describe('그림 — 참고 매매 시세 (결정 0038 A)', () => {
+  test('BE. 값 나는 층마다 p25~p75 띠 + 가운데값 눈금(축 0 ~ ㎡당 2,000만) · 먼 근거 연한 띠 · 1층 "–" · 넓은 화면은 글 왼쪽 · 휴대폰은 글 위 · 종이에도 그대로', async ({
+    page,
+  }, testInfo) => {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    // 2층 = 먼 근거(L5 · p25 746.5만 · 가운데 1,626.5만 · p75 1,904.6만) · 3층 = 이 땅 같은 층(L2 · 900만~1,500만 · 가운데 1,200만) · 1층 = 내지 않음.
+    const bands = [
+      ...priceBands(),
+      { ...priceBands()[2], floor_no: 3, stage: 'L2', n: 8, p25: 9_000_000, median: 12_000_000, p75: 15_000_000 },
+    ];
+    await mockFloorStack(page, [], bands, [
+      floorRow({ floor_no: 3 }),
+      floorRow({ floor_no: 2 }),
+      floorRow(),
+      floorRow({ floor_no: -1 }),
+    ]);
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+    const card = page.locator('section.band');
+    await openCard(page, /참고 매매 시세/);
+    const row = (label: string) => card.locator('.band__row').filter({ has: page.locator('.band__floor', { hasText: new RegExp(`^${label}$`) }) });
+    await expect(card.locator('.band__row')).toHaveCount(3);
+
+    const mobile = testInfo.project.name === 'mobile';
+    const [estBand, estFar, estInk, estChip] = await Promise.all(
+      ['--est-band', '--est-line', '--est-ink', '--est-chip'].map((n) => tokenRgb(page, n)),
+    );
+
+    const check = async () => {
+      // ② 띠 자리 = 픽스처 사분위 ÷ 상한 2,000만.
+      const r2 = row('2층');
+      const t2 = r2.locator('.band__track');
+      expect(await pctIn(r2.locator('.band__range'), t2, 'left')).toBeCloseTo((7_465_269.63 / 20_000_000) * 100, 0);
+      const w2 = ((await r2.locator('.band__range').boundingBox())!.width / (await t2.boundingBox())!.width) * 100;
+      expect(w2).toBeCloseTo(((19_045_698.84 - 7_465_269.63) / 20_000_000) * 100, 0);
+      expect(await pctIn(r2.locator('.band__tick'), t2)).toBeCloseTo((16_265_452.18 / 20_000_000) * 100, 0);
+      const r3 = row('3층');
+      const t3 = r3.locator('.band__track');
+      expect(await pctIn(r3.locator('.band__range'), t3, 'left')).toBeCloseTo(45, 0);
+      expect(((await r3.locator('.band__range').boundingBox())!.width / (await t3.boundingBox())!.width) * 100).toBeCloseTo(30, 0);
+      expect(await pctIn(r3.locator('.band__tick'), t3)).toBeCloseTo(60, 0);
+      // ④ 색 — 추정 회청 · 먼 근거(2층)는 연한 띠 · 가까운 근거(3층)는 진한 띠 · 눈금 잉크 · 바탕 칩.
+      const bg = (l: ReturnType<Page['locator']>) => l.evaluate((e) => e.ownerDocument.defaultView!.getComputedStyle(e).backgroundColor);
+      expect(await bg(r2.locator('.band__range'))).toBe(estFar);
+      expect(await bg(r3.locator('.band__range'))).toBe(estBand);
+      expect(await bg(r2.locator('.band__tick'))).toBe(estInk);
+      expect(await bg(t2)).toBe(estChip);
+      // 1층은 띠 없이 "–" · 까닭 글은 그대로.
+      const r1 = row('1층');
+      await expect(r1.locator('.band__range, .band__tick')).toHaveCount(0);
+      await expect(r1.locator('.band__viz')).toHaveText('–');
+      await expect(r1.locator('.band__none')).toContainText('1층은 내지 않습니다');
+      // A2 눈금 글 — 띠 목록 바로 아래 한 줄 · 왼쪽 끝 = 띠 칸 왼쪽 · 오른쪽 끝 = 띠 칸 오른쪽.
+      const axis = card.locator('.band__axis');
+      await expect(axis).toHaveText('0㎡당 2,000만');
+      const sc = (await axis.locator('.band__axis-scale').boundingBox())!;
+      const tb = (await t2.boundingBox())!;
+      expect(Math.abs(sc.x - tb.x)).toBeLessThan(1.5);
+      expect(Math.abs(sc.x + sc.width - (tb.x + tb.width))).toBeLessThan(1.5);
+    };
+    await check();
+
+    // A3 배치 — 넓은 화면은 띠가 글 왼쪽(같은 줄) · 휴대폰은 층 이름 / 띠 / 글 차례로 위아래.
+    const vb = (await row('2층').locator('.band__viz').boundingBox())!;
+    const xb = (await row('2층').locator('.band__text').boundingBox())!;
+    const fb = (await row('2층').locator('.band__floor').boundingBox())!;
+    if (mobile) {
+      expect(vb.y).toBeGreaterThanOrEqual(fb.y + fb.height - 0.5);
+      expect(xb.y).toBeGreaterThanOrEqual(vb.y + vb.height - 0.5);
+      expect(vb.width).toBeGreaterThan((await row('2층').boundingBox())!.width * 0.8);
+    } else {
+      expect(vb.x + vb.width).toBeLessThanOrEqual(xb.x);
+      expect(vb.x).toBeGreaterThanOrEqual(fb.x + fb.width);
+      expect(Math.abs(vb.y + vb.height / 2 - (xb.y + xb.height / 2))).toBeLessThan(xb.height / 2);
+    }
+    // 글은 그대로.
+    await expect(row('2층').locator('.band__val')).toHaveText('비슷한 호실 한 칸 32.8㎡ (10평) 기준 2.4억~6.2억');
+    expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+    for (const el of await card.locator('.band__hit, .band__axis').all()) {
+      expect(await el.evaluate((e) => e.scrollWidth - e.clientWidth)).toBeLessThanOrEqual(0);
+    }
+    await card.screenshot({ path: testInfo.outputPath(`be-band-${testInfo.project.name}.png`) });
+
+    // ⑤ 종이 — 같은 띠 · 같은 자리 · 같은 색(`print-color-adjust: exact`).
+    await page.emulateMedia({ media: 'print' });
+    await expect(row('2층').locator('.band__range')).toBeVisible();
+    await check();
+    expect(await row('2층').locator('.band__range').evaluate((e) => e.ownerDocument.defaultView!.getComputedStyle(e).printColorAdjust)).toBe('exact');
+    await page.emulateMedia({ media: null });
+  });
+});

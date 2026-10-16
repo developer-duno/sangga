@@ -12,6 +12,7 @@
 
 import type { FloorRow, PriceBand } from '../types';
 import { formatFloor } from './format';
+import { niceCeil, pctOf, rangePct } from './viz';
 
 /**
  * 서버가 주는 status 다섯. 모르는 값이 오면 화면은 **그 층을 조용히 안 그린다**
@@ -186,6 +187,63 @@ export function groupBands(
 
   for (const g of listed) g.label = rangeLabel(g.floors);
   return { listed, silent };
+}
+
+// ── 그림: 층마다 가로 띠 (결정 0038 A · 화면만) ────────────────────────────────────
+
+/**
+ * 이 줄이 값을 내는가 — `PriceBandSection` 의 `BandBody` 가 값 글을 쓰는 조건과 **같다**
+ * (status ok · 근거 글이 있음 · n·가운데값·p25·p75 가 다 있음). 값 글이 없는 줄에 띠가 서지 않게 한다.
+ * ⛔ BandBody 의 조건을 바꾸면 여기도 함께 바꾼다(컴포넌트 시험 「근거를 표시할 수 없어」 줄이 "–" 인지 본다).
+ */
+export function bandShowsValue(g: BandGroup): boolean {
+  const b = g.band;
+  return (
+    b.status === 'ok' &&
+    describeStage(b.stage, g.floors[0].floor_no) !== null &&
+    b.n !== null &&
+    b.median !== null &&
+    b.p25 !== null &&
+    b.p75 !== null
+  );
+}
+
+/**
+ * 카드 축 상한(㎡당 원) — 값을 내는 줄의 p75·가운데값 가운데 가장 큰 값을 **만원 단위로** `niceCeil`(1·2·2.5·5 × 10ⁿ) 올린 값.
+ * 예: p75 최대 1,904.6만 → 2,000만. 값을 내는 줄이 하나도 없으면 null(축·띠를 그리지 않는다).
+ * 못 보는 것: 한 줄의 p75 가 다른 줄보다 열 배쯤 크면 나머지 띠가 얇아진다(축은 카드에 하나 — §2-7 한 눈금에 자료 하나).
+ */
+export function bandAxisMaxWon(groups: BandGroup[]): number | null {
+  let top = 0;
+  for (const g of groups) {
+    if (!bandShowsValue(g)) continue;
+    top = Math.max(top, g.band.p75 as number, g.band.median as number);
+  }
+  const man = niceCeil(top / 10_000);
+  return man === null ? null : man * 10_000;
+}
+
+/** 한 줄의 그림 — 띠(p25~p75) + 가운데값 눈금 · 눈금만(폭 0) · 없음("–"). 자리·폭은 축 0~상한 위 %. */
+export type BandMark =
+  | { kind: 'none' }
+  | { kind: 'tick'; x: number; far: boolean }
+  | { kind: 'band'; left: number; width: number; x: number; far: boolean };
+
+/**
+ * 줄 하나 → 그림. 값을 안 내는 줄은 `none`(띠 없이 "–" — 까닭 글은 옆에 그대로).
+ * 거래 1건뿐·모두 같은 값(`isSinglePoint`)이거나 p25 > p75 처럼 범위를 못 세우면 띠 없이 눈금만.
+ * `far` = 먼 근거(L5·L6) — 연한 띠로 그린다.
+ */
+export function bandMark(g: BandGroup, maxWon: number | null): BandMark {
+  if (!bandShowsValue(g)) return { kind: 'none' };
+  const b = g.band;
+  const x = pctOf(b.median, maxWon);
+  if (x === null) return { kind: 'none' };
+  const far = isFarStage(b.stage);
+  if (isSinglePoint(b)) return { kind: 'tick', x, far };
+  const r = rangePct(b.p25, b.p75, maxWon);
+  if (r === null || r.width <= 0) return { kind: 'tick', x, far };
+  return { kind: 'band', left: r.left, width: r.width, x, far };
 }
 
 /** '2층' 또는 '3층~17층'. `floors` 는 고층 → 저층 순서로 들어온다. */

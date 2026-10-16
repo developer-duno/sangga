@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest';
 import type { FloorRow, PriceBand } from '../types';
 import {
   KNOWN_BAND_STATUS,
+  bandAxisMaxWon,
+  bandMark,
+  bandShowsValue,
   describeStage,
   floorBandName,
   groupBands,
@@ -229,5 +232,68 @@ describe('groupBands — 같은 값은 한 줄로 묶는다', () => {
     const { listed, silent } = groupBands([], [floor(2), floor(1)]);
     expect(listed).toHaveLength(0);
     expect(silent).toHaveLength(0);
+  });
+});
+
+// ── 그림: 층마다 가로 띠 (결정 0038 A) ────────────────────────────────────────────
+
+describe('그림 — 참고 시세 띠', () => {
+  /** 층 하나짜리 줄. */
+  const group = (b: PriceBand, floorNo = b.floor_no ?? 2) => groupBands([{ ...b, floor_no: floorNo }], [floor(floorNo)]).listed[0];
+
+  it('bandShowsValue — 값 글을 쓰는 줄만 참(BandBody 와 같은 조건)', () => {
+    expect(bandShowsValue(group(band()))).toBe(true);
+    expect(bandShowsValue(group(band({ status: 'floor_1f' }), 1))).toBe(false);
+    expect(bandShowsValue(group(band({ status: 'no_estimate' })))).toBe(false);
+    expect(bandShowsValue(group(band({ stage: 'L9' })))).toBe(false); // 근거를 말할 수 없으면 값도 없다
+    expect(bandShowsValue(group(band({ p75: null })))).toBe(false);
+    expect(bandShowsValue(group(band({ median: null })))).toBe(false);
+    expect(bandShowsValue(group(band({ n: null })))).toBe(false);
+  });
+
+  it('bandAxisMaxWon — p75·가운데값 최대를 만원 단위로 1·2·2.5·5 올림(1,904.6만 → 2,000만)', () => {
+    expect(bandAxisMaxWon([group(band())])).toBe(20_000_000);
+    // 값 안 내는 줄은 상한에 안 낀다.
+    expect(
+      bandAxisMaxWon([group(band()), group(band({ status: 'no_estimate', p75: 900_000_000 }), 3)]),
+    ).toBe(20_000_000);
+    // 상한과 같은 값이면 한 칸 더 올리지 않는다.
+    expect(bandAxisMaxWon([group(band({ p75: 20_000_000 }))])).toBe(20_000_000);
+    expect(bandAxisMaxWon([group(band({ p75: 20_000_001 }))])).toBe(25_000_000);
+    // 가운데값이 p75 보다 크게 온 줄(뜻밖의 값)도 축 밖으로 안 나간다.
+    expect(bandAxisMaxWon([group(band({ p25: 1_000_000, p75: 2_000_000, median: 30_000_000 }))])).toBe(50_000_000);
+  });
+
+  it('bandAxisMaxWon — 값을 내는 줄이 없거나 값이 0 이면 null(띠·축 없음)', () => {
+    expect(bandAxisMaxWon([])).toBeNull();
+    expect(bandAxisMaxWon([group(band({ status: 'floor_1f' }), 1)])).toBeNull();
+    expect(bandAxisMaxWon([group(band({ p25: 0, median: 0, p75: 0 }))])).toBeNull();
+  });
+
+  it('bandMark — 띠 = p25~p75 · 눈금 = 가운데값 · 축 0~상한 위 %', () => {
+    const m = bandMark(group(band()), 20_000_000);
+    expect(m.kind).toBe('band');
+    if (m.kind !== 'band') return;
+    expect(m.left).toBeCloseTo(37.3263, 3);
+    expect(m.width).toBeCloseTo(57.9021, 3);
+    expect(m.x).toBeCloseTo(81.3273, 3);
+    expect(m.far).toBe(true); // L5 = 먼 근거 → 연한 띠
+    expect((bandMark(group(band({ stage: 'L2' })), 20_000_000) as { far: boolean }).far).toBe(false);
+  });
+
+  it('bandMark — 1건뿐 · 모두 같은 값(p25 = p75) · p25 > p75 는 띠 없이 눈금만', () => {
+    expect(bandMark(group(band({ n: 1 })), 20_000_000).kind).toBe('tick');
+    expect(bandMark(group(band({ n: 6, p25: 10_000_000, median: 10_000_000, p75: 10_000_000 })), 20_000_000)).toEqual({
+      kind: 'tick',
+      x: 50,
+      far: true,
+    });
+    expect(bandMark(group(band({ p25: 19_000_000, p75: 7_000_000 })), 20_000_000).kind).toBe('tick');
+  });
+
+  it('bandMark — 값을 안 내는 줄 · 상한 없음이면 none("–")', () => {
+    expect(bandMark(group(band({ status: 'floor_1f' }), 1), 20_000_000)).toEqual({ kind: 'none' });
+    expect(bandMark(group(band({ stage: null })), 20_000_000)).toEqual({ kind: 'none' });
+    expect(bandMark(group(band()), null)).toEqual({ kind: 'none' });
   });
 });

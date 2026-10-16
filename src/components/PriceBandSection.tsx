@@ -13,13 +13,17 @@ import {
   formatMonthKo,
 } from '../lib/format';
 import {
+  bandAxisMaxWon,
+  bandMark,
   describeStage,
   groupBands,
   isFarStage,
   isSinglePoint,
   toTotalWon,
   type BandGroup,
+  type BandMark,
 } from '../lib/priceBand';
+import { cssVar, VIZ_TONES } from '../lib/viz';
 
 /**
  * "참고 매매 시세" 섹션 — Stage B(결정 0013).
@@ -144,6 +148,8 @@ export function PriceBandSection({
   // ⛔ 여기에 **숫자(값)를 적지 않는다.** 요약 줄에는 근거 단계·표본 수를 함께 실을 자리가
   //    없는데, 값만 떼어 내보내는 것은 절대 규칙 3 위반이다(값과 근거는 한 몸이다).
   const okFloorCnt = okGroups.reduce((sum, g) => sum + g.floors.length, 0);
+  // 띠의 축 상한(㎡당 원) — 값을 내는 줄의 p75·가운데값 최대를 만원 단위로 올림(결정 0038 A). null = 띠를 안 그린다.
+  const axisMax = bandAxisMaxWon(listed);
   const summary =
     okFloorCnt > 0 ? `값을 낸 층 ${okFloorCnt}개` : '이 건물에서는 값을 낸 층이 없습니다';
 
@@ -164,18 +170,30 @@ export function PriceBandSection({
               <li key={g.key} className={`band__row${open ? ' band__row--on' : ''}`}>
                 <button
                   type="button"
-                  className="band__hit"
+                  className={`band__hit${axisMax !== null ? ' band__hit--viz' : ''}`}
                   aria-expanded={open}
                   onClick={() => onPickFloor(g.floors[0].floor_no)}
                 >
                   <span className="band__floor">{g.label}</span>
-                  <BandBody group={g} />
+                  {/* 띠(결정 0038 A)는 글 왼쪽에 더할 뿐 — 글은 한 글자도 안 바뀐다. 값을 내는 줄이 하나도 없으면 띠 칸 자체가 없다. */}
+                  {axisMax !== null ? (
+                    <>
+                      <BandViz mark={bandMark(g, axisMax)} />
+                      <span className="band__text">
+                        <BandBody group={g} />
+                      </span>
+                    </>
+                  ) : (
+                    <BandBody group={g} />
+                  )}
                 </button>
               </li>
             );
           })}
         </ol>
       )}
+
+      {axisMax !== null && <BandAxis maxWon={axisMax} />}
 
       {noEvidenceNames.length > 0 && (
         <p className="band__none-note">
@@ -297,6 +315,53 @@ function BasePriceBlock({ rows }: { rows: BasePriceRow[] }) {
         <strong>시세가 아닙니다.</strong> 우리가 어림한 값이 아니라 고시된 값 그대로이고, 위
         참고 폭과는 다른 자로 잰 값이라 서로 견주기 어렵습니다.
       </p>
+    </div>
+  );
+}
+
+/**
+ * 줄 하나의 띠(결정 0038 A) — p25~p75 띠 + 가운데값 세로 눈금 · 축 = 0 ~ 카드 상한(㎡당).
+ * 추정 색(회청) · 먼 근거는 연한 띠 · 폭 0(1건뿐·모두 같은 값)은 눈금만 · 값을 안 내는 줄은 "–"(까닭 글은 옆에 그대로).
+ * 옆 글과 같은 내용이라 낭독기에서 뺀다(§2-1). 크기는 % 로만(§2-3 — DOM 을 재지 않는다).
+ */
+function BandViz({ mark }: { mark: BandMark }) {
+  if (mark.kind === 'none') {
+    return (
+      <span className="band__viz band__viz--none" aria-hidden="true">
+        –
+      </span>
+    );
+  }
+  return (
+    <span className={`band__viz${mark.far ? ' band__viz--far' : ''}`} aria-hidden="true">
+      <span className="band__track" style={{ background: cssVar(VIZ_TONES.est.track) }}>
+        {mark.kind === 'band' && (
+          <span
+            className="band__range"
+            style={{
+              left: `${mark.left}%`,
+              width: `${mark.width}%`,
+              background: cssVar(mark.far ? VIZ_TONES.est.far : VIZ_TONES.est.band),
+            }}
+          />
+        )}
+        <span className="band__tick" style={{ left: `${mark.x}%`, background: cssVar(VIZ_TONES.est.ink) }} />
+      </span>
+    </span>
+  );
+}
+
+/**
+ * 띠 축의 눈금 글 한 줄(결정 0038 A2) — 그림 밖 HTML(그림 안 글자는 폭 따라 줄어 13px 아래로 내려간다 · §2-2).
+ * 띠 목록 바로 아래, 띠 칸과 같은 자리에 「0 … ㎡당 상한」. 띠와 함께 읽는 글이라 띠처럼 낭독기에서 뺀다.
+ */
+function BandAxis({ maxWon }: { maxWon: number }) {
+  return (
+    <div className="band__axis" aria-hidden="true">
+      <span className="band__axis-scale">
+        <span>0</span>
+        <span>㎡당 {formatManWon(maxWon)}</span>
+      </span>
     </div>
   );
 }

@@ -19,6 +19,19 @@
   --est-line: #c5cbd9;
   --est-chip: #e7eaf2;
   --est-ink: #3d4560;
+  /* 추정 그림의 띠(가운데 절반 · 결정 0038) — 바탕(--est-chip)보다 짙고 눈금(--est-ink)보다 옅다. 먼 근거 띠는 --est-line. */
+  --est-band: #8e97b0;
+
+  /* 사실(A·B등급) 그림의 호박 진하기 4단(옅음 → 짙음 · 결정 0038 §2-6·§2-7) + 층 미상 회색(값이지 경고가 아니다).
+     ⓘ 이름은 `src/lib/viz.ts` 의 VIZ_TONES 가 가리킨다 — 여기서 지우면 viz.test 가 빨강. */
+  --fact-1: #f2ddb0;
+  --fact-2: #e0b45a;
+  --fact-3: #b9842a;
+  --fact-4: #7d5414;
+  /* 층 미상 = 옅은 회색 + 흰 빗금(`.mix__stack-cell[data-band='na']`) — 흑백 밝기는 1층 칸(--fact-2)과 비슷해서 밝기가 아니라 무늬로 가른다.
+     ⓘ 짙은 회색으로 밝기를 가르면 '모르는 칸'이 막대에서 가장 무거워 보인다(👤 메인 10-17 판단). */
+  --viz-na: #b4b7bf;
+  --viz-na-hatch: #f4f5f7;
 
   color-scheme: light;
 }
@@ -1596,6 +1609,104 @@ body {
   line-height: 1.6;
 }
 
+/* ── 그림: 층마다 가로 띠 (결정 0038 A) ───────────────────────────────────────────
+   넓은 화면 = 층 이름 | 띠 | 글(지금 글 그대로 · 오른쪽). 띠 = p25~p75 · 세로 눈금 = 가운데값 · 축 = 0 ~ 카드 상한(아래 `.band__axis`).
+   추정 색(회청 — 값은 viz.ts 가 인라인으로 준다) · 먼 근거는 연한 띠 + 점선 · 값을 안 내는 줄은 "–".
+   ⓘ 휴대폰(≤720px)은 옛 묶음의 `.band__hit { 1fr }` 가 세 칸을 위아래로 쌓는다(층 이름 / 띠 / 글) — 새 휴대폰 규칙은
+     `@media screen and (max-width: 720px)` 묶음에만(축 글 줄).
+   ⛔ 크기는 % 로만 — DOM 을 재지 않는다(접힌 카드는 폭 0 · 종이 백지 · §2-3). */
+.band__hit--viz {
+  grid-template-columns: 96px minmax(0, 2fr) minmax(0, 3fr);
+  align-items: center;
+}
+
+.band__hit--viz .band__floor {
+  grid-row: auto;
+}
+
+.band__viz {
+  display: block;
+  min-width: 0;
+}
+
+/* 값을 안 내는 줄의 "–" — 까닭 글은 옆(`.band__none`)에 그대로 있다. */
+.band__viz--none {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.band__track {
+  position: relative;
+  display: block;
+  height: 12px;
+  border-radius: 3px;
+}
+
+.band__range {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 3px;
+}
+
+.band__viz--far .band__range {
+  border: 1px dashed var(--est-ink);
+}
+
+.band__tick {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+}
+
+/* 글 칸 — 지금 글(값·근거 두 줄 또는 까닭 한 줄)을 한 칸에 위아래로. */
+.band__text {
+  display: block;
+  min-width: 0;
+}
+
+.band__text > .band__val,
+.band__text > .band__sub,
+.band__text > .band__none {
+  display: block;
+}
+
+/* 축 눈금 글 — 띠 칸과 같은 칸 자리(줄 단추의 안쪽 여백 6px · 칸 틈 10px 와 맞춘다).
+   기본 = 한 칸(띠가 폭 전체인 좁은 배치) · 넓은 배치(세 칸)는 아래 `min-width: 721px` 에서만.
+   ⓘ 줄의 배치는 옛 `@media (max-width: 720px)` 묶음이 정한다(화면·종이 둘 다) — 그 정확한 반대 조건으로 두어야
+     휴대폰 폭에서 종이로 바꿔도 눈금 글이 띠 칸과 어긋나지 않는다(화면 전용 규칙으로 두면 106px 어긋났다 · E2E BE 실측). */
+.band__axis {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  column-gap: 10px;
+  padding: 2px 6px 4px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+
+.band__axis-scale {
+  grid-column: 1;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+@media (min-width: 721px) {
+  .band__axis {
+    grid-template-columns: 96px minmax(0, 2fr) minmax(0, 3fr);
+  }
+
+  .band__axis-scale {
+    grid-column: 2;
+  }
+}
+
 .band__none-note,
 .band__src,
 .band__alt {
@@ -1910,6 +2021,61 @@ body {
   line-height: 1.6;
   overflow-wrap: anywhere;
   font-variant-numeric: tabular-nums;
+}
+
+/* ── 그림 (결정 0038 E) ─────────────────────────────────────────────────────────
+   ① 가운데값 ▲ — 비교 글이 있는 막대 줄에만. 막대와 같은 0~100 자 위 자리(`left: %`)에, 막대 바로 아래에서 위를 가리킨다.
+      추정 색(--est-ink · 값은 viz.ts 가 인라인으로도 준다). 테두리로 그린 삼각형이라 종이에도 색이 그대로다.
+      ⓘ ▲ 가 막대 칸 밖(아래)으로 나와야 해서 그 줄만 `overflow: visible` — 채움 막대는 제 둥근 모서리로 칸 안에 머문다.
+   ② 층 묶음 쌓은 막대 — 층 줄 글 바로 위 한 줄. 칸 폭 = 그 묶음 곳 수 ÷ 합(인라인 `width: %`) · 칸 안 글자 0.
+   ⛔ 크기는 % 로만 — DOM 을 재지 않는다(접힌 카드는 폭 0 · 종이 백지 · 결정 0038 §2-3). */
+.mix__bar--mark {
+  position: relative;
+  overflow: visible;
+}
+
+.mix__mark {
+  position: absolute;
+  top: 100%;
+  width: 0;
+  height: 0;
+  margin-left: -5px;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 6px solid var(--est-ink);
+}
+
+/* ▲ 가 아래 둘째 줄(비교 글)에 닿지 않게 그 줄만 틈을 넓힌다. */
+.mix__bars li.mix__row--mark {
+  row-gap: 7px;
+}
+
+.mix__stack {
+  display: flex;
+  height: 10px;
+  margin: 8px 0 0;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.mix__stack-cell {
+  display: block;
+  height: 100%;
+}
+
+/* 층 미상 칸만 흰 사선 빗금 — 흑백 종이에서 밝기가 비슷한 1층 칸과 무늬로 갈린다(종이 색은 `*` 의 print-color-adjust 가 지킨다).
+   ⓘ 칸 색은 인라인 `background-color` 로만 준다 — 인라인 `background` 줄임 속성이면 이 무늬를 덮어쓴다. */
+.mix__stack-cell[data-band='na'] {
+  background-image: repeating-linear-gradient(
+    135deg,
+    var(--viz-na-hatch) 0 2px,
+    transparent 2px 5px
+  );
+}
+
+/* 이웃 칸이 같은 계열 색이라 사이에 흰 줄 하나(폭은 % 안에 든다 — box-sizing: border-box). */
+.mix__stack-cell + .mix__stack-cell {
+  border-left: 1px solid var(--card);
 }
 
 /* 업종 비중 비교(물결 2-3) — 상권 블록 막대 줄의 둘째 줄 + 블록 머리 아래 설명. 모양 손질은 나중(👤 'CSS 는 나중')이라
@@ -4202,6 +4368,16 @@ body {
   */
   .floor.floor--units-open {
     break-inside: auto;
+  }
+
+  /* 그림과 그 글이 두 장에 갈리지 않게(결정 0038 §2-9) — 쌓은 막대는 아래 층 줄 글과, 띠 눈금 글은 위 띠 목록과 같은 장에.
+     ⛔ 카드 통째(`.mix`·`.band`)에는 걸지 않는다(위 설명 참조 — 장수가 늘고 흰 종이가 남는다). */
+  .mix__stack {
+    break-after: avoid;
+  }
+
+  .band__axis {
+    break-before: avoid;
   }
 
   /* 제목만 페이지 끝에 혼자 남는 것을 막는다. */
