@@ -1017,6 +1017,104 @@ describe('App — 탭 제목', () => {
 });
 
 /**
+ * 검색 색인 보강(결정 0042) — 이어 붙였을 때만 보이는 것: h1 은 늘 하나(첫 화면 = 사이트 이름 · 건물 = 건물 이름) ·
+ * 지역 고르개 구 칩 = 진짜 링크(열린 구 전부 · 보통 누름은 화면 안) · 같은 땅 여러 동이면 동 목록을 한 번 받아
+ * 탭 제목에 동 구분 + 층별 머리에 다른 동·구 링크(누르면 화면 안에서).
+ */
+describe('App — 검색 색인 보강 (결정 0042)', () => {
+  const PNU = '1168010100100010000';
+  const SELF = `${PNU}_1024110`;
+  const OTHER = `${PNU}_1024999`;
+  const DONGS = [
+    { bld_id: SELF, bld_nm: '테스트빌딩', dong_nm: 'A동', total_area_m2: 900, floor_cnt: 3, min_floor: 1, max_floor: 3, has_roof: false },
+    { bld_id: OTHER, bld_nm: '테스트빌딩', dong_nm: 'B동', total_area_m2: 500, floor_cnt: 2, min_floor: 1, max_floor: 2, has_roof: false },
+  ];
+
+  function twoDongs() {
+    from.mockImplementation((view: string) =>
+      makeQuery(view === 'v_coverage_stats' ? { data: [], error: null } : { data: [floorRow({ bld_cnt_in_pnu: 2 })], error: null }),
+    );
+    const base = rpc.getMockImplementation()!;
+    rpc.mockImplementation((fn: string, args?: unknown) =>
+      fn === 'list_parcel_buildings' ? Promise.resolve({ data: DONGS, error: null }) : base(fn, args),
+    );
+  }
+
+  it('첫 화면 — h1 은 사이트 이름 하나 · 구 칩은 열린 구 수만큼 진짜 링크 · 보통 누름은 화면 안에서 고르기', async () => {
+    openWith('');
+    render(<App />);
+    await screen.findByRole('button', { name: '서울' });
+    expect(screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent)).toEqual(['상가 층별 스택뷰']);
+    const links = [...document.querySelectorAll<HTMLAnchorElement>('a[href^="/?sgg="]')];
+    expect(links.map((a) => a.getAttribute('href')).sort()).toEqual(['/?sgg=11680', '/?sgg=30170']);
+    await pickGu('서울', '강남구');
+    expect(currentSearch()).toBe('?sgg=11680');
+  });
+
+  it('★ 같은 땅 두 동 — 동 목록 한 번 · 탭 제목에 동 구분(첫 HTML 과 같은 꼴) · h1 = 건물 이름 하나 · 다른 동·구 링크', async () => {
+    twoDongs();
+    openWith(`?sgg=11680&bld=${SELF}`);
+    render(<App />);
+    await screen.findByRole('heading', { level: 1, name: '테스트빌딩' });
+    await waitFor(() => expect(document.title).toBe('테스트빌딩 A동 — 강남구 테헤란로 1 | 상가 층별 스택뷰'));
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+    expect(document.querySelector('p.app__title')!.textContent).toBe('상가 층별 스택뷰');
+
+    const nav = await waitFor(() => {
+      const n = document.querySelector('nav.stack__links');
+      expect(n!.textContent).toContain('강남구 다른 건물 찾기');
+      return n!;
+    });
+    const hrefs = [...nav.querySelectorAll('a')].map((a) => [a.getAttribute('href'), a.textContent]);
+    expect(hrefs).toEqual([
+      [`/?sgg=11680&bld=${OTHER}`, '테스트빌딩 B동'],
+      ['/?sgg=11680', '강남구 다른 건물 찾기'],
+    ]);
+    expect(nav.textContent!.startsWith('같은 땅 다른 동: ')).toBe(true);
+    expect(rpc.mock.calls.filter((c) => c[0] === 'list_parcel_buildings')).toEqual([['list_parcel_buildings', { p_pnu: PNU }]]);
+
+    // 보통 누름 = 화면 안에서 그 동으로(주소가 따라 적힌다) · 같은 땅이라 동 목록은 다시 안 묻는다.
+    const go = nav.querySelector<HTMLAnchorElement>(`a[href$="${OTHER}"]`)!;
+    expect(fireEvent.click(go)).toBe(false); // preventDefault
+    await waitFor(() => expect(currentSearch()).toContain(`bld=${OTHER}`));
+    await waitFor(() => expect(document.title).toBe('테스트빌딩 B동 — 강남구 테헤란로 1 | 상가 층별 스택뷰'));
+    expect(rpc.mock.calls.filter((c) => c[0] === 'list_parcel_buildings')).toHaveLength(1);
+  });
+
+  it('「○○구 다른 건물 찾기」 보통 누름 = 위 칸을 펼치고 입력칸에 커서(보던 건물은 그대로) · Ctrl 누름은 링크 그대로', async () => {
+    twoDongs();
+    openWith(`?sgg=11680&bld=${SELF}`);
+    render(<App />);
+    const find = await screen.findByRole('link', { name: '강남구 다른 건물 찾기' });
+    expect(fireEvent.click(find, { ctrlKey: true })).toBe(true); // 가로채지 않는다(새 탭은 브라우저 몫)
+    expect((document.getElementById('entry-panel') as HTMLElement).hidden).toBe(true);
+    expect(fireEvent.click(find)).toBe(false);
+    await waitFor(() => expect((document.getElementById('entry-panel') as HTMLElement).hidden).toBe(false));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('건물명 또는 주소')));
+    expect(currentSearch()).toContain(`bld=${SELF}`);
+  });
+
+  it('동 목록이 실패하면 동 구분·다른 동 줄 없이 지금 화면 그대로', async () => {
+    twoDongs();
+    const base = rpc.getMockImplementation()!;
+    const err = console.error;
+    console.error = () => {};
+    rpc.mockImplementation((fn: string, args?: unknown) =>
+      fn === 'list_parcel_buildings' ? Promise.resolve({ data: null, error: { message: 'x' } }) : base(fn, args),
+    );
+    try {
+      openWith(`?sgg=11680&bld=${SELF}`);
+      render(<App />);
+      await screen.findByRole('link', { name: '강남구 다른 건물 찾기' });
+      expect(document.title).toBe('테스트빌딩 — 강남구 테헤란로 1 | 상가 층별 스택뷰');
+      expect(document.querySelector('nav.stack__links')!.textContent).not.toContain('같은 땅 다른 동');
+    } finally {
+      console.error = err;
+    }
+  });
+});
+
+/**
  * 중개사 「최근 뽑은 건물」(👤 결정 0036 결정 18 ⑥⑩ · 물결 1-A2(iii)) — 이어 붙였을 때만 보이는 것:
  * 인쇄 단추가 적는다(중개사일 때만) · 검색 덩어리 아래 접힌 줄(중개사만) · 누르면 그 건물로(다른 구면
  * 구도) · 지우기 · 주소·의견함에 안 실린다 · 막힌 창에서도 인쇄는 된다.
@@ -1533,8 +1631,9 @@ describe('App — 입구 접기 (S1)', () => {
     expect(document.activeElement).toBe(barBtn('다른 건물 찾기'));
     // 지도는 접힌 동안 그리지 않는다(종이에도 안 나온다 — 👤 10-15).
     expect(document.querySelector('section.dmap')).toBeNull();
-    // 제목(h1)은 그대로 있다 — 크기만 CSS 가 줄인다.
-    expect(screen.getByRole('heading', { level: 1, name: '상가 층별 스택뷰' })).toBeTruthy();
+    // 사이트 이름은 그대로 있다(크기만 CSS 가 줄인다) — 단 건물을 연 동안은 h1 이 아니라 p(결정 0042 H1 · h1 = 건물 이름 하나).
+    expect(document.querySelector('p.app__title')!.textContent).toBe('상가 층별 스택뷰');
+    expect(screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent)).toEqual(['테스트빌딩']);
   });
 
   it('★ 「다른 건물 찾기」= 위 덩어리만 펼치고 입력칸에 커서 · 검색어·결과·보던 건물 그대로 · 새 건물을 고르면 다시 접힌다', async () => {

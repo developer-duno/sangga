@@ -423,6 +423,101 @@ describe('FloorStack — 본체', () => {
     await waitFor(() => expect(screen.getByText(/이 땅에 건물이 3동 있습니다/)).toBeTruthy());
   });
 
+  describe('내부 링크 줄 · h1 (결정 0042 H1·H5)', () => {
+    const dong = (bld_id: string, dong_nm: string | null, bld_nm: string | null = '테스트빌딩') => ({
+      bld_id,
+      bld_nm,
+      dong_nm,
+      total_area_m2: 100,
+      floor_cnt: 2,
+      min_floor: 1,
+      max_floor: 2,
+      has_roof: false,
+    });
+    const DONGS = [dong('1168010100-1', 'A동'), dong('1168010100-2', 'B동'), dong('1168010100-3', null, null)];
+
+    it('건물 이름이 h1(하나)', async () => {
+      render(<FloorStack building={building()} />);
+      const h1 = await screen.findByRole('heading', { level: 1 });
+      expect(h1.textContent).toBe('테스트빌딩');
+      expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+    });
+
+    it('★ 같은 땅 여러 동 — 「같은 땅 다른 동: …」(자기는 뺀다 · 이름 + 동 구분) + 「○○구 다른 건물 찾기」 · 진짜 href', async () => {
+      responses.floors = { data: [floor({ bld_cnt_in_pnu: 3 })], error: null };
+      const { container } = render(
+        <FloorStack building={building({ bld_cnt_in_pnu: 3 })} dongs={DONGS} sigunguName="강남구" />,
+      );
+      await screen.findByRole('heading', { level: 1, name: '테스트빌딩' });
+      const nav = container.querySelector('header.stack__head nav.stack__links')!;
+      expect(nav.getAttribute('aria-label')).toBe('관련 페이지');
+      expect([...nav.querySelectorAll('a')].map((a) => [a.getAttribute('href'), a.textContent])).toEqual([
+        ['/?sgg=11680&bld=1168010100-2', '테스트빌딩 B동'],
+        ['/?sgg=11680&bld=1168010100-3', '(같은 땅 3동 중 3번째)'],
+        ['/?sgg=11680', '강남구 다른 건물 찾기'],
+      ]);
+      expect(nav.querySelector('.stack__links-row')!.textContent).toBe(
+        '같은 땅 다른 동: 테스트빌딩 B동 · (같은 땅 3동 중 3번째)',
+      );
+    });
+
+    it('★ 보통 누름 = 화면 안에서 그 동으로(땅 칸은 지금 건물 · 동 칸은 목록) / 구 찾기 · Ctrl 누름은 그대로 링크', async () => {
+      const onSelectBuilding = vi.fn();
+      const onFindInSigungu = vi.fn();
+      responses.floors = { data: [floor({ bld_cnt_in_pnu: 3 })], error: null };
+      render(
+        <FloorStack
+          building={building({ bld_cnt_in_pnu: 3, lat: 37.5, lng: 127 })}
+          dongs={DONGS}
+          sigunguName="강남구"
+          onSelectBuilding={onSelectBuilding}
+          onFindInSigungu={onFindInSigungu}
+        />,
+      );
+      const b = await screen.findByRole('link', { name: '테스트빌딩 B동' });
+      expect(fireEvent.click(b, { ctrlKey: true })).toBe(true);
+      expect(onSelectBuilding).not.toHaveBeenCalled();
+      expect(fireEvent.click(b)).toBe(false);
+      expect(onSelectBuilding).toHaveBeenCalledWith({
+        bld_id: '1168010100-2',
+        pnu: '1168010100100010000',
+        bld_nm: '테스트빌딩',
+        road_addr: '서울 강남구 테헤란로 1',
+        jibun_addr: undefined,
+        lat: 37.5,
+        lng: 127,
+        bld_cnt_in_pnu: 3,
+        floor_cnt: 2,
+        min_floor: 1,
+        max_floor: 2,
+        has_roof: false,
+      });
+      expect(fireEvent.click(screen.getByRole('link', { name: '강남구 다른 건물 찾기' }))).toBe(false);
+      expect(onFindInSigungu).toHaveBeenCalledTimes(1);
+    });
+
+    it('다른 동 링크는 첫 HTML 과 같은 10개까지 · 넘치면 「외 N동」(102동 단지 실측)', async () => {
+      const many = Array.from({ length: 14 }, (_, i) => dong(`1168010100-${i + 1}`, `${101 + i}동`));
+      responses.floors = { data: [floor({ bld_cnt_in_pnu: 14 })], error: null };
+      const { container } = render(<FloorStack building={building({ bld_cnt_in_pnu: 14 })} dongs={many} />);
+      await screen.findByRole('heading', { level: 1, name: '테스트빌딩' });
+      const row = container.querySelector('nav.stack__links .stack__links-row')!;
+      expect(row.querySelectorAll('a')).toHaveLength(10);
+      expect(row.textContent!.endsWith('테스트빌딩 111동 외 3동')).toBe(true);
+    });
+
+    it('동이 하나거나 목록이 없으면 다른 동 줄 없음 · 구 이름도 없으면 줄 자체가 없다', async () => {
+      const { container, unmount } = render(<FloorStack building={building()} dongs={null} sigunguName="강남구" />);
+      await screen.findByRole('heading', { level: 1, name: '테스트빌딩' });
+      expect(container.querySelector('nav.stack__links')!.textContent).toBe('강남구 다른 건물 찾기');
+      unmount();
+      // 뷰가 동 1개라 말하면 목록이 와도 줄을 안 세운다(옛 목록이 남은 그림 · 다른 땅 목록 방어).
+      const again = render(<FloorStack building={building()} dongs={DONGS} />);
+      await screen.findByRole('heading', { level: 1, name: '테스트빌딩' });
+      expect(again.container.querySelector('nav.stack__links')).toBeNull();
+    });
+  });
+
   it('D등급 배지를 항상 함께 보여준다', async () => {
     // 추정값 출력 시 근거 레벨 병기는 프로젝트 절대 규칙 3이다.
     render(<FloorStack building={building()} />);

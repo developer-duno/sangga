@@ -146,6 +146,27 @@ export function parcelBuildingToHit(land: DistrictLand, b: ParcelBuilding): Buil
 }
 
 /**
+ * 층별 화면의 「같은 땅 다른 동」 링크(결정 0042 H5) → `BuildingHit`. 땅의 칸(주소·좌표·동 수)은 지금 보던 건물에서,
+ * 동의 칸(번호·이름·층 범위)은 동 목록 줄에서 — `parcelBuildingToHit` 과 같은 나눔이다(같은 땅이라 땅 칸은 같다).
+ */
+export function siblingToHit(from: BuildingHit, b: ParcelBuilding): BuildingHit {
+  return {
+    bld_id: b.bld_id,
+    pnu: from.pnu,
+    bld_nm: b.bld_nm,
+    road_addr: from.road_addr,
+    jibun_addr: from.jibun_addr,
+    lat: from.lat,
+    lng: from.lng,
+    bld_cnt_in_pnu: from.bld_cnt_in_pnu,
+    floor_cnt: b.floor_cnt,
+    min_floor: b.min_floor,
+    max_floor: b.max_floor,
+    has_roof: b.has_roof,
+  };
+}
+
+/**
  * 목록 머리에 적을 한 줄 — "이 상권에 955곳 · 1,098동 · 이 중 50곳".
  *
  * ⛔ **잘렸다는 사실을 감추지 않는다.** 50곳만 보여 주면서 전체를 안 적으면 "이 상권엔

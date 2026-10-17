@@ -244,10 +244,53 @@ describe('RegionPicker — 구 목록', () => {
     });
     const { onSelectSigungu } = setup({ selectedSigungu: '11680' });
     await waitFor(() => expect(screen.getByText(/선택한 지역/)).toBeTruthy());
-    expect(screen.getByText(/강남구/)).toBeTruthy();
+    // ⓘ 구 칩(링크)도 숨은 채 DOM 에 있어(결정 0042) '강남구' 글자는 둘 — 고른 지역 줄 안에서 본다.
+    expect(screen.getByText(/선택한 지역/).textContent).toContain('강남구');
 
     fireEvent.click(screen.getByRole('button', { name: '선택 해제' }));
     expect(onSelectSigungu).toHaveBeenCalledWith(null, null);
+  });
+
+  describe('구 칩 = 진짜 링크(결정 0042 H4)', () => {
+    const LIST = [
+      gu({ sigungu_code: '11680', sigungu_nm: '강남구' }),
+      gu({ sigungu_code: '11440', sigungu_nm: '마포구' }),
+      gu({ sigungu_code: '30170', sido_code: '30', sido_nm: '대전', sigungu_nm: '서구' }),
+    ];
+
+    it('★ 시도를 안 펼쳐도 열린 구 전부가 `/?sgg=<코드>` 링크로 DOM 에 있다 — 펼치지 않은 것은 숨김', async () => {
+      rpc.mockResolvedValue({ data: LIST, error: null });
+      const { container } = render(<RegionPicker selectedSigungu={null} onSelectSigungu={vi.fn()} />);
+      await waitFor(() => expect(screen.getByRole('button', { name: /^서울$/ })).toBeTruthy());
+      const links = [...container.querySelectorAll<HTMLAnchorElement>('a[href^="/?sgg="]')];
+      expect(links.map((a) => a.getAttribute('href'))).toEqual(['/?sgg=11680', '/?sgg=11440', '/?sgg=30170']);
+      expect(links.every((a) => a.closest('.region__gus')!.hasAttribute('hidden'))).toBe(true);
+      // 보이는 모습은 예전 그대로 — 펼친 시도의 구만 낭독기·눈에 보인다.
+      fireEvent.click(screen.getByRole('button', { name: /^대전$/ }));
+      expect(screen.getByRole('button', { name: /^서구/ })).toBeTruthy();
+      expect(screen.queryByRole('button', { name: /^강남구/ })).toBeNull();
+    });
+
+    it('★ 보통 왼쪽 누름은 화면이 가로채 고르기 · Ctrl·Cmd·Shift·가운데 누름은 그대로 링크 · 스페이스로도 고른다', async () => {
+      rpc.mockResolvedValue({ data: LIST, error: null });
+      const onSelectSigungu = vi.fn();
+      render(<RegionPicker selectedSigungu={null} onSelectSigungu={onSelectSigungu} />);
+      await waitFor(() => expect(screen.getByRole('button', { name: /^서울$/ })).toBeTruthy());
+      fireEvent.click(screen.getByRole('button', { name: /^서울$/ }));
+      const chip = screen.getByRole('button', { name: /^마포구/ });
+      expect(chip.tagName).toBe('A');
+      expect(chip.getAttribute('aria-pressed')).toBe('false');
+
+      for (const mod of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { button: 1 }]) {
+        expect(fireEvent.click(chip, mod), JSON.stringify(mod)).toBe(true); // preventDefault 안 함
+      }
+      expect(onSelectSigungu).not.toHaveBeenCalled();
+
+      expect(fireEvent.click(chip)).toBe(false); // preventDefault
+      expect(onSelectSigungu).toHaveBeenCalledWith('11440', '마포구');
+      fireEvent.keyDown(chip, { key: ' ' });
+      expect(onSelectSigungu).toHaveBeenCalledTimes(2);
+    });
   });
 
   it('지역 목록을 못 받으면 이유를 말하고 다시 시도할 길을 준다', async () => {
