@@ -369,6 +369,28 @@ async function gotoTab(page: Page, name: '찾기' | '지도' | '건물' | '뽑�
   await expect(tabButton(page, name)).toHaveAttribute('aria-current', 'page');
 }
 
+/**
+ * 건물을 고른 뒤 입구 카드(LH·성적표·단가 흐름)가 물러나는가.
+ * 넓은 화면 = 카드가 DOM 에서 빠진다(지금 그대로). 휴대폰(W4a 검사 🟠 F2) = 건물 탭에선 숨고 · 찾기 탭으로 가면 다시 서고 ·
+ * 건물을 연 채 종이에서는 빠진다(종이 = 건물 한 장). 끝나면 건물 탭으로 돌려 둔다.
+ */
+async function expectEntryCardRetreats(page: Page, sel: string) {
+  const card = page.locator(sel);
+  if (!(await isPhoneTabs(page))) {
+    await expect(card).toHaveCount(0);
+    return;
+  }
+  await expect(card).toHaveCount(1);
+  await expect(card).toBeHidden();
+  await gotoTab(page, '찾기');
+  await expect(card).toBeVisible();
+  await page.emulateMedia({ media: 'print' });
+  await expect(card).toBeHidden();
+  await expect(page.locator('section.stack .stack__head')).toBeVisible();
+  await page.emulateMedia({ media: null });
+  await gotoTab(page, '건물');
+}
+
 /*
   '물어봤음' 기본값(결정 0039 §4-7 · W3). 이 기기 저장값이 없으면 입구 맨 위에 역할 고르기 큰 카드가 서고 작은 역할 단추 줄은
   숨는다 — 이 파일의 시험은 그 카드가 나오기 전 화면(역할 없음)을 전제로 쓰였으므로, 페이지가 열릴 때마다 **열쇠에 값이 없을
@@ -1435,11 +1457,11 @@ test.describe('입구 — LH 상가 분양·입점 공고', () => {
     await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
     await expect(lh).toContainText('출처: 한국토지주택공사(LH)');
 
-    // ⛔ 건물을 고르면 화면의 주제가 그 건물이다 — 카드는 물러난다.
+    // ⛔ 건물을 고르면 화면의 주제가 그 건물이다 — 카드는 물러난다(휴대폰은 건물 탭에서 숨고 찾기 탭엔 남는다 · W4a F2).
     await search(page, '테헤란로');
     await page.getByRole('button', { name: /테스트빌딩/ }).click();
     await expect(page.locator('section.stack')).toBeVisible();
-    await expect(page.locator('section.lh')).toHaveCount(0);
+    await expectEntryCardRetreats(page, 'section.lh'); // 휴대폰은 찾기 탭에 남는다(F2)
   });
 
   test('X. 입구 함수가 아직 없으면 그 카드들이 통째로 조용히 빠진다', async ({ page }) => {
@@ -1526,13 +1548,13 @@ test.describe('입구 — 참고 시세 성적표', () => {
     // ④ 방법 + 도장.
     await expect(score.locator('.grade__badge')).toHaveText('검증 성적 · 원본 성적표 v2');
 
-    // ⛔ 건물을 고르면 화면의 주제가 그 건물이다 — 입구 카드는 물러난다.
+    // ⛔ 건물을 고르면 화면의 주제가 그 건물이다 — 입구 카드는 물러난다(휴대폰은 건물 탭에서 숨고 찾기 탭엔 남는다 · W4a F2).
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
     await mockFloorStack(page);
     await search(page, '테헤란로');
     await page.getByRole('button', { name: /테스트빌딩/ }).click();
     await expect(page.locator('section.stack')).toBeVisible();
-    await expect(page.locator('section.score')).toHaveCount(0);
+    await expectEntryCardRetreats(page, 'section.score'); // 휴대폰은 찾기 탭에 남는다(F2)
   });
 
   test('AK. 펼치면 층마다의 오차 블록이 서고, 1층이 기준선을 넘은 이유가 한 줄 붙는다', async ({
@@ -1674,13 +1696,13 @@ test.describe('입구 — 동네 매매 단가 흐름', () => {
     // ③ 근거 등급 — 어림한 값이 아니라 신고된 거래다.
     await expect(flow.locator('.grade__badge')).toHaveText('A등급 · 실거래');
 
-    // ⛔ 건물을 고르면 화면의 주제가 그 건물이다 — 입구 카드는 물러난다.
+    // ⛔ 건물을 고르면 화면의 주제가 그 건물이다 — 입구 카드는 물러난다(휴대폰은 건물 탭에서 숨고 찾기 탭엔 남는다 · W4a F2).
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
     await mockFloorStack(page);
     await search(page, '테헤란로');
     await page.getByRole('button', { name: /테스트빌딩/ }).click();
     await expect(page.locator('section.stack')).toBeVisible();
-    await expect(page.locator('section.flow')).toHaveCount(0);
+    await expectEntryCardRetreats(page, 'section.flow'); // 휴대폰은 찾기 탭에 남는다(F2)
   });
 });
 
@@ -4345,5 +4367,32 @@ test.describe('휴대폰 아래 탭', () => {
     await expect(bar).toBeVisible();
     await page.locator('footer.foot').getByRole('textbox').focus();
     await expect(bar).toBeHidden();
+  });
+
+  test('BQ. 건물 없이 더보기 탭에서 뽑으면 종이에 입구가 되살아난다(넓은 화면 종이처럼) · 탭 막대 없음', async ({ page }, testInfo) => {
+    await mockOpenSigungu(page);
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    const entryDisplay = () =>
+      page.locator('#entry-panel').evaluate(
+        (e) => (globalThis as unknown as { getComputedStyle(x: unknown): { display: string } }).getComputedStyle(e).display,
+      );
+    if (testInfo.project.name !== 'mobile') {
+      // 넓은 화면은 입구를 숨긴 적이 없다 — 화면·종이 모두 입구가 서 있고 탭 막대 0.
+      await page.emulateMedia({ media: 'print' });
+      expect(await entryDisplay()).not.toBe('none');
+      await expect(page.locator('nav.tabbar')).toHaveCount(0);
+      await page.emulateMedia({ media: null });
+      return;
+    }
+    await gotoTab(page, '더보기');
+    await expect(page.locator('#entry-panel')).toBeHidden();
+    await page.emulateMedia({ media: 'print' });
+    // 탭이 숨긴 입구(`hidden`)를 종이에서 되살린다 — 건물이 없으면 지금처럼 입구(👤 W4a 「건물 한 장」의 짝 · 검사 🟡 F6).
+    expect(await entryDisplay()).toBe('block');
+    await expect(page.locator('nav.tabbar')).toBeHidden();
+    await expect(page.locator('.foot__notice')).toBeVisible();
+    await page.emulateMedia({ media: null });
+    await expect(page.locator('#entry-panel')).toBeHidden();
   });
 });

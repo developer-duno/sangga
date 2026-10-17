@@ -40,7 +40,7 @@ export const EMPTY_BUILDING_TITLE = '아직 고른 건물이 없습니다';
 export const EMPTY_BUILDING_BODY = '찾기나 지도에서 건물을 고르면 여기에 층별 화면이 섭니다';
 export const EMPTY_BUILDING_GO = '건물 찾으러 가기';
 
-/** 빈 「뽑은 건물」 탭(메인 판단 · 👤 확인 중 — 바뀌면 여기 한 곳만 고친다). */
+/** 빈 「뽑은 건물」 탭 — 두 줄 문구는 👤 2026-10-17 저녁 W4a 4번 「가」로 승인된 문구(바뀌면 여기 한 곳만 고친다). */
 export const EMPTY_PRINTED_TITLE = '아직 뽑은 건물이 없습니다';
 export const EMPTY_PRINTED_BODY = '건물 화면에서 「인쇄 · PDF로 저장」을 누르면 여기에 남습니다';
 

@@ -145,6 +145,8 @@ export default function App() {
   const [popSeq, setPopSeq] = useState(0);
   useEffect(() => {
     function onPop(e: PopStateEvent) {
+      // 넓은 화면은 탭이 없다 — 휴대폰에서 쌓인 칸이 남아 있어도 탭·주소 다시 쓰기는 안 한다(W4a 전과 같게 · 검사 🟡 F9).
+      if (!phoneRef.current) return;
       const mark = historyMarkOf(e.state);
       if (mark === null) return;
       setTab(mark === 'bld' ? 'building' : returnTabRef.current);
@@ -169,6 +171,9 @@ export default function App() {
   function handlePickFromCards(role: ViewerRole | null) {
     roleCardsFocusRef.current = true;
     handlePickRole(role);
+    // 휴대폰에서 큰 카드로 창업자를 고르면 지도 탭으로 — 카드 문구 「상권 지도·업종 분포를 먼저 보여 드립니다」와 0036 ④
+    // (`firstTab` 과 같은 규칙 · 검사 🟠 F3). 건물이 열려 있거나 되살리는 중이면 탭을 안 옮긴다 · 다른 역할은 찾기 그대로.
+    if (isPhone && role === '창업자' && selected === null && !restoring) setTab('map');
   }
 
   /*
@@ -209,12 +214,23 @@ export default function App() {
   const showMap = isPhone ? curTab === (viewerRole === '중개사' ? 'find' : 'map') : !folded;
   const headFolded = isPhone ? selected !== null || restoring : folded;
   /*
+    입구 카드 셋(LH·성적표·단가 흐름)을 세울 때 — 구를 골랐고 되살리는 중이 아니고, 넓은 화면은 건물을 안 열었을 때만(지금 그대로).
+    휴대폰은 건물을 열어 둔 채여도 찾기 탭에 선다(보던 건물이 남는 탭 꼴이라 · 검사 🟠 F2) — 다른 탭에선 CSS 가 숨기고,
+    종이(건물 있음)에서는 인쇄 감춤 `.app--tabs.app--bld .app__main > .card` 가 빼서 종이는 건물 한 장 그대로다.
+  */
+  const showEntryCards = sigungu !== null && !restoring && (selected === null || isPhone);
+  /*
     큰 카드에서 고른 뒤(위 `handlePickFromCards`) — 역할을 골랐으면 눌린 단추, 「그냥 둘러보기」면 첫 단추에 커서.
     ⓘ 화면은 굴리지 않는다(`preventScroll`) — 작은 줄은 카드가 있던 바로 그 자리라 이미 화면 안이다.
   */
   useEffect(() => {
     if (!roleCardsFocusRef.current) return;
     roleCardsFocusRef.current = false;
+    // 휴대폰은 작은 줄이 「더보기」 탭(숨음)에 있다 — 지금 고른 탭 단추에 커서(body 로 떨어지지 않게 · 검사 🟡 F4).
+    if (phoneRef.current) {
+      document.querySelector<HTMLButtonElement>('.tabbar__btn[aria-current="page"]')?.focus({ preventScroll: true });
+      return;
+    }
     const row = entryRef.current?.querySelector('.role');
     (
       row?.querySelector<HTMLButtonElement>('.role__chip[aria-pressed="true"]') ??
@@ -682,7 +698,7 @@ export default function App() {
           ⓘ `key` 를 일부러 안 준다 — 같은 시도 안에서 구만 바꾸면(강남구 → 서초구) 답이
             같으므로 다시 묻지 않는 것이 맞다. 카드가 시도 코드에만 매여 있다.
         */}
-        {sigungu !== null && selected === null && !restoring && <LhNoticeSection sigungu={sigungu} />}
+        {showEntryCards && <LhNoticeSection sigungu={sigungu} />}
 
         {/*
           입구의 두 번째 카드 — 참고 시세 성적표(로드맵 Wave 4).
@@ -695,7 +711,7 @@ export default function App() {
           ⓘ `key` 를 일부러 안 준다 — 서버 함수가 열린 구 **전부**를 한 번에 주므로 구를
             바꿔도 다시 물을 것이 없다(카드가 받아 둔 목록에서 그 구 줄만 골라 쓴다).
         */}
-        {sigungu !== null && selected === null && !restoring && (
+        {showEntryCards && (
           <ScorecardSection sigungu={sigungu} />
         )}
 
@@ -709,7 +725,7 @@ export default function App() {
           ⓘ `key` 를 일부러 안 준다 — 구가 바뀌면 `sigungu` prop 이 바뀌고 카드가 스스로
             다시 묻는다(카드 안의 `useEffect` 가 그 값에 매여 있다).
         */}
-        {sigungu !== null && selected === null && !restoring && <TxFlowSection sigungu={sigungu} />}
+        {showEntryCards && <TxFlowSection sigungu={sigungu} />}
 
         {selected ? (
           <>
@@ -769,9 +785,21 @@ export default function App() {
         ) : restoreFailed ? (
           // 층 자료가 없는 건물(239동)이거나 서버가 잠깐 흔들린 경우다. 어느 쪽이든
           // 빈 화면을 그리지 않고 다음에 할 일을 알려 준다.
-          <p className="msg msg--idle">
-            링크에 담긴 건물을 찾지 못했습니다. 위에서 건물을 검색해 선택해 주세요.
-          </p>
+          // 휴대폰 건물 탭엔 위에 검색창이 없다 — 「위에서…」 대신 빈 건물 탭의 「건물 찾으러 가기」 단추(검사 🟡 F5).
+          isPhone ? (
+            curTab === 'building' && (
+              <section className="tabempty" aria-label="링크의 건물을 찾지 못함">
+                <p className="tabempty__title">링크에 담긴 건물을 찾지 못했습니다.</p>
+                <button type="button" className="tabempty__go" onClick={() => pickTab('find')}>
+                  {EMPTY_BUILDING_GO}
+                </button>
+              </section>
+            )
+          ) : (
+            <p className="msg msg--idle">
+              링크에 담긴 건물을 찾지 못했습니다. 위에서 건물을 검색해 선택해 주세요.
+            </p>
+          )
         ) : isPhone ? (
           /*
             휴대폰 빈 「건물」 탭(👤 2026-10-17 W4a 1번 「가」 — 시안 글자 그대로). 「위에서 건물을…」 줄은 휴대폰에선 안 그린다

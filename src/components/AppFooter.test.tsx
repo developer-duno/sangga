@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, cleanup, within } from '@testing-library/react';
+import { render, screen, cleanup, within, fireEvent } from '@testing-library/react';
 
 /**
  * 화면 맨 아래 — 「함께 보면 좋은 사이트」 구역 시험(2026-10-06 · 2u 인계 10-05).
@@ -60,5 +60,26 @@ describe('AppFooter — 함께 보면 좋은 사이트', () => {
     for (const f of FAMILY) {
       expect(within(handoff as HTMLElement).queryByRole('link', { name: f.label })).toBeNull();
     }
+  });
+});
+
+describe('AppFooter — 휴대폰 더보기 차례(결정 0039 W4a)', () => {
+  it('★ 의견함은 차례를 바꿔도 같은 자리(맨 뒤) — 폰을 돌려 휴대폰 ↔ 넓은 꼴이 바뀌어도 쓰던 글이 남는다(검사 🟡 F8)', () => {
+    const lead = <section className="role">역할 줄</section>;
+    const { container, rerender } = render(<AppFooter lead={lead} phoneOrder />);
+    const foot = container.querySelector('footer.foot')!;
+    expect(foot.classList.contains('foot--phone')).toBe(true);
+    expect(foot.firstElementChild?.classList.contains('role')).toBe(true);
+    expect(foot.lastElementChild?.classList.contains('fb')).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: '의견 보내기' }));
+    const box = within(foot as HTMLElement).getByRole('textbox') as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: '쓰던 글' } });
+
+    rerender(<AppFooter />);
+    expect(foot.classList.contains('foot--phone')).toBe(false);
+    expect(foot.firstElementChild?.classList.contains('foot__notice')).toBe(true);
+    const after = within(foot as HTMLElement).getByRole('textbox') as HTMLTextAreaElement;
+    expect(after).toBe(box); // 같은 물건 — 다시 태어나지 않았다
+    expect(after.value).toBe('쓰던 글');
   });
 });

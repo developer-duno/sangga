@@ -287,9 +287,9 @@ describe('휴대폰 아래 탭 (결정 0039 W4a)', () => {
     expect(entry().querySelector('.role')).toBeNull();
     const foot = container.querySelector('footer.foot')!;
     expect(foot.firstElementChild?.classList.contains('role')).toBe(true);
-    const kids = [...foot.children].map((el) => el.className.split(' ')[0]);
-    expect(kids.indexOf('fb')).toBeLessThan(kids.indexOf('foot__notice'));
-    expect(kids.indexOf('foot__notice')).toBeLessThan(kids.indexOf('links'));
+    // 눈 차례(의견함이 안내 앞)는 CSS order(`.foot--phone` · 아래 CSS 시험) — 의견함 DOM 자리는 넓은 화면과 같은 맨 뒤(F8).
+    expect(foot.classList.contains('foot--phone')).toBe(true);
+    expect(foot.lastElementChild?.classList.contains('fb')).toBe(true);
 
     fireEvent.click(tab('지도'));
     fireEvent.click(tab('더보기'));
@@ -307,6 +307,82 @@ describe('휴대폰 아래 탭 (결정 0039 W4a)', () => {
     const { container } = render(<App />);
     expect(entry().querySelector('.rolecards')).not.toBeNull();
     expect(container.querySelector('footer.foot .role')).toBeNull();
+  });
+
+  it('★ 휴대폰 — 건물을 연 채 찾기 탭에도 입구 카드 셋이 선다(넓은 화면은 지금처럼 건물을 열면 물러남 · 검사 🟠 F2)', async () => {
+    phoneMedia();
+    // 입구 카드가 실제로 서게 단가 흐름 한 줄을 준다(빈 답이면 카드가 안 선다 — 양성 대조가 비지 않게).
+    const flowRow = {
+      yr: '2015', n: 12, n_all: 14, median_unit_price: 1000, p25_unit_price: 800, p75_unit_price: 1200,
+      median_area_m2: 50, floor_missing: 1, ym_cnt: 12, first_ym: '201501', last_ym: '201512',
+    };
+    const baseRpc = rpc.getMockImplementation()!;
+    rpc.mockImplementation((fn: string, ...rest: unknown[]) =>
+      fn === 'get_sigungu_tx_yearly' ? Promise.resolve({ data: [flowRow], error: null }) : baseRpc(fn, ...rest),
+    );
+    const { container } = render(<App />);
+    await pickGu();
+    const cards = () => container.querySelectorAll('.app__main > .card').length;
+    await vi.waitFor(() => expect(cards()).toBeGreaterThan(0));
+    const before = cards();
+    await searchAndOpen();
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+    expect(cards()).toBe(before); // 건물 탭에선 CSS 가 숨긴다 · 종이에선 인쇄 감춤(아래 CSS 시험)
+    fireEvent.click(tab('찾기'));
+    expect(cards()).toBe(before);
+    cleanup();
+
+    // 넓은 화면 대조 — 건물을 열면 카드가 물러난다(지금 그대로).
+    delete (window as { matchMedia?: unknown }).matchMedia;
+    window.history.replaceState(null, '', '/');
+    const wide = render(<App />);
+    await pickGu();
+    await vi.waitFor(() => expect(wide.container.querySelectorAll('.app__main > .card').length).toBeGreaterThan(0));
+    await searchAndOpen();
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+    expect(wide.container.querySelectorAll('.app__main > .card').length).toBe(0);
+  });
+
+  it('★ 휴대폰 첫 방문 큰 카드 — 「가게를 열려고」(창업자)는 지도 탭 · 다른 역할은 찾기 그대로 · 커서는 고른 탭 단추(검사 🟠 F3 · 🟡 F4)', async () => {
+    phoneMedia();
+    window.localStorage.clear();
+    const first = render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: /가게를 열려고/ }));
+    expect(current()).toBe('지도');
+    expect(document.activeElement).toBe(tab('지도'));
+    first.unmount();
+
+    window.localStorage.clear();
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: /투자·매입하려고/ }));
+    expect(current()).toBe('찾기');
+    expect(document.activeElement).toBe(tab('찾기'));
+  });
+
+  it('★ 휴대폰 건물 직행 링크인데 건물을 못 찾으면 — 「위에서…」 대신 「건물 찾으러 가기」 → 찾기 탭(검사 🟡 F5)', async () => {
+    phoneMedia();
+    from.mockImplementation((view: string) => makeQuery(view === 'v_coverage_stats' ? { data: [], error: null } : { data: [], error: null }));
+    window.history.replaceState(null, '', `/?sgg=11680&bld=${BLD}`);
+    render(<App />);
+    expect(await screen.findByText('링크에 담긴 건물을 찾지 못했습니다.')).toBeTruthy();
+    expect(screen.queryByText(/위에서 건물을 검색해 선택해 주세요/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '건물 찾으러 가기' }));
+    expect(current()).toBe('찾기');
+  });
+
+  it('★ 넓은 화면 뒤로가기 — 우리 표식이 있는 칸이어도 탭·주소를 다시 쓰지 않는다(W4a 전과 같게 · 검사 🟡 F9)', async () => {
+    render(<App />);
+    await pickGu();
+    await searchAndOpen();
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+    expect(window.location.search).toContain(`bld=${BLD}`);
+    window.history.replaceState({ sanggaTab: 'base' }, '', '/?sgg=11680');
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate', { state: { sanggaTab: 'base' } }));
+    });
+    // 휴대폰이면 지금 건물로 주소를 다시 적는다(위 「건물을 열면…」 시험) — 넓은 화면은 손대지 않는다.
+    expect(window.location.search).toBe('?sgg=11680');
+    expect(bar()).toBeNull();
   });
 });
 
@@ -401,5 +477,41 @@ describe('휴대폰 아래 탭 — CSS', () => {
     expect(rules.some((r) => r.media === PHONE && r.sel.includes('.office__field input') && /min-height:\s*44px/.test(r.body))).toBe(
       true,
     );
+  });
+
+  it('좌우 안전 영역은 기본 `.app` 규칙(모든 폭 — viewport-fit=cover 가 모든 폭에 먹는다) · 탭 묶음엔 중복 없음(검사 🟠 F1)', () => {
+    const app = rules.find((r) => r.media === null && r.sel.includes('.app'))!;
+    expect(app.body).toMatch(/padding-left:\s*max\(20px,\s*env\(safe-area-inset-left/);
+    expect(app.body).toMatch(/padding-right:\s*max\(20px,\s*env\(safe-area-inset-right/);
+    const tabs = rules.filter((r) => r.media === PHONE && r.sel.includes('.app--tabs'));
+    expect(tabs.length).toBe(1);
+    expect(tabs[0].body).not.toMatch(/padding-(left|right)/);
+  });
+
+  it('흐린 「건물」 탭 — 단추 통째 투명도 0(글자 대비 유지) · 흐림은 그림만(검사 🟡 F7)', () => {
+    const dim = rules.filter((r) => r.sel.some((s) => s.startsWith('.tabbar__btn--dim')));
+    expect(dim.length).toBeGreaterThan(0);
+    expect(dim.filter((r) => r.sel.includes('.tabbar__btn--dim') && /opacity/.test(r.body))).toEqual([]);
+    expect(dim.some((r) => r.sel.includes('.tabbar__btn--dim .tabbar__icon') && /opacity/.test(r.body))).toBe(true);
+  });
+
+  it('더보기 눈 차례는 휴대폰 묶음의 CSS order — 역할 줄 0 · 의견함 1 · 나머지 2(검사 🟡 F8)', () => {
+    const order = (sel: string) => {
+      const r = rules.find((x) => x.media === PHONE && x.sel.includes(sel) && /order:/.test(x.body));
+      return r ? Number(/order:\s*(\d+)/.exec(r.body)![1]) : null;
+    };
+    expect(order('.foot--phone > .role')).toBe(0);
+    expect(order('.foot--phone > .fb')).toBe(1);
+    expect(order('.foot--phone > *')).toBe(2);
+    expect(rules.filter((r) => r.media !== PHONE && r.sel.some((s) => s.includes('.foot--phone')))).toEqual([]);
+  });
+
+  it('종이 — 휴대폰에서 건물을 연 채면 입구 카드도 빠지고(F2) · 건물이 없으면 숨긴 입구를 되살린다(F6)', () => {
+    const print = rules.filter((r) => r.media === '@media print');
+    const hide = print.filter((r) => /display:\s*none/.test(r.body)).flatMap((r) => r.sel);
+    expect(hide).toContain('.app--tabs.app--bld .app__main > .card');
+    expect(
+      print.some((r) => r.sel.includes('.app--tabs:not(.app--bld) .entry[hidden]') && /display:\s*block/.test(r.body)),
+    ).toBe(true);
   });
 });
