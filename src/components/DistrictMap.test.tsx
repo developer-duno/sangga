@@ -21,19 +21,25 @@ const kakao = vi.hoisted(() => ({
   mapProps: null as {
     onClick?: (m: unknown, e: unknown) => void;
     onZoomChanged?: (m: { getLevel: () => number }) => void;
+    onIdle?: (m: unknown) => void;
   } | null,
   setBounds: vi.fn(),
   panTo: vi.fn(),
   setLevel: vi.fn(),
+  map: null as unknown,
 }));
+kakao.map = { setBounds: kakao.setBounds, panTo: kakao.panTo, setLevel: kakao.setLevel };
 
 vi.mock('react-kakao-maps-sdk', () => ({
   useKakaoLoader: () => [false, undefined],
-  useMap: () => ({ setBounds: kakao.setBounds, panTo: kakao.panTo, setLevel: kakao.setLevel }),
+  // ⓘ 진짜 SDK 처럼 **같은 지도 객체**를 돌려준다 — 부를 때마다 새 객체면 `[map, bounds]` effect 가 매 렌더 다시 돌아
+  //   "구를 바꿀 때만 다시 맞춘다"를 셀 수 없다(결정 0039 W1).
+  useMap: () => kakao.map,
   Map: (props: {
     children?: React.ReactNode;
     onClick?: (m: unknown, e: unknown) => void;
     onZoomChanged?: (m: { getLevel: () => number }) => void;
+    onIdle?: (m: unknown) => void;
   }) => {
     kakao.mapProps = props;
     return <div data-testid="map">{props.children}</div>;
@@ -615,6 +621,241 @@ describe('DistrictMap — 접기와 캐시', () => {
 
     // 파일 하나에 전국이 다 들어 있다 — 구별로 거르기만 하면 된다.
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── 지도 배율 — 몰린 곳에 맞추기 (결정 0039 W1) ──────────────────────────────────────────────
+// ⓘ E2E 에는 지도 키가 없어 지도가 안 그려진다 — 첫 범위·화면 밖 표지·멀리서의 점+이름의 화면 가드는 여기가 전부다.
+describe('DistrictMap — 지도 배율(결정 0039 W1)', () => {
+  /** `setBounds` 로 받은 LatLngBounds 흉내(위 stub — {sw, ne})를 숫자로 편다. */
+  function fitted(call: unknown[]) {
+    const b = call[0] as { sw: { lat: number; lng: number }; ne: { lat: number; lng: number } };
+    return { swLat: b.sw.lat, swLng: b.sw.lng, neLat: b.ne.lat, neLng: b.ne.lng };
+  }
+
+  /** 카카오가 멈춤(idle) 때 주는 지도 객체 흉내 — 지금 범위·지도 칸 크기·배율. */
+  async function idleAt(view: { swLat: number; swLng: number; neLat: number; neLng: number }, level = 6) {
+    await act(async () => {
+      kakao.mapProps?.onIdle?.({
+        getBounds: () => ({
+          getSouthWest: () => ({ getLat: () => view.swLat, getLng: () => view.swLng }),
+          getNorthEast: () => ({ getLat: () => view.neLat, getLng: () => view.neLng }),
+        }),
+        getNode: () => ({ clientWidth: 1000, clientHeight: 1000 }),
+        getLevel: () => level,
+      });
+    });
+  }
+
+  /** 서구(30170)에 상권 여섯 — 서쪽에 겹친 넷 + 옆에 하나 + 멀리 동쪽에 작은 하나. */
+  function sixGeo(): DistrictGeoJson {
+    const at = (id: string, r: Ring) =>
+      feature({ id, nm: id, type: '골목상권', gu: '30170', source: '소상공인시장진흥공단', ring: r });
+    return {
+      type: 'FeatureCollection',
+      meta: { district_cnt: 6, max_computed_at: '2026-08-13T23:18:22.882729Z' },
+      features: [
+        at('X1', ring(127.3, 36.3, 127.31, 36.31)),
+        at('X2', ring(127.3, 36.3, 127.31, 36.31)),
+        at('X3', ring(127.3, 36.3, 127.31, 36.31)),
+        at('X4', ring(127.3, 36.3, 127.31, 36.31)),
+        at('Y', ring(127.32, 36.3, 127.323, 36.31)),
+        at('Z', ring(127.4, 36.3, 127.401, 36.31)),
+      ],
+    };
+  }
+
+  it('첫 범위는 여백 네 개(위·오른쪽·아래·왼쪽)와 함께 맞춘다', async () => {
+    await renderMap();
+    await waitFor(() => expect(kakao.setBounds).toHaveBeenCalled());
+    const call = kakao.setBounds.mock.calls[0];
+    expect(call).toHaveLength(5);
+    const pads = call.slice(1) as number[];
+    // 카카오 기본(32)보다 넓게 — 가장자리 표지가 몰린 곳을 가리지 않게.
+    expect(pads.every((p) => typeof p === 'number' && p > 32)).toBe(true);
+    expect(new Set(pads).size).toBe(1);
+  });
+
+  it('상권 5곳 이하 구는 전부 담는 상자로 맞춘다', async () => {
+    await renderMap(); // 강남 2곳
+    await waitFor(() => expect(kakao.setBounds).toHaveBeenCalled());
+    expect(fitted(kakao.setBounds.mock.calls[0])).toEqual({ swLat: 37.5, swLng: 127.0, neLat: 37.6, neLng: 127.1 });
+  });
+
+  it('6곳부터는 몰린 곳 상자 — 멀리 떨어진 작은 상권 쪽으로 넓히지 않는다', async () => {
+    fetchMock.mockImplementation(() => okJson(sixGeo()));
+    await renderMap({ sigungu: '30170', sigunguName: '서구' });
+    await waitFor(() => expect(kakao.setBounds).toHaveBeenCalled());
+    const b = fitted(kakao.setBounds.mock.calls[0]);
+    expect(b.swLng).toBeGreaterThanOrEqual(127.3);
+    expect(b.neLng).toBeLessThan(127.33); // 전부 담으면 127.401
+  });
+
+  it('구를 바꾸면 사용자가 배율을 바꾼 뒤라도 새 구의 상자로 다시 맞춘다', async () => {
+    const DistrictMap = await load();
+    const { rerender } = render(
+      <DistrictMap sigungu="11680" sigunguName="강남구" selected={null} onSelectBuilding={() => {}} />,
+    );
+    await waitFor(() => expect(kakao.setBounds).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      kakao.mapProps?.onZoomChanged?.({ getLevel: () => 3 });
+    });
+    rerender(<DistrictMap sigungu="30170" sigunguName="서구" selected={null} onSelectBuilding={() => {}} />);
+    await waitFor(() => expect(kakao.setBounds).toHaveBeenCalledTimes(2));
+    expect(fitted(kakao.setBounds.mock.calls[1])).toEqual({ swLat: 36.3, swLng: 127.3, neLat: 36.4, neLng: 127.4 });
+  });
+
+  it('멈춘 뒤 화면 밖 상권이 있으면 가장자리 표지가 서고, 누르면 그쪽으로 옮긴다', async () => {
+    await renderMap();
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: /화면 밖 상권/ })).toBeNull();
+
+    // 지금 화면 = 강남 상권 둘보다 서쪽 → 둘 다 오른쪽 밖.
+    await idleAt({ swLat: 37.5, swLng: 126.8, neLat: 37.6, neLng: 126.9 });
+    const btn = screen.getByRole('button', { name: /화면 밖 상권/ });
+    // 접근 이름에 방향·곳 수·면적 큰 이름(파일 첫째 = 역삼역 — 시험 자료는 면적이 같아 앞의 것).
+    expect(btn.getAttribute('aria-label')).toBe('오른쪽 화면 밖 상권 2곳(역삼역 등) — 그쪽으로 옮기기');
+    expect(btn.className).toContain('dmap__off--e');
+    expect(btn.textContent).toBe('→역삼역등2곳');
+
+    fireEvent.click(btn);
+    expect(kakao.panTo).toHaveBeenCalledTimes(1);
+    const to = kakao.panTo.mock.calls[0][0] as { lat: number; lng: number };
+    expect(to.lat).toBeCloseTo(37.55, 6);
+    expect(to.lng).toBeCloseTo(127.05, 6);
+  });
+
+  it('화면 안에 다 들면 표지가 없다', async () => {
+    await renderMap();
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await idleAt({ swLat: 37.4, swLng: 126.9, neLat: 37.7, neLng: 127.2 });
+    expect(screen.queryByRole('button', { name: /화면 밖 상권/ })).toBeNull();
+  });
+
+  it('⛔ 다른 구에서 잰 화면으로는 표지를 세지 않는다 — 구를 바꾼 직후 전부 화면 밖으로 그려지지 않는다', async () => {
+    const DistrictMap = await load();
+    const { rerender } = render(
+      <DistrictMap sigungu="11680" sigunguName="강남구" selected={null} onSelectBuilding={() => {}} />,
+    );
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await idleAt({ swLat: 37.4, swLng: 126.9, neLat: 37.7, neLng: 127.2 });
+    rerender(<DistrictMap sigungu="30170" sigunguName="서구" selected={null} onSelectBuilding={() => {}} />);
+    await waitFor(() => expect(screen.getByText(/출처: 소상공인시장진흥공단/)).toBeTruthy());
+    expect(screen.queryByRole('button', { name: /화면 밖 상권/ })).toBeNull();
+  });
+
+  it('멀리(level 6)에서는 화면에서 작은 상권만 점 + 이름 — 누르기를 넘기고(clickable false), 확대하면 이름표가 대신한다', async () => {
+    await renderMap();
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    // 1000px 에 2° → 1px = 0.002°. 역삼역(0.1° = 50px)은 면이 보이고, 역삼골목(0.02° = 10px)만 점이다.
+    await idleAt({ swLat: 36.5, swLng: 126.0, neLat: 38.5, neLng: 128.0 }, 6);
+    const fars = document.querySelectorAll('.dmap__far');
+    expect(fars).toHaveLength(1);
+    expect(fars[0].textContent).toBe('역삼골목');
+    expect(fars[0].parentElement?.getAttribute('data-clickable')).toBe('false');
+
+    await act(async () => {
+      kakao.mapProps?.onZoomChanged?.({ getLevel: () => 5 });
+    });
+    expect(document.querySelectorAll('.dmap__far')).toHaveLength(0);
+    expect(screen.getAllByTestId('label')).toHaveLength(2);
+  });
+
+  it('점은 브라우저 쪽에서도 클릭 대상이 아니다(pointer-events: none)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const css = readFileSync('src/styles.css', 'utf8');
+    const block = css.slice(css.indexOf('.dmap__far {'));
+    expect(block.slice(0, block.indexOf('}'))).toMatch(/pointer-events:\s*none/);
+  });
+
+  it('화면 밖 표지는 종이에서 빠지고, 휴대폰 꼴(이름 숨김)은 화면 720 묶음 안에만 있다', async () => {
+    const { readFileSync } = await import('node:fs');
+    const css = readFileSync('src/styles.css', 'utf8');
+    const print = css.slice(css.indexOf('@media print {'));
+    expect(print.slice(0, print.indexOf('display: none !important;'))).toMatch(/\.dmap__off,/);
+    // 휴대폰 규칙이 든 묶음의 머리가 `@media screen and (max-width: 720px)` 인지 — 기본 규칙이면 종이·넓은 화면까지 바뀐다.
+    const at = css.indexOf('.dmap__off-nm,\n  .dmap__off-etc {\n    display: none;');
+    const at2 = at >= 0 ? at : css.indexOf('.dmap__off-nm,\r\n  .dmap__off-etc {\r\n    display: none;');
+    expect(at2).toBeGreaterThan(0);
+    const head = css.lastIndexOf('@media', at2);
+    expect(css.slice(head, css.indexOf('{', head))).toBe('@media screen and (max-width: 720px) ');
+  });
+
+  /**
+   * CSS 를 주석 빼고 `@media` 묶음 밖(기본 규칙)과 안으로 갈라 규칙 목록(선택자 · 본문 · 묶음 머리)으로 편다.
+   * ⓘ 이 파일의 CSS 가드 셋이 같은 함수를 지난다 — 양성 대조도 같은 함수로 본다.
+   * 못 보는 것: `@media` 안의 또 다른 `@media`·`@supports` 겹 묶음(이 파일에 없다) · 문자열 안의 중괄호.
+   */
+  function cssRules(css: string): { sel: string[]; body: string; media: string | null }[] {
+    const src = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    const out: { sel: string[]; body: string; media: string | null }[] = [];
+    const take = (chunk: string, media: string | null) => {
+      for (const m of chunk.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        out.push({ sel: m[1].split(',').map((x) => x.trim()), body: m[2], media });
+      }
+    };
+    let i = 0;
+    let plain = '';
+    while (i < src.length) {
+      const at = src.indexOf('@media', i);
+      if (at < 0) {
+        plain += src.slice(i);
+        break;
+      }
+      plain += src.slice(i, at);
+      const open = src.indexOf('{', at);
+      let depth = 1;
+      let j = open + 1;
+      while (j < src.length && depth > 0) {
+        if (src[j] === '{') depth += 1;
+        else if (src[j] === '}') depth -= 1;
+        j += 1;
+      }
+      take(src.slice(open + 1, j - 1), src.slice(at, open).trim());
+      i = j;
+    }
+    take(plain, null);
+    return out;
+  }
+
+  it('⛔ 아래 줄 표지(↙ ↓ ↘)는 카카오 로고·축척 막대(약 25~30px) 위에 뜬다', async () => {
+    const { readFileSync } = await import('node:fs');
+    const rules = cssRules(readFileSync('src/styles.css', 'utf8'));
+    for (const dir of ['sw', 's', 'se']) {
+      const bottoms = rules
+        .filter((r) => r.media === null && r.sel.includes(`.dmap__off--${dir}`))
+        .flatMap((r) => [...r.body.matchAll(/bottom:\s*(\d+)px/g)].map((m) => Number(m[1])));
+      expect(bottoms, dir).toHaveLength(1);
+      expect(bottoms[0], dir).toBeGreaterThanOrEqual(30);
+      // 화면 묶음에서 다시 낮추지 않는다.
+      const lowered = rules.filter((r) => r.media !== null && r.sel.includes(`.dmap__off--${dir}`) && /bottom:/.test(r.body));
+      expect(lowered, dir).toHaveLength(0);
+    }
+  });
+
+  it('표지는 화면 전체의 「누르는 것은 44px 이상」 목록에 든다', async () => {
+    const { readFileSync } = await import('node:fs');
+    const rules = cssRules(readFileSync('src/styles.css', 'utf8'));
+    const tall = rules.filter((r) => r.media === '@media screen' && /min-height:\s*44px/.test(r.body));
+    expect(tall.some((r) => r.sel.includes('.dmap__off'))).toBe(true);
+  });
+
+  it('넓은 화면에서는 표지 이름이 보인다 — 기본 규칙(모든 @media 밖)에서 이름을 숨기지 않는다', async () => {
+    const { readFileSync } = await import('node:fs');
+    const hides = (css: string) =>
+      cssRules(css).some(
+        (r) =>
+          r.media === null &&
+          (r.sel.includes('.dmap__off-nm') || r.sel.includes('.dmap__off-etc')) &&
+          /display:\s*none|visibility:\s*hidden/.test(r.body),
+      );
+    const css = readFileSync('src/styles.css', 'utf8');
+    expect(hides(css)).toBe(false);
+    // 양성 대조 — 흔한 꼴(이름 하나) + 변형 꼴(선택자 목록 · 줄바꿈 다른 꼴)을 실제로 잡는다.
+    expect(hides(`${css}\n.dmap__off-nm { display: none; }`)).toBe(true);
+    expect(hides(`${css}\r\n.x,\r\n.dmap__off-etc {\r\n  display:none;\r\n}`)).toBe(true);
+    // 720 묶음 안의 숨김은 기본 규칙이 아니다(지금 저장소가 그 꼴이다).
+    expect(hides('@media screen and (max-width: 720px) { .dmap__off-nm { display: none; } }')).toBe(false);
   });
 });
 

@@ -8,8 +8,16 @@ import {
   useMap,
 } from 'react-kakao-maps-sdk';
 import { loadDistricts } from '../lib/districts';
-import { labelPointOf, showLabels } from '../lib/districtLabels';
-import { boundsOf, pointInGeometry, polygonsOf, ringsToPath, type Bounds } from '../lib/geo';
+import { showLabels } from '../lib/districtLabels';
+import { pointInGeometry, polygonsOf, ringsToPath, type Bounds } from '../lib/geo';
+import {
+  coreBoundsOf,
+  farDots,
+  mapItemsOf,
+  offscreenGroups,
+  type MapView,
+  type OffscreenGroup,
+} from '../lib/districtMapView';
 import { FOUNDER_CHIP_ALL, type FounderChip } from '../lib/founderChips';
 import { EMPTY_MAP_PICK, type DistrictMapPick } from '../lib/districtMapPick';
 import type { BuildingHit, DistrictFeature } from '../types';
@@ -79,6 +87,13 @@ const FOCUS_LEVEL = 4;
  * 글자 죽이 된다(`lib/districtLabels.ts`). 한 단계 확대하면(5) 그때부터 이름이 붙는다.
  */
 const INITIAL_LEVEL = 6;
+
+/**
+ * 첫 범위를 맞출 때 사방 여백(px) — 카카오 `setBounds` 기본은 32(kakao.maps.d.ts).
+ * 화면 밖 표지(「↙ 3곳」)가 지도 가장자리에 앉으므로 그만큼 조금 더 비워, 몰린 곳의 가장자리 상권이
+ * 표지 밑에 깔리지 않게 한다(결정 0039 Q4 · W1).
+ */
+const MAP_PADDING_PX = 40;
 
 /**
  * 유형별 색. 자료에 있는 5종(골목·발달·전통시장·관광특구·주요)을 여기서 색으로만 잇는다.
@@ -218,7 +233,11 @@ function DistrictMapBody({
     () => (features ?? []).filter((f) => f.properties.sigungu_code === sigungu),
     [features, sigungu],
   );
-  const bounds = useMemo(() => boundsOf(shown), [shown]);
+  /*
+    첫 범위 = **몰린 곳** 상자(결정 0039 Q4 · W1). 상권 5곳 이하 구는 전부 담는 상자 — 그 갈래는
+    `coreBoundsOf` 안에 있다. ⓘ 구가 바뀌면 이 값이 바뀌어 `MapFocus` 가 사용자가 옮긴 배율과 상관없이 다시 맞춘다.
+  */
+  const bounds = useMemo(() => coreBoundsOf(shown), [shown]);
   /** 마지막으로 누른 자리에 걸친 상권들. null이면 아직 아무 데도 안 눌렀다는 뜻이다. */
   const picked = useMemo(
     () =>
@@ -250,16 +269,17 @@ function DistrictMapBody({
    * ⚠️ **`shown`이 바뀔 때만** 다시 센다. 배율이 바뀔 때마다 수백 개의 무게중심을 다시
    *    세면 확대·축소가 그만큼 뻑뻑해진다(이름표를 켜고 끄는 것은 계산이 아니라 그리기다).
    */
-  const labels = useMemo(
-    () =>
-      shown.flatMap((f) => {
-        const at = labelPointOf(f.geometry);
-        return at
-          ? [{ id: f.properties.district_id, nm: f.properties.district_nm || '(이름 없음)', at }]
-          : [];
-      }),
-    [shown],
-  );
+  const labels = useMemo(() => mapItemsOf(shown), [shown]);
+  /*
+    지도가 멈췄을 때 잰 지금 화면(`onIdle`) — 화면 밖 표지와 멀리서의 점+이름을 정한다(결정 0039 W1).
+    ⛔ 다른 구에서 잰 화면은 없는 것으로 본다 — 구를 바꾼 직후 새 범위를 맞추기 전에 옛 화면으로 세면
+       새 구의 상권이 전부 '화면 밖'으로 한 번 그려진다.
+  */
+  const [measured, setMeasured] = useState<(MapView & { sigungu: string }) | null>(null);
+  const view = measured?.sigungu === sigungu ? measured : null;
+  const offscreen = useMemo(() => (view ? offscreenGroups(labels, view.bounds) : []), [labels, view]);
+  // 배율은 `onZoomChanged` 로 받은 값(`level`)을 쓴다 — 멈춤(`onIdle`)보다 먼저 와서, 이름표와 점이 한꺼번에 서는 틈이 없다.
+  const dots = useMemo(() => (view ? farDots(labels, { ...view, level }) : []), [labels, view, level]);
 
   const focusLat = selected?.lat ?? null;
   const focusLng = selected?.lng ?? null;
@@ -292,6 +312,20 @@ function DistrictMapBody({
             });
           }}
           onZoomChanged={(map) => setLevel(map.getLevel())}
+          onIdle={(map) => {
+            // 지도가 멈출 때마다 지금 범위와 지도 칸 크기를 잰다(배율별 표를 박지 않는다).
+            const b = map.getBounds();
+            const sw = b.getSouthWest();
+            const ne = b.getNorthEast();
+            const node = map.getNode();
+            setMeasured({
+              sigungu,
+              bounds: { swLat: sw.getLat(), swLng: sw.getLng(), neLat: ne.getLat(), neLng: ne.getLng() },
+              widthPx: node.clientWidth,
+              heightPx: node.clientHeight,
+              level: map.getLevel(),
+            });
+          }}
         >
           <MapFocus bounds={bounds} focusLat={focusLat} focusLng={focusLng} />
 
@@ -328,6 +362,28 @@ function DistrictMapBody({
                 <span className="dmap__label">{l.nm}</span>
               </CustomOverlayMap>
             ))}
+
+          {/*
+            멀리서는 점 + 이름(결정 0039 W1) — 이름표가 꺼진 배율에서 화면에서 작은 상권만.
+            ⛔ 위 이름표와 같은 두 겹으로 **누르기를 넘긴다**: `clickable={false}` + `.dmap__far { pointer-events: none }`.
+            ⓘ 점의 가운데가 그 점에 오도록 왼쪽 끝에 붙인다(xAnchor 0) — 이름은 점 오른쪽(`farDots` 의 겹침 어림과 같은 꼴).
+          */}
+          {dots.map((d) => (
+            <CustomOverlayMap
+              key={`far-${d.id}`}
+              position={d.at}
+              clickable={false}
+              xAnchor={0}
+              yAnchor={0.5}
+            >
+              <span className="dmap__far">
+                <span className="dmap__dot" />
+                {d.nm && <span className="dmap__label">{d.nm}</span>}
+              </span>
+            </CustomOverlayMap>
+          ))}
+
+          <OffscreenBadges groups={offscreen} />
 
           {focusLat != null && focusLng != null && (
             <MapMarker
@@ -404,6 +460,10 @@ function MapFocus({
         new kakao.maps.LatLng(bounds.swLat, bounds.swLng),
         new kakao.maps.LatLng(bounds.neLat, bounds.neLng),
       ),
+      MAP_PADDING_PX,
+      MAP_PADDING_PX,
+      MAP_PADDING_PX,
+      MAP_PADDING_PX,
     );
   }, [map, bounds]);
 
@@ -425,6 +485,37 @@ function MapFocus({
   }, [map, focusLat, focusLng]);
 
   return null;
+}
+
+/**
+ * 화면 밖 표지 — 지금 화면 밖 상권을 방향마다 「↙ 이름 등 3곳」 단추로 가장자리에 단다(결정 0039 W1).
+ * 누르면 그 묶음의 가운데로 옮긴다(`panTo` — 배율은 그대로).
+ *
+ * ⓘ `<Map>` 안에 둬야 `useMap()` 이 지도를 준다. 그려지는 DOM 은 지도 칸 바로 옆(`.dmap__canvas` 안)이라
+ *   `.dmap__canvas` 를 기준으로 가장자리에 띄운다(styles.css).
+ * ⓘ 휴대폰(720px 이하)에서는 이름을 숨기고 「↙ 3곳」만 — styles.css 의 `@media screen and (max-width: 720px)` 묶음.
+ * ⛔ 종이에는 안 나온다(누르는 장치다 — styles.css 인쇄 감춤 목록).
+ */
+function OffscreenBadges({ groups }: { groups: OffscreenGroup[] }) {
+  const map = useMap();
+  return (
+    <>
+      {groups.map((g) => (
+        <button
+          key={g.dir}
+          type="button"
+          className={`dmap__off dmap__off--${g.dir}`}
+          aria-label={`${g.word} 화면 밖 상권 ${g.count}곳(${g.nm}${g.count > 1 ? ' 등' : ''}) — 그쪽으로 옮기기`}
+          onClick={() => map.panTo(new kakao.maps.LatLng(g.center.lat, g.center.lng))}
+        >
+          <span aria-hidden="true">{g.arrow}</span>
+          <span className="dmap__off-nm">{g.nm}</span>
+          {g.count > 1 && <span className="dmap__off-etc">등</span>}
+          <span>{g.count}곳</span>
+        </button>
+      ))}
+    </>
+  );
 }
 
 /**
