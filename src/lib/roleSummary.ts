@@ -12,7 +12,7 @@ import type {
 } from '../types';
 import type { ViewerRole } from './sectionCards';
 import { chipMatch, type FounderChip } from './founderChips';
-import { bandText, groupBands, type BandGroup } from './priceBand';
+import { BAND_GATE_TEXT, BAND_NO_VALUE_TEXT, bandText, groupBands, type BandGroup } from './priceBand';
 import { TX_LIST_CAP, TX_OPEN_SINCE_LABEL } from './appConstants';
 import { LAND_PRICE_BADGE, LAND_PRICE_NOTE, formatLandPriceAmount } from './landPrice';
 import { defaultBldType, rentSummary, toRentRows } from './rentStats';
@@ -121,9 +121,8 @@ export type RoleSummaryInput = {
 
 /**
  * 1층 칸의 '층 미상' 근거 글 — **이 함수 하나에서만** 나온다.
- * ⚠️ 👤 확인 중(2026-10-17 — 결정 원문은 「층 미상 수」인데 이 건물의 층 미상 점포 수는 자료에 없다). 지금은 서비스 지역
- *    전체 비율(카드 각주와 같은 `floorMissingPhrase`)을 「서비스 지역 전체」 글자와 함께 싣는다. 답이 「숫자 없이 사실 한 줄」로
- *    바뀌면 이 함수가 늘 첫 갈래 글만 돌려주게 고친다(다른 곳은 손대지 않는다).
+ * ⓘ 👤 확정(결정 0039 §7-6 · 2026-10-17): 이 건물의 층 미상 점포 수는 자료에 없어 **서비스 지역 전체 비율**(카드 각주와 같은
+ *    `floorMissingPhrase`)을 「서비스 지역 전체」 글자와 함께 싣는다. 이 글을 바꿀 일이 생기면 이 함수만 고친다.
  */
 export function floorUnknownNote(stats: CoverageStats | null): string {
   const phrase = floorMissingPhrase(stats?.floor_missing_pct);
@@ -147,10 +146,17 @@ export function txLineText(t: ParcelTransaction): string {
   ].join(' · ');
 }
 
+/**
+ * 거래 건수 뒤 꼬리 — 목록이 서버 상한(`TX_LIST_CAP`)에 닿았으면 카드 제목과 같은 「 (최근 100건까지)」, 아니면 빈 글.
+ * ⓘ 타일 첫 줄·중개사 근거 줄·한 줄 답이 **이 함수 하나**로 같은 꼴을 붙인다(셋이 서로 다른 건수를 말하지 않게).
+ */
+function txCapTail(n: number): string {
+  return n >= TX_LIST_CAP ? ` (최근 ${TX_LIST_CAP}건까지)` : '';
+}
+
 /** 카드의 「이 땅 거래 N건」(목록이 서버 상한에 닿았으면 그렇다고). */
 function txCountText(n: number): string {
-  const base = `이 땅 거래 ${n.toLocaleString('ko-KR')}건`;
-  return n >= TX_LIST_CAP ? `${base} (최근 ${TX_LIST_CAP}건까지)` : base;
+  return `이 땅 거래 ${n.toLocaleString('ko-KR')}건${txCapTail(n)}`;
 }
 
 // ── 참고 시세 ──────────────────────────────────────────────────────────────
@@ -182,10 +188,10 @@ function bandTile(input: RoleSummaryInput): SummaryTile | null {
   const pick = pickBand(input);
   if (pick === null) return null;
   if (pick.kind === 'gate') {
-    return { key: 'band', label: '참고 시세', lines: ['아직 참고 시세를 내지 않는 구입니다'], basis: [], grade: null };
+    return { key: 'band', label: '참고 시세', lines: [BAND_GATE_TEXT], basis: [], grade: null };
   }
   if (pick.kind === 'noValue') {
-    return { key: 'band', label: '참고 시세', lines: ['이 건물에서는 값을 낸 층이 없습니다'], basis: [], grade: null };
+    return { key: 'band', label: '참고 시세', lines: [BAND_NO_VALUE_TEXT], basis: [], grade: null };
   }
   const t = bandText(pick.group);
   const label = `참고 시세 (${pick.group.label})`;
@@ -228,7 +234,7 @@ function tx3Tile(input: RoleSummaryInput): SummaryTile | null {
     label: '실거래 최근 3건',
     lines: shown.map(txLineText),
     basis: [
-      `이 땅에서 신고된 거래 ${txs.length.toLocaleString('ko-KR')}건 중 최근 ${shown.length}건`,
+      `이 땅에서 신고된 거래 ${txs.length.toLocaleString('ko-KR')}건${txCapTail(txs.length)} 중 최근 ${shown.length}건`,
       TX_SINCE_NOTE,
     ],
     grade: null,
@@ -442,7 +448,9 @@ function investorAnswer(input: RoleSummaryInput): string | null {
     const t = bandText(pick.group);
     if (t.kind === 'value') parts.push(`${pick.group.label} 참고 시세는 ${t.val}입니다.`);
   }
-  if (input.txs !== null) parts.push(`이 땅 신고 거래는 ${input.txs.length.toLocaleString('ko-KR')}건입니다.`);
+  if (input.txs !== null) {
+    parts.push(`이 땅 신고 거래는 ${input.txs.length.toLocaleString('ko-KR')}건${txCapTail(input.txs.length)}입니다.`);
+  }
   return parts.length > 0 ? parts.join(' ') : null;
 }
 

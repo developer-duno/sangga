@@ -19,7 +19,7 @@ import type { DistrictOpenClose, IndustryMedian, IndustryMix, RentStat } from '.
  *    **같은 Promise** 를 `takePrefetched` 로 받기만 한다 — 없으면(다른 필지 것·안 줌) 그 타일은 없다(카드처럼 스스로 묻지 않는다).
  *    그래서 `supabase` 를 import 하지 않는다(시험이 FloorStack 전체의 rpc 호출 수가 판 유무와 같은지 본다).
  * ⛔ 받은 답은 물어본 pnu 와 함께 둔다 — 건물이 바뀐 첫 그림에 앞 건물 값이 한 순간도 붙지 않게(`sidePrefetch.ts` 머리말).
- * ⛔ 종이에서는 빠진다(§4-2) — `styles.css` 인쇄 감춤 목록의 `.rsum` 한 줄. 넣기로 하면 그 한 줄만 뺀다.
+ * ⛔ 종이에서는 빠진다(👤 확정 결정 0039 §7-7) — `styles.css` 인쇄 감춤 목록의 `.rsum` 한 줄뿐.
  */
 type SideGot = {
   pnu: string;

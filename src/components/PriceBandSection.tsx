@@ -5,6 +5,8 @@ import type { BasePrice, FloorRow, PriceBand } from '../types';
 import { pairBasePrices, type BasePriceRow } from '../lib/basePrice';
 import { formatFloor, formatManWon, formatDayKo, formatMonthKo } from '../lib/format';
 import {
+  BAND_GATE_TEXT,
+  BAND_NO_VALUE_TEXT,
   bandAxisMaxWon,
   bandMark,
   bandText,
@@ -93,7 +95,7 @@ export function PriceBandSection({
         className="band"
         // 접혀 있어도 이 한 줄은 보인다 — 아래 본문과 **같은 글자를 쓰지 않는다**(같은 말이
         // 화면에 둘이면 이름으로 찾는 시험이 어느 쪽을 잡았는지 모르게 된다).
-        summary="아직 참고 시세를 내지 않는 구입니다"
+        summary={BAND_GATE_TEXT}
       >
         <p className="band__gate">
           <strong>이 건물이 속한 구 전체는 아직 참고 시세를 내지 않습니다.</strong> 지난 거래로
@@ -132,7 +134,7 @@ export function PriceBandSection({
   // 띠의 축 상한(㎡당 원) — 값을 내는 줄의 p75·가운데값 최대를 만원 단위로 올림(결정 0038 A). null = 띠를 안 그린다.
   const axisMax = bandAxisMaxWon(listed);
   const summary =
-    okFloorCnt > 0 ? `값을 낸 층 ${okFloorCnt}개` : '이 건물에서는 값을 낸 층이 없습니다';
+    okFloorCnt > 0 ? `값을 낸 층 ${okFloorCnt}개` : BAND_NO_VALUE_TEXT;
 
   return (
     <SectionCard plan={plan} className="band" summary={summary}>

@@ -275,6 +275,13 @@ function rangeLabel(floors: FloorRow[]): string {
 export const THIN_SAMPLE = 5;
 
 /**
+ * 카드 접힌 요약 줄의 빈 글 둘 — 카드(`PriceBandSection`)와 역할 요약 판의 시세 타일이 **같은 상수**를 쓴다(결정 0039 W2 · 글자 그대로).
+ * `BAND_GATE_TEXT` = 이 구가 아직 참고 시세를 안 낸다(gate_fail) · `BAND_NO_VALUE_TEXT` = 값을 낸 층이 하나도 없다.
+ */
+export const BAND_GATE_TEXT = '아직 참고 시세를 내지 않는 구입니다';
+export const BAND_NO_VALUE_TEXT = '이 건물에서는 값을 낸 층이 없습니다';
+
+/**
  * 줄 하나의 값 글 — 카드 `BandBody` 와 역할 요약 판(결정 0039 W2)이 **같이 쓴다**(2026-10-17 카드에서 옮김 · 글자 그대로).
  * `none` = 값을 안 내는 줄의 사유 글 · `value` = 값 줄(`val`) + 근거 줄(`sub` — 근거 단계·표본 수 · 절대 규칙 3).
  * ⛔ 값을 낼지의 조건은 `bandShowsValue` 와 같다 — 한쪽을 바꾸면 다른 쪽도.

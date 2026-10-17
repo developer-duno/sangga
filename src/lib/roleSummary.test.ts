@@ -376,6 +376,51 @@ describe('중개사 「손님에게 뭘 보여 주나」', () => {
   });
 });
 
+describe('검사 반영 — 상권 여럿 · 시세 층 고르기 · 모름과 0 · 같은 땅 여러 동 · 거래 상한', () => {
+  it('상권이 둘이면 업종·임대·개업폐업 셋 다 첫째 + 「외 상권 1곳」', () => {
+    const two = view({
+      role: '창업자',
+      mix: { ...MIX, districts: [MIX.districts[0], { ...MIX.districts[0], district_id: 'd-2', name: '강남역', total: 999 }] },
+      rent: [RENT[0], { ...RENT[0], district_nm: '강남역', rone_region_nm: '서울>강남>강남대로', rent_per_m2: 51.2 }],
+      openClose: [OC[0], { ...OC[0], district_id: 'oc-2', district_nm: '강남역 상권' }],
+    });
+    expect(tile(two, 'industry')!.basis[0]).toBe('역삼역(발달상권) 안 점포 400곳 · 외 상권 1곳');
+    expect(tile(two, 'rent')!.lines).toEqual(['㎡당 임대료 27,060원']);
+    expect(tile(two, 'rent')!.basis[1]).toBe('역삼역 외 상권 1곳 · 부동산원 조사구역 서울>강남>테헤란로');
+    expect(tile(two, 'openclose')!.basis[0]).toBe('역삼역 상권 외 상권 1곳 · 2026년 2분기');
+  });
+
+  it('시세 층 고르기 — 지하와 지상이 섞이면 지상층 · 지하만 값을 내면 그 지하 줄', () => {
+    const floors = [floor(2, 3), floor(1, 4), floor(-1, 1)];
+    const mixed = view({ floors, bands: [band(-1, { n: 9, p25: 1_000_000, median: 1_100_000, p75: 1_200_000 }), band(2, {})] });
+    expect(tile(mixed, 'band')!.label).toBe('참고 시세 (2층)');
+    const under = view({ floors, bands: [band(-1, { n: 9, p25: 1_000_000, median: 1_100_000, p75: 1_200_000 }), BANDS[0]] });
+    expect(tile(under, 'band')!.label).toBe('참고 시세 (지하 1층)');
+    expect(tile(under, 'band')!.basis[0]).toContain('거래 9건');
+  });
+
+  it('1층 점포 칸이 비면(모름) 「—」 — 「점포 0」이 아니다', () => {
+    const v = view({ role: '창업자', floors: [floor(2, 3), floor(1, null)] });
+    expect(tile(v, 'floor1')!.lines).toEqual(['—']);
+    expect(tileText(v, 'floor1')).not.toContain('점포 0');
+    expect(v.answer ?? '').not.toContain('1층에 적힌 점포');
+  });
+
+  it('같은 땅에 건물이 여럿이면 1층 칸에 옆 동이 섞인다는 줄', () => {
+    const v = view({ role: '창업자', floors: FLOORS.map((f) => ({ ...f, bld_cnt_in_pnu: 2 })) });
+    expect(tile(v, 'floor1')!.basis).toContain('이 땅에 건물이 2동 있어 옆 동 점포가 섞여 보일 수 있습니다');
+    expect(tile(view({ role: '창업자' }), 'floor1')!.basis).toHaveLength(1);
+  });
+
+  it('거래가 서버 상한(100건)에 닿으면 타일·근거 줄·한 줄 답이 같은 「(최근 100건까지)」 꼴', () => {
+    const many = Array.from({ length: 100 }, (_, i) => tx(i === 0 ? '202603' : '202401', 200_000_000));
+    expect(tile(view({ txs: many }), 'tx')!.lines).toEqual(['이 땅 거래 100건 (최근 100건까지)']);
+    expect(view({ txs: many }).answer).toContain('이 땅 신고 거래는 100건 (최근 100건까지)입니다.');
+    expect(tile(view({ role: '중개사', txs: many }), 'tx3')!.basis[0]).toBe('이 땅에서 신고된 거래 100건 (최근 100건까지) 중 최근 3건');
+    expect(tile(view({ txs: TXS }), 'tx')!.lines).toEqual(['이 땅 거래 4건']);
+  });
+});
+
 describe('가드 — 판단 낱말 0 · 금지어 0 · 시세와 임대를 잇지 않는다', () => {
   const scenarios: RoleSummaryInput[] = (['투자자', '창업자', '중개사'] as const).flatMap((role) => [
     input({ role }),

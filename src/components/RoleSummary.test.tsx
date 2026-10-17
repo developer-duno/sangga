@@ -338,6 +338,36 @@ describe('RoleSummary — 층별 화면 맨 위 역할 요약 판', () => {
     expect(screen.queryByRole('button', { name: '한 장으로 뽑기' })).toBeNull();
   });
 
+  it('같은 건물에서 역할을 바꾸면 앞 역할의 타일이 남지 않는다(투자자 → 창업자)', async () => {
+    const { rerender, container } = render(<FloorStack building={building(A)} viewerRole="투자자" />);
+    await settle();
+    await waitFor(() => expect(container.querySelector('.rsum__tile--band')).not.toBeNull());
+    rerender(<FloorStack building={building(A)} viewerRole="창업자" />);
+    await waitFor(() => expect(container.querySelector('.rsum__tile--industry')).not.toBeNull());
+    expect(container.querySelector('.rsum__question')!.textContent).toBe('여기서 장사가 되나');
+    for (const k of ['band', 'tx', 'land']) expect(container.querySelector(`.rsum__tile--${k}`)).toBeNull();
+    expect(container.querySelectorAll('.rsum')).toHaveLength(1);
+  });
+
+  it('「한 장으로 뽑기」 — 기록(onBeforePrint)이 던져도 인쇄 창은 뜬다', async () => {
+    const print = vi.spyOn(window, 'print').mockImplementation(() => {});
+    const boom = vi.fn(() => {
+      throw new Error('적기 실패');
+    });
+    // React 는 이벤트 처리기 예외를 window 'error' 로 알린다 — 이 시험에서만 삼킨다(`PrintButton.test` 와 같은 꼴).
+    const swallow = (ev: ErrorEvent) => ev.preventDefault();
+    window.addEventListener('error', swallow);
+    try {
+      render(<FloorStack building={building(A)} viewerRole="중개사" onBeforePrint={boom} />);
+      await settle();
+      fireEvent.click(await screen.findByRole('button', { name: '한 장으로 뽑기' }));
+      expect(boom).toHaveBeenCalledTimes(1);
+      expect(print).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener('error', swallow);
+    }
+  });
+
   it('투자자 판의 실제 글 — 시세 줄(C등급)·임대(상권 평균)·공시지가', async () => {
     const { container } = render(<FloorStack building={building(A)} viewerRole="투자자" />);
     await settle();
