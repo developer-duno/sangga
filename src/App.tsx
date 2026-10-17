@@ -92,6 +92,15 @@ export default function App() {
     saveStoredRole(v);
     if (role !== '창업자') setFounderChip(FOUNDER_CHIP_ALL);
   }
+  /*
+    큰 카드에서 골랐다 — 카드가 사라지며 커서가 문서 맨 앞(body)으로 떨어지지 않게, 다음 그림에서 그 자리에 서는 작은
+    단추 줄로 옮긴다(아래 effect · 검사 🟡 W3). `useRef` 인 이유 = 그리기와 상관없는 '다음 그림에서 할 일' 표시다.
+  */
+  const roleCardsFocusRef = useRef(false);
+  function handlePickFromCards(role: ViewerRole | null) {
+    roleCardsFocusRef.current = true;
+    handlePickRole(role);
+  }
 
   /*
     링크 복원(아래)이 끝나기 전에 사용자가 직접 무언가를 골랐는지 표시하는 깃발.
@@ -122,6 +131,19 @@ export default function App() {
   const barFirstRef = useRef<HTMLButtonElement>(null);
   const entryFocusRef = useRef<'search' | 'map' | 'role' | null>(null);
   const folded = (selected !== null || restoring) && !entryOpen;
+  /*
+    큰 카드에서 고른 뒤(위 `handlePickFromCards`) — 역할을 골랐으면 눌린 단추, 「그냥 둘러보기」면 첫 단추에 커서.
+    ⓘ 화면은 굴리지 않는다(`preventScroll`) — 작은 줄은 카드가 있던 바로 그 자리라 이미 화면 안이다.
+  */
+  useEffect(() => {
+    if (!roleCardsFocusRef.current) return;
+    roleCardsFocusRef.current = false;
+    const row = entryRef.current?.querySelector('.role');
+    (
+      row?.querySelector<HTMLButtonElement>('.role__chip[aria-pressed="true"]') ??
+      row?.querySelector<HTMLButtonElement>('.role__chip')
+    )?.focus({ preventScroll: true });
+  }, [storedRole]);
   function openEntry(target: 'search' | 'map' | 'role') {
     entryFocusRef.current = target;
     setEntryOpen(true);
@@ -535,7 +557,7 @@ export default function App() {
             (결정 0039 Q3 · W3) — 카드가 서 있는 동안 작은 줄은 숨긴다(같은 질문이 두 번 안 보이게).
           */}
           {showRoleCards ? (
-            <RoleCards onPick={handlePickRole} />
+            <RoleCards onPick={handlePickFromCards} />
           ) : (
             <RolePicker role={viewerRole} onChange={handlePickRole} />
           )}

@@ -663,6 +663,31 @@ describe('App — 역할 고르기 큰 카드 (결정 0039 W3)', () => {
     expect(currentSearch()).not.toContain(encodeURIComponent('창업자'));
   });
 
+  it('★ 카드로 고르면 커서가 body 로 떨어지지 않고 작은 줄의 눌린 단추로 간다(화면은 안 굴린다)', async () => {
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus');
+    const card = cardBtn(/중개하려고/);
+    card.focus();
+    fireEvent.click(card);
+    expect(cards()).toBeNull();
+    const pressed = screen.getByRole('button', { name: '중개사' });
+    expect(pressed.getAttribute('aria-pressed')).toBe('true');
+    expect(document.activeElement).toBe(pressed);
+    expect(focus).toHaveBeenLastCalledWith({ preventScroll: true });
+  });
+
+  it('★ 「그냥 둘러보기」로 고르면 작은 줄의 첫 단추에 커서', async () => {
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+    const browse = screen.getByRole('button', { name: '그냥 둘러보기' });
+    browse.focus();
+    fireEvent.click(browse);
+    expect(cards()).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '투자자' }));
+    expect(document.activeElement).toBe(document.querySelector('section.role .role__chip'));
+  });
+
   it('★ 「그냥 둘러보기」= `둘러보기` 저장 · 카드 사라짐 · 아무 역할도 안 눌림 · 다시 열어도 안 뜬다', async () => {
     render(<App />);
     await screen.findByRole('button', { name: /^서울$/ });
