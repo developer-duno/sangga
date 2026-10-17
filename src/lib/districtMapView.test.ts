@@ -255,7 +255,7 @@ describe('coreBoundsOf — 실자료 30개 구(public/districts.geojson)', () =>
     }
   });
 
-  it(`상권 ${CORE_MIN_FEATURES}곳 이하인 대전 중구(30110)·대덕구(30230)는 전부 담는다`, () => {
+  it(`상권 ${CORE_MIN_FEATURES}곳 이하인 대전 동구(30110)·대덕구(30230)는 전부 담는다`, () => {
     for (const gu of ['30110', '30230']) {
       const fs = byGu.get(gu)!;
       expect(fs.length).toBeLessThanOrEqual(CORE_MIN_FEATURES);

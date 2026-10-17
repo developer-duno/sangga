@@ -768,7 +768,7 @@ describe('DistrictMap — 지도 배율(결정 0039 W1)', () => {
     expect(block.slice(0, block.indexOf('}'))).toMatch(/pointer-events:\s*none/);
   });
 
-  it('화면 밖 표지는 종이에서 빠지고, 휴대폰 꼴(이름 숨김·44px)은 화면 720 묶음 안에만 있다', async () => {
+  it('화면 밖 표지는 종이에서 빠지고, 휴대폰 꼴(이름 숨김)은 화면 720 묶음 안에만 있다', async () => {
     const { readFileSync } = await import('node:fs');
     const css = readFileSync('src/styles.css', 'utf8');
     const print = css.slice(css.indexOf('@media print {'));
@@ -779,6 +779,83 @@ describe('DistrictMap — 지도 배율(결정 0039 W1)', () => {
     expect(at2).toBeGreaterThan(0);
     const head = css.lastIndexOf('@media', at2);
     expect(css.slice(head, css.indexOf('{', head))).toBe('@media screen and (max-width: 720px) ');
+  });
+
+  /**
+   * CSS 를 주석 빼고 `@media` 묶음 밖(기본 규칙)과 안으로 갈라 규칙 목록(선택자 · 본문 · 묶음 머리)으로 편다.
+   * ⓘ 이 파일의 CSS 가드 셋이 같은 함수를 지난다 — 양성 대조도 같은 함수로 본다.
+   * 못 보는 것: `@media` 안의 또 다른 `@media`·`@supports` 겹 묶음(이 파일에 없다) · 문자열 안의 중괄호.
+   */
+  function cssRules(css: string): { sel: string[]; body: string; media: string | null }[] {
+    const src = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    const out: { sel: string[]; body: string; media: string | null }[] = [];
+    const take = (chunk: string, media: string | null) => {
+      for (const m of chunk.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        out.push({ sel: m[1].split(',').map((x) => x.trim()), body: m[2], media });
+      }
+    };
+    let i = 0;
+    let plain = '';
+    while (i < src.length) {
+      const at = src.indexOf('@media', i);
+      if (at < 0) {
+        plain += src.slice(i);
+        break;
+      }
+      plain += src.slice(i, at);
+      const open = src.indexOf('{', at);
+      let depth = 1;
+      let j = open + 1;
+      while (j < src.length && depth > 0) {
+        if (src[j] === '{') depth += 1;
+        else if (src[j] === '}') depth -= 1;
+        j += 1;
+      }
+      take(src.slice(open + 1, j - 1), src.slice(at, open).trim());
+      i = j;
+    }
+    take(plain, null);
+    return out;
+  }
+
+  it('⛔ 아래 줄 표지(↙ ↓ ↘)는 카카오 로고·축척 막대(약 25~30px) 위에 뜬다', async () => {
+    const { readFileSync } = await import('node:fs');
+    const rules = cssRules(readFileSync('src/styles.css', 'utf8'));
+    for (const dir of ['sw', 's', 'se']) {
+      const bottoms = rules
+        .filter((r) => r.media === null && r.sel.includes(`.dmap__off--${dir}`))
+        .flatMap((r) => [...r.body.matchAll(/bottom:\s*(\d+)px/g)].map((m) => Number(m[1])));
+      expect(bottoms, dir).toHaveLength(1);
+      expect(bottoms[0], dir).toBeGreaterThanOrEqual(30);
+      // 화면 묶음에서 다시 낮추지 않는다.
+      const lowered = rules.filter((r) => r.media !== null && r.sel.includes(`.dmap__off--${dir}`) && /bottom:/.test(r.body));
+      expect(lowered, dir).toHaveLength(0);
+    }
+  });
+
+  it('표지는 화면 전체의 「누르는 것은 44px 이상」 목록에 든다', async () => {
+    const { readFileSync } = await import('node:fs');
+    const rules = cssRules(readFileSync('src/styles.css', 'utf8'));
+    const tall = rules.filter((r) => r.media === '@media screen' && /min-height:\s*44px/.test(r.body));
+    expect(tall.some((r) => r.sel.includes('.dmap__off'))).toBe(true);
+  });
+
+  it('넓은 화면에서는 표지 이름이 보인다 — 기본 규칙(모든 @media 밖)에서 이름을 숨기지 않는다', async () => {
+    const { readFileSync } = await import('node:fs');
+    const hides = (css: string) =>
+      cssRules(css).some(
+        (r) =>
+          r.media === null &&
+          (r.sel.includes('.dmap__off-nm') || r.sel.includes('.dmap__off-etc')) &&
+          /display:\s*none|visibility:\s*hidden/.test(r.body),
+      );
+    const css = readFileSync('src/styles.css', 'utf8');
+    expect(hides(css)).toBe(false);
+    // 양성 대조 — 흔한 꼴(이름 하나) + 변형 꼴(선택자 목록 · 줄바꿈 다른 꼴)을 실제로 잡는다.
+    expect(hides(`${css}\n.dmap__off-nm { display: none; }`)).toBe(true);
+    expect(hides(`${css}\r\n.x,\r\n.dmap__off-etc {\r\n  display:none;\r\n}`)).toBe(true);
+    // 720 묶음 안의 숨김은 기본 규칙이 아니다(지금 저장소가 그 꼴이다).
+    expect(hides('@media screen and (max-width: 720px) { .dmap__off-nm { display: none; } }')).toBe(false);
   });
 });
 

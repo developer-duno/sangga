@@ -22,7 +22,7 @@ import type { DistrictFeature } from '../types';
 
 /**
  * 상권이 이만큼 이하인 구는 '몰린 곳'을 따로 고르지 않고 전부 담는다(결정 0039 Q4 · W1).
- * 대전 중구(30110)·대덕구(30230)는 상권이 3곳뿐이라 몇 곳을 잘라 내면 지도에 남는 것이 거의 없다.
+ * 대전 동구(30110)·대덕구(30230)는 상권이 3곳뿐이라 몇 곳을 잘라 내면 지도에 남는 것이 거의 없다.
  */
 export const CORE_MIN_FEATURES = 5;
 
@@ -242,12 +242,16 @@ export const FAR_DOT_MAX_PX = 16;
 /*
   이름 상자 크기 **어림**(px) — 겹침 판정에만 쓴다. 실제 글자 폭은 글꼴·글자마다 달라 정확히 잴 수 없다.
   ⓘ 이름은 점 오른쪽에서 시작한다 — `styles.css` 의 `.dmap__far`(점 8px 의 가운데가 그 점 · 사이 4px)와 맞춘다.
-  ⓘ 이름표(`.dmap__label`)는 최대 폭 116px(+ 테두리 2px)에서 말줄임이라 그보다 넓게 어림하지 않는다.
+  ⓘ 수치는 `styles.css` 의 `.dmap__label` 에서 계산한다 — 화면에서는 글자가 13px 이다(기본 규칙 11.5px 는 종이 값 ·
+    `@media screen` 13px 올림 목록에 `.dmap__label` 이 든다). 한글 한 자 ≈ 글자 크기 13px.
+    폭 = 글자 수 × 13 + 좌우 안쪽 여백 7×2 + 테두리 1×2 = 글자 수 × 13 + 16 · 높이 = 13 × 줄 높이 1.6 + 위아래 안쪽 여백 1×2
+    + 테두리 1×2 ≈ 25.
+  ⓘ 이름표는 최대 폭 116px(전역 `box-sizing: border-box` 라 여백·테두리 포함)에서 말줄임이라 그보다 넓게 어림하지 않는다.
 */
-const NAME_CHAR_PX = 11;
-const NAME_PAD_PX = 8;
-const NAME_MAX_PX = 118;
-const NAME_H_PX = 18;
+const NAME_CHAR_PX = 13;
+const NAME_PAD_PX = 16;
+const NAME_MAX_PX = 116;
+const NAME_H_PX = 25;
 const NAME_OFFSET_PX = 8;
 
 export type FarDot = {
