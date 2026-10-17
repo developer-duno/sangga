@@ -27,6 +27,10 @@ CLAUDE.md 검증 규칙: "미래로 과거를 맞히면 성적이 부풀려진�
 | L6   | 같은 법정동(PNU 앞 10자리) + 같은 층대 | 1 |
 | BASE | 같은 시군구 + 같은 층대              | 1 (비교 상대) |
 
+v3(결정 0040)부터 모든 칸에 **+ 같은 용도 묶음**이 붙는다 — 후보 거래의 묶음(건물 주용도 이름)이
+검증 거래 층의 묶음(대장 용도 · `price_floor_use_group`)과 같아야 한다. 채점은 층 묶음이
+상가·업무·숙박·기타인 거래만(화면이 값을 낼 수 있는 거래 · D10). 옛 대조군(용도 불문)은 참고 열로만 남긴다.
+
 추정값은 후보 단가의 **중앙값**이다. 운영 모드는 L2→L4→L5→L6 순서로 걸어가
 **처음 성립하는 단계**를 채택한다. BASE 는 사다리에 넣지 않는다 — "아무 것도 안 하고
 구 평균만 말했을 때"와 비교하기 위한 대조군일 뿐이다(귀무가설 대조,
@@ -42,9 +46,10 @@ CLAUDE.md 검증 규칙: "미래로 과거를 맞히면 성적이 부풀려진�
 
 출력 (기본 `docs/backtest/`)
 ----------------------------
-- `성적표-v2.md`            — 사람이 읽는 성적표(방법·한계·표·판단 재료). 판 번호는
-                              `SCORECARD_VERSION` 상수. 옛 판(`성적표-v1.md`)은 결정 0013 의
-                              근거라 지우지 않고 남긴다.
+- `성적표-v3.md`            — 사람이 읽는 성적표(방법·한계·표·판단 재료). 판 번호는
+                              `SCORECARD_VERSION` 상수. 옛 판(`성적표-v1.md`·`성적표-v2.md`)은
+                              결정 0013·0040 의 근거라 지우지 않고 남긴다.
+- `묶음별지표.csv`          — 용도 묶음 × 층대 오차·채점 건수(결정 0040 D6 · 화면 json 에는 안 실린다)
 - `단계별지표.csv`          — 단계 × 축(전체/시도/구/층대) 지표
 - `운영모드지표.csv`        — 사다리 걷기 결과(채택 단계 분포·축별 성적)
 - `검증거래별원자료.csv`    — 검증 거래 한 건마다 모든 단계의 추정·표본수·오차
@@ -61,12 +66,14 @@ CLAUDE.md 검증 규칙: "미래로 과거를 맞히면 성적이 부풀려진�
 = 같은 시군구 + 같은 유형 + 같은 층대(최소 5건)** 을 L5 뒤·L6 앞에 끼운다.
 
 ⚠️ 이 모드는 **새 파일 2개만** 쓴다(`1층-유형축-검증.md`·`1층유형별지표.csv`).
-   `성적표-v2.md`·`통과구.csv` 등 기존 4종은 건드리지 않는다 — 결정 0013 의 통과 구
+   `성적표-v3.md`·`통과구.csv` 등 기존 산출물은 건드리지 않는다 — 결정 0013 의 통과 구
    목록은 기본 모드의 계산에서만 나오고, 검토용 실험이 그것을 덮어쓰면 화면에 열리는
    구가 소리 없이 바뀐다.
 
-⚠️ 이 모드만 **psql**(`SANGGA_DATABASE_URL`)을 쓴다. 상권 소속은 `st_contains` 공간
+⚠️ 이 모드는 **psql**(`SANGGA_DATABASE_URL`)로 상권 소속도 읽는다. 상권 소속은 `st_contains` 공간
    조인이라 PostgREST 로는 읽을 수 없기 때문이다. 그래도 **읽기 전용**이다.
+⚠️ v3 부터는 두 모드 모두 검증 거래의 층 묶음을 psql 한 세션으로 읽는다 — 정본 `price_floor_use_group`
+   본문을 그 세션의 `pg_temp` 에 만들어 부른다(운영 DB 에 아직 없는 함수를 부르지 않는다 · 쓰기 0).
 
 쓰는 법
 -------
@@ -168,19 +175,66 @@ PNU_BATCH = 100          # URL 길이 제한 때문에 in.(...) 는 100개씩 �
 # ⛔ 지분 거래(is_share — 건물 일부 몫만 사고판 거래, ㎡당 값이 약 0.39배)는 뺀다(2026-10-08a).
 #    화면의 사다리(list_price_bands L2·L4·L5·L6)가 같은 조건으로 거른다 — 성적표와 화면이 같은
 #    모집단이어야 한다. ⚠️ 마이그레이션 2026-10-08a 전의 DB 에 돌리면 칸이 없어 조회가 실패한다.
+# main_use(건물 주용도 이름)는 결정 0040 의 묶음을 정하는 재료다(2026-10-18 · v3).
 TX_QUERY = (
     "tx_type=eq.집합&pnu=not.is.null&floor_no=not.is.null&unit_price=not.is.null"
     "&is_share=is.false"
-    "&select=tx_id,pnu,sigungu_code,floor_no,unit_price,contract_ym"
+    "&select=tx_id,pnu,sigungu_code,floor_no,unit_price,contract_ym,main_use"
 )
 
 SIDO_NAMES = {"11": "서울특별시", "30": "대전광역시"}
 
 # 성적표 판. 올리는 것은 사람 손이고 **별건 결재가 선행**한다(결정 0013 §4·§7 — 통과 구가
 # 조용히 바뀔 수 있어서). v2(2026-10-08) = 지분 거래 제외 + 열린 지역만 채점.
+# v3(2026-10-18 · 결정 0040 D4·D10 = 그 결재) = 같은 용도 묶음끼리 · 채점 = 화면이 값을 낼 수 있는 거래만 ·
+# 대조군 = 같은 묶음 구 평균.
 # 화면 쪽 짝: `scripts/build_scorecard_json.py` 의 VERSION · `src/lib/appConstants.ts` 의 SCORECARD_URL.
-SCORECARD_VERSION = "v2"
+SCORECARD_VERSION = "v3"
 SCORECARD_MD = "성적표-{}.md".format(SCORECARD_VERSION)
+
+# ── 용도 묶음 (결정 0040) ────────────────────────────────────────────────────
+# ⛔ 정본은 DB 함수 둘(`supabase/schema.sql` 의 price_use_group_cd · price_use_group_nm)이다. 여기 표는
+#    같은 짝을 파이썬으로 옮긴 것이고 `tests/test_price_ladder_sync.py` 가 글자 대조한다 — 한쪽만 고치면 빨강.
+# 대장 주용도코드 앞 두 자리 → 묶음(이 표에 없는 두 자리 = other · 빈 값 = None).
+USE_GROUP_CD = {
+    "03": "shop", "04": "shop", "07": "shop", "Z3": "shop", "Z6": "shop",
+    "14": "office",
+    "15": "lodging",
+    "01": "resid", "02": "resid",
+}
+# 실거래 건물 주용도 이름 → 묶음(이 표에 없는 이름 = other · 빈 값 = None). 주거는 없다.
+USE_GROUP_NM = {
+    "제1종근린생활": "shop", "제2종근린생활": "shop", "판매": "shop",
+    "업무": "office",
+    "숙박": "lodging",
+}
+USE_GROUP_OTHER = "other"
+# 채점하는 묶음(D10) — 화면이 값을 낼 수 있는 묶음. resid·officetel·None(no_use)·대장에 층 없음은 뺀다.
+SCORE_GROUPS = ("shop", "office", "lodging", "other")
+USE_GROUP_LABEL = {"shop": "상가", "office": "업무", "lodging": "숙박", "other": "기타"}
+# 채점에서 빠지는 갈래 — 성적표에 수를 적는다(D10).
+EXCLUDE_KINDS = (
+    ("no_floor", "대장에 그 층이 없음"),
+    ("resid", "주거 층(floor_resid)"),
+    ("officetel", "오피스텔 층(floor_officetel)"),
+    ("no_use", "대장 용도 코드 빈칸(no_use)"),
+)
+SCHEMA_SQL_PATH = os.path.join(PROJECT_ROOT, "supabase", "schema.sql")
+FLOOR_GROUP_SQL_BATCH = 2000
+
+
+def use_group_cd(cd):
+    """대장 코드 → 묶음. SQL price_use_group_cd 와 같은 규칙(앞 두 글자 · 빈 값 None · 그 밖 other)."""
+    if not cd:
+        return None
+    return USE_GROUP_CD.get(cd[:2], USE_GROUP_OTHER)
+
+
+def use_group_nm(nm):
+    """실거래 이름 → 묶음. SQL price_use_group_nm 과 같은 규칙(빈 값 None · 모르는 이름 other)."""
+    if not nm:
+        return None
+    return USE_GROUP_NM.get(nm, USE_GROUP_OTHER)
 
 # ⛔ 열린 지역만 채점한다(결정 0013 §7 — 2026-10-08 사장님 결재). 실거래는 서울·대전 밖
 #    (전남광주통합특별시 12 등)도 들어와 있는데, 화면이 그 구를 열지 않으니 그 구의 성적은
@@ -388,15 +442,29 @@ def grid_span(radius_m, lat, cell=GRID_CELL_DEG):
 # ── 순수 함수: 학습 색인·단계 추정 ──────────────────────────────────────────
 
 
-def build_train_index(train_rows):
+def train_group(row):
+    """학습 거래(후보)의 묶음 — 거래 자신의 이름(main_use)으로. 화면의 `price_use_group_nm(t.main_use)` 와 같다."""
+    return row.get("use_group")
+
+
+def no_group(row):
+    """옛 규칙(v2 — 용도 불문) 참고 열을 잴 때 쓰는 묶음 — 모두 같은 칸(None)."""
+    return None
+
+
+def build_train_index(train_rows, group_of=train_group):
     """학습 거래를 단계별 조회 모양으로 미리 갈라 둔다(전수 스캔 방지).
 
+    열쇠마다 **묶음**이 붙는다(결정 0040 D1·D10) — 후보는 그 층의 묶음과 같은 묶음 거래뿐이다.
+    `sigungu_band_all` 은 옛 대조군(구 × 층대 · 용도 불문) — 참고 열 ⓑ 용이고 판정에 안 쓴다.
     좌표가 없는 학습 거래는 반경 색인에서 빠진다 — 나머지 색인에는 그대로 들어간다.
+    `group_of=no_group` 이면 묶음이 전부 None 이라 v2 규칙(용도 불문)과 같다(참고 열 ⓒ).
     """
     index = {
         "pnu_floor": defaultdict(list),
         "dong_band": defaultdict(list),
         "sigungu_band": defaultdict(list),
+        "sigungu_band_all": defaultdict(list),
         "sigungu_place_band": defaultdict(list),
         "floor_grid": defaultdict(lambda: defaultdict(list)),
     }
@@ -405,16 +473,18 @@ def build_train_index(train_rows):
         pnu = row["pnu"]
         floor_no = row["floor_no"]
         band = floor_band(floor_no)
-        index["pnu_floor"][(pnu, floor_no)].append(price)
-        index["dong_band"][(pnu[:10], band)].append(price)
-        index["sigungu_band"][(row.get("sigungu_code"), band)].append(price)
+        grp = group_of(row)
+        index["pnu_floor"][(pnu, floor_no, grp)].append(price)
+        index["dong_band"][(pnu[:10], band, grp)].append(price)
+        index["sigungu_band"][(row.get("sigungu_code"), band, grp)].append(price)
+        index["sigungu_band_all"][(row.get("sigungu_code"), band)].append(price)
         # 유형을 모르는 학습 거래는 L7 후보에서만 빠진다(나머지 색인에는 그대로 있다).
         if row.get("place_type"):
             index["sigungu_place_band"][
-                (row.get("sigungu_code"), row["place_type"], band)].append(price)
+                (row.get("sigungu_code"), row["place_type"], band, grp)].append(price)
         lat, lng = row.get("lat"), row.get("lng")
         if lat is not None and lng is not None:
-            index["floor_grid"][floor_no][grid_key(lat, lng)].append((lat, lng, price))
+            index["floor_grid"][(floor_no, grp)][grid_key(lat, lng)].append((lat, lng, price))
     return index
 
 
@@ -452,25 +522,32 @@ def place_missing_result():
     return {"status": ST_PLACE_MISSING, "estimate": None, "n": 0}
 
 
-def stage_results_for(row, index):
-    """검증 거래 한 건에 대해 다섯 단계를 각각 독립 계산한다."""
+def stage_results_for(row, index, group=None):
+    """검증 거래 한 건에 대해 다섯 단계(+ 옛 대조군 BASE_ALL)를 각각 독립 계산한다.
+
+    `group` = 이 검증 거래의 **층 묶음**(결정 0040 — 화면의 v_grp). 모든 단계가 같은 묶음 후보만 본다.
+    ⚠️ 색인을 묶음과 함께 만들었으면 반드시 넘긴다 — 기본값 None 은 "묶음 없는 색인"(no_group)과만 맞는다.
+    """
     pnu = row["pnu"]
     floor_no = row["floor_no"]
     band = floor_band(floor_no)
     lat, lng = row.get("lat"), row.get("lng")
 
     results = {
-        "L2": estimate_from(index["pnu_floor"].get((pnu, floor_no), []), MIN_SAMPLES["L2"]),
-        "L6": estimate_from(index["dong_band"].get((pnu[:10], band), []), MIN_SAMPLES["L6"]),
+        "L2": estimate_from(index["pnu_floor"].get((pnu, floor_no, group), []), MIN_SAMPLES["L2"]),
+        "L6": estimate_from(index["dong_band"].get((pnu[:10], band, group), []), MIN_SAMPLES["L6"]),
         "BASE": estimate_from(
-            index["sigungu_band"].get((row.get("sigungu_code"), band), []), MIN_SAMPLES["BASE"]),
+            index["sigungu_band"].get((row.get("sigungu_code"), band, group), []), MIN_SAMPLES["BASE"]),
+        # 옛 대조군(용도 불문) — 참고 열 ⓑ 전용. 판정(gate)에 안 쓴다.
+        "BASE_ALL": estimate_from(
+            index["sigungu_band_all"].get((row.get("sigungu_code"), band), []), MIN_SAMPLES["BASE"]),
     }
 
-    # L7 — 같은 구 + 같은 유형 + 같은 층대. 유형 자료를 안 붙이고 돌리면(기본 모드)
+    # L7 — 같은 구 + 같은 유형 + 같은 층대(+ 같은 묶음). 유형 자료를 안 붙이고 돌리면(기본 모드)
     # 이 칸은 항상 place_missing 이라 기존 사다리(L2→L4→L5→L6)에 아무 영향이 없다.
     pt = row.get("place_type")
     results["L7"] = (
-        estimate_from(index["sigungu_place_band"].get((row.get("sigungu_code"), pt, band), []),
+        estimate_from(index["sigungu_place_band"].get((row.get("sigungu_code"), pt, band, group), []),
                       MIN_SAMPLES["L7"])
         if pt else place_missing_result())
 
@@ -479,8 +556,8 @@ def stage_results_for(row, index):
         results["L5"] = coords_missing_result()
         return results
 
-    # 500m 후보를 한 번만 모으고 100m 는 거기서 걸러 쓴다(같은 층이라 후보 집합이 같다).
-    near = neighbors_within(index["floor_grid"].get(floor_no), lat, lng, RADIUS_M["L5"])
+    # 500m 후보를 한 번만 모으고 100m 는 거기서 걸러 쓴다(같은 층·같은 묶음이라 후보 집합이 같다).
+    near = neighbors_within(index["floor_grid"].get((floor_no, group)), lat, lng, RADIUS_M["L5"])
     results["L5"] = estimate_from([p for _, p in near], MIN_SAMPLES["L5"])
     results["L4"] = estimate_from(
         [p for d, p in near if d <= RADIUS_M["L4"]], MIN_SAMPLES["L4"])
@@ -799,6 +876,117 @@ def fetch_place_context(pnus):
     return context
 
 
+def _schema_fn_block(name, schema_sql):
+    """정본에서 `create or replace function <name>(` 부터 `$$;` 까지(머리·본문·주석 그대로)."""
+    m = re.search(r"(?im)^create\s+or\s+replace\s+function\s+{}\s*\(".format(re.escape(name)), schema_sql)
+    if not m:
+        raise RuntimeError("schema.sql 에서 함수 {} 를 못 찾았습니다".format(name))
+    end = schema_sql.index("$$;", schema_sql.index("$$", m.end()) + 2)
+    return schema_sql[m.start():end + 3]
+
+
+def pg_temp_floor_group_sql(schema_sql):
+    """검증 거래 층 묶음용 함수 둘을 **정본 글자 그대로** 읽어 pg_temp 판으로 만든다(결정 0040 ㉧).
+
+    ⛔ 백테스트는 운영 DB 에 **아직 없는** 함수를 부르지 않는다(마이그레이션 전에도 돌아야 한다) — 그래서
+       psql 한 세션 안 pg_temp 에 같은 본문을 만들고 그 세션에서만 부른다. pg_temp 는 세션이 끝나면 사라져
+       운영에 남는 것이 없다. 본문을 복제해 적지 않고 정본에서 읽는다 — 화면과 성적표가 같은 규칙이 되게.
+    바꾸는 것은 이름 앞의 `pg_temp.` 뿐이다(pg_temp 의 함수는 이름을 다 적어야만 불린다 — PostgreSQL 문서).
+    시험(tests/test_price_ladder_sync.py)이 `pg_temp.` 를 걷어 낸 글자 = 정본 글자를 확인한다.
+    """
+    out = []
+    for name in ("price_use_group_cd", "price_floor_use_group"):
+        block = _schema_fn_block(name, schema_sql)
+        block = re.sub(r"(?<![\w.])price_use_group_cd\(", "pg_temp.price_use_group_cd(", block)
+        block = re.sub(r"(?<![\w.])price_floor_use_group\(", "pg_temp.price_floor_use_group(", block)
+        out.append(block)
+    return "\n\n".join(out) + "\n"
+
+
+def floor_group_query_sql(schema_sql, pairs):
+    """(pnu, 층) 목록 → 한 세션에서 pg_temp 함수 둘을 만들고 한 번에 부르는 SQL(읽기만 · pg_temp 만 만든다).
+
+    돌려주는 칸 = pnu · 층 · 묶음(없으면 빈 글자) · 대장에 그 층 행이 있나(t/f).
+    ⚠️ `p.pnu::char(19)` 로 리터럴 쪽을 캐스트한다(char19 함정 — 컬럼이 캐스트되면 색인이 죽는다).
+    """
+    values = ",".join("('{}', {})".format(p, int(f)) for p, f in pairs)
+    return (
+        pg_temp_floor_group_sql(schema_sql)
+        + "\nwith want(pnu, floor_no) as (values {})\n"
+          "select want.pnu,\n"
+          "       want.floor_no,\n"
+          "       coalesce(pg_temp.price_floor_use_group(want.pnu::char(19), want.floor_no::smallint), ''),\n"
+          "       exists (select 1 from building_floor bf\n"
+          "                where bf.pnu = want.pnu::char(19) and bf.floor_no = want.floor_no::smallint)\n"
+          "  from want\n"
+          " order by 1, 2;\n".format(values))
+
+
+def parse_floor_group_rows(rows):
+    """psql 출력 → {(pnu, 층): {"group": 묶음|None, "has_floor": bool}}. 모양이 다른 줄(명령 꼬리표)은 버린다."""
+    out = {}
+    for cells in rows:
+        if len(cells) != 4 or not PNU_RE.match(cells[0].strip()):
+            continue
+        try:
+            floor_no = int(cells[1].strip())
+        except ValueError:
+            continue
+        grp = cells[2].strip() or None
+        out[(cells[0].strip(), floor_no)] = {"group": grp, "has_floor": cells[3].strip() == "t"}
+    return out
+
+
+def floor_group_kind(info):
+    """층 묶음 조회 결과 → 채점 갈래: 묶음 넷 중 하나면 그 묶음, 아니면 빠지는 이유(EXCLUDE_KINDS)."""
+    if not info or not info.get("has_floor"):
+        return "no_floor"
+    grp = info.get("group")
+    if grp in SCORE_GROUPS:
+        return grp
+    if grp in ("resid", "officetel"):
+        return grp
+    return "no_use"
+
+
+def fetch_floor_groups(rows, schema_path=SCHEMA_SQL_PATH):
+    """검증 거래의 (pnu, 층) → 층 묶음. psql 한 세션씩(묶음 FLOOR_GROUP_SQL_BATCH 개)."""
+    with io.open(schema_path, encoding="utf-8") as f:
+        schema_sql = f.read().replace("\r\n", "\n")
+    pairs = sorted({(r["pnu"], r["floor_no"]) for r in rows
+                    if r.get("pnu") and PNU_RE.match(r["pnu"]) and r.get("floor_no") is not None})
+    out = {}
+    batches = chunked(pairs, FLOOR_GROUP_SQL_BATCH)
+    for i, batch in enumerate(batches, 1):
+        out.update(parse_floor_group_rows(_psql_query(floor_group_query_sql(schema_sql, batch))))
+        log("      배치 {}/{} … (필지, 층) {:,}개".format(i, len(batches), len(out)))
+    if len(out) != len(pairs):
+        raise RuntimeError("층 묶음 조회가 {:,}개 중 {:,}개만 돌아왔습니다".format(len(pairs), len(out)))
+    return out
+
+
+def attach_floor_groups(rows, groups):
+    """검증 거래에 층 묶음·채점 갈래를 붙인다(제자리). 갈래별 수 Counter 를 돌려준다."""
+    kinds = Counter()
+    for r in rows:
+        info = groups.get((r.get("pnu"), r.get("floor_no")))
+        kind = floor_group_kind(info)
+        r["floor_group"] = (info or {}).get("group")
+        r["score_kind"] = kind
+        kinds[kind] += 1
+    return kinds
+
+
+def scoring_set(rows):
+    """채점 집합(D10) — 층 묶음이 넷(shop·office·lodging·other) 중 하나인 거래만."""
+    return [r for r in rows if r.get("score_kind") in SCORE_GROUPS]
+
+
+def ref_all_group(row):
+    """참고 열 ⓐ(전체 거래) — 층 묶음이 넷 중 하나면 그것, 아니면(대장 없음·주거·오피스텔·빈칸) 거래 자신의 이름 묶음."""
+    return row["floor_group"] if row.get("score_kind") in SCORE_GROUPS else row.get("use_group")
+
+
 def fetch_sigungu_names(base_url, headers, codes):
     """구 이름표 — 코드 하나에 한 번씩 **단발 조회**한다(읽기 실패해도 코드로 계속 간다).
 
@@ -848,6 +1036,9 @@ def normalize_rows(raw_rows, coords, place_context=None):
             "contract_ym": r.get("contract_ym"),
             "lat": coords.get(pnu, (None, None))[0],
             "lng": coords.get(pnu, (None, None))[1],
+            "main_use": r.get("main_use"),
+            # 거래 자신의 묶음(이름) — 후보로 쓰일 때의 묶음. 검증 거래의 채점 묶음은 층(대장)으로 따로 붙인다.
+            "use_group": use_group_nm(r.get("main_use")),
             "road_contact": road_contact,
             "district_types": types,
             "district_type": dtype,
@@ -858,11 +1049,16 @@ def normalize_rows(raw_rows, coords, place_context=None):
     return rows
 
 
-def score_test_rows(test_rows, index):
-    """검증 거래마다 다섯 단계 + 사다리 결과를 붙인다."""
+def score_group(row):
+    """채점 묶음 = 검증 거래의 **층 묶음**(대장 · price_floor_use_group) — 화면과 같은 v_grp."""
+    return row.get("floor_group")
+
+
+def score_test_rows(test_rows, index, group_of=score_group):
+    """검증 거래마다 다섯 단계 + 사다리 결과를 붙인다. `group_of(row)` = 후보를 고르는 묶음."""
     scored = []
     for row in test_rows:
-        stages = stage_results_for(row, index)
+        stages = stage_results_for(row, index, group_of(row))
         actual = row["unit_price"]
         record = dict(row)
         record["stages"] = stages
@@ -1013,9 +1209,93 @@ def write_gate_csv(path, scored, sigungu_names):
     return rows
 
 
+# ── 묶음별 지표·참고 열 (결정 0040 D6·D10 — 판정에 안 쓴다) ──────────────────
+
+# ⛔ 새 파일이다. 운영모드지표.csv 에 줄을 더하지 않는다 — build_scorecard_json.py 가 그 파일의 줄을
+#    화면 json 에 그대로 싣는다(json 모양을 바꾸지 않는다 · 결정 0040 ㉥).
+GROUP_CSV = "묶음별지표.csv"
+
+
+def pick_base_all_ape(row):
+    """옛 대조군(구 × 층대 · 용도 불문)의 오차 — 참고 열 ⓑ 전용."""
+    return row["stage_ape"].get("BASE_ALL")
+
+
+def gate_map(scored, pick_a, pick_b):
+    """구별 짝지은 비교 + 기준선 판정 → {구: {...}}. gate_rows 와 같은 계산(참고 열을 같은 자로 잰다)."""
+    out = {}
+    for code, bucket in group_by(scored, lambda r: r.get("sigungu_code") or "?"):
+        p = paired_metrics(bucket, pick_a, pick_b)
+        out[code] = {"n_paired": p["n_pair"], "ladder_mdape": p["a_mdape"],
+                     "base_mdape": p["b_mdape"], "gate_pass": gate_pass(p["a_mdape"], p["b_mdape"])}
+    return out
+
+
+def read_prev_gate(path):
+    """덮어쓰기 **전** 통과구.csv → {구: {n_paired, ladder_mdape, base_mdape, gate_pass}} (없으면 {})."""
+    if not os.path.exists(path):
+        return {}
+    out = {}
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        for r in csv.DictReader(f):
+            code = (r.get("sigungu_code") or "").strip()
+            if not code:
+                continue
+            out[code] = {
+                "sigungu_nm": r.get("sigungu_nm") or "",
+                "n_paired": int(r["n_paired"]) if (r.get("n_paired") or "").strip() else 0,
+                "ladder_mdape": float(r["ladder_mdape"]) if (r.get("ladder_mdape") or "").strip() else None,
+                "base_mdape": float(r["base_mdape"]) if (r.get("base_mdape") or "").strip() else None,
+                "gate_pass": (r.get("gate_pass") or "").strip() == "true",
+            }
+    return out
+
+
+def gate_change(prev, gate_list):
+    """직전 통과 구 집합 대비 → {"in": [이름(코드)…], "out": [...], "stay": [...]}."""
+    now = {g["sigungu_code"]: g for g in gate_list}
+    prev_pass = {c for c, g in prev.items() if g["gate_pass"]}
+    now_pass = {c for c, g in now.items() if g["gate_pass"]}
+
+    def label(code):
+        nm = (now.get(code) or {}).get("sigungu_nm") or (prev.get(code) or {}).get("sigungu_nm") or "?"
+        return "{}({})".format(nm, code)
+    return {"in": [label(c) for c in sorted(now_pass - prev_pass)],
+            "out": [label(c) for c in sorted(prev_pass - now_pass)],
+            "stay": [label(c) for c in sorted(now_pass & prev_pass)]}
+
+
+def group_metric_rows(scored):
+    """묶음 × (전체·층대) 지표 — 오차 중앙값·채점 건수·같은 집합에서 BASE 와 짝지은 비교."""
+    out = []
+    for grp in SCORE_GROUPS:
+        bucket = [r for r in scored if r.get("floor_group") == grp]
+        bands = [("전체", bucket)] + [(b, [r for r in bucket if floor_band(r["floor_no"]) == b])
+                                      for b in ("1층", "2층", "3층+")]
+        for band, rows_b in bands:
+            m = cell_metrics(rows_b, pick_ladder_ape)
+            p = paired_metrics(rows_b, pick_ladder_ape, pick_base_ape)
+            out.append({"group": grp, "label": USE_GROUP_LABEL[grp], "band": band,
+                        "m": m, "p": p})
+    return out
+
+
+def write_group_csv(path, scored):
+    rows = group_metric_rows(scored)
+    _write_csv(path,
+               ["묶음", "묶음이름", "층대", "검증거래수", "추정성립수", "커버리지", "MdAPE", "MAPE",
+                "적중률20", "짝지은거래", "사다리MdAPE_짝", "BASE_MdAPE_짝"],
+               [[r["group"], r["label"], r["band"], r["m"]["n_total"], r["m"]["n_est"],
+                 _csv_ratio(r["m"]["coverage"]), _csv_ratio(r["m"]["mdape"]),
+                 _csv_ratio(r["m"]["mape"]), _csv_ratio(r["m"]["hit20"]),
+                 r["p"]["n_pair"], _csv_ratio(r["p"]["a_mdape"]), _csv_ratio(r["p"]["b_mdape"])]
+                for r in rows])
+    return rows
+
+
 def write_raw_csv(path, scored, sigungu_names):
     header = ["tx_id", "pnu", "sigungu_code", "sigungu_nm", "contract_ym",
-              "floor_no", "층대", "실제단가", "lat", "lng"]
+              "floor_no", "층대", "실제단가", "lat", "lng", "거래묶음", "층묶음"]
     for stage in ALL_STAGES:
         header += ["{}_상태".format(stage), "{}_표본수".format(stage),
                    "{}_추정".format(stage), "{}_APE".format(stage)]
@@ -1029,6 +1309,7 @@ def write_raw_csv(path, scored, sigungu_names):
             r["floor_no"], floor_band(r["floor_no"]), r["unit_price"],
             r["lat"] if r["lat"] is not None else "",
             r["lng"] if r["lng"] is not None else "",
+            r.get("use_group") or "", r.get("floor_group") or "",
         ]
         for stage in ALL_STAGES:
             res = r["stages"][stage]
@@ -1104,20 +1385,23 @@ def build_markdown(ctx):
     add("")
     add("**무엇을 했나.** 화면에 넣을지 검토 중인 \"시세 어림값\" 기능이 실제로 얼마나 맞는지 "
         "시험을 봤습니다. 컴퓨터에게 **{}년 말까지의 거래만** 보여주고, **{}년에 실제로 팔린 "
-        "상가 {:,}건의 가격을 맞혀 보라**고 한 뒤, 진짜 계약 가격과 비교해 채점했습니다. "
-        "답안지를 미리 보여주지 않는 시험입니다.".format(
-            ctx["train_until"][:4], ctx["test_from"][:4], len(ctx["test"])))
+        "구분 상가 {:,}건의 가격을 맞혀 보라**고 한 뒤, 진짜 계약 가격과 비교해 채점했습니다. "
+        "답안지를 미리 보여주지 않는 시험입니다. 채점한 거래는 **화면이 값을 낼 수 있는 거래만**입니다"
+        "(대장에 그 층이 있고, 주거·오피스텔 층이 아닌 거래 — 그 해 거래 {:,}건 중 {:,}건 · §1).".format(
+            ctx["train_until"][:4], ctx["test_from"][:4], len(scored),
+            len(ctx["test"]), len(scored)))
     add("")
     add("**어떻게 어림하나.** 곁의 거래를 아래 순서로 찾아, 찾은 가격들의 중간값을 씁니다"
-        "(위가 안 되면 아래로 내려가는 사다리입니다):")
+        "(위가 안 되면 아래로 내려가는 사다리입니다). 어느 칸이든 **그 층의 대장 용도와 같은 종류"
+        "(상가·업무·숙박·기타) 거래끼리만** 셉니다(결정 0040) — 업무 층에는 업무 거래만, 상가 층에는 상가 거래만:")
     add("")
     add("1. 같은 건물 같은 층에서 팔린 적이 있으면 → 그 가격")
     add("2. 없으면, 걸어서 1~2분 거리(100m) 안의 같은 층 가격들")
     add("3. 그래도 없으면, 500m 안의 같은 층 가격들")
     add("4. 그래도 없으면, 같은 동네(법정동)의 비슷한 층 평균")
     add("")
-    add("**비교 상대.** \"그 구(區) 전체의 비슷한 층 평균\" — 지금도 화면에 이미 있는 값입니다. "
-        "새 방식이 이것보다 낫지 않으면 만들 이유가 없습니다.")
+    add("**비교 상대.** \"그 구(區)에서 같은 층대·같은 용도 묶음 거래의 평균\" — 상가 거래에는 화면의 "
+        "『층대별 거래 단가』(상가 거래 기준)와 같은 값입니다. 새 방식이 이것보다 낫지 않으면 만들 이유가 없습니다.")
     add("")
     add("**결과 — 세 줄.**")
     add("")
@@ -1169,6 +1453,16 @@ def build_markdown(ctx):
                 len(ctx["outside"]), len(ctx["train"]) + len(ctx["test"]) + len(ctx["outside"]),
                 ctx["total"]))
     add("  랜덤 분할을 쓰지 않는다 — 미래로 과거를 맞히면 성적이 부풀려진다(CLAUDE.md 검증 규칙).")
+    add("- **용도 묶음(결정 0040)**: 상가(1·2종 근린생활·판매) / 업무 / 숙박 / 기타(교육연구·그 밖). "
+        "후보 거래의 묶음 = 그 거래의 건물 주용도 이름(`transaction.main_use` · 화면의 `price_use_group_nm`) · "
+        "검증 거래의 묶음 = **그 층의 대장 용도**(`price_floor_use_group` — 정본 본문을 psql 한 세션의 "
+        "`pg_temp` 에 만들어 불렀다 · 운영 쓰기 0). 모든 단계와 대조군이 같은 묶음 후보만 본다.")
+    kinds = ctx.get("kinds") or Counter()
+    add("- **채점 집합(결정 0040 D10)**: 검증 거래 {:,}건 중 층 묶음이 넷 가운데 하나인 **{:,}건**만 채점했다 "
+        "— 화면이 값을 낼 수 있는 거래만. 묶음별: {}. 뺀 갈래: {}.".format(
+            len(ctx["test"]), len(scored),
+            " · ".join("{} {:,}건".format(USE_GROUP_LABEL[g], kinds.get(g, 0)) for g in SCORE_GROUPS),
+            " · ".join("{} {:,}건".format(label, kinds.get(k, 0)) for k, label in EXCLUDE_KINDS)))
     add("- **추정값**: 각 단계 후보 거래 단가의 **중앙값**. 후보는 **학습 거래만**이다.")
     add("- **오차**: APE = |추정 − 실제| / 실제. 주지표는 **MdAPE(오차 중앙값)**, "
         "보조로 MAPE(평균)와 **±20% 적중률**.")
@@ -1177,11 +1471,12 @@ def build_markdown(ctx):
     add("")
     add("| 코드 | 후보 조건 | 최소 표본 |")
     add("|---|---|---|")
-    add("| L2 | 같은 필지(PNU) + 같은 층 | 1 |")
-    add("| L4 | 반경 100m 이내 + 같은 층 | 3 |")
-    add("| L5 | 반경 500m 이내 + 같은 층 | 5 |")
-    add("| L6 | 같은 법정동(PNU 앞 10자리) + 같은 층대 | 1 |")
-    add("| BASE | 같은 시군구 + 같은 층대 | 1 (사다리 밖 · 비교 상대) |")
+    add("| L2 | 같은 필지(PNU) + 같은 층 + 같은 묶음 | 1 |")
+    add("| L4 | 반경 100m 이내 + 같은 층 + 같은 묶음 | 3 |")
+    add("| L5 | 반경 500m 이내 + 같은 층 + 같은 묶음 | 5 |")
+    add("| L6 | 같은 법정동(PNU 앞 10자리) + 같은 층대 + 같은 묶음 | 1 |")
+    add("| BASE | 같은 시군구 + 같은 층대 + 같은 묶음 | 1 (사다리 밖 · 비교 상대 · 결정 0040 D10) |")
+    add("| (참고) 옛 BASE | 같은 시군구 + 같은 층대 (용도 불문 — v2 의 대조군) | 1 (판정에 안 씀 · §4-3) |")
     add("")
     add("- 코드 번호는 `docs/상세계획.md` **§6.2 사다리의 단계 번호**를 그대로 쓴다"
         "(2=동일 건물 동일 층 / 4=반경 100m / 5=반경 500m / 6=행정동→법정동). "
@@ -1302,6 +1597,21 @@ def build_markdown(ctx):
         add(_metric_row("{} ({})".format(names.get(value, value), value), m))
     add("")
 
+    add("### 3-6. 용도 묶음별 (운영 모드 · 결정 0040 D6)")
+    add("")
+    add("기준선(30%)을 넘는 묶음이 있으면 다시 여쭌다(D6). 짝지은 비교는 같은 묶음 구 평균(BASE)과 "
+        "둘 다 성립한 거래만이다. 같은 숫자가 `{}` 에 있다(감춘 칸까지).".format(GROUP_CSV))
+    add("")
+    add("| 묶음 | 층대 | 채점 거래 | 추정 성립 | 커버리지 | MdAPE | 짝지은 거래 | 사다리 MdAPE(짝) | BASE MdAPE(짝) |")
+    add("|---|---|---|---|---|---|---|---|---|")
+    for g in group_metric_rows(scored):
+        m, p = g["m"], g["p"]
+        add("| {} | {} | {:,} | {:,} | {} | {} | {:,} | {} | {} |".format(
+            g["label"], g["band"], m["n_total"], m["n_est"], fmt_pct(m["coverage"]),
+            fmt_metric(m["n_est"], m["mdape"]), p["n_pair"],
+            fmt_metric(p["n_pair"], p["a_mdape"]), fmt_metric(p["n_pair"], p["b_mdape"])))
+    add("")
+
     # 4. 핵심 비교
     add("## 4. 핵심 비교 — 사다리가 \"구 평균\"보다 나은가")
     add("")
@@ -1326,6 +1636,9 @@ def build_markdown(ctx):
             p = paired_metrics(bucket, pick_a, pick_base_ape)
             add(_paired_row("{} ({})".format(names.get(value, value), value), p))
         add("")
+
+    if ctx.get("gate_list") is not None:
+        add_reference_columns(add, ctx)
 
     # 5. 판단 재료
     add("## 5. 판단 재료 (사실만)")
@@ -1372,15 +1685,75 @@ def build_markdown(ctx):
                     names.get(worst[1], worst[1]), worst[1], fmt_pct(worst[0]), worst[2],
                     SUPPRESS_BELOW))
     add("- 커버리지가 얇은 구·층대는 3-5·3-3 표에 그대로 있다(감춘 칸은 CSV 에 남아 있다).")
+    if ctx.get("gate_list") is not None:
+        ch = gate_change(ctx.get("prev_gate") or {}, ctx["gate_list"])
+        n_pass = sum(1 for g in ctx["gate_list"] if g["gate_pass"])
+        add("- 기준선 통과 구: **{}/{}개**. 직전 `통과구.csv`(이번 실행 전 파일) 대비 들어온 구 {} · 나간 구 {} "
+            "· 그대로 {}개.".format(n_pass, len(ctx["gate_list"]),
+                                   " · ".join(ch["in"]) or "없음", " · ".join(ch["out"]) or "없음",
+                                   len(ch["stay"])))
     add("- 결정 0012 는 **성적표를 들고 다시 결재**하도록 정해 두었다. "
         "이 문서는 그 재료이며, 여기에는 판정·결재 문구를 적지 않는다.")
     add("")
     add("---")
     add("")
-    add("생성 파일: `단계별지표.csv` · `운영모드지표.csv` · `검증거래별원자료.csv` "
-        "(CSV 는 감춘 수치까지 전부 담고 있다).")
+    add("생성 파일: `단계별지표.csv` · `운영모드지표.csv` · `검증거래별원자료.csv` · `{}` · `통과구.csv` "
+        "(CSV 는 감춘 수치까지 전부 담고 있다).".format(GROUP_CSV))
     add("")
     return "\n".join(lines)
+
+
+def _gate_cell(g):
+    """참고 열 한 칸 — '짝 n · 사다리 a / BASE b · 통과|탈락' (없으면 '-')."""
+    if not g:
+        return "-"
+    return "{:,} · {} / {} · {}".format(
+        g["n_paired"], fmt_metric(g["n_paired"], g["ladder_mdape"]),
+        fmt_metric(g["n_paired"], g["base_mdape"]), "통과" if g["gate_pass"] else "탈락")
+
+
+def add_reference_columns(add, ctx):
+    """§4-3 — 참고 열 셋과 직전 판 대비 변화(결정 0040 D10 · **판정에 안 쓴다**).
+
+    통과 구가 왜 바뀌었는지 가를 수 있게: ⓐ 채점 집합을 넓히면(전체 거래) · ⓑ 대조군을 옛 것(용도 불문)으로
+    두면 · ⓒ 오늘 자료에 v2 규칙(용도 불문 · 채점 집합 없음)을 그대로 쓰면. 판정 집합은 하나다(위 4-1).
+    """
+    names = ctx["sigungu_names"]
+    now = {g["sigungu_code"]: g for g in ctx["gate_list"]}
+    prev = ctx.get("prev_gate") or {}
+    add("### 4-3. 참고 열 셋 — 통과 구가 왜 바뀌었나 (판정에 안 씀 · 결정 0040 D10)")
+    add("")
+    add("- **판정(v3)** = 위 4-1 · 통과구.csv 와 같은 값(채점 집합 · 같은 묶음 사다리 vs 같은 묶음 구 평균).")
+    add("- **ⓐ 전체 거래** = 검증 거래 {:,}건 전부(층 묶음이 넷이 아니면 거래 자신의 이름 묶음) · 같은 묶음 대조군. "
+        "전체 짝 {:,}건 · 사다리 {} / BASE {}.".format(
+            ctx.get("ref_all_n", 0), ctx["ref_all_overall"]["n_pair"],
+            fmt_metric(ctx["ref_all_overall"]["n_pair"], ctx["ref_all_overall"]["a_mdape"]),
+            fmt_metric(ctx["ref_all_overall"]["n_pair"], ctx["ref_all_overall"]["b_mdape"])))
+    add("- **ⓑ 옛 대조군** = 채점 집합 · 같은 묶음 사다리 vs **용도 불문** 구 평균(v2 의 대조군). "
+        "전체 짝 {:,}건 · 사다리 {} / 옛 BASE {}.".format(
+            ctx["ref_old_base_overall"]["n_pair"],
+            fmt_metric(ctx["ref_old_base_overall"]["n_pair"], ctx["ref_old_base_overall"]["a_mdape"]),
+            fmt_metric(ctx["ref_old_base_overall"]["n_pair"], ctx["ref_old_base_overall"]["b_mdape"])))
+    add("- **ⓒ 오늘 자료 + v2 규칙** = 검증 거래 전부 · 용도 불문 사다리 vs 용도 불문 구 평균. "
+        "전체 짝 {:,}건 · 사다리 {} / BASE {}.".format(
+            ctx["ref_v2_overall"]["n_pair"],
+            fmt_metric(ctx["ref_v2_overall"]["n_pair"], ctx["ref_v2_overall"]["a_mdape"]),
+            fmt_metric(ctx["ref_v2_overall"]["n_pair"], ctx["ref_v2_overall"]["b_mdape"])))
+    add("- **직전 판** = 이번 실행 전 `통과구.csv`(첫 v3 실행이면 v2). 「짝 변화」 = 판정(v3) 짝 − 직전 판 짝.")
+    add("- 칸 읽는 법: `짝지은 거래 · 사다리 MdAPE / BASE MdAPE · 판정`.")
+    add("")
+    add("| 구 | 판정(v3) | ⓐ 전체 거래 | ⓑ 옛 대조군 | ⓒ 오늘 자료 + v2 규칙 | 직전 판 | 짝 변화 |")
+    add("|---|---|---|---|---|---|---|")
+    codes = sorted(set(now) | set(prev))
+    for code in codes:
+        g = now.get(code)
+        p = prev.get(code)
+        delta = "-" if not (g and p) else "{:+,}".format(g["n_paired"] - p["n_paired"])
+        add("| {} ({}) | {} | {} | {} | {} | {} | {} |".format(
+            names.get(code, (p or {}).get("sigungu_nm") or code), code,
+            _gate_cell(g), _gate_cell(ctx["ref_all"].get(code)), _gate_cell(ctx["ref_old_base"].get(code)),
+            _gate_cell(ctx["ref_v2"].get(code)), _gate_cell(p), delta))
+    add("")
 
 
 def _paired_row(name, p):
@@ -1392,7 +1765,7 @@ def _paired_row(name, p):
 
 # ── 유형축(L7) 검증 — 별도 산출물 ────────────────────────────────────────────
 #
-# ⚠️ 이 아래 코드는 `성적표-v2.md`(SCORECARD_MD)·기존 CSV 4종을 **쓰지 않는다**. 결정 0013 의 통과 구
+# ⚠️ 이 아래 코드는 성적표 md(SCORECARD_MD)·기존 CSV 를 **쓰지 않는다**. 결정 0013 의 통과 구
 #    목록은 그 계산에서만 나오므로, 검토용 실험이 그 파일을 덮어쓰면 화면에 열리는 구가
 #    조용히 바뀔 수 있다. 그래서 파일 이름도 경로도 겹치지 않게 새로 만든다.
 
@@ -1831,17 +2204,17 @@ def run_place(args):
     base_url, key = get_supabase_config()
     headers = {"apikey": key, "Authorization": "Bearer {}".format(key)}
 
-    log("[1/6] 실거래(집합·PNU·층·단가 보유) 읽는 중 …")
+    log("[1/7] 실거래(집합·PNU·층·단가 보유) 읽는 중 …")
     raw = fetch_transactions(base_url, headers)
     log("      {:,}건".format(len(raw)))
     raw, _, _ = apply_open_filter(base_url, raw)
 
     pnus = [r["pnu"] for r in raw if r.get("pnu")]
 
-    log("[2/6] 필지 좌표 읽는 중 (100개씩) …")
+    log("[2/7] 필지 좌표 읽는 중 (100개씩) …")
     coords = fetch_parcel_coords(base_url, headers, pnus)
 
-    log("[3/6] 도로접면·상권 소속 읽는 중 (psql·st_contains) …")
+    log("[3/7] 도로접면·상권 소속 읽는 중 (psql·st_contains) …")
     context = fetch_place_context(pnus)
     log("      고유 PNU {:,}개 중 필지 자료 {:,}개".format(len(set(pnus)), len(context)))
 
@@ -1850,7 +2223,7 @@ def run_place(args):
     log("      유형이 매겨진 거래 {:,}건 ({})".format(
         typed, fmt_pct(typed / len(rows) if rows else None)))
 
-    log("[4/6] 시간 분할 …")
+    log("[4/7] 시간 분할 …")
     train, test, outside = split_by_period(rows, args.train_until, args.test_from)
     log("      학습 {:,} + 검증 {:,} + 범위밖 {:,} = {:,} (전체 {:,}) → 등식 {}".format(
         len(train), len(test), len(outside),
@@ -1859,11 +2232,21 @@ def run_place(args):
     if not test:
         raise RuntimeError("검증 거래가 0건입니다 — 분할 기준을 확인하세요.")
 
-    log("[5/6] 학습 색인 + 채점 …")
+    # 기본 모드(성적표 v3)와 같은 채점 집합·같은 묶음 열쇠(결정 0040 D10 — 두 모드가 다른 모집단이면
+    # 견줄 수 없다).
+    log("[5/7] 검증 거래의 층 묶음 읽는 중 (psql 한 세션 · pg_temp · 정본 본문) …")
+    kinds = attach_floor_groups(test, fetch_floor_groups(test))
+    test = scoring_set(test)
+    log("      채점 {:,}건 · 갈래 {}".format(
+        len(test), " · ".join("{} {:,}".format(k, v) for k, v in sorted(kinds.items()))))
+    if not test:
+        raise RuntimeError("채점 집합이 0건입니다 — 층 묶음 조회를 확인하세요.")
+
+    log("[6/7] 학습 색인 + 채점 …")
     index = build_train_index(train)
     scored = add_place_ladder(score_test_rows(test, index))
 
-    log("[6/6] 산출물 쓰는 중 …")
+    log("[7/7] 산출물 쓰는 중 …")
     os.makedirs(args.out_dir, exist_ok=True)
     csv_path = os.path.join(args.out_dir, "1층유형별지표.csv")
     md_path = os.path.join(args.out_dir, "1층-유형축-검증.md")
@@ -1904,12 +2287,12 @@ def run(args):
     base_url, key = get_supabase_config()
     headers = {"apikey": key, "Authorization": "Bearer {}".format(key)}
 
-    log("[1/6] 실거래(집합·PNU·층·단가 보유) 읽는 중 …")
+    log("[1/7] 실거래(집합·PNU·층·단가 보유) 읽는 중 …")
     raw = fetch_transactions(base_url, headers)
     log("      {:,}건".format(len(raw)))
     raw, open_codes, excluded = apply_open_filter(base_url, raw)
 
-    log("[2/6] 필지 좌표 읽는 중 (100개씩) …")
+    log("[2/7] 필지 좌표 읽는 중 (100개씩) …")
     pnus = [r["pnu"] for r in raw if r.get("pnu")]
     coords = fetch_parcel_coords(base_url, headers, pnus)
     rows = normalize_rows(raw, coords)
@@ -1918,7 +2301,7 @@ def run(args):
         len(set(pnus)), len(coords), with_coords,
         fmt_pct(with_coords / len(rows) if rows else None)))
 
-    log("[3/6] 시간 분할 …")
+    log("[3/7] 시간 분할 …")
     train, test, outside = split_by_period(rows, args.train_until, args.test_from)
     log("      학습 {:,} + 검증 {:,} + 범위밖 {:,} = {:,} (전체 {:,}) → 등식 {}".format(
         len(train), len(test), len(outside),
@@ -1927,13 +2310,26 @@ def run(args):
     if not test:
         raise RuntimeError("검증 거래가 0건입니다 — 분할 기준을 확인하세요.")
 
-    log("[4/6] 학습 색인 만드는 중 …")
+    log("[4/7] 검증 거래의 층 묶음 읽는 중 (psql 한 세션 · pg_temp · 정본 본문) …")
+    kinds = attach_floor_groups(test, fetch_floor_groups(test))
+    scoring = scoring_set(test)
+    log("      채점 {:,}건 / 검증 {:,}건 · 갈래 {}".format(
+        len(scoring), len(test), " · ".join("{} {:,}".format(k, v) for k, v in sorted(kinds.items()))))
+    if not scoring:
+        raise RuntimeError("채점 집합이 0건입니다 — 층 묶음 조회를 확인하세요.")
+
+    log("[5/7] 학습 색인 만드는 중 (같은 묶음 · 옛 규칙 참고용 둘) …")
     index = build_train_index(train)
+    index_v2 = build_train_index(train, group_of=no_group)
 
-    log("[5/6] 검증 거래 채점 중 ({:,}건) …".format(len(test)))
-    scored = score_test_rows(test, index)
+    log("[6/7] 검증 거래 채점 중 ({:,}건 + 참고 열) …".format(len(scoring)))
+    scored = score_test_rows(scoring, index)
+    # 참고 열(D10 · 판정에 안 씀): ⓐ 전체 거래(대장 없으면 거래 자신 묶음) · ⓒ 오늘 자료 + v2 규칙(용도 불문).
+    # ⓑ 옛 대조군은 scored 안의 BASE_ALL 로 잰다.
+    scored_all = score_test_rows(test, index, group_of=ref_all_group)
+    scored_v2 = score_test_rows(test, index_v2, group_of=no_group)
 
-    log("[6/6] 구 이름표 읽는 중 …")
+    log("[7/7] 구 이름표 읽는 중 …")
     sigungu_names = fetch_sigungu_names(
         base_url, headers, [r.get("sigungu_code") for r in rows])
 
@@ -1942,11 +2338,16 @@ def run(args):
     op_csv = os.path.join(args.out_dir, "운영모드지표.csv")
     raw_csv = os.path.join(args.out_dir, "검증거래별원자료.csv")
     gate_csv = os.path.join(args.out_dir, "통과구.csv")
+    group_csv = os.path.join(args.out_dir, GROUP_CSV)
     md_path = os.path.join(args.out_dir, SCORECARD_MD)
+
+    # 덮어쓰기 **전** 통과구.csv(직전 판)를 읽어 둔다 — 구별 짝지은 거래 수·판정의 변화 열.
+    prev_gate = read_prev_gate(gate_csv)
 
     write_stage_csv(stage_csv, scored, sigungu_names)
     write_operating_csv(op_csv, scored, sigungu_names)
     write_raw_csv(raw_csv, scored, sigungu_names)
+    write_group_csv(group_csv, scored)
     gate_list = write_gate_csv(gate_csv, scored, sigungu_names)
 
     ctx = {
@@ -1963,7 +2364,17 @@ def run(args):
         "dist": price_distribution(rows),
         "sido_counts": Counter((r.get("sigungu_code") or "?")[:2] for r in rows),
         "band_counts": Counter(floor_band(r["floor_no"]) for r in rows),
-        "test_coords_missing": sum(1 for r in test if r["lat"] is None),
+        "test_coords_missing": sum(1 for r in scored if r["lat"] is None),
+        "kinds": kinds,
+        "gate_list": gate_list,
+        "ref_all": gate_map(scored_all, pick_ladder_ape, pick_base_ape),
+        "ref_old_base": gate_map(scored, pick_ladder_ape, pick_base_all_ape),
+        "ref_v2": gate_map(scored_v2, pick_ladder_ape, pick_base_ape),
+        "ref_all_overall": paired_metrics(scored_all, pick_ladder_ape, pick_base_ape),
+        "ref_old_base_overall": paired_metrics(scored, pick_ladder_ape, pick_base_all_ape),
+        "ref_v2_overall": paired_metrics(scored_v2, pick_ladder_ape, pick_base_ape),
+        "ref_all_n": len(scored_all),
+        "prev_gate": prev_gate,
         "generated_at": datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M"),
     }
     with open(md_path, "w", encoding="utf-8", newline="\n") as f:
@@ -1992,8 +2403,15 @@ def run(args):
         .format(len(passed), len(gate_list), GATE_MAX_MDAPE * 100))
     log("  {}".format(" · ".join("{}({})".format(g["sigungu_nm"] or "?", g["sigungu_code"])
                                  for g in passed) or "(없음)"))
+    change = gate_change(prev_gate, gate_list)
+    log("직전 통과구.csv 대비 : 들어온 구 {} · 나간 구 {}".format(
+        " · ".join(change["in"]) or "(없음)", " · ".join(change["out"]) or "(없음)"))
+    for grp in SCORE_GROUPS:
+        m = cell_metrics([r for r in scored if r.get("floor_group") == grp], pick_ladder_ape)
+        log("묶음 {:<7}: 채점 {:,}건 · 성립 {:,}건 · MdAPE {}".format(
+            grp, m["n_total"], m["n_est"], fmt_metric(m["n_est"], m["mdape"])))
     log("")
-    for path in (md_path, stage_csv, op_csv, raw_csv, gate_csv):
+    for path in (md_path, stage_csv, op_csv, raw_csv, gate_csv, group_csv):
         log("생성: {}".format(path))
     return 0
 

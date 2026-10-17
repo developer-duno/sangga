@@ -6,7 +6,7 @@ import type { PriceGateRow, Scorecard, ScorecardOpsMode } from '../types';
  *
  * ⛔ **이 파일과 `ScorecardSection.tsx` 에는 통계 수치가 한 개도 없다.**
  *    로드맵이 "숫자 복사 금지"라고 못박은 자리라, 오차·커버리지·비중은 전부 서버
- *    (`list_price_gate()`)와 구워 둔 파일(`/scorecard-v2.json`)에서 읽는다. 숫자를 한 번
+ *    (`list_price_gate()`)와 구워 둔 파일(`/scorecard-v3.json`)에서 읽는다. 숫자를 한 번
  *    옮겨 적으면 성적표를 다시 뽑는 날 화면만 옛 성적을 말하고, 그것은 에러가 아니라
  *    **조용한 거짓말**이다. 그 사실을 `scorecard.test.ts` 가 정규식으로 지킨다.
  *

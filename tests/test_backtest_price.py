@@ -320,7 +320,7 @@ def test_좌표없는_학습거래는_반경색인에서만_빠진다():
 
 def test_neighbors_within_반경_밖은_버린다():
     index = bt.build_train_index(_train_rows())
-    grid = index["floor_grid"].get(1)
+    grid = index["floor_grid"].get((1, None))     # (층, 묶음) — 묶음 없는 학습 거래는 None 칸
     near_100 = bt.neighbors_within(grid, 37.5000, 127.0000, 100.0)
     near_500 = bt.neighbors_within(grid, 37.5000, 127.0000, 500.0)
     assert len(near_100) == 3
@@ -578,14 +578,258 @@ def test_순서_탐지기는_거르기_줄을_지우면_잡는다(fn_name):
     assert not _calls_in_order(moved)
 
 
-def test_성적표_판은_v2이고_md_이름이_따라간다():
-    assert bt.SCORECARD_VERSION == "v2"
-    assert bt.SCORECARD_MD == "성적표-v2.md"
+def test_성적표_판은_v3이고_md_이름이_따라간다():
+    assert bt.SCORECARD_VERSION == "v3"
+    assert bt.SCORECARD_MD == "성적표-v3.md"
 
 
 def test_지분_거래_제외_조건은_그대로다():
     """결재 3 — 지분 포함판은 돌리지 않는다. TX_QUERY 의 지분 제외가 빠지면 v2 의 전제가 깨진다."""
     assert "&is_share=is.false" in bt.TX_QUERY
+
+
+def test_조회가_용도_이름을_읽는다():
+    """결정 0040 — 후보 거래의 묶음은 main_use 에서 온다. 빠지면 모든 학습 거래가 None 묶음이 된다."""
+    m = re.search(r"&select=([^&]+)", bt.TX_QUERY)
+    assert "main_use" in m.group(1).split(",")
+
+
+# ── 용도 묶음 (결정 0040) ────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("cd,want", [
+    ("03", "shop"), ("04001", "shop"), ("07", "shop"), ("Z3", "shop"), ("Z6", "shop"),
+    ("14", "office"), ("15", "lodging"), ("01", "resid"), ("02999", "resid"),
+    (None, None), ("", None), ("10", "other"), ("Z8", "other"), ("05", "other"),
+])
+def test_use_group_cd(cd, want):
+    assert bt.use_group_cd(cd) == want
+
+
+@pytest.mark.parametrize("nm,want", [
+    ("제1종근린생활", "shop"), ("제2종근린생활", "shop"), ("판매", "shop"),
+    ("업무", "office"), ("숙박", "lodging"), (None, None), ("", None),
+    ("교육연구", "other"), ("기타", "other"), ("사무소", "other"),
+])
+def test_use_group_nm(nm, want):
+    assert bt.use_group_nm(nm) == want
+
+
+def _gtx(tx_id, ym, pnu, floor_no, price, use_group, floor_group=None, lat=None, lng=None):
+    row = _tx(tx_id, ym, pnu, floor_no, price, "11680", lat, lng)
+    row["use_group"] = use_group
+    row["floor_group"] = floor_group
+    return row
+
+
+def _group_train():
+    return [
+        _gtx("s1", "202501", PNU_A, 3, 1000.0, "shop", lat=37.5, lng=127.0),
+        _gtx("s2", "202502", PNU_A, 3, 1200.0, "shop", lat=37.5, lng=127.0),
+        _gtx("o1", "202503", PNU_A, 3, 9000.0, "office", lat=37.5, lng=127.0),
+        _gtx("o2", "202504", PNU_B, 4, 8000.0, "office", lat=37.5005, lng=127.0005),
+        _gtx("s3", "202505", PNU_C, 5, 3000.0, "shop", lat=37.503, lng=127.003),
+    ]
+
+
+def test_색인_열쇠에_묶음이_붙는다():
+    index = bt.build_train_index(_group_train())
+    assert index["pnu_floor"][(PNU_A, 3, "shop")] == [1000.0, 1200.0]
+    assert index["pnu_floor"][(PNU_A, 3, "office")] == [9000.0]
+    assert index["dong_band"][(PNU_A[:10], "3층+", "office")] == [9000.0, 8000.0]
+    assert index["sigungu_band"][("11680", "3층+", "shop")] == [1000.0, 1200.0, 3000.0]
+    # 옛 대조군(용도 불문)은 묶음 없이 전부
+    assert len(index["sigungu_band_all"][("11680", "3층+")]) == 5
+    assert len(index["floor_grid"][(3, "shop")]) == 1     # 한 격자 칸에 두 건
+    assert (3, "office") in index["floor_grid"]
+
+
+def test_단계마다_같은_묶음_후보만_본다():
+    index = bt.build_train_index(_group_train())
+    row = _gtx("x", "202601", PNU_A, 3, 5000.0, None, floor_group="shop", lat=37.5, lng=127.0)
+    res = bt.stage_results_for(row, index, "shop")
+    assert res["L2"]["n"] == 2 and res["L2"]["estimate"] == 1100.0      # 업무 9,000 은 빠진다
+    assert res["L6"]["n"] == 2                                          # 같은 법정동 3층+ 상가만(s3 는 다른 동)
+    assert res["BASE"]["n"] == 3
+    assert res["BASE_ALL"]["n"] == 5                                    # 참고 열 ⓑ — 용도 불문
+    assert res["L4"]["n"] == 2                                          # 반경 100m 안 상가(o2 는 업무라 빠짐)
+    office = bt.stage_results_for(row, index, "office")
+    assert office["L2"]["n"] == 1 and office["L2"]["estimate"] == 9000.0
+    assert office["L6"]["n"] == 2 and office["BASE"]["n"] == 2
+
+
+def test_묶음_없는_색인은_v2_규칙과_같다():
+    """참고 열 ⓒ — no_group 이면 묶음을 무시하고 옛 사다리와 같은 후보를 본다."""
+    index = bt.build_train_index(_group_train(), group_of=bt.no_group)
+    row = _gtx("x", "202601", PNU_A, 3, 5000.0, None, lat=37.5, lng=127.0)
+    res = bt.stage_results_for(row, index, None)
+    assert res["L2"]["n"] == 3 and res["L6"]["n"] == 4 and res["BASE"]["n"] == 5
+
+
+def test_돌연변이_묶음을_넘기지_않으면_후보가_없다():
+    """양성 대조 — 묶음 색인에 group 없이 물으면(기본 None) 0건: 채점 경로가 묶음을 넘기는지가 중요하다."""
+    index = bt.build_train_index(_group_train())
+    row = _gtx("x", "202601", PNU_A, 3, 5000.0, None, floor_group="shop", lat=37.5, lng=127.0)
+    assert bt.stage_results_for(row, index)["L2"]["n"] == 0
+    scored = bt.score_test_rows([row], index)          # 기본 group_of = 층 묶음
+    assert scored[0]["stages"]["L2"]["n"] == 2
+
+
+@pytest.mark.parametrize("info,want", [
+    (None, "no_floor"),
+    ({"group": None, "has_floor": False}, "no_floor"),
+    ({"group": None, "has_floor": True}, "no_use"),
+    ({"group": "resid", "has_floor": True}, "resid"),
+    ({"group": "officetel", "has_floor": True}, "officetel"),
+    ({"group": "shop", "has_floor": True}, "shop"),
+    ({"group": "other", "has_floor": True}, "other"),
+])
+def test_층_묶음_갈래(info, want):
+    assert bt.floor_group_kind(info) == want
+
+
+def test_채점_집합은_묶음_넷만_남긴다():
+    rows = [{"pnu": PNU_A, "floor_no": f} for f in (2, 3, 4, 5, 6, 7)]
+    groups = {(PNU_A, 2): {"group": "shop", "has_floor": True},
+              (PNU_A, 3): {"group": "office", "has_floor": True},
+              (PNU_A, 4): {"group": "resid", "has_floor": True},
+              (PNU_A, 5): {"group": "officetel", "has_floor": True},
+              (PNU_A, 6): {"group": None, "has_floor": True}}
+    kinds = bt.attach_floor_groups(rows, groups)
+    assert dict(kinds) == {"shop": 1, "office": 1, "resid": 1, "officetel": 1, "no_use": 1, "no_floor": 1}
+    assert [r["floor_no"] for r in bt.scoring_set(rows)] == [2, 3]
+    assert rows[0]["floor_group"] == "shop" and rows[5]["floor_group"] is None
+
+
+def test_참고열_전체거래는_대장이_없으면_거래_자신_묶음():
+    assert bt.ref_all_group({"score_kind": "shop", "floor_group": "shop", "use_group": "office"}) == "shop"
+    assert bt.ref_all_group({"score_kind": "no_floor", "floor_group": None, "use_group": "office"}) == "office"
+    assert bt.ref_all_group({"score_kind": "resid", "floor_group": "resid", "use_group": "shop"}) == "shop"
+
+
+def test_psql_층_묶음_출력을_읽는다():
+    rows = [[PNU_A, "2", "shop", "t"], [PNU_A, "3", "", "f"], [PNU_B, "4", "", "t"],
+            ["CREATE FUNCTION"], ["bad", "x", "y", "z"]]
+    assert bt.parse_floor_group_rows(rows) == {
+        (PNU_A, 2): {"group": "shop", "has_floor": True},
+        (PNU_A, 3): {"group": None, "has_floor": False},
+        (PNU_B, 4): {"group": None, "has_floor": True},
+    }
+
+
+def test_층_묶음_조회_SQL_모양():
+    sql = bt.floor_group_query_sql(
+        "create or replace function price_use_group_cd(p_cd text)\nreturns text\nas $$ select 1 $$;\n"
+        "create or replace function price_floor_use_group(p_pnu char(19), p_floor smallint)\n"
+        "returns text\nas $$ select price_use_group_cd('03') $$;\n",
+        [(PNU_A, 2), (PNU_B, 3)])
+    assert "create or replace function pg_temp.price_use_group_cd(" in sql
+    assert "create or replace function pg_temp.price_floor_use_group(" in sql
+    assert "select pg_temp.price_use_group_cd('03')" in sql
+    assert "('{}', 2),('{}', 3)".format(PNU_A, PNU_B) in sql
+    assert "pg_temp.price_floor_use_group(want.pnu::char(19), want.floor_no::smallint)" in sql
+    assert "bf.pnu = want.pnu::char(19)" in sql
+    # 운영에 남는 쓰기가 없다 — pg_temp 밖에 만들거나 고치는 문장이 없다.
+    body = re.sub(r"pg_temp\.\w+", "", sql)
+    assert not re.search(r"\b(insert|update|delete|alter|drop|grant|truncate)\b", body, re.I)
+    made = re.findall(r"create\s+(?:or\s+replace\s+)?function\s+([\w.]+)\s*\(", sql, re.I)
+    assert made and all(name.startswith("pg_temp.") for name in made)
+
+
+def _gate_entry(code, n, a, b, passed, nm=""):
+    return {"sigungu_code": code, "sigungu_nm": nm, "n_paired": n,
+            "ladder_mdape": a, "base_mdape": b, "gate_pass": passed}
+
+
+def test_직전_통과구를_읽고_변화를_가른다(tmp_path):
+    path = str(tmp_path / "통과구.csv")
+    bt.write_gate_csv(path, [_gate_scored("11680", 0.10, 0.40), _gate_scored("11545", 0.30, 0.10)],
+                      {"11680": "강남구", "11545": "금천구"})
+    prev = bt.read_prev_gate(path)
+    assert prev["11680"]["gate_pass"] is True and prev["11680"]["n_paired"] == 1
+    assert prev["11545"]["gate_pass"] is False
+    now = [_gate_entry("11680", 5, 0.4, 0.3, False, "강남구"), _gate_entry("11545", 5, 0.1, 0.3, True, "금천구")]
+    ch = bt.gate_change(prev, now)
+    assert ch == {"in": ["금천구(11545)"], "out": ["강남구(11680)"], "stay": []}
+    assert bt.read_prev_gate(str(tmp_path / "없음.csv")) == {}
+
+
+def test_gate_map_은_gate_rows_와_같은_계산():
+    scored = [_gate_scored("11680", 0.10, 0.40), _gate_scored("11680", 0.20, 0.50),
+              _gate_scored("11545", 0.30, 0.10)]
+    m = bt.gate_map(scored, bt.pick_ladder_ape, bt.pick_base_ape)
+    rows = {r["sigungu_code"]: r for r in bt.gate_rows(scored, {})}
+    for code in ("11680", "11545"):
+        for k in ("n_paired", "ladder_mdape", "base_mdape", "gate_pass"):
+            assert m[code][k] == rows[code][k]
+
+
+def _grp_scored(group, floor_no, ladder_ape, base_ape):
+    return {"floor_group": group, "floor_no": floor_no, "ladder_ape": ladder_ape,
+            "stage_ape": {"BASE": base_ape}}
+
+
+def test_묶음별_CSV_구조(tmp_path):
+    path = str(tmp_path / bt.GROUP_CSV)
+    scored = [_grp_scored("shop", 2, 0.10, 0.20), _grp_scored("shop", 3, 0.30, None),
+              _grp_scored("office", 3, 0.20, 0.40)]
+    bt.write_group_csv(path, scored)
+    with open(path, encoding="utf-8-sig") as f:
+        lines = [ln.strip() for ln in f if ln.strip()]
+    assert lines[0].split(",")[:6] == ["묶음", "묶음이름", "층대", "검증거래수", "추정성립수", "커버리지"]
+    assert any(ln.startswith("shop,상가,전체,2,2,") for ln in lines)
+    assert any(ln.startswith("office,업무,3층+,1,1,") for ln in lines)
+    assert any(ln.startswith("lodging,숙박,전체,0,0,") for ln in lines)   # 빈 묶음도 줄은 있다
+    assert len(lines) == 1 + len(bt.SCORE_GROUPS) * 4
+    assert bt.GROUP_CSV != "운영모드지표.csv"
+
+
+def test_성적표_v3_문서가_렌더된다():
+    """run() 과 같은 순서로 작은 표본을 돌려 md 를 만든다(DB 없이) — 서식·새 절이 깨지지 않는지."""
+    raw = []
+    for i in range(6):
+        raw.append({"tx_id": "s{}".format(i), "contract_ym": "202505", "pnu": PNU_A, "floor_no": 3,
+                    "unit_price": 1000.0 + i, "sigungu_code": "11680", "main_use": "제2종근린생활"})
+        raw.append({"tx_id": "o{}".format(i), "contract_ym": "202505", "pnu": PNU_A, "floor_no": 3,
+                    "unit_price": 5000.0 + i, "sigungu_code": "11680", "main_use": "업무"})
+    raw.append({"tx_id": "x1", "contract_ym": "202602", "pnu": PNU_A, "floor_no": 3,
+                "unit_price": 1100.0, "sigungu_code": "11680", "main_use": "판매"})
+    raw.append({"tx_id": "x2", "contract_ym": "202602", "pnu": PNU_B, "floor_no": 3,
+                "unit_price": 1100.0, "sigungu_code": "11680", "main_use": "판매"})
+    rows = bt.normalize_rows(raw, {})
+    assert rows[1]["use_group"] == "office"
+    train, test, outside = bt.split_by_period(rows, "202512", "202601")
+    kinds = bt.attach_floor_groups(test, {(PNU_A, 3): {"group": "shop", "has_floor": True}})
+    scoring = bt.scoring_set(test)
+    index = bt.build_train_index(train)
+    scored = bt.score_test_rows(scoring, index)
+    assert scored[0]["ladder_stage"] == "L2" and scored[0]["ladder_estimate"] == 1002.5   # 상가 6건만
+    scored_all = bt.score_test_rows(test, index, group_of=bt.ref_all_group)
+    scored_v2 = bt.score_test_rows(test, bt.build_train_index(train, group_of=bt.no_group),
+                                   group_of=bt.no_group)
+    gate_list = bt.gate_rows(scored, {"11680": "강남구"})
+    md = bt.build_markdown({
+        "scored": scored, "train": train, "test": test, "outside": outside, "total": len(rows),
+        "open_count": 1, "excluded": {}, "train_until": "202512", "test_from": "202601",
+        "sigungu_names": {"11680": "강남구"}, "dist": bt.price_distribution(rows),
+        "sido_counts": {"11": len(rows)}, "band_counts": {"3층+": len(rows)},
+        "test_coords_missing": 0, "kinds": kinds, "gate_list": gate_list,
+        "ref_all": bt.gate_map(scored_all, bt.pick_ladder_ape, bt.pick_base_ape),
+        "ref_old_base": bt.gate_map(scored, bt.pick_ladder_ape, bt.pick_base_all_ape),
+        "ref_v2": bt.gate_map(scored_v2, bt.pick_ladder_ape, bt.pick_base_ape),
+        "ref_all_overall": bt.paired_metrics(scored_all, bt.pick_ladder_ape, bt.pick_base_ape),
+        "ref_old_base_overall": bt.paired_metrics(scored, bt.pick_ladder_ape, bt.pick_base_all_ape),
+        "ref_v2_overall": bt.paired_metrics(scored_v2, bt.pick_ladder_ape, bt.pick_base_ape),
+        "ref_all_n": len(scored_all),
+        "prev_gate": {"11680": {"sigungu_nm": "강남구", "n_paired": 3, "ladder_mdape": 0.2,
+                                "base_mdape": 0.3, "gate_pass": True}},
+        "generated_at": "2026-10-18 12:00",
+    })
+    assert "성적표 v3" in md
+    assert "3-6. 용도 묶음별" in md and "4-3. 참고 열 셋" in md
+    assert "대장에 그 층이 없음 1건" in md          # PNU_B 3층은 대장에 없다
+    assert "| 강남구 (11680) |" in md
+    assert "같은 층대·같은 용도 묶음" in md
 
 
 # ── 금지 표현 (절대 규칙 2) ──────────────────────────────────────────────────
@@ -736,9 +980,9 @@ def test_L7_색인은_유형없는_학습거래를_뺀다():
         _ptx("t3", "202503", PNU_C, 1, 3000.0, "11680", None),      # 유형 모름
     ]
     index = bt.build_train_index(rows)
-    assert index["sigungu_place_band"][("11680", "큰길·밀집", "1층")] == [1000.0, 2000.0]
+    assert index["sigungu_place_band"][("11680", "큰길·밀집", "1층", None)] == [1000.0, 2000.0]
     # 유형을 모르는 거래도 나머지 색인에는 그대로 있다
-    assert len(index["sigungu_band"][("11680", "1층")]) == 3
+    assert len(index["sigungu_band"][("11680", "1층", None)]) == 3
 
 
 def _l7_train(n, place="큰길·밀집", price=1000.0, band_floor=1):

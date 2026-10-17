@@ -384,7 +384,7 @@ export const PRICE_GATE_FN = 'list_price_gate';
  *    조용히 바뀔 수 있다 — 로드맵 Wave 4 · 결정 0013 §7), 그때 이 상수와 굽는 스크립트
  *    (`scripts/build_scorecard_json.py` 의 `VERSION`)를 함께 올린다.
  */
-export const SCORECARD_URL = '/scorecard-v2.json';
+export const SCORECARD_URL = '/scorecard-v3.json';
 
 /**
  * 화면 아래 "이 자료는 언제 것인가" 표. 2026-09-05d.

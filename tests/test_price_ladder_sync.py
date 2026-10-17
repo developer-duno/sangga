@@ -173,6 +173,85 @@ def test_오피스텔_낱말이_호실_구성표와_같다():
     assert officetel_problems(_schema()) == []
 
 
+# ── 용도 묶음표 — SQL 함수 ↔ 백테스트 파이썬 표 (결정 0040 ㉠) ──────────────────
+# 묶음표의 정본은 DB 함수 둘이다. 백테스트의 USE_GROUP_CD·USE_GROUP_NM 이 한 글자라도 다르면
+# 성적표가 화면과 다른 묶음으로 채점한 것이 된다(에러 0).
+
+RE_WHEN_IN = re.compile(r"when\s+(left\(p_cd,\s*2\)|p_nm)\s+in\s*\(([^)]*)\)\s+then\s+'(\w+)'")
+RE_ELSE = re.compile(r"else\s+'(\w+)'")
+
+
+def sql_group_table(sql, name):
+    """묶음 함수 하나 → ({글자: 묶음}, else 묶음, 빈 값 갈래가 null 인가)."""
+    body = _fn(name, sql)
+    body = re.sub(r"--[^\n]*", "", body)
+    table = {}
+    for _, items, grp in RE_WHEN_IN.findall(body):
+        for item in re.findall(r"'([^']*)'", items):
+            table[item] = grp
+    other = RE_ELSE.findall(body)
+    null_first = bool(re.search(r"when\s+nullif\(p_(?:cd|nm),\s*''\)\s+is\s+null\s+then\s+null", body))
+    return table, (other[0] if len(other) == 1 else None), null_first
+
+
+def group_table_problems(sql):
+    probs = []
+    for name, py in (("price_use_group_cd", bt.USE_GROUP_CD), ("price_use_group_nm", bt.USE_GROUP_NM)):
+        table, other, null_first = sql_group_table(sql, name)
+        if not table:
+            probs.append("{} 의 표를 못 읽었다".format(name))
+        if table != py:
+            probs.append("{} 과 파이썬 표가 다르다: SQL {} / 파이썬 {}".format(name, table, py))
+        if other != bt.USE_GROUP_OTHER:
+            probs.append("{} 의 그 밖 묶음이 다르다: {}".format(name, other))
+        if not null_first:
+            probs.append("{} 의 빈 값 → NULL 갈래가 없다".format(name))
+    return probs
+
+
+def test_묶음표가_백테스트와_같다():
+    assert group_table_problems(_schema()) == []
+
+
+def test_돌연변이_묶음표_한_칸을_바꾸면_잡힌다():
+    src = _schema()
+    blk = _fn("price_use_group_cd", src)
+    bad = blk.replace("in ('14')", "in ('14', '10')", 1)
+    assert bad != blk
+    probs = group_table_problems(src.replace(blk, bad, 1))
+    assert len(probs) == 1 and probs[0].startswith("price_use_group_cd 과 파이썬 표가 다르다")
+
+
+def test_돌연변이_이름_묶음에서_판매를_빼면_잡힌다():
+    src = _schema()
+    blk = _fn("price_use_group_nm", src)
+    bad = blk.replace(", '판매')", ")", 1)
+    assert bad != blk
+    probs = group_table_problems(src.replace(blk, bad, 1))
+    assert len(probs) == 1 and probs[0].startswith("price_use_group_nm 과 파이썬 표가 다르다")
+
+
+def test_백테스트_pg_temp_판은_정본_글자_그대로다():
+    """결정 0040 ㉧ — 백테스트가 psql 세션에 만드는 함수 둘의 본문이 정본과 같아야 한다(이름 앞 pg_temp. 만 다름)."""
+    src = _schema()
+    made = bt.pg_temp_floor_group_sql(src)
+    assert "create or replace function pg_temp.price_use_group_cd(" in made
+    assert "create or replace function pg_temp.price_floor_use_group(" in made
+    assert "pg_temp.price_use_group_cd(u.main_purps_cd)" in made
+    back = made.replace("pg_temp.", "")
+    assert back == _fn("price_use_group_cd", src) + "\n\n" + _fn("price_floor_use_group", src) + "\n"
+
+
+def test_돌연변이_pg_temp_를_안_붙이면_세션_함수가_아니다():
+    """양성 대조 — 본문 안 호출에 pg_temp. 가 없으면 운영(public)에 아직 없는 함수를 부르게 된다."""
+    src = _schema()
+    made = bt.pg_temp_floor_group_sql(src)
+    calls = re.findall(r"(?<![\w.])price_use_group_cd\(", made)
+    assert calls == []
+    bad = made.replace("pg_temp.price_use_group_cd(u.", "price_use_group_cd(u.")
+    assert re.findall(r"(?<![\w.])price_use_group_cd\(", bad)
+
+
 def test_돌연변이_오피스텔_낱말을_바꾸면_잡힌다():
     src = _schema()
     blk = _fn("price_floor_use_group", src)

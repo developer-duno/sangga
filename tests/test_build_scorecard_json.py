@@ -63,7 +63,7 @@ def write_fixture_dir(tmp_path):
     ):
         with io.open(str(d / name), "w", encoding="utf-8", newline="\n") as f:
             f.write(BOM + text)          # ⚠️ 진짜 파일처럼 BOM 을 달아 둔다
-    doc = d / "성적표-v2.md"
+    doc = d / "성적표-v3.md"
     with io.open(str(doc), "w", encoding="utf-8", newline="\n") as f:
         f.write(DOC_TEXT)
     return str(d), str(doc)
@@ -187,7 +187,7 @@ class TestSourceHashes:
 
 class TestDocumentShape:
     def test_has_the_three_blocks_and_the_version(self, built):
-        assert built["version"] == "v2"
+        assert built["version"] == "v3"
         assert [r["stage"] for r in built["stages"]] == ["L2", "L6"]
         assert [r["kind"] for r in built["ops_modes"]][0] == "전체"
         assert [r["sigungu_code"] for r in built["gate"]] == ["11680", "11545"]
@@ -228,14 +228,14 @@ class TestDocumentShape:
 
 class TestMain:
     def test_dry_run_writes_nothing(self, tmp_path, monkeypatch, capsys):
-        out = tmp_path / "scorecard-v2.json"
+        out = tmp_path / "scorecard-v3.json"
         monkeypatch.setattr(bsj, "OUT_PATH", str(out))
         assert bsj.main(["--dry-run"]) == 0
         assert not out.exists()
         assert "미리보기" in capsys.readouterr().out
 
     def test_a_real_run_writes_a_readable_document(self, tmp_path, monkeypatch):
-        out = tmp_path / "scorecard-v2.json"
+        out = tmp_path / "scorecard-v3.json"
         monkeypatch.setattr(bsj, "OUT_PATH", str(out))
         assert bsj.main([]) == 0
         with io.open(str(out), encoding="utf-8") as f:

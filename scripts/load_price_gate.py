@@ -174,10 +174,11 @@ def assert_any_pass(rows):
     화면을 끄지는 않는다 — 사람이 보고 다시 부르게 한다.
     """
     if not any(r["gate_pass"] for r in rows):
+        import backtest_price  # noqa: PLC0415  (판 번호의 정본 — 판을 올려도 이 글이 낡지 않게)
         raise ValueError(
             "통과한 구가 한 곳도 없습니다. 이대로 넣으면 참고 시세가 전 지역에서 "
-            "사라집니다 — 성적표(docs/backtest/성적표-v2.md)가 제대로 나왔는지 먼저 "
-            "확인하세요.")
+            "사라집니다 — 성적표(docs/backtest/{})가 제대로 나왔는지 먼저 "
+            "확인하세요.".format(backtest_price.SCORECARD_MD))
     return True
 
 
