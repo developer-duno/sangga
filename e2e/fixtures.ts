@@ -149,7 +149,8 @@ export function priceBands(): PriceBand[] {
   return [
     priceBand({ floor_no: -1, status: 'no_evidence', ...NO_VALUE }),
     priceBand({ floor_no: 1, status: 'floor_1f', ...NO_VALUE }),
-    priceBand({ floor_no: 2 }),
+    // 결정 0040 이후 서버는 ok·no_estimate 줄에 그 층의 용도 묶음을 준다 — 근거 줄이 「상가 거래 15건」.
+    priceBand({ floor_no: 2, use_group: 'shop' }),
   ];
 }
 

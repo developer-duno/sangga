@@ -1050,7 +1050,7 @@ describe('FloorStack — 실거래 기록 (Stage A · 결정 0012)', () => {
   it('이 땅의 거래가 없으면 그 블록을 아예 그리지 않는다 (구 단가는 그대로 나온다)', async () => {
     responses.txs = { data: [], error: null };
     render(<FloorStack building={building()} />);
-    await waitFor(() => expect(screen.getByText(/강남구 층대별 거래 단가/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/강남구 층대별 거래 단가 \(상가 거래 기준\)/)).toBeTruthy());
     expect(screen.queryByText(/이 땅에서 신고된 거래/)).toBeNull();
   });
 
@@ -1093,7 +1093,7 @@ describe('FloorStack — 실거래 기록 (Stage A · 결정 0012)', () => {
       error: null,
     };
     const { container } = render(<FloorStack building={building()} />);
-    await waitFor(() => expect(screen.getByText(/유성구 층대별 거래 단가/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/유성구 층대별 거래 단가 \(상가 거래 기준\)/)).toBeTruthy());
     expect(screen.getByText(/2025년 1월 이후 계약분/)).toBeTruthy();
     // ⚠️ '강남구'는 이 건물 주소에도 들어 있다 — 실거래 블록 안만 본다.
     expect(container.querySelector('.tx')?.textContent).not.toContain('강남구');
@@ -1577,6 +1577,27 @@ describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
     const alt = container.querySelector('.band__alt')?.textContent ?? '';
     expect(alt).toContain('층대별 거래 단가');
     expect(alt).not.toContain('아래');
+  });
+
+  it('결정 0040 — 서버 응답을 거른다: use_group 이 글자가 아니면 그 칸만 null · 새 status 는 사유 글', async () => {
+    responses.floors = floorsDesc(4, 3, 2);
+    responses.bands = {
+      data: [
+        { ...priceBand({ floor_no: 2 }), use_group: 7 },
+        priceBand({ floor_no: 3, status: 'floor_resid', ...NO_VALUE, use_group: null }),
+        priceBand({ floor_no: 4, status: 'floor_officetel', ...NO_VALUE, use_group: null }),
+      ],
+      error: null,
+    };
+    const { container } = await renderBand();
+    await waitFor(() => expect(container.querySelector('.band__val')).toBeTruthy());
+    const text = container.querySelector('.band')?.textContent ?? '';
+    expect(text).toContain('근거: 500m 안 같은 층 · 거래 15건'); // 7 → null → 이름 없는 「거래 N건」
+    expect(text).not.toContain('7 거래');
+    expect(text).toContain('주거 층이라 상가 시세를 내지 않습니다.');
+    expect(text).toContain('오피스텔 층이라 상가 시세를 내지 않습니다.');
+    // 묶음 글자가 한 줄도 없으니(7 은 null 이 됐다) 리드의 「같은 종류끼리」 글도 없다.
+    expect(text).not.toContain('같은 종류 거래끼리만');
   });
 
   describe('국세청 기준시가 (같은 카드 안, 다른 자료)', () => {
@@ -2145,7 +2166,7 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       '역삼역(발달상권)출처: 서울특별시 상권분석서비스',
       '층 2개 · 점포 4곳',
       '속한 상권 1개 · 반경 500m 이내 402곳',
-      '이 땅 거래 1건 · 강남구 층대별 단가',
+      '이 땅 거래 1건 · 강남구 층대별 단가 (상가 거래 기준)',
       '값을 낸 층 1개',
       // 세 잣대 — 값 없이 무엇이 들어 있는지만(👤 물결 1-C2 · 비율 0).
       '국세청 · 구 실거래 · 부동산원 — 층마다 나란히',
@@ -2194,7 +2215,7 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     });
 
     const summary = container.querySelector('.tx .card__summary')?.textContent ?? '';
-    expect(summary).toBe('이 땅 거래 1건 · 층대별 단가');
+    expect(summary).toBe('이 땅 거래 1건 · 층대별 단가 (상가 거래 기준)');
     expect(summary).not.toContain('null');
     expect(summary).not.toContain('undefined');
   });

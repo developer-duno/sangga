@@ -155,6 +155,8 @@ function okRpc(fn: string, pnu: string): Res {
         p75: 4_000_000,
         median_area_m2: 33,
         window_from: '2024-01',
+        // 결정 0040 이후 서버는 묶음 칸을 준다(🟡20) — 타일 근거가 「상가 거래 7건」이 된다.
+        use_group: 'shop',
       };
       return { data: [b], error: null };
     }
@@ -392,6 +394,8 @@ describe('RoleSummary — 층별 화면 맨 위 역할 요약 판', () => {
     const band = container.querySelector('.rsum__tile--band')!;
     expect(band.classList.contains('rsum__tile--est')).toBe(true);
     expect(band.querySelector('.grade__badge--est')?.textContent).toBe('C등급 · 파생 추정');
+    // 결정 0040 — 서버 응답의 묶음 칸이 카드와 같은 근거 글로 흘러온다(목업 use_group 'shop').
+    expect(band.textContent).toContain('상가 거래 7건');
     expect(container.querySelector('.rsum__tile--rent')!.textContent).toContain('상권 평균 · 집합상가 · 2026년 2분기 조사');
     expect(container.querySelector('.rsum__answer')!.textContent).toBe(
       '2층 참고 시세는 비슷한 호실 한 칸 33㎡ (10평) 기준 1.0억~1.3억입니다. 이 땅 신고 거래는 1건입니다.',

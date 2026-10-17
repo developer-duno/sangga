@@ -9,8 +9,10 @@ import {
   BAND_NO_VALUE_TEXT,
   bandAxisMaxWon,
   bandMark,
+  bandPointsToSigunguTable,
   bandText,
   groupBands,
+  hasUseGroup,
   isFarStage,
   THIN_SAMPLE,
   type BandGroup,
@@ -31,6 +33,8 @@ import { cssVar, VIZ_TONES } from '../lib/viz';
  *  · no_evidence — 검증에 쓸 거래가 한 건도 없었다. **쌓여도 안 나온다** → 줄 대신 각주 1회
  *  · no_estimate — 곁 거래를 못 찾았다. **쌓이면 나온다**
  *  · ok          — 값. 근거 단계·표본 수를 항상 함께 적는다(절대 규칙 3)
+ * 결정 0040(2026-10-18a)의 셋 — 줄마다 사유 글(`missingLabel`)로:
+ *  · floor_resid     — 주거 층 · floor_officetel — 오피스텔 층 · no_use — 대장에 그 층 용도 없음
  */
 type Props = {
   /** null = 아직 안 옴(자리만 잡아 둔다). */
@@ -126,6 +130,11 @@ export function PriceBandSection({
   const hasUnderground = silent.some((f) => f.floor_no < 0);
   // 기간은 화면에 글자로 박지 않는다 — 서버가 준 창의 시작 달을 그대로 쓴다.
   const from = bands.find((b) => b.window_from)?.window_from ?? null;
+  // 서버가 층마다 용도 묶음을 줬나(결정 0040) — 줬을 때만 「같은 종류끼리」 글을 낸다(옛 서버면 옛 글 그대로).
+  const byUseGroup = hasUseGroup(bands);
+  // 『층대별 거래 단가』(상가 거래 기준)로 보내는 안내 — 상가 층·묶음 모르는 층에만(㉨).
+  const pointsToTable =
+    listed.some((g) => bandPointsToSigunguTable(g.band)) || noEvidenceNames.length > 0;
 
   // 접혀 있어도 보이는 한 줄 — 값을 낸 층이 몇 개인지.
   // ⛔ 여기에 **숫자(값)를 적지 않는다.** 요약 줄에는 근거 단계·표본 수를 함께 실을 자리가
@@ -141,6 +150,7 @@ export function PriceBandSection({
       <p className="band__lead">
         곁에서 실제로 팔린 값으로 어림한 폭입니다.{' '}
         <strong>사고파는 값이고 월세·보증금이 아닙니다.</strong>
+        {byUseGroup && <> 층마다 그 층의 대장 용도와 같은 종류 거래끼리만 셉니다.</>}
       </p>
 
       {listed.length > 0 && (
@@ -228,12 +238,13 @@ export function PriceBandSection({
           <p className="band__src">
             출처: 국토교통부 상업업무용 부동산 매매 실거래가 · 집합(구분소유) 거래
             {/* 날짜 말투는 카드 머리 날짜 줄과 같은 '2024년 10월'(F1 · 👤 2026-10-16 ④) — 못 읽으면 원본 그대로. */}
-            {from ? ` ${formatMonthKo(from) ?? from} 이후 계약분` : ''}으로 계산 · 지분 거래 제외.
+            {from ? ` ${formatMonthKo(from) ?? from} 이후 계약분` : ''}으로 계산 · 지분 거래 제외
+            {byUseGroup ? ' · 그 층 용도와 같은 종류(상가·업무·숙박·기타) 거래만' : ''}.
           </p>
         </>
       )}
 
-      {(listed.some((g) => g.band.status !== 'ok') || noEvidenceNames.length > 0) && hasTxStats && (
+      {pointsToTable && hasTxStats && (
         <p className="band__alt">
           값을 내지 않은 층도 『층대별 거래 단가』에서{' '}
           <strong>신고된 거래를 그대로 센 값</strong>은 보실 수 있습니다.

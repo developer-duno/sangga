@@ -29,7 +29,7 @@ import type { PriceGateRow, Scorecard } from '../types';
  *
  * ⛔ 숫자를 옮겨 적지 않는다
  * --------------------------
- * 판정은 서버(`list_price_gate()`)가, 방법·단계 분포는 구워 둔 파일(`/scorecard-v2.json`)이
+ * 판정은 서버(`list_price_gate()`)가, 방법·단계 분포는 구워 둔 파일(`/scorecard-v3.json`)이
  * 준다. 이 파일에 통계 수치 리터럴은 **한 개도 없다** — 한 번 옮겨 적으면 성적표를 다시
  * 뽑는 날 화면만 옛 성적을 말하고, 그것은 에러가 아니라 조용한 거짓말이다.
  * (`src/lib/scorecard.test.ts` 가 이 두 파일을 정규식으로 훑어 지킨다.)
@@ -153,7 +153,7 @@ export function ScorecardSection({ sigungu }: Props) {
               <span className="score__v">{formatPercent(mine.ladder_mdape) ?? '모름'}</span>
             </li>
             <li>
-              <span className="score__k">구 평균만 썼을 때 오차 중앙값</span>
+              <span className="score__k">같은 묶음 구 평균만 썼을 때 오차 중앙값</span>
               <span className="score__v">{formatPercent(mine.base_mdape) ?? '모름'}</span>
             </li>
             <li>
@@ -245,7 +245,7 @@ export function ScorecardSection({ sigungu }: Props) {
                 {g.gate_pass ? '제공' : '제공 안 함'}
               </span>
               <span className="score__err">
-                {formatPercent(g.ladder_mdape) ?? '—'} / 구평균 {formatPercent(g.base_mdape) ?? '—'}
+                {formatPercent(g.ladder_mdape) ?? '—'} / 같은 묶음 구평균 {formatPercent(g.base_mdape) ?? '—'}
               </span>
             </li>
           ))}
@@ -270,8 +270,10 @@ export function ScorecardSection({ sigungu }: Props) {
               하나로는 아무 말도 못 합니다.
             </li>
             <li>
-              <strong>이미 화면에 있는 값과 견줬습니다.</strong> 견줄 상대는 그 구의 비슷한 층
-              평균값입니다. 그것보다 낫지 않으면 새 어림을 얹을 이유가 없습니다.
+              {/* 결정 0040 D10 — 대조군이 '같은 묶음 구 평균'으로 바뀌어 예전 글(「이미 화면에 있는 값과
+                  견줬습니다」·「그 구의 비슷한 층 평균값」)은 업무·숙박·기타 거래에 대해 사실이 아니다(맹점 🟠8). */}
+              견줄 상대는 그 구에서 <strong>같은 층대·같은 용도 묶음</strong> 거래의 평균값입니다(상가
+              거래에는 바로 위 『층대별 거래 단가』의 값). 그것보다 낫지 않으면 새 어림을 얹을 이유가 없습니다.
             </li>
             <li>
               <strong>두 조건을 다 넘긴 구에서만 켭니다</strong> — 오차 중앙값이 기준선 안이고,

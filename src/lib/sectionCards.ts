@@ -245,7 +245,7 @@ export const ENTRY_SECTION_PLAN = {
    * ⛔ 접힌 채로 시작한다(입구 카드 규칙). 요약 한 줄이 **언제부터 언제까지 몇 건인지**를
    *    말하므로, 접혀 있어도 "볼 것이 있나 없나"는 읽힌다.
    */
-  txFlow: { title: '동네 매매 단가 흐름 (실거래)', role: '투자자', defaultOpen: false, sources: ['tx'] },
+  txFlow: { title: '동네 매매 단가 흐름 (실거래 · 상가 거래 기준)', role: '투자자', defaultOpen: false, sources: ['tx'] },
 } as const satisfies Record<string, SectionPlan>;
 
 /** 첫 화면에 펼쳐지는 카드 수. 상한을 지키는지 세는 데 쓴다. */

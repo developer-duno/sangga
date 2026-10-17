@@ -21,8 +21,9 @@ import {
 import { niceCeil, pctOf, rangePct } from './viz';
 
 /**
- * 서버가 주는 status 다섯. 모르는 값이 오면 화면은 **그 층을 조용히 안 그린다**
+ * 서버가 주는 status 여덟. 모르는 값이 오면 화면은 **그 층을 조용히 안 그린다**
  * — 뜻을 지어내는 것보다 침묵이 낫다. 대신 콘솔에 남겨 다음 사람이 알아채게 한다.
+ * 결정 0040(2026-10-18a): `floor_resid`(주거 층) · `floor_officetel`(오피스텔 층) · `no_use`(대장에 그 층 용도 없음).
  */
 export const KNOWN_BAND_STATUS: ReadonlySet<string> = new Set([
   'ok',
@@ -30,7 +31,78 @@ export const KNOWN_BAND_STATUS: ReadonlySet<string> = new Set([
   'floor_1f',
   'no_evidence',
   'no_estimate',
+  'floor_resid',
+  'floor_officetel',
+  'no_use',
 ]);
+
+/**
+ * 서버 응답(`list_price_bands`) → 화면이 믿고 쓸 줄들(결정 0040 · 맹점 🟠6).
+ *
+ * · 모르는 status 줄은 **뺀다**(콘솔 경고 한 줄 — 예전 `FloorStack` 의 동작 그대로).
+ * · `use_group` 이 글자가 아니면(숫자·객체 등) **그 칸만 null** — 줄은 살린다(값·근거는 멀쩡하다).
+ *   옛 서버는 칸 자체를 안 주므로 그대로 둔다(undefined).
+ * ⛔ 숫자를 새로 계산하지 않는다(나누기·비율 0) — 모양만 거른다.
+ */
+export function normalizePriceBands(rows: unknown): PriceBand[] {
+  if (!Array.isArray(rows)) return [];
+  const out: PriceBand[] = [];
+  const unknown = new Set<string>();
+  for (const raw of rows as PriceBand[]) {
+    if (raw === null || typeof raw !== 'object') continue;
+    if (!KNOWN_BAND_STATUS.has(raw.status)) {
+      unknown.add(String(raw.status));
+      continue;
+    }
+    if ('use_group' in raw && raw.use_group !== null && typeof raw.use_group !== 'string') {
+      out.push({ ...raw, use_group: null });
+    } else {
+      out.push(raw);
+    }
+  }
+  // 서버가 status 를 늘리면 화면은 그 층을 조용히 안 그린다(뜻을 지어내지 않는다). 눈에 안 띄므로
+  // 콘솔에는 반드시 남긴다 — status 를 늘리는 날 화면도 같은 커밋에서 고쳐야 한다는 신호다(문구는 예전 그대로).
+  if (unknown.size > 0) console.warn('모르는 status 라 그 층은 그리지 않습니다', [...unknown]);
+  return out;
+}
+
+/** 서버가 묶음 칸을 한 줄이라도 줬나(결정 0040 이후 서버) — 카드의 「같은 종류끼리」 글을 낼지 정한다. 옛 서버면 false. */
+export function hasUseGroup(bands: readonly PriceBand[]): boolean {
+  return bands.some((b) => typeof b.use_group === 'string' && b.use_group !== '');
+}
+
+/**
+ * 값을 못 낸 이 층을 『층대별 거래 단가』(상가 거래 기준)로 안내해도 되나(결정 0040 ㉨ · 맹점 🟠7).
+ * 그 층의 묶음이 **상가**이거나 **묶음을 모를 때만** 참이다 — 업무·숙박·기타 층이나 주거·오피스텔 층을 상가 표로 보내지 않는다.
+ * · 값을 낸 줄(ok) → false(안내할 까닭이 없다)
+ * · floor_resid·floor_officetel → false(상가가 아닌 층이라고 서버가 말했다)
+ * · 그 밖(floor_1f·no_evidence·no_use·no_estimate) → 묶음이 shop 이거나 없거나 모르는 글자면 true
+ * ⓘ 옛 서버(묶음 칸 없음)에서는 예전처럼 값 못 낸 층마다 참이다.
+ */
+export function bandPointsToSigunguTable(b: PriceBand): boolean {
+  if (b.status === 'ok' || b.status === 'floor_resid' || b.status === 'floor_officetel') return false;
+  const g = b.use_group;
+  return g === undefined || g === null || g === 'shop' || bandGroupLabel(g) === null;
+}
+
+/**
+ * 용도 묶음 이름표(결정 0040 D7) — 근거 줄 「업무 거래 5건」의 앞말. 모르는 값·없음 → null(그때는 「거래 5건」).
+ * ⛔ 지어내지 않는다 — 넷 밖의 글자가 오면 묶음 이름을 안 붙인다.
+ */
+export function bandGroupLabel(group: string | null | undefined): string | null {
+  switch (group) {
+    case 'shop':
+      return '상가';
+    case 'office':
+      return '업무';
+    case 'lodging':
+      return '숙박';
+    case 'other':
+      return '기타';
+    default:
+      return null;
+  }
+}
 
 /**
  * ㎡당 단가 × 면적 = 총액(원). 둘 중 하나라도 없으면 null.
@@ -126,9 +198,12 @@ export type BandGroup = {
   label: string;
 };
 
-/** 값이 같아 한 줄로 묶어도 되는가를 정하는 열쇠. 하나라도 다르면 새 줄이 된다. */
+/**
+ * 값이 같아 한 줄로 묶어도 되는가를 정하는 열쇠. 하나라도 다르면 새 줄이 된다.
+ * `use_group` 도 넣는다(결정 0040 🟡19) — 값이 우연히 같은 상가 층·업무 층이 한 줄로 묶이면 종류 이름표가 하나만 남는다.
+ */
 function valueKey(b: PriceBand): string {
-  return [b.status, b.stage, b.n, b.p25, b.median, b.p75, b.median_area_m2].join('|');
+  return [b.status, b.stage, b.n, b.p25, b.median, b.p75, b.median_area_m2, b.use_group ?? ''].join('|');
 }
 
 /**
@@ -305,7 +380,9 @@ export function bandText(group: BandGroup): BandText {
   }
 
   const area = band.median_area_m2;
-  const count = `거래 ${band.n.toLocaleString('ko-KR')}건`;
+  // 줄마다 종류(결정 0040 D7) — 「업무 거래 5건」. 묶음을 모르면(옛 서버·모르는 값) 지금처럼 「거래 5건」.
+  const groupLabel = bandGroupLabel(band.use_group);
+  const count = `${groupLabel !== null ? `${groupLabel} ` : ''}거래 ${band.n.toLocaleString('ko-KR')}건`;
   // 층대 평균은 층별로 따로 잰 값이 아니다. 라벨만으로도 알 수 있게 했지만, 한 줄로 묶여
   // 여러 층을 덮을 때가 많아 한 번 더 못 박는다.
   const note = band.stage === 'L6' ? '층별로 따로 잰 값이 아닙니다' : null;
@@ -371,5 +448,9 @@ function missingLabel(status: string): string {
     //    docs/backtest/1층-유형축-검증.md). 숫자는 여기 적지 않고 첫 화면 성적표 카드로 보낸다.
     return '1층은 내지 않습니다 — 같은 1층이라도 큰길 코너인지 골목 안쪽인지에 따라 값이 크게 갈립니다. 길의 넓이와 상권 안팎까지 맞춰 다시 채점해 봤지만 오차가 기준선을 넘어, 믿고 쓸 값이 못 됩니다. 층마다 얼마나 맞는지는 건물을 고르기 전 첫 화면의 「참고 시세는 얼마나 맞나」 카드에서 볼 수 있습니다.';
   }
+  // 결정 0040 — 세 문구는 👤 결정 원문(D2·D9) · 메인 판단 ㉡ 그대로.
+  if (status === 'floor_resid') return '주거 층이라 상가 시세를 내지 않습니다.';
+  if (status === 'floor_officetel') return '오피스텔 층이라 상가 시세를 내지 않습니다.';
+  if (status === 'no_use') return '대장에 이 층의 용도가 없어 값을 내지 않습니다.';
   return '표본 부족 — 곁에서 참고할 만한 거래를 아직 찾지 못했습니다. 거래가 쌓이면 나올 수 있습니다.';
 }

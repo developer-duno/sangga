@@ -634,7 +634,7 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     // 층 스택의 그 층에도 건수 뱃지가 붙는다(픽스처의 층·거래 층이 모두 1층).
     await expect(stack.locator('.floor__tx')).toHaveText('거래 1건');
     // ② 구 단가 — 표본이 충분한 층대만 수치가 나오고, 모자란 층대는 그렇다고 말한다.
-    await expect(stack.getByText(/강남구 층대별 거래 단가/)).toBeVisible();
+    await expect(stack.getByText(/강남구 층대별 거래 단가 \(상가 거래 기준\)/)).toBeVisible();
     await expect(stack.getByText(/중앙값 ㎡당 2,250만/)).toBeVisible();
     await expect(stack.getByText('표본 부족').first()).toBeVisible();
     // 출처표시 의무 + 절대 규칙 3(근거 레벨·표본 수 병기).
@@ -713,7 +713,9 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
       band.getByText('비슷한 호실 한 칸 32.8㎡ (10평) 기준 2.4억~6.2억'),
     ).toBeVisible();
     await expect(band.getByText(/500m 안 같은 층/)).toBeVisible();
-    await expect(band.getByText(/거래 15건/)).toBeVisible();
+    // 줄마다 종류(결정 0040 D7) — 그 층의 대장 용도와 같은 종류 거래만 셌다는 뜻.
+    await expect(band.getByText(/500m 안 같은 층 · 상가 거래 15건/)).toBeVisible();
+    await expect(band.getByText(/층마다 그 층의 대장 용도와 같은 종류 거래끼리만 셉니다/)).toBeVisible();
     await expect(band.getByText(/먼 근거/).first()).toBeVisible();
     await expect(band.getByText(/C등급 · 파생 추정/)).toBeVisible();
     // 1층은 오차가 기준선 밖이라서, 지하는 검증한 적이 없어서 — 서로 다른 말로 적는다.
@@ -1666,6 +1668,8 @@ test.describe('입구 — 동네 매매 단가 흐름', () => {
     await expect(flow.locator('.card__body')).toBeHidden();
 
     await openCard(page, /동네 매매 단가 흐름/);
+    // 상가(근생·판매) 거래만 센 표다(결정 0040 D3) — 제목이 그 사실을 말한다.
+    await expect(flow.getByText('동네 매매 단가 흐름 (실거래 · 상가 거래 기준)')).toBeVisible();
 
     const rows = flow.locator('.flow__rows li');
     await expect(rows).toHaveCount(3);

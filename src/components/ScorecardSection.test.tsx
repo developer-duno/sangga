@@ -190,6 +190,21 @@ describe('ScorecardSection — 성적이 있을 때', () => {
     expect(container.querySelector('.score__how')?.textContent).toContain('2026년 8월 15일');
     expect(container.querySelectorAll('.score__how-list li')).toHaveLength(4);
   });
+
+  it('결정 0040 D10 — 대조군 글은 「같은 층대·같은 용도 묶음」이고 옛 글은 없다', async () => {
+    const { container } = render(<ScorecardSection sigungu="11680" />);
+    fireEvent.click(await screen.findByRole('button', { name: /참고 시세는 얼마나 맞나/ }));
+    const how = container.querySelector('.score__how')?.textContent ?? '';
+    expect(how).toContain('견줄 상대는 그 구에서 같은 층대·같은 용도 묶음 거래의 평균값입니다');
+    expect(how).toContain('(상가 거래에는 바로 위 『층대별 거래 단가』의 값)');
+    expect(how).not.toContain('이미 화면에 있는 값과 견줬습니다');
+    expect(how).not.toContain('그 구의 비슷한 층 평균값');
+    const text = container.textContent ?? '';
+    expect(text).toContain('같은 묶음 구 평균만 썼을 때 오차 중앙값');
+    expect(text).toContain('같은 묶음 구평균');
+    // 수치 리터럴은 늘지 않는다 — 숫자는 서버·json 에서만 온다(scorecard.test 의 가드와 같은 원칙).
+    expect(how).not.toMatch(/\d+(\.\d+)?%/);
+  });
 });
 
 describe('ScorecardSection — 층마다 얼마나 맞나', () => {

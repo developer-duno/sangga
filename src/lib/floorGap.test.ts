@@ -164,7 +164,7 @@ describe('floorGapHeads — 칸 머리(서버 값으로만)', () => {
   it('구 이름 · 창 시작 달 · 조사구역 · 종류 · 분기', () => {
     const h = floorGapHeads(TX, [rent()], false);
     expect(h.base).toBe('국세청 기준시가 · 원/㎡ · 이 건물');
-    expect(h.tx).toBe('구 실거래 단가 · 강남구 · 2024년 10월부터');
+    expect(h.tx).toBe('구 상가 실거래 단가 · 강남구 · 2024년 10월부터');
     expect(h.rent).toBe(
       '부동산원 임대료(월) · 천원/㎡ · 서울>강남>테헤란로 집합상가 평균 — 이 건물 값 아님 (2026년 2분기 조사)',
     );

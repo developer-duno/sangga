@@ -283,6 +283,7 @@ export type SigunguTxYearly = {
  *                    ⛔ "표본 부족"이라 적으면 "더 모으면 나오나?"라는 오해가 된다.
  *  · `no_estimate` — 곁 거래를 못 찾았다. 거래가 쌓이면 나올 수 있다.
  *  · `ok`          — 값이 있다. 근거 단계(`stage`)와 표본 수(`n`)를 **항상 함께** 적는다.
+ *  · (결정 0040) `no_use` · `floor_resid` · `floor_officetel` — 아래 `use_group` 설명 참조.
  *
  * `ok` 가 아니면 `stage`·`n`·사분위·`median_area_m2` 가 전부 null 이다.
  */
@@ -314,6 +315,15 @@ export type PriceBand = {
    * **오늘 기준 롤링 24개월**이라 두 블록의 기간이 다르다. 화면에 기간을 글자로 박지 않는다.
    */
   window_from: string | null;
+  /**
+   * 그 층의 대장 용도 묶음(결정 0040) — 'shop'(상가) · 'office'(업무) · 'lodging'(숙박) · 'other'(기타).
+   * `ok`·`no_estimate` 줄에만 오고 다른 줄은 null. 후보 거래가 **이 묶음과 같은 종류**만이었다는 뜻이다.
+   * ⚠️ 선택 칸이다 — 옛 서버(2026-10-18a 적용 전)는 이 칸을 안 준다. 글자가 아니면
+   *    `normalizePriceBands` 가 null 로 바꾼다(모르는 묶음 이름은 `bandGroupLabel` 이 null).
+   * 결정 0040 의 새 status 셋: `no_use`(대장에 그 층 용도 없음) · `floor_resid`(주거 층) ·
+   * `floor_officetel`(오피스텔 층) — 셋 다 값을 안 낸다.
+   */
+  use_group?: string | null;
 };
 
 /**
@@ -952,7 +962,7 @@ export type StoreHit = {
 //   · 어느 구가 켜지고 꺼졌나 → **서버 함수** `list_price_gate()` (결정 0013 §4: 통과 구
 //     목록의 정본은 서버 한 곳. 화면·문서에 목록을 복사하면 성적표를 다시 뽑는 날 그
 //     사본만 조용히 낡는다)
-//   · 방법과 단계 분포 → **정적 파일** `/scorecard-v2.json` (백테스트 산출물 CSV 를 구운
+//   · 방법과 단계 분포 → **정적 파일** `/scorecard-v3.json` (백테스트 산출물 CSV 를 구운
 //     것 — DB 에 다시 넣으면 같은 사실이 두 곳에 살게 된다)
 
 /** 함수 `list_price_gate()` 한 줄 = 열린 구 하나의 판정과 그 근거. */
@@ -1025,7 +1035,7 @@ export type ScorecardOpsMode = {
 };
 
 /**
- * 구워 둔 성적표 파일(`/scorecard-v2.json`) 전체.
+ * 구워 둔 성적표 파일(`/scorecard-v3.json`) 전체.
  *
  * ⛔ **`gate` 칸을 일부러 안 담는다.** 파일에는 들어 있지만(그 판이 어떤 게이트를 낳았나의
  *    기록), 화면이 읽을 수 있게 두면 언젠가 읽고 그때부터 사본이 정본(서버

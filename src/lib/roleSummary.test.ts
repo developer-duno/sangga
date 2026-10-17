@@ -261,6 +261,24 @@ describe('투자자 「얼마고 얼마 벌리나」', () => {
     expect(v.answer).toBe('2층 참고 시세는 비슷한 호실 한 칸 33㎡ (10평) 기준 1.0억~1.3억입니다. 이 땅 신고 거래는 4건입니다.');
   });
 
+  it('결정 0040 — 서버가 묶음을 주면 시세 타일 근거에도 「업무 거래 N건」이 흘러온다(카드와 같은 bandText · ㉦)', () => {
+    const v = view({ bands: [BANDS[0], band(2, { use_group: 'office' }), BANDS[2]] });
+    expect(tile(v, 'band')!.basis).toEqual([
+      '㎡당 300만~400만 · 가운데값 ㎡당 350만 · 근거: 500m 안 같은 층 · 업무 거래 7건 · 먼 근거',
+    ]);
+    // 주거 층(값 안 냄)은 시세 타일 대상이 아니다 — 다음 값 낸 층(3층)이 선다.
+    const noValue = { stage: null, n: null, p25: null, median: null, p75: null, median_area_m2: null };
+    const r = view({
+      bands: [
+        BANDS[0],
+        band(2, { status: 'floor_resid', ...noValue }),
+        band(3, { stage: 'L6', n: 12, p25: 2_000_000, median: 2_400_000, p75: 2_800_000, use_group: 'shop' }),
+      ],
+    });
+    expect(tile(r, 'band')!.label).toBe('참고 시세 (3층)');
+    expect(tile(r, 'band')!.basis[0]).toContain('상가 거래 12건');
+  });
+
   it('일부 실패(시세·임대·공시지가) = 그 칸 없음 — 「없음」이라 적지 않는다', () => {
     const v = view({ bandsFailed: true, rent: null, landPrice: null });
     expect(v.tiles.map((t) => t.key)).toEqual(['tx']);

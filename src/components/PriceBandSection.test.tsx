@@ -188,3 +188,91 @@ describe('PriceBandSection — 그림 띠 (결정 0038 A)', () => {
     expect(container.querySelector('.band__axis')!.textContent).not.toContain('%');
   });
 });
+
+describe('PriceBandSection — 같은 용도 묶음 글 (결정 0040)', () => {
+  const LEAD_ADD = '층마다 그 층의 대장 용도와 같은 종류 거래끼리만 셉니다.';
+  const SRC_ADD = '· 그 층 용도와 같은 종류(상가·업무·숙박·기타) 거래만';
+  const ALT = '값을 내지 않은 층도 『층대별 거래 단가』에서';
+
+  function renderWithTable(bands: PriceBand[], floorNos: number[]) {
+    return render(
+      <PriceBandSection
+        bands={bands}
+        basePrices={null}
+        failed={false}
+        floors={floorNos.map(floor)}
+        hasTxStats={true}
+        openFloor={null}
+        onPickFloor={() => {}}
+      />,
+    );
+  }
+  const textOf = (c: HTMLElement, sel: string) => c.querySelector(sel)?.textContent ?? '';
+
+  it('★ 서버가 묶음을 주면 리드·출처에 「같은 종류끼리」 글 · 근거 줄에 「업무 거래 N건」', () => {
+    const { container } = renderWithTable([band({ floor_no: 3, use_group: 'office' })], [3]);
+    expect(textOf(container, '.band__lead')).toContain(LEAD_ADD);
+    expect(textOf(container, '.band__src')).toContain(SRC_ADD);
+    expect(textOf(container, '.band__src')).toMatch(/지분 거래 제외 · 그 층 용도와 같은 종류\(상가·업무·숙박·기타\) 거래만\.$/);
+    expect(textOf(container, '.band__sub')).toContain('업무 거래 15건');
+  });
+
+  it('★ 옛 서버(묶음 칸 없음)면 옛 글 그대로', () => {
+    const { container } = renderWithTable([band({ floor_no: 3 })], [3]);
+    expect(textOf(container, '.band__lead')).not.toContain(LEAD_ADD);
+    expect(textOf(container, '.band__src')).not.toContain(SRC_ADD);
+    expect(textOf(container, '.band__src')).toMatch(/지분 거래 제외\.$/);
+    expect(textOf(container, '.band__sub')).toContain('· 거래 15건');
+  });
+
+  it('주거·오피스텔·용도 없음 층은 결정 원문 사유 글', () => {
+    const { container } = renderWithTable(
+      [
+        band({ floor_no: 2, use_group: 'shop' }),
+        band({ floor_no: 3, status: 'floor_resid', ...NO_VALUE, use_group: null }),
+        band({ floor_no: 4, status: 'floor_officetel', ...NO_VALUE, use_group: null }),
+        band({ floor_no: 5, status: 'no_use', ...NO_VALUE, use_group: null }),
+      ],
+      [5, 4, 3, 2],
+    );
+    const text = textOf(container, '.band__rows');
+    expect(text).toContain('주거 층이라 상가 시세를 내지 않습니다.');
+    expect(text).toContain('오피스텔 층이라 상가 시세를 내지 않습니다.');
+    expect(text).toContain('대장에 이 층의 용도가 없어 값을 내지 않습니다.');
+  });
+
+  it('★ 상가 표 안내 줄(㉨) — 업무·주거·오피스텔 층만 값이 없으면 안 낸다', () => {
+    const { container } = renderWithTable(
+      [
+        band({ floor_no: 2, use_group: 'shop' }),
+        band({ floor_no: 3, status: 'no_estimate', ...NO_VALUE, use_group: 'office' }),
+        band({ floor_no: 4, status: 'floor_resid', ...NO_VALUE, use_group: null }),
+        band({ floor_no: 5, status: 'floor_officetel', ...NO_VALUE, use_group: null }),
+      ],
+      [5, 4, 3, 2],
+    );
+    expect(container.textContent).not.toContain(ALT);
+  });
+
+  it('★ 상가 층 표본 부족 · 대장 용도 없음 층이 있으면 안내 줄을 낸다', () => {
+    const shop = renderWithTable(
+      [band({ floor_no: 2, use_group: 'shop' }), band({ floor_no: 3, status: 'no_estimate', ...NO_VALUE, use_group: 'shop' })],
+      [3, 2],
+    );
+    expect(shop.container.textContent).toContain(ALT);
+    cleanup();
+    const noUse = renderWithTable(
+      [band({ floor_no: 2, use_group: 'office' }), band({ floor_no: 3, status: 'no_use', ...NO_VALUE, use_group: null })],
+      [3, 2],
+    );
+    expect(noUse.container.textContent).toContain(ALT);
+  });
+
+  it('옛 서버의 표본 부족 층은 예전처럼 안내 줄을 낸다', () => {
+    const { container } = renderWithTable(
+      [band({ floor_no: 2 }), band({ floor_no: 3, status: 'no_estimate', ...NO_VALUE })],
+      [3, 2],
+    );
+    expect(container.textContent).toContain(ALT);
+  });
+});

@@ -12,7 +12,7 @@
 - **DB 스키마** — `supabase/schema.sql`
 - **부동산 데이터 처리 규격** — 이 문서의 절대 규칙·확정 설계 + 층 정규화 정본 `scripts/normalize_floor.py`(재구현 금지) + 자료 출처 `docs/데이터백서.md`. ⛔ 옛 `budongsan-data` 스킬(2026-08-06판 · `docs/archive/`)은 **쓰지 않는다** — 임대료 역산식·층별효용비율 보정이 들어 있어 절대 규칙 5·결정 0031 과 어긋난다(레포·전역 어디에도 설치돼 있지 않다 · 2026-10-09 👤)
 - **현재 Phase** — **Phase 1 통과**(2026-08-09, 조인률 95.92%/96.86%) → 1단계 서비스범위(서울+대전) 확장 완료(결정 0006) → **Phase 2 통과**(2026-10-07 — 층별 스택 화면, 건물 10/10 원장 대조 일치 · `docs/PROGRESS.md` 「2026-10-07 (6)」). **라이브 https://sangga-one.vercel.app** (Vercel 프로젝트 `sangga`, GitHub 연결이라 **main push 가 곧 배포**. ⛔ **새 배포 주소가 생기면 카카오 콘솔에 그 주소를 등록해야 지도가 뜬다**(미분양아파트 앱 1398824 의 "플랫폼 키 > JS 키 수정 > JavaScript SDK 도메인")). 진행 기록 정본 = `docs/PROGRESS.md` · 결정 = `docs/decisions/`
-- **기능별 경위·⛔ 주의사항** = **`.claude/rules/feature-notes.md`** — 화면 코드(`src/`)·DB 정본(`supabase/`)·`e2e/`·마이그레이션 시험을 열면 자동으로 읽힌다. ⚠️ **파일을 안 열고 기능을 바꾸거나 설명하거나 DB 함수·마이그레이션을 다룰 때는 그 파일을 먼저 직접 연다** — 그 안의 ⛔ 는 어기면 에러 없이 조용히 틀리는 것들이다. 담긴 것(날짜순): 상권 경계·실거래·Stage B(0008·0011~0013) · 둘레의 업종 분포(0014) · 접히는 카드 `SECTION_PLAN` · 첫 배포 · 기본기 3종·의견함(0016·0017) · 주소로 들고 다니기(0019) · 종이로 뽑기(0020) · 국세청 기준시가(0021) · LH 상가 공고(0022) · 곧 올라오는 상가 건물(0023) · 임대 사실 카드·층별 임대료(0024·0031) · 상권→건물 다리(0025) · 성적표 공개 · 자료 신선도(0030) · 넘기기 링크 · 동네 매매 단가 흐름(0027) · 상호명 검색(0028) · 호실 구성표(0032) · 첫 방문 속도(09-27) · 서울 개업·폐업 자료·DB(0033 R1) · 분기 표지 '다 넣은 뒤 한 번에'(0035) · 개별공시지가 한 줄 · 인쇄 한 장 보강·층 차이 세 잣대(0036 1-C)
+- **기능별 경위·⛔ 주의사항** = **`.claude/rules/feature-notes.md`** — 화면 코드(`src/`)·DB 정본(`supabase/`)·`e2e/`·마이그레이션 시험을 열면 자동으로 읽힌다. ⚠️ **파일을 안 열고 기능을 바꾸거나 설명하거나 DB 함수·마이그레이션을 다룰 때는 그 파일을 먼저 직접 연다** — 그 안의 ⛔ 는 어기면 에러 없이 조용히 틀리는 것들이다. 담긴 것(날짜순): 상권 경계·실거래·Stage B(0008·0011~0013) · 둘레의 업종 분포(0014) · 접히는 카드 `SECTION_PLAN` · 첫 배포 · 기본기 3종·의견함(0016·0017) · 주소로 들고 다니기(0019) · 종이로 뽑기(0020) · 국세청 기준시가(0021) · LH 상가 공고(0022) · 곧 올라오는 상가 건물(0023) · 임대 사실 카드·층별 임대료(0024·0031) · 상권→건물 다리(0025) · 성적표 공개 · 자료 신선도(0030) · 넘기기 링크 · 동네 매매 단가 흐름(0027) · 상호명 검색(0028) · 호실 구성표(0032) · 첫 방문 속도(09-27) · 서울 개업·폐업 자료·DB(0033 R1) · 분기 표지 '다 넣은 뒤 한 번에'(0035) · 개별공시지가 한 줄 · 인쇄 한 장 보강·층 차이 세 잣대(0036 1-C) · 참고 시세 같은 용도 묶음·성적표 v3(0040)
 
 ### 🔴 운영 7계명 (매 세션 확인 — 어기면 복구 불가하거나 조용히 깨진다)
 
@@ -158,7 +158,7 @@ python scripts/collectors/collect_transactions.py --sigungu-code <구> --months 
 # ⚠️ 최근 달은 신고(30일)가 덜 끝난 채 'done' 으로 굳는다 → 아래 `--recollect-months` 로 매달 다시 받는다(2026-10-14 손으로 6개월 재수집 5,323건 → 2026-10-15 F5 옵션) · 적재기 load_transactions.py 는 `--sigungu-code` 가 없으면 **강남만** 적재한다(구마다 돌릴 것)
 python scripts/collectors/collect_transactions.py --sigungu-code <구> --recollect-months 6 --end-ym <이번 달>   # ★ 매달 — 최근 6개월 중 done 칸만 pending 으로 되돌려 다시 받는다(failed 는 --retry-failed 몫 · attempts 그대로 · N 1~24 · --dry-run 은 되돌리지 않고 '다시 받을 달 N개(그중 done M개)'만 · F5 2026-10-15)
 # ⚠️ `--dry-run` 도 `collect_progress` 에 pending 시드를 **쓴다**(형제 수집기의 "DB 쓰기 0" 미리보기와 다르다 — `seed_progress` 가 dry_run 분기 **앞**에 있다, collect_transactions.py:735-746). 시드는 멱등(있는 행 보존)이라 무해하지만 미리보기에도 DB 열쇠가 필요하다.
-python scripts/backtest_price.py                # Stage B 백테스트 성적표 재생성 (DB 읽기 전용 → docs/backtest/, 통과구.csv 포함)
+python scripts/backtest_price.py                # Stage B 백테스트 성적표 재생성 (DB 읽기 전용 → docs/backtest/, 통과구.csv·묶음별지표.csv 포함 · v3 부터 psql 도 쓴다 — 검증 거래 층 묶음을 한 세션 pg_temp 에 정본 함수로 만들어 읽는다 · 쓰기 0)
 python scripts/backtest_price.py --place-axis   # 1층 유형축(L7=도로등급×상권등급) 검증 — 새 파일 2개만 쓴다(기존 성적표·통과구.csv 안 건드림). psql 필요
 python scripts/backtest_openclose.py            # 결정 0033 R3 개업·폐업 정답지(소진공 202603→202606 vs 서울시 20262) — DB·외부 호출 0 · shapely 필요(`python -m pip install shapely`) → docs/backtest/개업폐업-정답지-v1.md·-상권별.csv 를 덮어쓴다(재실행하면 md 3번째 줄 생성 시각만 바뀐다)
 python scripts/load_price_gate.py --dry-run     # 통과구.csv → price_gate_sigungu 미리보기(DB 쓰기 0)
@@ -223,9 +223,9 @@ python scripts/load_rone_map.py                                    # 매핑 적�
 python scripts/build_district_geojson.py --dry-run                  # 지도용 상권 파일 미리보기(행수·크기만, 파일 안 씀)
 python scripts/build_district_geojson.py                           # ★ district 를 적재했으면 → public/districts.geojson 굽고 **커밋**
 python scripts/build_scorecard_json.py --dry-run                    # 성적표 파일 미리보기(줄 수·크기·원본 해시만, 파일 안 씀)
-python scripts/build_scorecard_json.py                              # ★ 성적표 CSV 가 바뀌었으면 → public/scorecard-v2.json 다시 굽고 **커밋**
-# ↑ 입력 = docs/backtest/{단계별지표,운영모드지표,통과구}.csv + 성적표-v2.md 의 생성 시각 한 줄.
-#   ⛔ 검증거래별원자료.csv(개별 실거래)는 **안 읽는다**. 판(v3)을 올리는 것은 별건 결재라
+python scripts/build_scorecard_json.py                              # ★ 성적표 CSV 가 바뀌었으면 → public/scorecard-v3.json 다시 굽고 **커밋**
+# ↑ 입력 = docs/backtest/{단계별지표,운영모드지표,통과구}.csv + 성적표-v3.md 의 생성 시각 한 줄(v3 = 결정 0040 같은 용도 묶음 · 묶음별지표.csv 는 안 싣는다).
+#   ⛔ 검증거래별원자료.csv(개별 실거래)는 **안 읽는다**. 판(v4)을 올리는 것은 별건 결재라
 #      그때 스크립트의 VERSION·backtest_price.py 의 SCORECARD_VERSION·출력 파일명·src/lib/appConstants.ts 의 SCORECARD_URL 을 함께 올린다(옛 json 은 git rm · 셋이 어긋나면 TestVersionPins 가 빨강).
 python scripts/build_sitemap.py --dry-run       # 사이트맵 미리보기 — 대상 건물(이름 + 비주거 층 · 스크립트 맨 위 TARGET_WHERE) 수·파일 수만 (DB 읽기만 · 쓰기 0 · 결정 0037)
 python scripts/build_sitemap.py                 # ★ 건축물대장·호실을 다시 적재했으면(post_load 뒤) → public/sitemap*.xml 다시 굽고 **커밋** → 배포 뒤 indexnow_ping.py --from-sitemap … (⚠️ 대상 고르기에 찬 캐시 약 10분 — 2026-10-10 실측 · 스크립트가 그 접속만 제한을 15분으로 늘린다)

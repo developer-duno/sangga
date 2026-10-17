@@ -141,7 +141,8 @@ export function floorGapHeads(
   const guName = txStats?.find((s) => s.sigungu_nm)?.sigungu_nm ?? null;
   const from = txStats?.find((s) => s.window_from)?.window_from ?? null;
   // 날짜 말투는 카드 머리 날짜 줄과 같은 '2024년 10월'(F2 · 👤 2026-10-16 ④) — 못 읽으면 원본 그대로.
-  const tx = ['구 실거래 단가', guName, from ? `${formatMonthKo(from) ?? from}부터` : null]
+  // 구 층대 단가는 상가(근생·판매) 거래만 센 값이다(결정 0040 D3) — 칸 머리도 그렇게 말한다.
+  const tx = ['구 상가 실거래 단가', guName, from ? `${formatMonthKo(from) ?? from}부터` : null]
     .filter((x): x is string => x !== null)
     .join(' · ');
 

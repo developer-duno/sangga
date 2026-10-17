@@ -75,7 +75,7 @@ import {
   unitPrintPlan,
   type UnitPrintMode,
 } from '../lib/unitPrint';
-import { KNOWN_BAND_STATUS } from '../lib/priceBand';
+import { normalizePriceBands } from '../lib/priceBand';
 import { lacksCoord } from '../lib/rentStats';
 import { buildingFromFloorRows } from '../lib/restoreBuilding';
 import {
@@ -673,15 +673,9 @@ export function FloorStack({
         setBandsFailed(true);
         return;
       }
-      const rows = data as PriceBand[];
-      // 서버가 여섯 번째 status 를 늘리면 화면은 그 층을 조용히 안 그린다(뜻을 지어내지
-      // 않는다). 눈에 안 띄므로 콘솔에는 반드시 남긴다 — status 를 늘리는 날 화면도 같은
-      // 커밋에서 고쳐야 한다는 신호다.
-      const unknown = [...new Set(rows.map((b) => b.status))].filter(
-        (s) => !KNOWN_BAND_STATUS.has(s),
-      );
-      if (unknown.length > 0) console.warn('모르는 status 라 그 층은 그리지 않습니다', unknown);
-      setBands(rows);
+      // 모양을 거른다(결정 0040 · 맹점 🟠6) — 모르는 status 줄은 빼고 콘솔에 남기며, use_group 이
+      // 글자가 아니면 그 칸만 null. 예전엔 `data as PriceBand[]` 로 받기만 했다.
+      setBands(normalizePriceBands(data));
     });
 
     // ── 국세청 기준시가 ────────────────────────────────────────────────────
@@ -1355,7 +1349,7 @@ function TransactionSection({
   const guName = stats?.find((s) => s.sigungu_nm)?.sigungu_nm ?? null;
   const summary = [
     hasHistory ? `이 땅 거래 ${txs!.length.toLocaleString('ko-KR')}건` : null,
-    hasStats ? `${guName ? `${guName} ` : ''}층대별 단가` : null,
+    hasStats ? `${guName ? `${guName} ` : ''}층대별 단가 (상가 거래 기준)` : null,
   ]
     .filter((s): s is string => s !== null)
     .join(' · ');
@@ -1446,7 +1440,10 @@ function SigunguTxBands({ stats }: { stats: SigunguTxStat[] }) {
 
   return (
     <div className="tx__block">
-      <h4 className="tx__sub">{guName ? `${guName} 층대별 거래 단가` : '층대별 거래 단가'}</h4>
+      {/* 상가(근생·판매) 거래만 센 표다(결정 0040 D3 · 서버 mv_sigungu_tx_stats 의 where) — 제목이 그 사실을 말한다. */}
+      <h4 className="tx__sub">
+        {guName ? `${guName} 층대별 거래 단가 (상가 거래 기준)` : '층대별 거래 단가 (상가 거래 기준)'}
+      </h4>
       <ul className="tx__bands">
         {stats.map((s) => {
           const enough = s.n >= MIN_SAMPLE;
@@ -1480,7 +1477,7 @@ function SigunguTxBands({ stats }: { stats: SigunguTxStat[] }) {
       </p>
       <p className="tx__src">
         출처: 국토교통부 상업업무용 부동산 매매 실거래가 ·{' '}
-        {guName ? `${guName} ` : ''}집합(구분소유) 거래
+        {guName ? `${guName} ` : ''}상가(근린생활·판매) 집합(구분소유) 거래
         {/* 날짜 말투는 카드 머리 날짜 줄과 같은 '2024년 10월'(F1 · 👤 2026-10-16 ④) — 못 읽으면 원본 그대로. */}
         {from ? ` ${formatMonthKo(from) ?? from} 이후 계약분` : ''} 집계 · 지분 거래 제외 · 전체 표본{' '}
         {total.toLocaleString('ko-KR')}건.

@@ -1,16 +1,21 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type { FloorRow, PriceBand } from '../types';
 import {
   KNOWN_BAND_STATUS,
   bandAxisMaxWon,
   bandMark,
+  bandPointsToSigunguTable,
   bandShowsValue,
+  bandText,
   describeStage,
   floorBandName,
   groupBands,
+  hasUseGroup,
   isFarStage,
   isSinglePoint,
+  normalizePriceBands,
   toTotalWon,
+  bandGroupLabel,
 } from './priceBand';
 
 /**
@@ -65,11 +70,21 @@ function floor(floorNo: number, over: Partial<FloorRow> = {}): FloorRow {
   };
 }
 
-describe('KNOWN_BAND_STATUS — 서버가 주는 status 다섯', () => {
-  it('다섯을 알고, 모르는 값은 모른다고 한다', () => {
-    for (const s of ['ok', 'gate_fail', 'floor_1f', 'no_evidence', 'no_estimate']) {
+describe('KNOWN_BAND_STATUS — 서버가 주는 status 여덟', () => {
+  it('여덟을 알고(결정 0040 의 셋 포함), 모르는 값은 모른다고 한다', () => {
+    for (const s of [
+      'ok',
+      'gate_fail',
+      'floor_1f',
+      'no_evidence',
+      'no_estimate',
+      'floor_resid',
+      'floor_officetel',
+      'no_use',
+    ]) {
       expect(KNOWN_BAND_STATUS.has(s)).toBe(true);
     }
+    expect(KNOWN_BAND_STATUS.size).toBe(8);
     expect(KNOWN_BAND_STATUS.has('somethig_new')).toBe(false);
   });
 });
@@ -295,5 +310,121 @@ describe('그림 — 참고 시세 띠', () => {
     expect(bandMark(group(band({ status: 'floor_1f' }), 1), 20_000_000)).toEqual({ kind: 'none' });
     expect(bandMark(group(band({ stage: null })), 20_000_000)).toEqual({ kind: 'none' });
     expect(bandMark(group(band()), null)).toEqual({ kind: 'none' });
+  });
+});
+
+// ── 같은 용도 묶음 (결정 0040) ─────────────────────────────────────────────────
+
+describe('결정 0040 — 용도 묶음 이름표·새 status·응답 모양 거르기', () => {
+  const one = (b: PriceBand, floorNo = b.floor_no ?? 2) =>
+    groupBands([{ ...b, floor_no: floorNo }], [floor(floorNo)]).listed[0];
+
+  it('bandGroupLabel — 넷만 이름이 있고 모르는 값·없음은 null(지어내지 않는다)', () => {
+    expect(bandGroupLabel('shop')).toBe('상가');
+    expect(bandGroupLabel('office')).toBe('업무');
+    expect(bandGroupLabel('lodging')).toBe('숙박');
+    expect(bandGroupLabel('other')).toBe('기타');
+    expect(bandGroupLabel('resid')).toBeNull();
+    expect(bandGroupLabel('officetel')).toBeNull();
+    expect(bandGroupLabel('mall')).toBeNull();
+    expect(bandGroupLabel(null)).toBeNull();
+    expect(bandGroupLabel(undefined)).toBeNull();
+  });
+
+  it('근거 줄 — 묶음이 오면 「업무 거래 5건」, 없으면(옛 서버) 지금처럼 「거래 5건」', () => {
+    const office = bandText(one(band({ stage: 'L5', n: 5, use_group: 'office' })));
+    expect(office.kind).toBe('value');
+    if (office.kind === 'value') expect(office.sub).toContain('근거: 500m 안 같은 층 · 업무 거래 5건');
+    const old = bandText(one(band({ stage: 'L5', n: 5 })));
+    if (old.kind === 'value') {
+      expect(old.sub).toContain('근거: 500m 안 같은 층 · 거래 5건');
+      expect(old.sub).not.toMatch(/(상가|업무|숙박|기타) 거래/);
+    }
+    // 폭 0 줄(1건뿐)도 같은 근거 글을 쓴다
+    const single = bandText(one(band({ stage: 'L2', n: 1, p25: 100, median: 100, p75: 100, use_group: 'shop' })));
+    if (single.kind === 'value') expect(single.sub).toContain('상가 거래 1건');
+  });
+
+  it('모르는 묶음 글자는 이름 없이 「거래 N건」', () => {
+    const t = bandText(one(band({ n: 7, use_group: 'mall' })));
+    if (t.kind === 'value') {
+      expect(t.sub).toContain('· 거래 7건');
+      expect(t.sub).not.toContain('mall');
+    }
+  });
+
+  it('새 status 셋의 사유 글 — 👤 결정 원문 그대로', () => {
+    expect(bandText(one(band({ status: 'floor_resid', stage: null, n: null })))).toEqual({
+      kind: 'none',
+      text: '주거 층이라 상가 시세를 내지 않습니다.',
+    });
+    expect(bandText(one(band({ status: 'floor_officetel', stage: null, n: null })))).toEqual({
+      kind: 'none',
+      text: '오피스텔 층이라 상가 시세를 내지 않습니다.',
+    });
+    expect(bandText(one(band({ status: 'no_use', stage: null, n: null })))).toEqual({
+      kind: 'none',
+      text: '대장에 이 층의 용도가 없어 값을 내지 않습니다.',
+    });
+  });
+
+  it('새 status 줄은 값도 띠도 없다', () => {
+    for (const s of ['floor_resid', 'floor_officetel', 'no_use']) {
+      expect(bandShowsValue(one(band({ status: s })))).toBe(false);
+    }
+  });
+
+  it('값이 같아도 묶음이 다르면 한 줄로 묶지 않는다(이름표가 하나만 남지 않게 · 🟡19)', () => {
+    const fl = [floor(4), floor(3)];
+    const same = groupBands([band({ floor_no: 3, use_group: 'shop' }), band({ floor_no: 4, use_group: 'shop' })], fl);
+    expect(same.listed).toHaveLength(1);
+    const diff = groupBands([band({ floor_no: 3, use_group: 'shop' }), band({ floor_no: 4, use_group: 'office' })], fl);
+    expect(diff.listed).toHaveLength(2);
+  });
+
+  it('normalizePriceBands — 모르는 status 는 빼고 경고 한 번 · use_group 이 글자가 아니면 그 칸만 null', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const rows = normalizePriceBands([
+        band({ floor_no: 2, use_group: 'office' }),
+        { ...band({ floor_no: 3 }), use_group: 7 as unknown as string },
+        band({ floor_no: 4, status: 'somethig_new' }),
+        band({ floor_no: 5 }),
+      ]);
+      expect(rows.map((r) => r.floor_no)).toEqual([2, 3, 5]);
+      expect(rows[0].use_group).toBe('office');
+      expect(rows[1].use_group).toBeNull();
+      expect(rows[1].median).toBe(16_265_452.18);          // 줄은 살린다
+      expect('use_group' in rows[2]).toBe(false);          // 옛 서버 꼴은 그대로
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toBe('모르는 status 라 그 층은 그리지 않습니다');
+      // 7 → null → 이름 없는 「거래 N건」
+      const t = bandText(one(rows[1]));
+      if (t.kind === 'value') expect(t.sub).toContain('· 거래 15건');
+      expect(normalizePriceBands(null)).toEqual([]);
+      expect(normalizePriceBands({})).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('hasUseGroup — 묶음 글자가 한 줄이라도 오면 참(옛 서버·null 만이면 거짓)', () => {
+    expect(hasUseGroup([band({ use_group: 'shop' }), band()])).toBe(true);
+    expect(hasUseGroup([band(), band({ use_group: null })])).toBe(false);
+    expect(hasUseGroup([])).toBe(false);
+  });
+
+  it('bandPointsToSigunguTable — 상가이거나 묶음을 모르는 값 못 낸 층만 상가 표로 보낸다(㉨)', () => {
+    expect(bandPointsToSigunguTable(band({ status: 'no_estimate', use_group: 'shop' }))).toBe(true);
+    expect(bandPointsToSigunguTable(band({ status: 'no_estimate', use_group: 'office' }))).toBe(false);
+    expect(bandPointsToSigunguTable(band({ status: 'no_estimate', use_group: 'lodging' }))).toBe(false);
+    expect(bandPointsToSigunguTable(band({ status: 'no_estimate', use_group: 'other' }))).toBe(false);
+    expect(bandPointsToSigunguTable(band({ status: 'no_estimate' }))).toBe(true); // 옛 서버
+    expect(bandPointsToSigunguTable(band({ status: 'no_estimate', use_group: 'mall' }))).toBe(true);
+    expect(bandPointsToSigunguTable(band({ status: 'floor_1f', use_group: null }))).toBe(true);
+    expect(bandPointsToSigunguTable(band({ status: 'no_use', use_group: null }))).toBe(true);
+    expect(bandPointsToSigunguTable(band({ status: 'floor_resid', use_group: null }))).toBe(false);
+    expect(bandPointsToSigunguTable(band({ status: 'floor_officetel', use_group: null }))).toBe(false);
+    expect(bandPointsToSigunguTable(band({ status: 'ok', use_group: 'shop' }))).toBe(false);
   });
 });
