@@ -52,6 +52,8 @@
     남는 필지가 있으면 [낡음](종료 코드 1 · 2026-10-03 부터 행수가 아니라 양쪽 차집합으로 잰다).
   · 별관 쫓겨남 — 별관(TOAST)을 쓰는 public·api 표에서 256바이트 미만 값이 별관에 있으면(큰 옆 칸
     탓에 쫓겨난 작은 값 — 그 칸을 훑는 쿼리가 느려진다) [주의](종료 코드 1 아님 · 2026-10-05 보탬).
+  · 실거래 용도 이름 — transaction.main_use 가 알려진 7종 밖(빈 값 포함)인 행이 있으면 [주의](종료 코드
+    1 아님 · 결정 0040 · 2026-10-18 보탬). 참고 시세 묶음표가 모르는 글자는 조용히 기타로 간다.
   · 분기 표지(snapshot_release · 결정 0035 · 2026-10-07 보탬) — 표가 비었거나 보여 주는 분기가
     점포 표에 0행이면 [사고], 다 들어온 분기 ≠ 보여 주는 분기면 [낡음](둘 다 종료 코드 1) ·
     점포 표에 표지보다 새 분기가 있거나(적재 중 · 적재기 exit 1) 행 수가 표지 기록과 다르면 [주의](종료 코드 무관).
@@ -2246,6 +2248,46 @@ def report_toast_evictions():
     return found
 
 
+# ── 실거래 용도 이름 — 묶음표가 모르는 글자 (2026-10-18a · 결정 0040) ─────────
+# 참고 시세·구 단가·동네 흐름은 `price_use_group_nm(transaction.main_use)` 로 묶음을 정한다. 모르는 글자는
+# **조용히 other(기타)** 가 되고(빈 글자는 어느 묶음에도 안 든다) 에러가 안 난다 — 국토부가 이름을 바꾸거나
+# 새 용도를 보내면 그 거래가 소리 없이 다른 묶음으로 샌다. 그래서 7종 밖인 행 수를 센다(0 이 기대).
+# ⓘ [주의]까지만 — 종료 코드에 안 넣는다(고장이 아니라 묶음표를 손볼 신호다).
+# ⚠️ 한글 글자를 SQL 에 그대로 넣지 않는다 — query_one 은 `psql -c` 라 Windows 콘솔 코드페이지로
+#    인코딩돼 깨진다(2026-08-11 실측). UTF-8 바이트를 16진수로 넣어 SQL 을 ASCII 로만 만든다.
+TX_MAIN_USE_KNOWN = ("제1종근린생활", "제2종근린생활", "판매", "업무", "숙박", "교육연구", "기타")
+
+
+def build_tx_main_use_unknown_sql(known=TX_MAIN_USE_KNOWN):
+    """7종 밖(빈 값 포함) 실거래 행 수 하나를 돌려주는 SQL(ASCII 만)."""
+    names = ", ".join("convert_from(decode('{}', 'hex'), 'UTF8')".format(k.encode("utf-8").hex())
+                      for k in known)
+    return ("select count(*) from transaction "
+            "where nullif(main_use, '') is null or main_use not in ({});".format(names))
+
+
+def judge_tx_main_use_unknown(raw):
+    """psql 답(숫자 한 줄) → 행 수. 숫자가 아니면 예외(조용히 0 으로 읽지 않는다)."""
+    return int(str(raw).strip())
+
+
+def report_tx_main_use_unknown():
+    """[주의]/[정상] 한 줄을 찍고 행 수를 돌려준다. 조회가 실패해도 --check 를 죽이지 않는다."""
+    try:
+        n = judge_tx_main_use_unknown(query_one(build_tx_main_use_unknown_sql()))
+    except Exception as exc:
+        print("[주의] 실거래 용도 이름 점검을 하지 못했습니다: {}".format(_psql_failure_reason(exc)))
+        return None
+    if n:
+        print("[주의] 실거래 용도 이름이 알려진 7종({}) 밖인 행 {:,}개 — 참고 시세 묶음에서 기타로 가거나"
+              " 빠집니다.".format("·".join(TX_MAIN_USE_KNOWN), n))
+        print("       고치는 법: 새 이름을 확인하고 price_use_group_nm(schema.sql)과 백테스트 USE_GROUP_NM 을"
+              " 같이 고친다(결정 0040 · 새 마이그레이션).")
+    else:
+        print("[정상] 실거래 용도 이름: 전부 알려진 7종 안 — 묶음표가 모르는 글자 0.")
+    return n
+
+
 def parse_args(argv):
     opts = {"check": False}
     for a in argv:
@@ -2298,6 +2340,8 @@ def main(argv=None):
         report_slow_functions()
         # 별관 쫓겨남(2026-10-05)도 [주의]까지만 — 종료 코드에 안 넣는다.
         report_toast_evictions()
+        # 실거래 용도 이름 7종 밖(2026-10-18a · 결정 0040)도 [주의]까지만 — 종료 코드에 안 넣는다.
+        report_tx_main_use_unknown()
         bad_index = report_canonical_indexes()
         drifted = report_function_drift()
         # 분기 표지(2026-10-07a · 결정 0035) — 비었거나 보여 주는 분기가 0행이면 [사고],

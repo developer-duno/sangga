@@ -130,3 +130,53 @@ def test_가드가_헛돌지_않는다():
 def test_모든_사다리_단계가_MIN_SAMPLES에_적혀_있다(lvl):
     """SQL 에만 있고 파이썬에는 없는 단계가 생기면, 대조 자체가 조용히 건너뛰어진다."""
     assert lvl in bt.MIN_SAMPLES, "MIN_SAMPLES 에 {} 가 없습니다".format(lvl)
+
+
+# ── 오피스텔 낱말 — 참고 시세 층 묶음 ↔ 호실 구성표 (결정 0040 D9) ─────────────
+# 오피스텔 층을 가르는 낱말은 호실 구성표(list_unit_floor_summary)의 officetel_re 와 **글자 같아야** 한다.
+# 갈라지면 같은 층이 구성표에서는 오피스텔인데 참고 시세는 업무 값을 내는(또는 거꾸로) 일이 조용히 생긴다.
+
+RE_OFFICETEL = re.compile(r"('[^']*'::text)\s+as\s+officetel_re")
+
+
+def _schema():
+    with open(SCHEMA, encoding="utf-8") as f:
+        return f.read().replace("\r\n", "\n")
+
+
+def _fn(name, sql):
+    m = re.search(r"(?im)^create\s+or\s+replace\s+function\s+{}\s*\(".format(re.escape(name)), sql)
+    assert m, name
+    end = sql.index("$$;", sql.index("$$", m.end()) + 2)
+    return sql[m.start():end + 3]
+
+
+def officetel_literals(sql):
+    """함수마다 officetel_re 낱말 → {함수: [글자…]} (못 찾으면 빈 목록 — 아래 대조가 빨강)."""
+    return {name: RE_OFFICETEL.findall(_fn(name, sql))
+            for name in ("price_floor_use_group", "list_unit_floor_summary")}
+
+
+def officetel_problems(sql):
+    lits = officetel_literals(sql)
+    probs = []
+    if len(lits["price_floor_use_group"]) != 1:
+        probs.append("층 묶음 함수의 officetel_re 가 정확히 하나가 아니다: {}".format(lits["price_floor_use_group"]))
+    if not lits["list_unit_floor_summary"]:
+        probs.append("호실 구성표의 officetel_re 를 못 찾았다")
+    if set(lits["price_floor_use_group"]) != set(lits["list_unit_floor_summary"]):
+        probs.append("오피스텔 낱말이 갈라졌다: {}".format(lits))
+    return probs
+
+
+def test_오피스텔_낱말이_호실_구성표와_같다():
+    assert officetel_problems(_schema()) == []
+
+
+def test_돌연변이_오피스텔_낱말을_바꾸면_잡힌다():
+    src = _schema()
+    blk = _fn("price_floor_use_group", src)
+    bad = blk.replace("'오피스텔'::text as officetel_re", "'오피스텔|주거용'::text as officetel_re", 1)
+    assert bad != blk
+    assert officetel_problems(src.replace(blk, bad, 1)) == [
+        "오피스텔 낱말이 갈라졌다: {}".format(officetel_literals(src.replace(blk, bad, 1)))]

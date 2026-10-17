@@ -16,7 +16,9 @@
 여기서 보는 것
   1) 정본 정적 가드 — 갈래·칸마다 따로 판정한다(탐지 함수는 아래 작은 함수 · 양성 대조가 같은 함수를 지난다)
   2) 마이그레이션 — lock_timeout 이 begin 앞 · begin/commit · notify 는 commit 뒤 · api.transaction
-     다시 만듦 · 다시 만든 함수·물질화뷰의 머리·본문·comment 가 정본과 글자 일치 · 권한
+     다시 만듦 · 목록 함수 둘의 머리·본문·comment 가 정본과 글자 일치 · 권한
+     (list_price_bands·요약표 둘은 2026-10-18a 가 다시 만들어 정본 대조는 test_price_use_group_migration 몫 —
+      여기서는 이 파일 안의 지분 불변식만 본다)
   3) backtest_price.py 의 TX_QUERY 도 지분을 뺀다(실행은 안 한다 — 성적표 v2 는 PR②)
   4) 로컬 PostgreSQL 이 있으면 실제로 돌려 본다(없으면 건너뜀 — CI 는 1)~3)만)
 
@@ -359,8 +361,11 @@ def test_마이그_목록_함수는_api_먼저_지우고_다시_만든다():
     assert a < p < mk < mk_api
 
 
-@pytest.mark.parametrize("name", ["list_parcel_transactions", "api.list_parcel_transactions",
-                                  "list_price_bands"])
+# ⓘ 2026-10-18a(결정 0040 — 같은 용도 묶음)가 list_price_bands·요약표 둘·그 comment 를 다시 만들었다.
+#   그 셋을 정본과 글자 대조하는 일은 이제 tests/test_price_use_group_migration.py 가 맡는다. 이 파일은
+#   적용된 원장(10-08a)의 **그 파일 안 불변식**(지분 네 갈래·건수 filter — 아래 test_마이그_정적_가드도_통과한다)만
+#   본다. 목록 함수 둘·지분 칸 comment·색인은 10-18a 가 안 건드려 지금도 정본과 같다.
+@pytest.mark.parametrize("name", ["list_parcel_transactions", "api.list_parcel_transactions"])
 def test_마이그_다시_만든_함수가_정본과_글자_일치(name):
     """머리(security definer·search_path·stable)까지 — create or replace 는 머리를 덮어쓴다."""
     assert fn_block(name, read(MIG)) == fn_block(name, read(SCHEMA))
@@ -368,9 +373,6 @@ def test_마이그_다시_만든_함수가_정본과_글자_일치(name):
 
 @pytest.mark.parametrize("pattern", [
     r"^comment on function list_parcel_transactions\(text\) is",
-    r"^comment on function list_price_bands\(text\) is",
-    r"^comment on materialized view mv_sigungu_tx_stats is",
-    r"^comment on materialized view mv_sigungu_tx_yearly is",
     r"^comment on column transaction\.is_share is",
     r"^create unique index if not exists idx_msts_key",
     r"^create unique index if not exists idx_msty_key",
@@ -380,7 +382,8 @@ def test_마이그_comment_와_색인이_정본과_글자_일치(pattern):
 
 
 @pytest.mark.parametrize("mv", ["mv_sigungu_tx_stats", "mv_sigungu_tx_yearly"])
-def test_마이그_물질화뷰는_떨어뜨린_뒤_정본과_같은_본문으로_굽는다(mv):
+def test_마이그_물질화뷰는_떨어뜨린_뒤_다시_굽는다(mv):
+    """본문의 지분 규칙은 test_마이그_정적_가드도_통과한다 가 본다(정본 대조는 10-18a 몫 — 위 ⓘ)."""
     mig = read(MIG)
     src = code(mig)
     drop = src.index("drop materialized view if exists {};".format(mv))
@@ -388,7 +391,6 @@ def test_마이그_물질화뷰는_떨어뜨린_뒤_정본과_같은_본문으�
     assert drop < make
     assert "create materialized view if not exists {}".format(mv) not in src, (
         "다시 굽는 판에서 if not exists 는 아무 일도 안 한다")
-    assert mv_select(mv, mig) == mv_select(mv, read(SCHEMA))
     after = flat(src[make:])
     assert "analyze {};".format(mv) in after
     assert "revoke all on {} from public, anon, authenticated;".format(mv) in after
@@ -468,6 +470,8 @@ def _old_state(schema_sql):
     for mv in ("mv_sigungu_tx_stats", "mv_sigungu_tx_yearly"):
         body = mv_select(mv, schema_sql)
         body = body.replace("\n  and not t.is_share", "").replace(" and not t.is_share", "")
+        # 2026-10-18a 의 상가 조건도 걷는다 — 10-08a 적용 전에는 묶음 함수가 없었다.
+        body = body.replace("\n  and price_use_group_nm(t.main_use) = 'shop'", "")
         old.append("create materialized view {} as\n{}".format(mv, body))
     old.append(stmt_at(r"^create unique index if not exists idx_msts_key", schema_sql))
     old.append(stmt_at(r"^create unique index if not exists idx_msty_key", schema_sql))
@@ -481,6 +485,7 @@ def _old_state(schema_sql):
     old.append(api)
     joined = "\n".join(old)
     assert "is_share" not in joined
+    assert "price_use_group" not in joined
     return joined
 
 

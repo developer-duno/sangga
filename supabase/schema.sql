@@ -2214,6 +2214,124 @@ comment on function list_parcel_transactions(text) is
   '나가는 것은 층·계약시점·면적·금액·단가·거래유형·지분 여부뿐(상호명·개인정보 없음). '
   '2026-10-08a: is_share = 지분 거래(건물 일부 몫) — 목록에서 지우지 않고 그대로 낸다(단가 계산에서만 뺀다)';
 
+-- ── ①-1 용도 묶음 (2026-10-18a · 결정 0040) ─────────────────────────────────
+-- 참고 시세·구 층대 단가·동네 단가 흐름이 **같은 용도끼리** 세게 하는 자. 묶음은 넷 + 둘:
+--   shop(상가 = 1·2종 근린생활·판매) / office(업무) / lodging(숙박) / other(기타 — 교육연구·그 밖)
+--   + 대장 층에만 있는 resid(주거 = 단독·공동주택) · 비어 있으면 NULL.
+-- 묶음표는 **여기 두 함수 한 곳**에만 둔다 — 백테스트(scripts/backtest_price.py)의 파이썬 표
+-- USE_GROUP_CD·USE_GROUP_NM 은 시험(tests/test_price_ladder_sync.py)이 이 글자와 대조한다.
+-- ⛔ 두 함수에 `set search_path`·`security definer` 를 붙이지 않는다 — 붙이면 SQL 함수 인라인이
+--    막혀 요약표 33만 행 스캔에서 행마다 함수 호출이 남는다(형제 price_floor_band 의 2.3배 선례).
+--    표를 한 줄도 안 읽는 순수 계산이라 search_path 가 필요 없다.
+-- ⚠️ 모르는 글자는 조용히 other 가 된다 — `post_load.py --check` 가 "transaction.main_use 가
+--    7종 밖인 행 수"를 [주의]로 센다(0 이 기대).
+create or replace function price_use_group_cd(p_cd text)
+returns text
+language sql
+immutable
+parallel safe
+as $$
+  -- 대장 주용도코드(building_floor.main_purps_cd) 앞 두 자리. Z3(옛 기타근린생활)·Z6(옛 판매및영업)은
+  -- 옛 분류라 상가로 본다(Z3 에는 사무소·공공시설이 약 1할 섞여 있다 — 알려진한계). Z8 등 그 밖은 other.
+  select case
+    when nullif(p_cd, '') is null                          then null
+    when left(p_cd, 2) in ('03', '04', '07', 'Z3', 'Z6')   then 'shop'
+    when left(p_cd, 2) in ('14')                           then 'office'
+    when left(p_cd, 2) in ('15')                           then 'lodging'
+    when left(p_cd, 2) in ('01', '02')                     then 'resid'
+    else                                                        'other'
+  end
+$$;
+
+comment on function price_use_group_cd(text) is
+  '결정 0040 용도 묶음(대장 코드) — main_purps_cd 앞 두 자리: 03·04·07·Z3·Z6=shop(상가) / 14=office(업무) / '
+  '15=lodging(숙박) / 01·02=resid(주거) / NULL·빈 글자=NULL / 그 밖=other(기타). '
+  '백테스트 USE_GROUP_CD 와 글자 대조(tests/test_price_ladder_sync.py). 인라인되게 search_path 를 안 박는다. 내부용';
+
+revoke all on function price_use_group_cd(text) from public, anon, authenticated;
+
+create or replace function price_use_group_nm(p_nm text)
+returns text
+language sql
+immutable
+parallel safe
+as $$
+  -- 실거래 건물 주용도(transaction.main_use — 국토부 buildingUse 이름 7종). 주거 묶음은 없다
+  -- (상업업무용 실거래에는 주택이 안 온다).
+  select case
+    when nullif(p_nm, '') is null                              then null
+    when p_nm in ('제1종근린생활', '제2종근린생활', '판매')     then 'shop'
+    when p_nm in ('업무')                                      then 'office'
+    when p_nm in ('숙박')                                      then 'lodging'
+    else                                                            'other'
+  end
+$$;
+
+comment on function price_use_group_nm(text) is
+  '결정 0040 용도 묶음(실거래 이름) — transaction.main_use: 제1종근린생활·제2종근린생활·판매=shop(상가) / '
+  '업무=office / 숙박=lodging / NULL·빈 글자=NULL / 교육연구·기타·모르는 글자=other(기타). '
+  '백테스트 USE_GROUP_NM 과 글자 대조(tests/test_price_ladder_sync.py). 인라인되게 search_path 를 안 박는다. 내부용';
+
+revoke all on function price_use_group_nm(text) from public, anon, authenticated;
+
+-- 그 층의 용도 묶음 하나 — 참고 시세(list_price_bands)가 층마다 부르고, 백테스트가 같은 본문을
+-- psql 한 세션의 pg_temp 에 만들어 검증 거래 층에 부른다(결정 0040 ㉧ — 복제 0 · 운영 쓰기 0).
+-- 규칙(결정 0040 D5·D9·㉡):
+--   ① 구획 = 연면적 제외가 **아닌** 구획. 그런 구획이 하나도 없는 층(계단실·물탱크실뿐 — 2층+ 1,062층)은
+--      제외 구획까지 넣는다(그 층도 용도가 있다).
+--   ② 묶음별 면적 합 → NULL 묶음(코드 빈칸)은 맨 뒤 · resid(주거)는 그 다음 뒤 · 나머지는 면적 큰 순.
+--      = 집(01·02) 구획밖에 없는 층만 resid. 비주거 구획이 하나라도 있으면 그중 면적 최대.
+--   ③ 오피스텔 — ① 의 구획 가운데 주용도·기타용도에 '오피스텔'이 있고 shop 구획이 없으면 'officetel'.
+--      낱말은 list_unit_floor_summary 의 officetel_re 와 글자 같다(시험이 대조).
+--   ④ 행이 없으면(대장에 그 층이 없음) NULL.
+-- ⓘ search_path 를 박는다 — 표(building_floor)를 읽는 함수라서다. 층마다 한 번 불리므로 인라인이
+--   안 돼도 비용이 없다(묶음 함수 둘과 다르다).
+create or replace function price_floor_use_group(p_pnu char(19), p_floor smallint)
+returns text
+language sql
+stable
+set search_path = public
+as $$
+  with seg as (
+    select bf.main_purps_cd, bf.main_purps_nm, bf.etc_purps, bf.area_m2, bf.area_excluded
+      from building_floor bf
+     where bf.pnu = p_pnu
+       and bf.floor_no = p_floor
+  ),
+  use_seg as (
+    select s.*
+      from seg s
+     where not s.area_excluded
+        or not exists (select 1 from seg x where not x.area_excluded)
+  ),
+  grp as (
+    select price_use_group_cd(u.main_purps_cd) as g,
+           sum(coalesce(u.area_m2, 0))         as area
+      from use_seg u
+     group by 1
+  ),
+  nm as (
+    select '오피스텔'::text as officetel_re
+  )
+  select case
+           when exists (select 1 from use_seg u cross join nm
+                         where u.main_purps_nm ~ nm.officetel_re
+                            or coalesce(u.etc_purps, '') ~ nm.officetel_re)
+            and not exists (select 1 from grp where grp.g = 'shop')
+             then 'officetel'
+           else (select grp.g from grp
+                  order by grp.g is null, grp.g = 'resid', grp.area desc, grp.g
+                  limit 1)
+         end
+$$;
+
+comment on function price_floor_use_group(char(19), smallint) is
+  '결정 0040 그 층의 용도 묶음 — 연면적 제외 아닌 구획(없으면 전부)을 price_use_group_cd 로 묶어 면적 합이 '
+  '큰 묶음(NULL 맨 뒤 · resid 그 다음 뒤 = 집 구획밖에 없는 층만 resid). 오피스텔 낱말이 있고 shop 구획이 '
+  '없으면 officetel. 대장에 그 층이 없으면 NULL. list_price_bands 와 백테스트(pg_temp 사본)가 같은 본문. 내부용';
+
+revoke all on function price_floor_use_group(char(19), smallint) from public, anon, authenticated;
+
 -- ── ② 구 × 층대 단가 분포 (사전계산) ────────────────────────────────────────
 -- 왜 집합만: 통건물(일반)은 지번이 100% 마스킹되고 건물 한 채 값이라 ㎡당 단가의 성격이
 --   다르다. 섞으면 분포가 오염된다.
@@ -2228,6 +2346,9 @@ comment on function list_parcel_transactions(text) is
 -- ⚠️ 옥탑(99)은 '3층이상'에 들어간다(결정 0012 의 층대 정의가 ">=3").
 -- ⛔ 지분 거래는 뺀다(2026-10-08a) — 건물 일부 몫만 사고판 거래라 ㎡당 단가가 약 0.39배로 낮게
 --    나와 분포를 끌어내린다. n(표본 수)도 지분을 뺀 수다(단가의 근거 수이므로).
+-- ⛔ 상가(근생·판매) 거래만 센다(2026-10-18a · 결정 0040 D3) — 업무·숙박이 섞이면 구 안에서 비중이
+--    해마다 바뀌어 단가가 조용히 출렁인다(강남 3층+ 업무 834만 vs 2종근생 1,621만). 화면 제목이
+--    「상가 거래 기준」이라 이 조건을 빼면 제목이 거짓말이 된다.
 create materialized view if not exists mv_sigungu_tx_stats as
 with win as (
   select to_char((now() at time zone 'Asia/Seoul') - interval '24 months', 'YYYYMM') as from_ym
@@ -2251,12 +2372,14 @@ cross join win w
 where t.tx_type = '집합'
   and t.unit_price is not null
   and not t.is_share
+  and price_use_group_nm(t.main_use) = 'shop'
   and t.contract_ym >= w.from_ym
 group by t.sigungu_code, 2;
 
 comment on materialized view mv_sigungu_tx_stats is
   'Stage A(결정 0012) 구×층대 실거래 단가 분포 — 집합(구분소유) 거래만, 갱신 시점 기준 24개월. '
   '2026-10-08a: 지분 거래(is_share)는 뺀다 — 건물 일부 몫이라 ㎡당 단가가 낮게 나온다. '
+  '2026-10-18a: 상가(근생·판매) 거래만 — 결정 0040 D3(price_use_group_nm(main_use) = shop · 업무·숙박·기타는 안 센다). '
   'window_from 은 그 창의 시작 달을 굳혀 둔 것이다(화면이 "최근 24개월"만 적으면 갱신을 미룬 날 '
   '그 문구가 조용히 거짓말이 된다). n 은 단가를 낼 수 있었던 행 수 = 중앙값의 실제 근거 수다. '
   '⚠️ 자료를 새로 넣으면 `python scripts/post_load.py` 로 갱신할 것. '
@@ -2327,6 +2450,8 @@ revoke all on function get_sigungu_tx_stats(text) from public, anon, authenticat
 -- ⛔ 지분 거래(2026-10-08a): 단가 셋·n·median_area_m2 에서는 **빼고**, n_all·floor_missing·
 --    ym_cnt·first_ym·last_ym 에는 **그대로 센다**(👤 결정 — 그 해 거래 N건은 실제로 있던 거래 수다).
 --    그래서 where 가 아니라 filter 다 — where 에 걸면 건수까지 줄어든다.
+-- ⛔ 상가(근생·판매) 거래만(2026-10-18a · 결정 0040 D3·D8) — 이건 **where** 다. 단가·건수·층 미상 %가
+--    같은 거래 집단(상가)을 말해야 한다("그 해 거래 N건"도 상가 거래 수). 지분과 거꾸로다 — 헷갈리지 말 것.
 create materialized view if not exists mv_sigungu_tx_yearly as
 select
   t.sigungu_code,
@@ -2351,6 +2476,7 @@ select
   max(t.contract_ym)                                                            as last_ym
 from transaction t
 where t.tx_type = '집합'
+  and price_use_group_nm(t.main_use) = 'shop'
 group by t.sigungu_code, substr(t.contract_ym, 1, 4);
 
 comment on materialized view mv_sigungu_tx_yearly is
@@ -2360,6 +2486,7 @@ comment on materialized view mv_sigungu_tx_yearly is
   '2026-09-09b: median_area_m2 = 그 해 단가의 근거가 된 거래 **한 건**의 건물면적 중앙값(㎡) — '
   '단가와 같은 모집단에서 잰다. 다른 해보다 유난히 작으면 초소형 구획이 무더기로 거래된 해다. '
   '2026-10-08a: 지분 거래(is_share)는 단가 셋·n·median_area_m2 에서 빼고 n_all·floor_missing·ym_cnt·first_ym·last_ym 에는 센다. '
+  '2026-10-18a: 상가(근생·판매) 거래만 — 결정 0040 D3·D8(where — 단가·n_all·floor_missing·ym_cnt·first_ym·last_ym 모두 상가 거래만). '
   '⚠️ 자료를 새로 넣으면 `python scripts/post_load.py` 로 갱신할 것. '
   '⛔ anon 에게 열지 않는다 — 화면은 api.get_sigungu_tx_yearly() 로만 읽는다.';
 
@@ -2595,8 +2722,18 @@ revoke all on mv_tx_parcel_geog from public, anon, authenticated;
 --   gate_fail    — 이 구는 아직 참고 시세를 내지 않는다(결정 0013 §2). 층 나열도 하지 않는다
 --   floor_1f     — 1층은 제공하지 않는다(백테스트 MdAPE 45.2% — 코너·전면 여부가 자료에 없다)
 --   no_evidence  — 지하·옥탑·층미상. 백테스트 표본이 **0건**이라 아무 말도 할 수 없다
+--   no_use          — 대장에 이 층의 용도(코드)가 없다 — 모르면 안 낸다(2026-10-18a · 결정 0040 ㉡)
+--   floor_resid     — 주거(집 구획밖에 없는) 층 — 상가 시세를 내지 않는다(결정 0040 D2·D5)
+--   floor_officetel — 오피스텔 층 — 상가 시세를 내지 않는다(결정 0040 D9)
 --   no_estimate  — 사다리가 어느 단계도 못 세웠다("표본 부족")
 --   ok           — 밴드를 낸다. stage(근거 단계)와 n(표본 수)을 반드시 함께 쓴다
+--   use_group    — ok·no_estimate 줄에만 그 층의 묶음(shop·office·lodging·other). 다른 줄은 NULL
+--
+-- ## 같은 용도 묶음끼리 (2026-10-18a · 결정 0040 D1)
+--
+-- 층마다 price_floor_use_group(pnu, 층)으로 그 층의 묶음을 정하고, 네 갈래(L2·L4·L5·L6) **모두**
+-- 후보를 `price_use_group_nm(t.main_use) = v_grp` 로 거른다. 업무 층에는 업무 거래만, 상가 층에는
+-- 상가 거래만 센다(강남 3층+ 업무 834만 vs 2종근생 1,621만 — 섞으면 922만이 된다).
 --
 -- ## 왜 밴드가 p25~p75 인가
 --
@@ -2643,7 +2780,8 @@ returns table (
   median          numeric,
   p75             numeric,
   median_area_m2  numeric,
-  window_from     text
+  window_from     text,
+  use_group       text
 )
 language plpgsql
 stable
@@ -2674,6 +2812,8 @@ declare
   v_near500  char(19)[];
   v_floor    smallint;
   v_band     text;
+  -- 그 층의 용도 묶음(결정 0040) — shop·office·lodging·other·resid·officetel·NULL.
+  v_grp      text;
   v_stage    text;
   v_n        int;
   v_p25      numeric;
@@ -2697,7 +2837,8 @@ begin
   -- 아직 판정이 없는 구(표에 줄이 없음)도 '아니오'다 — 모르면 안 낸다.
   if v_gate is not true then
     return query select null::smallint, 'gate_fail'::text, null::text, null::int,
-                        null::numeric, null::numeric, null::numeric, null::numeric, v_from::text;
+                        null::numeric, null::numeric, null::numeric, null::numeric, v_from::text,
+                        null::text;
     return;
   end if;
 
@@ -2735,7 +2876,8 @@ begin
     -- 백테스트 MdAPE 45.2% — 다른 층대의 두 배다. 그래서 "모른다"고 말한다(결정 0013 §3).
     if v_floor = 1 then
       return query select v_floor, 'floor_1f'::text, null::text, null::int,
-                          null::numeric, null::numeric, null::numeric, null::numeric, v_from::text;
+                          null::numeric, null::numeric, null::numeric, null::numeric, v_from::text,
+                          null::text;
       continue;
     end if;
 
@@ -2743,7 +2885,33 @@ begin
     -- 지하층 표기가 오지 않는다 — 알려진한계). 검증된 적 없는 층에는 값을 내지 않는다.
     if v_floor is null or v_floor < 0 or v_floor = 99 then
       return query select v_floor, 'no_evidence'::text, null::text, null::int,
-                          null::numeric, null::numeric, null::numeric, null::numeric, v_from::text;
+                          null::numeric, null::numeric, null::numeric, null::numeric, v_from::text,
+                          null::text;
+      continue;
+    end if;
+
+    -- 그 층의 용도 묶음(2026-10-18a · 결정 0040) — 1층·지하 판정 **뒤**, 사다리 **앞**.
+    -- 묶음을 모르면(대장 코드 빈칸) 안 낸다 · 주거·오피스텔 층은 상가 시세를 안 낸다.
+    v_grp := price_floor_use_group(v_pnu, v_floor);
+
+    if v_grp is null then
+      return query select v_floor, 'no_use'::text, null::text, null::int,
+                          null::numeric, null::numeric, null::numeric, null::numeric, v_from::text,
+                          null::text;
+      continue;
+    end if;
+
+    if v_grp = 'resid' then
+      return query select v_floor, 'floor_resid'::text, null::text, null::int,
+                          null::numeric, null::numeric, null::numeric, null::numeric, v_from::text,
+                          null::text;
+      continue;
+    end if;
+
+    if v_grp = 'officetel' then
+      return query select v_floor, 'floor_officetel'::text, null::text, null::int,
+                          null::numeric, null::numeric, null::numeric, null::numeric, v_from::text,
+                          null::text;
       continue;
     end if;
 
@@ -2771,10 +2939,14 @@ begin
             -- ⛔ 네 갈래 **모두** 지분 거래(is_share)를 뺀다(2026-10-08a) — 건물 일부 몫만 사고판
             --    거래라 ㎡당 단가가 약 0.39배로 낮게 나온다. 한 갈래만 빠뜨리면 그 단계의 밴드만
             --    조용히 내려앉는다(에러 0). 칸 조건이라 색인(idx_tx_pnu·idx_tx_pnu10_ym)은 그대로 탄다.
+            -- ⛔ 네 갈래 **모두** 같은 용도 묶음(price_use_group_nm(t.main_use) = v_grp)만 센다(2026-10-18a ·
+            --    결정 0040 D1) — 지분과 같은 병이다: 한 갈래만 빠지면 그 단계만 업무·숙박이 조용히 섞인다.
+            --    묶음 함수는 인라인되는 immutable SQL 이라 행마다 함수 호출이 남지 않는다.
             -- L2 — 같은 필지 같은 층
             select 'L2'::text as lvl, t.unit_price, t.bld_area_m2
               from transaction t
              where t.tx_type = '집합' and t.unit_price is not null and not t.is_share
+               and price_use_group_nm(t.main_use) = v_grp
                and t.contract_ym >= v_from
                and t.pnu = v_pnu and t.floor_no = v_floor
             union all
@@ -2790,6 +2962,7 @@ begin
             select 'L4', t.unit_price, t.bld_area_m2
               from transaction t
              where t.tx_type = '집합' and t.unit_price is not null and not t.is_share
+               and price_use_group_nm(t.main_use) = v_grp
                and t.contract_ym >= v_from
                and t.floor_no = v_floor and t.pnu = any(v_near100)
             union all
@@ -2797,6 +2970,7 @@ begin
             select 'L5', t.unit_price, t.bld_area_m2
               from transaction t
              where t.tx_type = '집합' and t.unit_price is not null and not t.is_share
+               and price_use_group_nm(t.main_use) = v_grp
                and t.contract_ym >= v_from
                and t.floor_no = v_floor and t.pnu = any(v_near500)
             union all
@@ -2806,6 +2980,7 @@ begin
             select 'L6', t.unit_price, t.bld_area_m2
               from transaction t
              where t.tx_type = '집합' and t.unit_price is not null and not t.is_share
+               and price_use_group_nm(t.main_use) = v_grp
                and t.contract_ym >= v_from
                and t.pnu is not null
                and substr(t.pnu, 1, 10) = substr(v_pnu, 1, 10)
@@ -2822,10 +2997,12 @@ begin
 
     if v_stage is null then
       return query select v_floor, 'no_estimate'::text, null::text, null::int,
-                          null::numeric, null::numeric, null::numeric, null::numeric, v_from::text;
+                          null::numeric, null::numeric, null::numeric, null::numeric, v_from::text,
+                          v_grp;
     else
       return query select v_floor, 'ok'::text, v_stage, v_n,
-                          v_p25, v_med, v_p75, v_area, v_from::text;
+                          v_p25, v_med, v_p75, v_area, v_from::text,
+                          v_grp;
     end if;
   end loop;
   return;
@@ -2836,7 +3013,10 @@ comment on function list_price_bands(text) is
   'Stage B(결정 0013) 이 필지의 층별 참고 시세 밴드 — 곁의 실거래(최근 24개월·집합·지분 거래 제외 — 2026-10-08a)로 어림한 '
   '추정값이며 감정평가가 아니다. 한 층에 한 줄이고 status 가 그 줄의 성격을 말한다: '
   'gate_fail(이 구는 기준선 미달 — 층 나열 없이 한 줄) / floor_1f(1층 미제공) / '
-  'no_evidence(지하·옥탑·층미상 — 백테스트 표본 0건) / no_estimate(표본 부족) / ok(밴드). '
+  'no_evidence(지하·옥탑·층미상 — 백테스트 표본 0건) / no_use(대장에 그 층 용도 없음) / '
+  'floor_resid(주거 층) / floor_officetel(오피스텔 층) / no_estimate(표본 부족) / ok(밴드). '
+  '2026-10-18a(결정 0040): 네 갈래 모두 그 층의 대장 용도 묶음(price_floor_use_group)과 같은 묶음 거래만 센다 — '
+  'use_group 은 ok·no_estimate 줄의 묶음(shop 상가·office 업무·lodging 숙박·other 기타), 다른 줄은 NULL. '
   'ok 인 줄은 stage(L2·L4·L5·L6)와 n(표본 수)을 **반드시 함께** 표시한다(절대 규칙 3). '
   'p25/median/p75 는 ㎡당 단가, median_area_m2 는 총액 환산용 후보 면적 중앙값이다. '
   'security definer — transaction·parcel·price_gate_sigungu 가 anon 에게 닫혀 있어 '
@@ -4032,7 +4212,8 @@ returns table (
   median          numeric,
   p75             numeric,
   median_area_m2  numeric,
-  window_from     text
+  window_from     text,
+  use_group       text
 )
 language sql
 stable

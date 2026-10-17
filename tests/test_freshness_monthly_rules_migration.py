@@ -837,6 +837,7 @@ class TestPostLoadLedgerCheck:
         "report_write_exposure": lambda: [],
         "report_slow_functions": lambda: [],
         "report_toast_evictions": lambda: [],
+        "report_tx_main_use_unknown": lambda: 0,
         "report_canonical_indexes": lambda: [],
         "report_function_drift": lambda: [],
         "report_snapshot_release": lambda *a: (False, False),
