@@ -158,11 +158,7 @@ python scripts/collectors/collect_transactions.py --sigungu-code <구> --months 
 # ⚠️ 최근 달은 신고(30일)가 덜 끝난 채 'done' 으로 굳는다 → 아래 `--recollect-months` 로 매달 다시 받는다(2026-10-14 손으로 6개월 재수집 5,323건 → 2026-10-15 F5 옵션) · 적재기 load_transactions.py 는 `--sigungu-code` 가 없으면 **강남만** 적재한다(구마다 돌릴 것)
 python scripts/collectors/collect_transactions.py --sigungu-code <구> --recollect-months 6 --end-ym <이번 달>   # ★ 매달 — 최근 6개월 중 done 칸만 pending 으로 되돌려 다시 받는다(failed 는 --retry-failed 몫 · attempts 그대로 · N 1~24 · --dry-run 은 되돌리지 않고 '다시 받을 달 N개(그중 done M개)'만 · F5 2026-10-15)
 # ⚠️ `--dry-run` 도 `collect_progress` 에 pending 시드를 **쓴다**(형제 수집기의 "DB 쓰기 0" 미리보기와 다르다 — `seed_progress` 가 dry_run 분기 **앞**에 있다, collect_transactions.py:735-746). 시드는 멱등(있는 행 보존)이라 무해하지만 미리보기에도 DB 열쇠가 필요하다.
-python scripts/backtest_price.py                # Stage B 백테스트 성적표 재생성 (DB 읽기 전용 → docs/backtest/, 통과구.csv·묶음별지표.csv 포함 · v3 부터 psql 도 쓴다 — 검증 거래 층 묶음을 한 세션 pg_temp 에 정본 함수로 만들어 읽는다 · 쓰기 0)
-python scripts/backtest_price.py --place-axis   # 1층 유형축(L7=도로등급×상권등급) 검증 — 새 파일 2개만 쓴다(기존 성적표·통과구.csv 안 건드림). psql 필요
 python scripts/backtest_openclose.py            # 결정 0033 R3 개업·폐업 정답지(소진공 202603→202606 vs 서울시 20262) — DB·외부 호출 0 · shapely 필요(`python -m pip install shapely`) → docs/backtest/개업폐업-정답지-v1.md·-상권별.csv 를 덮어쓴다(재실행하면 md 3번째 줄 생성 시각만 바뀐다)
-python scripts/load_price_gate.py --dry-run     # 통과구.csv → price_gate_sigungu 미리보기(DB 쓰기 0)
-python scripts/load_price_gate.py               # ★ 통과 구 게이트 적재 (관문 3종·걸리면 통째 롤백 — 손 편집 금지, 결정 0013 §4)
 python -m ruff check scripts/ tests/            # 파이썬 린트
 python scripts/collectors/collect_building_ledger.py --dry-run   # 수집 예산 확인(API 0콜)
 python scripts/collectors/collect_building_ledger.py             # 건축물대장 수집 (이어받기)
@@ -222,11 +218,6 @@ python scripts/load_rone_map.py --dry-run                          # seed → di
 python scripts/load_rone_map.py                                    # 매핑 적재 (검증 관문 3종 내장 — 걸리면 통째 롤백)
 python scripts/build_district_geojson.py --dry-run                  # 지도용 상권 파일 미리보기(행수·크기만, 파일 안 씀)
 python scripts/build_district_geojson.py                           # ★ district 를 적재했으면 → public/districts.geojson 굽고 **커밋**
-python scripts/build_scorecard_json.py --dry-run                    # 성적표 파일 미리보기(줄 수·크기·원본 해시만, 파일 안 씀)
-python scripts/build_scorecard_json.py                              # ★ 성적표 CSV 가 바뀌었으면 → public/scorecard-v3.json 다시 굽고 **커밋**
-# ↑ 입력 = docs/backtest/{단계별지표,운영모드지표,통과구}.csv + 성적표-v3.md 의 생성 시각 한 줄(v3 = 결정 0040 같은 용도 묶음 · 묶음별지표.csv 는 안 싣는다).
-#   ⛔ 검증거래별원자료.csv(개별 실거래)는 **안 읽는다**. 판(v4)을 올리는 것은 별건 결재라
-#      그때 스크립트의 VERSION·backtest_price.py 의 SCORECARD_VERSION·출력 파일명·src/lib/appConstants.ts 의 SCORECARD_URL 을 함께 올린다(옛 json 은 git rm · 셋이 어긋나면 TestVersionPins 가 빨강).
 python scripts/build_sitemap.py --dry-run       # 사이트맵 미리보기 — 대상 건물(이름 + 비주거 층 · 스크립트 맨 위 TARGET_WHERE) 수·파일 수만 (DB 읽기만 · 쓰기 0 · 결정 0037)
 python scripts/build_sitemap.py                 # ★ 건축물대장·호실을 다시 적재했으면(post_load 뒤) → public/sitemap*.xml 다시 굽고 **커밋** → 배포 뒤 indexnow_ping.py --from-sitemap … (⚠️ 대상 고르기에 찬 캐시 약 10분 — 2026-10-10 실측 · 스크립트가 그 접속만 제한을 15분으로 늘린다)
 python scripts/post_load.py                     # ★ 적재 후 필수 — vacuum(analyze) + 요약표(REFRESH_MVS 목록이 정본) 갱신 (권한 점검은 안 돈다)

@@ -73,6 +73,21 @@ COLLECTOR_VIEWS = (
 #    한결같았을 뿐, 문법상 언제든 쓸 수 있는 형태다(2026-08-24 적대검증 지적).
 RE_API_FN = re.compile(r"(?im)^create\s+(?:or\s+replace\s+)?function\s+api\.(\w+)")
 RE_API_VIEW = re.compile(r"(?im)^create\s+(?:or\s+replace\s+)?view\s+api\.(\w+)")
+# 만들기·지우기를 **차례대로** 되짚어 지금 살아 있는 api 함수를 센다(2026-10-18a 결정 0041 — 참고 시세·성적표
+# 함수를 지운 뒤에도 옛 파일의 `create` 가 남아 있어, 만든 것만 세면 지운 것까지 살아 있는 것으로 센다).
+RE_API_FN_EVENT = re.compile(
+    r"(?im)^(create\s+(?:or\s+replace\s+)?function|drop\s+function(?:\s+if\s+exists)?)\s+api\.(\w+)")
+
+
+def alive_api_fns(sql):
+    """주석을 걷은 문장에서 api 함수의 만들기·지우기를 위에서부터 되짚어 살아 있는 이름만 돌려준다."""
+    alive = set()
+    for kind, name in RE_API_FN_EVENT.findall(statements(sql)):
+        if kind.lower().startswith("drop"):
+            alive.discard(name)
+        else:
+            alive.add(name)
+    return alive
 
 
 def read(path):
@@ -161,7 +176,10 @@ def parsed_fns(migration):
 
 class TestScreenFunctions:
     def test_every_screen_function_is_wrapped(self, migration):
-        got = set(RE_API_FN.findall(migration))
+        got = alive_api_fns(migration)
+        # 양성 대조 — 지운 둘은 옛 파일에 만들기가 남아 있다(되짚기가 실제로 지우기를 반영하는지).
+        assert {"list_price_bands", "list_price_gate"} <= set(RE_API_FN.findall(migration))
+        assert not {"list_price_bands", "list_price_gate"} & got
         assert got == set(SCREEN_FNS) | set(COLLECTOR_FNS), (
             "api 래퍼 함수 목록이 화면이 부르는 것(+ 적재기 전용)과 다릅니다: {}".format(sorted(got))
         )

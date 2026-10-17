@@ -243,7 +243,6 @@ class TestSlowReport:
             ("report_tx_window_freshness", lambda: ("", "", False)),
             ("report_coverage_freshness", lambda: ("", "", False)),
             ("report_industry_mix_freshness", lambda: ("", "", False)),
-            ("report_tx_geog_freshness", lambda: ("1", "1", False)),
             ("report_anon_exposure", lambda: ([], [])),
             ("report_write_exposure", lambda: []),
             ("report_canonical_indexes", lambda: []),
@@ -301,7 +300,6 @@ class TestSlowReport:
             ("report_tx_window_freshness", lambda: ("", "", False)),
             ("report_coverage_freshness", lambda: ("", "", False)),
             ("report_industry_mix_freshness", lambda: ("", "", False)),
-            ("report_tx_geog_freshness", lambda: ("1", "1", False)),
             ("report_anon_exposure", lambda: ([], [])),
             ("report_write_exposure", lambda: []),
             ("report_slow_functions", lambda: [("list_price_bands", 3, 5000.0)]),
@@ -329,10 +327,9 @@ class TestSlowReport:
         monkeypatch.setattr(post_load, "report_function_drift", lambda: [("public.f", ["본문"])])
         assert post_load.main(["--check"]) == 1
         monkeypatch.setattr(post_load, "report_function_drift", lambda: [])
-        monkeypatch.setattr(post_load, "report_tx_geog_freshness", lambda: ("4383", "4384", True))
-        assert post_load.main(["--check"]) == 1
-        monkeypatch.setattr(post_load, "report_tx_geog_freshness", lambda: ("1", "1", False))
         assert post_load.main(["--check"]) == 0
+        # 참고 시세 이웃 요약표 점검(report_tx_geog_freshness)은 결정 0041(2026-10-18a)로 표와 함께 지웠다.
+        assert not hasattr(post_load, "report_tx_geog_freshness")
         # 층 분포 표(2026-10-09b · 물결 2-2) — 분기 낡음·업종 표와의 합 어긋남 둘 다 [낡음] → exit 1.
         monkeypatch.setattr(post_load, "report_industry_floor_freshness", lambda: ("202603", "202606", True))
         assert post_load.main(["--check"]) == 1
@@ -459,142 +456,6 @@ class TestSlowSnapshotSaveFailure:
                 "(저장이 실패해 기준도 새로 잡히지 않았습니다).") in out
         assert "기준만 새로 잡았습니다" not in out and "함께 셉니다" not in out
         assert "저장했습니다" not in out
-
-
-# ── 참고 시세 이웃 요약표 신선도 ────────────────────────────────────────────
-
-
-class TestTxGeogFreshness:
-    def _run(self, monkeypatch, capsys, raw):
-        monkeypatch.setattr(post_load, "query_one", lambda sql: raw)
-        got = post_load.report_tx_geog_freshness()
-        return got, capsys.readouterr().out
-
-    def test_equal_sets_are_fresh(self, monkeypatch, capsys):
-        (rows, expected, stale), out = self._run(monkeypatch, capsys, "4384|4384|0|0")
-        assert (rows, expected, stale) == ("4384", "4384", False)
-        assert "[신선] 참고 시세 이웃 요약표 4384행" in out
-        assert "표에만 있는 필지 0곳 · 표에 빠진 필지 0곳" in out
-
-    @pytest.mark.parametrize("raw", ["4383|4384|0|1", "4385|4384|1|0", "0|4384|0|4384"])
-    def test_any_difference_is_stale(self, monkeypatch, capsys, raw):
-        """많아도 적어도 낡음이다 — 거래가 지워진 필지가 남아 있어도 이웃에 헛 필지가 섞인다."""
-        (_, _, stale), out = self._run(monkeypatch, capsys, raw)
-        assert stale is True
-        assert "[낡음] 참고 시세 이웃 요약표" in out and "post_load.py" in out
-
-    def test_same_row_count_but_different_sets_is_stale(self, monkeypatch, capsys):
-        """⛔ 행수가 같아도(지워진 필지 1 · 새 필지 1) 집합이 다르면 낡음이다 — 예전엔 [신선]이었다."""
-        (rows, expected, stale), out = self._run(monkeypatch, capsys, "4384|4384|1|1")
-        assert (rows, expected, stale) == ("4384", "4384", True)
-        assert "표에만 있는 필지 1곳 · 표에 빠진 필지 1곳" in out
-        assert "[신선]" not in out
-
-    @pytest.mark.parametrize("raw", ["4384|4384", "4384|4384|0", "4384|4384|x|0", "4384|4384|1|x"])
-    def test_malformed_answer_is_loud(self, monkeypatch, raw):
-        """답 모양이 틀리면 [신선]·[낡음] 어느 쪽으로도 넘어가지 않고 예외로 죽는다(칸이 모자라거나
-        숫자가 아님 — 앞 칸만으로 낡음이 정해져도 뒤 칸이 글자면 죽는다)."""
-        monkeypatch.setattr(post_load, "query_one", lambda sql: raw)
-        with pytest.raises(ValueError):
-            post_load.report_tx_geog_freshness()
-
-    def test_sql_counts_both_set_differences_from_one_condition(self):
-        """한 번의 조회 · 조건 글자는 TX_GEOG_CONDITION 한 곳 · 양쪽 차집합 둘 다 센다."""
-        sql = post_load.build_tx_geog_freshness_sql()
-        assert sql.count(post_load.TX_GEOG_CONDITION) == 1
-        assert "from parcel p where " + post_load.TX_GEOG_CONDITION in sql   # 옛 단언을 이어받는다
-        assert "from mv_tx_parcel_geog" in sql
-        assert sql.count("'|'") == 3 and sql.rstrip().endswith(";") and sql.count(";") == 1
-        assert "from mv_tx_parcel_geog m where not exists (select 1 from want w where w.pnu = m.pnu)" in sql
-        assert "from want w where not exists (select 1 from mv_tx_parcel_geog m where m.pnu = w.pnu)" in sql
-        assert "::char" not in sql          # pnu 는 양쪽 다 char(19) 칸 — 캐스트를 넣으면 색인이 죽는다
-
-    @pytest.mark.parametrize("raw", ["4384|4384|1|0", "4384|4384|0|1", "4385|4384|0|0"])
-    def test_each_term_alone_makes_it_stale(self, monkeypatch, capsys, raw):
-        """판정의 세 항(표에만 있음 · 표에 빠짐 · 행수 다름)이 **각각 혼자서도** 낡음을 만든다.
-
-        실데이터에선 pnu 가 유일 키라 안 나오는 조합도 있지만, 항 하나를 지운 변이를 잡으려면 필요하다."""
-        (_, _, stale), out = self._run(monkeypatch, capsys, raw)
-        assert stale is True and "[낡음]" in out
-
-    @staticmethod
-    def _matches(definition):
-        """뷰 정의의 where 절 **전체**가 TX_GEOG_CONDITION 과 같은가 — 본 시험과 양성 대조가 함께 쓰는 판정."""
-        norm = lambda s: re.sub(r"\s+", " ", s).strip().lower()  # noqa: E731
-        m = re.search(r"\bfrom parcel p where (.*)$", norm(definition))
-        assert m, "뷰 정의에서 where 절을 못 찾았습니다: " + definition
-        return m.group(1) == norm(post_load.TX_GEOG_CONDITION)
-
-    def _view_definition(self):
-        m = re.search(r"create materialized view if not exists mv_tx_parcel_geog as(.*?);",
-                      read_schema(), re.S)
-        assert m, "정본에서 mv_tx_parcel_geog 정의를 못 찾았습니다."
-        return m.group(1)
-
-    def test_condition_matches_the_view_definition_in_schema(self):
-        """⛔ 오른쪽(있어야 할 필지)은 뷰 정의의 where 절 **전체**와 같아야 한다 — 갈리면 늘 낡음/늘 신선.
-
-        예전엔 부분 문자열 비교라 정본 where 끝에 조건을 덧붙여도 초록이었다(2026-10-03)."""
-        assert self._matches(self._view_definition())
-
-    @pytest.mark.parametrize("mutate", [
-        lambda d: d + " and p.x is not null",
-        lambda d: d + "\n   or p.pnu is null",
-        lambda d: d.replace("and exists (select 1 from transaction t where t.pnu = p.pnu)", ""),
-        lambda d: re.sub(r"p\.geom is not null\s+and ", "", d),
-    ])
-    def test_where_clause_comparison_catches_added_or_removed_conditions(self, mutate):
-        """양성 대조: 정의 사본(정본 파일은 안 고친다)에 조건을 더하거나 빼면 **본 시험과 같은 판정**이
-        거짓이어야 한다 — 판정을 부분 문자열 비교로 되돌리면 여기가 빨개진다."""
-        original = self._view_definition()
-        mutated = mutate(original)
-        assert mutated != original, "변이가 정의를 못 바꿨습니다 — 탐침 글자를 정본에 맞추세요."
-        assert not self._matches(mutated)
-
-
-class TestApplyRechecksTxGeog:
-    """갱신 흐름(`--check` 없이)도 참고 시세 이웃 요약표를 다시 잰다 — REFRESH_MVS 에 있어 방금
-    다시 구운 표다(2026-10-03 · 예전엔 --check 쪽에만 있었다)."""
-
-    def _apply(self, monkeypatch, geog):
-        assert "mv_tx_parcel_geog" in post_load.REFRESH_MVS
-        monkeypatch.setattr(post_load.dbx, "run_sql", lambda sql, **k: 0)
-        for name, val in (
-            ("report_freshness", lambda: ("1", "1", False)),
-            ("report_map_freshness", lambda: ({}, False)),
-            ("report_tx_window_freshness", lambda: ("", "", False)),
-            ("report_coverage_freshness", lambda: ("", "", False)),
-            ("report_industry_mix_freshness", lambda: ("", "", False)),
-            ("report_store_names_freshness", lambda: ("", "", False)),
-            ("report_industry_floor_freshness", lambda: ("", "", False)),
-            ("report_industry_floor_consistency", lambda: ("0", False)),
-            ("report_industry_median_freshness", lambda: ("", "", False)),
-            ("report_industry_median_consistency", lambda: ("0", False)),
-            ("report_industry_median_m_freshness", lambda: ("", "", False)),
-            ("report_industry_median_m_consistency", lambda: ("0", False)),
-            ("precheck_snapshot_release", lambda: (False, "202606", "")),
-            ("report_snapshot_release", lambda *a: (False, False)),
-            ("report_ledger_release", lambda: False),
-        ):
-            monkeypatch.setattr(post_load, name, val)
-        asked = []
-
-        def fake_query_one(sql):
-            asked.append(sql)
-            assert sql == post_load.build_tx_geog_freshness_sql()
-            return geog
-        monkeypatch.setattr(post_load, "query_one", fake_query_one)
-        return post_load.main([]), asked
-
-    def test_only_this_table_stale_after_refresh_exits_1(self, monkeypatch, capsys):
-        code, asked = self._apply(monkeypatch, "4384|4384|1|1")
-        assert code == 1 and len(asked) == 1
-        assert "[낡음] 참고 시세 이웃 요약표" in capsys.readouterr().out
-
-    def test_fresh_after_refresh_exits_0(self, monkeypatch, capsys):
-        code, asked = self._apply(monkeypatch, "4384|4384|0|0")
-        assert code == 0 and len(asked) == 1
-        assert "[신선] 참고 시세 이웃 요약표" in capsys.readouterr().out
 
 
 # ── ② 정본 색인 ──────────────────────────────────────────────────────────────
@@ -926,7 +787,6 @@ class TestCheckExitCodeForIndexes:
             ("report_tx_window_freshness", lambda: ("", "", False)),
             ("report_coverage_freshness", lambda: ("", "", False)),
             ("report_industry_mix_freshness", lambda: ("", "", False)),
-            ("report_tx_geog_freshness", lambda: ("1", "1", False)),
             ("report_anon_exposure", lambda: ([], [])),
             ("report_write_exposure", lambda: []),
             ("report_slow_functions", lambda: []),
@@ -1102,7 +962,6 @@ def test_median_consistency_with_two_quarters_in_mix_stays_green(monkeypatch, ca
         ("report_tx_window_freshness", lambda: ("", "", False)),
         ("report_coverage_freshness", lambda: ("", "", False)),
         ("report_industry_mix_freshness", lambda: ("", "", False)),
-        ("report_tx_geog_freshness", lambda: ("1", "1", False)),
         ("report_anon_exposure", lambda: ([], [])),
         ("report_write_exposure", lambda: []),
         ("report_slow_functions", lambda: []),

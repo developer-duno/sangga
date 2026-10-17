@@ -305,7 +305,6 @@ QUIET = (
     ("report_tx_window_freshness", lambda: ("", "", False)),
     ("report_coverage_freshness", lambda: ("", "", False)),
     ("report_industry_mix_freshness", lambda: ("", "", False)),
-    ("report_tx_geog_freshness", lambda: ("1", "1", False)),
     ("report_anon_exposure", lambda: ([], [])),
     ("report_write_exposure", lambda: []),
     ("report_slow_functions", lambda: []),
