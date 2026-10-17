@@ -52,6 +52,16 @@ export function oneInEvery(pct: number | null | undefined): number | null {
 }
 
 /**
+ * 층 결측 비율 → 「약 3곳 중 1곳(32.9%)」(층별 화면 각주와 역할 요약 판의 1층 칸이 함께 쓴다 — 결정 0039 W2,
+ * 2026-10-17 `FloorStack` 에서 옮김 · 글자 그대로). 비율이 값이 아니면 null(부르는 쪽이 문구를 정한다).
+ * ⓘ 이 비율은 **서비스 지역 전체**(뷰 `v_coverage_stats`)의 값이다 — 이 건물의 층 미상 점포 수가 아니다.
+ */
+export function floorMissingPhrase(pct: number | null | undefined): string | null {
+  const every = oneInEvery(pct);
+  return every === null ? null : `약 ${every}곳 중 1곳(${pct}%)`;
+}
+
+/**
  * 금액(원)을 "3억 2,000만"으로. 값이 없으면 '—'.
  *
  * 실거래 금액은 억 단위가 흔해서 `320000000원`으로 찍으면 자릿수를 세게 된다.

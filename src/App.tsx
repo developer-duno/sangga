@@ -624,6 +624,7 @@ export default function App() {
                 unitPrintMode={unitPrintMode}
                 unitPrintOpenSignal={unitPick.bldId === selected.bld_id ? unitPick.opened : 0}
                 onUnitListedCount={handleUnitListedCount}
+                onBeforePrint={handleBeforePrint}
               />
             </ErrorBoundary>
           </>

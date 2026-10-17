@@ -3,23 +3,16 @@ import { SECTION_PLAN, type SectionPlan } from '../lib/sectionCards';
 import { SectionCard } from './SectionCard';
 import type { BasePrice, FloorRow, PriceBand } from '../types';
 import { pairBasePrices, type BasePriceRow } from '../lib/basePrice';
+import { formatFloor, formatManWon, formatDayKo, formatMonthKo } from '../lib/format';
 import {
-  formatArea,
-  formatEokBand,
-  formatFloor,
-  formatManWon,
-  formatManWonBand,
-  formatDayKo,
-  formatMonthKo,
-} from '../lib/format';
-import {
+  BAND_GATE_TEXT,
+  BAND_NO_VALUE_TEXT,
   bandAxisMaxWon,
   bandMark,
-  describeStage,
+  bandText,
   groupBands,
   isFarStage,
-  isSinglePoint,
-  toTotalWon,
+  THIN_SAMPLE,
   type BandGroup,
   type BandMark,
 } from '../lib/priceBand';
@@ -68,17 +61,7 @@ type Props = {
 // 제목은 `SECTION_PLAN.band.title` 하나뿐이다(카드 머리에 적힌다) — 여기 또 적으면
 // 카드 머리와 본문이 서로 다른 이름을 말하는 날이 온다.
 
-/**
- * 이보다 적은 곁 거래로 낸 폭에는 '표본 적음' 표식을 붙인다.
- *
- * ⚠️ 아래 각주의 한글 문구("곁 거래가 **다섯 건**이 안 된다는 뜻입니다")와 짝이다 —
- *    바꿀 땐 두 곳을 함께 고친다(숫자만 고치면 표식과 설명이 어긋난다).
- * ⛔ 이름이 비슷한 이웃 둘과 **뜻이 다르다. 합치지 말 것**:
- *    · `FloorStack` 의 `MIN_SAMPLE` — 구 층대별 단가에서 수치를 아예 안 적는 임계
- *    · 서버 L5 의 `min_n`(`supabase/schema.sql`) — 그 근거 단계를 채택할지 정하는 임계
- *    여기 것은 "값은 내되 못 미덥다고 표시할" 임계다.
- */
-const THIN_SAMPLE = 5;
+// '표본 적음' 임계 `THIN_SAMPLE` 은 값 글(`bandText`)과 함께 `lib/priceBand.ts` 로 옮겼다(2026-10-17 · 결정 0039 W2).
 
 export function PriceBandSection({
   bands,
@@ -112,7 +95,7 @@ export function PriceBandSection({
         className="band"
         // 접혀 있어도 이 한 줄은 보인다 — 아래 본문과 **같은 글자를 쓰지 않는다**(같은 말이
         // 화면에 둘이면 이름으로 찾는 시험이 어느 쪽을 잡았는지 모르게 된다).
-        summary="아직 참고 시세를 내지 않는 구입니다"
+        summary={BAND_GATE_TEXT}
       >
         <p className="band__gate">
           <strong>이 건물이 속한 구 전체는 아직 참고 시세를 내지 않습니다.</strong> 지난 거래로
@@ -151,7 +134,7 @@ export function PriceBandSection({
   // 띠의 축 상한(㎡당 원) — 값을 내는 줄의 p75·가운데값 최대를 만원 단위로 올림(결정 0038 A). null = 띠를 안 그린다.
   const axisMax = bandAxisMaxWon(listed);
   const summary =
-    okFloorCnt > 0 ? `값을 낸 층 ${okFloorCnt}개` : '이 건물에서는 값을 낸 층이 없습니다';
+    okFloorCnt > 0 ? `값을 낸 층 ${okFloorCnt}개` : BAND_NO_VALUE_TEXT;
 
   return (
     <SectionCard plan={plan} className="band" summary={summary}>
@@ -366,105 +349,17 @@ function BandAxis({ maxWon }: { maxWon: number }) {
   );
 }
 
-/** 값 칸. status 넷이 각각 다른 말을 한다. */
+/**
+ * 값 칸. status 넷이 각각 다른 말을 한다 — 글은 `bandText`(lib/priceBand.ts) 하나에서 온다
+ * (역할 요약 판이 같은 글을 쓴다 · 결정 0039 W2 · 2026-10-17 옮김 — 글자는 한 글자도 안 바뀌었다).
+ */
 function BandBody({ group }: { group: BandGroup }) {
-  const band = group.band;
-  if (band.status !== 'ok') {
-    return <span className="band__none">{missingLabel(band.status)}</span>;
-  }
-
-  // 근거를 말할 수 없으면 값도 내지 않는다 — 절대 규칙 3은 "값과 근거는 한 몸"이라는 뜻이다.
-  const label = describeStage(band.stage, group.floors[0].floor_no);
-  if (
-    label === null ||
-    band.n === null ||
-    band.median === null ||
-    band.p25 === null ||
-    band.p75 === null
-  ) {
-    return <span className="band__none">근거를 표시할 수 없어 값을 내지 않습니다</span>;
-  }
-
-  const area = band.median_area_m2;
-  const count = `거래 ${band.n.toLocaleString('ko-KR')}건`;
-  // 층대 평균은 층별로 따로 잰 값이 아니다. 라벨만으로도 알 수 있게 했지만, 한 줄로 묶여
-  // 여러 층을 덮을 때가 많아 한 번 더 못 박는다.
-  const note = band.stage === 'L6' ? '층별로 따로 잰 값이 아닙니다' : null;
-
-  // 폭이 0인 밴드는 '2.4억~2.4억'으로 적지 않는다 — 사람은 그걸 "아주 정확하다"로 읽는데
-  // 사실은 정반대다. 밴드가 아니라 사실로 적는다(채택의 절반이 최소 표본 1건짜리 단계라
-  // 드문 예외가 아니다).
-  //
-  // ⚠️ 다만 폭이 0인 **까닭이 둘**이라 문장을 갈라야 한다: ① 곁 거래가 한 건뿐이라 폭이
-  //    없는 것 ② 여러 건인데 **전부 같은 단가**로 신고돼 사분위 셋이 같아진 것(`unit_price`
-  //    가 생성 컬럼이라 같은 층 동일 단가 신고가 겹치면 그렇게 된다 — 라이브에 실제로 있다).
-  //    하나로 뭉뚱그리면 "1건뿐"이라 적어 놓고 바로 밑 근거 줄에서 "거래 10건"이라 말하는
-  //    자기모순이 난다. 판정(`isSinglePoint`)은 폭을 묻는 것이므로 그대로 두고, **문구만** 가른다.
-  if (isSinglePoint(band)) {
-    const one = toTotalWon(band.median, area);
-    const pointMarks = [
-      isFarStage(band.stage) ? '먼 근거' : null,
-      // n=1 은 헤드라인이 이미 "1건뿐"이라 말한다 — 표식을 겹쳐 붙이지 않는다.
-      band.n > 1 && band.n < THIN_SAMPLE ? '표본 적음' : null,
-    ].filter((m): m is string => m !== null);
-    return (
-      <>
-        <span className="band__val">
-          {band.n === 1
-            ? `곁의 거래 1건뿐 — 그 거래는 ㎡당 ${formatManWon(band.median)}`
-            : `곁 거래 ${band.n.toLocaleString('ko-KR')}건이 모두 같은 값 — ㎡당 ${formatManWon(band.median)}`}
-        </span>
-        <span className="band__sub">
-          {one !== null && (
-            <>
-              비슷한 호실 한 칸 {formatArea(area)} 기준 {formatEokBand(one, one)} ·{' '}
-            </>
-          )}
-          근거: {label} · {count}
-          {note !== null && <> · {note}</>}
-          {pointMarks.length > 0 && <> · {pointMarks.join(' · ')}</>}
-        </span>
-      </>
-    );
-  }
-
-  const lo = toTotalWon(band.p25, area);
-  const hi = toTotalWon(band.p75, area);
-  const perBand = formatManWonBand(band.p25, band.p75);
-  const marks = [
-    isFarStage(band.stage) ? '먼 근거' : null,
-    band.n < THIN_SAMPLE ? '표본 적음' : null,
-  ].filter((m): m is string => m !== null);
-
+  const t = bandText(group);
+  if (t.kind === 'none') return <span className="band__none">{t.text}</span>;
   return (
     <>
-      <span className="band__val">
-        {lo !== null && hi !== null
-          ? `비슷한 호실 한 칸 ${formatArea(area)} 기준 ${formatEokBand(lo, hi)}`
-          : `㎡당 ${perBand}`}
-      </span>
-      <span className="band__sub">
-        {lo !== null && hi !== null && <>㎡당 {perBand} · </>}
-        가운데값 ㎡당 {formatManWon(band.median)} · 근거: {label} · {count}
-        {note !== null && <> · {note}</>}
-        {marks.length > 0 && <> · {marks.join(' · ')}</>}
-      </span>
+      <span className="band__val">{t.val}</span>
+      <span className="band__sub">{t.sub}</span>
     </>
   );
-}
-
-/**
- * 값을 못 내는 층의 사유.
- *
- * ⛔ `no_evidence` 에 "표본 부족"을 쓰지 않는다 — "조금만 더 모으면 나오나?"라는 오해를
- *    만든다(결정 0001). 그 층은 아예 줄로 그리지 않고 각주에서 한 번만 말한다.
- */
-function missingLabel(status: string): string {
-  if (status === 'floor_1f') {
-    // ⛔ "그 자리를 알려 주는 자료가 공공데이터에 없다"고 쓰지 않는다 — 틀린 말로 드러났다
-    //    (도로접면·상권 안팎은 자료에 있고, 그것까지 맞춰 다시 채점해도 기준선을 못 넘었다 —
-    //    docs/backtest/1층-유형축-검증.md). 숫자는 여기 적지 않고 첫 화면 성적표 카드로 보낸다.
-    return '1층은 내지 않습니다 — 같은 1층이라도 큰길 코너인지 골목 안쪽인지에 따라 값이 크게 갈립니다. 길의 넓이와 상권 안팎까지 맞춰 다시 채점해 봤지만 오차가 기준선을 넘어, 믿고 쓸 값이 못 됩니다. 층마다 얼마나 맞는지는 건물을 고르기 전 첫 화면의 「참고 시세는 얼마나 맞나」 카드에서 볼 수 있습니다.';
-  }
-  return '표본 부족 — 곁에서 참고할 만한 거래를 아직 찾지 못했습니다. 거래가 쌓이면 나올 수 있습니다.';
 }

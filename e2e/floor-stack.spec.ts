@@ -3744,3 +3744,94 @@ test.describe('그림 — 참고 매매 시세 (결정 0038 A)', () => {
     await page.emulateMedia({ media: null });
   });
 });
+
+// ── 역할 요약 판 (👤 결정 0039 Q2 · §4-2 · §4-9 · W2) ──────────────────────────────────────
+// 값 고르기·빈 값 갈래·판단 낱말·추가 호출 0 은 단위 시험(`roleSummary.test`·`RoleSummary.test`)이 덮는다.
+// 여기서만 보이는 것은 **자리(건물 머리 위)·좁은 폭 넘침·종이에서 빠짐·단추 높이**다.
+
+test.describe('층별 스택뷰 — 역할 요약 판', () => {
+  async function openWithRole(page: Page, role: string | null) {
+    if (role !== null) {
+      await page.addInitScript((r) => {
+        // ⚠️ 이 파일의 타입 검사는 브라우저 타입(DOM)을 안 켠다 — 전역을 좁은 모양으로 꺼내 쓴다(시험 AQ 와 같은 사정).
+        const w = globalThis as unknown as { localStorage: { setItem(k: string, v: string): void } };
+        w.localStorage.setItem('sangga.viewerRole', r);
+      }, role);
+    }
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(
+      page,
+      [parcelTx()],
+      priceBands(),
+      [floorRow({ floor_no: 2 }), floorRow()],
+      industryMix(),
+      undefined,
+      undefined,
+      rentStats(),
+    );
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).first().click();
+    await expect(page.locator('section.stack .stack__head')).toBeVisible();
+  }
+
+  test('BF. 역할을 고르면 건물 머리 위에 타일 판(근거·등급 줄) · 역할이 없으면 판 없음 · 412px 넘침 0 · 종이에서는 빠진다', async ({
+    page,
+  }) => {
+    // ① 역할 없음 — 판이 없다(지금 화면 그대로).
+    await openWithRole(page, null);
+    await expect(page.locator('section.stack .stack__head')).toBeVisible();
+    await expect(page.locator('.rsum')).toHaveCount(0);
+
+    // ② 투자자 — 판이 건물 머리 **앞**(같은 부모) · 시세 타일은 C등급 추정 색 · 임대 타일은 「상권 평균」.
+    await openWithRole(page, '투자자');
+    const sum = page.locator('section.stack > .rsum');
+    await expect(sum).toBeVisible();
+    await expect(sum.locator('.rsum__question')).toHaveText('얼마고 얼마 벌리나');
+    await expect(sum.locator('.rsum__tile--rent')).toContainText('상권 평균');
+    await expect(sum.locator('.rsum__tile--band .grade__badge--est')).toHaveText('C등급 · 파생 추정');
+    expect(await sum.locator('.rsum__tile').count()).toBeGreaterThanOrEqual(3);
+    expect(
+      await sum.evaluate((e) => {
+        const head = e.parentElement!.querySelector(':scope > .stack__head')!;
+        return (e.compareDocumentPosition(head) & 4) !== 0; // 4 = 머리가 판 뒤에 온다
+      }),
+    ).toBe(true);
+    // 판이 건물 이름보다 위(첫 3초).
+    const sumBox = (await sum.boundingBox())!;
+    const titleBox = (await page.locator('.stack__title').boundingBox())!;
+    expect(sumBox.y).toBeLessThan(titleBox.y);
+    // 좁은 폭에서도 판 안·페이지 가로 넘침이 없다.
+    expect(await sum.evaluate((e) => e.scrollWidth - e.clientWidth)).toBeLessThanOrEqual(0);
+    expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+
+    // ③ 종이 — 판은 빠지고(§4-2) 건물 머리는 그대로.
+    await page.emulateMedia({ media: 'print' });
+    await expect(sum).toBeHidden();
+    await expect(page.locator('section.stack .stack__head')).toBeVisible();
+    await page.emulateMedia({ media: null });
+  });
+
+  test('BG. 중개사 판의 「한 장으로 뽑기」 — 화면 44px 이상 · 누르면 인쇄 창 · 종이에서는 판째 빠진다', async ({ page }) => {
+    await openWithRole(page, '중개사');
+    const btn = page.locator('.rsum').getByRole('button', { name: '한 장으로 뽑기' });
+    await expect(btn).toBeVisible();
+    expect((await btn.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await expect(page.locator('.rsum__tile--owner')).toContainText('사용승인');
+    // 인쇄 창은 흉내만 — 불렸는지 센다.
+    await page.evaluate(() => {
+      const w = globalThis as unknown as { print: () => void; __printed: number };
+      w.__printed = 0;
+      w.print = () => {
+        w.__printed += 1;
+      };
+    });
+    await btn.click();
+    expect(await page.evaluate(() => (globalThis as unknown as { __printed: number }).__printed)).toBe(1);
+    await page.emulateMedia({ media: 'print' });
+    await expect(page.locator('.rsum')).toBeHidden();
+    await page.emulateMedia({ media: null });
+  });
+});

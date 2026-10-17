@@ -62,7 +62,7 @@ import {
   formatQuarter,
   formatWon,
   formatYearMonth,
-  oneInEvery,
+  floorMissingPhrase,
 } from '../lib/format';
 import { FOUNDER_CHIP_ALL, type FounderChip } from '../lib/founderChips';
 import {
@@ -93,6 +93,7 @@ import { OpenCloseSection } from './OpenCloseSection';
 import { EmptySection } from './EmptySection';
 import { FloorGapSection } from './FloorGapSection';
 import { SectionCard } from './SectionCard';
+import { RoleSummary } from './RoleSummary';
 
 /**
  * 구 단가에서 수치를 보여줄 최소 표본 수(결정 0012).
@@ -230,6 +231,11 @@ type Props = {
    * 요약을 못 받았으면 부르지 않는다(App 은 모름 = 숨김으로 읽는다).
    */
   onUnitListedCount?: (bldId: string, count: number) => void;
+  /**
+   * 역할 요약 판(결정 0039 W2)의 「한 장으로 뽑기」가 인쇄 창 **전에** 부른다 — App 의 `handleBeforePrint`(인쇄 단추와 같은 것).
+   * 안 줌 = 기록 없이 인쇄만.
+   */
+  onBeforePrint?: () => void;
 };
 
 /** 고른 층 하나의 첫 쪽 호 목록(받은 줄 + 그 층 전체 호실 수). */
@@ -305,6 +311,7 @@ export function FloorStack({
   building,
   viewerRole = null,
   founderChip = FOUNDER_CHIP_ALL,
+  onBeforePrint,
   unitPrintMode = 'none',
   unitPrintOpenSignal = 0,
   onUnitListedCount,
@@ -746,11 +753,8 @@ export function FloorStack({
 
   // 각주 숫자는 DB에서 계산해 온다. 못 불러왔으면 숫자를 빼고 경고만 남긴다
   // — 옛 숫자로 되돌리면 이 코드가 고치려던 문제(화면만 틀려지는 것)가 그대로 살아난다.
-  const missingEvery = stats ? oneInEvery(stats.floor_missing_pct) : null;
-  const missingPhrase =
-    stats && missingEvery
-      ? `약 ${missingEvery}곳 중 1곳(${stats.floor_missing_pct}%)`
-      : '적지 않은 수';
+  // 글은 `floorMissingPhrase` 하나에서 — 역할 요약 판의 1층 칸이 같은 글을 쓴다(결정 0039 W2).
+  const missingPhrase = floorMissingPhrase(stats?.floor_missing_pct) ?? '적지 않은 수';
   // "서비스 지역"을 밝히는 이유: 뷰가 세는 범위가 **지금 볼 수 있는 구**뿐이다(2026-08-22a).
   // 예전에는 전국을 세서, 화면이 보여주지도 않는 지역까지 섞인 숫자를 각주가 말했다.
   const basisPhrase = stats
@@ -1014,6 +1018,24 @@ export function FloorStack({
 
   return (
     <section className="stack">
+      {/*
+        역할 요약 판(결정 0039 W2) — 건물 머리 **위**(첫 3초에 보이게). 역할이 없으면 아무것도 안 그린다.
+        ⓘ 층 행이 이 건물 것이 아니면(건물이 바뀐 첫 그림) 판이 스스로 안 그린다(`roleSummaryView`) · 곁 카드 값은 판이 pnu 로 대조한다.
+      */}
+      <RoleSummary
+        role={viewerRole}
+        chip={founderChip}
+        building={building}
+        floors={floors}
+        stats={stats}
+        txs={txs}
+        bands={bands}
+        bandsFailed={bandsFailed}
+        landPrice={landPrice}
+        noCoord={lacksCoord(building)}
+        prefetch={sidePrefetch}
+        onBeforePrint={onBeforePrint}
+      />
       <header className="stack__head">
         <h2 className="stack__title">{head.bld_nm || '(이름 없는 건물)'}</h2>
         <p className="stack__addr">{head.road_addr || '주소 없음'}</p>
