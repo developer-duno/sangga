@@ -355,7 +355,7 @@ describe('SectionCard — 역할을 바꿀 때 (결정 0036 결정 18)', () => {
 describe('SectionCard — 제목 아래 날짜 줄 (S3 · 👤 2026-10-16)', () => {
   it('자료 칸이 있으면 제목 **바로 아래**에 \'자료: 이름 날짜\' 한 줄 — 접혀 있어도 보인다', async () => {
     const { container } = render(
-      <SectionCard plan={SECTION_PLAN.band} className="band" summary="요약 한 줄">
+      <SectionCard plan={SECTION_PLAN.floorgap} className="gap" summary="요약 한 줄">
         <p>본문</p>
       </SectionCard>,
     );
@@ -365,12 +365,13 @@ describe('SectionCard — 제목 아래 날짜 줄 (S3 · 👤 2026-10-16)', () 
       return el!;
     });
     expect(line.textContent).toBe(
-      '자료: 국토부 실거래 2026년 10월 계약분까지 (최근 두 달은 신고 중) · 국세청 기준시가 2026년 1월 1일 고시',
+      // 부동산원 줄은 이 표본 표에 없어 그 조각만 빠진다(아래 시험과 같은 규칙).
+      '자료: 국세청 기준시가 2026년 1월 1일 고시 · 국토부 실거래 2026년 10월 계약분까지 (최근 두 달은 신고 중)',
     );
     // 자리 — 제목(h3) 바로 다음, 요약 줄 앞.
     expect(line.previousElementSibling?.tagName).toBe('H3');
     expect(line.nextElementSibling?.className).toBe('card__summary');
-    // 접힌 카드(참고 매매 시세는 처음 접힘)에서도 숨지 않는다 — 본문 칸 밖이다.
+    // 접힌 카드(층별 공표값은 처음 접힘)에서도 숨지 않는다 — 본문 칸 밖이다.
     expect(screen.getByRole('button').getAttribute('aria-expanded')).toBe('false');
     expect(line.closest('[hidden]')).toBeNull();
   });

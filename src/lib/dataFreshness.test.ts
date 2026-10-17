@@ -218,7 +218,7 @@ describe('isDataFreshnessList — 서버 응답의 모양', () => {
 
 /* ── 카드마다 '자료 이름 + 날짜' 한 줄 (S3 · 👤 2026-10-16) ─────────────────────────────── */
 
-/** 2026-10-16 운영 `get_data_freshness` 의 열한 줄(기준값만 — 날짜 줄은 next_expected·cadence 를 안 쓴다). */
+/** 2026-10-16 운영 `get_data_freshness` 의 줄(기준값만 — 날짜 줄은 next_expected·cadence 를 안 쓴다) · 결정 0041 로 성적표 줄을 뺀 열 줄. */
 function rows1016(): DataFreshnessRow[] {
   const r = (src: string, basis_kind: string, basis: string | null) =>
     row({ src, basis_kind, basis, next_expected: null, cadence: '-' });
@@ -231,7 +231,6 @@ function rows1016(): DataFreshnessRow[] {
     r('건축 인허가', '기준월', '202608'),
     r('국세청 기준시가', '고시일', '2026-01-01'),
     r('상권 임대 동향 (부동산원)', '분기', '2026Q2'),
-    r('참고 시세 성적표', '적재일', '2026-10-08'),
     r('필지 (토지 특성)', '공시 연도', '2026'),
     r('상권 개업·폐업 (서울시)', '분기', '20262'),
   ];
@@ -240,7 +239,7 @@ function rows1016(): DataFreshnessRow[] {
 /**
  * 카드마다 기대하는 한 줄 — 👤 시안(SFpojgaYvHEdRnbx8ZTfQM)의 예시값(10-16 운영 값일 때) + 👤 10-16 보완 결정
  * B1(실거래 끝말 「(최근 두 달은 신고 중)」) · B3(층 목록에 실거래).
- * ⛔ 줄이 없는 카드 다섯 — 빈 카드 셋(업종별 추정매출·유동인구·이 자리 가게 이력 · 결정 ②) + LH 공고·성적표(B2).
+ * ⛔ 줄이 없는 카드 넷 — 빈 카드 셋(업종별 추정매출·유동인구·이 자리 가게 이력 · 결정 ②) + LH 공고(B2).
  */
 const TX_PIECE = '국토부 실거래 2026년 10월 계약분까지 (최근 두 달은 신고 중)';
 
@@ -249,7 +248,6 @@ const EXPECTED_LINES: Record<string, string | null> = {
   floors: '자료: 건축물대장 2026년 8월 판 · 상권정보 2026년 2분기 · 국토부 실거래 2026년 10월 계약분까지 (최근 두 달은 신고 중)',
   industry: '자료: 상권정보 2026년 2분기 · 건축 인허가 2026년 8월 기준',
   tx: '자료: 국토부 실거래 2026년 10월 계약분까지 (최근 두 달은 신고 중)',
-  band: '자료: 국토부 실거래 2026년 10월 계약분까지 (최근 두 달은 신고 중) · 국세청 기준시가 2026년 1월 1일 고시',
   floorgap:
     '자료: 국세청 기준시가 2026년 1월 1일 고시 · 국토부 실거래 2026년 10월 계약분까지 (최근 두 달은 신고 중) · 부동산원 2026년 2분기 조사',
   rent: '자료: 부동산원 2026년 2분기 조사',
@@ -258,21 +256,20 @@ const EXPECTED_LINES: Record<string, string | null> = {
   pop: null,
   history: null,
   lhNotice: null,
-  scorecard: null,
   txFlow: '자료: 국토부 실거래 2026년 10월 계약분까지 (최근 두 달은 신고 중)',
 };
 
 describe('cardSourceLine — 카드 제목 아래 날짜 줄 (S3)', () => {
   const ALL_PLANS: Record<string, SectionPlan> = { ...SECTION_PLAN, ...ENTRY_SECTION_PLAN };
 
-  it('카드 열네 장 전부 — 날짜 줄 카드 아홉 장은 결정 글 그대로, 다섯 장(빈 카드 셋 · LH · 성적표)은 줄이 없다', () => {
+  it('카드 열두 장 전부 — 날짜 줄 카드 여덟 장은 결정 글 그대로, 넷(빈 카드 셋 · LH)은 줄이 없다', () => {
     // 표가 카드를 빠짐없이 덮는다(카드가 새로 생기면 여기 기대 줄을 먼저 정한다).
     expect(Object.keys(EXPECTED_LINES).sort()).toEqual(Object.keys(ALL_PLANS).sort());
     for (const [key, plan] of Object.entries(ALL_PLANS)) {
       expect(cardSourceLine(plan.sources, rows1016()), key).toBe(EXPECTED_LINES[key]);
     }
     const withLine = Object.values(ALL_PLANS).filter((p) => cardSourceLine(p.sources, rows1016()));
-    expect(withLine).toHaveLength(9);
+    expect(withLine).toHaveLength(8);
   });
 
   it('종류별 끝말 — 판·계약분까지(최근 두 달은 신고 중)·계산·기준·고시·조사, 상권정보·서울시 분기는 끝말 없음', () => {
@@ -318,13 +315,12 @@ describe('cardSourceLine — 카드 제목 아래 날짜 줄 (S3)', () => {
     );
   });
 
-  it('빈 카드 셋(결정 ②)과 LH 공고·성적표(B2)는 자료 칸이 아예 없다', () => {
+  it('빈 카드 셋(결정 ②)과 LH 공고(B2)는 자료 칸이 아예 없다', () => {
     const none: SectionPlan[] = [
       SECTION_PLAN.sales,
       SECTION_PLAN.pop,
       SECTION_PLAN.history,
       ENTRY_SECTION_PLAN.lhNotice,
-      ENTRY_SECTION_PLAN.scorecard,
     ];
     for (const plan of none) {
       expect(plan, plan.title).not.toHaveProperty('sources');
@@ -332,10 +328,9 @@ describe('cardSourceLine — 카드 제목 아래 날짜 줄 (S3)', () => {
     }
   });
 
-  it('실거래 조각은 어느 카드에서나 같은 글이다(B1 · 실거래 기록·참고 시세·세 잣대·동네 흐름·층 목록)', () => {
+  it('실거래 조각은 어느 카드에서나 같은 글이다(B1 · 실거래 기록·층별 공표값·동네 흐름·층 목록)', () => {
     const plans: SectionPlan[] = [
       SECTION_PLAN.tx,
-      SECTION_PLAN.band,
       SECTION_PLAN.floorgap,
       SECTION_PLAN.floors,
       ENTRY_SECTION_PLAN.txFlow,
@@ -381,15 +376,15 @@ describe('카드 자료 이름 ↔ 정본 서버 함수의 자료 이름 (S3)', 
     expect(serverSrcLabels("select 1, '함수 없음'")).toEqual([]);
   });
 
-  it('정본의 자료 이름 열한 개 = 카드 자료 표의 이름 여덟 개 + 카드에 안 붙는 셋(필지 · LH · 성적표)', () => {
+  it('정본의 자료 이름 열 개 = 카드 자료 표의 이름 여덟 개 + 카드에 안 붙는 둘(필지 · LH) — 성적표 줄은 결정 0041 로 뺐다', () => {
     const sql = readFileSync('supabase/schema.sql', 'utf8');
     const server = serverSrcLabels(sql);
-    expect(server).toHaveLength(11);
+    expect(server).toHaveLength(10);
+    expect(server).not.toContain('참고 시세 성적표');
     const ours = [
       ...Object.values(CARD_SOURCES).map((s) => s.src),
       '필지 (토지 특성)',
       'LH 상가 공고',
-      '참고 시세 성적표',
     ];
     expect([...server].sort()).toEqual([...ours].sort());
   });

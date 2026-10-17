@@ -1,14 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import { roleSummaryView, floorUnknownNote, type RoleSummaryInput, type RoleSummaryView } from './roleSummary';
 import type {
+  BasePrice,
   BuildingHit,
   DistrictOpenClose,
   FloorRow,
   IndustryMedian,
   IndustryMix,
   ParcelTransaction,
-  PriceBand,
   RentStat,
+  SigunguTxStat,
 } from '../types';
 
 /**
@@ -62,26 +63,26 @@ const BUILDING: BuildingHit = {
   has_roof: false,
 };
 
-function band(no: number, over: Partial<PriceBand>): PriceBand {
+function base(no: number, won: number, ho = 1): BasePrice {
+  return { floor_no: no, median_price_per_m2: won, ho_cnt: ho, notice_date: '2026-01-01' };
+}
+
+/** 기준시가 — 2층·3층에만(1층 없음 · 땅에 가장 가까운 지상층 = 2층). */
+const BASES: BasePrice[] = [base(3, 4_000_000, 5), base(2, 5_960_000, 1)];
+
+function txStat(band: string, n: number, median: number | null = 3_800_000): SigunguTxStat {
   return {
-    floor_no: no,
-    status: 'ok',
-    stage: 'L5',
-    n: 7,
-    p25: 3_000_000,
-    median: 3_500_000,
-    p75: 4_000_000,
-    median_area_m2: 33,
-    window_from: '2024-01',
-    ...over,
+    floor_band: band,
+    n,
+    median_unit_price: median,
+    p25_unit_price: null,
+    p75_unit_price: null,
+    window_from: '202410',
+    sigungu_nm: '강남구',
   };
 }
 
-const BANDS: PriceBand[] = [
-  band(1, { status: 'floor_1f', stage: null, n: null, p25: null, median: null, p75: null, median_area_m2: null }),
-  band(2, {}),
-  band(3, { stage: 'L6', n: 12, p25: 2_000_000, median: 2_400_000, p75: 2_800_000 }),
-];
+const TX_STATS: SigunguTxStat[] = [txStat('지하', 3), txStat('1층', 213), txStat('2층', 41, 2_500_000), txStat('3층이상', 57, 2_100_000)];
 
 function tx(ym: string, price: number, over: Partial<ParcelTransaction> = {}): ParcelTransaction {
   return {
@@ -187,8 +188,8 @@ function input(over: Partial<RoleSummaryInput> = {}): RoleSummaryInput {
     floors: FLOORS,
     stats: { snapshot_ym: '202606', store_cnt: 1000, floor_missing_cnt: 329, floor_missing_pct: 32.9 },
     txs: TXS,
-    bands: BANDS,
-    bandsFailed: false,
+    txStats: TX_STATS,
+    basePrices: BASES,
     landPrice: { land_price: 45_230_000, land_price_year: 2025 },
     noCoord: false,
     rent: RENT,
@@ -244,63 +245,76 @@ describe('roleSummaryView — 역할 없음', () => {
 });
 
 describe('투자자 「얼마고 얼마 벌리나」', () => {
-  it('값이 다 있으면 시세 띠 · 이 땅 거래 · 상권 임대료 · 공시지가 넷', () => {
+  it('★ 값이 다 있으면 국세청 기준시가 · 이 땅 거래 · 상권 임대료 · 공시지가 넷 (결정 0041 E3)', () => {
     const v = view();
     expect(v.question).toBe('얼마고 얼마 벌리나');
-    expect(v.tiles.map((t) => t.key)).toEqual(['band', 'tx', 'rent', 'land']);
-    // 시세 = 값을 낸 줄 중 땅에 가장 가까운 지상층(2층) 한 줄 — 카드 글 그대로 + C등급(추정 색).
-    const b = tile(v, 'band')!;
-    expect(b.label).toBe('참고 시세 (2층)');
-    expect(b.lines).toEqual(['비슷한 호실 한 칸 33㎡ (10평) 기준 1.0억~1.3억']);
-    expect(b.basis).toEqual(['㎡당 300만~400만 · 가운데값 ㎡당 350만 · 근거: 500m 안 같은 층 · 거래 7건 · 먼 근거']);
-    expect(b.grade).toEqual({ text: 'C등급 · 파생 추정', est: true });
+    expect(v.tiles.map((t) => t.key)).toEqual(['base', 'tx', 'rent', 'land']);
+    // 기준시가 = 값이 있는 지상층 가운데 땅에 가장 가까운 층(2층 · 메인 ㉠) — 공식 고시 · 시세 아님 꼬리표.
+    const b = tile(v, 'base')!;
+    expect(b.label).toBe('국세청 기준시가 (2층)');
+    expect(b.lines).toEqual(['㎡당 596만']);
+    expect(b.basis).toEqual(['호 1개 가운데값 · 2026년 1월 1일 고시 · 세무 기준가격 — 시세 아님']);
+    expect(b.grade).toEqual({ text: 'A등급 · 공식 고시', est: false });
     expect(tile(v, 'tx')!.lines).toEqual(['이 땅 거래 4건']);
     expect(tile(v, 'rent')!.lines).toEqual(['㎡당 임대료 27,060원']);
     expect(tile(v, 'rent')!.basis).toEqual(['상권 평균 · 집합상가 · 2026년 2분기 조사', '역삼역 · 부동산원 조사구역 서울>강남>테헤란로']);
     expect(tile(v, 'land')!.lines).toEqual(['땅 1㎡당 4,523만원']);
-    expect(v.answer).toBe('2층 참고 시세는 비슷한 호실 한 칸 33㎡ (10평) 기준 1.0억~1.3억입니다. 이 땅 신고 거래는 4건입니다.');
+    expect(v.answer).toBe('이 땅 신고 거래는 4건입니다. 2층 국세청 기준시가는 ㎡당 596만(세무 기준가격)입니다.');
   });
 
-  it('결정 0040 — 서버가 묶음을 주면 시세 타일 근거에도 「업무 거래 N건」이 흘러온다(카드와 같은 bandText · ㉦)', () => {
-    const v = view({ bands: [BANDS[0], band(2, { use_group: 'office' }), BANDS[2]] });
-    expect(tile(v, 'band')!.basis).toEqual([
-      '㎡당 300만~400만 · 가운데값 ㎡당 350만 · 근거: 500m 안 같은 층 · 업무 거래 7건 · 먼 근거',
+  it('★ 기준시가 층 = 1층도 포함 · 지하·옥탑은 후보가 아니다(메인 ㉠)', () => {
+    const one = view({ basePrices: [...BASES, base(1, 9_000_000, 4)] });
+    expect(tile(one, 'base')!.label).toBe('국세청 기준시가 (1층)');
+    expect(tile(one, 'base')!.lines).toEqual(['㎡당 900만']);
+    // 지하에만 기준시가가 있으면 기준시가 타일이 안 서고 구 상가 단가로 넘어간다.
+    const floors = [floor(2, 1), floor(1, 2), floor(-1, 0)];
+    const under = view({ floors, basePrices: [base(-1, 1_200_000, 3)] });
+    expect(tile(under, 'base')).toBeUndefined();
+    expect(tile(under, 'txstat')!.label).toBe('구 상가 단가 (1층)');
+  });
+
+  it('★ 기준시가가 없으면 구 상가 단가 — 땅에 가장 가까운 지상층의 층대 · 표본 수 · 상가 거래 기준 · A등급 실거래', () => {
+    const v = view({ basePrices: [] });
+    expect(v.tiles.map((t) => t.key)).toEqual(['txstat', 'tx', 'rent', 'land']);
+    const t = tile(v, 'txstat')!;
+    expect(t.label).toBe('구 상가 단가 (1층)');
+    expect(t.lines).toEqual(['㎡당 380만']);
+    expect(t.basis).toEqual(['강남구 1층 · 표본 213건 · 상가 거래 기준']);
+    expect(t.grade).toEqual({ text: 'A등급 · 실거래', est: false });
+    expect(v.answer).toBe('이 땅 신고 거래는 4건입니다. 강남구 1층 상가 거래 단가 가운데값은 ㎡당 380만입니다.');
+    // 2층부터 있는 건물(1층 없음) — 2층 층대 · 5층부터면 3층이상 층대.
+    expect(tile(view({ basePrices: null, floors: [floor(3, 1), floor(2, 1)] }), 'txstat')!.basis).toEqual([
+      '강남구 2층 · 표본 41건 · 상가 거래 기준',
     ]);
-    // 주거 층(값 안 냄)은 시세 타일 대상이 아니다 — 다음 값 낸 층(3층)이 선다.
-    const noValue = { stage: null, n: null, p25: null, median: null, p75: null, median_area_m2: null };
-    const r = view({
-      bands: [
-        BANDS[0],
-        band(2, { status: 'floor_resid', ...noValue }),
-        band(3, { stage: 'L6', n: 12, p25: 2_000_000, median: 2_400_000, p75: 2_800_000, use_group: 'shop' }),
-      ],
-    });
-    expect(tile(r, 'band')!.label).toBe('참고 시세 (3층)');
-    expect(tile(r, 'band')!.basis[0]).toContain('상가 거래 12건');
+    const high = view({ basePrices: null, floors: [floor(6, 1), floor(5, 1)] });
+    expect(tile(high, 'txstat')!.label).toBe('구 상가 단가 (5층)');
+    expect(tile(high, 'txstat')!.basis[0]).toBe('강남구 3층이상 · 표본 57건 · 상가 거래 기준');
   });
 
-  it('일부 실패(시세·임대·공시지가) = 그 칸 없음 — 「없음」이라 적지 않는다', () => {
-    const v = view({ bandsFailed: true, rent: null, landPrice: null });
+  it('구 상가 단가 표본 5건 미만이면 「표본 부족」 — 단가 문장도 없다', () => {
+    const v = view({ basePrices: [], txStats: [txStat('1층', 4)] });
+    expect(tile(v, 'txstat')!.lines).toEqual(['표본 부족']);
+    expect(tile(v, 'txstat')!.basis).toEqual(['강남구 1층 · 표본 4건 · 상가 거래 기준']);
+    expect(v.answer).toBe('이 땅 신고 거래는 4건입니다.');
+  });
+
+  it('일부 실패(기준시가·구 단가·임대·공시지가) = 그 칸 없음 — 「없음」이라 적지 않는다 · 타일 셋도 된다', () => {
+    const v = view({ basePrices: null, txStats: null, rent: null, landPrice: null });
     expect(v.tiles.map((t) => t.key)).toEqual(['tx']);
     expect(v.answer).toBe('이 땅 신고 거래는 4건입니다.');
+    expect(view({ basePrices: null, txStats: null }).tiles.map((t) => t.key)).toEqual(['tx', 'rent', 'land']);
     // 실거래까지 아직이면 답도 없다.
-    expect(view({ bandsFailed: true, rent: null, landPrice: null, txs: null }).answer).toBeNull();
+    expect(view({ basePrices: null, txStats: null, rent: null, landPrice: null, txs: null }).answer).toBeNull();
   });
 
-  it('0건 = 「이 땅 거래 0건」 · 대상 아님 = 카드 글 그대로(구 관문 · 조사 표본 밖)', () => {
-    const v = view({ txs: [], bands: [band(0, { floor_no: null, status: 'gate_fail' })], rent: [] });
+  it('0건 = 「이 땅 거래 0건」 · 대상 아님 = 카드 글 그대로(조사 표본 밖)', () => {
+    const v = view({ txs: [], rent: [] });
     expect(tile(v, 'tx')!.lines).toEqual(['이 땅 거래 0건']);
-    expect(tile(v, 'band')!.lines).toEqual(['아직 참고 시세를 내지 않는 구입니다']);
     expect(tile(v, 'rent')!.lines).toEqual(['부동산원 조사 대상 상권이 아닙니다']);
     expect(view({ rent: [], noCoord: true }).tiles.find((t) => t.key === 'rent')!.lines).toEqual([
       '위치 정보가 없어 속한 상권을 찾지 못했습니다',
     ]);
-    expect(v.answer).toBe('이 구는 아직 참고 시세를 내지 않습니다. 이 땅 신고 거래는 0건입니다.');
-  });
-
-  it('값을 낸 줄이 없으면 카드 요약 글 그대로', () => {
-    const v = view({ bands: [BANDS[0]] });
-    expect(tile(v, 'band')!.lines).toEqual(['이 건물에서는 값을 낸 층이 없습니다']);
+    expect(v.answer).toBe('이 땅 신고 거래는 0건입니다. 2층 국세청 기준시가는 ㎡당 596만(세무 기준가격)입니다.');
   });
 });
 
@@ -394,7 +408,7 @@ describe('중개사 「손님에게 뭘 보여 주나」', () => {
   });
 });
 
-describe('검사 반영 — 상권 여럿 · 시세 층 고르기 · 모름과 0 · 같은 땅 여러 동 · 거래 상한', () => {
+describe('검사 반영 — 상권 여럿 · 모름과 0 · 같은 땅 여러 동 · 거래 상한', () => {
   it('상권이 둘이면 업종·임대·개업폐업 셋 다 첫째 + 「외 상권 1곳」', () => {
     const two = view({
       role: '창업자',
@@ -406,15 +420,6 @@ describe('검사 반영 — 상권 여럿 · 시세 층 고르기 · 모름과 0
     expect(tile(two, 'rent')!.lines).toEqual(['㎡당 임대료 27,060원']);
     expect(tile(two, 'rent')!.basis[1]).toBe('역삼역 외 상권 1곳 · 부동산원 조사구역 서울>강남>테헤란로');
     expect(tile(two, 'openclose')!.basis[0]).toBe('역삼역 상권 외 상권 1곳 · 2026년 2분기');
-  });
-
-  it('시세 층 고르기 — 지하와 지상이 섞이면 지상층 · 지하만 값을 내면 그 지하 줄', () => {
-    const floors = [floor(2, 3), floor(1, 4), floor(-1, 1)];
-    const mixed = view({ floors, bands: [band(-1, { n: 9, p25: 1_000_000, median: 1_100_000, p75: 1_200_000 }), band(2, {})] });
-    expect(tile(mixed, 'band')!.label).toBe('참고 시세 (2층)');
-    const under = view({ floors, bands: [band(-1, { n: 9, p25: 1_000_000, median: 1_100_000, p75: 1_200_000 }), BANDS[0]] });
-    expect(tile(under, 'band')!.label).toBe('참고 시세 (지하 1층)');
-    expect(tile(under, 'band')!.basis[0]).toContain('거래 9건');
   });
 
   it('1층 점포 칸이 비면(모름) 「—」 — 「점포 0」이 아니다', () => {
@@ -443,8 +448,9 @@ describe('가드 — 판단 낱말 0 · 금지어 0 · 시세와 임대를 잇�
   const scenarios: RoleSummaryInput[] = (['투자자', '창업자', '중개사'] as const).flatMap((role) => [
     input({ role }),
     input({ role, chip: '카페' }),
-    input({ role, txs: [], rent: [], bands: [BANDS[0]] }),
-    input({ role, bandsFailed: true, rent: null, mix: null, median: null, openClose: null, landPrice: null, txs: null }),
+    input({ role, txs: [], rent: [], basePrices: [] }),
+    input({ role, basePrices: [], txStats: [txStat('1층', 4)] }),
+    input({ role, basePrices: null, txStats: null, rent: null, mix: null, median: null, openClose: null, landPrice: null, txs: null }),
   ]);
 
   it('한 줄 답에 판단 낱말이 없다 — 양성 대조: 탐지가 실제로 잡는다', () => {
@@ -462,10 +468,12 @@ describe('가드 — 판단 낱말 0 · 금지어 0 · 시세와 임대를 잇�
     expect(forbiddenWords('감정 가는 없습니다')).toEqual(['감정가']);
   });
 
-  it('임대 타일에 시세·거래 숫자가 없고, 시세 타일에 임대 숫자가 없고, 투자자 한 줄 답에 임대가 없다', () => {
+  it('임대 타일에 시세·거래 숫자가 없고, 단가 타일에 임대 숫자가 없고, 투자자 한 줄 답에 임대가 없다', () => {
     const v = view();
     const rent = tileText(v, 'rent');
-    const price = [tileText(v, 'band'), tileText(v, 'tx'), tileText(v, 'land')].join(' ');
+    const price = [tileText(v, 'base'), tileText(view({ basePrices: [] }), 'txstat'), tileText(v, 'tx'), tileText(v, 'land')].join(' ');
+    expect(price).toContain('국세청 기준시가');
+    expect(price).toContain('구 상가 단가');
     expect(rent).not.toMatch(/억|만원|㎡당 \d+만|거래|시세|공시/);
     expect(rent).toContain('상권 평균');
     expect(price).not.toMatch(/27,060|임대|공실|수익률/);

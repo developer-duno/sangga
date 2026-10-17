@@ -4,6 +4,7 @@ import {
   FLOOR_GAP_FOOT,
   FLOOR_GAP_SUMMARY,
   GAP_NONE,
+  baseSub,
   floorGapHeads,
   floorGapRows,
   floorGapShowable,
@@ -13,7 +14,7 @@ import {
 } from './floorGap';
 
 /**
- * 「층 차이 세 잣대」 짝짓기(결정 0036 결정 15 · 물결 1-C2).
+ * 「층별 공표값 나란히」 짝짓기(결정 0036 결정 15 · 물결 1-C2 · 결정 0041).
  *
  * 지키는 것: ① 세 자료를 **원래 값 그대로** 나른다(나누기·비율 0 — 값 글자를 정확히 단언하므로
  * 나누기가 하나라도 끼면 여기서 빨강) ② 층 → 층대·층 구간 열쇠 ③ 빠진 자료는 그 칸만 '–'.
@@ -107,7 +108,8 @@ describe('floorGapRows — 층마다 세 칸', () => {
     expect(rows.map((r) => r.label)).toEqual(['옥탑', '12층', '7층', '2층', '1층', '지하 1층', '지하 2층']);
 
     const one = rows.find((r) => r.floorNo === 1)!;
-    expect(one.base).toEqual({ value: '500만', sub: '호 12개 가운데값' });
+    // 기준시가 작은 글 = 「호 N개 가운데값 · 고시일」(결정 0041 ㉤ — 내린 밴드 카드에서 옮겨 온 글).
+    expect(one.base).toEqual({ value: '500만', sub: '호 12개 가운데값 · 2026년 1월 1일 고시' });
     expect(one.tx).toEqual({ value: '㎡당 380만', sub: '1층 · 213건' });
     expect(one.rent).toEqual({ value: '74.6', sub: '상권 평균 · 1층' });
 
@@ -238,19 +240,29 @@ describe('경계 — 부동산원 열쇠 6·10·11층 · 표본 n=5(=TX_MIN_SAMP
   });
 });
 
-describe('floorGapShowable — 값 든 칸이 둘 이상 · 그중 하나는 국세청·부동산원', () => {
-  it('구 실거래만 있으면 숨김 · 국세청이나 부동산원이 하나라도 있으면 선다', () => {
-    expect(floorGapShowable(floorGapRows([floor(1)], null, TX, null))).toBe(false);
-    expect(floorGapShowable(floorGapRows([floor(1)], [], TX, []))).toBe(false); // 빈 배열 = null 처럼
-    expect(floorGapShowable(floorGapRows([floor(1)], [base(1, 5_000_000)], TX, null))).toBe(true);
-    expect(floorGapShowable(floorGapRows([floor(1)], null, TX, [rent()]))).toBe(true);
+describe('floorGapShowable — 값 든 칸이 하나라도 있으면 선다 (결정 0041 E2)', () => {
+  it('★ 기준시가만 있는 건물도 선다 · 구 실거래만 · 부동산원만 있어도 선다', () => {
+    expect(floorGapShowable(floorGapRows([floor(1)], [base(1, 5_000_000)], null, null))).toBe(true);
+    expect(floorGapShowable(floorGapRows([floor(1)], null, TX, null))).toBe(true);
+    expect(floorGapShowable(floorGapRows([floor(1)], null, null, [rent()]))).toBe(true);
+    // 표본 부족(값 아님)이 섞여도 기준시가 한 칸이면 선다.
+    expect(floorGapShowable(floorGapRows([floor(2)], [base(2, 5_000_000)], TX, null))).toBe(true);
   });
 
-  it('모든 층이 – 인 칸은 빈 칸으로 친다 · 국세청 한 칸만으로는 안 선다', () => {
+  it('★ 셋 다 비면 숨김 — null · 빈 배열 · 모든 층 – · 표본 부족뿐', () => {
+    expect(floorGapShowable(floorGapRows([floor(1)], null, null, null))).toBe(false);
+    expect(floorGapShowable(floorGapRows([floor(1)], [], [], []))).toBe(false); // 빈 배열 = null 처럼
     // 옥탑만 있는 건물 — 부동산원은 구간이 없어 전부 '–'.
     expect(floorGapShowable(floorGapRows([floor(99)], null, null, [rent()]))).toBe(false);
-    expect(floorGapShowable(floorGapRows([floor(1)], [base(1, 5_000_000)], null, null))).toBe(false);
     // 표본 부족뿐인 실거래는 값이 아니다.
-    expect(floorGapShowable(floorGapRows([floor(2)], [base(2, 5_000_000)], TX, null))).toBe(false);
+    expect(floorGapShowable(floorGapRows([floor(2)], null, TX, null))).toBe(false);
+  });
+});
+
+describe('baseSub — 기준시가 칸 작은 글 (결정 0041 ㉤)', () => {
+  it('고시일이 있으면 「호 N개 가운데값 · YYYY년 M월 D일 고시」 · 못 읽으면 서버 글자 그대로 · 없으면 호 수만', () => {
+    expect(baseSub(base(1, 5_000_000, 1))).toBe('호 1개 가운데값 · 2026년 1월 1일 고시');
+    expect(baseSub({ ...base(1, 5_000_000, 3), notice_date: '2026.1.1' })).toBe('호 3개 가운데값 · 2026.1.1 고시');
+    expect(baseSub({ ...base(1, 5_000_000, 1_234), notice_date: '' })).toBe('호 1,234개 가운데값');
   });
 });

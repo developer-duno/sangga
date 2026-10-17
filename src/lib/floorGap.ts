@@ -1,11 +1,11 @@
 import type { BasePrice, FloorRow, RentStat, SigunguTxStat } from '../types';
 import { pairBasePrices } from './basePrice';
 import { TX_MIN_SAMPLE } from './appConstants';
-import { formatFloor, formatManWon, formatMonthKo } from './format';
+import { formatDayKo, formatFloor, formatManWon, formatMonthKo } from './format';
 import { defaultBldType, floorRentLines, quarterLabel, rentSummary } from './rentStats';
 
 /**
- * 「층 차이 세 잣대 (공표값 나란히)」 카드의 **순수 짝짓기**(결정 0036 결정 15 · 물결 1-C2).
+ * 「층별 공표값 나란히」 카드의 **순수 짝짓기**(결정 0036 결정 15 · 물결 1-C2 · 결정 0041 로 제목·서는 조건 바뀜).
  *
  * 이 건물의 층마다 세 자료를 **각자 원래 단위 그대로** 한 줄에 나란히 놓는다:
  *   ① 국세청 기준시가(그 층 호실들의 ㎡당 가운데값 — `pairBasePrices` 그대로)
@@ -80,6 +80,12 @@ export function pickRentRow(rows: readonly RentStat[] | null): RentStat | null {
   return rows.find((r) => r.bld_type === type) ?? null;
 }
 
+/** 기준시가 칸의 작은 글 — 「호 N개 가운데값 · YYYY년 M월 D일 고시」(고시일이 없으면 호 수만). */
+export function baseSub(b: BasePrice): string {
+  const ho = `호 ${b.ho_cnt.toLocaleString('ko-KR')}개 가운데값`;
+  return b.notice_date ? `${ho} · ${formatDayKo(b.notice_date) ?? b.notice_date} 고시` : ho;
+}
+
 /**
  * 세 자료를 층마다 한 줄로 짝짓는다. 줄 차례 = `floors` 차례(층 목록 카드와 같다 — 높은 층 위).
  * 자료가 null(못 받음)이면 그 칸은 전부 '–'.
@@ -99,9 +105,9 @@ export function floorGapRows(
 
   return floors.map((f) => {
     const b = baseByFloor.get(f.floor_no);
-    const base: GapCell = b
-      ? { value: formatManWon(b.median_price_per_m2), sub: `호 ${b.ho_cnt.toLocaleString('ko-KR')}개 가운데값` }
-      : NONE;
+    // 작은 글 = 「호 N개 가운데값 · 2026년 1월 1일 고시」(결정 0041 ㉤ — 내린 밴드 카드의 기준시가 줄이 적던 글을
+    // 그대로 옮겼다 · 고시일은 서버 글자 · 못 읽으면 원본 그대로 · 없으면 호 수만).
+    const base: GapCell = b ? { value: formatManWon(b.median_price_per_m2), sub: baseSub(b) } : NONE;
 
     let tx: GapCell = NONE;
     const bandName = txBandOf(f.floor_no);
@@ -161,14 +167,12 @@ export function floorGapHeads(
 }
 
 /**
- * 카드를 세울 만한가 — **값이 든 칸(자료)이 둘 이상**이고 그중 하나는 국세청·부동산원이어야 한다(👤 2026-10-11).
- * 구 실거래는 거의 늘 오므로, 국세청·부동산원이 둘 다 비면(실패·null·빈 배열·모든 층 '–') 그 한 칸만으로
- * '나란히'가 성립하지 않는다 — 카드째 숨긴다. 칸에 값이 들었다 = 작은 글(`sub`)이 있다(표본 부족·'–' 은 없다).
+ * 카드를 세울 만한가 — **값이 든 칸이 하나라도** 있으면 선다(결정 0041 E2 · 👤 2026-10-18 — 예: 기준시가만 있는
+ * 건물도 선다. 옛 규칙 「둘 이상 + 국세청·부동산원 중 하나」(👤 2026-10-11)는 이 결정으로 바뀌었다).
+ * 칸에 값이 들었다 = 작은 글(`sub`)이 있다(표본 부족·'–' 은 없다). 셋 다 비면 카드째 숨긴다.
  */
 export function floorGapShowable(rows: readonly GapRow[]): boolean {
-  const has = (k: 'base' | 'tx' | 'rent') => rows.some((r) => r[k].sub !== null);
-  const filled = (['base', 'tx', 'rent'] as const).filter(has).length;
-  return filled >= 2 && (has('base') || has('rent'));
+  return rows.some((r) => r.base.sub !== null || r.tx.sub !== null || r.rent.sub !== null);
 }
 
 /** 구 실거래 표본 전체(배지 옆 건수). 못 받았으면 null. */
@@ -178,7 +182,7 @@ export function txTotal(txStats: readonly SigunguTxStat[] | null): number | null
 }
 
 /** 접힌 요약 — ⛔ 값을 적지 않는다(한정어를 담을 자리가 없어 이 건물 값으로 읽힌다). */
-export const FLOOR_GAP_SUMMARY = '국세청 · 구 실거래 · 부동산원 — 층마다 나란히';
+export const FLOOR_GAP_SUMMARY = '국세청 기준시가 · 구 상가 단가 · 부동산원 임대료 — 층마다 나란히';
 
 /** 발 문구(👤 2026-10-11 결정 글자 그대로). */
 export const FLOOR_GAP_FOOT = '세 값은 서로 다른 자료·다른 단위입니다 — 서로 나누거나 비율을 계산하지 않았습니다.';
