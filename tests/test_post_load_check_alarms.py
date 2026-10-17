@@ -260,6 +260,7 @@ class TestSlowReport:
             ("report_industry_median_m_freshness", lambda: ("", "", False)),
             ("report_industry_median_m_consistency", lambda: ("0", False)),
             ("report_toast_evictions", lambda: []),
+            ("report_tx_main_use_unknown", lambda: 0),
         ):
             monkeypatch.setattr(post_load, name, val)
         assert post_load.main(["--check"]) == 0
@@ -318,6 +319,7 @@ class TestSlowReport:
             ("report_industry_median_m_freshness", lambda: ("", "", False)),
             ("report_industry_median_m_consistency", lambda: ("0", False)),
             ("report_toast_evictions", lambda: []),
+            ("report_tx_main_use_unknown", lambda: 0),
         ):
             monkeypatch.setattr(post_load, name, val)
         assert post_load.main(["--check"]) == 0
@@ -941,6 +943,7 @@ class TestCheckExitCodeForIndexes:
             ("report_industry_median_m_freshness", lambda: ("", "", False)),
             ("report_industry_median_m_consistency", lambda: ("0", False)),
             ("report_toast_evictions", lambda: []),
+            ("report_tx_main_use_unknown", lambda: 0),
         ):
             monkeypatch.setattr(post_load, name, val)
         monkeypatch.setattr(post_load, "query_one", lambda sql: "\n".join(lines))
@@ -1114,6 +1117,7 @@ def test_median_consistency_with_two_quarters_in_mix_stays_green(monkeypatch, ca
         ("report_industry_median_m_freshness", lambda: ("202606", "202606", False)),
         ("report_industry_median_m_consistency", lambda: ("0", False)),
         ("report_toast_evictions", lambda: []),
+        ("report_tx_main_use_unknown", lambda: 0),
     ):
         monkeypatch.setattr(post_load, name, val)
     assert post_load.main(["--check"]) == 0

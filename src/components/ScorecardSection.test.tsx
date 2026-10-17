@@ -196,7 +196,9 @@ describe('ScorecardSection — 성적이 있을 때', () => {
     fireEvent.click(await screen.findByRole('button', { name: /참고 시세는 얼마나 맞나/ }));
     const how = container.querySelector('.score__how')?.textContent ?? '';
     expect(how).toContain('견줄 상대는 그 구에서 같은 층대·같은 용도 묶음 거래의 평균값입니다');
-    expect(how).toContain('(상가 거래에는 바로 위 『층대별 거래 단가』의 값)');
+    expect(how).toContain('(상가 거래에는 건물 화면 『층대별 거래 단가』의 값)');
+    // 이 카드는 첫 화면(건물 고르기 전)에 있어 『층대별 거래 단가』가 바로 위에 있지 않다 — 위치 지시어 금지.
+    expect(how).not.toContain('바로 위');
     expect(how).not.toContain('이미 화면에 있는 값과 견줬습니다');
     expect(how).not.toContain('그 구의 비슷한 층 평균값');
     const text = container.textContent ?? '';

@@ -784,6 +784,28 @@ def test_묶음별_CSV_구조(tmp_path):
     assert bt.GROUP_CSV != "운영모드지표.csv"
 
 
+def test_참고열_d_는_2층과_3층이상_거래만으로_재고_본판을_안_바꾼다(tmp_path):
+    scored = [
+        dict(_gate_scored("11680", 0.50, 0.40), floor_no=1),     # 1층 — ⓓ 에서 빠진다
+        dict(_gate_scored("11680", 0.10, 0.40), floor_no=2),
+        dict(_gate_scored("11680", 0.20, 0.50), floor_no=5),
+        dict(_gate_scored("11545", 0.10, 0.20), floor_no=1),     # 1층뿐 — ⓓ 짝 0
+    ]
+    assert [r["floor_no"] for r in bt.screen_rows(scored)] == [2, 5]
+    gate_list = bt.gate_rows(scored, {"11680": "강남구", "11545": "금천구"})
+    path = str(tmp_path / bt.SCREEN_GATE_CSV)
+    ref = bt.write_screen_gate_csv(path, scored, gate_list, {"11680": "강남구", "11545": "금천구"})
+    assert ref["11680"]["n_paired"] == 2 and ref["11680"]["gate_pass"] is True
+    assert "11545" not in ref
+    with open(path, encoding="utf-8-sig") as f:
+        lines = [ln.strip() for ln in f if ln.strip()]
+    assert lines[0] == "sigungu_code,sigungu_nm,n_paired,ladder_mdape,base_mdape,gate_pass,v3_gate_pass"
+    by = {ln.split(",")[0]: ln for ln in lines[1:]}
+    assert by["11680"].endswith(",true,true")      # 본판(1층 포함 3짝: 0.10·0.20·0.50 → 0.20 vs 0.40)도 통과
+    assert by["11545"] == "11545,금천구,0,,,false,true"
+    assert bt.SCREEN_GATE_CSV != "통과구.csv"
+
+
 def test_성적표_v3_문서가_렌더된다():
     """run() 과 같은 순서로 작은 표본을 돌려 md 를 만든다(DB 없이) — 서식·새 절이 깨지지 않는지."""
     raw = []
@@ -821,12 +843,17 @@ def test_성적표_v3_문서가_렌더된다():
         "ref_old_base_overall": bt.paired_metrics(scored, bt.pick_ladder_ape, bt.pick_base_all_ape),
         "ref_v2_overall": bt.paired_metrics(scored_v2, bt.pick_ladder_ape, bt.pick_base_ape),
         "ref_all_n": len(scored_all),
+        "ref_screen": bt.gate_map(bt.screen_rows(scored), bt.pick_ladder_ape, bt.pick_base_ape),
+        "ref_screen_overall": bt.paired_metrics(bt.screen_rows(scored), bt.pick_ladder_ape, bt.pick_base_ape),
         "prev_gate": {"11680": {"sigungu_nm": "강남구", "n_paired": 3, "ladder_mdape": 0.2,
                                 "base_mdape": 0.3, "gate_pass": True}},
+        "prev_gate_label": "gate-v2.csv",
         "generated_at": "2026-10-18 12:00",
     })
     assert "성적표 v3" in md
     assert "3-6. 용도 묶음별" in md and "4-3. 참고 열 셋" in md
+    assert "4-4. 참고 열 ⓓ" in md and bt.SCREEN_GATE_CSV in md
+    assert "`--prev-gate` 로 준 `gate-v2.csv`" in md
     assert "대장에 그 층이 없음 1건" in md          # PNU_B 3층은 대장에 없다
     assert "| 강남구 (11680) |" in md
     assert "같은 층대·같은 용도 묶음" in md

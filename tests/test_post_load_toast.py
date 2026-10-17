@@ -320,6 +320,7 @@ QUIET = (
     ("report_industry_median_consistency", lambda: ("0", False)),
     ("report_industry_median_m_freshness", lambda: ("", "", False)),
     ("report_industry_median_m_consistency", lambda: ("0", False)),
+    ("report_tx_main_use_unknown", lambda: 0),
     ("precheck_snapshot_release", lambda: (False, "202606", "")),
 )
 

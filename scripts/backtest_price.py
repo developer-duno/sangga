@@ -1216,6 +1216,33 @@ def write_gate_csv(path, scored, sigungu_names):
 GROUP_CSV = "묶음별지표.csv"
 
 
+# 참고 열 ⓓ(👤 여쭐 비교 자료 · 판정에 안 씀) — 화면이 값을 내는 층(2층·3층+)의 거래만으로 게이트를 쟀다면.
+# ⛔ 본판 판정(통과구.csv)은 결정 0013 §2 대로 구 전체(1층 포함)다 — 이 표는 그것을 바꾸지 않는다.
+SCREEN_BANDS = ("2층", "3층+")
+SCREEN_GATE_CSV = "게이트참고-2층이상.csv"
+
+
+def screen_rows(scored):
+    """채점 집합 중 화면이 값을 내는 층대(2층·3층+)의 거래만."""
+    return [r for r in scored if floor_band(r["floor_no"]) in SCREEN_BANDS]
+
+
+def write_screen_gate_csv(path, scored, gate_list, sigungu_names):
+    """참고 열 ⓓ — 2층·3층+ 거래만으로 잰 구별 판정 + 본판(v3) 판정 열. 적재기는 안 읽는다(판정에 안 씀)."""
+    ref = gate_map(screen_rows(scored), pick_ladder_ape, pick_base_ape)
+    main = {g["sigungu_code"]: g["gate_pass"] for g in gate_list}
+    codes = sorted(set(ref) | set(main))
+    _write_csv(path,
+               ["sigungu_code", "sigungu_nm", "n_paired", "ladder_mdape", "base_mdape",
+                "gate_pass", "v3_gate_pass"],
+               [[c, sigungu_names.get(c, ""), (ref.get(c) or {}).get("n_paired", 0),
+                 _csv_ratio((ref.get(c) or {}).get("ladder_mdape")),
+                 _csv_ratio((ref.get(c) or {}).get("base_mdape")),
+                 "true" if (ref.get(c) or {}).get("gate_pass") else "false",
+                 "true" if main.get(c) else "false"] for c in codes])
+    return ref
+
+
 def pick_base_all_ape(row):
     """옛 대조군(구 × 층대 · 용도 불문)의 오차 — 참고 열 ⓑ 전용."""
     return row["stage_ape"].get("BASE_ALL")
@@ -1739,7 +1766,11 @@ def add_reference_columns(add, ctx):
             ctx["ref_v2_overall"]["n_pair"],
             fmt_metric(ctx["ref_v2_overall"]["n_pair"], ctx["ref_v2_overall"]["a_mdape"]),
             fmt_metric(ctx["ref_v2_overall"]["n_pair"], ctx["ref_v2_overall"]["b_mdape"])))
-    add("- **직전 판** = 이번 실행 전 `통과구.csv`(첫 v3 실행이면 v2). 「짝 변화」 = 판정(v3) 짝 − 직전 판 짝.")
+    if ctx.get("prev_gate_label"):
+        add("- **직전 판** = `--prev-gate` 로 준 `{}`. 「짝 변화」 = 판정(v3) 짝 − 직전 판 짝.".format(
+            ctx["prev_gate_label"]))
+    else:
+        add("- **직전 판** = 이번 실행 전 `통과구.csv`(첫 v3 실행이면 v2). 「짝 변화」 = 판정(v3) 짝 − 직전 판 짝.")
     add("- 칸 읽는 법: `짝지은 거래 · 사다리 MdAPE / BASE MdAPE · 판정`.")
     add("")
     add("| 구 | 판정(v3) | ⓐ 전체 거래 | ⓑ 옛 대조군 | ⓒ 오늘 자료 + v2 규칙 | 직전 판 | 짝 변화 |")
@@ -1753,6 +1784,37 @@ def add_reference_columns(add, ctx):
             names.get(code, (p or {}).get("sigungu_nm") or code), code,
             _gate_cell(g), _gate_cell(ctx["ref_all"].get(code)), _gate_cell(ctx["ref_old_base"].get(code)),
             _gate_cell(ctx["ref_v2"].get(code)), _gate_cell(p), delta))
+    add("")
+    if ctx.get("ref_screen") is not None:
+        add_screen_reference(add, ctx)
+
+
+def add_screen_reference(add, ctx):
+    """§4-4 — 참고 열 ⓓ: 화면이 값을 내는 층(2층·3층+)의 거래만으로 게이트를 쟀다면(👤 여쭐 비교 자료 · 판정에 안 씀)."""
+    names = ctx["sigungu_names"]
+    now = {g["sigungu_code"]: g for g in ctx["gate_list"]}
+    ref = ctx["ref_screen"]
+    ov = ctx["ref_screen_overall"]
+    ref_pass = {c for c, g in ref.items() if g["gate_pass"]}
+    now_pass = {c for c, g in now.items() if g["gate_pass"]}
+
+    def label(code):
+        return "{}({})".format(names.get(code, code), code)
+    add("### 4-4. 참고 열 ⓓ — 화면이 값을 내는 층(2층·3층+)의 거래만으로 판정했다면 (판정에 안 씀)")
+    add("")
+    add("- 결정 0013 §2 의 본판 판정은 **구 전체**(1층 포함 — 위 4-1·통과구.csv)다. 이 표는 화면이 1층 값을 안 내는 "
+        "사실(§3)에 맞춰 1층 거래를 뺀 채 같은 규칙(30% 이하 + 같은 묶음 구 평균을 이김)으로 다시 잰 **비교 자료**다. "
+        "같은 숫자 = `{}`.".format(SCREEN_GATE_CSV))
+    add("- 전체 짝 {:,}건 · 사다리 {} / 같은 묶음 BASE {}. 이 기준 통과 **{}곳** — 본판(v3) {}곳 대비 들어옴 {} · 나감 {}.".format(
+        ov["n_pair"], fmt_metric(ov["n_pair"], ov["a_mdape"]), fmt_metric(ov["n_pair"], ov["b_mdape"]),
+        len(ref_pass), len(now_pass),
+        " · ".join(label(c) for c in sorted(ref_pass - now_pass)) or "없음",
+        " · ".join(label(c) for c in sorted(now_pass - ref_pass)) or "없음"))
+    add("")
+    add("| 구 | 본판(v3 · 1층 포함) | ⓓ 2층·3층+ 만 |")
+    add("|---|---|---|")
+    for code in sorted(set(now) | set(ref)):
+        add("| {} | {} | {} |".format(label(code), _gate_cell(now.get(code)), _gate_cell(ref.get(code))))
     add("")
 
 
@@ -2342,13 +2404,16 @@ def run(args):
     md_path = os.path.join(args.out_dir, SCORECARD_MD)
 
     # 덮어쓰기 **전** 통과구.csv(직전 판)를 읽어 둔다 — 구별 짝지은 거래 수·판정의 변화 열.
-    prev_gate = read_prev_gate(gate_csv)
+    # --prev-gate 를 주면 그 파일(같은 판을 다시 뽑을 때 옛 판과 견주려고 — 예: git 이력에서 꺼낸 v2).
+    prev_gate = read_prev_gate(args.prev_gate or gate_csv)
+    screen_csv = os.path.join(args.out_dir, SCREEN_GATE_CSV)
 
     write_stage_csv(stage_csv, scored, sigungu_names)
     write_operating_csv(op_csv, scored, sigungu_names)
     write_raw_csv(raw_csv, scored, sigungu_names)
     write_group_csv(group_csv, scored)
     gate_list = write_gate_csv(gate_csv, scored, sigungu_names)
+    ref_screen = write_screen_gate_csv(screen_csv, scored, gate_list, sigungu_names)
 
     ctx = {
         "scored": scored,
@@ -2374,7 +2439,10 @@ def run(args):
         "ref_old_base_overall": paired_metrics(scored, pick_ladder_ape, pick_base_all_ape),
         "ref_v2_overall": paired_metrics(scored_v2, pick_ladder_ape, pick_base_ape),
         "ref_all_n": len(scored_all),
+        "ref_screen": ref_screen,
+        "ref_screen_overall": paired_metrics(screen_rows(scored), pick_ladder_ape, pick_base_ape),
         "prev_gate": prev_gate,
+        "prev_gate_label": os.path.basename(args.prev_gate) if args.prev_gate else None,
         "generated_at": datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M"),
     }
     with open(md_path, "w", encoding="utf-8", newline="\n") as f:
@@ -2411,7 +2479,9 @@ def run(args):
         log("묶음 {:<7}: 채점 {:,}건 · 성립 {:,}건 · MdAPE {}".format(
             grp, m["n_total"], m["n_est"], fmt_metric(m["n_est"], m["mdape"])))
     log("")
-    for path in (md_path, stage_csv, op_csv, raw_csv, gate_csv, group_csv):
+    screen_pass = sorted(c for c, g in ref_screen.items() if g["gate_pass"])
+    log("참고 ⓓ 2층·3층+ 만 : 통과 {}곳 — {}".format(len(screen_pass), " · ".join(screen_pass) or "(없음)"))
+    for path in (md_path, stage_csv, op_csv, raw_csv, gate_csv, group_csv, screen_csv):
         log("생성: {}".format(path))
     return 0
 
@@ -2435,6 +2505,8 @@ def main(argv=None):
                     help="검증 구간 첫 계약년월 YYYYMM (기본 {})".format(TEST_FROM))
     ap.add_argument("--out-dir", default=DEFAULT_OUT_DIR,
                     help="산출물 폴더 (기본 docs/backtest)")
+    ap.add_argument("--prev-gate", default=None,
+                    help="「직전 판」 열로 견줄 통과구.csv 경로(기본 = 덮어쓰기 전 docs/backtest/통과구.csv)")
     ap.add_argument("--place-axis", action="store_true",
                     help="유형축(L7) 검증 모드 — `1층-유형축-검증.md`·`1층유형별지표.csv` 만 쓴다. "
                          "기존 성적표·통과구.csv 는 건드리지 않는다.")

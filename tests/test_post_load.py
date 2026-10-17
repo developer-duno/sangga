@@ -100,6 +100,8 @@ def p7_alarms_quiet(monkeypatch):
     monkeypatch.setattr(post_load, "report_tx_geog_freshness", lambda: ("1", "1", False))
     # 별관 경보(2026-10-05)도 같은 까닭으로 뺀다 — 판정은 tests/test_post_load_toast.py.
     monkeypatch.setattr(post_load, "report_toast_evictions", lambda: [])
+    # 실거래 용도 이름 7종 밖(2026-10-18a · 결정 0040)도 뺀다 — 판정은 tests/test_price_use_group_migration.py.
+    monkeypatch.setattr(post_load, "report_tx_main_use_unknown", lambda: 0)
     # 분기 표지(2026-10-07a · 결정 0035)도 뺀다 — 판정·배선은 아래 TestSnapshotRelease 가 본다.
     monkeypatch.setattr(post_load, "report_snapshot_release", lambda *a: (False, False))
     # 건축물대장 판 표지(2026-10-15a)도 뺀다 — 판정·진짜 배선은 tests/test_freshness_monthly_rules_migration.py.
