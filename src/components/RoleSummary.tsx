@@ -20,7 +20,12 @@ import type { DistrictOpenClose, IndustryMedian, IndustryMix, RentStat } from '.
  *    그래서 `supabase` 를 import 하지 않는다(시험이 FloorStack 전체의 rpc 호출 수가 판 유무와 같은지 본다).
  * ⛔ 받은 답은 물어본 pnu 와 함께 둔다 — 건물이 바뀐 첫 그림에 앞 건물 값이 한 순간도 붙지 않게(`sidePrefetch.ts` 머리말).
  * ⛔ 종이에서는 빠진다(👤 확정 결정 0039 §7-7) — `styles.css` 인쇄 감춤 목록의 `.rsum` 한 줄뿐.
+ * ⓘ 휴대폰에서는 타일 2칸 + 「요약 N칸 더 보기」(👤 2026-10-17 W4a 4번 「가」 · 결정 0039 §7-8 — 건물 이름이 첫 화면에) —
+ *    접기는 CSS 만 한다(`.rsum--fold` 는 `@media screen and (max-width: 720px)` 묶음에서만 먹고, 단추는 기본 규칙에서 숨는다)
+ *    → 넓은 화면·종이는 지금 그대로. 그래서 이 부품은 화면 폭을 모른다.
  */
+/** 휴대폰에서 접힌 판이 보여 주는 타일 수. */
+const RSUM_PHONE_TILES = 2;
 type SideGot = {
   pnu: string;
   rent: RentStat[] | null;
@@ -42,6 +47,7 @@ export function RoleSummary({ prefetch, onBeforePrint, ...input }: Props) {
   const pnu = input.building.pnu;
   const active = input.role !== null;
   const [got, setGot] = useState<SideGot>(() => emptyGot(pnu));
+  const [more, setMore] = useState(false);
 
   useEffect(() => {
     if (!active) return;
@@ -74,9 +80,11 @@ export function RoleSummary({ prefetch, onBeforePrint, ...input }: Props) {
   const mine = got.pnu === pnu ? got : emptyGot(pnu);
   const view = roleSummaryView({ ...input, ...mine });
   if (view === null) return null;
+  const hiddenTiles = view.tiles.length - RSUM_PHONE_TILES;
+  const fold = hiddenTiles > 0 && !more;
 
   return (
-    <section className="rsum" aria-label={`${view.role} 요약`}>
+    <section className={`rsum${fold ? ' rsum--fold' : ''}`} aria-label={`${view.role} 요약`}>
       <p className="rsum__q">
         <span className="rsum__role">{view.role}</span>
         <span className="rsum__question">{view.question}</span>
@@ -104,6 +112,11 @@ export function RoleSummary({ prefetch, onBeforePrint, ...input }: Props) {
           </li>
         ))}
       </ul>
+      {hiddenTiles > 0 && (
+        <button type="button" className="rsum__more" aria-expanded={more} onClick={() => setMore((v) => !v)}>
+          {more ? '요약 접기' : `요약 ${hiddenTiles}칸 더 보기`}
+        </button>
+      )}
       {view.role === '중개사' && (
         <button
           type="button"

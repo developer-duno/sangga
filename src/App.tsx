@@ -15,9 +15,21 @@ import { RoleCards } from './components/RoleCards';
 import { RolePicker } from './components/RolePicker';
 import { ScorecardSection } from './components/ScorecardSection';
 import { ShareButton } from './components/ShareButton';
+import { TabBar } from './components/TabBar';
 import { TxFlowSection } from './components/TxFlowSection';
 import { UnitPrintPicker } from './components/UnitPrintPicker';
 import { FLOOR_STACK_VIEW } from './lib/appConstants';
+import {
+  EMPTY_BUILDING_BODY,
+  EMPTY_BUILDING_GO,
+  EMPTY_BUILDING_TITLE,
+  HISTORY_KEY,
+  firstTab,
+  historyMarkOf,
+  tabAfterRoleChange,
+  tabsFor,
+  type AppTab,
+} from './lib/appTabs';
 import { EMPTY_MAP_PICK, type DistrictMapPick } from './lib/districtMapPick';
 import { buildingFromFloorRows } from './lib/restoreBuilding';
 import { FOUNDER_CHIP_ALL, type FounderChip } from './lib/founderChips';
@@ -26,6 +38,7 @@ import { supabase } from './lib/supabase';
 import { buildAppSearch, buildShareUrl, isSameSearch, parseAppUrl } from './lib/urlState';
 import { pageTitle } from './lib/seo';
 import { SIDOS } from './lib/regions';
+import { useIsPhone } from './lib/useIsPhone';
 import {
   BROWSE_ROLE,
   loadStoredRole,
@@ -85,12 +98,70 @@ export default function App() {
     ⛔ **화면만** — 이 기기 저장·주소·의견함에 싣지 않는다 · 구가 바뀌면 비운다(`handleSelectSigungu`·`handlePickRecent`).
   */
   const [mapPick, setMapPick] = useState<DistrictMapPick>(EMPTY_MAP_PICK);
+
+  /*
+    휴대폰 아래 탭(결정 0039 Q1 · W4a). `isPhone` = CSS 의 `@media screen and (max-width: 720px)` 와 같은 질의(인쇄 중엔 얼림 —
+    `useIsPhone`). 넓은 화면은 탭이 없고 아래 S1 입구 접기가 지금 그대로 돈다 — `tab` 은 휴대폰에서만 뜻이 있다.
+    ⛔ 탭은 주소·이 기기 저장·의견함에 안 싣는다(§4-1). 첫 탭 = `firstTab`(첫 그림 한 번만 · 건물 직행 = 건물 · 창업자 = 지도).
+    `curTab` = 그 역할에게 없는 탭이면 찾기(중개사의 지도 · 중개사 아닌 사람의 뽑은 건물).
+    `phoneRef`·`tabRef` = 첫 그림의 것을 쥐는 콜백(`handleSelectBuilding`)이 지금 값을 읽게 — 그리기와 상관없어 ref 다.
+  */
+  const isPhone = useIsPhone();
+  const [tab, setTab] = useState<AppTab>(() => firstTab(viewerRole, openedWith.bldId !== null));
+  const curTab = tabAfterRoleChange(tab, viewerRole);
+  const phoneRef = useRef(isPhone);
+  const tabRef = useRef<AppTab>(curTab);
+  phoneRef.current = isPhone;
+  tabRef.current = curTab;
+  /* 탭마다 굴린 자리(탭을 옮겼다 돌아오면 그 자리로) · 뒤로가기로 돌아갈 탭(건물을 열기 직전 탭). */
+  const tabScrollRef = useRef<Partial<Record<AppTab, number>>>({});
+  const returnTabRef = useRef<AppTab>('find');
+  const [tabSignal, setTabSignal] = useState(0);
+  function pickTab(next: AppTab) {
+    tabScrollRef.current[tabRef.current] = window.scrollY;
+    setTab(next);
+    setTabSignal((n) => n + 1);
+  }
+  useEffect(() => {
+    if (tabSignal === 0) return;
+    window.scrollTo(0, tabScrollRef.current[tabRef.current] ?? 0);
+  }, [tabSignal]);
+  /*
+    휴대폰에서 사람이 건물을 열었다 → 건물 탭 + 뒤로가기 한 칸(👤 2026-10-17 「건물에서만 한 칸」). 지금 칸이 이미 건물 칸이면
+    더 쌓지 않는다(여럿 열어도 늘 한 칸). 주소는 아래 주소 쓰기 effect 가 그 칸에 적는다(지금 규칙 그대로).
+    ⛔ 넓은 화면은 쌓지 않는다 — 탭이 없어 뒤로가기가 화면 변화 없이 헛눌린다.
+  */
+  function openBuildingTab() {
+    if (!phoneRef.current) return;
+    if (tabRef.current !== 'building') returnTabRef.current = tabRef.current;
+    tabScrollRef.current.building = 0;
+    setTab('building');
+    if (historyMarkOf(window.history.state) !== 'bld') {
+      window.history.replaceState({ ...(window.history.state ?? {}), [HISTORY_KEY]: 'base' }, '');
+      window.history.pushState({ [HISTORY_KEY]: 'bld' }, '', window.location.href);
+    }
+  }
+  /* 뒤로·앞으로 — 건물 칸이면 건물 탭, 그 앞 칸이면 열기 직전 탭. 그 칸의 주소는 옛것이라 다시 적는다(`popSeq`). */
+  const [popSeq, setPopSeq] = useState(0);
+  useEffect(() => {
+    function onPop(e: PopStateEvent) {
+      // 넓은 화면은 탭이 없다 — 휴대폰에서 쌓인 칸이 남아 있어도 탭·주소 다시 쓰기는 안 한다(W4a 전과 같게 · 검사 🟡 F9).
+      if (!phoneRef.current) return;
+      const mark = historyMarkOf(e.state);
+      if (mark === null) return;
+      setTab(mark === 'bld' ? 'building' : returnTabRef.current);
+      setPopSeq((n) => n + 1);
+    }
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
   /** 역할 고르기(큰 카드·작은 단추 줄 공용). null = 둘러보기·해제 — 지우지 않고 `둘러보기` 로 적는다(다시 안 묻는다). */
   function handlePickRole(role: ViewerRole | null) {
     const v: StoredRole = role ?? BROWSE_ROLE;
     setStoredRole(v);
     saveStoredRole(v);
     if (role !== '창업자') setFounderChip(FOUNDER_CHIP_ALL);
+    setTab((t) => tabAfterRoleChange(t, role));
   }
   /*
     큰 카드에서 골랐다 — 카드가 사라지며 커서가 문서 맨 앞(body)으로 떨어지지 않게, 다음 그림에서 그 자리에 서는 작은
@@ -100,6 +171,9 @@ export default function App() {
   function handlePickFromCards(role: ViewerRole | null) {
     roleCardsFocusRef.current = true;
     handlePickRole(role);
+    // 휴대폰에서 큰 카드로 창업자를 고르면 지도 탭으로 — 카드 문구 「상권 지도·업종 분포를 먼저 보여 드립니다」와 0036 ④
+    // (`firstTab` 과 같은 규칙 · 검사 🟠 F3). 건물이 열려 있거나 되살리는 중이면 탭을 안 옮긴다 · 다른 역할은 찾기 그대로.
+    if (isPhone && role === '창업자' && selected === null && !restoring) setTab('map');
   }
 
   /*
@@ -132,12 +206,31 @@ export default function App() {
   const entryFocusRef = useRef<'search' | 'map' | 'role' | null>(null);
   const folded = (selected !== null || restoring) && !entryOpen;
   /*
+    휴대폰 탭 꼴에서 입구가 숨는 때 = 찾기·지도 탭이 아닐 때(건물 유무와 상관없이 — S1 의 바·접기는 휴대폰에선 탭이 대신한다).
+    지도는 **보이는 탭에서만** 그린다(접힌 동안 안 그리는 S1 규칙과 같은 결 · 보이는 칸에서 태어나 relayout 이 필요 없다):
+    중개사 = 찾기 탭(지도 탭 자리가 「뽑은 건물」) · 나머지 = 지도 탭. 지역 고르개는 찾기·지도 두 탭에 같은 하나로 보인다(CSS).
+  */
+  const entryHidden = isPhone ? curTab !== 'find' && curTab !== 'map' : folded;
+  const showMap = isPhone ? curTab === (viewerRole === '중개사' ? 'find' : 'map') : !folded;
+  const headFolded = isPhone ? selected !== null || restoring : folded;
+  /*
+    입구 카드 셋(LH·성적표·단가 흐름)을 세울 때 — 구를 골랐고 되살리는 중이 아니고, 넓은 화면은 건물을 안 열었을 때만(지금 그대로).
+    휴대폰은 건물을 열어 둔 채여도 찾기 탭에 선다(보던 건물이 남는 탭 꼴이라 · 검사 🟠 F2) — 다른 탭에선 CSS 가 숨기고,
+    종이(건물 있음)에서는 인쇄 감춤 `.app--tabs.app--bld .app__main > .card` 가 빼서 종이는 건물 한 장 그대로다.
+  */
+  const showEntryCards = sigungu !== null && !restoring && (selected === null || isPhone);
+  /*
     큰 카드에서 고른 뒤(위 `handlePickFromCards`) — 역할을 골랐으면 눌린 단추, 「그냥 둘러보기」면 첫 단추에 커서.
     ⓘ 화면은 굴리지 않는다(`preventScroll`) — 작은 줄은 카드가 있던 바로 그 자리라 이미 화면 안이다.
   */
   useEffect(() => {
     if (!roleCardsFocusRef.current) return;
     roleCardsFocusRef.current = false;
+    // 휴대폰은 작은 줄이 「더보기」 탭(숨음)에 있다 — 지금 고른 탭 단추에 커서(body 로 떨어지지 않게 · 검사 🟡 F4).
+    if (phoneRef.current) {
+      document.querySelector<HTMLButtonElement>('.tabbar__btn[aria-current="page"]')?.focus({ preventScroll: true });
+      return;
+    }
     const row = entryRef.current?.querySelector('.role');
     (
       row?.querySelector<HTMLButtonElement>('.role__chip[aria-pressed="true"]') ??
@@ -184,7 +277,10 @@ export default function App() {
       const root = document.scrollingElement;
       if (root) root.scrollTop = 0;
     }
-    barFirstRef.current?.focus({ preventScroll: true });
+    // 휴대폰은 바 대신 탭 막대 — 고른 탭(건물)에 커서(고른 결과 줄이 숨어 커서가 문서 맨 앞으로 날아가지 않게).
+    (barFirstRef.current ?? document.querySelector<HTMLButtonElement>('.tabbar__btn[aria-current="page"]'))?.focus({
+      preventScroll: true,
+    });
   }, [foldSignal]);
 
   // 구가 바뀌면 이전 구의 선택 건물은 더는 맞지 않는다(스택이 다른 구 건물을 계속
@@ -203,7 +299,8 @@ export default function App() {
     userActedRef.current = true;
     setRestoreFailed(false);
     setSelected(hit);
-    foldEntry(true); // 첫 그림의 것을 쥐어도 된다 — setState 둘만 부른다
+    openBuildingTab(); // 휴대폰만 — 지금 폭·탭은 ref 로 읽는다
+    foldEntry(true); // 첫 그림의 것을 쥐어도 된다 — setState·ref 만 쓴다
   }, []);
 
   /*
@@ -268,6 +365,7 @@ export default function App() {
       setMapPick(EMPTY_MAP_PICK);
     }
     setSelected({ ...item });
+    openBuildingTab();
     foldEntry(true);
   }
 
@@ -344,8 +442,9 @@ export default function App() {
 
     const next = { sigungu, bldId: selected?.bld_id ?? null };
     if (isSameSearch(window.location.search, next)) return;
-    window.history.replaceState(null, '', `${window.location.pathname}${buildAppSearch(next)}`);
-  }, [sigungu, selected, restoring, restoreFailed]);
+    // 칸의 표식(휴대폰 뒤로가기 한 칸 · `openBuildingTab`)은 그대로 둔다 — 넓은 화면은 표식이 없어 지금처럼 null 이다.
+    window.history.replaceState(window.history.state, '', `${window.location.pathname}${buildAppSearch(next)}`);
+  }, [sigungu, selected, restoring, restoreFailed, popSeq]);
 
   /*
     탭 제목 — 건물을 고르면 그 이름, 풀면 첫 화면 제목으로 돌아온다(정본 = `src/lib/seo.ts`).
@@ -388,7 +487,8 @@ export default function App() {
         onSelect={handleSelectBuilding}
         onSearchStart={() => {
           userActedRef.current = true;
-          setSelected(null);
+          // 휴대폰 탭 꼴은 보던 건물을 남긴다 — 「건물」 탭으로 돌아가면 그대로(👤 확정 결정 0039 §7-1).
+          if (!isPhone) setSelected(null);
         }}
         selectedBldId={selected?.bld_id ?? null}
         sigungu={sigungu}
@@ -399,7 +499,8 @@ export default function App() {
           ⓘ 목록·지우기 상태는 App 이 쥔다 — 구가 바뀌어 검색창이 key 로 다시 태어나도 목록은 그대로다.
         */
         belowInput={
-          viewerRole === '중개사' ? (
+          // 휴대폰은 검색 아래가 아니라 「뽑은 건물」 탭에(👤 2026-10-17 W4a 2번 「가」).
+          viewerRole === '중개사' && !isPhone ? (
             <RecentPrinted
               items={recentPrinted}
               onPick={handlePickRecent}
@@ -422,9 +523,10 @@ export default function App() {
         지도는 바깥 지도 SDK 를 태우는 자리라 우리 코드만으로는 터질 자리를 다 못 셈한다.
         ⛔ 입구가 접힌 동안(건물을 연 채)에는 그리지 않는다 — 종이에도 안 나온다(👤 2026-10-15). 펼치면 새로 그린다.
       */
-      folded ? null : (
+      !showMap ? null : (
         <ErrorBoundary
-          key={`map:${sigungu ?? '__none__'}`}
+          // 휴대폰 ↔ 넓은 화면이 바뀌면(돌리기) 새 칸 크기에서 다시 태어나게 꼴도 넣는다(relayout 대신 · W4a).
+          key={`map:${sigungu ?? '__none__'}:${isPhone ? 'phone' : 'wide'}`}
           area="상권 지도"
           context={{ sigungu, sigungu_nm: sigunguName }}
         >
@@ -453,7 +555,12 @@ export default function App() {
     : '';
 
   return (
-    <div className={`app${folded ? ' app--folded' : ''}`}>
+    <div
+      className={`app${headFolded ? ' app--folded' : ''}${isPhone ? ' app--tabs' : ''}${
+        isPhone && selected !== null ? ' app--bld' : ''
+      }`}
+      data-tab={isPhone ? curTab : undefined}
+    >
       {/*
         종이에만 나오는 머리글(결정 0020). 화면에서는 보이지 않는다 — 맨 위에 두는 이유는
         인쇄물의 첫 줄이 "무슨 서류인가"여야 하기 때문이다. 지도가 그 아래에 오므로, 여기에
@@ -495,7 +602,7 @@ export default function App() {
           그 자리로 옮긴다. 펼친 동안은 같은 자리(펼친 덩어리 맨 위)에 '위 칸 접기' 하나 — 위를 보는 사람이 찾게.
           ⓘ 기호(←·▾·▲)는 낭독기가 기호 이름으로 읽지 않게 따로 감춘다(`aria-hidden`) · 종이에서는 빠진다.
         */}
-        {folded ? (
+        {isPhone ? null : folded ? (
           <div className="entrybar">
             {placeLabel && <span className="entrybar__place">{placeLabel}</span>}
             {/* 창업자가 고른 업종(👤 2026-10-15 G2) — 카드의 굵은 줄이 왜 굵은지 접힌 채로도 보이게. '전체'면 안 적는다. */}
@@ -551,14 +658,15 @@ export default function App() {
         )}
 
         {/* ⓘ 접힌 동안 `hidden` 으로 숨기기만 한다 — 안의 검색창·지역 고르개가 다시 태어나지 않게(위 `entryOpen`). */}
-        <div className="entry" id="entry-panel" ref={entryRef} hidden={folded}>
+        <div className="entry" id="entry-panel" ref={entryRef} hidden={entryHidden}>
           {/*
             역할 단추 줄 — 지역 고르기 바로 위(👤 결정 0036 결정 18 ⑧). 아직 안 물어봤으면 그 자리에 큰 카드
             (결정 0039 Q3 · W3) — 카드가 서 있는 동안 작은 줄은 숨긴다(같은 질문이 두 번 안 보이게).
           */}
           {showRoleCards ? (
             <RoleCards onPick={handlePickFromCards} />
-          ) : (
+          ) : isPhone ? null : (
+            // 휴대폰은 「더보기」 탭 맨 위(아래 꼬리말 `lead` · 0036 ⑧ → 결정 0039 §5 W4a) — 큰 카드는 이 자리 그대로.
             <RolePicker role={viewerRole} onChange={handlePickRole} />
           )}
 
@@ -590,7 +698,7 @@ export default function App() {
           ⓘ `key` 를 일부러 안 준다 — 같은 시도 안에서 구만 바꾸면(강남구 → 서초구) 답이
             같으므로 다시 묻지 않는 것이 맞다. 카드가 시도 코드에만 매여 있다.
         */}
-        {sigungu !== null && selected === null && !restoring && <LhNoticeSection sigungu={sigungu} />}
+        {showEntryCards && <LhNoticeSection sigungu={sigungu} />}
 
         {/*
           입구의 두 번째 카드 — 참고 시세 성적표(로드맵 Wave 4).
@@ -603,7 +711,7 @@ export default function App() {
           ⓘ `key` 를 일부러 안 준다 — 서버 함수가 열린 구 **전부**를 한 번에 주므로 구를
             바꿔도 다시 물을 것이 없다(카드가 받아 둔 목록에서 그 구 줄만 골라 쓴다).
         */}
-        {sigungu !== null && selected === null && !restoring && (
+        {showEntryCards && (
           <ScorecardSection sigungu={sigungu} />
         )}
 
@@ -617,7 +725,7 @@ export default function App() {
           ⓘ `key` 를 일부러 안 준다 — 구가 바뀌면 `sigungu` prop 이 바뀌고 카드가 스스로
             다시 묻는다(카드 안의 `useEffect` 가 그 값에 매여 있다).
         */}
-        {sigungu !== null && selected === null && !restoring && <TxFlowSection sigungu={sigungu} />}
+        {showEntryCards && <TxFlowSection sigungu={sigungu} />}
 
         {selected ? (
           <>
@@ -677,11 +785,47 @@ export default function App() {
         ) : restoreFailed ? (
           // 층 자료가 없는 건물(239동)이거나 서버가 잠깐 흔들린 경우다. 어느 쪽이든
           // 빈 화면을 그리지 않고 다음에 할 일을 알려 준다.
-          <p className="msg msg--idle">
-            링크에 담긴 건물을 찾지 못했습니다. 위에서 건물을 검색해 선택해 주세요.
-          </p>
+          // 휴대폰 건물 탭엔 위에 검색창이 없다 — 「위에서…」 대신 빈 건물 탭의 「건물 찾으러 가기」 단추(검사 🟡 F5).
+          isPhone ? (
+            curTab === 'building' && (
+              <section className="tabempty" aria-label="링크의 건물을 찾지 못함">
+                <p className="tabempty__title">링크에 담긴 건물을 찾지 못했습니다.</p>
+                <button type="button" className="tabempty__go" onClick={() => pickTab('find')}>
+                  {EMPTY_BUILDING_GO}
+                </button>
+              </section>
+            )
+          ) : (
+            <p className="msg msg--idle">
+              링크에 담긴 건물을 찾지 못했습니다. 위에서 건물을 검색해 선택해 주세요.
+            </p>
+          )
+        ) : isPhone ? (
+          /*
+            휴대폰 빈 「건물」 탭(👤 2026-10-17 W4a 1번 「가」 — 시안 글자 그대로). 「위에서 건물을…」 줄은 휴대폰에선 안 그린다
+            (메인 판단 ⑩ — 찾기 탭엔 검색이 바로 있고, 건물 탭엔 이 안내가 대신한다).
+          */
+          curTab === 'building' && (
+            <section className="tabempty" aria-label="고른 건물 없음">
+              <p className="tabempty__title">{EMPTY_BUILDING_TITLE}</p>
+              <p className="tabempty__body">{EMPTY_BUILDING_BODY}</p>
+              <button type="button" className="tabempty__go" onClick={() => pickTab('find')}>
+                {EMPTY_BUILDING_GO}
+              </button>
+            </section>
+          )
         ) : (
           <p className="msg msg--idle">위에서 건물을 검색해 선택해 주세요.</p>
+        )}
+
+        {/* 중개사 휴대폰 「뽑은 건물」 탭 — 지금의 「최근 뽑은 건물」 목록을 펼친 채(👤 W4a 2번 「가」 · 결정 0036 ⑩). */}
+        {isPhone && curTab === 'printed' && (
+          <RecentPrinted
+            inTab
+            items={recentPrinted}
+            onPick={handlePickRecent}
+            onClear={() => setRecentPrinted(clearRecentPrinted())}
+          />
         )}
       </main>
 
@@ -695,7 +839,14 @@ export default function App() {
           sigungu,
           sigungu_nm: sigunguName,
         }}
+        lead={isPhone && !showRoleCards ? <RolePicker role={viewerRole} onChange={handlePickRole} /> : null}
+        phoneOrder={isPhone}
       />
+
+      {/* 휴대폰 아래 탭(결정 0039 W4a) — 넓은 화면엔 없다 · 종이에서 빠진다. */}
+      {isPhone && (
+        <TabBar tabs={tabsFor(viewerRole)} current={curTab} buildingDim={selected === null} onPick={pickTab} />
+      )}
     </div>
   );
 }
