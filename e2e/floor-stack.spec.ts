@@ -340,6 +340,24 @@ async function unfoldEntry(page: Page, button: string | RegExp = '다른 건물 
   await page.locator('.entrybar').getByRole('button', { name: button }).click();
 }
 
+/*
+  '물어봤음' 기본값(결정 0039 §4-7 · W3). 이 기기 저장값이 없으면 입구 맨 위에 역할 고르기 큰 카드가 서고 작은 역할 단추 줄은
+  숨는다 — 이 파일의 시험은 그 카드가 나오기 전 화면(역할 없음)을 전제로 쓰였으므로, 페이지가 열릴 때마다 **열쇠에 값이 없을
+  때만** `둘러보기`(= 역할 없음)를 넣는다. 그래서 시험이 따로 넣는 역할(AQ·BF 의 addInitScript — 이 스크립트 뒤에 돈다)과
+  시험 안에서 고른 값(새로고침 뒤에도)이 이긴다.
+  ⓘ 큰 카드 전용 시험은 태그 `@first-visit` 를 달아 이 기본값을 건너뛴다(빈 저장소 = 처음 온 사람).
+*/
+test.beforeEach(async ({ page }, testInfo) => {
+  if (testInfo.tags.includes('@first-visit')) return;
+  await page.addInitScript(() => {
+    // ⚠️ 이 파일의 타입 검사는 브라우저 타입(DOM)을 안 켠다 — 전역을 좁은 모양으로 꺼내 쓴다(시험 AQ 와 같은 사정).
+    const w = globalThis as unknown as {
+      localStorage: { getItem(k: string): string | null; setItem(k: string, v: string): void };
+    };
+    if (w.localStorage.getItem('sangga.viewerRole') === null) w.localStorage.setItem('sangga.viewerRole', '둘러보기');
+  });
+});
+
 test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
   test('A. 검색 → 결과 클릭 → 층 스택 렌더', async ({ page }) => {
     await mockOpenSigungu(page);
@@ -3833,5 +3851,98 @@ test.describe('층별 스택뷰 — 역할 요약 판', () => {
     await page.emulateMedia({ media: 'print' });
     await expect(page.locator('.rsum')).toBeHidden();
     await page.emulateMedia({ media: null });
+  });
+});
+
+/*
+  역할 고르기 큰 카드(결정 0039 Q3 · §4-10 · §7-4 · W3). 세 시험 모두 `@first-visit` — 맨 위 beforeEach 의 '물어봤음' 기본값을
+  넣지 않은 빈 저장소(처음 온 사람)에서 시작한다. 카드 글·알림·저장 규칙은 단위 시험(`RoleCards.test`·`viewerRoleStore.test`·
+  `App.test` 「큰 카드」)이 본다 — 여기서는 실제 배치(휴대폰 세로 쌓기·넓은 화면 한 줄·높이)·종이·새로고침을 본다.
+*/
+test.describe('첫 화면 — 역할 고르기 큰 카드', () => {
+  /** 이 페이지의 이 기기 저장값(역할 열쇠). */
+  async function storedRole(page: Page) {
+    return page.evaluate(
+      () =>
+        (globalThis as unknown as { localStorage: { getItem(k: string): string | null } }).localStorage.getItem(
+          'sangga.viewerRole',
+        ),
+    );
+  }
+
+  test('BH. 빈 저장소로 `/` 를 열면 입구 맨 위에 큰 카드(작은 줄 숨김) · 휴대폰은 세로 쌓기·카드 56px·둘러보기 44px · 넓은 화면은 한 줄 · 종이에 없음 · 카드를 누르면 사라지고 그 역할 화면', { tag: '@first-visit' }, async ({ page }, testInfo) => {
+    await mockOpenSigungu(page);
+    await page.goto('/');
+    const box = page.locator('section.rolecards');
+    await expect(box).toBeVisible();
+    await expect(box.getByText('무엇을 하러 오셨나요?')).toBeVisible();
+    await expect(page.locator('section.role')).toHaveCount(0);
+    // 덮개가 아니다 — 지역 고르기가 카드 **아래**에 그대로 보인다.
+    const region = page.getByRole('button', { name: /^서울$/ });
+    await expect(region).toBeVisible();
+    expect((await region.boundingBox())!.y).toBeGreaterThan((await box.boundingBox())!.y);
+
+    const cards = box.locator('.rolecards__card');
+    await expect(cards).toHaveCount(3);
+    const rects = await Promise.all([0, 1, 2].map(async (i) => (await cards.nth(i).boundingBox())!));
+    for (const r of rects) expect(r.height).toBeGreaterThanOrEqual(56);
+    if (testInfo.project.name === 'mobile') {
+      // 세로로 쌓기 — 왼쪽 끝이 같고 위에서 아래로.
+      expect(rects[1].y).toBeGreaterThanOrEqual(rects[0].y + rects[0].height);
+      expect(rects[2].y).toBeGreaterThanOrEqual(rects[1].y + rects[1].height);
+      expect(Math.abs(rects[1].x - rects[0].x)).toBeLessThanOrEqual(1);
+    } else {
+      // 넓은 화면 = 한 줄에 셋.
+      expect(Math.abs(rects[1].y - rects[0].y)).toBeLessThanOrEqual(1);
+      expect(Math.abs(rects[2].y - rects[0].y)).toBeLessThanOrEqual(1);
+      expect(rects[1].x).toBeGreaterThan(rects[0].x + rects[0].width - 1);
+    }
+    const browse = box.getByRole('button', { name: '그냥 둘러보기' });
+    expect((await browse.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+
+    // 종이 — 누르는 장치라 빠진다.
+    await page.emulateMedia({ media: 'print' });
+    await expect(box).toBeHidden();
+    await page.emulateMedia({ media: null });
+    await expect(box).toBeVisible();
+
+    // 카드를 누르면 사라지고 작은 줄에 그 역할 · 창업자 차례(지도가 검색창 위)는 구를 골라야 보이니 저장값과 눌림만.
+    await cards.filter({ hasText: '가게를 열려고' }).click();
+    await expect(box).toHaveCount(0);
+    await expect(page.locator('section.role').getByRole('button', { name: '창업자' })).toHaveAttribute('aria-pressed', 'true');
+    expect(await storedRole(page)).toBe('창업자');
+    // 주소에는 안 실린다.
+    expect(new URL(page.url()).search).toBe('');
+  });
+
+  test('BI. 「그냥 둘러보기」= 카드 사라짐 · 아무 역할도 안 눌림 · 새로고침해도 안 뜬다', { tag: '@first-visit' }, async ({ page }) => {
+    await mockOpenSigungu(page);
+    await page.goto('/');
+    await page.locator('section.rolecards').getByRole('button', { name: '그냥 둘러보기' }).click();
+    await expect(page.locator('section.rolecards')).toHaveCount(0);
+    for (const name of ['투자자', '창업자', '중개사']) {
+      await expect(page.locator('section.role').getByRole('button', { name })).toHaveAttribute('aria-pressed', 'false');
+    }
+    expect(await storedRole(page)).toBe('둘러보기');
+    await page.reload();
+    await expect(page.locator('section.role')).toBeVisible();
+    await expect(page.locator('section.rolecards')).toHaveCount(0);
+  });
+
+  test('BJ. 건물 직행 링크(`bld`)에서는 안 뜨고 저장도 안 한다 · `?sgg=` 만 든 링크에서는 뜬다', { tag: '@first-visit' }, async ({ page }) => {
+    await mockOpenSigungu(page);
+    await mockFloorStack(page, [], [], [floorRow({ floor_no: 2 }), floorRow()]);
+    await page.goto(`/?sgg=11680&bld=${LINK_BLD}`);
+    await expect(page.locator('section.stack').getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
+    await expect(page.locator('.entrybar').getByRole('button', { name: '나는 역할 고르기' })).toBeVisible();
+    await unfoldEntry(page);
+    await expect(page.locator('section.role')).toBeVisible();
+    await expect(page.locator('section.rolecards')).toHaveCount(0);
+    expect(await storedRole(page)).toBeNull();
+
+    await page.goto('/?sgg=11680');
+    await expect(page.locator('section.rolecards')).toBeVisible();
+    await expect(page.locator('section.role')).toHaveCount(0);
   });
 });

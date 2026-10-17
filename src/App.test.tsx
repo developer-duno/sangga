@@ -89,6 +89,10 @@ function floorRow(over: Partial<FloorRow> = {}): FloorRow {
 }
 
 beforeEach(() => {
+  // '물어봤음' 기본값(결정 0039 §4-7 · W3) — 저장값이 없으면 입구 맨 위에 역할 고르기 큰 카드가 서고 작은 역할 단추 줄은
+  // 숨는다. 이 파일의 시험은 그 카드가 나오기 전 화면을 전제로 쓰였으므로 시작 때 `둘러보기`(= 역할 없음)를 넣는다.
+  // 역할을 따로 넣는 시험은 이 뒤에 setItem 하므로 그 값이 이긴다. 큰 카드 시험은 아래 「큰 카드」 묶음이 이 값을 지우고 본다.
+  window.localStorage.setItem('sangga.viewerRole', '둘러보기');
   rpc.mockReset();
   from.mockReset();
   from.mockImplementation((view: string) =>
@@ -555,7 +559,7 @@ describe('App — 역할 단추 (결정 0036 결정 18)', () => {
     await waitFor(() => expect(cardTitles()).toEqual(['층 목록', '속한 상권']));
   });
 
-  it('★ 누르면 이 기기에 저장되고, 다시 누르면 지워진다 — 주소에는 안 실린다', async () => {
+  it('★ 누르면 이 기기에 저장되고, 다시 누르면 「둘러보기」로 적힌다(결정 0039 §7-4) — 주소에는 안 실린다', async () => {
     openWith(`?sgg=11680&bld=${LINK_BLD}`);
     render(<App />);
     await screen.findByRole('heading', { name: '테스트빌딩' });
@@ -571,7 +575,7 @@ describe('App — 역할 단추 (결정 0036 결정 18)', () => {
     expect(currentSearch()).toBe(before);
 
     fireEvent.click(screen.getByRole('button', { name: '중개사' }));
-    expect(window.localStorage.getItem(KEY)).toBeNull();
+    expect(window.localStorage.getItem(KEY)).toBe('둘러보기');
     expect(cardTitles()).toEqual(['속한 상권', '층 목록']);
     expect(currentSearch()).toBe(before);
   });
@@ -598,6 +602,181 @@ describe('App — 역할 단추 (결정 0036 결정 18)', () => {
       setItem.mockRestore();
       getItem.mockRestore();
     }
+  });
+});
+
+/**
+ * 역할 고르기 큰 카드(결정 0039 Q3 · §4-10 · §7-4 · W3) — 이 기기 저장값이 없고 건물 직행 링크(`bld`)로 연 게 아닐 때만
+ * 입구 맨 위(작은 역할 단추 줄 자리)에 선다. 카드 한 장의 글·알림은 `RoleCards.test`, 저장 규칙은 `viewerRoleStore.test`.
+ */
+describe('App — 역할 고르기 큰 카드 (결정 0039 W3)', () => {
+  const KEY = 'sangga.viewerRole';
+  // 맨 위 beforeEach 의 '물어봤음' 기본값을 지운다 — 처음 온 사람(빈 저장소).
+  beforeEach(() => {
+    window.localStorage.clear();
+    openWith('');
+  });
+  afterEach(() => {
+    window.localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  const cards = () => document.querySelector('section.rolecards');
+  const smallRow = () => document.querySelector('section.role');
+  const cardBtn = (name: RegExp) => screen.getByRole('button', { name });
+
+  it('★ 빈 저장소로 `/` 를 열면 큰 카드가 서고 작은 단추 줄은 숨는다 · 카드 셋 + 그냥 둘러보기', async () => {
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+    expect(cards()).not.toBeNull();
+    expect(smallRow()).toBeNull();
+    expect(screen.getByText('무엇을 하러 오셨나요?')).toBeTruthy();
+    expect([...document.querySelectorAll('.rolecards__name')].map((e) => e.textContent)).toEqual([
+      '투자·매입하려고',
+      '가게를 열려고',
+      '중개하려고',
+    ]);
+    expect(screen.getByRole('button', { name: '그냥 둘러보기' })).toBeTruthy();
+    // 덮개가 아니다 — 지역 고르기가 같은 화면에 그대로 있다.
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(screen.getByRole('button', { name: /^서울$/ })).toBeTruthy();
+  });
+
+  it('★ `?sgg=` 만 든 링크에서도 뜬다(건물 직행만 예외)', async () => {
+    openWith('?sgg=30170');
+    render(<App />);
+    await screen.findByRole('button', { name: /^대전$/ });
+    expect(cards()).not.toBeNull();
+  });
+
+  it('★ 카드를 누르면 그 역할이 저장되고 카드가 사라지며 작은 줄에 그 역할이 눌린다 · 주소에는 안 실린다', async () => {
+    openWith('?sgg=11680');
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+    const before = currentSearch();
+    fireEvent.click(cardBtn(/가게를 열려고/));
+    expect(window.localStorage.getItem(KEY)).toBe('창업자');
+    expect(cards()).toBeNull();
+    expect(smallRow()).not.toBeNull();
+    expect(screen.getByRole('button', { name: '창업자' }).getAttribute('aria-pressed')).toBe('true');
+    expect(currentSearch()).toBe(before);
+    expect(currentSearch()).not.toContain(encodeURIComponent('창업자'));
+  });
+
+  it('★ 「그냥 둘러보기」= `둘러보기` 저장 · 카드 사라짐 · 아무 역할도 안 눌림 · 다시 열어도 안 뜬다', async () => {
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+    fireEvent.click(screen.getByRole('button', { name: '그냥 둘러보기' }));
+    expect(window.localStorage.getItem(KEY)).toBe('둘러보기');
+    expect(cards()).toBeNull();
+    for (const name of ['투자자', '창업자', '중개사']) {
+      expect(screen.getByRole('button', { name }).getAttribute('aria-pressed')).toBe('false');
+    }
+    cleanup();
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+    expect(cards()).toBeNull();
+    expect(smallRow()).not.toBeNull();
+  });
+
+  it('★ 고른 역할을 작은 단추로 해제하면 `둘러보기`(지우지 않음) → 다음 방문에 큰 카드가 안 뜬다', async () => {
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+    fireEvent.click(cardBtn(/중개하려고/));
+    fireEvent.click(screen.getByRole('button', { name: '중개사' }));
+    expect(window.localStorage.getItem(KEY)).toBe('둘러보기');
+    cleanup();
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+    expect(cards()).toBeNull();
+  });
+
+  it('저장값이 모르는 값이면 안 물어본 것으로 보고 뜬다', async () => {
+    window.localStorage.setItem(KEY, 'investor');
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+    expect(cards()).not.toBeNull();
+  });
+
+  it('★ 저장이 막힌 창 — 뜨고, 누르면 사라지며 화면은 그 역할대로 · 오류 없음 · 다음 방문에 다시 뜬다', async () => {
+    const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new DOMException('blocked', 'SecurityError');
+    });
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('blocked', 'SecurityError');
+    });
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+    expect(cards()).not.toBeNull();
+    fireEvent.click(cardBtn(/투자·매입하려고/));
+    expect(setItem).toHaveBeenCalled();
+    expect(cards()).toBeNull();
+    expect(screen.getByRole('button', { name: '투자자' }).getAttribute('aria-pressed')).toBe('true');
+    cleanup();
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+    expect(getItem).toHaveBeenCalled();
+    expect(cards()).not.toBeNull();
+  });
+
+  it('★ 건물 직행 링크(`bld`)로 연 방문에는 그 방문 내내 안 뜨고 저장도 안 한다 → 다음에 `/` 로 오면 뜬다', async () => {
+    openWith(`?sgg=11680&bld=${LINK_BLD}`);
+    render(<App />);
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+    unfoldEntry();
+    expect(cards()).toBeNull();
+    expect(smallRow()).not.toBeNull();
+    // 건물 선택을 풀고 입구로 돌아와도(구를 바꾸면 건물이 빠진다) 그 방문 동안은 안 뜬다.
+    await pickGu('대전', '서구');
+    await waitFor(() => expect(screen.queryByRole('heading', { name: '테스트빌딩' })).toBeNull());
+    expect(cards()).toBeNull();
+    expect(window.localStorage.getItem(KEY)).toBeNull();
+
+    cleanup();
+    openWith('');
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+    expect(cards()).not.toBeNull();
+  });
+
+  it('★ 큰 카드가 서 있는 채 건물을 열고 바의 「나는 역할 고르기」를 누르면 펼치고 첫 카드 단추에 커서', async () => {
+    const scrolled: Element[] = [];
+    Element.prototype.scrollIntoView = vi.fn(function (this: Element) {
+      scrolled.push(this);
+    });
+    render(<App />);
+    await pickGu('서울', '강남구');
+    const input = screen.getByLabelText('건물명 또는 주소');
+    fireEvent.change(input, { target: { value: '테헤란로' } });
+    fireEvent.submit(input.closest('form')!);
+    fireEvent.click(await screen.findByRole('button', { name: /테스트빌딩/ }));
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+    const roleBar = screen.getByRole('button', { name: '나는 역할 고르기' });
+    expect(roleBar.textContent).toBe('나는 역할 고르기 ▾');
+    fireEvent.click(roleBar);
+
+    expect(scrolled).toEqual([cards()]);
+    expect(document.activeElement).toBe(document.querySelector('section.rolecards .rolecards__card'));
+    expect(document.activeElement?.textContent).toContain('투자·매입하려고');
+    // @ts-expect-error — jsdom 원래 상태(없음)로 되돌린다.
+    delete Element.prototype.scrollIntoView;
+  });
+
+  it('★ 의견함 문맥에 역할·둘러보기 값이 실리지 않는다', async () => {
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+    fireEvent.click(cardBtn(/가게를 열려고/));
+    fireEvent.click(document.querySelector('.fb__open') as HTMLButtonElement);
+    fireEvent.click(document.querySelector('.fb__kinds input') as HTMLInputElement);
+    fireEvent.change(document.querySelector('.fb__input') as HTMLTextAreaElement, {
+      target: { value: '시험 의견' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }));
+    await waitFor(() => expect(rpc.mock.calls.some(([fn]) => fn === 'submit_feedback')).toBe(true));
+    const call = rpc.mock.calls.find(([fn]) => fn === 'submit_feedback')!;
+    const ctx = JSON.stringify((call[1] as { p_context: unknown }).p_context);
+    expect(ctx.length).toBeGreaterThan(2); // 양성 대조: 문맥은 실린다
+    for (const v of ['창업자', '둘러보기', '가게를 열려고']) expect(ctx).not.toContain(v);
   });
 });
 
@@ -961,7 +1140,8 @@ describe('App — 중개사 최근 뽑은 건물 (결정 0036 결정 18 ⑥⑩)'
     );
     async function ownLine(role: string | null) {
       window.localStorage.clear();
-      if (role) window.localStorage.setItem(KEY, role);
+      // 역할 없음 = '물어봤음' 기본값(맨 위 beforeEach 와 같은 뜻 — 결정 0039 W3 큰 카드가 서지 않게).
+      window.localStorage.setItem(KEY, role ?? '둘러보기');
       openWith('');
       render(<App />);
       await pickGu('서울', '강남구');
@@ -1235,7 +1415,8 @@ describe('App — 인쇄 한 장 보강 (결정 0036 결정 3·8 · 물결 1-C2)
     expect(asked[0]).toEqual({ p_bld_id: LINK_BLD, p_floor_no: 1, p_limit: 50, p_offset: 0 });
     // ⛔ 주소·저장소에 안 실린다.
     expect(currentSearch()).toBe(`?sgg=11680&bld=${LINK_BLD}`);
-    expect(Object.keys(window.localStorage)).toEqual([]);
+    // 저장소에는 맨 위 beforeEach 가 넣은 '물어봤음' 역할 값 하나뿐(결정 0039 W3) — 고르기 값은 안 실린다.
+    expect(Object.keys(window.localStorage)).toEqual([KEY]);
 
     // '넣지 않음'은 선택지로 남는다.
     fireEvent.click(radio('넣지 않음'));

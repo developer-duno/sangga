@@ -104,6 +104,8 @@ function floorRow(): FloorRow {
 
 beforeEach(() => {
   window.history.replaceState(null, '', '/');
+  // '물어봤음' 기본값(결정 0039 §4-7 · W3) — 빈 저장소면 입구 맨 위에 역할 고르기 큰 카드가 선다. 이 파일은 그 전 화면을 전제로 쓰였다.
+  window.localStorage.setItem('sangga.viewerRole', '둘러보기');
   rpc.mockReset();
   from.mockReset();
   from.mockImplementation((view: string) =>
