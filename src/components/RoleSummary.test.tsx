@@ -2,14 +2,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, act, fireEvent, waitFor } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 import type {
+  BasePrice,
   BuildingHit,
   DistrictOpenClose,
   FloorRow,
   IndustryMedian,
   IndustryMix,
   ParcelTransaction,
-  PriceBand,
   RentStat,
+  SigunguTxStat,
 } from '../types';
 
 /**
@@ -144,19 +145,22 @@ function okRpc(fn: string, pnu: string): Res {
       };
       return { data: [t], error: null };
     }
-    case 'list_price_bands': {
-      const b: PriceBand = {
-        floor_no: 2,
-        status: 'ok',
-        stage: 'L5',
-        n: 7,
-        p25: 3_000_000,
-        median: 3_500_000,
-        p75: 4_000_000,
-        median_area_m2: 33,
-        window_from: '2024-01',
-      };
+    case 'list_base_prices': {
+      // 기준시가 — 2층만(투자자 첫 타일 = 「국세청 기준시가 (2층)」 · 결정 0041 E3).
+      const b: BasePrice = { floor_no: 2, median_price_per_m2: isA(pnu) ? 5_960_000 : 4_100_000, ho_cnt: 1, notice_date: '2026-01-01' };
       return { data: [b], error: null };
+    }
+    case 'get_sigungu_tx_stats': {
+      const s: SigunguTxStat = {
+        floor_band: '1층',
+        n: 213,
+        median_unit_price: 3_800_000,
+        p25_unit_price: 3_000_000,
+        p75_unit_price: 4_500_000,
+        window_from: '202410',
+        sigungu_nm: '강남구',
+      };
+      return { data: [s], error: null };
     }
     case 'get_parcel_land_price':
       return { data: [{ land_price: isA(pnu) ? 45_230_000 : 12_340_000, land_price_year: 2025 }], error: null };
@@ -358,11 +362,11 @@ describe('RoleSummary — 층별 화면 맨 위 역할 요약 판', () => {
   it('같은 건물에서 역할을 바꾸면 앞 역할의 타일이 남지 않는다(투자자 → 창업자)', async () => {
     const { rerender, container } = render(<FloorStack building={building(A)} viewerRole="투자자" />);
     await settle();
-    await waitFor(() => expect(container.querySelector('.rsum__tile--band')).not.toBeNull());
+    await waitFor(() => expect(container.querySelector('.rsum__tile--base')).not.toBeNull());
     rerender(<FloorStack building={building(A)} viewerRole="창업자" />);
     await waitFor(() => expect(container.querySelector('.rsum__tile--industry')).not.toBeNull());
     expect(container.querySelector('.rsum__question')!.textContent).toBe('여기서 장사가 되나');
-    for (const k of ['band', 'tx', 'land']) expect(container.querySelector(`.rsum__tile--${k}`)).toBeNull();
+    for (const k of ['base', 'txstat', 'tx', 'land']) expect(container.querySelector(`.rsum__tile--${k}`)).toBeNull();
     expect(container.querySelectorAll('.rsum')).toHaveLength(1);
   });
 
@@ -385,17 +389,33 @@ describe('RoleSummary — 층별 화면 맨 위 역할 요약 판', () => {
     }
   });
 
-  it('투자자 판의 실제 글 — 시세 줄(C등급)·임대(상권 평균)·공시지가', async () => {
+  it('투자자 판의 실제 글 — 국세청 기준시가(A등급 공식 고시 · 시세 아님)·임대(상권 평균)·공시지가 (결정 0041 E3)', async () => {
     const { container } = render(<FloorStack building={building(A)} viewerRole="투자자" />);
     await settle();
     await waitFor(() => expect(container.querySelectorAll('.rsum__tile')).toHaveLength(4));
-    const band = container.querySelector('.rsum__tile--band')!;
-    expect(band.classList.contains('rsum__tile--est')).toBe(true);
-    expect(band.querySelector('.grade__badge--est')?.textContent).toBe('C등급 · 파생 추정');
+    const base = container.querySelector('.rsum__tile--base')!;
+    expect(base.classList.contains('rsum__tile--est')).toBe(false);
+    expect(base.querySelector('.rsum__label')?.textContent).toBe('국세청 기준시가 (2층)');
+    expect(base.querySelector('.rsum__val')?.textContent).toBe('㎡당 596만');
+    expect(base.querySelector('.grade__badge')?.textContent).toBe('A등급 · 공식 고시');
+    expect(base.textContent).toContain('세무 기준가격 — 시세 아님');
     expect(container.querySelector('.rsum__tile--rent')!.textContent).toContain('상권 평균 · 집합상가 · 2026년 2분기 조사');
     expect(container.querySelector('.rsum__answer')!.textContent).toBe(
-      '2층 참고 시세는 비슷한 호실 한 칸 33㎡ (10평) 기준 1.0억~1.3억입니다. 이 땅 신고 거래는 1건입니다.',
+      '이 땅 신고 거래는 1건입니다. 2층 국세청 기준시가는 ㎡당 596만(세무 기준가격)입니다.',
     );
+  });
+
+  it('★ 기준시가를 못 받으면 구 상가 단가 타일 — FloorStack 이 이미 받은 구 단가를 쓴다(추가 호출 0)', async () => {
+    state.side = (fn, pnu) =>
+      fn === 'list_base_prices' ? Promise.resolve({ data: null, error: { message: 'x' } }) : Promise.resolve(okRpc(fn, pnu));
+    const { container } = render(<FloorStack building={building(A)} viewerRole="투자자" />);
+    await settle();
+    await waitFor(() => expect(container.querySelector('.rsum__tile--txstat')).not.toBeNull());
+    const t = container.querySelector('.rsum__tile--txstat')!;
+    expect(t.querySelector('.rsum__label')?.textContent).toBe('구 상가 단가 (1층)');
+    expect(t.textContent).toContain('강남구 1층 · 표본 213건 · 상가 거래 기준');
+    expect(container.querySelector('.rsum__tile--base')).toBeNull();
+    expect(fetches.filter((f) => f.fn === 'get_sigungu_tx_stats')).toHaveLength(1);
   });
 });
 

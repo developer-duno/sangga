@@ -14,6 +14,9 @@
 
 ⛔ 둘 다 **에러가 안 난다** — 되돌아가도 답은 같고 느리기만 하다. 사람 눈으로는 영영 안 잡힌다.
 
+ⓘ 2026-10-18a(결정 0041) — ② 의 참고 시세 사다리와 이웃 표를 정본에서 지웠다. ② 의 불변식은 이제 적용된
+  원장(09-27c·10-08a) 안에서만 보고, 정본에는 그 둘이 **없음**을 본다. ① 은 그대로 정본을 본다.
+
 여기서 보는 것 (DB 없이 SQL 글자만 — CI 에는 DB 가 없다)
   1) 정본 list_parcel_transactions 본문에 `t.pnu = list_parcel_transactions.pnu::char(19)` 가
      있고, 캐스트 없는 옛 모양은 없다.
@@ -42,6 +45,7 @@ MIG = os.path.join(ROOT, "supabase", "migrations", "2026-09-27c_p6_cold_cache.sq
 # 같아야 하는 것은 이제 이 파일이다(09-27c 는 적용된 원장이라 그때 모양 그대로 남는다 —
 # 그 판의 불변식(캐스트·이웃 표)은 아래 test_마이그레이션도_같은_불변식을_지킨다 가 계속 본다).
 MIG_LATEST = os.path.join(ROOT, "supabase", "migrations", "2026-10-08a_transaction_share_flag.sql")
+LATEST_FOR = {"list_parcel_transactions": MIG_LATEST}
 SCRIPTS_DIR = os.path.join(ROOT, "scripts")
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
@@ -128,18 +132,16 @@ def test_실거래_함수가_char19로_견준다():
     assert tx_cast_problems(read(SCHEMA)) == []
 
 
-def test_참고시세_이웃이_새_요약표를_본다():
-    assert near_source(read(SCHEMA)) == NEW_MV
+def test_정본에서_사다리와_이웃_표를_지웠다():
+    """결정 0041 — 정본에 사다리 함수도 이웃 표 정의도 없다(주석은 걷고 본다)."""
+    src = code(read(SCHEMA))
+    assert not re.search(r"create\s+or\s+replace\s+function\s+list_price_bands\s*\(", src, re.I)
+    assert mv_problems(read(SCHEMA)) == ["새 표 정의가 없다"]
 
 
-def test_새_요약표_정의_색인_권한():
-    assert mv_problems(read(SCHEMA)) == []
-
-
-def test_post_load_가_새_요약표를_갱신한다():
-    assert NEW_MV in post_load.REFRESH_MVS
-    assert ("refresh materialized view concurrently {};".format(NEW_MV)
-            in post_load.build_refresh_sql())
+def test_post_load_는_이웃_표를_더_안_굽는다():
+    assert NEW_MV not in post_load.REFRESH_MVS
+    assert NEW_MV not in post_load.build_refresh_sql()
 
 
 # ── 5) 마이그레이션 ──────────────────────────────────────────────────────────
@@ -155,9 +157,9 @@ def test_마이그레이션이_한_트랜잭션이고_notify_는_뒤():
     assert "concurrently" not in src, "트랜잭션 안에서 concurrently 는 못 돈다"
 
 
-@pytest.mark.parametrize("name", ["list_parcel_transactions", "list_price_bands"])
+@pytest.mark.parametrize("name", ["list_parcel_transactions"])
 def test_마이그레이션_함수_블록이_정본과_같다(name):
-    assert fn_block(name, read(MIG_LATEST)) == fn_block(name, read(SCHEMA))
+    assert fn_block(name, read(LATEST_FOR[name])) == fn_block(name, read(SCHEMA))
 
 
 def test_마이그레이션도_같은_불변식을_지킨다():
@@ -183,7 +185,7 @@ def test_돌연변이_캐스트를_빼면_잡힌다():
 
 
 def test_돌연변이_이웃을_parcel_로_되돌리면_잡힌다():
-    src = read(SCHEMA)
+    src = read(MIG)   # 정본에서 사다리를 지워(결정 0041) 원장 사본으로 탐지기를 본다
     old = ("      from mv_tx_parcel_geog p\n"
            "     where st_dwithin(p.geog, v_geog, 500, false);")
     assert src.count(old) == 1
@@ -200,7 +202,7 @@ def test_돌연변이_주석_속_옛_글자는_통과로_세지_않는다():
 
 
 def test_돌연변이_거래_조건을_좁히면_잡힌다():
-    src = read(SCHEMA)
+    src = read(MIG)   # 정본에서 이웃 표를 지워(결정 0041) 원장 사본으로 탐지기를 본다
     old = "and exists (select 1 from transaction t where t.pnu = p.pnu);"
     assert src.count(old) == 1
     bad = src.replace(old, "and exists (select 1 from transaction t where t.pnu = p.pnu "
@@ -209,7 +211,7 @@ def test_돌연변이_거래_조건을_좁히면_잡힌다():
 
 
 def test_돌연변이_유일_색인을_빼면_잡힌다():
-    src = read(SCHEMA)
+    src = read(MIG)   # 정본에서 이웃 표를 지워(결정 0041) 원장 사본으로 탐지기를 본다
     bad = re.sub(r"create unique index if not exists idx_mtpg_pnu[^\n]*\n", "", src)
     assert bad != src
     assert mv_problems(bad)

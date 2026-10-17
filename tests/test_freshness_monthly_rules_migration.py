@@ -43,6 +43,15 @@ import post_load  # noqa: E402
 import publish_ledger_release as plr  # noqa: E402
 
 MIGRATION = os.path.join(ROOT, "supabase", "migrations", "2026-10-15a_freshness_monthly_rules.sql")
+# 2026-10-18a(결정 0041) — 9번 줄(참고 시세 성적표)을 빼고 다시 만든 판. 정본과 글자가 같아야 하는 쪽은 이제 이 파일이다.
+DROP_GATE_MIGRATION = os.path.join(ROOT, "supabase", "migrations", "2026-10-18a_price_use_group.sql")
+# 10-15a 본문에서 이 덩어리(9번 줄 + 뒤 union all)만 걷으면 정본 본문과 같아야 한다(결정 0041 이 바꾼 것은 그것뿐).
+GATE_ROW = ("    select 9, '참고 시세 성적표', '적재일',\n"
+            "           (select (max(t.loaded_at) at time zone 'Asia/Seoul')::date::text\n"
+            "              from price_gate_sigungu t),\n"
+            "           'none',\n"
+            "           '재생성 때 (결재 사항)'\n"
+            "    union all\n")
 SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
 FN = "get_data_freshness"
 
@@ -106,8 +115,16 @@ def schema():
 
 class TestMirrorsTheSchema:
     def test_function_block_equals_the_schema(self, mig, schema):
-        """머리·본문·comment·revoke 가 정본과 글자 그대로 — 드리프트 가드는 `$$` 안 본문만 본다."""
-        assert fn_block(mig) == fn_block(schema)
+        """머리·본문·comment·revoke 가 정본과 글자 그대로 — 드리프트 가드는 `$$` 안 본문만 본다.
+
+        ⓘ 2026-10-18a(결정 0041)부터 정본과 글자가 같아야 하는 쪽은 10-18a 다(10-15a 는 적용된 원장 — 9번 줄이 든 판).
+          그래서 둘을 본다: ① 10-18a 덩어리 == 정본 ② 10-15a 본문에서 9번 줄 하나만 걷으면 정본 본문과 같다
+          (결정 0041 이 그 밖의 줄을 건드리지 않았다는 증거).
+        """
+        assert fn_block(read(DROP_GATE_MIGRATION)) == fn_block(schema)
+        old = fn_body(mig)
+        assert old.count(GATE_ROW) == 1
+        assert old.replace(GATE_ROW, "", 1) == fn_body(schema)
 
     def test_head_keeps_the_four_properties(self, mig):
         head = fn_block(mig)
@@ -267,7 +284,8 @@ class TestTheTwoRows:
         assert branch(fn_body(read(path)), PERMIT_BRANCH) == (YM_SHAPE, 3)
 
     def test_eleven_rows(self, path):
-        assert fn_body(read(path)).count("union all") == 10
+        """원장 10-15a 는 열한 줄 · 정본은 2026-10-18a(결정 0041 — 성적표 줄 뺌)부터 열 줄."""
+        assert fn_body(read(path)).count("union all") == (10 if path == MIGRATION else 9)
 
 
 class TestTxDetectorCatches:
@@ -381,10 +399,11 @@ def _fresh(conn, migration_sql):
     return cur
 
 
-def _rows(cur):
+def _rows(cur, n=11):
+    """n = 기대 줄 수 — 원장 10-15a 는 11 · 정본(2026-10-18a 결정 0041 뒤)은 10."""
     cur.execute("select src, basis_kind, basis, next_expected::text, cadence from get_data_freshness()")
     rows = cur.fetchall()
-    assert len(rows) == 11, len(rows)
+    assert len(rows) == n, len(rows)
     return {r[0]: r[1:] for r in rows}
 
 
@@ -447,7 +466,7 @@ class TestRealRun:
         cur = _fresh(pg, read(MIGRATION))
         cur.execute(fn_block(read(SCHEMA)))
         cur.execute("insert into transaction values ('202610')")
-        rows = _rows(cur)
+        rows = _rows(cur, 10)   # 정본은 성적표 줄을 뺀 열 줄(결정 0041)
         assert rows["실거래 (매매)"][2] == "2026-11-30"
         assert rows["건축물대장"][2] == "2026-10-31"
 
@@ -702,7 +721,7 @@ class TestFreshnessIssueHint:
     def test_hint_keys_match_the_server_labels(self):
         """열쇠 글자가 서버 함수의 src 와 같아야 한다 — 다르면 안내가 조용히 안 나온다."""
         labels = server_src_labels(fn_body(read(SCHEMA)))
-        assert len(labels) == 11                                       # 신선도 표 11줄
+        assert len(labels) == 10                                       # 신선도 표 10줄(2026-10-18a 결정 0041 — 11 → 10)
         for key in check_data_freshness.SOURCE_HINTS:
             assert key in labels, key
 
@@ -832,11 +851,11 @@ class TestPostLoadLedgerCheck:
         "report_industry_median_consistency": lambda: ("0", False),
         "report_industry_median_m_freshness": lambda: ("", "", False),
         "report_industry_median_m_consistency": lambda: ("0", False),
-        "report_tx_geog_freshness": lambda: ("1", "1", False),
         "report_anon_exposure": lambda: ([], []),
         "report_write_exposure": lambda: [],
         "report_slow_functions": lambda: [],
         "report_toast_evictions": lambda: [],
+        "report_tx_main_use_unknown": lambda: 0,
         "report_canonical_indexes": lambda: [],
         "report_function_drift": lambda: [],
         "report_snapshot_release": lambda *a: (False, False),

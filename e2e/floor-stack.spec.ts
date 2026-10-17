@@ -5,8 +5,6 @@ import {
   coverageStats,
   parcelTx,
   sigunguTxStats,
-  priceBands,
-  priceBandGate,
   industryMix,
   industryFloors,
   industryMedian,
@@ -16,14 +14,12 @@ import {
   nearbyPermits,
   basePrices,
   lhNotice,
-  priceGate,
   rentStat,
   rentStatOld,
   rentStats,
   openClose,
   openCloseNotSeoul,
   dataFreshness,
-  scorecard,
   storeHit,
   unitSummary,
   floorUnitsPage,
@@ -72,10 +68,7 @@ const DISTRICT_PATTERN = '**/rest/v1/rpc/list_building_districts*';
 // 막지 않으면 실존하지 않는 도메인으로 요청이 나가 테스트가 네트워크에 좌우된다.
 const PARCEL_TX_PATTERN = '**/rest/v1/rpc/list_parcel_transactions*';
 const TX_STATS_PATTERN = '**/rest/v1/rpc/get_sigungu_tx_stats*';
-// 참고 매매 시세 밴드(Stage B · 결정 0013). 이것도 안 막으면 실존하지 않는 도메인으로
-// 요청이 나간다 — 기본값은 빈 배열이라 섹션이 아예 안 뜬다(기존 테스트에 영향 0).
-const PRICE_BAND_PATTERN = '**/rest/v1/rpc/list_price_bands*';
-// 국세청 기준시가. 참고 시세 카드 **안**에 한 줄로 붙지만 자료는 완전히 다른 것이다.
+// 국세청 기준시가. 『층별 공표값 나란히』 카드의 기준시가 칸에 들어간다(결정 0041 — 내린 참고 시세 카드에서 옮겼다).
 // ⚠️ 기본값은 **함수가 없는 상태**(404/PGRST202)다 — 마이그레이션 적용 전 라이브가 바로
 //    그 상태이고, 그때 이 줄이 조용히 빠지는지가 테스트 V 의 관심사다. 안 막으면 실존하지
 //    않는 도메인으로 요청이 나가 테스트가 DNS 에 좌우된다.
@@ -132,17 +125,10 @@ const LH_NOTICE_PATTERN = '**/rest/v1/rpc/list_lh_notices*';
 // ⚠️ 기본값은 역시 **함수가 없는 상태**다 — 마이그레이션 적용 전 라이브가 그것이고, 그때
 //    표가 통째로 조용히 빠지는지가 테스트 M 의 관심사 중 하나다.
 const DATA_FRESHNESS_PATTERN = '**/rest/v1/rpc/get_data_freshness*';
-// 참고 시세 성적표 — 이것도 **입구**에서 나가는 요청이다(LH 공고와 한 쌍으로 막는다).
-// ⚠️ 기본값은 역시 **함수가 없는 상태**다 — 마이그레이션 적용 전 라이브이 그것이고,
-//    그때 카드가 통째로 조용히 빠지는지가 다른 입구 시험들이 기대는 전제다.
-const PRICE_GATE_PATTERN = '**/rest/v1/rpc/list_price_gate*';
 // 동네 매매 단가 흐름(결정 0027) — 이것도 **입구**에서 나가는 요청이다(위 둘과 한 쌍으로 막는다).
 // ⚠️ 기본값은 역시 **함수가 없는 상태**다 — 마이그레이션 적용 전 라이브이 그것이고,
 //    그때 카드가 통째로 조용히 빠지는지가 스펙 X 의 관심사다.
 const TX_YEARLY_PATTERN = '**/rest/v1/rpc/get_sigungu_tx_yearly*';
-// 성적표 파일은 **같은 출처**(개발 서버의 public/)라 REST 목과 결이 다르다 — 라우트를
-// 안 걸면 진짜 파일이 그대로 나간다. 스펙 AB 는 작은 판으로 갈아 끼운다.
-const SCORECARD_PATTERN = '**/scorecard-v2.json';
 
 const CORS_HEADERS = {
   'access-control-allow-origin': '*',
@@ -176,7 +162,6 @@ async function mockJson(page: Page, pattern: string, body: unknown, delayMs = 0)
 async function mockFloorStack(
   page: Page,
   txs: unknown[] = [],
-  bands: unknown[] = [],
   floors?: unknown[],
   mix?: unknown,
   bases?: unknown[],
@@ -185,7 +170,6 @@ async function mockFloorStack(
 ) {
   await mockJson(page, STATS_PATTERN, [coverageStats()]);
   await mockJson(page, FLOOR_PATTERN, floors ?? [floorRow()]);
-  await mockJson(page, PRICE_BAND_PATTERN, bands);
   await mockJson(page, PARCEL_TX_PATTERN, txs);
   await mockJson(page, TX_STATS_PATTERN, sigunguTxStats());
   await mockJson(page, DISTRICT_PATTERN, {
@@ -296,12 +280,6 @@ async function mockOpenSigungu(
   */
   await mockMissingFunction(page, DATA_FRESHNESS_PATTERN);
   /*
-    성적표 카드도 구를 고르는 순간 함께 묻는다 — 같은 이유로 막는다.
-    기본값이 **함수가 없는 상태**인 것도 같다(마이그레이션 적용 전 라이브). 성적을 보고
-    싶은 시험은 이 뒤에 자기 응답을 한 번 더 등록한다.
-  */
-  await mockMissingFunction(page, PRICE_GATE_PATTERN);
-  /*
     동네 매매 단가 흐름 카드도 구를 고르는 순간 함께 묻는다 — 같은 이유로 막는다.
     기본값이 **함수가 없는 상태**인 것도 같다(마이그레이션 적용 전 라이브). 흐름을 보고
     싶은 시험은 이 뒤에 자기 응답을 한 번 더 등록한다.
@@ -318,7 +296,7 @@ async function pickGu(page: Page, sidoName: string, guName: string) {
 /**
  * 접힌 카드를 펼친다(로드맵 Wave 2 『한 장 요약 접힘 틀』).
  *
- * 첫 화면에 펼쳐 두는 카드는 넷뿐이라 『참고 매매 시세』는 접힌 채로 시작한다 —
+ * 첫 화면에 펼쳐 두는 카드는 넷뿐이라 『층별 공표값 나란히』 같은 카드는 접힌 채로 시작한다 —
  * 그 안의 값·근거를 보려면 한 번 눌러야 한다. 이미 펼쳐져 있으면 아무 일도 안 한다.
  */
 async function openCard(page: Page, title: RegExp) {
@@ -370,7 +348,7 @@ async function gotoTab(page: Page, name: '찾기' | '지도' | '건물' | '뽑�
 }
 
 /**
- * 건물을 고른 뒤 입구 카드(LH·성적표·단가 흐름)가 물러나는가.
+ * 건물을 고른 뒤 입구 카드(LH·단가 흐름)가 물러나는가.
  * 넓은 화면 = 카드가 DOM 에서 빠진다(지금 그대로). 휴대폰(W4a 검사 🟠 F2) = 건물 탭에선 숨고 · 찾기 탭으로 가면 다시 서고 ·
  * 건물을 연 채 종이에서는 빠진다(종이 = 건물 한 장). 끝나면 건물 탭으로 돌려 둔다.
  */
@@ -413,8 +391,8 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
   test('A. 검색 → 결과 클릭 → 층 스택 렌더', async ({ page }) => {
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
-    // 참고 시세 섹션(Stage B)까지 한 벌로 태운다 — "섹션이 통째로 안 뜨는 회귀"를 잡는 자리다.
-    await mockFloorStack(page, [], priceBands(), [floorRow({ floor_no: 2 }), floorRow()]);
+    // 층별 공표값 카드(결정 0041)까지 한 벌로 태운다 — "섹션이 통째로 안 뜨는 회귀"를 잡는 자리다.
+    await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()]);
 
     await page.goto('/');
     await pickGu(page, '서울', '강남구');
@@ -433,12 +411,14 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await expect(stack.getByText(/역삼역\(발달상권\)/)).toBeVisible();
     // 출처표시는 공공누리 1유형 의무다 — 상권 이름이 보이는데 출처만 빠지는 것도 결함이다.
     await expect(stack.getByText(/출처: 서울특별시 상권분석서비스/)).toBeVisible();
-    // 참고 시세 섹션도 같은 종류의 위험을 진다(별도 RPC 하나에 통째로 달려 있다).
+    // 층별 공표값 카드(결정 0041)도 같은 종류의 위험을 진다(곁 자료 셋에 달려 있다).
     // ⚠️ 이 카드는 첫 화면에서 **접혀 있다**(펼침 상한 4장) — 카드 자체는 보이지만
-    //    값·근거는 펼쳐야 나온다.
-    await expect(stack.locator('section.band')).toBeVisible();
-    await openCard(page, /참고 매매 시세/);
-    await expect(stack.getByText(/C등급 · 파생 추정/)).toBeVisible();
+    //    값·근거는 펼쳐야 나온다. 기준시가 함수가 없어도(이 목업) 구 상가 단가 칸 하나로 선다(E2).
+    await expect(stack.locator('section.gap')).toBeVisible();
+    await openCard(page, /층별 공표값 나란히/);
+    await expect(stack.getByText(/서로 나누거나 비율을 계산하지 않았습니다/)).toBeVisible();
+    // 내린 참고 매매 시세 카드는 없다(결정 0041 E1).
+    await expect(stack).not.toContainText('참고 매매 시세');
     // 업종 분포(결정 0014)는 **서버에 함수가 아직 없는 상태**로 흉내 냈다(mockFloorStack).
     // 그때 이 섹션은 아무 말도 없이 사라져야 한다 — "업종 없음" 같은 문구를 남기면
     // 모르는 것을 없는 것이라 말하게 되고, 터지면 층 스택 전체가 같이 죽는다.
@@ -634,15 +614,15 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     // 층 스택의 그 층에도 건수 뱃지가 붙는다(픽스처의 층·거래 층이 모두 1층).
     await expect(stack.locator('.floor__tx')).toHaveText('거래 1건');
     // ② 구 단가 — 표본이 충분한 층대만 수치가 나오고, 모자란 층대는 그렇다고 말한다.
-    await expect(stack.getByText(/강남구 층대별 거래 단가/)).toBeVisible();
+    await expect(stack.getByText(/강남구 층대별 거래 단가 \(상가 거래 기준\)/)).toBeVisible();
     await expect(stack.getByText(/중앙값 ㎡당 2,250만/)).toBeVisible();
     await expect(stack.getByText('표본 부족').first()).toBeVisible();
     // 출처표시 의무 + 절대 규칙 3(근거 레벨·표본 수 병기).
     await expect(stack.getByText(/국토교통부 상업업무용 부동산 매매 실거래가/)).toBeVisible();
-    // 같은 배지가 세 잣대 카드(물결 1-C2) 칸 머리에도 선다 — 실거래 카드 안으로 좁힌다.
+    // 같은 배지가 층별 공표값 카드(물결 1-C2) 칸 머리에도 선다 — 실거래 카드 안으로 좁힌다.
     await expect(stack.locator('section.tx').getByText(/A등급 · 실거래/)).toBeVisible();
     // 절대 규칙 2 — 금칙어 5종은 화면 어디에도 없다.
-    // ⚠️ '참고 매매 시세'는 절대 규칙 2 가 정한 **허용 대체어**라 Stage B 섹션이 쓴다.
+    // ⚠️ '시세'는 다른 카드(층별 공표값의 「시세가 아닙니다」 등)가 정당하게 쓴다.
     //    그래서 '시세' 금지는 화면 전체가 아니라 **Stage A 블록 안**으로 좁힌다 —
     //    "사실을 말하는 블록은 그 말조차 쓰지 않는다"는 원래 뜻은 그대로 지킨다.
     await expect(stack.locator('section.tx')).not.toContainText('시세');
@@ -676,98 +656,17 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     // 일반 거래 줄에는 꼬리표가 없다.
     await expect(list.locator('li').filter({ hasText: '3억 2,000만' }).locator('.tx__share')).toHaveCount(0);
     await expect(page.locator('section.stack .tx__share-note')).toHaveText(
-      '지분 = 건물 일부 몫만 사고판 거래라 ㎡당 값이 낮게 나옵니다 — 층대별 단가·참고 가격대 계산에서는 뺍니다.',
+      '지분 = 건물 일부 몫만 사고판 거래라 ㎡당 값이 낮게 나옵니다 — 층대별 단가 계산에서는 뺍니다.',
     );
     // G 의 규칙(Stage A 블록 안에는 '시세'라는 말조차 없다)을 설명 줄이 선 상태에서도 본다 —
     // G 는 지분 없는 거래뿐이라 이 줄이 그려지는 경우를 못 본다.
     await expect(page.locator('section.stack section.tx')).not.toContainText('시세');
   });
 
-  // ── 참고 매매 시세 밴드 (Stage B · 결정 0013) ─────────────────────────────
-  // 이 화면에서 **추정값이 나오는 유일한 자리**다. 값과 근거가 한 몸으로 나가는지,
-  // 안 내는 이유 넷을 각각 다른 말로 하는지를 눈으로 확인한다.
-
-  test('H. 참고 시세 밴드가 근거·표본·등급과 함께 뜨고, 값을 안 내는 층은 이유가 다르게 적힌다', async ({
-    page,
-  }) => {
-    await mockOpenSigungu(page);
-    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
-    await mockFloorStack(page, [parcelTx()], priceBands(), [
-      floorRow({ floor_no: 2 }),
-      floorRow(),
-      floorRow({ floor_no: -1 }),
-    ]);
-
-    await page.goto('/');
-    await pickGu(page, '서울', '강남구');
-    await search(page, '테헤란로');
-    await page.getByRole('button', { name: /테스트빌딩/ }).click();
-
-    const band = page.locator('section.band');
-    await expect(band).toBeVisible();
-    await openCard(page, /참고 매매 시세/);
-    // 매매인지 임대인지를 화면이 먼저 말한다(절대 규칙 5 — 임대 실거래는 존재하지 않는다).
-    await expect(band.getByText(/사고파는 값이고 월세·보증금이 아닙니다/)).toBeVisible();
-    // 값 + 근거 단계 + 표본 수가 한 줄에 함께 나온다(절대 규칙 3).
-    await expect(
-      band.getByText('비슷한 호실 한 칸 32.8㎡ (10평) 기준 2.4억~6.2억'),
-    ).toBeVisible();
-    await expect(band.getByText(/500m 안 같은 층/)).toBeVisible();
-    await expect(band.getByText(/거래 15건/)).toBeVisible();
-    await expect(band.getByText(/먼 근거/).first()).toBeVisible();
-    await expect(band.getByText(/C등급 · 파생 추정/)).toBeVisible();
-    // 1층은 오차가 기준선 밖이라서, 지하는 검증한 적이 없어서 — 서로 다른 말로 적는다.
-    await expect(band.getByText(/1층은 내지 않습니다/)).toBeVisible();
-    // 1층 문구는 층마다의 성적을 볼 자리(첫 화면 성적표 카드)로 안내한다.
-    await expect(band.getByText(/「참고 시세는 얼마나 맞나」 카드에서 볼 수 있습니다/)).toBeVisible();
-    await expect(band.getByText(/참고 시세를 내지 않은 층: 지하 1층/)).toBeVisible();
-    // 지하는 줄로 반복하지 않는다 — 값 있는 2층 + 1층 두 줄뿐이다.
-    await expect(band.locator('.band__row')).toHaveCount(2);
-
-    // 밴드 줄을 누르면 위쪽 층 목록의 그 층이 펼쳐진다(두 목록이 서로를 가리킨다).
-    await band.locator('.band__hit').first().click();
-    await expect(page.locator('.detail')).toBeVisible();
-    await expect(band.locator('.band__row--on')).toHaveCount(1);
-
-    // Stage A 의 사실 표시는 그대로 남아 있다(추정이 사실을 밀어내지 않는다).
-    // ⚠️ 거래가 없는 층의 뱃지 칸은 **빈 span** 이라 hidden 이다 — 자리는 남기되 0건이라
-    //    적지 않기 때문이다. 그래서 글자로 찾는다(1층에 거래 1건이 붙는다).
-    await expect(page.locator('.floor__tx', { hasText: '거래 1건' })).toBeVisible();
-  });
-
-  test('I. 기준선을 못 넘은 구에서는 층별 밴드 없이 한 문단만 나온다', async ({ page }) => {
-    await mockOpenSigungu(page);
-    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
-    await mockFloorStack(page, [parcelTx()], priceBandGate());
-
-    await page.goto('/');
-    await pickGu(page, '서울', '강남구');
-    await search(page, '테헤란로');
-    await page.getByRole('button', { name: /테스트빌딩/ }).click();
-
-    const band = page.locator('section.band');
-    await expect(band).toBeVisible();
-    await openCard(page, /참고 매매 시세/);
-    await expect(band.locator('.band__row')).toHaveCount(0);
-    await expect(band.getByText(/구 전체는 아직 참고 시세를 내지 않습니다/)).toBeVisible();
-    // 오차율·구 개수는 서버가 정본이라 화면에 복사하지 않는다(결정 0013 §4).
-    await expect(band.locator('.band__gate')).not.toContainText('%');
-    // 층 목록과 실거래 기록은 그대로 나온다 — 밴드만 없는 것이다.
-    await expect(page.locator('.floors .floor')).toHaveCount(1);
-    // ⚠️ **층별 화면 안으로 좁혀서** 본다(형제 시험 G 와 같은 방식). 화면 아래 안내가
-    //    카드 제목을 한 번씩 더 적으므로(넘기기 구역의 "어디서 뭐를 보나"), 좁히지 않으면
-    //    같은 글자가 둘이 되어 어느 쪽을 잡았는지 모르게 된다.
-    await expect(page.locator('section.stack').getByText('실거래 기록')).toBeVisible();
-  });
-
-  // ── 화면 공짜 3종 (로드맵 Wave 2 PR-A) ────────────────────────────────────
-  // 서버에서 이미 오는데 화면이 안 쓰던 값 셋이다. 셋 다 "서버 응답 한 칸이 조용히
-  // 빠지면 화면에서도 조용히 사라지는" 종류라 여기서 눈으로 확인한다.
-
   test('J. 구 칩 건물 수 · 도로접면 · 업종 요약 · 건물 스펙 4칸이 함께 뜬다', async ({ page }) => {
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
-    await mockFloorStack(page, [], [], [
+    await mockFloorStack(page, [], [
       floorRow({
         floor_no: 2,
         road_contact: '광대로한면',
@@ -812,7 +711,7 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     // ③ 업종 요약은 층을 안 펼쳐도 보이고, 층 여럿을 합쳐 센다(2층 한식 + 1층 한식 = 2곳).
     await expect(stack.locator('.stack__biz')).toContainText('한식 2곳');
     await expect(stack.locator('.stack__biz')).toContainText('커피 1곳');
-    // 새로 늘어난 문구에도 금칙어(절대 규칙 2)는 없다. '시세'는 참고 시세 섹션에
+    // 새로 늘어난 문구에도 금칙어(절대 규칙 2)는 없다. '시세'는 층별 공표값 카드에
     // 정당하게 있으므로 stack 통째가 아니라 **새 문구의 스코프**(.stack__biz)로 좁혀 단언한다
     // (같은 방식의 선례: 실거래 섹션의 not.toContainText('시세')).
     await expect(stack).not.toContainText('적정가');
@@ -830,7 +729,7 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
   test('K. 서버가 답하면 둘레의 업종 분포가 상권·반경 두 묶음으로 그려진다', async ({ page }) => {
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
-    await mockFloorStack(page, [], [], undefined, industryMix());
+    await mockFloorStack(page, [], undefined, industryMix());
 
     await page.goto('/');
     await pickGu(page, '서울', '강남구');
@@ -875,8 +774,8 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
   });
 
   // ── 한 장 요약 접힘 틀 (로드맵 Wave 2) ───────────────────────────────────
-  // 첫 화면에 펼쳐 두는 카드는 **넷**뿐이고, 다섯 번째(참고 매매 시세 = 이 화면에서
-  // 추정값이 나오는 유일한 자리)는 접힌 채로 시작한다. 다만 접힘은 **숨김이 아니다** —
+  // 첫 화면에 펼쳐 두는 카드는 **넷**뿐이고, 다섯 번째(층별 공표값 나란히 — 결정 0041 로 내린
+  // 참고 매매 시세의 자리)는 접힌 채로 시작한다. 다만 접힘은 **숨김이 아니다** —
   // 접힌 카드도 제목과 핵심 한 줄은 그대로 보여야 한다. 이 배치는 CSS·상태가 얽혀 있어
   // 단위 시험만으로는 "화면에서 정말 그런가"를 못 본다.
 
@@ -886,7 +785,6 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await mockFloorStack(
       page,
       [parcelTx()],
-      priceBands(),
       [floorRow({ floor_no: 2 }), floorRow()],
       industryMix(),
     );
@@ -898,22 +796,22 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
 
     const stack = page.locator('section.stack');
     // 다섯 장 + 늘 서는 빈 카드 셋(결정 0036 결정 2 · 물결 1-B — 아무것도 안 불러서 목업이 없어도 선다)
-    // ⓘ 세 잣대(물결 1-C2)는 국세청·부동산원이 둘 다 비면(이 시험의 목업 = 함수 없음) 서지 않는다.
+    // ⓘ 층별 공표값은 값 든 칸 하나면 선다(결정 0041 E2) — 이 목업은 구 상가 단가 1층 칸 하나로 선다.
     await expect(stack.locator('.card')).toHaveCount(8);
     await expect(stack.locator('.card__toggle[aria-expanded="true"]')).toHaveCount(4);
 
-    const band = stack.locator('section.band');
+    const gap = stack.locator('section.gap');
     // 접힌 채로도 제목과 핵심 한 줄은 읽힌다 — 본문(값)만 없다.
-    await expect(band.locator('.card__title')).toHaveText('참고 매매 시세 (추정값)');
-    await expect(band.locator('.card__summary')).toHaveText('값을 낸 층 1개');
+    await expect(gap.locator('.card__title')).toHaveText('층별 공표값 나란히 — 국세청 기준시가 · 구 상가 단가 · 부동산원 임대료');
+    await expect(gap.locator('.card__summary')).toHaveText('국세청 기준시가 · 구 상가 단가 · 부동산원 임대료 — 층마다 나란히');
     // ⚠️ "DOM 에 없다"가 아니라 **"안 보인다"**를 본다. 접힌 본문은 자리에 남겨 둔다 —
     //    안 그러면 종이로 뽑을 때 이 카드가 통째로 빠진다(결정 0020, 시험 R·S).
-    await expect(band.locator('.card__body')).toBeHidden();
+    await expect(gap.locator('.card__body')).toBeHidden();
 
     // 누르면 그 자리에서 값·근거가 함께 나온다(절대 규칙 3 — 값과 근거는 한 몸이다).
-    await openCard(page, /참고 매매 시세/);
-    await expect(band.locator('.band__val').first()).toBeVisible();
-    await expect(band.getByText(/C등급 · 파생 추정/)).toBeVisible();
+    await openCard(page, /층별 공표값 나란히/);
+    await expect(gap.locator('.gap__row[data-floor="1"] .gap__cell--tx .gap__val')).toHaveText('㎡당 2,250만');
+    await expect(gap.locator('.gap__head--tx').getByText(/A등급 · 실거래/)).toBeVisible();
 
     // 펼쳐진 카드도 접을 수 있다 — 접으면 본문만 사라지고 요약은 남는다.
     const floorsCard = stack.locator('.card--floors');
@@ -921,15 +819,6 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await floorsCard.locator('.card__toggle').click();
     await expect(floorsCard.locator('.card__body')).toBeHidden();
     await expect(floorsCard.locator('.card__summary')).toHaveText('층 2개 · 점포 4곳');
-
-    // ⛔ 층 목록을 접어 둔 채로 시세 줄을 눌러도 그 층이 보여야 한다. 안 그러면 눌렀는데
-    //    화면이 그대로라, 사람은 고장 났다고 읽는다. (진짜 브라우저에서만 도는 길이다 —
-    //    스크롤을 다음 그림으로 미루는 requestAnimationFrame 이 여기서 실제로 돈다.)
-    await expect(band.locator('.band__row--on')).toHaveCount(0);
-    await band.locator('.band__hit').first().click();
-    await expect(floorsCard.locator('.card__toggle')).toHaveAttribute('aria-expanded', 'true');
-    await expect(stack.locator('.detail')).toBeVisible();
-    await expect(band.locator('.band__row--on')).toHaveCount(1);
   });
 });
 
@@ -991,7 +880,7 @@ test.describe('화면 아래 — 어디까지 믿을지와 한마디 남기는 �
     //    화면에 박아 두면 적재하는 순간부터 그 글자만 거짓말을 한다.
     const fresh = foot.locator('section.fresh');
     await expect(fresh.getByRole('heading', { name: '이 자료는 언제 것인가' })).toBeVisible();
-    await expect(fresh.locator('tbody tr')).toHaveCount(11);
+    await expect(fresh.locator('tbody tr')).toHaveCount(10); // 결정 0041 로 성적표 줄을 뺀 열 줄
     await expect(fresh.getByText('점포·업종 (상권정보)')).toBeVisible();
     // '202606' 이 사람 말로 바뀌어 실린다(원본을 그대로 찍지 않는다).
     await expect(fresh.getByText('2026년 2분기').first()).toBeVisible();
@@ -1070,7 +959,7 @@ const LINK_BLD = '1168010100100010000_1024110';
 test.describe('층별 스택뷰 — 주소로 들고 다니기', () => {
   test('O. 링크로 바로 들어오면 검색 없이 그 건물이 열린다', async ({ page }) => {
     await mockOpenSigungu(page);
-    await mockFloorStack(page, [], [], [floorRow({ floor_no: 2 }), floorRow()]);
+    await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()]);
     // 검색은 **안 불려야** 정상이다. 그래도 막아 둔다 — 안 막으면 혹시 불렸을 때
     // 실존하지 않는 도메인으로 요청이 나가 실패 원인이 흐려진다.
     let searched = 0;
@@ -1106,7 +995,7 @@ test.describe('층별 스택뷰 — 주소로 들고 다니기', () => {
   test('P. 층 자료가 없는 건물 링크면 빈 화면 대신 안내가 뜬다', async ({ page }) => {
     await mockOpenSigungu(page);
     // 층이 한 줄도 없는 건물이 239동 실재한다.
-    await mockFloorStack(page, [], [], []);
+    await mockFloorStack(page, [], []);
 
     await page.goto(`/?sgg=11680&bld=${LINK_BLD}`);
 
@@ -1157,7 +1046,6 @@ test.describe('층별 스택뷰 — 종이로 뽑기', () => {
     await mockFloorStack(
       page,
       [parcelTx()],
-      priceBands(),
       [floorRow({ floor_no: 2 }), floorRow()],
       industryMix(),
     );
@@ -1228,24 +1116,24 @@ test.describe('층별 스택뷰 — 종이로 뽑기', () => {
   test('S. 접어 둔 카드도 종이에는 나오고, 막대 색이 지워지지 않는다', async ({ page }) => {
     await openBuilding(page);
 
-    const band = page.locator('section.band');
+    const gap = page.locator('section.gap');
     const floorsCard = page.locator('.card--floors');
 
     // 사용자가 층 목록까지 접어 둔 채로 인쇄하는 상황을 만든다.
-    // (『참고 매매 시세』는 원래 접힌 채로 시작한다 — 첫 화면 펼침 상한이 넷이라서.)
+    // (『층별 공표값 나란히』는 원래 접힌 채로 시작한다 — 첫 화면 펼침 상한이 넷이라서.)
     await floorsCard.locator('.card__toggle').click();
     await expect(floorsCard.locator('.card__body')).toBeHidden();
-    await expect(band.locator('.card__body')).toBeHidden();
+    await expect(gap.locator('.card__body')).toBeHidden();
 
     await page.emulateMedia({ media: 'print' });
 
     // ⛔ 화면에서 접는 것은 "지금은 안 볼래"이지 "종이에서도 빼라"가 아니다.
     //    이게 깨지면 종이에서 카드가 **제목만 남고 통째로 사라진다**(2026-08-25 실측).
     await expect(floorsCard.locator('.card__body')).toBeVisible();
-    await expect(band.locator('.card__body')).toBeVisible();
-    await expect(band.locator('.band__val').first()).toBeVisible();
+    await expect(gap.locator('.card__body')).toBeVisible();
+    await expect(gap.locator('.gap__val').first()).toBeVisible();
     // 값과 근거는 한 몸이다(절대 규칙 3) — 종이에서도 함께 나와야 한다.
-    await expect(band.getByText(/C등급 · 파생 추정/)).toBeVisible();
+    await expect(gap.locator('.gap__head--tx').getByText(/A등급 · 실거래/)).toBeVisible();
 
     // ⛔ 브라우저는 잉크를 아끼려고 배경색을 안 찍는다. 그런데 이 화면에서 막대는
     //    **본론**이라, 이 설정이 빠지면 층별 스택이 종이에서 백지가 된다(2026-08-25 실측).
@@ -1269,7 +1157,6 @@ test.describe('층별 스택뷰 — 종이로 뽑기', () => {
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
     await mockJson(page, STATS_PATTERN, [coverageStats()]);
     await mockJson(page, FLOOR_PATTERN, [floorRow()], 5000);
-    await mockJson(page, PRICE_BAND_PATTERN, []);
     await mockJson(page, PARCEL_TX_PATTERN, []);
     await mockJson(page, TX_STATS_PATTERN, sigunguTxStats());
     await mockJson(page, DISTRICT_PATTERN, { covered: true, districts: [], sources: [] });
@@ -1320,21 +1207,20 @@ test.describe('층별 스택뷰 — 종이로 뽑기', () => {
 
 test.describe('층별 스택뷰 — 국세청 기준시가', () => {
   /**
-   * 참고 시세 카드 **안**에 붙지만 자료는 완전히 다른 것이다 — 추정이 아니라 고시된 값.
+   * 『층별 공표값 나란히』 카드의 기준시가 칸(결정 0041 ㉤ — 내린 참고 시세 카드에서 옮겼다) — 추정이 아니라 고시된 값.
    * 그래서 여기서 눈으로 보는 것은 둘이다:
-   *   ① 값·호 수·고시일이 한 줄에 함께 나오고, "시세가 아니다"라고 못 박는다
-   *   ② 서버에 함수가 아직 없으면 **그 줄만** 빠지고 카드의 나머지는 멀쩡하다
+   *   ① 값·호 수·고시일이 한 칸에 함께 나오고, "시세가 아니다"라고 카드 안에서 한 번 못 박는다
+   *   ② 서버에 함수가 아직 없으면 **그 칸만** '–' 이고 카드의 나머지는 멀쩡하다
    * (거르기·짝짓기 같은 순수 규칙은 src/lib/basePrice.test.ts 가 촘촘히 덮는다.)
    */
 
-  /** 층 목록·밴드는 같게 두고 기준시가만 갈아 끼운다. `bases` 를 안 주면 함수가 없는 상태다. */
+  /** 층 목록은 같게 두고 기준시가만 갈아 끼운다. `bases` 를 안 주면 함수가 없는 상태다. */
   async function openBuilding(page: Page, bases?: unknown[]) {
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
     await mockFloorStack(
       page,
       [],
-      priceBands(),
       [floorRow({ floor_no: 2 }), floorRow()],
       undefined,
       bases,
@@ -1343,39 +1229,38 @@ test.describe('층별 스택뷰 — 국세청 기준시가', () => {
     await pickGu(page, '서울', '강남구');
     await search(page, '테헤란로');
     await page.getByRole('button', { name: /테스트빌딩/ }).click();
-    await openCard(page, /참고 매매 시세/);
+    await openCard(page, /층별 공표값 나란히/);
   }
 
-  test('U. 기준시가가 층마다 값·호 수·고시일과 함께 뜨고, 추정과 섞이지 않는다', async ({
+  const baseCell = (page: Page, floorNo: number) =>
+    page.locator(`section.gap .gap__row[data-floor="${floorNo}"] .gap__cell--base`);
+
+  test('U. 기준시가가 층마다 값·호 수·고시일과 함께 뜨고, 「시세가 아닙니다」를 카드 안에서 한 번 적는다', async ({
     page,
   }) => {
     await openBuilding(page, basePrices());
 
-    const band = page.locator('section.band');
-    const rows = band.locator('.band__base-rows li');
-    await expect(rows).toHaveCount(2);
+    const gap = page.locator('section.gap');
     // 값만 떼어 내보내지 않는다 — 이 값은 그 층 호실들의 가운데값이다(절대 규칙 3).
-    await expect(rows.first()).toContainText('2층');
-    await expect(rows.first()).toContainText('㎡당 300만');
-    await expect(rows.first()).toContainText('호 12개 가운데값 · 2026년 1월 1일 고시');
+    await expect(baseCell(page, 2).locator('.gap__val')).toHaveText('300만');
+    await expect(baseCell(page, 2).locator('.gap__sub')).toHaveText('(호 12개 가운데값 · 2026년 1월 1일 고시)');
+    // 1층에도 선다 — 밴드처럼 1층을 빼지 않는다(국세청이 낸 값이다).
+    await expect(baseCell(page, 1).locator('.gap__val')).toHaveText('410만');
     // 세무 기준가격이라는 사실을 카드 안에서 한 번 못 박는다.
-    await expect(band.getByText(/시세가 아닙니다/)).toBeVisible();
-    await expect(band.getByText(/A등급 · 공식 고시/)).toBeVisible();
-
-    // 추정 밴드는 그대로 남고(하나가 다른 하나를 밀어내지 않는다), 두 값이 한 줄에서 섞이지도 않는다.
-    await expect(band.getByText('비슷한 호실 한 칸 32.8㎡ (10평) 기준 2.4억~6.2억')).toBeVisible();
-    await expect(band.locator('.band__row').first()).not.toContainText('고시');
+    await expect(gap.getByText(/시세가 아닙니다/)).toHaveCount(1);
+    await expect(gap.locator('.gap__head--base').getByText(/A등급 · 공식 고시/)).toBeVisible();
   });
 
-  test('V. 서버에 함수가 아직 없으면 그 줄만 조용히 빠진다', async ({ page }) => {
+  test('V. 서버에 함수가 아직 없으면 그 칸만 – 이고 카드는 그대로다', async ({ page }) => {
     // 마이그레이션을 적용하기 전 라이브가 바로 이 상태다(404/PGRST202).
     await openBuilding(page);
 
-    const band = page.locator('section.band');
-    await expect(band.locator('.band__base')).toHaveCount(0);
-    // 카드도 값도 그대로다 — "기준시가 없음"이라고 적지도 않는다.
-    await expect(band.locator('.band__val').first()).toBeVisible();
-    await expect(band).not.toContainText('기준시가');
+    const gap = page.locator('section.gap');
+    await expect(baseCell(page, 2).locator('.gap__val')).toHaveText('–');
+    await expect(baseCell(page, 1).locator('.gap__val')).toHaveText('–');
+    // 카드도 다른 칸 값도 그대로다 — "기준시가 없음"이라고 적지도 않는다.
+    await expect(gap.locator('.gap__row[data-floor="1"] .gap__cell--tx .gap__val')).toHaveText('㎡당 2,250만');
+    await expect(gap).not.toContainText('기준시가 없음');
   });
 });
 
@@ -1479,110 +1364,12 @@ test.describe('입구 — LH 상가 분양·입점 공고', () => {
     await expect(page.locator('section.lh')).toHaveCount(0);
     // "공고 없음" 같은 말도 남기지 않는다 — 모르는 것을 없는 것이라 말하지 않는다.
     await expect(page.locator('.app')).not.toContainText('LH 상가 분양·입점 공고');
-    // ⓘ 입구 카드는 이제 **셋**이다(성적표·흐름도 같은 기본값 = 함수 없음). **셋 다**
+    // ⓘ 입구 카드는 **둘**이다(흐름도 같은 기본값 = 함수 없음 · 성적표 카드는 결정 0041 로 내렸다). **둘 다**
     //   빠져도 검색창이 서 있는지를 이 한 시험이 함께 본다 — 곁다리들이 본체를 못 죽인다.
-    await expect(page.locator('section.score')).toHaveCount(0);
     await expect(page.locator('.app')).not.toContainText('참고 시세는 얼마나 맞나');
     await expect(page.locator('section.flow')).toHaveCount(0);
     await expect(page.locator('.app')).not.toContainText('동네 매매 단가 흐름');
   });
-});
-
-// ── 입구 — 참고 시세 성적표 (로드맵 Wave 4) ────────────────────────────────
-//
-// 두 갈래에서 값이 온다는 것이 이 화면의 특징이고, 그 이음매는 진짜 브라우저에서만 보인다:
-//   · 판정(어느 구가 켜지나) = 서버 함수 `list_price_gate`
-//   · 방법·단계 분포        = **같은 출처의 정적 파일** `/scorecard-v2.json`
-// 단위 시험은 둘 다 흉내로 넣지만, "정말 그 주소를 받아 오나"는 여기서만 확인된다.
-//
-// ⓘ **함수가 없을 때 카드가 조용히 빠지는 경로는 여기 없다** — 그건 이미 위 스펙 X 가
-//   같은 자리에서 함께 본다(그 시험은 두 입구 함수가 **둘 다** 404 인 상태에서 검색창이
-//   멀쩡한지를 본다). 같은 것을 두 번 보는 시험을 만들지 않는다.
-//   카드 자체가 빠지는지는 단위 시험(ScorecardSection.test.tsx)이 따로 본다.
-
-test.describe('입구 — 참고 시세 성적표', () => {
-  test('AB. 접힌 카드로 서고, 펼치면 체감 단계 분포가 가장 흔한 자리부터 나온다', async ({
-    page,
-  }) => {
-    await mockOpenSigungu(page);
-    // ⚠️ mockOpenSigungu 뒤에 등록해야 이 응답이 잡힌다(나중에 등록한 것이 먼저다).
-    await mockJson(page, PRICE_GATE_PATTERN, priceGate());
-    // 정적 파일도 갈아 끼운다 — 안 그러면 진짜 성적표(구운 파일)가 나가 시험이 그 판의
-    // 숫자에 매인다(성적표를 다시 뽑는 날 코드 변경 0 인데 빨간불이 된다).
-    await mockJson(page, SCORECARD_PATTERN, scorecard());
-
-    await page.goto('/');
-    // 구를 고르기 전에는 물을 곳이 없다 — 카드도 없다.
-    await expect(page.locator('section.score')).toHaveCount(0);
-
-    await pickGu(page, '서울', '강남구');
-
-    const score = page.locator('section.score');
-    await expect(score).toBeVisible();
-    // 접혀 있어도 **이 구가 받나 못 받나**와 언제 잰 성적인가는 읽힌다.
-    const summary = score.locator('.card__summary');
-    await expect(summary).toContainText('참고 시세 제공');
-    await expect(summary).toContainText('262건');
-    await expect(summary).toContainText('성적표 v2');
-    await expect(summary).toContainText('2026년 8월 15일 생성');
-    await expect(score.locator('.card__body')).toBeHidden();
-
-    await openCard(page, /참고 시세는 얼마나 맞나/);
-
-    // ① 이 구의 성적 — 사다리와 구 평균을 나란히.
-    await expect(score.locator('.score__mine')).toContainText('28.3%');
-    await expect(score.locator('.score__mine')).toContainText('49.2%');
-
-    // ② ★ 체감 단계 분포 — **가장 흔한 자리(폴백)가 맨 위**(로드맵 Wave 4).
-    const stages = score.locator('.score__stages .score__rows li');
-    await expect(stages).toHaveCount(2);
-    await expect(stages.first()).toContainText('L6');
-    await expect(stages.first()).toContainText('60.0%');
-    // 커버리지가 유리한 숫자라는 정직 공지(결정 0013 §3).
-    await expect(score.locator('.score__honest')).toContainText('유리');
-
-    // ③ 전체 구 — 떨어진 구도 함께 서고, 왜 떨어졌는지가 적힌다.
-    await expect(score.locator('.score__all .score__rows li')).toHaveCount(2);
-    await expect(score.locator('.score__all')).toContainText('금천구');
-
-    // ④ 방법 + 도장.
-    await expect(score.locator('.grade__badge')).toHaveText('검증 성적 · 원본 성적표 v2');
-
-    // ⛔ 건물을 고르면 화면의 주제가 그 건물이다 — 입구 카드는 물러난다(휴대폰은 건물 탭에서 숨고 찾기 탭엔 남는다 · W4a F2).
-    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
-    await mockFloorStack(page);
-    await search(page, '테헤란로');
-    await page.getByRole('button', { name: /테스트빌딩/ }).click();
-    await expect(page.locator('section.stack')).toBeVisible();
-    await expectEntryCardRetreats(page, 'section.score'); // 휴대폰은 찾기 탭에 남는다(F2)
-  });
-
-  test('AK. 펼치면 층마다의 오차 블록이 서고, 1층이 기준선을 넘은 이유가 한 줄 붙는다', async ({
-    page,
-  }) => {
-    await mockOpenSigungu(page);
-    await mockJson(page, PRICE_GATE_PATTERN, priceGate());
-    await mockJson(page, SCORECARD_PATTERN, scorecard());
-
-    await page.goto('/');
-    await pickGu(page, '서울', '강남구');
-    const score = page.locator('section.score');
-    await expect(score).toBeVisible();
-    await openCard(page, /참고 시세는 얼마나 맞나/);
-
-    const floors = score.locator('.score__floors');
-    await expect(floors).toBeVisible();
-    await expect(floors.getByRole('heading', { name: '층마다 얼마나 맞나' })).toBeVisible();
-    const rows = floors.locator('.score__rows li');
-    await expect(rows).toHaveCount(3);
-    await expect(rows.first()).toContainText('1층');
-    await expect(rows.first()).toContainText('오차 중앙값 45.0%');
-    await expect(rows.first()).toContainText('739건');
-    await expect(rows.nth(2)).toContainText('3층 이상');
-    // 1층은 기준선을 넘었다 — 층별 화면에서 값을 안 내는 이유가 이 블록에서 보인다.
-    await expect(floors.locator('.score__why')).toContainText('1층은 오차가 기준선');
-  });
-
 });
 
 // ── 입구 — 동네 매매 단가 흐름 (결정 0027) ─────────────────────────────────
@@ -1666,6 +1453,8 @@ test.describe('입구 — 동네 매매 단가 흐름', () => {
     await expect(flow.locator('.card__body')).toBeHidden();
 
     await openCard(page, /동네 매매 단가 흐름/);
+    // 상가(근생·판매) 거래만 센 표다(결정 0040 D3) — 제목이 그 사실을 말한다.
+    await expect(flow.getByText('동네 매매 단가 흐름 (실거래 · 상가 거래 기준)')).toBeVisible();
 
     const rows = flow.locator('.flow__rows li');
     await expect(rows).toHaveCount(3);
@@ -1718,7 +1507,7 @@ test.describe('층별 스택뷰 — 둘레에 새로 올라오는 건물', () =>
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
     // 업종 분포가 있어야 카드가 선다 — 이 줄은 그 카드 안에 산다.
-    await mockFloorStack(page, [], [], undefined, industryMix(), undefined, nearbyPermits());
+    await mockFloorStack(page, [], undefined, industryMix(), undefined, nearbyPermits());
 
     await page.goto('/');
     await pickGu(page, '서울', '강남구');
@@ -1754,7 +1543,6 @@ test.describe('층별 스택뷰 — 상권 임대 동향', () => {
     await mockFloorStack(
       page,
       [],
-      priceBands(),
       [floorRow({ floor_no: 2 }), floorRow()],
       industryMix(),
       undefined,
@@ -1771,8 +1559,8 @@ test.describe('층별 스택뷰 — 상권 임대 동향', () => {
     const rent = stack.locator('section.rent');
     await expect(rent).toBeVisible();
     // 카드가 하나 늘어도 **첫 화면 펼침은 여전히 넷**이다(로드맵 Wave 2 의 예산).
-    // 여섯 장 + 빈 카드 셋(물결 1-B) + 세 잣대(물결 1-C2 · 접힌 채).
-    await expect(stack.locator('.card')).toHaveCount(10);
+    // 다섯 장 + 빈 카드 셋(물결 1-B) + 층별 공표값(결정 0041 · 접힌 채 — 참고 매매 시세 카드는 내렸다).
+    await expect(stack.locator('.card')).toHaveCount(9);
     await expect(stack.locator('.card__toggle[aria-expanded="true"]')).toHaveCount(4);
     // 접혀 있어도 무엇·언제는 읽힌다. ⛔ 값은 요약에 없다 — 한정어 없이 이 건물 값으로 읽힌다.
     await expect(rent.locator('.card__summary')).toHaveText(
@@ -1817,7 +1605,7 @@ test.describe('층별 스택뷰 — 상권 임대 동향', () => {
     await expect(rent).not.toContainText('74,600원');
     await expect(rent).not.toContainText('22,700원');
 
-    // ⛔ 이 카드는 조사값이다. 추정으로 읽히는 말이 섞이면 바로 옆 참고 시세 카드와
+    // ⛔ 이 카드는 조사값이다. 추정으로 읽히는 말이 섞이면 이 건물 값처럼 읽혀
     //    구분이 무너진다(사실과 추정을 가르는 것이 이 화면의 신뢰다).
     await expect(rent).not.toContainText('추정');
     await expect(rent).not.toContainText('시세');
@@ -1830,7 +1618,7 @@ test.describe('층별 스택뷰 — 상권 임대 동향', () => {
     // 기본값이 그것이라 여기서는 아무것도 덧붙이지 않는다.
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
-    await mockFloorStack(page, [], priceBands(), [floorRow({ floor_no: 2 }), floorRow()]);
+    await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()]);
 
     await page.goto('/');
     await pickGu(page, '서울', '강남구');
@@ -1855,7 +1643,6 @@ test.describe('층별 스택뷰 — 상권 임대 동향', () => {
     await mockFloorStack(
       page,
       [],
-      priceBands(),
       [floorRow({ floor_no: 2 }), floorRow()],
       industryMix(),
       undefined,
@@ -1900,7 +1687,7 @@ test.describe('검색 — 가게 이름으로 찾은 땅', () => {
     await mockJson(page, SEARCH_STORES_PATTERN, [
       storeHit({ total_parcel_cnt: 3, total_store_cnt: 12 }),
     ]);
-    await mockFloorStack(page, [], priceBands(), [floorRow({ floor_no: 2 }), floorRow()]);
+    await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()]);
 
     await page.goto('/');
     await pickGu(page, '서울', '강남구');
@@ -1945,7 +1732,7 @@ test.describe('검색 — 가게 이름으로 찾은 땅', () => {
         total_store_cnt: 12,
       }),
     ]);
-    await mockFloorStack(page, [], priceBands(), [floorRow({ floor_no: 2 }), floorRow()]);
+    await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()]);
 
     await page.goto('/');
     await pickGu(page, '서울', '강남구');
@@ -2006,7 +1793,7 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
     });
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
-    await mockFloorStack(page, [], [], floors);
+    await mockFloorStack(page, [], floors);
     if (summary !== undefined) {
       await mockJson(page, UNIT_SUMMARY_PATTERN, summary);
       await page.route(FLOOR_UNITS_PATTERN, async (route) => {
@@ -2158,7 +1945,7 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
   }) => {
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
-    await mockFloorStack(page, [], priceBands(), [floorRow({ floor_no: 2 }), floorRow()], industryMix());
+    await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()], industryMix());
     // 나중에 등록한 것이 먼저 잡힌다 — mockFloorStack 의 '함수 없음' 위에 덮는다.
     await mockJson(page, OPEN_CLOSE_PATTERN, openClose());
 
@@ -2286,7 +2073,6 @@ test.describe('첫 화면 — 역할 단추', () => {
     await mockFloorStack(
       page,
       [parcelTx()],
-      priceBands(),
       [floorRow({ floor_no: 2 }), floorRow()],
       industryMix(),
       undefined,
@@ -2301,9 +2087,8 @@ test.describe('첫 화면 — 역할 단추', () => {
       '층 목록',
       '둘레의 업종 분포',
       '실거래 기록',
-      '참고 매매 시세 (추정값)',
-      // 세 잣대(물결 1-C2) — 참고 매매 시세 바로 뒤 · 접힌 채.
-      '층 차이 세 잣대 (공표값 나란히)',
+      // 층별 공표값(결정 0041) — 내린 참고 매매 시세의 자리 · 접힌 채.
+      '층별 공표값 나란히 — 국세청 기준시가 · 구 상가 단가 · 부동산원 임대료',
       '상권 임대 동향 (부동산원 조사)',
       '상권 개업·폐업 (서울시 공표)',
       '업종별 추정매출',
@@ -2320,8 +2105,7 @@ test.describe('첫 화면 — 역할 단추', () => {
       '유동인구',
       '이 자리 가게 이력',
       '실거래 기록',
-      '참고 매매 시세 (추정값)',
-      '층 차이 세 잣대 (공표값 나란히)',
+      '층별 공표값 나란히 — 국세청 기준시가 · 구 상가 단가 · 부동산원 임대료',
       '상권 임대 동향 (부동산원 조사)',
     ];
     // ⚠️ exact — 카드 머리의 역할 태그('창업자')가 버튼 이름 안에 들어 있어 부분 일치로 찾으면 겹친다.
@@ -2399,7 +2183,7 @@ test.describe('첫 화면 — 창업자 입구 · 업종 칩', () => {
   }) => {
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
-    await mockFloorStack(page, [], priceBands(), [floorRow({ floor_no: 2 }), floorRow()], industryMix());
+    await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()], industryMix());
     // 나중에 등록한 것이 먼저 잡힌다 — mockFloorStack 의 '함수 없음' 위에 덮는다.
     await mockJson(page, OPEN_CLOSE_PATTERN, openClose());
     await mockJson(page, INDUSTRY_DETAIL_PATTERN, {
@@ -2532,7 +2316,7 @@ test.describe('층별 스택뷰 — 업종별 층 분포', () => {
     const CHIP_D = '층별 고른 업종(카페): 지하 0곳 · 1층 15곳 · 2층 3곳 · 3층 이상 0곳 · 층 미상 2곳 (10%)';
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
-    await mockFloorStack(page, [], priceBands(), [floorRow()], industryMix());
+    await mockFloorStack(page, [], [floorRow()], industryMix());
     // 나중에 등록한 것이 먼저 잡힌다 — mockFloorStack 의 '함수 없음' 위에 덮는다.
     await mockJson(page, INDUSTRY_DETAIL_PATTERN, {
       snapshot_ym: '202606',
@@ -2614,7 +2398,7 @@ test.describe('층별 스택뷰 — 개별공시지가 한 줄', () => {
     const BADGE = 'A등급 · 공식 공시';
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
-    await mockFloorStack(page, [], [], [floorRow({ floor_no: 2 }), floorRow()]);
+    await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()]);
     // 나중에 등록한 것이 먼저 잡힌다 — 기본(함수 없음)을 값으로 덮는다.
     const asked: unknown[] = [];
     await page.route(LAND_PRICE_PATTERN, async (route) => {
@@ -2669,12 +2453,12 @@ test.describe('층별 스택뷰 — 개별공시지가 한 줄', () => {
   });
 });
 
-// ── 인쇄 한 장 보강 + 세 잣대 (👤 결정 0036 결정 3·8·15 · 물결 1-C2) ─────────────────────────
+// ── 인쇄 한 장 보강 + 층별 공표값 (👤 결정 0036 결정 3·8·15 · 물결 1-C2 · 결정 0041) ─────────────────────────
 // 저장 규칙·칸 모양·짝짓기는 단위 시험이 덮는다(`brokerOfficeStore.test`·`unitPrint.test`·`floorGap.test`·
 // `App.test`·`FloorStack.test`). 여기서만 보이는 것은 **종이**(인쇄 시험 넷 — 결정 0036 「지키는 것」)와
-// 좁은 폭(412px)에서 세 잣대가 넘치지 않는가다.
+// 좁은 폭(412px)에서 층별 공표값 카드가 넘치지 않는가다.
 
-test.describe('종이 한 장 보강 — 사무소 칸 · 호실 구성표 · 세 잣대', () => {
+test.describe('종이 한 장 보강 — 사무소 칸 · 호실 구성표 · 층별 공표값', () => {
   /** 중개사로 저장해 두고(+ 최근 뽑은 건물 한 줄) 건물을 연다 — 저장은 진짜 브라우저 저장소. */
   async function openAsBroker(page: Page) {
     const { total_cnt: _t, ...recent } = searchHit({ bld_id: '1168010100100020000_1', pnu: '1168010100100020000', bld_nm: '옛빌딩' });
@@ -2691,7 +2475,7 @@ test.describe('종이 한 장 보강 — 사무소 칸 · 호실 구성표 · �
     }, recent);
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
-    await mockFloorStack(page, [], [], [floorRow({ floor_no: 2 }), floorRow()]);
+    await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()]);
     await page.goto('/');
     await pickGu(page, '서울', '강남구');
     await search(page, '테헤란로');
@@ -2768,7 +2552,7 @@ test.describe('종이 한 장 보강 — 사무소 칸 · 호실 구성표 · �
     });
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
-    await mockFloorStack(page, [], [], [
+    await mockFloorStack(page, [], [
       floorRow({ floor_no: 35, main_use: '아파트' }),
       floorRow({ floor_no: 5 }),
       floorRow({ floor_no: 4 }),
@@ -2863,7 +2647,7 @@ test.describe('종이 한 장 보강 — 사무소 칸 · 호실 구성표 · �
     expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
   });
 
-  test('AS. 세 잣대 — 접힌 카드로 서고 펼치면 층마다 세 값 · 412px 넘침 0 · 종이에서는 줄 단위', async ({
+  test('AS. 층별 공표값 나란히 — 접힌 카드로 서고 펼치면 층마다 세 값(기준시가 칸에 호 수·고시일) · 412px 넘침 0 · 종이에서는 줄 단위', async ({
     page,
   }, testInfo) => {
     await mockOpenSigungu(page);
@@ -2871,7 +2655,6 @@ test.describe('종이 한 장 보강 — 사무소 칸 · 호실 구성표 · �
     await mockFloorStack(
       page,
       [],
-      priceBands(),
       [floorRow({ floor_no: 2 }), floorRow(), floorRow({ floor_no: -1 })],
       undefined,
       basePrices(),
@@ -2885,14 +2668,16 @@ test.describe('종이 한 장 보강 — 사무소 칸 · 호실 구성표 · �
 
     const gap = page.locator('section.card--floorgap');
     await expect(gap.locator('.card__toggle')).toHaveAttribute('aria-expanded', 'false');
-    await expect(gap.locator('.card__summary')).toHaveText('국세청 · 구 실거래 · 부동산원 — 층마다 나란히');
-    // 자리 = 참고 매매 시세 바로 뒤(역할 없음).
+    await expect(gap.locator('.card__summary')).toHaveText('국세청 기준시가 · 구 상가 단가 · 부동산원 임대료 — 층마다 나란히');
+    // 자리 = 실거래 기록 바로 뒤(역할 없음 · 결정 0041 — 내린 참고 매매 시세의 자리).
     const titles = await page.locator('section.stack .card .card__title').allTextContents();
-    expect(titles[titles.indexOf('층 차이 세 잣대 (공표값 나란히)') - 1]).toBe('참고 매매 시세 (추정값)');
+    expect(titles[titles.indexOf('층별 공표값 나란히 — 국세청 기준시가 · 구 상가 단가 · 부동산원 임대료') - 1]).toBe('실거래 기록');
 
-    await openCard(page, /층 차이 세 잣대/);
+    await openCard(page, /층별 공표값 나란히/);
     const val = (no: number, k: string) => gap.locator(`.gap__row[data-floor="${no}"] .gap__cell--${k} .gap__val`);
     await expect(val(1, 'base')).toHaveText('410만');
+    // 기준시가 칸 작은 글 = 호 수 · 고시일(결정 0041 ㉤).
+    await expect(gap.locator('.gap__row[data-floor="1"] .gap__cell--base .gap__sub')).toHaveText('(호 12개 가운데값 · 2026년 1월 1일 고시)');
     await expect(val(1, 'tx')).toHaveText('㎡당 2,250만');
     await expect(val(1, 'rent')).toHaveText('74.6');
     await expect(val(2, 'tx')).toHaveText('표본 부족 (0건)');
@@ -2932,7 +2717,7 @@ test.describe('건물 머리 새 칸 — 구조 · 승강기 · 내진설계 · 
     };
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
-    await mockFloorStack(page, [], [], [floorRow({ floor_no: 2, ...spec }), floorRow(spec)]);
+    await mockFloorStack(page, [], [floorRow({ floor_no: 2, ...spec }), floorRow(spec)]);
     await page.goto('/');
     await pickGu(page, '서울', '강남구');
     await search(page, '테헤란로');
@@ -2977,7 +2762,7 @@ test.describe('건물 머리 새 칸 — 구조 · 승강기 · 내진설계 · 
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
     // 지상 6층 — 승강기 합 0 이 '미상'으로 서는 경계(👤 결정 A · 5층 이하면 칸 없음은 AV).
-    await mockFloorStack(page, [], [], [6, 5, 4, 3, 2, 1].map((no) => floorRow({ floor_no: no, ...spec })));
+    await mockFloorStack(page, [], [6, 5, 4, 3, 2, 1].map((no) => floorRow({ floor_no: no, ...spec })));
     await page.goto('/');
     await pickGu(page, '서울', '강남구');
     await search(page, '테헤란로');
@@ -3010,7 +2795,7 @@ test.describe('건물 머리 새 칸 — 구조 · 승강기 · 내진설계 · 
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
     // 지하 1 + 지상 5 + 옥탑 — 행은 7개지만 지상 최고층은 5(옥탑·지하는 안 센다).
-    await mockFloorStack(page, [], [], [99, 5, 4, 3, 2, 1, -1].map((no) => floorRow({ floor_no: no, ...spec })));
+    await mockFloorStack(page, [], [99, 5, 4, 3, 2, 1, -1].map((no) => floorRow({ floor_no: no, ...spec })));
     await page.goto('/');
     await pickGu(page, '서울', '강남구');
     await search(page, '테헤란로');
@@ -3044,7 +2829,7 @@ test.describe('층별 스택뷰 — 업종 비중 비교', () => {
   }) => {
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
-    await mockFloorStack(page, [], priceBands(), [floorRow()], industryMixTwoDistricts());
+    await mockFloorStack(page, [], [floorRow()], industryMixTwoDistricts());
     // 나중에 등록한 것이 먼저 잡힌다 — mockFloorStack 의 '함수 없음' 위에 덮는다.
     // 받은 요청 주소를 모은다(⑥) — 이 처리기가 중분류 함수 요청까지 잡으면 대분류 패턴이 넓어진 것이다.
     const medianUrls: string[] = [];
@@ -3133,7 +2918,7 @@ test.describe('층별 스택뷰 — 업종 비중 비교 · 중분류', () => {
       'C등급 · 비교값가운데값은 서울 골목상권 가운데 음식 가게가 30곳 이상인 526곳의 음식 안 업종 비중을 크기순으로 세웠을 때 한가운데 값입니다 — 비교용 숫자입니다.';
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
-    await mockFloorStack(page, [], priceBands(), [floorRow()], industryMixTwoDistricts());
+    await mockFloorStack(page, [], [floorRow()], industryMixTwoDistricts());
     // 나중에 등록한 것이 먼저 잡힌다 — mockFloorStack 의 '함수 없음' 위에 덮는다.
     await mockJson(page, INDUSTRY_DETAIL_PATTERN, industryDetailTwoDistricts());
     const asked: unknown[] = [];
@@ -3225,7 +3010,7 @@ test.describe('첫 화면 — 건물을 열면 입구가 한 줄로 접힌다', 
     if (testInfo.project.name === 'chromium') await page.setViewportSize({ width: 1366, height: 768 });
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
-    await mockFloorStack(page, [], [], [floorRow({ floor_no: 2 }), floorRow()]);
+    await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()]);
 
     await page.goto('/');
     await pickGu(page, '서울', '강남구');
@@ -3369,7 +3154,6 @@ test.describe('누르는 것 44px · 글자 13px', () => {
     await mockFloorStack(
       page,
       [parcelTx()],
-      priceBands(),
       [floorRow({ floor_no: 2 }), floorRow()],
       industryMix(),
       undefined,
@@ -3443,7 +3227,7 @@ test.describe('누르는 것 44px · 글자 13px', () => {
       searchHit({ bld_id: `1168010100100${String(i + 10).padStart(2, '0')}0000_1`, bld_nm: `결과빌딩${i + 1}` }),
     );
     await mockJson(page, SEARCH_PATTERN, hits);
-    await mockFloorStack(page, [], [], [floorRow({ floor_no: 2 }), floorRow()]);
+    await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()]);
 
     await page.goto('/');
     await pickGu(page, '서울', '강남구');
@@ -3485,7 +3269,6 @@ test.describe('긴 카드 창', () => {
       page,
       // 지분 거래는 숨는 12번째 줄에만 — 접힌 화면엔 설명 줄이 없고 펼치거나 종이면 선다(👤 2026-10-16).
       Array.from({ length: 12 }, (_, i) => parcelTx({ is_share: i === 11 })),
-      [],
       Array.from({ length: 12 }, (_, i) => floorRow({ floor_no: 12 - i })),
     );
 
@@ -3573,7 +3356,6 @@ test.describe('휴대폰 층 줄', () => {
     await mockFloorStack(
       page,
       [parcelTx({ floor_no: 2 }), parcelTx({ floor_no: 2 })],
-      [],
       [
         floorRow({ floor_no: 2, main_use: '기타제1종근린생활시설', floor_area_m2: 2116.2, store_cnt: 8 }),
         // 용도 이름이 긴 층 — 좁은 화면에서 첫 줄 안에서만 줄을 바꾼다(가로 넘침 0).
@@ -3664,8 +3446,8 @@ test.describe('휴대폰 층 줄', () => {
   });
 });
 
-// ── 그림 (결정 0038 V1 — E ▲ 눈금·층 묶음 쌓은 막대 · A 참고 시세 띠) ─────────────────────
-// 값 → 자리·폭 계산은 단위 시험(`viz.test.ts`·`industryMix.test.ts`·`priceBand.test.ts`)이, 서는 경우/안 서는 경우는 컴포넌트 시험이 덮는다.
+// ── 그림 (결정 0038 V1 — E ▲ 눈금·층 묶음 쌓은 막대 · A 참고 시세 띠는 결정 0041 로 내림) ─────────────────────
+// 값 → 자리·폭 계산은 단위 시험(`viz.test.ts`·`industryMix.test.ts`)이, 서는 경우/안 서는 경우는 컴포넌트 시험이 덮는다.
 // 여기서만 보이는 것은 **실제로 그려진 자리**(브라우저가 배치한 상자의 비율이 픽스처 숫자와 맞나) · 색이 토큰 값인가 ·
 // 넓은 화면·휴대폰·종이에서 같은 그림이 서는가다(그림이 깨져도 글자 시험은 초록이다 — 결정 0038 §2-10).
 
@@ -3693,7 +3475,7 @@ test.describe('그림 — 둘레의 업종 분포 (결정 0038 E)', () => {
   }) => {
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
-    await mockFloorStack(page, [], priceBands(), [floorRow()], industryMixTwoDistricts());
+    await mockFloorStack(page, [], [floorRow()], industryMixTwoDistricts());
     // 나중에 등록한 것이 먼저 잡힌다 — mockFloorStack 의 '함수 없음' 위에 덮는다.
     await mockJson(page, INDUSTRY_MEDIAN_PATTERN, industryMedian());
     await mockJson(page, INDUSTRY_MEDIAN_M_PATTERN, industryMedianM());
@@ -3830,102 +3612,6 @@ test.describe('그림 — 둘레의 업종 분포 (결정 0038 E)', () => {
   });
 });
 
-test.describe('그림 — 참고 매매 시세 (결정 0038 A)', () => {
-  test('BE. 값 나는 층마다 p25~p75 띠 + 가운데값 눈금(축 0 ~ ㎡당 2,000만) · 먼 근거 연한 띠 · 1층 "–" · 넓은 화면은 글 왼쪽 · 휴대폰은 글 위 · 종이에도 그대로', async ({
-    page,
-  }, testInfo) => {
-    await mockOpenSigungu(page);
-    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
-    // 2층 = 먼 근거(L5 · p25 746.5만 · 가운데 1,626.5만 · p75 1,904.6만) · 3층 = 이 땅 같은 층(L2 · 900만~1,500만 · 가운데 1,200만) · 1층 = 내지 않음.
-    const bands = [
-      ...priceBands(),
-      { ...priceBands()[2], floor_no: 3, stage: 'L2', n: 8, p25: 9_000_000, median: 12_000_000, p75: 15_000_000 },
-    ];
-    await mockFloorStack(page, [], bands, [
-      floorRow({ floor_no: 3 }),
-      floorRow({ floor_no: 2 }),
-      floorRow(),
-      floorRow({ floor_no: -1 }),
-    ]);
-
-    await page.goto('/');
-    await pickGu(page, '서울', '강남구');
-    await search(page, '테헤란로');
-    await page.getByRole('button', { name: /테스트빌딩/ }).click();
-    const card = page.locator('section.band');
-    await openCard(page, /참고 매매 시세/);
-    const row = (label: string) => card.locator('.band__row').filter({ has: page.locator('.band__floor', { hasText: new RegExp(`^${label}$`) }) });
-    await expect(card.locator('.band__row')).toHaveCount(3);
-
-    const mobile = testInfo.project.name === 'mobile';
-    const [estBand, estFar, estInk, estChip] = await Promise.all(
-      ['--est-band', '--est-line', '--est-ink', '--est-chip'].map((n) => tokenRgb(page, n)),
-    );
-
-    const check = async () => {
-      // ② 띠 자리 = 픽스처 사분위 ÷ 상한 2,000만.
-      const r2 = row('2층');
-      const t2 = r2.locator('.band__track');
-      expect(await pctIn(r2.locator('.band__range'), t2, 'left')).toBeCloseTo((7_465_269.63 / 20_000_000) * 100, 0);
-      const w2 = ((await r2.locator('.band__range').boundingBox())!.width / (await t2.boundingBox())!.width) * 100;
-      expect(w2).toBeCloseTo(((19_045_698.84 - 7_465_269.63) / 20_000_000) * 100, 0);
-      expect(await pctIn(r2.locator('.band__tick'), t2)).toBeCloseTo((16_265_452.18 / 20_000_000) * 100, 0);
-      const r3 = row('3층');
-      const t3 = r3.locator('.band__track');
-      expect(await pctIn(r3.locator('.band__range'), t3, 'left')).toBeCloseTo(45, 0);
-      expect(((await r3.locator('.band__range').boundingBox())!.width / (await t3.boundingBox())!.width) * 100).toBeCloseTo(30, 0);
-      expect(await pctIn(r3.locator('.band__tick'), t3)).toBeCloseTo(60, 0);
-      // ④ 색 — 추정 회청 · 먼 근거(2층)는 연한 띠 · 가까운 근거(3층)는 진한 띠 · 눈금 잉크 · 바탕 칩.
-      const bg = (l: ReturnType<Page['locator']>) => l.evaluate((e) => e.ownerDocument.defaultView!.getComputedStyle(e).backgroundColor);
-      expect(await bg(r2.locator('.band__range'))).toBe(estFar);
-      expect(await bg(r3.locator('.band__range'))).toBe(estBand);
-      expect(await bg(r2.locator('.band__tick'))).toBe(estInk);
-      expect(await bg(t2)).toBe(estChip);
-      // 1층은 띠 없이 "–" · 까닭 글은 그대로.
-      const r1 = row('1층');
-      await expect(r1.locator('.band__range, .band__tick')).toHaveCount(0);
-      await expect(r1.locator('.band__viz')).toHaveText('–');
-      await expect(r1.locator('.band__none')).toContainText('1층은 내지 않습니다');
-      // A2 눈금 글 — 띠 목록 바로 아래 한 줄 · 왼쪽 끝 = 띠 칸 왼쪽 · 오른쪽 끝 = 띠 칸 오른쪽.
-      const axis = card.locator('.band__axis');
-      await expect(axis).toHaveText('0㎡당 2,000만');
-      const sc = (await axis.locator('.band__axis-scale').boundingBox())!;
-      const tb = (await t2.boundingBox())!;
-      expect(Math.abs(sc.x - tb.x)).toBeLessThan(1.5);
-      expect(Math.abs(sc.x + sc.width - (tb.x + tb.width))).toBeLessThan(1.5);
-    };
-    await check();
-
-    // A3 배치 — 넓은 화면은 띠가 글 왼쪽(같은 줄) · 휴대폰은 층 이름 / 띠 / 글 차례로 위아래.
-    const vb = (await row('2층').locator('.band__viz').boundingBox())!;
-    const xb = (await row('2층').locator('.band__text').boundingBox())!;
-    const fb = (await row('2층').locator('.band__floor').boundingBox())!;
-    if (mobile) {
-      expect(vb.y).toBeGreaterThanOrEqual(fb.y + fb.height - 0.5);
-      expect(xb.y).toBeGreaterThanOrEqual(vb.y + vb.height - 0.5);
-      expect(vb.width).toBeGreaterThan((await row('2층').boundingBox())!.width * 0.8);
-    } else {
-      expect(vb.x + vb.width).toBeLessThanOrEqual(xb.x);
-      expect(vb.x).toBeGreaterThanOrEqual(fb.x + fb.width);
-      expect(Math.abs(vb.y + vb.height / 2 - (xb.y + xb.height / 2))).toBeLessThan(xb.height / 2);
-    }
-    // 글은 그대로.
-    await expect(row('2층').locator('.band__val')).toHaveText('비슷한 호실 한 칸 32.8㎡ (10평) 기준 2.4억~6.2억');
-    expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
-    for (const el of await card.locator('.band__hit, .band__axis').all()) {
-      expect(await el.evaluate((e) => e.scrollWidth - e.clientWidth)).toBeLessThanOrEqual(0);
-    }
-    await card.screenshot({ path: testInfo.outputPath(`be-band-${testInfo.project.name}.png`) });
-
-    // ⑤ 종이 — 같은 띠 · 같은 자리 · 같은 색(`print-color-adjust: exact`).
-    await page.emulateMedia({ media: 'print' });
-    await expect(row('2층').locator('.band__range')).toBeVisible();
-    await check();
-    expect(await row('2층').locator('.band__range').evaluate((e) => e.ownerDocument.defaultView!.getComputedStyle(e).printColorAdjust)).toBe('exact');
-    await page.emulateMedia({ media: null });
-  });
-});
-
 // ── 역할 요약 판 (👤 결정 0039 Q2 · §4-2 · §4-9 · W2) ──────────────────────────────────────
 // 값 고르기·빈 값 갈래·판단 낱말·추가 호출 0 은 단위 시험(`roleSummary.test`·`RoleSummary.test`)이 덮는다.
 // 여기서만 보이는 것은 **자리(건물 머리 위)·좁은 폭 넘침·종이에서 빠짐·단추 높이**다.
@@ -3944,7 +3630,6 @@ test.describe('층별 스택뷰 — 역할 요약 판', () => {
     await mockFloorStack(
       page,
       [parcelTx()],
-      priceBands(),
       [floorRow({ floor_no: 2 }), floorRow()],
       industryMix(),
       undefined,
@@ -3966,13 +3651,17 @@ test.describe('층별 스택뷰 — 역할 요약 판', () => {
     await expect(page.locator('section.stack .stack__head')).toBeVisible();
     await expect(page.locator('.rsum')).toHaveCount(0);
 
-    // ② 투자자 — 판이 건물 머리 **앞**(같은 부모) · 시세 타일은 C등급 추정 색 · 임대 타일은 「상권 평균」.
+    // ② 투자자 — 판이 건물 머리 **앞**(같은 부모) · 첫 타일은 공표값(결정 0041 E3 — 이 목업은 기준시가 함수가 없어
+    //    구 상가 단가 · A등급 실거래 · 추정 색 아님) · 임대 타일은 「상권 평균」.
     await openWithRole(page, '투자자');
     const sum = page.locator('section.stack > .rsum');
     await expect(sum).toBeVisible();
     await expect(sum.locator('.rsum__question')).toHaveText('얼마고 얼마 벌리나');
     await expect(sum.locator('.rsum__tile--rent')).toContainText('상권 평균');
-    await expect(sum.locator('.rsum__tile--band .grade__badge--est')).toHaveText('C등급 · 파생 추정');
+    await expect(sum.locator('.rsum__tile--txstat .rsum__label')).toHaveText('구 상가 단가 (1층)');
+    await expect(sum.locator('.rsum__tile--txstat .grade__badge')).toHaveText('A등급 · 실거래');
+    await expect(sum.locator('.rsum__tile--txstat .grade__badge--est')).toHaveCount(0);
+    await expect(sum).not.toContainText('참고 시세');
     expect(await sum.locator('.rsum__tile').count()).toBeGreaterThanOrEqual(3);
     expect(
       await sum.evaluate((e) => {
@@ -4130,7 +3819,7 @@ test.describe('첫 화면 — 역할 고르기 큰 카드', () => {
 
   test('BJ. 건물 직행 링크(`bld`)에서는 안 뜨고 저장도 안 한다 · `?sgg=` 만 든 링크에서는 뜬다', { tag: '@first-visit' }, async ({ page }) => {
     await mockOpenSigungu(page);
-    await mockFloorStack(page, [], [], [floorRow({ floor_no: 2 }), floorRow()]);
+    await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()]);
     await page.goto(`/?sgg=11680&bld=${LINK_BLD}`);
     await expect(page.locator('section.stack').getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
     if (await isPhoneTabs(page)) await expect(tabButton(page, '건물')).toHaveAttribute('aria-current', 'page');
@@ -4153,7 +3842,7 @@ test.describe('휴대폰 아래 탭', () => {
   async function openBuilding(page: Page) {
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
-    await mockFloorStack(page, [], [], [floorRow({ floor_no: 2 }), floorRow()]);
+    await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()]);
     await page.goto('/');
     await pickGu(page, '서울', '강남구');
     await search(page, '테헤란로');
@@ -4236,7 +3925,7 @@ test.describe('휴대폰 아래 탭', () => {
         w.localStorage.setItem('sangga.viewerRole', v);
       }, r);
     await mockOpenSigungu(page);
-    await mockFloorStack(page, [], [], [floorRow({ floor_no: 2 }), floorRow()]);
+    await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()]);
     await setRole('창업자');
     await page.goto('/');
     if (testInfo.project.name !== 'mobile') {
@@ -4278,7 +3967,7 @@ test.describe('휴대폰 아래 탭', () => {
     // ⚠️ 둘째 건물 번호도 진짜 꼴(19자리_숫자)로 — 주소 쓰기는 꼴이 틀린 번호를 버린다(`urlState.ts` 의 BLD_RE).
     const OTHER = '1168010100100020000_2';
     await mockJson(page, SEARCH_PATTERN, [searchHit(), searchHit({ bld_id: OTHER, bld_nm: '다른빌딩' })]);
-    await mockFloorStack(page, [], [], [floorRow({ floor_no: 2 }), floorRow()]);
+    await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()]);
     await page.goto('/');
     await pickGu(page, '서울', '강남구');
     await search(page, '테헤란로');

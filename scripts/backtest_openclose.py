@@ -203,7 +203,7 @@ def load_official(path):
 
 
 def percentile(values, q):
-    """0~1 분위수(선형 보간 — backtest_price.percentile 과 같은 정의). 비면 None."""
+    """0~1 분위수(선형 보간 — PostgreSQL percentile_cont 와 같은 정의). 비면 None."""
     if not values:
         return None
     ordered = sorted(values)

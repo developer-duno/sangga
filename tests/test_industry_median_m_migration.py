@@ -395,8 +395,9 @@ class TestPermissions:
         assert not [n for n in post_load.ANON_CALLABLE_ALLOWLIST if MV in n]
 
     def test_allowlist_total_is_32(self):
-        """읽기 4 + 부르기 28 = `--check` 총계 32(2026-10-13a 로 31 → 32)."""
-        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 32
+        """읽기 4 + 부르기 26 = `--check` 총계 30(2026-10-13a 로 31 → 32 · 2026-10-18a 결정 0041 로 둘을 빼 32 → 30)."""
+        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 30
+        assert "api.list_industry_median_m" in post_load.ANON_CALLABLE_ALLOWLIST
 
 
 class TestPostLoadWiring:
@@ -405,7 +406,8 @@ class TestPostLoadWiring:
         assert mvs.index(MV) > mvs.index(MIX), "재료(업종 표) 뒤라야 한다 — 앞이면 옛 업종 표로 굽는다"
         assert mvs.index(MV) == mvs.index("mv_industry_mix_median") + 1
         assert post_load.QUARTER_MVS[-1] == MV and len(post_load.QUARTER_MVS) == 6
-        assert MV not in post_load.NON_QUARTER_MVS and len(post_load.NON_QUARTER_MVS) == 5
+        # 결정 0041(2026-10-18a)로 mv_tx_parcel_geog 를 빼 분기와 무관한 묶음 5 → 4.
+        assert MV not in post_load.NON_QUARTER_MVS and len(post_load.NON_QUARTER_MVS) == 4
 
     def test_publish_do_compares_the_sixth(self):
         do = post_load.PUBLISH_DO_SQL

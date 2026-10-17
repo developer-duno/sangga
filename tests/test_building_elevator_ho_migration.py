@@ -580,7 +580,8 @@ class TestFile:
         api.list_industry_median_m 하나를 더해 32 가 됐다 — 이 마이그레이션은 여전히 새 공개 호출 0 이다(늘어난 둘은 그 PR 몫 ·
         그 목록은 tests/test_post_load.py 가 통째로 대조한다).
         """
-        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 32
+        # ⓘ 2026-10-18a(결정 0041)가 api.list_price_bands·api.list_price_gate 를 지워 32 → 30(이 마이그레이션 몫 아님).
+        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 30
         assert "api.list_industry_median" in post_load.ANON_CALLABLE_ALLOWLIST
         assert "api.list_industry_median_m" in post_load.ANON_CALLABLE_ALLOWLIST
         assert "api.search_buildings" in post_load.ANON_CALLABLE_ALLOWLIST

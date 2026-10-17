@@ -228,8 +228,9 @@ def test_both_moves_are_present_in_schema():
     """정본에 두 방식(캐스트 · char(19) 변수)이 실제로 있고 둘 다 통과로 읽힌다(헛통과 아님)."""
     fns = {n: (a, b) for n, a, b in functions(read(SCHEMA))}
     assert "::char(19)" in strip_comments_and_strings(fns["list_industry_mix"][1])
-    assert re.search(r"v_pnu\s+char\(19\)\s*:=\s*p_pnu", fns["list_price_bands"][1])
-    for name in ("list_industry_mix", "list_price_bands", "list_parcel_transactions"):
+    # ⓘ char(19) 변수 꼴의 본보기는 list_price_bands 였다 — 결정 0041(2026-10-18a)로 지워 list_base_prices 로 바꿨다.
+    assert re.search(r"v_pnu\s+char\(19\)\s*:=\s*p_pnu", fns["list_base_prices"][1])
+    for name in ("list_industry_mix", "list_base_prices", "list_parcel_transactions"):
         args, body = fns[name]
         arg = pnu_text_args(args)[0][0]
         assert bare_uses(name, arg, False, body) == [], name
@@ -327,8 +328,8 @@ def test_mutation_schema_qualified_cast_removed_is_red():
 
 
 def test_mutation_schema_char19_variable_retyped_is_red():
-    """`v_pnu char(19) := p_pnu` 를 text 변수로 바꾸면 빨강(list_price_bands)."""
+    """`v_pnu char(19) := p_pnu` 를 text 변수로 바꾸면 빨강(list_base_prices — 정본의 첫 char(19) 변수 꼴)."""
     text = read(SCHEMA)
     broken, n = re.subn(r"v_pnu(\s+)char\(19\)(\s*):= p_pnu;", r"v_pnu\1text\2:= p_pnu;", text, 1)
-    assert n == 1, "전제: list_price_bands 의 char(19) 변수"
-    assert any("list_price_bands" in b for b in pnu_problems(broken))
+    assert n == 1, "전제: list_base_prices 의 char(19) 변수"
+    assert any("list_base_prices" in b for b in pnu_problems(broken))

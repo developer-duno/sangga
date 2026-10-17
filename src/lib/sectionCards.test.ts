@@ -218,6 +218,43 @@ describe('빈 카드 셋 — sales · pop · history', () => {
 });
 
 /**
+ * 결정 0041 E2(👤 2026-10-18) — 참고 매매 시세(band) 카드를 내리고 층별 공표값(floorgap)이 그 자리를 이어받는다.
+ * 투자자 벌만 펼침도 이어받고, 중개사 벌은 펼침이 셋으로 줄어든다(넷째를 채우지 않는다).
+ */
+describe('결정 0041 — 층별 공표값이 내린 밴드 자리를 이어받는다', () => {
+  it('밴드 칸은 표에 없다 (세 벌 어디에도)', () => {
+    expect(Object.keys(SECTION_PLAN)).not.toContain('band');
+    for (const role of VIEWER_ROLES) {
+      expect(ROLE_SECTION_LAYOUT[role].order as readonly string[]).not.toContain('band');
+    }
+  });
+
+  it('카드 제목 = 「층별 공표값 나란히 — 국세청 기준시가 · 구 상가 단가 · 부동산원 임대료」 · 자료 셋 그대로', () => {
+    expect(SECTION_PLAN.floorgap.title).toBe('층별 공표값 나란히 — 국세청 기준시가 · 구 상가 단가 · 부동산원 임대료');
+    expect(SECTION_PLAN.floorgap.sources).toEqual(['nts', 'tx', 'rone']);
+  });
+
+  it('★ 투자자 펼침 = 상권 · 층 목록 · 실거래 · 층별 공표값 / 중개사 펼침 = 층 목록 · 실거래 · 상권(셋)', () => {
+    expect([...ROLE_SECTION_LAYOUT.투자자.open]).toEqual(['district', 'floors', 'tx', 'floorgap']);
+    expect([...ROLE_SECTION_LAYOUT.중개사.open]).toEqual(['floors', 'tx', 'district']);
+    expect(ROLE_SECTION_LAYOUT.창업자.open as readonly string[]).not.toContain('floorgap');
+  });
+
+  it('★ 자리 — 투자자·중개사 벌은 층별 공표값이 실거래·상권 바로 뒤, 창업자 벌은 실거래 바로 뒤', () => {
+    const inv = ROLE_SECTION_LAYOUT.투자자.order as readonly string[];
+    expect(inv[inv.indexOf('tx') + 1]).toBe('floorgap');
+    const bro = ROLE_SECTION_LAYOUT.중개사.order as readonly string[];
+    expect(bro[bro.indexOf('district') + 1]).toBe('floorgap');
+    const fnd = ROLE_SECTION_LAYOUT.창업자.order as readonly string[];
+    expect(fnd[fnd.indexOf('tx') + 1]).toBe('floorgap');
+  });
+
+  it('입구 카드는 LH 공고 · 동네 매매 단가 흐름 둘뿐이다(성적표 카드를 내렸다)', () => {
+    expect(Object.keys(ENTRY_SECTION_PLAN)).toEqual(['lhNotice', 'txFlow']);
+  });
+});
+
+/**
  * 입구 두 덩어리(검색창·상권 지도)의 차례(👤 결정 0036 결정 18 ④). 창업자만 지도가 위다.
  * 다른 역할·역할 없음은 지금 차례 그대로(검색 → 지도) — 양성 대조로 창업자와 짝지어 본다.
  */

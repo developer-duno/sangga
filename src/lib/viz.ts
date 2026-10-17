@@ -1,8 +1,8 @@
 /**
  * 건물 화면의 그림 — 값을 좌표·폭(%)으로 바꾸는 순수 함수와 색 두 벌(결정 0038 §2·§5 V1).
  *
- * 왜 한 곳에 모으나 — 참고 시세 띠(A)와 실거래 구 층대 띠(B · V2)가 같은 좌표 함수를 쓰고 색만 다르다(사실 = 호박 ·
- * 추정 = 회청 · §2-6). 좌표를 카드마다 따로 셈하면 같은 값이 카드마다 다른 자리에 선다.
+ * 왜 한 곳에 모으나 — 카드마다 같은 좌표 함수를 쓰고 색만 다르다(사실 = 호박 · 추정·비교값 = 회청 · §2-6). 좌표를
+ * 카드마다 따로 셈하면 같은 값이 카드마다 다른 자리에 선다. (참고 시세 띠(A)는 결정 0041 로 카드째 내렸다.)
  *
  * 지키는 것:
  *  · DOM 을 재지 않는다 — 모든 자리는 %(접힌 카드는 폭이 0 이라, 재서 그리면 종이에서 백지가 된다 · §2-3).
@@ -47,43 +47,12 @@ function isFiniteNum(v: unknown): v is number {
 }
 
 /**
- * 축 상한 — 값보다 크거나 같은 가장 작은 '보기 좋은 수'(1 · 2 · 2.5 · 5 × 10ⁿ).
- * 예: 1,904.6 → 2,000 · 2,000 → 2,000 · 2,001 → 2,500 · 0.37 → 0.5.
- * 0 이하·NaN·무한대면 null(축을 세울 수 없다).
- */
-export function niceCeil(v: number | null | undefined): number | null {
-  if (!isFiniteNum(v) || v <= 0) return null;
-  const mag = 10 ** Math.floor(Math.log10(v));
-  for (const step of [1, 2, 2.5, 5, 10]) {
-    const c = step * mag;
-    // 부동소수 오차(2000 이 1999.9999… 로 나뉘는 것)를 견딘다 — 같은 값이면 그 값이 상한이다.
-    if (c >= v * (1 - 1e-12)) return Number(c.toPrecision(12));
-  }
-  return Number((10 * mag).toPrecision(12));
-}
-
-/**
  * 값 → 0~100 축 위의 자리(%). 0 ≤ 값 ≤ 상한일 때만 — 상한보다 크면 100 에 붙인다(축 밖으로 안 나가게).
  * 값이 null·NaN·음수이거나 상한이 0 이하면 null.
  */
 export function pctOf(value: number | null | undefined, max: number | null | undefined): number | null {
   if (!isFiniteNum(value) || !isFiniteNum(max) || max <= 0 || value < 0) return null;
   return Math.min(100, (value / max) * 100);
-}
-
-/**
- * 범위(lo~hi) → 띠의 `[왼쪽 %, 폭 %]`. lo > hi · 값 없음 · 음수 · 상한 0 이하면 null.
- * lo = hi 면 폭 0 — 부르는 쪽이 "띠 없이 눈금만"으로 그린다(폭 0 띠를 최소 폭으로 키우지 않는다).
- */
-export function rangePct(
-  lo: number | null | undefined,
-  hi: number | null | undefined,
-  max: number | null | undefined,
-): { left: number; width: number } | null {
-  const l = pctOf(lo, max);
-  const h = pctOf(hi, max);
-  if (l === null || h === null || (lo as number) > (hi as number)) return null;
-  return { left: l, width: h - l };
 }
 
 /**

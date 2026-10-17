@@ -99,7 +99,7 @@ export function TxFlowSection({ sigungu }: Props) {
     <SectionCard plan={ENTRY_SECTION_PLAN.txFlow} className="flow" summary={flowSummary(rows)}>
       <p className="flow__lead">
         {guName === null ? '' : `${guName}에서 `}신고된{' '}
-        <strong>집합상가(구분소유) 매매</strong>를 해마다 모아 ㎡당 가운데값을 잰 것입니다.
+        <strong>상가(근린생활·판매) 집합 매매</strong>를 해마다 모아 ㎡당 가운데값을 잰 것입니다.
         어림한 값이 아니라 <strong>신고된 거래를 그대로 센 값</strong>입니다.
       </p>
 
@@ -168,7 +168,7 @@ export function TxFlowSection({ sigungu }: Props) {
       </p>
 
       <p className="flow__src">
-        출처: 국토교통부 상업업무용 부동산 매매 실거래가 · 집합(구분소유) 거래만 · 해제된
+        출처: 국토교통부 상업업무용 부동산 매매 실거래가 · 상가(근린생활·판매) 집합(구분소유) 거래만 · 해제된
         거래 제외 · 단가는 지분 거래 제외. “층 미상”은 신고 자료에 층이 빠진 거래의 비율입니다 —{' '}
         {TX_BASEMENT_MISSING_SINCE}년부터는 지하층이 자료에 아예 없어 이 칸에 섞여 있습니다.{' '}
         “한 건 면적”은 그 해 단가 근거가 된 거래 한 건의 건물면적 중앙값입니다 — 다른 해보다

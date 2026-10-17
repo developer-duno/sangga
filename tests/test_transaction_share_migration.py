@@ -16,9 +16,12 @@
 여기서 보는 것
   1) 정본 정적 가드 — 갈래·칸마다 따로 판정한다(탐지 함수는 아래 작은 함수 · 양성 대조가 같은 함수를 지난다)
   2) 마이그레이션 — lock_timeout 이 begin 앞 · begin/commit · notify 는 commit 뒤 · api.transaction
-     다시 만듦 · 다시 만든 함수·물질화뷰의 머리·본문·comment 가 정본과 글자 일치 · 권한
-  3) backtest_price.py 의 TX_QUERY 도 지분을 뺀다(실행은 안 한다 — 성적표 v2 는 PR②)
-  4) 로컬 PostgreSQL 이 있으면 실제로 돌려 본다(없으면 건너뜀 — CI 는 1)~3)만)
+     다시 만듦 · 목록 함수 둘의 머리·본문·comment 가 정본과 글자 일치 · 권한
+     (요약표 둘은 2026-10-18a 가 다시 만들어 정본 대조는 test_price_use_group_migration 몫 — 여기서는 이 파일 안의
+      지분 불변식만 본다 · 참고 시세 사다리 list_price_bands 는 결정 0041(2026-10-18a)로 정본에서 지웠다 — 사다리의
+      지분 불변식은 이 원장 파일(10-08a) 안에서만 본다)
+  3) (옛) 백테스트 조회(TX_QUERY) 가드 — 결정 0041 로 스크립트를 지워 시험도 지웠다
+  4) 로컬 PostgreSQL 이 있으면 실제로 돌려 본다(없으면 건너뜀 — CI 는 1)·2)만)
 
 ⓘ 도우미는 형제 시험에서 **복사**해 왔다(import 안 함 — 시험끼리 얽히면 한쪽 고장이 다른 쪽을 가린다).
 """
@@ -37,11 +40,12 @@ import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
 MIG = os.path.join(ROOT, "supabase", "migrations", "2026-10-08a_transaction_share_flag.sql")
+# 실제 실행 흉내가 쓰는 층대 도우미(price_floor_band) — 결정 0041 로 정본에서 지워 그 원장 파일에서 꺼낸다.
+MIG_STAGE_B = os.path.join(ROOT, "supabase", "migrations", "2026-08-16a_stage_b_price_band.sql")
 SCRIPTS_DIR = os.path.join(ROOT, "scripts")
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
-import backtest_price  # noqa: E402
 import post_load  # noqa: E402
 
 LADDER = ("L2", "L4", "L5", "L6")
@@ -206,10 +210,6 @@ def test_정본_칸이_있다():
     assert "comment on column transaction.is_share is" in src
 
 
-def test_정본_사다리_네_갈래_모두_지분_제외():
-    assert ladder_problems(read(SCHEMA)) == []
-
-
 def test_정본_동네_단가_흐름은_단가만_빼고_건수는_센다():
     assert yearly_problems(read(SCHEMA)) == []
 
@@ -225,9 +225,11 @@ def test_정본_실거래_목록은_지분도_낸다():
     assert "select * from public.list_parcel_transactions(pnu)" in api
 
 
-def test_정본_반경_이웃_표는_거래_조건을_좁히지_않는다():
-    """mv_tx_parcel_geog 는 바꾸지 않는다(L4·L5 가 거래 쪽에서 지분을 거른다)."""
-    assert "is_share" not in flat(mv_select("mv_tx_parcel_geog", read(SCHEMA)))
+def test_정본에_사다리가_없다():
+    """결정 0041 — 사다리·이웃 표를 정본에서 지웠다(아래 양성 대조는 원장 10-08a 의 사다리로 탐지기를 본다)."""
+    src = read(SCHEMA)
+    assert not re.search(r"(?im)^create\s+or\s+replace\s+function\s+list_price_bands\s*\(", src)
+    assert not re.search(r"(?im)^create materialized view (?:if not exists )?mv_tx_parcel_geog\b", src)
 
 
 # ── 1-1. 양성 대조 — 하나만 빠진 변형도 잡는다 ──────────────────────────────
@@ -235,7 +237,7 @@ def test_정본_반경_이웃_표는_거래_조건을_좁히지_않는다():
 
 @pytest.mark.parametrize("lvl", LADDER)
 def test_돌연변이_갈래_하나만_지분_제외를_빼도_잡힌다(lvl):
-    src = read(SCHEMA)
+    src = read(MIG)
     body = fn_block("list_price_bands", src)
     m = re.search(r"select '{}'".format(lvl), body)
     nxt = body.find("and not t.is_share", m.end())
@@ -246,7 +248,7 @@ def test_돌연변이_갈래_하나만_지분_제외를_빼도_잡힌다(lvl):
 
 
 def test_돌연변이_갈래의_조건을_주석으로_죽여도_잡힌다():
-    src = read(SCHEMA)
+    src = read(MIG)
     body = fn_block("list_price_bands", src)
     i = body.index("and not t.is_share", body.index("select 'L5'"))
     bad_body = body[:i] + "-- " + body[i:]
@@ -254,7 +256,7 @@ def test_돌연변이_갈래의_조건을_주석으로_죽여도_잡힌다():
 
 
 def test_변형_꼴_is_false_도_지분_제외로_인정한다():
-    src = read(SCHEMA)
+    src = read(MIG)
     body = fn_block("list_price_bands", src)
     i = body.index("and not t.is_share", body.index("select 'L4'"))
     alt = body[:i] + "and t.is_share is false" + body[i + len("and not t.is_share"):]
@@ -359,8 +361,11 @@ def test_마이그_목록_함수는_api_먼저_지우고_다시_만든다():
     assert a < p < mk < mk_api
 
 
-@pytest.mark.parametrize("name", ["list_parcel_transactions", "api.list_parcel_transactions",
-                                  "list_price_bands"])
+# ⓘ 2026-10-18a(결정 0040 — 같은 용도 묶음)가 list_price_bands·요약표 둘·그 comment 를 다시 만들었다.
+#   그 셋을 정본과 글자 대조하는 일은 이제 tests/test_price_use_group_migration.py 가 맡는다. 이 파일은
+#   적용된 원장(10-08a)의 **그 파일 안 불변식**(지분 네 갈래·건수 filter — 아래 test_마이그_정적_가드도_통과한다)만
+#   본다. 목록 함수 둘·지분 칸 comment·색인은 10-18a 가 안 건드려 지금도 정본과 같다.
+@pytest.mark.parametrize("name", ["list_parcel_transactions", "api.list_parcel_transactions"])
 def test_마이그_다시_만든_함수가_정본과_글자_일치(name):
     """머리(security definer·search_path·stable)까지 — create or replace 는 머리를 덮어쓴다."""
     assert fn_block(name, read(MIG)) == fn_block(name, read(SCHEMA))
@@ -368,9 +373,6 @@ def test_마이그_다시_만든_함수가_정본과_글자_일치(name):
 
 @pytest.mark.parametrize("pattern", [
     r"^comment on function list_parcel_transactions\(text\) is",
-    r"^comment on function list_price_bands\(text\) is",
-    r"^comment on materialized view mv_sigungu_tx_stats is",
-    r"^comment on materialized view mv_sigungu_tx_yearly is",
     r"^comment on column transaction\.is_share is",
     r"^create unique index if not exists idx_msts_key",
     r"^create unique index if not exists idx_msty_key",
@@ -380,7 +382,8 @@ def test_마이그_comment_와_색인이_정본과_글자_일치(pattern):
 
 
 @pytest.mark.parametrize("mv", ["mv_sigungu_tx_stats", "mv_sigungu_tx_yearly"])
-def test_마이그_물질화뷰는_떨어뜨린_뒤_정본과_같은_본문으로_굽는다(mv):
+def test_마이그_물질화뷰는_떨어뜨린_뒤_다시_굽는다(mv):
+    """본문의 지분 규칙은 test_마이그_정적_가드도_통과한다 가 본다(정본 대조는 10-18a 몫 — 위 ⓘ)."""
     mig = read(MIG)
     src = code(mig)
     drop = src.index("drop materialized view if exists {};".format(mv))
@@ -388,7 +391,6 @@ def test_마이그_물질화뷰는_떨어뜨린_뒤_정본과_같은_본문으�
     assert drop < make
     assert "create materialized view if not exists {}".format(mv) not in src, (
         "다시 굽는 판에서 if not exists 는 아무 일도 안 한다")
-    assert mv_select(mv, mig) == mv_select(mv, read(SCHEMA))
     after = flat(src[make:])
     assert "analyze {};".format(mv) in after
     assert "revoke all on {} from public, anon, authenticated;".format(mv) in after
@@ -414,29 +416,11 @@ def test_마이그_정적_가드도_통과한다():
 
 
 def test_공개_호출_허용_목록은_그대로다():
-    """함수 이름·서명이 안 바뀌었다 — 허용 목록에 새 이름이 생기지 않는다."""
+    """목록 함수 이름·서명이 안 바뀌었다 — 허용 목록에 새 이름이 생기지 않는다(사다리는 결정 0041 로 빠졌다)."""
     assert "api.list_parcel_transactions" in post_load.ANON_CALLABLE_ALLOWLIST
-    assert "api.list_price_bands" in post_load.ANON_CALLABLE_ALLOWLIST
+    assert "api.list_price_bands" not in post_load.ANON_CALLABLE_ALLOWLIST
     assert "mv_sigungu_tx_stats" in post_load.REFRESH_MVS
     assert "mv_sigungu_tx_yearly" in post_load.REFRESH_MVS
-
-
-# ── 3. 성적표 코드 ───────────────────────────────────────────────────────────
-
-
-def tx_query_problems(query):
-    return [] if re.search(r"(?:^|&)is_share=(?:is|eq)\.false(?:&|$)", query) else [
-        "TX_QUERY 가 지분 거래를 안 뺀다"]
-
-
-def test_백테스트_조회가_지분을_뺀다():
-    assert tx_query_problems(backtest_price.TX_QUERY) == []
-
-
-def test_돌연변이_백테스트_조회에서_빼면_잡힌다():
-    bad = backtest_price.TX_QUERY.replace("&is_share=is.false", "")
-    assert bad != backtest_price.TX_QUERY
-    assert tx_query_problems(bad)
 
 
 # ── 4. 로컬 PostgreSQL 로 실제 실행 (없으면 건너뜀 — 형제 test_district_openclose_migration 과 같은 방식) ──
@@ -461,13 +445,15 @@ create materialized view mv_tx_parcel_geog as select pnu, geom::geography as geo
 def _old_state(schema_sql):
     """적용 **전** 라이브와 같은 모양 — 정본에서 is_share 를 걷어낸 표·뷰·함수."""
     table = stmt_at(r"^create table if not exists transaction \(", schema_sql)
-    pfb = fn_block("price_floor_band", schema_sql)
+    pfb = fn_block("price_floor_band", read(MIG_STAGE_B))
     old = []
     old.append(table)
     old.append("create or replace view api.transaction as select * from public.transaction;")
     for mv in ("mv_sigungu_tx_stats", "mv_sigungu_tx_yearly"):
         body = mv_select(mv, schema_sql)
         body = body.replace("\n  and not t.is_share", "").replace(" and not t.is_share", "")
+        # 2026-10-18a 의 상가 조건도 걷는다 — 10-08a 적용 전에는 묶음 함수가 없었다.
+        body = body.replace("\n  and price_use_group_nm(t.main_use) = 'shop'", "")
         old.append("create materialized view {} as\n{}".format(mv, body))
     old.append(stmt_at(r"^create unique index if not exists idx_msts_key", schema_sql))
     old.append(stmt_at(r"^create unique index if not exists idx_msty_key", schema_sql))
@@ -481,6 +467,7 @@ def _old_state(schema_sql):
     old.append(api)
     joined = "\n".join(old)
     assert "is_share" not in joined
+    assert "price_use_group" not in joined
     return joined
 
 
