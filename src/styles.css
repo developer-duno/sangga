@@ -183,6 +183,93 @@ body {
   color: var(--muted);
 }
 
+/* ── 역할 고르기 큰 카드 (결정 0039 Q3 · W3 — 첫 방문 한 번 · 역할 단추 줄 자리) ─────────────
+   덮개가 아니라 입구 맨 위 제자리 카드다(아래 내용을 가리지 않는다). 넓은 화면 = 카드 셋 한 줄 · 휴대폰 = 세로로 쌓기
+   (`@media screen and (max-width: 720px)` 묶음). 글자는 처음부터 13px 이상 · 「그냥 둘러보기」 44px 는 '누르는 것은 44px
+   이상' 목록에 · 종이에서는 빠진다(인쇄 감춤 목록의 `.rolecards`). */
+.rolecards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 0 16px;
+  padding: 14px;
+  border: 1.5px solid var(--accent);
+  border-radius: 14px;
+  background: var(--card);
+}
+
+.rolecards__q {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.rolecards__list {
+  list-style: none;
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+}
+
+.rolecards__list > li {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+}
+
+.rolecards__card {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  min-height: 56px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rolecards__card:hover,
+.rolecards__card:focus-visible {
+  border-color: var(--accent);
+}
+
+.rolecards__name {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.rolecards__line {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.rolecards__browse {
+  align-self: flex-start;
+  padding: 0 14px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 14px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.rolecards__note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
 /* ── 창업자 업종 칩 줄 (결정 0036 결정 18 ④⑤ — 상권 지도 제목 줄 아래) ──── */
 
 /* 지도 머리(제목·접기 단추) 아래 한 줄을 통째로 쓴다 — 좁은 폭에서도 칩이 줄을 바꿔 서고 옆으로 안 넘친다. */
@@ -3779,6 +3866,15 @@ body {
   .rsum__print {
     width: 100%;
   }
+
+  /* 역할 고르기 큰 카드(결정 0039 W3) — 휴대폰은 카드를 세로로 쌓고 「그냥 둘러보기」는 가운데. */
+  .rolecards__list {
+    flex-direction: column;
+  }
+
+  .rolecards__browse {
+    align-self: center;
+  }
 }
 
 /* ── 가지고 나가기(링크 복사) ──────────────────────────────────────────────
@@ -4273,6 +4369,8 @@ body {
   .dmap__off,
   /* 역할 요약 판 「한 장으로 뽑기」(결정 0039 W2). */
   .rsum__print,
+  /* 역할 고르기 큰 카드 「그냥 둘러보기」(결정 0039 W3 — 카드 셋은 기본 규칙에서 56px). */
+  .rolecards__browse,
   .dbld__row,
   .dbld__dong,
   .dbld__more,
@@ -4358,6 +4456,8 @@ body {
   .app__head,
   /* 역할 단추 줄(결정 0036 결정 18) — 누르는 장치다. */
   .role,
+  /* 역할 고르기 큰 카드(결정 0039 W3) — 누르는 장치다. */
+  .rolecards,
   /* 창업자 업종 칩 줄(결정 0036 결정 18 ④) — 역할 단추 줄과 같은 꼴(누르는 장치). */
   .chips,
   .region,

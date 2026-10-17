@@ -11,6 +11,7 @@ import { PrintButton } from './components/PrintButton';
 import { PrintHeader } from './components/PrintHeader';
 import { RecentPrinted } from './components/RecentPrinted';
 import { RegionPicker } from './components/RegionPicker';
+import { RoleCards } from './components/RoleCards';
 import { RolePicker } from './components/RolePicker';
 import { ScorecardSection } from './components/ScorecardSection';
 import { ShareButton } from './components/ShareButton';
@@ -25,7 +26,13 @@ import { supabase } from './lib/supabase';
 import { buildAppSearch, buildShareUrl, isSameSearch, parseAppUrl } from './lib/urlState';
 import { pageTitle } from './lib/seo';
 import { SIDOS } from './lib/regions';
-import { loadViewerRole, saveViewerRole } from './lib/viewerRoleStore';
+import {
+  BROWSE_ROLE,
+  loadStoredRole,
+  saveStoredRole,
+  viewerRoleOf,
+  type StoredRole,
+} from './lib/viewerRoleStore';
 import {
   clearRecentPrinted,
   loadRecentPrinted,
@@ -59,8 +66,13 @@ export default function App() {
   /*
     첫 화면에서 고른 역할(결정 0036 결정 18). **이 기기에만** 적어 두고 첫 그림에 한 번 읽는다.
     ⛔ 주소·의견함에는 싣지 않는다(위 주소 쓰기·아래 `feedbackContext` 에 넣지 말 것).
+    저장값은 세 역할 또는 `둘러보기`(결정 0039 §7-4) — 화면이 쓰는 `viewerRole` 은 셋 또는 null(둘러보기 = 역할 없음).
+    `storedRole === null` = 아직 안 물어봤다 → 입구 맨 위 큰 카드(결정 0039 Q3 · W3). 단 **건물 직행 링크(`bld`)로
+    연 방문에는 그 방문 내내 안 띄운다**(첫 주소 한 번만 본다 · 저장도 안 해서 다음에 `/` 로 오면 뜬다).
   */
-  const [viewerRole, setViewerRole] = useState<ViewerRole | null>(() => loadViewerRole());
+  const [storedRole, setStoredRole] = useState<StoredRole | null>(() => loadStoredRole());
+  const viewerRole: ViewerRole | null = viewerRoleOf(storedRole);
+  const showRoleCards = storedRole === null && openedWith.bldId === null;
   /*
     창업자 업종 칩(결정 0036 결정 18 ④⑤⑨). ⛔ **화면만** — 이 기기 저장·주소·의견함 어디에도 싣지
     않는다(새로고침 = 전체). 창업자에서 벗어나면 전체로 돌린다 — 다른 역할에 칩 효과가 남지 않게.
@@ -73,10 +85,21 @@ export default function App() {
     ⛔ **화면만** — 이 기기 저장·주소·의견함에 싣지 않는다 · 구가 바뀌면 비운다(`handleSelectSigungu`·`handlePickRecent`).
   */
   const [mapPick, setMapPick] = useState<DistrictMapPick>(EMPTY_MAP_PICK);
+  /** 역할 고르기(큰 카드·작은 단추 줄 공용). null = 둘러보기·해제 — 지우지 않고 `둘러보기` 로 적는다(다시 안 묻는다). */
   function handlePickRole(role: ViewerRole | null) {
-    setViewerRole(role);
-    saveViewerRole(role);
+    const v: StoredRole = role ?? BROWSE_ROLE;
+    setStoredRole(v);
+    saveStoredRole(v);
     if (role !== '창업자') setFounderChip(FOUNDER_CHIP_ALL);
+  }
+  /*
+    큰 카드에서 골랐다 — 카드가 사라지며 커서가 문서 맨 앞(body)으로 떨어지지 않게, 다음 그림에서 그 자리에 서는 작은
+    단추 줄로 옮긴다(아래 effect · 검사 🟡 W3). `useRef` 인 이유 = 그리기와 상관없는 '다음 그림에서 할 일' 표시다.
+  */
+  const roleCardsFocusRef = useRef(false);
+  function handlePickFromCards(role: ViewerRole | null) {
+    roleCardsFocusRef.current = true;
+    handlePickRole(role);
   }
 
   /*
@@ -108,6 +131,19 @@ export default function App() {
   const barFirstRef = useRef<HTMLButtonElement>(null);
   const entryFocusRef = useRef<'search' | 'map' | 'role' | null>(null);
   const folded = (selected !== null || restoring) && !entryOpen;
+  /*
+    큰 카드에서 고른 뒤(위 `handlePickFromCards`) — 역할을 골랐으면 눌린 단추, 「그냥 둘러보기」면 첫 단추에 커서.
+    ⓘ 화면은 굴리지 않는다(`preventScroll`) — 작은 줄은 카드가 있던 바로 그 자리라 이미 화면 안이다.
+  */
+  useEffect(() => {
+    if (!roleCardsFocusRef.current) return;
+    roleCardsFocusRef.current = false;
+    const row = entryRef.current?.querySelector('.role');
+    (
+      row?.querySelector<HTMLButtonElement>('.role__chip[aria-pressed="true"]') ??
+      row?.querySelector<HTMLButtonElement>('.role__chip')
+    )?.focus({ preventScroll: true });
+  }, [storedRole]);
   function openEntry(target: 'search' | 'map' | 'role') {
     entryFocusRef.current = target;
     setEntryOpen(true);
@@ -123,10 +159,11 @@ export default function App() {
       return;
     }
     // 키보드·낭독기 손님도 그 자리에 서게 — 지도는 머리의 접기 단추, 역할은 첫 역할 단추에 커서(검사 🟡 10-15).
+    // 아직 안 물어봐 큰 카드가 서 있으면(작은 단추 줄은 숨음) 첫 카드 단추에(결정 0039 W3).
     // ⓘ 화면은 덩어리 맨 위로 옮긴다(커서 자리로 옮기면 지도 제목이 위로 잘린다). jsdom 에는 scrollIntoView 가 없다.
-    const block = root.querySelector(target === 'map' ? '.dmap' : '.role');
+    const block = root.querySelector(target === 'map' ? '.dmap' : '.rolecards, .role');
     block
-      ?.querySelector<HTMLButtonElement>(target === 'map' ? '.dmap__toggle' : '.role__chip')
+      ?.querySelector<HTMLButtonElement>(target === 'map' ? '.dmap__toggle' : '.rolecards__card, .role__chip')
       ?.focus({ preventScroll: true });
     block?.scrollIntoView?.({ block: 'start' });
   }, [entryOpen]);
@@ -515,8 +552,15 @@ export default function App() {
 
         {/* ⓘ 접힌 동안 `hidden` 으로 숨기기만 한다 — 안의 검색창·지역 고르개가 다시 태어나지 않게(위 `entryOpen`). */}
         <div className="entry" id="entry-panel" ref={entryRef} hidden={folded}>
-          {/* 역할 단추 줄 — 지역 고르기 바로 위(👤 결정 0036 결정 18 ⑧). */}
-          <RolePicker role={viewerRole} onChange={handlePickRole} />
+          {/*
+            역할 단추 줄 — 지역 고르기 바로 위(👤 결정 0036 결정 18 ⑧). 아직 안 물어봤으면 그 자리에 큰 카드
+            (결정 0039 Q3 · W3) — 카드가 서 있는 동안 작은 줄은 숨긴다(같은 질문이 두 번 안 보이게).
+          */}
+          {showRoleCards ? (
+            <RoleCards onPick={handlePickFromCards} />
+          ) : (
+            <RolePicker role={viewerRole} onChange={handlePickRole} />
+          )}
 
           <RegionPicker
             selectedSigungu={sigungu}
