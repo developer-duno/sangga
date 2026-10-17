@@ -100,9 +100,11 @@ class TestEveryTableHasRls:
         하나도 못 찾고 조용히 초록이 된다 — 이 레포가 가장 여러 번 데인 '가짜 초록'이다.
         """
         assert len(tables_in(schema)) >= 17, "표를 못 찾고 있습니다 — 정규식이 헛돕니다."
-        broken = schema.replace(
-            "alter table price_gate_sigungu enable row level security;", "", 1)
-        assert "price_gate_sigungu" in (set(tables_in(broken)) - set(rls_enabled_in(broken)))
+        # ⓘ 본보기 표는 price_gate_sigungu 였다 — 결정 0041(2026-10-18a)로 지워 snapshot_release 로 바꿨다.
+        line = "alter table snapshot_release enable row level security;"
+        assert schema.count(line) == 1, "전제: 본보기 표의 RLS 한 줄"
+        broken = schema.replace(line, "", 1)
+        assert "snapshot_release" in (set(tables_in(broken)) - set(rls_enabled_in(broken)))
 
 
 class TestEveryTableIsClosedToPublicRoles:
