@@ -277,6 +277,23 @@ describe('RoleSummary — 층별 화면 맨 위 역할 요약 판', () => {
     expect(sum.parentElement).toBe(head.parentElement);
   });
 
+  it('휴대폰 접기(결정 0039 W4a · §7-8) — 타일 3개 이상이면 「요약 N칸 더 보기」 + .rsum--fold · 누르면 펼침/다시 접기', async () => {
+    const { container } = render(<FloorStack building={building(A)} viewerRole="투자자" />);
+    await settle();
+    await waitFor(() => expect(container.querySelectorAll('.rsum__tile')).toHaveLength(4));
+    const sum = container.querySelector('.rsum')!;
+    const more = screen.getByRole('button', { name: '요약 2칸 더 보기' });
+    expect(sum.classList.contains('rsum--fold')).toBe(true);
+    expect(more.getAttribute('aria-expanded')).toBe('false');
+    // 접기는 CSS 만 — 타일은 넷 다 DOM 에 있다(넓은 화면·종이는 다 보인다).
+    expect(container.querySelectorAll('.rsum__tile')).toHaveLength(4);
+    fireEvent.click(more);
+    expect(sum.classList.contains('rsum--fold')).toBe(false);
+    expect(screen.getByRole('button', { name: '요약 접기' }).getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: '요약 접기' }));
+    expect(sum.classList.contains('rsum--fold')).toBe(true);
+  });
+
   it('판이 서버에 더 묻지 않는다 — 같은 역할로 판 유무만 갈라 rpc 요청 수가 같다', async () => {
     const counts: number[] = [];
     for (const off of [true, false]) {
@@ -448,6 +465,18 @@ describe('역할 요약 판 — CSS', () => {
     expect(rules.filter((r) => r.sel.some((s) => /\.rsum/.test(s)) && r.media === '@media (max-width: 720px)')).toEqual([]);
     const tall = rules.filter((r) => r.media === '@media screen' && /min-height:\s*44px/.test(r.body));
     expect(tall.some((r) => r.sel.includes('.rsum__print'))).toBe(true);
+    // 휴대폰 접기(W4a) — 감추는 규칙은 화면 720 묶음 안에만 · 「더 보기」 단추는 기본 규칙에서 숨고 720 묶음에서만 선다 · 44px 목록.
+    const foldRules = rules.filter((r) => r.sel.some((s) => s.startsWith('.rsum--fold')));
+    expect(foldRules.map((r) => r.media)).toEqual(['@media screen and (max-width: 720px)']);
+    const moreRules = rules.filter((r) => r.sel.includes('.rsum__more') && /display:/.test(r.body));
+    expect(moreRules.map((r) => [r.media, /display:\s*none/.test(r.body)])).toHaveLength(2);
+    expect(moreRules.map((r) => [r.media, /display:\s*none/.test(r.body)])).toEqual(
+      expect.arrayContaining([
+        [null, true],
+        ['@media screen and (max-width: 720px)', false],
+      ]),
+    );
+    expect(tall.some((r) => r.sel.includes('.rsum__more'))).toBe(true);
     // 카드 통째 break-inside: avoid 금지(종이에 넣는 날 한 장을 넘기면 통째로 다음 장으로 밀린다).
     expect(rules.filter((r) => r.sel.some((s) => /^\.rsum/.test(s)) && /break-inside:\s*avoid/.test(r.body))).toEqual([]);
   });

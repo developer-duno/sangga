@@ -54,6 +54,8 @@ body {
   max-width: 940px;
   margin: 0 auto;
   padding: 32px 20px 80px;
+  /* 휴대폰 아래 탭 막대 높이(결정 0039 W4a — 단추 52px + 위 4px + 선 1px) · 쓰는 곳은 `@media screen and (max-width: 720px)` 묶음뿐. */
+  --tabbar-h: 57px;
 }
 
 .app__title {
@@ -1363,6 +1365,12 @@ body {
   font-size: 13px;
   line-height: 1.5;
   color: var(--muted);
+}
+
+/* 휴대폰 「요약 N칸 더 보기」(결정 0039 W4a · §7-8) — 기본은 숨김, `@media screen and (max-width: 720px)` 묶음에서만 선다
+   (넓은 화면·종이는 타일 전부 그대로). */
+.rsum__more {
+  display: none;
 }
 
 .rsum__print {
@@ -3875,6 +3883,174 @@ body {
   .rolecards__browse {
     align-self: center;
   }
+
+  /* ── 휴대폰 아래 탭(결정 0039 Q1 · W4a) ──────────────────────────────────────────────
+     `.app--tabs` · `data-tab` 은 App 이 휴대폰 꼴일 때만 붙인다(`useIsPhone` — 이 묶음과 같은 질의). 탭에 안 맞는 덩어리는
+     여기서만 숨긴다 → ⛔ **`screen` 안이라 종이에는 안 먹는다**(건물·안내 글은 어느 탭에서 뽑아도 종이에 남는다 — 👤 「건물 한 장」).
+     ⓘ 입구(`.entry`)는 찾기·지도 탭이 아니면 App 이 `hidden` 으로 숨긴다 · 지도는 보이는 탭에서만 그린다. */
+  .app--tabs {
+    /* 아이폰 노치·둥근 모서리(가로 놓기) — `viewport-fit=cover` 라 안전 영역을 우리가 지킨다(WebKit 권고 꼴 max). */
+    padding-left: max(20px, env(safe-area-inset-left, 0px));
+    padding-right: max(20px, env(safe-area-inset-right, 0px));
+    /* 맨 아래 꼬리말·의견함이 탭 막대 뒤에 숨지 않게 — 막대 높이 + 아이폰 홈 막대 + 여유. */
+    padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 32px);
+  }
+
+  /* 찾기 탭이 아니면 입구 카드(LH·성적표·단가 흐름)를 숨긴다. */
+  .app--tabs:not([data-tab='find']) .app__main > .card {
+    display: none;
+  }
+
+  /* 건물 탭이 아니면 건물 덩어리(가지고 나가기·층별 화면·그물·안내 줄)를 숨긴다 — 언마운트 0(보던 건물이 남는다 · §7-1). */
+  .app--tabs:not([data-tab='building']) .app__main > :is(.takeout, .stack, .errbox, .msg) {
+    display: none;
+  }
+
+  /* 지도 탭 = 지역 고르개 + 지도 — 검색·큰 카드는 찾기 탭에만(지역 고르개는 두 탭에 같은 하나 · 메인 판단 ①). */
+  .app--tabs[data-tab='map'] .entry > :is(.rolecards, .search) {
+    display: none;
+  }
+
+  /* 더보기 탭이 아니면 꼬리말(역할 줄·의견함·안내·링크·형제 사이트·신선도)을 숨긴다. */
+  .app--tabs:not([data-tab='more']) .foot {
+    display: none;
+  }
+
+  .app--tabs[data-tab='more'] .foot {
+    margin-top: 8px;
+    padding-top: 0;
+    border-top: 0;
+  }
+
+  .tabbar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    padding: 4px max(4px, env(safe-area-inset-left, 0px)) env(safe-area-inset-bottom, 0px)
+      max(4px, env(safe-area-inset-right, 0px));
+    border-top: 1px solid var(--line);
+    background: var(--card);
+  }
+
+  .tabbar__btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-height: 52px;
+    padding: 2px 0;
+    border: 0;
+    background: none;
+    color: var(--muted);
+    font: inherit;
+    font-size: 13px;
+    line-height: 1.2;
+    cursor: pointer;
+  }
+
+  .tabbar__btn--on {
+    color: var(--accent);
+    font-weight: 700;
+  }
+
+  /* 고른 건물이 없는 「건물」 탭 — 흐리게 늘 그 자리(👤 1번 「가」). 글자 색만 흐리게(누를 수는 있다 → 빈 안내). */
+  .tabbar__btn--dim {
+    opacity: 0.55;
+  }
+
+  .tabbar__icon {
+    width: 22px;
+    height: 22px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  /* 휴대폰 자판(👤 「숨김」) — 글 입력칸에 커서가 있으면 막대를 숨긴다(자판 위에 떠서 입력칸·결과를 가리지 않게).
+     ⓘ 틈: 안드로이드에서 뒤로 단추로 자판만 내리면 커서가 남아 막대가 안 돌아온다(칸 밖을 누르면 돌아옴 · feature-notes W4a). */
+  .app--tabs:has(
+      input:focus:is(:not([type]), [type='text'], [type='search'], [type='tel'], [type='email'], [type='url'], [type='number']),
+      textarea:focus
+    )
+    .tabbar {
+    display: none;
+  }
+
+  /* 빈 「건물」 탭 · 빈 「뽑은 건물」 탭(👤 1번 「가」 · 메인 판단 ②). */
+  .tabempty,
+  .recent--tab:not(:has(.recent__list)) {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    margin: 40px 0;
+    text-align: center;
+    color: var(--muted);
+  }
+
+  .tabempty__title {
+    margin: 0;
+    color: var(--text);
+    font-weight: 700;
+  }
+
+  .tabempty__body {
+    margin: 0;
+  }
+
+  .tabempty__go {
+    padding: 0 18px;
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    background: var(--card);
+    color: var(--accent);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .recent__h {
+    margin: 0 0 8px;
+    font-weight: 700;
+  }
+
+  /* 요약 판 높이(👤 4번 「가」 · 결정 0039 §7-8) — 접힌 동안 타일 2칸만 + 「요약 N칸 더 보기」. 넓은 화면·종이는 그대로. */
+  .rsum--fold .rsum__tile:nth-child(n + 3) {
+    display: none;
+  }
+
+  .rsum__more {
+    display: block;
+    width: 100%;
+    margin-top: 10px;
+    padding: 0 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--accent);
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+  }
+
+  /* 작은 눌림 칸(결정 0039 §5 W4 줄 · 메인 판단 ⑥ — 휴대폰에만 · 넓은 화면은 그대로). 넘기기 링크·형제 사이트 링크는 폭도 44px
+     · 중개사 사무소 입력칸은 높이 44px. ⓘ 라디오·체크는 글씨를 감싼 이름표가 이미 44px 이라 input 은 그대로다. */
+  .links__a,
+  .family__a {
+    min-width: 44px;
+    justify-content: center;
+  }
+
+  .office__field input {
+    min-height: 44px;
+  }
 }
 
 /* ── 가지고 나가기(링크 복사) ──────────────────────────────────────────────
@@ -4371,6 +4547,10 @@ body {
   .rsum__print,
   /* 역할 고르기 큰 카드 「그냥 둘러보기」(결정 0039 W3 — 카드 셋은 기본 규칙에서 56px). */
   .rolecards__browse,
+  /* 휴대폰 아래 탭 · 빈 건물 탭 단추 · 요약 판 더 보기(결정 0039 W4a — 휴대폰에서만 그려지거나 보인다). */
+  .tabbar__btn,
+  .tabempty__go,
+  .rsum__more,
   .dbld__row,
   .dbld__dong,
   .dbld__more,
@@ -4464,6 +4644,12 @@ body {
   .search,
   /* 접힌 입구의 한 줄 바·'위 칸 접기'(S1) — 누르는 장치다. */
   .entrybar,
+  /* 휴대폰 아래 탭 막대 · 빈 건물 탭 안내(결정 0039 W4a) — 누르는 장치·화면 안내다. */
+  .tabbar,
+  .tabempty,
+  /* ⛔ 휴대폰에서 건물을 연 채 찾기·지도 탭에서 뽑아도 종이 = 건물 한 장(👤 「건물 한 장」) — 그 탭이 그려 둔 지도를 뺀다.
+     `.app--tabs` 는 인쇄 중에도 그대로다(`useIsPhone` 이 인쇄 중 값을 얼린다). 넓은 화면은 이 이름표가 없어 지금 그대로. */
+  .app--tabs.app--bld .entry,
   /* 중개사 「최근 뽑은 건물」 줄(결정 0036 결정 18 ⑥) — 지금은 `.search` 안이지만 자리가 옮겨져도
      종이에 새지 않게 따로 적어 둔다(누르는 장치). */
   .recent,

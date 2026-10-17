@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { FeedbackContext } from '../lib/feedback';
 
 import { DataFreshness } from './DataFreshness';
@@ -25,11 +26,21 @@ import { HandoffLinks } from './HandoffLinks';
 interface Props {
   /** 무엇을 보던 중이었나. 의견함이 함께 실어 보낸다. */
   feedbackContext?: FeedbackContext;
+  /**
+   * 휴대폰 「더보기」 탭(결정 0039 W4a · 메인 판단 ⑨) — 맨 앞에 끼울 것(작은 역할 단추 줄)과 차례 바꾸기.
+   * 차례 = 맨 앞 → 의견함 → 안내 → 넘기기 링크 → 형제 사이트 → 자료 신선도(DOM 차례 = 눈 차례 · 낭독기도 같다).
+   * ⓘ 넓은 화면은 둘 다 안 준다 — 지금 차례 그대로. 종이에 남는 것(안내·신선도)은 차례만 바뀐다.
+   */
+  lead?: ReactNode;
+  phoneOrder?: boolean;
 }
 
-export function AppFooter({ feedbackContext }: Props) {
+export function AppFooter({ feedbackContext, lead = null, phoneOrder = false }: Props) {
+  const feedback = <FeedbackBox context={feedbackContext} />;
   return (
     <footer className="foot">
+      {lead}
+      {phoneOrder && feedback}
       <div className="foot__notice">
         <p className="foot__lead">이 화면을 어디까지 믿어도 되나</p>
         <ul className="foot__list">
@@ -93,7 +104,7 @@ export function AppFooter({ feedbackContext }: Props) {
           바로 다음에 오는 것이 자연스럽다. 서버가 못 답하면 이 자리만 조용히 빈다. */}
       <DataFreshness />
 
-      <FeedbackBox context={feedbackContext} />
+      {!phoneOrder && feedback}
     </footer>
   );
 }

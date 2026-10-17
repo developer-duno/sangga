@@ -337,7 +337,36 @@ async function search(page: Page, text: string) {
  * 지도는 아예 안 그려지므로, 건물을 연 뒤 그것들을 만지는 시험은 먼저 이것을 부른다.
  */
 async function unfoldEntry(page: Page, button: string | RegExp = '다른 건물 찾기') {
+  // 휴대폰(결정 0039 W4a)은 바 대신 아래 탭 — 바의 단추 이름을 그 탭으로 옮겨 누른다(찾기 · 지도 · 더보기).
+  // 중개사는 지도 탭이 없고 지도가 찾기 탭 안이다.
+  if (await isPhoneTabs(page)) {
+    const name = String(button);
+    if (name.includes('상권 지도')) {
+      await gotoTab(page, (await tabButton(page, '지도').count()) > 0 ? '지도' : '찾기');
+    } else if (name.includes('나는')) {
+      await gotoTab(page, '더보기');
+    } else {
+      await gotoTab(page, '찾기');
+    }
+    return;
+  }
   await page.locator('.entrybar').getByRole('button', { name: button }).click();
+}
+
+/** 휴대폰 아래 탭(결정 0039 W4a)이 서 있나 — mobile 판(412px)에서만 선다. */
+async function isPhoneTabs(page: Page): Promise<boolean> {
+  return (await page.locator('nav.tabbar').count()) > 0;
+}
+
+function tabButton(page: Page, name: string) {
+  return page.getByRole('navigation', { name: '화면 고르기' }).getByRole('button', { name, exact: true });
+}
+
+/** 휴대폰이면 그 탭을 누른다 · 넓은 화면은 아무 일도 안 한다(탭이 없고 그 덩어리가 이미 화면에 있다). */
+async function gotoTab(page: Page, name: '찾기' | '지도' | '건물' | '뽑은 건물' | '더보기') {
+  if (!(await isPhoneTabs(page))) return;
+  await tabButton(page, name).click();
+  await expect(tabButton(page, name)).toHaveAttribute('aria-current', 'page');
 }
 
 /*
@@ -422,6 +451,14 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await unfoldEntry(page);
     await search(page, '다른동');
 
+    if (await isPhoneTabs(page)) {
+      // 휴대폰 탭 꼴(👤 확정 결정 0039 §7-1)은 검색해도 보던 건물을 남긴다 — 찾기 탭에선 안 보이고 「건물」 탭에 그대로.
+      await expect(page.locator('section.stack')).toHaveCount(1);
+      await expect(page.locator('section.stack')).toBeHidden();
+      await gotoTab(page, '건물');
+      await expect(page.locator('section.stack').getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
+      return;
+    }
     await expect(page.locator('section.stack')).toHaveCount(0);
     await expect(page.getByText('위에서 건물을 검색해 선택해 주세요.')).toBeVisible();
   });
@@ -448,7 +485,9 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     //    **고른 구 안에서** 못 찾았다고 말한다(2026-08-13 2차 검증에서 정리).
     // ⚠️ '강남구'는 지역 칩에도 있으므로 **문구 안에서** 찾아야 한다(그냥 getByText 는 모호).
     await expect(page.getByText(/강남구에서 찾지 못했습니다/)).toBeVisible();
-    await expect(page.locator('section.stack')).toHaveCount(0);
+    // 휴대폰 탭 꼴은 보던 건물을 남긴다(§7-1) — 찾기 탭에선 숨어 있다.
+    if (await isPhoneTabs(page)) await expect(page.locator('section.stack')).toBeHidden();
+    else await expect(page.locator('section.stack')).toHaveCount(0);
   });
 
   // ── 너무 넓은 검색 안내 (2026-08-13 안내창 → 2026-09-10 건물 쪽은 한 줄) ──────────────────────────────────
@@ -904,6 +943,8 @@ test.describe('화면 아래 — 어디까지 믿을지와 한마디 남기는 �
     });
 
     await page.goto('/');
+    // 휴대폰(결정 0039 W4a)은 꼬리말이 「더보기」 탭 안이다.
+    await gotoTab(page, '더보기');
 
     // 건물을 고르지 않아도 아래 안내는 늘 보인다 — 다 보고 난 사람이 찾는 자리다.
     const foot = page.locator('footer.foot');
@@ -941,8 +982,10 @@ test.describe('화면 아래 — 어디까지 믿을지와 한마디 남기는 �
     // 자료가 아직 한 행도 없는 갈래도 줄은 남는다 — 빼면 "그런 자료를 안 쓴다"로 읽힌다.
     await expect(fresh.getByText('자료 없음')).toBeVisible();
 
-    // 보던 지역이 함께 실리는지 보려고 구를 하나 고른다.
+    // 보던 지역이 함께 실리는지 보려고 구를 하나 고른다(휴대폰은 찾기 탭에서 고르고 더보기로 돌아온다).
+    await gotoTab(page, '찾기');
     await pickGu(page, '서울', '강남구');
+    await gotoTab(page, '더보기');
 
     await foot.getByRole('button', { name: '의견 보내기' }).click();
     // 답장을 못 한다는 사실을 **미리** 말한다 — 기다리게 해 놓고 안 하는 것이 가장 나쁘다.
@@ -971,6 +1014,7 @@ test.describe('화면 아래 — 어디까지 믿을지와 한마디 남기는 �
     await mockMissingFunction(page, FEEDBACK_PATTERN);
 
     await page.goto('/');
+    await gotoTab(page, '더보기'); // 휴대폰은 꼬리말이 「더보기」 탭 안(W4a)
     const foot = page.locator('footer.foot');
 
     // 신선도 표도 같은 상태(함수 없음)다 — **통째로 빠지되 아래 안내는 그대로 선다.**
@@ -1019,11 +1063,18 @@ test.describe('층별 스택뷰 — 주소로 들고 다니기', () => {
     await expect(stack.getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
     // 구 이름도 살아난다 — 주소에는 코드(11680)만 담겨 있고 이름은 서버 목록에서 얻는다.
     // ⓘ 링크로 연 건물은 입구가 접힌 채 시작한다(S1) — 바에 지금 구, 지도는 펼쳐야 그린다.
-    await expect(page.locator('.entrybar__place')).toHaveText('서울 강남구');
+    //    휴대폰(W4a)은 바 대신 탭 — 첫 탭이 「건물」이고 지도는 지도 탭에서만 그린다.
+    if (await isPhoneTabs(page)) {
+      await expect(tabButton(page, '건물')).toHaveAttribute('aria-current', 'page');
+      await expect(page.locator('.entrybar')).toHaveCount(0);
+    } else {
+      await expect(page.locator('.entrybar__place')).toHaveText('서울 강남구');
+    }
     await expect(page.locator('section.dmap')).toHaveCount(0);
     await unfoldEntry(page, '상권 지도 보기');
     await expect(page.getByRole('heading', { name: /강남구 상권 지도/ })).toBeVisible();
-    // 가지고 나가는 버튼도 함께 선다.
+    // 가지고 나가는 버튼도 함께 선다(휴대폰은 건물 탭에).
+    await gotoTab(page, '건물');
     await expect(page.getByRole('button', { name: '링크 복사' })).toBeVisible();
     // ★ 열자마자 주소가 스스로 지워지지 않는다(그러면 새로고침하는 순간 링크가 죽는다).
     expect(new URL(page.url()).search).toContain(`bld=${LINK_BLD}`);
@@ -2258,12 +2309,15 @@ test.describe('첫 화면 — 역할 단추', () => {
     const opened = stack.locator('.card__toggle[aria-expanded="true"]');
 
     await page.goto('/');
+    // 휴대폰(W4a)은 작은 역할 줄이 「더보기」 탭 맨 위 — 고른 뒤 찾기 탭으로 돌아와 구를 고른다.
+    await gotoTab(page, '더보기');
     for (const name of ['투자자', '창업자', '중개사']) {
       await expect(roleBtn(name)).toHaveAttribute('aria-pressed', 'false');
     }
     await roleBtn('창업자').click();
     await expect(roleBtn('창업자')).toHaveAttribute('aria-pressed', 'true');
 
+    await gotoTab(page, '찾기');
     await pickGu(page, '서울', '강남구');
     await search(page, '테헤란로');
     await page.getByRole('button', { name: /테스트빌딩/ }).click();
@@ -2278,7 +2332,9 @@ test.describe('첫 화면 — 역할 단추', () => {
     // 새로고침 — 건물은 주소가(결정 0019), 역할은 이 기기 저장이 되살린다.
     await page.reload();
     // ⓘ 링크로 되살린 건물은 입구가 접힌 채(되살리는 동안도 — S1) — 되살아난 역할은 바 단추 글자로 먼저 본다.
-    await expect(page.locator('.entrybar').getByRole('button', { name: '나는 창업자' })).toBeVisible();
+    //    휴대폰(W4a)은 바 대신 탭 — 건물 직행 주소라 첫 탭이 「건물」이다.
+    if (await isPhoneTabs(page)) await expect(tabButton(page, '건물')).toHaveAttribute('aria-current', 'page');
+    else await expect(page.locator('.entrybar').getByRole('button', { name: '나는 창업자' })).toBeVisible();
     await expect(titles).toHaveText(FOUNDER);
     await expect(opened).toHaveCount(4);
 
@@ -2347,12 +2403,17 @@ test.describe('첫 화면 — 창업자 입구 · 업종 칩', () => {
     const top = async (sel: string) => (await page.locator(sel).boundingBox())!.y;
 
     await page.goto('/');
+    const phone = await isPhoneTabs(page);
+    await gotoTab(page, '더보기'); // 휴대폰(W4a)은 역할 줄이 「더보기」 탭
     await roleBtn('창업자').click();
+    // 휴대폰 = 창업자 입구가 「지도」 탭(결정 0036 ④ 짝 · 지역 고르개도 그 탭에 선다).
+    await gotoTab(page, '지도');
     await pickGu(page, '서울', '강남구');
 
     // 창업자 = 지도가 검색창 위(결정 18 ④) · 지도 제목 줄에 칩 여섯, 처음은 전체.
     await expect(page.locator('section.dmap')).toBeVisible();
-    expect(await top('section.dmap')).toBeLessThan(await top('section.search'));
+    if (phone) await expect(page.locator('section.search')).toBeHidden(); // 지도 탭엔 검색이 없다(찾기 탭)
+    else expect(await top('section.dmap')).toBeLessThan(await top('section.search'));
     await expect(chips.getByRole('button')).toHaveText(['카페', '한식', '미용', '학원', '편의점', '전체']);
     await expect(chipBtn('전체')).toHaveAttribute('aria-pressed', 'true');
     // 칩 곁 안내 한 줄(👤 F4) — 글자 그대로.
@@ -2365,15 +2426,21 @@ test.describe('첫 화면 — 창업자 입구 · 업종 칩', () => {
     // 칩은 저장하지 않는다 — 주소에도 안 실린다.
     expect([...new URL(page.url()).searchParams.keys()]).toEqual(['sgg']);
 
+    await gotoTab(page, '찾기');
     await search(page, '테헤란로');
     await page.getByRole('button', { name: /테스트빌딩/ }).click();
 
     // 접힌 바에 고른 업종 글자(👤 G2 · 단추 아님) — 카드의 굵은 줄이 왜 굵은지 접힌 채로도 보인다. 종이에선 바째 빠진다.
     // ⓘ 지도 기억 되살리기(G1)는 E2E 에서 지도 알맹이가 안 그려져(키 없음) 볼 수 없다 — `DistrictMap.test` 「G1」·`App.mapPick.test` 가 본다.
-    await expect(page.locator('.entrybar .entrybar__chip')).toHaveText('업종: 카페');
-    await page.emulateMedia({ media: 'print' });
-    await expect(page.locator('.entrybar__chip')).toBeHidden();
-    await page.emulateMedia({ media: null });
+    // ⓘ 휴대폰(W4a)은 바 대신 탭이라 이 글자가 없다(건물 탭으로 바로 간다).
+    if (phone) {
+      await expect(tabButton(page, '건물')).toHaveAttribute('aria-current', 'page');
+    } else {
+      await expect(page.locator('.entrybar .entrybar__chip')).toHaveText('업종: 카페');
+      await page.emulateMedia({ media: 'print' });
+      await expect(page.locator('.entrybar__chip')).toBeHidden();
+      await page.emulateMedia({ media: null });
+    }
 
     // 둘레 업종 분포 — 음식(I2)을 미리 고른 채 열리고 짝 중분류(비알코올) 줄이 굵다.
     const mix = page.locator('section.mix');
@@ -2395,9 +2462,19 @@ test.describe('첫 화면 — 창업자 입구 · 업종 칩', () => {
     await expect(page.locator('.chips')).toBeVisible();
 
     // 투자자 — 칩 줄이 없고 차례는 지금 그대로(검색 → 지도) · 칩 효과도 풀린다.
+    await gotoTab(page, '더보기');
     await roleBtn('투자자').click();
     await expect(page.locator('.chips')).toHaveCount(0);
-    expect(await top('section.search')).toBeLessThan(await top('section.dmap'));
+    if (phone) {
+      // 휴대폰 투자자 = 지도는 지도 탭(칩 없이) · 찾기 탭엔 검색만.
+      await gotoTab(page, '지도');
+      await expect(page.locator('section.dmap')).toBeVisible();
+      await expect(page.locator('.chips')).toHaveCount(0);
+      await gotoTab(page, '찾기');
+      await expect(page.locator('section.dmap')).toHaveCount(0);
+    } else {
+      expect(await top('section.search')).toBeLessThan(await top('section.dmap'));
+    }
     await expect(mix.locator('select.mix__select')).toHaveValue('');
     await expect(oc.locator('.oc__chip-none')).toHaveCount(0);
   });
@@ -2482,9 +2559,12 @@ test.describe('층별 스택뷰 — 업종별 층 분포', () => {
 
     // ② 창업자 + 카페 칩 — 같은 대분류가 미리 골라지고 상권 블록에 '고른 업종(카페)' 줄이 하나 더(반경은 칩 0곳이라 없음).
     await page.goto('/');
+    await gotoTab(page, '더보기'); // 휴대폰(W4a) — 역할 줄은 더보기 · 지도·칩은 지도 탭 · 검색은 찾기 탭
     await roleBtn('창업자').click();
+    await gotoTab(page, '지도');
     await pickGu(page, '서울', '강남구');
     await page.locator('.dmap__head .chips').getByRole('button', { name: '카페', exact: true }).click();
+    await gotoTab(page, '찾기');
     await search(page, '테헤란로');
     await page.getByRole('button', { name: /테스트빌딩/ }).click();
     await expect(mix.locator('select.mix__select')).toHaveValue('I2');
@@ -2605,7 +2685,9 @@ test.describe('종이 한 장 보강 — 사무소 칸 · 호실 구성표 · �
     const box = page.locator('.printmeta__office');
     await expect(office).toBeVisible();
     // 「최근 뽑은 건물」 줄은 검색창 안이다 — 건물을 열면 입구가 접히므로(S1) 펼쳐서 본다.
-    await unfoldEntry(page);
+    // 휴대폰(W4a)은 검색 아래가 아니라 「뽑은 건물」 탭(👤 2번 「가」)이다.
+    if (await isPhoneTabs(page)) await gotoTab(page, '뽑은 건물');
+    else await unfoldEntry(page);
     await expect(page.locator('section.recent')).toBeVisible();
 
     // ① 칸이 비면 — 종이 머리 오른쪽 상자가 아예 없다.
@@ -2617,6 +2699,7 @@ test.describe('종이 한 장 보강 — 사무소 칸 · 호실 구성표 · �
     await expect(page.locator('.unitpick')).toBeHidden();
     await expect(page.locator('section.recent')).toBeHidden();
     await page.emulateMedia({ media: null });
+    await gotoTab(page, '건물'); // 사무소 칸은 건물 탭(가지고 나가기 줄)
 
     // ② 채우면 — 화면에서는 안 보이고(머리글째 화면에 없다) 종이에만 보인다 · 빈 칸은 줄째 빠진다.
     await office.locator('summary').click();
@@ -2630,6 +2713,10 @@ test.describe('종이 한 장 보강 — 사무소 칸 · 호실 구성표 · �
     await expect(box).toBeHidden();
     // 412px 에서도 입력 칸이 가로로 넘치지 않는다.
     expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+    // 휴대폰(W4a · 결정 0039 §5 W4 줄)은 입력 칸 높이 44px 이상(171×29 였다) · 넓은 화면은 그대로(메인 판단 ⑥).
+    const nameBox = (await page.getByLabel('사무소 이름').boundingBox())!;
+    if (testInfo.project.name === 'mobile') expect(nameBox.height).toBeGreaterThanOrEqual(44);
+    else expect(nameBox.height).toBeLessThan(44);
 
     await page.emulateMedia({ media: 'print' });
     await expect(box).toBeVisible();
@@ -3134,6 +3221,26 @@ test.describe('첫 화면 — 건물을 열면 입구가 한 줄로 접힌다', 
     const docBottom = title.y + title.height + (await page.evaluate(() => (globalThis as unknown as { scrollY: number }).scrollY));
     expect(docBottom).toBeLessThanOrEqual(vh);
 
+    if (await isPhoneTabs(page)) {
+      // 휴대폰(결정 0039 W4a)은 한 줄 바 대신 아래 탭 — 건물 탭 · 위 덩어리 숨김 · 지도 안 그림 · 소개 줄 숨김.
+      await expect(page.locator('.entrybar')).toHaveCount(0);
+      await expect(tabButton(page, '건물')).toHaveAttribute('aria-current', 'page');
+      await expect(page.locator('.region')).toBeHidden();
+      await expect(page.locator('.search')).toBeHidden();
+      await expect(page.locator('section.dmap')).toHaveCount(0);
+      await expect(page.locator('.app__sub')).toBeHidden();
+      // 지도 탭에서 뽑아도 종이 = 건물 한 장(👤 「건물 한 장」 — 그 탭이 그린 지도는 종이에서 빠진다).
+      await gotoTab(page, '지도');
+      await expect(page.locator('section.dmap')).toBeVisible();
+      await page.emulateMedia({ media: 'print' });
+      await expect(page.locator('section.dmap')).toBeHidden();
+      await expect(page.locator('nav.tabbar')).toBeHidden();
+      await expect(page.locator('.printmeta')).toBeVisible();
+      await expect(head.getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
+      await page.emulateMedia({ media: null });
+      return;
+    }
+
     // ② 한 줄 바 — 지금 구 · 단추 셋(높이 44px 이상) · 위 덩어리는 숨고 지도는 안 그린다.
     const bar = page.locator('.entrybar');
     await expect(bar.locator('.entrybar__place')).toHaveText('서울 강남구');
@@ -3199,12 +3306,14 @@ const MEASURE_TARGETS_JS = `(() => {
     'button, summary, select, input:not([type=hidden]):not([type=radio]):not([type=checkbox]), ' +
     'label:has(input[type=radio]), label:has(input[type=checkbox]), a.links__a, a.family__a';
   const small = [];
+  const narrow = [];
   let targets = 0;
   for (const el of document.querySelectorAll(sel)) {
     if (!vis(el)) continue;
     targets += 1;
-    const h = el.getBoundingClientRect().height;
-    if (h < 44 - 0.01) small.push(name(el) + ' ' + Math.round(h) + 'px');
+    const r = el.getBoundingClientRect();
+    if (r.height < 44 - 0.01) small.push(name(el) + ' ' + Math.round(r.height) + 'px');
+    if (r.width < 44 - 0.01) narrow.push(name(el) + ' ' + Math.round(r.width) + 'px');
   }
   const tiny = [];
   let texts = 0;
@@ -3215,11 +3324,17 @@ const MEASURE_TARGETS_JS = `(() => {
     const fs = parseFloat(getComputedStyle(el).fontSize);
     if (fs < 13 - 0.01) tiny.push(name(el) + ' ' + fs + 'px');
   }
-  return { targets, small, texts, tiny };
+  return { targets, small, narrow, texts, tiny };
 })()`;
 
 async function measureTargets(page: Page) {
-  return (await page.evaluate(MEASURE_TARGETS_JS)) as { targets: number; small: string[]; texts: number; tiny: string[] };
+  return (await page.evaluate(MEASURE_TARGETS_JS)) as {
+    targets: number;
+    small: string[];
+    narrow: string[];
+    texts: number;
+    tiny: string[];
+  };
 }
 
 test.describe('누르는 것 44px · 글자 13px', () => {
@@ -3265,9 +3380,30 @@ test.describe('누르는 것 44px · 글자 13px', () => {
     await unfoldEntry(page, '상권 지도 보기');
     await expect(page.locator('section.dmap')).toBeVisible();
     const all = await measureTargets(page);
-    expect(all.targets).toBeGreaterThan(first.targets);
-    expect(all.small).toEqual([]);
-    expect(all.tiny).toEqual([]);
+    if (await isPhoneTabs(page)) {
+      // 휴대폰(W4a) — 탭마다 따로 선다: 지도 탭 · 더보기 탭(역할 줄·의견함·넘기기 링크·형제 사이트)도 재고, 폭도 본다(412px ·
+      // 결정 0039 §5 W4 줄 「AZ 시험에 폭도」 — 넘기기 링크 26·39px 이 44px 로). 건물 탭(카드 다 펼침)도 폭을 다시 잰다.
+      expect(all.targets).toBeGreaterThan(0);
+      expect(all.small).toEqual([]);
+      expect(all.tiny).toEqual([]);
+      expect(all.narrow).toEqual([]);
+      await gotoTab(page, '더보기');
+      await page.getByRole('button', { name: '의견 보내기' }).click();
+      const more = await measureTargets(page);
+      expect(more.targets).toBeGreaterThan(5);
+      expect(more.small).toEqual([]);
+      expect(more.tiny).toEqual([]);
+      expect(more.narrow).toEqual([]);
+      await gotoTab(page, '건물');
+      const bld = await measureTargets(page);
+      expect(bld.targets).toBeGreaterThan(first.targets);
+      expect(bld.small).toEqual([]);
+      expect(bld.narrow).toEqual([]);
+    } else {
+      expect(all.targets).toBeGreaterThan(first.targets);
+      expect(all.small).toEqual([]);
+      expect(all.tiny).toEqual([]);
+    }
 
     // ⛔ 종이에서는 44px 이 안 먹는다(`@media screen` 안) — 카드 머리 단추는 화면 44px · 종이는 원래 높이.
     const toggle = page.locator('.card__toggle').first();
@@ -3295,18 +3431,23 @@ test.describe('누르는 것 44px · 글자 13px', () => {
     // 손님이 결과 목록을 끝까지 내린 상태(문서 맨 아래로 굴린다).
     await page.evaluate('window.scrollTo(0, document.documentElement.scrollHeight)');
     // 정말 아래로 내려온 상태에서 고른다(이 전제가 없으면 시험이 아무것도 안 본다).
-    expect(await page.evaluate(() => (globalThis as unknown as { scrollY: number }).scrollY)).toBeGreaterThan(200);
+    // ⓘ 휴대폰 탭 꼴(W4a)은 찾기 탭에 역할 줄·꼬리말이 없어 문서가 짧다 — 내려간 만큼만 본다.
+    const minScroll = (await isPhoneTabs(page)) ? 50 : 200;
+    expect(await page.evaluate(() => (globalThis as unknown as { scrollY: number }).scrollY)).toBeGreaterThan(minScroll);
     await last.click();
 
     const head = page.locator('.stack__head');
     await expect(head).toBeVisible();
     const vh = page.viewportSize()!.height;
-    await expect(page.locator('.entrybar')).toBeInViewport();
+    const phone = await isPhoneTabs(page);
+    // 휴대폰(W4a)은 바 대신 아래 탭 막대(늘 화면 안 · 고른 탭 = 건물).
+    await expect(page.locator(phone ? 'nav.tabbar' : '.entrybar')).toBeInViewport();
     const title = (await head.getByRole('heading').first().boundingBox())!;
     expect(title.y).toBeGreaterThanOrEqual(0);
     expect(title.y + title.height).toBeLessThanOrEqual(vh);
-    // 커서는 바의 첫 단추(고른 결과 줄이 숨어 커서가 문서 맨 앞으로 날아가지 않게).
-    await expect(page.getByRole('button', { name: '다른 건물 찾기' })).toBeFocused();
+    // 커서는 바의 첫 단추(고른 결과 줄이 숨어 커서가 문서 맨 앞으로 날아가지 않게) · 휴대폰은 고른 탭(건물).
+    if (phone) await expect(tabButton(page, '건물')).toBeFocused();
+    else await expect(page.getByRole('button', { name: '다른 건물 찾기' })).toBeFocused();
   });
 });
 
@@ -3832,6 +3973,38 @@ test.describe('층별 스택뷰 — 역할 요약 판', () => {
     await page.emulateMedia({ media: null });
   });
 
+  test('BK. 휴대폰 요약 판은 타일 2칸 + 「요약 N칸 더 보기」(44px) — 건물 이름이 첫 화면에 · 누르면 다 · 넓은 화면은 다 보이고 단추 없음 · 종이에서 판째 빠짐', async ({
+    page,
+  }, testInfo) => {
+    await openWithRole(page, '투자자');
+    const sum = page.locator('section.stack > .rsum');
+    const tiles = sum.locator('.rsum__tile');
+    const more = sum.getByRole('button', { name: /^요약 \d+칸 더 보기$/ });
+    // 곁 카드 값이 다 와 타일이 다 선 뒤에 센다(임대 타일이 마지막 쪽).
+    await expect(sum.locator('.rsum__tile--rent')).toContainText('상권 평균');
+    await expect.poll(() => tiles.count()).toBeGreaterThanOrEqual(3);
+    const n = await tiles.count();
+    if (testInfo.project.name === 'mobile') {
+      // 👤 2026-10-17 W4a 4번 「가」 · 결정 0039 §7-8.
+      await expect(sum.locator('.rsum__tile:visible')).toHaveCount(2);
+      await expect(more).toHaveText(`요약 ${n - 2}칸 더 보기`);
+      expect((await more.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      // 건물 이름이 첫 화면 높이 안(문서 위치 · 맨 위에서 스크롤 없이).
+      const title = (await page.locator('.stack__title').boundingBox())!;
+      const sy = await page.evaluate(() => (globalThis as unknown as { scrollY: number }).scrollY);
+      expect(title.y + title.height + sy).toBeLessThanOrEqual(page.viewportSize()!.height);
+      await more.click();
+      await expect(sum.locator('.rsum__tile:visible')).toHaveCount(n);
+      await expect(sum.getByRole('button', { name: '요약 접기' })).toHaveAttribute('aria-expanded', 'true');
+    } else {
+      await expect(sum.locator('.rsum__tile:visible')).toHaveCount(n);
+      await expect(more).toBeHidden();
+    }
+    await page.emulateMedia({ media: 'print' });
+    await expect(sum).toBeHidden();
+    await page.emulateMedia({ media: null });
+  });
+
   test('BG. 중개사 판의 「한 장으로 뽑기」 — 화면 44px 이상 · 누르면 인쇄 창 · 종이에서는 판째 빠진다', async ({ page }) => {
     await openWithRole(page, '중개사');
     const btn = page.locator('.rsum').getByRole('button', { name: '한 장으로 뽑기' });
@@ -3910,6 +4083,7 @@ test.describe('첫 화면 — 역할 고르기 큰 카드', () => {
     // 카드를 누르면 사라지고 작은 줄에 그 역할 · 창업자 차례(지도가 검색창 위)는 구를 골라야 보이니 저장값과 눌림만.
     await cards.filter({ hasText: '가게를 열려고' }).click();
     await expect(box).toHaveCount(0);
+    await gotoTab(page, '더보기'); // 휴대폰(W4a)은 작은 역할 줄이 「더보기」 탭(숨은 단추는 역할로 못 찾는다)
     await expect(page.locator('section.role').getByRole('button', { name: '창업자' })).toHaveAttribute('aria-pressed', 'true');
     expect(await storedRole(page)).toBe('창업자');
     // 주소에는 안 실린다.
@@ -3921,11 +4095,13 @@ test.describe('첫 화면 — 역할 고르기 큰 카드', () => {
     await page.goto('/');
     await page.locator('section.rolecards').getByRole('button', { name: '그냥 둘러보기' }).click();
     await expect(page.locator('section.rolecards')).toHaveCount(0);
+    await gotoTab(page, '더보기'); // 휴대폰(W4a)은 작은 역할 줄이 「더보기」 탭
     for (const name of ['투자자', '창업자', '중개사']) {
       await expect(page.locator('section.role').getByRole('button', { name })).toHaveAttribute('aria-pressed', 'false');
     }
     expect(await storedRole(page)).toBe('둘러보기');
     await page.reload();
+    await gotoTab(page, '더보기'); // 휴대폰(W4a)은 작은 역할 줄이 「더보기」 탭
     await expect(page.locator('section.role')).toBeVisible();
     await expect(page.locator('section.rolecards')).toHaveCount(0);
   });
@@ -3935,8 +4111,9 @@ test.describe('첫 화면 — 역할 고르기 큰 카드', () => {
     await mockFloorStack(page, [], [], [floorRow({ floor_no: 2 }), floorRow()]);
     await page.goto(`/?sgg=11680&bld=${LINK_BLD}`);
     await expect(page.locator('section.stack').getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
-    await expect(page.locator('.entrybar').getByRole('button', { name: '나는 역할 고르기' })).toBeVisible();
-    await unfoldEntry(page);
+    if (await isPhoneTabs(page)) await expect(tabButton(page, '건물')).toHaveAttribute('aria-current', 'page');
+    else await expect(page.locator('.entrybar').getByRole('button', { name: '나는 역할 고르기' })).toBeVisible();
+    await unfoldEntry(page, '나는 역할 고르기'); // 휴대폰은 「더보기」 탭
     await expect(page.locator('section.role')).toBeVisible();
     await expect(page.locator('section.rolecards')).toHaveCount(0);
     expect(await storedRole(page)).toBeNull();
@@ -3944,5 +4121,229 @@ test.describe('첫 화면 — 역할 고르기 큰 카드', () => {
     await page.goto('/?sgg=11680');
     await expect(page.locator('section.rolecards')).toBeVisible();
     await expect(page.locator('section.role')).toHaveCount(0);
+  });
+});
+
+// ── 휴대폰 아래 탭 (결정 0039 Q1 · W4a · 👤 2026-10-17 결정 7건) ─────────────────────────────────────────────
+// 휴대폰(mobile 판 · 412px)에서만 선다 — 넓은 화면(chromium)은 탭 0 을 보고 끝난다. 탭 상태·뒤로가기 칸·역할별 탭은 vitest
+// (`App.tabs.test.tsx`)도 본다 — 여기서만 보이는 것은 **CSS 로 숨는 덩어리 · 고정 막대의 자리 · 종이 · 자판 · 진짜 뒤로가기**다.
+test.describe('휴대폰 아래 탭', () => {
+  async function openBuilding(page: Page) {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page, [], [], [floorRow({ floor_no: 2 }), floorRow()]);
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+    await expect(page.locator('section.stack .stack__head')).toBeVisible();
+  }
+
+  test('BL. 탭 넷(그림 + 글자 · 44px · 13px · 고른 탭 강조) · 첫 탭 찾기 · 빈 건물 탭 안내 · 탭마다 다른 덩어리 · 꼬리말이 막대에 안 가림 · 넓은 화면엔 탭 0', async ({
+    page,
+  }, testInfo) => {
+    await mockOpenSigungu(page);
+    await page.goto('/');
+    const bar = page.getByRole('navigation', { name: '화면 고르기' });
+    if (testInfo.project.name !== 'mobile') {
+      await expect(page.locator('section.region')).toBeVisible();
+      await expect(bar).toHaveCount(0);
+      await expect(page.locator('footer.foot .foot__notice')).toBeVisible();
+      return;
+    }
+    const btns = bar.getByRole('button');
+    await expect(btns).toHaveText(['찾기', '지도', '건물', '더보기']);
+    await expect(bar.getByRole('button', { name: '찾기', exact: true })).toHaveAttribute('aria-current', 'page');
+    for (const b of await btns.all()) {
+      const box = (await b.boundingBox())!;
+      expect(box.height).toBeGreaterThanOrEqual(44);
+      expect(box.width).toBeGreaterThanOrEqual(44);
+      await expect(b).toHaveCSS('font-size', '13px');
+      await expect(b.locator('svg')).toHaveCount(1);
+    }
+    // 고른 탭은 강조색 · 굵게(나머지와 다르다).
+    // ⚠️ 이 파일의 타입 검사는 브라우저 타입(DOM)을 안 켠다 — 전역을 좁은 모양으로 꺼내 쓴다.
+    const color = (name: string) =>
+      tabButton(page, name).evaluate(
+        (e) => (globalThis as unknown as { getComputedStyle(x: unknown): { color: string } }).getComputedStyle(e).color,
+      );
+    expect(await color('찾기')).not.toBe(await color('지도'));
+    // 막대는 화면 맨 아래에 붙는다(고정).
+    const vh = page.viewportSize()!.height;
+    const barBox = (await bar.boundingBox())!;
+    expect(Math.abs(barBox.y + barBox.height - vh)).toBeLessThanOrEqual(1);
+
+    // 찾기 탭 = 지역·검색 · 꼬리말 숨김.
+    await expect(page.locator('section.region')).toBeVisible();
+    await expect(page.locator('section.search')).toBeVisible();
+    await expect(page.locator('footer.foot')).toBeHidden();
+    // 빈 건물 탭(👤 1번 「가」) — 흐린 탭 · 안내 둘 · 찾으러 가기(44px) → 찾기.
+    await expect(tabButton(page, '건물')).toHaveClass(/tabbar__btn--dim/);
+    await gotoTab(page, '건물');
+    await expect(page.getByText('아직 고른 건물이 없습니다', { exact: true })).toBeVisible();
+    await expect(page.getByText('찾기나 지도에서 건물을 고르면 여기에 층별 화면이 섭니다', { exact: true })).toBeVisible();
+    await expect(page.locator('section.search')).toBeHidden();
+    const go = page.getByRole('button', { name: '건물 찾으러 가기' });
+    expect((await go.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await go.click();
+    await expect(tabButton(page, '찾기')).toHaveAttribute('aria-current', 'page');
+    // 지도 탭 = 지역 고르개(같은 하나) · 검색 없음.
+    await gotoTab(page, '지도');
+    await expect(page.locator('section.region')).toBeVisible();
+    await expect(page.locator('section.search')).toBeHidden();
+    // 더보기 탭 = 역할 줄 → 의견함 → 안내 차례 · 맨 아래까지 내려도 막대에 안 가린다.
+    await gotoTab(page, '더보기');
+    await expect(page.locator('section.region')).toBeHidden();
+    const foot = page.locator('footer.foot');
+    await expect(foot).toBeVisible();
+    const y = async (sel: string) => (await foot.locator(sel).first().boundingBox())!.y;
+    expect(await y('section.role')).toBeLessThan(await y('.fb'));
+    expect(await y('.fb')).toBeLessThan(await y('.foot__notice'));
+    await page.evaluate('window.scrollTo(0, document.documentElement.scrollHeight)');
+    const last = (await foot.locator('nav.family').boundingBox())!;
+    expect(last.y + last.height).toBeLessThanOrEqual((await bar.boundingBox())!.y);
+    expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+  });
+
+  test('BM. 첫 탭 — 창업자 = 지도 · 건물 직행 링크 = 건물 · 중개사 탭 = 찾기·건물·뽑은 건물·더보기(지도는 찾기 탭 · 빈 안내)', async ({
+    page,
+  }, testInfo) => {
+    const setRole = (r: string) =>
+      page.addInitScript((v) => {
+        const w = globalThis as unknown as { localStorage: { setItem(k: string, val: string): void } };
+        w.localStorage.setItem('sangga.viewerRole', v);
+      }, r);
+    await mockOpenSigungu(page);
+    await mockFloorStack(page, [], [], [floorRow({ floor_no: 2 }), floorRow()]);
+    await setRole('창업자');
+    await page.goto('/');
+    if (testInfo.project.name !== 'mobile') {
+      // 넓은 화면은 아래 탭이 없다 — 창업자 첫 화면·건물 직행 링크·중개사 어느 쪽도 탭 막대 0(지금 화면 그대로).
+      await expect(page.locator('section.region')).toBeVisible();
+      await expect(page.locator('nav.tabbar')).toHaveCount(0);
+      await page.goto(`/?sgg=11680&bld=${LINK_BLD}`);
+      await expect(page.locator('section.stack').getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
+      await expect(page.locator('nav.tabbar')).toHaveCount(0);
+      await setRole('중개사');
+      await page.goto('/');
+      await expect(page.locator('section.region')).toBeVisible();
+      await expect(page.locator('nav.tabbar')).toHaveCount(0);
+      return;
+    }
+    await expect(tabButton(page, '지도')).toHaveAttribute('aria-current', 'page');
+    await expect(page.locator('section.region')).toBeVisible();
+    await page.goto(`/?sgg=11680&bld=${LINK_BLD}`);
+    await expect(tabButton(page, '건물')).toHaveAttribute('aria-current', 'page');
+    await expect(page.locator('section.stack').getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
+
+    await setRole('중개사');
+    await page.goto('/');
+    const bar = page.getByRole('navigation', { name: '화면 고르기' });
+    await expect(bar.getByRole('button')).toHaveText(['찾기', '건물', '뽑은 건물', '더보기']);
+    await expect(tabButton(page, '찾기')).toHaveAttribute('aria-current', 'page');
+    await pickGu(page, '서울', '강남구');
+    await expect(page.getByRole('heading', { name: /강남구 상권 지도/ })).toBeVisible();
+    await gotoTab(page, '뽑은 건물');
+    await expect(page.getByText('아직 뽑은 건물이 없습니다', { exact: true })).toBeVisible();
+    await expect(page.getByText('건물 화면에서 「인쇄 · PDF로 저장」을 누르면 여기에 남습니다', { exact: true })).toBeVisible();
+    await expect(page.locator('section.dmap')).toHaveCount(0);
+  });
+
+  test('BN. 뒤로가기 — 건물을 열 때만 한 칸(여럿 열어도 한 칸) · 뒤로 = 아까 탭(건물은 남음) · 앞으로 = 건물 · 넓은 화면은 칸 0', async ({
+    page,
+  }, testInfo) => {
+    await mockOpenSigungu(page);
+    // ⚠️ 둘째 건물 번호도 진짜 꼴(19자리_숫자)로 — 주소 쓰기는 꼴이 틀린 번호를 버린다(`urlState.ts` 의 BLD_RE).
+    const OTHER = '1168010100100020000_2';
+    await mockJson(page, SEARCH_PATTERN, [searchHit(), searchHit({ bld_id: OTHER, bld_nm: '다른빌딩' })]);
+    await mockFloorStack(page, [], [], [floorRow({ floor_no: 2 }), floorRow()]);
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    const len = () => page.evaluate(() => (globalThis as unknown as { history: { length: number } }).history.length);
+    const before = await len();
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+    await expect(page.locator('section.stack .stack__head')).toBeVisible();
+    if (testInfo.project.name !== 'mobile') {
+      expect(await len()).toBe(before); // 넓은 화면은 지금처럼 replaceState 만
+      return;
+    }
+    expect(await len()).toBe(before + 1);
+    await expect(tabButton(page, '건물')).toHaveAttribute('aria-current', 'page');
+    // 찾기 탭에서 둘째 건물을 열어도 칸은 그대로 하나.
+    await gotoTab(page, '찾기');
+    await page.getByRole('button', { name: /다른빌딩/ }).click();
+    await expect(tabButton(page, '건물')).toHaveAttribute('aria-current', 'page');
+    expect(await len()).toBe(before + 1);
+    // ⓘ 주소는 페이지 안에서 읽는다 — `page.url()` 은 같은 문서 안 주소 바꾸기(push/replace)를 늦게 따라올 수 있다.
+    const bldNow = () =>
+      page.evaluate(() =>
+        new URLSearchParams((globalThis as unknown as { location: { search: string } }).location.search).get('bld'),
+      );
+    await expect.poll(bldNow).toBe(OTHER);
+
+    await page.goBack();
+    await expect(tabButton(page, '찾기')).toHaveAttribute('aria-current', 'page');
+    await expect(page.locator('section.search')).toBeVisible();
+    // 건물은 남는다(§7-1) · 주소는 지금 건물로 다시 적힌다.
+    await expect(page.locator('section.stack')).toHaveCount(1);
+    await expect.poll(bldNow).toBe(OTHER);
+    await page.goForward();
+    await expect(tabButton(page, '건물')).toHaveAttribute('aria-current', 'page');
+    await expect(page.locator('section.stack .stack__head')).toBeVisible();
+  });
+
+  test('BO. 건물을 연 채 찾기·지도·더보기 탭에서 뽑아도 종이 = 건물 한 장 · 탭 막대·바 없음 · 안내 글은 남음', async ({ page }, testInfo) => {
+    await openBuilding(page);
+    if (testInfo.project.name !== 'mobile') {
+      // 넓은 화면은 탭 막대가 없다 — 화면에도 종이에도 0(넓은 화면 종이의 나머지는 R·AY 가 본다).
+      await expect(page.locator('nav.tabbar')).toHaveCount(0);
+      await page.emulateMedia({ media: 'print' });
+      await expect(page.locator('section.stack .stack__head')).toBeVisible();
+      await expect(page.locator('nav.tabbar')).toHaveCount(0);
+      await page.emulateMedia({ media: null });
+      return;
+    }
+    for (const t of ['찾기', '지도', '더보기'] as const) {
+      await gotoTab(page, t);
+      await expect(page.locator('section.stack')).toBeHidden();
+      await page.emulateMedia({ media: 'print' });
+      await expect(page.locator('.printmeta')).toBeVisible();
+      await expect(page.locator('section.stack .stack__head')).toBeVisible();
+      await expect(page.locator('.card--floors .floor').first()).toBeVisible();
+      await expect(page.locator('.foot__notice')).toBeVisible();
+      await expect(page.locator('nav.tabbar')).toBeHidden();
+      await expect(page.locator('section.dmap')).toBeHidden();
+      await expect(page.locator('.search')).toBeHidden();
+      await expect(page.locator('.fb')).toBeHidden();
+      await page.emulateMedia({ media: null });
+      await expect(page.locator('nav.tabbar')).toBeVisible();
+    }
+  });
+
+  test('BP. 글 입력칸에 커서가 있으면(휴대폰 자판) 탭 막대가 숨고, 커서가 빠지면 돌아온다 · 라디오는 해당 없음', async ({ page }, testInfo) => {
+    await mockOpenSigungu(page);
+    await page.goto('/');
+    const bar = page.locator('nav.tabbar');
+    if (testInfo.project.name !== 'mobile') {
+      // 넓은 화면은 탭 막대가 없다 — 검색창에 커서가 가도 0 그대로.
+      await expect(page.getByLabel('건물명 또는 주소')).toBeVisible();
+      await expect(bar).toHaveCount(0);
+      await page.getByLabel('건물명 또는 주소').focus();
+      await expect(bar).toHaveCount(0);
+      return;
+    }
+    await expect(bar).toBeVisible();
+    await page.getByLabel('건물명 또는 주소').focus();
+    await expect(bar).toBeHidden();
+    await page.getByLabel('건물명 또는 주소').blur();
+    await expect(bar).toBeVisible();
+    // 의견함 종류(라디오)를 눌러도 막대는 그대로(자판이 안 뜬다) · 글 칸에 커서면 숨는다.
+    await gotoTab(page, '더보기');
+    await page.getByRole('button', { name: '의견 보내기' }).click();
+    await page.getByRole('radio', { name: '건의·제안' }).check();
+    await expect(bar).toBeVisible();
+    await page.locator('footer.foot').getByRole('textbox').focus();
+    await expect(bar).toBeHidden();
   });
 });
