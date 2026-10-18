@@ -3326,7 +3326,9 @@ const MEASURE_TARGETS_JS = `(() => {
   const name = (el) => el.tagName.toLowerCase() + '.' + [...el.classList].join('.');
   const sel =
     'button, summary, select, input:not([type=hidden]):not([type=radio]):not([type=checkbox]), ' +
-    'label:has(input[type=radio]), label:has(input[type=checkbox]), a.links__a, a.family__a';
+    'label:has(input[type=radio]), label:has(input[type=checkbox]), a.links__a, a.family__a, ' +
+    // 결정 0042 — 구 칩은 단추에서 진짜 링크로(역할은 단추) · 층별 머리의 내부 링크 줄도 누르는 것이다.
+    'a.region__gu-chip, a.stack__links-a';
   const small = [];
   const narrow = [];
   let targets = 0;
@@ -3365,18 +3367,23 @@ test.describe('누르는 것 44px · 글자 13px', () => {
   }) => {
     await mockOpenSigungu(page);
     await mockJson(page, DATA_FRESHNESS_PATTERN, dataFreshness());
-    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    // 같은 땅 2동(결정 0042 보완 F6) — 머리 링크 줄에 2글자 동 링크 「A동」(이름 없음)이 서게 해 그 폭·높이도 잰다.
+    await mockJson(page, SEARCH_PATTERN, [searchHit({ bld_cnt_in_pnu: 2 })]);
     await mockFloorStack(
       page,
       [parcelTx()],
       priceBands(),
-      [floorRow({ floor_no: 2 }), floorRow()],
+      [floorRow({ floor_no: 2, bld_cnt_in_pnu: 2 }), floorRow({ bld_cnt_in_pnu: 2 })],
       industryMix(),
       undefined,
       undefined,
       rentStats(),
     );
     await mockJson(page, OPEN_CLOSE_PATTERN, openClose());
+    await mockJson(page, '**/rest/v1/rpc/list_parcel_buildings*', [
+      { bld_id: searchHit().bld_id, bld_nm: '테스트빌딩', dong_nm: '본동', total_area_m2: 900, floor_cnt: 2, min_floor: 1, max_floor: 2, has_roof: false },
+      { bld_id: '1168010100100010000_1024999', bld_nm: null, dong_nm: 'A동', total_area_m2: 100, floor_cnt: 1, min_floor: 1, max_floor: 1, has_roof: false },
+    ]);
 
     await page.goto('/');
     await pickGu(page, '서울', '강남구');
@@ -3390,6 +3397,8 @@ test.describe('누르는 것 44px · 글자 13px', () => {
     await page.getByRole('button', { name: /테스트빌딩/ }).click();
     await expect(page.locator('section.stack')).toBeVisible();
     await expect(page.locator('section.oc')).toBeVisible();
+    // 짧은 동 링크가 실제로 선 뒤에 잰다(빈 측정으로 초록이 되지 않게).
+    await expect(page.locator('a.stack__links-a', { hasText: /^A동$/ })).toBeVisible();
     const first = await measureTargets(page);
     expect(first.targets).toBeGreaterThan(10); // 재는 것이 실제로 있었다(빈 측정으로 초록이 되지 않게)
     expect(first.small).toEqual([]);
@@ -4394,5 +4403,71 @@ test.describe('휴대폰 아래 탭', () => {
     await expect(page.locator('.foot__notice')).toBeVisible();
     await page.emulateMedia({ media: null });
     await expect(page.locator('#entry-panel')).toBeHidden();
+  });
+});
+
+test.describe('검색 색인 보강 (결정 0042)', () => {
+  test('BR. 건물 직행 — h1 은 건물 이름 하나 · 탭 제목에 동 구분 · 같은 땅 다른 동·구 내부 링크(진짜 href · 누르면 화면 안) · 종이에 링크 줄 없음 · 첫 화면은 사이트 이름 h1 + 구 칩 = 열린 구 수만큼 링크', async ({
+    page,
+  }) => {
+    const gus = [
+      { sido_code: '11', sido_nm: '서울', sigungu_code: '11680', sigungu_nm: '강남구', building_cnt: 14223 },
+      { sido_code: '11', sido_nm: '서울', sigungu_code: '11440', sigungu_nm: '마포구', building_cnt: 9000 },
+      { sido_code: '30', sido_nm: '대전', sigungu_code: '30170', sigungu_nm: '서구', building_cnt: 5000 },
+    ];
+    const OTHER = '1168010100100010000_1024999';
+    await mockOpenSigungu(page, gus);
+    await mockFloorStack(page, [], [], [floorRow({ floor_no: 2, bld_cnt_in_pnu: 2 }), floorRow({ bld_cnt_in_pnu: 2 })]);
+    const dong = (bld_id: string, dong_nm: string) => ({
+      bld_id,
+      bld_nm: '테스트빌딩',
+      dong_nm,
+      total_area_m2: 900,
+      floor_cnt: 2,
+      min_floor: 1,
+      max_floor: 2,
+      has_roof: false,
+    });
+    await mockJson(page, '**/rest/v1/rpc/list_parcel_buildings*', [dong(LINK_BLD, 'A동'), dong(OTHER, 'B동')]);
+
+    await page.goto(`/?sgg=11680&bld=${LINK_BLD}`);
+    const stack = page.locator('section.stack');
+    await expect(page).toHaveTitle('테스트빌딩 A동 — 강남구 테헤란로 1 | 상가 층별 스택뷰');
+    // 렌더 h1 도 같은 동 구분(보완 F3) · 정확히 1개.
+    await expect(page.locator('h1')).toHaveCount(1);
+    await expect(page.locator('h1')).toHaveText('테스트빌딩 A동');
+
+    const links = stack.locator('nav.stack__links a');
+    await expect(links).toHaveCount(2);
+    await expect(links.nth(0)).toHaveText('테스트빌딩 B동');
+    await expect(links.nth(0)).toHaveAttribute('href', `/?sgg=11680&bld=${OTHER}`);
+    await expect(links.nth(1)).toHaveText('강남구 다른 건물 찾기');
+    await expect(links.nth(1)).toHaveAttribute('href', '/?sgg=11680');
+    expect(await page.locator('a[href^="/?sgg="]').count()).toBeGreaterThanOrEqual(1);
+
+    // 종이에는 누르는 문이 없다 — 머리의 링크 줄은 숨고, 첫 HTML 링크 묶음(.seo-links)은 React 가 이미 덮었다.
+    await page.emulateMedia({ media: 'print' });
+    await expect(stack.locator('nav.stack__links')).toBeHidden();
+    await expect(stack.getByRole('heading', { level: 1, name: '테스트빌딩 A동' })).toBeVisible();
+    await expect(page.locator('.seo-links')).toHaveCount(0);
+    await page.emulateMedia({ media: null });
+
+    // 보통 누름 = 화면 안에서 그 동으로(새로 읽지 않는다 — 창 표식이 남는다) · 주소가 따라 적힌다.
+    await page.evaluate(() => {
+      (globalThis as unknown as { __noReload: number }).__noReload = 1;
+    });
+    await links.nth(0).click();
+    await expect.poll(() => new URL(page.url()).search).toContain(`bld=${OTHER}`);
+    expect(await page.evaluate(() => (globalThis as unknown as { __noReload?: number }).__noReload)).toBe(1);
+    await expect(page).toHaveTitle('테스트빌딩 B동 — 강남구 테헤란로 1 | 상가 층별 스택뷰');
+    await expect(page.locator('h1')).toHaveText('테스트빌딩 B동');
+
+    // 첫 화면 — h1 은 사이트 이름 하나 · 지역 고르개의 구 칩이 열린 구 수만큼 진짜 링크(펼치지 않은 시도 것도 DOM 에).
+    await page.goto('/');
+    await expect(page.locator('h1')).toHaveCount(1);
+    await expect(page.locator('h1')).toHaveText('상가 층별 스택뷰');
+    await expect(page.locator('a[href^="/?sgg="]')).toHaveCount(gus.length);
+    await pickGu(page, '서울', '마포구');
+    await expect.poll(() => new URL(page.url()).search).toBe('?sgg=11440');
   });
 });

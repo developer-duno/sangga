@@ -8,6 +8,7 @@ import {
   CACHE_HOME,
   CACHE_NONE,
   CACHE_NOT_FOUND,
+  CACHE_PARTIAL,
   FETCH_TIMEOUT_MS,
   RETRY_AFTER_S,
   handleBuilding,
@@ -156,7 +157,7 @@ describe('handleBuilding', () => {
     const db = calls.find((c) => c.url.includes('/rest/v1/'))!;
     expect(db.url).toBe(
       'https://example.supabase.co/rest/v1/v_floor_stack' +
-        `?bld_id=eq.${BLD}&select=bld_id,pnu,floor_no,floor_label,segment_cnt,main_use,uses,bld_nm,road_addr` +
+        `?bld_id=eq.${BLD}&select=bld_id,pnu,floor_no,floor_label,segment_cnt,main_use,uses,bld_nm,road_addr,bld_cnt_in_pnu` +
         '&order=floor_no.asc.nullslast',
     );
     const h = db.init!.headers as Record<string, string>;
@@ -240,6 +241,82 @@ describe('handleBuilding', () => {
     expect(await via(`https://sangga-one.vercel.app/api/building?bld=${BLD}`)).toEqual(
       await via(`https://sangga-one.vercel.app/?sgg=11680&bld=${BLD}`),
     );
+  });
+
+  it('동이 하나(bld_cnt_in_pnu 1·없음)면 동 목록을 안 부른다 — fetch 2번뿐', async () => {
+    for (const cnt of [1, null, undefined]) {
+      const one = rows('테헤란빌딩').map((r) => ({ ...r, bld_cnt_in_pnu: cnt }));
+      const { res, calls } = await run(`?bld=${BLD}`, () => new Response(JSON.stringify(one)));
+      expect(res.status).toBe(200);
+      expect(calls.length, String(cnt)).toBe(2);
+      expect(calls.some((c) => c.url.includes('/rpc/'))).toBe(false);
+    }
+  });
+
+  describe('같은 땅 여러 동(결정 0042) — 동 목록 1번 더', () => {
+    const SIB = `${PNU}_10241100299999`;
+    const many = () => rows('테헤란빌딩').map((r) => ({ ...r, bld_cnt_in_pnu: 2 }));
+    const LIST = [
+      { bld_id: BLD, bld_nm: '테헤란빌딩', dong_nm: 'A동' },
+      { bld_id: SIB, bld_nm: '테헤란빌딩', dong_nm: 'B동' },
+    ];
+
+    function fetchWith(list: () => Response | Promise<Response>) {
+      const calls: Call[] = [];
+      const fn: HandlerDeps['fetch'] = async (url, init) => {
+        calls.push({ url, init });
+        if (url.endsWith('/index.html')) return new Response(HOME);
+        if (url.includes('/rpc/list_parcel_buildings')) return list();
+        return new Response(JSON.stringify(many()));
+      };
+      return { fn, calls };
+    }
+
+    it('★ 추가 fetch 1번 — api 스키마 GET · 공개키 · 3초 · cookie 0 · 제목에 동 이름 · 다른 동 링크', async () => {
+      const f = fetchWith(() => new Response(JSON.stringify(LIST)));
+      const res = await handleBuilding(req(`?bld=${BLD}`, { cookie: '_vercel_jwt=abc' }), { fetch: f.fn, env: ENV });
+      const body = await res.text();
+      expect(res.status).toBe(200);
+      expect(res.headers.get('cache-control')).toBe(CACHE_BUILDING);
+      expect(f.calls.length).toBe(3);
+      const sib = f.calls.filter((c) => c.url.includes('/rpc/'));
+      expect(sib.length).toBe(1);
+      expect(sib[0].url).toBe(
+        `https://example.supabase.co/rest/v1/rpc/list_parcel_buildings?p_pnu=${PNU}&select=bld_id,bld_nm,dong_nm`,
+      );
+      expect(sib[0].init!.method ?? 'GET').toBe('GET');
+      expect(sib[0].init!.headers).toEqual({ apikey: 'anon-test', Authorization: 'Bearer anon-test', 'Accept-Profile': 'api' });
+      expect(sib[0].init!.signal).toBeInstanceOf(AbortSignal);
+      expect(title(body)).toBe('테헤란빌딩 A동 — 강남구 테헤란로 1 | 상가 층별 스택뷰');
+      expect(body).toContain(`<a href="/?sgg=11680&amp;bld=${SIB}">테헤란빌딩 B동</a>`);
+    });
+
+    it('★ 동 목록이 실패·모양 틀림이어도 건물 HTML 은 나간다 — 동 구분 없이 지금 제목 · 짧은 캐시(10분 · 보완 F9)', async () => {
+      const fails: (() => Response | Promise<Response>)[] = [
+        () => new Response('{"message":"x"}', { status: 404 }),
+        () => Promise.reject(new TypeError('network')),
+        () => Promise.reject(new DOMException('timeout', 'TimeoutError')),
+        () => new Response('{"a":1}'),
+        () => new Response('[{"bld_nm":"x"}]'),
+        () => new Response('not json'),
+      ];
+      for (const list of fails) {
+        const f = fetchWith(list);
+        const res = await handleBuilding(req(`?bld=${BLD}`), { fetch: f.fn, env: ENV });
+        expect(res.status).toBe(200);
+        // 일시 실패 한 번이 동 구분 없는 제목(구글 중복)을 하루+일주일 굳히지 않게.
+        expect(res.headers.get('cache-control')).toBe(CACHE_PARTIAL);
+        expect(CACHE_PARTIAL).toBe('public, s-maxage=600');
+        expect(title(await res.text())).toBe('테헤란빌딩 — 강남구 테헤란로 1 | 상가 층별 스택뷰');
+      }
+    });
+
+    it('이름이 없는 건물은 동 목록을 안 부른다(어차피 첫 화면)', async () => {
+      const noName = many().map((r) => ({ ...r, bld_nm: null }));
+      const { res, calls } = await run(`?bld=${BLD}`, () => new Response(JSON.stringify(noName)));
+      expect(res.headers.get('cache-control')).toBe(CACHE_HOME);
+      expect(calls.some((c) => c.url.includes('/rpc/'))).toBe(false);
+    });
   });
 
   it('첫 화면 HTML 모양이 바뀌어 치환 가드에 걸리면 첫 화면 · no-store', async () => {

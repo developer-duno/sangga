@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { OPEN_SIGUNGU_FN } from '../lib/appConstants';
 import { SIDOS } from '../lib/regions';
+import { isPlainLeftClick } from '../lib/spaLink';
 import type { OpenSigungu } from '../types';
 
 /**
@@ -92,7 +93,6 @@ export function RegionPicker({
   useEffect(() => {
     if (selectedGu) onSigunguNameResolved?.(selectedGu.sigungu_nm);
   }, [selectedGu, onSigunguNameResolved]);
-  const gusInExpanded = expandedSido ? guList.filter((g) => g.sido_code === expandedSido) : [];
 
   function pickGu(g: OpenSigungu) {
     const already = g.sigungu_code === selectedSigungu;
@@ -175,18 +175,37 @@ export function RegionPicker({
         </ul>
       )}
 
-      {expandedSido && gusInExpanded.length > 0 && (
-        <div className="region__gus">
+      {/*
+        구 칩 = 진짜 링크(결정 0042 H4 · `/?sgg=<코드>`) — 검색 봇이 열린 구 전부를 따라가게 **모든 시도의 구 목록을 늘 그리고**
+        펼치지 않은 시도의 것은 `hidden` 으로 숨긴다(보이는 모습은 예전 그대로 — 펼친 시도 하나만).
+        보통 왼쪽 누름은 화면이 가로채 지금처럼 고르기(`pickGu`) · Ctrl/가운데 누름(새 탭)은 그대로 링크다.
+        ⓘ 역할은 단추 그대로(`role="button"` + `aria-pressed` · 스페이스로도 누른다) — 낭독기에 들리는 것이 안 바뀐다.
+      */}
+      {!guLoading && !guError && sidos.map((s) => {
+        const gus = guList.filter((g) => g.sido_code === s.code);
+        if (gus.length === 0) return null;
+        return (
+        <div className="region__gus" key={s.code} hidden={expandedSido !== s.code}>
           <ul className="region__gu-list">
-            {gusInExpanded.map((g) => {
+            {gus.map((g) => {
               const on = g.sigungu_code === selectedSigungu;
               return (
                 <li key={g.sigungu_code}>
-                  <button
-                    type="button"
+                  <a
+                    href={`/?sgg=${g.sigungu_code}`}
+                    role="button"
                     className={`region__gu-chip${on ? ' region__gu-chip--on' : ''}`}
                     aria-pressed={on}
-                    onClick={() => pickGu(g)}
+                    onClick={(e) => {
+                      if (!isPlainLeftClick(e)) return;
+                      e.preventDefault();
+                      pickGu(g);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key !== ' ') return;
+                      e.preventDefault();
+                      pickGu(g);
+                    }}
                   >
                     {g.sigungu_nm}
                     {/*
@@ -203,13 +222,14 @@ export function RegionPicker({
                         {g.building_cnt.toLocaleString('ko-KR')}동
                       </span>
                     )}
-                  </button>
+                  </a>
                 </li>
               );
             })}
           </ul>
         </div>
-      )}
+        );
+      })}
     </section>
   );
 }

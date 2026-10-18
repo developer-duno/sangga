@@ -62,8 +62,10 @@ body {
   --tabbar-h: 57px;
 }
 
+/* 건물을 연 동안엔 h1 이 아니라 p 다(결정 0042 H1 — h1 은 층별 화면 머리의 건물 이름) · 굵기를 적어 두어 모양이 같다. */
 .app__title {
   font-size: 26px;
+  font-weight: 700;
   margin: 0 0 6px;
   letter-spacing: -0.02em;
 }
@@ -420,6 +422,7 @@ body {
   padding: 0;
 }
 
+/* 구 칩은 진짜 링크다(결정 0042 H4 · `<a role="button">`) — 단추였을 때와 같은 모양이 되게 상자·밑줄을 맞춘다. */
 .region__gu-chip {
   font: inherit;
   font-size: 13px;
@@ -429,6 +432,9 @@ body {
   background: var(--bg);
   color: var(--text);
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
 }
 
 .region__gu-chip:hover {
@@ -1399,6 +1405,21 @@ body {
   margin: 0 0 16px;
   color: var(--muted);
   font-size: 14px;
+}
+
+/* 머리 사양 칸 아래 내부 링크 줄(결정 0042 H5) — 같은 땅 다른 동 · 이 구 다른 건물 찾기. 종이에서는 빠진다(@media print). */
+.stack__links {
+  margin: 10px 0 0;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.stack__links-row {
+  margin: 4px 0 0;
+}
+
+.stack__links a {
+  color: var(--accent);
 }
 
 /* 공공누리 1유형(출처표시) 의무. 본문보다 작게 두되 지우지는 않는다. */
@@ -4599,10 +4620,18 @@ body {
   /* 따로 서 있는 링크 줄(넘기기 링크 · 형제 사이트)도 손가락으로 누르는 것이다 — 줄 글자 링크라 높이를 주려면
      안쪽 상자로 바꾼다(부모가 flex 라 배치는 그대로). 문장 속 링크는 넣지 않는다. */
   .links__a,
-  .family__a {
+  .family__a,
+  /* 층별 머리의 내부 링크(결정 0042 H5) — 따로 서 있는 링크 줄이다. */
+  .stack__links-a {
     display: inline-flex;
     align-items: center;
     min-height: 44px;
+  }
+
+  /* 「A동」처럼 짧은 동 링크도 손가락 폭 44px(결정 0042 보완 F6) — 글자는 가운데. */
+  .stack__links-a {
+    min-width: 44px;
+    justify-content: center;
   }
 
   /* 펼침 머리(summary)는 표시 삼각형을 지키려고 list-item 그대로 두고 위아래 여백으로 키운다. */
@@ -4656,6 +4685,10 @@ body {
     절반이 검색창·구 칩·버튼이었다(2026-08-25 실측).
   */
   .app__head,
+  /* 내부 링크(결정 0042) — 첫 HTML 의 링크 묶음(`.seo-links` · React 가 그리면 덮이지만 혹시 남아도)과
+     층별 화면 머리의 링크 줄(`.stack__links`). 누르는 문이라 종이에서 뺀다. */
+  .seo-links,
+  .stack__links,
   /* 역할 단추 줄(결정 0036 결정 18) — 누르는 장치다. */
   .role,
   /* 역할 고르기 큰 카드(결정 0039 W3) — 누르는 장치다. */
