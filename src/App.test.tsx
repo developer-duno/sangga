@@ -995,24 +995,49 @@ describe('App — 탭 제목', () => {
     expect(document.title).toBe('테스트빌딩 — 강남구 테헤란로 1 | 상가 층별 스택뷰');
   });
 
-  it('건물을 고르면 "<이름> — <구 도로명> | 상가 층별 스택뷰", 선택을 풀면 첫 화면 제목으로 돌아온다', async () => {
+  it('건물을 고르면 "<이름> — <구 도로명> | 상가 층별 스택뷰", 선택을 풀면 구 허브 제목 · 구도 풀면 첫 화면 제목', async () => {
     const { HOME_TITLE } = await import('./lib/seo');
+    const { hubPlace, hubTitle } = await import('./lib/hubHead');
+    // 구 허브 첫 HTML(결정 0043)과 같은 함수로 — 글을 따로 만들지 않는다.
+    const HUB_TITLE = hubTitle(hubPlace({ sido_code: '11', sigungu_nm: '강남구' }) as string);
+    expect(HUB_TITLE).toBe('서울 강남구 상가 건물 층별 보기 — 상가 층별 스택뷰');
     openWith('');
     render(<App />);
-    await pickGu('서울', '강남구');
     expect(document.title).toBe(HOME_TITLE);
+    await pickGu('서울', '강남구');
+    await waitFor(() => expect(document.title).toBe(HUB_TITLE));
 
     const input = screen.getByLabelText('건물명 또는 주소');
     fireEvent.change(input, { target: { value: '테헤란로' } });
     fireEvent.submit(input.closest('form')!);
     fireEvent.click(await screen.findByRole('button', { name: /테스트빌딩/ }));
     await screen.findByRole('heading', { name: '테스트빌딩' });
+    // 양성 대조 — 건물을 고르면 허브 제목이 아니라 건물 제목.
     expect(document.title).toBe('테스트빌딩 — 강남구 테헤란로 1 | 상가 층별 스택뷰');
 
-    // 새 검색을 걸면 선택이 풀린다 — 첫 화면 제목으로 돌아온다.
+    // 새 검색을 걸면 선택이 풀린다 — 구는 그대로라 구 허브 제목으로 돌아온다.
     fireEvent.change(input, { target: { value: '역삼' } });
     fireEvent.submit(input.closest('form')!);
+    await waitFor(() => expect(document.title).toBe(HUB_TITLE));
+
+    // 양성 대조 — 고른 구를 다시 눌러 풀면 첫 화면 제목.
+    fireEvent.click(await screen.findByRole('button', { name: /^강남구/ }));
     await waitFor(() => expect(document.title).toBe(HOME_TITLE));
+  });
+
+  it('구 주소로 들어와 구 이름을 아직 모르면 서버가 넣은 허브 제목을 덮지 않는다', async () => {
+    let release: ((r: { data: unknown; error: unknown }) => void) | null = null;
+    const pending = new Promise<{ data: unknown; error: unknown }>((r) => {
+      release = r;
+    });
+    rpc.mockImplementation((fn: string) => (fn === 'list_open_sigungu' ? pending : Promise.resolve({ data: [], error: null })));
+    document.title = '서버가 넣은 허브 제목';
+    openWith('?sgg=11680');
+    render(<App />);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(document.title).toBe('서버가 넣은 허브 제목');
+    release!({ data: [gu()], error: null });
+    await waitFor(() => expect(document.title).toBe('서울 강남구 상가 건물 층별 보기 — 상가 층별 스택뷰'));
   });
 });
 

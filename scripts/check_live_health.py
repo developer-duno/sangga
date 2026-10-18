@@ -7,12 +7,14 @@
 0** 이었다. 이 앱에는 서버가 없어서(순수 화면 + Supabase 직결) 어디에도 로그가 안 남고,
 main 에 push 하면 그대로 배포되므로 잘못 나간 것을 막아 줄 것도 없다.
 
-무엇을 보나 (셋 다 "밖에서 본 모습"이다 — 안을 들여다보지 않는다)
+무엇을 보나 (넷 다 "밖에서 본 모습"이다 — 안을 들여다보지 않는다)
   ① 첫 화면이 200 으로 오고, 그 안에 리액트가 붙을 자리(`<div id="root">`)가 있나
   ② 그 화면이 부르는 **자바스크립트 묶음**이 실제로 받아지나
      ⛔ 이게 핵심이다. 배포가 반쪽만 나가면 첫 화면은 200 인데 묶음이 404 라
         **화면이 하얗게 뜬다** — ①만 봐서는 절대 못 잡는 종류다.
   ③ 지도가 쓰는 상권 파일이 받아지나
+  ④ 구 입구 허브(결정 0043)가 서 있나 — `/?sgg=<HUB_CHECK_SGG>` 첫 HTML 의 h1 이 「상가 건물 층별 보기」로 끝나나
+     (서버 조각·허브 파일·middleware 중 하나가 빠지면 첫 화면 h1 이 와서 여기서 걸린다)
 
 무엇을 못 보나 (있다고 안심하면 안 되는 자리)
   · **창고(Supabase)가 살아 있는지는 안 본다.** 그러려면 공개키를 GitHub 에 올려야 하는데,
@@ -75,10 +77,19 @@ DEFAULT_SITE = "https://sangga-one.vercel.app"
 RETRY_COUNT = 5
 RETRY_BACKOFF_SEC = 5
 
-# check() 가 두드리는 URL 개수 — 첫 화면 · 자바스크립트 묶음 · 상권 지도 파일.
+# check() 가 두드리는 URL 개수 — 첫 화면 · 자바스크립트 묶음 · 상권 지도 파일 · 구 입구 허브(2026-10-18 결정 0043).
 # ⚠️ check() 에 검사를 더하면 **이 값도 함께 올린다.** 안 올리면 위 최악 계산이 다시
 #    낙관적으로 틀어지고, 그 틀린 값이 회귀 가드의 기준이 된다(시험이 개수를 대조한다).
-CHECKED_URLS = 3
+#    (4개면 최악 명목 225 × 4 = 900초 — 360분 기본 한도 안이다.)
+CHECKED_URLS = 4
+
+# ④ 에서 두드리는 구 입구(결정 0043) — 굽힌 허브 파일에서 고르지 않고 상수 하나로 둔다(감시가 굽기 결과에 끌려가지 않게).
+# ⛔ 이 구가 `public/hub/<코드>.json` 에 있어야 한다(tests/test_check_live_health.py 가 대조) — 열린 구가 바뀌어
+#    허브가 없어지면 그 시험이 빨강이 되니 다른 열린 구로 바꾼다.
+HUB_CHECK_SGG = "11680"
+# 허브 h1 의 끝 글자(`src/lib/hubHead.ts` 의 `hubHeading` 꼴) — 첫 화면 h1 은 사이트 이름이라 여기에 안 걸린다.
+HUB_H1_SUFFIX = "상가 건물 층별 보기"
+H1_RE = re.compile(r'<h1 class="seo-title">([^<]*)</h1>')
 
 # 다시 물어봐도 답이 같은 실패 — 재시도는 시간만 버린다.
 # 401·403 은 접근이 거절된 것, 404 는 주소가 바뀐 것. 전부 사람이 고쳐야 한다.
@@ -228,7 +239,7 @@ def fetch_with_retry(url: str, what: str, attempts: int = RETRY_COUNT, sleep=tim
 
 
 def check(site: str, sleep=time.sleep) -> list[str]:
-    """세 가지를 본다. 통과한 것들의 설명을 돌려주고, 실패하면 CheckFailed.
+    """네 가지를 본다. 통과한 것들의 설명을 돌려주고, 실패하면 CheckFailed.
 
     `sleep` 은 시험이 재시도 백오프를 실제로 기다리지 않게 끼워 넣는 자리다(기본은
     진짜 time.sleep).
@@ -310,6 +321,19 @@ def check(site: str, sleep=time.sleep) -> list[str]:
     if not geo.lstrip().startswith(b"{"):
         raise CheckFailed("상권 지도 파일이 JSON 이 아닙니다 — 오류 페이지가 온 듯합니다.")
     passed.append(f"상권 지도 파일 200 · {len(geo):,}바이트")
+
+    # ④ 구 입구 허브(결정 0043) — 사람 화면은 늘 뜨지만, 허브 갈래가 빠지면 첫 HTML 이 첫 화면 것으로 돌아가
+    #    검색 쪽 링크가 조용히 사라진다(에러가 아니다). 그래서 h1 끝 글자로 본다.
+    hub_url = f"{site}/?sgg={HUB_CHECK_SGG}"
+    hub = fetch_with_retry(hub_url, "구 입구 허브", sleep=sleep).decode("utf-8", errors="replace")
+    h1 = H1_RE.findall(hub)
+    if len(h1) != 1 or not h1[0].strip().endswith(HUB_H1_SUFFIX):
+        raise CheckFailed(
+            f"구 입구 허브가 서 있지 않습니다 — {hub_url} 의 첫 HTML h1 이 「{HUB_H1_SUFFIX}」로 끝나지 않습니다 "
+            f"(h1 {len(h1)}개: {_one_line_excerpt(' | '.join(h1))}). 사람 화면은 뜨지만 검색 쪽 건물 링크가 빠진 상태입니다 — "
+            "middleware.ts 의 허브 갈래 · api/hub.ts · public/hub/*.json 배포를 확인하세요."
+        )
+    passed.append(f"구 입구 허브 200 · h1 「{_one_line_excerpt(h1[0].strip())}」")
 
     return passed
 

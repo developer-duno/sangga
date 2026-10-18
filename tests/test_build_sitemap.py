@@ -371,6 +371,31 @@ def test_write_files_replaces_old_hub_files(tmp_path):
     assert sorted(os.listdir(hub)) == ["11680.json", "keep.txt"]
 
 
+def test_zero_hubs_bake_removes_old_hub_sitemap(tmp_path):
+    """허브가 0개가 되는 굽기면 옛 sitemap-hubs.xml·hub/*.json 이 남지 않는다(색인에는 이미 안 실린다)."""
+    rows = fake_rows(2)
+    hubs, _ = bs.build_hubs(*fake_materials(rows))
+    bs.write_files(bs.build_files(rows, hubs.keys()), str(tmp_path), bs.build_hub_files(hubs))
+    assert (tmp_path / "sitemap-hubs.xml").is_file()
+    none, _ = bs.build_hubs(*fake_materials(rows, open_sggs=()))
+    assert none == {}
+    bs.write_files(bs.build_files(rows, none.keys()), str(tmp_path), bs.build_hub_files(none))
+    assert not (tmp_path / "sitemap-hubs.xml").exists()
+    assert os.listdir(tmp_path / "hub") == []
+    assert SITE + "sitemap-hubs.xml" not in locs((tmp_path / "sitemap.xml").read_text(encoding="utf-8"), "s:sitemap/s:loc")
+
+
+def test_control_hub_sitemap_kept_when_hubs_remain_or_hub_files_none(tmp_path):
+    """양성 대조 — 허브가 남으면 그대로 · hub_files 를 안 준 옛 호출은 허브 사이트맵을 건드리지 않는다."""
+    rows = fake_rows(2)
+    hubs, _ = bs.build_hubs(*fake_materials(rows))
+    bs.write_files(bs.build_files(rows, hubs.keys()), str(tmp_path), bs.build_hub_files(hubs))
+    bs.write_files(bs.build_files(rows, hubs.keys()), str(tmp_path), bs.build_hub_files(hubs))
+    assert (tmp_path / "sitemap-hubs.xml").is_file()
+    bs.write_files(bs.build_files(rows), str(tmp_path))
+    assert (tmp_path / "sitemap-hubs.xml").is_file()
+
+
 def _committed_hubs():
     d = os.path.join(ROOT, "public", "hub")
     names = bs.existing_hub_files(os.path.join(ROOT, "public"))

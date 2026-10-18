@@ -38,6 +38,7 @@ import { entryBlockOrder, type EntryBlockKey, type ViewerRole } from './lib/sect
 import { supabase } from './lib/supabase';
 import { buildAppSearch, buildShareUrl, isSameSearch, parseAppUrl } from './lib/urlState';
 import { pageTitle } from './lib/seo';
+import { hubPlace, hubTitle } from './lib/hubHead';
 import { SIDOS } from './lib/regions';
 import { useIsPhone } from './lib/useIsPhone';
 import {
@@ -491,10 +492,21 @@ export default function App() {
   // N = 고른 건물의 `bld_cnt_in_pnu`(뷰와 같은 수 — 첫 HTML 은 뷰 행의 값 · 결정 0042 보완 F1).
   const dong = selected && dongs ? dongSuffix(selected.bld_id, dongs, selected.bld_cnt_in_pnu) : null;
 
+  /*
+    구만 고른 동안(건물 없음)은 구 입구 허브 첫 HTML(결정 0043)과 같은 제목 — 같은 함수(`hubHead.ts` 의 `hubPlace`·`hubTitle`).
+    구 이름을 아직 모르면(링크로 들어와 지역 고르개가 이름을 채우기 전) 건드리지 않는다 — 서버가 넣은 허브 제목을 덮지 않게.
+  */
+  const hubPlaceName = selected === null && sigungu !== null && sigunguName
+    ? hubPlace({ sido_code: sigungu.slice(0, 2), sigungu_nm: sigunguName })
+    : null;
   useEffect(() => {
     if (restoring) return;
+    if (selected === null && sigungu !== null) {
+      if (hubPlaceName) document.title = hubTitle(hubPlaceName);
+      return;
+    }
     document.title = pageTitle(selected?.bld_nm, selected?.road_addr, dong);
-  }, [selected?.bld_nm, selected?.road_addr, dong, restoring]);
+  }, [selected, sigungu, hubPlaceName, dong, restoring]);
 
   /*
     지금 화면의 온전한 주소. **링크 복사 버튼과 종이 머리글이 같은 값을 쓴다** — 두 곳에서

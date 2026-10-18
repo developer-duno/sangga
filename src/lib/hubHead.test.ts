@@ -94,10 +94,18 @@ describe('hubPlace · 이름 · 한 줄 · 차례', () => {
     expect(hubBuildingName(d.buildings[1], {})).toBe('롯데 상가');
   });
 
-  it('가나다순(링크 글자 차례) · 같으면 bld_id — 넣은 차례와 무관', () => {
+  it('한글 먼저(가나다) → 영문(대소문자 섞어 ABC) → 숫자 → 기호 · 같으면 bld_id — 넣은 차례와 무관', () => {
+    const names = ['---------', 'Zeta', '(주)세곡드림시티', 'abc빌딩', '1', 'ASTY 논현', '효성빌딩', '가나빌딩'];
+    const mixed: HubData = { ...data(), buildings: names.map((n, i) => b(String(i + 1), P2, n, null)), parcels: {} };
+    // ⓘ 무리 안은 Intl.Collator('ko') 그대로 — 영문 abc… 가 AS… 보다 앞(대소문자 섞어 ABC) · 기호끼리는 '-' 가 '(' 보다 앞.
+    const want = ['가나빌딩', '효성빌딩', 'abc빌딩', 'ASTY 논현', 'Zeta', '1', '---------', '(주)세곡드림시티'];
+    expect(hubEntries(mixed).map((e) => e.text)).toEqual(want);
+    // 양성 대조 — 옛 차례(글자 부호 그대로)라면 영문 대문자가 소문자보다 앞(「Zeta 다음 abc」)이고 한글이 맨 뒤다.
+    const codeUnit = [...names].sort((x, y) => (x < y ? -1 : x > y ? 1 : 0));
+    expect(codeUnit.indexOf('Zeta')).toBeLessThan(codeUnit.indexOf('abc빌딩'));
+    expect(codeUnit).not.toEqual(want);
     const d = data();
     const texts = hubEntries(d).map((e) => e.text);
-    expect(texts).toEqual([...texts].sort((a, c) => (a < c ? -1 : a > c ? 1 : 0)));
     expect(texts[0]).toBe('가나 빌딩 · 강남구 테헤란로 9');
     const rev = hubEntries({ ...d, buildings: [...d.buildings].reverse() });
     expect(rev).toEqual(hubEntries(d));
@@ -243,6 +251,17 @@ describe('renderHubHtml — 실제 index.html', () => {
     expect(html).toContain('href="/?sgg=11680&amp;bld=');
     expect(html).toContain('다빈치 &lt;타워&gt; &amp; &quot;몰&quot;');
     expect(html).not.toContain('다빈치 <타워>');
+  });
+
+  it('구 이름에 </script> 가 끼어도 JSON-LD 덩어리를 빠져나가지 못한다(< 를 \\u003c 로)', () => {
+    const evil = '</script><script>x</script>';
+    const out = renderHubHtml(HOME, { ...d, sigungu_nm: evil });
+    // 바꾼 뒤 </script> 수 = 첫 화면 수 + 1(빵부스러기 덩어리 하나만 늘었다 — 이름 속 것은 글로 남는다).
+    expect(count(out, '</script>')).toBe(count(HOME, '</script>') + 1);
+    const blocks = [...doc(out).querySelectorAll('script[type="application/ld+json"]')];
+    expect(blocks.length).toBe(2);
+    for (const s of blocks) expect(() => JSON.parse(s.textContent ?? '')).not.toThrow();
+    expect(JSON.parse(blocks[1].textContent ?? '').itemListElement[1].name).toBe(`서울 ${evil}`);
   });
 
   it('치환 글자의 $& · $1 이 특수 패턴으로 안 읽힌다(함수 치환)', () => {

@@ -133,13 +133,32 @@ export function hubLine(b: HubBuilding, parcels: HubData['parcels']): string {
 }
 
 /**
- * 링크 목록(이스케이프 전) — 👤 「가나다순」: 링크 글자의 차례(글자 부호 차례 — 한글 음절은 부호가 가나다 차례다) ·
- * 같으면 bld_id. 주소 = 사이트맵 `building_loc` 과 같은 꼴(`/?sgg=<pnu 앞 5자리>&bld=<id>` · 상대).
+ * 차례 무리(👤 재확인 2026-10-18 「한글 먼저, 나머지 뒤로」) — 첫 글자가 한글 음절(가~힣) 0 · 영문 1 · 숫자 2 · 그 밖(기호 등) 3.
+ */
+export function sortGroup(text: string): number {
+  const c = text.charAt(0);
+  if (c >= '가' && c <= '힣') return 0;
+  if (/[A-Za-z]/.test(c)) return 1;
+  if (/[0-9]/.test(c)) return 2;
+  return 3;
+}
+
+/**
+ * 링크 목록(이스케이프 전) — 👤 「가나다순」 + 재확인 「한글 먼저, 나머지 뒤로」: 무리(`sortGroup` — 한글 → 영문 → 숫자 → 기호)
+ * 차례 → 무리 안은 `Intl.Collator('ko')`(영문은 대소문자 섞어 ABC순) → 같으면 bld_id.
+ * 주소 = 사이트맵 `building_loc` 과 같은 꼴(`/?sgg=<pnu 앞 5자리>&bld=<id>` · 상대).
  */
 export function hubEntries(data: HubData): HubEntry[] {
+  // 함수 안에서 만든다 — 맨 위에 두면 화면 묶음(App 이 이 파일의 제목 함수만 쓴다)에도 남는다.
+  const KO = new Intl.Collator('ko');
   return data.buildings
     .map((b) => ({ href: `/?sgg=${b.pnu.slice(0, 5)}&bld=${b.bld_id}`, text: hubLine(b, data.parcels), bldId: b.bld_id }))
-    .sort((a, b) => (a.text < b.text ? -1 : a.text > b.text ? 1 : a.bldId < b.bldId ? -1 : a.bldId > b.bldId ? 1 : 0));
+    .sort(
+      (a, b) =>
+        sortGroup(a.text) - sortGroup(b.text) ||
+        KO.compare(a.text, b.text) ||
+        (a.bldId < b.bldId ? -1 : a.bldId > b.bldId ? 1 : 0),
+    );
 }
 
 /** 정식 주소(이스케이프 전) — 지금 구 입구 주소 그대로(👤 「지금 구 입구 주소」). */

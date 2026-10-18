@@ -276,7 +276,8 @@ def existing_hub_files(public_dir):
 
 
 def write_files(files, public_dir, hub_files=None):
-    """옛 건물 파일·옛 허브 파일을 지우고 새로 쓴다(LF). hub_files 가 None 이면 허브 폴더는 건드리지 않는다."""
+    """옛 건물 파일·옛 허브 파일을 지우고 새로 쓴다(LF). hub_files 가 None 이면 허브 폴더·허브 사이트맵은 건드리지 않는다.
+    허브가 0개인 굽기면(색인에 허브 사이트맵이 안 실린다) 옛 sitemap-hubs.xml 도 지운다 — 색인 밖에 떠돌지 않게."""
     for old in existing_building_files(public_dir):
         os.remove(os.path.join(public_dir, old))
     if hub_files is not None:
@@ -284,6 +285,9 @@ def write_files(files, public_dir, hub_files=None):
             os.remove(os.path.join(public_dir, HUB_DIR, old))
         if hub_files:
             os.makedirs(os.path.join(public_dir, HUB_DIR), exist_ok=True)
+        stale = os.path.join(public_dir, HUBS_FILE)
+        if HUBS_FILE not in files and os.path.isfile(stale):
+            os.remove(stale)
     merged = dict(files)
     merged.update(hub_files or {})
     for name, text in merged.items():

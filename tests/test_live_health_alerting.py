@@ -194,15 +194,20 @@ class TestTheHomePageIsScannedToo:
         """⛔ 거짓 경보를 내면 6시간마다 열려 진짜 사고까지 묻힌다 — 반대편도 못 박는다."""
         html = '<html><div id="root"></div><script src="/assets/app.js"></script></html>'
 
+        # 구 입구 허브(결정 0043 · check() ④) — 허브 첫 HTML 은 h1 이 「… 상가 건물 층별 보기」.
+        hub = '<html><div id="root"><h1 class="seo-title">서울 강남구 상가 건물 층별 보기</h1></div></html>'
+
         def fake_fetch(url, what, attempts=5, sleep=None):
             if url.endswith("/"):
                 return html.encode()
             if url.endswith(".js"):
                 return b"z" * 4096
+            if "/?sgg=" in url:
+                return hub.encode()
             return b'{"type":"FeatureCollection"}'
 
         monkeypatch.setattr(chk, "fetch_with_retry", fake_fetch)
-        assert len(chk.check("https://example.test")) == 3
+        assert len(chk.check("https://example.test")) == chk.CHECKED_URLS == 4
 
 
 class TestTheBrokenScriptDoesNotTellYouToClose:
