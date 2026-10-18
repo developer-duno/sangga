@@ -4106,7 +4106,7 @@ test.describe('검색 색인 보강 (결정 0042)', () => {
     ];
     const OTHER = '1168010100100010000_1024999';
     await mockOpenSigungu(page, gus);
-    await mockFloorStack(page, [], [], [floorRow({ floor_no: 2, bld_cnt_in_pnu: 2 }), floorRow({ bld_cnt_in_pnu: 2 })]);
+    await mockFloorStack(page, [], [floorRow({ floor_no: 2, bld_cnt_in_pnu: 2 }), floorRow({ bld_cnt_in_pnu: 2 })]);
     const dong = (bld_id: string, dong_nm: string) => ({
       bld_id,
       bld_nm: '테스트빌딩',
