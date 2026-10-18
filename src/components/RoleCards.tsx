@@ -13,7 +13,7 @@ import type { ViewerRole } from '../lib/sectionCards';
  * ⓘ 인쇄에서 빠진다(`styles.css` 의 `@media print` · 종이에서 못 누르는 조종 장치).
  */
 const ROLE_CARDS: ReadonlyArray<{ role: ViewerRole; name: string; line: string }> = [
-  { role: '투자자', name: '투자·매입하려고', line: '실거래·참고 시세를 먼저 펼쳐 둡니다' },
+  { role: '투자자', name: '투자·매입하려고', line: '실거래·층별 공표값을 먼저 펼쳐 둡니다' },
   { role: '창업자', name: '가게를 열려고', line: '상권 지도·업종 분포를 먼저 보여 드립니다' },
   { role: '중개사', name: '중개하려고', line: '층별 호실·한 장으로 뽑기를 먼저 둡니다' },
 ];

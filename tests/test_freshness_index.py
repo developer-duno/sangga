@@ -45,7 +45,6 @@ MIGRATION = os.path.join(
 EXCEPTIONS = {
     ("district", "computed_at"): "수천 행 이하(1,687개), 11.7ms 실측 2026-09-27",
     ("lh_notice", "collected_at"): "수천 행 이하, 11.2ms 실측 2026-09-27",
-    ("price_gate_sigungu", "loaded_at"): "수천 행 이하(구 단위), 10.9ms 실측 2026-09-27",
 }
 
 RE_FN = re.compile(
@@ -248,8 +247,9 @@ def test_pairs_really_are_extracted():
     """ⓐ 가짜 초록 방지 — 열 갈래 중 max 를 쓰는 줄이 실제로 뽑혀 나오는가."""
     pairs = freshness_pairs(freshness_body(read(SCHEMA)))
     # 2026-10-15a — 건축물대장 줄이 max(building.updated_at) 대신 판 표지(ledger_release) 한 줄을 읽어
-    #   쌍이 10 → 9 로 줄었다(실측 9).
-    assert len(pairs) >= 9, pairs
+    #   쌍이 10 → 9 로 줄었다(실측 9). 2026-10-18a(결정 0041) — 성적표 줄(price_gate_sigungu.loaded_at)을 빼 9 → 8.
+    assert len(pairs) >= 8, pairs
+    assert ("price_gate_sigungu", "loaded_at") not in pairs
     # 2026-10-12b — 필지 줄은 받아 둔 날(updated_at)이 아니라 공시 연도를 읽는다.
     assert ("parcel", "land_price_year") in pairs
     assert ("parcel", "updated_at") not in pairs
@@ -517,7 +517,7 @@ def test_remaining_exceptions_are_not_backed():
     """남은 예외는 정말 색인·기본키가 없는 쌍이다(새 검사가 오탐하지 않는다)."""
     s = _schema()
     assert ("rent_stat", "quarter") not in EXCEPTIONS
-    assert len(EXCEPTIONS) == 3
+    assert len(EXCEPTIONS) == 2   # 2026-10-18a(결정 0041) — 게이트 표 줄을 빼 3 → 2
     for key in EXCEPTIONS:
         assert not has_leading_index(s, *key), key
         assert not has_leading_primary_key(s, *key), key

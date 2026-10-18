@@ -49,8 +49,10 @@ export function AppFooter({ feedbackContext, lead = null, phoneOrder = false }: 
             입니다. 감정평가가 아니며, 그 대신으로 쓸 수 없습니다.
           </li>
           <li>
-            <strong>추정한 값에는 "추정"이라고 적고, 근거와 표본 수를 함께 적습니다.</strong>{' '}
-            그 표시가 없는 숫자는 원본 자료를 그대로 옮긴 것입니다.
+            <strong>
+              신고·고시·조사된 값은 원본 그대로 나르고, 우리가 세어 낸 집계에는 '집계'·'비교값'이라고
+              적습니다.
+            </strong>
           </li>
           <li>
             원본이 안 적어 둔 칸은 <strong>"미상"</strong>으로 보입니다 — 값이 0이라는 뜻이

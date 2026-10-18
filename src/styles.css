@@ -1631,7 +1631,7 @@ body {
 
 /* ── 한 장 요약 카드 틀 (로드맵 Wave 2) ──────────────────────────────── */
 /*
-   층별 화면의 섹션 다섯 장이 공유하는 겉틀이다. `.tx`(사실)·`.band`(추정)·`.mix`(둘레)는
+   층별 화면의 섹션 다섯 장이 공유하는 겉틀이다. `.tx`(사실)·`.mix`(둘레) 등은
    **여기 뒤에** 자기 배경·테두리를 다시 칠한다 — 그 셋을 눈으로 가르는 장치를 이 공통
    틀이 덮어쓰면 안 되므로 순서를 바꾸지 말 것.
 */
@@ -1732,7 +1732,7 @@ body {
 
 /* ── 실거래 기록 (Stage A · 결정 0012) ───────────────────────────────── */
 /* ⛔ 이 블록에 추정값을 그리지 말 것. 신고된 거래와 그것을 센 값만 나온다.
-   추정은 아래 .band 블록으로 간다. */
+   (추정 밴드 카드는 결정 0041 로 내렸다.) */
 
 .tx {
   margin: 22px 0 0;
@@ -1845,267 +1845,6 @@ body {
   line-height: 1.6;
 }
 
-/* ── 참고 매매 시세 밴드 (Stage B · 결정 0013) ─────────────────────────── */
-/* ⚠️ 이 화면에서 **추정값이 나오는 유일한 자리**다. 위 .tx(실선 · 신고된 사실)와 카드를
-   갈라 두는 것이 사실과 추정을 가르는 장치다 — 점선 테두리도 "확정된 사실이 아니다"라는
-   뜻이다. 두 블록을 합치지 말 것. */
-
-.band {
-  margin: 22px 0 0;
-  padding: 16px 16px 8px;
-  border: 1px dashed var(--est-line);
-  border-radius: 8px;
-  background: var(--est-bg);
-}
-
-.band__lead {
-  margin: 0 0 12px;
-  color: var(--muted);
-  font-size: 12.5px;
-  line-height: 1.6;
-}
-
-.band__gate {
-  margin: 0 0 4px;
-  font-size: 13px;
-  line-height: 1.7;
-}
-
-.band__rows {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  font-variant-numeric: tabular-nums;
-}
-
-.band__row {
-  border-bottom: 1px dashed var(--est-line);
-}
-
-.band__row:last-child {
-  border-bottom: none;
-}
-
-/* 지금 펼쳐진 층의 밴드 줄. 위아래 두 목록이 서로를 가리키게 하는 유일한 표시다. */
-.band__row--on {
-  background: #eceff6;
-  border-radius: 6px;
-}
-
-.band__hit {
-  display: grid;
-  grid-template-columns: 96px minmax(0, 1fr); /* 층 범위('3층~17층')가 들어갈 폭 */
-  gap: 2px 10px;
-  width: 100%;
-  padding: 8px 6px;
-  border: 0;
-  background: none;
-  font: inherit;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.band__hit:hover {
-  background: #eceff6;
-  border-radius: 6px;
-}
-
-.band__floor {
-  grid-row: 1 / span 2;
-  font-weight: 700;
-  font-size: 13px;
-}
-
-.band__val {
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.band__sub {
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-/* 값을 못 내는 층. 사실 쪽 .tx__val--none 과 같은 어휘(회색 이탤릭)로 "왜 없는지"를 말한다. */
-.band__none {
-  grid-column: 2;
-  color: var(--muted);
-  font-size: 12.5px;
-  font-style: italic;
-  line-height: 1.6;
-}
-
-/* ── 그림: 층마다 가로 띠 (결정 0038 A) ───────────────────────────────────────────
-   넓은 화면 = 층 이름 | 띠 | 글(지금 글 그대로 · 오른쪽). 띠 = p25~p75 · 세로 눈금 = 가운데값 · 축 = 0 ~ 카드 상한(아래 `.band__axis`).
-   추정 색(회청 — 값은 viz.ts 가 인라인으로 준다) · 먼 근거는 연한 띠 + 점선 · 값을 안 내는 줄은 "–".
-   ⓘ 휴대폰(≤720px)은 옛 묶음의 `.band__hit { 1fr }` 가 세 칸을 위아래로 쌓는다(층 이름 / 띠 / 글) — 새 휴대폰 규칙은
-     `@media screen and (max-width: 720px)` 묶음에만(축 글 줄).
-   ⛔ 크기는 % 로만 — DOM 을 재지 않는다(접힌 카드는 폭 0 · 종이 백지 · §2-3). */
-.band__hit--viz {
-  grid-template-columns: 96px minmax(0, 2fr) minmax(0, 3fr);
-  align-items: center;
-}
-
-.band__hit--viz .band__floor {
-  grid-row: auto;
-}
-
-.band__viz {
-  display: block;
-  min-width: 0;
-}
-
-/* 값을 안 내는 줄의 "–" — 까닭 글은 옆(`.band__none`)에 그대로 있다. */
-.band__viz--none {
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.band__track {
-  position: relative;
-  display: block;
-  height: 12px;
-  border-radius: 3px;
-}
-
-.band__range {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  border-radius: 3px;
-}
-
-.band__viz--far .band__range {
-  border: 1px dashed var(--est-ink);
-}
-
-.band__tick {
-  position: absolute;
-  top: -3px;
-  bottom: -3px;
-  width: 2px;
-  margin-left: -1px;
-  border-radius: 1px;
-}
-
-/* 글 칸 — 지금 글(값·근거 두 줄 또는 까닭 한 줄)을 한 칸에 위아래로. */
-.band__text {
-  display: block;
-  min-width: 0;
-}
-
-.band__text > .band__val,
-.band__text > .band__sub,
-.band__text > .band__none {
-  display: block;
-}
-
-/* 축 눈금 글 — 띠 칸과 같은 칸 자리(줄 단추의 안쪽 여백 6px · 칸 틈 10px 와 맞춘다).
-   기본 = 한 칸(띠가 폭 전체인 좁은 배치) · 넓은 배치(세 칸)는 아래 `min-width: 721px` 에서만.
-   ⓘ 줄의 배치는 옛 `@media (max-width: 720px)` 묶음이 정한다(화면·종이 둘 다) — 그 정확한 반대 조건으로 두어야
-     휴대폰 폭에서 종이로 바꿔도 눈금 글이 띠 칸과 어긋나지 않는다(화면 전용 규칙으로 두면 106px 어긋났다 · E2E BE 실측). */
-.band__axis {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  column-gap: 10px;
-  padding: 2px 6px 4px;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.5;
-  font-variant-numeric: tabular-nums;
-}
-
-.band__axis-scale {
-  grid-column: 1;
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-@media (min-width: 721px) {
-  .band__axis {
-    grid-template-columns: 96px minmax(0, 2fr) minmax(0, 3fr);
-  }
-
-  .band__axis-scale {
-    grid-column: 2;
-  }
-}
-
-.band__none-note,
-.band__src,
-.band__alt {
-  margin: 10px 0 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.band__why {
-  margin: 6px 0 0;
-  padding: 0 0 0 16px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.65;
-}
-
-.band__why li + li {
-  margin-top: 4px;
-}
-
-/* ── 국세청 기준시가 ───────────────────────────────────────────────────────
-   이 카드에서 **유일하게 추정이 아닌 값**이다. 그래서 위 밴드 목록과 실선 하나로 갈라 둔다
-   — 이어 붙이면 같은 자로 잰 값처럼 읽힌다(⛔ 이 구분선을 지우지 말 것). 배지도 사실 쪽
-   색(호박)을 쓰고, 첫 문장이 "시세가 아니다"라고 못 박는다. */
-.band__base {
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
-}
-
-.band__base-h {
-  margin: 0 0 6px;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.band__base-rows {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  font-variant-numeric: tabular-nums;
-}
-
-.band__base-rows li {
-  display: grid;
-  grid-template-columns: 96px minmax(0, auto) minmax(0, 1fr); /* 층 폭은 밴드 줄과 맞춘다 */
-  gap: 4px 10px;
-  align-items: baseline;
-  padding: 5px 0;
-  font-size: 13px;
-}
-
-.band__base-floor {
-  font-weight: 600;
-}
-
-.band__base-val {
-  font-weight: 600;
-}
-
-.band__base-sub {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-/* 아직 안 온 상태. 자리를 미리 잡아 두면 나중에 페이지가 밀리지 않는다. */
-.band--wait {
-  min-height: 92px;
-}
-
 /* 옥탑도 지하와 같은 "근거 없는 층"이다(결정 0001 가드 4). */
 .floor--roof .floor__label {
   color: var(--under);
@@ -2176,7 +1915,7 @@ body {
 
 /* ── 둘레의 업종 분포 (결정 0014) ─────────────────────────────────────── */
 /*
-   ⚠️ `.tx`(사실)·`.band`(추정)와 **또 다른 카드**로 둔다. 여기 숫자는 추정이 아니지만
+   ⚠️ `.tx`(사실)와 **또 다른 카드**로 둔다. 여기 숫자는 추정이 아니지만
       "이 건물의 점포"도 아니라서(둘레의 남의 가게까지 센다) 층 목록에 붙여 놓으면
       같은 것을 세는 두 숫자처럼 읽힌다. 테두리를 실선으로 두되 배경을 달리해 가른다.
 */
@@ -2452,7 +2191,7 @@ body {
       다섯 장과 달리 여기 내용은 우리가 잰 값이 아니라 **남의 집(LH) 공고 목록**이라,
       배경을 따뜻한 쪽(경고 톤과 같은 계열)으로 두어 "밖으로 나가는 자리"임을 보인다.
    ⚠️ `.card--closed` 보다 **위**에 둔다 — 여기서 padding 을 다시 잡으므로, 아래에 두면
-      접힌 상태의 아래 여백 규칙이 이 카드에서만 조용히 안 먹는다(.tx·.band·.mix 와 같다).
+      접힌 상태의 아래 여백 규칙이 이 카드에서만 조용히 안 먹는다(.tx·.mix 와 같다).
 */
 .lh {
   margin: 0 0 24px;
@@ -2574,154 +2313,10 @@ body {
   line-height: 1.6;
 }
 
-/* ── 참고 시세 성적표 (입구 · 로드맵 Wave 4) ───────────────────────────────── */
-
-/*
-   ⚠️ 바탕을 `.lh`(따뜻한 쪽 = 밖으로 나가는 자리)와 **다르게** 둔다. 나란히 서는 두
-      입구 카드인데 같은 옷을 입히면 "남의 집 공고"와 "우리 값의 성적"이 한 덩어리로
-      읽힌다. 이쪽은 우리가 스스로에게 매긴 점수라 차분한 회청 쪽으로 둔다.
+/* ── 동네 매매 단가 흐름 (입구 · 결정 0027) ──────────────────────────────────
+   ⓘ 사실을 그대로 나르는 자리라 흰 바탕에 가깝게 둔다(옛 성적표 카드는 결정 0041 로 내렸다).
    ⚠️ `.card--closed` 보다 **위**에 둔다 — 여기서 padding 을 다시 잡으므로, 아래에 두면
       접힌 상태의 아래 여백 규칙이 이 카드에서만 조용히 안 먹는다(.lh·.rent 와 같다).
-*/
-.score {
-  margin: 0 0 24px;
-  padding: 14px 16px 6px;
-  background: #f6f8fb;
-}
-
-.score__lead,
-.score__sub,
-.score__honest,
-.score__why,
-.score__none {
-  margin: 0 0 10px;
-  color: var(--muted);
-  font-size: 12.5px;
-  line-height: 1.6;
-}
-
-/* 왜 떨어졌는지 한 줄. 값이 아니라 **판정의 이유**라 눈에 띄게 둔다. */
-.score__why {
-  color: var(--under);
-  font-weight: 600;
-}
-
-.score__h {
-  margin: 16px 0 6px;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.score__facts {
-  margin: 0 0 10px;
-  padding: 0;
-  list-style: none;
-  font-size: 13px;
-}
-
-.score__facts li {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 10px;
-  padding: 6px 0;
-  border-top: 1px solid var(--line);
-}
-
-.score__facts li:first-child {
-  border-top: none;
-}
-
-.score__k {
-  flex: 1 1 220px;
-  min-width: 0;
-  color: var(--muted);
-}
-
-.score__v {
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-/* 제공·미제공을 색으로 가른다 — 이 카드에서 사람이 가장 먼저 찾는 한 글자다. */
-.score__v--pass {
-  color: var(--accent);
-}
-
-.score__v--fail {
-  color: var(--under);
-}
-
-.score__rows {
-  margin: 0 0 10px;
-  padding: 0;
-  list-style: none;
-}
-
-.score__rows li {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 10px;
-  padding: 7px 0;
-  border-top: 1px solid var(--line);
-  font-size: 13px;
-}
-
-.score__rows li:first-child {
-  border-top: none;
-}
-
-/* 단계 코드(L2·L6)는 성적표가 쓰는 이름 그대로다 — 우리가 다시 이름 붙이지 않는다. */
-.score__stage,
-.score__gu {
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.score__note {
-  flex: 1 1 200px;
-  min-width: 0;
-  color: var(--muted);
-}
-
-.score__code {
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.score__share {
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.score__err {
-  margin-left: auto;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.score__how-list {
-  margin: 0 0 10px;
-  padding-left: 18px;
-  color: var(--muted);
-  font-size: 12.5px;
-  line-height: 1.65;
-}
-
-.score__how-list li + li {
-  margin-top: 6px;
-}
-
-/* ── 동네 매매 단가 흐름 (입구 · 결정 0027) ──────────────────────────────────
-   ⚠️ 바탕을 성적표(`.score`)와 **다르게** 둔다. 나란히 서는 두 입구 카드인데 같은 옷을
-      입히면 "우리 값의 성적"과 "신고된 사실"이 한 덩어리로 읽힌다. 이쪽은 사실을 그대로
-      나르는 자리라 흰 바탕에 가깝게 둔다.
-   ⚠️ `.card--closed` 보다 **위**에 둔다 — 여기서 padding 을 다시 잡으므로, 아래에 두면
-      접힌 상태의 아래 여백 규칙이 이 카드에서만 조용히 안 먹는다(.lh·.score·.rent 와 같다).
    ──────────────────────────────────────────────────────────────────────────── */
 .flow {
   margin: 0 0 24px;
@@ -2823,9 +2418,8 @@ body {
 /* ── 상권 임대 동향 (부동산원 조사 · 결정 0024) ────────────────────────────── */
 
 /*
-   ⚠️ 바탕색을 참고 시세 카드(`.band`)와 **다르게** 둔다. 두 카드가 나란히 서는데 하나는
-      우리가 어림한 추정이고 하나는 부동산원이 조사한 값이라, 같은 옷을 입히면 같은 무게로
-      읽힌다(상세계획 §7.4 "C·D는 시각적으로 구분한다"의 결).
+   ⓘ 부동산원이 조사한 상권 값이라 이 건물 값과 갈라 보이게 바탕색을 따로 둔다(옛 참고 시세 카드
+      `.band` 와 가르던 자리 — 그 카드는 결정 0041 로 내렸다).
 */
 .rent {
   margin: 0 0 24px;
@@ -3238,7 +2832,7 @@ body {
 /*
    접힌 카드는 머리 + 요약 한 줄뿐이라 아래 여백이 남는다.
 
-   ⚠️ 이 한 줄만 `.card` 묶음에서 떼어 **여기**(.tx·.band·.mix 뒤)에 둔다. 그 셋이 저마다
+   ⚠️ 이 한 줄만 `.card` 묶음에서 떼어 **여기**(.tx·.mix 뒤)에 둔다. 그 셋이 저마다
       `padding` 을 다시 잡기 때문에, 위에 있으면 세 카드에서만 조용히 안 먹는다.
 */
 .card--closed {
@@ -3758,26 +3352,6 @@ body {
     padding-left: 10px;
   }
 
-  .band__hit {
-    grid-template-columns: 1fr;
-  }
-
-  /* 한 칸으로 접히면 "2번째 칸"이 없다 — 그대로 두면 빈 칸이 하나 생긴다. */
-  .band__floor {
-    grid-row: auto;
-  }
-
-  .band__none {
-    grid-column: 1;
-  }
-
-  /* 기준시가 줄도 좁은 폭에서는 한 칸으로 접는다 — 세 칸을 유지하면 '㎡당 300만 원'이
-     줄바꿈으로 쪼개져 숫자가 두 줄에 걸린다. */
-  .band__base-rows li {
-    grid-template-columns: 1fr;
-    gap: 2px;
-  }
-
   /* 한 칸으로 접히면 막대가 라벨 아래 한 줄을 통째로 쓴다 — 층마다 세로로 부담되지
      않게 낮추기만 한다. 숨기면 "층별 규모"라는 이 화면의 본론이 모바일에서만 사라진다. */
   .floor__bar {
@@ -3918,7 +3492,7 @@ body {
     padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 32px);
   }
 
-  /* 찾기 탭이 아니면 입구 카드(LH·성적표·단가 흐름)를 숨긴다. */
+  /* 찾기 탭이 아니면 입구 카드(LH·단가 흐름 — 성적표 카드는 결정 0041 로 내렸다)를 숨긴다. */
   .app--tabs:not([data-tab='find']) .app__main > .card {
     display: none;
   }
@@ -4231,6 +3805,11 @@ body {
   margin: 2px 0;
 }
 
+/* 기준시가 빈 칸의 이유 한 줄(결정 0041 · 👤 2026-10-18 ②) — 칸 머리 바로 아래 줄로 · 머리와 같은 작은 회색 글. */
+.gap__head-note {
+  display: block;
+}
+
 .gap__rows {
   margin: 0;
   padding: 0;
@@ -4475,14 +4054,6 @@ body {
   .tx__n,
   .tx__note,
   .tx__src,
-  .band__lead,
-  .band__sub,
-  .band__none,
-  .band__none-note,
-  .band__src,
-  .band__alt,
-  .band__why,
-  .band__base-sub,
   .detail__sub,
   .detail__none,
   .detail__note,
@@ -4501,12 +4072,6 @@ body {
   .lh__more-btn,
   .lh__more-lead,
   .lh__src,
-  .score__lead,
-  .score__sub,
-  .score__honest,
-  .score__why,
-  .score__none,
-  .score__how-list,
   .flow__lead,
   .flow__src,
   .flow__part,
@@ -4600,7 +4165,6 @@ body {
   .card__toggle,
   .floor__row,
   .units__more,
-  .band__hit,
   .mix__select,
   .rent__select,
   .lh__more-btn,
@@ -4705,7 +4269,7 @@ body {
   /* ⛔ 휴대폰에서 건물을 연 채 찾기·지도 탭에서 뽑아도 종이 = 건물 한 장(👤 「건물 한 장」) — 그 탭이 그려 둔 지도를 뺀다.
      `.app--tabs` 는 인쇄 중에도 그대로다(`useIsPhone` 이 인쇄 중 값을 얼린다). 넓은 화면은 이 이름표가 없어 지금 그대로. */
   .app--tabs.app--bld .entry,
-  /* 같은 까닭으로 휴대폰 찾기 탭에 선 입구 카드 셋(LH·성적표·단가 흐름 — 건물을 연 채여도 선다 · 검사 🟠 F2)도 뺀다. */
+  /* 같은 까닭으로 휴대폰 찾기 탭에 선 입구 카드 둘(LH·단가 흐름 — 건물을 연 채여도 선다 · 검사 🟠 F2 · 성적표 카드는 결정 0041 로 내렸다)도 뺀다. */
   .app--tabs.app--bld .app__main > .card,
   /* 중개사 「최근 뽑은 건물」 줄(결정 0036 결정 18 ⑥) — 지금은 `.search` 안이지만 자리가 옮겨져도
      종이에 새지 않게 따로 적어 둔다(누르는 장치). */
@@ -4895,17 +4459,12 @@ body {
   .mix__permits,
   .floor,
   .lh__list li,
-  /* 단계·구 한 줄에 이름과 그 성적이 함께 있다 — 갈리면 근거 없는 숫자가 된다. */
-  .score__facts li,
-  .score__rows li,
   /* 한 해의 값과 그 해가 몇 달치인지·표본이 몇 건인지가 한 줄에 있다 — 갈리면 근거 없는
      숫자가 된다. ⛔ 카드 통째(`.flow`)에는 걸지 않는다(위 설명 참조). */
   .flow__rows li,
   .tx__list li,
   .tx__bands li,
   .mix__bars li,
-  .band__row,
-  .band__base-rows li,
   /* 값과 그 값이 어느 상권·어느 분기 것인지가 한 줄에 있다 — 갈리면 근거 없는 숫자가 된다. */
   .rent__rows li,
   /* 층별 표는 **줄 단위로만** 안 잘리게 한다(결정 0031). 위 `li` 가 한 장보다 길어지면
@@ -4953,21 +4512,16 @@ body {
     break-inside: auto;
   }
 
-  /* 그림과 그 글이 두 장에 갈리지 않게(결정 0038 §2-9) — 쌓은 막대는 아래 층 줄 글과, 띠 눈금 글은 위 띠 목록과 같은 장에.
-     ⛔ 카드 통째(`.mix`·`.band`)에는 걸지 않는다(위 설명 참조 — 장수가 늘고 흰 종이가 남는다). */
+  /* 그림과 그 글이 두 장에 갈리지 않게(결정 0038 §2-9) — 쌓은 막대는 아래 층 줄 글과 같은 장에.
+     ⛔ 카드 통째(`.mix`)에는 걸지 않는다(위 설명 참조 — 장수가 늘고 흰 종이가 남는다). */
   .mix__stack {
     break-after: avoid;
-  }
-
-  .band__axis {
-    break-before: avoid;
   }
 
   /* 제목만 페이지 끝에 혼자 남는 것을 막는다. */
   .card__h,
   .tx__sub,
-  .mix__sub,
-  .band__base-h {
+  .mix__sub {
     break-after: avoid;
   }
 

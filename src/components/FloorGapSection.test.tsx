@@ -4,7 +4,7 @@ import type { BasePrice, FloorRow, RentStat, SigunguTxStat } from '../types';
 import type { SidePrefetch } from '../lib/sidePrefetch';
 
 /**
- * 「층 차이 세 잣대」 카드(결정 0036 결정 15 · 물결 1-C2). 짝짓기 규칙은 `lib/floorGap.test.ts` 가 덮고,
+ * 「층별 공표값 나란히」 카드(결정 0036 결정 15 · 물결 1-C2 · 결정 0041). 짝짓기 규칙은 `lib/floorGap.test.ts` 가 덮고,
  * 여기서는 ① 재료 하나가 실패하면 그 칸만 '–' · 셋 다 없으면 카드째 숨김 · 층 0줄도 숨김
  * ② 부동산원은 임대 카드와 **같은 미리 보낸 답**을 받아 RPC 를 더 안 낸다 ③ 접힌 채 시작 · 요약에 값 0.
  */
@@ -92,12 +92,18 @@ describe('FloorGapSection', () => {
     const { container } = render(
       <FloorGapSection floors={[floor(2), floor(1)]} basePrices={BASES} txStats={TX} pnu={PNU} />,
     );
-    const toggle = await screen.findByRole('button', { name: /층 차이 세 잣대/ });
+    const toggle = await screen.findByRole('button', { name: /층별 공표값 나란히/ });
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    expect(container.querySelector('.card__summary')?.textContent).toBe('국세청 · 구 실거래 · 부동산원 — 층마다 나란히');
+    expect(container.querySelector('.card__summary')?.textContent).toBe(
+      '국세청 기준시가 · 구 상가 단가 · 부동산원 임대료 — 층마다 나란히',
+    );
     await waitFor(() => expect(cellText(container, 1, 'rent')).toBe('74.6'));
     expect([...container.querySelectorAll('.gap__row')].map((r) => r.getAttribute('data-floor'))).toEqual(['2', '1']);
     expect(cellText(container, 1, 'base')).toBe('500만');
+    // 기준시가 칸 작은 글 = 호 수 · 고시일(결정 0041 ㉤ — 내린 밴드 카드에서 옮김).
+    expect(
+      container.querySelector('.gap__row[data-floor="1"] .gap__cell--base .gap__sub')?.textContent,
+    ).toBe(' (호 12개 가운데값 · 2026년 1월 1일 고시)');
     expect(cellText(container, 1, 'tx')).toBe('㎡당 380만');
     expect(cellText(container, 2, 'base')).toBe('–');
     expect(cellText(container, 2, 'tx')).toBe('㎡당 250만');
@@ -105,7 +111,28 @@ describe('FloorGapSection', () => {
     expect(container.textContent).toContain('세무 기준가격 — 시세가 아닙니다');
     expect(container.textContent).toContain('A등급 · 공식 고시');
     expect(container.textContent).toContain('B등급 · 공식 표본조사');
+    // 구 상가 단가는 우리가 센 집계 — 배지 「A등급 · 실거래 집계」 + 발 문구 한 마디(👤 2026-10-18 ③).
+    expect(container.querySelector('.gap__head--tx .grade__badge')?.textContent).toBe('A등급 · 실거래 집계');
+    expect(container.textContent).toContain('구 단가는 신고된 거래를 우리가 세어 낸 가운데값입니다(상가 거래 기준).');
+    // 근거 병기 한 마디(보완 2차 C5 — 옛 꼬리말 약속을 잇는다).
+    expect(container.textContent).toContain('칸마다 근거(호 수·표본 수)를 함께 적습니다.');
     expect(container.textContent).not.toMatch(/[%％]/);
+  });
+
+  it('★ 기준시가를 아직 안 받은 동안(null · 실패 아님)에는 이유 줄이 없다 — 받고 보니 빈 배열이면 그때 선다(보완 2차 C4)', async () => {
+    const { container, rerender } = render(
+      <FloorGapSection floors={[floor(1)]} basePrices={null} txStats={TX} pnu={PNU} />,
+    );
+    await waitFor(() => expect(cellText(container, 1, 'rent')).toBe('74.6'));
+    expect(container.querySelector('.gap__head--base')).toBeTruthy();
+    expect(container.querySelector('.gap__head-note')).toBeNull();
+    expect(container.textContent).not.toContain('상가 기준시가가 없습니다');
+    expect(container.textContent).not.toContain('불러오지 못했습니다');
+    // 양성 대조 — 같은 자리에 빈 배열이 오면 이유 줄이 선다(위 단언이 선택자 오타로 늘 초록인 것이 아님).
+    rerender(<FloorGapSection floors={[floor(1)]} basePrices={[]} txStats={TX} pnu={PNU} />);
+    expect(container.querySelector('.gap__head--base .gap__head-note')?.textContent).toBe(
+      '이 건물에는 국세청이 고시한 상가 기준시가가 없습니다(오피스텔 호실은 주거 가격이라 싣지 않습니다)',
+    );
   });
 
   it('부동산원 함수가 실패하면 그 칸만 – (카드는 선다)', async () => {
@@ -113,7 +140,7 @@ describe('FloorGapSection', () => {
     const { container } = render(
       <FloorGapSection floors={[floor(1)]} basePrices={BASES} txStats={TX} pnu={PNU} />,
     );
-    await screen.findByRole('button', { name: /층 차이 세 잣대/ });
+    await screen.findByRole('button', { name: /층별 공표값 나란히/ });
     await waitFor(() => expect(cardCalls()).toHaveLength(1));
     expect(cellText(container, 1, 'rent')).toBe('–');
     expect(cellText(container, 1, 'base')).toBe('500만');
@@ -128,12 +155,23 @@ describe('FloorGapSection', () => {
     expect(cellText(container, 1, 'rent')).toBe('–');
   });
 
-  it('★ 국세청·부동산원이 둘 다 비면 구 실거래가 있어도 카드째 숨긴다(빈 배열도 null 처럼)', async () => {
+  it('★ 값 든 칸이 하나라도 있으면 선다 — 기준시가만 있어도(결정 0041 E2)', async () => {
+    responses.rent = { data: [], error: null };
+    const { container } = render(<FloorGapSection floors={[floor(1)]} basePrices={BASES} txStats={null} pnu={PNU} />);
+    await screen.findByRole('button', { name: /층별 공표값 나란히/ });
+    await waitFor(() => expect(cardCalls()).toHaveLength(1));
+    expect(cellText(container, 1, 'base')).toBe('500만');
+    expect(cellText(container, 1, 'tx')).toBe('–');
+    expect(cellText(container, 1, 'rent')).toBe('–');
+  });
+
+  it('★ 구 실거래만 있어도 선다(옛 「둘 이상」 규칙은 결정 0041 로 바뀌었다 · 빈 배열도 null 처럼)', async () => {
     responses.rent = { data: [], error: null };
     const { container } = render(<FloorGapSection floors={[floor(1)]} basePrices={[]} txStats={TX} pnu={PNU} />);
     await waitFor(() => expect(cardCalls()).toHaveLength(1));
     await new Promise((r) => setTimeout(r, 0));
-    expect(container.querySelector('.gap')).toBeNull();
+    expect(container.querySelector('.gap')).not.toBeNull();
+    expect(cellText(container, 1, 'tx')).toBe('㎡당 380만');
   });
 
   it('세 재료가 모두 없으면 카드째 숨긴다', async () => {

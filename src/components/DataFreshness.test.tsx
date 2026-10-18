@@ -8,7 +8,7 @@ import type { DataFreshnessRow } from '../types';
  *
  * 여기서 특히 지키는 것
  * ---------------------
- *  ① **자료 열한 갈래가 다 뜬다** — 한 줄이 빠지면 보는 사람은 "그런 자료는 안 쓰나 보다"로
+ *  ① **자료 열 갈래가 다 뜬다** — 한 줄이 빠지면 보는 사람은 "그런 자료는 안 쓰나 보다"로
  *     읽는다. 에러가 아니라 조용한 누락이라 아무도 모른다.
  *  ② **못 읽었으면 아무 말도 안 한다** — 마이그레이션 적용 전 라이브가 그 상태다.
  *     "자료 없음"이라 적으면 모르는 것을 없는 것이라 말하게 된다.
@@ -46,10 +46,10 @@ function row(over: Partial<DataFreshnessRow> = {}): DataFreshnessRow {
 }
 
 /**
- * 라이브가 주는 것과 같은 열한 줄(2026-10-16 운영 모양 — 실거래·건축물대장은 2026-10-15a 부터 규칙으로 날짜를 준다).
+ * 라이브가 주는 것과 같은 열 줄(2026-10-16 운영 모양에서 결정 0041 로 성적표 줄을 뺀 것 — 실거래·건축물대장은 2026-10-15a 부터 규칙으로 날짜를 준다).
  * ⓘ 인허가만 일부러 옛 기준월(202606 → 규칙대로 2026-08-31)이다 — '지났습니다' 줄을 보려고.
  */
-function elevenRows(): DataFreshnessRow[] {
+function tenRows(): DataFreshnessRow[] {
   return [
     row(),
     row({
@@ -101,13 +101,6 @@ function elevenRows(): DataFreshnessRow[] {
       next_expected: '2026-10-31',
       cadence: '분기마다',
     }),
-    row({
-      src: '참고 시세 성적표',
-      basis_kind: '적재일',
-      basis: '2026-10-08',
-      next_expected: null,
-      cadence: '재생성 때 (결재 사항)',
-    }),
     // 2026-10-12b — 기준 = 공시 연도(네 자리) · 다음 갱신 = 공시 연도의 다음 해 6월 30일.
     row({
       src: '필지 (토지 특성)',
@@ -131,7 +124,7 @@ beforeEach(() => {
   rpcCalls.length = 0;
   // 표와 카드가 나눠 쓰는 한 번의 요청(`loadDataFreshness`)을 시험마다 비운다 — 안 비우면 앞 시험의 답이 남는다.
   resetDataFreshnessCache();
-  responses.fresh = { data: elevenRows(), error: null };
+  responses.fresh = { data: tenRows(), error: null };
 });
 
 afterEach(() => {
@@ -140,15 +133,15 @@ afterEach(() => {
 });
 
 describe('DataFreshness — 서버가 답할 때', () => {
-  it('자료 열한 갈래가 한 줄씩 뜬다', async () => {
+  it('자료 열 갈래가 한 줄씩 뜬다', async () => {
     const { container } = render(<DataFreshness />);
 
     expect(await screen.findByText('이 자료는 언제 것인가')).toBeTruthy();
-    // 머리글 줄 하나 + 자료 열한 줄.
+    // 머리글 줄 하나 + 자료 열 줄.
     await waitFor(() => {
-      expect(container.querySelectorAll('.fresh__table tbody tr').length).toBe(11);
+      expect(container.querySelectorAll('.fresh__table tbody tr').length).toBe(10);
     });
-    for (const src of elevenRows().map((r) => r.src)) {
+    for (const src of tenRows().map((r) => r.src)) {
       expect(screen.getByText(src)).toBeTruthy();
     }
   });
@@ -184,7 +177,7 @@ describe('DataFreshness — 서버가 답할 때', () => {
     // 기준 칸 = 종류 + 값 — 사람이 읽는 글 그대로.
     expect(cells[0].textContent).toBe('공시 연도 2026년');
     expect(cells[1].textContent).toBe('2027년 6월 30일 무렵');
-    expect(container.querySelectorAll('.fresh__table tbody tr').length).toBe(11);
+    expect(container.querySelectorAll('.fresh__table tbody tr').length).toBe(10);
   });
 
   it('다음 갱신 예정이 없는 자료는 그렇게 적는다 — 없는 주기를 지어내지 않는다', async () => {
@@ -196,8 +189,8 @@ describe('DataFreshness — 서버가 답할 때', () => {
     expect(screen.getByText('2026년 11월 30일 무렵')).toBeTruthy(); // 실거래 계약월 202610 → + 2개월 − 하루
     expect(screen.getByText('2027년 3월 31일 무렵')).toBeTruthy();
     expect(screen.getByText('2027년 6월 30일 무렵')).toBeTruthy(); // 필지 공시 연도 2026 → 다음 해 6월 30일
-    // 열한 줄 중 세 줄이 주기가 없다(상권 경계·LH·성적표 — 필지는 2026-10-12b · 실거래·대장은 2026-10-15a 부터 있다).
-    expect(screen.getAllByText('정해진 주기 없음')).toHaveLength(3);
+    // 열 줄 중 두 줄이 주기가 없다(상권 경계·LH — 필지는 2026-10-12b · 실거래·대장은 2026-10-15a 부터 있다 · 성적표 줄은 결정 0041 로 뺐다).
+    expect(screen.getAllByText('정해진 주기 없음')).toHaveLength(2);
     // 인허가의 예정일(8월 31일)은 이 '오늘'보다 앞이다 — 지났다고 적는다.
     expect(screen.getByText('2026년 8월 31일 무렵 — 지났습니다, 갱신 전')).toBeTruthy();
   });
@@ -213,7 +206,7 @@ describe('DataFreshness — 서버가 답할 때', () => {
     // 아직 안 온 것은 그대로다.
     expect(screen.getByText('2027년 3월 31일 무렵')).toBeTruthy();
     // 줄은 하나도 빠지지 않는다.
-    expect(container.querySelectorAll('.fresh__table tbody tr').length).toBe(11);
+    expect(container.querySelectorAll('.fresh__table tbody tr').length).toBe(10);
   });
 
   it('예정일 당일은 아직 지나지 않았다', async () => {

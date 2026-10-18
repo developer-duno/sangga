@@ -110,7 +110,7 @@ ALLOWED = (
         "docs/backtest/*.csv",
         0xFEFF,
         "file-start",
-        "backtest_price.py 가 utf-8-sig 로 쓴다 — 엑셀이 한글 헤더를 깨지 않게",
+        "옛 백테스트 스크립트(결정 0041 로 지움)가 utf-8-sig 로 썼다 — 엑셀이 한글 헤더를 깨지 않게 · 기록으로 남긴 csv",
     ),
 )
 POSITIONS = {
@@ -472,7 +472,7 @@ def test_bom_in_the_middle_of_a_backtest_csv_is_caught():
 @pytest.mark.parametrize(
     "rel",
     [
-        "scripts/backtest_price.py",
+        "scripts/backtest_openclose.py",
         "docs/backtest/성적표-v1.md",
         "docs/backtest/sub/x.csv",
         "docs/x.csv",

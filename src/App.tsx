@@ -13,7 +13,6 @@ import { RecentPrinted } from './components/RecentPrinted';
 import { RegionPicker } from './components/RegionPicker';
 import { RoleCards } from './components/RoleCards';
 import { RolePicker } from './components/RolePicker';
-import { ScorecardSection } from './components/ScorecardSection';
 import { ShareButton } from './components/ShareButton';
 import { TabBar } from './components/TabBar';
 import { TxFlowSection } from './components/TxFlowSection';
@@ -216,7 +215,7 @@ export default function App() {
   const showMap = isPhone ? curTab === (viewerRole === '중개사' ? 'find' : 'map') : !folded;
   const headFolded = isPhone ? selected !== null || restoring : folded;
   /*
-    입구 카드 셋(LH·성적표·단가 흐름)을 세울 때 — 구를 골랐고 되살리는 중이 아니고, 넓은 화면은 건물을 안 열었을 때만(지금 그대로).
+    입구 카드 둘(LH·단가 흐름)을 세울 때 — 구를 골랐고 되살리는 중이 아니고, 넓은 화면은 건물을 안 열었을 때만(지금 그대로).
     휴대폰은 건물을 열어 둔 채여도 찾기 탭에 선다(보던 건물이 남는 탭 꼴이라 · 검사 🟠 F2) — 다른 탭에선 CSS 가 숨기고,
     종이(건물 있음)에서는 인쇄 감춤 `.app--tabs.app--bld .app__main > .card` 가 빼서 종이는 건물 한 장 그대로다.
   */
@@ -749,26 +748,11 @@ export default function App() {
         {showEntryCards && <LhNoticeSection sigungu={sigungu} />}
 
         {/*
-          입구의 두 번째 카드 — 참고 시세 성적표(로드맵 Wave 4).
+          입구의 두 번째 카드 — 동네 매매 단가 흐름(결정 0027).
 
           ⛔ **LH 공고 뒤에 둔다.** 앞의 것은 "지금 무엇이 열려 있나"(할 일)이고 이쪽은
-             "우리 값을 얼마나 믿어도 되나"(읽을거리)라, 순서를 바꾸면 입구에서 먼저 눈에
-             드는 것이 뒤바뀐다.
+             "그동안 흐름은 어땠나"(읽을거리)다. (그 사이에 서던 참고 시세 성적표 카드는 결정 0041 로 내렸다.)
           ⓘ 조건은 LH 카드와 **똑같다** — 구를 골랐고, 건물은 아직 안 골랐고, 되살리는
-            중도 아니다. 건물을 고르면 화면의 주제가 그 건물이므로 함께 물러난다.
-          ⓘ `key` 를 일부러 안 준다 — 서버 함수가 열린 구 **전부**를 한 번에 주므로 구를
-            바꿔도 다시 물을 것이 없다(카드가 받아 둔 목록에서 그 구 줄만 골라 쓴다).
-        */}
-        {showEntryCards && (
-          <ScorecardSection sigungu={sigungu} />
-        )}
-
-        {/*
-          입구의 세 번째 카드 — 동네 매매 단가 흐름(결정 0027).
-
-          ⛔ **성적표 뒤에 둔다.** 앞의 것은 "우리 값을 얼마나 믿어도 되나"(믿음의 근거)이고
-             이쪽은 "그래서 흐름은 어땠나"(읽을거리)라, 믿음의 근거가 먼저 오는 편이 맞다.
-          ⓘ 조건은 앞의 두 카드와 **똑같다** — 구를 골랐고, 건물은 아직 안 골랐고, 되살리는
             중도 아니다. 건물을 고르면 화면의 주제가 그 건물이므로 함께 물러난다.
           ⓘ `key` 를 일부러 안 준다 — 구가 바뀌면 `sigungu` prop 이 바뀌고 카드가 스스로
             다시 묻는다(카드 안의 `useEffect` 가 그 값에 매여 있다).

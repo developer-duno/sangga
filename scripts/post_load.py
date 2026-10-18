@@ -48,10 +48,10 @@
     다르면 [사고](종료 코드 1). 거꾸로 라이브에만 남은 색인(제약이 만든 것·확장 소유 표의
     것은 뺀다)은 [주의](종료 코드 1 아님 — 2026-10-02 보탬).
   · 정본↔라이브 함수 — 언어·본문 md5·설정(set …)이 schema.sql 과 다르면 [사고](종료 코드 1).
-  · 참고 시세 이웃 요약표(mv_tx_parcel_geog) pnu 집합 == 좌표·거래 있는 필지 집합 — 어느 쪽에든
-    남는 필지가 있으면 [낡음](종료 코드 1 · 2026-10-03 부터 행수가 아니라 양쪽 차집합으로 잰다).
   · 별관 쫓겨남 — 별관(TOAST)을 쓰는 public·api 표에서 256바이트 미만 값이 별관에 있으면(큰 옆 칸
     탓에 쫓겨난 작은 값 — 그 칸을 훑는 쿼리가 느려진다) [주의](종료 코드 1 아님 · 2026-10-05 보탬).
+  · 실거래 용도 이름 — transaction.main_use 가 알려진 7종 밖(빈 값 포함)인 행이 있으면 [주의](종료 코드
+    1 아님 · 결정 0040 · 2026-10-18 보탬). 구 층대 단가·동네 흐름의 상가 묶음표가 모르는 글자는 조용히 기타로 간다.
   · 분기 표지(snapshot_release · 결정 0035 · 2026-10-07 보탬) — 표가 비었거나 보여 주는 분기가
     점포 표에 0행이면 [사고], 다 들어온 분기 ≠ 보여 주는 분기면 [낡음](둘 다 종료 코드 1) ·
     점포 표에 표지보다 새 분기가 있거나(적재 중 · 적재기 exit 1) 행 수가 표지 기록과 다르면 [주의](종료 코드 무관).
@@ -69,7 +69,7 @@
 
 ⭐ 새 상권 분기는 이 스크립트가 **표지를 올려야** 화면에 보인다(결정 0035) — 갱신 흐름(2026-10-07 개정):
    ① 표지를 먼저 읽는다([사고]면 굽지 않고 멈춤 · 표지 없이 들어온 새 분기가 있으면 [경고] 뒤 끝에 exit 1)
-   → ② vacuum → 분기와 무관한 요약표 다섯 갱신(자동커밋) → 그 판정 넷(검색·지도·실거래 창·이웃 표)
+   → ② vacuum → 분기와 무관한 요약표 넷 갱신(자동커밋) → 그 판정 셋(검색·지도·실거래 창)
    → ③ **한 트랜잭션**: 분기 요약표 여섯(가게 이름·각주·업종·층·가운데값·중분류 가운데값 — 2026-10-09 층 분포 ·
    2026-10-12 가운데값 · 2026-10-13 중분류 가운데값 추가)을 다 들어온 분기(loaded_ym)로 굽고 → 여섯의 분기 = loaded_ym
    인지 대조(아니면 통째 롤백) → 보여 주는 분기(published_ym)를 올림 → commit (이 순간 모든 카드가 함께 바뀐다)
@@ -149,8 +149,7 @@ REFRESH_MVS = (
     # 앞이면 옛 업종 표로 굽는다, 에러 0). 대분류 가운데값 표와는 의존관계가 없고 짝으로 보이게 바로 뒤에 둔다.
     # 아래 report_industry_median_m_freshness() 가 분기를, report_industry_median_m_consistency() 가 모집단 수·값을 잡는다.
     "mv_industry_mix_median_m",
-    # 참고 시세의 반경 이웃 찾기 전용(2026-09-27c) — 빠지면 새 거래 필지가 이웃에서 조용히 빠진다.
-    "mv_tx_parcel_geog",
+    # ⓘ 참고 시세의 반경 이웃 찾기 전용 mv_tx_parcel_geog(2026-09-27c)는 결정 0041(2026-10-18a)로 사다리와 함께 지웠다.
 )
 SEARCH_MV = REFRESH_MVS[0]
 
@@ -1121,59 +1120,6 @@ def report_store_names_freshness():
     return names_ym, loaded_ym, stale
 
 
-# ── 참고 시세 이웃 요약표 신선도 (2026-09-27 P7 — 사장님 결재) ─────────────────
-#
-# mv_tx_parcel_geog(2026-09-27c)는 "좌표 있고 거래가 한 건이라도 있는 필지"만 담는다.
-# 실거래를 새로 넣고 갱신을 잊으면 **새로 거래가 생긴 필지가 참고 시세 이웃에서 조용히
-# 빠진다**(에러 0). 표의 pnu 집합 == 정의 조건의 pnu 집합(양쪽 차집합이 0)으로 잡는다
-# (2026-10-03 — 행수만 보면 지워진 필지와 새 필지가 같은 수일 때 [신선]이었다).
-# ⛔ 아래 조건은 schema.sql 의 뷰 정의(where 절)와 **글자 그대로 같은 뜻**이어야 한다.
-#    정의를 바꾸면 여기도 바꾼다(tests/test_post_load_check_alarms.py 가 두 곳을 맞대 본다).
-TX_GEOG_MV = "mv_tx_parcel_geog"
-TX_GEOG_CONDITION = (
-    "p.geom is not null and exists (select 1 from transaction t where t.pnu = p.pnu)"
-)
-
-
-def build_tx_geog_freshness_sql():
-    """한 번의 조회로 네 수를 뽑는다: 표 행수 | 있어야 할 행수 | 표에만 있는 pnu | 표에 빠진 pnu.
-
-    ⛔ 행수만 보면 지워진 필지와 새 필지가 같은 수일 때 [신선]이다 — 그래서 pnu 집합을 양쪽으로
-       뺀다(4천 행끼리라 싸다). '있어야 할 필지'는 CTE 한 번으로 구해 양쪽 차집합이 같이 쓴다.
-    ⚠️ 못 보는 것: pnu 집합만 본다 — 필지 도형(geom)이 바뀌었는데 표의 geog 가 옛것인 경우는 [신선]이다.
-    """
-    return (
-        "with want as (select p.pnu from parcel p where {cond}) "
-        "select (select count(*) from {mv})::text || '|' || "
-        "(select count(*) from want)::text || '|' || "
-        "(select count(*) from {mv} m where not exists "
-        "(select 1 from want w where w.pnu = m.pnu))::text || '|' || "
-        "(select count(*) from want w where not exists "
-        "(select 1 from {mv} m where m.pnu = w.pnu))::text;"
-    ).format(mv=TX_GEOG_MV, cond=TX_GEOG_CONDITION)
-
-
-def report_tx_geog_freshness():
-    """참고 시세 이웃 요약표를 재서 (표행수, 있어야할행수, 낡음여부) 를 돌려준다.
-
-    낡음 = 표에만 있는 pnu 가 있거나 표에 빠진 pnu 가 있다(행수가 같아도) — 종료 코드도
-    형제들처럼 낡음이면 1. 답이 네 칸이 아니거나 숫자가 아니면 예외로 시끄럽게 죽는다.
-    """
-    mv_rows, expected, only_mv, missing = query_one(build_tx_geog_freshness_sql()).split("|")
-    # 네 칸을 **먼저 전부** 숫자로 — 판정이 앞에서 끝나도 뒤 칸이 글자면 죽어야 설명이 참이다.
-    n_rows, n_expected, n_only, n_missing = (int(v) for v in (mv_rows, expected, only_mv, missing))
-    stale = n_only > 0 or n_missing > 0 or is_stale(n_rows, n_expected)
-    if stale:
-        print("[낡음] 참고 시세 이웃 요약표 {}행 / 있어야 할 행수 {}행 · 표에만 있는 필지 {}곳 · "
-              "표에 빠진 필지 {}곳 — 갱신이 필요합니다.".format(mv_rows, expected, only_mv, missing))
-        print("       이대로 두면 새로 거래가 생긴 필지가 참고 시세 이웃에서 빠집니다(에러는 안 납니다).")
-        print("       python scripts/post_load.py 를 실행하면 다시 굽습니다.")
-    else:
-        print("[신선] 참고 시세 이웃 요약표 {}행 = 좌표·거래 있는 필지 수 · 표에만 있는 필지 0곳 · "
-              "표에 빠진 필지 0곳.".format(mv_rows))
-    return mv_rows, expected, stale
-
-
 # ── 공개키(anon)가 읽어도 되는 것 ──────────────────────────────────────────
 # 화면이 실제로 읽는 것만 적는다. 이 목록에 없는 것이 열려 있으면 사고다.
 #
@@ -1205,9 +1151,7 @@ ANON_CALLABLE_ALLOWLIST = (
     # Stage A 실거래 표시(결정 0012). 물질화뷰 mv_sigungu_tx_stats 는 **여기 없다** —
     # 화면은 함수로만 읽고, 표 자체가 열리면 그건 사고다.
     "api.list_parcel_transactions", "api.get_sigungu_tx_stats",
-    # Stage B 참고 시세 밴드(결정 0013). 게이트 표 price_gate_sigungu 와 층대 도우미
-    # price_floor_band 는 **여기 없다** — 화면은 이 함수 하나로만 읽는다.
-    "api.list_price_bands",
+    # ⓘ Stage B 참고 시세 밴드(api.list_price_bands)는 결정 0041(2026-10-18a)로 지웠다 — 허용 목록에서도 뺐다.
     # 둘레의 업종 분포(결정 0014). 사전계산표 mv_district_industry_mix 는 **여기 없다** —
     # 그 표가 열리면 상호명은 안 나가더라도 상권별 점포 구성이 통째로 긁힌다.
     "api.list_industry_mix", "api.list_industry_detail",
@@ -1251,10 +1195,7 @@ ANON_CALLABLE_ALLOWLIST = (
     #   ⓘ 같은 이름의 public 쪽 함수는 이 목록에 없다 — 스키마까지 보므로 api 쪽만 열려
     #      있어도 정확히 그것만 통과한다(예전 이름 기준 판정의 구멍이 여기서 막힌다).
     "api.list_district_buildings", "api.list_parcel_buildings",
-    # 성적표 공개(2026-09-05e · 로드맵 Wave 4). 표 price_gate_sigungu 는 **여기 없다** —
-    # 화면은 이 함수 하나로만 읽는다. 나가는 것은 **구별 요약 한 줄씩**(짝지은 거래 수와
-    # 두 방법의 오차 중앙값)이고, 검증 거래 하나하나(필지·층·단가)는 그 표에 아예 없다.
-    "api.list_price_gate",
+    # ⓘ 성적표 공개(api.list_price_gate · 2026-09-05e)는 결정 0041(2026-10-18a)로 표 price_gate_sigungu 와 함께 지웠다.
     # 이 자료는 언제 것인가(2026-09-05d). 나가는 것은 열 갈래 자료의 **max() 도장뿐**이라
     # 원본 행은 한 줄도 안 나간다. ⛔ api_quota_log 는 쳐다보지도 않는다(호출 장부이지
     # 자료의 나이가 아니고, 하한선일 뿐이라 신선도 근거로 쓰면 틀린 날짜를 자신 있게 적는다).
@@ -1293,7 +1234,8 @@ ANON_CALLABLE_ALLOWLIST = (
 # ✅ **닫힘 이력** — 2026-09-01 감사가 찾은 잔존 노출 9개는 마이그레이션
 #    **2026-09-05a** 로 닫혔다(get_sigungu_tx_stats·list_building_districts·
 #    list_industry_detail·list_industry_mix·list_open_sigungu·list_parcel_transactions·
-#    list_price_bands·search_buildings·search_scope 의 **public** 원본).
+#    list_price_bands·search_buildings·search_scope 의 **public** 원본 · 그중 list_price_bands 는 결정 0041
+#    (2026-10-18a)로 함수째 지웠다).
 # ⓘ **왜 열려 있었나** — PostgreSQL 은 새 함수에 PUBLIC EXECUTE 를 기본으로 준다
 #    (공식 문서 §5.8 표 5.2). 그 기본값을 막는 전역 한 줄은 2026-09-01b 에서야 들어갔고,
 #    기본권한은 "앞으로"에만 걸려서 그보다 먼저 태어난 아홉은 손으로 닫을 수밖에 없었다.
@@ -2246,6 +2188,47 @@ def report_toast_evictions():
     return found
 
 
+# ── 실거래 용도 이름 — 묶음표가 모르는 글자 (2026-10-18a · 결정 0040) ─────────
+# 구 층대 단가·동네 흐름 요약표는 `price_use_group_nm(transaction.main_use) = 'shop'` 으로 상가만 센다(참고 시세는 결정 0041 로
+# 내렸다). 모르는 글자는
+# **조용히 other(기타)** 가 되고(빈 글자는 어느 묶음에도 안 든다) 에러가 안 난다 — 국토부가 이름을 바꾸거나
+# 새 용도를 보내면 그 거래가 소리 없이 다른 묶음으로 샌다. 그래서 7종 밖인 행 수를 센다(0 이 기대).
+# ⓘ [주의]까지만 — 종료 코드에 안 넣는다(고장이 아니라 묶음표를 손볼 신호다).
+# ⚠️ 한글 글자를 SQL 에 그대로 넣지 않는다 — query_one 은 `psql -c` 라 Windows 콘솔 코드페이지로
+#    인코딩돼 깨진다(2026-08-11 실측). UTF-8 바이트를 16진수로 넣어 SQL 을 ASCII 로만 만든다.
+TX_MAIN_USE_KNOWN = ("제1종근린생활", "제2종근린생활", "판매", "업무", "숙박", "교육연구", "기타")
+
+
+def build_tx_main_use_unknown_sql(known=TX_MAIN_USE_KNOWN):
+    """7종 밖(빈 값 포함) 실거래 행 수 하나를 돌려주는 SQL(ASCII 만)."""
+    names = ", ".join("convert_from(decode('{}', 'hex'), 'UTF8')".format(k.encode("utf-8").hex())
+                      for k in known)
+    return ("select count(*) from transaction "
+            "where nullif(main_use, '') is null or main_use not in ({});".format(names))
+
+
+def judge_tx_main_use_unknown(raw):
+    """psql 답(숫자 한 줄) → 행 수. 숫자가 아니면 예외(조용히 0 으로 읽지 않는다)."""
+    return int(str(raw).strip())
+
+
+def report_tx_main_use_unknown():
+    """[주의]/[정상] 한 줄을 찍고 행 수를 돌려준다. 조회가 실패해도 --check 를 죽이지 않는다."""
+    try:
+        n = judge_tx_main_use_unknown(query_one(build_tx_main_use_unknown_sql()))
+    except Exception as exc:
+        print("[주의] 실거래 용도 이름 점검을 하지 못했습니다: {}".format(_psql_failure_reason(exc)))
+        return None
+    if n:
+        print("[주의] 실거래 용도 이름이 알려진 7종({}) 밖인 행 {:,}개 — 구 층대 단가·동네 흐름 요약표(상가만)에서"
+              " 빠집니다.".format("·".join(TX_MAIN_USE_KNOWN), n))
+        print("       고치는 법: 새 이름을 확인하고 price_use_group_nm(schema.sql)만 고친다"
+              "(결정 0040 · 새 마이그레이션 · 묶음표는 그 함수 한 곳).")
+    else:
+        print("[정상] 실거래 용도 이름: 전부 알려진 7종 안 — 묶음표가 모르는 글자 0.")
+    return n
+
+
 def parse_args(argv):
     opts = {"check": False}
     for a in argv:
@@ -2290,7 +2273,6 @@ def main(argv=None):
         # 업종 중분류 가운데값 표(2026-10-13a · 물결 2-3b) — 분기 + 모집단 수·값 다시 세기. 어느 것이든 [낡음]이면 exit 1.
         _, _, median_m_stale = report_industry_median_m_freshness()
         _, median_m_mismatch = report_industry_median_m_consistency()
-        _, _, geog_stale = report_tx_geog_freshness()
         _, exposed = report_anon_exposure()
         # 읽기와 쓰기는 따로 묻는다 — 허용 목록에 있는 이름이라도 쓰기가 붙어 있으면 사고다.
         writable = report_write_exposure()
@@ -2298,6 +2280,8 @@ def main(argv=None):
         report_slow_functions()
         # 별관 쫓겨남(2026-10-05)도 [주의]까지만 — 종료 코드에 안 넣는다.
         report_toast_evictions()
+        # 실거래 용도 이름 7종 밖(2026-10-18a · 결정 0040)도 [주의]까지만 — 종료 코드에 안 넣는다.
+        report_tx_main_use_unknown()
         bad_index = report_canonical_indexes()
         drifted = report_function_drift()
         # 분기 표지(2026-10-07a · 결정 0035) — 비었거나 보여 주는 분기가 0행이면 [사고],
@@ -2307,7 +2291,7 @@ def main(argv=None):
         ledger_fatal = report_ledger_release()
         return 1 if (stale or map_stale or tx_stale or cov_stale or mix_stale or names_stale
                      or floor_stale or floor_mismatch or median_stale or median_mismatch
-                     or median_m_stale or median_m_mismatch or geog_stale or exposed or writable or bad_index or drifted
+                     or median_m_stale or median_m_mismatch or exposed or writable or bad_index or drifted
                      or rel_fatal or rel_stale or ledger_fatal) else 0
 
     # ① 표지부터 읽는다(2026-10-07) — 비었거나 보여 주는 분기가 0행이면 굽기 전에 멈춘다.
@@ -2321,7 +2305,7 @@ def main(argv=None):
         print("[실패] VACUUM ANALYZE 가 실패했습니다.")
         return rc
 
-    # ② 분기와 무관한 요약표 다섯 — 지금처럼 문장마다 자동커밋.
+    # ② 분기와 무관한 요약표 넷 — 지금처럼 문장마다 자동커밋.
     print("검색 요약표를 갱신합니다 (분기와 무관한 {}개)…".format(len(NON_QUARTER_MVS)))
     rc = dbx.run_sql("set statement_timeout = '600s';\n" + build_refresh_sql(NON_QUARTER_MVS), quiet=True)
     if rc != 0:
@@ -2335,9 +2319,7 @@ def main(argv=None):
     _, map_stale = report_map_freshness()
     # 방금 갱신했으니 창도 오늘 기준이어야 한다 — 했다고 믿지 않고 다시 잰다.
     _, _, tx_stale = report_tx_window_freshness()
-    # 참고 시세 이웃 요약표도 방금 다시 구웠다 — 다시 잰다(2026-10-03).
-    _, _, geog_stale = report_tx_geog_freshness()
-    if stale or map_stale or tx_stale or geog_stale:
+    if stale or map_stale or tx_stale:
         print("       분기 요약표 여섯(가게 이름·각주·업종·층·가운데값·중분류 가운데값)과 표지는 이번에 안 건드렸습니다 — "
               "위 [낡음]을 고친 뒤 python scripts/post_load.py 를 다시 돌리세요.")
         return 1

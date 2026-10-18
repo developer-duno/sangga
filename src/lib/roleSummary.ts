@@ -1,4 +1,5 @@
 import type {
+  BasePrice,
   BuildingHit,
   CoverageStats,
   DistrictOpenClose,
@@ -7,13 +8,14 @@ import type {
   IndustryMix,
   ParcelLandPrice,
   ParcelTransaction,
-  PriceBand,
   RentStat,
+  SigunguTxStat,
 } from '../types';
 import type { ViewerRole } from './sectionCards';
 import { chipMatch, type FounderChip } from './founderChips';
-import { BAND_GATE_TEXT, BAND_NO_VALUE_TEXT, bandText, groupBands, type BandGroup } from './priceBand';
-import { TX_LIST_CAP, TX_OPEN_SINCE_LABEL } from './appConstants';
+import { pairBasePrices, type BasePriceRow } from './basePrice';
+import { TX_STAT_BADGE, baseSub, txBandOf } from './floorGap';
+import { TX_LIST_CAP, TX_MIN_SAMPLE, TX_OPEN_SINCE_LABEL } from './appConstants';
 import { LAND_PRICE_BADGE, LAND_PRICE_NOTE, formatLandPriceAmount } from './landPrice';
 import { defaultBldType, rentSummary, toRentRows } from './rentStats';
 import {
@@ -45,8 +47,8 @@ import { buildingFromFloorRows } from './restoreBuilding';
  * 역할 요약 판(결정 0039 Q2 · §4-2 · §4-9 · W2) — 건물 화면 맨 위, 고른 역할의 첫 질문에 답하는 숫자 타일 3~4개 + 한 줄 답.
  *
  * 이 파일은 **고르기만** 한다(입력 = 층별 화면의 카드 상태 + 미리 보낸 곁 카드 답 · 출력 = 타일 목록 + 한 줄 답). 그리기는 `RoleSummary`.
- * ⛔ **숫자는 전부 카드 값의 복사** — 새 계산·추정 0. 글은 카드와 **같은 함수**(bandText·toRentRows·countRateText·toBars·
- *    medianViewOf·describeOwnership·describeHoCnt·landPrice…)에서 온다. 여기서 숫자를 더하거나 나누지 않는다.
+ * ⛔ **숫자는 전부 카드 값의 복사** — 새 계산·추정 0. 글은 카드와 **같은 함수**(pairBasePrices·baseSub·txBandOf·toRentRows·
+ *    countRateText·toBars·medianViewOf·describeOwnership·describeHoCnt·landPrice…)에서 온다. 여기서 숫자를 더하거나 나누지 않는다.
  * ⛔ 카드가 따로 부르는 값(중분류 비중·중분류 가운데값 등)은 쓰지 않는다 — 입력에 그 자리가 없다(추가 서버 호출 0).
  * ⛔ **한 줄 답은 사실 문장만** — 많다·적다·되겠다·좋다 같은 판단 낱말 0(결정 0036 ㉕ · 시험이 낱말 목록으로 훑는다).
  * ⛔ **시세와 임대를 한 줄에 잇지 않는다** — 임대 타일에는 시세 숫자, 시세 타일에는 임대 숫자가 없고, 한 줄 답에는 임대가 없다
@@ -63,7 +65,8 @@ export const ROLE_QUESTIONS: Readonly<Record<ViewerRole, string>> = {
 };
 
 export type TileKey =
-  | 'band'
+  | 'base'
+  | 'txstat'
   | 'tx'
   | 'rent'
   | 'land'
@@ -108,8 +111,10 @@ export type RoleSummaryInput = {
   floors: FloorRow[];
   stats: CoverageStats | null;
   txs: ParcelTransaction[] | null;
-  bands: PriceBand[] | null;
-  bandsFailed: boolean;
+  /** 구 층대 단가(층별 화면이 이미 받은 `get_sigungu_tx_stats` — 추가 호출 0). null = 실패·아직. */
+  txStats: SigunguTxStat[] | null;
+  /** 국세청 기준시가(층별 화면이 이미 받은 `list_base_prices` — 추가 호출 0). null = 실패·아직. */
+  basePrices: BasePrice[] | null;
   landPrice: ParcelLandPrice | null;
   /** 좌표 없는 건물(`lacksCoord`) — 임대 카드의 빈 답 글이 갈린다. */
   noCoord: boolean;
@@ -159,49 +164,66 @@ function txCountText(n: number): string {
   return `이 땅 거래 ${n.toLocaleString('ko-KR')}건${txCapTail(n)}`;
 }
 
-// ── 참고 시세 ──────────────────────────────────────────────────────────────
+// ── 공표 단가(국세청 기준시가 → 없으면 구 상가 단가 · 결정 0041 E3) ─────────────────
 
-type BandPick =
-  | { kind: 'gate' }
-  | { kind: 'noValue' }
-  | { kind: 'group'; group: BandGroup };
+/** 지상층(1층 포함 · 옥탑 제외)인가 — 메인 ㉠ 「땅에 가장 가까운 지상층」의 후보. */
+const isAbove = (no: number) => no >= 1 && no !== 99;
 
 /**
- * 시세 띠에서 보일 줄 — 값을 낸 줄 가운데 **땅에 가장 가까운 지상층 묶음 하나**(메인 ㉠ · 대개 2층 — 1층은 원래 안 낸다).
- * 지상 묶음이 없으면 값을 낸 줄 가운데 땅에 가장 가까운 것. null = 카드도 안 서는 상태(실패·아직·빈 답).
+ * 기준시가가 있는 **지상층 가운데 땅에 가장 가까운 층** 하나(메인 ㉠ · 1층 포함). 짝짓기는 세 잣대 카드와 같은
+ * `pairBasePrices`(이 건물 층만 · 0 이하·호 수 없는 줄은 버림). 없으면 null.
  */
-function pickBand(input: RoleSummaryInput): BandPick | null {
-  const { bands, bandsFailed, floors } = input;
-  if (bandsFailed || bands === null || bands.length === 0) return null;
-  if (bands.some((b) => b.status === 'gate_fail')) return { kind: 'gate' };
-  const { listed, silent } = groupBands(bands, floors);
-  if (listed.length === 0 && silent.length === 0) return null;
-  const ok = listed.filter((g) => g.band.status === 'ok');
-  if (ok.length === 0) return { kind: 'noValue' };
-  const dist = (no: number) => (no >= 1 && no !== 99 ? no : 1000 + Math.abs(no));
-  const near = (g: BandGroup) => Math.min(...g.floors.map((f) => dist(f.floor_no)));
-  const best = ok.reduce((a, b) => (near(b) < near(a) ? b : a));
-  return { kind: 'group', group: best };
+function pickBase(input: RoleSummaryInput): BasePriceRow | null {
+  const rows = pairBasePrices(input.basePrices, input.floors).filter((r) => r.base.floor_no !== null && isAbove(r.base.floor_no));
+  if (rows.length === 0) return null;
+  return rows.reduce((a, b) => (b.base.floor_no! < a.base.floor_no! ? b : a));
 }
 
-function bandTile(input: RoleSummaryInput): SummaryTile | null {
-  const pick = pickBand(input);
+function basePriceTile(input: RoleSummaryInput): SummaryTile | null {
+  const pick = pickBase(input);
   if (pick === null) return null;
-  if (pick.kind === 'gate') {
-    return { key: 'band', label: '참고 시세', lines: [BAND_GATE_TEXT], basis: [], grade: null };
-  }
-  if (pick.kind === 'noValue') {
-    return { key: 'band', label: '참고 시세', lines: [BAND_NO_VALUE_TEXT], basis: [], grade: null };
-  }
-  const t = bandText(pick.group);
-  const label = `참고 시세 (${pick.group.label})`;
-  if (t.kind === 'none') return { key: 'band', label, lines: [t.text], basis: [], grade: null };
   return {
-    key: 'band',
-    label,
-    lines: [t.val],
-    basis: [t.sub],
-    grade: { text: 'C등급 · 파생 추정', est: true },
+    key: 'base',
+    label: `국세청 기준시가 (${pick.label})`,
+    lines: [`㎡당 ${formatManWon(pick.base.median_price_per_m2)}`],
+    basis: [`${baseSub(pick.base)} · 세무 기준가격 — 시세 아님`],
+    grade: { text: 'A등급 · 공식 고시', est: false },
+  };
+}
+
+type TxStatPick = { label: string; stat: SigunguTxStat; enough: boolean };
+
+/**
+ * 구 상가 단가 — 기준시가가 없을 때만(결정 0041 E3). 층 = 이 건물의 **땅에 가장 가까운 지상층**(메인 ㉠ — 기준시가 쪽과 같은 규칙)의
+ * 층대(`txBandOf` — 세 잣대 카드와 같은 함수). 그 층대 줄이 없거나 구 단가를 못 받았으면 null.
+ */
+function pickTxStat(input: RoleSummaryInput): TxStatPick | null {
+  const { txStats, floors } = input;
+  if (txStats === null || txStats.length === 0) return null;
+  const above = floors.filter((f) => isAbove(f.floor_no));
+  if (above.length === 0) return null;
+  const f = above.reduce((a, b) => (b.floor_no < a.floor_no ? b : a));
+  const band = txBandOf(f.floor_no);
+  const stat = band === null ? undefined : txStats.find((s) => s.floor_band === band);
+  if (stat === undefined) return null;
+  return {
+    label: formatFloor(f.floor_no, f.floor_label),
+    stat,
+    enough: stat.n >= TX_MIN_SAMPLE && stat.median_unit_price !== null,
+  };
+}
+
+function txStatsTile(input: RoleSummaryInput): SummaryTile | null {
+  const pick = pickTxStat(input);
+  if (pick === null) return null;
+  const { stat } = pick;
+  const where = [stat.sigungu_nm, stat.floor_band].filter((x): x is string => !!x).join(' ');
+  return {
+    key: 'txstat',
+    label: `구 상가 단가 (${pick.label})`,
+    lines: [pick.enough ? `㎡당 ${formatManWon(stat.median_unit_price)}` : '표본 부족'],
+    basis: [`${where} · 표본 ${stat.n.toLocaleString('ko-KR')}건 · 상가 거래 기준`],
+    grade: { text: TX_STAT_BADGE, est: false },
   };
 }
 
@@ -440,16 +462,28 @@ function hoTile(input: RoleSummaryInput): SummaryTile | null {
 
 // ── 한 줄 답(사실 문장만) ────────────────────────────────────────────────────
 
+/**
+ * 투자자 한 줄 답(메인 ㉡) — 「이 땅 신고 거래는 N건입니다.」 + 「N층 국세청 기준시가(호 N개 가운데값)는 ㎡당 X(세무 기준가격)입니다.」
+ * (기준시가가 없으면 구 상가 단가 문장 · 표본 부족이면 단가 문장 없음). 타일과 **같은 고르기 함수**를 지난다.
+ */
 function investorAnswer(input: RoleSummaryInput): string | null {
   const parts: string[] = [];
-  const pick = pickBand(input);
-  if (pick?.kind === 'gate') parts.push('이 구는 아직 참고 시세를 내지 않습니다.');
-  if (pick?.kind === 'group') {
-    const t = bandText(pick.group);
-    if (t.kind === 'value') parts.push(`${pick.group.label} 참고 시세는 ${t.val}입니다.`);
-  }
   if (input.txs !== null) {
     parts.push(`이 땅 신고 거래는 ${input.txs.length.toLocaleString('ko-KR')}건${txCapTail(input.txs.length)}입니다.`);
+  }
+  const base = pickBase(input);
+  if (base !== null) {
+    // 「호 N개 가운데값」 — 구 단가 문장의 '가운데값'과 같은 결(몇 개를 세운 값인지 · 보완 1차 B10).
+    const ho = base.base.ho_cnt.toLocaleString('ko-KR');
+    parts.push(
+      `${base.label} 국세청 기준시가(호 ${ho}개 가운데값)는 ㎡당 ${formatManWon(base.base.median_price_per_m2)}(세무 기준가격)입니다.`,
+    );
+  } else {
+    const t = pickTxStat(input);
+    if (t !== null && t.enough) {
+      const gu = t.stat.sigungu_nm ? `${t.stat.sigungu_nm} ` : '';
+      parts.push(`${gu}${t.stat.floor_band} 상가 거래 단가 가운데값은 ㎡당 ${formatManWon(t.stat.median_unit_price)}입니다.`);
+    }
   }
   return parts.length > 0 ? parts.join(' ') : null;
 }
@@ -496,7 +530,8 @@ export function roleSummaryView(input: RoleSummaryInput): RoleSummaryView | null
     return {
       role,
       question: ROLE_QUESTIONS[role],
-      tiles: keep([bandTile(input), txTile(input), rentTile(input), landTile(input)]),
+      // 첫 타일 = 국세청 기준시가, 없으면 구 상가 단가(결정 0041 E3) · 둘 다 없으면 타일 셋.
+      tiles: keep([basePriceTile(input) ?? txStatsTile(input), txTile(input), rentTile(input), landTile(input)]),
       answer: investorAnswer(input),
     };
   }
