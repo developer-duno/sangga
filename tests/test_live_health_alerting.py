@@ -45,11 +45,15 @@ WORKFLOW = os.path.join(ROOT, ".github", "workflows", "live-health-watch.yml")
 DOWN_BODY = os.path.join(ROOT, ".github", "live-health-failure-issue.md")
 LEAK_BODY = os.path.join(ROOT, ".github", "live-health-leak-issue.md")
 BROKEN_BODY = os.path.join(ROOT, ".github", "live-health-broken-issue.md")
+HUB_BODY = os.path.join(ROOT, ".github", "live-health-hub-issue.md")
 
 # 제목은 **글자 그대로** 여기 적는다 — 워크플로에서 읽어 오면 둘이 함께 틀려도 초록이다.
 LEAK_TITLE = "🔴 배포된 화면에 관리자 키가 실렸습니다 — 즉시 회전이 필요합니다"
 DOWN_TITLE = "라이브 사이트가 정상이 아닙니다 — 확인이 필요합니다"
 BROKEN_TITLE = "라이브 감시가 확인을 끝내지 못했습니다 — 사이트 상태는 아직 모릅니다"
+# 구 입구 허브만 깨진 날(결정 0043 · 2026-10-18 재검사 🟠) — 사람 화면은 멀쩡할 수 있다.
+HUB_TITLE = "구 입구 허브 첫 HTML 이 허브가 아닙니다 — 검색 쪽 건물 링크가 빠졌습니다"
+ALL_TITLES = (LEAK_TITLE, DOWN_TITLE, BROKEN_TITLE, HUB_TITLE)
 # '감시 고장' 대본이 '사이트 다운' 대본의 닫으라는 말을 **부정하며 인용**하는 자리의 글자.
 DOWN_CLOSE_QUOTE = "'멀쩡히 뜨면 닫으세요'는"
 
@@ -105,6 +109,48 @@ class TestFailuresCarryAKind:
         assert "kind" in out.read_text(encoding="utf-8")
         assert "leak" in out.read_text(encoding="utf-8")
 
+    @staticmethod
+    def _fetch(chk, home_ok=True, hub_body=None, hub_fails=False):
+        """가짜 fetch_with_retry — 받기 실패는 진짜처럼 그 모듈의 CheckFailed(기본 kind down)로 던진다."""
+        html = '<html><div id="root"></div><script src="/assets/app.js"></script></html>'
+
+        def fake_fetch(url, what, attempts=5, sleep=None):
+            if url.endswith("/"):
+                if not home_ok:
+                    raise chk.CheckFailed("{}을(를) 못 받았습니다: HTTP 503".format(what))
+                return html.encode()
+            if url.endswith(".js"):
+                return b"z" * 4096
+            if "/?sgg=" in url:
+                if hub_fails:
+                    raise chk.CheckFailed("{}을(를) 못 받았습니다: HTTP 503".format(what))
+                return (hub_body or "<html>첫 화면</html>").encode()
+            return b'{"type":"FeatureCollection"}'
+
+        return fake_fetch
+
+    @pytest.mark.parametrize("hub_fails", [False, True], ids=["h1 아님", "받기 실패"])
+    def test_a_hub_only_failure_is_a_hub(self, chk, monkeypatch, hub_fails):
+        """⛔ 허브만 깨진 날을 down 으로 내면 '멀쩡히 뜨면 닫으세요' 대본이 진짜 결함을 닫게 한다(재검사 🟠)."""
+        monkeypatch.setattr(chk, "fetch_with_retry", self._fetch(chk, hub_fails=hub_fails))
+        with pytest.raises(chk.CheckFailed) as ex:
+            chk.check("https://example.test")
+        assert ex.value.kind == "hub"
+        assert "구 입구 허브" in str(ex.value)
+
+    def test_a_home_failure_wins_over_a_hub_failure(self, chk, monkeypatch):
+        """첫 화면이 죽은 날은 허브도 깨져 있지만 down 이 먼저다(앞 단계 실패가 이긴다)."""
+        monkeypatch.setattr(chk, "fetch_with_retry", self._fetch(chk, home_ok=False, hub_fails=True))
+        with pytest.raises(chk.CheckFailed) as ex:
+            chk.check("https://example.test")
+        assert ex.value.kind == "down"
+
+    def test_control_a_good_hub_is_not_a_failure(self, chk, monkeypatch):
+        """양성 대조 — 같은 가짜 응답에 허브 h1 만 맞게 주면 실패가 아니다."""
+        hub = '<h1 class="seo-title">서울 강남구 ' + chk.HUB_H1_SUFFIX + "</h1>"
+        monkeypatch.setattr(chk, "fetch_with_retry", self._fetch(chk, hub_body=hub))
+        assert len(chk.check("https://example.test")) == chk.CHECKED_URLS
+
 
 @pytest.fixture(scope="module")
 def wf():
@@ -141,6 +187,43 @@ class TestTheWorkflowSplitsTitleAndScript:
         assert "KIND:-down" not in wf, "빈 kind 를 down 으로 치는 옛 꼴이 되살아났다."
         assert ".github/live-health-broken-issue.md" in wf
         assert BROKEN_TITLE in wf
+
+    def test_it_branches_to_the_hub_script(self, wf):
+        """허브만 깨진 날(결정 0043)은 전용 제목·전용 대본 — 대본 파일이 실제로 있다."""
+        assert 'elif [ "${KIND:-}" = "hub" ]; then' in wf
+        assert HUB_TITLE in wf
+        assert ".github/live-health-hub-issue.md" in wf
+        assert os.path.isfile(HUB_BODY)
+
+
+class TestTheHubScript:
+    """허브 대본 — 사람 화면이 멀쩡해도 닫지 말라 · 확인 명령 · 닫는 조건은 h1 끝 글자."""
+
+    def test_it_says_not_to_close_because_the_page_loads(self):
+        body = read(HUB_BODY)
+        assert "이 이슈를 닫으세요" not in body
+        assert "닫지 마세요" in read(HUB_BODY).splitlines()[0]
+        assert "사이트가 열린다는 것은 닫아도 되는 이유가 아닙니다" in body
+
+    def test_it_gives_the_check_command_and_the_close_condition(self, chk):
+        body = read(HUB_BODY)
+        assert '"https://sangga-one.vercel.app/?sgg=' + chk.HUB_CHECK_SGG + '"' in body
+        assert "<h1 class=\"seo-title\">[^<]*" in body
+        section = body[body.index("## 이 이슈를 닫아도 될 때"):]
+        assert "「" + chk.HUB_H1_SUFFIX + "」로 끝날 때" in section
+        assert "닫아야 다음 고장을 다시 알립니다" in body
+
+    def test_it_names_the_usual_causes(self):
+        body = read(HUB_BODY)
+        for words in ("public/hub", "hubRewriteTarget", "api/hub.ts", "middleware.ts"):
+            assert words in body
+
+    def test_the_down_script_points_hub_failures_elsewhere(self):
+        """'사이트 다운' 대본의 「셋을 봅니다」 표에는 허브 줄이 없고, 따로 간다는 한 줄만 있다."""
+        down = read(DOWN_BODY)
+        assert HUB_TITLE.split(" — ")[0] in down
+        table = down[down.index("| 걸린 곳 |"):down.index("## 되돌리기")]
+        assert "허브" not in table
 
 
 class TestTheLeakScriptSaysTheOppositeOfTheDownScript:
@@ -320,8 +403,11 @@ BRANCHES = [
     ("leakage", BROKEN_TITLE, BROKEN_BODY),
     ("LEAK", BROKEN_TITLE, BROKEN_BODY),
     ("down\n", BROKEN_TITLE, BROKEN_BODY),
+    ("hub", HUB_TITLE, HUB_BODY),
+    ("HUB", BROKEN_TITLE, BROKEN_BODY),
+    ("hubs", BROKEN_TITLE, BROKEN_BODY),
 ]
-BRANCH_IDS = ["leak", "down", "빈값", "모르는값", "leakage", "LEAK", "down+줄바꿈"]
+BRANCH_IDS = ["leak", "down", "빈값", "모르는값", "leakage", "LEAK", "down+줄바꿈", "hub", "HUB", "hubs"]
 
 FAKE_GH = """#!/bin/sh
 # 가짜 gh. 진짜 gh 처럼 대상 저장소를 알아야 돈다 — 작업 폴더에 .git 이 있거나 GH_REPO 가 있어야 한다.
@@ -394,7 +480,7 @@ def _run_step(run_text, env_keys, work, kind, reason="", checked_out=True, open_
     if checked_out:
         (work / ".git").mkdir()
         (work / ".github").mkdir()
-        for src in (LEAK_BODY, DOWN_BODY, BROKEN_BODY):
+        for src in (LEAK_BODY, DOWN_BODY, BROKEN_BODY, HUB_BODY):
             shutil.copyfile(src, str(work / ".github" / os.path.basename(src)))
     (work / "open_titles.txt").write_bytes(("\n".join(open_titles) + "\n").encode("utf-8"))
     bin_dir = work / "fakebin"
@@ -484,7 +570,7 @@ class TestTheIssueStepForReal:
     @pytest.mark.parametrize("kind, title, body_path", BRANCHES, ids=BRANCH_IDS)
     def test_the_other_open_titles_do_not_swallow_it(self, step, tmp_path, kind, title, body_path):
         """제목이 갈라진 이유 — 먼저 열린 다른 갈래의 이슈가 이 알림을 삼키면 안 된다."""
-        others = [t for t in (LEAK_TITLE, DOWN_TITLE, BROKEN_TITLE) if t != title]
+        others = [t for t in ALL_TITLES if t != title]
         _check_opens(step["run"], step["env"], tmp_path / "w", kind, title,
                      _first_line(body_path), open_titles=others)
 
@@ -525,10 +611,10 @@ class TestTheIssueStepForReal:
         assert "--state open" in step["run"]
         assert step["run"].count("--state") == 1
 
-    def test_the_three_titles_are_each_set_once_and_differ(self, step):
+    def test_the_four_titles_are_each_set_once_and_differ(self, step):
         titles = re.findall(r'^\s*TITLE="([^"]+)"$', step["run"], re.M)
-        assert sorted(titles) == sorted([LEAK_TITLE, DOWN_TITLE, BROKEN_TITLE])
-        assert len({LEAK_TITLE, DOWN_TITLE, BROKEN_TITLE}) == 3
+        assert sorted(titles) == sorted(ALL_TITLES)
+        assert len(set(ALL_TITLES)) == 4
 
 
 def _mutate(run_text, old, new):
@@ -558,6 +644,18 @@ class TestTheChecksAboveActuallyCatchABrokenStep:
         with pytest.raises(AssertionError):
             _check_opens(broken, step["env"], tmp_path / "w", "", BROKEN_TITLE,
                          _first_line(BROKEN_BODY))
+
+    def test_a_missing_hub_branch_is_caught(self, step, tmp_path):
+        """허브 갈래를 지우면 kind=hub 가 '감시 고장'으로 빠진다 — 허브 제목 대조가 잡는다."""
+        broken = _mutate(step["run"], 'elif [ "${KIND:-}" = "hub" ]; then', 'elif false; then')
+        with pytest.raises(AssertionError):
+            _check_opens(broken, step["env"], tmp_path / "w", "hub", HUB_TITLE, _first_line(HUB_BODY))
+
+    def test_a_hub_branch_borrowing_the_down_script_is_caught(self, step, tmp_path):
+        broken = _mutate(step["run"], 'BODY_FILE=".github/live-health-hub-issue.md"',
+                         'BODY_FILE=".github/live-health-failure-issue.md"')
+        with pytest.raises(AssertionError):
+            _check_opens(broken, step["env"], tmp_path / "w", "hub", HUB_TITLE, _first_line(HUB_BODY))
 
     def test_a_broken_title_borrowing_the_down_script_is_caught(self, step, tmp_path):
         """제목만 새것이고 대본이 '사이트 다운'이면 첫 줄 대조가 잡는다."""

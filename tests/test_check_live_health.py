@@ -745,7 +745,8 @@ def test_hub_without_hub_h1_is_failure(monkeypatch, hub_body):
     with pytest.raises(chk.CheckFailed) as ex:
         chk.check(SITE, sleep=NO_SLEEP)
     assert "구 입구 허브" in str(ex.value)
-    assert ex.value.kind == "down"
+    # 허브만 깨진 날은 전용 종류(2026-10-18 재검사 🟠) — down 이면 '멀쩡히 뜨면 닫으세요' 대본으로 나간다.
+    assert ex.value.kind == "hub"
 
 
 def test_hub_404_is_failure(monkeypatch):
@@ -755,6 +756,19 @@ def test_hub_404_is_failure(monkeypatch):
     with pytest.raises(chk.CheckFailed) as ex:
         chk.check(SITE, sleep=NO_SLEEP)
     assert "구 입구 허브" in str(ex.value)
+    assert ex.value.kind == "hub"
+
+
+def test_home_404_with_hub_broken_is_still_down(monkeypatch):
+    """첫 화면이 죽은 날은 허브도 깨져 있지만 down 이 먼저다(① 이 ④ 보다 앞)."""
+    routes = all_good()
+    del routes["/"]
+    routes[HUB_PATH] = (200, GOOD_HTML.encode("utf-8"))
+    install_fake_fetch(monkeypatch, routes)
+    with pytest.raises(chk.CheckFailed) as ex:
+        chk.check(SITE, sleep=NO_SLEEP)
+    assert ex.value.kind == "down"
+    assert "첫 화면" in str(ex.value)
 
 
 def test_control_hub_h1_passes_and_is_the_fourth_url(monkeypatch):

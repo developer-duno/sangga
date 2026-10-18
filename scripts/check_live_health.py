@@ -61,16 +61,16 @@ DEFAULT_SITE = "https://sangga-one.vercel.app"
 #    ⛔ **최악은 1배가 아니라 URL 수만큼이다** (2026-09-01 적대검증에서 정정).
 #       처음에 "check() 가 첫 실패에서 곧장 예외를 던지니 뒤의 URL 은 안 두드린다 ⇒ 1배"
 #       라고 적었는데 **틀렸다**: 앞 URL 이 **마지막 시도에서 성공**하면 예외가 안 나므로
-#       그대로 다음 URL 로 넘어간다. 즉 "세 URL 이 각각 끝까지 버티다 겨우 성공"이 가장
+#       그대로 다음 URL 로 넘어간다. 즉 "URL 넷이 각각 끝까지 버티다 겨우 성공"이 가장
 #       비싼 경로다. 조기 종료는 **실패했을 때만** 일어난다.
 #         URL 하나 몫 = TIMEOUT_S(30) × RETRY_COUNT(5) + 백오프합(5+10+20+40=75) = 225초
-#         최악 = 225 × CHECKED_URLS(3) = **675초(11.25분)**
+#         최악 = 225 × CHECKED_URLS(4) = **900초(15분)** (2026-10-18 결정 0043 — 구 입구 허브 ④ 를 더해 3 → 4)
 #       → 360분 기본 한도 안에는 여전히 넉넉하다.
-#       ⚠️ **675초는 상한이 아니라 명목값(사실상 하한)이다** (2026-09-01 2차 검증에서 정정).
+#       ⚠️ **900초는 상한이 아니라 명목값(사실상 하한)이다** (2026-09-01 2차 검증에서 정정).
 #          `urlopen(timeout=)` 은 **요청 전체**가 아니라 **소켓 연산 하나**의 제한이라,
 #          서버가 30초 안에 조금씩 계속 흘려보내면 한 번의 시도가 30초를 훌쩍 넘길 수 있다.
-#          그래도 결론은 안 바뀐다 — 360분과 11분 사이의 여유가 워낙 커서, 이 느슨함이
-#          문제가 되려면 응답이 **30배 넘게** 늘어져야 한다. 다만 누가 `timeout-minutes` 를
+#          그래도 결론은 안 바뀐다 — 360분과 15분 사이의 여유가 워낙 커서, 이 느슨함이
+#          문제가 되려면 응답이 **24배 넘게** 늘어져야 한다. 다만 누가 `timeout-minutes` 를
 #          짧게(예: 15분) 박는 날에는 이 명목값만 믿으면 안 된다. 다만 **틀린 공식을 시험에 박아 두면**
 #         누가 `timeout-minutes` 를 짧게 박는 날 시험은 초록인데 job 만 잘린다(이 레포가
 #         가장 두려워하는 조용한 실패). 그래서 TestWorkflowTimeout 이 URL 수까지 곱한다.
@@ -167,6 +167,9 @@ class CheckFailed(Exception):
     kind:
       "down" — 사이트가 안 뜬다·반쪽 배포·파일이 이상하다 (기본값)
       "leak" — 배포된 묶음에 관리자 키로 보이는 값이 실렸다 (사이트는 멀쩡하다)
+      "hub"  — 구 입구 허브(결정 0043 · check() ④)만 깨졌다 (사람 화면은 멀쩡할 수 있다 — 2026-10-18 재검사 🟠:
+               down 으로 내면 '멀쩡히 뜨면 닫으세요' 대본이 진짜 결함을 닫게 하고, 같은 제목이라 진짜 다운 알림을 삼킨다)
+               ⓘ 앞 단계(①~③)가 실패하면 그쪽이 먼저 던져져 down·leak 이 이긴다(④ 는 마지막이다).
     """
 
     def __init__(self, message: str, kind: str = "down"):
@@ -247,7 +250,7 @@ def check(site: str, sleep=time.sleep) -> list[str]:
     ⛔ **최악 대기는 한 번 몫이 아니라 URL 수만큼이다** (2026-09-01 정정). 검사 하나가
        끝내 실패하면 곧장 예외가 올라가 뒤의 URL 을 안 두드리는 것은 맞다 — 그러나
        앞 URL 이 **마지막 시도에서 성공**하면 예외가 안 나므로 그대로 다음으로 넘어간다.
-       즉 조기 종료는 **실패했을 때만** 일어나고, 가장 비싼 경로는 "셋이 각각 끝까지
+       즉 조기 종료는 **실패했을 때만** 일어나고, 가장 비싼 경로는 "넷이 각각 끝까지
        버티다 겨우 성공"이다(위 상수 머리말의 계산 참조).
     """
     passed: list[str] = []
@@ -324,14 +327,20 @@ def check(site: str, sleep=time.sleep) -> list[str]:
 
     # ④ 구 입구 허브(결정 0043) — 사람 화면은 늘 뜨지만, 허브 갈래가 빠지면 첫 HTML 이 첫 화면 것으로 돌아가
     #    검색 쪽 링크가 조용히 사라진다(에러가 아니다). 그래서 h1 끝 글자로 본다.
+    #    ⛔ 실패 종류는 `hub` — 받기 실패(503·404·끊김)도 여기서는 허브 쪽 실패다(첫 화면은 방금 ① 에서 받았다).
     hub_url = f"{site}/?sgg={HUB_CHECK_SGG}"
-    hub = fetch_with_retry(hub_url, "구 입구 허브", sleep=sleep).decode("utf-8", errors="replace")
+    try:
+        hub_raw = fetch_with_retry(hub_url, "구 입구 허브", sleep=sleep)
+    except CheckFailed as ex:
+        raise CheckFailed(str(ex), kind="hub") from ex
+    hub = hub_raw.decode("utf-8", errors="replace")
     h1 = H1_RE.findall(hub)
     if len(h1) != 1 or not h1[0].strip().endswith(HUB_H1_SUFFIX):
         raise CheckFailed(
             f"구 입구 허브가 서 있지 않습니다 — {hub_url} 의 첫 HTML h1 이 「{HUB_H1_SUFFIX}」로 끝나지 않습니다 "
             f"(h1 {len(h1)}개: {_one_line_excerpt(' | '.join(h1))}). 사람 화면은 뜨지만 검색 쪽 건물 링크가 빠진 상태입니다 — "
-            "middleware.ts 의 허브 갈래 · api/hub.ts · public/hub/*.json 배포를 확인하세요."
+            "middleware.ts 의 허브 갈래 · api/hub.ts · public/hub/*.json 배포를 확인하세요.",
+            kind="hub",
         )
     passed.append(f"구 입구 허브 200 · h1 「{_one_line_excerpt(h1[0].strip())}」")
 
