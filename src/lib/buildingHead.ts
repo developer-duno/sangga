@@ -65,6 +65,9 @@ export type ParcelSibling = {
 /** 첫 HTML 내부 링크에 싣는 같은 땅 다른 동의 최대 수(결정 0042 H3). */
 export const MAX_SIBLING_LINKS = 10;
 
+/** `dongSuffix` 의 차례 꼴 「(같은 땅 N동 중 k번째)」로 끝나는가(설명 글 괄호 겹침 막기 · 보완 F12). */
+const ORDINAL_SUFFIX_RE = /\(같은 땅 \d+동 중 \d+번째\)$/;
+
 export type FloorFact = {
   floorNo: number | null;
   label: string;
@@ -85,6 +88,8 @@ export type BuildingFacts = {
   segments: number;
   /** floor_no 오름차순(불명은 맨 뒤). */
   floors: FloorFact[];
+  /** 같은 땅 동 수(뷰 `bld_cnt_in_pnu` · 결정 0042 보완 F1·F10) — 안 왔으면 null. */
+  bldCnt: number | null;
 };
 
 export function isBldId(s: string | null | undefined): boolean {
@@ -181,6 +186,7 @@ export function buildingFacts(rows: BuildingRow[]): BuildingFacts | null {
       use: clean(r.main_use),
       segments: r.segment_cnt,
     })),
+    bldCnt: typeof head.bld_cnt_in_pnu === 'number' ? head.bld_cnt_in_pnu : null,
   };
 }
 
@@ -225,7 +231,12 @@ export function buildingTitle(f: BuildingFacts & { name: string }): string {
 }
 
 export function buildingDescription(f: BuildingFacts & { name: string }): string {
-  const who = f.roadAddr ? `${f.name}(${f.roadAddr})` : f.name;
+  // 이름이 동 구분 「(같은 땅 N동 중 k번째)」로 끝나면 괄호가 겹치지 않게 「 — 주소」 꼴(결정 0042 보완 F12 · 원래 괄호로 끝나는 이름은 그대로).
+  const who = f.roadAddr
+    ? ORDINAL_SUFFIX_RE.test(f.name)
+      ? `${f.name} — ${f.roadAddr}`
+      : `${f.name}(${f.roadAddr})`
+    : f.name;
   const phrase = floorsPhrase(f);
   const shape = phrase ? `${phrase}, 층별개요 구간 ${f.segments}개.` : `층별개요 구간 ${f.segments}개.`;
   return (
@@ -280,24 +291,69 @@ export function buildingJsonLd(f: BuildingFacts & { name: string }): string {
  * - 동 목록이 2줄 미만이거나 그 동이 목록에 없으면 null(구분 없이 지금 제목).
  * - 원문 `dong_nm` 이 있고 그 땅에서 **하나뿐**이면 그 글자(「101동」) — 이름에 이미 들어 있으면(이름이 동명칭으로
  *   대신된 동) null(「101동 101동」이 되지 않게 · 이름 자체가 이미 다르다).
- * - 비었거나 같은 동명칭이 둘 이상이면 「(같은 땅 N동 중 k번째)」 — N = 목록 줄 수 · k = 함수가 준 차례(연면적 큰 순).
- * ⛔ 첫 HTML 제목과 화면 탭 제목(`seo.ts` `pageTitle`)이 **같은 함수**를 쓴다 — 갈리면 구글은 화면이 그린 제목을 본다.
+ * - 비었거나 같은 동명칭이 둘 이상이면 「(같은 땅 N동 중 k번째)」 — N = **뷰의 `bld_cnt_in_pnu`**(`bldCnt` · 화면 「이 땅에 N동」과
+ *   같은 수 — 함수는 층 자료 있는 동만 주어 줄 수가 더 적을 수 있다 · 결정 0042 보완 F1) · 없으면 목록 줄 수 · k = 함수가 준 차례(연면적 큰 순).
+ * ⛔ 첫 HTML 제목·h1 과 화면 탭 제목(`seo.ts` `pageTitle`)·화면 h1 이 **같은 함수**를 쓴다 — 갈리면 구글은 화면이 그린 것을 본다.
  */
-export function dongSuffix(bldId: string, siblings: readonly ParcelSibling[] | null | undefined): string | null {
+export function dongSuffix(
+  bldId: string,
+  siblings: readonly ParcelSibling[] | null | undefined,
+  bldCnt?: number | null,
+): string | null {
   if (!siblings || siblings.length < 2) return null;
   const k = siblings.findIndex((s) => s.bld_id === bldId);
   if (k < 0) return null;
   const self = siblings[k];
   const dong = clean(self.dong_nm);
   if (dong && siblings.filter((s) => clean(s.dong_nm) === dong).length === 1) {
-    return clean(self.bld_nm)?.includes(dong) ? null : dong;
+    return nameHasDong(clean(self.bld_nm), dong) ? null : dong;
   }
-  return `(같은 땅 ${siblings.length}동 중 ${k + 1}번째)`;
+  const n = typeof bldCnt === 'number' && bldCnt > 0 ? bldCnt : siblings.length;
+  return `(같은 땅 ${n}동 중 ${k + 1}번째)`;
+}
+
+/**
+ * 이름이 이미 그 동명칭을 담았나(보완 F5) — 낱말로 들었거나(공백으로 갈린 한 낱말), 이름 **끝**에 붙었고 바로 앞 글자가
+ * 숫자·영문이 아닐 때만. 「제1동상가」·「제11동」은 「1동」을 담은 것이 아니다(가운데 · 앞이 숫자).
+ */
+function nameHasDong(name: string | null, dong: string): boolean {
+  if (!name) return false;
+  if (name.split(/\s+/).includes(dong)) return true;
+  if (!name.endsWith(dong)) return false;
+  const before = name.charAt(name.length - dong.length - 1);
+  return before === '' || !/[0-9A-Za-z]/.test(before);
 }
 
 /** 이름 + 동 구분 — 링크 글자·제목 이름. 이름도 구분도 없으면 화면과 같은 「(이름 없는 건물)」. */
-export function siblingName(s: ParcelSibling, siblings: readonly ParcelSibling[]): string {
-  return [clean(s.bld_nm), dongSuffix(s.bld_id, siblings)].filter(Boolean).join(' ') || '(이름 없는 건물)';
+export function siblingName(s: ParcelSibling, siblings: readonly ParcelSibling[], bldCnt?: number | null): string {
+  return [clean(s.bld_nm), dongSuffix(s.bld_id, siblings, bldCnt)].filter(Boolean).join(' ') || '(이름 없는 건물)';
+}
+
+/**
+ * 같은 땅 다른 동 링크로 실을 동들(보완 F2) — **자기 차례 앞뒤 창**: 자기를 뺀 목록에서 자기 자리를 가운데로 최대 `max`개
+ * (앞 5 · 뒤 5 · 끝에 닿으면 반대쪽으로 채운다). 큰 동 10개 고정이면 102동 땅의 작은 동끼리는 아무 링크도 못 받는다 —
+ * 창이면 차례로 이어져 모든 동이 사슬로 닿는다. 첫 HTML(`seoLinksInner`)·화면(FloorStack)이 같은 함수를 쓴다.
+ * 자기가 목록에 없으면 앞에서부터. 목록이 2줄 미만이면 빈 배열.
+ */
+export function siblingWindow<T extends ParcelSibling>(
+  bldId: string,
+  siblings: readonly T[] | null | undefined,
+  max: number = MAX_SIBLING_LINKS,
+): T[] {
+  if (!siblings || siblings.length < 2) return [];
+  const k = Math.max(0, siblings.findIndex((s) => s.bld_id === bldId));
+  const others = siblings.filter((s) => s.bld_id !== bldId);
+  const lo = Math.min(Math.max(0, k - Math.floor(max / 2)), Math.max(0, others.length - max));
+  return others.slice(lo, lo + max);
+}
+
+/**
+ * 「외 N동」의 N(보완 F10) — 뷰 `bld_cnt_in_pnu` 에서 자기와 보인 링크 수를 뺀 것(뷰가 없으면 목록 줄 수로) · 0 이하면 0.
+ * 첫 HTML·화면이 같은 셈을 쓴다.
+ */
+export function moreDongCount(bldCnt: number | null | undefined, siblings: readonly ParcelSibling[], shown: number): number {
+  const total = typeof bldCnt === 'number' && bldCnt > 0 ? bldCnt : siblings.length;
+  return Math.max(0, total - 1 - shown);
 }
 
 /** 도로명주소 둘째 낱말이 구·군·시로 끝나면 그 이름(「서대문구」) — 아니면 null(지어내지 않는다). */
@@ -313,17 +369,19 @@ function guPath(pnu: string): string {
 
 /**
  * 첫 HTML 소개문 뒤 내부 링크 묶음의 **안쪽**(결정 0042 H3) — 이미 이스케이프된 HTML.
- * ⓐ 같은 땅 다른 동(최대 10) ⓑ 「○○구 상가 건물 찾기」 ⓒ 「첫 화면」. 글자는 뷰·함수 값과 정한 틀뿐.
- * 구 이름을 도로명에서 못 얻으면 ⓑ 는 「같은 구 상가 건물 찾기」.
+ * ⓐ 같은 땅 다른 동(자기 차례 앞뒤 창 최대 10 · 넘치면 「외 N동」) ⓑ 「○○구 상가 건물 찾기」 ⓒ 「첫 화면」.
+ * 글자는 뷰·함수 값과 정한 틀뿐. 구 이름을 도로명에서 못 얻으면 ⓑ 는 「같은 구 상가 건물 찾기」.
  */
 export function seoLinksInner(f: BuildingFacts, siblings: readonly ParcelSibling[] | null | undefined): string {
   const parts: string[] = [];
-  const others = (siblings && siblings.length >= 2 ? siblings : []).filter((s) => s.bld_id !== f.bldId).slice(0, MAX_SIBLING_LINKS);
+  const others = siblingWindow(f.bldId, siblings);
   if (others.length > 0 && siblings) {
     const links = others.map(
-      (s) => `<a href="${escapeHtml(`/?sgg=${f.pnu.slice(0, 5)}&bld=${s.bld_id}`)}">${escapeHtml(siblingName(s, siblings))}</a>`,
+      (s) =>
+        `<a href="${escapeHtml(`/?sgg=${f.pnu.slice(0, 5)}&bld=${s.bld_id}`)}">${escapeHtml(siblingName(s, siblings, f.bldCnt))}</a>`,
     );
-    parts.push(`<p>같은 땅 다른 동: ${links.join(' · ')}</p>`);
+    const more = moreDongCount(f.bldCnt, siblings, others.length);
+    parts.push(`<p>같은 땅 다른 동: ${links.join(' · ')}${more > 0 ? ` 외 ${more}동` : ''}</p>`);
   }
   const gu = guNameFromRoad(f.roadAddr);
   parts.push(
@@ -376,7 +434,7 @@ export function renderBuildingHtml(
 ): string | null {
   const facts = buildingFacts(rows);
   if (!facts || !facts.name) return null;
-  const suffix = dongSuffix(facts.bldId, siblings);
+  const suffix = dongSuffix(facts.bldId, siblings, facts.bldCnt);
   // 제목 이름 = 이름 + 동 구분(결정 0042 H2) · 소개문만 원래 이름(문장 조사가 이름에 맞춰져 있다).
   const f = { ...facts, name: suffix ? `${facts.name} ${suffix}` : facts.name };
 

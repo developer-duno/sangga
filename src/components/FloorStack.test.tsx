@@ -448,7 +448,8 @@ describe('FloorStack — 본체', () => {
       const { container } = render(
         <FloorStack building={building({ bld_cnt_in_pnu: 3 })} dongs={DONGS} sigunguName="강남구" />,
       );
-      await screen.findByRole('heading', { level: 1, name: '테스트빌딩' });
+      // 보완 F3 — 렌더 h1 에도 동 구분(첫 HTML h1·탭 제목과 같은 글).
+      await screen.findByRole('heading', { level: 1, name: '테스트빌딩 A동' });
       const nav = container.querySelector('header.stack__head nav.stack__links')!;
       expect(nav.getAttribute('aria-label')).toBe('관련 페이지');
       expect([...nav.querySelectorAll('a')].map((a) => [a.getAttribute('href'), a.textContent])).toEqual([
@@ -500,10 +501,42 @@ describe('FloorStack — 본체', () => {
       const many = Array.from({ length: 14 }, (_, i) => dong(`1168010100-${i + 1}`, `${101 + i}동`));
       responses.floors = { data: [floor({ bld_cnt_in_pnu: 14 })], error: null };
       const { container } = render(<FloorStack building={building({ bld_cnt_in_pnu: 14 })} dongs={many} />);
-      await screen.findByRole('heading', { level: 1, name: '테스트빌딩' });
+      await screen.findByRole('heading', { level: 1, name: '테스트빌딩 101동' });
       const row = container.querySelector('nav.stack__links .stack__links-row')!;
       expect(row.querySelectorAll('a')).toHaveLength(10);
       expect(row.textContent!.endsWith('테스트빌딩 111동 외 3동')).toBe(true);
+    });
+
+    it('★ 보완 F3 — 같은 땅 두 동의 렌더 h1 이 서로 다르다 · 동명칭이 비면 차례(N = 뷰 동 수)', async () => {
+      responses.floors = { data: [floor({ bld_id: '1168010100-2', bld_cnt_in_pnu: 5 })], error: null };
+      const b = render(<FloorStack building={building({ bld_id: '1168010100-2', bld_cnt_in_pnu: 5 })} dongs={DONGS} />);
+      await screen.findByRole('heading', { level: 1, name: '테스트빌딩 B동' });
+      b.unmount();
+      responses.floors = { data: [floor({ bld_id: '1168010100-3', bld_cnt_in_pnu: 5 })], error: null };
+      render(<FloorStack building={building({ bld_id: '1168010100-3', bld_nm: null, bld_cnt_in_pnu: 5 })} dongs={DONGS} />);
+      // 층 행의 이름이 '테스트빌딩'이라 이름 + 차례(함수 줄 3 · 뷰 5).
+      await screen.findByRole('heading', { level: 1, name: '테스트빌딩 (같은 땅 5동 중 3번째)' });
+    });
+
+    it('★ 보완 F4 — 불러오는 중·오류·층 0개에서도 h1 은 건물 이름 하나', async () => {
+      let release: (v: unknown) => void = () => {};
+      responses.floors = new Promise((r) => (release = r)) as unknown as typeof responses.floors;
+      const loading = render(<FloorStack building={building({ bld_cnt_in_pnu: 3 })} dongs={DONGS} />);
+      expect(screen.getByText('층 정보를 불러오는 중…')).toBeTruthy();
+      expect(screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent)).toEqual(['테스트빌딩 A동']);
+      release({ data: [], error: null });
+      loading.unmount();
+
+      responses.floors = { data: null, error: { message: 'x' } };
+      const failed = render(<FloorStack building={building()} />);
+      await waitFor(() => expect(failed.container.querySelector('.msg--error')).not.toBeNull());
+      expect(screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent)).toEqual(['테스트빌딩']);
+      failed.unmount();
+
+      responses.floors = { data: [], error: null };
+      render(<FloorStack building={building()} />);
+      await screen.findByText('이 건물에는 층 정보가 없습니다.');
+      expect(screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent)).toEqual(['테스트빌딩']);
     });
 
     it('동이 하나거나 목록이 없으면 다른 동 줄 없음 · 구 이름도 없으면 줄 자체가 없다', async () => {

@@ -13,7 +13,8 @@
      사람 화면은 그대로 뜨고(앱이 스스로 다시 읽는다), 봇은 '잠깐 실패'로 알고 나중에 다시 온다
   ⓒ 행 0 → 404 + noindex(앱은 "못 찾음"을 띄운다 · 구글이 쓰레기 주소를 색인하지 않게)
   ⓓ 이름 없음 → 첫 화면 그대로(지금처럼 첫 화면에 합쳐진다)
-  ⓔ 이름 있음 → 그 건물의 HTML(하루 캐시 + 일주일 stale-while-revalidate) — 비주거 층이 없으면 noindex 한 줄 더
+  ⓔ 이름 있음 → 그 건물의 HTML(하루 캐시 + 일주일 stale-while-revalidate) — 비주거 층이 없으면 noindex 한 줄 더 ·
+     같은 땅 동 목록이 필요했는데 실패했으면 10분 캐시(`CACHE_PARTIAL` · 결정 0042 보완 F9)
   ⓕ 첫 화면 HTML 을 못 받음 → 307 `/index.html?<원래 query>`(no-store) — 정적 파일로 앱을 띄운다
 
   ⛔ 사람·봇 모두 같은 HTML — User-Agent 로 가르지 않는다(구글: 동적 렌더링은 '우회책').
@@ -33,6 +34,11 @@ export type HandlerDeps = {
 export const CACHE_HOME = 'public, s-maxage=86400';
 export const CACHE_BUILDING = 'public, s-maxage=86400, stale-while-revalidate=604800';
 export const CACHE_NOT_FOUND = 'public, s-maxage=600';
+/**
+ * 같은 땅 동 목록을 받아야 했는데 실패해 동 구분 없이 나간 건물 HTML(결정 0042 보완 F9) — 10분만.
+ * 하루 + 일주일 SWR 로 굳으면 한 번의 일시 실패가 같은 땅 동끼리 같은 제목(구글 중복)을 하루 넘게 되살린다.
+ */
+export const CACHE_PARTIAL = 'public, s-maxage=600';
 export const CACHE_NONE = 'no-store';
 export const RETRY_AFTER_S = '120';
 export const FETCH_TIMEOUT_MS = 3000;
@@ -157,11 +163,10 @@ export async function handleBuilding(request: Request, deps: HandlerDeps): Promi
   if (rows === null) return html(home, 503, CACHE_NONE, { 'retry-after': RETRY_AFTER_S }); // ⓑ
   if (rows.length === 0) return html(withNoindex(home), 404, CACHE_NOT_FOUND); // ⓒ
   // 같은 땅에 동이 여럿이고 이름이 있을 때만 동 목록을 한 번 더(결정 0042 · 이름이 없으면 어차피 첫 화면이다).
+  // ⓘ 건물 행 **뒤에** 부른다(동 수를 알아야 해서) — 같은 땅 여러 동이면 최대 3초 더 걸린다(0042 §3 기록 · 보완 F8).
   const head = rows[0];
-  const siblings =
-    (head.bld_cnt_in_pnu ?? 1) > 1 && typeof head.bld_nm === 'string' && head.bld_nm.trim() !== ''
-      ? await fetchSiblings(head.pnu, base as string, key as string, deps)
-      : null;
+  const wantSiblings = (head.bld_cnt_in_pnu ?? 1) > 1 && typeof head.bld_nm === 'string' && head.bld_nm.trim() !== '';
+  const siblings = wantSiblings ? await fetchSiblings(head.pnu, base as string, key as string, deps) : null;
   let page: string | null;
   try {
     page = renderBuildingHtml(home, rows, siblings);
@@ -171,5 +176,6 @@ export async function handleBuilding(request: Request, deps: HandlerDeps): Promi
     return html(home, 200, CACHE_NONE);
   }
   if (page === null) return html(home, 200, CACHE_HOME); // ⓓ
-  return html(page, 200, CACHE_BUILDING); // ⓔ
+  // ⓔ — 동 목록이 필요했는데 실패했으면 짧게만 굳힌다(보완 F9).
+  return html(page, 200, wantSiblings && siblings === null ? CACHE_PARTIAL : CACHE_BUILDING);
 }

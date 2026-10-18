@@ -8,6 +8,7 @@ import {
   CACHE_HOME,
   CACHE_NONE,
   CACHE_NOT_FOUND,
+  CACHE_PARTIAL,
   FETCH_TIMEOUT_MS,
   RETRY_AFTER_S,
   handleBuilding,
@@ -290,7 +291,7 @@ describe('handleBuilding', () => {
       expect(body).toContain(`<a href="/?sgg=11680&amp;bld=${SIB}">테헤란빌딩 B동</a>`);
     });
 
-    it('★ 동 목록이 실패·모양 틀림이어도 건물 HTML 은 나간다 — 동 구분 없이 지금 제목 · 같은 하루 캐시', async () => {
+    it('★ 동 목록이 실패·모양 틀림이어도 건물 HTML 은 나간다 — 동 구분 없이 지금 제목 · 짧은 캐시(10분 · 보완 F9)', async () => {
       const fails: (() => Response | Promise<Response>)[] = [
         () => new Response('{"message":"x"}', { status: 404 }),
         () => Promise.reject(new TypeError('network')),
@@ -303,7 +304,9 @@ describe('handleBuilding', () => {
         const f = fetchWith(list);
         const res = await handleBuilding(req(`?bld=${BLD}`), { fetch: f.fn, env: ENV });
         expect(res.status).toBe(200);
-        expect(res.headers.get('cache-control')).toBe(CACHE_BUILDING);
+        // 일시 실패 한 번이 동 구분 없는 제목(구글 중복)을 하루+일주일 굳히지 않게.
+        expect(res.headers.get('cache-control')).toBe(CACHE_PARTIAL);
+        expect(CACHE_PARTIAL).toBe('public, s-maxage=600');
         expect(title(await res.text())).toBe('테헤란빌딩 — 강남구 테헤란로 1 | 상가 층별 스택뷰');
       }
     });

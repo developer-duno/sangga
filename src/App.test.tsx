@@ -1055,8 +1055,9 @@ describe('App — 검색 색인 보강 (결정 0042)', () => {
     twoDongs();
     openWith(`?sgg=11680&bld=${SELF}`);
     render(<App />);
-    await screen.findByRole('heading', { level: 1, name: '테스트빌딩' });
     await waitFor(() => expect(document.title).toBe('테스트빌딩 A동 — 강남구 테헤란로 1 | 상가 층별 스택뷰'));
+    // 렌더 h1 도 같은 동 구분(보완 F3 — 첫 HTML h1 과 같은 글) · 정확히 1개.
+    await screen.findByRole('heading', { level: 1, name: '테스트빌딩 A동' });
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
     expect(document.querySelector('p.app__title')!.textContent).toBe('상가 층별 스택뷰');
 
@@ -1092,6 +1093,48 @@ describe('App — 검색 색인 보강 (결정 0042)', () => {
     await waitFor(() => expect((document.getElementById('entry-panel') as HTMLElement).hidden).toBe(false));
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('건물명 또는 주소')));
     expect(currentSearch()).toContain(`bld=${SELF}`);
+  });
+
+  it('★ 보완 F11 — 지금 고른 구가 건물의 구가 아니면 「○○구 다른 건물 찾기」를 그 구 이름으로 적지 않는다', async () => {
+    twoDongs();
+    // 고른 구(대전 서구 30170) ≠ 건물의 구(강남 11680) — 상권이 구 경계를 넘어 지도·목록에서 옆 구 건물을 고른 때와 같다.
+    // ⓘ 주소로는 못 만든다(parseAppUrl 이 건물 앞 5자리로 구를 맞춘다) — 서구에서 찾은 결과로 강남 건물이 온 척한다.
+    const base = rpc.getMockImplementation()!;
+    rpc.mockImplementation((fn: string, args?: unknown) =>
+      fn === 'search_buildings' ? Promise.resolve({ data: [hit({ bld_cnt_in_pnu: 2 })], error: null }) : base(fn, args),
+    );
+    openWith('');
+    render(<App />);
+    await pickGu('대전', '서구');
+    const input = screen.getByLabelText('건물명 또는 주소');
+    fireEvent.change(input, { target: { value: '테헤란로' } });
+    fireEvent.submit(input.closest('form')!);
+    fireEvent.click(await screen.findByRole('button', { name: /테스트빌딩/ }));
+    await screen.findByRole('heading', { level: 1, name: '테스트빌딩 A동' });
+    expect(document.querySelector('.entrybar__place')!.textContent).toBe('대전 서구');
+    await screen.findByRole('link', { name: '테스트빌딩 B동' });
+    expect(screen.queryByRole('link', { name: /다른 건물 찾기/ })).toBeNull();
+    expect(document.querySelector('nav.stack__links')!.textContent).not.toContain('서구');
+  });
+
+  it('★ 보완 F4 — 건물을 연 채 층을 불러오는 중에도 h1 은 정확히 1개(건물 이름)', async () => {
+    from.mockImplementation((view: string) => {
+      if (view === 'v_coverage_stats') return makeQuery({ data: [], error: null });
+      const q: Record<string, unknown> = {};
+      for (const m of ['select', 'eq', 'order', 'limit']) q[m] = () => q;
+      q.then = () => new Promise(() => {}); // 층 응답이 영영 안 온다
+      return q;
+    });
+    openWith('');
+    render(<App />);
+    await pickGu('서울', '강남구');
+    const input = screen.getByLabelText('건물명 또는 주소');
+    fireEvent.change(input, { target: { value: '테헤란로' } });
+    fireEvent.submit(input.closest('form')!);
+    fireEvent.click(await screen.findByRole('button', { name: /테스트빌딩/ }));
+    await screen.findByText('층 정보를 불러오는 중…');
+    expect(screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent)).toEqual(['테스트빌딩']);
+    expect(document.querySelector('p.app__title')).not.toBeNull();
   });
 
   it('동 목록이 실패하면 동 구분·다른 동 줄 없이 지금 화면 그대로', async () => {

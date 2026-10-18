@@ -13,6 +13,7 @@ import {
   RESIDENTIAL_RE,
   renderBuildingHtml,
   siblingName,
+  siblingWindow,
   SITE_NAME,
   SITE_ORIGIN,
   topicJosa,
@@ -406,14 +407,73 @@ describe('같은 땅 여러 동(결정 0042 H2·H3)', () => {
     expect(links).toEqual(['/?sgg=11410', '/']);
   });
 
-  it(`다른 동 링크는 최대 ${MAX_SIBLING_LINKS}개 · 이름·동이 없으면 「(이름 없는 건물)」 대신 차례`, () => {
+  it(`다른 동 링크는 최대 ${MAX_SIBLING_LINKS}개 + 「외 N동」(보완 F10 · N = 뷰 동 수 − 자기 − 보인 수) · 이름·동이 없으면 차례`, () => {
     const many = Array.from({ length: 14 }, (_, i) => sib(`${DMC_PNU}_${100 + i}`, null, null));
     many[0] = sib(A, null);
-    const { doc } = page(A, many);
-    const sibLinks = Array.from(doc.querySelectorAll('nav.seo-links p:first-child a'));
+    const rows14 = dmc(A).map((r) => ({ ...r, bld_cnt_in_pnu: 14 }));
+    const doc = parse(renderBuildingHtml(HOME, rows14, many)!);
+    const row = doc.querySelector('nav.seo-links p:first-child')!;
+    const sibLinks = Array.from(row.querySelectorAll('a'));
     expect(sibLinks.length).toBe(MAX_SIBLING_LINKS);
     expect(sibLinks[0].textContent).toBe('(같은 땅 14동 중 2번째)');
+    expect(row.textContent!.endsWith('(같은 땅 14동 중 11번째) 외 3동')).toBe(true);
+    // 뷰가 더 많이 말하면(층 자료 없는 동) 그 수로 센다 — 함수 14줄 · 뷰 20 → 외 9동.
+    const rows20 = dmc(A).map((r) => ({ ...r, bld_cnt_in_pnu: 20 }));
+    expect(parse(renderBuildingHtml(HOME, rows20, many)!).querySelector('nav.seo-links p')!.textContent!.endsWith(' 외 9동')).toBe(true);
+    // 10개 이하면 「외」 없음.
+    expect(page(A, LIST).doc.querySelector('nav.seo-links p')!.textContent).not.toContain(' 외 ');
     expect(siblingName(sib('x', null, null), [sib('x', null, null)])).toBe('(이름 없는 건물)');
+  });
+
+  it('★ 보완 F1 — 「(같은 땅 N동 중 k번째)」의 N 은 뷰의 bld_cnt_in_pnu(함수 줄 수가 아니다)', () => {
+    const list = [sib(A, null), sib(B, null), sib(C, null)];
+    const rows5 = dmc(B).map((r) => ({ ...r, bld_cnt_in_pnu: 5 }));
+    expect(parse(renderBuildingHtml(HOME, rows5, list)!).title).toBe(
+      'DMC파크뷰자이 (같은 땅 5동 중 2번째) — 서대문구 가좌로 134 | 상가 층별 스택뷰',
+    );
+    expect(dongSuffix(B, list, 5)).toBe('(같은 땅 5동 중 2번째)');
+    expect(dongSuffix(B, list)).toBe('(같은 땅 3동 중 2번째)'); // 뷰 값이 없으면 줄 수
+  });
+
+  it('★ 보완 F2 — 다른 동 링크는 자기 차례 앞뒤 창(차례 50 → 45~55 · 차례 1 → 2~11 · 끝 → 반대쪽으로 채움) · 102동이 사슬로 이어진다', () => {
+    const ids = Array.from({ length: 102 }, (_, i) => `${DMC_PNU}_${1000 + i}`);
+    const list = ids.map((id, i) => sib(id, `${i + 1}동`));
+    const orders = (k: number) => siblingWindow(ids[k - 1], list).map((s) => ids.indexOf(s.bld_id) + 1);
+    expect(orders(50)).toEqual([45, 46, 47, 48, 49, 51, 52, 53, 54, 55]);
+    expect(orders(1)).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    expect(orders(102)).toEqual([92, 93, 94, 95, 96, 97, 98, 99, 100, 101]);
+    expect(orders(3)).toEqual([1, 2, 4, 5, 6, 7, 8, 9, 10, 11]);
+    // 모든 동이 앞 동·뒤 동에서 링크를 받는다(사슬).
+    for (let k = 1; k <= 102; k += 1) {
+      if (k > 1) expect(orders(k - 1), `${k - 1} → ${k}`).toContain(k);
+      if (k < 102) expect(orders(k + 1), `${k + 1} → ${k}`).toContain(k);
+    }
+    // 첫 HTML 도 같은 창 — 차례 50 의 링크가 45~55.
+    const rows = dmc(ids[49]).map((r) => ({ ...r, bld_id: ids[49], bld_cnt_in_pnu: 102 }));
+    const hrefs = Array.from(parse(renderBuildingHtml(HOME, rows, list)!).querySelectorAll('nav.seo-links p:first-child a')).map(
+      (a) => ids.indexOf(a.getAttribute('href')!.split('bld=')[1]) + 1,
+    );
+    expect(hrefs).toEqual([45, 46, 47, 48, 49, 51, 52, 53, 54, 55]);
+  });
+
+  it('보완 F5 — 이름이 그 동명칭을 낱말로·끝에 담을 때만 안 붙인다(「제1동상가」·「제11동」은 붙인다)', () => {
+    const two = (name: string, dong: string) => [sib(A, dong, name), sib(B, '다른동', name)];
+    expect(dongSuffix(A, two('래미안 101동', '101동'))).toBeNull();
+    expect(dongSuffix(A, two('래미안101동', '101동'))).toBeNull();
+    expect(dongSuffix(A, two('101동', '101동'))).toBeNull();
+    expect(dongSuffix(A, two('제1동상가', '1동'))).toBe('1동');
+    expect(dongSuffix(A, two('제11동', '1동'))).toBe('1동');
+    expect(dongSuffix(A, two('B1동', '1동'))).toBe('1동');
+  });
+
+  it('보완 F12 — 동명칭이 빈 동의 설명은 괄호를 겹치지 않는다(「… (같은 땅 3동 중 2번째) — 주소의 …」)', () => {
+    const list = [sib(A, null), sib(B, null), sib(C, null)];
+    const desc = meta(page(B, list).doc, 'meta[name="description"]')[0];
+    expect(desc.startsWith('DMC파크뷰자이 (같은 땅 3동 중 2번째) — 서울특별시 서대문구 가좌로 134의 층별 용도')).toBe(true);
+    expect(desc).not.toContain(')(');
+    // 원래 괄호로 끝나는 이름은 지금 꼴 그대로.
+    const own = renderBuildingHtml(HOME, tower({ bld_nm: '디아이타워(신관)' }))!;
+    expect(meta(parse(own), 'meta[name="description"]')[0].startsWith('디아이타워(신관)(서울특별시 강남구 테헤란로 123)의 ')).toBe(true);
   });
 
   it('동 이름에 태그·따옴표가 있어도 링크를 깨지 못한다', () => {

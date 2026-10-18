@@ -106,6 +106,24 @@ describe('ErrorBoundary', () => {
     expect(screen.getByText('되살아난 내용')).toBeTruthy();
   });
 
+  it('결정 0042 보완 F4 — `heading` 을 주면 안내 위에 그 제목을 세운다(층별 화면이 지던 h1 이 0개가 되지 않게)', () => {
+    render(
+      <ErrorBoundary area="층별 화면" heading={<h1 className="stack__title">테스트빌딩</h1>}>
+        <Boom explode />
+      </ErrorBoundary>,
+    );
+    expect(screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent)).toEqual(['테스트빌딩']);
+    expect(screen.getByRole('alert')).toBeTruthy();
+    cleanup();
+    // 안 터지면 제목을 따로 그리지 않는다(자식이 제 h1 을 그린다).
+    render(
+      <ErrorBoundary area="층별 화면" heading={<h1>테스트빌딩</h1>}>
+        <Boom explode={false} />
+      </ErrorBoundary>,
+    );
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+  });
+
   it('새로고침 길도 함께 준다', () => {
     render(
       <ErrorBoundary area="시험">

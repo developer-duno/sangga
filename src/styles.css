@@ -4628,6 +4628,12 @@ body {
     min-height: 44px;
   }
 
+  /* 「A동」처럼 짧은 동 링크도 손가락 폭 44px(결정 0042 보완 F6) — 글자는 가운데. */
+  .stack__links-a {
+    min-width: 44px;
+    justify-content: center;
+  }
+
   /* 펼침 머리(summary)는 표시 삼각형을 지키려고 list-item 그대로 두고 위아래 여백으로 키운다. */
   .oc__ind-sum,
   .office__toggle {

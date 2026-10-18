@@ -489,7 +489,8 @@ export default function App() {
     };
   }, [dongPnu]);
   const dongs = dongPnu !== null && parcelDongs?.pnu === dongPnu ? parcelDongs.list : null;
-  const dong = selected && dongs ? dongSuffix(selected.bld_id, dongs) : null;
+  // N = 고른 건물의 `bld_cnt_in_pnu`(뷰와 같은 수 — 첫 HTML 은 뷰 행의 값 · 결정 0042 보완 F1).
+  const dong = selected && dongs ? dongSuffix(selected.bld_id, dongs, selected.bld_cnt_in_pnu) : null;
 
   useEffect(() => {
     if (restoring) return;
@@ -815,6 +816,12 @@ export default function App() {
               key={`stack:${selected.bld_id}`}
               area="층별 화면"
               context={{ bld_id: selected.bld_id, sigungu }}
+              // 그물이 뜨면 층별 화면의 h1 이 사라진다 — 안내 위에 건물 이름 h1 을 세운다(h1 정확히 1개 · 결정 0042 보완 F4).
+              heading={
+                <h1 className="stack__title">
+                  {[selected.bld_nm?.trim() || null, dong].filter(Boolean).join(' ') || '(이름 없는 건물)'}
+                </h1>
+              }
             >
               <FloorStack
                 building={selected}
