@@ -163,15 +163,32 @@ describe('handleHub', () => {
     for (const c of b.calls) expect(new Headers(c.init?.headers).get('cookie')).toBeNull();
   });
 
-  it('cookie 는 첫 화면 fetch 에만 · 허브 fetch 에는 0 · 둘 다 3초 제한', async () => {
-    const { calls } = await run(`?sgg=${SGG}`, okHub, { headers: { cookie: '_vercel_jwt=abc' } });
-    const home = calls.find((c) => c.url.endsWith('/index.html'));
-    const hub = calls.find((c) => c.url.includes('/hub/'));
-    expect(new Headers(home?.init?.headers).get('cookie')).toBe('_vercel_jwt=abc');
-    expect(new Headers(hub?.init?.headers).get('cookie')).toBeNull();
-    expect(hub?.init?.signal).toBeInstanceOf(AbortSignal);
-    expect(home?.init?.signal).toBeInstanceOf(AbortSignal);
+  it('허용 호스트면 cookie 를 같은 배포의 두 fetch 모두에 · 둘 다 3초 제한', async () => {
+    const env = { VERCEL_URL: 'sangga-abc.vercel.app' };
+    for (const host of ['sangga-one.vercel.app', 'sangga-abc.vercel.app']) {
+      const { calls } = await run(`?sgg=${SGG}`, okHub, { headers: { cookie: '_vercel_jwt=abc' }, env, host });
+      expect(calls.length, host).toBe(2);
+      for (const c of calls) {
+        expect(c.url.startsWith(`https://${host}/`), c.url).toBe(true);
+        expect(new Headers(c.init?.headers).get('cookie'), c.url).toBe('_vercel_jwt=abc');
+        expect(c.init?.signal).toBeInstanceOf(AbortSignal);
+      }
+    }
     expect(FETCH_TIMEOUT_MS).toBe(3000);
+  });
+
+  it('양성 대조 — 남의 호스트면 두 fetch 모두 정식 주소 고정 + cookie 0', async () => {
+    for (const headers of [
+      { 'x-forwarded-host': 'evil.example.com', cookie: '_vercel_jwt=abc' },
+      { 'x-forwarded-host': 'localhost:6379', cookie: '_vercel_jwt=abc' },
+    ]) {
+      const { calls } = await run(`?sgg=${SGG}`, okHub, { headers });
+      expect(calls.length).toBe(2);
+      for (const c of calls) {
+        expect(c.url.startsWith('https://sangga-one.vercel.app/'), c.url).toBe(true);
+        expect(new Headers(c.init?.headers).get('cookie'), c.url).toBeNull();
+      }
+    }
   });
 
   it('두 fetch 는 함께 보낸다(허브가 첫 화면을 기다리지 않는다)', async () => {

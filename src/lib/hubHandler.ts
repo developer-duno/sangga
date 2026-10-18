@@ -14,8 +14,9 @@
   ⓕ 정상 → 허브 HTML(하루 캐시 + 일주일 stale-while-revalidate)
 
   ⛔ 사람·봇 모두 같은 HTML — User-Agent 로 가르지 않는다(건물 쪽과 같다).
-  ⛔ 들어온 요청의 cookie 는 **첫 화면 HTML fetch 에만**(건물 쪽 `fetchHome` 그대로) — 허브 파일 fetch 에는 안 싣는다.
-     ⓘ 그래서 배포 보호가 걸린 미리보기 배포에서는 허브 파일이 401 → ⓓ 503 이 된다(사람 화면은 그대로 뜬다 · 운영 정식 주소는 보호 없음).
+  ⛔ 들어온 요청의 cookie 는 **허용 호스트일 때만 같은 배포의 두 요청**(`/index.html` · `/hub/<sgg>.json`)에 싣는다 —
+     둘 다 같은 출처 정적 파일이라 위험이 같고, 배포 보호가 걸린 미리보기 배포에서 허브를 확인하려면 필요하다.
+     남의 호스트면 둘 다 정식 주소 고정 + cookie 0(건물 쪽 `homeSource` 그대로).
   ⛔ 의존(fetch·env)은 주입받는다 — 시험은 가짜 fetch 로 외부 호출 0.
   ⛔ import 는 `.js` 확장자 — 함수 런타임(Node ESM).
 */
@@ -34,11 +35,18 @@ function html(body: string, status: number, cache: string, extra: Record<string,
   });
 }
 
-/** 같은 배포의 `/hub/<sgg>.json` — 첫 화면과 같은 곳(허용 호스트면 그 배포 · 아니면 정식 주소) · cookie 0 · 3초. */
+/**
+ * 같은 배포의 `/hub/<sgg>.json` — 첫 화면과 같은 곳 · 같은 cookie 규칙(허용 호스트면 그 배포에서 cookie 를 붙여 ·
+ * 아니면 정식 주소 고정 + cookie 0) · 3초. 같은 출처 정적 파일이라 첫 화면 fetch 와 위험이 같다.
+ */
 async function fetchHub(sgg: string, request: Request, deps: HandlerDeps): Promise<HubFetch> {
-  const { origin } = homeSource(request, deps.env);
+  const { origin, trusted } = homeSource(request, deps.env);
+  const cookie = trusted ? request.headers.get('cookie') : null;
   try {
-    const res = await deps.fetch(`${origin}/hub/${sgg}.json`, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    const res = await deps.fetch(`${origin}/hub/${sgg}.json`, {
+      headers: cookie ? { cookie } : {},
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
     if (res.status === 404) return { kind: 'missing' };
     if (res.status !== 200) return { kind: 'fail' };
     return { kind: 'ok', text: await res.text() };

@@ -2861,3 +2861,13 @@ pytest **4,457 passed**(본 폴더) · vitest **960 passed** · tsc 0 · oxlint 
 - **수치(이 판 실측)**: pytest 수집 5,335(전체 5,326 passed · 6 failed → 지운 함수·허용 총계·NON_QUARTER 수·9번 줄 원장 참조를 고쳐 그 4파일 273 passed · 3 skipped) · vitest 1,493/1,493 · E2E 64개 × 2벌 = 128 passed · tsc·oxlint·ruff exit 0.
 
 **⚠️ 남은 것.** ① 운영 반영(결정 0041 §6) — 마이그 적용 → `post_load.py` → 워크트리에서 `--check`(허용 목록 30 · 함수 드리프트 0) → 머지 → 라이브 3엔진 후 캡처. ② 역할 고르기 큰 카드의 투자자 줄 「실거래·참고 시세를 먼저 펼쳐 둡니다」(결정 0039 W3 👤 문구)가 없어진 카드를 말한다 — 문구는 👤 결정이라 손대지 않았다(메인 여쭘). ③ `idx_tx_pnu10_ym`(L6 용) · `price_use_group_cd`(쓰는 곳 0)는 범위 밖이라 남김.
+
+## 2026-10-18 (3) — 구 입구 허브 첫 HTML (결정 0043 · DB 변경 0 · 요청 때 DB 0)
+
+**무엇**(👤 2026-10-18 AskUserQuestion 답 6건 — 지금 만든다 · 지금 구 입구 주소 · 「○○구 상가 건물 층별 보기」 · 가나다순 · 이름 + 도로명 · 모든 구에 시 이름): 결정 0042 §3 이 다음 수로 적어 둔 것. 구 입구 주소 `/?sgg=<5자리>`(bld 없음)의 첫 HTML 을 그 구의 허브로 — 제목·h1 `<시> <구> 상가 건물 층별 보기` · 소개문(= 설명) `<시> <구>에서 층별 화면을 볼 수 있는 상가 건물 N곳입니다.` · canonical = 구 입구 주소 · `nav.seo-links` = 그 구 대상 건물 링크 전부(`<이름> · <짧은 도로명>` · 가나다) + 「첫 화면」 · 빵부스러기 첫 화면 → 곳. 사람 화면은 지금처럼 구 화면(React 가 덮는다). 동이 하나뿐인 건물도 들어오는 내부 링크가 0 → 1.
+
+**어떻게**: `middleware.ts` 가 건물 갈래 다음에 `hubRewriteTarget` → `api/hub.ts` → `src/lib/hubHandler.ts`(같은 배포의 `/index.html` + `/hub/<sgg>.json` 함께 · 각 3초 · 허용 호스트일 때 cookie 는 두 요청 모두에 — 메인 판단) → `src/lib/hubHead.ts`. 재료는 `scripts/build_sitemap.py` 가 사이트맵과 **같은 대상 질의 한 번**으로 굽는 `public/hub/<sgg>.json`(뷰와 같은 칸 + 같은 땅 2동 이상이면 `list_parcel_buildings` 결과 그대로 + `mv_open_sigungu` · 새 DB 함수 0) + `public/sitemap-hubs.xml`(색인의 home 다음). 이름 글은 TS 만 — 건물 첫 HTML h1 과 같은 `dongSuffix`·같은 재료(짝 시험이 `renderBuildingHtml` h1 과 대조).
+
+**시험**(굽기 전 워크트리): pytest 전체 5,358 passed · 2 failed · 3 skipped(실패 둘 = 커밋된 허브 파일 ↔ 사이트맵 대조 — 굽기 전 예상 빨강) · vitest 전체 69파일 1,593 passed · 1 failed(같은 대조) · `tsc -b`·`tsc -p tsconfig.api.json --noEmit`·oxlint·ruff exit 0 · 대상 SQL 을 로컬 PostgreSQL 에서 실제 `list_parcel_buildings` 정의로 실행 · 변이 5종(bld 있는 주소를 허브로 · bld_id 차례 · 동 구분 빠뜨림 · 허브 404 를 503 으로 · 색인에서 허브 줄 빠뜨림) 전부 빨강 확인 뒤 복원.
+
+**다음**: 메인 굽기(본 폴더 열쇠로 DB 읽기만) → 두 빨강 초록 확인 → 커밋 → draft PR → 검사(적대 Opus · 할루 Sonnet) → 구 입구 첫 HTML 전/후 → 👤 「진행」 → 머지 → `indexnow_ping.py --from-sitemap public/sitemap-hubs.xml` → 서치콘솔 사이트맵 재제출 · 10/25 무렵 보고서.
