@@ -507,6 +507,22 @@ describe('FloorStack — 본체', () => {
       expect(row.textContent!.endsWith('테스트빌딩 111동 외 3동')).toBe(true);
     });
 
+    it('★ 재검사 🟡 — 화면 링크도 공용 앞뒤 창(siblingWindow): 14동 중 자기 차례 8번째 → 3~13번째(자기 제외) + 외 3동', async () => {
+      const many = Array.from({ length: 14 }, (_, i) => dong(`1168010100-${i + 1}`, `${101 + i}동`));
+      const self = many[7]; // 8번째 = 108동
+      responses.floors = { data: [floor({ bld_id: self.bld_id, bld_cnt_in_pnu: 14 })], error: null };
+      const { container } = render(
+        <FloorStack building={building({ bld_id: self.bld_id, bld_cnt_in_pnu: 14 })} dongs={many} />,
+      );
+      await screen.findByRole('heading', { level: 1, name: '테스트빌딩 108동' });
+      const row = container.querySelector('nav.stack__links .stack__links-row')!;
+      // 앞에서 10개(101~111동 중 자기 뺌)로 돌아가면 101·102동이 끼고 112·113동이 빠진다.
+      expect([...row.querySelectorAll('a')].map((a) => a.textContent)).toEqual(
+        [103, 104, 105, 106, 107, 109, 110, 111, 112, 113].map((n) => `테스트빌딩 ${n}동`),
+      );
+      expect(row.textContent!.endsWith(' 외 3동')).toBe(true);
+    });
+
     it('★ 보완 F3 — 같은 땅 두 동의 렌더 h1 이 서로 다르다 · 동명칭이 비면 차례(N = 뷰 동 수)', async () => {
       responses.floors = { data: [floor({ bld_id: '1168010100-2', bld_cnt_in_pnu: 5 })], error: null };
       const b = render(<FloorStack building={building({ bld_id: '1168010100-2', bld_cnt_in_pnu: 5 })} dongs={DONGS} />);
