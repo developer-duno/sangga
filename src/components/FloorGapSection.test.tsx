@@ -111,7 +111,28 @@ describe('FloorGapSection', () => {
     expect(container.textContent).toContain('세무 기준가격 — 시세가 아닙니다');
     expect(container.textContent).toContain('A등급 · 공식 고시');
     expect(container.textContent).toContain('B등급 · 공식 표본조사');
+    // 구 상가 단가는 우리가 센 집계 — 배지 「A등급 · 실거래 집계」 + 발 문구 한 마디(👤 2026-10-18 ③).
+    expect(container.querySelector('.gap__head--tx .grade__badge')?.textContent).toBe('A등급 · 실거래 집계');
+    expect(container.textContent).toContain('구 단가는 신고된 거래를 우리가 세어 낸 가운데값입니다(상가 거래 기준).');
+    // 근거 병기 한 마디(보완 2차 C5 — 옛 꼬리말 약속을 잇는다).
+    expect(container.textContent).toContain('칸마다 근거(호 수·표본 수)를 함께 적습니다.');
     expect(container.textContent).not.toMatch(/[%％]/);
+  });
+
+  it('★ 기준시가를 아직 안 받은 동안(null · 실패 아님)에는 이유 줄이 없다 — 받고 보니 빈 배열이면 그때 선다(보완 2차 C4)', async () => {
+    const { container, rerender } = render(
+      <FloorGapSection floors={[floor(1)]} basePrices={null} txStats={TX} pnu={PNU} />,
+    );
+    await waitFor(() => expect(cellText(container, 1, 'rent')).toBe('74.6'));
+    expect(container.querySelector('.gap__head--base')).toBeTruthy();
+    expect(container.querySelector('.gap__head-note')).toBeNull();
+    expect(container.textContent).not.toContain('상가 기준시가가 없습니다');
+    expect(container.textContent).not.toContain('불러오지 못했습니다');
+    // 양성 대조 — 같은 자리에 빈 배열이 오면 이유 줄이 선다(위 단언이 선택자 오타로 늘 초록인 것이 아님).
+    rerender(<FloorGapSection floors={[floor(1)]} basePrices={[]} txStats={TX} pnu={PNU} />);
+    expect(container.querySelector('.gap__head--base .gap__head-note')?.textContent).toBe(
+      '이 건물에는 국세청이 고시한 상가 기준시가가 없습니다(오피스텔 호실은 주거 가격이라 싣지 않습니다)',
+    );
   });
 
   it('부동산원 함수가 실패하면 그 칸만 – (카드는 선다)', async () => {

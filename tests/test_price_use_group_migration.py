@@ -358,6 +358,8 @@ def test_마이그_함수가_정본과_글자_일치(name):
     r"^comment on function price_use_group_cd\(text\) is",
     r"^comment on function price_use_group_nm\(text\) is",
     r"^comment on function get_data_freshness\(\) is",
+    r"^comment on function get_sigungu_tx_stats\(text\) is",
+    r"^comment on function get_sigungu_tx_yearly\(text\) is",
     r"^comment on materialized view mv_sigungu_tx_stats is",
     r"^comment on materialized view mv_sigungu_tx_yearly is",
     r"^create unique index if not exists idx_msts_key",
@@ -380,6 +382,14 @@ def test_마이그_물질화뷰는_떨어뜨린_뒤_정본과_같은_본문으�
     after = flat(src[make:])
     assert "analyze {};".format(mv) in after
     assert "revoke all on {} from public, anon, authenticated;".format(mv) in after
+
+
+@pytest.mark.parametrize("fn", ["get_sigungu_tx_stats", "get_sigungu_tx_yearly"])
+def test_구_표_함수_설명에_상가_거래만이_있다(fn):
+    """보완 1차 B5 — 구 표 둘을 읽는 함수의 설명에도 「상가(근생·판매) 거래만」(정본·마이그 같은 글 — 위 글자 대조)."""
+    for path in (SCHEMA, MIG):
+        stmt = stmt_at(r"^comment on function {}\(text\) is".format(fn), read(path))
+        assert "상가(근생·판매) 거래만 — 결정 0040 D3·D8" in stmt, (fn, path)
 
 
 def test_마이그_권한_신선도_api_만_열고_나머지는_닫는다():
@@ -407,10 +417,49 @@ def test_마이그_머리말에_되돌리기_절과_의존_확인이_있다():
     head = raw[:raw.index("\nset lock_timeout")]
     assert "② 되돌리기" in head
     assert "pg_depend" in head
-    # 되돌릴 때 글자 그대로 옮겨 올 원장 다섯이 다 적혀 있다.
-    for f in ("2026-08-16a", "2026-10-15a", "2026-09-05e", "2026-09-27c", "f75cbc5"):
-        assert f in head, f
-    assert "cascade;" not in head
+    assert rollback_problems(head) == []
+
+
+def rollback_problems(head):
+    """머리말 「② 되돌리기」 절 — 목표 = 700a254(운영 10-08a 판 · 보완 1차 B4).
+
+    ① 글자 그대로 옮겨 올 원장 다섯 + 700a254 가 다 적혀 있다 ② squash 뒤 이력에 없는 f75cbc5 를 가리키지 않는다
+    ③ 요약표 둘(용도 불문 판)을 다시 굽는 줄이 묶음 함수 drop **앞**이다(뒤면 의존에 막힌다) ④ cascade 0
+    ⑤ (9) 구 표 함수 둘의 comment 를 700a254 판 글자로 되돌리는 줄이 있다(보완 2차 C2 — ⑦ 이 덧붙인 구절을 걷는다).
+    못 보는 것: 적힌 행 번호가 그 파일의 실제 블록과 맞는지(사람이 본다).
+    """
+    sec = head[head.index("② 되돌리기"):] if "② 되돌리기" in head else ""
+    probs = []
+    for f in ("2026-08-16a", "2026-09-27c", "2026-10-08a", "2026-09-05e", "2026-10-15a", "700a254"):
+        if f not in sec:
+            probs.append("없다: " + f)
+    if "f75cbc5" in sec:
+        probs.append("f75cbc5 를 가리킨다")
+    mv = sec.find("요약표 둘(용도 불문")
+    drop = sec.find("drop function if exists price_use_group_nm(text);")
+    if mv < 0 or drop < 0 or not mv < drop:
+        probs.append("요약표 재생성이 묶음 함수 drop 앞이 아니다")
+    if "cascade;" in sec:
+        probs.append("cascade")
+    c9 = sec.find("-- (9)")
+    need9 = ("2306-2311", "2403-2408", "get_sigungu_tx_stats", "get_sigungu_tx_yearly", "comment")
+    if c9 < 0 or not all(s in sec[c9:] for s in need9):
+        probs.append("구 표 함수 설명 되돌리기(9)가 없다")
+    return probs
+
+
+def test_돌연변이_되돌리기_절이_틀리면_잡힌다():
+    raw = read(MIG)
+    head = raw[:raw.index("\nset lock_timeout")]
+    assert rollback_problems(head.replace("700a254", "f75cbc5")) == ["없다: 700a254", "f75cbc5 를 가리킨다"]
+    i = head.index("--   -- (8)")
+    j = head.index("--   commit;", i)
+    moved = head[:head.index("--   -- (1)")] + head[i:j] + head[head.index("--   -- (1)"):i] + head[j:]
+    assert "요약표 재생성이 묶음 함수 drop 앞이 아니다" in rollback_problems(moved)
+    # (9) 를 빼면 잡힌다(보완 2차 C2).
+    k = head.index("--   -- (9)")
+    no9 = head[:k] + head[head.index("--   commit;", k):]
+    assert rollback_problems(no9) == ["구 표 함수 설명 되돌리기(9)가 없다"]
 
 
 def test_마이그_머리말에는_함수_정의_글자가_없다():

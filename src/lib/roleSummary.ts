@@ -14,7 +14,7 @@ import type {
 import type { ViewerRole } from './sectionCards';
 import { chipMatch, type FounderChip } from './founderChips';
 import { pairBasePrices, type BasePriceRow } from './basePrice';
-import { baseSub, txBandOf } from './floorGap';
+import { TX_STAT_BADGE, baseSub, txBandOf } from './floorGap';
 import { TX_LIST_CAP, TX_MIN_SAMPLE, TX_OPEN_SINCE_LABEL } from './appConstants';
 import { LAND_PRICE_BADGE, LAND_PRICE_NOTE, formatLandPriceAmount } from './landPrice';
 import { defaultBldType, rentSummary, toRentRows } from './rentStats';
@@ -223,7 +223,7 @@ function txStatsTile(input: RoleSummaryInput): SummaryTile | null {
     label: `구 상가 단가 (${pick.label})`,
     lines: [pick.enough ? `㎡당 ${formatManWon(stat.median_unit_price)}` : '표본 부족'],
     basis: [`${where} · 표본 ${stat.n.toLocaleString('ko-KR')}건 · 상가 거래 기준`],
-    grade: { text: 'A등급 · 실거래', est: false },
+    grade: { text: TX_STAT_BADGE, est: false },
   };
 }
 
@@ -463,7 +463,7 @@ function hoTile(input: RoleSummaryInput): SummaryTile | null {
 // ── 한 줄 답(사실 문장만) ────────────────────────────────────────────────────
 
 /**
- * 투자자 한 줄 답(메인 ㉡) — 「이 땅 신고 거래는 N건입니다.」 + 「N층 국세청 기준시가는 ㎡당 X(세무 기준가격)입니다.」
+ * 투자자 한 줄 답(메인 ㉡) — 「이 땅 신고 거래는 N건입니다.」 + 「N층 국세청 기준시가(호 N개 가운데값)는 ㎡당 X(세무 기준가격)입니다.」
  * (기준시가가 없으면 구 상가 단가 문장 · 표본 부족이면 단가 문장 없음). 타일과 **같은 고르기 함수**를 지난다.
  */
 function investorAnswer(input: RoleSummaryInput): string | null {
@@ -473,7 +473,11 @@ function investorAnswer(input: RoleSummaryInput): string | null {
   }
   const base = pickBase(input);
   if (base !== null) {
-    parts.push(`${base.label} 국세청 기준시가는 ㎡당 ${formatManWon(base.base.median_price_per_m2)}(세무 기준가격)입니다.`);
+    // 「호 N개 가운데값」 — 구 단가 문장의 '가운데값'과 같은 결(몇 개를 세운 값인지 · 보완 1차 B10).
+    const ho = base.base.ho_cnt.toLocaleString('ko-KR');
+    parts.push(
+      `${base.label} 국세청 기준시가(호 ${ho}개 가운데값)는 ㎡당 ${formatManWon(base.base.median_price_per_m2)}(세무 기준가격)입니다.`,
+    );
   } else {
     const t = pickTxStat(input);
     if (t !== null && t.enough) {

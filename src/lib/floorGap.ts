@@ -167,6 +167,26 @@ export function floorGapHeads(
 }
 
 /**
+ * 기준시가 칸 머리 아래 이유 한 줄 — 서버가 빈 배열을 줬다(👤 2026-10-18 ②).
+ * ⓘ 서버 `list_base_prices` 는 **'상가' 종류만** 준다 — 오피스텔만 고시된 건물(재검사 실측 572동)도 빈 배열이라
+ *   「고시 대상이 아닙니다」라고 쓰면 틀린 말이 된다. 그래서 두 경우 모두 참인 문장으로 적는다(보완 2차 C1).
+ */
+export const BASE_NOT_LISTED_NOTE =
+  '이 건물에는 국세청이 고시한 상가 기준시가가 없습니다(오피스텔 호실은 주거 가격이라 싣지 않습니다)';
+/** 기준시가 조회가 실패했다 — 「없음」과 섞지 않는다(없는 것과 모르는 것은 다르다 · 부동산원 칸 `rentSummary` 와 같은 결). */
+export const BASE_FAILED_NOTE = '기준시가를 불러오지 못했습니다';
+
+/**
+ * 기준시가 칸 머리 아래 이유 한 줄. 실패 → 「불러오지 못했습니다」 · 빈 배열 → 「상가 기준시가가 없습니다」 ·
+ * 아직 안 옴(null · 실패 아님)·값이 있음 → null(줄 없음). ⛔ 실패와 빈 답을 섞지 않는다.
+ */
+export function baseHeadNote(basePrices: readonly BasePrice[] | null, failed: boolean): string | null {
+  if (failed) return BASE_FAILED_NOTE;
+  if (basePrices !== null && basePrices.length === 0) return BASE_NOT_LISTED_NOTE;
+  return null;
+}
+
+/**
  * 카드를 세울 만한가 — **값이 든 칸이 하나라도** 있으면 선다(결정 0041 E2 · 👤 2026-10-18 — 예: 기준시가만 있는
  * 건물도 선다. 옛 규칙 「둘 이상 + 국세청·부동산원 중 하나」(👤 2026-10-11)는 이 결정으로 바뀌었다).
  * 칸에 값이 들었다 = 작은 글(`sub`)이 있다(표본 부족·'–' 은 없다). 셋 다 비면 카드째 숨긴다.
@@ -187,3 +207,12 @@ export const FLOOR_GAP_SUMMARY = '국세청 기준시가 · 구 상가 단가 ·
 /** 발 문구(👤 2026-10-11 결정 글자 그대로). */
 export const FLOOR_GAP_FOOT = '세 값은 서로 다른 자료·다른 단위입니다 — 서로 나누거나 비율을 계산하지 않았습니다.';
 export const FLOOR_GAP_BASE_NOTE = '국세청 기준시가는 세무 기준가격 — 시세가 아닙니다.';
+/** 구 단가 한 마디(👤 2026-10-18 ③ — 신고 거래를 우리가 세어 낸 집계라는 사실). */
+export const FLOOR_GAP_TX_NOTE = '구 단가는 신고된 거래를 우리가 세어 낸 가운데값입니다(상가 거래 기준).';
+/** 근거 병기 한 마디(보완 2차 C5 — 내린 옛 꼬리말 「근거와 표본 수를 함께 적습니다」 약속을 이 카드에서 잇는다 · 절대 규칙 3). */
+export const FLOOR_GAP_BASIS_NOTE = '칸마다 근거(호 수·표본 수)를 함께 적습니다.';
+/**
+ * 구 상가 단가 배지(👤 2026-10-18 ③ — 공표값이 아니라 우리가 센 집계라 「집계」를 붙인다). 세 잣대 칸 머리와 투자자 요약 판
+ * 구 단가 타일이 **이 상수 하나**를 쓴다(카드·타일 같은 글).
+ */
+export const TX_STAT_BADGE = 'A등급 · 실거래 집계';

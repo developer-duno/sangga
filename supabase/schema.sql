@@ -2373,7 +2373,8 @@ comment on function get_sigungu_tx_stats(text) is
   '표본이 없는 층대는 물질화뷰에 행이 없으므로 여기서 n=0 으로 채운다(칸이 사라지면 '
   '"그 층은 아예 안 판다"처럼 읽힌다). 화면은 n<5 면 수치를 감추고 "표본 부족"만 적는다. '
   'window_from 은 집계한 창의 시작 달, sigungu_nm 은 구 이름(화면에 지역명을 박지 않기 위해 '
-  '서버가 준다). security definer — 물질화뷰가 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다';
+  '서버가 준다). security definer — 물질화뷰가 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. '
+  '상가(근생·판매) 거래만 — 결정 0040 D3·D8(2026-10-18a)';
 
 revoke all on function list_parcel_transactions(text) from public, anon, authenticated;
 revoke all on function get_sigungu_tx_stats(text) from public, anon, authenticated;
@@ -2474,7 +2475,8 @@ comment on function get_sigungu_tx_yearly(text) is
   '화면은 n<5 면 수치를 감추고 "표본 부족"만 적는다(절대 규칙 3). security definer — 물질화뷰가 '
   'anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. sigungu_nm 은 구 이름(화면에 지역명을 박지 않기 위해). '
   '2026-09-09b: median_area_m2 = 그 해 단가의 근거가 된 거래 한 건의 건물면적 중앙값(㎡). '
-  '⛔ 숫자를 거르는 칸이 아니다 — 초소형 구획이 무더기로 거래된 해를 사람이 알아보게 하는 사실 한 칸이다.';
+  '⛔ 숫자를 거르는 칸이 아니다 — 초소형 구획이 무더기로 거래된 해를 사람이 알아보게 하는 사실 한 칸이다. '
+  '상가(근생·판매) 거래만 — 결정 0040 D3·D8(2026-10-18a)';
 
 revoke all on function get_sigungu_tx_yearly(text) from public, anon, authenticated;
 
@@ -4167,7 +4169,8 @@ revoke all on sequence nts_base_price_id_seq from public, anon, authenticated;
 -- ⛔ **여러 해가 쌓여도 한 해만 본다.** 필터 없이 묶으면 2026년과 2027년 값의 중앙값이라는
 --    뜻 없는 숫자가 나온다. 그 필지에 있는 **가장 최근 고시일자**만 골라 그 안에서 센다.
 -- ⚠️ 파라미터를 p_ 로 시작하는 이유: `pnu` 는 컬럼 이름과 겹친다. 겹치면 PostgreSQL 이
---    컬럼을 우선 집어 `where n.pnu = n.pnu`(= 전 국토)가 된다(list_price_bands 와 같은 함정).
+--    컬럼을 우선 집어 `where n.pnu = n.pnu`(= 전 국토)가 된다(결정 0041 로 지운 옛 list_price_bands 와
+--    같은 함정).
 create or replace function list_base_prices(p_pnu text)
 returns table (
   floor_no             smallint,

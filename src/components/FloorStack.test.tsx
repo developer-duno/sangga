@@ -1056,7 +1056,7 @@ describe('FloorStack — 실거래 기록 (Stage A · 결정 0012)', () => {
     // 절대 규칙 3 — 근거 레벨 + 표본 수 병기.
     const { container } = render(<FloorStack building={building()} />);
     // 같은 배지가 층별 공표값 카드(물결 1-C2) 칸 머리에도 선다 — 실거래 카드 안으로 좁혀 본다.
-    await waitFor(() => expect(container.querySelector('section.tx')?.textContent).toMatch(/A등급 · 실거래/));
+    await waitFor(() => expect(container.querySelector('section.tx')?.textContent).toMatch(/A등급 · 실거래 집계/));
     expect(screen.getByText(/국토교통부 상업업무용 부동산 매매 실거래가/)).toBeTruthy();
     expect(screen.getByText(/전체 표본 213건/)).toBeTruthy();
   });
@@ -1201,6 +1201,9 @@ describe('FloorStack — 국세청 기준시가 (『층별 공표값 나란히�
     await waitFor(() => expect(container.querySelector('.gap')).toBeTruthy());
     expect(baseCell(container, 1, 'val')).toBe('–');
     expect(container.querySelector('.gap')?.textContent).not.toContain('기준시가 없음');
+    // 이유 한 줄(👤 2026-10-18 ② · 보완 2차 C1) — 빈 배열 = 상가 기준시가 없음(실패 글과 섞지 않는다).
+    const note = container.querySelector('.gap__head--base .gap__head-note')?.textContent;
+    expect(note).toBe('이 건물에는 국세청이 고시한 상가 기준시가가 없습니다(오피스텔 호실은 주거 가격이라 싣지 않습니다)');
   });
 
   it('서버에 함수가 아직 없어도(PGRST202) 카드의 나머지는 정상이다', async () => {
@@ -1211,6 +1214,9 @@ describe('FloorStack — 국세청 기준시가 (『층별 공표값 나란히�
     expect(baseCell(container, 1, 'val')).toBe('–');
     expect(container.querySelector('.gap__row[data-floor="1"] .gap__cell--tx .gap__val')?.textContent).toBe('㎡당 2,250만');
     expect(container.textContent ?? '').not.toContain('PGRST202');
+    // 실패 = 「불러오지 못했습니다」(상가 기준시가가 없다고 말하지 않는다 — 모르는 것을 없다고 하지 않는다).
+    expect(container.querySelector('.gap__head--base .gap__head-note')?.textContent).toBe('기준시가를 불러오지 못했습니다');
+    expect(container.textContent).not.toContain('상가 기준시가가 없습니다');
   });
 
   it('pnu 를 p_pnu 라는 이름으로 보낸다 (라이브 전용 오류를 막는 유일한 가드)', async () => {

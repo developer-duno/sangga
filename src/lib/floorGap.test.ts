@@ -4,6 +4,7 @@ import {
   FLOOR_GAP_FOOT,
   FLOOR_GAP_SUMMARY,
   GAP_NONE,
+  baseHeadNote,
   baseSub,
   floorGapHeads,
   floorGapRows,
@@ -256,6 +257,23 @@ describe('floorGapShowable — 값 든 칸이 하나라도 있으면 선다 (결
     expect(floorGapShowable(floorGapRows([floor(99)], null, null, [rent()]))).toBe(false);
     // 표본 부족뿐인 실거래는 값이 아니다.
     expect(floorGapShowable(floorGapRows([floor(2)], null, TX, null))).toBe(false);
+  });
+});
+
+describe('baseHeadNote — 기준시가 빈 칸의 이유 한 줄 (👤 2026-10-18 ②)', () => {
+  it('★ 빈 배열 = 상가 기준시가 없음 · 실패 = 불러오지 못함 · 둘을 섞지 않는다', () => {
+    // 오피스텔만 고시된 건물도 빈 배열이다(서버가 상가만 준다) — 「고시 대상 아님」이라 하면 틀린다(보완 2차 C1).
+    expect(baseHeadNote([], false)).toBe('이 건물에는 국세청이 고시한 상가 기준시가가 없습니다(오피스텔 호실은 주거 가격이라 싣지 않습니다)');
+    expect(baseHeadNote([], false)).not.toContain('고시 대상');
+    expect(baseHeadNote(null, true)).toBe('기준시가를 불러오지 못했습니다');
+    // 실패가 이긴다(실패면 빈 답 여부와 무관하게 「모른다」).
+    expect(baseHeadNote([], true)).toBe('기준시가를 불러오지 못했습니다');
+    expect(baseHeadNote([], false)).not.toBe(baseHeadNote(null, true));
+  });
+
+  it('아직 안 옴(null · 실패 아님)·값이 있으면 줄이 없다', () => {
+    expect(baseHeadNote(null, false)).toBeNull();
+    expect(baseHeadNote([base(1, 5_000_000)], false)).toBeNull();
   });
 });
 

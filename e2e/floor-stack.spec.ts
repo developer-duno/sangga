@@ -620,7 +620,7 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     // 출처표시 의무 + 절대 규칙 3(근거 레벨·표본 수 병기).
     await expect(stack.getByText(/국토교통부 상업업무용 부동산 매매 실거래가/)).toBeVisible();
     // 같은 배지가 층별 공표값 카드(물결 1-C2) 칸 머리에도 선다 — 실거래 카드 안으로 좁힌다.
-    await expect(stack.locator('section.tx').getByText(/A등급 · 실거래/)).toBeVisible();
+    await expect(stack.locator('section.tx').getByText(/A등급 · 실거래 집계/)).toBeVisible();
     // 절대 규칙 2 — 금칙어 5종은 화면 어디에도 없다.
     // ⚠️ '시세'는 다른 카드(층별 공표값의 「시세가 아닙니다」 등)가 정당하게 쓴다.
     //    그래서 '시세' 금지는 화면 전체가 아니라 **Stage A 블록 안**으로 좁힌다 —
@@ -811,7 +811,7 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     // 누르면 그 자리에서 값·근거가 함께 나온다(절대 규칙 3 — 값과 근거는 한 몸이다).
     await openCard(page, /층별 공표값 나란히/);
     await expect(gap.locator('.gap__row[data-floor="1"] .gap__cell--tx .gap__val')).toHaveText('㎡당 2,250만');
-    await expect(gap.locator('.gap__head--tx').getByText(/A등급 · 실거래/)).toBeVisible();
+    await expect(gap.locator('.gap__head--tx').getByText('A등급 · 실거래 집계', { exact: true })).toBeVisible();
 
     // 펼쳐진 카드도 접을 수 있다 — 접으면 본문만 사라지고 요약은 남는다.
     const floorsCard = stack.locator('.card--floors');
@@ -1133,7 +1133,7 @@ test.describe('층별 스택뷰 — 종이로 뽑기', () => {
     await expect(gap.locator('.card__body')).toBeVisible();
     await expect(gap.locator('.gap__val').first()).toBeVisible();
     // 값과 근거는 한 몸이다(절대 규칙 3) — 종이에서도 함께 나와야 한다.
-    await expect(gap.locator('.gap__head--tx').getByText(/A등급 · 실거래/)).toBeVisible();
+    await expect(gap.locator('.gap__head--tx').getByText('A등급 · 실거래 집계', { exact: true })).toBeVisible();
 
     // ⛔ 브라우저는 잉크를 아끼려고 배경색을 안 찍는다. 그런데 이 화면에서 막대는
     //    **본론**이라, 이 설정이 빠지면 층별 스택이 종이에서 백지가 된다(2026-08-25 실측).
@@ -1483,7 +1483,7 @@ test.describe('입구 — 동네 매매 단가 흐름', () => {
     // 곁눈으로 말해 주는 셈이 된다.
     await expect(rows.last()).not.toContainText('한 건 면적');
     // ③ 근거 등급 — 어림한 값이 아니라 신고된 거래다.
-    await expect(flow.locator('.grade__badge')).toHaveText('A등급 · 실거래');
+    await expect(flow.locator('.grade__badge')).toHaveText('A등급 · 실거래 집계');
 
     // ⛔ 건물을 고르면 화면의 주제가 그 건물이다 — 입구 카드는 물러난다(휴대폰은 건물 탭에서 숨고 찾기 탭엔 남는다 · W4a F2).
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
@@ -3659,7 +3659,7 @@ test.describe('층별 스택뷰 — 역할 요약 판', () => {
     await expect(sum.locator('.rsum__question')).toHaveText('얼마고 얼마 벌리나');
     await expect(sum.locator('.rsum__tile--rent')).toContainText('상권 평균');
     await expect(sum.locator('.rsum__tile--txstat .rsum__label')).toHaveText('구 상가 단가 (1층)');
-    await expect(sum.locator('.rsum__tile--txstat .grade__badge')).toHaveText('A등급 · 실거래');
+    await expect(sum.locator('.rsum__tile--txstat .grade__badge')).toHaveText('A등급 · 실거래 집계');
     await expect(sum.locator('.rsum__tile--txstat .grade__badge--est')).toHaveCount(0);
     await expect(sum).not.toContainText('참고 시세');
     expect(await sum.locator('.rsum__tile').count()).toBeGreaterThanOrEqual(3);

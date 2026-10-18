@@ -230,7 +230,7 @@ describe('TxFlowSection — 자료가 있을 때', () => {
     const { container } = render(<TxFlowSection sigungu="11680" />);
     fireEvent.click(await screen.findByRole('button', { name: /동네 매매 단가 흐름/ }));
 
-    expect(container.querySelector('.grade__badge')?.textContent).toBe('A등급 · 실거래');
+    expect(container.querySelector('.grade__badge')?.textContent).toBe('A등급 · 실거래 집계');
     const src = container.querySelector('.flow__src')?.textContent ?? '';
     // 각주의 두 시점은 **상수에서 온 값**이다(화면에 박은 글자가 아니다).
     expect(src).toContain('2017');

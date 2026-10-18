@@ -7,6 +7,7 @@ import {
   TX_OPEN_SINCE_LABEL,
 } from '../lib/appConstants';
 import { ENTRY_SECTION_PLAN } from '../lib/sectionCards';
+import { TX_STAT_BADGE } from '../lib/floorGap';
 import { SectionCard } from './SectionCard';
 import { formatManWon, formatManWonBand } from '../lib/format';
 import {
@@ -161,7 +162,8 @@ export function TxFlowSection({ sigungu }: Props) {
       </ul>
 
       <p className="grade">
-        <span className="grade__badge">A등급 · 실거래</span>
+        {/* 구×연도 가운데값 = 우리가 세어 낸 집계 — 구 단가 배지와 같은 글(결정 0041 보완 1차 · 꼬리말 약속). */}
+        <span className="grade__badge">{TX_STAT_BADGE}</span>
         어림한 값이 아니라 <strong>신고된 거래를 그대로 센 값</strong>입니다. 표본이{' '}
         {TX_MIN_SAMPLE}건 미만인 해는 수치를 적지 않습니다 — 몇 건으로 낸 가운데값은 숫자
         모양만 통계이기 때문입니다.

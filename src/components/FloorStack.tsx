@@ -18,6 +18,7 @@ import {
   LAND_PRICE_FN,
 } from '../lib/appConstants';
 import { LAND_PRICE_BADGE, landPriceText, parseLandPrice } from '../lib/landPrice';
+import { TX_STAT_BADGE } from '../lib/floorGap';
 import type {
   BasePrice,
   BuildingDistricts,
@@ -343,6 +344,8 @@ export function FloorStack({
    *   상태를 하나 더 만들면 쓰는 곳 없이 갈래만 는다.
    */
   const [basePrices, setBasePrices] = useState<BasePrice[] | null>(null);
+  /** 기준시가 조회가 실패했나 — 층별 공표값 칸 머리의 이유 줄이 「불러오지 못했습니다」와 「상가 기준시가 없음」(빈 배열)을 가른다(👤 2026-10-18 ②). */
+  const [basePricesFailed, setBasePricesFailed] = useState(false);
   /**
    * 이 건물의 층별 호실 요약(결정 0032). null = 아직 안 왔거나 **못 읽음** — 그때는 요약 줄도
    * "자료 없음" 안내도 안 그린다. 빈 배열 = 물어봤더니 호실 자료가 없는 건물(안내가 선다).
@@ -617,6 +620,7 @@ export function FloorStack({
     setTxs(null);
     setTxStats(null);
     setBasePrices(null);
+    setBasePricesFailed(false);
 
     supabase.rpc(PARCEL_TX_FN, { pnu: building.pnu }).then(({ data, error: err }) => {
       if (cancelled) return;
@@ -644,11 +648,12 @@ export function FloorStack({
     // ⚠️ 인자 이름이 이 함수만 `p_pnu` 다(형제 둘은 pnu·sigungu — 컬럼명 `pnu` 와 겹친다).
     //    목은 인자 이름을 안 보므로 습관대로 `{ pnu: … }` 로 부르면 테스트는 전부 초록인 채
     //    **라이브에서만** PGRST202 가 난다.
-    // ⓘ 못 읽었으면 그 칸만 조용히 뺀다(업종 분포와 같은 관행) — 『층별 공표값 나란히』의 기준시가 칸이 '–'.
+    // ⓘ 못 읽었으면 그 칸만 '–' 이고, 칸 머리 아래에 「기준시가를 불러오지 못했습니다」 한 줄(빈 배열의 「상가 기준시가 없음」과 섞지 않는다).
     supabase.rpc(BASE_PRICES_FN, { p_pnu: building.pnu }).then(({ data, error: err }) => {
       if (cancelled) return;
       if (err || !Array.isArray(data)) {
         console.warn('기준시가 조회 실패 — 그 줄 없이 표시합니다', err);
+        setBasePricesFailed(true);
         return;
       }
       setBasePrices(data as BasePrice[]);
@@ -895,6 +900,7 @@ export function FloorStack({
       <FloorGapSection
         floors={floors}
         basePrices={basePrices}
+        basePricesFailed={basePricesFailed}
         txStats={txStats}
         pnu={building.pnu}
         prefetch={sidePrefetch}
@@ -1398,7 +1404,8 @@ function SigunguTxBands({ stats }: { stats: SigunguTxStat[] }) {
         })}
       </ul>
       <p className="grade">
-        <span className="grade__badge">A등급 · 실거래</span>
+        {/* 구 층대 가운데값 = 우리가 세어 낸 집계 — 세 잣대 칸·요약 타일과 같은 배지(결정 0041 보완 1차 · 꼬리말 약속). */}
+        <span className="grade__badge">{TX_STAT_BADGE}</span>
         추정한 값이 아니라 <strong>신고된 거래를 그대로 센 값</strong>입니다. 표본이{' '}
         {MIN_SAMPLE}건 미만인 층대는 수치를 적지 않습니다 — 몇 건으로 낸 가운데값은 숫자
         모양만 통계이기 때문입니다.

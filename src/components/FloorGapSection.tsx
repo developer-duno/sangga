@@ -8,6 +8,10 @@ import {
   FLOOR_GAP_BASE_NOTE,
   FLOOR_GAP_FOOT,
   FLOOR_GAP_SUMMARY,
+  FLOOR_GAP_TX_NOTE,
+  FLOOR_GAP_BASIS_NOTE,
+  TX_STAT_BADGE,
+  baseHeadNote,
   floorGapHeads,
   floorGapRows,
   floorGapShowable,
@@ -35,8 +39,10 @@ import { SectionCard } from './SectionCard';
  */
 type Props = {
   floors: FloorRow[];
-  /** 부모가 받은 기준시가. null = 아직 안 왔거나 못 읽음. */
+  /** 부모가 받은 기준시가. null = 아직 안 왔거나 못 읽음(둘은 `basePricesFailed` 가 가른다). */
   basePrices: BasePrice[] | null;
+  /** 기준시가 조회가 실패했나 — 칸 머리 아래 「불러오지 못했습니다」(빈 배열의 「상가 기준시가 없음」과 섞지 않는다). */
+  basePricesFailed?: boolean;
   /** 부모가 받은 구 층대 단가. null = 아직 안 왔거나 못 읽음. */
   txStats: SigunguTxStat[] | null;
   pnu: string;
@@ -49,6 +55,7 @@ type Props = {
 export function FloorGapSection({
   floors,
   basePrices,
+  basePricesFailed = false,
   txStats,
   pnu,
   prefetch,
@@ -81,6 +88,8 @@ export function FloorGapSection({
   const rows = floorGapRows(floors, basePrices, txStats, rentRows);
   if (!floorGapShowable(rows)) return null;
   const heads = floorGapHeads(txStats, rentRows, noCoord);
+  // 기준시가 빈 칸의 이유 한 줄(👤 2026-10-18 ②) — 상가 기준시가 없음 / 불러오지 못함 / (아직·값 있음이면 없음).
+  const baseNote = baseHeadNote(basePrices, basePricesFailed);
   const total = txTotal(txStats);
 
   return (
@@ -88,9 +97,10 @@ export function FloorGapSection({
       <ol className="gap__heads">
         <li className="gap__head gap__head--base">
           <span className="grade__badge">A등급 · 공식 고시</span> {heads.base}
+          {baseNote !== null && <span className="gap__head-note">{baseNote}</span>}
         </li>
         <li className="gap__head gap__head--tx">
-          <span className="grade__badge">A등급 · 실거래</span> {heads.tx}
+          <span className="grade__badge">{TX_STAT_BADGE}</span> {heads.tx}
           {total !== null && <span className="gap__n"> · 구 합계 표본 {total.toLocaleString('ko-KR')}건</span>}
         </li>
         <li className="gap__head gap__head--rent">
@@ -109,6 +119,8 @@ export function FloorGapSection({
       </ol>
       <p className="gap__foot">{FLOOR_GAP_FOOT}</p>
       <p className="gap__foot">{FLOOR_GAP_BASE_NOTE}</p>
+      <p className="gap__foot">{FLOOR_GAP_TX_NOTE}</p>
+      <p className="gap__foot">{FLOOR_GAP_BASIS_NOTE}</p>
     </SectionCard>
   );
 }

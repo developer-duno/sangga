@@ -75,10 +75,13 @@
 --   ⓪ 적용 직전 기록: 위 의존 확인 쿼리 둘(0행).
 --   ① 워크트리(이 가지)에서 적용:
 --        python scripts/dbx.py -f supabase/migrations/2026-10-18a_price_use_group.sql
---   ② python scripts/post_load.py → **워크트리에서** python scripts/post_load.py --check
---      (본 폴더 main 의 옛 정본으로 돌리면 함수 드리프트가 뜬다 · 기대 = 드리프트 0 · 공개 호출 허용 목록
---       두 줄(api.list_price_bands · api.list_price_gate) 빠짐 · 「transaction.main_use 7종 밖」 0).
---   ③ 바로 PR 머지(= 배포) → 라이브 엔진 3벌 전/후 캡처.
+--   ② **둘 다 워크트리에서** python scripts/post_load.py → python scripts/post_load.py --check
+--      (본 폴더 main 의 post_load.py 는 REFRESH_MVS 에 지운 mv_tx_parcel_geog 가 있어 "그런 뷰 없음"으로 멈추고,
+--       옛 정본으로 돌리면 함수 드리프트가 뜬다 · 기대 = 드리프트 0 · 공개 호출 허용 목록 두 줄(api.list_price_bands ·
+--       api.list_price_gate) 빠짐 · 「transaction.main_use 7종 밖」 0).
+--   ③ 바로 PR 머지(= 배포) → 라이브 엔진 3벌 전/후 캡처 → python scripts/indexnow_ping.py(첫 HTML 설명 글이 바뀌었다).
+--   ⓘ 적용 ~ 머지 창은 사람 적은 시간에(그 사이 화면 main 은 지운 함수를 부른다 — 참고 시세 카드·성적표 카드가
+--     실패해 통째로 사라진다(몇 분)).
 --
 -- 적용한 사람이 보게 되는 것 (파일의 실제 문장 순서)
 -- --------------------------------------------------
@@ -89,34 +92,41 @@
 --   DROP TABLE ·
 --   DROP MATERIALIZED VIEW · SELECT n · COMMENT · CREATE INDEX · ANALYZE · REVOKE ·
 --   DROP MATERIALIZED VIEW · SELECT n · COMMENT · CREATE INDEX · ANALYZE · REVOKE ·
+--   COMMENT ×2 ·
 --   COMMIT · NOTIFY
 --
--- ② 되돌리기 — **새 마이그레이션 파일**로(적용한 뒤에는 이 파일이 원장이라 고치지 않는다) + 정본 되돌림(PR revert)
--- ---------------------------------------------------------------------------------------------------------
---   순서: ⓐ 화면 PR revert(배포) ⓑ 아래 SQL(새 파일 `<날짜>_revert_price_band_removal.sql`) ⓒ 통과 구 =
---     `git show f75cbc5:docs/backtest/통과구.csv` 로 꺼낸 판을 `git show f75cbc5:scripts/load_price_gate.py`
---     로 꺼낸 적재기로 다시 적재 ⓓ python scripts/post_load.py.
+-- ② 되돌리기 — 목표 = **700a254(운영 10-08a 판 · 결정 0040·0041 이전)** · **새 마이그레이션 파일**로(적용한 뒤에는 이 파일이
+--    원장이라 고치지 않는다) + 정본 되돌림(PR revert — 정본이 700a254 판으로 돌아간다)
+-- -----------------------------------------------------------------------------------------------------------------
+--   순서: ⓐ 화면 PR revert(배포) ⓑ 아래 SQL(새 파일 `<날짜>_revert_price_band_removal.sql`) ⓒ 신선도 함수는 ⓑ 안에서
+--     10-15a 판(9번 줄 포함)으로 ⓓ 통과 구 = `git show 700a254:docs/backtest/통과구.csv` 로 꺼낸 판을
+--     `git show 700a254:scripts/load_price_gate.py` 로 꺼낸 적재기로 다시 적재 ⓔ python scripts/post_load.py.
 --   ⓘ 이 머리말에는 함수 정의 문장을 글자로 적지 않는다 — tests/test_schema_function_drift.py 의 파서가
 --     주석을 안 걷어 내 그 글자부터 다음 함수 본문까지를 한 함수로 삼키기 때문이다. 대신 **글자 그대로
---     옮겨 올 곳**을 적는다(그 판의 정본은 `git show f75cbc5:supabase/schema.sql` — 결정 0041 직전):
+--     옮겨 올 곳**을 적는다(그 판의 정본은 `git show 700a254:supabase/schema.sql`):
 --
 --   set lock_timeout = '2s';
 --   begin;
---   -- (1) 표 price_gate_sigungu = 2026-08-16a 파일 41-65행(create table · comment 셋 · revoke) + f75cbc5 판
+--   -- (1) 표 price_gate_sigungu = 2026-08-16a 파일 41-65행(create table · comment 셋 · revoke) + 700a254 판
 --   --     schema.sql 의 `alter table price_gate_sigungu enable row level security;` 를 글자 그대로.
---   -- (2) get_data_freshness = 2026-10-15a 파일 100-246행(9번 줄이 든 판 — 정의 · comment · revoke)을 글자 그대로
---   --     (api 쌍둥이는 본문이 같아 다시 만들 필요가 없다 — 이 파일도 같은 글자로 다시 만들 뿐이다).
---   -- (3) list_price_gate + api 쌍둥이 = 2026-09-05e 파일 40-105행(정의 · comment · revoke · grant)을 글자 그대로.
---   -- (4) mv_tx_parcel_geog = 2026-09-27c 파일 61-84행(create · comment · 유일 색인 · gist 색인 · analyze ·
+--   -- (2) price_floor_band = 2026-08-16a 파일 85-107행(정의 · comment · revoke)을 글자 그대로.
+--   -- (3) mv_tx_parcel_geog = 2026-09-27c 파일 61-84행(create · comment · 유일 색인 · gist 색인 · analyze ·
 --   --     revoke)을 글자 그대로.
---   -- (5) price_floor_band = 2026-08-16a 파일 85-107행(정의 · comment · revoke)을 글자 그대로.
---   -- (6) price_floor_use_group · list_price_bands(use_group 10칸) · api.list_price_bands = f75cbc5 판의
---   --     이 파일(2026-10-18a 결정 0040 판 — `git show f75cbc5:supabase/migrations/2026-10-18a_price_use_group.sql`)
---   --     ②·③ 블록(그 판 179-506행)을 글자 그대로 — revoke · grant 까지.
+--   -- (4) list_price_bands(9칸 · 용도 묶음 없음) = 2026-10-08a 파일 282-492행(정의 · comment · revoke)을 글자 그대로 +
+--   --     api 쌍둥이 9칸 = 700a254 판 schema.sql 의 api.list_price_bands 정의와 그 revoke · grant 한 줄씩을 글자 그대로.
+--   -- (5) list_price_gate + api 쌍둥이 = 2026-09-05e 파일 40-105행(정의 · comment · revoke · grant)을 글자 그대로.
+--   -- (6) get_data_freshness = 2026-10-15a 파일 100-246행(9번 줄이 든 판 — 정의 · comment · revoke)을 글자 그대로
+--   --     (api 쌍둥이는 본문이 같아 다시 만들 필요가 없다).
+--   -- (7) 요약표 둘(용도 불문 · 상가 조건 없는 판) = 2026-10-08a 파일 192-234행(mv_sigungu_tx_stats)·237-279행
+--   --     (mv_sigungu_tx_yearly) 을 글자 그대로(drop → create → comment → 유일 색인 → analyze → revoke).
+--   -- (8) 그 **뒤에** 묶음 함수 둘을 지운다 — 요약표가 더는 안 쓰게 된 다음이라야 의존(pg_depend 'n')에 안 막힌다:
+--   --     drop function if exists price_use_group_nm(text);
+--   --     drop function if exists price_use_group_cd(text);
+--   -- (9) 구 표 함수 둘의 설명 = 700a254 판 schema.sql 2306-2311행(get_sigungu_tx_stats)·2403-2408행
+--   --     (get_sigungu_tx_yearly)의 comment 두 문장을 글자 그대로 — 이 파일 ⑦ 이 덧붙인 「상가(근생·판매) 거래만」
+--   --     한 구절을 걷어 낸다(함수 본문은 이 파일이 안 바꿨으니 그대로).
 --   commit;
 --   notify pgrst, 'reload schema';
---   ⓘ 되돌린 뒤 `post_load.py --check` 의 함수 드리프트는 정본을 같은 PR revert 로 되돌려야 0 이 되고,
---     공개 호출 허용 목록 두 줄과 REFRESH_MVS 의 mv_tx_parcel_geog 도 같은 revert 로 돌아온다.
 
 set lock_timeout = '2s';
 
@@ -449,6 +459,23 @@ create unique index if not exists idx_msty_key on mv_sigungu_tx_yearly (sigungu_
 analyze mv_sigungu_tx_yearly;
 
 revoke all on mv_sigungu_tx_yearly from public, anon, authenticated;
+
+-- ⑦ 구 표 둘을 읽는 함수 둘의 설명 — 「상가(근생·판매) 거래만」 한 구절(정본에서 글자 그대로 · 함수 본문은 그대로).
+comment on function get_sigungu_tx_stats(text) is
+  'Stage A(결정 0012) 구 실거래 단가 분포 — 층대 5칸을 **항상 같은 순서로** 돌려준다. '
+  '표본이 없는 층대는 물질화뷰에 행이 없으므로 여기서 n=0 으로 채운다(칸이 사라지면 '
+  '"그 층은 아예 안 판다"처럼 읽힌다). 화면은 n<5 면 수치를 감추고 "표본 부족"만 적는다. '
+  'window_from 은 집계한 창의 시작 달, sigungu_nm 은 구 이름(화면에 지역명을 박지 않기 위해 '
+  '서버가 준다). security definer — 물질화뷰가 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. '
+  '상가(근생·판매) 거래만 — 결정 0040 D3·D8(2026-10-18a)';
+
+comment on function get_sigungu_tx_yearly(text) is
+  '결정 0027 구 실거래 단가의 연도별 흐름 — 집합 거래만, 연도 오름차순, 자료가 있는 해만. '
+  '화면은 n<5 면 수치를 감추고 "표본 부족"만 적는다(절대 규칙 3). security definer — 물질화뷰가 '
+  'anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. sigungu_nm 은 구 이름(화면에 지역명을 박지 않기 위해). '
+  '2026-09-09b: median_area_m2 = 그 해 단가의 근거가 된 거래 한 건의 건물면적 중앙값(㎡). '
+  '⛔ 숫자를 거르는 칸이 아니다 — 초소형 구획이 무더기로 거래된 해를 사람이 알아보게 하는 사실 한 칸이다. '
+  '상가(근생·판매) 거래만 — 결정 0040 D3·D8(2026-10-18a)';
 
 commit;
 

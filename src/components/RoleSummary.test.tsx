@@ -401,7 +401,7 @@ describe('RoleSummary — 층별 화면 맨 위 역할 요약 판', () => {
     expect(base.textContent).toContain('세무 기준가격 — 시세 아님');
     expect(container.querySelector('.rsum__tile--rent')!.textContent).toContain('상권 평균 · 집합상가 · 2026년 2분기 조사');
     expect(container.querySelector('.rsum__answer')!.textContent).toBe(
-      '이 땅 신고 거래는 1건입니다. 2층 국세청 기준시가는 ㎡당 596만(세무 기준가격)입니다.',
+      '이 땅 신고 거래는 1건입니다. 2층 국세청 기준시가(호 1개 가운데값)는 ㎡당 596만(세무 기준가격)입니다.',
     );
   });
 
@@ -414,6 +414,8 @@ describe('RoleSummary — 층별 화면 맨 위 역할 요약 판', () => {
     const t = container.querySelector('.rsum__tile--txstat')!;
     expect(t.querySelector('.rsum__label')?.textContent).toBe('구 상가 단가 (1층)');
     expect(t.textContent).toContain('강남구 1층 · 표본 213건 · 상가 거래 기준');
+    // 카드(세 잣대 칸 머리)와 같은 배지 글(👤 2026-10-18 ③).
+    expect(t.querySelector('.grade__badge')?.textContent).toBe('A등급 · 실거래 집계');
     expect(container.querySelector('.rsum__tile--base')).toBeNull();
     expect(fetches.filter((f) => f.fn === 'get_sigungu_tx_stats')).toHaveLength(1);
   });

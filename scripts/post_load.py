@@ -1234,7 +1234,8 @@ ANON_CALLABLE_ALLOWLIST = (
 # ✅ **닫힘 이력** — 2026-09-01 감사가 찾은 잔존 노출 9개는 마이그레이션
 #    **2026-09-05a** 로 닫혔다(get_sigungu_tx_stats·list_building_districts·
 #    list_industry_detail·list_industry_mix·list_open_sigungu·list_parcel_transactions·
-#    list_price_bands·search_buildings·search_scope 의 **public** 원본).
+#    list_price_bands·search_buildings·search_scope 의 **public** 원본 · 그중 list_price_bands 는 결정 0041
+#    (2026-10-18a)로 함수째 지웠다).
 # ⓘ **왜 열려 있었나** — PostgreSQL 은 새 함수에 PUBLIC EXECUTE 를 기본으로 준다
 #    (공식 문서 §5.8 표 5.2). 그 기본값을 막는 전역 한 줄은 2026-09-01b 에서야 들어갔고,
 #    기본권한은 "앞으로"에만 걸려서 그보다 먼저 태어난 아홉은 손으로 닫을 수밖에 없었다.
@@ -2188,7 +2189,8 @@ def report_toast_evictions():
 
 
 # ── 실거래 용도 이름 — 묶음표가 모르는 글자 (2026-10-18a · 결정 0040) ─────────
-# 참고 시세·구 단가·동네 흐름은 `price_use_group_nm(transaction.main_use)` 로 묶음을 정한다. 모르는 글자는
+# 구 층대 단가·동네 흐름 요약표는 `price_use_group_nm(transaction.main_use) = 'shop'` 으로 상가만 센다(참고 시세는 결정 0041 로
+# 내렸다). 모르는 글자는
 # **조용히 other(기타)** 가 되고(빈 글자는 어느 묶음에도 안 든다) 에러가 안 난다 — 국토부가 이름을 바꾸거나
 # 새 용도를 보내면 그 거래가 소리 없이 다른 묶음으로 샌다. 그래서 7종 밖인 행 수를 센다(0 이 기대).
 # ⓘ [주의]까지만 — 종료 코드에 안 넣는다(고장이 아니라 묶음표를 손볼 신호다).
@@ -2218,10 +2220,10 @@ def report_tx_main_use_unknown():
         print("[주의] 실거래 용도 이름 점검을 하지 못했습니다: {}".format(_psql_failure_reason(exc)))
         return None
     if n:
-        print("[주의] 실거래 용도 이름이 알려진 7종({}) 밖인 행 {:,}개 — 참고 시세 묶음에서 기타로 가거나"
+        print("[주의] 실거래 용도 이름이 알려진 7종({}) 밖인 행 {:,}개 — 구 층대 단가·동네 흐름 요약표(상가만)에서"
               " 빠집니다.".format("·".join(TX_MAIN_USE_KNOWN), n))
-        print("       고치는 법: 새 이름을 확인하고 price_use_group_nm(schema.sql)과 백테스트 USE_GROUP_NM 을"
-              " 같이 고친다(결정 0040 · 새 마이그레이션).")
+        print("       고치는 법: 새 이름을 확인하고 price_use_group_nm(schema.sql)만 고친다"
+              "(결정 0040 · 새 마이그레이션 · 묶음표는 그 함수 한 곳).")
     else:
         print("[정상] 실거래 용도 이름: 전부 알려진 7종 안 — 묶음표가 모르는 글자 0.")
     return n

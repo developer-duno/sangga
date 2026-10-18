@@ -83,3 +83,15 @@ describe('AppFooter — 휴대폰 더보기 차례(결정 0039 W4a)', () => {
     expect(after.value).toBe('쓰던 글');
   });
 });
+
+describe('AppFooter — 이 화면을 어디까지 믿어도 되나 (결정 0041 보완 1차 B8)', () => {
+  it('추정값 문장 대신 「원본 그대로 · 집계·비교값 표시」 문장이 선다', () => {
+    const { container } = render(<AppFooter />);
+    const list = container.querySelector('.foot__list') as HTMLElement;
+    expect(list.textContent).toContain(
+      "신고·고시·조사된 값은 원본 그대로 나르고, 우리가 세어 낸 집계에는 '집계'·'비교값'이라고 적습니다.",
+    );
+    // 참고 시세(추정)를 내렸으니 "추정이라고 적는다"는 약속은 화면에서 빠진다.
+    expect(list.textContent).not.toContain('"추정"이라고');
+  });
+});

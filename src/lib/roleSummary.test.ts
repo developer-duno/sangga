@@ -259,13 +259,15 @@ describe('투자자 「얼마고 얼마 벌리나」', () => {
     expect(tile(v, 'rent')!.lines).toEqual(['㎡당 임대료 27,060원']);
     expect(tile(v, 'rent')!.basis).toEqual(['상권 평균 · 집합상가 · 2026년 2분기 조사', '역삼역 · 부동산원 조사구역 서울>강남>테헤란로']);
     expect(tile(v, 'land')!.lines).toEqual(['땅 1㎡당 4,523만원']);
-    expect(v.answer).toBe('이 땅 신고 거래는 4건입니다. 2층 국세청 기준시가는 ㎡당 596만(세무 기준가격)입니다.');
+    expect(v.answer).toBe('이 땅 신고 거래는 4건입니다. 2층 국세청 기준시가(호 1개 가운데값)는 ㎡당 596만(세무 기준가격)입니다.');
   });
 
   it('★ 기준시가 층 = 1층도 포함 · 지하·옥탑은 후보가 아니다(메인 ㉠)', () => {
     const one = view({ basePrices: [...BASES, base(1, 9_000_000, 4)] });
     expect(tile(one, 'base')!.label).toBe('국세청 기준시가 (1층)');
     expect(tile(one, 'base')!.lines).toEqual(['㎡당 900만']);
+    // 한 줄 답의 「호 N개 가운데값」은 고른 층의 호 수(보완 1차 B10 — 1층 호 4개).
+    expect(one.answer).toContain('1층 국세청 기준시가(호 4개 가운데값)는 ㎡당 900만(세무 기준가격)입니다.');
     // 지하에만 기준시가가 있으면 기준시가 타일이 안 서고 구 상가 단가로 넘어간다.
     const floors = [floor(2, 1), floor(1, 2), floor(-1, 0)];
     const under = view({ floors, basePrices: [base(-1, 1_200_000, 3)] });
@@ -280,7 +282,7 @@ describe('투자자 「얼마고 얼마 벌리나」', () => {
     expect(t.label).toBe('구 상가 단가 (1층)');
     expect(t.lines).toEqual(['㎡당 380만']);
     expect(t.basis).toEqual(['강남구 1층 · 표본 213건 · 상가 거래 기준']);
-    expect(t.grade).toEqual({ text: 'A등급 · 실거래', est: false });
+    expect(t.grade).toEqual({ text: 'A등급 · 실거래 집계', est: false });
     expect(v.answer).toBe('이 땅 신고 거래는 4건입니다. 강남구 1층 상가 거래 단가 가운데값은 ㎡당 380만입니다.');
     // 2층부터 있는 건물(1층 없음) — 2층 층대 · 5층부터면 3층이상 층대.
     expect(tile(view({ basePrices: null, floors: [floor(3, 1), floor(2, 1)] }), 'txstat')!.basis).toEqual([
@@ -314,7 +316,7 @@ describe('투자자 「얼마고 얼마 벌리나」', () => {
     expect(view({ rent: [], noCoord: true }).tiles.find((t) => t.key === 'rent')!.lines).toEqual([
       '위치 정보가 없어 속한 상권을 찾지 못했습니다',
     ]);
-    expect(v.answer).toBe('이 땅 신고 거래는 0건입니다. 2층 국세청 기준시가는 ㎡당 596만(세무 기준가격)입니다.');
+    expect(v.answer).toBe('이 땅 신고 거래는 0건입니다. 2층 국세청 기준시가(호 1개 가운데값)는 ㎡당 596만(세무 기준가격)입니다.');
   });
 });
 
