@@ -31,3 +31,23 @@ export function buildingRewriteTarget(input: string): string | null {
   dest.search = q.toString();
   return dest.href;
 }
+
+/** 구 입구 주소의 `sgg` 꼴 — 시군구 코드 5자리 숫자. */
+const SGG_RE = /^\d{5}$/;
+
+/**
+ * 구 입구 허브(결정 0043) — 넘길 주소(절대 주소) 또는 null.
+ * ⛔ 주소가 `/` 이고 **`bld` 인자가 아예 없고** `sgg` 가 5자리 숫자일 때만 `/api/hub?sgg=<sgg>`.
+ *    `bld` 가 있으면(꼴이 틀려도) 허브가 아니다 — 건물 갈래(`buildingRewriteTarget`)의 규칙 그대로 둔다.
+ * ⛔ `sgg` 하나만 다시 조립한다 — 낯선 인자로 CDN 캐시 칸을 늘리지 못하게(건물 갈래와 같은 이유).
+ */
+export function hubRewriteTarget(input: string): string | null {
+  const url = new URL(input);
+  if (url.pathname !== '/') return null;
+  if (url.searchParams.has('bld')) return null;
+  const sgg = url.searchParams.get('sgg');
+  if (sgg === null || !SGG_RE.test(sgg)) return null;
+  const dest = new URL('/api/hub', url);
+  dest.search = new URLSearchParams({ sgg }).toString();
+  return dest.href;
+}

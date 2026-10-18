@@ -78,7 +78,8 @@ export function homeSource(request: Request, env: HandlerDeps['env']): { origin:
   return allowed.has(host) ? { origin: `https://${host}`, trusted: true } : { origin: `https://${SITE_HOST}`, trusted: false };
 }
 
-async function fetchHome(request: Request, deps: HandlerDeps): Promise<string | null> {
+/** 첫 화면 HTML(같은 배포의 `/index.html` · 허용 호스트에서만 cookie · 3초) — 못 받으면 null. 구 허브(`hubHandler.ts`)도 쓴다. */
+export async function fetchHome(request: Request, deps: HandlerDeps): Promise<string | null> {
   const { origin, trusted } = homeSource(request, deps.env);
   const cookie = trusted ? request.headers.get('cookie') : null;
   try {

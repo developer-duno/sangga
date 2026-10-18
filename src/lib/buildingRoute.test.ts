@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { buildingRewriteTarget } from './buildingRoute';
+import { buildingRewriteTarget, hubRewriteTarget } from './buildingRoute';
 
 const BLD = '1168010600109420015_10241100257870';
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -65,5 +65,50 @@ describe('buildingRewriteTarget — middleware 판정(결정 0037)', () => {
     const src = readFileSync(resolve(HERE, '../../middleware.ts'), 'utf-8');
     expect(src).toContain("matcher: '/'");
     expect(src).toContain("from './src/lib/buildingRoute.js'");
+    // 건물 갈래가 먼저 · 허브는 그다음(결정 0043) — bld 있는 주소가 허브로 새지 않는다.
+    expect(src).toContain('buildingRewriteTarget(request.url) ?? hubRewriteTarget(request.url)');
+  });
+});
+
+/** middleware 본체와 같은 차례(건물 먼저 → 허브). */
+function route(u: string): string | null {
+  return buildingRewriteTarget(u) ?? hubRewriteTarget(u);
+}
+
+describe('hubRewriteTarget — 구 입구 허브 갈래(결정 0043)', () => {
+  it('/ 이고 bld 가 없고 sgg 가 5자리면 /api/hub?sgg= 로', () => {
+    expect(hubRewriteTarget('https://sangga-one.vercel.app/?sgg=11680')).toBe('https://sangga-one.vercel.app/api/hub?sgg=11680');
+    expect(route('https://sangga-one.vercel.app/?sgg=30140')).toBe('https://sangga-one.vercel.app/api/hub?sgg=30140');
+  });
+
+  it('sgg 하나만 다시 조립한다 — 낯선 인자는 사라진다(같은 허브 주소)', () => {
+    const want = 'https://sangga-one.vercel.app/api/hub?sgg=11680';
+    for (const q of ['?sgg=11680&x=1', '?utm_source=a&sgg=11680', '?sgg=11680&sgg=30140', '?sgg=11680&role=investor']) {
+      expect(route(`https://sangga-one.vercel.app/${q}`), q).toBe(want);
+    }
+  });
+
+  it('sgg 꼴이 틀리거나 없으면 null(손대지 않음)', () => {
+    for (const q of ['', '?sgg=1168', '?sgg=116800', '?sgg=abcde', '?sgg=', '?sgg=11680%20', '?x=11680']) {
+      expect(route(`https://sangga-one.vercel.app/${q}`), q).toBeNull();
+    }
+  });
+
+  it('bld 인자가 있으면 허브가 아니다 — 꼴이 맞으면 건물 갈래 · 틀리면 손대지 않음', () => {
+    expect(hubRewriteTarget(`https://sangga-one.vercel.app/?sgg=11680&bld=${BLD}`)).toBeNull();
+    expect(route(`https://sangga-one.vercel.app/?sgg=11680&bld=${BLD}`)).toBe(
+      `https://sangga-one.vercel.app/api/building?sgg=11680&bld=${BLD}`,
+    );
+    for (const bad of ['abc', '', BLD.slice(0, 19)]) {
+      const u = `https://sangga-one.vercel.app/?sgg=11680&bld=${encodeURIComponent(bad)}`;
+      expect(hubRewriteTarget(u), bad).toBeNull();
+      expect(route(u), bad).toBeNull();
+    }
+  });
+
+  it('다른 경로는 sgg 가 있어도 null', () => {
+    for (const p of ['/index.html', '/hub/11680.json', '/api/hub', '/sitemap.xml']) {
+      expect(route(`https://sangga-one.vercel.app${p}?sgg=11680`), p).toBeNull();
+    }
   });
 });
