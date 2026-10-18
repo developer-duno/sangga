@@ -27,6 +27,7 @@ import type {
   FloorRow,
   ParcelLandPrice,
   FloorUnit,
+  ParcelBuilding,
   ParcelTransaction,
   SigunguTxStat,
   UnitFloorSummary,
@@ -76,6 +77,9 @@ import {
 } from '../lib/unitPrint';
 import { lacksCoord } from '../lib/rentStats';
 import { buildingFromFloorRows } from '../lib/restoreBuilding';
+import { dongSuffix, moreDongCount, siblingName, siblingWindow } from '../lib/buildingHead';
+import { siblingToHit } from '../lib/districtBuildings';
+import { isPlainLeftClick } from '../lib/spaLink';
 import {
   SECTION_PLAN,
   sectionOrder,
@@ -233,6 +237,17 @@ type Props = {
    * 안 줌 = 기록 없이 인쇄만.
    */
   onBeforePrint?: () => void;
+  /**
+   * 같은 땅의 동 목록(결정 0042 H5 · `list_parcel_buildings` — App 이 `bld_cnt_in_pnu > 1` 일 때 한 번 받는다).
+   * 2줄 이상이면 머리 사양 칸 아래 「같은 땅 다른 동: …」 링크 줄. null·안 줌 = 그 줄 없음.
+   */
+  dongs?: readonly ParcelBuilding[] | null;
+  /** 이 건물이 있는 구의 이름(지역 고르개가 서버 목록에서 알려 준 것) — 있으면 「○○구 다른 건물 찾기」 링크. */
+  sigunguName?: string | null;
+  /** 같은 땅 다른 동 링크의 보통 누름 — 화면 안에서 그 동으로(App 의 `handleSelectBuilding`). */
+  onSelectBuilding?: (hit: BuildingHit) => void;
+  /** 「○○구 다른 건물 찾기」의 보통 누름 — 화면 안에서 찾기 칸으로(넓은 화면 = 위 칸 펼침 · 휴대폰 = 찾기 탭). */
+  onFindInSigungu?: () => void;
 };
 
 /** 고른 층 하나의 첫 쪽 호 목록(받은 줄 + 그 층 전체 호실 수). */
@@ -312,6 +327,10 @@ export function FloorStack({
   unitPrintMode = 'none',
   unitPrintOpenSignal = 0,
   onUnitListedCount,
+  dongs = null,
+  sigunguName = null,
+  onSelectBuilding,
+  onFindInSigungu,
 }: Props) {
   const plans = sectionPlansFor(viewerRole);
   const [floors, setFloors] = useState<FloorRow[]>([]);
@@ -664,9 +683,38 @@ export function FloorStack({
     };
   }, [building.pnu]);
 
-  if (loading) return <p className="msg msg--loading">층 정보를 불러오는 중…</p>;
-  if (error) return <p className="msg msg--error">{error}</p>;
-  if (floors.length === 0) return <p className="msg">이 건물에는 층 정보가 없습니다.</p>;
+  /*
+    h1 글 = 건물 이름 + 같은 땅 동 구분(결정 0042 보완 F3 — 첫 HTML h1·탭 제목과 같은 `dongSuffix` · 동 목록은 App 이 이미 받는다 ·
+    동이 하나면 이름 그대로). 일찍 끝나는 갈래(불러오는 중·오류·층 0개)도 이 h1 을 그린다 — 건물을 연 동안 App 은 사이트 이름을
+    p 로 내리므로 여기서 안 그리면 h1 이 0개가 된다(보완 F4).
+  */
+  const dongLabel =
+    dongs && building.bld_cnt_in_pnu > 1 ? dongSuffix(building.bld_id, dongs, building.bld_cnt_in_pnu) : null;
+  const titleText = (name: string | null | undefined) =>
+    [name?.trim() || null, dongLabel].filter(Boolean).join(' ') || '(이름 없는 건물)';
+  const bareTitle = <h1 className="stack__title">{titleText(building.bld_nm)}</h1>;
+
+  if (loading)
+    return (
+      <>
+        {bareTitle}
+        <p className="msg msg--loading">층 정보를 불러오는 중…</p>
+      </>
+    );
+  if (error)
+    return (
+      <>
+        {bareTitle}
+        <p className="msg msg--error">{error}</p>
+      </>
+    );
+  if (floors.length === 0)
+    return (
+      <>
+        {bareTitle}
+        <p className="msg">이 건물에는 층 정보가 없습니다.</p>
+      </>
+    );
 
   const head = floors[0];
   const roadContact = displayRoadContact(head.road_contact);
@@ -945,6 +993,14 @@ export function FloorStack({
     history: <EmptySection kind="history" pnu={building.pnu} plan={plans.history} />,
   };
 
+  /*
+    내부 링크 줄(결정 0042 H5) — 같은 땅 다른 동(동 목록이 이 땅 것이고 2줄 이상일 때만)과 구 코드.
+    실을 동 = 자기 차례 앞뒤 창(`siblingWindow` — 첫 HTML 과 같은 함수 · 보완 F2) · 「외 N동」의 N 도 같은 셈(`moreDongCount`).
+  */
+  const shownDongs = dongs && head.bld_cnt_in_pnu > 1 ? siblingWindow(building.bld_id, dongs) : [];
+  const moreDongs = dongs && shownDongs.length > 0 ? moreDongCount(head.bld_cnt_in_pnu, dongs, shownDongs.length) : 0;
+  const sggCode = building.pnu.slice(0, 5);
+
   return (
     <section className="stack">
       {/*
@@ -966,7 +1022,8 @@ export function FloorStack({
         onBeforePrint={onBeforePrint}
       />
       <header className="stack__head">
-        <h2 className="stack__title">{head.bld_nm || '(이름 없는 건물)'}</h2>
+        {/* 건물을 연 동안 이 이름이 화면의 h1(결정 0042 H1 — 사이트 이름은 App 머리에서 p 로 내려간다 · h1 은 정확히 1개). */}
+        <h1 className="stack__title">{titleText(head.bld_nm)}</h1>
         <p className="stack__addr">{head.road_addr || '주소 없음'}</p>
         <dl className="stack__facts">
           <div>
@@ -1065,6 +1122,53 @@ export function FloorStack({
             <span className="grade__badge">{LAND_PRICE_BADGE}</span>
             <span className="stack__land-text">{landPriceText(landPrice)}</span>
           </p>
+        )}
+        {/*
+          내부 링크 줄(결정 0042 H5) — 진짜 `<a href>` 라 검색 봇이 따라가고, 사람의 보통 누름은 화면 안에서 처리한다.
+          ⓘ 글자 = 동 목록 함수 값(`siblingName` — 첫 HTML 링크와 같은 함수) · 구 이름은 지역 고르개가 준 것 · 틀 두 줄은 메인 판단.
+          ⛔ 종이에서는 빠진다(`@media print` 의 `.stack__links` — 누르는 문).
+        */}
+        {(shownDongs.length > 0 || sigunguName) && (
+          <nav className="stack__links" aria-label="관련 페이지">
+            {shownDongs.length > 0 && dongs && (
+              <p className="stack__links-row">
+                같은 땅 다른 동:{' '}
+                {shownDongs.map((d, i) => (
+                  <Fragment key={d.bld_id}>
+                    {i > 0 && ' · '}
+                    <a
+                      className="stack__links-a"
+                      href={`/?sgg=${sggCode}&bld=${d.bld_id}`}
+                      onClick={(e) => {
+                        if (!onSelectBuilding || !isPlainLeftClick(e)) return;
+                        e.preventDefault();
+                        onSelectBuilding(siblingToHit(building, d));
+                      }}
+                    >
+                      {siblingName(d, dongs, head.bld_cnt_in_pnu)}
+                    </a>
+                  </Fragment>
+                ))}
+                {/* 첫 HTML 과 같은 상한(10) — 한 땅에 102동인 단지도 있다(DMC파크뷰자이 실측). 넘치면 수만 적는다(N = 뷰 동 수 − 자기 − 보인 수). */}
+                {moreDongs > 0 && ` 외 ${moreDongs}동`}
+              </p>
+            )}
+            {sigunguName && (
+              <p className="stack__links-row">
+                <a
+                  className="stack__links-a"
+                  href={`/?sgg=${sggCode}`}
+                  onClick={(e) => {
+                    if (!onFindInSigungu || !isPlainLeftClick(e)) return;
+                    e.preventDefault();
+                    onFindInSigungu();
+                  }}
+                >
+                  {sigunguName} 다른 건물 찾기
+                </a>
+              </p>
+            )}
+          </nav>
         )}
       </header>
 

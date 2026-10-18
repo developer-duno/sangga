@@ -17,7 +17,9 @@ import { ShareButton } from './components/ShareButton';
 import { TabBar } from './components/TabBar';
 import { TxFlowSection } from './components/TxFlowSection';
 import { UnitPrintPicker } from './components/UnitPrintPicker';
-import { FLOOR_STACK_VIEW } from './lib/appConstants';
+import { FLOOR_STACK_VIEW, PARCEL_BUILDINGS_FN } from './lib/appConstants';
+import { dongSuffix } from './lib/buildingHead';
+import { isParcelBuildingList } from './lib/districtBuildings';
 import {
   EMPTY_BUILDING_BODY,
   EMPTY_BUILDING_GO,
@@ -58,7 +60,7 @@ import {
   type BrokerOffice,
 } from './lib/brokerOfficeStore';
 import { UNIT_PRINT_DEFAULT, type UnitPrintMode } from './lib/unitPrint';
-import type { BuildingHit, FloorRow } from './types';
+import type { BuildingHit, FloorRow, ParcelBuilding } from './types';
 
 export default function App() {
   /*
@@ -239,6 +241,18 @@ export default function App() {
   function openEntry(target: 'search' | 'map' | 'role') {
     entryFocusRef.current = target;
     setEntryOpen(true);
+  }
+  /*
+    층별 머리의 「○○구 다른 건물 찾기」 링크(결정 0042 H5)의 보통 누름 — 바의 「다른 건물 찾기」와 같은 일(보던 건물은 그대로):
+    넓은 화면 = 위 칸을 펼치고 입력칸에 커서(이미 펼쳐 있으면 커서만) · 휴대폰 = 찾기 탭.
+  */
+  function handleFindInSigungu() {
+    if (isPhone) {
+      pickTab('find');
+      return;
+    }
+    if (entryOpen) entryRef.current?.querySelector<HTMLInputElement>('.search__input')?.focus();
+    else openEntry('search');
   }
   useEffect(() => {
     const target = entryFocusRef.current;
@@ -451,10 +465,36 @@ export default function App() {
     ⛔ 되살리는 **중에는 건드리지 않는다** — 그때 selected 는 아직 null 이라, 적으면 서버 조각(결정 0037)이
        첫 HTML 에 넣어 둔 건물 제목을 첫 화면 제목으로 잠깐 덮는다. 꼴은 서버와 같다(`pageTitle`).
   */
+  /*
+    같은 땅의 동 목록(결정 0042 H2·H5) — 고른 건물의 땅에 동이 여럿일 때만 한 번 받는다(같은 땅 동끼리 옮겨 다녀도 다시 안 묻는다).
+    쓰는 곳 둘: 탭 제목의 동 구분(첫 HTML 제목과 같은 `dongSuffix` — 구글은 화면이 그린 제목을 보니 갈리면 안 된다)과
+    층별 머리의 「같은 땅 다른 동」 링크 줄. 실패·모양 틀림이면 없음(구분·줄 없이 지금 화면 그대로).
+  */
+  const [parcelDongs, setParcelDongs] = useState<{ pnu: string; list: ParcelBuilding[] } | null>(null);
+  const dongPnu = selected !== null && (selected.bld_cnt_in_pnu ?? 1) > 1 ? selected.pnu : null;
+  useEffect(() => {
+    if (dongPnu === null) return;
+    let cancelled = false;
+    supabase.rpc(PARCEL_BUILDINGS_FN, { p_pnu: dongPnu }).then(({ data, error }) => {
+      if (cancelled) return;
+      if (error || !isParcelBuildingList(data)) {
+        if (error) console.error('같은 땅 동 목록 조회 실패', error);
+        return;
+      }
+      setParcelDongs({ pnu: dongPnu, list: data });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [dongPnu]);
+  const dongs = dongPnu !== null && parcelDongs?.pnu === dongPnu ? parcelDongs.list : null;
+  // N = 고른 건물의 `bld_cnt_in_pnu`(뷰와 같은 수 — 첫 HTML 은 뷰 행의 값 · 결정 0042 보완 F1).
+  const dong = selected && dongs ? dongSuffix(selected.bld_id, dongs, selected.bld_cnt_in_pnu) : null;
+
   useEffect(() => {
     if (restoring) return;
-    document.title = pageTitle(selected?.bld_nm, selected?.road_addr);
-  }, [selected?.bld_nm, selected?.road_addr, restoring]);
+    document.title = pageTitle(selected?.bld_nm, selected?.road_addr, dong);
+  }, [selected?.bld_nm, selected?.road_addr, dong, restoring]);
 
   /*
     지금 화면의 온전한 주소. **링크 복사 버튼과 종이 머리글이 같은 값을 쓴다** — 두 곳에서
@@ -575,7 +615,15 @@ export default function App() {
       )}
 
       <header className="app__head">
-        <h1 className="app__title">상가 층별 스택뷰</h1>
+        {/*
+          h1 은 화면에 정확히 1개(결정 0042 H1) — 건물을 연 동안은 층별 머리의 건물 이름이 h1 이고 사이트 이름은 p 로 내려간다
+          (모양은 같다 — `.app__title` 이 굵기까지 적는다). 첫 화면·입구에서는 지금처럼 사이트 이름이 h1.
+        */}
+        {selected ? (
+          <p className="app__title">상가 층별 스택뷰</p>
+        ) : (
+          <h1 className="app__title">상가 층별 스택뷰</h1>
+        )}
         {/*
           ⛔ 담긴 지역을 여기에 글자로 박지 말 것. 자료가 늘면 문구가 곧바로 거짓말이
              된다(2026-08-11 실제로 그랬다 — 헤더는 '강남구'인데 각주는 서울·대전
@@ -752,6 +800,12 @@ export default function App() {
               key={`stack:${selected.bld_id}`}
               area="층별 화면"
               context={{ bld_id: selected.bld_id, sigungu }}
+              // 그물이 뜨면 층별 화면의 h1 이 사라진다 — 안내 위에 건물 이름 h1 을 세운다(h1 정확히 1개 · 결정 0042 보완 F4).
+              heading={
+                <h1 className="stack__title">
+                  {[selected.bld_nm?.trim() || null, dong].filter(Boolean).join(' ') || '(이름 없는 건물)'}
+                </h1>
+              }
             >
               <FloorStack
                 building={selected}
@@ -761,6 +815,11 @@ export default function App() {
                 unitPrintOpenSignal={unitPick.bldId === selected.bld_id ? unitPick.opened : 0}
                 onUnitListedCount={handleUnitListedCount}
                 onBeforePrint={handleBeforePrint}
+                dongs={dongs}
+                // 구 이름은 지금 고른 구가 이 건물의 구일 때만(다른 구 이름으로 「○○구 다른 건물 찾기」를 적지 않게).
+                sigunguName={sigungu === selected.pnu.slice(0, 5) ? sigunguName : null}
+                onSelectBuilding={handleSelectBuilding}
+                onFindInSigungu={handleFindInSigungu}
               />
             </ErrorBoundary>
           </>
