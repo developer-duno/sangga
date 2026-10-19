@@ -1127,30 +1127,42 @@ export function FloorStack({
           내부 링크 줄(결정 0042 H5) — 진짜 `<a href>` 라 검색 봇이 따라가고, 사람의 보통 누름은 화면 안에서 처리한다.
           ⓘ 글자 = 동 목록 함수 값(`siblingName` — 첫 HTML 링크와 같은 함수) · 구 이름은 지역 고르개가 준 것 · 틀 두 줄은 메인 판단.
           ⛔ 종이에서는 빠진다(`@media print` 의 `.stack__links` — 누르는 문).
+          ⓘ 휴대폰은 첫 줄 「같은 땅 다른 동 (외 N동)」 + 한 줄 칩(옆으로 밀기 · 👤 2026-10-19 「가」) — 칸을 span 으로만 나눠
+            넓은 화면 그림·글(textContent)은 그대로 두고, 휴대폰 묶음(`@media screen and (max-width: 720px)`)이 점을 숨기고 칩으로 바꾼다.
+            한 벌만 그린다(숨긴 점은 `display: none` 이라 낭독기도 안 읽는다). ⛔ 첫 줄 「같은 땅 다른 동:」은 쪼개지 않는다 — 쌍점만 칸으로
+            감싸면 넓은 화면 글자 자리가 밀린다(휴대폰은 styles.css 가 이 글을 0 크기로 두고 `::before` 로 쌍점 없이 다시 쓴다 — 글자를 바꾸면 거기도).
         */}
         {(shownDongs.length > 0 || sigunguName) && (
           <nav className="stack__links" aria-label="관련 페이지">
             {shownDongs.length > 0 && dongs && (
-              <p className="stack__links-row">
-                같은 땅 다른 동:{' '}
-                {shownDongs.map((d, i) => (
-                  <Fragment key={d.bld_id}>
-                    {i > 0 && ' · '}
-                    <a
-                      className="stack__links-a"
-                      href={`/?sgg=${sggCode}&bld=${d.bld_id}`}
-                      onClick={(e) => {
-                        if (!onSelectBuilding || !isPlainLeftClick(e)) return;
-                        e.preventDefault();
-                        onSelectBuilding(siblingToHit(building, d));
-                      }}
-                    >
-                      {siblingName(d, dongs, head.bld_cnt_in_pnu)}
-                    </a>
-                  </Fragment>
-                ))}
-                {/* 첫 HTML 과 같은 상한(10) — 한 땅에 102동인 단지도 있다(DMC파크뷰자이 실측). 넘치면 수만 적는다(N = 뷰 동 수 − 자기 − 보인 수). */}
-                {moreDongs > 0 && ` 외 ${moreDongs}동`}
+              <p className="stack__links-row stack__links-row--dongs">
+                <span className="stack__links-lead">같은 땅 다른 동:</span>{' '}
+                <span className="stack__links-chips">
+                  {shownDongs.map((d, i) => (
+                    <Fragment key={d.bld_id}>
+                      {i > 0 && <span className="stack__links-sep"> · </span>}
+                      <a
+                        className="stack__links-a"
+                        href={`/?sgg=${sggCode}&bld=${d.bld_id}`}
+                        onClick={(e) => {
+                          if (!onSelectBuilding || !isPlainLeftClick(e)) return;
+                          e.preventDefault();
+                          onSelectBuilding(siblingToHit(building, d));
+                        }}
+                      >
+                        {siblingName(d, dongs, head.bld_cnt_in_pnu)}
+                      </a>
+                    </Fragment>
+                  ))}
+                </span>
+                {/* 첫 HTML 과 같은 상한(10) — 한 땅에 102동인 단지도 있다(DMC파크뷰자이 실측). 넘치면 수만 적는다(N = 뷰 동 수 − 자기 − 보인 수).
+                    ⓘ 앞 띄어쓰기는 칸 밖 글이다 — 휴대폰 묶음(flex)에서는 빈 글이라 사라지고, 괄호는 그 묶음의 ::before·::after 가 단다. */}
+                {moreDongs > 0 && (
+                  <>
+                    {' '}
+                    <span className="stack__links-more">외 {moreDongs}동</span>
+                  </>
+                )}
               </p>
             )}
             {sigunguName && (
