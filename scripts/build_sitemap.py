@@ -19,7 +19,7 @@
 
 ⛔ 건물 주소 꼴은 화면이 쓰는 `?sgg=<pnu 앞 5자리>&bld=<id>` 그대로(👤 결정 ④) — XML 안에서 `&` 는 `&amp;`.
 ⛔ lastmod 를 적지 않는다 — 건물마다 정확한 수정일이 없다(구글: 정확할 때만).
-⛔ 대상 = 맨 위 상수 TARGET_WHERE(이름 + 층 행 + 비주거 호실 · 👤 2026-10-09 13,324동) — 얇은 페이지 대량 생성 금지.
+⛔ 대상 = 맨 위 상수 TARGET_WHERE(이름(글자 하나 이상 · 👤 2026-10-19) + 층 행 + 비주거 호실 · 👤 2026-10-09 13,324동) — 얇은 페이지 대량 생성 금지.
    대상 밖(이름은 있으나 비주거 층 없음)은 함수가 noindex 를 단다(src/lib/buildingHead.ts 같은 정규식).
    허브에 싣는 건물 = 이 대상 그대로(사이트맵 건물 = 허브 건물 · 열린 구 밖이면 허브에서만 빠지고 개수를 알린다).
 ⛔ 허브 파일에는 **재료만** 담는다(뷰와 같은 칸 · `list_parcel_buildings` 결과 그대로) — 이름·동 구분 글은
@@ -44,8 +44,8 @@ if SCRIPTS_DIR not in sys.path:
 
 import dbx  # noqa: E402  (같은 폴더의 접속 정보 해석기를 그대로 쓴다 — post_load.py 와 같은 길)
 
-# ★ 사이트맵에 싣는 건물의 조건 — 여기 둘만 고치면 된다(👤 2026-10-09 19:1x 재결정 — 13,324동).
-#   이름 있음 + 층 행(v_building_floor_stack) 있음(층 행 0 이면 함수가 404) + 비주거 호실이 하나라도 있음.
+# ★ 사이트맵에 싣는 건물의 조건 — 여기 셋만 고치면 된다(👤 2026-10-09 19:1x 재결정 — 13,324동).
+#   이름 있음(글자 하나 이상 — 아래 NAME_LETTER_RE) + 층 행(v_building_floor_stack) 있음(층 행 0 이면 함수가 404) + 비주거 호실이 하나라도 있음.
 #   ⛔ RESIDENTIAL_RE 는 src/lib/buildingHead.ts 의 RESIDENTIAL_RE 와 글자까지 같아야 한다
 #      (tests/test_build_sitemap.py 가 대조 — 함수는 그 정규식으로 대상 밖 건물에 noindex 를 단다).
 #   ⛔ 한글이 들어 있어 psql -c 로 못 보낸다(윈도우가 인자를 cp949 로 넘긴다) → fetch_rows 는 UTF-8 파일(-f).
@@ -53,8 +53,14 @@ RESIDENTIAL_RE = (
     "(주택|주거|아파트|다세대|연립|기숙사|주차|기계|전기|계단|승강|옥탑|부속|창고|관리|경비|대피|"
     "물탱크|펌프|발전|보일러|쓰레기|분리수거)"
 )
+# 이름에 글자(한글 음절·자모 · 영문 · 한자)가 하나 이상 — 「.」「1」「---------」 같은 이름은 사이트맵·허브에서 뺀다
+#   (👤 2026-10-19 — 구글에 「. — 강남구 …」 같은 제목이 안 나가게 · 그 건물의 화면·첫 HTML·noindex 규칙은 그대로).
+#   ⓘ 범위를 `\uXXXX` 로 적는다(PostgreSQL 정규식·파이썬 re 둘 다 같은 뜻 — 소스에 드문 글자를 직접 쓰지 않는다).
+#   가-힣 · ㄱ-ㅣ(호환 자모) · A-Za-z · 한자(확장 A · 기본 · 호환).
+NAME_LETTER_RE = r"[가-힣ㄱ-ㅣA-Za-z㐀-䶿一-鿿豈-﫿]"
 TARGET_WHERE = (
     "b.display_nm is not null "
+    "and b.display_nm ~ '" + NAME_LETTER_RE + "' "
     "and exists (select 1 from v_building_floor_stack s where s.bld_id = b.bld_id) "
     "and exists (select 1 from unit u where u.bld_id = b.bld_id "
     "and u.floor_use is not null and u.floor_use !~ '" + RESIDENTIAL_RE + "')"

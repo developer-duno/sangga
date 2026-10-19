@@ -161,7 +161,7 @@ describe('OpenCloseSection — 서울 자료가 있을 때', () => {
     expect([...first.querySelectorAll('.oc__latest .oc__num')].map((n) => n.textContent)).toEqual([
       '점포 441곳(프랜차이즈 포함)',
       // 프랜차이즈 비중(👤 물결 1-B) — 분모는 점포(프랜차이즈 포함) 441 · stor_co(378)면 16.67% 가 된다.
-      '프랜차이즈 63곳 (점포의 14.29%)',
+      '프랜차이즈 63곳 (점포의 14.29% · 서울시 공표 개수로 계산)',
       '개업 5곳 · 개업률(분기) 1.13%',
       '폐업 9곳 · 폐업률(분기) 2.04%',
     ]);
@@ -414,8 +414,8 @@ describe('OpenCloseSection — 프랜차이즈 비중 (👤 물결 1-B)', () => 
     const { container } = render(<OpenCloseSection pnu={PNU} />);
     await openCard();
     expect([...container.querySelectorAll('.oc__latest .oc__num--frc')].map((n) => n.textContent)).toEqual([
-      '프랜차이즈 63곳 (점포의 14.29%)',
-      '프랜차이즈 120곳 (점포의 18.05%)',
+      '프랜차이즈 63곳 (점포의 14.29% · 서울시 공표 개수로 계산)',
+      '프랜차이즈 120곳 (점포의 18.05% · 서울시 공표 개수로 계산)',
     ]);
     // ⛔ 요약에는 값을 적지 않는다(기존 결정) — 프랜차이즈도 마찬가지.
     expect(container.querySelector('.card__summary')?.textContent).not.toContain('프랜차이즈');

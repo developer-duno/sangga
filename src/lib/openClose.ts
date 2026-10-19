@@ -83,8 +83,10 @@ export function storeTotalText(count: number | null): string {
 }
 
 /**
- * 큰 숫자 줄의 프랜차이즈 한 칸 — '프랜차이즈 120곳 (점포의 18.05%)'(👤 결정 · 물결 1-B).
+ * 큰 숫자 줄의 프랜차이즈 한 칸 — '프랜차이즈 120곳 (점포의 18.05% · 서울시 공표 개수로 계산)'(👤 결정 · 물결 1-B).
  *
+ * ⓘ 꼬리 「 · 서울시 공표 개수로 계산」 — 화면이 나눈 값임을 밝힌다(👤 「밝힌다」 · 후속 묶음 ③). 비율이 나올 때만 붙고,
+ *    개수만 두는 꼴('프랜차이즈 N곳')에는 없다.
  * ⛔ 「비율을 다시 계산하지 않는다」의 **유일한 예외**다 — 서울시가 프랜차이즈 비중을 공표하지 않아
  *    공표 개수 둘을 화면이 나눈다(파일 머리말).
  * ⛔ **분모는 점포(프랜차이즈 포함) = `similr_induty_stor_co`** 다 — `stor_co`(프랜차이즈 뺀 점포)로
@@ -96,7 +98,7 @@ export function franchiseText(frcStorCo: number, similrStorCo: number): string {
   const count = `프랜차이즈 ${formatStoreCount(frcStorCo)}`;
   if (similrStorCo < OPEN_CLOSE_MIN_SAMPLE) return count;
   const r = formatRate((frcStorCo / similrStorCo) * 100);
-  return r === null ? count : `${count} (점포의 ${r})`;
+  return r === null ? count : `${count} (점포의 ${r} · 서울시 공표 개수로 계산)`;
 }
 
 /**
