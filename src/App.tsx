@@ -226,6 +226,16 @@ export default function App() {
   const mapFull = mapLayout === 'full' && sigungu !== null && curTab === 'map';
   const [regionOpen, setRegionOpen] = useState(false);
   /*
+    띠로 펼친 지역 고르개에서 구를 고르면 고르개가 닫혀(숨어) 커서가 갈 곳을 잃는다 → 띠 단추로 돌려 둔다(W4b 보완 C2).
+    ⓘ 화면은 굴리지 않는다(`preventScroll`) · 띠가 없어진 경우(구 해제)는 아무것도 안 한다.
+  */
+  const stripFocusRef = useRef(false);
+  useEffect(() => {
+    if (regionOpen || !stripFocusRef.current) return;
+    stripFocusRef.current = false;
+    document.querySelector<HTMLButtonElement>('.rstrip__btn')?.focus({ preventScroll: true });
+  }, [regionOpen]);
+  /*
     지도 그려 두기(W4b · 결정 0039 §4-11) — 휴대폰에서 한 번 보인 지도는 탭을 옮겨도 언마운트하지 않고 `hidden` 으로 숨긴다
     (돌아오면 `relayout` 한 번 → 확대·이동·누른 상권 그대로). 첫 방문(그 지도 탭에 아직 안 간 사람)은 지금처럼 안 그린다
     (카카오·상권 파일을 안 받는다). ⛔ 구·꼴이 바뀌면 다시 보일 때 새로 그린다 — 숨은(크기 0) 칸에서 태어나면 첫 범위가 틀린다.
@@ -326,6 +336,7 @@ export default function App() {
     setSigunguName(code ? (name ?? null) : null);
     setMapPick(EMPTY_MAP_PICK);
     setSelected(null);
+    if (regionOpen) stripFocusRef.current = true; // 닫은 뒤 커서를 띠 단추로(위 effect · C2)
     setRegionOpen(false); // 띠로 펼쳤으면 구를 고른 뒤 닫는다(다른 구를 골라도 · W4b)
   }
 

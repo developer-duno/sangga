@@ -4332,7 +4332,7 @@ test.describe('휴대폰 지도 가득 · 상권 판 · 홈 화면 안내 (결�
     );
   }
 
-  test('BT. 휴대폰 지도 탭 = 위 띠 「서울 강남구 ▾」 + 지도 가득(화면 60% 이상) · 칩 여섯 한 줄 옆으로 밀기 · 판 엿보기 → 반 → 가득 → 엿보기 · 띠로 다른 구 · 탭을 옮겨도 같은 지도 · 가로 넘침 0 · 종이에 띠·판·칩 없음 · 넓은 화면은 그대로', async ({
+  test('BT. 휴대폰 지도 탭 = 위 띠 「서울 강남구 ▾」 + 지도 가득(화면 70% 이상) · 칩 여섯 한 줄 옆으로 밀기 · 판 엿보기 → 반 → 가득 → 엿보기 · 띠로 다른 구 · 탭을 옮겨도 같은 지도 · 가로 넘침 0 · 종이에 띠·칩·손잡이 없음(판 안 범례·출처는 남음) · 넓은 화면은 그대로', async ({
     page,
   }, testInfo) => {
     await mockOpenSigungu(page, [
@@ -4368,9 +4368,12 @@ test.describe('휴대폰 지도 가득 · 상권 판 · 홈 화면 안내 (결�
     await expect(page.locator('.app__head')).toBeHidden();
     await expect(page.locator('section.region')).toBeHidden();
     await expect(page.locator('.dmap__toggle')).toHaveCount(0);
-    // 지도 가득 — 덩어리도 지도 칸도 화면의 60% 이상(키가 없어 칸 안은 안내 글).
-    expect((await box('section.dmap')).height).toBeGreaterThanOrEqual(0.6 * vh);
-    expect((await box('.dmap__canvas')).height).toBeGreaterThanOrEqual(0.6 * vh);
+    // 지도 가득 — 덩어리도 지도 칸도 화면의 70% 이상(키가 없어 칸 안은 안내 글) · 칩 줄은 칩 44px + 선 1px(W4b 보완 C1).
+    expect((await box('section.dmap')).height).toBeGreaterThanOrEqual(0.7 * vh);
+    expect((await box('.dmap__canvas')).height).toBeGreaterThanOrEqual(0.7 * vh);
+    expect((await box('.dmap__head')).height).toBeLessThanOrEqual(45);    // 지도를 끄는 손가락이 쪽을 당기지 않는다(C3 · 뿌리 html 까지) · 흐름에 남는 것은 띠 아래에서 시작(C4).
+    await expect(page.locator('html')).toHaveCSS('overscroll-behavior-y', 'none');
+    await expect(page.locator('.app--mapfull')).toHaveCSS('padding-top', '48px');
 
     // 칩 여섯 = 한 줄(같은 높이) · 칩 줄만 옆으로 밀린다 · 칩 밑 설명 글은 숨음 · 칩 44px.
     const chipBtns = page.locator('.dmap__head .chips__chip');
@@ -4437,11 +4440,17 @@ test.describe('휴대폰 지도 가득 · 상권 판 · 홈 화면 안내 (결�
     await expect(page.locator('section.dmap[data-w4b-mark="1"]')).toBeVisible();
     expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
 
-    // 종이(건물 없음) — 띠·판·칩 줄이 빠진다.
+    // 종이(건물 없음) — 띠·칩 줄·판의 손잡이·안내가 빠지고, 판 안 범례·출처(공공누리 출처표시)는 남는다 · 판은 흐름(W4b 보완 A3).
     await page.emulateMedia({ media: 'print' });
     await expect(page.locator('.rstrip')).toBeHidden();
-    await expect(page.locator('.dsheet')).toBeHidden();
     await expect(page.locator('.chips')).toBeHidden();
+    await expect(sheet.locator('.dsheet__handle')).toBeHidden();
+    await expect(sheet.locator('.dsheet__hint')).toBeHidden();
+    await expect(sheet.locator('.dsheet__title')).toHaveText('서초구 상권 2곳');
+    await expect(sheet.locator('.dmap__legend')).toBeVisible();
+    await expect(sheet.locator('.dmap__src')).toHaveText('출처: 서울특별시 상권분석서비스');
+    await expect(sheet.locator('.dmap__src')).toBeVisible();
+    await expect(sheet).toHaveCSS('position', 'static');
     await page.emulateMedia({ media: null });
     await expect(page.locator('.rstrip')).toBeVisible();
   });

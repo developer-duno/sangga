@@ -176,6 +176,8 @@ describe('휴대폰 아래 탭 (결정 0039 W4a)', () => {
     expect(map.getAttribute('data-layout')).toBe('card');
     expect(map.hasAttribute('hidden')).toBe(false);
     expect(container.querySelector('section.region')!.hasAttribute('id')).toBe(false);
+    // 끌어올리는 판도 넓은 화면 DOM 0(W4b 보완 C5 · 카드 꼴 지도는 판 없이 지도 칸 아래에 그린다).
+    expect(container.querySelector('.dsheet')).toBeNull();
   });
 
   it('★ 휴대폰 — 탭 넷 · 첫 탭 찾기 · 빈 건물 탭(흐림 · 안내 · 찾으러 가기) · 바·안내 줄 없음', async () => {
@@ -460,6 +462,26 @@ describe('휴대폰 지도 가득 (결정 0039 W4b)', () => {
     expect(container.querySelector('section.region')).toBe(region);
   });
 
+  it('★ 띠로 펼친 지역 고르개에서 구를 고르면 커서가 띠 단추로(고르개가 숨어 커서가 갈 곳을 잃지 않게 · W4b 보완 C2) · 양성 대조(띠 없이 고르면 안 옮김)', async () => {
+    phoneMedia();
+    twoGus();
+    window.localStorage.setItem('sangga.viewerRole', '창업자');
+    render(<App />);
+    await pickGu();
+    fireEvent.click(strip()!);
+    const seocho = await screen.findByRole('button', { name: /^서초구/ });
+    seocho.focus();
+    fireEvent.click(seocho);
+    expect(strip()!.textContent).toBe('서울 서초구 ▾');
+    expect(document.activeElement).toBe(strip());
+    // 양성 대조 — 띠를 펼치지 않은 채(찾기 탭) 구를 고르면 커서를 옮기지 않는다(누른 구 단추에 그대로).
+    fireEvent.click(tab('찾기'));
+    const gangnam = await screen.findByRole('button', { name: /^강남구/ });
+    gangnam.focus();
+    fireEvent.click(gangnam);
+    expect(document.activeElement).toBe(gangnam);
+  });
+
   it('★ 띠로 펼친 채 탭을 옮기면 닫힌다 · 찾기 탭엔 띠·가득 없음(지도는 같은 노드가 숨음)', async () => {
     phoneMedia();
     window.localStorage.setItem('sangga.viewerRole', '창업자');
@@ -678,8 +700,36 @@ describe('휴대폰 아래 탭 — CSS', () => {
     expect(phone).toContain('.app--mapfull .app__head');
     expect(phone).toContain('.app--mapfull:not(.app--regionopen) .entry > .region');
     const hide = rules.filter((r) => r.media === '@media print' && /display:\s*none/.test(r.body)).flatMap((r) => r.sel);
-    for (const s of ['.rstrip', '.dsheet', '.hshint', '.chips']) expect(hide, s).toContain(s);
+    // 판은 통째가 아니라 손잡이·「접기」·안내만 빠진다(W4b 보완 A3 — 범례·출처는 종이에 남는다).
+    for (const s of ['.rstrip', '.dsheet__handle', '.dsheet__fold', '.hshint', '.chips']) expect(hide, s).toContain(s);
+    expect(hide).not.toContain('.dsheet');
     const tall = rules.filter((r) => r.media === '@media screen' && /min-height:\s*44px/.test(r.body)).flatMap((r) => r.sel);
     for (const s of ['.rstrip__btn', '.dsheet__handle', '.dsheet__fold', '.hshint__btn']) expect(tall, s).toContain(s);
+  });
+
+  /**
+   * 지도 가득일 때 ① 쪽 당기기·튕김을 끄나(C3 — 지도 끄는 손가락이 쪽 전체를 끌지 않게 · 뿌리 html 에도)
+   * ② 흐름에 남는 것(지도 그물 안내 `.errbox`·`.msg`)이 띠 밑에서 시작하나(C4 — `.app--mapfull` 위 여백 = 띠 높이).
+   * 가드 본체와 양성 대조가 이 함수를 같이 지난다. 못 보는 것: 다른 규칙이 뒤에서 덮는 꼴 · `.app--mapfull` 아닌 이름표로 옮긴 꼴.
+   */
+  function mapfullGuards(src: string) {
+    const phone = cssRules(src).filter((r) => r.media === PHONE);
+    const app = phone.filter((r) => r.sel.includes('.app--mapfull'));
+    return {
+      overscroll:
+        app.some((r) => /overscroll-behavior-y:\s*none/.test(r.body)) &&
+        phone.some((r) => r.sel.includes('html:has(.app--mapfull)') && /overscroll-behavior-y:\s*none/.test(r.body)),
+      underStrip: app.some((r) => /padding-top:\s*var\(--rstrip-h\)/.test(r.body)) && !app.some((r) => /padding-top:\s*0/.test(r.body)),
+    };
+  }
+
+  it('W4b 보완 C3·C4 — 지도 가득은 당겨 새로 고침·튕김 없음(html 에도) · 위 여백 = 띠 높이 · 양성 대조(여백 0 꼴 · 튕김 막기 뺀 꼴)', () => {
+    expect(mapfullGuards(css)).toEqual({ overscroll: true, underStrip: true });
+    const noPad = css.replace(/padding-top:\s*var\(--rstrip-h\);/, 'padding-top: 0;');
+    expect(noPad).not.toBe(css);
+    expect(mapfullGuards(noPad).underStrip).toBe(false);
+    const noOver = css.replace(/html:has\(\.app--mapfull\)\s*\{[^}]*\}/, '');
+    expect(noOver).not.toBe(css);
+    expect(mapfullGuards(noOver).overscroll).toBe(false);
   });
 });

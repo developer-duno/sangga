@@ -253,6 +253,7 @@ export function DistrictMap({
 
       <PickedList
         picked={picked}
+        inSheet={full}
         openId={openDistrict?.properties.district_id ?? null}
         onPick={(f) =>
           setPick({
@@ -326,10 +327,18 @@ export function DistrictMap({
       ) : (
         <span className="dsheet__title">누른 자리 ({picked.length}곳):</span>
       );
+    /*
+      판이 가득이면 덮인 칩 줄·지도 칸은 `inert`(W4b 보완 C2) — 눈에 안 보이는 단추(칩·화면 밖 표지)에 키보드·낭독기가 가지 않게.
+    */
+    const covered = stage === 'full';
     return (
       <section className="dmap dmap--full" hidden={!visible}>
-        {headExtra && <header className="dmap__head">{headExtra}</header>}
-        {appkey ? body : <div className="dmap__canvas">{noKey}</div>}
+        {headExtra && (
+          <header className="dmap__head" inert={covered}>
+            {headExtra}
+          </header>
+        )}
+        {appkey ? body : <div className="dmap__canvas" inert={covered}>{noKey}</div>}
         {features !== null && !fileError && bounds !== null && (
           <DistrictSheet stage={stage} onStage={setStage} head={sheetHead}>
             {below}
@@ -404,20 +413,50 @@ function DistrictMapBody({
   const [level, setLevel] = useState(INITIAL_LEVEL);
   /** 카카오 지도 객체(`onCreate`) — `relayout` 을 부르려고만 쥔다. */
   const [map, setMap] = useState<kakao.maps.Map | null>(null);
+  /*
+    한 번이라도 보였나(W4b 보완 B1) — `<Map>` 은 보이는 칸에서만 태어나게 한다. 숨은(크기 0) 칸에서 태어나면 첫 범위(`setBounds`)를
+    0×0 에 맞춰 엉뚱한 배율이 된다. 경계 파일·카카오 SDK 는 숨은 동안 받아도 된다(위 `useKakaoLoader` 는 그대로 부른다).
+    ⛔ 한 번 참이 되면 다시 거짓으로 돌리지 않는다 — 숨길 때마다 지도를 치우면 확대·이동·누른 상권이 날아간다(§4-11).
+  */
+  const [everVisible, setEverVisible] = useState(visible);
+  if (visible && !everVisible) setEverVisible(true);
+  /*
+    마지막으로 **제대로 잰**(칸 크기가 0 이 아닌) 중심·배율(W4b 보완 B2 · `onIdle` 이 적는다). 숨었다 다시 보일 때 `relayout` 만으로는
+    중심이 어긋난다(카카오 데브톡 97194 꼴 — 크기 0 동안 중심 기준이 흐트러진다) → `relayout` 뒤 배율 → 중심 차례로 되돌린다.
+    ⛔ 다른 구에서 잰 값은 쓰지 않는다.
+  */
+  const lastView = useRef<{ sigungu: string; center: kakao.maps.LatLng; level: number } | null>(null);
+  /** 마지막으로 누른 자리(W4b 보완 B3) — 판이 올라와 지도 칸이 줄어든 뒤 그 자리가 화면 밖이면 그쪽으로 옮긴다. 구가 다르면 없는 것. */
+  const lastClick = useRef<{ sigungu: string; at: kakao.maps.LatLng } | null>(null);
   const wasVisible = useRef(visible);
   useEffect(() => {
     const was = wasVisible.current;
     wasVisible.current = visible;
+    if (!map || !visible || was) return;
     // 숨김(display: none · 크기 0)에서 다시 보였다 — 카카오는 칸 크기 변화를 스스로 모른다(공식 설명).
-    if (map && visible && !was) map.relayout();
-  }, [map, visible]);
+    map.relayout();
+    const v = lastView.current;
+    if (v && v.sigungu === sigungu) {
+      map.setLevel(v.level);
+      map.setCenter(v.center);
+    }
+  }, [map, visible, sigungu]);
   const lastStage = useRef(stage);
   useEffect(() => {
     if (lastStage.current === stage) return;
     lastStage.current = stage;
     // 판 단계가 바뀌어 지도 칸 높이가 바뀌었다(손을 뗀 단계에서 한 번 — 끄는 도중에는 칸 높이를 안 바꾼다).
-    if (map && visible) map.relayout();
-  }, [map, stage, visible]);
+    if (!map || !visible) return;
+    map.relayout();
+    /*
+      누른 자리가 줄어든 칸 밖으로 밀려났으면 그쪽으로 옮긴다(B3 — 지도를 눌러 판이 반으로 올라오면 아래쪽을 누른 자리가 판 밑에 깔린다).
+      ⛔ 안이면 아무것도 안 한다 — 단계가 바뀔 때마다 가운데로 끌고 가면 사용자가 옮긴 화면을 빼앗는다.
+    */
+    const c = lastClick.current;
+    // 한 번 쓰고 비운다(재검사 🟠) — 안 비우면 사용자가 지도를 옮긴 뒤 판을 접었다 펼 때마다 옛 누른 자리로 끌려간다.
+    lastClick.current = null;
+    if (c && c.sigungu === sigungu && !map.getBounds().contain(c.at)) map.panTo(c.at);
+  }, [map, stage, visible, sigungu]);
 
   /**
    * 이름표를 놓을 자리 — 면 하나에 한 곳. 자리를 못 잡는 도형은 아예 빠진다.
@@ -451,25 +490,40 @@ function DistrictMapBody({
     // "왜 아무것도 없지?" 하게 두는 대신, 자료가 없다고 말한다.
     <p className="msg">이 구에는 아직 상권 경계 자료가 없습니다.</p>
   ) : null;
-  if (note !== null || bounds === null) return full ? <div className="dmap__canvas">{note}</div> : note;
+  /** 휴대폰 판이 가득이라 지도 칸이 덮였다 — `inert`(W4b 보완 C2 · 바깥 `DistrictMap` 의 칩 줄과 같이). */
+  const covered = full && stage === 'full';
+  if (note !== null || bounds === null)
+    return full ? (
+      <div className="dmap__canvas" inert={covered}>
+        {note}
+      </div>
+    ) : (
+      note
+    );
+  // 아직 한 번도 안 보였다 — 지도를 만들지 않는다(B1 · 위 `everVisible`). 숨은 칸이라 빈 자리여도 눈에 안 띈다.
+  if (!everVisible) return full ? <div className="dmap__canvas" inert={covered} /> : null;
 
   const canvas = (
-    <div className="dmap__canvas">
+    <div className="dmap__canvas" inert={covered}>
       <Map
         center={{ lat: (bounds.swLat + bounds.neLat) / 2, lng: (bounds.swLng + bounds.neLng) / 2 }}
         style={{ width: '100%', height: '100%' }}
         level={INITIAL_LEVEL}
         onCreate={setMap}
         onClick={(_map, mouseEvent) => {
+          lastClick.current = { sigungu, at: mouseEvent.latLng };
           onMapPick(mouseEvent.latLng.getLng(), mouseEvent.latLng.getLat());
         }}
         onZoomChanged={(m) => setLevel(m.getLevel())}
         onIdle={(m) => {
           // 지도가 멈출 때마다 지금 범위와 지도 칸 크기를 잰다(배율별 표를 박지 않는다).
+          const node = m.getNode();
+          // ⛔ 숨은(크기 0) 칸에서 잰 값은 버린다(B2) — 그 범위로 세면 상권이 전부 '화면 밖'이 되고, 되돌릴 중심도 틀린다.
+          if (node.clientWidth === 0 || node.clientHeight === 0) return;
+          lastView.current = { sigungu, center: m.getCenter(), level: m.getLevel() };
           const b = m.getBounds();
           const sw = b.getSouthWest();
           const ne = b.getNorthEast();
-          const node = m.getNode();
           setMeasured({
             sigungu,
             bounds: { swLat: sw.getLat(), swLng: sw.getLng(), neLat: ne.getLat(), neLng: ne.getLng() },
@@ -647,10 +701,16 @@ function OffscreenBadges({ groups }: { groups: OffscreenGroup[] }) {
  */
 function PickedList({
   picked,
+  inSheet = false,
   openId,
   onPick,
 }: {
   picked: DistrictFeature[] | null;
+  /**
+   * 휴대폰 판 안이다(W4b 보완 A2) — 판 머리 줄(`.dsheet__title`)이 이미 「누른 자리 (N곳):」·「어느 상권 경계에도…」를 말하므로
+   * 여기서는 그 머리를 다시 쓰지 않는다(같은 글 두 번 · 낭독기도 두 번 읽는다). 카드 꼴(넓은 화면·중개사)은 그대로.
+   */
+  inSheet?: boolean;
   /** 지금 건물 목록을 펼쳐 둔 상권. 없으면 null. */
   openId: string | null;
   onPick: (f: DistrictFeature) => void;
@@ -665,6 +725,8 @@ function PickedList({
   }
 
   if (picked.length === 0) {
+    // 판 안이면 머리 줄이 이 글 전부를 이미 말한다(A2).
+    if (inSheet) return null;
     return (
       <p className="dmap__picked">
         <span className="dmap__picked-key">누른 자리:</span>
@@ -675,7 +737,7 @@ function PickedList({
 
   return (
     <div className="dmap__picked">
-      <span className="dmap__picked-key">누른 자리 ({picked.length}곳):</span>
+      {!inSheet && <span className="dmap__picked-key">누른 자리 ({picked.length}곳):</span>}
       <ul className="dmap__picked-list">
         {picked.map((f) => (
           <li key={f.properties.district_id}>

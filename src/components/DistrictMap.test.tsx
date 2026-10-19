@@ -28,9 +28,20 @@ const kakao = vi.hoisted(() => ({
   setLevel: vi.fn(),
   /** 지도 칸 크기를 바꾼 뒤 부르는 것(W4b — 숨겼다 보일 때 · 판 단계가 바뀐 뒤). */
   relayout: vi.fn(),
+  /** 다시 보일 때 마지막으로 잰 중심을 되돌린다(W4b 보완 B2). */
+  setCenter: vi.fn(),
+  /** 지금 보이는 범위 — 누른 자리가 화면 안인지(`contain`) 볼 때 쓴다(W4b 보완 B3). */
+  getBounds: vi.fn(),
   map: null as unknown,
 }));
-kakao.map = { setBounds: kakao.setBounds, panTo: kakao.panTo, setLevel: kakao.setLevel, relayout: kakao.relayout };
+kakao.map = {
+  setBounds: kakao.setBounds,
+  panTo: kakao.panTo,
+  setLevel: kakao.setLevel,
+  relayout: kakao.relayout,
+  setCenter: kakao.setCenter,
+  getBounds: kakao.getBounds,
+};
 
 vi.mock('react-kakao-maps-sdk', async () => {
   const { useEffect } = await import('react');
@@ -234,6 +245,9 @@ beforeEach(() => {
   kakao.panTo.mockReset();
   kakao.setLevel.mockReset();
   kakao.relayout.mockReset();
+  kakao.setCenter.mockReset();
+  kakao.getBounds.mockReset();
+  kakao.getBounds.mockImplementation(() => ({ contain: () => true }));
   fetchMock.mockReset();
   fetchMock.mockImplementation(() => okJson(geojson()));
   vi.stubGlobal('fetch', fetchMock);
@@ -692,6 +706,7 @@ describe('DistrictMap — 지도 배율(결정 0039 W1)', () => {
         }),
         getNode: () => ({ clientWidth: 1000, clientHeight: 1000 }),
         getLevel: () => level,
+        getCenter: () => ({ lat: (view.swLat + view.neLat) / 2, lng: (view.swLng + view.neLng) / 2 }),
       });
     });
   }
@@ -1135,7 +1150,8 @@ describe('DistrictMap — 휴대폰 지도 가득(결정 0039 W4b)', () => {
     );
     const rules = cssRules(css);
     const hide = rules.filter((r) => r.media === '@media print' && /display:\s*none/.test(r.body)).flatMap((r) => r.sel);
-    expect(hide).toContain('.dsheet');
+    // 종이에서는 손잡이·「접기」·안내만 빠진다 — 판 통째는 남는다(W4b 보완 A3 · 아래 「종이」 시험).
+    for (const s of ['.dsheet__handle', '.dsheet__fold', '.dsheet__hint']) expect(hide, s).toContain(s);
     const tall = rules.filter((r) => r.media === '@media screen' && /min-height:\s*44px/.test(r.body)).flatMap((r) => r.sel);
     for (const s of ['.dsheet__handle', '.dsheet__fold']) expect(tall, s).toContain(s);
     expect(
@@ -1146,5 +1162,218 @@ describe('DistrictMap — 휴대폰 지도 가득(결정 0039 W4b)', () => {
           /display:\s*none/.test(r.body),
       ),
     ).toBe(true);
+  });
+});
+
+// ── W4b 보완 1 — 검사관 3인 + 메인 실사진(겹침·두 번 쓴 글·종이 출처·숨은 지도의 안전·inert) ──────────────────────
+describe('DistrictMap — 휴대폰 지도 가득 보완(W4b 보완 1)', () => {
+  const PHONE = '@media screen and (max-width: 720px)';
+  const base = {
+    sigungu: '11680',
+    sigunguName: '강남구',
+    selected: null,
+    onSelectBuilding: () => {},
+    layout: 'full' as const,
+  };
+  async function clickAt(lng: number, lat: number) {
+    await act(async () => {
+      kakao.mapProps?.onClick?.(null, { latLng: { getLat: () => lat, getLng: () => lng } });
+    });
+  }
+  /** 카카오 멈춤(idle) 흉내 — 칸 크기·배율·중심을 고른다(숨은 칸 = 0×0). */
+  async function idle(
+    view: { swLat: number; swLng: number; neLat: number; neLng: number },
+    size: { w: number; h: number },
+    level = 6,
+    center: unknown = { lat: (view.swLat + view.neLat) / 2, lng: (view.swLng + view.neLng) / 2 },
+  ) {
+    await act(async () => {
+      kakao.mapProps?.onIdle?.({
+        getBounds: () => ({
+          getSouthWest: () => ({ getLat: () => view.swLat, getLng: () => view.swLng }),
+          getNorthEast: () => ({ getLat: () => view.neLat, getLng: () => view.neLng }),
+        }),
+        getNode: () => ({ clientWidth: size.w, clientHeight: size.h }),
+        getLevel: () => level,
+        getCenter: () => center,
+      });
+    });
+  }
+  /** 상권(127.0~127.1 · 37.5~37.6)이 하나도 안 드는 먼 화면 — 표지가 서야 하는 범위. */
+  const FAR = { swLat: 37.0, swLng: 126.0, neLat: 37.01, neLng: 126.01 };
+  const sheet = () => document.querySelector('.dsheet');
+  const handle = () => document.querySelector<HTMLButtonElement>('.dsheet__handle')!;
+  const stageOf = () => /dsheet--(\w+)/.exec(sheet()!.className)![1];
+
+  /**
+   * 판이 화면 밖 표지 위에 오나(A1) — 휴대폰 묶음의 판 규칙(`.dsheet`·`.dsheet--단계`) z-index 가 전부 표지(`.dmap__off`) 보다 크고
+   * 띠(19) 보다 작은가. 가드 본체와 양성 대조가 이 함수를 같이 지난다.
+   * 못 보는 것: 같은 선택자가 뒤 규칙에서 z-index 없이 덮이는 꼴 · `.dsheet` 를 다른 이름표 조합(`.x .dsheet`)으로 고친 꼴.
+   */
+  function sheetAboveBadge(src: string): boolean {
+    const rules = cssRules(src);
+    const z = (body: string) => Number(/z-index:\s*(-?\d+)/.exec(body)![1]);
+    const badge = rules.filter((r) => r.sel.includes('.dmap__off') && /z-index/.test(r.body)).map((r) => z(r.body));
+    const sheets = rules
+      .filter((r) => r.media === PHONE && r.sel.some((s) => /^\.dsheet(--\w+)?$/.test(s)) && /z-index/.test(r.body))
+      .map((r) => z(r.body));
+    if (badge.length === 0 || sheets.length === 0) return false;
+    return sheets.every((s) => s > Math.max(...badge) && s < 19);
+  }
+
+  it('A1 판(엿보기·반·가득)의 층이 화면 밖 표지보다 위 · 띠보다 아래 · 양성 대조(되돌린 꼴 · 띠를 넘는 꼴 · 표지를 올린 꼴)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const css = readFileSync('src/styles.css', 'utf8');
+    expect(sheetAboveBadge(css)).toBe(true);
+    expect(sheetAboveBadge(`${css}\n${PHONE} {\n  .dsheet { z-index: 2; }\n}`)).toBe(false);
+    expect(sheetAboveBadge(`${css}\n${PHONE} {\r\n  .a,\r\n  .dsheet--full { z-index: 25; }\r\n}`)).toBe(false);
+    expect(sheetAboveBadge(`${css}\n.dmap__off { z-index: 30; }`)).toBe(false);
+  });
+
+  it('★ A2 판 안에서는 「누른 자리」·「경계 밖」 글이 한 번(판 머리만) — 카드 꼴은 지금 그대로(목록 머리 · 양성 대조)', async () => {
+    const count = (re: RegExp) => (document.body.textContent!.match(re) ?? []).length;
+    await renderMap({ layout: 'full' });
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await clickAt(127.05, 37.55);
+    expect(stageOf()).toBe('half');
+    expect(count(/누른 자리/g)).toBe(1);
+    expect(sheet()!.querySelector('.dsheet__title')!.textContent).toBe('누른 자리 (2곳):');
+    expect(document.querySelector('.dmap__picked-key')).toBeNull();
+    // 이름 단추(건물 목록 열기)는 그대로 판 안에 있다.
+    expect(screen.getByRole('button', { name: /역삼골목/ })).toBeTruthy();
+    await clickAt(126.0, 30.0);
+    expect(count(/어느 상권 경계에도 들지 않는 위치입니다/g)).toBe(1);
+    cleanup();
+
+    await renderMap();
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await clickAt(127.05, 37.55);
+    expect(document.querySelector('.dmap__picked-key')!.textContent).toBe('누른 자리 (2곳):');
+    expect(count(/누른 자리/g)).toBe(1);
+    await clickAt(126.0, 30.0);
+    expect(document.querySelector('.dmap__picked-key')!.textContent).toBe('누른 자리:');
+    expect(count(/어느 상권 경계에도 들지 않는 위치입니다/g)).toBe(1);
+  });
+
+  it('A3 종이 — 판 통째·범례·출처는 남고 손잡이·「접기」·안내만 빠진다 · 판은 흐름(static)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const print = cssRules(readFileSync('src/styles.css', 'utf8')).filter((r) => r.media === '@media print');
+    const hide = print.filter((r) => /display:\s*none/.test(r.body)).flatMap((r) => r.sel);
+    for (const s of ['.dsheet__handle', '.dsheet__fold', '.dsheet__hint']) expect(hide, s).toContain(s);
+    for (const s of ['.dsheet', '.dsheet__body', '.dsheet__head', '.dmap__legend', '.dmap__src', '.dmap--full']) {
+      expect(hide, s).not.toContain(s);
+    }
+    expect(print.some((r) => r.sel.includes('.dsheet') && /position:\s*static/.test(r.body))).toBe(true);
+  });
+
+  it('★ B1 숨은 채 태어나면 지도를 만들지 않는다(자료·판은 받는다) — 처음 보일 때 하나 만들고 첫 범위 한 번 · 다시 숨겨도 치우지 않는다', async () => {
+    const DistrictMap = await load();
+    const { rerender } = render(<DistrictMap {...base} visible={false} />);
+    await waitFor(() => expect(sheet()).not.toBeNull());
+    expect(screen.queryByTestId('map')).toBeNull();
+    expect(kakao.setBounds).not.toHaveBeenCalled();
+    rerender(<DistrictMap {...base} visible />);
+    await waitFor(() => expect(screen.getAllByTestId('map')).toHaveLength(1));
+    expect(kakao.setBounds).toHaveBeenCalledTimes(1);
+    // 보이는 칸에서 태어났다 — 되맞출 것이 없다.
+    expect(kakao.relayout).not.toHaveBeenCalled();
+    rerender(<DistrictMap {...base} visible={false} />);
+    expect(screen.getAllByTestId('map')).toHaveLength(1);
+    expect(kakao.setBounds).toHaveBeenCalledTimes(1);
+  });
+
+  it('★ B2 숨은(0×0) 칸의 멈춤은 버린다 — 표지도 안 세고 되돌릴 중심도 안 적는다 · 양성 대조(제 크기면 표지가 선다)', async () => {
+    const DistrictMap = await load();
+    const { rerender } = render(<DistrictMap {...base} visible />);
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await idle(FAR, { w: 0, h: 0 });
+    expect(document.querySelectorAll('.dmap__off')).toHaveLength(0);
+    await idle(FAR, { w: 412, h: 0 });
+    expect(document.querySelectorAll('.dmap__off')).toHaveLength(0);
+    rerender(<DistrictMap {...base} visible={false} />);
+    rerender(<DistrictMap {...base} visible />);
+    expect(kakao.relayout).toHaveBeenCalledTimes(1);
+    expect(kakao.setLevel).not.toHaveBeenCalled();
+    expect(kakao.setCenter).not.toHaveBeenCalled();
+    await idle(FAR, { w: 412, h: 600 });
+    expect(document.querySelectorAll('.dmap__off').length).toBeGreaterThan(0);
+  });
+
+  it('★ B2 숨었다 다시 보이면 relayout → 배율 → 중심 차례로 「마지막으로 제대로 잰」 값을 되돌린다(0×0 멈춤은 안 덮는다)', async () => {
+    const DistrictMap = await load();
+    const { rerender } = render(<DistrictMap {...base} visible />);
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    const good = { tag: '제대로 잰 중심' };
+    await idle(FAR, { w: 412, h: 600 }, 4, good);
+    rerender(<DistrictMap {...base} visible={false} />);
+    await idle(FAR, { w: 0, h: 0 }, 9, { tag: '숨은 칸 중심' });
+    rerender(<DistrictMap {...base} visible />);
+    expect(kakao.relayout).toHaveBeenCalledTimes(1);
+    expect(kakao.setLevel).toHaveBeenCalledTimes(1);
+    expect(kakao.setLevel).toHaveBeenCalledWith(4);
+    expect(kakao.setCenter).toHaveBeenCalledTimes(1);
+    expect(kakao.setCenter.mock.calls[0][0]).toBe(good);
+    const order = [kakao.relayout, kakao.setLevel, kakao.setCenter].map((f) => f.mock.invocationCallOrder[0]);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+
+  it('★ B3 지도를 눌러 판이 반으로 오른 뒤 — 누른 자리가 줄어든 화면 밖이면 relayout 다음에 그쪽으로 한 번 옮긴다', async () => {
+    kakao.getBounds.mockImplementation(() => ({ contain: () => false }));
+    await renderMap({ layout: 'full' });
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await clickAt(127.05, 37.55);
+    expect(stageOf()).toBe('half');
+    expect(kakao.relayout).toHaveBeenCalledTimes(1);
+    expect(kakao.panTo).toHaveBeenCalledTimes(1);
+    const at = kakao.panTo.mock.calls[0][0] as { getLat: () => number; getLng: () => number };
+    expect([at.getLat(), at.getLng()]).toEqual([37.55, 127.05]);
+    expect(kakao.relayout.mock.invocationCallOrder[0]).toBeLessThan(kakao.panTo.mock.invocationCallOrder[0]);
+  });
+
+  it('★ B3 누른 자리가 화면 안이면 옮기지 않는다(음성) · 아직 안 눌렀으면 단계를 바꿔도 옮기지 않는다', async () => {
+    await renderMap({ layout: 'full' });
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    fireEvent.click(handle()); // 반 — 누른 자리 없음
+    expect(kakao.relayout).toHaveBeenCalledTimes(1);
+    expect(kakao.getBounds).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '접기' }));
+    await clickAt(127.05, 37.55); // 기본 = 화면 안(contain true)
+    expect(stageOf()).toBe('half');
+    expect(kakao.relayout).toHaveBeenCalledTimes(3);
+    expect(kakao.getBounds).toHaveBeenCalled();
+    expect(kakao.panTo).not.toHaveBeenCalled();
+  });
+
+  it('★ B3 누른 자리는 한 번만 쓴다 — 그 뒤 판 단계를 바꿔도(사용자가 지도를 옮겼어도) 옛 누른 자리로 다시 옮기지 않는다(재검사 🟠)', async () => {
+    kakao.getBounds.mockImplementation(() => ({ contain: () => false }));
+    await renderMap({ layout: 'full' });
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await clickAt(127.05, 37.55);
+    expect(stageOf()).toBe('half');
+    expect(kakao.panTo).toHaveBeenCalledTimes(1);
+    fireEvent.click(handle()); // 가득 — 화면 밖(contain false)이어도 옛 누른 자리로는 안 간다
+    expect(stageOf()).toBe('full');
+    expect(kakao.panTo).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: '접기' }));
+    expect(kakao.panTo).toHaveBeenCalledTimes(1);
+    // 다시 누르면 다시 한 번(양성 대조).
+    await clickAt(127.06, 37.56);
+    expect(kakao.panTo).toHaveBeenCalledTimes(2);
+  });
+
+  it('★ C2 판이 가득이면 칩 줄·지도 칸은 inert(판 자체는 아님) — 엿보기·반에서는 아니다', async () => {
+    await renderMap({ layout: 'full', headExtra: <span>칩 줄</span> });
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    const inert = () =>
+      ['.dmap__head', '.dmap__canvas'].map((s) => document.querySelector(s)!.hasAttribute('inert'));
+    expect(inert()).toEqual([false, false]);
+    fireEvent.click(handle()); // 반
+    expect(inert()).toEqual([false, false]);
+    fireEvent.click(handle()); // 가득
+    expect(stageOf()).toBe('full');
+    expect(inert()).toEqual([true, true]);
+    expect(sheet()!.closest('[inert]')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '접기' }));
+    expect(inert()).toEqual([false, false]);
   });
 });

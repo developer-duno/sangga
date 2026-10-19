@@ -3733,14 +3733,22 @@ body {
      ⛔ 엿보기·반 단계에서 판은 지도를 **덮지 않고** 지도 칸이 줄어든다(카카오 로고·축척이 늘 보이게 — 로고 가림은 약관 문제 ·
         줄어든 뒤 `relayout`) · 가득 단계에서만 판이 지도를 덮는다(지도가 안 보이니 로고 문제 없음).
      ⛔ 전부 이 묶음 안 — 넓은 화면·종이는 그대로(종이에서는 띠·판·칩 줄이 인쇄 감춤 목록으로 빠진다). */
+  /* ⓘ 위 여백 = 띠 높이(W4b 보완 C4) — 지도 덩어리·띠·탭 막대는 전부 고정이라 상관없고, 흐름에 남는 것(지도 그물(ErrorBoundary)
+     안내 `.errbox`·`.msg`)만 띠 밑에 깔리지 않고 그 아래에서 시작한다.
+     ⓘ 당겨서 새로 고침·튕김 막기(C3) — 지도를 끄는 손가락이 쪽 전체를 끌지 않게. 쪽을 굴리는 것은 뿌리(html)라 거기에도 둔다. */
   .app--mapfull {
     --rstrip-h: 48px;
     box-sizing: border-box;
     height: 100vh;
     height: 100dvh;
     overflow: hidden;
-    padding-top: 0;
+    overscroll-behavior-y: none;
+    padding-top: var(--rstrip-h);
     padding-bottom: 0;
+  }
+
+  html:has(.app--mapfull) {
+    overscroll-behavior-y: none;
   }
 
   .app--mapfull .app__head {
@@ -3825,9 +3833,10 @@ body {
   }
 
   /* 칩 줄(창업자) — 한 줄 가로 밀기(10-19 「같은 땅 다른 동」 칩 줄과 같은 꼴) · 칩 밑 설명 글은 지도 탭에서 숨긴다(칩 높이 44px 는 목록 그대로). */
+  /* 칩 줄 높이 = 칩 44px 그대로 + 선 1px(W4b 보완 C1 — 위아래 여백·줄 사이 틈 0 · 지도 칸을 그만큼 넓힌다). */
   .dmap--full .dmap__head {
     flex: none;
-    padding: 2px max(12px, env(safe-area-inset-right, 0px)) 2px max(12px, env(safe-area-inset-left, 0px));
+    padding: 0 max(12px, env(safe-area-inset-right, 0px)) 0 max(12px, env(safe-area-inset-left, 0px));
     border-bottom: 1px solid var(--line);
     background: var(--card);
   }
@@ -3835,6 +3844,7 @@ body {
   .dmap--full .chips {
     flex-wrap: nowrap;
     min-width: 0;
+    row-gap: 0;
   }
 
   .dmap--full .chips__lead {
@@ -3846,8 +3856,7 @@ body {
     min-width: 0;
     overflow-x: auto;
     overscroll-behavior-x: contain;
-    /* 초점 테두리가 밀림 상자에 잘리지 않게 위아래 조금. */
-    padding-block: 3px;
+    padding-block: 0;
   }
 
   .dmap--full .chips__list > li {
@@ -3856,6 +3865,11 @@ body {
 
   .dmap--full .chips__chip {
     white-space: nowrap;
+  }
+
+  /* 위아래 여백이 0 이라 초점 테두리가 밀림 상자에 잘린다 → 칩 안쪽에 그린다(C1). */
+  .dmap--full .chips__chip:focus-visible {
+    outline-offset: -3px;
   }
 
   .dmap--full .chips__note {
@@ -3875,9 +3889,11 @@ body {
     margin: 16px;
   }
 
+  /* ⛔ 층(z-index) — 판은 지도 칸 안 화면 밖 표지(`.dmap__off` 10)보다 위, 띠(19)·탭 막대(20)·펼친 지역 고르개(19)보다 아래(W4b 보완 A1 ·
+     표지가 판 위로 비쳤다). `.dmap--full` 이 층 묶음(z-index 1)이라 띠·탭 막대와는 어차피 겹 밖이지만 숫자로도 아래에 둔다. */
   .dsheet {
     position: relative;
-    z-index: 2;
+    z-index: 11;
     flex: none;
     display: flex;
     flex-direction: column;
@@ -3895,7 +3911,7 @@ body {
   .dsheet--full {
     position: absolute;
     inset: 0;
-    z-index: 3;
+    z-index: 12;
     border-radius: 0;
   }
 
@@ -4613,9 +4629,14 @@ body {
   /* 휴대폰 아래 탭 막대 · 빈 건물 탭 안내(결정 0039 W4a) — 누르는 장치·화면 안내다. */
   .tabbar,
   .tabempty,
-  /* 휴대폰 지도 탭의 띠 · 끌어올리는 상권 판 · 홈 화면 추가 안내(결정 0039 W4b) — 누르는 장치·화면 안내다(칩 줄은 위 `.chips`). */
+  /* 휴대폰 지도 탭의 띠 · 끌어올리는 상권 판의 손잡이·「접기」·「지도를 누르면」 안내 · 홈 화면 추가 안내(결정 0039 W4b) —
+     누르는 장치·화면 안내다(칩 줄은 위 `.chips`).
+     ⛔ 판(`.dsheet`) 통째로는 빼지 않는다(W4b 보완 A3) — 안의 범례·누른 자리·출처는 내용이다(출처 = 공공누리 1유형 출처표시 의무).
+        건물 목록(`.dbld`)·처음 안내(`.dmap__picked--idle`)는 이 목록의 다른 줄이 그대로 뺀다. 판 머리 글(구 상권 수 · 누른 자리)은 남는다. */
   .rstrip,
-  .dsheet,
+  .dsheet__handle,
+  .dsheet__fold,
+  .dsheet__hint,
   .hshint,
   /* ⛔ 휴대폰에서 건물을 연 채 찾기·지도 탭에서 뽑아도 종이 = 건물 한 장(👤 「건물 한 장」) — 그 탭이 그려 둔 지도를 뺀다.
      `.app--tabs` 는 인쇄 중에도 그대로다(`useIsPhone` 이 인쇄 중 값을 얼린다). 넓은 화면은 이 이름표가 없어 지금 그대로. */
@@ -4670,6 +4691,14 @@ body {
   .list__fold,
   .modal__back {
     display: none !important;
+  }
+
+  /* 휴대폰 지도 탭의 판(W4b 보완 A3)은 종이에서 흐름 그대로 — 화면에서 판을 띄우는 규칙(고정·가득 덮기·끄는 중 밀림)은 휴대폰 화면
+     묶음 안이라 종이엔 원래 안 오지만, 끄는 도중 붙는 인라인 `transform` 과 혹시 모를 고정 꼴까지 여기서 끊는다. */
+  .dsheet {
+    position: static !important;
+    transform: none !important;
+    box-shadow: none;
   }
 
   /* 이 종이가 무엇이고 언제 것이며 원본이 어디인지 — 첫 줄에 적는다.
