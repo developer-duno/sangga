@@ -195,6 +195,28 @@ def test_control_residential_re_drift_is_caught():
     assert ts_residential_re("const X = /a/;\n") is None
 
 
+def ts_name_letter_re(text):
+    """buildingHead.ts 원문에서 `export const NAME_LETTER_RE = /…/;` 의 정규식 본문을 꺼낸다(없으면 None)."""
+    m = re.search(r"^export const NAME_LETTER_RE = /(.*)/;\s*$", text, re.M)
+    return m.group(1) if m else None
+
+
+def test_name_letter_re_matches_building_head_ts():
+    """파이썬 상수 == 함수 쪽 상수(👤 2026-10-19 「단다」) — 갈라지면 사이트맵에서 뺀 건물과 첫 HTML noindex 가 어긋난다."""
+    ts = os.path.join(ROOT, "src", "lib", "buildingHead.ts")
+    with open(ts, encoding="utf-8") as f:
+        assert ts_name_letter_re(f.read()) == bs.NAME_LETTER_RE
+
+
+def test_control_name_letter_re_drift_is_caught():
+    """양성 대조 — 범위 하나만 빠져도(영문) 다르게 읽힌다 · 상수가 없으면 None."""
+    good = "export const NAME_LETTER_RE = /" + bs.NAME_LETTER_RE + "/;\n"
+    assert ts_name_letter_re(good) == bs.NAME_LETTER_RE
+    drift = good.replace("A-Za-z", "")
+    assert ts_name_letter_re(drift) != bs.NAME_LETTER_RE
+    assert ts_name_letter_re("const X = /a/;\n") is None
+
+
 def test_fetch_rows_sends_sql_by_file_not_dash_c():
     """한글 정규식이 든 SQL 을 psql -c 로 보내면 윈도우에서 cp949 로 깨진다 — 파일(-f)로 보내야 한다."""
     import inspect

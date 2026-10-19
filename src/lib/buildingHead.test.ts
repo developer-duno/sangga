@@ -10,6 +10,7 @@ import {
   isNonResidential,
   MAX_INTRO_FLOORS,
   MAX_SIBLING_LINKS,
+  NAME_LETTER_RE,
   RESIDENTIAL_RE,
   renderBuildingHtml,
   siblingName,
@@ -537,6 +538,42 @@ describe('비주거 판정 · noindex(👤 2026-10-09 19:1x — 색인 대상 = 
     expect(count(render(tower()))).toBe(0);
     const mixed = [...tower({ main_use: '아파트', uses: [{ use: '아파트' }] }).slice(1), row(1)];
     expect(count(render(mixed))).toBe(0);
+  });
+
+  it('★ 이름에 글자가 하나도 없으면(「.」「1」「---------」) 비주거여도 noindex 1개 · 머리글은 그 건물 것(👤 2026-10-19 「단다」)', () => {
+    for (const nm of ['.', '1', '---------']) {
+      const html = render(tower({ bld_nm: nm }));
+      expect(count(html), nm).toBe(1);
+      expect(html.indexOf(NOINDEX), nm).toBeLessThan(html.indexOf('</head>'));
+      expect(parse(html).title, nm).toBe(`${nm} — 강남구 테헤란로 123 | 상가 층별 스택뷰`);
+    }
+  });
+
+  it('양성 대조 — 「坮玹住宅」「A동」「가」는 비주거면 noindex 0 · 주거만이면 그대로 1(두 조건은 「또는」)', () => {
+    for (const nm of ['坮玹住宅', 'A동', '가']) {
+      expect(count(render(tower({ bld_nm: nm }))), nm).toBe(0);
+      expect(count(render(tower({ bld_nm: nm, main_use: '아파트', uses: [{ use: '아파트' }] }))), nm).toBe(1);
+    }
+    // 글자 없는 이름 + 주거만 — 둘 다 걸려도 noindex 는 한 줄.
+    expect(count(render(tower({ bld_nm: '.', main_use: '아파트', uses: [{ use: '아파트' }] })))).toBe(1);
+  });
+
+  it('★ 판정은 동 구분을 붙이기 전 원래 이름 — 「.」에 「(같은 땅 3동 중 2번째)」가 붙어도 noindex', () => {
+    const P = '1141012000103850000';
+    const me = `${P}_10141100217441`;
+    const list = [
+      { bld_id: `${P}_10141100217510`, bld_nm: '.', dong_nm: null },
+      { bld_id: me, bld_nm: '.', dong_nm: null },
+      { bld_id: `${P}_10141100217999`, bld_nm: '.', dong_nm: null },
+    ];
+    const html = renderBuildingHtml(HOME, tower({ bld_id: me, pnu: P, bld_nm: '.', bld_cnt_in_pnu: 3 }), list)!;
+    expect(parse(html).querySelector('h1')!.textContent).toBe('. (같은 땅 3동 중 2번째)');
+    expect(count(html)).toBe(1);
+  });
+
+  it('이름 글자 정규식 — 소스에는 이스케이프 표기만(비ASCII 0) · 파이썬 쪽 대조는 tests/test_build_sitemap.py', () => {
+    expect([...NAME_LETTER_RE.source].filter((ch) => ch.charCodeAt(0) > 127)).toEqual([]);
+    expect(NAME_LETTER_RE.flags).toBe('');
   });
 
   it('정규식은 사이트맵 스크립트와 같은 목록(파이썬 쪽 대조는 tests/test_build_sitemap.py)', () => {
