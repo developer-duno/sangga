@@ -177,6 +177,16 @@ describe('handleBuilding', () => {
     expect(body.split('<meta name="robots" content="noindex" />').length - 1).toBe(1);
   });
 
+  it('ⓔ 이름에 글자가 없는 건물(「.」 — 👤 2026-10-19)은 건물 HTML + noindex 한 줄 · 같은 하루 캐시 · 「가」는 noindex 0', async () => {
+    const dot = await run(`?bld=${BLD}`, () => new Response(JSON.stringify(rows('.'))));
+    expect(dot.res.status).toBe(200);
+    expect(dot.res.headers.get('cache-control')).toBe(CACHE_BUILDING);
+    expect(title(dot.body)).toBe('. — 강남구 테헤란로 1 | 상가 층별 스택뷰');
+    expect(dot.body.split('<meta name="robots" content="noindex" />').length - 1).toBe(1);
+    const ga = await run(`?bld=${BLD}`, () => new Response(JSON.stringify(rows('가'))));
+    expect(ga.body.split('<meta name="robots" content="noindex" />').length - 1).toBe(0);
+  });
+
   it('사람·봇 같은 HTML — User-Agent 로 가르지 않는다', async () => {
     const f1 = fakeFetch(() => new Response(JSON.stringify(rows('테헤란빌딩'))));
     const f2 = fakeFetch(() => new Response(JSON.stringify(rows('테헤란빌딩'))));

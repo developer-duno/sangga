@@ -32,6 +32,14 @@ const BLD_RE = /^\d{19}_\d{1,32}$/;
  */
 export const RESIDENTIAL_RE = /(주택|주거|아파트|다세대|연립|기숙사|주차|기계|전기|계단|승강|옥탑|부속|창고|관리|경비|대피|물탱크|펌프|발전|보일러|쓰레기|분리수거)/;
 
+/**
+ * 이름에 글자(한글 음절·호환 자모·영문·한자)가 하나라도 있나 — 하나도 없으면(「.」「1」「---------」) 첫 HTML 도 noindex
+ * (👤 2026-10-19 「단다」 — 사이트맵·구 허브에서 뺀 것과 같은 뜻을 끝까지).
+ * ⛔ `scripts/build_sitemap.py` 의 NAME_LETTER_RE 와 **글자까지 같아야** 한다(tests/test_build_sitemap.py 가 대조).
+ * ⛔ 범위는 이스케이프 표기(역슬래시 u + 16진 넷)로만 적는다 — 소스에 드문 글자를 직접 넣지 않는다(편집 도구가 표기를 글자로 바꿔 넣은 일이 있다).
+ */
+export const NAME_LETTER_RE = /[\uac00-\ud7a3\u3131-\u3163A-Za-z\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
+
 const NOINDEX = '<meta name="robots" content="noindex" />';
 
 /** 서버 조각이 뷰에서 받아 오는 칸(`select=` 와 같은 목록). */
@@ -423,7 +431,7 @@ function metaPattern(attr: 'name' | 'property', key: string): RegExp {
  * 첫 화면 HTML 의 머리글·소개문을 그 건물 것으로 바꾼다.
  * 행이 없거나 이름이 없으면 null(호출부가 첫 화면 HTML 을 그대로 쓴다).
  * 바꿀 태그가 정확히 1개가 아니면 throw.
- * 비주거 층이 없으면(`isNonResidential` false) `</head>` 앞에 noindex 한 줄을 더한다.
+ * 비주거 층이 없거나(`isNonResidential` false) 이름에 글자가 하나도 없으면(`NAME_LETTER_RE`) `</head>` 앞에 noindex 한 줄을 더한다.
  * `siblings`(결정 0042) = 같은 땅 동 목록(`list_parcel_buildings` · 없거나 실패면 null) — 있으면 제목·설명·og·
  * JSON-LD·h1 의 이름에 동 구분을 붙이고 내부 링크에 다른 동을 싣는다. 소개문은 원래 이름 그대로.
  */
@@ -475,6 +483,8 @@ export function renderBuildingHtml(
     `<nav class="seo-links" aria-label="관련 페이지">${links}</nav>`,
     '내부 링크 자리',
   );
-  // 비주거 층이 없는 건물(아파트 동 등) — 미리보기는 건물 것이되 검색 색인에는 안 담는다.
-  return isNonResidential(rows) ? html : withNoindex(html);
+  // 비주거 층이 없는 건물(아파트 동 등) **또는** 이름에 글자가 하나도 없는 건물(「.」「1」 — 👤 2026-10-19) —
+  // 미리보기는 건물 것이되 검색 색인에는 안 담는다. 이름은 동 구분을 붙이기 전 원래 이름(사이트맵이 보는 `display_nm` 과 같은 칸) —
+  // 붙인 뒤 이름으로 보면 「(같은 땅 3동 중 2번째)」의 한글 때문에 늘 통과한다.
+  return isNonResidential(rows) && NAME_LETTER_RE.test(facts.name) ? html : withNoindex(html);
 }
