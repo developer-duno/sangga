@@ -26,39 +26,50 @@ const kakao = vi.hoisted(() => ({
   setBounds: vi.fn(),
   panTo: vi.fn(),
   setLevel: vi.fn(),
+  /** 지도 칸 크기를 바꾼 뒤 부르는 것(W4b — 숨겼다 보일 때 · 판 단계가 바뀐 뒤). */
+  relayout: vi.fn(),
   map: null as unknown,
 }));
-kakao.map = { setBounds: kakao.setBounds, panTo: kakao.panTo, setLevel: kakao.setLevel };
+kakao.map = { setBounds: kakao.setBounds, panTo: kakao.panTo, setLevel: kakao.setLevel, relayout: kakao.relayout };
 
-vi.mock('react-kakao-maps-sdk', () => ({
-  useKakaoLoader: () => [false, undefined],
-  // ⓘ 진짜 SDK 처럼 **같은 지도 객체**를 돌려준다 — 부를 때마다 새 객체면 `[map, bounds]` effect 가 매 렌더 다시 돌아
-  //   "구를 바꿀 때만 다시 맞춘다"를 셀 수 없다(결정 0039 W1).
-  useMap: () => kakao.map,
-  Map: (props: {
-    children?: React.ReactNode;
-    onClick?: (m: unknown, e: unknown) => void;
-    onZoomChanged?: (m: { getLevel: () => number }) => void;
-    onIdle?: (m: unknown) => void;
-  }) => {
-    kakao.mapProps = props;
-    return <div data-testid="map">{props.children}</div>;
-  },
-  // 이름표가 타는 오버레이. **클릭을 막는 스위치(clickable)** 를 볼 수 있게 그대로 내건다.
-  CustomOverlayMap: (props: {
-    children?: React.ReactNode;
-    clickable?: boolean;
-    position: { lat: number; lng: number };
-  }) => (
-    <div data-testid="label" data-clickable={String(props.clickable)} data-lat={props.position.lat}>
-      {props.children}
-    </div>
-  ),
-  Polygon: (props: { fillColor?: string }) => <div data-testid="polygon" data-fill={props.fillColor} />,
-  MapMarker: (props: { position: { lat: number; lng: number } }) => (
-    <div data-testid="marker" data-lat={props.position.lat} data-lng={props.position.lng} />
-  ),
-}));
+vi.mock('react-kakao-maps-sdk', async () => {
+  const { useEffect } = await import('react');
+  return {
+    useKakaoLoader: () => [false, undefined],
+    // ⓘ 진짜 SDK 처럼 **같은 지도 객체**를 돌려준다 — 부를 때마다 새 객체면 `[map, bounds]` effect 가 매 렌더 다시 돌아
+    //   "구를 바꿀 때만 다시 맞춘다"를 셀 수 없다(결정 0039 W1).
+    useMap: () => kakao.map,
+    Map: (props: {
+      children?: React.ReactNode;
+      onClick?: (m: unknown, e: unknown) => void;
+      onZoomChanged?: (m: { getLevel: () => number }) => void;
+      onIdle?: (m: unknown) => void;
+      onCreate?: (m: unknown) => void;
+    }) => {
+      kakao.mapProps = props;
+      // 진짜 SDK 처럼 지도를 만든 뒤 한 번 `onCreate` 로 지도 객체를 건넨다(W4b relayout 시험).
+      const { onCreate } = props;
+      useEffect(() => {
+        onCreate?.(kakao.map);
+      }, [onCreate]);
+      return <div data-testid="map">{props.children}</div>;
+    },
+    // 이름표가 타는 오버레이. **클릭을 막는 스위치(clickable)** 를 볼 수 있게 그대로 내건다.
+    CustomOverlayMap: (props: {
+      children?: React.ReactNode;
+      clickable?: boolean;
+      position: { lat: number; lng: number };
+    }) => (
+      <div data-testid="label" data-clickable={String(props.clickable)} data-lat={props.position.lat}>
+        {props.children}
+      </div>
+    ),
+    Polygon: (props: { fillColor?: string }) => <div data-testid="polygon" data-fill={props.fillColor} />,
+    MapMarker: (props: { position: { lat: number; lng: number } }) => (
+      <div data-testid="marker" data-lat={props.position.lat} data-lng={props.position.lng} />
+    ),
+  };
+});
 
 // 지도 시점 맞추기가 쓰는 전역. 값은 안 쓰고 "불렸는지"만 본다.
 vi.stubGlobal('kakao', {
@@ -222,6 +233,7 @@ beforeEach(() => {
   kakao.setBounds.mockReset();
   kakao.panTo.mockReset();
   kakao.setLevel.mockReset();
+  kakao.relayout.mockReset();
   fetchMock.mockReset();
   fetchMock.mockImplementation(() => okJson(geojson()));
   vi.stubGlobal('fetch', fetchMock);
@@ -624,6 +636,43 @@ describe('DistrictMap — 접기와 캐시', () => {
   });
 });
 
+/**
+ * CSS 를 주석 빼고 `@media` 묶음 밖(기본 규칙)과 안으로 갈라 규칙 목록(선택자 · 본문 · 묶음 머리)으로 편다.
+ * ⓘ 이 파일의 CSS 가드 셋이 같은 함수를 지난다 — 양성 대조도 같은 함수로 본다.
+ * 못 보는 것: `@media` 안의 또 다른 `@media`·`@supports` 겹 묶음(이 파일에 없다) · 문자열 안의 중괄호.
+ */
+function cssRules(css: string): { sel: string[]; body: string; media: string | null }[] {
+  const src = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const out: { sel: string[]; body: string; media: string | null }[] = [];
+  const take = (chunk: string, media: string | null) => {
+    for (const m of chunk.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      out.push({ sel: m[1].split(',').map((x) => x.trim()), body: m[2], media });
+    }
+  };
+  let i = 0;
+  let plain = '';
+  while (i < src.length) {
+    const at = src.indexOf('@media', i);
+    if (at < 0) {
+      plain += src.slice(i);
+      break;
+    }
+    plain += src.slice(i, at);
+    const open = src.indexOf('{', at);
+    let depth = 1;
+    let j = open + 1;
+    while (j < src.length && depth > 0) {
+      if (src[j] === '{') depth += 1;
+      else if (src[j] === '}') depth -= 1;
+      j += 1;
+    }
+    take(src.slice(open + 1, j - 1), src.slice(at, open).trim());
+    i = j;
+  }
+  take(plain, null);
+  return out;
+}
+
 // ── 지도 배율 — 몰린 곳에 맞추기 (결정 0039 W1) ──────────────────────────────────────────────
 // ⓘ E2E 에는 지도 키가 없어 지도가 안 그려진다 — 첫 범위·화면 밖 표지·멀리서의 점+이름의 화면 가드는 여기가 전부다.
 describe('DistrictMap — 지도 배율(결정 0039 W1)', () => {
@@ -781,43 +830,6 @@ describe('DistrictMap — 지도 배율(결정 0039 W1)', () => {
     expect(css.slice(head, css.indexOf('{', head))).toBe('@media screen and (max-width: 720px) ');
   });
 
-  /**
-   * CSS 를 주석 빼고 `@media` 묶음 밖(기본 규칙)과 안으로 갈라 규칙 목록(선택자 · 본문 · 묶음 머리)으로 편다.
-   * ⓘ 이 파일의 CSS 가드 셋이 같은 함수를 지난다 — 양성 대조도 같은 함수로 본다.
-   * 못 보는 것: `@media` 안의 또 다른 `@media`·`@supports` 겹 묶음(이 파일에 없다) · 문자열 안의 중괄호.
-   */
-  function cssRules(css: string): { sel: string[]; body: string; media: string | null }[] {
-    const src = css.replace(/\/\*[\s\S]*?\*\//g, '');
-    const out: { sel: string[]; body: string; media: string | null }[] = [];
-    const take = (chunk: string, media: string | null) => {
-      for (const m of chunk.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-        out.push({ sel: m[1].split(',').map((x) => x.trim()), body: m[2], media });
-      }
-    };
-    let i = 0;
-    let plain = '';
-    while (i < src.length) {
-      const at = src.indexOf('@media', i);
-      if (at < 0) {
-        plain += src.slice(i);
-        break;
-      }
-      plain += src.slice(i, at);
-      const open = src.indexOf('{', at);
-      let depth = 1;
-      let j = open + 1;
-      while (j < src.length && depth > 0) {
-        if (src[j] === '{') depth += 1;
-        else if (src[j] === '}') depth -= 1;
-        j += 1;
-      }
-      take(src.slice(open + 1, j - 1), src.slice(at, open).trim());
-      i = j;
-    }
-    take(plain, null);
-    return out;
-  }
-
   it('⛔ 아래 줄 표지(↙ ↓ ↘)는 카카오 로고·축척 막대(약 25~30px) 위에 뜬다', async () => {
     const { readFileSync } = await import('node:fs');
     const rules = cssRules(readFileSync('src/styles.css', 'utf8'));
@@ -933,5 +945,206 @@ describe('DistrictMap — 다시 그려져도 누른 상권·목록 되살리기
     expect(screen.queryByRole('button', { name: /역삼역/ })).toBeNull();
     expect(screen.queryByText('역삼빌딩')).toBeNull();
     expect(screen.getByText(/지도를 누르면 그 자리의 상권을 알려드립니다/)).toBeTruthy();
+  });
+});
+
+// ── 휴대폰 지도 가득 · 끌어올리는 상권 판 · relayout (👤 2026-10-19 결정 0039 W4b) ─────────────────────────────
+// ⓘ E2E 에는 카카오 키가 없어 지도 칸은 안내 글뿐이다 — 판·relayout 의 배선은 이 가짜 SDK 시험이 본다(판 자체는 E2E BT 도 본다).
+describe('DistrictMap — 휴대폰 지도 가득(결정 0039 W4b)', () => {
+  async function clickAt(lng: number, lat: number) {
+    await act(async () => {
+      kakao.mapProps?.onClick?.(null, { latLng: { getLat: () => lat, getLng: () => lng } });
+    });
+  }
+  const sheet = () => document.querySelector('.dsheet');
+  const handle = () => document.querySelector<HTMLButtonElement>('.dsheet__handle')!;
+  const stageOf = () => /dsheet--(\w+)/.exec(sheet()!.className)![1];
+
+  it('★ full 꼴 — 제목·접기 단추 없이 지도 칸 + 엿보기 글(구 이름 · 상권 수) · 카드 꼴엔 판이 없다', async () => {
+    await renderMap({ layout: 'full' });
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    expect(document.querySelector('.dmap__toggle')).toBeNull();
+    expect(document.querySelector('.dmap__title')).toBeNull();
+    expect(document.querySelector('section.dmap')!.classList.contains('dmap--full')).toBe(true);
+    expect(sheet()!.querySelector('.dsheet__title')!.textContent).toBe('강남구 상권 2곳');
+    expect(sheet()!.querySelector('.dsheet__hint')!.textContent).toBe('지도를 누르면 그 자리 상권');
+    expect(stageOf()).toBe('peek');
+    cleanup();
+
+    await renderMap();
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    expect(sheet()).toBeNull();
+    expect(document.querySelector('.dmap__toggle')).not.toBeNull();
+    expect(document.querySelector('section.dmap')!.classList.contains('dmap--full')).toBe(false);
+  });
+
+  it('★ 손잡이는 단추 — 이름과 펼침이 단계마다 바뀌며 엿보기 → 반 → 가득 → 엿보기 · 「접기」는 반·가득에서만 → 엿보기', async () => {
+    await renderMap({ layout: 'full' });
+    await waitFor(() => expect(sheet()).not.toBeNull());
+    const seen: [string, string | null, string | null][] = [];
+    for (let i = 0; i < 4; i += 1) {
+      seen.push([stageOf(), handle().getAttribute('aria-label'), handle().getAttribute('aria-expanded')]);
+      if (i < 3) fireEvent.click(handle());
+    }
+    expect(seen).toEqual([
+      ['peek', '상권 판 펼치기', 'false'],
+      ['half', '상권 판 더 펼치기', 'true'],
+      ['full', '상권 판 접기', 'true'],
+      ['peek', '상권 판 펼치기', 'false'],
+    ]);
+    expect(screen.queryByRole('button', { name: '접기' })).toBeNull();
+    fireEvent.click(handle());
+    fireEvent.click(screen.getByRole('button', { name: '접기' }));
+    expect(stageOf()).toBe('peek');
+    fireEvent.click(handle());
+    fireEvent.click(handle());
+    fireEvent.click(screen.getByRole('button', { name: '접기' }));
+    expect(stageOf()).toBe('peek');
+  });
+
+  it('★ 손가락 끌기 — 30px 넘게 올리면 한 단계 위 · 내리면 한 단계 아래 · 그만큼 안 움직이면 그대로(끈 뒤 따라오는 click 은 안 먹는다)', async () => {
+    await renderMap({ layout: 'full' });
+    await waitFor(() => expect(sheet()).not.toBeNull());
+    const bar = () => document.querySelector('.dsheet__bar')!;
+    const drag = (from: number, to: number) => {
+      fireEvent.pointerDown(bar(), { pointerId: 1, clientY: from });
+      fireEvent.pointerMove(bar(), { pointerId: 1, clientY: to });
+      fireEvent.pointerUp(bar(), { pointerId: 1, clientY: to });
+    };
+    drag(500, 490); // 10px — 단계 그대로
+    expect(stageOf()).toBe('peek');
+    drag(500, 450); // 위로 50px
+    expect(stageOf()).toBe('half');
+    fireEvent.click(handle()); // 끈 뒤 따라오는 click — 한 번 더 돌리지 않는다
+    expect(stageOf()).toBe('half');
+    drag(300, 250);
+    expect(stageOf()).toBe('full');
+    drag(100, 160); // 아래로
+    expect(stageOf()).toBe('half');
+    drag(100, 160);
+    expect(stageOf()).toBe('peek');
+    fireEvent.click(handle()); // 끈 뒤 click 은 버림
+    fireEvent.click(handle()); // 그다음 누름은 먹는다
+    expect(stageOf()).toBe('half');
+  });
+
+  it('★ 지도를 누르면 그 자리 상권 + 판이 반으로(엿보기일 때만 — 반·가득이면 그대로) · 머리 글은 지금 누른 자리 글 그대로', async () => {
+    await renderMap({ layout: 'full' });
+    await waitFor(() => expect(sheet()).not.toBeNull());
+    await clickAt(127.05, 37.55);
+    expect(stageOf()).toBe('half');
+    expect(sheet()!.querySelector('.dsheet__title')!.textContent).toBe('누른 자리 (2곳):');
+    expect(screen.getByRole('button', { name: /역삼골목/ })).toBeTruthy();
+    fireEvent.click(handle()); // 가득
+    await clickAt(126.0, 30.0); // 경계 밖
+    expect(stageOf()).toBe('full');
+    expect(sheet()!.querySelector('.dsheet__title')!.textContent).toBe('어느 상권 경계에도 들지 않는 위치입니다.');
+    fireEvent.click(screen.getByRole('button', { name: '접기' }));
+    fireEvent.click(handle()); // 반
+    await clickAt(127.05, 37.55);
+    expect(stageOf()).toBe('half');
+  });
+
+  it('★ 구가 바뀌면 판은 엿보기로', async () => {
+    const DistrictMap = await load();
+    const { rerender } = render(
+      <DistrictMap sigungu="11680" sigunguName="강남구" selected={null} onSelectBuilding={() => {}} layout="full" />,
+    );
+    await waitFor(() => expect(sheet()).not.toBeNull());
+    fireEvent.click(handle());
+    fireEvent.click(handle());
+    expect(stageOf()).toBe('full');
+    rerender(<DistrictMap sigungu="30170" sigunguName="서구" selected={null} onSelectBuilding={() => {}} layout="full" />);
+    await waitFor(() => expect(sheet()!.querySelector('.dsheet__title')!.textContent).toBe('서구 상권 1곳'));
+    expect(stageOf()).toBe('peek');
+  });
+
+  it('★ 판 안 차례 = 범례 → 누른 자리 상권 → 건물 목록 → 출처(지금 카드 아래 것 그대로)', async () => {
+    await renderMap({ layout: 'full' });
+    await waitFor(() => expect(sheet()).not.toBeNull());
+    await clickAt(127.09, 37.59);
+    fireEvent.click(screen.getByRole('button', { name: /역삼역/ }));
+    await screen.findByText('역삼빌딩');
+    const body = sheet()!.querySelector('.dsheet__body')!;
+    const order = [...body.children].map((c) => c.className.split(' ')[0]);
+    expect(order).toEqual(['dmap__legend', 'dmap__picked', 'dbld', 'dmap__src']);
+    // 판 바깥에는 범례·출처가 없다.
+    expect(document.querySelectorAll('.dmap__legend')).toHaveLength(1);
+  });
+
+  it('★ 숨겼다 다시 보이면 relayout 한 번(true→true 는 0 · 양성/음성) · 판 단계가 바뀐 뒤에도 한 번', async () => {
+    const DistrictMap = await load();
+    const props = {
+      sigungu: '11680',
+      sigunguName: '강남구',
+      selected: null,
+      onSelectBuilding: () => {},
+      layout: 'full' as const,
+    };
+    const { rerender } = render(<DistrictMap {...props} visible />);
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    rerender(<DistrictMap {...props} visible />);
+    expect(kakao.relayout).not.toHaveBeenCalled();
+    rerender(<DistrictMap {...props} visible={false} />);
+    expect(document.querySelector('section.dmap')!.hasAttribute('hidden')).toBe(true);
+    expect(kakao.relayout).not.toHaveBeenCalled();
+    rerender(<DistrictMap {...props} visible />);
+    expect(kakao.relayout).toHaveBeenCalledTimes(1);
+    // 같은 지도 — 다시 맞추지 않았다(첫 범위 한 번뿐 · 확대·이동이 그대로).
+    expect(kakao.setBounds).toHaveBeenCalledTimes(1);
+    fireEvent.click(handle());
+    expect(kakao.relayout).toHaveBeenCalledTimes(2);
+  });
+
+  it('★ 카드 꼴도 숨겼다 보이면 relayout 을 받는다(중개사 지도) · 기본은 숨김 속성 없음', async () => {
+    const DistrictMap = await load();
+    const props = { sigungu: '11680', sigunguName: '강남구', selected: null, onSelectBuilding: () => {} };
+    const { rerender } = render(<DistrictMap {...props} />);
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    expect(document.querySelector('section.dmap')!.hasAttribute('hidden')).toBe(false);
+    rerender(<DistrictMap {...props} visible={false} />);
+    rerender(<DistrictMap {...props} visible />);
+    expect(kakao.relayout).toHaveBeenCalledTimes(1);
+  });
+
+  it('★ 키가 없어도 full 꼴은 판이 선다(지도 칸에는 키 안내 글) — 카드 꼴은 지금처럼 파일을 안 받는다(위 「키가 없을 때」)', async () => {
+    vi.stubEnv('VITE_KAKAO_JS_KEY', '');
+    await renderMap({ layout: 'full' });
+    await waitFor(() => expect(sheet()).not.toBeNull());
+    expect(document.querySelector('.dmap__canvas')!.textContent).toMatch(/지도 키가 설정되지 않았습니다/);
+    expect(sheet()!.querySelector('.dsheet__title')!.textContent).toBe('강남구 상권 2곳');
+    fireEvent.click(handle());
+    expect(screen.getByText(/출처: 서울특별시 상권분석서비스/)).toBeTruthy();
+    expect(screen.queryByTestId('map')).toBeNull();
+  });
+
+  it('판 규칙은 전부 휴대폰 화면 묶음 안 · 종이에서 빠진다 · 손잡이·접기는 44px 목록 · 엿보기는 안 굴린다', async () => {
+    const { readFileSync } = await import('node:fs');
+    const css = readFileSync('src/styles.css', 'utf8');
+    const medias = (src: string) =>
+      cssRules(src)
+        .filter((r) => r.media !== '@media print' && r.sel.some((s) => /\.dsheet|\.dmap--full/.test(s)))
+        .filter((r) => !(r.media === '@media screen' && /min-height:\s*44px/.test(r.body)))
+        .map((r) => r.media);
+    expect(medias(css).length).toBeGreaterThan(10);
+    expect(new Set(medias(css))).toEqual(new Set(['@media screen and (max-width: 720px)']));
+    // 양성 대조 — 기본 규칙 꼴 + 다른 묶음 속 선택자 목록 꼴(줄바꿈 다른 꼴).
+    expect(medias(`${css}\n.dsheet { position: fixed; }`)).toContain(null);
+    expect(medias(`${css}\n@media (max-width: 720px) {\r\n  .a,\r\n  .dsheet--half { height: 1px; }\r\n}`)).toContain(
+      '@media (max-width: 720px)',
+    );
+    const rules = cssRules(css);
+    const hide = rules.filter((r) => r.media === '@media print' && /display:\s*none/.test(r.body)).flatMap((r) => r.sel);
+    expect(hide).toContain('.dsheet');
+    const tall = rules.filter((r) => r.media === '@media screen' && /min-height:\s*44px/.test(r.body)).flatMap((r) => r.sel);
+    for (const s of ['.dsheet__handle', '.dsheet__fold']) expect(tall, s).toContain(s);
+    expect(
+      rules.some(
+        (r) =>
+          r.media === '@media screen and (max-width: 720px)' &&
+          r.sel.includes('.dsheet--peek .dsheet__body') &&
+          /display:\s*none/.test(r.body),
+      ),
+    ).toBe(true);
   });
 });

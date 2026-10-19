@@ -28,8 +28,22 @@ vi.mock('./lib/supabase', () => ({
   },
 }));
 
+// ⓘ 가짜 지도도 진짜처럼 `visible` 이 거짓이면 `hidden` 으로 숨기기만 하고(W4b) 받은 꼴(`layout`)을 적어 둔다.
 vi.mock('./components/DistrictMap', () => ({
-  DistrictMap: ({ sigungu }: { sigungu: string | null }) => (sigungu ? <section className="dmap">가짜 지도</section> : null),
+  DistrictMap: ({
+    sigungu,
+    visible = true,
+    layout = 'card',
+  }: {
+    sigungu: string | null;
+    visible?: boolean;
+    layout?: 'card' | 'full';
+  }) =>
+    sigungu ? (
+      <section className="dmap" hidden={!visible} data-layout={layout}>
+        가짜 지도
+      </section>
+    ) : null,
 }));
 
 const { default: App } = await import('./App');
@@ -153,6 +167,15 @@ describe('휴대폰 아래 탭 (결정 0039 W4a)', () => {
     const foot = container.querySelector('footer.foot')!;
     expect(foot.firstElementChild?.classList.contains('foot__notice')).toBe(true);
     expect(foot.lastElementChild?.classList.contains('fb')).toBe(true);
+    // W4b — 띠·지도 가득·홈 화면 안내는 넓은 화면 DOM 0 · 지도는 카드 꼴에 숨김 속성 없음 · 지역 고르개 id 없음.
+    expect(container.querySelector('.rstrip')).toBeNull();
+    expect(container.querySelector('.hshint')).toBeNull();
+    expect(app.classList.contains('app--mapfull')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: /상권 지도 보기/ }));
+    const map = container.querySelector('section.dmap')!;
+    expect(map.getAttribute('data-layout')).toBe('card');
+    expect(map.hasAttribute('hidden')).toBe(false);
+    expect(container.querySelector('section.region')!.hasAttribute('id')).toBe(false);
   });
 
   it('★ 휴대폰 — 탭 넷 · 첫 탭 찾기 · 빈 건물 탭(흐림 · 안내 · 찾으러 가기) · 바·안내 줄 없음', async () => {
@@ -235,13 +258,17 @@ describe('휴대폰 아래 탭 (결정 0039 W4a)', () => {
     expect(current()).toBe('지도');
     expect(entry().hidden).toBe(false);
     await pickGu(); // 지도 탭에 선 지역 고르개로
-    expect(container.querySelector('.dmap')).not.toBeNull();
+    const map = container.querySelector<HTMLElement>('.dmap')!;
+    expect(map).not.toBeNull();
+    // W4b(결정 0039 §4-11) — 탭을 옮겨도 지도를 다시 그리지 않는다: 같은 노드가 숨기만 했다가 돌아오면 다시 보인다(relayout 은 DistrictMap 시험).
     fireEvent.click(tab('찾기'));
-    expect(container.querySelector('.dmap')).toBeNull();
+    expect(container.querySelector('.dmap')).toBe(map);
+    expect(map.hidden).toBe(true);
     fireEvent.click(tab('더보기'));
     expect(entry().hidden).toBe(true);
     fireEvent.click(tab('지도'));
-    expect(container.querySelector('.dmap')).not.toBeNull();
+    expect(container.querySelector('.dmap')).toBe(map);
+    expect(map.hidden).toBe(false);
   });
 
   it('★ 휴대폰 중개사 — 탭 = 찾기·건물·뽑은 건물·더보기 · 지도는 찾기 탭 · 빈 「뽑은 건물」 안내 · 목록은 펼친 채', async () => {
@@ -386,6 +413,119 @@ describe('휴대폰 아래 탭 (결정 0039 W4a)', () => {
   });
 });
 
+// ── 휴대폰 지도 가득 · 위 한 줄 띠 (👤 2026-10-19 결정 0039 W4b) ──────────────────────────────────
+
+describe('휴대폰 지도 가득 (결정 0039 W4b)', () => {
+  const strip = () => document.querySelector<HTMLButtonElement>('.rstrip__btn');
+  const appEl = (c: HTMLElement) => c.querySelector('.app')!;
+
+  /** 강남구·서초구 두 구 — 띠로 다른 구를 고르는 시험용. */
+  function twoGus() {
+    const base = rpc.getMockImplementation()!;
+    rpc.mockImplementation((fn: string, ...rest: unknown[]) =>
+      fn === 'list_open_sigungu'
+        ? Promise.resolve({ data: [gu(), gu({ sigungu_code: '11650', sigungu_nm: '서초구' })], error: null })
+        : base(fn, ...rest),
+    );
+  }
+
+  it('★ 창업자 + 구 → 지도 탭: 지도 가득 · 띠 「서울 강남구」 · 띠를 누르면 같은 지역 고르개가 펼쳐지고 다른 구를 고르면 닫힘', async () => {
+    phoneMedia();
+    twoGus();
+    window.localStorage.setItem('sangga.viewerRole', '창업자');
+    const { container } = render(<App />);
+    expect(current()).toBe('지도');
+    // 구 고르기 전 = 지금 지역 고르개 화면 그대로(띠·가득 없음).
+    expect(strip()).toBeNull();
+    expect(appEl(container).classList.contains('app--mapfull')).toBe(false);
+    await pickGu();
+
+    expect(appEl(container).classList.contains('app--mapfull')).toBe(true);
+    expect(strip()!.textContent).toBe('서울 강남구 ▾');
+    expect(strip()!.getAttribute('aria-expanded')).toBe('false');
+    const region = container.querySelector('section.region')!;
+    expect(strip()!.getAttribute('aria-controls')).toBe('region-panel');
+    expect(region.id).toBe('region-panel');
+    expect(container.querySelector('section.dmap')!.getAttribute('data-layout')).toBe('full');
+    expect(appEl(container).classList.contains('app--regionopen')).toBe(false);
+
+    fireEvent.click(strip()!);
+    expect(strip()!.getAttribute('aria-expanded')).toBe('true');
+    expect(appEl(container).classList.contains('app--regionopen')).toBe(true);
+    fireEvent.click(await screen.findByRole('button', { name: /^서초구/ }));
+    // 다른 구를 고르면 닫히고 띠 글이 그 구 · 지역 고르개는 같은 노드(다시 태어나지 않는다).
+    expect(appEl(container).classList.contains('app--regionopen')).toBe(false);
+    expect(strip()!.textContent).toBe('서울 서초구 ▾');
+    expect(strip()!.getAttribute('aria-expanded')).toBe('false');
+    expect(container.querySelector('section.region')).toBe(region);
+  });
+
+  it('★ 띠로 펼친 채 탭을 옮기면 닫힌다 · 찾기 탭엔 띠·가득 없음(지도는 같은 노드가 숨음)', async () => {
+    phoneMedia();
+    window.localStorage.setItem('sangga.viewerRole', '창업자');
+    const { container } = render(<App />);
+    await pickGu();
+    const map = container.querySelector<HTMLElement>('section.dmap')!;
+    fireEvent.click(strip()!);
+    expect(appEl(container).classList.contains('app--regionopen')).toBe(true);
+    fireEvent.click(tab('찾기'));
+    expect(strip()).toBeNull();
+    expect(appEl(container).classList.contains('app--mapfull')).toBe(false);
+    expect(appEl(container).classList.contains('app--regionopen')).toBe(false);
+    expect(map.hidden).toBe(true);
+    fireEvent.click(tab('지도'));
+    expect(strip()!.getAttribute('aria-expanded')).toBe('false');
+    expect(container.querySelector('section.dmap')).toBe(map);
+    expect(map.hidden).toBe(false);
+  });
+
+  it('★ 첫 방문 그대로 — 지도 탭에 아직 안 간 사람(투자자 · 찾기 탭)은 지도를 안 그린다 · 한 번 본 뒤엔 숨기기만', async () => {
+    phoneMedia();
+    window.localStorage.setItem('sangga.viewerRole', '투자자');
+    const { container } = render(<App />);
+    await pickGu();
+    expect(current()).toBe('찾기');
+    expect(container.querySelector('section.dmap')).toBeNull();
+    fireEvent.click(tab('지도'));
+    const map = container.querySelector<HTMLElement>('section.dmap')!;
+    expect(map.hidden).toBe(false);
+    expect(strip()!.textContent).toBe('서울 강남구 ▾');
+    fireEvent.click(tab('찾기'));
+    expect(container.querySelector('section.dmap')).toBe(map);
+    expect(map.hidden).toBe(true);
+  });
+
+  it('★ 중개사 — 띠·지도 가득 없음 · 지도는 찾기 탭 카드 꼴 그대로 · 다른 탭에선 같은 노드가 숨음', async () => {
+    phoneMedia();
+    window.localStorage.setItem('sangga.viewerRole', '중개사');
+    const { container } = render(<App />);
+    await pickGu();
+    const map = container.querySelector<HTMLElement>('section.dmap')!;
+    expect(map.getAttribute('data-layout')).toBe('card');
+    expect(map.hidden).toBe(false);
+    expect(strip()).toBeNull();
+    expect(appEl(container).classList.contains('app--mapfull')).toBe(false);
+    fireEvent.click(tab('뽑은 건물'));
+    expect(container.querySelector('section.dmap')).toBe(map);
+    expect(map.hidden).toBe(true);
+    expect(strip()).toBeNull();
+    fireEvent.click(tab('찾기'));
+    expect(map.hidden).toBe(false);
+  });
+
+  it('★ 더보기 — 홈 화면 상자가 의견함 다음·안내 앞(눈 차례) · 의견함 DOM 자리는 그대로 맨 뒤', async () => {
+    phoneMedia();
+    const { container } = render(<App />);
+    fireEvent.click(tab('더보기'));
+    const foot = container.querySelector('footer.foot')!;
+    const kids = [...foot.children];
+    const at = (cls: string) => kids.findIndex((k) => k.classList.contains(cls));
+    expect(at('hshint')).toBeGreaterThan(at('role'));
+    expect(at('hshint')).toBeLessThan(at('foot__notice'));
+    expect(foot.lastElementChild?.classList.contains('fb')).toBe(true);
+  });
+});
+
 // ── CSS 가드 — 탭 꼴은 휴대폰 화면 묶음에만 · 종이에서 빠짐 · 44px 목록 ──────────────────────────────────
 
 /**
@@ -513,5 +653,33 @@ describe('휴대폰 아래 탭 — CSS', () => {
     expect(
       print.some((r) => r.sel.includes('.app--tabs:not(.app--bld) .entry[hidden]') && /display:\s*block/.test(r.body)),
     ).toBe(true);
+  });
+
+  /** W4b 이름표(띠·지도 가득·판·홈 화면 상자)가 나오는 규칙의 묶음 머리들(인쇄 묶음·44px 목록은 뺀다). */
+  function w4bMedias(src: string): (string | null)[] {
+    return cssRules(src)
+      .filter((r) => r.media !== '@media print' && r.sel.some((s) => /\.app--mapfull|\.app--regionopen|\.rstrip|\.dmap--full|\.dsheet|\.hshint/.test(s)))
+      .filter((r) => !(r.media === '@media screen' && /min-height:\s*44px/.test(r.body)))
+      .map((r) => r.media);
+  }
+
+  it('W4b 규칙(띠·지도 가득·판·홈 화면 상자)은 전부 휴대폰 화면 묶음 안 · 양성 대조(기본 규칙 꼴 + 다른 묶음 꼴)', () => {
+    const medias = w4bMedias(css);
+    expect(medias.length).toBeGreaterThan(15);
+    expect(new Set(medias)).toEqual(new Set([PHONE]));
+    expect(w4bMedias(`${css}\n.rstrip { position: fixed; }`)).toContain(null);
+    expect(w4bMedias(`${css}\n@media (max-width: 720px) {\n  .x,\n  .app--mapfull .dmap--full { top: 0; }\n}`)).toContain(
+      '@media (max-width: 720px)',
+    );
+  });
+
+  it('W4b — 지도 탭에서 사이트 제목 줄이 숨고 · 지역 고르개는 띠를 눌렀을 때만 · 종이에서 띠·판·홈 화면 상자가 빠진다 · 44px 목록', () => {
+    const phone = rules.filter((r) => r.media === PHONE && /display:\s*none/.test(r.body)).flatMap((r) => r.sel);
+    expect(phone).toContain('.app--mapfull .app__head');
+    expect(phone).toContain('.app--mapfull:not(.app--regionopen) .entry > .region');
+    const hide = rules.filter((r) => r.media === '@media print' && /display:\s*none/.test(r.body)).flatMap((r) => r.sel);
+    for (const s of ['.rstrip', '.dsheet', '.hshint', '.chips']) expect(hide, s).toContain(s);
+    const tall = rules.filter((r) => r.media === '@media screen' && /min-height:\s*44px/.test(r.body)).flatMap((r) => r.sel);
+    for (const s of ['.rstrip__btn', '.dsheet__handle', '.dsheet__fold', '.hshint__btn']) expect(tall, s).toContain(s);
   });
 });

@@ -4,6 +4,7 @@ import type { FeedbackContext } from '../lib/feedback';
 import { DataFreshness } from './DataFreshness';
 import { FeedbackBox } from './FeedbackBox';
 import { HandoffLinks } from './HandoffLinks';
+import { HomeScreenHint } from './HomeScreenHint';
 
 /**
  * 화면 맨 아래 — 이 자료를 어떻게 받아들여야 하는지 + 한마디 남기는 자리.
@@ -41,6 +42,11 @@ export function AppFooter({ feedbackContext, lead = null, phoneOrder = false }: 
   return (
     <footer className={`foot${phoneOrder ? ' foot--phone' : ''}`}>
       {lead}
+      {/*
+        홈 화면에 두고 앱처럼 쓰기(👤 2026-10-19 W4b 3번 「가」) — 휴대폰 「더보기」에서만(넓은 화면 DOM 0). 눈 차례 = 역할 줄 → 의견함 →
+        **이 상자** → 안내 → …(의견함만 order 1 · 나머지는 order 2 라 DOM 차례대로 — 그래서 안내 앞 DOM 자리에 둔다).
+      */}
+      {phoneOrder && <HomeScreenHint />}
       <div className="foot__notice">
         <p className="foot__lead">이 화면을 어디까지 믿어도 되나</p>
         <ul className="foot__list">

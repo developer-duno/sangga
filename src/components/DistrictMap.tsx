@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   CustomOverlayMap,
   Map,
@@ -22,6 +22,7 @@ import { FOUNDER_CHIP_ALL, type FounderChip } from '../lib/founderChips';
 import { EMPTY_MAP_PICK, type DistrictMapPick } from '../lib/districtMapPick';
 import type { BuildingHit, DistrictFeature } from '../types';
 import { DistrictBuildings } from './DistrictBuildings';
+import { DistrictSheet, type SheetStage } from './DistrictSheet';
 
 /**
  * 상권 지도 — 고른 구의 상권 경계를 면으로 그린다(결정 0010).
@@ -68,6 +69,17 @@ type Props = {
    */
   pick?: DistrictMapPick;
   onPickChange?: (next: DistrictMapPick) => void;
+  /**
+   * 꼴 — `card`(기본 · 넓은 화면·중개사: 제목·접기 단추 → 지도 칸 → 범례·누른 자리·건물 목록·출처) ·
+   * `full`(휴대폰 지도 탭 · 👤 2026-10-19 W4b: 칩 줄만 → 지도 칸(남은 높이 전부) → 끌어올리는 판 안에 범례·누른 자리·건물 목록·출처).
+   * ⓘ 화면 배치(지도 칸이 화면을 채우는 것)는 App 의 `.app--mapfull` + styles.css 720 화면 묶음이 맡는다.
+   */
+  layout?: 'card' | 'full';
+  /**
+   * 보이나(휴대폰 탭 · W4b) — false 면 `hidden` 으로 숨기기만 한다(언마운트 0 · 확대·이동·누른 상권이 그대로).
+   * 다시 보이면 카카오 `relayout()` 을 한 번 부른다. 넓은 화면은 늘 true(속성 없음 — DOM 그대로).
+   */
+  visible?: boolean;
 };
 
 /**
@@ -124,94 +136,36 @@ export function DistrictMap({
   onSelectBuilding,
   headExtra,
   chip = FOUNDER_CHIP_ALL,
-  pick,
+  pick: pickProp,
   onPickChange,
+  layout = 'card',
+  visible = true,
 }: Props) {
   const [open, setOpen] = useState(true);
-
-  if (!sigungu) return null;
+  const full = layout === 'full';
+  /*
+    끌어올리는 판의 단계(휴대폰 지도 탭 · W4b). ⛔ 구가 바뀌면 엿보기로 — 그리는 도중에 맞춘다(React 공식 꼴 ·
+    effect 로 돌리면 새 구가 옛 단계로 한 번 그려진다).
+  */
+  const [stage, setStage] = useState<SheetStage>('peek');
+  const [stageFor, setStageFor] = useState(sigungu);
+  if (stageFor !== sigungu) {
+    setStageFor(sigungu);
+    setStage('peek');
+  }
 
   // ⚠️ 키를 모듈 바깥이 아니라 여기서 읽는다 — 없는 상태를 테스트로 재현할 수 있어야 한다.
   const appkey = import.meta.env.VITE_KAKAO_JS_KEY;
+  /*
+    경계 파일을 받을 때 — 카드 꼴은 지금처럼 **키가 있고 펼쳐 있을 때만**(키가 없으면 1.13MB 를 받아 봐야 그릴 데가 없다).
+    휴대폰 지도 가득(full)은 키가 없어도 받는다 — 판(상권 수·범례·출처)은 지도 없이도 선다(E2E·CI 에는 키가 없다).
+  */
+  const needData = sigungu !== null && (full || (open && Boolean(appkey)));
 
-  return (
-    <section className="dmap">
-      <header className="dmap__head">
-        <h2 className="dmap__title">{sigunguName ?? '고른 지역'} 상권 지도</h2>
-        <button type="button" className="dmap__toggle" onClick={() => setOpen(!open)}>
-          {open ? '지도 접기' : '지도 펴기'}
-        </button>
-        {headExtra}
-      </header>
-
-      {!open ? (
-        <p className="dmap__folded">지도를 접어 두었습니다.</p>
-      ) : !appkey ? (
-        <p className="msg">
-          지도 키가 설정되지 않았습니다. <code>python scripts/make_env_local.py</code>를 실행하면{' '}
-          <code>.env</code>에서 만들어집니다.
-        </p>
-      ) : (
-        <DistrictMapBody
-          appkey={appkey}
-          sigungu={sigungu}
-          selected={selected}
-          onSelectBuilding={onSelectBuilding}
-          chip={chip}
-          pick={pick}
-          onPickChange={onPickChange}
-        />
-      )}
-    </section>
-  );
-}
-
-/**
- * 키가 있을 때만 그려지는 알맹이.
- *
- * ⚠️ 컴포넌트를 굳이 나눈 이유: `useKakaoLoader`는 부르는 순간 카카오 스크립트를 내려받는다.
- *    키가 없을 때 그 훅을 부르면(훅은 조건부로 못 부른다) 빈 키로 요청이 나간다. 컴포넌트
- *    자체를 안 그리면 훅도 안 불린다 — CI·E2E 처럼 키가 없는 환경에서 바깥 요청이 0이다.
- */
-function DistrictMapBody({
-  appkey,
-  sigungu,
-  selected,
-  onSelectBuilding,
-  chip,
-  pick: pickProp,
-  onPickChange,
-}: {
-  appkey: string;
-  sigungu: string;
-  selected: BuildingHit | null;
-  onSelectBuilding: (hit: BuildingHit) => void;
-  chip: FounderChip;
-  pick?: DistrictMapPick;
-  onPickChange?: (next: DistrictMapPick) => void;
-}) {
-  const [kakaoLoading, kakaoError] = useKakaoLoader({ appkey });
   const [features, setFeatures] = useState<DistrictFeature[] | null>(null);
   const [fileError, setFileError] = useState(false);
-  /*
-    누른 자리·펼친 상권(`DistrictMapPick`). 위(App)가 주면 그것을, 안 주면 스스로 쥔다.
-    ⛔ 다른 구에서 누른 기억은 없는 것으로 본다 — 안 그러면 다른 구의 상권이 그대로 남는다.
-  */
-  const [ownPick, setOwnPick] = useState<DistrictMapPick>(EMPTY_MAP_PICK);
-  const pickNow = pickProp ?? ownPick;
-  const setPick = onPickChange ?? setOwnPick;
-  const mine = pickNow.sigungu === sigungu ? pickNow : EMPTY_MAP_PICK;
-  /**
-   * 지금 확대 수준. 이름표를 켤지 말지에만 쓴다.
-   *
-   * ⚠️ 이 값을 `<Map level>`로 되먹이지 **않는다.** 지도가 실제로 몇 배율인지는 카카오가
-   *    쥐고 있고(사용자 휠·`setBounds`·`setLevel`이 다 바꾼다), 우리는 그 결과를
-   *    `onZoomChanged`로 **받아 적기만** 한다. 되먹이면 우리가 적은 값이 다시 지도를
-   *    밀어 사용자가 맞춘 배율과 다투게 된다.
-   */
-  const [level, setLevel] = useState(INITIAL_LEVEL);
-
   useEffect(() => {
+    if (!needData) return;
     let cancelled = false;
     loadDistricts()
       .then((json) => {
@@ -226,7 +180,16 @@ function DistrictMapBody({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [needData]);
+
+  /*
+    누른 자리·펼친 상권(`DistrictMapPick`). 위(App)가 주면 그것을, 안 주면 스스로 쥔다.
+    ⛔ 다른 구에서 누른 기억은 없는 것으로 본다 — 안 그러면 다른 구의 상권이 그대로 남는다.
+  */
+  const [ownPick, setOwnPick] = useState<DistrictMapPick>(EMPTY_MAP_PICK);
+  const pickNow = pickProp ?? ownPick;
+  const setPick = onPickChange ?? setOwnPick;
+  const mine = pickNow.sigungu === sigungu ? pickNow : EMPTY_MAP_PICK;
 
   // ⛔ 정렬하지 않는다. 파일 순서(면적 내림차순)가 곧 겹침 규칙이다.
   const shown = useMemo(
@@ -263,137 +226,22 @@ function DistrictMapBody({
     () => [...new Set(shown.map((f) => f.properties.district_type ?? '기타'))],
     [shown],
   );
-  /**
-   * 이름표를 놓을 자리 — 면 하나에 한 곳. 자리를 못 잡는 도형은 아예 빠진다.
-   *
-   * ⚠️ **`shown`이 바뀔 때만** 다시 센다. 배율이 바뀔 때마다 수백 개의 무게중심을 다시
-   *    세면 확대·축소가 그만큼 뻑뻑해진다(이름표를 켜고 끄는 것은 계산이 아니라 그리기다).
-   */
-  const labels = useMemo(() => mapItemsOf(shown), [shown]);
-  /*
-    지도가 멈췄을 때 잰 지금 화면(`onIdle`) — 화면 밖 표지와 멀리서의 점+이름을 정한다(결정 0039 W1).
-    ⛔ 다른 구에서 잰 화면은 없는 것으로 본다 — 구를 바꾼 직후 새 범위를 맞추기 전에 옛 화면으로 세면
-       새 구의 상권이 전부 '화면 밖'으로 한 번 그려진다.
-  */
-  const [measured, setMeasured] = useState<(MapView & { sigungu: string }) | null>(null);
-  const view = measured?.sigungu === sigungu ? measured : null;
-  const offscreen = useMemo(() => (view ? offscreenGroups(labels, view.bounds) : []), [labels, view]);
-  // 배율은 `onZoomChanged` 로 받은 값(`level`)을 쓴다 — 멈춤(`onIdle`)보다 먼저 와서, 이름표와 점이 한꺼번에 서는 틈이 없다.
-  const dots = useMemo(() => (view ? farDots(labels, { ...view, level }) : []), [labels, view, level]);
 
-  const focusLat = selected?.lat ?? null;
-  const focusLng = selected?.lng ?? null;
+  if (!sigungu) return null;
 
-  if (kakaoError) return <p className="msg msg--error">지도를 불러오지 못했습니다.</p>;
-  if (fileError) return <p className="msg msg--error">상권 경계 자료를 불러오지 못했습니다.</p>;
-  if (features === null || kakaoLoading) return <p className="msg">지도를 불러오는 중…</p>;
-  if (bounds === null) {
-    // 상권이 0개인 구는 실제로 있다(대전은 5개 구에 37개가 흩어져 있다). 빈 지도를 띄우고
-    // "왜 아무것도 없지?" 하게 두는 대신, 자료가 없다고 말한다.
-    return <p className="msg">이 구에는 아직 상권 경계 자료가 없습니다.</p>;
+  /** 지도를 눌렀다 — 그 자리에 걸친 상권(전부). 휴대폰 지도 가득에서는 판이 엿보기면 반으로 올라온다(👤 W4b 2번). */
+  function handleMapPick(lng: number, lat: number) {
+    setPick({
+      sigungu,
+      pickedIds: shown.filter((f) => pointInGeometry(lng, lat, f.geometry)).map((f) => f.properties.district_id),
+      openId: null,
+    });
+    if (full && stage === 'peek') setStage('half');
   }
 
-  return (
+  /* 지도 아래 것 — 범례 → 누른 자리 상권 → 건물 목록 → 출처(카드 꼴은 지도 칸 아래, 휴대폰 지도 가득은 판 안). */
+  const below = (
     <>
-      <div className="dmap__canvas">
-        <Map
-          center={{ lat: (bounds.swLat + bounds.neLat) / 2, lng: (bounds.swLng + bounds.neLng) / 2 }}
-          style={{ width: '100%', height: '100%' }}
-          level={INITIAL_LEVEL}
-          onClick={(_map, mouseEvent) => {
-            const lat = mouseEvent.latLng.getLat();
-            const lng = mouseEvent.latLng.getLng();
-            setPick({
-              sigungu,
-              pickedIds: shown
-                .filter((f) => pointInGeometry(lng, lat, f.geometry))
-                .map((f) => f.properties.district_id),
-              openId: null,
-            });
-          }}
-          onZoomChanged={(map) => setLevel(map.getLevel())}
-          onIdle={(map) => {
-            // 지도가 멈출 때마다 지금 범위와 지도 칸 크기를 잰다(배율별 표를 박지 않는다).
-            const b = map.getBounds();
-            const sw = b.getSouthWest();
-            const ne = b.getNorthEast();
-            const node = map.getNode();
-            setMeasured({
-              sigungu,
-              bounds: { swLat: sw.getLat(), swLng: sw.getLng(), neLat: ne.getLat(), neLng: ne.getLng() },
-              widthPx: node.clientWidth,
-              heightPx: node.clientHeight,
-              level: map.getLevel(),
-            });
-          }}
-        >
-          <MapFocus bounds={bounds} focusLat={focusLat} focusLng={focusLng} />
-
-          {shown.map((f) =>
-            polygonsOf(f.geometry).map((rings, i) => (
-              <Polygon
-                key={`${f.properties.district_id}-${i}`}
-                path={ringsToPath(rings)}
-                fillColor={colorOf(f.properties.district_type)}
-                fillOpacity={FILL_OPACITY}
-                strokeColor={colorOf(f.properties.district_type)}
-                strokeOpacity={0.7}
-                strokeWeight={1}
-              />
-            )),
-          )}
-
-          {/*
-            상권 이름표 — 한 단계 확대(level ≤ 5)부터만 켠다.
-
-            ⛔ **클릭을 가로채면 안 된다.** 이 화면의 "누른 자리 상권"은 지도 클릭 한 번을
-               받아 우리가 직접 판정한다(lib/geo.ts 머리말). 이름표가 그 클릭을 삼키면
-               상권 위를 눌렀는데 아무 일도 안 일어난다.
-               막는 장치는 둘이고, 둘 다 필요하다:
-                ① `clickable={false}` — 카카오가 "컨텐츠를 클릭하면 지도 이벤트를 막는" 것은
-                   **`clickable: true`일 때뿐**이다(kakao.maps.d.ts `CustomOverlayOptions`).
-                   그래서 끈 채로 둔다. ⚠️ 값을 안 주면 기본값에 기대게 되므로 **적어 둔다.**
-                ② `styles.css`의 `.dmap__label { pointer-events: none }` — 브라우저 수준에서
-                   이름표 자체를 클릭 대상에서 빼, 클릭이 지도에 그대로 닿는다.
-          */}
-          {showLabels(level) &&
-            labels.map((l) => (
-              <CustomOverlayMap key={`label-${l.id}`} position={l.at} clickable={false}>
-                <span className="dmap__label">{l.nm}</span>
-              </CustomOverlayMap>
-            ))}
-
-          {/*
-            멀리서는 점 + 이름(결정 0039 W1) — 이름표가 꺼진 배율에서 화면에서 작은 상권만.
-            ⛔ 위 이름표와 같은 두 겹으로 **누르기를 넘긴다**: `clickable={false}` + `.dmap__far { pointer-events: none }`.
-            ⓘ 점의 가운데가 그 점에 오도록 왼쪽 끝에 붙인다(xAnchor 0) — 이름은 점 오른쪽(`farDots` 의 겹침 어림과 같은 꼴).
-          */}
-          {dots.map((d) => (
-            <CustomOverlayMap
-              key={`far-${d.id}`}
-              position={d.at}
-              clickable={false}
-              xAnchor={0}
-              yAnchor={0.5}
-            >
-              <span className="dmap__far">
-                <span className="dmap__dot" />
-                {d.nm && <span className="dmap__label">{d.nm}</span>}
-              </span>
-            </CustomOverlayMap>
-          ))}
-
-          <OffscreenBadges groups={offscreen} />
-
-          {focusLat != null && focusLng != null && (
-            <MapMarker
-              position={{ lat: focusLat, lng: focusLng }}
-              title={selected?.bld_nm ?? undefined}
-            />
-          )}
-        </Map>
-      </div>
-
       <ul className="dmap__legend">
         {legend.map((t) => (
           <li key={t}>
@@ -433,6 +281,277 @@ function DistrictMapBody({
 
       {/* 공공누리 1유형(출처표시) 의무. 문구가 아니라 자료(source_nm)에서 온다. */}
       {sources.length > 0 && <p className="dmap__src">출처: {sources.join(' · ')}</p>}
+    </>
+  );
+
+  const noKey = (
+    <p className="msg">
+      지도 키가 설정되지 않았습니다. <code>python scripts/make_env_local.py</code>를 실행하면{' '}
+      <code>.env</code>에서 만들어집니다.
+    </p>
+  );
+
+  const body = (
+    <DistrictMapBody
+      appkey={appkey ?? ''}
+      sigungu={sigungu}
+      full={full}
+      visible={visible}
+      stage={stage}
+      ready={features !== null}
+      fileError={fileError}
+      bounds={bounds}
+      shown={shown}
+      selected={selected}
+      onMapPick={handleMapPick}
+      below={below}
+    />
+  );
+
+  if (full) {
+    /*
+      휴대폰 지도 가득(👤 2026-10-19 W4b 1번 「안 A」) — 제목·접기 단추 없이 칩 줄만(창업자) → 지도 칸(남은 높이 전부) → 판.
+      ⓘ 판은 카카오 키가 없어도 선다(지도 칸에는 키 안내 글만) — 상권이 있는 구에서만(자료를 받기 전·없는 구·실패면 판 없음).
+    */
+    const sheetHead =
+      picked === null ? (
+        <>
+          <span className="dsheet__title">
+            {sigunguName ?? '고른 지역'} 상권 {shown.length}곳
+          </span>
+          <span className="dsheet__hint">지도를 누르면 그 자리 상권</span>
+        </>
+      ) : picked.length === 0 ? (
+        <span className="dsheet__title">어느 상권 경계에도 들지 않는 위치입니다.</span>
+      ) : (
+        <span className="dsheet__title">누른 자리 ({picked.length}곳):</span>
+      );
+    return (
+      <section className="dmap dmap--full" hidden={!visible}>
+        {headExtra && <header className="dmap__head">{headExtra}</header>}
+        {appkey ? body : <div className="dmap__canvas">{noKey}</div>}
+        {features !== null && !fileError && bounds !== null && (
+          <DistrictSheet stage={stage} onStage={setStage} head={sheetHead}>
+            {below}
+          </DistrictSheet>
+        )}
+      </section>
+    );
+  }
+
+  return (
+    <section className="dmap" hidden={!visible}>
+      <header className="dmap__head">
+        <h2 className="dmap__title">{sigunguName ?? '고른 지역'} 상권 지도</h2>
+        <button type="button" className="dmap__toggle" onClick={() => setOpen(!open)}>
+          {open ? '지도 접기' : '지도 펴기'}
+        </button>
+        {headExtra}
+      </header>
+
+      {!open ? <p className="dmap__folded">지도를 접어 두었습니다.</p> : !appkey ? noKey : body}
+    </section>
+  );
+}
+
+/**
+ * 키가 있을 때만 그려지는 알맹이 — 카카오 지도 그리기만 맡는다(자료·누른 자리는 바깥 `DistrictMap` 이 쥔다 · W4b).
+ *
+ * ⚠️ 컴포넌트를 굳이 나눈 이유: `useKakaoLoader`는 부르는 순간 카카오 스크립트를 내려받는다.
+ *    키가 없을 때 그 훅을 부르면(훅은 조건부로 못 부른다) 빈 키로 요청이 나간다. 컴포넌트
+ *    자체를 안 그리면 훅도 안 불린다 — CI·E2E 처럼 키가 없는 환경에서 바깥 요청이 0이다.
+ * ⓘ 카드 꼴은 지도 칸 아래에 `below`(범례·누른 자리·건물 목록·출처)를 함께 그린다 — 지도가 서기 전(불러오는 중·실패)에는
+ *   지금처럼 안내 한 줄뿐. 휴대폰 지도 가득은 지도 칸 하나만(안내도 그 칸 안) — `below` 는 판이 든다.
+ * ⓘ `relayout`(카카오 공식: 지도 칸 크기를 바꾼 뒤엔 반드시 부른다 · 창 크기 변화는 스스로) — 숨겼다가 다시 보일 때
+ *   (`visible` false→true) 한 번, 판 단계가 바뀌어 지도 칸 높이가 바뀐 뒤 한 번. 지도 객체는 `onCreate` 로 받는다(SDK 권장 꼴).
+ */
+function DistrictMapBody({
+  appkey,
+  sigungu,
+  full,
+  visible,
+  stage,
+  ready,
+  fileError,
+  bounds,
+  shown,
+  selected,
+  onMapPick,
+  below,
+}: {
+  appkey: string;
+  sigungu: string;
+  full: boolean;
+  visible: boolean;
+  stage: SheetStage;
+  ready: boolean;
+  fileError: boolean;
+  bounds: Bounds | null;
+  shown: DistrictFeature[];
+  selected: BuildingHit | null;
+  onMapPick: (lng: number, lat: number) => void;
+  below: ReactNode;
+}) {
+  const [kakaoLoading, kakaoError] = useKakaoLoader({ appkey });
+  /**
+   * 지금 확대 수준. 이름표를 켤지 말지에만 쓴다.
+   *
+   * ⚠️ 이 값을 `<Map level>`로 되먹이지 **않는다.** 지도가 실제로 몇 배율인지는 카카오가
+   *    쥐고 있고(사용자 휠·`setBounds`·`setLevel`이 다 바꾼다), 우리는 그 결과를
+   *    `onZoomChanged`로 **받아 적기만** 한다. 되먹이면 우리가 적은 값이 다시 지도를
+   *    밀어 사용자가 맞춘 배율과 다투게 된다.
+   */
+  const [level, setLevel] = useState(INITIAL_LEVEL);
+  /** 카카오 지도 객체(`onCreate`) — `relayout` 을 부르려고만 쥔다. */
+  const [map, setMap] = useState<kakao.maps.Map | null>(null);
+  const wasVisible = useRef(visible);
+  useEffect(() => {
+    const was = wasVisible.current;
+    wasVisible.current = visible;
+    // 숨김(display: none · 크기 0)에서 다시 보였다 — 카카오는 칸 크기 변화를 스스로 모른다(공식 설명).
+    if (map && visible && !was) map.relayout();
+  }, [map, visible]);
+  const lastStage = useRef(stage);
+  useEffect(() => {
+    if (lastStage.current === stage) return;
+    lastStage.current = stage;
+    // 판 단계가 바뀌어 지도 칸 높이가 바뀌었다(손을 뗀 단계에서 한 번 — 끄는 도중에는 칸 높이를 안 바꾼다).
+    if (map && visible) map.relayout();
+  }, [map, stage, visible]);
+
+  /**
+   * 이름표를 놓을 자리 — 면 하나에 한 곳. 자리를 못 잡는 도형은 아예 빠진다.
+   *
+   * ⚠️ **`shown`이 바뀔 때만** 다시 센다. 배율이 바뀔 때마다 수백 개의 무게중심을 다시
+   *    세면 확대·축소가 그만큼 뻑뻑해진다(이름표를 켜고 끄는 것은 계산이 아니라 그리기다).
+   */
+  const labels = useMemo(() => mapItemsOf(shown), [shown]);
+  /*
+    지도가 멈췄을 때 잰 지금 화면(`onIdle`) — 화면 밖 표지와 멀리서의 점+이름을 정한다(결정 0039 W1).
+    ⛔ 다른 구에서 잰 화면은 없는 것으로 본다 — 구를 바꾼 직후 새 범위를 맞추기 전에 옛 화면으로 세면
+       새 구의 상권이 전부 '화면 밖'으로 한 번 그려진다.
+  */
+  const [measured, setMeasured] = useState<(MapView & { sigungu: string }) | null>(null);
+  const view = measured?.sigungu === sigungu ? measured : null;
+  const offscreen = useMemo(() => (view ? offscreenGroups(labels, view.bounds) : []), [labels, view]);
+  // 배율은 `onZoomChanged` 로 받은 값(`level`)을 쓴다 — 멈춤(`onIdle`)보다 먼저 와서, 이름표와 점이 한꺼번에 서는 틈이 없다.
+  const dots = useMemo(() => (view ? farDots(labels, { ...view, level }) : []), [labels, view, level]);
+
+  const focusLat = selected?.lat ?? null;
+  const focusLng = selected?.lng ?? null;
+
+  const note = kakaoError ? (
+    <p className="msg msg--error">지도를 불러오지 못했습니다.</p>
+  ) : fileError ? (
+    <p className="msg msg--error">상권 경계 자료를 불러오지 못했습니다.</p>
+  ) : !ready || kakaoLoading ? (
+    <p className="msg">지도를 불러오는 중…</p>
+  ) : bounds === null ? (
+    // 상권이 0개인 구는 실제로 있다(대전은 5개 구에 37개가 흩어져 있다). 빈 지도를 띄우고
+    // "왜 아무것도 없지?" 하게 두는 대신, 자료가 없다고 말한다.
+    <p className="msg">이 구에는 아직 상권 경계 자료가 없습니다.</p>
+  ) : null;
+  if (note !== null || bounds === null) return full ? <div className="dmap__canvas">{note}</div> : note;
+
+  const canvas = (
+    <div className="dmap__canvas">
+      <Map
+        center={{ lat: (bounds.swLat + bounds.neLat) / 2, lng: (bounds.swLng + bounds.neLng) / 2 }}
+        style={{ width: '100%', height: '100%' }}
+        level={INITIAL_LEVEL}
+        onCreate={setMap}
+        onClick={(_map, mouseEvent) => {
+          onMapPick(mouseEvent.latLng.getLng(), mouseEvent.latLng.getLat());
+        }}
+        onZoomChanged={(m) => setLevel(m.getLevel())}
+        onIdle={(m) => {
+          // 지도가 멈출 때마다 지금 범위와 지도 칸 크기를 잰다(배율별 표를 박지 않는다).
+          const b = m.getBounds();
+          const sw = b.getSouthWest();
+          const ne = b.getNorthEast();
+          const node = m.getNode();
+          setMeasured({
+            sigungu,
+            bounds: { swLat: sw.getLat(), swLng: sw.getLng(), neLat: ne.getLat(), neLng: ne.getLng() },
+            widthPx: node.clientWidth,
+            heightPx: node.clientHeight,
+            level: m.getLevel(),
+          });
+        }}
+      >
+        <MapFocus bounds={bounds} focusLat={focusLat} focusLng={focusLng} />
+
+        {shown.map((f) =>
+          polygonsOf(f.geometry).map((rings, i) => (
+            <Polygon
+              key={`${f.properties.district_id}-${i}`}
+              path={ringsToPath(rings)}
+              fillColor={colorOf(f.properties.district_type)}
+              fillOpacity={FILL_OPACITY}
+              strokeColor={colorOf(f.properties.district_type)}
+              strokeOpacity={0.7}
+              strokeWeight={1}
+            />
+          )),
+        )}
+
+        {/*
+          상권 이름표 — 한 단계 확대(level ≤ 5)부터만 켠다.
+
+          ⛔ **클릭을 가로채면 안 된다.** 이 화면의 "누른 자리 상권"은 지도 클릭 한 번을
+             받아 우리가 직접 판정한다(lib/geo.ts 머리말). 이름표가 그 클릭을 삼키면
+             상권 위를 눌렀는데 아무 일도 안 일어난다.
+             막는 장치는 둘이고, 둘 다 필요하다:
+              ① `clickable={false}` — 카카오가 "컨텐츠를 클릭하면 지도 이벤트를 막는" 것은
+                 **`clickable: true`일 때뿐**이다(kakao.maps.d.ts `CustomOverlayOptions`).
+                 그래서 끈 채로 둔다. ⚠️ 값을 안 주면 기본값에 기대게 되므로 **적어 둔다.**
+              ② `styles.css`의 `.dmap__label { pointer-events: none }` — 브라우저 수준에서
+                 이름표 자체를 클릭 대상에서 빼, 클릭이 지도에 그대로 닿는다.
+        */}
+        {showLabels(level) &&
+          labels.map((l) => (
+            <CustomOverlayMap key={`label-${l.id}`} position={l.at} clickable={false}>
+              <span className="dmap__label">{l.nm}</span>
+            </CustomOverlayMap>
+          ))}
+
+        {/*
+          멀리서는 점 + 이름(결정 0039 W1) — 이름표가 꺼진 배율에서 화면에서 작은 상권만.
+          ⛔ 위 이름표와 같은 두 겹으로 **누르기를 넘긴다**: `clickable={false}` + `.dmap__far { pointer-events: none }`.
+          ⓘ 점의 가운데가 그 점에 오도록 왼쪽 끝에 붙인다(xAnchor 0) — 이름은 점 오른쪽(`farDots` 의 겹침 어림과 같은 꼴).
+        */}
+        {dots.map((d) => (
+          <CustomOverlayMap
+            key={`far-${d.id}`}
+            position={d.at}
+            clickable={false}
+            xAnchor={0}
+            yAnchor={0.5}
+          >
+            <span className="dmap__far">
+              <span className="dmap__dot" />
+              {d.nm && <span className="dmap__label">{d.nm}</span>}
+            </span>
+          </CustomOverlayMap>
+        ))}
+
+        <OffscreenBadges groups={offscreen} />
+
+        {focusLat != null && focusLng != null && (
+          <MapMarker
+            position={{ lat: focusLat, lng: focusLng }}
+            title={selected?.bld_nm ?? undefined}
+          />
+        )}
+      </Map>
+    </div>
+  );
+
+  if (full) return canvas;
+  return (
+    <>
+      {canvas}
+      {below}
     </>
   );
 }

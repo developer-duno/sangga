@@ -3726,6 +3726,290 @@ body {
     background: var(--bg);
     text-decoration: none;
   }
+
+  /* ── 휴대폰 지도 가득 + 위 한 줄 띠 + 끌어올리는 상권 판 (👤 2026-10-19 결정 0039 W4b) ─────────────────────────
+     `.app--mapfull` = 중개사가 아닌 사람이 구를 고른 채 「지도」 탭(App). 띠(48px)는 화면 맨 위에 고정, 지도 덩어리(`.dmap--full`)는
+     띠 아래부터 탭 막대 위까지 고정 — 그 안에서 칩 줄 → 지도 칸(남은 높이 전부) → 판. 사이트 제목·소개 한 줄은 지도 탭에서만 숨는다.
+     ⛔ 엿보기·반 단계에서 판은 지도를 **덮지 않고** 지도 칸이 줄어든다(카카오 로고·축척이 늘 보이게 — 로고 가림은 약관 문제 ·
+        줄어든 뒤 `relayout`) · 가득 단계에서만 판이 지도를 덮는다(지도가 안 보이니 로고 문제 없음).
+     ⛔ 전부 이 묶음 안 — 넓은 화면·종이는 그대로(종이에서는 띠·판·칩 줄이 인쇄 감춤 목록으로 빠진다). */
+  .app--mapfull {
+    --rstrip-h: 48px;
+    box-sizing: border-box;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+
+  .app--mapfull .app__head {
+    display: none;
+  }
+
+  .rstrip {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 20;
+    box-sizing: border-box;
+    height: var(--rstrip-h);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 0 max(12px, env(safe-area-inset-right, 0px)) 0 max(6px, env(safe-area-inset-left, 0px));
+    border-bottom: 1px solid var(--line);
+    background: var(--card);
+  }
+
+  .rstrip__btn {
+    min-width: 0;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 8px;
+    background: none;
+    color: var(--text);
+    font: inherit;
+    font-size: 16px;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+  }
+
+  .rstrip__note {
+    flex: none;
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  /* 지역 고르개(찾기 탭과 같은 하나)는 띠를 눌렀을 때만 — 띠 아래로 펼친 판(지도 위에 뜬다 · 지도 칸 크기는 그대로). */
+  .app--mapfull:not(.app--regionopen) .entry > .region {
+    display: none;
+  }
+
+  .app--regionopen .entry > .region {
+    position: fixed;
+    top: var(--rstrip-h);
+    left: 0;
+    right: 0;
+    z-index: 19;
+    box-sizing: border-box;
+    max-height: calc(100vh - var(--rstrip-h) - var(--tabbar-h) - env(safe-area-inset-bottom, 0px));
+    max-height: calc(100dvh - var(--rstrip-h) - var(--tabbar-h) - env(safe-area-inset-bottom, 0px));
+    overflow-y: auto;
+    margin: 0;
+    padding: 12px max(16px, env(safe-area-inset-right, 0px)) 16px max(16px, env(safe-area-inset-left, 0px));
+    border-bottom: 1px solid var(--line);
+    background: var(--card);
+    box-shadow: 0 8px 16px rgb(0 0 0 / 12%);
+  }
+
+  .app--mapfull .dmap--full {
+    position: fixed;
+    top: var(--rstrip-h);
+    left: 0;
+    right: 0;
+    bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px));
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: var(--bg);
+  }
+
+  /* 칩 줄(창업자) — 한 줄 가로 밀기(10-19 「같은 땅 다른 동」 칩 줄과 같은 꼴) · 칩 밑 설명 글은 지도 탭에서 숨긴다(칩 높이 44px 는 목록 그대로). */
+  .dmap--full .dmap__head {
+    flex: none;
+    padding: 2px max(12px, env(safe-area-inset-right, 0px)) 2px max(12px, env(safe-area-inset-left, 0px));
+    border-bottom: 1px solid var(--line);
+    background: var(--card);
+  }
+
+  .dmap--full .chips {
+    flex-wrap: nowrap;
+    min-width: 0;
+  }
+
+  .dmap--full .chips__lead {
+    flex: none;
+  }
+
+  .dmap--full .chips__list {
+    flex-wrap: nowrap;
+    min-width: 0;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    /* 초점 테두리가 밀림 상자에 잘리지 않게 위아래 조금. */
+    padding-block: 3px;
+  }
+
+  .dmap--full .chips__list > li {
+    flex: none;
+  }
+
+  .dmap--full .chips__chip {
+    white-space: nowrap;
+  }
+
+  .dmap--full .chips__note {
+    display: none;
+  }
+
+  .dmap--full .dmap__canvas {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .dmap--full .dmap__canvas > .msg {
+    margin: 16px;
+  }
+
+  .dsheet {
+    position: relative;
+    z-index: 2;
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--line);
+    border-radius: 14px 14px 0 0;
+    background: var(--card);
+    box-shadow: 0 -4px 12px rgb(0 0 0 / 8%);
+  }
+
+  .dsheet--half {
+    height: 50vh;
+    height: 50dvh;
+  }
+
+  .dsheet--full {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    border-radius: 0;
+  }
+
+  .dsheet__bar {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 56px;
+    padding: 4px max(12px, env(safe-area-inset-right, 0px)) 4px max(4px, env(safe-area-inset-left, 0px));
+    /* 손가락 끌기는 판이 받는다(브라우저가 쪽을 굴리지 않게). */
+    touch-action: none;
+  }
+
+  .dsheet__handle {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    padding: 0;
+    border: 0;
+    border-radius: 8px;
+    background: none;
+    cursor: pointer;
+  }
+
+  .dsheet__grip {
+    width: 28px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--muted);
+  }
+
+  .dsheet__head {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    line-height: 1.35;
+  }
+
+  .dsheet__title {
+    font-size: 15px;
+    font-weight: 700;
+  }
+
+  .dsheet__hint {
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  .dsheet__fold {
+    flex: none;
+    padding: 0 14px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--card);
+    color: var(--muted);
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+  }
+
+  .dsheet__body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0 max(16px, env(safe-area-inset-right, 0px)) 16px max(16px, env(safe-area-inset-left, 0px));
+  }
+
+  /* 엿보기에서는 안 굴린다 — 머리 한 줄만. */
+  .dsheet--peek .dsheet__body {
+    display: none;
+  }
+
+  /* 홈 화면에 두고 앱처럼 쓰기(👤 W4b 3번 「가」) — 「더보기」 탭 의견함 뒤·안내 앞(눈 차례는 위 `.foot--phone > *` 의 order 2 + DOM 차례). */
+  .hshint {
+    margin: 0 0 16px;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--card);
+    font-size: 14px;
+  }
+
+  .hshint__h {
+    margin: 0 0 6px;
+    font-weight: 700;
+  }
+
+  .hshint__list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    color: var(--muted);
+  }
+
+  .hshint__list li + li {
+    margin-top: 4px;
+  }
+
+  .hshint__btn {
+    margin-top: 10px;
+    padding: 0 16px;
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    background: var(--card);
+    color: var(--accent);
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+  }
 }
 
 /* ── 가지고 나가기(링크 복사) ──────────────────────────────────────────────
@@ -4217,6 +4501,11 @@ body {
   .tabbar__btn,
   .tabempty__go,
   .rsum__more,
+  /* 휴대폰 지도 탭 띠 · 끌어올리는 판의 손잡이·접기 · 홈 화면 추가 단추(결정 0039 W4b — 휴대폰에서만 그려진다). */
+  .rstrip__btn,
+  .dsheet__handle,
+  .dsheet__fold,
+  .hshint__btn,
   .dbld__row,
   .dbld__dong,
   .dbld__more,
@@ -4324,6 +4613,10 @@ body {
   /* 휴대폰 아래 탭 막대 · 빈 건물 탭 안내(결정 0039 W4a) — 누르는 장치·화면 안내다. */
   .tabbar,
   .tabempty,
+  /* 휴대폰 지도 탭의 띠 · 끌어올리는 상권 판 · 홈 화면 추가 안내(결정 0039 W4b) — 누르는 장치·화면 안내다(칩 줄은 위 `.chips`). */
+  .rstrip,
+  .dsheet,
+  .hshint,
   /* ⛔ 휴대폰에서 건물을 연 채 찾기·지도 탭에서 뽑아도 종이 = 건물 한 장(👤 「건물 한 장」) — 그 탭이 그려 둔 지도를 뺀다.
      `.app--tabs` 는 인쇄 중에도 그대로다(`useIsPhone` 이 인쇄 중 값을 얼린다). 넓은 화면은 이 이름표가 없어 지금 그대로. */
   .app--tabs.app--bld .entry,

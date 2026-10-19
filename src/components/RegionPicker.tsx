@@ -40,6 +40,8 @@ type Props = {
    *    말한다. 코드만 담고 이름은 늘 서버 목록에서 얻으면 그 어긋남이 없다.
    */
   onSigunguNameResolved?: (name: string) => void;
+  /** 휴대폰 지도 탭의 띠 단추가 가리킬 id(`aria-controls` · W4b) — 그때만 준다(넓은 화면 DOM 그대로). */
+  id?: string;
 };
 
 /** 서버가 준 구 목록에서 시도를 뽑는다(중복 제거, 코드순). 짧은 이름은 SIDOS 에서. */
@@ -57,6 +59,7 @@ export function RegionPicker({
   selectedSigungu,
   onSelectSigungu,
   onSigunguNameResolved,
+  id,
 }: Props) {
   const [expandedSido, setExpandedSido] = useState<string | null>(null);
   const [guList, setGuList] = useState<OpenSigungu[]>([]);
@@ -100,7 +103,7 @@ export function RegionPicker({
   }
 
   return (
-    <section className="region">
+    <section className="region" id={id}>
       {/*
         ⚠️ 안내 문구도 **서버 목록에서 만든다.** 예전에는 `openRegionLabel()`(코드에 박힌
            ['11','30'] · **지금은 삭제됨**)을 썼는데, 칩 목록은 서버에서 오므로 **부산 자료가 들어오면 칩은
