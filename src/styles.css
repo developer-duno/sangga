@@ -3668,6 +3668,64 @@ body {
   .office__field input {
     min-height: 44px;
   }
+
+  /* 층별 머리의 같은 땅 다른 동(👤 2026-10-19 「가. 한 줄 칩 · 옆으로 밀기」 — 운영 헬리오시티 168동에서 링크 줄이 312px 로 꺾였다).
+     첫 줄 「같은 땅 다른 동 (외 N동)」 + 둘째 줄 칩(한 줄 · 칩 줄만 옆으로 밀린다 · 칩 높이 44px 는 '누르는 것은 44px 이상' 목록).
+     ⓘ 점(·)은 `display: none` 이라 낭독기도 안 읽는다 · 「외 N동」 괄호만 여기서 단다. ⛔ 이 묶음 밖으로 옮기면 넓은 화면이 바뀐다(E2E 「BS」).
+     ⓘ 쌍점(:)은 따로 감싸지 않는다 — 「동」과 「:」 사이를 칸으로 가르면 넓은 화면 첫 줄 뒤 글자들의 자리가 조금 밀려 그림이 달라진다(10-19 실측 — 첫 줄에서만 64픽셀).
+       그래서 첫 줄 이름은 글자 0 크기 + `::before` 로 다시 쓴다 — 낭독기는 원래 글(「같은 땅 다른 동:」)만 읽고, `/ ''` 대체 글이 빈 `::before` 는 안 읽는다
+       (대체 글 문법을 모르는 옛 브라우저는 첫 줄 `content` 를 쓴다 — 글은 보이고 두 번 읽힐 뿐). 글자는 FloorStack.tsx 의 첫 줄과 같아야 한다. */
+  .stack__links-row--dongs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: 0.3em;
+    row-gap: 4px;
+  }
+
+  .stack__links-lead {
+    font-size: 0;
+  }
+
+  .stack__links-lead::before {
+    content: '같은 땅 다른 동';
+    content: '같은 땅 다른 동' / '';
+    font-size: 14px;
+  }
+
+  .stack__links-sep {
+    display: none;
+  }
+
+  .stack__links-more::before {
+    content: '(';
+  }
+
+  .stack__links-more::after {
+    content: ')';
+  }
+
+  .stack__links-chips {
+    order: 1;
+    flex: 0 0 100%;
+    min-width: 0;
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    /* 초점 테두리가 밀림 상자에 잘리지 않게 위아래 조금. */
+    padding-block: 3px;
+  }
+
+  .stack__links-chips > .stack__links-a {
+    flex: none;
+    white-space: nowrap;
+    padding: 0 14px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--bg);
+    text-decoration: none;
+  }
 }
 
 /* ── 가지고 나가기(링크 복사) ──────────────────────────────────────────────

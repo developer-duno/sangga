@@ -1970,7 +1970,7 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
     await expect(first.locator('.oc__latest .oc__num')).toHaveText([
       '점포 441곳(프랜차이즈 포함)',
       // 프랜차이즈 비중(👤 물결 1-B) — 63 ÷ 441(점포(프랜차이즈 포함)) · stor_co 378 이 분모가 아니다.
-      '프랜차이즈 63곳 (점포의 14.29%)',
+      '프랜차이즈 63곳 (점포의 14.29% · 서울시 공표 개수로 계산)',
       '개업 5곳 · 개업률(분기) 1.13%',
       '폐업 9곳 · 폐업률(분기) 2.04%',
     ]);
@@ -3130,7 +3130,10 @@ const MEASURE_TARGETS_JS = `(() => {
     if (!vis(el)) continue;
     if (![...el.childNodes].some((c) => c.nodeType === 3 && (c.textContent || '').trim())) continue;
     texts += 1;
-    const fs = parseFloat(getComputedStyle(el).fontSize);
+    let fs = parseFloat(getComputedStyle(el).fontSize);
+    // 글을 0 크기로 두고 ::before 로 다시 쓰는 칸(휴대폰 「같은 땅 다른 동」 · 10-19 U1)은 눈에 보이는 글 = ::before 의 글자 크기.
+    const before = getComputedStyle(el, '::before');
+    if (fs === 0 && before.content !== 'none') fs = parseFloat(before.fontSize);
     if (fs < 13 - 0.01) tiny.push(name(el) + ' ' + fs + 'px');
   }
   return { targets, small, narrow, texts, tiny };
@@ -4158,5 +4161,107 @@ test.describe('검색 색인 보강 (결정 0042)', () => {
     await expect(page.locator('a[href^="/?sgg="]')).toHaveCount(gus.length);
     await pickGu(page, '서울', '마포구');
     await expect.poll(() => new URL(page.url()).search).toBe('?sgg=11440');
+  });
+
+  test('BS. 휴대폰의 같은 땅 다른 동 = 첫 줄 「같은 땅 다른 동 (외 N동)」 + 한 줄 칩(44px · 옆으로 밀기 · 점 없음 · 페이지 가로 넘침 0 · 키보드로 옮기면 칩 줄이 따라 밀림) · 넓은 화면은 그대로(점·글자 링크) · 종이에 없음', async ({
+    page,
+  }, testInfo) => {
+    const mobile = testInfo.project.name === 'mobile';
+    // 운영 실측(헬리오시티 168동 · 링크 줄 312px)과 같은 폭.
+    if (mobile) await page.setViewportSize({ width: 390, height: 844 });
+    await mockOpenSigungu(page);
+    await mockFloorStack(page, [], [floorRow({ floor_no: 2, bld_cnt_in_pnu: 14 }), floorRow({ bld_cnt_in_pnu: 14 })]);
+    const dongs = Array.from({ length: 14 }, (_, i) => ({
+      bld_id: i === 0 ? LINK_BLD : `1168010100100010000_10249${String(i).padStart(2, '0')}`,
+      bld_nm: '테스트빌딩',
+      dong_nm: `${101 + i}동`,
+      total_area_m2: 900 - i,
+      floor_cnt: 2,
+      min_floor: 1,
+      max_floor: 2,
+      has_roof: false,
+    }));
+    await mockJson(page, '**/rest/v1/rpc/list_parcel_buildings*', dongs);
+
+    await page.goto(`/?sgg=11680&bld=${LINK_BLD}`);
+    const nav = page.locator('section.stack nav.stack__links');
+    // 링크 수·글자는 그대로 — 다른 동 10 + 구 찾기 1(두 벌을 그리지 않는다 · 낭독기에 같은 글이 두 번 안 나온다).
+    await expect(nav.locator('a')).toHaveCount(11);
+    const row = nav.locator('.stack__links-row').first();
+    await expect(row).toHaveText('같은 땅 다른 동: ' + [102, 103, 104, 105, 106, 107, 108, 109, 110, 111].map((n) => `테스트빌딩 ${n}동`).join(' · ') + ' 외 3동');
+    await expect(nav.locator('.stack__links-row').nth(1)).toHaveText('강남구 다른 건물 찾기');
+    await nav.screenshot({ path: testInfo.outputPath(`bs-nav-${testInfo.project.name}.png`) });
+    await page.locator('section.stack header.stack__head').screenshot({ path: testInfo.outputPath(`bs-head-${testInfo.project.name}.png`) });
+
+    const shape = await row.evaluate((el) => {
+      const win = el.ownerDocument.defaultView!;
+      // ⓘ 이 파일은 DOM 타입을 안 켠다 — 쓰는 모양만 적는다.
+      const box = (n: { getBoundingClientRect(): { top: number; bottom: number; left: number; right: number; height: number } }) => {
+        const b = n.getBoundingClientRect();
+        return { top: b.top, bottom: b.bottom, left: b.left, right: b.right, h: b.height, mid: (b.top + b.bottom) / 2 };
+      };
+      const chips = el.querySelector('.stack__links-chips')!;
+      const more = el.querySelector('.stack__links-more')!;
+      return {
+        row: box(el),
+        lead: box(el.querySelector('.stack__links-lead')!),
+        more: box(more),
+        chipsBox: box(chips),
+        chips: [...el.querySelectorAll('a.stack__links-a')].map((a) => ({ ...box(a), bg: win.getComputedStyle(a).backgroundColor })),
+        sepShown: [...el.querySelectorAll('.stack__links-sep')].map((s) => win.getComputedStyle(s).display !== 'none'),
+        leadFont: win.getComputedStyle(el.querySelector('.stack__links-lead')!).fontSize,
+        leadBefore: win.getComputedStyle(el.querySelector('.stack__links-lead')!, '::before').content,
+        moreBefore: win.getComputedStyle(more, '::before').content,
+        moreAfter: win.getComputedStyle(more, '::after').content,
+        chipsOver: chips.scrollWidth - chips.clientWidth,
+        overflowX: win.getComputedStyle(chips).overflowX,
+      };
+    });
+    expect(shape.chips).toHaveLength(10);
+    expect(shape.sepShown).toHaveLength(9);
+    if (mobile) {
+      testInfo.annotations.push({ type: '다른 동 줄 높이(px)', description: String(shape.row.h) });
+      // 한 줄 칩 — 운영 312px 대비 60~110px · 칩은 모두 같은 줄(줄바꿈 0) · 칩마다 44px 이상 · 둥근 바탕.
+      expect(shape.row.h).toBeGreaterThanOrEqual(60);
+      expect(shape.row.h).toBeLessThanOrEqual(110);
+      for (const c of shape.chips) {
+        expect(Math.abs(c.top - shape.chips[0].top)).toBeLessThan(1);
+        expect(c.h).toBeGreaterThanOrEqual(44);
+        expect(c.bg).not.toBe('rgba(0, 0, 0, 0)');
+      }
+      // 첫 줄 = 「같은 땅 다른 동」 + 「(외 3동)」 같은 줄 · 칩 줄은 그 아래 · 점(·)과 쌍점(:)은 안 보인다.
+      expect(Math.abs(shape.lead.mid - shape.more.mid)).toBeLessThan(2);
+      expect(shape.more.left).toBeGreaterThan(shape.lead.right);
+      expect(shape.chipsBox.top).toBeGreaterThanOrEqual(shape.lead.bottom);
+      expect(shape.sepShown.every((s) => !s)).toBe(true);
+      // 쌍점 없는 첫 줄 = 원래 글(「같은 땅 다른 동:」)은 0 크기 · `::before` 가 쌍점 없이 다시 쓴다(낭독기용 대체 글은 빈 글).
+      expect(shape.leadFont).toBe('0px');
+      expect(shape.leadBefore).toBe('"같은 땅 다른 동" / ""');
+      expect(shape.lead.right - shape.lead.left).toBeGreaterThan(50);
+      expect([shape.moreBefore, shape.moreAfter]).toEqual(['"("', '")"']);
+      // 칩 줄만 옆으로 밀린다 — 넘치는 칩이 있고(양성 대조) 페이지는 가로로 안 밀린다.
+      expect(shape.overflowX).toBe('auto');
+      expect(shape.chipsOver).toBeGreaterThan(0);
+      expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+      // 키보드 — 마지막 칩에 초점을 주면 칩 줄이 따라 밀려 그 칩이 보인다.
+      const last = row.locator('a.stack__links-a').last();
+      await last.focus();
+      await expect(last).toBeFocused();
+      expect(await row.locator('.stack__links-chips').evaluate((el) => el.scrollLeft)).toBeGreaterThan(0);
+      await expect(last).toBeInViewport();
+    } else {
+      // 넓은 화면은 그대로 — 점·쌍점이 보이고, 「외 3동」은 괄호 없이 끝에 · 링크에 바탕 없음 · 칩 줄 넘침 없음.
+      expect(shape.sepShown.every((s) => s)).toBe(true);
+      expect(shape.leadBefore).toBe('none');
+      expect(shape.leadFont).toBe('14px');
+      expect([shape.moreBefore, shape.moreAfter]).toEqual(['none', 'none']);
+      for (const c of shape.chips) expect(c.bg).toBe('rgba(0, 0, 0, 0)');
+      expect(shape.overflowX).toBe('visible');
+    }
+
+    // 종이에는 누르는 문이 없다(두 폭 모두).
+    await page.emulateMedia({ media: 'print' });
+    await expect(nav).toBeHidden();
+    await page.emulateMedia({ media: null });
   });
 });

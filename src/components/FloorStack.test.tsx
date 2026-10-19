@@ -517,6 +517,18 @@ describe('FloorStack — 본체', () => {
     await waitFor(() => expect(screen.getByText(/D등급 · 간접 추론/)).toBeTruthy());
   });
 
+  it('★ 맨 아래 설명 글 — 「미상」 문장 바로 뒤에 승강기·대장 호수 칸을 두지 않는 까닭 한 문장(👤 2026-10-19 글자 그대로)', async () => {
+    render(<FloorStack building={building()} />);
+    const badge = await screen.findByText('D등급 · 간접 추론');
+    const text = badge.closest('p.grade')!.textContent!;
+    expect(text).toContain(
+      '0을 값으로 적으면 없는 사실이 생깁니다. 승강기는 5층 이하 건물에서 대장에 0대로 적혀 있으면 칸을 두지 않고, ' +
+        '공동주택·단독주택은 대장 호수가 세대 수라 칸을 두지 않습니다.',
+    );
+    // 호실 목록 안내(있을 때)보다 앞 — 이 건물엔 호실 목록이 없어 문장으로 끝난다.
+    expect(text.endsWith('칸을 두지 않습니다.')).toBe(true);
+  });
+
   it('점포 0곳(확정)과 정보 없음(null)을 구분해 보여준다', async () => {
     // JS truthy 검사(f.store_cnt ? … : '—')를 쓰면 0 과 null 이 똑같이 '—' 로
     // 보인다. v_floor_stack 의 store_cnt 는 group by 없는 lateral count(*) 라

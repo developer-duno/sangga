@@ -141,12 +141,36 @@ def test_target_sql_matches_decision():
         "and u.floor_use is not null and u.floor_use !~ '" + bs.RESIDENTIAL_RE + "')"
     ) in bs.TARGET_WHERE
     assert "'" not in bs.RESIDENTIAL_RE  # SQL 따옴표를 깨지 않는다
+    # 👤 2026-10-19 — 이름에 글자(한글·영문·한자)가 하나 이상인 건물만.
+    assert "and b.display_nm ~ '" + bs.NAME_LETTER_RE + "' " in bs.TARGET_WHERE
+    assert "'" not in bs.NAME_LETTER_RE
+    # 범위는 이스케이프 표기로만(소스에 한자·자모 끝 글자를 직접 넣지 않는다 — 도구가 표기를 실제 글자로 바꿔 넣은 일이 있다 · 10-19).
+    assert all(ord(ch) < 128 for ch in bs.NAME_LETTER_RE), bs.NAME_LETTER_RE
     assert sql.startswith("with t as (select b.bld_id, b.pnu, b.display_nm from building b where ")
     # 같은 땅 동 목록은 서버 조각이 부르는 그 함수 그대로(새 함수 정의 0) · 줄바꿈 넣는 json_agg 금지.
     assert "list_parcel_buildings(m.pnu) with ordinality" in sql
     assert "json_agg" not in sql.replace("jsonb_agg", "")
     assert "from mv_open_sigungu m" in sql
     assert "create " not in sql.lower()
+
+
+# 허브 파일 실측(10-19) 글자 없는 이름 42동의 꼴 전부 + 남아야 하는 이름(양성 대조 — 한자·영문·한글 한 글자·자모·숫자 섞임).
+NO_LETTER_NAMES = [".", "1", "..", "273", "...", "747", "*", "2020", "---------", " ", "(1)", "1-2"]
+LETTER_NAMES = ["坮玹住宅", "A동", "가", "b", "ㄱ", "상가1", "1동", "제1동상가", "(주)한빛", "Ⅱ 타워"]
+
+
+def has_name_letter(name):
+    """사이트맵 대상의 이름 조건(NAME_LETTER_RE)을 파이썬 re 로 — SQL 쪽은 로컬 PostgreSQL 시험이 같은 이름으로 잰다."""
+    return re.search(bs.NAME_LETTER_RE, name) is not None
+
+
+def test_name_letter_re_drops_names_without_letters():
+    assert [n for n in NO_LETTER_NAMES if has_name_letter(n)] == []
+
+
+def test_control_name_letter_re_keeps_names_with_letters():
+    """양성 대조 — 글자가 하나라도 있으면 남는다(한자만인 이름도 · 영문 한 글자도)."""
+    assert [n for n in LETTER_NAMES if not has_name_letter(n)] == []
 
 
 def ts_residential_re(text):
@@ -529,3 +553,20 @@ def test_target_sql_runs_on_local_postgres(pg):
     hubs, outside = bs.build_hubs(buildings, gus)
     assert sorted(hubs) == ["11680", "30140"] and outside == 1
     assert list(hubs["11680"]["parcels"]) == [P1]
+
+
+def test_target_sql_name_letter_rule_on_local_postgres(pg):
+    """👤 2026-10-19 — PostgreSQL 정규식(`\\uXXXX` 범위)이 파이썬 re 와 같은 이름을 빼고 남긴다(실제 DB 에서)."""
+    c = pg.cursor()
+    c.execute("drop schema if exists public cascade; create schema public;")
+    c.execute(SHIM)
+    c.execute(_list_parcel_buildings_def())
+    names = NO_LETTER_NAMES + LETTER_NAMES
+    for i, nm in enumerate(names):
+        pnu = "116801010010{:03d}0000".format(i)
+        c.execute("insert into building values (%s, %s, %s, null, 10)", (pnu + "_1", pnu, nm))
+    c.execute("insert into v_building_floor_stack select bld_id, 1 from building")
+    c.execute("insert into unit select bld_id, '근린생활시설' from building")
+    c.execute(bs.TARGET_SQL)
+    buildings, _ = bs.parse_rows("\n".join(r[0] for r in c.fetchall()) + "\n")
+    assert sorted(b["bld_nm"] for b in buildings) == sorted(LETTER_NAMES)

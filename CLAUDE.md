@@ -103,7 +103,7 @@ main → App → components → lib → types   (단방향 — 역방향 import 
 | 서버 | **`api/building.ts` · `api/hub.ts` 둘**(① 건물별 첫 HTML · 결정 0037 — 건물 주소의 첫 HTML 머리글·소개문만 그 건물 것으로 바꾼다 · 본체 `src/lib/buildingHandler.ts` ② 구 입구 허브 첫 HTML · 결정 0043 — 구 입구 주소 `/?sgg=`(bld 없음)의 첫 HTML 에 그 구 건물 링크 전부 · 본체 `src/lib/hubHandler.ts` · 재료 = 빌드 때 굽는 `public/hub/<sgg>.json`(요청 때 DB 0) · 레포 루트 `middleware.ts`(Routing Middleware)가 `/?…bld=…` 은 ①, `bld` 없는 `/?sgg=<5자리>` 는 ② 로 넘긴다 · 되돌리기 = `middleware.ts` 삭제(허브만 = 그 안의 허브 갈래 삭제) · 2026-10-09·10-18). **나머지는 그대로 DB 함수** — 화면이 Supabase PostgREST·RPC 를 직접 부르고(2026-08-25 실측 때는 서버리스 함수 0개), Vercel 은 정적 파일 호스팅·배포와 이 함수 둘만 맡는다. ⚠️ 화면 로직에 고칠 서버 코드는 없다 — 서버에서 해야 할 일은 전부 DB 함수(schema.sql)로 간다 |
 | DB | Supabase PostgreSQL + PostGIS (**별도 프로젝트**) |
 | 수집 | ⬜ **여전히 로컬 수동 실행이다** — 받기·적재·백업 전부 사람 손. 다만 **놓치는 것만은 막아 뒀다**: 감시 그물 여섯(분기 스냅샷 `sangkwon-quarterly-watch` · 상권 원천 `district-source-watch` · 라이브 생존 `live-health-watch` · 의견함 주간 알림 `feedback-digest` · LH 상가 공고 `lh-notice-watch` · 지난 날짜 감시 `data-freshness-watch`)이 서로를 전부 본다(`check_watch_heartbeat.py`). ⛔ **새 예약 워크플로를 만들면 그물에도 넣어야 한다** — `DEFAULT_WORKFLOWS` 와 형제들의 `--workflow` 인자 둘 다. 빠뜨리면 테스트가 빨간불로 잡는다(`schedule:` 있는 파일을 훑어 대조한다). ⛔ 알리기만 한다 — 적재는 여전히 사람 손. ⛔ **검색 함수만 고장 난 경우는 여전히 아무도 안 본다**. 적재 후 기준선 상수(`LATEST_KNOWN_QUARTER` · `LATEST_KNOWN_NOTICE_DATE` · 상권 원천 기준선)는 **사람이 올린다**. 각 그물의 비밀값·종료코드·이슈 제목 규칙·못 보는 틈 = **`.claude/rules/watch-nets.md`**(`.github/`·`scripts/check_*.py`·감시 시험을 열면 자동으로 읽힌다 — ⚠️ 감시가 연 이슈를 처리하거나 감시를 고칠 때는 그 파일을 먼저 직접 연다) |
-| 테스트 | 파이썬 **pytest 5,398개** + 프론트 **vitest 1,596개**(jsdom + @testing-library/react) + **E2E playwright 65개**(`e2e/floor-stack.spec.ts` — 시험별 내용 = **`.claude/rules/e2e-catalog.md`**, `e2e/` 를 열면 자동으로 읽힌다). ⚠️ **E2E 는 같은 65개를 넓은 화면(chromium)과 휴대폰(mobile — Pixel 7 프리셋, 폭 412px·터치)에서 두 번 돌려 총 130회다** — 좁은 폭은 `styles.css` 의 `@media (max-width: 720px)` 가 판을 다시 짜는 자리라 넓은 화면만 보면 못 잡는다(2026-08-22 층별 막대를 모바일에서만 숨긴 사고). 개수를 셀 때 65(시험)과 130(실행)을 헷갈리지 말 것. CI가 셋 다 돌린다(`pnpm test:e2e`). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도. ⛔ **인쇄는 거의 전부가 CSS라 jsdom(vitest)이 원리적으로 못 본다** — 인쇄 매체를 흉내 낼 수 있는 곳은 E2E 뿐이다 |
+| 테스트 | 파이썬 **pytest 5,401개** + 프론트 **vitest 1,597개**(jsdom + @testing-library/react) + **E2E playwright 66개**(`e2e/floor-stack.spec.ts` — 시험별 내용 = **`.claude/rules/e2e-catalog.md`**, `e2e/` 를 열면 자동으로 읽힌다). ⚠️ **E2E 는 같은 66개를 넓은 화면(chromium)과 휴대폰(mobile — Pixel 7 프리셋, 폭 412px·터치)에서 두 번 돌려 총 132회다** — 좁은 폭은 `styles.css` 의 `@media (max-width: 720px)` 가 판을 다시 짜는 자리라 넓은 화면만 보면 못 잡는다(2026-08-22 층별 막대를 모바일에서만 숨긴 사고). 개수를 셀 때 66(시험)과 132(실행)을 헷갈리지 말 것. CI가 셋 다 돌린다(`pnpm test:e2e`). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도. ⛔ **인쇄는 거의 전부가 CSS라 jsdom(vitest)이 원리적으로 못 본다** — 인쇄 매체를 흉내 낼 수 있는 곳은 E2E 뿐이다 |
 
 **성능 원칙**: 상권(수천 개)은 사전계산 정적 JSON, 호실(수백만)은 Supabase 쿼리.
 정적 JSON 폴백을 호실에는 두지 않는다.
@@ -136,13 +136,13 @@ main → App → components → lib → types   (단방향 — 역방향 import 
 ```bash
 pnpm dev                                        # 개발 서버 (http://localhost:5173)
 pnpm build                                      # 타입 검사 + 빌드 (tsc -b && vite build)
-pnpm test                                       # 프론트 테스트 (vitest, 1,596개)
-pnpm test:e2e                                   # ★ 화면 E2E (playwright, 65개 × 넓은화면·휴대폰 2벌 = 130회) — 아래 경고 참조
+pnpm test                                       # 프론트 테스트 (vitest, 1,597개)
+pnpm test:e2e                                   # ★ 화면 E2E (playwright, 66개 × 넓은화면·휴대폰 2벌 = 132회) — 아래 경고 참조
 pnpm exec oxlint                                # 프론트 린트
 ```
 
 ```bash
-python -m pytest tests/ -q                      # 파이썬 테스트 (5,398개 — 10-18 결정 0043 보완 1차 판 전체 실행 실측 5,371(5,367 passed · 1 failed · 3 skipped — 실패 1 = test_live_health_alerting 의 가짜 응답에 허브 주소가 없던 것, 고친 뒤 표적 127 passed) + 보완 2차(허브 실패 종류 hub)가 그 두 파일에 더한 27(수집 127 → 154 실측 · 전체는 다시 안 돌림)) · vitest 1,596 은 10-18 결정 0043 보완 판 전체 실행 실측(69파일 전부 통과) · E2E 64 는 e2e/floor-stack.spec.ts 의 시험 수 — 130회 실행 실측) · 워크트리는 원본 자료가 없어 몇 개를 건너뛴다(10-06 실측 3) · CI 는 로컬 PostgreSQL·shapely 가 없어 약 30개를 더 건너뛴다(test_district_openclose_migration 실행 시험 16 · test_industry_median_migration 실행 시험 11 · test_backtest_openclose 도형 1 등) · 지난 개수 이력은 git log -p CLAUDE.md)
+python -m pytest tests/ -q                      # 파이썬 테스트 (5,401개 — 10-19 후속 묶음 판 전체 실행 실측 5,398 passed · 3 skipped · vitest 1,597 은 같은 날 전체 실행 실측(69파일 전부 통과) · E2E 66 은 e2e/floor-stack.spec.ts 의 시험 수 — 132회 실행 실측(132 passed)) · 워크트리는 원본 자료가 없어 몇 개를 건너뛴다(10-06 실측 3) · CI 는 로컬 PostgreSQL·shapely 가 없어 약 30개를 더 건너뛴다(test_district_openclose_migration 실행 시험 16 · test_industry_median_migration 실행 시험 11 · test_backtest_openclose 도형 1 등) · 지난 개수 이력은 git log -p CLAUDE.md)
 python scripts/check_new_sangkwon_quarter.py    # 새 분기 스냅샷이 떴나 (읽기만, 키 불필요)
 python scripts/check_district_source_update.py  # 상권 원천(서울·소진공) 수정일이 바뀌었나 (읽기만, 키 불필요)
 python scripts/check_watch_heartbeat.py         # 예약 6종이 아직 돌고 있나 (읽기만, 키 불필요 — 멈춤=exit 1 · 조회·판정 실패=2 · 결과 쓰기 실패=4)
@@ -218,7 +218,7 @@ python scripts/load_rone_map.py --dry-run                          # seed → di
 python scripts/load_rone_map.py                                    # 매핑 적재 (검증 관문 3종 내장 — 걸리면 통째 롤백)
 python scripts/build_district_geojson.py --dry-run                  # 지도용 상권 파일 미리보기(행수·크기만, 파일 안 씀)
 python scripts/build_district_geojson.py                           # ★ district 를 적재했으면 → public/districts.geojson 굽고 **커밋**
-python scripts/build_sitemap.py --dry-run       # 사이트맵·구 허브 미리보기 — 대상 건물(이름 + 비주거 층 · 스크립트 맨 위 TARGET_WHERE) 수·파일 수·허브 수만 (DB 읽기만 · 쓰기 0 · 결정 0037·0043)
+python scripts/build_sitemap.py --dry-run       # 사이트맵·구 허브 미리보기 — 대상 건물(이름(글자 하나 이상 · 10-19) + 비주거 층 · 스크립트 맨 위 TARGET_WHERE) 수·파일 수·허브 수만 (DB 읽기만 · 쓰기 0 · 결정 0037·0043)
 python scripts/build_sitemap.py                 # ★ 건축물대장·호실을 다시 적재했으면(post_load 뒤) → public/sitemap*.xml + 구 허브 public/hub/<sgg>.json(같은 대상 · 결정 0043) 다시 굽고 **함께 커밋**(시험이 허브 ↔ 사이트맵을 대조) → 배포 뒤 indexnow_ping.py --from-sitemap … (⚠️ 대상 고르기에 찬 캐시 약 10분 — 2026-10-10 실측 · 스크립트가 그 접속만 제한을 15분으로 늘린다)
 python scripts/post_load.py                     # ★ 적재 후 필수 — vacuum(analyze) + 요약표(REFRESH_MVS 목록이 정본) 갱신 (권한 점검은 안 돈다)
 python scripts/post_load.py --check              # 낡았나 + 공개 롤이 읽거나 **고칠 수** 있는 것 점검 (DB 쓰기 0, 걸리면 exit 1)
