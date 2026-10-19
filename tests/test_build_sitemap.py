@@ -144,6 +144,8 @@ def test_target_sql_matches_decision():
     # 👤 2026-10-19 — 이름에 글자(한글·영문·한자)가 하나 이상인 건물만.
     assert "and b.display_nm ~ '" + bs.NAME_LETTER_RE + "' " in bs.TARGET_WHERE
     assert "'" not in bs.NAME_LETTER_RE
+    # 범위는 이스케이프 표기로만(소스에 한자·자모 끝 글자를 직접 넣지 않는다 — 도구가 표기를 실제 글자로 바꿔 넣은 일이 있다 · 10-19).
+    assert all(ord(ch) < 128 for ch in bs.NAME_LETTER_RE), bs.NAME_LETTER_RE
     assert sql.startswith("with t as (select b.bld_id, b.pnu, b.display_nm from building b where ")
     # 같은 땅 동 목록은 서버 조각이 부르는 그 함수 그대로(새 함수 정의 0) · 줄바꿈 넣는 json_agg 금지.
     assert "list_parcel_buildings(m.pnu) with ordinality" in sql

@@ -57,7 +57,7 @@ RESIDENTIAL_RE = (
 #   (👤 2026-10-19 — 구글에 「. — 강남구 …」 같은 제목이 안 나가게 · 그 건물의 화면·첫 HTML·noindex 규칙은 그대로).
 #   ⓘ 범위를 `\uXXXX` 로 적는다(PostgreSQL 정규식·파이썬 re 둘 다 같은 뜻 — 소스에 드문 글자를 직접 쓰지 않는다).
 #   가-힣 · ㄱ-ㅣ(호환 자모) · A-Za-z · 한자(확장 A · 기본 · 호환).
-NAME_LETTER_RE = r"[가-힣ㄱ-ㅣA-Za-z㐀-䶿一-鿿豈-﫿]"
+NAME_LETTER_RE = r"[\uac00-\ud7a3\u3131-\u3163A-Za-z\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]"
 TARGET_WHERE = (
     "b.display_nm is not null "
     "and b.display_nm ~ '" + NAME_LETTER_RE + "' "
