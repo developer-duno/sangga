@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, act } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import { useEffect, useRef } from 'react';
 import type { BuildingHit, FloorRow, OpenSigungu } from './types';
@@ -358,7 +358,8 @@ function cssRules(raw: string): Rule[] {
   return out;
 }
 
-const W5_NAME = /\.app--wide|\.app--lcollapsed|\.app--wbld|\.app--printmap|\.lrail|\.entry__fold|\.rpane-empty|\.mapprint/;
+const W5_NAME =
+  /\.app--wide|\.app--lcollapsed|\.app--wbld|\.app--printmap|\.app--rfold|\.lrail|\.entry__fold|\.rpane-empty|\.mapprint|\.regionfold/;
 
 /**
  * W5 이름표가 나오는 규칙의 묶음 머리들 — 인쇄 묶음과 '누르는 것 44px' 목록(`@media screen` 의 min-height 44)은 뺀다.
@@ -433,5 +434,212 @@ describe('PC 두 칸 — CSS', () => {
   it('누르는 것 44px 목록에 「왼쪽 칸 접기」·띠 단추·「상권 지도 넣기」', () => {
     const tall = rules.filter((r) => r.media === '@media screen' && /min-height:\s*44px/.test(r.body)).flatMap((r) => r.sel);
     for (const s of ['.entry__fold', '.lrail__btn', '.mapprint']) expect(tall, s).toContain(s);
+  });
+});
+
+// ── 보완 1(검사관 3인 + 메인 실사진 + 👤 결정 3 · 2026-10-21 08:1x) ──────────────────────────────────────────
+
+/** 크기를 바꿀 수 있는 흉내 `matchMedia` — 폭을 바꾸면 듣는 쪽(`useIsWide`·`useIsPhone`) 전부에 change 를 보낸다. */
+function resizableMedia(width: number) {
+  const st = { width };
+  const listeners = new Set<() => void>();
+  window.matchMedia = ((q: string) => ({
+    media: q,
+    get matches() {
+      const min = /min-width:\s*(\d+)px/.exec(q);
+      const max = /max-width:\s*(\d+)px/.exec(q);
+      return q !== 'print' && (!min || st.width >= Number(min[1])) && (!max || st.width <= Number(max[1]));
+    },
+    addEventListener: (_t: string, cb: () => void) => listeners.add(cb),
+    removeEventListener: (_t: string, cb: () => void) => listeners.delete(cb),
+  })) as unknown as typeof window.matchMedia;
+  return {
+    setWidth(v: number) {
+      st.width = v;
+      act(() => listeners.forEach((cb) => cb()));
+    },
+  };
+}
+
+describe('PC 두 칸 보완 1 (W5)', () => {
+  it('★ D1 두 칸에서 새로 검색해도 오른쪽 건물은 그대로(§7-1 과 같은 규칙) — 결과를 눌러야 바뀐다 · 1023 한 열은 지금처럼 비운다(양성 대조)', async () => {
+    mediaAt(1280);
+    const { container } = render(<App />);
+    await pickGu();
+    await searchAndOpen();
+    const input = screen.getByLabelText('건물명 또는 주소') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '다른동' } });
+    fireEvent.submit(input.closest('form')!);
+    expect(screen.getByRole('heading', { name: '테스트빌딩' })).toBeTruthy();
+    await screen.findByRole('button', { name: /둘째빌딩/ });
+    expect(screen.getByRole('heading', { name: '테스트빌딩' })).toBeTruthy();
+    expect(container.querySelector('.rpane-empty')).toBeNull();
+    expect(app().classList.contains('app--wbld')).toBe(true);
+    cleanup();
+    window.history.replaceState(null, '', '/'); // 앞 그림이 주소에 적은 구·건물을 비운다
+
+    mediaAt(1023);
+    render(<App />);
+    await pickGu();
+    await searchAndOpen();
+    const input2 = screen.getByLabelText('건물명 또는 주소') as HTMLInputElement;
+    fireEvent.change(input2, { target: { value: '다른동' } });
+    fireEvent.submit(input2.closest('form')!);
+    expect(screen.queryByRole('heading', { name: '테스트빌딩' })).toBeNull();
+  });
+
+  it('★ D2 구를 고르면 칩 상자는 접고 「서울 강남구 · 바꾸기」 한 줄 · 커서는 「바꾸기」 · 펼치면 칩 상자(같은 노드) · 다른 구를 고르면 다시 접힘 · 구를 풀면 한 줄 없음 · 1023 은 한 줄 없음', async () => {
+    rpc.mockImplementation((fn: string) => {
+      if (fn === 'list_open_sigungu')
+        return Promise.resolve({ data: [gu(), gu({ sigungu_code: '11650', sigungu_nm: '서초구' })], error: null });
+      return Promise.resolve({ data: [], error: null });
+    });
+    mediaAt(1280);
+    const { container } = render(<App />);
+    const region = container.querySelector('section.region')!;
+    expect(region).not.toBeNull();
+    expect(container.querySelector('.regionfold')).toBeNull();
+    expect(app().classList.contains('app--rfold')).toBe(false);
+    await pickGu();
+    const fold = container.querySelector('.regionfold')!;
+    expect(fold.querySelector('.regionfold__place')!.textContent).toBe('서울 강남구');
+    const change = screen.getByRole('button', { name: '바꾸기' });
+    expect(change.getAttribute('aria-expanded')).toBe('false');
+    expect(change.getAttribute('aria-controls')).toBe('region-panel');
+    expect(region.id).toBe('region-panel');
+    expect(app().classList.contains('app--rfold')).toBe(true);
+    expect(document.activeElement).toBe(change);
+    // 칩 상자는 다시 태어나지 않는다(숨기기만) — 같은 노드 · 차례 = 지역 한 줄 → 칩 상자(지역 고르개 자리).
+    expect(container.querySelector('section.region')).toBe(region);
+    expect(fold.nextElementSibling).toBe(region);
+
+    fireEvent.click(change);
+    expect(change.getAttribute('aria-expanded')).toBe('true');
+    expect(app().classList.contains('app--rfold')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: /^서초구/ }));
+    expect(app().classList.contains('app--rfold')).toBe(true);
+    expect(container.querySelector('.regionfold__place')!.textContent).toBe('서울 서초구');
+    const change2 = screen.getByRole('button', { name: '바꾸기' });
+    expect(change2.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(change2);
+    expect(container.querySelector('section.region')).toBe(region);
+
+    // 「바꾸기」 → 고른 구를 다시 누르면(풀기) 한 줄이 없어지고 칩 상자 그대로.
+    fireEvent.click(change2);
+    fireEvent.click(screen.getByRole('button', { name: /^서초구/ }));
+    expect(container.querySelector('.regionfold')).toBeNull();
+    expect(app().classList.contains('app--rfold')).toBe(false);
+    cleanup();
+    window.history.replaceState(null, '', '/'); // 앞 그림이 주소에 적은 구·건물을 비운다
+
+    mediaAt(1023);
+    const r2 = render(<App />);
+    await pickGu();
+    expect(r2.container.querySelector('.regionfold')).toBeNull();
+    expect(app().classList.contains('app--rfold')).toBe(false);
+    expect(r2.container.querySelector('section.region')!.id).toBe('');
+  });
+
+  it('★ F6 띠로 접은 채 1023 으로 줄었다 1280 으로 돌아오면 왼쪽 칸은 펼친 채(지도가 보이는 칸에서 다시 태어남)', async () => {
+    const media = resizableMedia(1280);
+    const { container } = render(<App />);
+    await pickGu();
+    await searchAndOpen();
+    fireEvent.click(screen.getByRole('button', { name: '왼쪽 칸 접기' }));
+    expect(app().classList.contains('app--lcollapsed')).toBe(true);
+    media.setWidth(1023);
+    expect(app().classList.contains('app--wide')).toBe(false);
+    media.setWidth(1280);
+    expect(app().classList.contains('app--wide')).toBe(true);
+    expect(app().classList.contains('app--lcollapsed')).toBe(false);
+    expect(container.querySelector('.lrail')).toBeNull();
+    expect(entry().hasAttribute('inert')).toBe(false);
+    const map = container.querySelector('section.dmap')!;
+    expect(map).not.toBeNull();
+    expect(map.hasAttribute('hidden')).toBe(false);
+  });
+
+  it('F6 양성 대조 — 두 칸 안에서 크기만 바뀌면(1280 → 1100) 접힌 채 그대로', async () => {
+    const media = resizableMedia(1280);
+    render(<App />);
+    await pickGu();
+    await searchAndOpen();
+    fireEvent.click(screen.getByRole('button', { name: '왼쪽 칸 접기' }));
+    media.setWidth(1100);
+    expect(app().classList.contains('app--lcollapsed')).toBe(true);
+  });
+});
+
+/**
+ * 두 칸 묶음 안의 `(max-width: 1279px)` 갈래 규칙(F2·F4) — 가드 본체와 양성 대조가 이 함수를 같이 지난다.
+ * 못 보는 것: 갈래 머리 글자를 바꾼 꼴(예: `1280px`)은 못 찾아 빈 목록이 된다(= 빨강) · 두 칸 묶음이 둘 이상이면 첫 묶음만 본다.
+ */
+function narrowRules(src: string): Rule[] {
+  const clean = src.replace(/\/\*[\s\S]*?\*\//g, '');
+  const at = clean.indexOf(`${WIDE} {`);
+  if (at < 0) return [];
+  const open = clean.indexOf('{', at);
+  let depth = 1;
+  let j = open + 1;
+  while (j < clean.length && depth > 0) {
+    if (clean[j] === '{') depth += 1;
+    else if (clean[j] === '}') depth -= 1;
+    j += 1;
+  }
+  return cssRules(clean.slice(open + 1, j - 1)).filter((r) => r.media === '@media (max-width: 1279px)');
+}
+
+/** 층 줄 칸 합(px) — 고정 칸 + `minmax(n, …)` 의 n + 틈 × (칸 수 − 1) + 안쪽 여백 20 + 테두리 2. */
+function floorRowPx(body: string): number {
+  const cols = /grid-template-columns:\s*([^;]+);/.exec(body)![1];
+  const tracks = cols.match(/minmax\([^)]*\)|\S+/g)!;
+  const px = tracks.reduce((s, t) => s + Number(/(\d+)px/.exec(t)![1]), 0);
+  const gap = Number(/gap:\s*(\d+)px/.exec(body)![1]);
+  return px + gap * (tracks.length - 1) + 20 + 2;
+}
+
+describe('PC 두 칸 보완 1 — CSS', () => {
+  const css = readFileSync('src/styles.css', 'utf8');
+  const rules = cssRules(css);
+
+  it('★ F2 1024~1279 층 줄 = 칸 합 640px 미만 · 사양 칸 틈 18 · F4 화면 밖 표지 이름 숨김 — 두 칸 묶음 안 1279 갈래 · 양성 대조(갈래 삭제 · 기본 폭으로 되돌린 꼴)', () => {
+    const narrow = narrowRules(css);
+    const row = narrow.find((r) => r.sel.includes('.app--wide .floor__row'))!;
+    expect(floorRowPx(row.body)).toBeLessThan(640);
+    // 기본 층 줄은 그대로(1280 이상 · 721~1023) — 기본 칸 합은 640 을 넘는다(그래서 갈래가 필요하다).
+    const baseRow = rules.find((r) => r.media === null && r.sel.includes('.floor__row') && /grid-template-columns/.test(r.body))!;
+    expect(floorRowPx(baseRow.body)).toBeGreaterThan(640);
+    expect(narrow.find((r) => r.sel.includes('.app--wide .stack__facts'))!.body).toMatch(/gap:\s*18px/);
+    const off = narrow.find((r) => r.sel.includes('.app--wide .dmap__off-nm'))!;
+    expect(off.sel).toContain('.app--wide .dmap__off-etc');
+    expect(off.body).toMatch(/display:\s*none/);
+    // 양성 대조 — 갈래를 통째로 지운 꼴 · 층 줄을 기본 칸으로 되돌린 꼴.
+    const noBranch = css.replace(/@media \(max-width: 1279px\) \{[\s\S]*?\r?\n {2}\}\r?\n/, '');
+    expect(noBranch).not.toBe(css);
+    expect(narrowRules(noBranch)).toEqual([]);
+    const wideRow = css.replace(
+      '64px minmax(60px, 1fr) 100px 140px 56px 60px 20px',
+      '74px minmax(80px, 1fr) 118px 168px 62px 66px 20px',
+    );
+    expect(wideRow).not.toBe(css);
+    const back = narrowRules(wideRow).find((r) => r.sel.includes('.app--wide .floor__row'))!;
+    expect(floorRowPx(back.body)).toBeGreaterThanOrEqual(640);
+  });
+
+  it('★ F1 첫 방문 큰 카드 — 두 칸 묶음에서 세로 쌓기 · 「그냥 둘러보기」 가운데 · 기본 규칙은 한 줄 그대로', () => {
+    const wide = rules.filter((r) => r.media === WIDE);
+    expect(wide.find((r) => r.sel.includes('.app--wide .rolecards__list'))!.body).toMatch(/flex-direction:\s*column/);
+    expect(wide.find((r) => r.sel.includes('.app--wide .rolecards__browse'))!.body).toMatch(/align-self:\s*center/);
+    const base = rules.filter((r) => r.media === null && r.sel.includes('.rolecards__list'));
+    expect(base.some((r) => /flex-direction:\s*column/.test(r.body))).toBe(false);
+  });
+
+  it('★ D2 지역 한 줄 — 접힘이면 칩 상자 숨김(두 칸 묶음) · 「바꾸기」 44px 목록 · 한 줄은 종이에서 빠진다', () => {
+    const wide = rules.filter((r) => r.media === WIDE);
+    expect(wide.find((r) => r.sel.includes('.app--wide.app--rfold .entry .region'))!.body).toMatch(/display:\s*none/);
+    const tall = rules.filter((r) => r.media === '@media screen' && /min-height:\s*44px/.test(r.body)).flatMap((r) => r.sel);
+    expect(tall).toContain('.regionfold__btn');
+    const hide = rules.filter((r) => r.media === PRINT && /display:\s*none/.test(r.body)).flatMap((r) => r.sel);
+    expect(hide).toContain('.regionfold');
   });
 });

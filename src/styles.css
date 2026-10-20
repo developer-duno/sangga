@@ -4521,6 +4521,7 @@ body {
   .entry__fold,
   .lrail__btn,
   .mapprint,
+  .regionfold__btn,
   /* 휴대폰 지도 탭 띠 · 끌어올리는 판의 손잡이·접기 · 홈 화면 추가 단추(결정 0039 W4b — 휴대폰에서만 그려진다). */
   .rstrip__btn,
   .dsheet__handle,
@@ -4719,6 +4720,69 @@ body {
     font-size: 13px;
     cursor: pointer;
   }
+
+  /* 첫 방문 큰 카드 셋(결정 0039 W3)은 왼쪽 칸(약 400px)에서 세로로 쌓는다 — 한 줄이면 120px 씩이라 글이 낱말마다 꺾인다
+     (W5 보완 F1 · 휴대폰 720 묶음과 같은 꼴). 「그냥 둘러보기」는 가운데. */
+  .app--wide .rolecards__list {
+    flex-direction: column;
+  }
+
+  .app--wide .rolecards__browse {
+    align-self: center;
+  }
+
+  /* 지역 한 줄(W5 보완 D2 · 👤 「가」) — 구를 고르면 칩 상자(`.region`)는 접고 「서울 강남구 · 바꾸기」만(`.app--rfold` = 접힘).
+     ⓘ 칩 상자는 숨기기만 한다(같은 DOM 하나 · 「바꾸기」로 다시 보인다) · 「바꾸기」 44px 는 위 '누르는 것' 목록. */
+  .app--wide.app--rfold .entry .region {
+    display: none;
+  }
+
+  .regionfold {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 0 0 12px;
+    padding: 0 0 0 4px;
+  }
+
+  .regionfold__place {
+    font-weight: 700;
+  }
+
+  .regionfold__btn {
+    padding: 0 14px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--card);
+    color: var(--text);
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+  }
+
+  .regionfold__btn:hover {
+    border-color: var(--accent);
+  }
+
+  /* 1024~1279 — 오른쪽 칸이 640px 안팎이라 기본 층 줄(칸 합 680px)이 넘친다(W5 보완 F2 · 메인 실측 1024×768 62px 넘침).
+     칸·틈을 줄여 합 568px. 사양 칸 틈도 줄인다 · 요약 판 타일은 이미 줄을 바꾼다. 좁은 지도의 화면 밖 표지는 이름을 숨긴다(F4 ·
+     720 묶음과 같은 꼴 — 「↙ 3곳」만). ⓘ 1280 이상은 기본 그대로. */
+  @media (max-width: 1279px) {
+    .app--wide .floor__row {
+      grid-template-columns: 64px minmax(60px, 1fr) 100px 140px 56px 60px 20px;
+      gap: 8px;
+    }
+
+    .app--wide .stack__facts {
+      gap: 18px;
+    }
+
+    .app--wide .dmap__off-nm,
+    .app--wide .dmap__off-etc {
+      display: none;
+    }
+  }
 }
 
 @media print {
@@ -4773,6 +4837,7 @@ body {
   .lrail,
   .mapprint,
   .rpane-empty,
+  .regionfold,
   /* ⛔ PC 두 칸에서 건물을 연 채 뽑으면 종이 = 오른쪽(건물)만(Q5 · 0020) — 왼쪽 칸(지도 포함)을 뺀다. 「상권 지도 넣기」를 켰으면
      (`.app--printmap`) 남기고, 그 안의 역할·지역·검색은 위 줄(`.role`·`.region`·`.search` 등)이 빼서 지도 덩어리만 남는다(§7-2).
      `.app--wide` 는 인쇄 중에도 그대로다(`useIsWide` 가 인쇄 중 값을 얼린다). 721~1023 은 이 이름표가 없어 10-15 규칙 그대로. */
@@ -4938,6 +5003,17 @@ body {
   /* 두 칸에서 종이에 나오는 지도(지도 넣기 · 또는 건물 없이 뽑은 입구)는 화면의 두 칸 높이 그대로. */
   .app--wide .entry .dmap__canvas {
     height: 300px;
+  }
+
+  /*
+    「상권 지도 넣기」 종이의 지도 칸 폭 = 화면에서 그린 폭(W5 보완 F3 · `DistrictMapBody` 가 `onIdle` 로 잰 값을 `--dmap-w` 로 남긴다).
+    종이 폭으로 늘리면 카카오가 화면 폭(약 370px)만큼만 타일을 그려 둬 오른쪽이 빈 회색이 된다(메인 실측 862px) — 그린 폭 그대로 가운데.
+    아직 못 쟀으면(변수 없음) 지금처럼 폭 전체.
+  */
+  .app--printmap .dmap__canvas {
+    width: var(--dmap-w, 100%);
+    margin-left: auto;
+    margin-right: auto;
   }
 
   /*

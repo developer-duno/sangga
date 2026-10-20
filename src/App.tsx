@@ -122,6 +122,23 @@ export default function App() {
   const isWide = useIsWide();
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [printMap, setPrintMap] = useState(false);
+  /*
+    한 열(1023 이하)에서 두 칸(1024+)으로 돌아오면 왼쪽 칸은 펼친 채 시작한다(W5 보완 F6 · 메인 판단) — 띠로 접은 채 줄었다 돌아오면
+    지도가 숨은(`visible=false`) 칸에서 새로 태어나 `<Map>` 이 없고, 그 채로 「상권 지도 넣기」 종이를 뽑으면 지도 칸이 빈다.
+    그리는 도중에 바로잡는다(React 공식 꼴 — effect 로 하면 접힌 채 한 번 그려진 뒤 다시 그린다).
+  */
+  const [prevWide, setPrevWide] = useState(isWide);
+  if (prevWide !== isWide) {
+    setPrevWide(isWide);
+    if (isWide) setLeftCollapsed(false);
+  }
+  /*
+    PC 두 칸 지역 줄 접기(W5 보완 D2 · 👤 2026-10-21 「가」) — 구를 고르면 칩 상자는 접고 「서울 강남구 · 바꾸기」 한 줄만.
+    `regionFoldOpen` = 「바꾸기」로 칩 상자를 펼쳤나(구를 고르면 다시 접힌다). 칩 상자는 같은 하나 — CSS 로 숨기기만 한다.
+    `regionFoldFocusRef` = 구를 고른 뒤 커서를 「바꾸기」로(누른 칩이 숨어 커서가 문서 맨 앞으로 날아가지 않게) — 그리기와 상관없어 ref.
+  */
+  const [regionFoldOpen, setRegionFoldOpen] = useState(false);
+  const regionFoldFocusRef = useRef(false);
   const [tab, setTab] = useState<AppTab>(() => firstTab(viewerRole, openedWith.bldId !== null));
   const curTab = tabAfterRoleChange(tab, viewerRole);
   const phoneRef = useRef(isPhone);
@@ -250,6 +267,12 @@ export default function App() {
     stripFocusRef.current = false;
     document.querySelector<HTMLButtonElement>('.rstrip__btn')?.focus({ preventScroll: true });
   }, [regionOpen]);
+  // PC 두 칸에서 구를 고른 뒤 — 칩 상자가 접혀 숨으니 커서를 지역 한 줄의 「바꾸기」로(D2 · 위 C2 와 같은 꼴).
+  useEffect(() => {
+    if (!regionFoldFocusRef.current) return;
+    regionFoldFocusRef.current = false;
+    document.querySelector<HTMLButtonElement>('.regionfold__btn')?.focus({ preventScroll: true });
+  }, [sigungu, regionFoldOpen]);
   /*
     지도 그려 두기(W4b · 결정 0039 §4-11) — 휴대폰에서 한 번 보인 지도는 탭을 옮겨도 언마운트하지 않고 `hidden` 으로 숨긴다
     (돌아오면 `relayout` 한 번 → 확대·이동·누른 상권 그대로). 첫 방문(그 지도 탭에 아직 안 간 사람)은 지금처럼 안 그린다
@@ -397,6 +420,9 @@ export default function App() {
     setSelected(null);
     if (regionOpen) stripFocusRef.current = true; // 닫은 뒤 커서를 띠 단추로(위 effect · C2)
     setRegionOpen(false); // 띠로 펼쳤으면 구를 고른 뒤 닫는다(다른 구를 골라도 · W4b)
+    // PC 두 칸 — 구를 고르면 칩 상자를 다시 접고 커서는 「바꾸기」로(D2). 구를 풀면 한 줄이 없어져 칩 상자 그대로다.
+    if (isWide && code !== null) regionFoldFocusRef.current = true;
+    setRegionFoldOpen(false);
   }
 
   // 검색으로 건물을 고르면 "링크로 들어왔다가 실패한 상태"는 끝난 것이다.
@@ -630,7 +656,9 @@ export default function App() {
         onSearchStart={() => {
           userActedRef.current = true;
           // 휴대폰 탭 꼴은 보던 건물을 남긴다 — 「건물」 탭으로 돌아가면 그대로(👤 확정 결정 0039 §7-1).
-          if (!isPhone) setSelected(null);
+          // PC 두 칸도 같은 규칙(👤 2026-10-21 W5 보완 D1 「가 · 건물은 그대로 남김」) — 오른쪽 건물은 결과를 눌러 고를 때 바뀐다.
+          // ⓘ 한 열(721~1023)은 지금 그대로 비운다(2026-08-08 「새 검색에도 옛 건물」 회귀 막이 — 위 주석).
+          if (!isPhone && !isWide) setSelected(null);
         }}
         selectedBldId={selected?.bld_id ?? null}
         sigungu={sigungu}
@@ -697,6 +725,9 @@ export default function App() {
   const placeLabel = sigunguName
     ? [SIDOS.find((s) => s.code === sigungu?.slice(0, 2))?.name, sigunguName].filter(Boolean).join(' ')
     : '';
+  /* PC 두 칸 지역 한 줄(D2) — 구를 골랐고 그 이름을 알 때만(되살리는 중 이름을 모르면 칩 상자 그대로) · 「바꾸기」로 펼친 동안은 칩 상자도 보인다. */
+  const showRegionFold = isWide && sigungu !== null && placeLabel !== '';
+  const regionFolded = showRegionFold && !regionFoldOpen;
 
   return (
     <div
@@ -707,7 +738,7 @@ export default function App() {
         isWide ? ' app--wide' : ''
       }${isWide && leftCollapsed ? ' app--lcollapsed' : ''}${isWide && (selected !== null || restoring) ? ' app--wbld' : ''}${
         isWide && selected !== null && sigungu !== null && printMap ? ' app--printmap' : ''
-      }`}
+      }${regionFolded ? ' app--rfold' : ''}`}
       data-tab={isPhone ? curTab : undefined}
     >
       {/*
@@ -863,11 +894,30 @@ export default function App() {
             <RolePicker role={viewerRole} onChange={handlePickRole} />
           )}
 
+          {/*
+            PC 두 칸 지역 한 줄(W5 보완 D2 · 👤 2026-10-21 「가」) — 구를 고르면 칩 상자(아래 `RegionPicker` · 같은 하나)는 CSS 로 접고
+            「서울 강남구 · 바꾸기」만. 「바꾸기」를 누르면 칩 상자가 펼쳐지고 구를 고르면 다시 접힌다. 종이에서 빠진다(`.regionfold`).
+          */}
+          {showRegionFold && (
+            <div className="regionfold">
+              <span className="regionfold__place">{placeLabel}</span>
+              <button
+                type="button"
+                className="regionfold__btn"
+                aria-expanded={regionFoldOpen}
+                aria-controls="region-panel"
+                onClick={() => setRegionFoldOpen((v) => !v)}
+              >
+                바꾸기
+              </button>
+            </div>
+          )}
+
           <RegionPicker
             selectedSigungu={sigungu}
             onSelectSigungu={handleSelectSigungu}
             onSigunguNameResolved={handleSigunguNameResolved}
-            id={mapFull ? 'region-panel' : undefined}
+            id={mapFull || isWide ? 'region-panel' : undefined}
           />
 
           {/*

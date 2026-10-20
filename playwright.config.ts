@@ -39,6 +39,15 @@ export default defineConfig({
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
     { name: 'mobile', use: { ...devices['Pixel 7'] } },
+    /*
+      한 열 PC(721~1023 · S1 입구 접기 · 결정 0039 W5 보완 F5). chromium(1280)은 1024px 이상이라 PC 두 칸이 되어 한 열 경로를
+      아무도 안 지나게 됐다 → 태그 `@onecol` 단 시험만 1000×768 로 한 번 더 돈다(그 시험들은 chromium 두 칸 · 휴대폰에서도 돈다).
+    */
+    {
+      name: 'desktop-1000',
+      use: { ...devices['Desktop Chrome'], viewport: { width: 1000, height: 768 } },
+      grep: /@onecol/,
+    },
   ],
   use: {
     baseURL: `http://localhost:${port}`,

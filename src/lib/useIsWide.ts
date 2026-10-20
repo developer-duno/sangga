@@ -19,13 +19,22 @@ export function useIsWide(): boolean {
   useEffect(() => {
     if (!hasMatchMedia()) return;
     const mq = window.matchMedia(WIDE_QUERY);
+    const pm = window.matchMedia('print');
     const sync = () => {
-      if (window.matchMedia('print').matches) return;
+      if (pm.matches) return;
       setWide(mq.matches);
     };
     sync();
     mq.addEventListener('change', sync);
-    return () => mq.removeEventListener('change', sync);
+    /*
+      종이에서 돌아올 때도 다시 맞춘다(W5 보완 · E2E BW 병렬 실측) — 인쇄를 마치자마자 창 폭도 1023 이하로 바뀌면 브라우저가 둘을 한 번에
+      평가해 두 칸 질의 값이 '거짓(인쇄) → 거짓(좁음)'이라 change 가 안 온다 → 인쇄 중 얼려 둔 '두 칸'이 남는다. 인쇄 질의의 change 로 메운다.
+    */
+    pm.addEventListener('change', sync);
+    return () => {
+      mq.removeEventListener('change', sync);
+      pm.removeEventListener('change', sync);
+    };
   }, []);
   return wide;
 }

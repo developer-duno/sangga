@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
   CustomOverlayMap,
   Map,
@@ -503,8 +503,16 @@ function DistrictMapBody({
   // 아직 한 번도 안 보였다 — 지도를 만들지 않는다(B1 · 위 `everVisible`). 숨은 칸이라 빈 자리여도 눈에 안 띈다.
   if (!everVisible) return full ? <div className="dmap__canvas" inert={covered} /> : null;
 
+  /*
+    화면에서 그린 지도 칸 폭(`onIdle` 이 잰 값)을 칸의 style 변수 `--dmap-w` 로 남긴다(결정 0039 W5 보완 F3) — PC 두 칸에서
+    「상권 지도 넣기」를 켠 종이는 이 폭 그대로 가운데 놓는다(인쇄 묶음 `.app--printmap .dmap__canvas`). 종이 폭으로 늘리면 카카오가
+    화면 폭만큼만 타일을 그려 둬 오른쪽이 빈 회색이 된다 — 인쇄 직전 relayout 뒤 비동기 타일은 믿지 않는다.
+    ⓘ 카드 꼴만(휴대폰 지도 가득은 DOM 그대로) · 아직 못 쟀거나 다른 구에서 잰 값이면 안 적는다(0 은 `onIdle` 이 이미 버린다).
+  */
+  const canvasStyle =
+    !full && view !== null && view.widthPx > 0 ? ({ '--dmap-w': `${view.widthPx}px` } as CSSProperties) : undefined;
   const canvas = (
-    <div className="dmap__canvas" inert={covered}>
+    <div className="dmap__canvas" inert={covered} style={canvasStyle}>
       <Map
         center={{ lat: (bounds.swLat + bounds.neLat) / 2, lng: (bounds.swLng + bounds.neLng) / 2 }}
         style={{ width: '100%', height: '100%' }}

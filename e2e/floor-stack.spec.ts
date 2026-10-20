@@ -292,6 +292,17 @@ async function pickGu(page: Page, sidoName: string, guName: string) {
   // 휴대폰 지도 가득(결정 0039 W4b) — 지역 고르개는 위 띠(「서울 강남구 ▾」)를 눌러야 펼쳐진다.
   const strip = page.locator('.rstrip__btn');
   if ((await strip.count()) > 0 && (await strip.getAttribute('aria-expanded')) === 'false') await strip.click();
+  // PC 두 칸(결정 0039 W5 보완 D2) — 구를 고른 뒤엔 칩 상자가 「서울 강남구 · 바꾸기」 한 줄로 접혀 있다 → 「바꾸기」로 펼친다.
+  //   펼친 시도는 그대로라 같은 시도의 구는 시도 칩을 다시 누르지 않는다(누르면 시도가 접힌다).
+  const fold = page.locator('.regionfold__btn');
+  if ((await fold.count()) > 0 && (await fold.getAttribute('aria-expanded')) === 'false') {
+    await fold.click();
+    const gu = page.getByRole('button', { name: guName });
+    if (await gu.first().isVisible()) {
+      await gu.click();
+      return;
+    }
+  }
   await page.getByRole('button', { name: new RegExp(`^${sidoName}$`) }).click();
   await page.getByRole('button', { name: guName }).click();
 }
@@ -450,7 +461,7 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await expect(stack.getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
   });
 
-  test('B. 새 검색을 제출하면 이전 층 스택이 즉시 사라진다', async ({ page }) => {
+  test('B. 새 검색을 제출하면 이전 층 스택이 즉시 사라진다', { tag: '@onecol' }, async ({ page }) => {
     // App.tsx onSearchStart 주석에 박제된 실제 라이브 회귀 재현: 두 번째 검색 응답을
     // 일부러 늦춰서, 응답을 기다리지 않고 선택이 먼저 비워지는지를 본다.
     await mockOpenSigungu(page);
@@ -478,17 +489,20 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
       await expect(page.locator('section.stack').getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
       return;
     }
-    await expect(page.locator('section.stack')).toHaveCount(0);
-    // PC 두 칸(W5)은 「위에서…」 줄 대신 오른쪽 안내 한 줄(👤 2026-10-21 「가」 — 찾기는 위가 아니라 왼쪽).
     if (await isTwoCols(page)) {
-      await expect(page.locator('.rpane-empty')).toHaveText('왼쪽에서 건물을 고르면 여기에 층별 화면이 섭니다');
-      await expect(page.getByText('위에서 건물을 검색해 선택해 주세요.')).toHaveCount(0);
-    } else {
-      await expect(page.getByText('위에서 건물을 검색해 선택해 주세요.')).toBeVisible();
+      // PC 두 칸도 같은 규칙(👤 2026-10-21 W5 보완 D1 「가 · 건물은 그대로 남김」) — 오른쪽 건물은 결과를 눌러야 바뀐다.
+      //   늦게 오는 응답을 기다리는 동안에도 · 결과가 선 뒤에도 그대로 · 빈 오른쪽 안내 줄은 안 선다.
+      await expect(page.locator('section.stack').getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
+      await expect(page.getByRole('button', { name: /다른빌딩/ })).toBeVisible();
+      await expect(page.locator('section.stack').getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
+      await expect(page.locator('.rpane-empty')).toHaveCount(0);
+      return;
     }
+    await expect(page.locator('section.stack')).toHaveCount(0);
+    await expect(page.getByText('위에서 건물을 검색해 선택해 주세요.')).toBeVisible();
   });
 
-  test('C. 검색 결과 0건일 때도 이전 층 스택이 사라진다', async ({ page }) => {
+  test('C. 검색 결과 0건일 때도 이전 층 스택이 사라진다', { tag: '@onecol' }, async ({ page }) => {
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
     await mockFloorStack(page);
@@ -512,6 +526,9 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await expect(page.getByText(/강남구에서 찾지 못했습니다/)).toBeVisible();
     // 휴대폰 탭 꼴은 보던 건물을 남긴다(§7-1) — 찾기 탭에선 숨어 있다.
     if (await isPhoneTabs(page)) await expect(page.locator('section.stack')).toBeHidden();
+    // PC 두 칸(W5 보완 D1)도 보던 건물을 남긴다 — 오른쪽에 그대로 보인다.
+    else if (await isTwoCols(page))
+      await expect(page.locator('section.stack').getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
     else await expect(page.locator('section.stack')).toHaveCount(0);
   });
 
@@ -980,7 +997,7 @@ test.describe('화면 아래 — 어디까지 믿을지와 한마디 남기는 �
 const LINK_BLD = '1168010100100010000_1024110';
 
 test.describe('층별 스택뷰 — 주소로 들고 다니기', () => {
-  test('O. 링크로 바로 들어오면 검색 없이 그 건물이 열린다', async ({ page }) => {
+  test('O. 링크로 바로 들어오면 검색 없이 그 건물이 열린다', { tag: '@onecol' }, async ({ page }) => {
     await mockOpenSigungu(page);
     await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()]);
     // 검색은 **안 불려야** 정상이다. 그래도 막아 둔다 — 안 막으면 혹시 불렸을 때
@@ -2093,7 +2110,7 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
 // 좁은 폭(412px)에서도 같은 차례로 서는가, 종이에서 빠지는가다.
 
 test.describe('첫 화면 — 역할 단추', () => {
-  test('AM. 창업자를 고르면 카드가 그 차례·펼침으로 서고, 새로고침해도 남고, 다시 누르면 지금 차례로', async ({
+  test('AM. 창업자를 고르면 카드가 그 차례·펼침으로 서고, 새로고침해도 남고, 다시 누르면 지금 차례로', { tag: '@onecol' }, async ({
     page,
   }) => {
     await mockOpenSigungu(page);
@@ -2209,7 +2226,7 @@ test.describe('첫 화면 — 역할 단추', () => {
 // 여기서만 보이는 것은 **실제 배치**(지도가 검색창 위로 오나 · 좁은 폭에서 칩 줄이 안 넘치나)와 종이다.
 
 test.describe('첫 화면 — 창업자 입구 · 업종 칩', () => {
-  test('AN. 창업자면 지도가 검색창 위·칩 여섯 · 카페 칩으로 건물을 열면 두 카드가 따르고, 투자자면 칩 없이 지금 차례', async ({
+  test('AN. 창업자면 지도가 검색창 위·칩 여섯 · 카페 칩으로 건물을 열면 두 카드가 따르고, 투자자면 칩 없이 지금 차례', { tag: '@onecol' }, async ({
     page,
   }) => {
     await mockOpenSigungu(page);
@@ -3040,13 +3057,11 @@ test.describe('층별 스택뷰 — 업종 비중 비교 · 중분류', () => {
 // 여기서만 보이는 것은 **실제 배치**(건물 이름이 첫 화면 높이 안에 오나 · 바 단추가 44px 인가 · 좁은 폭에서 안 넘치나)와 종이다.
 
 test.describe('첫 화면 — 건물을 열면 입구가 한 줄로 접힌다', () => {
-  test('AY. 검색으로 연 건물 이름이 첫 화면 높이 안에 · 바 단추 44px · 펼치면 입력칸에 커서 · 접힌 지도는 종이에 없고 펼친 지도는 종이에 나온다', async ({
+  test('AY. 검색으로 연 건물 이름이 첫 화면 높이 안에 · 바 단추 44px · 펼치면 입력칸에 커서 · 접힌 지도는 종이에 없고 펼친 지도는 종이에 나온다', { tag: '@onecol' }, async ({
     page,
-  }, testInfo) => {
-    // 넓은 화면은 한 열 폭(1000×768)으로 잰다 · 휴대폰은 Pixel 7 프리셋 그대로(412×839).
-    // ⓘ 2026-10-21 W5 — 1024px 이상은 PC 두 칸이라 S1 접기가 없다(결정 0039 §4-13). S1 이 남는 721~1023 을 지키려고 1366 → 1000 으로
-    //   옮겼다(높이 768 그대로). 1366×768 두 칸에서 건물 이름이 첫 화면 안인지는 BV 가 잰다.
-    if (testInfo.project.name === 'chromium') await page.setViewportSize({ width: 1000, height: 768 });
+  }) => {
+    // 폭은 프로젝트가 정한다(W5 보완 F5) — 한 열 S1 은 desktop-1000(1000×768 · 태그 @onecol) · 두 칸은 chromium(1280×720) ·
+    //   휴대폰은 Pixel 7 프리셋(412×839). 1366×768 두 칸에서 건물 이름이 첫 화면 안인지는 BV 가 잰다.
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
     await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()]);
@@ -3081,6 +3096,21 @@ test.describe('첫 화면 — 건물을 열면 입구가 한 줄로 접힌다', 
       await page.emulateMedia({ media: 'print' });
       await expect(page.locator('section.dmap')).toBeHidden();
       await expect(page.locator('nav.tabbar')).toBeHidden();
+      await expect(page.locator('.printmeta')).toBeVisible();
+      await expect(head.getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
+      await page.emulateMedia({ media: null });
+      return;
+    }
+
+    if (await isTwoCols(page)) {
+      // PC 두 칸(W5 · Q5)은 바가 없고 왼쪽 칸(검색·지도)이 그대로 선다 · 소개 한 줄은 건물을 연 동안 빠진다(머리 작게).
+      await expect(page.locator('.entrybar')).toHaveCount(0);
+      await expect(page.locator('.search')).toBeVisible();
+      await expect(page.locator('section.dmap')).toBeVisible();
+      await expect(page.locator('.app__sub')).toBeHidden();
+      // 종이 — 「상권 지도 넣기」를 안 켰으면 건물만(왼쪽 칸째 빠짐 · 켠 종이는 BW).
+      await page.emulateMedia({ media: 'print' });
+      await expect(page.locator('section.dmap')).toBeHidden();
       await expect(page.locator('.printmeta')).toBeVisible();
       await expect(head.getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
       await page.emulateMedia({ media: null });
@@ -3279,7 +3309,7 @@ test.describe('누르는 것 44px · 글자 13px', () => {
     await page.emulateMedia({ media: null });
   });
 
-  test('BA. 검색 결과를 내려 아래쪽 건물을 고르면 위 칸이 접히며 화면이 맨 위로 — 바와 건물 이름이 화면 안', async ({
+  test('BA. 검색 결과를 내려 아래쪽 건물을 고르면 위 칸이 접히며 화면이 맨 위로 — 바와 건물 이름이 화면 안', { tag: '@onecol' }, async ({
     page,
   }) => {
     await mockOpenSigungu(page);
@@ -3817,7 +3847,7 @@ test.describe('첫 화면 — 역할 고르기 큰 카드', () => {
     );
   }
 
-  test('BH. 빈 저장소로 `/` 를 열면 입구 맨 위에 큰 카드(작은 줄 숨김) · 휴대폰은 세로 쌓기·카드 56px·둘러보기 44px · 넓은 화면은 한 줄 · 종이에 없음 · 카드를 누르면 사라지고 그 역할 화면', { tag: '@first-visit' }, async ({ page }, testInfo) => {
+  test('BH. 빈 저장소로 `/` 를 열면 입구 맨 위에 큰 카드(작은 줄 숨김) · 휴대폰은 세로 쌓기·카드 56px·둘러보기 44px · 넓은 화면은 한 줄 · 종이에 없음 · 카드를 누르면 사라지고 그 역할 화면', { tag: ['@first-visit', '@onecol'] }, async ({ page }, testInfo) => {
     await mockOpenSigungu(page);
     await page.goto('/');
     const box = page.locator('section.rolecards');
@@ -3833,13 +3863,14 @@ test.describe('첫 화면 — 역할 고르기 큰 카드', () => {
     await expect(cards).toHaveCount(3);
     const rects = await Promise.all([0, 1, 2].map(async (i) => (await cards.nth(i).boundingBox())!));
     for (const r of rects) expect(r.height).toBeGreaterThanOrEqual(56);
-    if (testInfo.project.name === 'mobile') {
+    // 휴대폰 · PC 두 칸 왼쪽 칸(약 400px · W5 보완 F1)은 세로로 쌓기 · 한 열 넓은 화면(desktop-1000)은 한 줄에 셋.
+    if (testInfo.project.name === 'mobile' || (await isTwoCols(page))) {
       // 세로로 쌓기 — 왼쪽 끝이 같고 위에서 아래로.
       expect(rects[1].y).toBeGreaterThanOrEqual(rects[0].y + rects[0].height);
       expect(rects[2].y).toBeGreaterThanOrEqual(rects[1].y + rects[1].height);
       expect(Math.abs(rects[1].x - rects[0].x)).toBeLessThanOrEqual(1);
     } else {
-      // 넓은 화면 = 한 줄에 셋.
+      // 한 열 넓은 화면 = 한 줄에 셋.
       expect(Math.abs(rects[1].y - rects[0].y)).toBeLessThanOrEqual(1);
       expect(Math.abs(rects[2].y - rects[0].y)).toBeLessThanOrEqual(1);
       expect(rects[1].x).toBeGreaterThan(rects[0].x + rects[0].width - 1);
@@ -3880,7 +3911,7 @@ test.describe('첫 화면 — 역할 고르기 큰 카드', () => {
     await expect(page.locator('section.rolecards')).toHaveCount(0);
   });
 
-  test('BJ. 건물 직행 링크(`bld`)에서는 안 뜨고 저장도 안 한다 · `?sgg=` 만 든 링크에서는 뜬다', { tag: '@first-visit' }, async ({ page }) => {
+  test('BJ. 건물 직행 링크(`bld`)에서는 안 뜨고 저장도 안 한다 · `?sgg=` 만 든 링크에서는 뜬다', { tag: ['@first-visit', '@onecol'] }, async ({ page }) => {
     await mockOpenSigungu(page);
     await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()]);
     await page.goto(`/?sgg=11680&bld=${LINK_BLD}`);
@@ -4391,7 +4422,14 @@ test.describe('휴대폰 지도 가득 · 상권 판 · 홈 화면 안내 (결�
       await expect(page.locator('.rstrip')).toHaveCount(0);
       await expect(page.locator('.app--mapfull')).toHaveCount(0);
       await expect(page.locator('.dsheet')).toHaveCount(0);
-      await expect(page.locator('section.region')).toBeVisible();
+      // PC 두 칸(W5 보완 D2)은 구가 정해지면 칩 상자를 「서울 강남구 · 바꾸기」 한 줄로 접는다 · 한 열(721~1023)은 칩 상자 그대로.
+      if (await isTwoCols(page)) {
+        await expect(page.locator('.regionfold')).toBeVisible();
+        await expect(page.locator('.regionfold__place')).toHaveText('서울 강남구');
+        await expect(page.locator('section.region')).toBeHidden();
+      } else {
+        await expect(page.locator('section.region')).toBeVisible();
+      }
       return;
     }
 
@@ -4645,7 +4683,24 @@ test.describe('PC 두 칸', () => {
     const title = (await stack.getByRole('heading', { name: '테스트빌딩' }).boundingBox())!;
     expect(title.y + title.height).toBeLessThanOrEqual(768);
 
-    // ⑥ 1023 — 두 칸이 아니다: 지금 한 열(건물을 연 채라 S1 바 · 입구 숨김 · 지도 안 그림).
+    // ⑥ 1024×768(두 칸 가장 좁은 폭 · W5 보완 F2) — 층 줄이 오른쪽 칸 안 · 문서 가로 넘침 0 · 왼쪽 칸 안 가로 넘침 0.
+    //   (화면 밖 표지 이름 숨김(F4)은 지도 키가 없어 여기선 못 본다 — vitest CSS 가드.)
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await expect(page.locator('.app')).toHaveClass(/app--wide/);
+    expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0);
+    expect(await page.locator('.entry').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+    const narrowStack = await box('section.stack');
+    // ⓘ 11줄 이상이면 화면엔 10줄만 선다(BB) — 보이는 줄만 잰다(숨은 줄은 상자가 없다).
+    const rows = page.locator('section.stack .floor__row:visible');
+    expect(await rows.count()).toBeGreaterThan(0);
+    for (const row of await rows.all()) {
+      const r = (await row.boundingBox())!;
+      expect(r.x + r.width).toBeLessThanOrEqual(narrowStack.x + narrowStack.width + 0.5);
+      expect(await row.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+    }
+    await page.screenshot({ path: testInfo.outputPath('bv-two-cols-1024.png'), fullPage: false });
+
+    // ⑦ 1023 — 두 칸이 아니다: 지금 한 열(건물을 연 채라 S1 바 · 입구 숨김 · 지도 안 그림).
     await page.setViewportSize({ width: 1023, height: 720 });
     await expect(page.locator('.app')).not.toHaveClass(/app--wide/);
     await expect(page.locator('.entrybar')).toBeVisible();
