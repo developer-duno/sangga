@@ -289,6 +289,9 @@ async function mockOpenSigungu(
 
 /** 시도 칩을 눌러 구 목록을 펼치고, 그 안의 구 칩을 눌러 고른다. */
 async function pickGu(page: Page, sidoName: string, guName: string) {
+  // 휴대폰 지도 가득(결정 0039 W4b) — 지역 고르개는 위 띠(「서울 강남구 ▾」)를 눌러야 펼쳐진다.
+  const strip = page.locator('.rstrip__btn');
+  if ((await strip.count()) > 0 && (await strip.getAttribute('aria-expanded')) === 'false') await strip.click();
   await page.getByRole('button', { name: new RegExp(`^${sidoName}$`) }).click();
   await page.getByRole('button', { name: guName }).click();
 }
@@ -983,7 +986,9 @@ test.describe('층별 스택뷰 — 주소로 들고 다니기', () => {
     }
     await expect(page.locator('section.dmap')).toHaveCount(0);
     await unfoldEntry(page, '상권 지도 보기');
-    await expect(page.getByRole('heading', { name: /강남구 상권 지도/ })).toBeVisible();
+    // 휴대폰 지도 탭은 지도 가득(W4b) — 제목 대신 위 띠에 지금 구가 선다.
+    if (await isPhoneTabs(page)) await expect(page.locator('.rstrip__btn')).toHaveText('서울 강남구 ▾');
+    else await expect(page.getByRole('heading', { name: /강남구 상권 지도/ })).toBeVisible();
     // 가지고 나가는 버튼도 함께 선다(휴대폰은 건물 탭에).
     await gotoTab(page, '건물');
     await expect(page.getByRole('button', { name: '링크 복사' })).toBeVisible();
@@ -2276,8 +2281,9 @@ test.describe('첫 화면 — 창업자 입구 · 업종 칩', () => {
       await gotoTab(page, '지도');
       await expect(page.locator('section.dmap')).toBeVisible();
       await expect(page.locator('.chips')).toHaveCount(0);
+      // 찾기 탭에선 지도가 숨기만 한다(W4b — 다시 그리지 않고 돌아오면 relayout · 같은 노드).
       await gotoTab(page, '찾기');
-      await expect(page.locator('section.dmap')).toHaveCount(0);
+      await expect(page.locator('section.dmap')).toBeHidden();
     } else {
       expect(await top('section.search')).toBeLessThan(await top('section.dmap'));
     }
@@ -3205,6 +3211,15 @@ test.describe('누르는 것 44px · 글자 13px', () => {
       expect(all.small).toEqual([]);
       expect(all.tiny).toEqual([]);
       expect(all.narrow).toEqual([]);
+      // 지도 가득(W4b) — 위 띠 단추 · 판 손잡이 · 반으로 펼친 판의 「접기」도 잰다(지도 탭엔 지도 접기 단추가 없다).
+      await expect(page.locator('.rstrip__btn')).toBeVisible();
+      await expect(page.locator('.dmap__toggle')).toHaveCount(0);
+      await page.locator('.dsheet__handle').click();
+      await expect(page.locator('.dsheet__fold')).toBeVisible();
+      const sheet = await measureTargets(page);
+      expect(sheet.small).toEqual([]);
+      expect(sheet.tiny).toEqual([]);
+      expect(sheet.narrow).toEqual([]);
       await gotoTab(page, '더보기');
       await page.getByRole('button', { name: '의견 보내기' }).click();
       const more = await measureTargets(page);
@@ -3910,10 +3925,18 @@ test.describe('휴대폰 아래 탭', () => {
     expect((await go.boundingBox())!.height).toBeGreaterThanOrEqual(44);
     await go.click();
     await expect(tabButton(page, '찾기')).toHaveAttribute('aria-current', 'page');
-    // 지도 탭 = 지역 고르개(같은 하나) · 검색 없음.
+    // 지도 탭 = 지역 고르개(같은 하나) · 검색 없음 — 구를 고르기 전 그대로.
     await gotoTab(page, '지도');
     await expect(page.locator('section.region')).toBeVisible();
     await expect(page.locator('section.search')).toBeHidden();
+    // 구를 고르면 지도 가득(W4b) — 지역 고르개는 위 띠를 눌러야 펼쳐진다(같은 하나 · 찾기 탭에선 그대로 보인다).
+    await pickGu(page, '서울', '강남구');
+    await expect(page.locator('.rstrip__btn')).toHaveText('서울 강남구 ▾');
+    await expect(page.locator('section.region')).toBeHidden();
+    await page.locator('.rstrip__btn').click();
+    await expect(page.locator('section.region')).toBeVisible();
+    await gotoTab(page, '찾기');
+    await expect(page.locator('section.region')).toBeVisible();
     // 더보기 탭 = 역할 줄 → 의견함 → 안내 차례 · 맨 아래까지 내려도 막대에 안 가린다.
     await gotoTab(page, '더보기');
     await expect(page.locator('section.region')).toBeHidden();
@@ -3969,7 +3992,11 @@ test.describe('휴대폰 아래 탭', () => {
     await gotoTab(page, '뽑은 건물');
     await expect(page.getByText('아직 뽑은 건물이 없습니다', { exact: true })).toBeVisible();
     await expect(page.getByText('건물 화면에서 「인쇄 · PDF로 저장」을 누르면 여기에 남습니다', { exact: true })).toBeVisible();
-    await expect(page.locator('section.dmap')).toHaveCount(0);
+    // 다른 탭에선 지도가 숨기만 한다(W4b — 같은 노드 · 찾기 탭으로 돌아오면 relayout) · 중개사엔 띠·지도 가득이 없다.
+    await expect(page.locator('section.dmap')).toBeHidden();
+    await expect(page.locator('.rstrip')).toHaveCount(0);
+    await gotoTab(page, '찾기');
+    await expect(page.locator('section.dmap .dmap__toggle')).toBeVisible();
   });
 
   test('BN. 뒤로가기 — 건물을 열 때만 한 칸(여럿 열어도 한 칸) · 뒤로 = 아까 탭(건물은 남음) · 앞으로 = 건물 · 넓은 화면은 칸 0', async ({
@@ -4263,5 +4290,221 @@ test.describe('검색 색인 보강 (결정 0042)', () => {
     await page.emulateMedia({ media: 'print' });
     await expect(nav).toBeHidden();
     await page.emulateMedia({ media: null });
+  });
+});
+
+// ── 휴대폰 지도 가득 · 끌어올리는 상권 판 · 홈 화면 안내 (👤 2026-10-19 결정 0039 W4b) ─────────────────────────────
+// ⓘ E2E 에는 카카오 키가 없다 — 지도 칸은 안내 글뿐이고, 띠·판·칩 줄·자리·종이는 여기서 본다(relayout 배선은 `DistrictMap.test`).
+test.describe('휴대폰 지도 가득 · 상권 판 · 홈 화면 안내 (결정 0039 W4b)', () => {
+  /** 상권 경계 파일 목업 — 강남구 3곳 · 서초구 2곳(실제 파일의 상권 수가 바뀌어도 시험이 안 흔들리게). */
+  async function mockDistricts(page: Page) {
+    const sq = (id: string, gu: string, x: number) => ({
+      type: 'Feature',
+      geometry: {
+        type: 'Polygon',
+        coordinates: [[[x, 37.5], [x + 0.01, 37.5], [x + 0.01, 37.51], [x, 37.51], [x, 37.5]]],
+      },
+      properties: {
+        district_id: id,
+        district_nm: `상권${id}`,
+        district_type: '골목상권',
+        source_nm: '서울특별시 상권분석서비스',
+        sigungu_code: gu,
+        area_m2: 1,
+      },
+    });
+    await page.route('**/districts.geojson', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          type: 'FeatureCollection',
+          meta: { district_cnt: 5, max_computed_at: '2026-10-01T00:00:00Z' },
+          features: [
+            sq('a', '11680', 127.0),
+            sq('b', '11680', 127.02),
+            sq('c', '11680', 127.04),
+            sq('d', '11650', 127.06),
+            sq('e', '11650', 127.08),
+          ],
+        }),
+      }),
+    );
+  }
+
+  test('BT. 휴대폰 지도 탭 = 위 띠 「서울 강남구 ▾」 + 지도 가득(화면 70% 이상) · 칩 여섯 한 줄 옆으로 밀기 · 판 엿보기 → 반 → 가득 → 엿보기 · 띠로 다른 구 · 탭을 옮겨도 같은 지도 · 가로 넘침 0 · 종이에 띠·칩·손잡이 없음(판 안 범례·출처는 남음) · 넓은 화면은 그대로', async ({
+    page,
+  }, testInfo) => {
+    await mockOpenSigungu(page, [
+      { sido_code: '11', sido_nm: '서울', sigungu_code: '11680', sigungu_nm: '강남구', building_cnt: 14223 },
+      { sido_code: '11', sido_nm: '서울', sigungu_code: '11650', sigungu_nm: '서초구', building_cnt: 9000 },
+    ]);
+    await mockDistricts(page);
+    await page.addInitScript(() => {
+      const w = globalThis as unknown as { localStorage: { setItem(k: string, v: string): void } };
+      w.localStorage.setItem('sangga.viewerRole', '창업자');
+    });
+    await page.goto('/?sgg=11680');
+
+    if (testInfo.project.name !== 'mobile') {
+      // 넓은 화면 = 지금 그대로 — 지도 카드(제목·접기 단추·칩 밑 설명) · 띠·지도 가득·판 0.
+      await expect(page.locator('section.dmap .dmap__toggle')).toBeVisible();
+      await expect(page.locator('.dmap__head .chips__note')).toBeVisible();
+      await expect(page.locator('.rstrip')).toHaveCount(0);
+      await expect(page.locator('.app--mapfull')).toHaveCount(0);
+      await expect(page.locator('.dsheet')).toHaveCount(0);
+      await expect(page.locator('section.region')).toBeVisible();
+      return;
+    }
+
+    const vh = page.viewportSize()!.height;
+    const box = async (sel: string) => (await page.locator(sel).boundingBox())!;
+    await expect(tabButton(page, '지도')).toHaveAttribute('aria-current', 'page');
+    const strip = page.locator('.rstrip__btn');
+    await expect(strip).toHaveText('서울 강남구 ▾');
+    await expect(strip).toHaveAttribute('aria-expanded', 'false');
+    expect((await box('.rstrip__btn')).height).toBeGreaterThanOrEqual(44);
+    // 지도 탭에서는 사이트 제목·소개 한 줄이 안 보이고 · 지역 고르개는 띠를 눌러야.
+    await expect(page.locator('.app__head')).toBeHidden();
+    await expect(page.locator('section.region')).toBeHidden();
+    await expect(page.locator('.dmap__toggle')).toHaveCount(0);
+    // 지도 가득 — 덩어리도 지도 칸도 화면의 70% 이상(키가 없어 칸 안은 안내 글) · 칩 줄은 칩 44px + 선 1px(W4b 보완 C1).
+    expect((await box('section.dmap')).height).toBeGreaterThanOrEqual(0.7 * vh);
+    expect((await box('.dmap__canvas')).height).toBeGreaterThanOrEqual(0.7 * vh);
+    expect((await box('.dmap__head')).height).toBeLessThanOrEqual(45);    // 지도를 끄는 손가락이 쪽을 당기지 않는다(C3 · 뿌리 html 까지) · 흐름에 남는 것은 띠 아래에서 시작(C4).
+    await expect(page.locator('html')).toHaveCSS('overscroll-behavior-y', 'none');
+    await expect(page.locator('.app--mapfull')).toHaveCSS('padding-top', '48px');
+
+    // 칩 여섯 = 한 줄(같은 높이) · 칩 줄만 옆으로 밀린다 · 칩 밑 설명 글은 숨음 · 칩 44px.
+    const chipBtns = page.locator('.dmap__head .chips__chip');
+    await expect(chipBtns).toHaveCount(6);
+    const ys: number[] = [];
+    for (const c of await chipBtns.all()) {
+      const b = (await c.boundingBox())!;
+      ys.push(b.y);
+      expect(b.height).toBeGreaterThanOrEqual(44);
+    }
+    expect(Math.max(...ys) - Math.min(...ys)).toBeLessThanOrEqual(1);
+    await expect(page.locator('.dmap__head .chips__list')).toHaveCSS('overflow-x', 'auto');
+    await expect(page.locator('.chips__note')).toBeHidden();
+
+    // 판 — 엿보기 한 줄(구 이름 · 상권 수) → 반(화면 40% 이상 · 지도 칸은 판 위에서 끝남) → 가득(띠 바로 아래) → 엿보기.
+    const sheet = page.locator('.dsheet');
+    const handle = sheet.locator('.dsheet__handle');
+    await expect(sheet.locator('.dsheet__title')).toHaveText('강남구 상권 3곳');
+    await expect(sheet.locator('.dsheet__hint')).toHaveText('지도를 누르면 그 자리 상권');
+    await expect(handle).toHaveAttribute('aria-label', '상권 판 펼치기');
+    const hb = (await handle.boundingBox())!;
+    expect(hb.height).toBeGreaterThanOrEqual(44);
+    expect(hb.width).toBeGreaterThanOrEqual(44);
+    expect((await box('.dsheet')).height).toBeLessThan(0.15 * vh);
+    await expect(sheet.locator('.dmap__src')).toBeHidden();
+
+    await handle.click();
+    await expect(handle).toHaveAttribute('aria-label', '상권 판 더 펼치기');
+    expect((await box('.dsheet')).height).toBeGreaterThanOrEqual(0.4 * vh);
+    const canvas = await box('.dmap__canvas');
+    expect(canvas.y + canvas.height).toBeLessThanOrEqual((await box('.dsheet')).y + 1); // 판이 지도를 안 덮는다(로고 자리)
+    await expect(sheet.locator('.dmap__src')).toHaveText('출처: 서울특별시 상권분석서비스');
+    await expect(sheet.getByRole('button', { name: '접기' })).toBeVisible();
+
+    await handle.click();
+    await expect(handle).toHaveAttribute('aria-label', '상권 판 접기');
+    const stripBox = await box('.rstrip');
+    expect(Math.abs((await box('.dsheet')).y - (stripBox.y + stripBox.height))).toBeLessThanOrEqual(1);
+    await handle.click();
+    await expect(handle).toHaveAttribute('aria-label', '상권 판 펼치기');
+
+    // 띠 → 지역 고르개(같은 하나)가 띠 아래로 · 다른 구를 고르면 닫히고 띠 글이 그 구 · 판은 그 구의 수.
+    await strip.click();
+    await expect(strip).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.locator('section.region')).toBeVisible();
+    const seocho = page.getByRole('button', { name: /^서초구/ });
+    if (!(await seocho.isVisible())) await page.getByRole('button', { name: /^서울$/ }).click();
+    await seocho.click();
+    await expect(strip).toHaveText('서울 서초구 ▾');
+    await expect(strip).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator('section.region')).toBeHidden();
+    await expect(sheet.locator('.dsheet__title')).toHaveText('서초구 상권 2곳');
+
+    // 탭을 옮겨도 지도를 다시 그리지 않는다 — 같은 노드가 숨었다가 다시 보인다(결정 0039 §4-11 · relayout 은 DistrictMap 시험).
+    await page
+      .locator('section.dmap')
+      .evaluate((e) => (e as unknown as { setAttribute(k: string, v: string): void }).setAttribute('data-w4b-mark', '1'));
+    await gotoTab(page, '찾기');
+    await expect(page.locator('section.dmap[data-w4b-mark="1"]')).toBeHidden();
+    await expect(page.locator('section.region')).toBeVisible();
+    await expect(page.locator('.rstrip')).toHaveCount(0);
+    await expect(page.locator('.app__head')).toBeVisible();
+    await gotoTab(page, '지도');
+    await expect(page.locator('section.dmap[data-w4b-mark="1"]')).toBeVisible();
+    expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+
+    // 종이(건물 없음) — 띠·칩 줄·판의 손잡이·안내가 빠지고, 판 안 범례·출처(공공누리 출처표시)는 남는다 · 판은 흐름(W4b 보완 A3).
+    await page.emulateMedia({ media: 'print' });
+    await expect(page.locator('.rstrip')).toBeHidden();
+    await expect(page.locator('.chips')).toBeHidden();
+    await expect(sheet.locator('.dsheet__handle')).toBeHidden();
+    await expect(sheet.locator('.dsheet__hint')).toBeHidden();
+    await expect(sheet.locator('.dsheet__title')).toHaveText('서초구 상권 2곳');
+    await expect(sheet.locator('.dmap__legend')).toBeVisible();
+    await expect(sheet.locator('.dmap__src')).toHaveText('출처: 서울특별시 상권분석서비스');
+    await expect(sheet.locator('.dmap__src')).toBeVisible();
+    await expect(sheet).toHaveCSS('position', 'static');
+    await page.emulateMedia({ media: null });
+    await expect(page.locator('.rstrip')).toBeVisible();
+  });
+
+  test('BU. 더보기 탭 「홈 화면에 두고 앱처럼 쓰기」 — 두 줄 글자 그대로 · 의견함 다음·안내 앞 · 단추 0 → 크롬 설치 이벤트가 오면 「홈 화면에 추가」(44px) → 누르면 그 창 1회 → 단추 사라짐 · 종이에 없음 · 넓은 화면은 상자 0', async ({
+    page,
+  }, testInfo) => {
+    await mockOpenSigungu(page);
+    await page.goto('/');
+    const hint = page.locator('.hshint');
+    if (testInfo.project.name !== 'mobile') {
+      await expect(page.locator('footer.foot .foot__notice')).toBeVisible();
+      await expect(hint).toHaveCount(0);
+      return;
+    }
+    await gotoTab(page, '더보기');
+    await expect(hint.locator('.hshint__h')).toHaveText('홈 화면에 두고 앱처럼 쓰기');
+    await expect(hint.locator('li')).toHaveText([
+      '아이폰 Safari: 공유 단추 → 「홈 화면에 추가」',
+      '안드로이드 크롬: 더보기(⋮) → 「설치 및 바로가기 만들기」',
+    ]);
+    await expect(hint.getByRole('button')).toHaveCount(0);
+    const y = async (sel: string) => (await page.locator(sel).first().boundingBox())!.y;
+    expect(await y('footer.foot .fb')).toBeLessThan(await y('.hshint'));
+    expect(await y('.hshint')).toBeLessThan(await y('footer.foot .foot__notice'));
+
+    // 크롬이 설치 창 이벤트를 준 것처럼(prompt 흉내) — 단추가 서고, 누르면 그 창을 한 번 띄운 뒤 단추만 사라진다.
+    await page.evaluate(() => {
+      const g = globalThis as unknown as {
+        Event: new (t: string, o?: { cancelable?: boolean }) => object;
+        dispatchEvent(e: object): boolean;
+        w4bPrompted: number;
+      };
+      g.w4bPrompted = 0;
+      const ev = new g.Event('beforeinstallprompt', { cancelable: true }) as { prompt?: () => Promise<void> };
+      ev.prompt = () => {
+        g.w4bPrompted += 1;
+        return Promise.resolve();
+      };
+      g.dispatchEvent(ev);
+    });
+    const btn = hint.getByRole('button', { name: '홈 화면에 추가' });
+    await expect(btn).toBeVisible();
+    expect((await btn.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await expect(hint.locator('li').nth(1)).toHaveText(
+      '안드로이드 크롬: 아래 단추를 누르거나 더보기(⋮) → 「설치 및 바로가기 만들기」',
+    );
+    await btn.click();
+    expect(await page.evaluate(() => (globalThis as unknown as { w4bPrompted: number }).w4bPrompted)).toBe(1);
+    await expect(hint.getByRole('button')).toHaveCount(0);
+
+    await page.emulateMedia({ media: 'print' });
+    await expect(hint).toBeHidden();
+    await page.emulateMedia({ media: null });
+    await expect(hint).toBeVisible();
   });
 });

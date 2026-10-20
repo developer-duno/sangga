@@ -1,3 +1,5 @@
+// 홈 화면 추가 창 이벤트(`beforeinstallprompt`)는 그리기 전에 올 수 있다(MDN) — 무엇보다 먼저 들여와 듣기 시작한다(W4b).
+import './lib/installPrompt';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';

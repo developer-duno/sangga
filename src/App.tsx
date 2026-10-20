@@ -11,6 +11,7 @@ import { PrintButton } from './components/PrintButton';
 import { PrintHeader } from './components/PrintHeader';
 import { RecentPrinted } from './components/RecentPrinted';
 import { RegionPicker } from './components/RegionPicker';
+import { RegionStrip } from './components/RegionStrip';
 import { RoleCards } from './components/RoleCards';
 import { RolePicker } from './components/RolePicker';
 import { ShareButton } from './components/ShareButton';
@@ -123,6 +124,7 @@ export default function App() {
     tabScrollRef.current[tabRef.current] = window.scrollY;
     setTab(next);
     setTabSignal((n) => n + 1);
+    setRegionOpen(false); // 지도 탭 띠로 펼친 지역 고르개는 탭을 옮기면 닫는다(W4b)
   }
   useEffect(() => {
     if (tabSignal === 0) return;
@@ -216,6 +218,34 @@ export default function App() {
   const showMap = isPhone ? curTab === (viewerRole === '중개사' ? 'find' : 'map') : !folded;
   const headFolded = isPhone ? selected !== null || restoring : folded;
   /*
+    휴대폰 지도 가득(👤 2026-10-19 W4b 1번 「안 A」) — 중개사가 아닌 사람이 구를 고른 채 「지도」 탭에 있을 때.
+    `mapLayout` = 지도 꼴(휴대폰 비중개사는 **탭과 상관없이** full — 탭을 옮겨도 같은 노드가 숨기만 하게 · 중개사·넓은 화면은 카드).
+    `regionOpen` = 띠 「서울 강남구 ▾」로 지역 고르개를 펼쳤나(구를 고르거나 탭을 옮기면 닫힌다).
+  */
+  const mapLayout: 'card' | 'full' = isPhone && viewerRole !== '중개사' ? 'full' : 'card';
+  const mapFull = mapLayout === 'full' && sigungu !== null && curTab === 'map';
+  const [regionOpen, setRegionOpen] = useState(false);
+  /*
+    띠로 펼친 지역 고르개에서 구를 고르면 고르개가 닫혀(숨어) 커서가 갈 곳을 잃는다 → 띠 단추로 돌려 둔다(W4b 보완 C2).
+    ⓘ 화면은 굴리지 않는다(`preventScroll`) · 띠가 없어진 경우(구 해제)는 아무것도 안 한다.
+  */
+  const stripFocusRef = useRef(false);
+  useEffect(() => {
+    if (regionOpen || !stripFocusRef.current) return;
+    stripFocusRef.current = false;
+    document.querySelector<HTMLButtonElement>('.rstrip__btn')?.focus({ preventScroll: true });
+  }, [regionOpen]);
+  /*
+    지도 그려 두기(W4b · 결정 0039 §4-11) — 휴대폰에서 한 번 보인 지도는 탭을 옮겨도 언마운트하지 않고 `hidden` 으로 숨긴다
+    (돌아오면 `relayout` 한 번 → 확대·이동·누른 상권 그대로). 첫 방문(그 지도 탭에 아직 안 간 사람)은 지금처럼 안 그린다
+    (카카오·상권 파일을 안 받는다). ⛔ 구·꼴이 바뀌면 다시 보일 때 새로 그린다 — 숨은(크기 0) 칸에서 태어나면 첫 범위가 틀린다.
+    넓은 화면은 지금 그대로(접히면 안 그림 — S1).
+  */
+  const mapKey = `map:${sigungu ?? '__none__'}:${isPhone ? 'phone' : 'wide'}:${mapLayout}`;
+  const [mapSeenKey, setMapSeenKey] = useState<string | null>(null);
+  if (isPhone && showMap && sigungu !== null && mapSeenKey !== mapKey) setMapSeenKey(mapKey);
+  const mapMounted = showMap || (isPhone && mapSeenKey === mapKey);
+  /*
     입구 카드 둘(LH·단가 흐름)을 세울 때 — 구를 골랐고 되살리는 중이 아니고, 넓은 화면은 건물을 안 열었을 때만(지금 그대로).
     휴대폰은 건물을 열어 둔 채여도 찾기 탭에 선다(보던 건물이 남는 탭 꼴이라 · 검사 🟠 F2) — 다른 탭에선 CSS 가 숨기고,
     종이(건물 있음)에서는 인쇄 감춤 `.app--tabs.app--bld .app__main > .card` 가 빼서 종이는 건물 한 장 그대로다.
@@ -306,6 +336,8 @@ export default function App() {
     setSigunguName(code ? (name ?? null) : null);
     setMapPick(EMPTY_MAP_PICK);
     setSelected(null);
+    if (regionOpen) stripFocusRef.current = true; // 닫은 뒤 커서를 띠 단추로(위 effect · C2)
+    setRegionOpen(false); // 띠로 펼쳤으면 구를 고른 뒤 닫는다(다른 구를 골라도 · W4b)
   }
 
   // 검색으로 건물을 고르면 "링크로 들어왔다가 실패한 상태"는 끝난 것이다.
@@ -574,10 +606,10 @@ export default function App() {
         지도는 바깥 지도 SDK 를 태우는 자리라 우리 코드만으로는 터질 자리를 다 못 셈한다.
         ⛔ 입구가 접힌 동안(건물을 연 채)에는 그리지 않는다 — 종이에도 안 나온다(👤 2026-10-15). 펼치면 새로 그린다.
       */
-      !showMap ? null : (
+      !mapMounted ? null : (
         <ErrorBoundary
-          // 휴대폰 ↔ 넓은 화면이 바뀌면(돌리기) 새 칸 크기에서 다시 태어나게 꼴도 넣는다(relayout 대신 · W4a).
-          key={`map:${sigungu ?? '__none__'}:${isPhone ? 'phone' : 'wide'}`}
+          // 휴대폰 ↔ 넓은 화면이 바뀌면(돌리기) 새 칸 크기에서 다시 태어나게 꼴도 넣는다(W4a) · 지도 꼴(card·full)도(W4b).
+          key={mapKey}
           area="상권 지도"
           context={{ sigungu, sigungu_nm: sigunguName }}
         >
@@ -589,6 +621,8 @@ export default function App() {
             chip={activeChip}
             pick={mapPick}
             onPickChange={setMapPick}
+            layout={mapLayout}
+            visible={showMap}
             headExtra={
               viewerRole === '창업자' ? (
                 <FounderChips chip={founderChip} onChange={setFounderChip} />
@@ -609,7 +643,7 @@ export default function App() {
     <div
       className={`app${headFolded ? ' app--folded' : ''}${isPhone ? ' app--tabs' : ''}${
         isPhone && selected !== null ? ' app--bld' : ''
-      }`}
+      }${mapFull ? ' app--mapfull' : ''}${mapFull && regionOpen ? ' app--regionopen' : ''}`}
       data-tab={isPhone ? curTab : undefined}
     >
       {/*
@@ -716,6 +750,19 @@ export default function App() {
           )
         )}
 
+        {/*
+          휴대폰 지도 탭 위 한 줄 띠(👤 W4b 1번 「안 A」) — 누르면 아래 지역 고르개(같은 하나)가 띠 아래로 펼쳐진다.
+          ⓘ 휴대폰 지도 가득일 때만 그린다(넓은 화면·중개사·구 고르기 전 DOM 0) · 종이에서 빠진다(`.rstrip`).
+        */}
+        {mapFull && (
+          <RegionStrip
+            place={placeLabel}
+            open={regionOpen}
+            controls="region-panel"
+            onToggle={() => setRegionOpen((v) => !v)}
+          />
+        )}
+
         {/* ⓘ 접힌 동안 `hidden` 으로 숨기기만 한다 — 안의 검색창·지역 고르개가 다시 태어나지 않게(위 `entryOpen`). */}
         <div className="entry" id="entry-panel" ref={entryRef} hidden={entryHidden}>
           {/*
@@ -733,6 +780,7 @@ export default function App() {
             selectedSigungu={sigungu}
             onSelectSigungu={handleSelectSigungu}
             onSigunguNameResolved={handleSigunguNameResolved}
+            id={mapFull ? 'region-panel' : undefined}
           />
 
           {/*
