@@ -331,7 +331,21 @@ async function unfoldEntry(page: Page, button: string | RegExp = '다른 건물 
     }
     return;
   }
+  // PC 두 칸(결정 0039 W5 · 1024px 이상 — chromium 판 1280)은 바가 없고 왼쪽 칸이 늘 서 있다 — 띠로 접혀 있으면 펼치기만.
+  if (await isTwoCols(page)) {
+    const rail = page.getByRole('button', { name: '왼쪽 칸 펼치기' });
+    if ((await rail.count()) > 0) await rail.click();
+    return;
+  }
   await page.locator('.entrybar').getByRole('button', { name: button }).click();
+}
+
+/**
+ * PC 두 칸(결정 0039 W5)인가 — 1024px 이상(chromium 판 1280×720)에서만 `.app--wide` 가 붙는다.
+ * ⓘ 화면이 그려지기 전(새로고침 직후)에도 맞게 창 폭으로 가른다 — 이름표가 실제로 붙는지는 BV 가 본다.
+ */
+async function isTwoCols(page: Page): Promise<boolean> {
+  return (page.viewportSize()?.width ?? 0) >= 1024;
 }
 
 /** 휴대폰 아래 탭(결정 0039 W4a)이 서 있나 — mobile 판(412px)에서만 선다. */
@@ -465,7 +479,13 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
       return;
     }
     await expect(page.locator('section.stack')).toHaveCount(0);
-    await expect(page.getByText('위에서 건물을 검색해 선택해 주세요.')).toBeVisible();
+    // PC 두 칸(W5)은 「위에서…」 줄 대신 오른쪽 안내 한 줄(👤 2026-10-21 「가」 — 찾기는 위가 아니라 왼쪽).
+    if (await isTwoCols(page)) {
+      await expect(page.locator('.rpane-empty')).toHaveText('왼쪽에서 건물을 고르면 여기에 층별 화면이 섭니다');
+      await expect(page.getByText('위에서 건물을 검색해 선택해 주세요.')).toHaveCount(0);
+    } else {
+      await expect(page.getByText('위에서 건물을 검색해 선택해 주세요.')).toBeVisible();
+    }
   });
 
   test('C. 검색 결과 0건일 때도 이전 층 스택이 사라진다', async ({ page }) => {
@@ -978,13 +998,17 @@ test.describe('층별 스택뷰 — 주소로 들고 다니기', () => {
     // 구 이름도 살아난다 — 주소에는 코드(11680)만 담겨 있고 이름은 서버 목록에서 얻는다.
     // ⓘ 링크로 연 건물은 입구가 접힌 채 시작한다(S1) — 바에 지금 구, 지도는 펼쳐야 그린다.
     //    휴대폰(W4a)은 바 대신 탭 — 첫 탭이 「건물」이고 지도는 지도 탭에서만 그린다.
+    //    PC 두 칸(W5)은 바가 없고 왼쪽 칸(지도 포함)이 링크로 열어도 그대로 선다(Q5 — 자동 접기 없음).
     if (await isPhoneTabs(page)) {
       await expect(tabButton(page, '건물')).toHaveAttribute('aria-current', 'page');
       await expect(page.locator('.entrybar')).toHaveCount(0);
+    } else if (await isTwoCols(page)) {
+      await expect(page.locator('.entrybar')).toHaveCount(0);
+      await expect(page.locator('section.dmap')).toBeVisible();
     } else {
       await expect(page.locator('.entrybar__place')).toHaveText('서울 강남구');
     }
-    await expect(page.locator('section.dmap')).toHaveCount(0);
+    if (!(await isTwoCols(page))) await expect(page.locator('section.dmap')).toHaveCount(0);
     await unfoldEntry(page, '상권 지도 보기');
     // 휴대폰 지도 탭은 지도 가득(W4b) — 제목 대신 위 띠에 지금 구가 선다.
     if (await isPhoneTabs(page)) await expect(page.locator('.rstrip__btn')).toHaveText('서울 강남구 ▾');
@@ -2144,7 +2168,9 @@ test.describe('첫 화면 — 역할 단추', () => {
     await page.reload();
     // ⓘ 링크로 되살린 건물은 입구가 접힌 채(되살리는 동안도 — S1) — 되살아난 역할은 바 단추 글자로 먼저 본다.
     //    휴대폰(W4a)은 바 대신 탭 — 건물 직행 주소라 첫 탭이 「건물」이다.
+    //    PC 두 칸(W5)은 바가 없고 왼쪽 칸의 역할 줄이 그대로 서 있다 — 되살아난 역할을 그 줄에서 본다.
     if (await isPhoneTabs(page)) await expect(tabButton(page, '건물')).toHaveAttribute('aria-current', 'page');
+    else if (await isTwoCols(page)) await expect(roleBtn('창업자')).toHaveAttribute('aria-pressed', 'true');
     else await expect(page.locator('.entrybar').getByRole('button', { name: '나는 창업자' })).toBeVisible();
     await expect(titles).toHaveText(FOUNDER);
     await expect(opened).toHaveCount(4);
@@ -2244,8 +2270,13 @@ test.describe('첫 화면 — 창업자 입구 · 업종 칩', () => {
     // 접힌 바에 고른 업종 글자(👤 G2 · 단추 아님) — 카드의 굵은 줄이 왜 굵은지 접힌 채로도 보인다. 종이에선 바째 빠진다.
     // ⓘ 지도 기억 되살리기(G1)는 E2E 에서 지도 알맹이가 안 그려져(키 없음) 볼 수 없다 — `DistrictMap.test` 「G1」·`App.mapPick.test` 가 본다.
     // ⓘ 휴대폰(W4a)은 바 대신 탭이라 이 글자가 없다(건물 탭으로 바로 간다).
+    // ⓘ PC 두 칸(W5)은 바가 없다 — 왼쪽 칸 지도 머리의 칩 줄이 건물을 연 채로도 그대로 보인다(Q5).
     if (phone) {
       await expect(tabButton(page, '건물')).toHaveAttribute('aria-current', 'page');
+    } else if (await isTwoCols(page)) {
+      await expect(page.locator('.entrybar')).toHaveCount(0);
+      await expect(chipBtn('카페')).toBeVisible();
+      await expect(chipBtn('카페')).toHaveAttribute('aria-pressed', 'true');
     } else {
       await expect(page.locator('.entrybar .entrybar__chip')).toHaveText('업종: 카페');
       await page.emulateMedia({ media: 'print' });
@@ -3012,8 +3043,10 @@ test.describe('첫 화면 — 건물을 열면 입구가 한 줄로 접힌다', 
   test('AY. 검색으로 연 건물 이름이 첫 화면 높이 안에 · 바 단추 44px · 펼치면 입력칸에 커서 · 접힌 지도는 종이에 없고 펼친 지도는 종이에 나온다', async ({
     page,
   }, testInfo) => {
-    // 넓은 화면은 흔한 노트북 폭(1366×768)으로 잰다 · 휴대폰은 Pixel 7 프리셋 그대로(412×839).
-    if (testInfo.project.name === 'chromium') await page.setViewportSize({ width: 1366, height: 768 });
+    // 넓은 화면은 한 열 폭(1000×768)으로 잰다 · 휴대폰은 Pixel 7 프리셋 그대로(412×839).
+    // ⓘ 2026-10-21 W5 — 1024px 이상은 PC 두 칸이라 S1 접기가 없다(결정 0039 §4-13). S1 이 남는 721~1023 을 지키려고 1366 → 1000 으로
+    //   옮겼다(높이 768 그대로). 1366×768 두 칸에서 건물 이름이 첫 화면 안인지는 BV 가 잰다.
+    if (testInfo.project.name === 'chromium') await page.setViewportSize({ width: 1000, height: 768 });
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
     await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()]);
@@ -3273,13 +3306,16 @@ test.describe('누르는 것 44px · 글자 13px', () => {
     await expect(head).toBeVisible();
     const vh = page.viewportSize()!.height;
     const phone = await isPhoneTabs(page);
-    // 휴대폰(W4a)은 바 대신 아래 탭 막대(늘 화면 안 · 고른 탭 = 건물).
-    await expect(page.locator(phone ? 'nav.tabbar' : '.entrybar')).toBeInViewport();
+    const cols = await isTwoCols(page);
+    // 휴대폰(W4a)은 바 대신 아래 탭 막대(늘 화면 안 · 고른 탭 = 건물) · PC 두 칸(W5)은 바 대신 왼쪽 칸(화면에 붙어 늘 화면 안).
+    await expect(page.locator(phone ? 'nav.tabbar' : cols ? '.entry' : '.entrybar')).toBeInViewport();
     const title = (await head.getByRole('heading').first().boundingBox())!;
     expect(title.y).toBeGreaterThanOrEqual(0);
     expect(title.y + title.height).toBeLessThanOrEqual(vh);
     // 커서는 바의 첫 단추(고른 결과 줄이 숨어 커서가 문서 맨 앞으로 날아가지 않게) · 휴대폰은 고른 탭(건물).
+    // PC 두 칸은 결과 줄이 숨지 않는다 — 누른 결과 줄에 그대로(문서 맨 앞으로 안 날아간다).
     if (phone) await expect(tabButton(page, '건물')).toBeFocused();
+    else if (cols) await expect(last).toBeFocused();
     else await expect(page.getByRole('button', { name: '다른 건물 찾기' })).toBeFocused();
   });
 });
@@ -3849,7 +3885,9 @@ test.describe('첫 화면 — 역할 고르기 큰 카드', () => {
     await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()]);
     await page.goto(`/?sgg=11680&bld=${LINK_BLD}`);
     await expect(page.locator('section.stack').getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
+    // PC 두 칸(W5)은 바가 없고 왼쪽 칸에 작은 역할 줄이 그대로 선다(아래에서 본다).
     if (await isPhoneTabs(page)) await expect(tabButton(page, '건물')).toHaveAttribute('aria-current', 'page');
+    else if (await isTwoCols(page)) await expect(page.locator('.entrybar')).toHaveCount(0);
     else await expect(page.locator('.entrybar').getByRole('button', { name: '나는 역할 고르기' })).toBeVisible();
     await unfoldEntry(page, '나는 역할 고르기'); // 휴대폰은 「더보기」 탭
     await expect(page.locator('section.role')).toBeVisible();
@@ -4506,5 +4544,183 @@ test.describe('휴대폰 지도 가득 · 상권 판 · 홈 화면 안내 (결�
     await expect(hint).toBeHidden();
     await page.emulateMedia({ media: null });
     await expect(hint).toBeVisible();
+  });
+});
+
+// ── PC 두 칸 (결정 0039 Q5 · W5 · §4-13 · 👤 2026-10-21 4건) ─────────────────────────────────────────────
+// 1024px 이상(chromium 판 1280×720)에서만 선다 — 휴대폰(mobile 판)은 두 칸 이름표·새 단추 0 을 보고 끝난다(skip 0).
+// 배선(이름표·`inert`·같은 노드·체크란)은 vitest(`App.wide.test.tsx`)도 본다 — 여기서만 보이는 것은 **칸의 실제 자리
+// (1/3 · 56px 띠 · 화면에 붙음) · 가로 넘침 · 종이**다. ⓘ E2E 엔 카카오 키가 없어 지도 칸은 안내 글뿐(지도 그림의 종이 모양은 못 본다).
+test.describe('PC 두 칸', () => {
+  async function openTall(page: Page) {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    // 층이 많은 건물 — 오른쪽 칸이 화면보다 훨씬 길어야 '왼쪽은 화면에 붙음'을 잴 수 있다.
+    await mockFloorStack(page, [], Array.from({ length: 24 }, (_, i) => floorRow({ floor_no: i + 1 })));
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+  }
+
+  async function phoneHasNoCols(page: Page) {
+    await expect(page.locator('nav.tabbar')).toHaveCount(1);
+    for (const sel of ['.app--wide', '.app--lcollapsed', '.entry__fold', '.lrail', '.mapprint', '.rpane-empty']) {
+      await expect(page.locator(sel), sel).toHaveCount(0);
+    }
+  }
+
+  test('BV. 1280 두 칸 — 왼쪽 ≈ 1/3 · 오른쪽 건물 · 건물을 열어도 같은 지도 · 「왼쪽 칸 접기」 → 56px 띠(건물 칸 넓어짐) → 펼치면 같은 지도 · 왼쪽은 화면에 붙음 · 가로 넘침 0 · 1366×768 건물 이름 첫 화면 · 1023 은 지금 한 열', async ({
+    page,
+  }, testInfo) => {
+    await openTall(page);
+    if (testInfo.project.name === 'mobile') {
+      await phoneHasNoCols(page);
+      return;
+    }
+    await expect(page.locator('.app')).toHaveClass(/app--wide/);
+    // 건물 없음 = 오른쪽 안내 한 줄(👤 「가」 — 글자 그대로) · 「위에서…」 줄 없음.
+    await expect(page.locator('.rpane-empty')).toHaveText('왼쪽에서 건물을 고르면 여기에 층별 화면이 섭니다');
+    await expect(page.getByText('위에서 건물을 검색해 선택해 주세요.')).toHaveCount(0);
+    const map = page.locator('section.dmap');
+    await expect(map).toBeVisible();
+    await map.evaluate((el) => el.setAttribute('data-w5-mark', '1'));
+
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+    const stack = page.locator('section.stack');
+    await expect(stack.getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
+
+    // ① 자리 — 왼쪽 칸 오른쪽 끝 < 건물 칸 왼쪽 끝 · 왼쪽 폭 ≈ (본문 폭 − 틈 24) ÷ 3 ± 20px · 바 없음 · 같은 지도 노드가 보임(Q5).
+    const box = async (sel: string) => (await page.locator(sel).first().boundingBox())!;
+    const left = await box('.entry');
+    const right = await box('section.stack');
+    const main = await box('.app__main');
+    expect(left.x + left.width).toBeLessThan(right.x);
+    expect(Math.abs(left.width - (main.width - 24) / 3)).toBeLessThanOrEqual(20);
+    expect(left.y).toBeLessThanOrEqual(right.y + 1); // 두 칸이 같은 줄에서 시작한다(아래로 쌓이지 않음)
+    await expect(page.locator('.entrybar')).toHaveCount(0);
+    await expect(page.locator('section.dmap[data-w5-mark="1"]')).toBeVisible();
+    expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+
+    // ② 왼쪽은 화면에 붙는다 — 건물 칸 끝(층별 화면 맨 아래)까지 굴려도 왼쪽 칸 위가 화면 안(0 이상) · 지도·검색이 늘 보임.
+    //    ⓘ 꼬리말(두 칸 아래 전체 폭)까지 내려가면 왼쪽 칸도 제 자리(본문 grid 칸)를 따라 올라간다 — sticky 의 원래 동작.
+    await page.evaluate(
+      'window.scrollTo(0, window.scrollY + document.querySelector("section.stack").getBoundingClientRect().bottom - window.innerHeight)',
+    );
+    expect(await page.evaluate(() => (globalThis as unknown as { scrollY: number }).scrollY)).toBeGreaterThan(500);
+    const stackEnd = await box('section.stack');
+    expect(Math.abs(stackEnd.y + stackEnd.height - page.viewportSize()!.height)).toBeLessThanOrEqual(2); // 정말 건물 칸 끝이다
+    const stuck = await box('.entry');
+    expect(stuck.y).toBeGreaterThanOrEqual(0);
+    expect(stuck.y).toBeLessThanOrEqual(20);
+    await expect(page.getByLabel('건물명 또는 주소')).toBeInViewport();
+    expect(await page.locator('.entry').evaluate((el) => el.ownerDocument.defaultView!.getComputedStyle(el).overflowY)).toBe('auto');
+    await page.evaluate('window.scrollTo(0, 0)');
+
+    // ③ 「왼쪽 칸 접기」(44px) → 56px 띠 · 건물 칸이 넓어진다 · 띠 단추 44px · 구 이름 세로 글.
+    const fold = page.getByRole('button', { name: '왼쪽 칸 접기' });
+    expect((await fold.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await fold.click();
+    await expect(page.locator('.entry')).toBeHidden();
+    const rail = await box('.lrail');
+    expect(Math.round(rail.width)).toBe(56);
+    expect((await box('section.stack')).width).toBeGreaterThan(right.width + 250);
+    for (const b of await page.locator('.lrail').getByRole('button').all()) {
+      expect((await b.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    }
+    await expect(page.locator('.lrail__place')).toHaveText('서울 강남구');
+    expect(await page.locator('.lrail__place').evaluate((el) => el.ownerDocument.defaultView!.getComputedStyle(el).writingMode)).toBe('vertical-rl');
+    await expect(page.getByRole('button', { name: '왼쪽 칸 펼치기' })).toBeFocused();
+    expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+
+    // ④ 펼치면 같은 지도 노드 그대로(언마운트 0) · 커서는 「왼쪽 칸 접기」.
+    await page.getByRole('button', { name: '왼쪽 칸 펼치기' }).click();
+    await expect(page.locator('.lrail')).toHaveCount(0);
+    await expect(page.locator('section.dmap[data-w5-mark="1"]')).toBeVisible();
+    await expect(fold).toBeFocused();
+    await page.screenshot({ path: testInfo.outputPath('bv-two-cols-1280.png') });
+
+    // ⑤ 흔한 노트북 1366×768 — 건물 이름이 문서 맨 위 첫 화면 안(S1 의 AY ① 과 같은 잣대).
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await page.evaluate('window.scrollTo(0, 0)');
+    const title = (await stack.getByRole('heading', { name: '테스트빌딩' }).boundingBox())!;
+    expect(title.y + title.height).toBeLessThanOrEqual(768);
+
+    // ⑥ 1023 — 두 칸이 아니다: 지금 한 열(건물을 연 채라 S1 바 · 입구 숨김 · 지도 안 그림).
+    await page.setViewportSize({ width: 1023, height: 720 });
+    await expect(page.locator('.app')).not.toHaveClass(/app--wide/);
+    await expect(page.locator('.entrybar')).toBeVisible();
+    await expect(page.locator('.entry')).toBeHidden();
+    await expect(page.locator('section.dmap')).toHaveCount(0);
+    await expect(page.locator('.entry__fold')).toHaveCount(0);
+    await expect(page.locator('.mapprint')).toHaveCount(0);
+    expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+  });
+
+  test('BW. 종이 — 두 칸에서 체크란 끔 = 오른쪽(건물)만 · 「상권 지도 넣기」 켬 = 지도 덩어리만 더(역할·지역·검색은 빠짐 · 띠로 접은 채여도) · 체크란·접기 단추는 종이에 없음 · 1023 은 지금 규칙', async ({
+    page,
+  }, testInfo) => {
+    await openTall(page);
+    if (testInfo.project.name === 'mobile') {
+      await phoneHasNoCols(page);
+      return;
+    }
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+    const stack = page.locator('section.stack');
+    await expect(stack.getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
+    const box = page.getByRole('checkbox', { name: '상권 지도 넣기' });
+    await expect(box).not.toBeChecked();
+    expect((await page.locator('.mapprint').boundingBox())!.height).toBeGreaterThanOrEqual(44);
+
+    // ① 끔(기본) — 종이 = 건물만: 왼쪽 칸(지도 포함) 통째 빠짐 · 종이 머리글·층별 화면은 남음.
+    await page.emulateMedia({ media: 'print' });
+    await expect(page.locator('.entry')).toBeHidden();
+    await expect(page.locator('section.dmap')).toBeHidden();
+    await expect(stack).toBeVisible();
+    await expect(page.locator('.printmeta')).toBeVisible();
+    await expect(page.locator('.mapprint')).toBeHidden();
+    expect(await page.locator('.app__main').evaluate((el) => el.ownerDocument.defaultView!.getComputedStyle(el).display)).toBe('block'); // 종이에선 grid 풀림
+    await page.emulateMedia({ media: null });
+
+    // ② 켬 — 종이에 지도 덩어리(제목)만 더 · 역할·지역·검색·접기 단추·지도 접기 단추는 빠짐 · 차례 = 지도 → 건물.
+    await box.check();
+    await expect(page.locator('.app')).toHaveClass(/app--printmap/);
+    await page.emulateMedia({ media: 'print' });
+    await expect(page.locator('section.dmap')).toBeVisible();
+    await expect(page.getByRole('heading', { name: /강남구 상권 지도/ })).toBeVisible();
+    for (const sel of ['.role', '.region', '.search', '.entry__fold', '.dmap__toggle', '.mapprint']) {
+      await expect(page.locator(sel).first(), sel).toBeHidden();
+    }
+    await expect(stack).toBeVisible();
+    const y = async (sel: string) => (await page.locator(sel).first().boundingBox())!.y;
+    expect(await y('section.dmap')).toBeLessThan(await y('section.stack'));
+    await page.emulateMedia({ media: null });
+
+    // ③ 켠 채 왼쪽을 띠로 접어도 종이엔 지도(숨은 지도를 종이에서 되살린다) · 띠는 종이에 없음.
+    await page.getByRole('button', { name: '왼쪽 칸 접기' }).click();
+    await expect(page.locator('section.dmap')).toBeHidden();
+    await page.emulateMedia({ media: 'print' });
+    await expect(page.locator('section.dmap')).toBeVisible();
+    await expect(page.locator('.lrail')).toBeHidden();
+    await page.emulateMedia({ media: null });
+    await page.getByRole('button', { name: '왼쪽 칸 펼치기' }).click();
+
+    // ④ 다시 끄면 종이 = 건물만.
+    await box.uncheck();
+    await page.emulateMedia({ media: 'print' });
+    await expect(page.locator('section.dmap')).toBeHidden();
+    await page.emulateMedia({ media: null });
+
+    // ⑤ 1023(한 열) — 체크란 없음 · 지금 10-15 규칙: 접힌 채면 지도 안 그림(종이에도 없음) · 「상권 지도 보기」로 펼치면 종이에 나온다.
+    await page.setViewportSize({ width: 1023, height: 720 });
+    await expect(page.locator('.mapprint')).toHaveCount(0);
+    await page.emulateMedia({ media: 'print' });
+    await expect(page.locator('section.dmap')).toHaveCount(0);
+    await page.emulateMedia({ media: null });
+    await unfoldEntry(page, '상권 지도 보기');
+    await expect(page.locator('section.dmap')).toBeVisible();
+    await page.emulateMedia({ media: 'print' });
+    await expect(page.locator('section.dmap')).toBeVisible();
+    await page.emulateMedia({ media: null });
   });
 });

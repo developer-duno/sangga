@@ -103,7 +103,7 @@ main → App → components → lib → types   (단방향 — 역방향 import 
 | 서버 | **`api/building.ts` · `api/hub.ts` 둘**(① 건물별 첫 HTML · 결정 0037 — 건물 주소의 첫 HTML 머리글·소개문만 그 건물 것으로 바꾼다 · 본체 `src/lib/buildingHandler.ts` ② 구 입구 허브 첫 HTML · 결정 0043 — 구 입구 주소 `/?sgg=`(bld 없음)의 첫 HTML 에 그 구 건물 링크 전부 · 본체 `src/lib/hubHandler.ts` · 재료 = 빌드 때 굽는 `public/hub/<sgg>.json`(요청 때 DB 0) · 레포 루트 `middleware.ts`(Routing Middleware)가 `/?…bld=…` 은 ①, `bld` 없는 `/?sgg=<5자리>` 는 ② 로 넘긴다 · 되돌리기 = `middleware.ts` 삭제(허브만 = 그 안의 허브 갈래 삭제) · 2026-10-09·10-18). **나머지는 그대로 DB 함수** — 화면이 Supabase PostgREST·RPC 를 직접 부르고(2026-08-25 실측 때는 서버리스 함수 0개), Vercel 은 정적 파일 호스팅·배포와 이 함수 둘만 맡는다. ⚠️ 화면 로직에 고칠 서버 코드는 없다 — 서버에서 해야 할 일은 전부 DB 함수(schema.sql)로 간다 |
 | DB | Supabase PostgreSQL + PostGIS (**별도 프로젝트**) |
 | 수집 | ⬜ **여전히 로컬 수동 실행이다** — 받기·적재·백업 전부 사람 손. 다만 **놓치는 것만은 막아 뒀다**: 감시 그물 여섯(분기 스냅샷 `sangkwon-quarterly-watch` · 상권 원천 `district-source-watch` · 라이브 생존 `live-health-watch` · 의견함 주간 알림 `feedback-digest` · LH 상가 공고 `lh-notice-watch` · 지난 날짜 감시 `data-freshness-watch`)이 서로를 전부 본다(`check_watch_heartbeat.py`). ⛔ **새 예약 워크플로를 만들면 그물에도 넣어야 한다** — `DEFAULT_WORKFLOWS` 와 형제들의 `--workflow` 인자 둘 다. 빠뜨리면 테스트가 빨간불로 잡는다(`schedule:` 있는 파일을 훑어 대조한다). ⛔ 알리기만 한다 — 적재는 여전히 사람 손. ⛔ **검색 함수만 고장 난 경우는 여전히 아무도 안 본다**. 적재 후 기준선 상수(`LATEST_KNOWN_QUARTER` · `LATEST_KNOWN_NOTICE_DATE` · 상권 원천 기준선)는 **사람이 올린다**. 각 그물의 비밀값·종료코드·이슈 제목 규칙·못 보는 틈 = **`.claude/rules/watch-nets.md`**(`.github/`·`scripts/check_*.py`·감시 시험을 열면 자동으로 읽힌다 — ⚠️ 감시가 연 이슈를 처리하거나 감시를 고칠 때는 그 파일을 먼저 직접 연다) |
-| 테스트 | 파이썬 **pytest 5,403개** + 프론트 **vitest 1,640개**(jsdom + @testing-library/react) + **E2E playwright 68개**(`e2e/floor-stack.spec.ts` — 시험별 내용 = **`.claude/rules/e2e-catalog.md`**, `e2e/` 를 열면 자동으로 읽힌다). ⚠️ **E2E 는 같은 68개를 넓은 화면(chromium)과 휴대폰(mobile — Pixel 7 프리셋, 폭 412px·터치)에서 두 번 돌려 총 136회다** — 좁은 폭은 `styles.css` 의 `@media (max-width: 720px)` 가 판을 다시 짜는 자리라 넓은 화면만 보면 못 잡는다(2026-08-22 층별 막대를 모바일에서만 숨긴 사고). 개수를 셀 때 68(시험)과 136(실행)을 헷갈리지 말 것. CI가 셋 다 돌린다(`pnpm test:e2e`). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도. ⛔ **인쇄는 거의 전부가 CSS라 jsdom(vitest)이 원리적으로 못 본다** — 인쇄 매체를 흉내 낼 수 있는 곳은 E2E 뿐이다 |
+| 테스트 | 파이썬 **pytest 5,403개** + 프론트 **vitest 1,658개**(jsdom + @testing-library/react) + **E2E playwright 70개**(`e2e/floor-stack.spec.ts` — 시험별 내용 = **`.claude/rules/e2e-catalog.md`**, `e2e/` 를 열면 자동으로 읽힌다). ⚠️ **E2E 는 같은 70개를 넓은 화면(chromium — 1280×720 = PC 두 칸 · 결정 0039 W5)과 휴대폰(mobile — Pixel 7 프리셋, 폭 412px·터치)에서 두 번 돌려 총 140회다** — 좁은 폭은 `styles.css` 의 `@media (max-width: 720px)` 가 판을 다시 짜는 자리라 넓은 화면만 보면 못 잡는다(2026-08-22 층별 막대를 모바일에서만 숨긴 사고). 개수를 셀 때 70(시험)과 140(실행)을 헷갈리지 말 것. CI가 셋 다 돌린다(`pnpm test:e2e`). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도. ⛔ **인쇄는 거의 전부가 CSS라 jsdom(vitest)이 원리적으로 못 본다** — 인쇄 매체를 흉내 낼 수 있는 곳은 E2E 뿐이다 |
 
 **성능 원칙**: 상권(수천 개)은 사전계산 정적 JSON, 호실(수백만)은 Supabase 쿼리.
 정적 JSON 폴백을 호실에는 두지 않는다.
@@ -136,13 +136,13 @@ main → App → components → lib → types   (단방향 — 역방향 import 
 ```bash
 pnpm dev                                        # 개발 서버 (http://localhost:5173)
 pnpm build                                      # 타입 검사 + 빌드 (tsc -b && vite build)
-pnpm test                                       # 프론트 테스트 (vitest, 1,640개)
-pnpm test:e2e                                   # ★ 화면 E2E (playwright, 68개 × 넓은화면·휴대폰 2벌 = 136회) — 아래 경고 참조
+pnpm test                                       # 프론트 테스트 (vitest, 1,658개)
+pnpm test:e2e                                   # ★ 화면 E2E (playwright, 70개 × 넓은화면·휴대폰 2벌 = 140회) — 아래 경고 참조
 pnpm exec oxlint                                # 프론트 린트
 ```
 
 ```bash
-python -m pytest tests/ -q                      # 파이썬 테스트 (5,403개 — 10-19 noindex 판 수집 실측(--collect-only) · 그 앞 후속 묶음 판 전체 실행 5,398 passed · 3 skipped(수집 5,401) + 이번 표적 2 · vitest 1,640 = 10-19 W4b 보완 1 뒤 전체 실행 1,640(71파일 전부 통과) · E2E 68 은 e2e/floor-stack.spec.ts 의 시험 수 — 10-19 W4b 뒤 136회 실행 실측(136 passed)) · 워크트리는 원본 자료가 없어 몇 개를 건너뛴다(10-06 실측 3) · CI 는 로컬 PostgreSQL·shapely 가 없어 약 30개를 더 건너뛴다(test_district_openclose_migration 실행 시험 16 · test_industry_median_migration 실행 시험 11 · test_backtest_openclose 도형 1 등) · 지난 개수 이력은 git log -p CLAUDE.md)
+python -m pytest tests/ -q                      # 파이썬 테스트 (5,403개 — 10-19 noindex 판 수집 실측(--collect-only) · 그 앞 후속 묶음 판 전체 실행 5,398 passed · 3 skipped(수집 5,401) + 이번 표적 2 · vitest 1,658 = 10-21 W5 뒤 전체 실행 1,658(73파일 전부 통과) · E2E 70 은 e2e/floor-stack.spec.ts 의 시험 수 — 10-21 W5 뒤 140회 실행 실측(전체 140 = 70×2 · 139 passed + mobile R 1 failed(종이 머리 시각 칸이 빈 글 — 흔들림) → mobile R 단독 재실행 2회 통과)) · 워크트리는 원본 자료가 없어 몇 개를 건너뛴다(10-06 실측 3) · CI 는 로컬 PostgreSQL·shapely 가 없어 약 30개를 더 건너뛴다(test_district_openclose_migration 실행 시험 16 · test_industry_median_migration 실행 시험 11 · test_backtest_openclose 도형 1 등) · 지난 개수 이력은 git log -p CLAUDE.md)
 python scripts/check_new_sangkwon_quarter.py    # 새 분기 스냅샷이 떴나 (읽기만, 키 불필요)
 python scripts/check_district_source_update.py  # 상권 원천(서울·소진공) 수정일이 바뀌었나 (읽기만, 키 불필요)
 python scripts/check_watch_heartbeat.py         # 예약 6종이 아직 돌고 있나 (읽기만, 키 불필요 — 멈춤=exit 1 · 조회·판정 실패=2 · 결과 쓰기 실패=4)
