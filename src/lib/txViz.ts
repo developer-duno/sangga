@@ -132,6 +132,8 @@ export type TxLabel = {
   side: 'r' | 'l' | 'c' | 'L' | 'R';
   /** 제 점(묶음이면 점들의 가운데) 높이에서 비켜난 거리(기준 px · 칸 끝에 막힌 반 줄은 빼고) — `TX_LABEL_MAX_SHIFT` 이하. */
   shift: number;
+  /** 이 글자가 말하는 점들(`TxPlot.points` 의 차례 번호 · 오름차순) — 묶음이면 여럿. 글자 없는 점 세기에 쓴다(보완 3 G1). */
+  points: number[];
   box: { x0: number; x1: number; y0: number; y1: number };
 };
 
@@ -139,10 +141,12 @@ export type TxPlot = {
   points: TxPlotPoint[];
   /** 세로 축 상한(㎡당 원). */
   yMaxWon: number;
-  /** 가로 눈금(보완 1 F4) — 축 상한을 4칸으로: 0 · ¼ · ½ · ¾ · 상한(자리 % · ㎡당 원). */
+  /** 가로 눈금(보완 1 F4 · 보완 3 G3) — `txPlotTicks`: 4칸 · 안 나뉘면 5칸 · 그래도 안 나뉘면 0 과 상한(자리 % · ㎡당 원). */
   ticks: Array<{ y: number; won: number }>;
   /** 점 금액 글자 두 벌 — 넓은 화면·종이용(`wide`)과 휴대폰용(`narrow` · 더 좁은 기준 폭으로 비켜 적음). */
   labels: { wide: TxLabel[]; narrow: TxLabel[] };
+  /** 글자를 못 단 점 수(벌마다 · 보완 3 G1) — 0 보다 크면 화면이 「글자 자리가 없는 점 N개 — 금액은 아래 목록에 있습니다」를 적는다. */
+  unlabeled: { wide: number; narrow: number };
   /** 가로 축 양 끝 계약 달(원본 'YYYYMM'). */
   fromYm: string;
   toYm: string;
@@ -199,6 +203,9 @@ export function txLabelWidth(text: string): number {
   }
   return w;
 }
+
+/** 다른 계약 달이 섞인 묶음 글자 꼬리(보완 3 G2 — 마지막 수단 묶음에만 · 같은 달 묶음엔 없다). */
+export const TX_LABEL_MULTI_MONTH = ' · 여러 달';
 
 /** 묶음 글자 — 값 하나면 「260만 ×2」, 여러 값이면 「729만~772만 ×3」(목록·띠와 같은 서식 함수 · 새 서식 0). */
 function labelText(prices: number[], n: number): string {
@@ -266,8 +273,10 @@ function nearestFree(want: number, blocked: Array<{ c: number; d: number }>, lo:
  *     가장 가까운 빈 칸을 고른다(옆 자리는 한도 안에서 위아래로 움직이고, 위·아래 자리는 점에 붙은 한 칸뿐).
  *  ③ 빈 칸이 없으면 — 같은 계약 달 글자가 있으면 그것과 묶고(부딪힌 것 먼저), 없으면 그 글자만 한도를 한 줄 늘려 ①부터 다시.
  *     한도가 칸 높이를 넘도록 자리가 없을 때만(매우 빽빽한 자료) 마지막 수단으로 가로로 가장 가까운 글자와 묶는다.
- *  묶거나 한도를 늘릴 때마다 남은 일이 줄어 반드시 끝난다(글자 하나 + 한도 = 칸 높이면 늘 자리가 있다 — 점을 덮지 않는 자리가
- *  하나도 없을 만큼 칸이 점으로 가득하면 글자 0 으로 끝난다).
+ *     그 글자는 달이 여럿이라고 밝힌다(「… · 여러 달」 · 보완 3 G2).
+ *  ④ 묶을 상대도 없으면(긴 묶음 글자 하나가 세로로 흩어진 점 사이에 못 앉는다 — 검사관 재현: 한 달 12건 · 100만~5,000만)
+ *     **가장 높은 점부터 낱개 글자를 넣을 수 있는 만큼만** 넣는다(보완 3 G1 — 전에는 글자 0). 못 단 점 수는 `txPlot` 이 센다.
+ *  묶거나 한도를 늘릴 때마다 남은 일이 줄어 반드시 끝난다.
  */
 export function txPlotLabels(points: TxPlotPoint[], ref: { w: number; maxW: number; h: number }): TxLabel[] {
   const H = TX_LABEL_H;
@@ -283,11 +292,12 @@ export function txPlotLabels(points: TxPlotPoint[], ref: { w: number; maxW: numb
   }));
   const month = (i: number) => points[i].x; // 같은 계약 달 = 같은 가로 자리.
   let seeds: LabelSeed[] = points.map((p, i) => ({ members: [i], ax: (p.x / 100) * ref.w, ay: (p.y / 100) * ref.h, tier: 1 }));
+  // 다른 달이 섞인 묶음(마지막 수단)은 「… · 여러 달」 — 같은 달 묶음은 그대로(보완 3 G2).
   const textOf = (s: LabelSeed) =>
     labelText(
       s.members.map((i) => points[i].price),
       s.members.reduce((sum, i) => sum + points[i].n, 0),
-    );
+    ) + (new Set(s.members.map(month)).size > 1 ? TX_LABEL_MULTI_MONTH : '');
   /** 자리 후보 — 옆(한도 안에서 위아래로) 또는 점 바로 위·아래(고정 높이). */
   const slotsOf = (s: LabelSeed, w: number): Array<{ span: Span; heights: number[] | null }> => {
     const alpha = s.ax / ref.w;
@@ -303,59 +313,83 @@ export function txPlotLabels(points: TxPlotPoint[], ref: { w: number; maxW: numb
     return out;
   };
 
+  type Placed = { i: number; text: string; span: Span; cy: number };
+  /** 씨앗 하나를 이미 놓은 글자(`placed`)와 모든 점을 피해 놓아 본다 — 자리 또는 null(+ 부딪힌 글자들). */
+  const tryPlace = (s: LabelSeed, placed: Placed[]): { span: Span; cy: number } | { against: number[] } => {
+    const text = textOf(s);
+    const limit = TX_LABEL_MAX_SHIFT * s.tier;
+    const want = Math.min(hi, Math.max(lo, s.ay));
+    let best: { span: Span; cy: number; d: number } | null = null;
+    const againstAll = new Set<number>();
+    for (const slot of slotsOf(s, txLabelWidth(text))) {
+      const against = placed.filter((p) => mayOverlap(slot.span, p.span, ref.w, ref.maxW));
+      for (const p of against) againstAll.add(p.i);
+      const blocked = [
+        ...against.map((p) => ({ c: p.cy, d: S })),
+        ...dots.filter((d) => mayOverlap(slot.span, d.span, ref.w, ref.maxW)).map((d) => ({ c: d.cy, d: H / 2 + DOT + 1 })),
+      ];
+      const cands =
+        slot.heights === null
+          ? [nearestFree(s.ay, blocked, lo, hi)]
+          : slot.heights.filter((y) => y >= lo - 1e-9 && y <= hi + 1e-9 && !blocked.some((b) => Math.abs(y - b.c) < b.d - 1e-9));
+      for (const cy of cands) {
+        if (cy === null || Math.abs(cy - want) > limit + 1e-9) continue;
+        // 옆 자리를 먼저(같은 거리면) — 점 위·아래는 옆이 막혔을 때의 자리.
+        const d = Math.abs(cy - s.ay) + (slot.span.side === 'c' ? 0.5 : 0);
+        if (best === null || d < best.d - 1e-9) best = { span: slot.span, cy, d };
+      }
+    }
+    return best === null ? { against: [...againstAll] } : { span: best.span, cy: best.cy };
+  };
+  const toLabels = (list: LabelSeed[], placed: Placed[]): TxLabel[] =>
+    placed
+      .sort((a, b) => a.i - b.i)
+      .map((p) => {
+        const x0 = p.span.alpha * ref.w + p.span.c;
+        return {
+          text: p.text,
+          x: (list[p.i].ax / ref.w) * 100,
+          y: (p.cy / ref.h) * 100,
+          side: p.span.side,
+          shift: Math.abs(p.cy - Math.min(hi, Math.max(lo, list[p.i].ay))),
+          points: [...list[p.i].members].sort((a, b) => a - b),
+          box: { x0, x1: x0 + p.span.w, y0: p.cy - H / 2, y1: p.cy + H / 2 },
+        };
+      });
+  /**
+   * 마지막 대비(보완 3 G1) — 묶고 비켜도 글자를 다 못 놓을 때 글자 0 으로 끝내지 않는다: **가장 높은 점부터** 낱개 글자를 한 줄 안에서
+   * 넣을 수 있는 만큼만 넣고, 못 넣은 점은 글자 없이 둔다(그 수는 `txPlot` 이 안내 줄로 말한다 · 금액은 아래 목록에 있다).
+   */
+  const partial = (): TxLabel[] => {
+    const list: LabelSeed[] = points
+      .map((p, i) => ({ members: [i], ax: (p.x / 100) * ref.w, ay: (p.y / 100) * ref.h, tier: 1 }))
+      .sort((a, b) => b.ay - a.ay || a.members[0] - b.members[0]);
+    const placed: Placed[] = [];
+    list.forEach((s, i) => {
+      const r = tryPlace(s, placed);
+      if ('span' in r) placed.push({ i, text: textOf(s), span: r.span, cy: r.cy });
+    });
+    return toLabels(list, placed);
+  };
+
   const MAX_ROUNDS = points.length * (maxTier + 2) + 2;
   for (let round = 0; round < MAX_ROUNDS; round += 1) {
     const order = seeds.map((_, i) => i).sort((a, b) => seeds[a].ay - seeds[b].ay || seeds[a].ax - seeds[b].ax);
-    const placed: Array<{ i: number; text: string; span: Span; cy: number }> = [];
+    const placed: Placed[] = [];
     let fail: { i: number; against: number[] } | null = null;
     for (const i of order) {
-      const s = seeds[i];
-      const text = textOf(s);
-      const limit = TX_LABEL_MAX_SHIFT * s.tier;
-      const want = Math.min(hi, Math.max(lo, s.ay));
-      let best: { span: Span; cy: number; d: number } | null = null;
-      const againstAll = new Set<number>();
-      for (const slot of slotsOf(s, txLabelWidth(text))) {
-        const against = placed.filter((p) => mayOverlap(slot.span, p.span, ref.w, ref.maxW));
-        for (const p of against) againstAll.add(p.i);
-        const blocked = [
-          ...against.map((p) => ({ c: p.cy, d: S })),
-          ...dots.filter((d) => mayOverlap(slot.span, d.span, ref.w, ref.maxW)).map((d) => ({ c: d.cy, d: H / 2 + DOT + 1 })),
-        ];
-        const cands =
-          slot.heights === null
-            ? [nearestFree(s.ay, blocked, lo, hi)]
-            : slot.heights.filter((y) => y >= lo - 1e-9 && y <= hi + 1e-9 && !blocked.some((b) => Math.abs(y - b.c) < b.d - 1e-9));
-        for (const cy of cands) {
-          if (cy === null || Math.abs(cy - want) > limit + 1e-9) continue;
-          // 옆 자리를 먼저(같은 거리면) — 점 위·아래는 옆이 막혔을 때의 자리.
-          const d = Math.abs(cy - s.ay) + (slot.span.side === 'c' ? 0.5 : 0);
-          if (best === null || d < best.d - 1e-9) best = { span: slot.span, cy, d };
-        }
-      }
-      if (best === null) {
-        fail = { i, against: [...againstAll] };
+      const r = tryPlace(seeds[i], placed);
+      if (!('span' in r)) {
+        fail = { i, against: r.against };
         break;
       }
-      placed.push({ i, text, span: best.span, cy: best.cy });
+      placed.push({ i, text: textOf(seeds[i]), span: r.span, cy: r.cy });
     }
-    if (fail === null) {
-      return placed
-        .sort((a, b) => a.i - b.i)
-        .map((p) => {
-          const x0 = p.span.alpha * ref.w + p.span.c;
-          return {
-            text: p.text,
-            x: (seeds[p.i].ax / ref.w) * 100,
-            y: (p.cy / ref.h) * 100,
-            side: p.span.side,
-            shift: Math.abs(p.cy - Math.min(hi, Math.max(lo, seeds[p.i].ay))),
-            box: { x0, x1: x0 + p.span.w, y0: p.cy - H / 2, y1: p.cy + H / 2 },
-          };
-        });
-    }
-    // ③ 같은 계약 달 글자와 묶는다(부딪힌 것 먼저 · 그다음 세로로 가까운 것).
+    if (fail === null) return toLabels(seeds, placed);
     const me = seeds[fail.i];
+    // 묶음 글자가 이미 칸보다 넓다 — 더 묶으면 더 넓어질 뿐이다 → 가장 높은 점부터 낱개로(보완 3 G1 · 검사관 재현에서 「×98 · 여러 달」 한 글자가 칸 밖으로 나갔다).
+    if (txLabelWidth(textOf(me)) > ref.w) return partial();
+    // ③ 같은 계약 달 글자와 묶는다(부딪힌 것 먼저 · 그다음 세로로 가까운 것).
     const sameMonth = seeds
       .map((_, j) => j)
       .filter((j) => j !== fail!.i && month(seeds[j].members[0]) === month(me.members[0]) && seeds[j].ax === me.ax);
@@ -373,7 +407,8 @@ export function txPlotLabels(points: TxPlotPoint[], ref: { w: number; maxW: numb
     } else {
       // 마지막 수단(칸 높이만큼 비켜도 자리가 없는 매우 빽빽한 자료) — 가로로 가장 가까운 글자와 묶는다.
       const pool = fail.against.length > 0 ? fail.against : seeds.map((_, j) => j).filter((j) => j !== fail!.i);
-      if (pool.length === 0) return []; // 점이 칸을 가득 메워 글자 하나도 못 놓는다 — 글자 0(점을 덮지 않는다).
+      // 묶을 상대도 없다(글자 하나가 점 사이에 못 앉는다) — 가장 높은 점부터 넣을 수 있는 만큼만(보완 3 G1).
+      if (pool.length === 0) return partial();
       partner = [...pool].sort(
         (a, b) =>
           Math.abs(seeds[a].ax - me.ax) - Math.abs(seeds[b].ax - me.ax) ||
@@ -389,8 +424,20 @@ export function txPlotLabels(points: TxPlotPoint[], ref: { w: number; maxW: numb
     };
     seeds = [...seeds.filter((_, j) => j !== fail!.i && j !== partner), merged];
   }
-  // 닿지 않는 자리(위 ③ 설명 — 단계 수에 끝이 있다) — 안전하게 글자 0.
-  return [];
+  // 닿지 않는 자리(위 ③ 설명 — 단계 수에 끝이 있다) — 그래도 글자 0 으로 끝내지 않는다.
+  return partial();
+}
+
+/**
+ * 세로 눈금(보완 3 G3) — 축 상한을 4칸으로 나눈 값이 **만 원 단위 정수**면 4칸, 아니면 5칸, 그래도 아니면 0 과 상한 둘만.
+ * 왜 — 상한 250만을 4칸으로 나누면 62.5·187.5만이 「63만·188만」으로 반올림돼 적힌다(눈금 글이 실제 선 높이와 다른 값을 말한다).
+ * 예: 1,000만 → 0·250·500·750·1,000만 · 250만 → 0·50·100·150·200·250만 · 25만 → 0·5·…·25만 · 1만 → 0·1만.
+ */
+export function txPlotTicks(yMaxWon: number): Array<{ y: number; won: number }> {
+  const man = yMaxWon / 10_000;
+  const isInt = (v: number) => Math.abs(v - Math.round(v)) < 1e-9;
+  const parts = isInt(man / 4) ? 4 : isInt(man / 5) ? 5 : 1;
+  return Array.from({ length: parts + 1 }, (_, k) => ({ y: (k / parts) * 100, won: (yMaxWon * k) / parts }));
 }
 
 /**
@@ -442,11 +489,16 @@ export function txPlot(txs: ParcelTransaction[]): TxPlot | null {
     });
   }
   const seen = new Set(points.map((p) => p.shape));
+  const labels = { wide: txPlotLabels(points, TX_PLOT_REF.wide), narrow: txPlotLabels(points, TX_PLOT_REF.narrow) };
   return {
     points,
     yMaxWon,
-    ticks: [0, 1, 2, 3, 4].map((k) => ({ y: k * 25, won: (yMaxWon * k) / 4 })),
-    labels: { wide: txPlotLabels(points, TX_PLOT_REF.wide), narrow: txPlotLabels(points, TX_PLOT_REF.narrow) },
+    ticks: txPlotTicks(yMaxWon),
+    labels,
+    unlabeled: {
+      wide: points.length - new Set(labels.wide.flatMap((l) => l.points)).size,
+      narrow: points.length - new Set(labels.narrow.flatMap((l) => l.points)).size,
+    },
     fromYm: drawable.find((d) => d.idx === lo)!.t.contract_ym,
     toYm: drawable.find((d) => d.idx === hi)!.t.contract_ym,
     skipped,

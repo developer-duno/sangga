@@ -5,6 +5,7 @@ import {
   TX_LABEL_GAP,
   TX_LABEL_H,
   TX_LABEL_MAX_SHIFT,
+  TX_LABEL_MULTI_MONTH,
   TX_PLOT_MIN,
   TX_PLOT_REF,
   TX_SHAPE_ORDER,
@@ -13,6 +14,7 @@ import {
   txLabelWidth,
   txPlot,
   txPlotShows,
+  txPlotTicks,
   txShape,
   mayOverlap,
   type TxLabel,
@@ -308,6 +310,30 @@ const UNION = [
   tx({ floor_no: 1, contract_ym: '202402', unit_price: 5_000_000 }),
 ];
 
+describe('txPlotTicks — 세로 눈금 칸 수(보완 3 G3)', () => {
+  it('4칸이 만 원 단위로 나뉘면 4칸 · 아니면 5칸 · 그래도 아니면 0 과 상한', () => {
+    const won = (max: number) => txPlotTicks(max).map((t) => t.won / 10_000);
+    expect(won(10_000_000)).toEqual([0, 250, 500, 750, 1000]);
+    expect(won(25_000_000)).toEqual([0, 625, 1250, 1875, 2500]);
+    // 250만 ÷ 4 = 62.5만(「63만」 반올림) → 5칸.
+    expect(won(2_500_000)).toEqual([0, 50, 100, 150, 200, 250]);
+    expect(won(250_000)).toEqual([0, 5, 10, 15, 20, 25]);
+    expect(won(50_000)).toEqual([0, 1, 2, 3, 4, 5]);
+    // 2.5만 · 1만 — 4칸도 5칸도 만 원 정수가 아니다 → 둘만.
+    expect(won(25_000)).toEqual([0, 2.5]);
+    expect(won(10_000)).toEqual([0, 1]);
+    // 자리(%)는 칸 수대로 고르게.
+    expect(txPlotTicks(2_500_000).map((t) => t.y)).toEqual([0, 20, 40, 60, 80, 100]);
+    expect(txPlotTicks(10_000).map((t) => t.y)).toEqual([0, 100]);
+    // 모든 눈금 값이 만 원 정수(둘만 남긴 경우의 상한은 빼고) — 화면 글 「63만」 같은 반올림이 없다.
+    for (const max of [10_000, 20_000, 25_000, 50_000, 100_000, 200_000, 250_000, 500_000, 1_000_000, 2_500_000, 50_000_000]) {
+      const ts = txPlotTicks(max);
+      const inner = ts.length === 2 ? [ts[0]] : ts;
+      for (const t of inner) expect(Number.isInteger(t.won / 10_000), `${max} ${t.won}`).toBe(true);
+    }
+  });
+});
+
 describe('txPlot — 겹친 거래 묶기 · 눈금 넷(보완 1 F2·F4)', () => {
   it('같은 달 + 같은 값 + 같은 꼴은 점 하나 · n = 건수 · 다른 꼴·지분 여부가 다르면 따로', () => {
     const p = txPlot([
@@ -352,7 +378,7 @@ describe('txPlotLabels — 점 금액 글자 자리(보완 1 F1·F3)', () => {
       expect(texts).toContain('900만');
       expect(texts).toContain('260만 ×2');
       // 점 하나에 글자 하나 — 묶지 않았으면 11개, 묶었으면 건수 합이 12.
-      const count = (t: string) => Number(/×(\d+)$/.exec(t)?.[1] ?? 1);
+      const count = (t: string) => Number(/×(\d+)(?: · 여러 달)?$/.exec(t)?.[1] ?? 1);
       expect(texts.reduce((s, t) => s + count(t), 0), kind).toBe(12);
     }
     // 넓은 벌은 몰린 2025-07 셋도 낱개로 비켜 적는다(묶지 않는다).
@@ -392,7 +418,7 @@ describe('txPlotLabels — 점 금액 글자 자리(보완 1 F1·F3)', () => {
   it('한 달에 몰려 가까이 둘 칸이 모자라면 「a만~b만 ×N」 묶음 글자로 · 건수 합 그대로 · 겹침 0', () => {
     const many = Array.from({ length: 20 }, (_, i) => tx({ contract_ym: '202507', unit_price: 5_000_000 + i * 10_000, floor_no: i + 3 }));
     const p = txPlot([...many, tx({ contract_ym: '202401', unit_price: 1_000_000 })])!;
-    const count = (t: string) => Number(/×(\d+)$/.exec(t)?.[1] ?? 1);
+    const count = (t: string) => Number(/×(\d+)(?: · 여러 달)?$/.exec(t)?.[1] ?? 1);
     for (const kind of ['wide', 'narrow'] as const) {
       const labels = p.labels[kind];
       expect(overlapPairs(labels), kind).toEqual([]);
@@ -433,9 +459,15 @@ describe('txPlotLabels — 점 금액 글자 자리(보완 1 F1·F3)', () => {
       expect(outOfBox(labels, TX_PLOT_REF[kind]), kind).toEqual([]);
       expect(problemsAtWidths(labels, TX_PLOT_REF[kind]), kind).toEqual([]);
       expect(dotHitsAtWidths(labels, p.points, TX_PLOT_REF[kind]), kind).toEqual([]);
-      const count = (t: string) => Number(/×(\d+)$/.exec(t)?.[1] ?? 1);
-      expect(labels.reduce((s, l) => s + count(l.text), 0), kind).toBe(total);
+      const count = (t: string) => Number(/×(\d+)(?: · 여러 달)?$/.exec(t)?.[1] ?? 1);
+      // 글자 건수 + 글자 없는 점의 건수 = 전체(보완 3 G1 — 다 못 달면 가장 높은 점부터 넣고 나머지는 안내 줄로 센다).
+      const covered = new Set(labels.flatMap((l) => l.points));
+      const missing = p.points.reduce((s, x, i) => s + (covered.has(i) ? 0 : x.n), 0);
+      expect(labels.reduce((s, l) => s + count(l.text), 0) + missing, kind).toBe(total);
+      expect(p.unlabeled[kind], kind).toBe(p.points.length - covered.size);
     }
+    // 휴대폰 벌은 다 못 단다(점 100개를 160px 에) → 안내 줄 조건이 참 · 그래도 글자 0 은 아니다(보완 3 G1).
+    expect(p.unlabeled.narrow).toBeGreaterThan(0);
   });
 
   it('오른쪽 끝 점의 글자는 왼쪽에 · 그 밖은 오른쪽 · 가로 자리는 제 점(묶지 않은 글자)', () => {
@@ -457,7 +489,7 @@ describe('txPlotLabels — 점 금액 글자 자리(보완 1 F1·F3)', () => {
   it('양성 대조 — 기준 폭에선 떨어져 있어도 폭이 늘며 엇갈려 겹치는 짝을 검사 함수가 잡는다', () => {
     const ref = { w: 200, maxW: 800, h: 200 };
     // 오른쪽 점(55%)의 글자는 왼쪽에, 왼쪽 점(50%)의 글자는 오른쪽에 — 기준 폭 200 에선 4px 떨어짐 · 400 에선 겹침.
-    const mk = (x: number, side: TxLabel['side']): TxLabel => ({ text: '900만', x, y: 50, side, shift: 0, box: { x0: 0, x1: 0, y0: 0, y1: 0 } });
+    const mk = (x: number, side: TxLabel['side']): TxLabel => ({ text: '900만', x, y: 50, side, shift: 0, points: [], box: { x0: 0, x1: 0, y0: 0, y1: 0 } });
     const pair = [mk(55, 'l'), mk(50, 'r')];
     expect(overlapPairs(pair.map((l) => ({ ...l, box: boxAt(l, ref.w, ref.h) })))).toEqual([]);
     expect(problemsAtWidths(pair, ref).length).toBeGreaterThan(0);
@@ -500,6 +532,79 @@ describe('txPlotLabels — 점 금액 글자 자리(보완 1 F1·F3)', () => {
     }
   });
 
+  it('보완 3 G1 — 한 달 12건 · 100만~5,000만 흩어짐(검사관 재현 · 전에는 휴대폰 글자 0): 넣을 수 있는 글자는 넣고 못 단 점 수를 센다', () => {
+    // D:/tmp/sangga-v2/rev/zero.jsonl 첫 줄 그대로 — [계약월, ㎡당, 층, 지분].
+    const rows: Array<[string, number, number, boolean]> = [
+      ['202401', 6997469, 99, true], ['202401', 47468477, 1, false], ['202401', 5000319, 1, true], ['202401', 49858970, 3, true],
+      ['202401', 46227028, 3, true], ['202401', 23806838, -1, false], ['202401', 46996554, 99, false], ['202401', 3028304, 2, false],
+      ['202401', 32313076, 1, false], ['202401', 37498675, 3, false], ['202401', 1023302, 3, true], ['202401', 24405702, 2, false],
+    ];
+    const p = txPlot(rows.map(([ym, unit, floor, share]) => tx({ contract_ym: ym, unit_price: unit, floor_no: floor, is_share: share })))!;
+    expect(p.points).toHaveLength(12);
+    for (const kind of ['wide', 'narrow'] as const) {
+      const labels = p.labels[kind];
+      expect(labels.length, kind).toBeGreaterThan(0);
+      const covered = new Set(labels.flatMap((l) => l.points));
+      expect(p.unlabeled[kind], kind).toBe(12 - covered.size);
+      expect(overlapPairs(labels), kind).toEqual([]);
+      expect(problemsAtWidths(labels, TX_PLOT_REF[kind]), kind).toEqual([]);
+      expect(dotHitsAtWidths(labels, p.points, TX_PLOT_REF[kind]), kind).toEqual([]);
+    }
+    // 이 자료는 이제 휴대폰 벌도 12점 모두 낱개 글자를 단다(긴 묶음 글자 하나로 몰다 못 앉던 것을 가장 높은 점부터 낱개로 넣는다).
+    expect(p.unlabeled.narrow).toBe(0);
+    expect(p.labels.narrow).toHaveLength(12);
+    expect(p.labels.narrow.map((l) => l.text)).toContain('4,986만');
+  });
+
+  it('보완 3 G1 — 한 달 40건(1,000만~4,900만): 두 벌 모두 글자 0 아님 · 가장 높은 점 글자 있음 · 못 단 점 수 = 덮이지 않은 점 · 겹침 0', () => {
+    const p = txPlot(Array.from({ length: 40 }, (_, i) => tx({ contract_ym: '202507', unit_price: 10_000_000 + i * 1_000_000, floor_no: 3 })))!;
+    for (const kind of ['wide', 'narrow'] as const) {
+      const labels = p.labels[kind];
+      const covered = new Set(labels.flatMap((l) => l.points));
+      expect(labels.length, kind).toBeGreaterThan(0);
+      expect(p.unlabeled[kind], kind).toBe(40 - covered.size);
+      // 가장 높은 점(4,900만)은 글자가 있다.
+      expect(labels.some((l) => l.points.includes(39)), kind).toBe(true);
+      expect(overlapPairs(labels), kind).toEqual([]);
+      expect(problemsAtWidths(labels, TX_PLOT_REF[kind]), kind).toEqual([]);
+      expect(dotHitsAtWidths(labels, p.points, TX_PLOT_REF[kind]), kind).toEqual([]);
+    }
+  });
+
+  it('보완 3 G2 — 다른 달이 섞인 묶음 글자만 「· 여러 달」 · 같은 달 묶음엔 없다', () => {
+    let seed = 7;
+    const rnd = () => {
+      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+      return seed / 2_147_483_648;
+    };
+    const dense = txPlot(
+      Array.from({ length: 100 }, () =>
+        tx({
+          contract_ym: `${2024 + Math.floor(rnd() * 3)}${String(1 + Math.floor(rnd() * 12)).padStart(2, '0')}`,
+          unit_price: Math.round(1_000_000 + rnd() * 9_000_000),
+        }),
+      ),
+    )!;
+    const sameMonthCrowd = txPlot([
+      ...Array.from({ length: 20 }, (_, i) => tx({ contract_ym: '202507', unit_price: 5_000_000 + i * 10_000, floor_no: i + 3 })),
+      tx({ contract_ym: '202401', unit_price: 1_000_000 }),
+    ])!;
+    let multi = 0;
+    for (const p of [dense, sameMonthCrowd]) {
+      for (const kind of ['wide', 'narrow'] as const) {
+        for (const l of p.labels[kind]) {
+          const months = new Set(l.points.map((i) => p.points[i].x)).size;
+          expect(l.text.endsWith(TX_LABEL_MULTI_MONTH), `${kind} ${l.text}`).toBe(months > 1);
+          if (months > 1) multi += 1;
+        }
+      }
+    }
+    // 빽빽한 자료엔 다른 달 묶음이 실제로 있다(이 시험이 빈 검사가 아니다) · 같은 달 무리엔 없다.
+    expect(multi).toBeGreaterThan(0);
+    expect(sameMonthCrowd.labels.narrow.some((l) => l.text.includes('여러 달'))).toBe(false);
+    expect(sameMonthCrowd.labels.narrow.some((l) => /~.*×\d+$/.test(l.text))).toBe(true);
+  });
+
   it('mayOverlap — 기준 폭에선 떨어졌어도 폭 범위 안에서 엇갈려 겹치는 짝은 참 · 범위 밖에서만 겹치면 거짓', () => {
     // 오른쪽 점(55%)의 글자는 왼쪽에, 왼쪽 점(50%)의 글자는 오른쪽에 — 폭 200 에선 4px 떨어짐 · 400 에선 겹침.
     const a: TxSpan = { side: 'l', alpha: 0.55, c: -TX_LABEL_GAP - 42, w: 42 };
@@ -530,7 +635,7 @@ describe('txPlotLabels — 점 금액 글자 자리(보완 1 F1·F3)', () => {
 
   it('양성 대조 — 점 덮기 검사 함수는 점 위에 놓인 글자를 잡는다', () => {
     const pt: TxPlotPoint = { x: 50, y: 50, shape: '1', hollow: false, price: 5_000_000, n: 1 };
-    const onDot: TxLabel = { text: '500만', x: 40, y: 50, side: 'r', shift: 0, box: { x0: 0, x1: 0, y0: 0, y1: 0 } };
+    const onDot: TxLabel = { text: '500만', x: 40, y: 50, side: 'r', shift: 0, points: [0], box: { x0: 0, x1: 0, y0: 0, y1: 0 } };
     expect(dotHitsAtWidths([onDot], [pt], { w: 200, maxW: 400, h: 200 }).length).toBeGreaterThan(0);
   });
 
@@ -600,6 +705,12 @@ function mediaAt(css: string, needle: string): string[] | null {
 describe('CSS 가드 — 실거래 그림(결정 0038 §2-8·§2-9)', () => {
   // 윈도우 작업본은 CRLF · 저장소·CI 는 LF — 줄바꿈이 든 검색어를 쓰므로 LF 로 맞춰 읽는다(CLAUDE.md 줄바꿈 경고).
   const css = readFileSync('src/styles.css', 'utf8').replace(/\r\n/g, '\n');
+
+  it('글자 없는 점 안내 줄(보완 3 G1) — 기본(넓은 화면·종이)은 넓은 벌 · 휴대폰 벌로 바꾸는 규칙은 screen 720 묶음에만', () => {
+    expect(mediaAt(css, '.tx__plot-note--narrow {\n  display: none;')).toEqual([]);
+    expect(mediaAt(css, '  .tx__plot-note--narrow {\n    display: block;')).toEqual(['@media screen and (max-width: 720px)']);
+    expect(/\.tx__plot-note\s*\{[^}]*font-size:\s*13px/.test(css)).toBe(true);
+  });
 
   it('휴대폰 배치(글을 아래 줄로)는 `@media screen and (max-width: 720px)` 묶음에만 — 종이 모양이 안 바뀐다', () => {
     expect(mediaAt(css, "'band viz viz'")).toEqual(['@media screen and (max-width: 720px)']);

@@ -1451,6 +1451,43 @@ describe('FloorStack — 실거래 그림 (결정 0038 B · V2)', () => {
     expect(container.querySelector('.tx')?.textContent).not.toContain('시세');
   });
 
+  it('보완 3 G1 — 글자를 다 못 단 점그림엔 안내 줄 「글자 자리가 없는 점 N개 — 금액은 아래 목록에 있습니다」 · 다 단 그림엔 없다', async () => {
+    let seed = 7;
+    const rnd = () => {
+      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+      return seed / 2_147_483_648;
+    };
+    responses.txs = {
+      data: Array.from({ length: 100 }, () =>
+        tx({
+          contract_ym: `${2024 + Math.floor(rnd() * 3)}${String(1 + Math.floor(rnd() * 12)).padStart(2, '0')}`,
+          unit_price: Math.round(1_000_000 + rnd() * 9_000_000),
+        }),
+      ),
+      error: null,
+    };
+    const dense = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(dense.container.querySelector('.tx__plot')).toBeTruthy());
+    const note = dense.container.querySelector('.tx__plot-note--narrow');
+    expect(note?.textContent).toMatch(/^글자 자리가 없는 점 \d+개 — 금액은 아래 목록에 있습니다$/);
+    // 글자 수 + 안내 줄의 N = 점 수(휴대폰 벌).
+    const n = Number(/점 (\d+)개/.exec(note!.textContent!)![1]);
+    const dots = dense.container.querySelectorAll('.tx__plot-in .tx__dot').length;
+    const covered = dense.container.querySelectorAll('.tx__labs--narrow .tx__lab').length;
+    expect(n).toBeGreaterThan(0);
+    expect(covered).toBeGreaterThan(0);
+    expect(n).toBeLessThan(dots);
+    // 안내 줄은 점그림 안(범례 줄 바로 위) — 그림과 함께 낭독기에서 빠진다.
+    expect(note!.closest('.tx__plot')).toBeTruthy();
+    expect(note!.nextElementSibling?.classList.contains('tx__keys')).toBe(true);
+    dense.unmount();
+
+    responses.txs = { data: Array.from({ length: 5 }, (_, i) => tx({ unit_price: (i + 1) * 1_000_000 })), error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelector('.tx__plot')).toBeTruthy());
+    expect(container.querySelector('.tx__plot-note')).toBeNull();
+  });
+
   it('목록은 그대로 — 처음 10건 + 「거래 전부 보기 (N건)」 · 줄 글자 그대로', async () => {
     responses.txs = { data: Array.from({ length: 12 }, () => tx()), error: null };
     const { container } = render(<FloorStack building={building()} />);

@@ -1999,6 +1999,18 @@ body {
   display: none;
 }
 
+/* 글자를 못 단 점 안내 줄(보완 3 G1) — 점그림 바로 아래 · 13px · 종이에도(넓은 벌) · 휴대폰 벌은 아래 screen 720 묶음에서 바꾼다. */
+.tx__plot-note {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.tx__plot-note--narrow {
+  display: none;
+}
+
 .tx__lab {
   position: absolute;
   z-index: 1;
@@ -3799,11 +3811,13 @@ body {
     grid-template-rows: auto 340px auto;
   }
 
-  .tx__labs--wide {
+  .tx__labs--wide,
+  .tx__plot-note--wide {
     display: none;
   }
 
-  .tx__labs--narrow {
+  .tx__labs--narrow,
+  .tx__plot-note--narrow {
     display: block;
   }
 

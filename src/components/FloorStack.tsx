@@ -1681,6 +1681,14 @@ function TxDotPlot({ plot }: { plot: TxPlot }) {
           {to !== from && <span>{to}</span>}
         </span>
       </div>
+      {/* 글자를 못 단 점이 있으면 한 줄(보완 3 G1) — 벌마다 따로(넓은 화면·종이 / 휴대폰 · 글자 벌과 같은 CSS 로 고른다). */}
+      {(['wide', 'narrow'] as const).map((kind) =>
+        plot.unlabeled[kind] > 0 ? (
+          <p key={kind} className={`tx__plot-note tx__plot-note--${kind}`}>
+            글자 자리가 없는 점 {plot.unlabeled[kind].toLocaleString('ko-KR')}개 — 금액은 아래 목록에 있습니다
+          </p>
+        ) : null,
+      )}
       <p className="tx__keys">
         {plot.shapes.map((s) => (
           <span key={s} className="tx__key">
