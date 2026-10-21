@@ -1928,29 +1928,114 @@ body {
   margin: 0 0 10px;
 }
 
+/* 높이 220 = 점 칸(.tx__plot-in) 안쪽 202px — 글자 자리 계산의 기준 높이(`TX_PLOT_REF` 200)보다 커야 한다(보완 1 · 줄이면 글자가 겹칠 수 있다). */
 .tx__plot-frame {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  grid-template-rows: 132px auto;
+  grid-template-rows: auto 220px auto;
   column-gap: 6px;
+}
+
+/* 세로 눈금의 단위 한 줄(눈금 칸 위 · 오른쪽 맞춤) — 눈금 글은 값만 적어 눈금 칸을 좁힌다. */
+.tx__plot-unit {
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: end;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 16px;
 }
 
 .tx__plot-y {
   grid-column: 1;
-  grid-row: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
+  grid-row: 2;
+  position: relative;
+  display: block;
   text-align: right;
   color: var(--muted);
   font-size: 13px;
-  line-height: 1.2;
+  line-height: 16px;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 칸 폭만 잡는 빈 자리(가장 긴 눈금 글 · 높이 0). */
+.tx__plot-yw {
+  display: block;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+}
+
+/* 눈금 글 자리 = 점 칸과 같은 위아래(테두리 1 + 안쪽 8). */
+.tx__plot-yin {
+  position: absolute;
+  inset: 9px 0;
+}
+
+.tx__tick-y {
+  position: absolute;
+  right: 0;
+  transform: translateY(50%);
+}
+
+/* 가로 눈금선(보완 1 F4) — 축 상한의 0 · ¼ · ½ · ¾ · 끝 · 점선 · 점·글자 뒤. */
+.tx__grid {
+  position: absolute;
+  left: -10px;
+  right: -10px;
+  height: 0;
+  border-top: 1px dashed var(--warn-line);
+}
+
+/* 점 금액 글자(보완 1 F1~F3) — 자리는 txViz.ts 가 % 로 준다 · 점 옆 간격 7px(`TX_LABEL_GAP`) · 줄 높이 16px(`TX_LABEL_H`).
+   두 벌 중 넓은 화면·종이용이 기본, 휴대폰은 아래 `@media screen and (max-width: 720px)` 묶음에서 바꾼다. */
+.tx__labs {
+  position: absolute;
+  inset: 0;
+}
+
+.tx__labs--narrow {
+  display: none;
+}
+
+.tx__lab {
+  position: absolute;
+  z-index: 1;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 16px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  text-shadow:
+    1px 0 0 var(--warn-bg),
+    -1px 0 0 var(--warn-bg),
+    0 1px 0 var(--warn-bg),
+    0 -1px 0 var(--warn-bg);
+}
+
+.tx__lab--r {
+  transform: translate(7px, 50%);
+}
+
+.tx__lab--l {
+  transform: translate(calc(-100% - 7px), 50%);
+}
+
+/* 점 바로 위·아래(보완 2) — 가로 가운데 맞춤 · 세로 자리는 txViz.ts 가 준다. */
+.tx__lab--c {
+  transform: translate(-50%, 50%);
+}
+
+/* 양쪽 다 칸을 넘는 긴 글자(묶음 글자 · 드물다)는 칸 끝에 붙인다. */
+.tx__lab--L,
+.tx__lab--R {
+  transform: translateY(50%);
 }
 
 .tx__plot-area {
   grid-column: 2;
-  grid-row: 1;
+  grid-row: 2;
   position: relative;
   display: block;
   min-width: 0;
@@ -1965,6 +2050,7 @@ body {
 
 .tx__dot {
   position: absolute;
+  z-index: 2;
   width: 10px;
   height: 10px;
   transform: translate(-50%, 50%);
@@ -1996,7 +2082,7 @@ body {
 
 .tx__plot-x {
   grid-column: 2;
-  grid-row: 2;
+  grid-row: 3;
   display: flex;
   justify-content: space-between;
   gap: 8px;
@@ -3704,6 +3790,21 @@ body {
 
   .tx__axis-scale {
     grid-column: 2 / 4;
+  }
+
+  /* 점 금액 글자(보완 1 F5) — 휴대폰은 더 좁은 기준 폭(`TX_PLOT_REF.narrow`)으로 비켜 적은 벌을 보이고, 폭이 좁은 만큼
+     점그림 높이를 키워(220 → 340 · 점 칸 안쪽 322px · 보완 2 에서 300 → 340) 세로 여유를 늘린다 — 줄이면 `TX_PLOT_REF.narrow.h`(320)
+     보다 낮아져 글자가 겹칠 수 있다. */
+  .tx__plot-frame {
+    grid-template-rows: auto 340px auto;
+  }
+
+  .tx__labs--wide {
+    display: none;
+  }
+
+  .tx__labs--narrow {
+    display: block;
   }
 
   /* ── 휴대폰 아래 탭(결정 0039 Q1 · W4a) ──────────────────────────────────────────────

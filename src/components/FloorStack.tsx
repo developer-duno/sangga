@@ -1625,18 +1625,53 @@ function TxShapeIcon({ shape, hollow }: { shape: TxShape; hollow: boolean }) {
 function TxDotPlot({ plot }: { plot: TxPlot }) {
   const from = formatMonthKo(plot.fromYm) ?? plot.fromYm;
   const to = formatMonthKo(plot.toYm) ?? plot.toYm;
+  // 세로 눈금 글(보완 1 F4) — 값만(맨 아래 「0」) · 단위 「㎡당」은 눈금 칸 위 한 줄(눈금 칸을 좁혀 점 칸을 넓힌다 — 휴대폰).
+  const tickText = (k: number, won: number) => (k === 0 ? '0' : formatManWon(won));
+  const top = tickText(plot.ticks.length - 1, plot.yMaxWon);
   return (
     <div className="tx__plot" aria-hidden="true">
       <div className="tx__plot-frame">
+        <span className="tx__plot-unit">㎡당</span>
         <span className="tx__plot-y">
-          <span>㎡당 {formatManWon(plot.yMaxWon)}</span>
-          <span>0</span>
+          {/* 칸 폭을 가장 긴 눈금 글로 잡는 빈 자리(눈금 글은 아래 % 자리에 겹쳐 선다 · DOM 을 재지 않는다). */}
+          <span className="tx__plot-yw">{top}</span>
+          <span className="tx__plot-yin">
+            {plot.ticks.map((t, k) => (
+              <span key={k} className="tx__tick-y" style={{ bottom: `${t.y}%` }}>
+                {tickText(k, t.won)}
+              </span>
+            ))}
+          </span>
         </span>
         <span className="tx__plot-area" style={{ background: cssVar(VIZ_TONES.fact.bg), borderColor: cssVar(VIZ_TONES.fact.line) }}>
           <span className="tx__plot-in">
+            {plot.ticks.map((t, k) => (
+              <span key={`g${k}`} className="tx__grid" style={{ bottom: `${t.y}%` }} />
+            ))}
             {plot.points.map((p, i) => (
               <span key={i} className="tx__dot" style={{ left: `${p.x}%`, bottom: `${p.y}%` }}>
                 <TxShapeIcon shape={p.shape} hollow={p.hollow} />
+              </span>
+            ))}
+            {/* 점 금액 글자(보완 1 F1~F3) — 넓은 화면·종이용과 휴대폰용 두 벌 중 CSS 가 하나만 보인다(@media screen 720 묶음). */}
+            {(['wide', 'narrow'] as const).map((kind) => (
+              <span key={kind} className={`tx__labs tx__labs--${kind}`}>
+                {plot.labels[kind].map((l, i) => (
+                  <span
+                    key={i}
+                    className={`tx__lab tx__lab--${l.side}`}
+                    // 칸 끝에 붙인 글자('L'·'R')는 칸 왼쪽·오른쪽 끝 기준 · 나머지는 제 점 자리 기준.
+                    style={
+                      l.side === 'L'
+                        ? { left: 0, bottom: `${l.y}%` }
+                        : l.side === 'R'
+                          ? { right: 0, bottom: `${l.y}%` }
+                          : { left: `${l.x}%`, bottom: `${l.y}%` }
+                    }
+                  >
+                    {l.text}
+                  </span>
+                ))}
               </span>
             ))}
           </span>

@@ -4811,7 +4811,8 @@ test.describe('PC 두 칸', () => {
 // 실거래 기록 카드의 그림(결정 0038 B · V2 · 👤 2026-10-21 「계획대로 둘 다」) — 그림이 깨져도 글자 시험은 초록이다(§2-10).
 // 폭·자리·색은 CSS 라 jsdom(vitest)은 못 본다 — 넓은 화면(1280 두 칸)·휴대폰(412)·종이에서 여기서만 잰다.
 test.describe('실거래 그림', () => {
-  // 12건 — 층 묶음 다섯 꼴 + 지분 둘(숨는 11·12번째 줄 포함) · 계약 달 2024-01 ~ 2026-05 · ㎡당 최대 920만(축 1,000만).
+  // 12건 — 층 묶음 다섯 꼴 + 지분 둘(숨는 11·12번째 줄 · 같은 달·같은 값 1층 둘 = 점 하나 「100만 ×2」 — 보완 1) ·
+  // 계약 달 2024-01 ~ 2026-05 · ㎡당 최대 920만(축 1,000만).
   const TXS = [
     parcelTx({ floor_no: 1, contract_ym: '202605', unit_price: 9_200_000 }),
     parcelTx({ floor_no: 1, contract_ym: '202511', unit_price: 6_100_000 }),
@@ -4824,7 +4825,7 @@ test.describe('실거래 그림', () => {
     parcelTx({ floor_no: 3, contract_ym: '202403', unit_price: 2_800_000 }),
     parcelTx({ floor_no: 1, contract_ym: '202402', unit_price: 5_000_000 }),
     parcelTx({ floor_no: 1, contract_ym: '202401', unit_price: 1_000_000, is_share: true }),
-    parcelTx({ floor_no: 2, contract_ym: '202402', unit_price: 1_500_000, is_share: true }),
+    parcelTx({ floor_no: 1, contract_ym: '202401', unit_price: 1_000_000, is_share: true }),
   ];
 
   test('BX. 구 층대 띠(사실 색 · p25~p75 폭 비례 · 줄마다 같은 자 · 표본 부족 "–") + 이 땅 거래 점그림(층 묶음 꼴 · 지분 빈 꼴 · 자리 비례 · 설명 줄 늘) · 넓은 화면 글 오른쪽 · 휴대폰 글 아래 줄·넘침 0 · 13px · 종이에 그대로', async ({
@@ -4881,14 +4882,14 @@ test.describe('실거래 그림', () => {
     if (phone) expect(val.y).toBeGreaterThanOrEqual(track.y + track.height - 1);
     else expect(val.x).toBeGreaterThanOrEqual(track.x + track.width - 1);
 
-    // ② 점그림 — 12건 전부 점 · 지분 둘은 빈 꼴 · 꼴 다섯.
+    // ② 점그림 — 12건 · 같은 달·같은 값 지분 둘은 점 하나(보완 1 F2) → 점 11 · 빈 꼴 1 · 꼴 다섯.
     const plot = card.locator('.tx__plot');
     await expect(plot).toBeVisible();
     const dots = plot.locator('.tx__plot-in .tx__dot');
-    await expect(dots).toHaveCount(12);
-    await expect(plot.locator('.tx__plot-in .tx__shape[data-hollow="1"]')).toHaveCount(2);
+    await expect(dots).toHaveCount(11);
+    await expect(plot.locator('.tx__plot-in .tx__shape[data-hollow="1"]')).toHaveCount(1);
     const shapes = await plot.locator('.tx__plot-in .tx__shape').evaluateAll((els) => els.map((e) => e.getAttribute('data-shape')));
-    expect(shapes).toEqual(['1', '1', '2', '2', '3+', '3+', 'b', 'na', '3+', '1', '1', '2']);
+    expect(shapes).toEqual(['1', '1', '2', '2', '3+', '3+', 'b', 'na', '3+', '1', '1']);
     // 칠 — 찬 꼴 = 호박(--fact-3) · 층 미상 = 회색(--viz-na) · 빈 꼴 = 바탕(--card 흰색).
     // ⓘ 이 파일은 DOM 타입을 안 싣는다 — getComputedStyle 대신 toHaveCSS.
     const shapeEl = (i: number) => plot.locator('.tx__plot-in .tx__shape').nth(i).locator(':scope > *');
@@ -4908,16 +4909,90 @@ test.describe('실거래 그림', () => {
     }
     expect(Math.abs((await center(0)).x - (area.x + area.width))).toBeLessThan(1.5);
     expect(Math.abs((await center(10)).x - area.x)).toBeLessThan(1.5);
-    for (let i = 0; i < 12; i += 1) {
+    for (let i = 0; i < 11; i += 1) {
       const { b } = await center(i);
       expect(b.x).toBeGreaterThanOrEqual(frame.x);
       expect(b.x + b.width).toBeLessThanOrEqual(frame.x + frame.width);
       expect(b.y).toBeGreaterThanOrEqual(frame.y);
       expect(b.y + b.height).toBeLessThanOrEqual(frame.y + frame.height);
     }
-    await expect(plot.locator('.tx__plot-y')).toHaveText('㎡당 1,000만0');
+    // 세로 눈금 넷 + 가로 눈금선(보완 1 F4) — 눈금 글은 그 선과 같은 높이.
+    await expect(plot.locator('.tx__plot-yin .tx__tick-y')).toHaveText(['0', '250만', '500만', '750만', '1,000만']);
+    await expect(plot.locator('.tx__plot-unit')).toHaveText('㎡당');
+    const grids = plot.locator('.tx__plot-in .tx__grid');
+    await expect(grids).toHaveCount(5);
+    for (let k = 0; k < 5; k += 1) {
+      const g = await box(grids.nth(k));
+      const t = await box(plot.locator('.tx__plot-yin .tx__tick-y').nth(k));
+      expect(Math.abs(g.y - (t.y + t.height / 2))).toBeLessThan(2);
+    }
     await expect(plot.locator('.tx__plot-x')).toHaveText('2024년 1월2026년 5월');
     await expect(plot.locator('.tx__key')).toHaveText(['1층', '2층', '3층 이상', '지하', '층 미상', '속이 빈 꼴 = 지분']);
+    // 점 금액 글자(보완 1 F1·F3·F5) — 넓은 화면은 넓은 벌 · 휴대폰은 휴대폰 벌 하나만 보인다 · 실제 상자로 글자끼리 겹침 0 · 그림 칸 안.
+    const labs = plot.locator(phone ? '.tx__labs--narrow .tx__lab' : '.tx__labs--wide .tx__lab');
+    await expect(plot.locator(phone ? '.tx__labs--wide' : '.tx__labs--narrow')).toBeHidden();
+    await expect(labs.first()).toBeVisible();
+    const labTexts = await labs.allTextContents();
+    expect(labTexts.reduce((s, t) => s + Number(/×(\d+)$/.exec(t)?.[1] ?? 1), 0)).toBe(12);
+    if (!phone) expect(labTexts).toEqual(expect.arrayContaining(['920만', '100만 ×2', '350만']));
+    /** 보이는 글자의 실제 상자 — 글자끼리 겹침(0.5px 넘게) · 그림 칸 밖을 모은다. */
+    const labelProblems = async (sel: string) => {
+      const ls = plot.locator(sel);
+      const fr = await box(plot.locator('.tx__plot-area'));
+      const n = await ls.count();
+      const bs: Array<{ t: string; b: { x: number; y: number; width: number; height: number } }> = [];
+      for (let i = 0; i < n; i += 1) bs.push({ t: (await ls.nth(i).textContent()) ?? '', b: await box(ls.nth(i)) });
+      const bad: string[] = [];
+      // 보완 2 — 글자가 어느 점도 덮지 않는다(묶음 안 제 점 포함 · 점 상자 = .tx__dot 10px).
+      const ds = plot.locator('.tx__plot-in .tx__dot');
+      const dn = await ds.count();
+      const dbs: Array<{ x: number; y: number; width: number; height: number }> = [];
+      for (let i = 0; i < dn; i += 1) dbs.push(await box(ds.nth(i)));
+      bs.forEach(({ t, b: a }) => {
+        dbs.forEach((d, k) => {
+          if (a.x < d.x + d.width - 0.5 && d.x < a.x + a.width - 0.5 && a.y < d.y + d.height - 0.5 && d.y < a.y + a.height - 0.5) {
+            bad.push(`${t} ↔ 점 ${k}`);
+          }
+        });
+      });
+      bs.forEach(({ t, b: a }, i) => {
+        if (a.x < fr.x - 0.5 || a.x + a.width > fr.x + fr.width + 0.5 || a.y < fr.y - 0.5 || a.y + a.height > fr.y + fr.height + 0.5) {
+          bad.push(`칸 밖 ${t}`);
+        }
+        for (let j = i + 1; j < bs.length; j += 1) {
+          const b = bs[j].b;
+          if (a.x < b.x + b.width - 0.5 && b.x < a.x + a.width - 0.5 && a.y < b.y + b.height - 0.5 && b.y < a.y + a.height - 0.5) {
+            bad.push(`${t} ↔ ${bs[j].t}`);
+          }
+        }
+      });
+      return bad;
+    };
+    expect(await labelProblems(phone ? '.tx__labs--narrow .tx__lab' : '.tx__labs--wide .tx__lab')).toEqual([]);
+    await expect(labs.first()).toHaveCSS('font-size', '13px');
+    // 글자 자리는 '그 꼴에서 가장 좁은 폭'(txViz.ts TX_PLOT_REF — 넓은 벌 460 · 휴대폰 벌 160 · 높이 200/320)으로 계산한다 —
+    // 실제 점 칸이 그보다 좁으면 겹칠 수 있으니 여기서 잰다(넓은 벌이 서는 가장 좁은 두 곳 = 721 한 열 · 1024 두 칸 ·
+    // 10-21 실측 점 칸 폭: 1280 659 · 1024 488 · 721 529 · 412 220 · 360 168 · 320 128 — 320 폭 전화는 덮지 않는다).
+    expect(area.width).toBeGreaterThanOrEqual(phone ? 160 : 460);
+    // 높이 — 넓은 화면 220px 칸(안쪽 202 ≥ 기준 200) · 휴대폰 340px 칸(안쪽 322 ≥ 기준 320 · 보완 1 F5 · 보완 2 에서 300 → 340).
+    expect(area.height).toBeGreaterThanOrEqual(phone ? 320 : 200);
+    if (!phone) {
+      for (const width of [721, 1024]) {
+        await page.setViewportSize({ width, height: 800 });
+        const a = await box(plot.locator('.tx__plot-in'));
+        expect(a.width, `${width}px 점 칸 폭`).toBeGreaterThanOrEqual(460);
+        expect(await labelProblems('.tx__labs--wide .tx__lab'), `${width}px`).toEqual([]);
+      }
+      await page.setViewportSize({ width: 1280, height: 720 });
+    } else {
+      // 360px 전화(휴대폰 벌의 기준 폭 200 이 이 폭을 덮는다).
+      await page.setViewportSize({ width: 360, height: 780 });
+      const a = await box(plot.locator('.tx__plot-in'));
+      expect(a.width, '360px 점 칸 폭').toBeGreaterThanOrEqual(160);
+      expect(await labelProblems('.tx__labs--narrow .tx__lab'), '360px').toEqual([]);
+      expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+      await page.setViewportSize({ width: 412, height: 839 });
+    }
     // 그림은 목록과 같은 내용이라 낭독기에서 뺀다 · 목록은 그대로(처음 10건 + 전부 보기).
     await expect(plot).toHaveAttribute('aria-hidden', 'true');
     await expect(card.locator('.tx__list > li:visible')).toHaveCount(10);
@@ -4925,7 +5000,7 @@ test.describe('실거래 그림', () => {
     // 지분은 숨는 11·12번째 줄에만 — 그림이 서서 설명 줄은 접힌 화면에도 선다.
     await expect(card.locator('.tx__share-note')).toBeVisible();
     // 글자 13px 이상(S4) — 눈금·범례·"–".
-    for (const sel of ['.tx__plot-y', '.tx__plot-x', '.tx__keys', '.tx__axis', '.tx__viz--none']) {
+    for (const sel of ['.tx__plot-unit', '.tx__plot-y', '.tx__plot-x', '.tx__keys', '.tx__axis', '.tx__viz--none']) {
       await expect(card.locator(sel).first()).toHaveCSS('font-size', '13px');
     }
     // 가로 넘침 0(문서·카드).
@@ -4942,6 +5017,10 @@ test.describe('실거래 그림', () => {
     const pVal = await box(row('1층').locator('.tx__val'));
     expect(pVal.x).toBeGreaterThanOrEqual(pTrack.x + pTrack.width - 1);
     await expect(plot).toHaveCSS('break-inside', 'avoid');
+    // 금액 글자·눈금선도 종이에 그대로(보완 1 F6) — 종이는 넓은 벌(휴대폰 벌은 screen 묶음이라 종이에 안 샌다).
+    await expect(plot.locator('.tx__labs--wide .tx__lab').first()).toBeVisible();
+    await expect(plot.locator('.tx__labs--narrow')).toBeHidden();
+    await expect(plot.locator('.tx__plot-in .tx__grid').nth(2)).toBeVisible();
     await expect(card.locator('.tx__list > li:visible')).toHaveCount(12);
     await expect(card.locator('.tx__share-note')).toBeVisible();
     await card.screenshot({ path: testInfo.outputPath(`bx-tx-print-${testInfo.project.name}.png`) });
