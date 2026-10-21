@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, cleanup, within } from '@testing-library/react';
+import { render, screen, cleanup, within, fireEvent } from '@testing-library/react';
 
 /**
  * 화면 맨 아래 — 「함께 보면 좋은 사이트」 구역 시험(2026-10-06 · 2u 인계 10-05).
@@ -60,5 +60,38 @@ describe('AppFooter — 함께 보면 좋은 사이트', () => {
     for (const f of FAMILY) {
       expect(within(handoff as HTMLElement).queryByRole('link', { name: f.label })).toBeNull();
     }
+  });
+});
+
+describe('AppFooter — 휴대폰 더보기 차례(결정 0039 W4a)', () => {
+  it('★ 의견함은 차례를 바꿔도 같은 자리(맨 뒤) — 폰을 돌려 휴대폰 ↔ 넓은 꼴이 바뀌어도 쓰던 글이 남는다(검사 🟡 F8)', () => {
+    const lead = <section className="role">역할 줄</section>;
+    const { container, rerender } = render(<AppFooter lead={lead} phoneOrder />);
+    const foot = container.querySelector('footer.foot')!;
+    expect(foot.classList.contains('foot--phone')).toBe(true);
+    expect(foot.firstElementChild?.classList.contains('role')).toBe(true);
+    expect(foot.lastElementChild?.classList.contains('fb')).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: '의견 보내기' }));
+    const box = within(foot as HTMLElement).getByRole('textbox') as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: '쓰던 글' } });
+
+    rerender(<AppFooter />);
+    expect(foot.classList.contains('foot--phone')).toBe(false);
+    expect(foot.firstElementChild?.classList.contains('foot__notice')).toBe(true);
+    const after = within(foot as HTMLElement).getByRole('textbox') as HTMLTextAreaElement;
+    expect(after).toBe(box); // 같은 물건 — 다시 태어나지 않았다
+    expect(after.value).toBe('쓰던 글');
+  });
+});
+
+describe('AppFooter — 이 화면을 어디까지 믿어도 되나 (결정 0041 보완 1차 B8)', () => {
+  it('추정값 문장 대신 「원본 그대로 · 집계·비교값 표시」 문장이 선다', () => {
+    const { container } = render(<AppFooter />);
+    const list = container.querySelector('.foot__list') as HTMLElement;
+    expect(list.textContent).toContain(
+      "신고·고시·조사된 값은 원본 그대로 나르고, 우리가 세어 낸 집계에는 '집계'·'비교값'이라고 적습니다.",
+    );
+    // 참고 시세(추정)를 내렸으니 "추정이라고 적는다"는 약속은 화면에서 빠진다.
+    expect(list.textContent).not.toContain('"추정"이라고');
   });
 });

@@ -598,7 +598,10 @@ class TestReplayMatchesCanonical:
         r = replay_all(migrations)
         pinned = {"search_path": "public, extensions, pg_temp"}
         for key in KNOWN_0923_TARGETS:
-            if key.startswith(("public.search_key(", "public.price_floor_band(")):
+            if key == "public.price_floor_band(smallint)":
+                # 2026-10-18a(결정 0041)로 함수째 지웠다 — 되짚기 끝에는 없다(23c 의 해제까지는 거쳤다).
+                assert key not in r.fn, key
+            elif key.startswith("public.search_key("):
                 assert r.fn[key] == {}, key
             else:
                 assert r.fn[key] == pinned, key

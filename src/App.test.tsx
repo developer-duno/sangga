@@ -89,6 +89,10 @@ function floorRow(over: Partial<FloorRow> = {}): FloorRow {
 }
 
 beforeEach(() => {
+  // '물어봤음' 기본값(결정 0039 §4-7 · W3) — 저장값이 없으면 입구 맨 위에 역할 고르기 큰 카드가 서고 작은 역할 단추 줄은
+  // 숨는다. 이 파일의 시험은 그 카드가 나오기 전 화면을 전제로 쓰였으므로 시작 때 `둘러보기`(= 역할 없음)를 넣는다.
+  // 역할을 따로 넣는 시험은 이 뒤에 setItem 하므로 그 값이 이긴다. 큰 카드 시험은 아래 「큰 카드」 묶음이 이 값을 지우고 본다.
+  window.localStorage.setItem('sangga.viewerRole', '둘러보기');
   rpc.mockReset();
   from.mockReset();
   from.mockImplementation((view: string) =>
@@ -144,8 +148,20 @@ async function pickGu(sidoName: string, guName: string) {
   fireEvent.click(guBtn);
 }
 
+/**
+ * 건물을 연 동안 한 줄 바로 접힌 입구(S1)를 바의 「다른 건물 찾기」로 펼친다 — 접혀 있지 않으면 아무 일도 안 한다.
+ * ⓘ 접힌 입구는 `hidden` 이라 역할 단추·지역 칩·검색 결과를 `getByRole` 이 못 찾는다(손님 눈에도 안 보인다).
+ */
+function unfoldEntry() {
+  const btn = [...document.querySelectorAll<HTMLButtonElement>('.entrybar button')].find(
+    (b) => b.textContent === '← 다른 건물 찾기',
+  );
+  if (btn) fireEvent.click(btn);
+}
+
 describe('App — 구를 바꾸면 이전 결과가 사라진다', () => {
   it('검색 결과·선택 건물·검색어가 구를 바꾸는 순간 함께 사라진다', async () => {
+    openWith(''); // 앞 시험이 남긴 건물 주소로 시작하면 입구가 접혀 지역 칩이 숨는다(순서 섞기 seed 2·3).
     render(<App />);
 
     await pickGu('서울', '강남구');
@@ -159,6 +175,7 @@ describe('App — 구를 바꾸면 이전 결과가 사라진다', () => {
     await waitFor(() => expect(screen.getByRole('heading', { name: '테스트빌딩' })).toBeTruthy());
     expect(screen.getByText(/강남구에서/)).toBeTruthy();
 
+    unfoldEntry(); // 건물을 열면 입구가 접힌다(S1) — 구를 바꾸려면 펼친다.
     await pickGu('대전', '서구');
 
     // 이전 구의 선택 건물(층 스택)·검색 결과 문구·검색어가 전부 사라졌다.
@@ -309,6 +326,8 @@ describe('App — 주소로 들고 다니기', () => {
     openWith(`?sgg=11680&bld=${LINK_BLD}`);
     render(<App />);
 
+    // 건물이 서면 입구가 접혀 지도를 안 그린다(S1) — 바의 「상권 지도 보기」로 펼쳐 지도 제목을 본다.
+    fireEvent.click(await screen.findByRole('button', { name: '상권 지도 보기' }));
     expect(await screen.findByRole('heading', { name: /강남구 상권 지도/ })).toBeTruthy();
   });
 
@@ -400,7 +419,8 @@ describe('App — 주소로 들고 다니기', () => {
 
     expect(await screen.findByText('링크에 담긴 건물을 불러오는 중입니다…')).toBeTruthy();
 
-    // 그 사이 사용자가 검색으로 다른 건물을 고른다.
+    // 그 사이 사용자가 검색으로 다른 건물을 고른다(되살리는 동안도 입구는 접혀 있다 — 바에서 펼친다).
+    unfoldEntry();
     const input = screen.getByLabelText('건물명 또는 주소');
     fireEvent.change(input, { target: { value: '테헤란로' } });
     fireEvent.submit(input.closest('form')!);
@@ -466,6 +486,7 @@ describe('App — 주소로 들고 다니기', () => {
     render(<App />);
     await screen.findByRole('heading', { name: '테스트빌딩' });
 
+    unfoldEntry();
     await pickGu('대전', '서구');
 
     await waitFor(() => expect(currentSearch()).not.toContain('bld='));
@@ -520,6 +541,7 @@ describe('App — 역할 단추 (결정 0036 결정 18)', () => {
     openWith(`?sgg=11680&bld=${LINK_BLD}`);
     render(<App />);
     await screen.findByRole('heading', { name: '테스트빌딩' });
+    unfoldEntry();
     for (const name of ['투자자', '창업자', '중개사']) {
       expect(screen.getByRole('button', { name }).getAttribute('aria-pressed')).toBe('false');
     }
@@ -531,17 +553,19 @@ describe('App — 역할 단추 (결정 0036 결정 18)', () => {
     openWith(`?sgg=11680&bld=${LINK_BLD}`);
     render(<App />);
     await screen.findByRole('heading', { name: '테스트빌딩' });
+    unfoldEntry();
     expect(screen.getByRole('button', { name: '중개사' }).getAttribute('aria-pressed')).toBe('true');
     // 중개사는 층 목록이 먼저다(역할 없음은 속한 상권이 먼저).
     await waitFor(() => expect(cardTitles()).toEqual(['층 목록', '속한 상권']));
   });
 
-  it('★ 누르면 이 기기에 저장되고, 다시 누르면 지워진다 — 주소에는 안 실린다', async () => {
+  it('★ 누르면 이 기기에 저장되고, 다시 누르면 「둘러보기」로 적힌다(결정 0039 §7-4) — 주소에는 안 실린다', async () => {
     openWith(`?sgg=11680&bld=${LINK_BLD}`);
     render(<App />);
     await screen.findByRole('heading', { name: '테스트빌딩' });
     await waitFor(() => expect(cardTitles()).toEqual(['속한 상권', '층 목록']));
     const before = currentSearch();
+    unfoldEntry();
 
     fireEvent.click(screen.getByRole('button', { name: '중개사' }));
     expect(window.localStorage.getItem(KEY)).toBe('중개사');
@@ -551,7 +575,7 @@ describe('App — 역할 단추 (결정 0036 결정 18)', () => {
     expect(currentSearch()).toBe(before);
 
     fireEvent.click(screen.getByRole('button', { name: '중개사' }));
-    expect(window.localStorage.getItem(KEY)).toBeNull();
+    expect(window.localStorage.getItem(KEY)).toBe('둘러보기');
     expect(cardTitles()).toEqual(['속한 상권', '층 목록']);
     expect(currentSearch()).toBe(before);
   });
@@ -567,6 +591,7 @@ describe('App — 역할 단추 (결정 0036 결정 18)', () => {
       openWith(`?sgg=11680&bld=${LINK_BLD}`);
       render(<App />);
       await screen.findByRole('heading', { name: '테스트빌딩' });
+      unfoldEntry();
       fireEvent.click(screen.getByRole('button', { name: '중개사' }));
       expect(setItem).toHaveBeenCalled();
       expect(screen.getByRole('button', { name: '중개사' }).getAttribute('aria-pressed')).toBe(
@@ -577,6 +602,206 @@ describe('App — 역할 단추 (결정 0036 결정 18)', () => {
       setItem.mockRestore();
       getItem.mockRestore();
     }
+  });
+});
+
+/**
+ * 역할 고르기 큰 카드(결정 0039 Q3 · §4-10 · §7-4 · W3) — 이 기기 저장값이 없고 건물 직행 링크(`bld`)로 연 게 아닐 때만
+ * 입구 맨 위(작은 역할 단추 줄 자리)에 선다. 카드 한 장의 글·알림은 `RoleCards.test`, 저장 규칙은 `viewerRoleStore.test`.
+ */
+describe('App — 역할 고르기 큰 카드 (결정 0039 W3)', () => {
+  const KEY = 'sangga.viewerRole';
+  // 맨 위 beforeEach 의 '물어봤음' 기본값을 지운다 — 처음 온 사람(빈 저장소).
+  beforeEach(() => {
+    window.localStorage.clear();
+    openWith('');
+  });
+  afterEach(() => {
+    window.localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  const cards = () => document.querySelector('section.rolecards');
+  const smallRow = () => document.querySelector('section.role');
+  const cardBtn = (name: RegExp) => screen.getByRole('button', { name });
+
+  it('★ 빈 저장소로 `/` 를 열면 큰 카드가 서고 작은 단추 줄은 숨는다 · 카드 셋 + 그냥 둘러보기', async () => {
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+    expect(cards()).not.toBeNull();
+    expect(smallRow()).toBeNull();
+    expect(screen.getByText('무엇을 하러 오셨나요?')).toBeTruthy();
+    expect([...document.querySelectorAll('.rolecards__name')].map((e) => e.textContent)).toEqual([
+      '투자·매입하려고',
+      '가게를 열려고',
+      '중개하려고',
+    ]);
+    expect(screen.getByRole('button', { name: '그냥 둘러보기' })).toBeTruthy();
+    // 덮개가 아니다 — 지역 고르기가 같은 화면에 그대로 있다.
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(screen.getByRole('button', { name: /^서울$/ })).toBeTruthy();
+  });
+
+  it('★ `?sgg=` 만 든 링크에서도 뜬다(건물 직행만 예외)', async () => {
+    openWith('?sgg=30170');
+    render(<App />);
+    await screen.findByRole('button', { name: /^대전$/ });
+    expect(cards()).not.toBeNull();
+  });
+
+  it('★ 카드를 누르면 그 역할이 저장되고 카드가 사라지며 작은 줄에 그 역할이 눌린다 · 주소에는 안 실린다', async () => {
+    openWith('?sgg=11680');
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+    const before = currentSearch();
+    fireEvent.click(cardBtn(/가게를 열려고/));
+    expect(window.localStorage.getItem(KEY)).toBe('창업자');
+    expect(cards()).toBeNull();
+    expect(smallRow()).not.toBeNull();
+    expect(screen.getByRole('button', { name: '창업자' }).getAttribute('aria-pressed')).toBe('true');
+    expect(currentSearch()).toBe(before);
+    expect(currentSearch()).not.toContain(encodeURIComponent('창업자'));
+  });
+
+  it('★ 카드로 고르면 커서가 body 로 떨어지지 않고 작은 줄의 눌린 단추로 간다(화면은 안 굴린다)', async () => {
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus');
+    const card = cardBtn(/중개하려고/);
+    card.focus();
+    fireEvent.click(card);
+    expect(cards()).toBeNull();
+    const pressed = screen.getByRole('button', { name: '중개사' });
+    expect(pressed.getAttribute('aria-pressed')).toBe('true');
+    expect(document.activeElement).toBe(pressed);
+    expect(focus).toHaveBeenLastCalledWith({ preventScroll: true });
+  });
+
+  it('★ 「그냥 둘러보기」로 고르면 작은 줄의 첫 단추에 커서', async () => {
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+    const browse = screen.getByRole('button', { name: '그냥 둘러보기' });
+    browse.focus();
+    fireEvent.click(browse);
+    expect(cards()).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '투자자' }));
+    expect(document.activeElement).toBe(document.querySelector('section.role .role__chip'));
+  });
+
+  it('★ 「그냥 둘러보기」= `둘러보기` 저장 · 카드 사라짐 · 아무 역할도 안 눌림 · 다시 열어도 안 뜬다', async () => {
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+    fireEvent.click(screen.getByRole('button', { name: '그냥 둘러보기' }));
+    expect(window.localStorage.getItem(KEY)).toBe('둘러보기');
+    expect(cards()).toBeNull();
+    for (const name of ['투자자', '창업자', '중개사']) {
+      expect(screen.getByRole('button', { name }).getAttribute('aria-pressed')).toBe('false');
+    }
+    cleanup();
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+    expect(cards()).toBeNull();
+    expect(smallRow()).not.toBeNull();
+  });
+
+  it('★ 고른 역할을 작은 단추로 해제하면 `둘러보기`(지우지 않음) → 다음 방문에 큰 카드가 안 뜬다', async () => {
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+    fireEvent.click(cardBtn(/중개하려고/));
+    fireEvent.click(screen.getByRole('button', { name: '중개사' }));
+    expect(window.localStorage.getItem(KEY)).toBe('둘러보기');
+    cleanup();
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+    expect(cards()).toBeNull();
+  });
+
+  it('저장값이 모르는 값이면 안 물어본 것으로 보고 뜬다', async () => {
+    window.localStorage.setItem(KEY, 'investor');
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+    expect(cards()).not.toBeNull();
+  });
+
+  it('★ 저장이 막힌 창 — 뜨고, 누르면 사라지며 화면은 그 역할대로 · 오류 없음 · 다음 방문에 다시 뜬다', async () => {
+    const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new DOMException('blocked', 'SecurityError');
+    });
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('blocked', 'SecurityError');
+    });
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+    expect(cards()).not.toBeNull();
+    fireEvent.click(cardBtn(/투자·매입하려고/));
+    expect(setItem).toHaveBeenCalled();
+    expect(cards()).toBeNull();
+    expect(screen.getByRole('button', { name: '투자자' }).getAttribute('aria-pressed')).toBe('true');
+    cleanup();
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+    expect(getItem).toHaveBeenCalled();
+    expect(cards()).not.toBeNull();
+  });
+
+  it('★ 건물 직행 링크(`bld`)로 연 방문에는 그 방문 내내 안 뜨고 저장도 안 한다 → 다음에 `/` 로 오면 뜬다', async () => {
+    openWith(`?sgg=11680&bld=${LINK_BLD}`);
+    render(<App />);
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+    unfoldEntry();
+    expect(cards()).toBeNull();
+    expect(smallRow()).not.toBeNull();
+    // 건물 선택을 풀고 입구로 돌아와도(구를 바꾸면 건물이 빠진다) 그 방문 동안은 안 뜬다.
+    await pickGu('대전', '서구');
+    await waitFor(() => expect(screen.queryByRole('heading', { name: '테스트빌딩' })).toBeNull());
+    expect(cards()).toBeNull();
+    expect(window.localStorage.getItem(KEY)).toBeNull();
+
+    cleanup();
+    openWith('');
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+    expect(cards()).not.toBeNull();
+  });
+
+  it('★ 큰 카드가 서 있는 채 건물을 열고 바의 「나는 역할 고르기」를 누르면 펼치고 첫 카드 단추에 커서', async () => {
+    const scrolled: Element[] = [];
+    Element.prototype.scrollIntoView = vi.fn(function (this: Element) {
+      scrolled.push(this);
+    });
+    render(<App />);
+    await pickGu('서울', '강남구');
+    const input = screen.getByLabelText('건물명 또는 주소');
+    fireEvent.change(input, { target: { value: '테헤란로' } });
+    fireEvent.submit(input.closest('form')!);
+    fireEvent.click(await screen.findByRole('button', { name: /테스트빌딩/ }));
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+    const roleBar = screen.getByRole('button', { name: '나는 역할 고르기' });
+    expect(roleBar.textContent).toBe('나는 역할 고르기 ▾');
+    fireEvent.click(roleBar);
+
+    expect(scrolled).toEqual([cards()]);
+    expect(document.activeElement).toBe(document.querySelector('section.rolecards .rolecards__card'));
+    expect(document.activeElement?.textContent).toContain('투자·매입하려고');
+    // @ts-expect-error — jsdom 원래 상태(없음)로 되돌린다.
+    delete Element.prototype.scrollIntoView;
+  });
+
+  it('★ 의견함 문맥에 역할·둘러보기 값이 실리지 않는다', async () => {
+    render(<App />);
+    await screen.findByRole('button', { name: /^서울$/ });
+    fireEvent.click(cardBtn(/가게를 열려고/));
+    fireEvent.click(document.querySelector('.fb__open') as HTMLButtonElement);
+    fireEvent.click(document.querySelector('.fb__kinds input') as HTMLInputElement);
+    fireEvent.change(document.querySelector('.fb__input') as HTMLTextAreaElement, {
+      target: { value: '시험 의견' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }));
+    await waitFor(() => expect(rpc.mock.calls.some(([fn]) => fn === 'submit_feedback')).toBe(true));
+    const call = rpc.mock.calls.find(([fn]) => fn === 'submit_feedback')!;
+    const ctx = JSON.stringify((call[1] as { p_context: unknown }).p_context);
+    expect(ctx.length).toBeGreaterThan(2); // 양성 대조: 문맥은 실린다
+    for (const v of ['창업자', '둘러보기', '가게를 열려고']) expect(ctx).not.toContain(v);
   });
 });
 
@@ -728,6 +953,9 @@ describe('App — 창업자 입구 · 업종 칩 (결정 0036 결정 18 ④⑤�
     expect(select.value).toBe('I2');
 
     // 건물 화면이 열린 채 칩을 바꾼다 — 첫 렌더 함정이면 옛 대분류가 남는다.
+    // ⓘ 건물을 열면 입구가 접혀 지도(칩 줄)를 안 그린다(S1) — 바의 「상권 지도 보기」로 펼친다(칩 값은 App 이 쥐어 그대로).
+    fireEvent.click(screen.getByRole('button', { name: '상권 지도 보기' }));
+    expect(chipBtn('카페').getAttribute('aria-pressed')).toBe('true');
     fireEvent.click(chipBtn('미용'));
     expect((screen.getByLabelText('업종 골라보기') as HTMLSelectElement).value).toBe('S2');
 
@@ -767,24 +995,190 @@ describe('App — 탭 제목', () => {
     expect(document.title).toBe('테스트빌딩 — 강남구 테헤란로 1 | 상가 층별 스택뷰');
   });
 
-  it('건물을 고르면 "<이름> — <구 도로명> | 상가 층별 스택뷰", 선택을 풀면 첫 화면 제목으로 돌아온다', async () => {
+  it('건물을 고르면 "<이름> — <구 도로명> | 상가 층별 스택뷰", 선택을 풀면 구 허브 제목 · 구도 풀면 첫 화면 제목', async () => {
     const { HOME_TITLE } = await import('./lib/seo');
+    const { hubPlace, hubTitle } = await import('./lib/hubHead');
+    // 구 허브 첫 HTML(결정 0043)과 같은 함수로 — 글을 따로 만들지 않는다.
+    const HUB_TITLE = hubTitle(hubPlace({ sido_code: '11', sigungu_nm: '강남구' }) as string);
+    expect(HUB_TITLE).toBe('서울 강남구 상가 건물 층별 보기 — 상가 층별 스택뷰');
     openWith('');
     render(<App />);
-    await pickGu('서울', '강남구');
     expect(document.title).toBe(HOME_TITLE);
+    await pickGu('서울', '강남구');
+    await waitFor(() => expect(document.title).toBe(HUB_TITLE));
 
     const input = screen.getByLabelText('건물명 또는 주소');
     fireEvent.change(input, { target: { value: '테헤란로' } });
     fireEvent.submit(input.closest('form')!);
     fireEvent.click(await screen.findByRole('button', { name: /테스트빌딩/ }));
     await screen.findByRole('heading', { name: '테스트빌딩' });
+    // 양성 대조 — 건물을 고르면 허브 제목이 아니라 건물 제목.
     expect(document.title).toBe('테스트빌딩 — 강남구 테헤란로 1 | 상가 층별 스택뷰');
 
-    // 새 검색을 걸면 선택이 풀린다 — 첫 화면 제목으로 돌아온다.
+    // 새 검색을 걸면 선택이 풀린다 — 구는 그대로라 구 허브 제목으로 돌아온다.
     fireEvent.change(input, { target: { value: '역삼' } });
     fireEvent.submit(input.closest('form')!);
+    await waitFor(() => expect(document.title).toBe(HUB_TITLE));
+
+    // 양성 대조 — 고른 구를 다시 눌러 풀면 첫 화면 제목.
+    fireEvent.click(await screen.findByRole('button', { name: /^강남구/ }));
     await waitFor(() => expect(document.title).toBe(HOME_TITLE));
+  });
+
+  it('구 주소로 들어와 구 이름을 아직 모르면 서버가 넣은 허브 제목을 덮지 않는다', async () => {
+    let release: ((r: { data: unknown; error: unknown }) => void) | null = null;
+    const pending = new Promise<{ data: unknown; error: unknown }>((r) => {
+      release = r;
+    });
+    rpc.mockImplementation((fn: string) => (fn === 'list_open_sigungu' ? pending : Promise.resolve({ data: [], error: null })));
+    document.title = '서버가 넣은 허브 제목';
+    openWith('?sgg=11680');
+    render(<App />);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(document.title).toBe('서버가 넣은 허브 제목');
+    release!({ data: [gu()], error: null });
+    await waitFor(() => expect(document.title).toBe('서울 강남구 상가 건물 층별 보기 — 상가 층별 스택뷰'));
+  });
+});
+
+/**
+ * 검색 색인 보강(결정 0042) — 이어 붙였을 때만 보이는 것: h1 은 늘 하나(첫 화면 = 사이트 이름 · 건물 = 건물 이름) ·
+ * 지역 고르개 구 칩 = 진짜 링크(열린 구 전부 · 보통 누름은 화면 안) · 같은 땅 여러 동이면 동 목록을 한 번 받아
+ * 탭 제목에 동 구분 + 층별 머리에 다른 동·구 링크(누르면 화면 안에서).
+ */
+describe('App — 검색 색인 보강 (결정 0042)', () => {
+  const PNU = '1168010100100010000';
+  const SELF = `${PNU}_1024110`;
+  const OTHER = `${PNU}_1024999`;
+  const DONGS = [
+    { bld_id: SELF, bld_nm: '테스트빌딩', dong_nm: 'A동', total_area_m2: 900, floor_cnt: 3, min_floor: 1, max_floor: 3, has_roof: false },
+    { bld_id: OTHER, bld_nm: '테스트빌딩', dong_nm: 'B동', total_area_m2: 500, floor_cnt: 2, min_floor: 1, max_floor: 2, has_roof: false },
+  ];
+
+  function twoDongs() {
+    from.mockImplementation((view: string) =>
+      makeQuery(view === 'v_coverage_stats' ? { data: [], error: null } : { data: [floorRow({ bld_cnt_in_pnu: 2 })], error: null }),
+    );
+    const base = rpc.getMockImplementation()!;
+    rpc.mockImplementation((fn: string, args?: unknown) =>
+      fn === 'list_parcel_buildings' ? Promise.resolve({ data: DONGS, error: null }) : base(fn, args),
+    );
+  }
+
+  it('첫 화면 — h1 은 사이트 이름 하나 · 구 칩은 열린 구 수만큼 진짜 링크 · 보통 누름은 화면 안에서 고르기', async () => {
+    openWith('');
+    render(<App />);
+    await screen.findByRole('button', { name: '서울' });
+    expect(screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent)).toEqual(['상가 층별 스택뷰']);
+    const links = [...document.querySelectorAll<HTMLAnchorElement>('a[href^="/?sgg="]')];
+    expect(links.map((a) => a.getAttribute('href')).sort()).toEqual(['/?sgg=11680', '/?sgg=30170']);
+    await pickGu('서울', '강남구');
+    expect(currentSearch()).toBe('?sgg=11680');
+  });
+
+  it('★ 같은 땅 두 동 — 동 목록 한 번 · 탭 제목에 동 구분(첫 HTML 과 같은 꼴) · h1 = 건물 이름 하나 · 다른 동·구 링크', async () => {
+    twoDongs();
+    openWith(`?sgg=11680&bld=${SELF}`);
+    render(<App />);
+    await waitFor(() => expect(document.title).toBe('테스트빌딩 A동 — 강남구 테헤란로 1 | 상가 층별 스택뷰'));
+    // 렌더 h1 도 같은 동 구분(보완 F3 — 첫 HTML h1 과 같은 글) · 정확히 1개.
+    await screen.findByRole('heading', { level: 1, name: '테스트빌딩 A동' });
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+    expect(document.querySelector('p.app__title')!.textContent).toBe('상가 층별 스택뷰');
+
+    const nav = await waitFor(() => {
+      const n = document.querySelector('nav.stack__links');
+      expect(n!.textContent).toContain('강남구 다른 건물 찾기');
+      return n!;
+    });
+    const hrefs = [...nav.querySelectorAll('a')].map((a) => [a.getAttribute('href'), a.textContent]);
+    expect(hrefs).toEqual([
+      [`/?sgg=11680&bld=${OTHER}`, '테스트빌딩 B동'],
+      ['/?sgg=11680', '강남구 다른 건물 찾기'],
+    ]);
+    expect(nav.textContent!.startsWith('같은 땅 다른 동: ')).toBe(true);
+    expect(rpc.mock.calls.filter((c) => c[0] === 'list_parcel_buildings')).toEqual([['list_parcel_buildings', { p_pnu: PNU }]]);
+
+    // 보통 누름 = 화면 안에서 그 동으로(주소가 따라 적힌다) · 같은 땅이라 동 목록은 다시 안 묻는다.
+    const go = nav.querySelector<HTMLAnchorElement>(`a[href$="${OTHER}"]`)!;
+    expect(fireEvent.click(go)).toBe(false); // preventDefault
+    await waitFor(() => expect(currentSearch()).toContain(`bld=${OTHER}`));
+    await waitFor(() => expect(document.title).toBe('테스트빌딩 B동 — 강남구 테헤란로 1 | 상가 층별 스택뷰'));
+    expect(rpc.mock.calls.filter((c) => c[0] === 'list_parcel_buildings')).toHaveLength(1);
+  });
+
+  it('「○○구 다른 건물 찾기」 보통 누름 = 위 칸을 펼치고 입력칸에 커서(보던 건물은 그대로) · Ctrl 누름은 링크 그대로', async () => {
+    twoDongs();
+    openWith(`?sgg=11680&bld=${SELF}`);
+    render(<App />);
+    const find = await screen.findByRole('link', { name: '강남구 다른 건물 찾기' });
+    expect(fireEvent.click(find, { ctrlKey: true })).toBe(true); // 가로채지 않는다(새 탭은 브라우저 몫)
+    expect((document.getElementById('entry-panel') as HTMLElement).hidden).toBe(true);
+    expect(fireEvent.click(find)).toBe(false);
+    await waitFor(() => expect((document.getElementById('entry-panel') as HTMLElement).hidden).toBe(false));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('건물명 또는 주소')));
+    expect(currentSearch()).toContain(`bld=${SELF}`);
+  });
+
+  it('★ 보완 F11 — 지금 고른 구가 건물의 구가 아니면 「○○구 다른 건물 찾기」를 그 구 이름으로 적지 않는다', async () => {
+    twoDongs();
+    // 고른 구(대전 서구 30170) ≠ 건물의 구(강남 11680) — 상권이 구 경계를 넘어 지도·목록에서 옆 구 건물을 고른 때와 같다.
+    // ⓘ 주소로는 못 만든다(parseAppUrl 이 건물 앞 5자리로 구를 맞춘다) — 서구에서 찾은 결과로 강남 건물이 온 척한다.
+    const base = rpc.getMockImplementation()!;
+    rpc.mockImplementation((fn: string, args?: unknown) =>
+      fn === 'search_buildings' ? Promise.resolve({ data: [hit({ bld_cnt_in_pnu: 2 })], error: null }) : base(fn, args),
+    );
+    openWith('');
+    render(<App />);
+    await pickGu('대전', '서구');
+    const input = screen.getByLabelText('건물명 또는 주소');
+    fireEvent.change(input, { target: { value: '테헤란로' } });
+    fireEvent.submit(input.closest('form')!);
+    fireEvent.click(await screen.findByRole('button', { name: /테스트빌딩/ }));
+    await screen.findByRole('heading', { level: 1, name: '테스트빌딩 A동' });
+    expect(document.querySelector('.entrybar__place')!.textContent).toBe('대전 서구');
+    await screen.findByRole('link', { name: '테스트빌딩 B동' });
+    expect(screen.queryByRole('link', { name: /다른 건물 찾기/ })).toBeNull();
+    expect(document.querySelector('nav.stack__links')!.textContent).not.toContain('서구');
+  });
+
+  it('★ 보완 F4 — 건물을 연 채 층을 불러오는 중에도 h1 은 정확히 1개(건물 이름)', async () => {
+    from.mockImplementation((view: string) => {
+      if (view === 'v_coverage_stats') return makeQuery({ data: [], error: null });
+      const q: Record<string, unknown> = {};
+      for (const m of ['select', 'eq', 'order', 'limit']) q[m] = () => q;
+      q.then = () => new Promise(() => {}); // 층 응답이 영영 안 온다
+      return q;
+    });
+    openWith('');
+    render(<App />);
+    await pickGu('서울', '강남구');
+    const input = screen.getByLabelText('건물명 또는 주소');
+    fireEvent.change(input, { target: { value: '테헤란로' } });
+    fireEvent.submit(input.closest('form')!);
+    fireEvent.click(await screen.findByRole('button', { name: /테스트빌딩/ }));
+    await screen.findByText('층 정보를 불러오는 중…');
+    expect(screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent)).toEqual(['테스트빌딩']);
+    expect(document.querySelector('p.app__title')).not.toBeNull();
+  });
+
+  it('동 목록이 실패하면 동 구분·다른 동 줄 없이 지금 화면 그대로', async () => {
+    twoDongs();
+    const base = rpc.getMockImplementation()!;
+    const err = console.error;
+    console.error = () => {};
+    rpc.mockImplementation((fn: string, args?: unknown) =>
+      fn === 'list_parcel_buildings' ? Promise.resolve({ data: null, error: { message: 'x' } }) : base(fn, args),
+    );
+    try {
+      openWith(`?sgg=11680&bld=${SELF}`);
+      render(<App />);
+      await screen.findByRole('link', { name: '강남구 다른 건물 찾기' });
+      expect(document.title).toBe('테스트빌딩 — 강남구 테헤란로 1 | 상가 층별 스택뷰');
+      expect(document.querySelector('nav.stack__links')!.textContent).not.toContain('같은 땅 다른 동');
+    } finally {
+      console.error = err;
+    }
   });
 });
 
@@ -823,6 +1217,8 @@ describe('App — 중개사 최근 뽑은 건물 (결정 0036 결정 18 ⑥⑩)'
     openWith(`?sgg=11680&bld=${LINK_BLD}`);
     render(<App />);
     await screen.findByRole('heading', { name: '테스트빌딩' });
+    // 최근 줄은 검색창 안이다 — 건물을 열면 입구가 접히므로(S1) 펼쳐서 본다.
+    unfoldEntry();
   }
 
   it('★ 중개사가 인쇄 단추를 누르면 인쇄 창 전에 적히고, 검색 입력칸 바로 아래에 접힌 줄이 선다 · 주소는 그대로', async () => {
@@ -883,6 +1279,9 @@ describe('App — 중개사 최근 뽑은 건물 (결정 0036 결정 18 ⑥⑩)'
     await waitFor(() => expect(currentSearch()).toContain(`bld=${other}`));
     expect(currentSearch()).toContain('sgg=11680');
     expect(document.querySelector('.stack')).not.toBeNull();
+    // 펼친 채(openLinked) 같은 구의 최근 건물을 고르면 다시 한 줄로 접힌다(S1 · 검사 🟡 10-15).
+    expect((document.querySelector('.entry') as HTMLElement).hidden).toBe(true);
+    expect(document.querySelector('.entrybar:not(.entrybar--open)')).not.toBeNull();
   });
 
   it('★ 다른 구 건물이면 구도 그 구로 바뀐다 (구 코드 = 저장한 pnu 앞 5자리)', async () => {
@@ -895,8 +1294,8 @@ describe('App — 중개사 최근 뽑은 건물 (결정 0036 결정 18 ⑥⑩)'
     await waitFor(() => expect(currentSearch()).toContain('sgg=30170'));
     expect(currentSearch()).toContain(`bld=${dj}`);
     expect(currentSearch()).not.toContain('sgg=11680');
-    // 구 이름은 지역 고르개가 서버 목록에서 채운다.
-    expect(await screen.findByRole('heading', { name: /서구 상권 지도/ })).toBeTruthy();
+    // 구 이름은 지역 고르개가 서버 목록에서 채운다 — 건물을 고르면 입구가 접히므로(S1) 바의 지금 구로 본다.
+    await waitFor(() => expect(document.querySelector('.entrybar__place')?.textContent).toBe('대전 서구'));
   });
 
   it('★ 자리 = 검색 입력칸 → 최근 줄 → 결과 목록 차례 · 구를 바꿔 검색창이 다시 태어나도 목록은 그대로', async () => {
@@ -932,7 +1331,8 @@ describe('App — 중개사 최근 뽑은 건물 (결정 0036 결정 18 ⑥⑩)'
     );
     async function ownLine(role: string | null) {
       window.localStorage.clear();
-      if (role) window.localStorage.setItem(KEY, role);
+      // 역할 없음 = '물어봤음' 기본값(맨 위 beforeEach 와 같은 뜻 — 결정 0039 W3 큰 카드가 서지 않게).
+      window.localStorage.setItem(KEY, role ?? '둘러보기');
       openWith('');
       render(<App />);
       await pickGu('서울', '강남구');
@@ -968,6 +1368,7 @@ describe('App — 중개사 최근 뽑은 건물 (결정 0036 결정 18 ⑥⑩)'
     openWith(`?sgg=11680&bld=${LINK_BLD}`);
     render(<App />);
     await screen.findByText('링크에 담긴 건물을 불러오는 중입니다…');
+    unfoldEntry(); // 되살리는 동안도 입구는 접혀 있다(검사 🟡 10-15)
     fireEvent.click(toggle());
     fireEvent.click(screen.getByRole('button', { name: /옆빌딩/ }));
 
@@ -1205,7 +1606,8 @@ describe('App — 인쇄 한 장 보강 (결정 0036 결정 3·8 · 물결 1-C2)
     expect(asked[0]).toEqual({ p_bld_id: LINK_BLD, p_floor_no: 1, p_limit: 50, p_offset: 0 });
     // ⛔ 주소·저장소에 안 실린다.
     expect(currentSearch()).toBe(`?sgg=11680&bld=${LINK_BLD}`);
-    expect(Object.keys(window.localStorage)).toEqual([]);
+    // 저장소에는 맨 위 beforeEach 가 넣은 '물어봤음' 역할 값 하나뿐(결정 0039 W3) — 고르기 값은 안 실린다.
+    expect(Object.keys(window.localStorage)).toEqual([KEY]);
 
     // '넣지 않음'은 선택지로 남는다.
     fireEvent.click(radio('넣지 않음'));
@@ -1234,5 +1636,228 @@ describe('App — 인쇄 한 장 보강 (결정 0036 결정 3·8 · 물결 1-C2)
     await new Promise((r) => setTimeout(r, 0));
     expect(document.querySelector('.unitpick')).toBeNull();
     expect(rpc.mock.calls.some(([fn]) => fn === 'list_floor_units')).toBe(false);
+  });
+});
+
+/**
+ * 입구 접기(S1 · 👤 2026-10-14·15). 건물을 연 동안 위 덩어리를 한 줄 바로 접고, 바에서 펼치면 그 자리로 간다.
+ * 여기서 보는 것 = 여러 조각을 이어 붙였을 때만 드러나는 것(접힘·펼침·새 건물에 다시 접힘·검색어 보존·
+ * 지도는 접힌 동안 안 그림). 실제 배치(첫 화면 높이 안에 건물 이름)는 E2E 가 본다.
+ */
+describe('App — 입구 접기 (S1)', () => {
+  const KEY = 'sangga.viewerRole';
+  afterEach(() => {
+    window.localStorage.clear();
+    vi.restoreAllMocks();
+  });
+  beforeEach(() => openWith(''));
+
+  const bar = () => document.querySelector('.entrybar:not(.entrybar--open)');
+  const entry = () => document.querySelector('.entry') as HTMLElement;
+  const barBtn = (name: RegExp | string) => screen.getByRole('button', { name });
+
+  async function openBuildingBySearch() {
+    render(<App />);
+    await pickGu('서울', '강남구');
+    const input = screen.getByLabelText('건물명 또는 주소') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '테헤란로' } });
+    fireEvent.submit(input.closest('form')!);
+    fireEvent.click(await screen.findByRole('button', { name: /테스트빌딩/ }));
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+    return input;
+  }
+
+  it('★ 건물이 없으면 바 없이 지금 화면 그대로 — 건물을 열면 위 덩어리가 접히고 한 줄 바가 선다', async () => {
+    render(<App />);
+    await pickGu('서울', '강남구');
+    expect(bar()).toBeNull();
+    expect(entry().hidden).toBe(false);
+    expect(document.querySelector('.app--folded')).toBeNull();
+    expect(document.querySelector('section.dmap')).not.toBeNull();
+    cleanup();
+    openWith(''); // 앞 그림이 주소에 적은 구를 지운다(첫 그림 한 번만 주소를 읽는다).
+
+    await openBuildingBySearch();
+    expect(bar()).not.toBeNull();
+    expect(entry().hidden).toBe(true);
+    expect(document.querySelector('.app--folded')).not.toBeNull();
+    // 바 내용 — 지금 구(서버가 준 이름 + 짧은 이름표) · 단추 셋(역할 없음 = '역할 고르기'). 보이는 글자 그대로.
+    expect(bar()!.querySelector('.entrybar__place')!.textContent).toBe('서울 강남구');
+    expect([...bar()!.querySelectorAll('button')].map((b) => b.textContent)).toEqual([
+      '← 다른 건물 찾기',
+      '상권 지도 보기',
+      '나는 역할 고르기 ▾',
+    ]);
+    // 낭독기에는 기호 없이 읽힌다 · 펼침 상태(닫힘)와 무엇을 펼치는지(위 칸)를 알린다.
+    expect(entry().id).toBe('entry-panel');
+    for (const name of ['다른 건물 찾기', '상권 지도 보기', '나는 역할 고르기']) {
+      const btn = barBtn(name);
+      expect(btn.getAttribute('aria-expanded')).toBe('false');
+      expect(btn.getAttribute('aria-controls')).toBe('entry-panel');
+    }
+    // 건물을 고르면 커서는 바의 첫 단추로(고른 결과 줄이 숨어 커서가 문서 맨 앞으로 날아가지 않게).
+    expect(document.activeElement).toBe(barBtn('다른 건물 찾기'));
+    // 지도는 접힌 동안 그리지 않는다(종이에도 안 나온다 — 👤 10-15).
+    expect(document.querySelector('section.dmap')).toBeNull();
+    // 사이트 이름은 그대로 있다(크기만 CSS 가 줄인다) — 단 건물을 연 동안은 h1 이 아니라 p(결정 0042 H1 · h1 = 건물 이름 하나).
+    expect(document.querySelector('p.app__title')!.textContent).toBe('상가 층별 스택뷰');
+    expect(screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent)).toEqual(['테스트빌딩']);
+  });
+
+  it('★ 「다른 건물 찾기」= 위 덩어리만 펼치고 입력칸에 커서 · 검색어·결과·보던 건물 그대로 · 새 건물을 고르면 다시 접힌다', async () => {
+    const input = await openBuildingBySearch();
+    fireEvent.click(barBtn('다른 건물 찾기'));
+
+    expect(entry().hidden).toBe(false);
+    expect(bar()).toBeNull();
+    // 같은 입력칸이 그대로(다시 태어나지 않았다) · 검색어 그대로 · 커서가 거기.
+    expect(screen.getByLabelText('건물명 또는 주소')).toBe(input);
+    expect(input.value).toBe('테헤란로');
+    expect(document.activeElement).toBe(input);
+    // 검색 결과도 그대로 · 보던 건물도 아래 그대로.
+    expect(screen.getByRole('button', { name: /테헤란로 1/ })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '테스트빌딩' })).toBeTruthy();
+    // 「위 칸 접기」는 바가 있던 자리 = 펼친 덩어리 **맨 위**(위를 보는 사람이 찾게) · 펼침 상태(열림)를 알린다.
+    const fold = barBtn('위 칸 접기');
+    expect(fold.textContent).toBe('▲ 위 칸 접기');
+    expect(fold.getAttribute('aria-expanded')).toBe('true');
+    expect(fold.getAttribute('aria-controls')).toBe('entry-panel');
+    expect(fold.compareDocumentPosition(entry()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    // 결과에서 건물을 고르면 다시 한 줄로 · 커서는 바의 첫 단추.
+    fireEvent.click(screen.getByRole('button', { name: /테헤란로 1/ }));
+    expect(entry().hidden).toBe(true);
+    expect(bar()).not.toBeNull();
+    expect(screen.queryByRole('button', { name: '위 칸 접기' })).toBeNull();
+    expect(document.activeElement).toBe(barBtn('다른 건물 찾기'));
+  });
+
+  it('★ 「상권 지도 보기」= 펼치고 지도로 옮기며 지도 머리에 커서(지도는 새로 그린다) · 「위 칸 접기」로 접으면 지도는 빠지고 검색어는 남고 커서는 바로', async () => {
+    const scrolled: Element[] = [];
+    Element.prototype.scrollIntoView = vi.fn(function (this: Element) {
+      scrolled.push(this);
+    });
+    const input = await openBuildingBySearch();
+    fireEvent.click(barBtn('상권 지도 보기'));
+
+    expect(entry().hidden).toBe(false);
+    const map = document.querySelector('section.dmap');
+    expect(map).not.toBeNull();
+    expect(scrolled).toEqual([map]);
+    expect(document.activeElement).toBe(map!.querySelector('.dmap__toggle'));
+
+    fireEvent.click(barBtn('위 칸 접기'));
+    expect(entry().hidden).toBe(true);
+    expect(document.querySelector('section.dmap')).toBeNull();
+    expect(screen.getByLabelText('건물명 또는 주소')).toBe(input);
+    expect(input.value).toBe('테헤란로');
+    expect(document.activeElement).toBe(barBtn('다른 건물 찾기'));
+    // @ts-expect-error — jsdom 원래 상태(없음)로 되돌린다.
+    delete Element.prototype.scrollIntoView;
+  });
+
+  it('★ 역할이 있으면 「나는 투자자 ▾」 — 누르면 펼치고 역할 줄로 옮기며 첫 역할 단추에 커서', async () => {
+    const scrolled: Element[] = [];
+    Element.prototype.scrollIntoView = vi.fn(function (this: Element) {
+      scrolled.push(this);
+    });
+    window.localStorage.setItem(KEY, '투자자');
+    await openBuildingBySearch();
+    expect(barBtn('나는 투자자').textContent).toBe('나는 투자자 ▾');
+    fireEvent.click(barBtn('나는 투자자'));
+
+    expect(entry().hidden).toBe(false);
+    expect(scrolled).toEqual([document.querySelector('section.role')]);
+    expect(document.activeElement).toBe(document.querySelector('section.role .role__chip'));
+    expect(screen.getByRole('button', { name: '투자자' }).getAttribute('aria-pressed')).toBe('true');
+    // @ts-expect-error — jsdom 원래 상태(없음)로 되돌린다.
+    delete Element.prototype.scrollIntoView;
+  });
+
+  it('★ 링크로 연 건물은 되살린 뒤 접힌 채로 시작하고, 바에 구 이름이 살아난다', async () => {
+    openWith(`?sgg=11680&bld=${LINK_BLD}`);
+    render(<App />);
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+    expect(entry().hidden).toBe(true);
+    // 지역 고르개는 숨겨져 있어도 살아 있어 서버 목록에서 구 이름을 채운다.
+    await waitFor(() => expect(bar()!.querySelector('.entrybar__place')!.textContent).toBe('서울 강남구'));
+    expect(document.querySelector('section.dmap')).toBeNull();
+  });
+
+  it('★ 되살리는 동안에도 접힌 모양(입구·지도를 그렸다 접지 않는다) · 되살리기에 실패하면 펼친 화면', async () => {
+    // 층 목록 응답을 붙잡아 둔 채 '되살리는 중'을 본다.
+    let release: ((r: { data: unknown; error: unknown }) => void) | null = null;
+    const pending = new Promise<{ data: unknown; error: unknown }>((r) => {
+      release = r;
+    });
+    from.mockImplementation((view: string) => {
+      if (view === 'v_coverage_stats') return makeQuery({ data: [], error: null });
+      const q: Record<string, unknown> = {};
+      for (const m of ['select', 'eq', 'order', 'limit']) q[m] = () => q;
+      q.then = (cb: (r: unknown) => unknown) => pending.then(cb);
+      return q;
+    });
+    openWith(`?sgg=11680&bld=${LINK_BLD}`);
+    render(<App />);
+    await screen.findByText('링크에 담긴 건물을 불러오는 중입니다…');
+    expect(entry().hidden).toBe(true);
+    expect(bar()).not.toBeNull();
+    // 지도는 그리지 않는다 — 지도 스크립트도 안 부른다.
+    expect(document.querySelector('section.dmap')).toBeNull();
+
+    // 층이 한 줄도 없는 건물 = 되살리기 실패 → 펼친 화면(바 없음 · 검색창 보임 · 지도 그림).
+    await act(async () => {
+      release!({ data: [], error: null });
+      await pending;
+    });
+    expect(await screen.findByText(/링크에 담긴 건물을 찾지 못했습니다/)).toBeTruthy();
+    expect(entry().hidden).toBe(false);
+    expect(bar()).toBeNull();
+    expect(document.querySelector('section.dmap')).not.toBeNull();
+  });
+
+  it('★ G2 창업자가 칩을 고른 채 건물을 열면 바에 「업종: 카페」(글자 · 단추 아님) — 전체·투자자면 없다', async () => {
+    const chipBtn = (name: string) =>
+      [...document.querySelectorAll('.chips button')].find((b) => b.textContent === name) as HTMLButtonElement;
+    const chipText = () => bar()?.querySelector('.entrybar__chip')?.textContent ?? null;
+
+    // ① 창업자 + 카페 → 적는다.
+    window.localStorage.setItem(KEY, '창업자');
+    render(<App />);
+    await pickGu('서울', '강남구');
+    fireEvent.click(chipBtn('카페'));
+    let input = screen.getByLabelText('건물명 또는 주소');
+    fireEvent.change(input, { target: { value: '테헤란로' } });
+    fireEvent.submit(input.closest('form')!);
+    fireEvent.click(await screen.findByRole('button', { name: /테스트빌딩/ }));
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+    expect(chipText()).toBe('업종: 카페');
+    expect(bar()!.querySelector('.entrybar__chip')!.tagName).toBe('SPAN');
+    expect([...bar()!.querySelectorAll('button')].map((b) => b.textContent)).toEqual([
+      '← 다른 건물 찾기',
+      '상권 지도 보기',
+      '나는 창업자 ▾',
+    ]);
+    cleanup();
+    openWith('');
+
+    // ② 창업자 + 전체(처음 값) → 안 적는다.
+    render(<App />);
+    await pickGu('서울', '강남구');
+    input = screen.getByLabelText('건물명 또는 주소');
+    fireEvent.change(input, { target: { value: '테헤란로' } });
+    fireEvent.submit(input.closest('form')!);
+    fireEvent.click(await screen.findByRole('button', { name: /테스트빌딩/ }));
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+    expect(bar()).not.toBeNull();
+    expect(chipText()).toBeNull();
+    cleanup();
+    openWith('');
+
+    // ③ 투자자 → 칩이 없으니 안 적는다.
+    window.localStorage.setItem(KEY, '투자자');
+    await openBuildingBySearch();
+    expect(bar()).not.toBeNull();
+    expect(chipText()).toBeNull();
   });
 });

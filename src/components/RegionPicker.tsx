@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { OPEN_SIGUNGU_FN } from '../lib/appConstants';
 import { SIDOS } from '../lib/regions';
+import { isPlainLeftClick } from '../lib/spaLink';
 import type { OpenSigungu } from '../types';
 
 /**
@@ -39,6 +40,8 @@ type Props = {
    *    말한다. 코드만 담고 이름은 늘 서버 목록에서 얻으면 그 어긋남이 없다.
    */
   onSigunguNameResolved?: (name: string) => void;
+  /** 휴대폰 지도 탭의 띠 단추가 가리킬 id(`aria-controls` · W4b) — 그때만 준다(넓은 화면 DOM 그대로). */
+  id?: string;
 };
 
 /** 서버가 준 구 목록에서 시도를 뽑는다(중복 제거, 코드순). 짧은 이름은 SIDOS 에서. */
@@ -56,6 +59,7 @@ export function RegionPicker({
   selectedSigungu,
   onSelectSigungu,
   onSigunguNameResolved,
+  id,
 }: Props) {
   const [expandedSido, setExpandedSido] = useState<string | null>(null);
   const [guList, setGuList] = useState<OpenSigungu[]>([]);
@@ -92,7 +96,6 @@ export function RegionPicker({
   useEffect(() => {
     if (selectedGu) onSigunguNameResolved?.(selectedGu.sigungu_nm);
   }, [selectedGu, onSigunguNameResolved]);
-  const gusInExpanded = expandedSido ? guList.filter((g) => g.sido_code === expandedSido) : [];
 
   function pickGu(g: OpenSigungu) {
     const already = g.sigungu_code === selectedSigungu;
@@ -100,7 +103,7 @@ export function RegionPicker({
   }
 
   return (
-    <section className="region">
+    <section className="region" id={id}>
       {/*
         ⚠️ 안내 문구도 **서버 목록에서 만든다.** 예전에는 `openRegionLabel()`(코드에 박힌
            ['11','30'] · **지금은 삭제됨**)을 썼는데, 칩 목록은 서버에서 오므로 **부산 자료가 들어오면 칩은
@@ -175,18 +178,37 @@ export function RegionPicker({
         </ul>
       )}
 
-      {expandedSido && gusInExpanded.length > 0 && (
-        <div className="region__gus">
+      {/*
+        구 칩 = 진짜 링크(결정 0042 H4 · `/?sgg=<코드>`) — 검색 봇이 열린 구 전부를 따라가게 **모든 시도의 구 목록을 늘 그리고**
+        펼치지 않은 시도의 것은 `hidden` 으로 숨긴다(보이는 모습은 예전 그대로 — 펼친 시도 하나만).
+        보통 왼쪽 누름은 화면이 가로채 지금처럼 고르기(`pickGu`) · Ctrl/가운데 누름(새 탭)은 그대로 링크다.
+        ⓘ 역할은 단추 그대로(`role="button"` + `aria-pressed` · 스페이스로도 누른다) — 낭독기에 들리는 것이 안 바뀐다.
+      */}
+      {!guLoading && !guError && sidos.map((s) => {
+        const gus = guList.filter((g) => g.sido_code === s.code);
+        if (gus.length === 0) return null;
+        return (
+        <div className="region__gus" key={s.code} hidden={expandedSido !== s.code}>
           <ul className="region__gu-list">
-            {gusInExpanded.map((g) => {
+            {gus.map((g) => {
               const on = g.sigungu_code === selectedSigungu;
               return (
                 <li key={g.sigungu_code}>
-                  <button
-                    type="button"
+                  <a
+                    href={`/?sgg=${g.sigungu_code}`}
+                    role="button"
                     className={`region__gu-chip${on ? ' region__gu-chip--on' : ''}`}
                     aria-pressed={on}
-                    onClick={() => pickGu(g)}
+                    onClick={(e) => {
+                      if (!isPlainLeftClick(e)) return;
+                      e.preventDefault();
+                      pickGu(g);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key !== ' ') return;
+                      e.preventDefault();
+                      pickGu(g);
+                    }}
                   >
                     {g.sigungu_nm}
                     {/*
@@ -203,13 +225,14 @@ export function RegionPicker({
                         {g.building_cnt.toLocaleString('ko-KR')}동
                       </span>
                     )}
-                  </button>
+                  </a>
                 </li>
               );
             })}
           </ul>
         </div>
-      )}
+        );
+      })}
     </section>
   );
 }

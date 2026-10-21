@@ -47,6 +47,10 @@ SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
 # 정본과 같은 모양을 말하는 것은 이제 이 파일이다. filter 모집단만 바뀌었다(아래 UNIT_FILTER).
 MIGRATION_SHARE = os.path.join(
     ROOT, "supabase", "migrations", "2026-10-08a_transaction_share_flag.sql")
+# 상가(근생·판매) 거래만 세는 판(2026-10-18a · 결정 0040 D3·D8 — where 라 건수까지 상가만). 뷰를 다시
+# 구웠으므로 정본과 같은 모양을 말하는 것은 이제 이 파일이다(10-08a 는 적용된 원장 — 그 판의 filter 는 그대로 본다).
+MIGRATION_USE_GROUP = os.path.join(
+    ROOT, "supabase", "migrations", "2026-10-18a_price_use_group.sql")
 
 # 단가의 근거(n·분위·면적)를 고르는 filter — 판마다 글자 그대로. n_all 등 건수 칸에는 filter 가 없다.
 UNIT_FILTER_OLD = "(where t.unit_price is not null)"
@@ -55,8 +59,11 @@ UNIT_FILTER = {
     MIGRATION: UNIT_FILTER_OLD,
     MIGRATION_AREA: UNIT_FILTER_OLD,
     MIGRATION_SHARE: UNIT_FILTER_SHARE,
+    MIGRATION_USE_GROUP: UNIT_FILTER_SHARE,
     SCHEMA: UNIT_FILTER_SHARE,
 }
+# 상가만 — where 한 줄(정본과 10-18a 에만 있다).
+SHOP_WHERE = "where t.tx_type = '집합' and price_use_group_nm(t.main_use) = 'shop' group by"
 
 BOTH = [MIGRATION, SCHEMA]
 # 두 판 **모두**에서 참이어야 하는 불변식 — 권한·집합 거래만·읽기 전용 같은 것들.
@@ -211,6 +218,20 @@ class TestTheViewExists:
             text,
         )
 
+    @pytest.mark.parametrize("path", [MIGRATION_USE_GROUP, SCHEMA])
+    def test_only_shop_rows_in_the_latest(self, path):
+        """⛔ 결정 0040 D3·D8 — 상가(근생·판매) 거래만, **where** 로(그 해 거래 N건도 상가 거래 수).
+        filter 로 옮기면 건수에 업무·숙박이 다시 섞인다. 정본과 최근 판(10-18a)이 같은 글자다."""
+        assert SHOP_WHERE in flat(read(path))
+
+    def test_the_latest_view_body_matches_canonical(self):
+        """정본과 같은 모양을 말하는 판은 10-18a 다 — 요약표 본문을 글자 그대로 대조한다."""
+        def body(path):
+            text = read(path).replace("\r\n", "\n")
+            m = re.search(r"(?im)^create materialized view (?:if not exists )?%s as\n" % MV, text)
+            return text[m.end():text.index(";", m.end())]
+        assert body(MIGRATION_USE_GROUP) == body(SCHEMA)
+
     @pytest.mark.parametrize("path", ALL)
     def test_only_jiphap_and_grouped_by_year(self, path):
         """⛔ 통건물(일반)을 섞으면 분포가 오염된다(건물 한 채 값이라 ㎡당 단가의 성격이
@@ -260,7 +281,7 @@ class TestTheViewExists:
 class TestTheAreaColumn:
     """그 해 단가의 근거가 된 거래 **한 건의 크기**(2026-09-09b · 사장님 결재 2026-09-09)."""
 
-    @pytest.mark.parametrize("path", [MIGRATION_AREA, MIGRATION_SHARE, SCHEMA])
+    @pytest.mark.parametrize("path", [MIGRATION_AREA, MIGRATION_SHARE, MIGRATION_USE_GROUP, SCHEMA])
     def test_measured_on_exactly_the_same_rows_as_the_unit_price(self, path):
         """⛔ **filter 가 단가 셋과 글자 그대로 같아야 한다.**
 

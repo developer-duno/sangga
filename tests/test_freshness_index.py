@@ -45,7 +45,6 @@ MIGRATION = os.path.join(
 EXCEPTIONS = {
     ("district", "computed_at"): "수천 행 이하(1,687개), 11.7ms 실측 2026-09-27",
     ("lh_notice", "collected_at"): "수천 행 이하, 11.2ms 실측 2026-09-27",
-    ("price_gate_sigungu", "loaded_at"): "수천 행 이하(구 단위), 10.9ms 실측 2026-09-27",
 }
 
 RE_FN = re.compile(
@@ -247,10 +246,15 @@ def test_schema_freshness_pairs_are_indexed_or_excepted():
 def test_pairs_really_are_extracted():
     """ⓐ 가짜 초록 방지 — 열 갈래 중 max 를 쓰는 줄이 실제로 뽑혀 나오는가."""
     pairs = freshness_pairs(freshness_body(read(SCHEMA)))
-    assert len(pairs) >= 10, pairs
+    # 2026-10-15a — 건축물대장 줄이 max(building.updated_at) 대신 판 표지(ledger_release) 한 줄을 읽어
+    #   쌍이 10 → 9 로 줄었다(실측 9). 2026-10-18a(결정 0041) — 성적표 줄(price_gate_sigungu.loaded_at)을 빼 9 → 8.
+    assert len(pairs) >= 8, pairs
+    assert ("price_gate_sigungu", "loaded_at") not in pairs
     # 2026-10-12b — 필지 줄은 받아 둔 날(updated_at)이 아니라 공시 연도를 읽는다.
     assert ("parcel", "land_price_year") in pairs
     assert ("parcel", "updated_at") not in pairs
+    # 2026-10-15a — 건축물대장 줄은 적재일이 아니라 판 표지를 읽는다(훑을 표가 없다).
+    assert ("building", "updated_at") not in pairs
     # ⓘ '점포·업종' 줄은 2026-10-07a(결정 0035)부터 max() 가 아니라 표지 한 줄
     #    (`select r.published_ym::text from snapshot_release r`)을 읽는다 — 훑을 표가 없다.
     assert ("unit_business", "snapshot_ym") not in pairs
@@ -380,8 +384,8 @@ def test_mutation_migration_without_statement_timeout_is_noticed():
 
 
 @pytest.mark.parametrize("table,col,line", [
-    ("building", "updated_at",
-     "create index if not exists idx_building_updated_at on building (updated_at);"),
+    # ⓘ building.updated_at 경우는 2026-10-15a 에 뺐다 — 신선도 함수가 더는 그 칸을 max() 하지 않아
+    #   색인을 지워도 '받칠 쌍이 없어졌다'가 문제가 아니다(색인 자체는 남겨 둔다 — schema.sql 주석).
     ("transaction", "contract_ym",
      "create index if not exists idx_tx_contract_ym on transaction (contract_ym);"),
 ])
@@ -513,7 +517,7 @@ def test_remaining_exceptions_are_not_backed():
     """남은 예외는 정말 색인·기본키가 없는 쌍이다(새 검사가 오탐하지 않는다)."""
     s = _schema()
     assert ("rent_stat", "quarter") not in EXCEPTIONS
-    assert len(EXCEPTIONS) == 3
+    assert len(EXCEPTIONS) == 2   # 2026-10-18a(결정 0041) — 게이트 표 줄을 빼 3 → 2
     for key in EXCEPTIONS:
         assert not has_leading_index(s, *key), key
         assert not has_leading_primary_key(s, *key), key

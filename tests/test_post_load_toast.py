@@ -305,13 +305,13 @@ QUIET = (
     ("report_tx_window_freshness", lambda: ("", "", False)),
     ("report_coverage_freshness", lambda: ("", "", False)),
     ("report_industry_mix_freshness", lambda: ("", "", False)),
-    ("report_tx_geog_freshness", lambda: ("1", "1", False)),
     ("report_anon_exposure", lambda: ([], [])),
     ("report_write_exposure", lambda: []),
     ("report_slow_functions", lambda: []),
     ("report_canonical_indexes", lambda: []),
     ("report_function_drift", lambda: []),
     ("report_snapshot_release", lambda *a: (False, False)),
+    ("report_ledger_release", lambda: False),
     ("report_store_names_freshness", lambda: ("", "", False)),
     ("report_industry_floor_freshness", lambda: ("", "", False)),
     ("report_industry_floor_consistency", lambda: ("0", False)),
@@ -319,6 +319,7 @@ QUIET = (
     ("report_industry_median_consistency", lambda: ("0", False)),
     ("report_industry_median_m_freshness", lambda: ("", "", False)),
     ("report_industry_median_m_consistency", lambda: ("0", False)),
+    ("report_tx_main_use_unknown", lambda: 0),
     ("precheck_snapshot_release", lambda: (False, "202606", "")),
 )
 

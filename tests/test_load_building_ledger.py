@@ -265,6 +265,37 @@ def test_build_building_record_maps_every_field():
     assert rec["is_jiphap"] is True
 
 
+def updated_at_problems(rec):
+    """building 행이 적재 시각을 명시로 싣는가 — 가드 본체와 양성 대조가 같은 함수를 지난다.
+
+    merge-duplicates 는 JSON 에 없는 칸을 SET 하지 않는다 → 칸이 없으면 이미 있던 건물의
+    updated_at 이 옛 값 그대로라 대장 판 표지(publish_ledger_release ⓓ)가 영영 못 지난다.
+    못 보는 것: 값이 '지금'인지(실행 1회 1값인 모듈 상수와 같은지만 본다).
+    """
+    bad = []
+    if "updated_at" not in rec:
+        bad.append("updated_at 칸이 없습니다")
+    elif rec["updated_at"] != target.RUN_LOADED_AT:
+        bad.append("updated_at 이 RUN_LOADED_AT 이 아닙니다: {!r}".format(rec["updated_at"]))
+    return bad
+
+
+def test_build_building_record_carries_run_loaded_at():
+    rec = target.build_building_record(PNU_A, TITLE_ITEM)
+    assert updated_at_problems(rec) == []
+    # 시간대가 명시돼 있다(+00:00) — 시간대 없는 문자열은 DB 세션 시간대로 해석된다
+    assert target.RUN_LOADED_AT.endswith("+00:00")
+    # 한 실행 안에서 한 값
+    assert target.build_building_record(PNU_B, TITLE_ITEM)["updated_at"] == rec["updated_at"]
+
+
+def test_mutation_dropping_updated_at_is_noticed():
+    rec = target.build_building_record(PNU_A, TITLE_ITEM)
+    broken = {k: v for k, v in rec.items() if k != "updated_at"}
+    assert any("없습니다" in m for m in updated_at_problems(broken))
+    assert updated_at_problems(dict(rec, updated_at="2026-01-01T00:00:00+00:00"))
+
+
 def test_build_building_record_ilban_is_not_jiphap():
     rec = target.build_building_record(PNU_A, dict(TITLE_ITEM, regstrGbCd="1"))
     assert rec["is_jiphap"] is False
@@ -1884,6 +1915,37 @@ def test_main_building_only_sends_the_spec_columns(tmp_path, monkeypatch):
     row = bodies[0][1][0]
     assert [row[k] for k in SPEC_KEYS] == [2, 1, 0, "철근콘크리트구조", True, None, "1+", None]
     assert "updated_at" not in row            # 기존 레코드에 없는 칸 — 건드리지 않는다
+    # ⓘ 2026-10-15 — 평소 적재는 updated_at 을 싣지만 칸 채우기는 뺀다(대장 판 표지 ⓓ 를 속이지 않게 ·
+    #   평소 경로는 아래 test_main_normal_load_sends_run_loaded_at 이 본다).
+
+
+def _posted_building_row(tmp_path, monkeypatch, argv):
+    raw_dir = _raw_with_floor_and_unit(tmp_path)
+    bodies = []
+    _fake_http(monkeypatch, [])
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        bodies.append((url, json))
+        return _FakeResponse(201)
+
+    monkeypatch.setattr(target.requests, "post", fake_post)
+    monkeypatch.setattr(sys, "argv", ["prog", "--raw-dir", raw_dir] + argv)
+    assert target.main() == 0
+    rows = [json for url, json in bodies if url.endswith("/rest/v1/building")]
+    assert len(rows) == 1
+    return rows[0][0]
+
+
+def test_main_normal_load_sends_run_loaded_at(tmp_path, monkeypatch):
+    """평소 적재(판 적재)는 갱신 행도 updated_at 이 바뀌게 RUN_LOADED_AT 을 싣는다(2026-10-15a ⓓ 의 전제)."""
+    assert _posted_building_row(tmp_path, monkeypatch, [])["updated_at"] == target.RUN_LOADED_AT
+
+
+def test_without_loaded_at_leaves_the_input_alone():
+    rec = target.build_building_record(PNU_A, TITLE_ITEM)
+    out = target.without_loaded_at([rec])
+    assert "updated_at" not in out[0] and "updated_at" in rec
+    assert {k: v for k, v in rec.items() if k != "updated_at"} == out[0]
 
 
 def test_main_building_only_dry_run_touches_nothing(tmp_path, monkeypatch, capsys):

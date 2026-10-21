@@ -19,6 +19,19 @@
   --est-line: #c5cbd9;
   --est-chip: #e7eaf2;
   --est-ink: #3d4560;
+  /* 추정 그림의 띠(가운데 절반 · 결정 0038) — 바탕(--est-chip)보다 짙고 눈금(--est-ink)보다 옅다. 먼 근거 띠는 --est-line. */
+  --est-band: #8e97b0;
+
+  /* 사실(A·B등급) 그림의 호박 진하기 4단(옅음 → 짙음 · 결정 0038 §2-6·§2-7) + 층 미상 회색(값이지 경고가 아니다).
+     ⓘ 이름은 `src/lib/viz.ts` 의 VIZ_TONES 가 가리킨다 — 여기서 지우면 viz.test 가 빨강. */
+  --fact-1: #f2ddb0;
+  --fact-2: #e0b45a;
+  --fact-3: #b9842a;
+  --fact-4: #7d5414;
+  /* 층 미상 = 옅은 회색 + 흰 빗금(`.mix__stack-cell[data-band='na']`) — 흑백 밝기는 1층 칸(--fact-2)과 비슷해서 밝기가 아니라 무늬로 가른다.
+     ⓘ 짙은 회색으로 밝기를 가르면 '모르는 칸'이 막대에서 가장 무거워 보인다(👤 메인 10-17 판단). */
+  --viz-na: #b4b7bf;
+  --viz-na-hatch: #f4f5f7;
 
   color-scheme: light;
 }
@@ -41,10 +54,18 @@ body {
   max-width: 940px;
   margin: 0 auto;
   padding: 32px 20px 80px;
+  /* 아이폰 노치·둥근 모서리(가로 놓기) — `viewport-fit=cover`(index.html)는 모든 폭에 먹으므로 좌우 안전 영역도 모든 폭에서 지킨다
+     (WebKit 권고 꼴 max · 노치가 없으면 env = 0 → 20px 그대로라 넓은 화면·종이 픽셀 변화 0 · 검사 🟠 F1 — 노치 아이폰 가로 844~932px 는 넓은 꼴). */
+  padding-left: max(20px, env(safe-area-inset-left, 0px));
+  padding-right: max(20px, env(safe-area-inset-right, 0px));
+  /* 휴대폰 아래 탭 막대 높이(결정 0039 W4a — 단추 52px + 위 4px + 선 1px) · 쓰는 곳은 `@media screen and (max-width: 720px)` 묶음뿐. */
+  --tabbar-h: 57px;
 }
 
+/* 건물을 연 동안엔 h1 이 아니라 p 다(결정 0042 H1 — h1 은 층별 화면 머리의 건물 이름) · 굵기를 적어 두어 모양이 같다. */
 .app__title {
   font-size: 26px;
+  font-weight: 700;
   margin: 0 0 6px;
   letter-spacing: -0.02em;
 }
@@ -52,6 +73,69 @@ body {
 .app__sub {
   margin: 0 0 28px;
   color: var(--muted);
+}
+
+/* ── 접힌 입구 (S1 · 시안 Qjdr1GXX — 건물을 연 동안 위 덩어리를 한 줄 바로) ──────────
+   제목은 작게, 소개 한 줄은 뺀다. 역할 줄·지역 고르개·검색은 `App` 이 `.entry[hidden]` 으로 숨기고
+   지도는 아예 안 그린다. ⓘ h1 은 그대로 있다(크기만). */
+.app--folded .app__title {
+  font-size: 1.05rem;
+  margin: 0;
+}
+
+.app--folded .app__sub {
+  display: none;
+}
+
+.entrybar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  font-size: 14px;
+}
+
+.entrybar__place {
+  font-weight: 700;
+}
+
+.entrybar__chip {
+  color: var(--muted);
+}
+
+.entrybar__btn {
+  font: inherit;
+  font-size: 14px;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.entrybar__btn:hover {
+  border-color: var(--accent);
+}
+
+/* 역할 단추는 오른쪽 끝 · 강조색(시안 그대로). */
+.entrybar__role {
+  margin-left: auto;
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* 펼친 동안의 '위 칸 접기' 줄 — 테두리 없이 단추 하나만. */
+.entrybar--open {
+  padding: 0;
+  border: 0;
+  background: none;
 }
 
 /* ── 역할 단추 줄 (결정 0036 결정 18 ⑧ — 지역 고르기 바로 위) ─────────── */
@@ -104,6 +188,93 @@ body {
 .role__note {
   margin: 0;
   font-size: 12px;
+  color: var(--muted);
+}
+
+/* ── 역할 고르기 큰 카드 (결정 0039 Q3 · W3 — 첫 방문 한 번 · 역할 단추 줄 자리) ─────────────
+   덮개가 아니라 입구 맨 위 제자리 카드다(아래 내용을 가리지 않는다). 넓은 화면 = 카드 셋 한 줄 · 휴대폰 = 세로로 쌓기
+   (`@media screen and (max-width: 720px)` 묶음). 글자는 처음부터 13px 이상 · 「그냥 둘러보기」 44px 는 '누르는 것은 44px
+   이상' 목록에 · 종이에서는 빠진다(인쇄 감춤 목록의 `.rolecards`). */
+.rolecards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 0 16px;
+  padding: 14px;
+  border: 1.5px solid var(--accent);
+  border-radius: 14px;
+  background: var(--card);
+}
+
+.rolecards__q {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.rolecards__list {
+  list-style: none;
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+}
+
+.rolecards__list > li {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+}
+
+.rolecards__card {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  min-height: 56px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rolecards__card:hover,
+.rolecards__card:focus-visible {
+  border-color: var(--accent);
+}
+
+.rolecards__name {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.rolecards__line {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.rolecards__browse {
+  align-self: flex-start;
+  padding: 0 14px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 14px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.rolecards__note {
+  margin: 0;
+  font-size: 13px;
   color: var(--muted);
 }
 
@@ -251,6 +422,7 @@ body {
   padding: 0;
 }
 
+/* 구 칩은 진짜 링크다(결정 0042 H4 · `<a role="button">`) — 단추였을 때와 같은 모양이 되게 상자·밑줄을 맞춘다. */
 .region__gu-chip {
   font: inherit;
   font-size: 13px;
@@ -260,6 +432,9 @@ body {
   background: var(--bg);
   color: var(--text);
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
 }
 
 .region__gu-chip:hover {
@@ -709,11 +884,115 @@ body {
 
 /* 지도는 부모 높이를 채운다 — 카카오 지도는 컨테이너 높이가 0이면 아무것도 안 보인다. */
 .dmap__canvas {
+  /* 화면 밖 표지(`.dmap__off`)를 지도 가장자리에 띄우는 기준(결정 0039 W1). */
+  position: relative;
   height: 420px;
   margin: 14px 0 0;
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
+}
+
+/*
+  화면 밖 표지 — 「↙ 이름 등 3곳」(결정 0039 Q4 · W1). 지금 화면 밖 상권을 방향마다 묶어 그쪽 가장자리에 단다.
+  누르면 그쪽으로 옮긴다. ⓘ 지도 위에 떠야 하므로 카카오 지도 칸(형제)보다 높은 층에 둔다.
+  ⓘ 휴대폰(720px 이하)은 이름을 숨긴다 — 아래 `@media screen and (max-width: 720px)` 묶음.
+  ⓘ 높이 44px 는 화면 전체의 '누르는 것은 44px 이상' 목록(`@media screen` · S4)에 든다 — 여기엔 안 적는다.
+  ⛔ 종이에서는 뺀다(누르는 장치 — 인쇄 감춤 목록).
+*/
+.dmap__off {
+  position: absolute;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(50% - 16px);
+  padding: 2px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+}
+
+.dmap__off:hover,
+.dmap__off:focus-visible {
+  border-color: currentColor;
+}
+
+/* 긴 상권 이름(대전 서구 「가수원육교.가수원시장 정류장」)은 한 줄로 두고 넘치면 …로 줄인다. */
+.dmap__off-nm {
+  max-width: 8em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dmap__off--n,
+.dmap__off--s {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.dmap__off--w,
+.dmap__off--e {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.dmap__off--nw,
+.dmap__off--n,
+.dmap__off--ne {
+  top: 8px;
+}
+
+/*
+  ⛔ 아래 줄 표지는 **카카오 로고·축척 막대 위로** 띄운다 — 카카오 지도는 왼쪽 아래에 로고와 축척 막대를 그린다(높이 약 25~30px).
+     8px 에 두었더니 서구 넓은 화면에서 「↙ … 1곳」이 로고·축척을 덮었다(메인 실측 2026-10-17 · 휴대폰도 축척에 걸림).
+     로고를 가리는 것은 카카오 지도 약관 문제다. 30px + 여유 6px = 36px. 오른쪽 아래(`--se`)도 같은 높이로 맞춰 줄을 가지런히 둔다.
+*/
+.dmap__off--sw,
+.dmap__off--s,
+.dmap__off--se {
+  bottom: 36px;
+}
+
+.dmap__off--nw,
+.dmap__off--w,
+.dmap__off--sw {
+  left: 8px;
+}
+
+.dmap__off--ne,
+.dmap__off--e,
+.dmap__off--se {
+  right: 8px;
+}
+
+/*
+  멀리서는 점 + 이름(결정 0039 W1) — 이름은 지금 이름표(`.dmap__label`)를 그대로 쓴다(화면·종이 대접이 같다).
+  ⛔ **누르기를 넘긴다**(`pointer-events: none`) — `DistrictMap.tsx` 의 `clickable={false}` 와 짝이다(이름표와 같은 두 겹).
+  ⓘ 점(8px)의 가운데가 상권의 이름표 점에 오도록 왼쪽으로 4px 당긴다 — `lib/districtMapView.ts` 의 겹침 어림(이름은 8px 오른쪽부터)과 맞춘다.
+*/
+.dmap__far {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: -4px;
+  pointer-events: none;
+}
+
+.dmap__dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid #fff;
+  border-radius: 50%;
+  background: var(--muted);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
 }
 
 .dmap__legend {
@@ -1007,6 +1286,116 @@ body {
   padding: 22px;
 }
 
+/* ── 역할 요약 판(결정 0039 W2) ─────────────────────────────────────────────────
+   건물 머리 위 — 고른 역할의 첫 질문 + 한 줄 답 + 숫자 타일 3~4개. 값은 카드 글 그대로(`lib/roleSummary.ts`).
+   ⓘ 기본 규칙은 화면·종이 공용으로 무난히 둔다 — 지금은 인쇄 감춤 목록의 `.rsum` 한 줄로 종이에서 빠지지만, 그 줄을 빼면
+     이 모양 그대로 종이에 나온다(종이에서 빼기 = 👤 확정 결정 0039 §7-7). 글자는 처음부터 13px 이상(화면 13px 규칙).
+   ⓘ 추정(C등급) 타일은 카드처럼 회청 바탕(`--est-*`)으로 가른다. 휴대폰 배치는 `@media screen and (max-width: 720px)` 묶음에. */
+.rsum {
+  margin: 0 0 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.rsum__q {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: baseline;
+}
+
+.rsum__role {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.rsum__question {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.rsum__answer {
+  margin: 6px 0 0;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.rsum__tiles {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+.rsum__tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  overflow-wrap: anywhere;
+}
+
+.rsum__tile--est {
+  background: var(--est-bg);
+  border-color: var(--est-line);
+}
+
+.rsum__label {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.rsum__val {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.rsum__val--more {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.rsum__grade {
+  align-self: flex-start;
+  font-size: 13px;
+}
+
+.rsum__basis {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* 휴대폰 「요약 N칸 더 보기」(결정 0039 W4a · §7-8) — 기본은 숨김, `@media screen and (max-width: 720px)` 묶음에서만 선다
+   (넓은 화면·종이는 타일 전부 그대로). */
+.rsum__more {
+  display: none;
+}
+
+.rsum__print {
+  margin-top: 12px;
+  padding: 10px 18px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+}
+
 .stack__title {
   margin: 0 0 2px;
   font-size: 20px;
@@ -1016,6 +1405,21 @@ body {
   margin: 0 0 16px;
   color: var(--muted);
   font-size: 14px;
+}
+
+/* 머리 사양 칸 아래 내부 링크 줄(결정 0042 H5) — 같은 땅 다른 동 · 이 구 다른 건물 찾기. 종이에서는 빠진다(@media print). */
+.stack__links {
+  margin: 10px 0 0;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.stack__links-row {
+  margin: 4px 0 0;
+}
+
+.stack__links a {
+  color: var(--accent);
 }
 
 /* 공공누리 1유형(출처표시) 의무. 본문보다 작게 두되 지우지는 않는다. */
@@ -1210,9 +1614,24 @@ body {
   cursor: pointer;
 }
 
+/* 긴 목록(층 목록 · 이 땅 거래)의 「전부 보기」/「접기」 단추(S2 · 👤 2026-10-15).
+   넘치는 줄을 숨기는 규칙과 종이에서 빼는 규칙은 아래 `@media screen`·`@media print` 에 있다. */
+.list__fold {
+  display: block;
+  margin-top: 8px;
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  font: inherit;
+  font-size: 13px;
+  color: var(--accent);
+  cursor: pointer;
+}
+
 /* ── 한 장 요약 카드 틀 (로드맵 Wave 2) ──────────────────────────────── */
 /*
-   층별 화면의 섹션 다섯 장이 공유하는 겉틀이다. `.tx`(사실)·`.band`(추정)·`.mix`(둘레)는
+   층별 화면의 섹션 다섯 장이 공유하는 겉틀이다. `.tx`(사실)·`.mix`(둘레) 등은
    **여기 뒤에** 자기 배경·테두리를 다시 칠한다 — 그 셋을 눈으로 가르는 장치를 이 공통
    틀이 덮어쓰면 안 되므로 순서를 바꾸지 말 것.
 */
@@ -1287,6 +1706,18 @@ body {
   font-size: 13px;
 }
 
+/*
+   제목 바로 아래 '자료: 이름 날짜' 한 줄(S3 · 👤 2026-10-16 · 13px 회색). 접혀 있어도 남고 종이에도 나온다.
+   ⛔ 여기(기본 규칙)는 12px — 화면의 13px 는 아래 `@media screen` 글자 묶음이 올린다(종이 글자는 그대로 두려고).
+*/
+.card__src {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  /* 휴대폰 폭에서 '부동/산원'처럼 낱말 가운데서 끊기지 않게 — 공백에서만 줄을 바꾼다(화면·종이 공통). */
+  word-break: keep-all;
+}
+
 .card__note {
   margin: 10px 0 0;
   color: var(--muted);
@@ -1301,7 +1732,7 @@ body {
 
 /* ── 실거래 기록 (Stage A · 결정 0012) ───────────────────────────────── */
 /* ⛔ 이 블록에 추정값을 그리지 말 것. 신고된 거래와 그것을 센 값만 나온다.
-   추정은 아래 .band 블록으로 간다. */
+   (추정 밴드 카드는 결정 0041 로 내렸다.) */
 
 .tx {
   margin: 22px 0 0;
@@ -1414,169 +1845,6 @@ body {
   line-height: 1.6;
 }
 
-/* ── 참고 매매 시세 밴드 (Stage B · 결정 0013) ─────────────────────────── */
-/* ⚠️ 이 화면에서 **추정값이 나오는 유일한 자리**다. 위 .tx(실선 · 신고된 사실)와 카드를
-   갈라 두는 것이 사실과 추정을 가르는 장치다 — 점선 테두리도 "확정된 사실이 아니다"라는
-   뜻이다. 두 블록을 합치지 말 것. */
-
-.band {
-  margin: 22px 0 0;
-  padding: 16px 16px 8px;
-  border: 1px dashed var(--est-line);
-  border-radius: 8px;
-  background: var(--est-bg);
-}
-
-.band__lead {
-  margin: 0 0 12px;
-  color: var(--muted);
-  font-size: 12.5px;
-  line-height: 1.6;
-}
-
-.band__gate {
-  margin: 0 0 4px;
-  font-size: 13px;
-  line-height: 1.7;
-}
-
-.band__rows {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  font-variant-numeric: tabular-nums;
-}
-
-.band__row {
-  border-bottom: 1px dashed var(--est-line);
-}
-
-.band__row:last-child {
-  border-bottom: none;
-}
-
-/* 지금 펼쳐진 층의 밴드 줄. 위아래 두 목록이 서로를 가리키게 하는 유일한 표시다. */
-.band__row--on {
-  background: #eceff6;
-  border-radius: 6px;
-}
-
-.band__hit {
-  display: grid;
-  grid-template-columns: 96px minmax(0, 1fr); /* 층 범위('3층~17층')가 들어갈 폭 */
-  gap: 2px 10px;
-  width: 100%;
-  padding: 8px 6px;
-  border: 0;
-  background: none;
-  font: inherit;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.band__hit:hover {
-  background: #eceff6;
-  border-radius: 6px;
-}
-
-.band__floor {
-  grid-row: 1 / span 2;
-  font-weight: 700;
-  font-size: 13px;
-}
-
-.band__val {
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.band__sub {
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-/* 값을 못 내는 층. 사실 쪽 .tx__val--none 과 같은 어휘(회색 이탤릭)로 "왜 없는지"를 말한다. */
-.band__none {
-  grid-column: 2;
-  color: var(--muted);
-  font-size: 12.5px;
-  font-style: italic;
-  line-height: 1.6;
-}
-
-.band__none-note,
-.band__src,
-.band__alt {
-  margin: 10px 0 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.band__why {
-  margin: 6px 0 0;
-  padding: 0 0 0 16px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.65;
-}
-
-.band__why li + li {
-  margin-top: 4px;
-}
-
-/* ── 국세청 기준시가 ───────────────────────────────────────────────────────
-   이 카드에서 **유일하게 추정이 아닌 값**이다. 그래서 위 밴드 목록과 실선 하나로 갈라 둔다
-   — 이어 붙이면 같은 자로 잰 값처럼 읽힌다(⛔ 이 구분선을 지우지 말 것). 배지도 사실 쪽
-   색(호박)을 쓰고, 첫 문장이 "시세가 아니다"라고 못 박는다. */
-.band__base {
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
-}
-
-.band__base-h {
-  margin: 0 0 6px;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.band__base-rows {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  font-variant-numeric: tabular-nums;
-}
-
-.band__base-rows li {
-  display: grid;
-  grid-template-columns: 96px minmax(0, auto) minmax(0, 1fr); /* 층 폭은 밴드 줄과 맞춘다 */
-  gap: 4px 10px;
-  align-items: baseline;
-  padding: 5px 0;
-  font-size: 13px;
-}
-
-.band__base-floor {
-  font-weight: 600;
-}
-
-.band__base-val {
-  font-weight: 600;
-}
-
-.band__base-sub {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-/* 아직 안 온 상태. 자리를 미리 잡아 두면 나중에 페이지가 밀리지 않는다. */
-.band--wait {
-  min-height: 92px;
-}
-
 /* 옥탑도 지하와 같은 "근거 없는 층"이다(결정 0001 가드 4). */
 .floor--roof .floor__label {
   color: var(--under);
@@ -1647,7 +1915,7 @@ body {
 
 /* ── 둘레의 업종 분포 (결정 0014) ─────────────────────────────────────── */
 /*
-   ⚠️ `.tx`(사실)·`.band`(추정)와 **또 다른 카드**로 둔다. 여기 숫자는 추정이 아니지만
+   ⚠️ `.tx`(사실)와 **또 다른 카드**로 둔다. 여기 숫자는 추정이 아니지만
       "이 건물의 점포"도 아니라서(둘레의 남의 가게까지 센다) 층 목록에 붙여 놓으면
       같은 것을 세는 두 숫자처럼 읽힌다. 테두리를 실선으로 두되 배경을 달리해 가른다.
 */
@@ -1822,6 +2090,61 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* ── 그림 (결정 0038 E) ─────────────────────────────────────────────────────────
+   ① 가운데값 ▲ — 비교 글이 있는 막대 줄에만. 막대와 같은 0~100 자 위 자리(`left: %`)에, 막대 바로 아래에서 위를 가리킨다.
+      추정 색(--est-ink · 값은 viz.ts 가 인라인으로도 준다). 테두리로 그린 삼각형이라 종이에도 색이 그대로다.
+      ⓘ ▲ 가 막대 칸 밖(아래)으로 나와야 해서 그 줄만 `overflow: visible` — 채움 막대는 제 둥근 모서리로 칸 안에 머문다.
+   ② 층 묶음 쌓은 막대 — 층 줄 글 바로 위 한 줄. 칸 폭 = 그 묶음 곳 수 ÷ 합(인라인 `width: %`) · 칸 안 글자 0.
+   ⛔ 크기는 % 로만 — DOM 을 재지 않는다(접힌 카드는 폭 0 · 종이 백지 · 결정 0038 §2-3). */
+.mix__bar--mark {
+  position: relative;
+  overflow: visible;
+}
+
+.mix__mark {
+  position: absolute;
+  top: 100%;
+  width: 0;
+  height: 0;
+  margin-left: -5px;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 6px solid var(--est-ink);
+}
+
+/* ▲ 가 아래 둘째 줄(비교 글)에 닿지 않게 그 줄만 틈을 넓힌다. */
+.mix__bars li.mix__row--mark {
+  row-gap: 7px;
+}
+
+.mix__stack {
+  display: flex;
+  height: 10px;
+  margin: 8px 0 0;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.mix__stack-cell {
+  display: block;
+  height: 100%;
+}
+
+/* 층 미상 칸만 흰 사선 빗금 — 흑백 종이에서 밝기가 비슷한 1층 칸과 무늬로 갈린다(종이 색은 `*` 의 print-color-adjust 가 지킨다).
+   ⓘ 칸 색은 인라인 `background-color` 로만 준다 — 인라인 `background` 줄임 속성이면 이 무늬를 덮어쓴다. */
+.mix__stack-cell[data-band='na'] {
+  background-image: repeating-linear-gradient(
+    135deg,
+    var(--viz-na-hatch) 0 2px,
+    transparent 2px 5px
+  );
+}
+
+/* 이웃 칸이 같은 계열 색이라 사이에 흰 줄 하나(폭은 % 안에 든다 — box-sizing: border-box). */
+.mix__stack-cell + .mix__stack-cell {
+  border-left: 1px solid var(--card);
+}
+
 /* 업종 비중 비교(물결 2-3) — 상권 블록 막대 줄의 둘째 줄 + 블록 머리 아래 설명. 모양 손질은 나중(👤 'CSS 는 나중')이라
    최소만: 작은 글 · 줄 전체 폭(격자 네 칸을 가로지른다) · 좁은 화면에서 줄바꿈 허용(412px 넘침 0).
    ⓘ 둘째 줄이 같은 `li` 안이라 인쇄의 `.mix__bars li` 줄 단위 avoid 가 그대로 지킨다(종이에도 그대로 나온다). */
@@ -1868,7 +2191,7 @@ body {
       다섯 장과 달리 여기 내용은 우리가 잰 값이 아니라 **남의 집(LH) 공고 목록**이라,
       배경을 따뜻한 쪽(경고 톤과 같은 계열)으로 두어 "밖으로 나가는 자리"임을 보인다.
    ⚠️ `.card--closed` 보다 **위**에 둔다 — 여기서 padding 을 다시 잡으므로, 아래에 두면
-      접힌 상태의 아래 여백 규칙이 이 카드에서만 조용히 안 먹는다(.tx·.band·.mix 와 같다).
+      접힌 상태의 아래 여백 규칙이 이 카드에서만 조용히 안 먹는다(.tx·.mix 와 같다).
 */
 .lh {
   margin: 0 0 24px;
@@ -1990,154 +2313,10 @@ body {
   line-height: 1.6;
 }
 
-/* ── 참고 시세 성적표 (입구 · 로드맵 Wave 4) ───────────────────────────────── */
-
-/*
-   ⚠️ 바탕을 `.lh`(따뜻한 쪽 = 밖으로 나가는 자리)와 **다르게** 둔다. 나란히 서는 두
-      입구 카드인데 같은 옷을 입히면 "남의 집 공고"와 "우리 값의 성적"이 한 덩어리로
-      읽힌다. 이쪽은 우리가 스스로에게 매긴 점수라 차분한 회청 쪽으로 둔다.
+/* ── 동네 매매 단가 흐름 (입구 · 결정 0027) ──────────────────────────────────
+   ⓘ 사실을 그대로 나르는 자리라 흰 바탕에 가깝게 둔다(옛 성적표 카드는 결정 0041 로 내렸다).
    ⚠️ `.card--closed` 보다 **위**에 둔다 — 여기서 padding 을 다시 잡으므로, 아래에 두면
       접힌 상태의 아래 여백 규칙이 이 카드에서만 조용히 안 먹는다(.lh·.rent 와 같다).
-*/
-.score {
-  margin: 0 0 24px;
-  padding: 14px 16px 6px;
-  background: #f6f8fb;
-}
-
-.score__lead,
-.score__sub,
-.score__honest,
-.score__why,
-.score__none {
-  margin: 0 0 10px;
-  color: var(--muted);
-  font-size: 12.5px;
-  line-height: 1.6;
-}
-
-/* 왜 떨어졌는지 한 줄. 값이 아니라 **판정의 이유**라 눈에 띄게 둔다. */
-.score__why {
-  color: var(--under);
-  font-weight: 600;
-}
-
-.score__h {
-  margin: 16px 0 6px;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.score__facts {
-  margin: 0 0 10px;
-  padding: 0;
-  list-style: none;
-  font-size: 13px;
-}
-
-.score__facts li {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 10px;
-  padding: 6px 0;
-  border-top: 1px solid var(--line);
-}
-
-.score__facts li:first-child {
-  border-top: none;
-}
-
-.score__k {
-  flex: 1 1 220px;
-  min-width: 0;
-  color: var(--muted);
-}
-
-.score__v {
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-/* 제공·미제공을 색으로 가른다 — 이 카드에서 사람이 가장 먼저 찾는 한 글자다. */
-.score__v--pass {
-  color: var(--accent);
-}
-
-.score__v--fail {
-  color: var(--under);
-}
-
-.score__rows {
-  margin: 0 0 10px;
-  padding: 0;
-  list-style: none;
-}
-
-.score__rows li {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 10px;
-  padding: 7px 0;
-  border-top: 1px solid var(--line);
-  font-size: 13px;
-}
-
-.score__rows li:first-child {
-  border-top: none;
-}
-
-/* 단계 코드(L2·L6)는 성적표가 쓰는 이름 그대로다 — 우리가 다시 이름 붙이지 않는다. */
-.score__stage,
-.score__gu {
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.score__note {
-  flex: 1 1 200px;
-  min-width: 0;
-  color: var(--muted);
-}
-
-.score__code {
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.score__share {
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.score__err {
-  margin-left: auto;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.score__how-list {
-  margin: 0 0 10px;
-  padding-left: 18px;
-  color: var(--muted);
-  font-size: 12.5px;
-  line-height: 1.65;
-}
-
-.score__how-list li + li {
-  margin-top: 6px;
-}
-
-/* ── 동네 매매 단가 흐름 (입구 · 결정 0027) ──────────────────────────────────
-   ⚠️ 바탕을 성적표(`.score`)와 **다르게** 둔다. 나란히 서는 두 입구 카드인데 같은 옷을
-      입히면 "우리 값의 성적"과 "신고된 사실"이 한 덩어리로 읽힌다. 이쪽은 사실을 그대로
-      나르는 자리라 흰 바탕에 가깝게 둔다.
-   ⚠️ `.card--closed` 보다 **위**에 둔다 — 여기서 padding 을 다시 잡으므로, 아래에 두면
-      접힌 상태의 아래 여백 규칙이 이 카드에서만 조용히 안 먹는다(.lh·.score·.rent 와 같다).
    ──────────────────────────────────────────────────────────────────────────── */
 .flow {
   margin: 0 0 24px;
@@ -2239,9 +2418,8 @@ body {
 /* ── 상권 임대 동향 (부동산원 조사 · 결정 0024) ────────────────────────────── */
 
 /*
-   ⚠️ 바탕색을 참고 시세 카드(`.band`)와 **다르게** 둔다. 두 카드가 나란히 서는데 하나는
-      우리가 어림한 추정이고 하나는 부동산원이 조사한 값이라, 같은 옷을 입히면 같은 무게로
-      읽힌다(상세계획 §7.4 "C·D는 시각적으로 구분한다"의 결).
+   ⓘ 부동산원이 조사한 상권 값이라 이 건물 값과 갈라 보이게 바탕색을 따로 둔다(옛 참고 시세 카드
+      `.band` 와 가르던 자리 — 그 카드는 결정 0041 로 내렸다).
 */
 .rent {
   margin: 0 0 24px;
@@ -2654,7 +2832,7 @@ body {
 /*
    접힌 카드는 머리 + 요약 한 줄뿐이라 아래 여백이 남는다.
 
-   ⚠️ 이 한 줄만 `.card` 묶음에서 떼어 **여기**(.tx·.band·.mix 뒤)에 둔다. 그 셋이 저마다
+   ⚠️ 이 한 줄만 `.card` 묶음에서 떼어 **여기**(.tx·.mix 뒤)에 둔다. 그 셋이 저마다
       `padding` 을 다시 잡기 때문에, 위에 있으면 세 카드에서만 조용히 안 먹는다.
 */
 .card--closed {
@@ -3174,26 +3352,6 @@ body {
     padding-left: 10px;
   }
 
-  .band__hit {
-    grid-template-columns: 1fr;
-  }
-
-  /* 한 칸으로 접히면 "2번째 칸"이 없다 — 그대로 두면 빈 칸이 하나 생긴다. */
-  .band__floor {
-    grid-row: auto;
-  }
-
-  .band__none {
-    grid-column: 1;
-  }
-
-  /* 기준시가 줄도 좁은 폭에서는 한 칸으로 접는다 — 세 칸을 유지하면 '㎡당 300만 원'이
-     줄바꿈으로 쪼개져 숫자가 두 줄에 걸린다. */
-  .band__base-rows li {
-    grid-template-columns: 1fr;
-    gap: 2px;
-  }
-
   /* 한 칸으로 접히면 막대가 라벨 아래 한 줄을 통째로 쓴다 — 층마다 세로로 부담되지
      않게 낮추기만 한다. 숨기면 "층별 규모"라는 이 화면의 본론이 모바일에서만 사라진다. */
   .floor__bar {
@@ -3243,6 +3401,630 @@ body {
   .rent__floors {
     max-width: none;
     width: 100%;
+  }
+}
+
+/* ── 휴대폰 층 줄 = 세 줄 (S2 후속 · 👤 2026-10-16 시안 「나」) ─────────────────────────
+   위 묶음은 층 줄 칸 일곱을 한 칸씩 세로로 쌓아 한 줄이 214px 였다(운영 실측 · 10줄 카드 2,525px).
+   좁은 화면에서만 세 줄로 묶는다: ① 층 이름 + 용도 … ▼ ② 막대(폭 전체) ③ 면적 … 점포 · 거래 N건.
+   ⓘ 버튼 안 칸의 순서(DOM)는 그대로 두고 그리드 자리(grid-area)만 옮긴다 — 시험이 버튼 이름으로 찾고, 낭독 순서도 같다.
+   ⛔ **화면에서만**(`screen and`) — 넓은 화면은 위 기본 규칙, 종이는 지금 모양 그대로 둔다(크롬 A4 PDF 에는
+      위 `max-width: 720px` 묶음이 안 걸린다 — 10-16 실측. 다른 브라우저·종이 크기에서도 종이에 새지 않게 묶는다).
+   ⓘ 용도 이름이 길면 첫 줄 안에서만 줄을 바꾼다(가로 넘침 0 — E2E 「BC」). */
+@media screen and (max-width: 720px) {
+  .floor__row {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      'label use use caret'
+      'bar bar bar bar'
+      'area area stores tx';
+    gap: 4px 8px;
+  }
+
+  .floor__label {
+    grid-area: label;
+  }
+
+  .floor__use {
+    grid-area: use;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .floor__caret {
+    grid-area: caret;
+    justify-self: end;
+  }
+
+  .floor__bar {
+    grid-area: bar;
+  }
+
+  .floor__area {
+    grid-area: area;
+  }
+
+  .floor__stores {
+    grid-area: stores;
+    justify-self: end;
+  }
+
+  .floor__tx {
+    grid-area: tx;
+    justify-self: end;
+  }
+
+  /* 거래가 없는 층(뱃지 칸이 빈 글)은 점포가 셋째 줄 오른쪽 끝까지 간다 — 빈 칸 자리만큼 안쪽에 서면 줄마다 점포 글자가 흔들린다. */
+  .floor__row:has(> .floor__tx:empty) .floor__stores {
+    grid-column-end: -1;
+  }
+
+  /* 지도 화면 밖 표지(결정 0039 W1) — 좁은 지도에서는 이름을 숨겨 「↙ 3곳」만(높이 44px 는 '누르는 것은 44px 이상' 목록). */
+  .dmap__off-nm,
+  .dmap__off-etc {
+    display: none;
+  }
+
+  /* 역할 요약 판(결정 0039 W2) — 휴대폰은 타일을 한 줄에 하나씩(긴 시세·근거 글이 반 칸에서 잘게 꺾이지 않게) · 단추는 폭 전체. */
+  .rsum__tiles {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rsum__print {
+    width: 100%;
+  }
+
+  /* 역할 고르기 큰 카드(결정 0039 W3) — 휴대폰은 카드를 세로로 쌓고 「그냥 둘러보기」는 가운데. */
+  .rolecards__list {
+    flex-direction: column;
+  }
+
+  .rolecards__browse {
+    align-self: center;
+  }
+
+  /* ── 휴대폰 아래 탭(결정 0039 Q1 · W4a) ──────────────────────────────────────────────
+     `.app--tabs` · `data-tab` 은 App 이 휴대폰 꼴일 때만 붙인다(`useIsPhone` — 이 묶음과 같은 질의). 탭에 안 맞는 덩어리는
+     여기서만 숨긴다 → ⛔ **`screen` 안이라 종이에는 안 먹는다**(건물·안내 글은 어느 탭에서 뽑아도 종이에 남는다 — 👤 「건물 한 장」).
+     ⓘ 입구(`.entry`)는 찾기·지도 탭이 아니면 App 이 `hidden` 으로 숨긴다 · 지도는 보이는 탭에서만 그린다. */
+  .app--tabs {
+    /* 좌우 안전 영역은 기본 `.app` 규칙이 모든 폭에서 지킨다(F1). 맨 아래 꼬리말·의견함이 탭 막대 뒤에 숨지 않게 — 막대 높이 + 아이폰 홈 막대 + 여유. */
+    padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 32px);
+  }
+
+  /* 찾기 탭이 아니면 입구 카드(LH·단가 흐름 — 성적표 카드는 결정 0041 로 내렸다)를 숨긴다. */
+  .app--tabs:not([data-tab='find']) .app__main > .card {
+    display: none;
+  }
+
+  /* 건물 탭이 아니면 건물 덩어리(가지고 나가기·층별 화면·그물·안내 줄)를 숨긴다 — 언마운트 0(보던 건물이 남는다 · §7-1). */
+  .app--tabs:not([data-tab='building']) .app__main > :is(.takeout, .stack, .errbox, .msg) {
+    display: none;
+  }
+
+  /* 지도 탭 = 지역 고르개 + 지도 — 검색·큰 카드는 찾기 탭에만(지역 고르개는 두 탭에 같은 하나 · 메인 판단 ①). */
+  .app--tabs[data-tab='map'] .entry > :is(.rolecards, .search) {
+    display: none;
+  }
+
+  /* 더보기 탭이 아니면 꼬리말(역할 줄·의견함·안내·링크·형제 사이트·신선도)을 숨긴다. */
+  .app--tabs:not([data-tab='more']) .foot {
+    display: none;
+  }
+
+  .app--tabs[data-tab='more'] .foot {
+    margin-top: 8px;
+    padding-top: 0;
+    border-top: 0;
+  }
+
+  /* 더보기 차례(역할 줄 → 의견함 → 안내 → 넘기기 → 형제 → 신선도)는 눈 차례만 바꾼다 — 의견함 DOM 자리는 넓은 화면과 같은 맨 뒤라
+     폰을 돌려 720 경계를 넘어도 의견함이 다시 태어나지 않는다(쓰던 글 유지 · 검사 🟡 F8). `.foot--phone` 은 휴대폰 꼴일 때만 붙는다. */
+  .foot--phone {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .foot--phone > * {
+    order: 2;
+  }
+
+  .foot--phone > .role {
+    order: 0;
+  }
+
+  .foot--phone > .fb {
+    order: 1;
+  }
+
+  .tabbar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    padding: 4px max(4px, env(safe-area-inset-left, 0px)) env(safe-area-inset-bottom, 0px)
+      max(4px, env(safe-area-inset-right, 0px));
+    border-top: 1px solid var(--line);
+    background: var(--card);
+  }
+
+  .tabbar__btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-height: 52px;
+    padding: 2px 0;
+    border: 0;
+    background: none;
+    color: var(--muted);
+    font: inherit;
+    font-size: 13px;
+    line-height: 1.2;
+    cursor: pointer;
+  }
+
+  .tabbar__btn--on {
+    color: var(--accent);
+    font-weight: 700;
+  }
+
+  /* 고른 건물이 없는 「건물」 탭 — 흐리게 늘 그 자리(👤 1번 「가」 · 누를 수 있다 → 빈 안내). 글자는 다른 탭과 같은 색(대비 4.5:1 이상 —
+     단추 통째 투명도는 약 2.2:1 이었다 · 검사 🟡 F7) · 흐림은 그림 쪽만(옅게 + 점선). */
+  .tabbar__btn--dim .tabbar__icon {
+    opacity: 0.45;
+    stroke-dasharray: 2 2.5;
+  }
+
+  .tabbar__icon {
+    width: 22px;
+    height: 22px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  /* 휴대폰 자판(👤 「숨김」) — 글 입력칸에 커서가 있으면 막대를 숨긴다(자판 위에 떠서 입력칸·결과를 가리지 않게).
+     ⓘ 틈: 안드로이드에서 뒤로 단추로 자판만 내리면 커서가 남아 막대가 안 돌아온다(칸 밖을 누르면 돌아옴 · feature-notes W4a). */
+  .app--tabs:has(
+      input:focus:is(:not([type]), [type='text'], [type='search'], [type='tel'], [type='email'], [type='url'], [type='number']),
+      textarea:focus
+    )
+    .tabbar {
+    display: none;
+  }
+
+  /* 빈 「건물」 탭 · 빈 「뽑은 건물」 탭(👤 1번 「가」 · 메인 판단 ②). */
+  .tabempty,
+  .recent--tab:not(:has(.recent__list)) {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    margin: 40px 0;
+    text-align: center;
+    color: var(--muted);
+  }
+
+  .tabempty__title {
+    margin: 0;
+    color: var(--text);
+    font-weight: 700;
+  }
+
+  .tabempty__body {
+    margin: 0;
+  }
+
+  .tabempty__go {
+    padding: 0 18px;
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    background: var(--card);
+    color: var(--accent);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .recent__h {
+    margin: 0 0 8px;
+    font-weight: 700;
+  }
+
+  /* 요약 판 높이(👤 4번 「가」 · 결정 0039 §7-8) — 접힌 동안 타일 2칸만 + 「요약 N칸 더 보기」. 넓은 화면·종이는 그대로. */
+  .rsum--fold .rsum__tile:nth-child(n + 3) {
+    display: none;
+  }
+
+  .rsum__more {
+    display: block;
+    width: 100%;
+    margin-top: 10px;
+    padding: 0 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--accent);
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+  }
+
+  /* 작은 눌림 칸(결정 0039 §5 W4 줄 · 메인 판단 ⑥ — 휴대폰에만 · 넓은 화면은 그대로). 넘기기 링크·형제 사이트 링크는 폭도 44px
+     · 중개사 사무소 입력칸은 높이 44px. ⓘ 라디오·체크는 글씨를 감싼 이름표가 이미 44px 이라 input 은 그대로다. */
+  .links__a,
+  .family__a {
+    min-width: 44px;
+    justify-content: center;
+  }
+
+  .office__field input {
+    min-height: 44px;
+  }
+
+  /* 층별 머리의 같은 땅 다른 동(👤 2026-10-19 「가. 한 줄 칩 · 옆으로 밀기」 — 운영 헬리오시티 168동에서 링크 줄이 312px 로 꺾였다).
+     첫 줄 「같은 땅 다른 동 (외 N동)」 + 둘째 줄 칩(한 줄 · 칩 줄만 옆으로 밀린다 · 칩 높이 44px 는 '누르는 것은 44px 이상' 목록).
+     ⓘ 점(·)은 `display: none` 이라 낭독기도 안 읽는다 · 「외 N동」 괄호만 여기서 단다. ⛔ 이 묶음 밖으로 옮기면 넓은 화면이 바뀐다(E2E 「BS」).
+     ⓘ 쌍점(:)은 따로 감싸지 않는다 — 「동」과 「:」 사이를 칸으로 가르면 넓은 화면 첫 줄 뒤 글자들의 자리가 조금 밀려 그림이 달라진다(10-19 실측 — 첫 줄에서만 64픽셀).
+       그래서 첫 줄 이름은 글자 0 크기 + `::before` 로 다시 쓴다 — 낭독기는 원래 글(「같은 땅 다른 동:」)만 읽고, `/ ''` 대체 글이 빈 `::before` 는 안 읽는다
+       (대체 글 문법을 모르는 옛 브라우저는 첫 줄 `content` 를 쓴다 — 글은 보이고 두 번 읽힐 뿐). 글자는 FloorStack.tsx 의 첫 줄과 같아야 한다. */
+  .stack__links-row--dongs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: 0.3em;
+    row-gap: 4px;
+  }
+
+  .stack__links-lead {
+    font-size: 0;
+  }
+
+  .stack__links-lead::before {
+    content: '같은 땅 다른 동';
+    content: '같은 땅 다른 동' / '';
+    font-size: 14px;
+  }
+
+  .stack__links-sep {
+    display: none;
+  }
+
+  .stack__links-more::before {
+    content: '(';
+  }
+
+  .stack__links-more::after {
+    content: ')';
+  }
+
+  .stack__links-chips {
+    order: 1;
+    flex: 0 0 100%;
+    min-width: 0;
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    /* 초점 테두리가 밀림 상자에 잘리지 않게 위아래 조금. */
+    padding-block: 3px;
+  }
+
+  .stack__links-chips > .stack__links-a {
+    flex: none;
+    white-space: nowrap;
+    padding: 0 14px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--bg);
+    text-decoration: none;
+  }
+
+  /* ── 휴대폰 지도 가득 + 위 한 줄 띠 + 끌어올리는 상권 판 (👤 2026-10-19 결정 0039 W4b) ─────────────────────────
+     `.app--mapfull` = 중개사가 아닌 사람이 구를 고른 채 「지도」 탭(App). 띠(48px)는 화면 맨 위에 고정, 지도 덩어리(`.dmap--full`)는
+     띠 아래부터 탭 막대 위까지 고정 — 그 안에서 칩 줄 → 지도 칸(남은 높이 전부) → 판. 사이트 제목·소개 한 줄은 지도 탭에서만 숨는다.
+     ⛔ 엿보기·반 단계에서 판은 지도를 **덮지 않고** 지도 칸이 줄어든다(카카오 로고·축척이 늘 보이게 — 로고 가림은 약관 문제 ·
+        줄어든 뒤 `relayout`) · 가득 단계에서만 판이 지도를 덮는다(지도가 안 보이니 로고 문제 없음).
+     ⛔ 전부 이 묶음 안 — 넓은 화면·종이는 그대로(종이에서는 띠·판·칩 줄이 인쇄 감춤 목록으로 빠진다). */
+  /* ⓘ 위 여백 = 띠 높이(W4b 보완 C4) — 지도 덩어리·띠·탭 막대는 전부 고정이라 상관없고, 흐름에 남는 것(지도 그물(ErrorBoundary)
+     안내 `.errbox`·`.msg`)만 띠 밑에 깔리지 않고 그 아래에서 시작한다.
+     ⓘ 당겨서 새로 고침·튕김 막기(C3) — 지도를 끄는 손가락이 쪽 전체를 끌지 않게. 쪽을 굴리는 것은 뿌리(html)라 거기에도 둔다. */
+  .app--mapfull {
+    --rstrip-h: 48px;
+    box-sizing: border-box;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+    overscroll-behavior-y: none;
+    padding-top: var(--rstrip-h);
+    padding-bottom: 0;
+  }
+
+  html:has(.app--mapfull) {
+    overscroll-behavior-y: none;
+  }
+
+  .app--mapfull .app__head {
+    display: none;
+  }
+
+  .rstrip {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 20;
+    box-sizing: border-box;
+    height: var(--rstrip-h);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 0 max(12px, env(safe-area-inset-right, 0px)) 0 max(6px, env(safe-area-inset-left, 0px));
+    border-bottom: 1px solid var(--line);
+    background: var(--card);
+  }
+
+  .rstrip__btn {
+    min-width: 0;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 8px;
+    background: none;
+    color: var(--text);
+    font: inherit;
+    font-size: 16px;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+  }
+
+  .rstrip__note {
+    flex: none;
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  /* 지역 고르개(찾기 탭과 같은 하나)는 띠를 눌렀을 때만 — 띠 아래로 펼친 판(지도 위에 뜬다 · 지도 칸 크기는 그대로). */
+  .app--mapfull:not(.app--regionopen) .entry > .region {
+    display: none;
+  }
+
+  .app--regionopen .entry > .region {
+    position: fixed;
+    top: var(--rstrip-h);
+    left: 0;
+    right: 0;
+    z-index: 19;
+    box-sizing: border-box;
+    max-height: calc(100vh - var(--rstrip-h) - var(--tabbar-h) - env(safe-area-inset-bottom, 0px));
+    max-height: calc(100dvh - var(--rstrip-h) - var(--tabbar-h) - env(safe-area-inset-bottom, 0px));
+    overflow-y: auto;
+    margin: 0;
+    padding: 12px max(16px, env(safe-area-inset-right, 0px)) 16px max(16px, env(safe-area-inset-left, 0px));
+    border-bottom: 1px solid var(--line);
+    background: var(--card);
+    box-shadow: 0 8px 16px rgb(0 0 0 / 12%);
+  }
+
+  .app--mapfull .dmap--full {
+    position: fixed;
+    top: var(--rstrip-h);
+    left: 0;
+    right: 0;
+    bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px));
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: var(--bg);
+  }
+
+  /* 칩 줄(창업자) — 한 줄 가로 밀기(10-19 「같은 땅 다른 동」 칩 줄과 같은 꼴) · 칩 밑 설명 글은 지도 탭에서 숨긴다(칩 높이 44px 는 목록 그대로). */
+  /* 칩 줄 높이 = 칩 44px 그대로 + 선 1px(W4b 보완 C1 — 위아래 여백·줄 사이 틈 0 · 지도 칸을 그만큼 넓힌다). */
+  .dmap--full .dmap__head {
+    flex: none;
+    padding: 0 max(12px, env(safe-area-inset-right, 0px)) 0 max(12px, env(safe-area-inset-left, 0px));
+    border-bottom: 1px solid var(--line);
+    background: var(--card);
+  }
+
+  .dmap--full .chips {
+    flex-wrap: nowrap;
+    min-width: 0;
+    row-gap: 0;
+  }
+
+  .dmap--full .chips__lead {
+    flex: none;
+  }
+
+  .dmap--full .chips__list {
+    flex-wrap: nowrap;
+    min-width: 0;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    padding-block: 0;
+  }
+
+  .dmap--full .chips__list > li {
+    flex: none;
+  }
+
+  .dmap--full .chips__chip {
+    white-space: nowrap;
+  }
+
+  /* 위아래 여백이 0 이라 초점 테두리가 밀림 상자에 잘린다 → 칩 안쪽에 그린다(C1). */
+  .dmap--full .chips__chip:focus-visible {
+    outline-offset: -3px;
+  }
+
+  .dmap--full .chips__note {
+    display: none;
+  }
+
+  .dmap--full .dmap__canvas {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .dmap--full .dmap__canvas > .msg {
+    margin: 16px;
+  }
+
+  /* ⛔ 층(z-index) — 판은 지도 칸 안 화면 밖 표지(`.dmap__off` 10)보다 위, 띠(19)·탭 막대(20)·펼친 지역 고르개(19)보다 아래(W4b 보완 A1 ·
+     표지가 판 위로 비쳤다). `.dmap--full` 이 층 묶음(z-index 1)이라 띠·탭 막대와는 어차피 겹 밖이지만 숫자로도 아래에 둔다. */
+  .dsheet {
+    position: relative;
+    z-index: 11;
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--line);
+    border-radius: 14px 14px 0 0;
+    background: var(--card);
+    box-shadow: 0 -4px 12px rgb(0 0 0 / 8%);
+  }
+
+  .dsheet--half {
+    height: 50vh;
+    height: 50dvh;
+  }
+
+  .dsheet--full {
+    position: absolute;
+    inset: 0;
+    z-index: 12;
+    border-radius: 0;
+  }
+
+  .dsheet__bar {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 56px;
+    padding: 4px max(12px, env(safe-area-inset-right, 0px)) 4px max(4px, env(safe-area-inset-left, 0px));
+    /* 손가락 끌기는 판이 받는다(브라우저가 쪽을 굴리지 않게). */
+    touch-action: none;
+  }
+
+  .dsheet__handle {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    padding: 0;
+    border: 0;
+    border-radius: 8px;
+    background: none;
+    cursor: pointer;
+  }
+
+  .dsheet__grip {
+    width: 28px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--muted);
+  }
+
+  .dsheet__head {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    line-height: 1.35;
+  }
+
+  .dsheet__title {
+    font-size: 15px;
+    font-weight: 700;
+  }
+
+  .dsheet__hint {
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  .dsheet__fold {
+    flex: none;
+    padding: 0 14px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--card);
+    color: var(--muted);
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+  }
+
+  .dsheet__body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0 max(16px, env(safe-area-inset-right, 0px)) 16px max(16px, env(safe-area-inset-left, 0px));
+  }
+
+  /* 엿보기에서는 안 굴린다 — 머리 한 줄만. */
+  .dsheet--peek .dsheet__body {
+    display: none;
+  }
+
+  /* 홈 화면에 두고 앱처럼 쓰기(👤 W4b 3번 「가」) — 「더보기」 탭 의견함 뒤·안내 앞(눈 차례는 위 `.foot--phone > *` 의 order 2 + DOM 차례). */
+  .hshint {
+    margin: 0 0 16px;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--card);
+    font-size: 14px;
+  }
+
+  .hshint__h {
+    margin: 0 0 6px;
+    font-weight: 700;
+  }
+
+  .hshint__list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    color: var(--muted);
+  }
+
+  .hshint__list li + li {
+    margin-top: 4px;
+  }
+
+  .hshint__btn {
+    margin-top: 10px;
+    padding: 0 16px;
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    background: var(--card);
+    color: var(--accent);
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
   }
 }
 
@@ -3379,6 +4161,11 @@ body {
 
 .gap__head {
   margin: 2px 0;
+}
+
+/* 기준시가 빈 칸의 이유 한 줄(결정 0041 · 👤 2026-10-18 ②) — 칸 머리 바로 아래 줄로 · 머리와 같은 작은 회색 글. */
+.gap__head-note {
+  display: block;
 }
 
 .gap__rows {
@@ -3580,6 +4367,424 @@ body {
    ⛔ **접어 둔 지도는 종이에도 안 나온다** — 접으면 지도를 아예 그리지 않기 때문이고,
       사용자가 일부러 접은 것이므로 그 뜻을 존중한다(카드의 접힘과는 다른 경우다).
    ──────────────────────────────────────────────────────────────────────────── */
+/* ── 화면 글자는 13px 이상 (S4 · 👤 2026-10-14) ─────────────────────────────────
+   위쪽 기본 규칙에서 13px 보다 작게 둔 글자를 **화면에서만** 13px 로 올린다.
+   ⛔ 기본 규칙의 값은 일부러 그대로 둔다 — 종이(`@media print`)는 그 값을 써야 장수가 안 바뀐다(검사 🟠 2026-10-15).
+   ⛔ 이 묶음은 원래 규칙들보다 **뒤**(인쇄 구역 바로 앞)에 있어야 같은 무게의 옛 값을 이긴다.
+   ⓘ 새 글자 칸은 처음부터 13px 이상으로 쓴다 — 여기에 더하지 않는다(E2E 「AZ」가 건물 화면의 13px 미만 글자를 0으로 잰다).
+     예외: 카드 날짜 줄 `.card__src`(S3 · 2026-10-16)는 종이 장수를 지키려고 일부러 기본 12px + 여기 13px 이다
+     (메인 10-16 크롬 PDF 실측: 강남파이낸스센터 12→12장 · 한신인터밸리24 13→13장). */
+@media screen {
+  .role__note,
+  .chips__note,
+  .region__clear,
+  .region__gu-cnt,
+  .region__retry,
+  .hit__jibun,
+  .hit__own,
+  .recent__note,
+  .stores__jibun,
+  .stores__src,
+  .dmap__legend,
+  .dmap__picked-key,
+  .dmap__picked-ty,
+  .dmap__label,
+  .dmap__src,
+  .dbld__note,
+  .dbld__dong-meta,
+  .dbld__src,
+  .stack__district-src,
+  .stack__facts dt,
+  .stack__biz-etc,
+  .floor__tx,
+  .floor__caret,
+  .floor__units,
+  .floor__units-orphan,
+  .floor__units-note,
+  .floor__units-none,
+  .units__mixed,
+  .units__more,
+  .card__role,
+  .card__caret,
+  .card__note,
+  .card__src,
+  .tx__share,
+  .tx__n,
+  .tx__note,
+  .tx__src,
+  .detail__sub,
+  .detail__none,
+  .detail__note,
+  .mix__lead,
+  .mix__chip-note,
+  .mix__permits-note,
+  .mix__floors,
+  .mix__med,
+  .mix__med-note,
+  .mix__none,
+  .mix__note,
+  .mix__src,
+  .mix__why,
+  .lh__lead,
+  .lh__kind,
+  .lh__more-btn,
+  .lh__more-lead,
+  .lh__src,
+  .flow__lead,
+  .flow__src,
+  .flow__part,
+  .flow__spread,
+  .flow__area,
+  .flow__n,
+  .rent__lead,
+  .rent__note,
+  .rent__pick-label,
+  .rent__scope,
+  .rent__quarter,
+  .rent__floors,
+  .rent__floors-cap,
+  .rent__floor-note,
+  .rent__none,
+  .rent__src,
+  .rent__why,
+  .oc__lead,
+  .oc__scale,
+  .oc__quarter,
+  .oc__note,
+  .oc__none,
+  .oc__src,
+  .oc__trend-cap,
+  .oc__gap,
+  .oc__tick,
+  .oc__ind-sum,
+  .oc__table,
+  .oc__table thead th,
+  .oc__why,
+  .empty__body,
+  .grade,
+  .grade__badge,
+  .fresh__table,
+  .fresh__kind,
+  .fresh__note,
+  .fb__count,
+  .share__label,
+  .gap__heads,
+  .gap__k,
+  .gap__sub,
+  .gap__foot,
+  .office__note,
+  .office__clear,
+  .floor__unitprint,
+  .floor__unitprint-more,
+  .floor__unitprint-cap,
+  .floor__unitprint-loading,
+  .floor__unitprint-failed,
+  .printmeta__office {
+    font-size: 13px;
+  }
+}
+
+/* ── 누르는 것은 44px 이상 (S4 · 👤 2026-10-14) ─────────────────────────────────
+   손가락으로 누르는 단추·칩·고르개·접기 단추의 높이를 44px 이상으로 둔다(시안 P3). 문장 속 글자 링크는 뺀다.
+   ⛔ **화면에서만**(`@media screen`) — 종이(`@media print`)는 높이가 늘면 장수가 바뀐다.
+   ⓘ 새 단추를 만들면 여기에 이름을 더한다 — E2E 「AZ. 건물 화면의 누르는 것은 44px 이상 · 글자는 13px 이상」이
+     건물 화면(기본 · 카드 다 펼침)에서 재고, 종이에서는 이 높이가 안 먹는지도 본다. */
+@media screen {
+  .role__chip,
+  .chips__chip,
+  .region__chip,
+  .region__clear,
+  .region__gu-chip,
+  .region__retry,
+  .modal__close,
+  .search__input,
+  .search__btn,
+  .hit,
+  .recent__toggle,
+  .recent__clear,
+  .recent__row,
+  .stores__row,
+  .stores__more,
+  .dmap__toggle,
+  .dmap__picked-btn,
+  /* 지도 화면 밖 표지(결정 0039 W1) — 넓은 화면·휴대폰 둘 다. */
+  .dmap__off,
+  /* 역할 요약 판 「한 장으로 뽑기」(결정 0039 W2). */
+  .rsum__print,
+  /* 역할 고르기 큰 카드 「그냥 둘러보기」(결정 0039 W3 — 카드 셋은 기본 규칙에서 56px). */
+  .rolecards__browse,
+  /* 휴대폰 아래 탭 · 빈 건물 탭 단추 · 요약 판 더 보기(결정 0039 W4a — 휴대폰에서만 그려지거나 보인다). */
+  .tabbar__btn,
+  .tabempty__go,
+  .rsum__more,
+  /* PC 두 칸의 「왼쪽 칸 접기」 · 접힌 띠의 펼치기·「지도」 단추 · 「상권 지도 넣기」(결정 0039 W5 — 1024px 이상에서만 그려진다). */
+  .entry__fold,
+  .lrail__btn,
+  .mapprint,
+  .regionfold__btn,
+  /* 휴대폰 지도 탭 띠 · 끌어올리는 판의 손잡이·접기 · 홈 화면 추가 단추(결정 0039 W4b — 휴대폰에서만 그려진다). */
+  .rstrip__btn,
+  .dsheet__handle,
+  .dsheet__fold,
+  .hshint__btn,
+  .dbld__row,
+  .dbld__dong,
+  .dbld__more,
+  .card__toggle,
+  .floor__row,
+  .units__more,
+  .mix__select,
+  .rent__select,
+  .lh__more-btn,
+  .errbox__btn,
+  .links__guide-btn,
+  .fb__open,
+  .fb__kind,
+  .fb__btn,
+  .share__btn,
+  .print__btn,
+  .office__clear,
+  .unitpick__opt,
+  .list__fold {
+    min-height: 44px;
+  }
+
+  /* 따로 서 있는 링크 줄(넘기기 링크 · 형제 사이트)도 손가락으로 누르는 것이다 — 줄 글자 링크라 높이를 주려면
+     안쪽 상자로 바꾼다(부모가 flex 라 배치는 그대로). 문장 속 링크는 넣지 않는다. */
+  .links__a,
+  .family__a,
+  /* 층별 머리의 내부 링크(결정 0042 H5) — 따로 서 있는 링크 줄이다. */
+  .stack__links-a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+
+  /* 「A동」처럼 짧은 동 링크도 손가락 폭 44px(결정 0042 보완 F6) — 글자는 가운데. */
+  .stack__links-a {
+    min-width: 44px;
+    justify-content: center;
+  }
+
+  /* 펼침 머리(summary)는 표시 삼각형을 지키려고 list-item 그대로 두고 위아래 여백으로 키운다. */
+  .oc__ind-sum,
+  .office__toggle {
+    min-height: 44px;
+    padding-block: 12px;
+  }
+}
+
+/* ── 긴 목록 창 (S2 · 👤 2026-10-15) ──────────────────────────────────────────────
+   층 목록·이 땅 거래 목록은 처음 10줄만 화면에 보이고 나머지는 「전부 보기」로 펼친다 — 넘치는 줄에는
+   `list__folded` 이름표가 붙는다(FloorStack.tsx 의 LIST_FOLD_AT).
+   ⛔ **화면에서만**(`@media screen`) 숨긴다 — 종이에는 늘 전부 나와야 장수가 그대로다. 이 묶음 밖으로
+      옮기면 종이에서 11번째 줄부터 사라진다(E2E 「BB」가 본다).
+   ⓘ `display: none` 이라 낭독기에도 숨는다(눈과 귀가 같은 목록을 본다). 줄은 DOM 에 있어 `floor-N` id 는 늘 있다. */
+@media screen {
+  /* ⚠️ 목록 이름까지 붙여 무게를 올린다 — `.tx__list li { display: flex }`(무게 0,1,1)가 이름표 하나(0,1,0)를 이긴다. */
+  .floors > li.list__folded,
+  .tx__list > li.list__folded,
+  /* 지분 설명 줄 — 지분이 숨은 줄에만 있을 때 이 이름표가 붙는다(FloorStack.tsx 의 shownShare · 👤 2026-10-16). */
+  .tx__share-note.list__folded {
+    display: none;
+  }
+
+  /* 접힌 동안 거래 목록의 보이는 마지막 줄(10번째) 아래 점선을 지운다 — 원래 `:last-child` 가 지우는 선인데,
+     숨은 줄이 뒤에 있어 마지막 줄이 아니게 된다. ⓘ 층 목록은 줄 사이가 선이 아니라 틈(gap)이라 해당 없다. */
+  .tx__list > li:has(+ li.list__folded) {
+    border-bottom: none;
+  }
+}
+
+/* ── PC 두 칸 (결정 0039 Q5 · W5 · §4-13 · 👤 2026-10-21) ─────────────────────────────────────
+   1024px 이상에서 왼쪽(약 1/3 · 1280 화면에서 약 400px) = 찾기(역할·지역·검색·지도) · 오른쪽 = 건물(요약 판·카드).
+   `.app--wide` 는 App 이 이 묶음과 같은 질의(`useIsWide`)일 때만 붙인다.
+   ⛔ 두 칸 전용 규칙은 **전부 이 묶음 안**이다 — 기본 규칙·720 묶음·인쇄 묶음은 손대지 않는다(721~1023 은 지금 한 열 · 픽셀 0).
+      예외는 '누르는 것 44px' 목록(위 `@media screen`)에 이름만 더한 셋과 인쇄 묶음의 `.app--wide`·`.app--printmap` 갈래뿐.
+   ⛔ DOM 차례는 그대로다 — grid 자리만 바꾼다(`.entry`·접힌 띠 `.lrail` = 왼쪽 열 · 나머지 = 오른쪽 열). 머리글·꼬리말은 `.app__main`
+      밖이라 두 칸 위·아래 전체 폭.
+   ⓘ 종이는 폭이 없어 이 묶음이 안 먹는다 → 종이에서는 grid·sticky 가 저절로 풀린다(인쇄 묶음은 이름표로 가른다). */
+@media screen and (min-width: 1024px) {
+  .app--wide {
+    max-width: 1320px;
+  }
+
+  /* 오른쪽 덩어리 자리 여덟 줄 + 남는 높이를 받는 1fr 줄 — 모든 줄에 걸친 왼쪽 칸의 높이가 오른쪽 덩어리 **사이** 틈으로 새지 않고
+     마지막 줄로만 간다(걸친 칸의 남는 높이는 유연한 줄이 받는다 — CSS Grid 트랙 크기 규칙). 오른쪽 덩어리는 지금 많아야 다섯이다. */
+  .app--wide .app__main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+    grid-template-rows: repeat(8, auto) 1fr;
+    column-gap: 24px;
+    align-items: start;
+  }
+
+  /* 띠로 접으면 왼쪽 열 = 56px · 건물 칸이 넓어진다(👤 「가」). */
+  .app--wide.app--lcollapsed .app__main {
+    grid-template-columns: 56px minmax(0, 1fr);
+  }
+
+  .app--wide .app__main > * {
+    grid-column: 2;
+  }
+
+  /* 왼쪽 칸은 화면에 붙고 안에서 굴린다(👤 「가」) — 건물 카드를 길게 내려도 지도·검색이 늘 보인다 · 오른쪽은 페이지 굴림. */
+  .app--wide .app__main > .entry,
+  .app--wide .app__main > .lrail {
+    grid-column: 1;
+    grid-row: 1 / -1;
+    position: sticky;
+    top: 16px;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+  }
+
+  /* 접힌 동안 왼쪽 칸은 숨기기만 한다(언마운트 0 — 검색어·지도 그대로 · App 이 `inert` 도 건다). */
+  .app--wide.app--lcollapsed .app__main > .entry {
+    display: none;
+  }
+
+  /* 지도 칸은 왼쪽 폭에 맞춰 낮춘다(기본 420px → 300px). */
+  .app--wide .entry .dmap__canvas {
+    height: 300px;
+  }
+
+  /* 왼쪽 칸 머리 「왼쪽 칸 접기 ‹」 — 지역 줄 위(S1 바 대신 · 44px 는 위 '누르는 것' 목록). */
+  .entry__fold {
+    display: block;
+    margin: 0 0 12px auto;
+    padding: 0 14px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--card);
+    color: var(--text);
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+  }
+
+  .entry__fold:hover,
+  .lrail__btn:hover {
+    border-color: var(--accent);
+  }
+
+  /* 접힌 띠 — 펼치기 단추 · 구 이름 세로 글 · 「지도」 단추. */
+  .lrail {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 0;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--card);
+  }
+
+  .lrail__btn {
+    width: 44px;
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--text);
+    font: inherit;
+    font-size: 16px;
+    cursor: pointer;
+  }
+
+  .lrail__map {
+    font-size: 13px;
+  }
+
+  .lrail__place {
+    writing-mode: vertical-rl;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+  }
+
+  /* 건물이 없을 때 오른쪽 맨 위 한 줄(👤 「가」) — 그 아래 입구 카드 둘. */
+  .rpane-empty {
+    margin: 0;
+    padding: 14px 16px;
+    border: 1px dashed var(--line);
+    border-radius: 10px;
+    color: var(--muted);
+  }
+
+  /* 인쇄 단추 옆 「상권 지도 넣기」(§7-2) — 호실 구성표 고르기(`.unitpick__opt`)와 같은 꼴. */
+  .mapprint {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+
+  /* 첫 방문 큰 카드 셋(결정 0039 W3)은 왼쪽 칸(약 400px)에서 세로로 쌓는다 — 한 줄이면 120px 씩이라 글이 낱말마다 꺾인다
+     (W5 보완 F1 · 휴대폰 720 묶음과 같은 꼴). 「그냥 둘러보기」는 가운데. */
+  .app--wide .rolecards__list {
+    flex-direction: column;
+  }
+
+  .app--wide .rolecards__browse {
+    align-self: center;
+  }
+
+  /* 지역 한 줄(W5 보완 D2 · 👤 「가」) — 구를 고르면 칩 상자(`.region`)는 접고 「서울 강남구 · 바꾸기」만(`.app--rfold` = 접힘).
+     ⓘ 칩 상자는 숨기기만 한다(같은 DOM 하나 · 「바꾸기」로 다시 보인다) · 「바꾸기」 44px 는 위 '누르는 것' 목록. */
+  .app--wide.app--rfold .entry .region {
+    display: none;
+  }
+
+  .regionfold {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 0 0 12px;
+    padding: 0 0 0 4px;
+  }
+
+  .regionfold__place {
+    font-weight: 700;
+  }
+
+  .regionfold__btn {
+    padding: 0 14px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--card);
+    color: var(--text);
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+  }
+
+  .regionfold__btn:hover {
+    border-color: var(--accent);
+  }
+
+  /* 1024~1279 — 오른쪽 칸이 640px 안팎이라 기본 층 줄(칸 합 680px)이 넘친다(W5 보완 F2 · 메인 실측 1024×768 62px 넘침).
+     칸·틈을 줄여 합 568px. 사양 칸 틈도 줄인다 · 요약 판 타일은 이미 줄을 바꾼다. 좁은 지도의 화면 밖 표지는 이름을 숨긴다(F4 ·
+     720 묶음과 같은 꼴 — 「↙ 3곳」만). ⓘ 1280 이상은 기본 그대로. */
+  @media (max-width: 1279px) {
+    .app--wide .floor__row {
+      grid-template-columns: 64px minmax(60px, 1fr) 100px 140px 56px 60px 20px;
+      gap: 8px;
+    }
+
+    .app--wide .stack__facts {
+      gap: 18px;
+    }
+
+    .app--wide .dmap__off-nm,
+    .app--wide .dmap__off-etc {
+      display: none;
+    }
+  }
+}
+
 @media print {
   /*
     ⛔ **종이 여백을 우리가 못 박는다.**
@@ -3601,12 +4806,47 @@ body {
     절반이 검색창·구 칩·버튼이었다(2026-08-25 실측).
   */
   .app__head,
+  /* 내부 링크(결정 0042) — 첫 HTML 의 링크 묶음(`.seo-links` · React 가 그리면 덮이지만 혹시 남아도)과
+     층별 화면 머리의 링크 줄(`.stack__links`). 누르는 문이라 종이에서 뺀다. */
+  .seo-links,
+  .stack__links,
   /* 역할 단추 줄(결정 0036 결정 18) — 누르는 장치다. */
   .role,
+  /* 역할 고르기 큰 카드(결정 0039 W3) — 누르는 장치다. */
+  .rolecards,
   /* 창업자 업종 칩 줄(결정 0036 결정 18 ④) — 역할 단추 줄과 같은 꼴(누르는 장치). */
   .chips,
   .region,
   .search,
+  /* 접힌 입구의 한 줄 바·'위 칸 접기'(S1) — 누르는 장치다. */
+  .entrybar,
+  /* 휴대폰 아래 탭 막대 · 빈 건물 탭 안내(결정 0039 W4a) — 누르는 장치·화면 안내다. */
+  .tabbar,
+  .tabempty,
+  /* 휴대폰 지도 탭의 띠 · 끌어올리는 상권 판의 손잡이·「접기」·「지도를 누르면」 안내 · 홈 화면 추가 안내(결정 0039 W4b) —
+     누르는 장치·화면 안내다(칩 줄은 위 `.chips`).
+     ⛔ 판(`.dsheet`) 통째로는 빼지 않는다(W4b 보완 A3) — 안의 범례·누른 자리·출처는 내용이다(출처 = 공공누리 1유형 출처표시 의무).
+        건물 목록(`.dbld`)·처음 안내(`.dmap__picked--idle`)는 이 목록의 다른 줄이 그대로 뺀다. 판 머리 글(구 상권 수 · 누른 자리)은 남는다. */
+  .rstrip,
+  .dsheet__handle,
+  .dsheet__fold,
+  .dsheet__hint,
+  .hshint,
+  /* PC 두 칸(결정 0039 W5) — 「왼쪽 칸 접기」 · 접힌 띠 · 「상권 지도 넣기」 고르기 · 빈 오른쪽 안내 줄. 누르는 장치·화면 안내다. */
+  .entry__fold,
+  .lrail,
+  .mapprint,
+  .rpane-empty,
+  .regionfold,
+  /* ⛔ PC 두 칸에서 건물을 연 채 뽑으면 종이 = 오른쪽(건물)만(Q5 · 0020) — 왼쪽 칸(지도 포함)을 뺀다. 「상권 지도 넣기」를 켰으면
+     (`.app--printmap`) 남기고, 그 안의 역할·지역·검색은 위 줄(`.role`·`.region`·`.search` 등)이 빼서 지도 덩어리만 남는다(§7-2).
+     `.app--wide` 는 인쇄 중에도 그대로다(`useIsWide` 가 인쇄 중 값을 얼린다). 721~1023 은 이 이름표가 없어 10-15 규칙 그대로. */
+  .app--wide.app--wbld:not(.app--printmap) .entry,
+  /* ⛔ 휴대폰에서 건물을 연 채 찾기·지도 탭에서 뽑아도 종이 = 건물 한 장(👤 「건물 한 장」) — 그 탭이 그려 둔 지도를 뺀다.
+     `.app--tabs` 는 인쇄 중에도 그대로다(`useIsPhone` 이 인쇄 중 값을 얼린다). 넓은 화면은 이 이름표가 없어 지금 그대로. */
+  .app--tabs.app--bld .entry,
+  /* 같은 까닭으로 휴대폰 찾기 탭에 선 입구 카드 둘(LH·단가 흐름 — 건물을 연 채여도 선다 · 검사 🟠 F2 · 성적표 카드는 결정 0041 로 내렸다)도 뺀다. */
+  .app--tabs.app--bld .app__main > .card,
   /* 중개사 「최근 뽑은 건물」 줄(결정 0036 결정 18 ⑥) — 지금은 `.search` 안이지만 자리가 옮겨져도
      종이에 새지 않게 따로 적어 둔다(누르는 장치). */
   .recent,
@@ -3614,6 +4854,10 @@ body {
   .fb,
   .dmap__toggle,
   .dmap__picked--idle,
+  /* 지도 화면 밖 표지(결정 0039 W1) — 누르는 장치다. */
+  .dmap__off,
+  /* 역할 요약 판(결정 0039 W2) — 종이에서 뺀다(👤 확정 결정 0039 §7-7) · 감춤은 **이 한 줄뿐**(기본 규칙은 화면·종이 공용). */
+  .rsum,
   .dbld,
   .mix__pick,
   /* ⛔ 고르개만 빼고 **고른 결과는 남긴다** — `.rent__now` 가 어느 종류를 보는 중인지
@@ -3647,8 +4891,18 @@ body {
   .unitpick,
   /* 호실 목록 '불러오는 중' 한 줄은 화면에만(물결 1-C2 보완) — 못 받은 층 수 줄은 종이에 남는다. */
   .floor__unitprint-loading,
+  /* 긴 목록의 「전부 보기」/「접기」(S2) — 누르는 장치다. 줄은 종이에 늘 전부 나온다. */
+  .list__fold,
   .modal__back {
     display: none !important;
+  }
+
+  /* 휴대폰 지도 탭의 판(W4b 보완 A3)은 종이에서 흐름 그대로 — 화면에서 판을 띄우는 규칙(고정·가득 덮기·끄는 중 밀림)은 휴대폰 화면
+     묶음 안이라 종이엔 원래 안 오지만, 끄는 도중 붙는 인라인 `transform` 과 혹시 모를 고정 꼴까지 여기서 끊는다. */
+  .dsheet {
+    position: static !important;
+    transform: none !important;
+    box-shadow: none;
   }
 
   /* 이 종이가 무엇이고 언제 것이며 원본이 어디인지 — 첫 줄에 적는다.
@@ -3728,6 +4982,41 @@ body {
   }
 
   /*
+    ⛔ 휴대폰에서 **건물 없이** 찾기 밖 탭(더보기·빈 건물 탭)에서 뽑아도 종이는 지금 넓은 화면 종이처럼 입구가 나온다(👤 W4a 「건물 한 장」의
+    짝 — 건물 없으면 지금처럼 입구 · 검사 🟡 F6). 탭이 숨긴 `.entry[hidden]` 을 종이에서 되살린다(건물을 연 채면 위 감춤 목록이 뺀다).
+    ⓘ 틈: 지도는 보이는 탭에서만 그리므로 그 탭에서 안 그려져 있으면 종이에도 없다(feature-notes W4a).
+  */
+  .app--tabs:not(.app--bld) .entry[hidden] {
+    display: block;
+  }
+
+  /*
+    PC 두 칸 「상권 지도 넣기」(결정 0039 §7-2 · W5) — 켜면 종이에 왼쪽 칸의 지도 덩어리(제목·지도 칸·범례·누른 자리·출처).
+    왼쪽 칸을 띠로 접은 채면 지도가 `hidden` 으로 숨어 있다 → 종이에서 되살린다. 지도 칸 높이는 화면(두 칸 300px)과 같게 —
+    카카오는 칸 크기 변화를 스스로 모르므로(relayout 없이 종이로 간다) 화면에서 그린 높이 그대로 둔다.
+    ⓘ 폭은 종이 폭이라 화면 왼쪽 칸(약 400px)보다 넓다 — 화면에서 그린 타일 밖은 비어 보일 수 있다(feature-notes W5 「알려진 틈」).
+  */
+  .app--printmap .entry .dmap[hidden] {
+    display: block;
+  }
+
+  /* 두 칸에서 종이에 나오는 지도(지도 넣기 · 또는 건물 없이 뽑은 입구)는 화면의 두 칸 높이 그대로. */
+  .app--wide .entry .dmap__canvas {
+    height: 300px;
+  }
+
+  /*
+    「상권 지도 넣기」 종이의 지도 칸 폭 = 화면에서 그린 폭(W5 보완 F3 · `DistrictMapBody` 가 `onIdle` 로 잰 값을 `--dmap-w` 로 남긴다).
+    종이 폭으로 늘리면 카카오가 화면 폭(약 370px)만큼만 타일을 그려 둬 오른쪽이 빈 회색이 된다(메인 실측 862px) — 그린 폭 그대로 가운데.
+    아직 못 쟀으면(변수 없음) 지금처럼 폭 전체.
+  */
+  .app--printmap .dmap__canvas {
+    width: var(--dmap-w, 100%);
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  /*
     ⛔ 색을 지우지 말 것.
     브라우저는 잉크를 아끼려고 배경색을 기본으로 인쇄하지 않는다. 그런데 이 화면에서 색은
     장식이 아니라 **뜻을 나른다** — 층별 면적 막대와 업종 막대가 통째로 사라지고(이 화면의
@@ -3780,17 +5069,12 @@ body {
   .mix__permits,
   .floor,
   .lh__list li,
-  /* 단계·구 한 줄에 이름과 그 성적이 함께 있다 — 갈리면 근거 없는 숫자가 된다. */
-  .score__facts li,
-  .score__rows li,
   /* 한 해의 값과 그 해가 몇 달치인지·표본이 몇 건인지가 한 줄에 있다 — 갈리면 근거 없는
      숫자가 된다. ⛔ 카드 통째(`.flow`)에는 걸지 않는다(위 설명 참조). */
   .flow__rows li,
   .tx__list li,
   .tx__bands li,
   .mix__bars li,
-  .band__row,
-  .band__base-rows li,
   /* 값과 그 값이 어느 상권·어느 분기 것인지가 한 줄에 있다 — 갈리면 근거 없는 숫자가 된다. */
   .rent__rows li,
   /* 층별 표는 **줄 단위로만** 안 잘리게 한다(결정 0031). 위 `li` 가 한 장보다 길어지면
@@ -3838,11 +5122,16 @@ body {
     break-inside: auto;
   }
 
+  /* 그림과 그 글이 두 장에 갈리지 않게(결정 0038 §2-9) — 쌓은 막대는 아래 층 줄 글과 같은 장에.
+     ⛔ 카드 통째(`.mix`)에는 걸지 않는다(위 설명 참조 — 장수가 늘고 흰 종이가 남는다). */
+  .mix__stack {
+    break-after: avoid;
+  }
+
   /* 제목만 페이지 끝에 혼자 남는 것을 막는다. */
   .card__h,
   .tx__sub,
-  .mix__sub,
-  .band__base-h {
+  .mix__sub {
     break-after: avoid;
   }
 

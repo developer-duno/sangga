@@ -7,7 +7,7 @@ import {
   isLhNoticeList,
   latestCollectedAt,
   lhSummary,
-  monthDay,
+  yearMonthDay,
   sidoOf,
   splitByRegion,
 } from './lhNotices';
@@ -55,11 +55,11 @@ describe('sidoOf — 고른 구에서 시도 두 자리', () => {
   });
 });
 
-describe('monthDay — 날짜 한 조각', () => {
+describe('yearMonthDay — 날짜 한 조각(연도까지 · F4)', () => {
   it('날짜만 있는 값은 적힌 그대로 읽는다', () => {
-    expect(monthDay('2026-09-17')).toBe('9월 17일');
+    expect(yearMonthDay('2026-09-17')).toBe('2026년 9월 17일');
     // 앞자리 0 을 떼고 적는다('09월 07일'이 아니다).
-    expect(monthDay('2026-01-07')).toBe('1월 7일');
+    expect(yearMonthDay('2026-01-07')).toBe('2026년 1월 7일');
   });
 
   it('★ 시각이 붙은 값은 보는 사람의 시계로 옮겨 적는다', () => {
@@ -77,17 +77,17 @@ describe('monthDay — 날짜 한 조각', () => {
     */
     for (const hour of [0, 23]) {
       const at = new Date(2026, 7, 27, hour, 30);
-      expect(monthDay(at.toISOString()), `현지 ${hour}시 30분`).toBe(
-        `${at.getMonth() + 1}월 ${at.getDate()}일`,
+      expect(yearMonthDay(at.toISOString()), `현지 ${hour}시 30분`).toBe(
+        `${at.getFullYear()}년 ${at.getMonth() + 1}월 ${at.getDate()}일`,
       );
     }
   });
 
   it('읽을 수 없으면 null 이다 (없는 날짜를 지어내지 않는다)', () => {
-    expect(monthDay(null)).toBeNull();
-    expect(monthDay(undefined)).toBeNull();
-    expect(monthDay('')).toBeNull();
-    expect(monthDay('추후 공고')).toBeNull();
+    expect(yearMonthDay(null)).toBeNull();
+    expect(yearMonthDay(undefined)).toBeNull();
+    expect(yearMonthDay('')).toBeNull();
+    expect(yearMonthDay('추후 공고')).toBeNull();
   });
 });
 
@@ -124,7 +124,7 @@ describe('lhSummary — 접혀 있어도 보이는 한 줄', () => {
       notice({ pan_id: 'a', collected_at: at.toISOString() }),
       notice({ pan_id: 'b', collected_at: new Date(2026, 7, 25, 9, 0).toISOString() }),
     ];
-    expect(lhSummary(rows)).toBe('2건 · 8월 27일 수집 기준');
+    expect(lhSummary(rows)).toBe('2건 · 2026년 8월 27일 수집 기준');
   });
 
   it('수집 시각을 못 읽으면 그 조각만 뺀다 (건수는 남긴다)', () => {
@@ -138,7 +138,7 @@ describe('lhSummary — 접혀 있어도 보이는 한 줄', () => {
       notice({ pan_id: 'b', collected_at: at, is_nationwide: true }),
       notice({ pan_id: 'c', collected_at: at, is_nationwide: true }),
     ];
-    expect(lhSummary(rows)).toBe('1건 · 전국 표시 2건 · 8월 27일 수집 기준');
+    expect(lhSummary(rows)).toBe('1건 · 전국 표시 2건 · 2026년 8월 27일 수집 기준');
   });
 
   it('★ 지역 공고가 하나도 없으면 "0건"이라 적지 않는다 (카드가 빈 것처럼 보인다)', () => {
@@ -147,12 +147,12 @@ describe('lhSummary — 접혀 있어도 보이는 한 줄', () => {
       notice({ pan_id: 'a', collected_at: at, is_nationwide: true }),
       notice({ pan_id: 'b', collected_at: at, is_nationwide: true }),
     ];
-    expect(lhSummary(rows)).toBe('전국 표시 2건 · 8월 27일 수집 기준');
+    expect(lhSummary(rows)).toBe('전국 표시 2건 · 2026년 8월 27일 수집 기준');
   });
 
   it('★ 옛 응답(지역 칸 없음)은 예전과 글자 하나까지 같다', () => {
     const at = new Date(2026, 7, 27, 9, 0).toISOString();
-    expect(lhSummary([notice({ collected_at: at })])).toBe('1건 · 8월 27일 수집 기준');
+    expect(lhSummary([notice({ collected_at: at })])).toBe('1건 · 2026년 8월 27일 수집 기준');
   });
 
   it('천 단위에는 쉼표가 붙는다', () => {

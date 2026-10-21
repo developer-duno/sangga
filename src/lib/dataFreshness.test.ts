@@ -1,12 +1,17 @@
 import { describe, it, expect } from 'vitest';
 
+import { readFileSync } from 'node:fs';
+
 import {
   basisText,
+  CARD_SOURCES,
+  cardSourceLine,
   isDataFreshnessList,
   isDataFreshnessRow,
   nextText,
   seoulToday,
 } from './dataFreshness';
+import { ENTRY_SECTION_PLAN, SECTION_PLAN, type SectionPlan } from './sectionCards';
 import type { DataFreshnessRow } from '../types';
 
 /**
@@ -208,5 +213,179 @@ describe('isDataFreshnessList — 서버 응답의 모양', () => {
     expect(isDataFreshnessList([{ ...row(), basis_kind: 2 }])).toBe(false);
     expect(isDataFreshnessList([{ ...row(), basis: 202606 }])).toBe(false);
     expect(isDataFreshnessList([{ ...row(), cadence: null }])).toBe(false);
+  });
+});
+
+/* ── 카드마다 '자료 이름 + 날짜' 한 줄 (S3 · 👤 2026-10-16) ─────────────────────────────── */
+
+/** 2026-10-16 운영 `get_data_freshness` 의 줄(기준값만 — 날짜 줄은 next_expected·cadence 를 안 쓴다) · 결정 0041 로 성적표 줄을 뺀 열 줄. */
+function rows1016(): DataFreshnessRow[] {
+  const r = (src: string, basis_kind: string, basis: string | null) =>
+    row({ src, basis_kind, basis, next_expected: null, cadence: '-' });
+  return [
+    r('점포·업종 (상권정보)', '분기', '202606'),
+    r('실거래 (매매)', '계약월', '202610'),
+    r('건축물대장', '판', '202608'),
+    r('상권 경계', '계산일', '2026-09-08'),
+    r('LH 상가 공고', '수집일', '2026-10-12'),
+    r('건축 인허가', '기준월', '202608'),
+    r('국세청 기준시가', '고시일', '2026-01-01'),
+    r('상권 임대 동향 (부동산원)', '분기', '2026Q2'),
+    r('필지 (토지 특성)', '공시 연도', '2026'),
+    r('상권 개업·폐업 (서울시)', '분기', '20262'),
+  ];
+}
+
+/**
+ * 카드마다 기대하는 한 줄 — 👤 시안(SFpojgaYvHEdRnbx8ZTfQM)의 예시값(10-16 운영 값일 때) + 👤 10-16 보완 결정
+ * B1(실거래 끝말 「(최근 두 달은 신고 중)」) · B3(층 목록에 실거래).
+ * ⛔ 줄이 없는 카드 넷 — 빈 카드 셋(업종별 추정매출·유동인구·이 자리 가게 이력 · 결정 ②) + LH 공고(B2).
+ */
+const TX_PIECE = '국토부 실거래 2026년 10월 계약분까지 (최근 두 달은 신고 중)';
+
+const EXPECTED_LINES: Record<string, string | null> = {
+  district: '자료: 상권 경계 2026년 9월 8일 계산',
+  floors: '자료: 건축물대장 2026년 8월 판 · 상권정보 2026년 2분기 · 국토부 실거래 2026년 10월 계약분까지 (최근 두 달은 신고 중)',
+  industry: '자료: 상권정보 2026년 2분기 · 건축 인허가 2026년 8월 기준',
+  tx: '자료: 국토부 실거래 2026년 10월 계약분까지 (최근 두 달은 신고 중)',
+  floorgap:
+    '자료: 국세청 기준시가 2026년 1월 1일 고시 · 국토부 실거래 2026년 10월 계약분까지 (최근 두 달은 신고 중) · 부동산원 2026년 2분기 조사',
+  rent: '자료: 부동산원 2026년 2분기 조사',
+  openclose: '자료: 서울시 상권분석서비스 2026년 2분기',
+  sales: null,
+  pop: null,
+  history: null,
+  lhNotice: null,
+  txFlow: '자료: 국토부 실거래 2026년 10월 계약분까지 (최근 두 달은 신고 중)',
+};
+
+describe('cardSourceLine — 카드 제목 아래 날짜 줄 (S3)', () => {
+  const ALL_PLANS: Record<string, SectionPlan> = { ...SECTION_PLAN, ...ENTRY_SECTION_PLAN };
+
+  it('카드 열두 장 전부 — 날짜 줄 카드 여덟 장은 결정 글 그대로, 넷(빈 카드 셋 · LH)은 줄이 없다', () => {
+    // 표가 카드를 빠짐없이 덮는다(카드가 새로 생기면 여기 기대 줄을 먼저 정한다).
+    expect(Object.keys(EXPECTED_LINES).sort()).toEqual(Object.keys(ALL_PLANS).sort());
+    for (const [key, plan] of Object.entries(ALL_PLANS)) {
+      expect(cardSourceLine(plan.sources, rows1016()), key).toBe(EXPECTED_LINES[key]);
+    }
+    const withLine = Object.values(ALL_PLANS).filter((p) => cardSourceLine(p.sources, rows1016()));
+    expect(withLine).toHaveLength(8);
+  });
+
+  it('종류별 끝말 — 판·계약분까지(최근 두 달은 신고 중)·계산·기준·고시·조사, 상권정보·서울시 분기는 끝말 없음', () => {
+    const one = (k: keyof typeof CARD_SOURCES) => cardSourceLine([k], rows1016());
+    expect(one('ledger')).toBe('자료: 건축물대장 2026년 8월 판');
+    expect(one('tx')).toBe('자료: 국토부 실거래 2026년 10월 계약분까지 (최근 두 달은 신고 중)');
+    expect(one('district')).toBe('자료: 상권 경계 2026년 9월 8일 계산');
+    expect(one('permit')).toBe('자료: 건축 인허가 2026년 8월 기준');
+    expect(one('nts')).toBe('자료: 국세청 기준시가 2026년 1월 1일 고시');
+    expect(one('rone')).toBe('자료: 부동산원 2026년 2분기 조사');
+    expect(one('sangkwon')).toBe('자료: 상권정보 2026년 2분기');
+    expect(one('openclose')).toBe('자료: 서울시 상권분석서비스 2026년 2분기');
+  });
+
+  it('⛔ 날짜는 서버 값에서만 — 새 판이 들어오면 줄이 저절로 바뀐다', () => {
+    const next = rows1016().map((r) => (r.src === '건축물대장' ? { ...r, basis: '202609' } : r));
+    expect(cardSourceLine(SECTION_PLAN.floors.sources, next)).toBe(
+      '자료: 건축물대장 2026년 9월 판 · 상권정보 2026년 2분기 · 국토부 실거래 2026년 10월 계약분까지 (최근 두 달은 신고 중)',
+    );
+  });
+
+  it('⛔ 표를 못 받았으면(null) 줄이 없다 — 모르는 것을 \'자료 없음\'이라 적지 않는다', () => {
+    expect(cardSourceLine(SECTION_PLAN.floors.sources, null)).toBeNull();
+    // 양성 대조 — 같은 카드가 표를 받으면 줄이 있다(위 null 이 '늘 null' 이라서가 아니다).
+    expect(cardSourceLine(SECTION_PLAN.floors.sources, rows1016())).not.toBeNull();
+  });
+
+  it('⛔ 서버 표에 그 자료 줄이 없으면 그 조각만 빠지고, 하나도 안 남으면 줄이 없다', () => {
+    const noLedger = rows1016().filter((r) => r.src !== '건축물대장');
+    expect(cardSourceLine(SECTION_PLAN.floors.sources, noLedger)).toBe(
+      '자료: 상권정보 2026년 2분기 · 국토부 실거래 2026년 10월 계약분까지 (최근 두 달은 신고 중)',
+    );
+    expect(cardSourceLine(SECTION_PLAN.district.sources, noLedger)).toBe(
+      '자료: 상권 경계 2026년 9월 8일 계산',
+    );
+    expect(cardSourceLine(SECTION_PLAN.floors.sources, [])).toBeNull();
+  });
+
+  it('줄은 있는데 기준값이 비었으면 맨 아래 표처럼 \'자료 없음\'(끝말은 안 붙인다)', () => {
+    const empty = rows1016().map((r) => (r.src === '건축물대장' ? { ...r, basis: null } : r));
+    expect(cardSourceLine(SECTION_PLAN.floors.sources, empty)).toBe(
+      '자료: 건축물대장 자료 없음 · 상권정보 2026년 2분기 · 국토부 실거래 2026년 10월 계약분까지 (최근 두 달은 신고 중)',
+    );
+  });
+
+  it('빈 카드 셋(결정 ②)과 LH 공고(B2)는 자료 칸이 아예 없다', () => {
+    const none: SectionPlan[] = [
+      SECTION_PLAN.sales,
+      SECTION_PLAN.pop,
+      SECTION_PLAN.history,
+      ENTRY_SECTION_PLAN.lhNotice,
+    ];
+    for (const plan of none) {
+      expect(plan, plan.title).not.toHaveProperty('sources');
+      expect(cardSourceLine(plan.sources, rows1016())).toBeNull();
+    }
+  });
+
+  it('실거래 조각은 어느 카드에서나 같은 글이다(B1 · 실거래 기록·층별 공표값·동네 흐름·층 목록)', () => {
+    const plans: SectionPlan[] = [
+      SECTION_PLAN.tx,
+      SECTION_PLAN.floorgap,
+      SECTION_PLAN.floors,
+      ENTRY_SECTION_PLAN.txFlow,
+    ];
+    for (const plan of plans) expect(cardSourceLine(plan.sources, rows1016()), plan.title).toContain(TX_PIECE);
+    // 맨 아래 표 글은 그대로(B1) — 끝말은 카드 줄에만 붙는다.
+    expect(basisText(rows1016()[1])).toBe('2026년 10월');
+  });
+});
+
+/**
+ * 정본 `supabase/schema.sql` 의 `get_data_freshness()` 본문에서 **select 문 안의 자료 이름**(둘째 칸 글자)만 뽑는다.
+ *
+ * ⛔ `--` 주석을 먼저 지운다 — 주석에 같은 글자가 남아 있어도 통과하면 정본이 바뀐 것을 못 본다(#309 교훈).
+ * 못 보는 것: 자료 이름을 문자열 잇기·함수 호출로 만드는 꼴(지금 정본에는 없다) · 글자 안의 `--`.
+ */
+function serverSrcLabels(sql: string): string[] {
+  const start = sql.indexOf('create or replace function get_data_freshness()');
+  if (start < 0) return [];
+  const end = sql.indexOf('$$;', start);
+  const body = sql
+    .slice(start, end < 0 ? undefined : end)
+    .split('\n')
+    .map((line) => line.replace(/--.*$/, ''))
+    .join('\n');
+  return [...body.matchAll(/\bselect\s+\d+\s*(?:as\s+ord\s*)?,\s*'([^']+)'/gi)].map((m) => m[1]);
+}
+
+describe('카드 자료 이름 ↔ 정본 서버 함수의 자료 이름 (S3)', () => {
+  it('양성 대조 — 흔한 꼴·변형 꼴은 잡고, 주석에만 있는 글자는 안 잡는다', () => {
+    const sample = [
+      'create or replace function get_data_freshness()',
+      'as $$',
+      "  select 1 as ord,",
+      "         '가짜 자료'::text as src,",
+      "  union all select 2, '두번째 자료', '계약월'",
+      "  -- select 3, '주석 자료', '판'",
+      "  union all select 4 , '넷째 자료' -- 끝 주석 '꼬리'",
+      '$$;',
+      "select 5, '함수 밖 자료'",
+    ].join('\n');
+    expect(serverSrcLabels(sample)).toEqual(['가짜 자료', '두번째 자료', '넷째 자료']);
+    expect(serverSrcLabels("select 1, '함수 없음'")).toEqual([]);
+  });
+
+  it('정본의 자료 이름 열 개 = 카드 자료 표의 이름 여덟 개 + 카드에 안 붙는 둘(필지 · LH) — 성적표 줄은 결정 0041 로 뺐다', () => {
+    const sql = readFileSync('supabase/schema.sql', 'utf8');
+    const server = serverSrcLabels(sql);
+    expect(server).toHaveLength(10);
+    expect(server).not.toContain('참고 시세 성적표');
+    const ours = [
+      ...Object.values(CARD_SOURCES).map((s) => s.src),
+      '필지 (토지 특성)',
+      'LH 상가 공고',
+    ];
+    expect([...server].sort()).toEqual([...ours].sort());
   });
 });

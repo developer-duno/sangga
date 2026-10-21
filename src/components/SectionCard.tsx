@@ -1,5 +1,8 @@
 import { Children, useEffect, useId, useState, type ReactNode } from 'react';
+import { cardSourceLine, type CardSourceKey } from '../lib/dataFreshness';
+import { loadDataFreshness } from '../lib/loadDataFreshness';
 import type { SectionPlan } from '../lib/sectionCards';
+import type { DataFreshnessRow } from '../types';
 
 /**
  * 층별 화면 섹션을 감싸는 **공통 카드 틀** — 로드맵 Wave 2 『한 장 요약 접힘 틀』.
@@ -9,13 +12,14 @@ import type { SectionPlan } from '../lib/sectionCards';
  *  ② 접기/펼치기 — 버튼 시맨틱(`aria-expanded`·`aria-controls`)이라 키보드·읽어 주는
  *     기기에서도 눌린다
  *  ③ **접혀 있어도 핵심 한 줄(`summary`)은 그대로 보인다**
+ *  (+ 표에 `sources` 가 있으면 제목 바로 아래 '자료: … 날짜' 한 줄 — S3 · 👤 2026-10-16 · 아래 `CardSourceLine`)
  *
  * ⚠️ ③이 이 틀의 존재 이유다. 접힘이 "숨김"이 되면 한 장 요약이 아니라 그냥 잠긴 서랍이
  *    된다 — 접힌 카드에서도 "몇 건인지 · 무엇이 있는지"는 읽을 수 있어야 한다.
  * ⚠️ **본문이 없으면 버튼을 만들지 않는다**(아래 `hasBody`). 눌러도 아무 일도 안 하는데
  *    "펼칠 수 있음"이라고 말하는 버튼은, 눈으로 보는 사람에게는 그냥 안 열리는 화살표지만
  *    읽어 주는 기기를 쓰는 사람에게는 **없는 내용을 찾아 헤매게 만드는 거짓말**이다.
- *    발동 지점은 로딩 카드 둘(업종 분포·참고 시세의 "불러오는 중…")이다.
+ *    발동 지점은 로딩 카드(업종 분포의 "불러오는 중…")다 — 옛 참고 시세 카드는 결정 0041 로 내렸다.
  * ⓘ 상태는 **이 카드 안의 `useState` 하나**다. 위에서 내려 주는 전역 상태로 만들면 카드
  *    다섯 장이 한 덩어리가 되고, 카드를 하나 더 붙일 때마다 부모를 고쳐야 한다.
  */
@@ -42,9 +46,10 @@ type Props = {
   /**
    * 펼침/접힘이 바뀔 때 밖에 알린다.
    *
-   * 이 카드 안의 내용을 **가리키는 다른 카드**가 있을 때만 쓴다 — 참고 시세 줄이
+   * 이 카드 안의 내용을 **가리키는 다른 카드**가 있을 때만 쓴다 — 다른 카드의 줄이
    * `aria-expanded` 로 "그 층이 펼쳐져 있다"고 말하는데, 정작 층 목록 카드가 접혀 있으면
-   * 그 말이 거짓이 된다. 상태를 위로 끌어올리지 않고 **알려 주기만** 한다.
+   * 그 말이 거짓이 된다(처음 쓴 곳 = 옛 참고 시세 줄 · 결정 0041 로 내렸다). 상태를 위로
+   * 끌어올리지 않고 **알려 주기만** 한다.
    */
   onToggle?: (open: boolean) => void;
 };
@@ -121,6 +126,8 @@ export function SectionCard({
         )}
       </h3>
 
+      {plan.sources && plan.sources.length > 0 && <CardSourceLine sources={plan.sources} />}
+
       {summary !== null && summary !== undefined && <p className="card__summary">{summary}</p>}
 
       {/*
@@ -146,4 +153,28 @@ export function SectionCard({
       )}
     </section>
   );
+}
+
+/**
+ * 제목 바로 아래 '자료: 이름 날짜 · …' 한 줄(S3 · 👤 2026-10-16 · 결정 ① 글 꼴 「자료 이름 + 날짜」 · ③ 13px 회색).
+ *
+ * ⛔ 날짜는 서버 신선도 표에서만 온다(`loadDataFreshness` — 맨 아래 표와 **같은 한 번의 요청**). 코드에 날짜를 적지 않는다.
+ * ⛔ 표를 못 받았거나 그 자료 줄이 없으면 **그리지 않는다**(카드는 그대로 — 맨 아래 표가 실패를 따로 안내한다).
+ * ⓘ 접혀 있어도 보인다(요약 줄과 같은 자리 성격) · 종이에도 나온다. 13px 은 `@media screen` 묶음에만 있다.
+ */
+function CardSourceLine({ sources }: { sources: readonly CardSourceKey[] }) {
+  const [rows, setRows] = useState<DataFreshnessRow[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadDataFreshness().then((data) => {
+      if (!cancelled) setRows(data);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const line = cardSourceLine(sources, rows);
+  return line === null ? null : <p className="card__src">{line}</p>;
 }

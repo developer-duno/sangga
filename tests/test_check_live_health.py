@@ -66,6 +66,11 @@ GOOD_HTML = (
 )
 GOOD_BUNDLE = b"x" * 5000
 GOOD_GEOJSON = b'{"type":"FeatureCollection","features":[]}'
+# 구 입구 허브 첫 HTML(결정 0043) — h1 이 「상가 건물 층별 보기」로 끝난다.
+HUB_PATH = "/?sgg=" + chk.HUB_CHECK_SGG
+GOOD_HUB_HTML = GOOD_HTML.replace(
+    '<div id="root"></div>', '<div id="root"><h1 class="seo-title">서울 강남구 상가 건물 층별 보기</h1></div>'
+)
 
 
 def install_fake_fetch(monkeypatch, routes):
@@ -90,16 +95,18 @@ def all_good():
         "/": (200, GOOD_HTML.encode("utf-8")),
         "/assets/index-ABC123.js": (200, GOOD_BUNDLE),
         "/districts.geojson": (200, GOOD_GEOJSON),
+        HUB_PATH: (200, GOOD_HUB_HTML.encode("utf-8")),
     }
 
 
 # ── 정상 ─────────────────────────────────────────────────────────────────────
 
 
-def test_all_green_returns_three_lines(monkeypatch):
+def test_all_green_returns_four_lines(monkeypatch):
     install_fake_fetch(monkeypatch, all_good())
     passed = chk.check(SITE)
-    assert len(passed) == 3
+    assert len(passed) == 4
+    assert "구 입구 허브" in passed[3]
 
 
 def test_bundle_path_is_read_from_html_not_hardcoded(monkeypatch):
@@ -111,6 +118,7 @@ def test_bundle_path_is_read_from_html_not_hardcoded(monkeypatch):
         ),
         "/assets/index-ZZZ999.js": (200, GOOD_BUNDLE),
         "/districts.geojson": (200, GOOD_GEOJSON),
+        HUB_PATH: (200, GOOD_HUB_HTML.encode("utf-8")),
     }
     calls = install_fake_fetch(monkeypatch, routes)
     chk.check(SITE)
@@ -216,7 +224,7 @@ def test_transient_failure_is_retried(monkeypatch):
     # sleep=NO_SLEEP — 실제로 두 번(5초·10초)을 기다리지 않고도 재시도 자체는
     # 그대로 검증된다(gives_up 류 시험과 같은 이유).
     passed = chk.check(SITE, sleep=NO_SLEEP)
-    assert len(passed) == 3
+    assert len(passed) == 4
     assert attempts["n"] == 2
 
 
@@ -269,7 +277,7 @@ def test_cut_off_response_recovers_on_retry(monkeypatch):
         return all_good()[path]
 
     monkeypatch.setattr(chk, "fetch", flaky_fetch)
-    assert len(chk.check(SITE, sleep=NO_SLEEP)) == 3
+    assert len(chk.check(SITE, sleep=NO_SLEEP)) == 4
     assert attempts["n"] == 1
 
 
@@ -720,3 +728,62 @@ class TestAdminKeyNeverShipsInTheBundle:
         )
         install_fake_fetch(monkeypatch, routes)
         chk.check(SITE)      # 예외가 안 나야 정상
+
+
+# ── ④ 구 입구 허브(결정 0043) ─────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("hub_body", [
+    GOOD_HTML,  # 허브 갈래가 빠져 첫 화면 HTML 이 그대로 왔다(h1 없음)
+    GOOD_HTML.replace('<div id="root"></div>', '<div id="root"><h1 class="seo-title">상가 층별 스택뷰 — 서울·대전</h1></div>'),
+    GOOD_HUB_HTML.replace("</div>", '<h1 class="seo-title">서울 중구 상가 건물 층별 보기</h1></div>'),  # h1 둘
+])
+def test_hub_without_hub_h1_is_failure(monkeypatch, hub_body):
+    routes = all_good()
+    routes[HUB_PATH] = (200, hub_body.encode("utf-8"))
+    install_fake_fetch(monkeypatch, routes)
+    with pytest.raises(chk.CheckFailed) as ex:
+        chk.check(SITE, sleep=NO_SLEEP)
+    assert "구 입구 허브" in str(ex.value)
+    # 허브만 깨진 날은 전용 종류(2026-10-18 재검사 🟠) — down 이면 '멀쩡히 뜨면 닫으세요' 대본으로 나간다.
+    assert ex.value.kind == "hub"
+
+
+def test_hub_404_is_failure(monkeypatch):
+    routes = all_good()
+    del routes[HUB_PATH]
+    install_fake_fetch(monkeypatch, routes)
+    with pytest.raises(chk.CheckFailed) as ex:
+        chk.check(SITE, sleep=NO_SLEEP)
+    assert "구 입구 허브" in str(ex.value)
+    assert ex.value.kind == "hub"
+
+
+def test_home_404_with_hub_broken_is_still_down(monkeypatch):
+    """첫 화면이 죽은 날은 허브도 깨져 있지만 down 이 먼저다(① 이 ④ 보다 앞)."""
+    routes = all_good()
+    del routes["/"]
+    routes[HUB_PATH] = (200, GOOD_HTML.encode("utf-8"))
+    install_fake_fetch(monkeypatch, routes)
+    with pytest.raises(chk.CheckFailed) as ex:
+        chk.check(SITE, sleep=NO_SLEEP)
+    assert ex.value.kind == "down"
+    assert "첫 화면" in str(ex.value)
+
+
+def test_control_hub_h1_passes_and_is_the_fourth_url(monkeypatch):
+    """양성 대조 — 허브 h1 이 있으면 통과하고, 네 번째로 두드린 주소가 `/?sgg=<상수>` 다."""
+    calls = install_fake_fetch(monkeypatch, all_good())
+    passed = chk.check(SITE, sleep=NO_SLEEP)
+    assert passed[3].endswith("「서울 강남구 상가 건물 층별 보기」")
+    assert calls[3] == SITE + "/?sgg=" + chk.HUB_CHECK_SGG
+
+
+def test_hub_check_sgg_has_a_baked_hub_file():
+    """감시가 두드리는 구가 실제로 구워진 허브에 있다(없으면 운영에서 늘 첫 화면 h1 → 늘 실패)."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    assert re.fullmatch(r"\d{5}", chk.HUB_CHECK_SGG)
+    assert os.path.isfile(os.path.join(root, "public", "hub", chk.HUB_CHECK_SGG + ".json"))
+    # 허브 h1 끝 글자는 hubHead.ts 의 hubHeading 꼴과 같다.
+    with open(os.path.join(root, "src", "lib", "hubHead.ts"), encoding="utf-8") as f:
+        assert "`${place} " + chk.HUB_H1_SUFFIX + "`" in f.read()

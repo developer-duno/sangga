@@ -18,10 +18,13 @@ export const HOME_TITLE = '상가 층별 스택뷰 — 서울·대전 상가 건
  * `<이름> — <도로명에서 시·도를 뗀 것> | 상가 층별 스택뷰`, 도로명이 없으면 `<이름> | 상가 층별 스택뷰`.
  * 이름이 없으면(없음·빈 이름) 첫 화면 제목.
  * ⛔ 주소 줄이기는 `buildingHead.ts` 의 `shortAddr` 하나를 함께 쓴다 — 따로 만들면 탭 제목과 첫 HTML 제목이 갈린다.
+ * `dong`(결정 0042) = 같은 땅 여러 동의 동 구분(`buildingHead.ts` 의 `dongSuffix` 가 만든 것) — 있으면 이름 뒤에 붙인다
+ * (화면이 동 목록을 받기 전이면 없다 · 받은 뒤 첫 HTML 제목과 같아진다).
  */
-export function pageTitle(bldNm: string | null | undefined, roadAddr?: string | null): string {
-  const name = bldNm?.trim();
-  if (!name) return HOME_TITLE;
+export function pageTitle(bldNm: string | null | undefined, roadAddr?: string | null, dong?: string | null): string {
+  const bare = bldNm?.trim();
+  if (!bare) return HOME_TITLE;
+  const name = dong ? `${bare} ${dong}` : bare;
   const road = roadAddr?.trim();
   return road ? `${name} — ${shortAddr(road)} | ${SITE_NAME}` : `${name} | ${SITE_NAME}`;
 }

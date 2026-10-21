@@ -53,8 +53,10 @@ RECREATED_LATER = {
         MIG_DIR, "2026-10-11a_district_buildings_industry.sql"),  # 물결 2-2b 업종 인자
     # 물결 2-1 건물 사양 5칸을 v_floor_stack 끝에 붙였다(표지 칸 published 는 그대로).
     "v_floor_stack": os.path.join(MIG_DIR, "2026-10-11c_building_elevator_ho.sql"),
-    # 필지 줄의 기준을 공시 연도로(표지 칸 published 는 그대로 · 사장님 결정 2026-10-12).
-    "get_data_freshness": os.path.join(MIG_DIR, "2026-10-12b_freshness_land_price_year.sql"),
+    # 필지 줄의 기준을 공시 연도로(2026-10-12b) → 실거래·대장 판 월간 규칙(2026-10-15a · 표지 칸 published 는
+    # 그대로 · 사장님 결정 2026-10-15). 정본과 대조하는 쪽은 마지막으로 다시 만든 판이다.
+    # → 성적표 줄(9번)을 뺀 2026-10-18a(결정 0041)가 마지막 판이다.
+    "get_data_freshness": os.path.join(MIG_DIR, "2026-10-18a_price_use_group.sql"),
 }
 
 

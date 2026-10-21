@@ -42,6 +42,12 @@ interface Props {
    *    거기서 "다시 시도"를 권하는 것은 될 리 없는 일을 시키는 것이다(2026-08-24 적대검증).
    */
   outermost?: boolean;
+  /**
+   * 안쪽 그물이 대신 그림을 띄울 때 그 위에 세울 제목(결정 0042 보완 F4). 층별 화면은 건물 이름 h1 을 지고 있어
+   * (App 이 건물을 연 동안 사이트 이름을 p 로 내린다) 그물이 뜨면 화면의 h1 이 0개가 된다 — 그 h1 을 여기로 넘긴다.
+   * 바깥 그물(`outermost`)에서는 쓰지 않는다.
+   */
+  heading?: ReactNode;
 }
 
 interface State {
@@ -97,7 +103,10 @@ export class ErrorBoundary extends Component<Props, State> {
     }
 
     return (
-      // role="alert" — 화면을 읽어 주는 기기에 "지금 뭔가 달라졌다"를 알린다.
+      <>
+      {/* 그물 안이 지던 제목(예: 층별 화면의 건물 이름 h1 — 결정 0042 보완 F4)을 안내 위에 그대로 세운다. 안 주면 없음. */}
+      {this.props.heading ?? null}
+      {/* role="alert" — 화면을 읽어 주는 기기에 "지금 뭔가 달라졌다"를 알린다. */}
       <div className="errbox" role="alert">
         <p className="errbox__title">이 부분을 보여주다 문제가 생겼습니다.</p>
         <p className="errbox__body">
@@ -118,6 +127,7 @@ export class ErrorBoundary extends Component<Props, State> {
           </button>
         </div>
       </div>
+      </>
     );
   }
 }

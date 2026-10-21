@@ -8,6 +8,10 @@ import {
   FLOOR_GAP_BASE_NOTE,
   FLOOR_GAP_FOOT,
   FLOOR_GAP_SUMMARY,
+  FLOOR_GAP_TX_NOTE,
+  FLOOR_GAP_BASIS_NOTE,
+  TX_STAT_BADGE,
+  baseHeadNote,
   floorGapHeads,
   floorGapRows,
   floorGapShowable,
@@ -18,24 +22,27 @@ import type { BasePrice, FloorRow, RentStat, SigunguTxStat } from '../types';
 import { SectionCard } from './SectionCard';
 
 /**
- * 「층 차이 세 잣대 (공표값 나란히)」 카드(결정 0036 결정 15 · 물결 1-C2 · 👤 2026-10-11).
+ * 「층별 공표값 나란히」 카드(결정 0036 결정 15 · 물결 1-C2 · 👤 2026-10-11 → 결정 0041 E2 · 👤 2026-10-18).
  *
- * 이 건물의 층마다 국세청 기준시가 · 구 실거래 단가 · 부동산원 층별 임대료를 **각자 원래 단위로**
- * 한 줄에 둔다. 짝짓기는 `lib/floorGap.ts` 한 곳이다.
+ * 이 건물의 층마다 국세청 기준시가 · 구 상가 단가 · 부동산원 층별 임대료를 **각자 원래 단위로**
+ * 한 줄에 둔다. 짝짓기는 `lib/floorGap.ts` 한 곳이다. 결정 0041 로 내린 참고 매매 시세 카드의 자리를
+ * 이어받았고, 그 카드 안에 있던 국세청 기준시가의 「호 N개 가운데값 · 고시일」은 이 카드의 기준시가 칸으로 옮겼다.
  *
  * ⛔ **비율·나누기 0** — 층끼리도 자료끼리도 견주는 산수를 넣지 않는다(결정 15 · 0031). 발 문구가
  *    그 사실을 적는다. 접힌 요약에도 값을 적지 않는다.
  * ⛔ 재료 셋은 층별 화면이 이미 받는 것을 그대로 쓴다 — 기준시가·구 단가는 부모가 받은 것,
  *    부동산원은 임대 카드와 **같은 미리 보낸 답**(`takePrefetched` 는 같은 Promise 를 몇 번이든
  *    내준다 — 꺼내 가도 비지 않는다). 새 서버 함수 0.
- * ⛔ 재료 하나가 실패하면 그 칸만 '–' · 국세청·부동산원이 **둘 다** 비면(실패·null·빈 배열·모든 층 '–')
- *    카드째 숨긴다 — 값 든 칸이 둘 이상이어야 '나란히'다(👤 2026-10-11 · `floorGapShowable`) · 층 0줄도 숨긴다.
+ * ⛔ 재료 하나가 실패하면 그 칸만 '–' · 값 든 칸이 **하나라도** 있으면 선다 — 셋 다 비면(실패·null·빈 배열·
+ *    모든 층 '–') 카드째 숨긴다(결정 0041 E2 · `floorGapShowable`) · 층 0줄도 숨긴다.
  * ⓘ 부동산원은 미리 보낸 답이 없을 때만 한 번 직접 묻는다(아래 폴백 — 지금 층별 화면은 늘 미리 보낸다).
  */
 type Props = {
   floors: FloorRow[];
-  /** 부모가 받은 기준시가. null = 아직 안 왔거나 못 읽음. */
+  /** 부모가 받은 기준시가. null = 아직 안 왔거나 못 읽음(둘은 `basePricesFailed` 가 가른다). */
   basePrices: BasePrice[] | null;
+  /** 기준시가 조회가 실패했나 — 칸 머리 아래 「불러오지 못했습니다」(빈 배열의 「상가 기준시가 없음」과 섞지 않는다). */
+  basePricesFailed?: boolean;
   /** 부모가 받은 구 층대 단가. null = 아직 안 왔거나 못 읽음. */
   txStats: SigunguTxStat[] | null;
   pnu: string;
@@ -48,6 +55,7 @@ type Props = {
 export function FloorGapSection({
   floors,
   basePrices,
+  basePricesFailed = false,
   txStats,
   pnu,
   prefetch,
@@ -80,6 +88,8 @@ export function FloorGapSection({
   const rows = floorGapRows(floors, basePrices, txStats, rentRows);
   if (!floorGapShowable(rows)) return null;
   const heads = floorGapHeads(txStats, rentRows, noCoord);
+  // 기준시가 빈 칸의 이유 한 줄(👤 2026-10-18 ②) — 상가 기준시가 없음 / 불러오지 못함 / (아직·값 있음이면 없음).
+  const baseNote = baseHeadNote(basePrices, basePricesFailed);
   const total = txTotal(txStats);
 
   return (
@@ -87,9 +97,10 @@ export function FloorGapSection({
       <ol className="gap__heads">
         <li className="gap__head gap__head--base">
           <span className="grade__badge">A등급 · 공식 고시</span> {heads.base}
+          {baseNote !== null && <span className="gap__head-note">{baseNote}</span>}
         </li>
         <li className="gap__head gap__head--tx">
-          <span className="grade__badge">A등급 · 실거래</span> {heads.tx}
+          <span className="grade__badge">{TX_STAT_BADGE}</span> {heads.tx}
           {total !== null && <span className="gap__n"> · 구 합계 표본 {total.toLocaleString('ko-KR')}건</span>}
         </li>
         <li className="gap__head gap__head--rent">
@@ -108,6 +119,8 @@ export function FloorGapSection({
       </ol>
       <p className="gap__foot">{FLOOR_GAP_FOOT}</p>
       <p className="gap__foot">{FLOOR_GAP_BASE_NOTE}</p>
+      <p className="gap__foot">{FLOOR_GAP_TX_NOTE}</p>
+      <p className="gap__foot">{FLOOR_GAP_BASIS_NOTE}</p>
     </SectionCard>
   );
 }

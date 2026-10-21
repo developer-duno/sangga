@@ -3,7 +3,7 @@ import type { LhNotice } from '../types';
 /**
  * LH 상가 분양·입점 공고 카드의 **순수 계산**만 모은다.
  *
- * 컴포넌트에서 빼 둔 이유는 `industryMix.ts`·`priceBand.ts` 와 같다 — 여기 있는 규칙들은
+ * 컴포넌트에서 빼 둔 이유는 `industryMix.ts` 와 같다 — 여기 있는 규칙들은
  * 화면을 띄우지 않고도 시험할 수 있어야 하고, 실제로 틀리기 쉬운 곳이 전부 여기다
  * (시도 코드 자르기 · 시간대 · 서버 응답 모양 · 링크 주소).
  */
@@ -29,7 +29,7 @@ export function sidoOf(sigungu: string | null | undefined): string | null {
 
 /**
  * (내부) 날짜를 연·월·일로. 시각이 붙은 값은 보는 사람의 시계로, 날짜만 있는 값은 적힌
- * 그대로 — `monthDay` 가 쓰던 규칙 그대로다.
+ * 그대로 — `yearMonthDay`(옛 `monthDay`) 가 쓰는 규칙 그대로다.
  *
  * ⛔ 이 해석을 두 벌로 복제하지 않는다. 마감일에 연도를 붙이려면 연도도 같은 규칙으로
  *    읽어야 하는데, 규칙이 두 군데면 한쪽만 고쳐지는 날 월·일과 연도가 서로 다른 시계를
@@ -52,7 +52,9 @@ function parseDate(
 }
 
 /**
- * 날짜를 '9월 17일'로. 읽을 수 없으면 **null**(빈 글자도 '—'도 아니다).
+ * 날짜를 '2026년 9월 17일'로(연도까지 — F4 · 👤 2026-10-16 ④ 카드 머리 날짜 줄과 말투를 맞춘다 · 그전 이름
+ * `monthDay` 는 '9월 17일'이었다). 읽을 수 없으면 **null**(빈 글자도 '—'도 아니다).
+ * ⓘ 입구 요약 한 줄의 수집 기준 날짜에 쓴다(`lhSummary`).
  *
  * 왜 `format.ts` 가 아닌가 — 저기 함수들은 못 읽으면 '—' 를 준다. 여기서는 값이 없을 때
  * 문장이 통째로 달라진다("~9월 17일" ↔ "마감일 미정"), 그래서 부르는 쪽이 갈라 쓸 수
@@ -64,9 +66,9 @@ function parseDate(
  *  · 날짜만 있으면 **적힌 그대로** 쓴다. `new Date('2026-09-17')` 은 UTC 자정으로 읽혀,
  *    한국보다 뒤진 시간대에서는 16일로 밀린다(마감일이 하루 당겨져 보인다).
  */
-export function monthDay(value: string | null | undefined): string | null {
+export function yearMonthDay(value: string | null | undefined): string | null {
   const d = parseDate(value);
-  return d ? `${d.month}월 ${d.day}일` : null;
+  return d ? `${d.year}년 ${d.month}월 ${d.day}일` : null;
 }
 
 /**
@@ -113,8 +115,8 @@ export function splitByRegion(notices: readonly LhNotice[]): {
 }
 
 /**
- * 접혀 있어도 보이는 한 줄 — "3건 · 8월 27일 수집 기준",
- * 접힌 묶음이 있으면 "4건 · 전국 표시 35건 · 9월 1일 수집 기준".
+ * 접혀 있어도 보이는 한 줄 — "3건 · 2026년 8월 27일 수집 기준",
+ * 접힌 묶음이 있으면 "4건 · 전국 표시 35건 · 2026년 9월 1일 수집 기준"(연도는 F4 · 👤 2026-10-16).
  *
  * ⛔ **수집 시각을 감추지 않는다.** 공고는 마감이 있는 자료라 "언제 받아 둔 것인가"가
  *    건수만큼 중요하다. 다만 그 시각을 못 읽으면 없는 날짜를 지어내지 않고 그 조각만 뺀다.
@@ -128,7 +130,7 @@ export function lhSummary(notices: readonly LhNotice[]): string {
     pieces.push(`${regional.length.toLocaleString('ko-KR')}건`);
   if (nationwide.length > 0)
     pieces.push(`전국 표시 ${nationwide.length.toLocaleString('ko-KR')}건`);
-  const day = monthDay(latestCollectedAt(notices));
+  const day = yearMonthDay(latestCollectedAt(notices));
   if (day) pieces.push(`${day} 수집 기준`);
   return pieces.join(' · ');
 }

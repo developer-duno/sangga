@@ -29,6 +29,13 @@ vi.mock('../lib/supabase', () => ({
 }));
 
 const { TxFlowSection } = await import('./TxFlowSection');
+const { resetDataFreshnessCache } = await import('../lib/loadDataFreshness');
+
+/**
+ * 이 카드가 부른 것만 — 카드 머리 날짜 줄(S3)의 신선도 요청은 뺀다(맨 아래 표와 나눠 쓰는 한 번의 요청이라
+ * 이 카드의 질문이 아니다). ⓘ 그 요청은 시험마다 새로 나간다(아래 beforeEach 가 보관을 비운다) — 시험 차례에 기대지 않게.
+ */
+const cardCalls = () => rpcCalls.filter((c) => c.fn !== 'get_data_freshness');
 
 function yearlyRow(over: Partial<SigunguTxYearly> = {}): SigunguTxYearly {
   return {
@@ -80,6 +87,7 @@ function yearlyRows(): SigunguTxYearly[] {
 
 beforeEach(() => {
   rpcCalls.length = 0;
+  resetDataFreshnessCache();
   responses.yearly = { data: yearlyRows(), error: null };
   vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
@@ -93,7 +101,7 @@ describe('TxFlowSection — 자료가 있을 때', () => {
   it('접힌 카드로 서고, 요약 한 줄에 자료 범위와 건수가 적힌다', async () => {
     const { container } = render(<TxFlowSection sigungu="11680" />);
 
-    expect(await screen.findByText('동네 매매 단가 흐름 (실거래)')).toBeTruthy();
+    expect(await screen.findByText('동네 매매 단가 흐름 (실거래 · 상가 거래 기준)')).toBeTruthy();
     const summary = container.querySelector('.card__summary')?.textContent ?? '';
     // 범위·건수는 **서버가 준 값**이다 — 화면에 글자로 박은 것이 아니다.
     expect(summary).toContain('2006년 9월');
@@ -110,10 +118,10 @@ describe('TxFlowSection — 자료가 있을 때', () => {
 
   it('★ 서버를 부를 때 인자 이름이 `sigungu` 다', async () => {
     render(<TxFlowSection sigungu="11680" />);
-    await screen.findByText('동네 매매 단가 흐름 (실거래)');
-    expect(rpcCalls).toHaveLength(1);
-    expect(rpcCalls[0].fn).toBe('get_sigungu_tx_yearly');
-    expect(rpcCalls[0].args).toEqual({ sigungu: '11680' });
+    await screen.findByText('동네 매매 단가 흐름 (실거래 · 상가 거래 기준)');
+    expect(cardCalls()).toHaveLength(1);
+    expect(cardCalls()[0].fn).toBe('get_sigungu_tx_yearly');
+    expect(cardCalls()[0].args).toEqual({ sigungu: '11680' });
   });
 
   it('펼치면 해마다 한 줄씩 — 해의 일부와 표본 부족을 정직하게 적는다', async () => {
@@ -222,7 +230,7 @@ describe('TxFlowSection — 자료가 있을 때', () => {
     const { container } = render(<TxFlowSection sigungu="11680" />);
     fireEvent.click(await screen.findByRole('button', { name: /동네 매매 단가 흐름/ }));
 
-    expect(container.querySelector('.grade__badge')?.textContent).toBe('A등급 · 실거래');
+    expect(container.querySelector('.grade__badge')?.textContent).toBe('A등급 · 실거래 집계');
     const src = container.querySelector('.flow__src')?.textContent ?? '';
     // 각주의 두 시점은 **상수에서 온 값**이다(화면에 박은 글자가 아니다).
     expect(src).toContain('2017');
@@ -230,6 +238,10 @@ describe('TxFlowSection — 자료가 있을 때', () => {
     expect(src).toContain('집합');
     // 모집단 — 단가는 지분 거래를 뺀다(건수는 센다 · 2026-10-08a).
     expect(src).toContain('해제된 거래 제외 · 단가는 지분 거래 제외');
+    // 결정 0040 D3·D8 — 상가(근생·판매) 거래만 센 표다(제목·리드·출처가 같은 말).
+    expect(src).toContain('상가(근린생활·판매) 집합(구분소유) 거래만');
+    expect(container.querySelector('.flow__lead')?.textContent).toContain('상가(근린생활·판매) 집합 매매');
+    expect(container.querySelector('.flow__lead')?.textContent).not.toContain('집합상가(구분소유) 매매');
   });
 
   it('★ 막대는 값을 적는 해끼리만 견준다 — 표본 부족 해는 막대도 0 이다', async () => {
@@ -278,7 +290,7 @@ describe('TxFlowSection — 못 읽었을 때', () => {
 
   it('★ 구를 바꾸면 앞 구의 줄이 남지 않는다 — 새 답을 못 읽어도', async () => {
     const { container, rerender } = render(<TxFlowSection sigungu="11680" />);
-    await screen.findByText('동네 매매 단가 흐름 (실거래)');
+    await screen.findByText('동네 매매 단가 흐름 (실거래 · 상가 거래 기준)');
     expect(container.textContent).toContain('강남구');
 
     // 새 구는 못 읽는다(마이그레이션 전 라이브·일시 장애가 그 상태다).

@@ -12,7 +12,7 @@
 - **DB 스키마** — `supabase/schema.sql`
 - **부동산 데이터 처리 규격** — 이 문서의 절대 규칙·확정 설계 + 층 정규화 정본 `scripts/normalize_floor.py`(재구현 금지) + 자료 출처 `docs/데이터백서.md`. ⛔ 옛 `budongsan-data` 스킬(2026-08-06판 · `docs/archive/`)은 **쓰지 않는다** — 임대료 역산식·층별효용비율 보정이 들어 있어 절대 규칙 5·결정 0031 과 어긋난다(레포·전역 어디에도 설치돼 있지 않다 · 2026-10-09 👤)
 - **현재 Phase** — **Phase 1 통과**(2026-08-09, 조인률 95.92%/96.86%) → 1단계 서비스범위(서울+대전) 확장 완료(결정 0006) → **Phase 2 통과**(2026-10-07 — 층별 스택 화면, 건물 10/10 원장 대조 일치 · `docs/PROGRESS.md` 「2026-10-07 (6)」). **라이브 https://sangga-one.vercel.app** (Vercel 프로젝트 `sangga`, GitHub 연결이라 **main push 가 곧 배포**. ⛔ **새 배포 주소가 생기면 카카오 콘솔에 그 주소를 등록해야 지도가 뜬다**(미분양아파트 앱 1398824 의 "플랫폼 키 > JS 키 수정 > JavaScript SDK 도메인")). 진행 기록 정본 = `docs/PROGRESS.md` · 결정 = `docs/decisions/`
-- **기능별 경위·⛔ 주의사항** = **`.claude/rules/feature-notes.md`** — 화면 코드(`src/`)·DB 정본(`supabase/`)·`e2e/`·마이그레이션 시험을 열면 자동으로 읽힌다. ⚠️ **파일을 안 열고 기능을 바꾸거나 설명하거나 DB 함수·마이그레이션을 다룰 때는 그 파일을 먼저 직접 연다** — 그 안의 ⛔ 는 어기면 에러 없이 조용히 틀리는 것들이다. 담긴 것(날짜순): 상권 경계·실거래·Stage B(0008·0011~0013) · 둘레의 업종 분포(0014) · 접히는 카드 `SECTION_PLAN` · 첫 배포 · 기본기 3종·의견함(0016·0017) · 주소로 들고 다니기(0019) · 종이로 뽑기(0020) · 국세청 기준시가(0021) · LH 상가 공고(0022) · 곧 올라오는 상가 건물(0023) · 임대 사실 카드·층별 임대료(0024·0031) · 상권→건물 다리(0025) · 성적표 공개 · 자료 신선도(0030) · 넘기기 링크 · 동네 매매 단가 흐름(0027) · 상호명 검색(0028) · 호실 구성표(0032) · 첫 방문 속도(09-27) · 서울 개업·폐업 자료·DB(0033 R1) · 분기 표지 '다 넣은 뒤 한 번에'(0035) · 개별공시지가 한 줄 · 인쇄 한 장 보강·층 차이 세 잣대(0036 1-C)
+- **기능별 경위·⛔ 주의사항** = **`.claude/rules/feature-notes.md`** — 화면 코드(`src/`)·DB 정본(`supabase/`)·`e2e/`·마이그레이션 시험을 열면 자동으로 읽힌다. ⚠️ **파일을 안 열고 기능을 바꾸거나 설명하거나 DB 함수·마이그레이션을 다룰 때는 그 파일을 먼저 직접 연다** — 그 안의 ⛔ 는 어기면 에러 없이 조용히 틀리는 것들이다. 담긴 것(날짜순): 상권 경계·실거래·Stage B(0008·0011~0013) · 둘레의 업종 분포(0014) · 접히는 카드 `SECTION_PLAN` · 첫 배포 · 기본기 3종·의견함(0016·0017) · 주소로 들고 다니기(0019) · 종이로 뽑기(0020) · 국세청 기준시가(0021) · LH 상가 공고(0022) · 곧 올라오는 상가 건물(0023) · 임대 사실 카드·층별 임대료(0024·0031) · 상권→건물 다리(0025) · 성적표 공개 · 자료 신선도(0030) · 넘기기 링크 · 동네 매매 단가 흐름(0027) · 상호명 검색(0028) · 호실 구성표(0032) · 첫 방문 속도(09-27) · 서울 개업·폐업 자료·DB(0033 R1) · 분기 표지 '다 넣은 뒤 한 번에'(0035) · 개별공시지가 한 줄 · 인쇄 한 장 보강·층 차이 세 잣대(0036 1-C) · 참고 시세 같은 용도 묶음·성적표 v3(0040) · 참고 매매 시세 밴드 내림·층별 공표값 나란히(0041)
 
 ### 🔴 운영 7계명 (매 세션 확인 — 어기면 복구 불가하거나 조용히 깨진다)
 
@@ -49,10 +49,10 @@
 | 적정가격, 적정가, 평가액, 감정가, 가치평가 | 추정 시세, 참고 시세, 시세 밴드, AI 추정값 |
 
 ### 3. 신뢰도 배지 필수
-추정값 출력 시 항상 근거 레벨 + 표본 수 병기.
+추정값·집계값 출력 시 항상 근거 레벨 + 표본 수 병기(참고 시세 밴드는 결정 0041 로 내렸다 — 지금 화면의 집계는 구 단가·업종 비교값).
 ```
-✅ "3.2억 ~ 3.8억 (반경 500m 동일층 실거래 7건 기준)"
-❌ "3.5억"
+✅ "㎡당 1,250만 (이 구 1층 상가 실거래 42건의 가운데값 · A등급 · 실거래 집계)"
+❌ "㎡당 1,250만"
 ```
 
 ### 4. 층 표기는 정수
@@ -72,7 +72,7 @@
 1. **섹터** — 용도 4축(상업/업무/산업물류/토지) × 거래단위 3축(구분소유/통건물/필지). 네이버 분류 미사용
 2. **3층 구조** — 필지(PNU) → 건물 → 호실. 아파트 2층으로는 상가를 못 담음
 3. **조인 키** — PNU 19자리. 상권정보에 이미 있으므로 마스터로 사용
-4. **매매는 실측, 임대는 공표 조사값** — 옛 문장 "매매 실측, 임대 추정"은 결정 0031 로 바뀌었다 (임대 추정은 검증 수단이 생길 때까지 하지 않는다).
+4. **매매는 실측·공표값, 임대는 공표 조사값** — 옛 문장 "매매 실측, 임대 추정"은 결정 0031 로 바뀌었다 (임대 추정은 검증 수단이 생길 때까지 하지 않는다). 매매도 우리가 곁 거래로 어림하던 「참고 매매 시세」 밴드는 결정 0041(2026-10-18)로 내렸다 — 화면에는 실거래(사실)와 공표값(국세청 기준시가 · 구 상가 층대 단가 · 부동산원 임대료)을 **나란히** 둘 뿐이다(새 추정·나누기·비율 0).
 5. **비교는 거리가 아니라 유사도** — 상권 8차원 벡터 코사인 유사도
 6. **조회형 먼저, 탐색형 나중** — 추정 검증 전 추천 금지
 7. **Supabase 별도 프로젝트** — 기존 mibunyang DB와 격리
@@ -100,10 +100,10 @@ main → App → components → lib → types   (단방향 — 역방향 import 
 | 레이어 | 기술 |
 |---|---|
 | 프론트 | React 19 + Vite, 카카오맵(**react-kakao-maps-sdk** — 상권 면·마커를 이걸로 그린다, 결정 0010). ⚠️ deck.gl 은 **안 쓴다**(설치돼 있지도 않다) — 카카오맵 위에 렌더러를 하나 더 얹는 셈이라 확대·이동 때 두 그림을 맞추는 일을 떠안는다. 호실 수백만 개를 점으로 뿌리는 화면이 생기면 그때 다시 본다 |
-| 서버 | **`api/building.ts` 하나**(건물별 첫 HTML · 결정 0037 — 건물 주소의 첫 HTML 머리글·소개문만 그 건물 것으로 바꾼다 · 본체 `src/lib/buildingHandler.ts` · 레포 루트 `middleware.ts`(Routing Middleware)가 `/?…bld=…` 만 넘긴다 · 되돌리기 = `middleware.ts` 삭제 · 2026-10-09). **나머지는 그대로 DB 함수** — 화면이 Supabase PostgREST·RPC 를 직접 부르고(2026-08-25 실측 때는 서버리스 함수 0개), Vercel 은 정적 파일 호스팅·배포와 이 함수 하나만 맡는다. ⚠️ 화면 로직에 고칠 서버 코드는 없다 — 서버에서 해야 할 일은 전부 DB 함수(schema.sql)로 간다 |
+| 서버 | **`api/building.ts` · `api/hub.ts` 둘**(① 건물별 첫 HTML · 결정 0037 — 건물 주소의 첫 HTML 머리글·소개문만 그 건물 것으로 바꾼다 · 본체 `src/lib/buildingHandler.ts` ② 구 입구 허브 첫 HTML · 결정 0043 — 구 입구 주소 `/?sgg=`(bld 없음)의 첫 HTML 에 그 구 건물 링크 전부 · 본체 `src/lib/hubHandler.ts` · 재료 = 빌드 때 굽는 `public/hub/<sgg>.json`(요청 때 DB 0) · 레포 루트 `middleware.ts`(Routing Middleware)가 `/?…bld=…` 은 ①, `bld` 없는 `/?sgg=<5자리>` 는 ② 로 넘긴다 · 되돌리기 = `middleware.ts` 삭제(허브만 = 그 안의 허브 갈래 삭제) · 2026-10-09·10-18). **나머지는 그대로 DB 함수** — 화면이 Supabase PostgREST·RPC 를 직접 부르고(2026-08-25 실측 때는 서버리스 함수 0개), Vercel 은 정적 파일 호스팅·배포와 이 함수 둘만 맡는다. ⚠️ 화면 로직에 고칠 서버 코드는 없다 — 서버에서 해야 할 일은 전부 DB 함수(schema.sql)로 간다 |
 | DB | Supabase PostgreSQL + PostGIS (**별도 프로젝트**) |
 | 수집 | ⬜ **여전히 로컬 수동 실행이다** — 받기·적재·백업 전부 사람 손. 다만 **놓치는 것만은 막아 뒀다**: 감시 그물 여섯(분기 스냅샷 `sangkwon-quarterly-watch` · 상권 원천 `district-source-watch` · 라이브 생존 `live-health-watch` · 의견함 주간 알림 `feedback-digest` · LH 상가 공고 `lh-notice-watch` · 지난 날짜 감시 `data-freshness-watch`)이 서로를 전부 본다(`check_watch_heartbeat.py`). ⛔ **새 예약 워크플로를 만들면 그물에도 넣어야 한다** — `DEFAULT_WORKFLOWS` 와 형제들의 `--workflow` 인자 둘 다. 빠뜨리면 테스트가 빨간불로 잡는다(`schedule:` 있는 파일을 훑어 대조한다). ⛔ 알리기만 한다 — 적재는 여전히 사람 손. ⛔ **검색 함수만 고장 난 경우는 여전히 아무도 안 본다**. 적재 후 기준선 상수(`LATEST_KNOWN_QUARTER` · `LATEST_KNOWN_NOTICE_DATE` · 상권 원천 기준선)는 **사람이 올린다**. 각 그물의 비밀값·종료코드·이슈 제목 규칙·못 보는 틈 = **`.claude/rules/watch-nets.md`**(`.github/`·`scripts/check_*.py`·감시 시험을 열면 자동으로 읽힌다 — ⚠️ 감시가 연 이슈를 처리하거나 감시를 고칠 때는 그 파일을 먼저 직접 연다) |
-| 테스트 | 파이썬 **pytest 5,568개** + 프론트 **vitest 1,423개**(jsdom + @testing-library/react) + **E2E playwright 50개**(`e2e/floor-stack.spec.ts` — 시험별 내용 = **`.claude/rules/e2e-catalog.md`**, `e2e/` 를 열면 자동으로 읽힌다). ⚠️ **E2E 는 같은 50개를 넓은 화면(chromium)과 휴대폰(mobile — Pixel 7 프리셋, 폭 412px·터치)에서 두 번 돌려 총 100회다** — 좁은 폭은 `styles.css` 의 `@media (max-width: 720px)` 가 판을 다시 짜는 자리라 넓은 화면만 보면 못 잡는다(2026-08-22 층별 막대를 모바일에서만 숨긴 사고). 개수를 셀 때 50(시험)과 100(실행)을 헷갈리지 말 것. CI가 셋 다 돌린다(`pnpm test:e2e`). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도. ⛔ **인쇄는 거의 전부가 CSS라 jsdom(vitest)이 원리적으로 못 본다** — 인쇄 매체를 흉내 낼 수 있는 곳은 E2E 뿐이다 |
+| 테스트 | 파이썬 **pytest 5,461개** + 프론트 **vitest 1,670개**(jsdom + @testing-library/react) + **E2E playwright 70개**(`e2e/floor-stack.spec.ts` — 시험별 내용 = **`.claude/rules/e2e-catalog.md`**, `e2e/` 를 열면 자동으로 읽힌다). ⚠️ **E2E 는 같은 70개를 넓은 화면(chromium — 1280×720 = PC 두 칸 · 결정 0039 W5)과 휴대폰(mobile — Pixel 7 프리셋, 폭 412px·터치)에서 두 번 돌리고, 태그 `@onecol` 단 9개는 한 열 PC(desktop-1000 — 1000×768 · S1 입구 접기 · W5 보완 F5)에서 한 번 더 돌려 총 149회다** — 좁은 폭은 `styles.css` 의 `@media (max-width: 720px)` 가 판을 다시 짜는 자리라 넓은 화면만 보면 못 잡는다(2026-08-22 층별 막대를 모바일에서만 숨긴 사고). 개수를 셀 때 70(시험)과 149(실행)을 헷갈리지 말 것. CI가 셋 다 돌린다(`pnpm test:e2e`). ⚠️ **로컬에서 앞의 둘만 돌리면 E2E 실패를 못 본다** — 화면 문구를 건드렸으면 `pnpm test:e2e`도. ⛔ **인쇄는 거의 전부가 CSS라 jsdom(vitest)이 원리적으로 못 본다** — 인쇄 매체를 흉내 낼 수 있는 곳은 E2E 뿐이다 |
 
 **성능 원칙**: 상권(수천 개)은 사전계산 정적 JSON, 호실(수백만)은 Supabase 쿼리.
 정적 JSON 폴백을 호실에는 두지 않는다.
@@ -120,7 +120,7 @@ main → App → components → lib → types   (단방향 — 역방향 import 
 
 - **시간 분할 백테스트** (랜덤 분할 금지 — 미래로 과거를 맞히면 성적이 부풀려짐)
 - **지역별로 따로 측정** — 상가는 표본이 적어 전국 평균은 무의미
-- 오차율이 기준선 초과 시 그 지역은 시세 미표시, "표본 부족"만 노출
+- 오차율이 기준선 초과 시 그 지역은 시세 미표시, "표본 부족"만 노출 — ⓘ 결정 0041(2026-10-18)로 추정 시세는 화면에서 내렸다. 다시 낼 때 이 규칙들로 검증한다
 - 데이터 신뢰등급 A(실측)/B(공식표본)/C(파생추정)/D(간접추론) — **C·D는 화면에서 시각적 구분**
 
 ## 법률 — 결재 완료 (2026-08-22, 결정 0015)
@@ -136,13 +136,13 @@ main → App → components → lib → types   (단방향 — 역방향 import 
 ```bash
 pnpm dev                                        # 개발 서버 (http://localhost:5173)
 pnpm build                                      # 타입 검사 + 빌드 (tsc -b && vite build)
-pnpm test                                       # 프론트 테스트 (vitest, 1,423개)
-pnpm test:e2e                                   # ★ 화면 E2E (playwright, 50개 × 넓은화면·휴대폰 2벌 = 100회) — 아래 경고 참조
+pnpm test                                       # 프론트 테스트 (vitest, 1,670개)
+pnpm test:e2e                                   # ★ 화면 E2E (playwright, 70개 × 넓은화면·휴대폰 2벌 + 한 열 PC @onecol 9 = 149회) — 아래 경고 참조
 pnpm exec oxlint                                # 프론트 린트
 ```
 
 ```bash
-python -m pytest tests/ -q                      # 파이썬 테스트 (5,568개 — 10-14 물결 2-2c PR① 후속+PR② 판 수집 실측(--collect-only · 전체 실행 5,551 통과 · 3 건너뜀 · vitest 1,423 같은 판 전체 실행 통과) · 워크트리는 원본 자료가 없어 몇 개를 건너뛴다(10-06 실측 3) · CI 는 로컬 PostgreSQL·shapely 가 없어 약 30개를 더 건너뛴다(test_district_openclose_migration 실행 시험 16 · test_industry_median_migration 실행 시험 11 · test_backtest_openclose 도형 1 등) · 지난 개수 이력은 git log -p CLAUDE.md)
+python -m pytest tests/ -q                      # 파이썬 테스트 (5,461개 — 10-21 물결 2-2c PR① 판(main 합침 뒤) 전체 실행 5,458 passed · 3 skipped(워크트리 원본 없음) · 그 앞 5,403 = 10-19 noindex 판 수집 실측(--collect-only) · 10-21 W6 재실측 같음(수집 5,403 · vitest 전체 실행 1,670 · E2E 시험 70 · @onecol 9) · 그 앞 후속 묶음 판 전체 실행 5,398 passed · 3 skipped(수집 5,401) + 이번 표적 2 · vitest 1,670 = 10-21 W5 보완 1 뒤 전체 실행 1,670(73파일 전부 통과) · E2E 70 은 e2e/floor-stack.spec.ts 의 시험 수 — 10-21 W5 보완 1 뒤 149회 실행 실측(전체 149 = 70×2 + desktop-1000 9 · 149 passed · 실패 0)) · 워크트리는 원본 자료가 없어 몇 개를 건너뛴다(10-06 실측 3) · CI 는 로컬 PostgreSQL·shapely 가 없어 약 30개를 더 건너뛴다(test_district_openclose_migration 실행 시험 16 · test_industry_median_migration 실행 시험 11 · test_backtest_openclose 도형 1 등) · 지난 개수 이력은 git log -p CLAUDE.md)
 python scripts/check_new_sangkwon_quarter.py    # 새 분기 스냅샷이 떴나 (읽기만, 키 불필요)
 python scripts/check_district_source_update.py  # 상권 원천(서울·소진공) 수정일이 바뀌었나 (읽기만, 키 불필요)
 python scripts/check_watch_heartbeat.py         # 예약 6종이 아직 돌고 있나 (읽기만, 키 불필요 — 멈춤=exit 1 · 조회·판정 실패=2 · 결과 쓰기 실패=4)
@@ -155,12 +155,10 @@ python scripts/collectors/collect_lh_notices.py --dry-run   # LH 상가 공고 �
 python scripts/collectors/collect_lh_notices.py             # LH 상가 공고 적재 (upsert — 끝나면 안내대로 기준선 상수를 올릴 것)
 python scripts/feedback_digest.py               # 의견함에 뭐가 쌓였나 (숫자만 — 내용은 dbx.py 로. .env 자동 사용)
 python scripts/collectors/collect_transactions.py --sigungu-code <구> --months 216 --end-ym 202408   # 과거 백필(2006-09~2024-08) — 2026-09-09 서울·대전 30구 완료, 재실행은 이어받기
+# ⚠️ 최근 달은 신고(30일)가 덜 끝난 채 'done' 으로 굳는다 → 아래 `--recollect-months` 로 매달 다시 받는다(2026-10-14 손으로 6개월 재수집 5,323건 → 2026-10-15 F5 옵션) · 적재기 load_transactions.py 는 `--sigungu-code` 가 없으면 **강남만** 적재한다(구마다 돌릴 것)
+python scripts/collectors/collect_transactions.py --sigungu-code <구> --recollect-months 6 --end-ym <이번 달>   # ★ 매달 — 최근 6개월 중 done 칸만 pending 으로 되돌려 다시 받는다(failed 는 --retry-failed 몫 · attempts 그대로 · N 1~24 · --dry-run 은 되돌리지 않고 '다시 받을 달 N개(그중 done M개)'만 · F5 2026-10-15)
 # ⚠️ `--dry-run` 도 `collect_progress` 에 pending 시드를 **쓴다**(형제 수집기의 "DB 쓰기 0" 미리보기와 다르다 — `seed_progress` 가 dry_run 분기 **앞**에 있다, collect_transactions.py:735-746). 시드는 멱등(있는 행 보존)이라 무해하지만 미리보기에도 DB 열쇠가 필요하다.
-python scripts/backtest_price.py                # Stage B 백테스트 성적표 재생성 (DB 읽기 전용 → docs/backtest/, 통과구.csv 포함)
-python scripts/backtest_price.py --place-axis   # 1층 유형축(L7=도로등급×상권등급) 검증 — 새 파일 2개만 쓴다(기존 성적표·통과구.csv 안 건드림). psql 필요
 python scripts/backtest_openclose.py            # 결정 0033 R3 개업·폐업 정답지(소진공 202603→202606 vs 서울시 20262) — DB·외부 호출 0 · shapely 필요(`python -m pip install shapely`) → docs/backtest/개업폐업-정답지-v1.md·-상권별.csv 를 덮어쓴다(재실행하면 md 3번째 줄 생성 시각만 바뀐다)
-python scripts/load_price_gate.py --dry-run     # 통과구.csv → price_gate_sigungu 미리보기(DB 쓰기 0)
-python scripts/load_price_gate.py               # ★ 통과 구 게이트 적재 (관문 3종·걸리면 통째 롤백 — 손 편집 금지, 결정 0013 §4)
 python -m ruff check scripts/ tests/            # 파이썬 린트
 python scripts/collectors/collect_building_ledger.py --dry-run   # 수집 예산 확인(API 0콜)
 python scripts/collectors/collect_building_ledger.py             # 건축물대장 수집 (이어받기)
@@ -180,7 +178,7 @@ python scripts/collectors/fetch_bldrgst_bulk.py --list             # 건축HUB �
 python scripts/collectors/fetch_bldrgst_bulk.py --kind title --probe  # 크기·형식만 확인 (저장 0)
 python scripts/collectors/fetch_bldrgst_bulk.py --kind title      # 표제부 zip 받기 (646MB, 로그인 불필요)
 python scripts/collectors/convert_bldrgst_bulk.py --dry-run       # zip → raw JSONL 변환 미리보기(쓰기 0)
-python scripts/collectors/convert_bldrgst_bulk.py                 # 변환 (기본 범위 11,30 = 서울+대전)
+python scripts/collectors/convert_bldrgst_bulk.py                 # 변환 (기본 범위 11,30 = 서울+대전) — ⚠️ 기본 입력 폴더가 202606 으로 박혀 있다 → 새 판은 `--src-dir data/raw/bldrgst_bulk/<YYYYMM> --out-dir data/raw/bldrgst_bulk_converted_<YYYYMM>`(2026-10-14)
 # ↑ 변환 후에는 기존 적재기를 시군구 폴더마다 돌린다 (코드 수정 0):
 #   python scripts/collectors/load_building_ledger.py --raw-dir data/raw/bldrgst_bulk_converted/11680 --snapshot-ym 202606
 python scripts/collectors/fetch_bldrgst_bulk.py --kind permit-basis   # ★ 건축인허가 기본개요 zip 받기 (438MB, 분류 01 — 월간·3개월만 보관)
@@ -220,17 +218,15 @@ python scripts/load_rone_map.py --dry-run                          # seed → di
 python scripts/load_rone_map.py                                    # 매핑 적재 (검증 관문 3종 내장 — 걸리면 통째 롤백)
 python scripts/build_district_geojson.py --dry-run                  # 지도용 상권 파일 미리보기(행수·크기만, 파일 안 씀)
 python scripts/build_district_geojson.py                           # ★ district 를 적재했으면 → public/districts.geojson 굽고 **커밋**
-python scripts/build_scorecard_json.py --dry-run                    # 성적표 파일 미리보기(줄 수·크기·원본 해시만, 파일 안 씀)
-python scripts/build_scorecard_json.py                              # ★ 성적표 CSV 가 바뀌었으면 → public/scorecard-v2.json 다시 굽고 **커밋**
-# ↑ 입력 = docs/backtest/{단계별지표,운영모드지표,통과구}.csv + 성적표-v2.md 의 생성 시각 한 줄.
-#   ⛔ 검증거래별원자료.csv(개별 실거래)는 **안 읽는다**. 판(v3)을 올리는 것은 별건 결재라
-#      그때 스크립트의 VERSION·backtest_price.py 의 SCORECARD_VERSION·출력 파일명·src/lib/appConstants.ts 의 SCORECARD_URL 을 함께 올린다(옛 json 은 git rm · 셋이 어긋나면 TestVersionPins 가 빨강).
-python scripts/build_sitemap.py --dry-run       # 사이트맵 미리보기 — 대상 건물(이름 + 비주거 층 · 스크립트 맨 위 TARGET_WHERE) 수·파일 수만 (DB 읽기만 · 쓰기 0 · 결정 0037)
-python scripts/build_sitemap.py                 # ★ 건축물대장·호실을 다시 적재했으면(post_load 뒤) → public/sitemap*.xml 다시 굽고 **커밋** → 배포 뒤 indexnow_ping.py --from-sitemap … (⚠️ 대상 고르기에 찬 캐시 약 10분 — 2026-10-10 실측 · 스크립트가 그 접속만 제한을 15분으로 늘린다)
+python scripts/build_sitemap.py --dry-run       # 사이트맵·구 허브 미리보기 — 대상 건물(이름(글자 하나 이상 · 10-19) + 비주거 층 · 스크립트 맨 위 TARGET_WHERE) 수·파일 수·허브 수만 (DB 읽기만 · 쓰기 0 · 결정 0037·0043)
+python scripts/build_sitemap.py                 # ★ 건축물대장·호실을 다시 적재했으면(post_load 뒤) → public/sitemap*.xml + 구 허브 public/hub/<sgg>.json(같은 대상 · 결정 0043) 다시 굽고 **함께 커밋**(시험이 허브 ↔ 사이트맵을 대조) → 배포 뒤 indexnow_ping.py --from-sitemap … (⚠️ 대상 고르기에 찬 캐시 약 10분 — 2026-10-10 실측 · 스크립트가 그 접속만 제한을 15분으로 늘린다)
 python scripts/post_load.py                     # ★ 적재 후 필수 — vacuum(analyze) + 요약표(REFRESH_MVS 목록이 정본) 갱신 (권한 점검은 안 돈다)
 python scripts/post_load.py --check              # 낡았나 + 공개 롤이 읽거나 **고칠 수** 있는 것 점검 (DB 쓰기 0, 걸리면 exit 1)
 python scripts/publish_snapshot.py --show        # 분기 표지(다 들어온 분기 · 보여 주는 분기) + 점포 표 분기별 행수 + 요약표 여섯의 분기 (읽기만)
 python scripts/publish_snapshot.py --ym <분기>   # 표지 두 칸을 그 분기로(되돌리기·RPC 실패 대응 · 점포 표에 있는 분기만) → 이어서 post_load.py
+python scripts/publish_ledger_release.py --show             # 건축물대장 판 표지(판·적은 시각) + 열린 구마다 '표지 뒤에 적재됐나' (읽기만 · 2026-10-15a)
+python scripts/publish_ledger_release.py --ym <판> --dry-run # 판정만(쓰기 0) — ⓐ 모양 ⓑ 앞으로만(같은 판이면 쓰기 0 · exit 0) ⓒ 지난달까지 ⓓ 열린 구 전부의 max(building.updated_at) 이 지금 표지를 적은 시각 뒤
+python scripts/publish_ledger_release.py --ym <판>          # ★ 대장 새 판을 30구 다 넣은 뒤 — 신선도 표 건축물대장 줄이 이 판을 말한다(판 + 3개월 − 하루). ⚠️ ⓓ 는 손대지 않은 구가 남았는지만 본다 — 한 구 도중 실패는 못 보니 30구 적재가 모두 exit 0 인지 먼저 본다(`--building-only` 칸 채우기는 적재 시각을 안 실어 ⓓ 를 지나가지 않는다 — 단 DB 에 없던 건물이 새로 들어가면 그 행엔 기본값(지금 시각)이 찍혀 그 구는 넣음으로 보인다)
 python scripts/make_env_local.py                # .env → .env.local (브라우저용 공개키만)
 python scripts/setup_git_hooks.py               # ★ 새 컴퓨터에서 한 번 — main 잠금(로컬 알람) 켜기 + 깃헙 잠금 함께 확인
 python scripts/setup_git_hooks.py --check       # 양쪽 잠금이 제자리인가 (아무것도 안 바꿈, 어긋나면 exit 1)
@@ -238,6 +234,10 @@ python scripts/backup_raw.py --dry-run          # 원본 백업 대상 확인 (�
 python scripts/backup_raw.py                    # data/raw → F:\sangga-raw-backup (외장 SSD 연결 필요)
 python scripts/backup_raw.py --verify           # 백업본을 다시 읽어 SHA-256 대조
 ```
+
+> 📅 **매달 할 일**(F3·F5 · 2026-10-15) — 신선도 표가 두 줄에 날짜를 건다(실거래 = 계약월 + 2개월 − 하루 · 건축물대장 = 판 + 3개월 − 하루). 넘기면 그물 6호가 이슈를 연다.
+> ① **실거래**: 30구 `collect_transactions.py --sigungu-code <구> --recollect-months 6 --end-ym <이번 달>` → 30구 `load_transactions.py --sigungu-code <구>`(⚠️ 구 인자가 없으면 강남만 적재) → `post_load.py`.
+> ② **건축물대장**: 매달 20일 무렵 새 판(N월 판 = (N+1)월 20일 게시) → 적재 **전** 디스크 판정(지금 사용량 + 약 +320MB(10-14 실측 5,464 → 5,783MB) + WAL 여유 1GB 가 디스크의 85% 미만일 때만 — 넘으면 확장부터) → `fetch_bldrgst_bulk.py --kind title` · `flr_ouln` · `expos_area` → `convert_bldrgst_bulk.py --src-dir data/raw/bldrgst_bulk/<판> --out-dir data/raw/bldrgst_bulk_converted_<판>` → 30구 `load_building_ledger.py --raw-dir …/<구> --snapshot-ym <상권 분기>`(30구 모두 exit 0 인지 본다) → `publish_ledger_release.py --ym <판>` → `post_load.py` · `post_load.py --check` → `build_sitemap.py` → 커밋 → 배포 뒤 `indexnow_ping.py --from-sitemap public/sitemap-buildings-1.xml` · 한 번 더 `indexnow_ping.py --from-sitemap public/sitemap-hubs.xml`(구 허브 · 결정 0043) → `backup_raw.py`(포털은 최근 3개월치만 남긴다).
 
 > 💾 **원본 백업은 자동이 아니다.** 새 분기 zip을 받았거나 대량 수집을 마쳤으면 `backup_raw.py`를
 > 직접 한 번 돌린다. 과거 분기 zip은 포털에서 내려가면 **재수집이 불가능**하다(절대 규칙 6).

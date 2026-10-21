@@ -21,21 +21,18 @@ src/                     # 프론트 (라우터·상태관리 라이브러리 �
 │   ├── BuildingSearch.tsx   # 검색 폼+결과. search_buildings / 0건이면 search_scope 재질의 + search_stores(가게 이름 → 땅 구역, 늘 함께 · 0028)
 │   ├── LhNoticeSection.tsx  # LH 상가 분양·입점 공고(결정 0022) — **입구**(구는 골랐고 건물은
 │   │                         #   아직)에 App 이 직접 꽂음. list_lh_notices, ENTRY_SECTION_PLAN
-│   ├── ScorecardSection.tsx # "참고 시세는 얼마나 맞나" 성적표(Wave 4) — 같은 입구 자리.
-│   │                         #   판정은 list_price_gate(), 방법·분포는 구운 /scorecard-v2.json
-│   ├── TxFlowSection.tsx    # 동네 매매 단가 흐름(결정 0027) — 같은 입구 자리의 셋째 카드.
+│   ├── TxFlowSection.tsx    # 동네 매매 단가 흐름(결정 0027) — 같은 입구 자리의 둘째 카드.
 │   │                         #   get_sigungu_tx_yearly(구×연도). 연도 리터럴 0(주석까지)
 │   ├── DistrictMap.tsx      # 카카오맵 + 상권 폴리곤 (정적 /districts.geojson — Supabase 안 씀)
 │   ├── DistrictBuildings.tsx  # 지도 안 — 상권 이름을 누르면 그 안의 **땅**(필지) 목록이 펼쳐짐
 │   │                         #   (결정 0025). list_district_buildings / 여러 동은 list_parcel_buildings
-│   ├── FloorStack.tsx       # 시그니처 화면: 층 스택+속한 상권+실거래+참고시세+기준시가+호실 요약 등
+│   ├── FloorStack.tsx       # 시그니처 화면: 층 스택+속한 상권+실거래+기준시가+호실 요약 등
 │   │                         #   8개 질의를 독립 상태로 발사 (하나 실패해도 나머지 렌더). 층을 펼치면
 │   │                         #   셋째 칸 "호실"이 그 층 호 목록을 그때 부른다(결정 0032 · 주거 층은 안 부름)
 │   ├── SectionCard.tsx      # 카드 공통 틀(로드맵 Wave 2) — 접어도 요약 한 줄은 항상 보임,
 │   │                         #   본문은 hidden 으로 감춰 둘 뿐 DOM 에서 안 뺌(인쇄가 되살릴 수 있게)
 │   ├── IndustryMixSection.tsx  # 둘레의 업종 분포(결정 0014) — 상권/반경 두 스코프 + 인허가 한 줄,
 │   │                         #   자체 질의 보유(list_industry_mix·list_industry_detail·count_nearby_permits)
-│   ├── PriceBandSection.tsx    # 참고 매매 시세 밴드(Stage B·결정 0013) — FloorStack 안에서 렌더
 │   ├── RentStatSection.tsx     # 상권 임대 동향(결정 0024) — 부동산원 공표값을 그대로 나름
 │   │                         #   (역산 0). list_rent_stats, FloorStack 안에서 렌더
 │   ├── OpenCloseSection.tsx    # 상권 개업·폐업(서울시 공표 · 결정 0033 R2) — 공표값 그대로,
@@ -66,9 +63,8 @@ src/                     # 프론트 (라우터·상태관리 라이브러리 �
     ├── industryMix.ts   # 업종 분포 순수 계산(결정 0014) — IndustryMixSection 의 계산 부분만 분리
     ├── nearbyPermits.ts # 둘레의 "새로 올라오는 상가 건물" 한 줄(결정 0023) — 어림 0, 걸러 내기만.
     │                     #   `stale_cnt`(허가 후 2년 미착공)는 **선택 칸**이라 없으면 그 문장만 빠짐
-    ├── priceBand.ts      # 참고 시세 밴드 순수 계산·어휘(결정 0013) — 단가×면적 곱셈은 여기서만
     ├── basePrice.ts     # 국세청 기준시가(층별) 짝짓기·거르기(결정 0021) — 계산 0(서버 가운데값을
-    │                     #   그대로 나름). priceBand.ts 와 일부러 갈라 둠(두 값을 견주게 되므로)
+    │                     #   그대로 나름)
     ├── rentStats.ts     # 상권 임대 동향 순수 계산(결정 0024) — 산수는 천원/㎡→원 곱하기 하나뿐
     │                     #   (종류끼리 더하기·수익률 ×4·층별효용비율은 넣지 않는다)
     ├── unitTable.ts     # 호실 구성표 순수 규칙(결정 0032) — 응답 모양 검사(이상한 줄만 뺌)·층 줄 요약 글·
@@ -76,8 +72,6 @@ src/                     # 프론트 (라우터·상태관리 라이브러리 �
     ├── lhNotices.ts     # LH 공고 순수 계산(결정 0022) — 시도 두 자리 자르기·마감·중복 묶기·링크
     ├── txFlow.ts        # 동네 매매 단가 흐름 순수 계산(결정 0027) — 요약 문구·부분 해 라벨·
     │                     #   표본 부족 가르기·막대 폭. 연도 리터럴 0(시험이 원문을 훑어 지킴)
-    ├── scorecard.ts     # 성적표 순수 계산(Wave 4) — 통계 수치 리터럴 0, 판정은 서버 gate_pass
-    │                     #   그대로. /scorecard-v2.json 을 읽어 방법·단계 분포만 그림
     ├── dataFreshness.ts # 자료 기준일 표의 순수 계산 — 날짜·분기·주기가 이 파일에 하나도 없음
     │                     #   (`new Date('YYYY-MM-DD')` 은 UTC 자정이라 안 씀 — 적힌 그대로 적음)
     ├── handoffLinks.ts  # 넘기는 곳 목록·역할별 시작점(결정 0014 §5). 머리말에 **주소 확인 기록** —
@@ -98,7 +92,6 @@ src/                     # 프론트 (라우터·상태관리 라이브러리 �
 
 public/                  # 정적 자산 (Supabase 를 안 거치는 것만)
 ├── districts.geojson    # 상권 경계 1.1MB — build_district_geojson.py 로 굽고 커밋
-├── scorecard-v2.json    # 백테스트 성적표 — build_scorecard_json.py 로 굽고 커밋
 ├── favicon.svg
 └── icons.svg
 
@@ -122,12 +115,8 @@ scripts/                 # 데이터 파이프라인 전부 24개 (수동 실행
 ├── setup_git_hooks.py               # main 잠금(로컬 훅+GitHub 규칙) 새 컴퓨터에서 1회 세팅/확인
 ├── download_sangkwon_history.py     # 상권정보 "주기성 과거 데이터" 분기별 zip 일괄 다운로드
 ├── make_env_local.py                # .env → .env.local (브라우저용 공개키만 골라 씀)
-├── backtest_price.py                # Stage B 백테스트 성적표(docs/backtest/) 재생성 — DB 읽기 전용
 ├── backtest_openclose.py            # 결정 0033 R3 개업·폐업 정답지(사진 비교 vs 서울시 공표 · docs/backtest/) — DB·외부 호출 0 · shapely 필요
-├── load_price_gate.py               # 통과구.csv → price_gate_sigungu 적재(관문 3종, 걸리면 롤백)
 ├── build_district_geojson.py        # district → public/districts.geojson (단순화)
-├── build_scorecard_json.py          # 백테스트 CSV 3종 → public/scorecard-v2.json (굽고 커밋 —
-│                                    #   산출물이라 DB 에 안 넣음. 통과 구 정본은 여전히 서버)
 ├── build_rone_map.py / load_rone_map.py  # district↔R-ONE 매핑 후보 생성 / seed 적재(관문 3종)
 ├── seeds/               # district_rone_map.csv (사람이 확정한 매핑 정본)
 └── collectors/          # 원천별 수집기·적재기 23개 (fetch_/collect_ = 받기, load_/convert_ = 적재)
@@ -168,11 +157,11 @@ docs/                    # 상세계획·알려진한계(조사 전 필독)·데
 
 | 모듈 | 책임 (1줄) |
 |---|---|
-| `src/App.tsx` | 상태(주소로 연 값·selected·sigungu·sigunguName·restoring·restoreFailed + 고른 역할 `viewerRole` — 첫 그림 전에 `viewerRoleStore` 에서 읽고 바뀌면 저장) 소유·배분. 구 변경 시 `key` 로 BuildingSearch 강제 재마운트(검색 초기화), 지도·층별 화면은 각각 `key` 를 준 `ErrorBoundary` 로 감쌈. 입구 카드(`LhNoticeSection`·`ScorecardSection`·`TxFlowSection`)는 구는 골랐고 건물은 아직일 때만 직접 꽂음 |
-| `src/components/FloorStack.tsx` | 층 스택 + 속한 상권 + 실거래 + 참고 시세 + 기준시가 + 임대 동향 + 업종 분포 섹션. 질의 8개(뷰 2 + RPC 6 — 호실 요약 포함, 위 나무와 같은 셈) 독립 실패 허용, `SectionCard` 로 묶은 카드들의 뼈대. 카드는 이름으로 담아 `sectionOrder(viewerRole)` 차례로 그림(key = 카드 이름 — 역할을 바꿔도 자리만 옮김) |
+| `src/App.tsx` | 상태(주소로 연 값·selected·sigungu·sigunguName·restoring·restoreFailed + 고른 역할 `viewerRole` — 첫 그림 전에 `viewerRoleStore` 에서 읽고 바뀌면 저장) 소유·배분. 구 변경 시 `key` 로 BuildingSearch 강제 재마운트(검색 초기화), 지도·층별 화면은 각각 `key` 를 준 `ErrorBoundary` 로 감쌈. 입구 카드(`LhNoticeSection`·`TxFlowSection` — 성적표 카드는 결정 0041 로 내렸다)는 구는 골랐고 건물은 아직일 때만 직접 꽂음 |
+| `src/components/FloorStack.tsx` | 층 스택 + 속한 상권 + 실거래 + 기준시가 + 층별 공표값 나란히 + 임대 동향 + 업종 분포 섹션. 질의 8개(뷰 2 + RPC 6 — 호실 요약 포함, 위 나무와 같은 셈) 독립 실패 허용, `SectionCard` 로 묶은 카드들의 뼈대. 카드는 이름으로 담아 `sectionOrder(viewerRole)` 차례로 그림(key = 카드 이름 — 역할을 바꿔도 자리만 옮김) |
 | `src/components/SectionCard.tsx` | 카드 공통 틀 — 첫 화면 펼침 상한 4장(`sectionCards.ts` 의 `SECTION_PLAN` 이 장수·제목의 정본, 입구 카드는 `ENTRY_SECTION_PLAN`), 접힌 카드도 본문은 그려 두고 `hidden` 만 해서 인쇄가 되살릴 수 있게 함 |
 | `src/lib/supabase.ts` | anon 클라이언트(persistSession:false). 원본 표는 닫혀 있고 함수·뷰만 접근 |
-| `src/lib/appConstants.ts` | 서버 함수/뷰 이름과 짝수(TX_LIST_CAP·FEEDBACK_MAX_LEN·SCORECARD_URL 등)만 모은 순수 모듈 — env 를 안 봐서 테스트가 흉내낼 필요 없음 |
+| `src/lib/appConstants.ts` | 서버 함수/뷰 이름과 짝수(TX_LIST_CAP·FEEDBACK_MAX_LEN 등)만 모은 순수 모듈 — env 를 안 봐서 테스트가 흉내낼 필요 없음 |
 | `src/lib/urlState.ts` | 화면 상태 ↔ `?sgg=&bld=` 주소 변환 순수 부품(결정 0019). 되살리는 중엔 절대 안 씀(링크 자멸 방지) |
 | `scripts/post_load.py` | "했다고 믿지 않고 다시 잰다" — 등식 검증·geojson 대조·24개월 창·anon 허용목록(`--check`) |
 | `scripts/collectors/load_transactions.py` | 실거래 적재: PNU 조립(집합만 가능)·층 정규화·unit_price 는 DB 생성 컬럼 |
@@ -181,24 +170,24 @@ docs/                    # 상세계획·알려진한계(조사 전 필독)·데
 ## 의존성 / 데이터 흐름
 
 - **프론트 단방향**: `main → App → components → lib → types` (역방향 import 0건, 컴포넌트끼리 import 는
-  `FloorStack → SectionCard/IndustryMixSection/PriceBandSection/RentStatSection`,
+  `FloorStack → SectionCard/IndustryMixSection/FloorGapSection/RentStatSection`,
   `DistrictMap → DistrictBuildings`, `AppFooter → FeedbackBox/HandoffLinks/DataFreshness` 처럼
-  같은 계층 안 조립만 있고 밖으로 새지 않는다). 외부 경계 4개 = Supabase REST · 정적 geojson ·
-  구운 성적표 JSON · 카카오맵 스크립트.
+  같은 계층 안 조립만 있고 밖으로 새지 않는다). 외부 경계 3개 = Supabase REST · 정적 geojson ·
+  카카오맵 스크립트(구운 성적표 JSON 은 결정 0041 로 지웠다).
 - **DB 3층**: `parcel(pnu) ← building(bld_id) ← building_floor/unit`. `unit_business`·`transaction` 은
   FK 없이 (pnu, floor)·(sigungu, floor) 로 느슨하게 붙는다. `district` 는 `st_contains` 공간 조인뿐.
   건물 좌표는 **필지(parcel.geom, `st_y/st_x`로 뽑음)에서** 나온다. `app_feedback` 은 anon 에게
   통째로 닫혀 있고 `submit_feedback()` 넣기 전용 함수 하나만 열려 있다(읽는 함수는 없음).
 - **대표 시나리오** (검색→층 스택→가지고 나가기): 첫 그림에서 주소(`?sgg=&bld=`)가 있으면
   `restoreBuilding.ts` 로 검색 없이 건물을 되살리고, 없으면 RegionPicker `list_open_sigungu()` →
-  구 선택(이때 입구에 `LhNoticeSection`=`list_lh_notices`, `ScorecardSection`=`list_price_gate`+
-  `/scorecard-v2.json`, `TxFlowSection`=`get_sigungu_tx_yearly` 가 뜬다. 지도에서 상권을 누르면 `DistrictBuildings` 가
+  구 선택(이때 입구에 `LhNoticeSection`=`list_lh_notices`,
+  `TxFlowSection`=`get_sigungu_tx_yearly` 가 뜬다. 지도에서 상권을 누르면 `DistrictBuildings` 가
   `list_district_buildings`·`list_parcel_buildings` 로 그 안의 땅을 펼친다) →
   BuildingSearch `search_buildings(q, lim, sigungu)`(0건 시 `search_scope`) ∥ `search_stores(q, lim, sigungu, p_offset)`(상호 → 땅, 0028) → 선택 →
   FloorStack 이 8개 질의 동시 발사: `v_coverage_stats`·`v_floor_stack`·`list_building_districts(bld_id)`·
   `list_unit_floor_summary(p_bld_id)`(호실 요약 · 결정 0032 — 층을 펼치면 그 층만 `list_floor_units`)·
-  `list_parcel_transactions(pnu)`·`get_sigungu_tx_stats(sigungu)`·`list_price_bands(p_pnu)`·
-  `list_base_prices(p_pnu)` → 층 막대+실거래+참고시세+기준시가+호실 요약 렌더. 그 안에서
+  `list_parcel_transactions(pnu)`·`get_sigungu_tx_stats(sigungu)`·
+  `list_base_prices(p_pnu)` → 층 막대+실거래+기준시가+호실 요약 렌더. 그 안에서
   `IndustryMixSection` 이 `list_industry_mix`·`list_industry_detail`·`count_nearby_permits` 를,
   `RentStatSection` 이 `list_rent_stats` 를 따로 발사한다.
   건물을 고르면 화면 상태가 `urlState.ts` 로 주소에 따라 적히고(되살리는 중엔 안 적음),

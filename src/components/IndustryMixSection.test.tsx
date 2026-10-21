@@ -1314,3 +1314,198 @@ describe('IndustryMixSection — 업종 비중 비교 · 중분류 (물결 2-3b)
     expect(container.querySelector('.card__summary')!.textContent).not.toContain('가운데');
   });
 });
+
+// ── 그림 (결정 0038 E — ▲ 가운데값 눈금 · 층 묶음 쌓은 막대) ─────────────────────────
+// 그림이 깨져도 글자 시험은 초록이다(§2-10) — 자리(left %)·폭(width %)·칸 수·차례·낭독기 숨김을 숫자로 본다.
+
+/** 블록마다 — [블록 제목, 줄마다 ▲ 의 left(없으면 null)]. */
+function markLefts(container: HTMLElement, sel = '.mix__block') {
+  return [...container.querySelectorAll(sel)].map((b) => [
+    b.querySelector('.mix__sub')?.textContent ?? '',
+    [...b.querySelectorAll('.mix__bars li')].map(
+      (li) => (li.querySelector('.mix__mark') as HTMLElement | null)?.style.left ?? null,
+    ),
+  ]);
+}
+
+describe('IndustryMixSection — 그림 ▲ 가운데값 눈금 (결정 0038 E)', () => {
+  const PNU = '1168010100100010000';
+
+  it('★ 비교 글이 있는 상권 막대 줄마다 ▲ — left = med_pct% · 반경 블록엔 없다 · 비교 글 줄은 그대로', async () => {
+    responses.median = () => ({ data: median(), error: null });
+    const { container } = render(<IndustryMixSection pnu={PNU} />);
+    await screen.findByText('서울 발달상권 가운데 26.5%');
+    expect(markLefts(container)).toEqual([
+      ['강남역(발달상권) 안 100곳', ['26.5%', '16%']],
+      ['반경 500m 안 200곳', [null, null]],
+    ]);
+    const mark = container.querySelector('.mix__mark') as HTMLElement;
+    // 막대 칸 안(같은 0~100 자) · 추정 색 토큰 · 낭독기에서 뺀다(옆 글과 같은 내용).
+    expect(mark.parentElement?.classList.contains('mix__bar')).toBe(true);
+    expect(mark.style.borderBottomColor).toBe('var(--est-ink)');
+    expect(mark.getAttribute('aria-hidden')).toBe('true');
+    expect(mark.textContent).toBe('');
+    // 글 줄(비교 글)은 한 글자도 안 바뀐다.
+    expect(medTexts(container)[0][1]).toEqual(['서울 발달상권 가운데 26.5%', '서울 발달상권 가운데 16.0%']);
+  });
+
+  it('▲ 는 막대 폭(bar.pct)이 아니라 가운데값 자리에 선다(같은 줄의 채움 막대와 다른 값)', async () => {
+    responses.median = () => ({ data: median(), error: null });
+    const { container } = render(<IndustryMixSection pnu={PNU} />);
+    await screen.findByText('서울 발달상권 가운데 26.5%');
+    const li = container.querySelector('.mix__block .mix__bars li')!;
+    expect((li.querySelector('.mix__fill') as HTMLElement).style.width).toBe('60%');
+    expect((li.querySelector('.mix__mark') as HTMLElement).style.left).toBe('26.5%');
+  });
+
+  it('가운데값 줄이 없는 업종 · 비교 함수 없음 · 점포 기준 미만 상권이면 그 줄에 ▲ 없음', async () => {
+    const m = median();
+    m.districts[0].cats = [{ cd: 'I2', nm: '음식', med_pct: 26.5 }];
+    responses.median = () => ({ data: m, error: null });
+    const { container, unmount } = render(<IndustryMixSection pnu={PNU} />);
+    await screen.findByText('서울 발달상권 가운데 26.5%');
+    expect(markLefts(container)[0]).toEqual(['강남역(발달상권) 안 100곳', ['26.5%', null]]);
+    unmount();
+
+    responses.median = () => ({ data: null, error: { message: 'PGRST202' } });
+    const second = render(<IndustryMixSection pnu={PNU} />);
+    await screen.findByText('반경 500m 안');
+    await act(() => new Promise((r) => setTimeout(r, 0)));
+    expect(second.container.querySelectorAll('.mix__mark')).toHaveLength(0);
+    second.unmount();
+
+    responses.median = () => ({
+      data: median({ districts: [{ district_id: '3120189', type: '발달상권', total: 12, pop: null, cats: [] }] }),
+      error: null,
+    });
+    responses.mix = {
+      data: mix({
+        districts: [{ ...mix().districts[0], total: 12, cats: [{ cd: 'I2', nm: '음식', n: 12 }] }],
+      }),
+      error: null,
+    };
+    const third = render(<IndustryMixSection pnu={PNU} />);
+    await screen.findByText('점포 12곳 — 30곳이 안 돼 비교값은 적지 않습니다.');
+    expect(third.container.querySelectorAll('.mix__mark')).toHaveLength(0);
+  });
+
+  it('★ 상세 상권 블록(중분류)에도 비교 글이 있으면 ▲ · 반경 블록엔 없다', async () => {
+    responses.medianM = () => ({ data: medianM(), error: null });
+    const { container } = render(<IndustryMixSection pnu={PNU} />);
+    fireEvent.change(await screen.findByLabelText('업종 골라보기'), { target: { value: 'I2' } });
+    await screen.findByText('서울 발달상권 가운데 37.3%');
+    expect(markLefts(container, '.mix__detail .mix__block')).toEqual([
+      ['강남역(발달상권) 안 음식 60곳', ['37.3%', '3.8%']],
+      ['반경 500m 안 음식 150곳', [null]],
+    ]);
+  });
+});
+
+describe('IndustryMixSection — 그림 층 묶음 쌓은 막대 (결정 0038 E)', () => {
+  const PNU = '1168010100100010000';
+  const LINE_D = '층별 음식: 지하 0곳 · 1층 36곳 · 2층 9곳 · 3층 이상 3곳 · 층 미상 12곳 (20%)';
+  const CHIP_D = '층별 고른 업종(카페): 지하 0곳 · 1층 15곳 · 2층 3곳 · 3층 이상 0곳 · 층 미상 2곳 (10%)';
+
+  function floors(catL: string, catM: string[] | null): IndustryFloors {
+    if (catM === null) {
+      return {
+        snapshot_ym: '202606',
+        radius_m: 500,
+        cat_l_cd: catL,
+        cat_m_cds: null,
+        districts: [
+          { district_id: '3120189', name: '강남역', total: 60, bands: { b: 0, '1': 36, '2': 9, '3+': 3, na: 12 } },
+        ],
+        radius: { total: 150, bands: { b: 2, '1': 90, '2': 24, '3+': 9, na: 25 } },
+      };
+    }
+    return {
+      snapshot_ym: '202606',
+      radius_m: 500,
+      cat_l_cd: catL,
+      cat_m_cds: catM,
+      districts: [{ district_id: '3120189', name: '강남역', total: 20, bands: { b: 0, '1': 15, '2': 3, '3+': 0, na: 2 } }],
+      radius: { total: 0, bands: { b: 0, '1': 0, '2': 0, '3+': 0, na: 0 } },
+    };
+  }
+
+  /** 층 줄 글 바로 앞 형제 막대의 칸 — [묶음 열쇠, width, background]. 막대가 없으면 null. */
+  function stackBefore(p: Element) {
+    const bar = p.previousElementSibling as HTMLElement | null;
+    if (!bar || !bar.classList.contains('mix__stack')) return null;
+    return [...bar.querySelectorAll<HTMLElement>('.mix__stack-cell')].map((c) => [
+      c.dataset.band,
+      c.style.width,
+      c.style.backgroundColor,
+    ]);
+  }
+
+  beforeEach(() => {
+    responses.floors = ({ p_cat_l, p_cat_m }) => ({ data: floors(p_cat_l, p_cat_m), error: null });
+  });
+
+  it('★ 층 줄 글 바로 위에 막대 한 줄 — 차례 고정 · 0곳 묶음 칸 없음 · 폭 = 곳 수 ÷ 합 · 호박 진하기 + 층 미상 회색', async () => {
+    const { container } = render(<IndustryMixSection pnu={PNU} />);
+    fireEvent.change(await screen.findByLabelText('업종 골라보기'), { target: { value: 'I2' } });
+    const line = await screen.findByText(LINE_D);
+    expect(stackBefore(line)).toEqual([
+      ['1', '60%', 'var(--fact-2)'],
+      ['2', '15%', 'var(--fact-3)'],
+      ['3+', '5%', 'var(--fact-4)'],
+      ['na', '20%', 'var(--viz-na)'],
+    ]);
+    const radius = [...container.querySelectorAll('.mix__floors')][1];
+    const cells = stackBefore(radius)!;
+    expect(cells.map((c) => c[0])).toEqual(['b', '1', '2', '3+', 'na']);
+    expect(cells[0][2]).toBe('var(--fact-1)');
+    // 막대 수 = 층 줄 수 · 낭독기에서 뺀다 · 칸 안 글자 0(비율을 글자로 새로 내지 않는다).
+    const bars = container.querySelectorAll('.mix__stack');
+    expect(bars).toHaveLength(container.querySelectorAll('.mix__floors').length);
+    for (const b of bars) {
+      expect(b.getAttribute('aria-hidden')).toBe('true');
+      expect(b.textContent).toBe('');
+    }
+    // 글 줄은 그대로.
+    expect(line.textContent).toBe(LINE_D);
+  });
+
+  it('★ 창업자 카페 칩 줄 위에도 막대 — total 0 인 반경엔 칩 줄도 막대도 없다', async () => {
+    const { container } = render(<IndustryMixSection pnu={PNU} chip="카페" />);
+    const chip = await screen.findByText(CHIP_D);
+    await screen.findByText(LINE_D);
+    expect(stackBefore(chip)).toEqual([
+      ['1', '75%', 'var(--fact-2)'],
+      ['2', '15%', 'var(--fact-3)'],
+      ['na', '10%', 'var(--viz-na)'],
+    ]);
+    expect(container.querySelectorAll('.mix__stack')).toHaveLength(3); // 대분류 둘 + 칩 하나
+  });
+
+  it('층 함수가 실패하면 층 줄도 막대도 없다(0 으로 그리지 않는다)', async () => {
+    responses.floors = () => ({ data: null, error: { message: 'PGRST202' } });
+    const { container } = render(<IndustryMixSection pnu={PNU} />);
+    fireEvent.change(await screen.findByLabelText('업종 골라보기'), { target: { value: 'I2' } });
+    expect(await screen.findByText('음식 60곳')).toBeTruthy();
+    await act(() => new Promise((r) => setTimeout(r, 0)));
+    expect(container.querySelectorAll('.mix__stack')).toHaveLength(0);
+    expect(container.querySelectorAll('.mix__floors')).toHaveLength(0);
+  });
+
+  it('모든 범위가 0곳이면 막대도 없다', async () => {
+    const zero = { b: 0, '1': 0, '2': 0, '3+': 0, na: 0 };
+    responses.floors = ({ p_cat_l, p_cat_m }) => ({
+      data: {
+        ...floors(p_cat_l, p_cat_m),
+        districts: [{ district_id: '3120189', name: '강남역', total: 0, bands: zero }],
+        radius: { total: 0, bands: zero },
+      },
+      error: null,
+    });
+    const { container } = render(<IndustryMixSection pnu={PNU} />);
+    fireEvent.change(await screen.findByLabelText('업종 골라보기'), { target: { value: 'I2' } });
+    expect(await screen.findByText('음식 60곳')).toBeTruthy();
+    await waitFor(() => expect(rpcCalls.some((c) => c.fn === 'list_industry_floors')).toBe(true));
+    await act(() => new Promise((r) => setTimeout(r, 0)));
+    expect(container.querySelectorAll('.mix__stack')).toHaveLength(0);
+  });
+});

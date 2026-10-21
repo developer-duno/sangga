@@ -32,6 +32,7 @@ vi.mock('../lib/supabase', () => ({
 }));
 
 const { DataFreshness } = await import('./DataFreshness');
+const { resetDataFreshnessCache } = await import('../lib/loadDataFreshness');
 
 function row(over: Partial<DataFreshnessRow> = {}): DataFreshnessRow {
   return {
@@ -44,42 +45,45 @@ function row(over: Partial<DataFreshnessRow> = {}): DataFreshnessRow {
   };
 }
 
-/** 라이브가 주는 것과 같은 열 줄. */
+/**
+ * 라이브가 주는 것과 같은 열 줄(2026-10-16 운영 모양에서 결정 0041 로 성적표 줄을 뺀 것 — 실거래·건축물대장은 2026-10-15a 부터 규칙으로 날짜를 준다).
+ * ⓘ 인허가만 일부러 옛 기준월(202606 → 규칙대로 2026-08-31)이다 — '지났습니다' 줄을 보려고.
+ */
 function tenRows(): DataFreshnessRow[] {
   return [
     row(),
     row({
       src: '실거래 (매매)',
       basis_kind: '계약월',
-      basis: '202608',
-      next_expected: null,
-      cadence: '수시 (서울·대전 전부 활성화 뒤 확대)',
+      basis: '202610',
+      next_expected: '2026-11-30',
+      cadence: '월 1회 (최근 6개월 다시 받기)',
     }),
     row({
       src: '건축물대장',
-      basis_kind: '적재일',
-      basis: '2026-06-30',
-      next_expected: null,
+      basis_kind: '판',
+      basis: '202608',
+      next_expected: '2026-10-31',
       cadence: '월간 파일 (사람이 적재)',
     }),
     row({
       src: '상권 경계',
       basis_kind: '계산일',
-      basis: '2026-08-15',
+      basis: '2026-09-08',
       next_expected: null,
       cadence: '비정기 (원천이 바뀌면)',
     }),
     row({
       src: 'LH 상가 공고',
       basis_kind: '수집일',
-      basis: '2026-08-28',
+      basis: '2026-10-12',
       next_expected: null,
       cadence: '주 1회 감시 · 적재는 사람',
     }),
     row({
       src: '건축 인허가',
       basis_kind: '기준월',
-      basis: '202607',
+      basis: '202606',
       next_expected: '2026-08-31',
       cadence: '월 1회',
     }),
@@ -97,13 +101,6 @@ function tenRows(): DataFreshnessRow[] {
       next_expected: '2026-10-31',
       cadence: '분기마다',
     }),
-    row({
-      src: '참고 시세 성적표',
-      basis_kind: '적재일',
-      basis: '2026-08-16',
-      next_expected: null,
-      cadence: '재생성 때 (결재 사항)',
-    }),
     // 2026-10-12b — 기준 = 공시 연도(네 자리) · 다음 갱신 = 공시 연도의 다음 해 6월 30일.
     row({
       src: '필지 (토지 특성)',
@@ -112,11 +109,21 @@ function tenRows(): DataFreshnessRow[] {
       next_expected: '2027-06-30',
       cadence: '연 1회 (브이월드)',
     }),
+    // 결정 0033 — 서울시 분기 꼴은 Q 없는 다섯 자리('20262').
+    row({
+      src: '상권 개업·폐업 (서울시)',
+      basis_kind: '분기',
+      basis: '20262',
+      next_expected: '2026-10-31',
+      cadence: '분기마다',
+    }),
   ];
 }
 
 beforeEach(() => {
   rpcCalls.length = 0;
+  // 표와 카드가 나눠 쓰는 한 번의 요청(`loadDataFreshness`)을 시험마다 비운다 — 안 비우면 앞 시험의 답이 남는다.
+  resetDataFreshnessCache();
   responses.fresh = { data: tenRows(), error: null };
 });
 
@@ -151,12 +158,13 @@ describe('DataFreshness — 서버가 답할 때', () => {
   it('기준값을 종류에 맞게 읽는다 — 같은 여섯 자리가 분기도 되고 달도 된다', async () => {
     render(<DataFreshness />);
 
-    // ⓘ '2026년 2분기'가 **둘**인 것이 정상이다 — 상권정보('202606')와 부동산원('2026Q2')이
-    //   서로 다른 표기로 같은 분기를 말한다. 화면이 그 둘을 같은 말로 바꿔 적는 것이 요점이다.
-    expect(await screen.findAllByText('2026년 2분기')).toHaveLength(2);
-    expect(screen.getByText('2026년 8월')).toBeTruthy(); // 202608 · 계약월
-    expect(screen.getByText('2026년 7월')).toBeTruthy(); // 202607 · 기준월
-    expect(screen.getByText('2026년 8월 28일')).toBeTruthy(); // 수집일
+    // ⓘ '2026년 2분기'가 **셋**인 것이 정상이다 — 상권정보('202606')·부동산원('2026Q2')·서울시('20262')가
+    //   서로 다른 표기로 같은 분기를 말한다. 화면이 그 셋을 같은 말로 바꿔 적는 것이 요점이다.
+    expect(await screen.findAllByText('2026년 2분기')).toHaveLength(3);
+    expect(screen.getByText('2026년 10월')).toBeTruthy(); // 202610 · 계약월
+    expect(screen.getByText('2026년 8월')).toBeTruthy(); // 202608 · 판
+    expect(screen.getByText('2026년 6월')).toBeTruthy(); // 202606 · 기준월
+    expect(screen.getByText('2026년 10월 12일')).toBeTruthy(); // 수집일
   });
 
   it("필지 줄은 기준 칸에 '공시 연도 2026년' 이라 적는다 (2026-10-12b)", async () => {
@@ -176,12 +184,13 @@ describe('DataFreshness — 서버가 답할 때', () => {
     // ⛔ 오늘을 못 박는다 — 실제 오늘에 기대면 2026-10-31 이 지나는 날 저절로 빨개진다.
     render(<DataFreshness today="2026-10-01" />);
 
-    // 분기 자료 둘은 같은 날 함께 갱신된다(같은 규칙을 쓰므로) — 그래서 두 줄이다.
-    expect(await screen.findAllByText('2026년 10월 31일 무렵')).toHaveLength(2);
+    // 분기 자료 셋(같은 규칙)과 건축물대장 8월 판(월간 규칙)이 같은 날이다 — 그래서 네 줄이다.
+    expect(await screen.findAllByText('2026년 10월 31일 무렵')).toHaveLength(4);
+    expect(screen.getByText('2026년 11월 30일 무렵')).toBeTruthy(); // 실거래 계약월 202610 → + 2개월 − 하루
     expect(screen.getByText('2027년 3월 31일 무렵')).toBeTruthy();
     expect(screen.getByText('2027년 6월 30일 무렵')).toBeTruthy(); // 필지 공시 연도 2026 → 다음 해 6월 30일
-    // 열 줄 중 다섯 줄이 주기가 없다(실거래·건축물대장·상권 경계·LH·성적표 — 필지는 2026-10-12b 부터 있다).
-    expect(screen.getAllByText('정해진 주기 없음')).toHaveLength(5);
+    // 열 줄 중 두 줄이 주기가 없다(상권 경계·LH — 필지는 2026-10-12b · 실거래·대장은 2026-10-15a 부터 있다 · 성적표 줄은 결정 0041 로 뺐다).
+    expect(screen.getAllByText('정해진 주기 없음')).toHaveLength(2);
     // 인허가의 예정일(8월 31일)은 이 '오늘'보다 앞이다 — 지났다고 적는다.
     expect(screen.getByText('2026년 8월 31일 무렵 — 지났습니다, 갱신 전')).toBeTruthy();
   });
@@ -189,9 +198,9 @@ describe('DataFreshness — 서버가 답할 때', () => {
   it('⛔ 예정일이 지나면 그 줄에 지났다고 적는다 — 날짜를 바꾸거나 줄을 숨기지 않는다', async () => {
     const { container } = render(<DataFreshness today="2026-11-01" />);
 
-    // 10월 31일 예정인 분기 자료 둘이 하루 지났다.
+    // 10월 31일 예정인 넷(분기 자료 셋 · 건축물대장)이 하루 지났다.
     expect(await screen.findAllByText('2026년 10월 31일 무렵 — 지났습니다, 갱신 전')).toHaveLength(
-      2,
+      4,
     );
     expect(screen.queryByText('2026년 10월 31일 무렵')).toBeNull();
     // 아직 안 온 것은 그대로다.
@@ -203,7 +212,7 @@ describe('DataFreshness — 서버가 답할 때', () => {
   it('예정일 당일은 아직 지나지 않았다', async () => {
     render(<DataFreshness today="2026-10-31" />);
 
-    expect(await screen.findAllByText('2026년 10월 31일 무렵')).toHaveLength(2);
+    expect(await screen.findAllByText('2026년 10월 31일 무렵')).toHaveLength(4);
     expect(screen.queryAllByText(/지났습니다/)).toHaveLength(1); // 인허가(8월 31일)만
   });
 

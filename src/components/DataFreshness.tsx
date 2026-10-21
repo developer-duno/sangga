@@ -1,8 +1,7 @@
 import { useEffect, useId, useState } from 'react';
 
-import { DATA_FRESHNESS_FN } from '../lib/appConstants';
-import { basisText, isDataFreshnessList, nextText, seoulToday } from '../lib/dataFreshness';
-import { supabase } from '../lib/supabase';
+import { basisText, nextText, seoulToday } from '../lib/dataFreshness';
+import { loadDataFreshness } from '../lib/loadDataFreshness';
 import type { DataFreshnessRow } from '../types';
 
 /**
@@ -40,14 +39,11 @@ export function DataFreshness({ today }: { today?: string } = {}) {
 
   useEffect(() => {
     let cancelled = false;
-    supabase.rpc(DATA_FRESHNESS_FN).then(({ data, error }) => {
-      if (cancelled) return;
-      // ⚠️ 모양까지 본다. 뜻밖의 답이 렌더로 흘러 들어가면 그 자리에서 터지는데, 이 표는
-      //    화면 맨 아래에 있어 터지면 면책 안내와 의견함까지 함께 사라진다.
-      if (error || !isDataFreshnessList(data)) {
-        console.warn('자료 기준일 조회 실패 — 그 표 없이 표시합니다', error ?? data);
-        return;
-      }
+    // 카드들의 날짜 줄과 **같은 한 번의 요청**을 나눠 쓴다(`lib/loadDataFreshness.ts` · S3).
+    // ⚠️ 모양 검사는 그 안에서 한다 — 뜻밖의 답이 렌더로 흘러 들어가면 그 자리에서 터지는데, 이 표는
+    //    화면 맨 아래에 있어 터지면 면책 안내와 의견함까지 함께 사라진다. 못 읽었으면 null 이 온다.
+    void loadDataFreshness().then((data) => {
+      if (cancelled || data === null) return;
       setRows(data);
     });
 
