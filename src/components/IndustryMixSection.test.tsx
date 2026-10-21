@@ -1031,7 +1031,7 @@ describe('IndustryMixSection — 업종 비중 비교 (물결 2-3)', () => {
     const grade = container.querySelector('.grade')!;
     expect(grade.querySelector('.grade__badge')?.textContent).toBe('A등급 · 실측 집계');
     expect(grade.textContent).toBe(
-      'A등급 · 실측 집계막대와 곳 수는 어림한 값이 아니라 등록된 점포를 그대로 센 값입니다(가운데값은 C등급 · 비교값). 다만 아래 두 가지 때문에 실제와 다를 수 있습니다.',
+      'A등급 · 실측 집계막대와 곳 수는 어림한 값이 아니라 등록된 점포를 그대로 센 값입니다(가운데값은 C등급 · 비교값). 다만 아래 까닭으로 실제와 다를 수 있습니다.',
     );
   });
 });

@@ -498,8 +498,8 @@ export function IndustryMixSection({
       <p className="grade">
         <span className="grade__badge">A등급 · 실측 집계</span>
         {/* 👤 2026-10-12 06:2x — A등급의 범위를 막대와 곳 수로 좁힌다(같은 카드의 가운데값 비교 글은 C등급). */}
-        <strong>막대와 곳 수</strong>는 어림한 값이 아니라 <strong>등록된 점포를 그대로 센 값</strong>입니다(가운데값은 C등급 · 비교값). 다만 아래 두 가지
-        때문에 실제와 다를 수 있습니다.
+        <strong>막대와 곳 수</strong>는 어림한 값이 아니라 <strong>등록된 점포를 그대로 센 값</strong>입니다(가운데값은 C등급 · 비교값). 다만 아래 까닭으로
+        실제와 다를 수 있습니다.
       </p>
       <ul className="mix__why">
         <li>
