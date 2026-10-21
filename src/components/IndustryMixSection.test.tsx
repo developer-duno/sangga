@@ -653,6 +653,40 @@ describe('IndustryMixSection — 업종별 층 분포', () => {
     ]);
   });
 
+  // 물결 2-2c — 👤 2026-10-13 D2' 문구 글자 그대로. basement_unknown_counted === true 일 때만 바뀐다.
+  const WHY_NA_NEW = '층 미상 — 원본에 층이 비어 있거나 읽을 수 없는 가게입니다.';
+  const WHY_B_NEW = "지하 — 몇 층인지 없이 '지하'라고만 적힌 가게도 지하에 셉니다.";
+
+  it('★ 2-2c 지하 칸에 센 분기(counted true)면 설명이 새 두 항목 — 옛 문구는 없다', async () => {
+    responses.floors = ({ p_cat_l, p_cat_m }) => ({
+      data: { ...floors(p_cat_l, p_cat_m), basement_unknown_counted: true },
+      error: null,
+    });
+    const { container } = render(<IndustryMixSection pnu={PNU} />);
+    fireEvent.change(await screen.findByLabelText('업종 골라보기'), { target: { value: 'I2' } });
+    expect(await screen.findByText(LINE_D)).toBeTruthy();
+    const items = [...container.querySelectorAll('.mix__why li')].map((li) => li.textContent);
+    expect(items.slice(2)).toEqual([WHY_NA_NEW, WHY_B_NEW]);
+    expect(items).not.toContain(WHY_TEXT);
+  });
+
+  it.each([
+    ['false', false],
+    ['문자열(모양 틀림)', 'true'],
+    ['숫자(모양 틀림)', 1],
+  ])('2-2c counted 가 %s 면 옛 문구 그대로 — 응답은 버리지 않는다(층 줄은 선다)', async (_label, value) => {
+    responses.floors = ({ p_cat_l, p_cat_m }) => ({
+      data: { ...floors(p_cat_l, p_cat_m), basement_unknown_counted: value },
+      error: null,
+    });
+    const { container } = render(<IndustryMixSection pnu={PNU} />);
+    fireEvent.change(await screen.findByLabelText('업종 골라보기'), { target: { value: 'I2' } });
+    expect(await screen.findByText(LINE_D)).toBeTruthy();
+    const items = [...container.querySelectorAll('.mix__why li')].map((li) => li.textContent);
+    expect(items.slice(2)).toEqual([WHY_TEXT]);
+    expect(screen.queryByText(/읽을 수 없는/)).toBeNull();
+  });
+
   it('★ 창업자 카페 칩이면 짝 중분류(I212) 층 줄이 한 줄 더 — total 0 인 범위(반경)엔 칩 줄이 없다', async () => {
     const { container } = render(<IndustryMixSection pnu={PNU} chip="카페" />);
     expect(await screen.findByText(CHIP_D)).toBeTruthy();

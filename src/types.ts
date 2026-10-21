@@ -474,6 +474,11 @@ export type IndustryFloors = {
   cat_l_cd: string;
   /** 물어본 중분류 그대로 — null 이면 대분류 전체. */
   cat_m_cds: string[] | null;
+  /**
+   * 그 분기가 '지하인데 층 모름' 칸이 채워진 분기인가(2026-10-14b · 물결 2-2c) — true 면 숫자 없이 '지하'라고만
+   * 적힌 가게가 `b` 에 들어 있다. 선택 칸: 옛 서버(칸 없음)·boolean 아닌 값은 false 로 본다(`basementUnknownCounted`).
+   */
+  basement_unknown_counted?: boolean;
   districts: IndustryFloorDistrict[];
   radius: IndustryFloorScope | null;
 };

@@ -558,7 +558,7 @@ class TestCanonicalIndexIncludes:
         includes = post_load.canonical_index_includes(raw)
         assert set(includes) == set(post_load.canonical_index_names(raw))
         assert {k: v for k, v in includes.items() if v} == {
-            "idx_ub_pnu_cat": ["cat_l_cd", "cat_l_nm", "cat_m_cd", "cat_m_nm", "floor_no"],
+            "idx_ub_pnu_cat": ["cat_l_cd", "cat_l_nm", "cat_m_cd", "cat_m_nm", "floor_no", "floor_basement_unknown"],
             "idx_arch_permit_pnu": [
                 "loaded_ym", "use_apr_day", "main_purps_cd", "real_stcns_day", "arch_pms_day"],
         }

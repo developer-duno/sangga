@@ -2344,8 +2344,11 @@ test.describe('첫 화면 — 창업자 입구 · 업종 칩', () => {
 // 층 묶음 계산·늦은 답 버리기·실패 시 줄 없음은 단위 시험(`industryMix.test.ts`·`IndustryMixSection.test.tsx`)이
 // 덮는다. 여기서만 보이는 것은 **실제 줄 글자가 블록 안에 서는지**와 좁은 폭(412px)에서 그 긴 한 줄이 안 넘치는지다.
 
-/** 층 함수 목업 — 물어본 `p_cat_m` 대로 갈라 답한다(대분류 줄과 칩 줄이 다른 답을 받게 · 서버처럼 그대로 되돌림). */
-async function mockIndustryFloors(page: Page) {
+/**
+ * 층 함수 목업 — 물어본 `p_cat_m` 대로 갈라 답한다(대분류 줄과 칩 줄이 다른 답을 받게 · 서버처럼 그대로 되돌림).
+ * `counted` 를 주면 응답에 `basement_unknown_counted`(물결 2-2c)를 싣는다 — 안 주면 칸 없는 옛 서버 꼴.
+ */
+async function mockIndustryFloors(page: Page, counted?: boolean) {
   await page.route(INDUSTRY_FLOORS_PATTERN, async (route) => {
     if (route.request().method() === 'OPTIONS') {
       await route.fulfill({ status: 204, headers: CORS_HEADERS });
@@ -2356,7 +2359,10 @@ async function mockIndustryFloors(page: Page) {
       status: 200,
       contentType: 'application/json',
       headers: CORS_HEADERS,
-      body: JSON.stringify(industryFloors(args.p_cat_l ?? 'I2', args.p_cat_m ?? null)),
+      body: JSON.stringify({
+        ...industryFloors(args.p_cat_l ?? 'I2', args.p_cat_m ?? null),
+        ...(counted === undefined ? {} : { basement_unknown_counted: counted }),
+      }),
     });
   });
 }
@@ -2389,7 +2395,8 @@ test.describe('층별 스택뷰 — 업종별 층 분포', () => {
       ],
       radius: { total: 150, cats: [{ cd: 'I201', nm: '한식', n: 100 }, { cd: 'I212', nm: '비알코올', n: 50 }] },
     });
-    await mockIndustryFloors(page);
+    // ① 은 지금 분기(202606 — '지'를 아직 지하에 못 센 분기 · 물결 2-2c counted false)의 옛 문구를 본다.
+    await mockIndustryFloors(page, false);
 
     const roleBtn = (name: string) => page.locator('.role').getByRole('button', { name, exact: true });
     const noOverflow = async () =>
@@ -2416,6 +2423,25 @@ test.describe('층별 스택뷰 — 업종별 층 분포', () => {
     for (const el of await mix.locator('.mix__floors').all()) {
       expect(await el.evaluate((e) => e.scrollWidth - e.clientWidth)).toBeLessThanOrEqual(0);
     }
+
+    // ①-2 물결 2-2c — '지'를 지하에 센 분기(counted true)면 설명이 새 두 항목(👤 2026-10-13 D2' 글자 그대로).
+    //      나중에 등록한 목업이 먼저 잡힌다. 층 줄 꼴은 그대로다.
+    await mockIndustryFloors(page, true);
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+    if ((await mix.locator('.card__toggle').getAttribute('aria-expanded')) === 'false') {
+      await mix.locator('.card__toggle').click();
+    }
+    await mix.locator('select.mix__select').selectOption('I2');
+    await expect(mix.locator('.mix__detail .mix__floors')).toHaveText([LINE_D, LINE_R]);
+    await expect(mix.locator('.mix__why li')).toHaveCount(4);
+    await expect(mix.locator('.mix__why li').nth(2)).toHaveText('층 미상 — 원본에 층이 비어 있거나 읽을 수 없는 가게입니다.');
+    await expect(mix.locator('.mix__why li').nth(3)).toHaveText(
+      "지하 — 몇 층인지 없이 '지하'라고만 적힌 가게도 지하에 셉니다.",
+    );
+    await noOverflow();
 
     // ② 창업자 + 카페 칩 — 같은 대분류가 미리 골라지고 상권 블록에 '고른 업종(카페)' 줄이 하나 더(반경은 칩 0곳이라 없음).
     await page.goto('/');
