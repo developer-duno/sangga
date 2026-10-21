@@ -6,6 +6,7 @@ import { DistrictMap } from './components/DistrictMap';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { FloorStack } from './components/FloorStack';
 import { FounderChips } from './components/FounderChips';
+import { LeftRail } from './components/LeftRail';
 import { LhNoticeSection } from './components/LhNoticeSection';
 import { PrintButton } from './components/PrintButton';
 import { PrintHeader } from './components/PrintHeader';
@@ -42,6 +43,7 @@ import { pageTitle } from './lib/seo';
 import { hubPlace, hubTitle } from './lib/hubHead';
 import { SIDOS } from './lib/regions';
 import { useIsPhone } from './lib/useIsPhone';
+import { useIsWide } from './lib/useIsWide';
 import {
   BROWSE_ROLE,
   loadStoredRole,
@@ -110,6 +112,33 @@ export default function App() {
     `phoneRef`·`tabRef` = 첫 그림의 것을 쥐는 콜백(`handleSelectBuilding`)이 지금 값을 읽게 — 그리기와 상관없어 ref 다.
   */
   const isPhone = useIsPhone();
+  /*
+    PC 두 칸(결정 0039 Q5 · W5 · §4-13) — 1024px 이상에서 왼쪽 찾기(역할·지역·검색·지도) / 오른쪽 건물. `isWide` = CSS 의
+    `@media screen and (min-width: 1024px)` 와 같은 질의(인쇄 중 얼림 — `useIsWide`). 721~1023 은 지금 한 열(S1 접기) 그대로.
+    ⛔ 두 칸에서는 건물을 열어도 왼쪽(지도 포함)을 자동으로 접지 않는다(Q5 「건물을 바꿔도 지도가 사라지지 않음」) — 대신 손님이
+       「왼쪽 칸 접기」로 56px 띠로 접는다(`leftCollapsed` · 👤 2026-10-21 「가」). 접어도 왼쪽은 CSS 로 숨기기만 한다(언마운트 0).
+    `printMap` = 인쇄 단추 옆 「상권 지도 넣기」(§7-2 · 기본 끔). 둘 다 ⛔ 화면만 — 이 기기 저장·주소·의견함에 안 싣는다.
+  */
+  const isWide = useIsWide();
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [printMap, setPrintMap] = useState(false);
+  /*
+    한 열(1023 이하)에서 두 칸(1024+)으로 돌아오면 왼쪽 칸은 펼친 채 시작한다(W5 보완 F6 · 메인 판단) — 띠로 접은 채 줄었다 돌아오면
+    지도가 숨은(`visible=false`) 칸에서 새로 태어나 `<Map>` 이 없고, 그 채로 「상권 지도 넣기」 종이를 뽑으면 지도 칸이 빈다.
+    그리는 도중에 바로잡는다(React 공식 꼴 — effect 로 하면 접힌 채 한 번 그려진 뒤 다시 그린다).
+  */
+  const [prevWide, setPrevWide] = useState(isWide);
+  if (prevWide !== isWide) {
+    setPrevWide(isWide);
+    if (isWide) setLeftCollapsed(false);
+  }
+  /*
+    PC 두 칸 지역 줄 접기(W5 보완 D2 · 👤 2026-10-21 「가」) — 구를 고르면 칩 상자는 접고 「서울 강남구 · 바꾸기」 한 줄만.
+    `regionFoldOpen` = 「바꾸기」로 칩 상자를 펼쳤나(구를 고르면 다시 접힌다). 칩 상자는 같은 하나 — CSS 로 숨기기만 한다.
+    `regionFoldFocusRef` = 구를 고른 뒤 커서를 「바꾸기」로(누른 칩이 숨어 커서가 문서 맨 앞으로 날아가지 않게) — 그리기와 상관없어 ref.
+  */
+  const [regionFoldOpen, setRegionFoldOpen] = useState(false);
+  const regionFoldFocusRef = useRef(false);
   const [tab, setTab] = useState<AppTab>(() => firstTab(viewerRole, openedWith.bldId !== null));
   const curTab = tabAfterRoleChange(tab, viewerRole);
   const phoneRef = useRef(isPhone);
@@ -208,15 +237,18 @@ export default function App() {
   const entryRef = useRef<HTMLDivElement>(null);
   const barFirstRef = useRef<HTMLButtonElement>(null);
   const entryFocusRef = useRef<'search' | 'map' | 'role' | null>(null);
-  const folded = (selected !== null || restoring) && !entryOpen;
+  // ⛔ PC 두 칸(1024+)에서는 S1 자동 접기를 끈다(W5 · Q5) — 왼쪽 칸은 손님이 띠로 접을 때만 숨는다(`leftCollapsed`).
+  const folded = !isWide && (selected !== null || restoring) && !entryOpen;
   /*
     휴대폰 탭 꼴에서 입구가 숨는 때 = 찾기·지도 탭이 아닐 때(건물 유무와 상관없이 — S1 의 바·접기는 휴대폰에선 탭이 대신한다).
     지도는 **보이는 탭에서만** 그린다(접힌 동안 안 그리는 S1 규칙과 같은 결 · 보이는 칸에서 태어나 relayout 이 필요 없다):
     중개사 = 찾기 탭(지도 탭 자리가 「뽑은 건물」) · 나머지 = 지도 탭. 지역 고르개는 찾기·지도 두 탭에 같은 하나로 보인다(CSS).
   */
   const entryHidden = isPhone ? curTab !== 'find' && curTab !== 'map' : folded;
-  const showMap = isPhone ? curTab === (viewerRole === '중개사' ? 'find' : 'map') : !folded;
-  const headFolded = isPhone ? selected !== null || restoring : folded;
+  // PC 두 칸은 왼쪽 칸이 펼쳐 있으면 늘 보인다 · 띠로 접으면 숨기만 한다(아래 `mapMounted` 가 그려 둔 지도를 남긴다 · W5).
+  const showMap = isPhone ? curTab === (viewerRole === '중개사' ? 'find' : 'map') : isWide ? !leftCollapsed : !folded;
+  // 머리(사이트 제목 줄)는 두 칸에서도 건물을 연 동안 작게 — 1280 화면 지금 모양 그대로(제목 작게 · 소개 한 줄 없음).
+  const headFolded = isPhone || isWide ? selected !== null || restoring : folded;
   /*
     휴대폰 지도 가득(👤 2026-10-19 W4b 1번 「안 A」) — 중개사가 아닌 사람이 구를 고른 채 「지도」 탭에 있을 때.
     `mapLayout` = 지도 꼴(휴대폰 비중개사는 **탭과 상관없이** full — 탭을 옮겨도 같은 노드가 숨기만 하게 · 중개사·넓은 화면은 카드).
@@ -235,16 +267,24 @@ export default function App() {
     stripFocusRef.current = false;
     document.querySelector<HTMLButtonElement>('.rstrip__btn')?.focus({ preventScroll: true });
   }, [regionOpen]);
+  // PC 두 칸에서 구를 고른 뒤 — 칩 상자가 접혀 숨으니 커서를 지역 한 줄의 「바꾸기」로(D2 · 위 C2 와 같은 꼴).
+  useEffect(() => {
+    if (!regionFoldFocusRef.current) return;
+    regionFoldFocusRef.current = false;
+    document.querySelector<HTMLButtonElement>('.regionfold__btn')?.focus({ preventScroll: true });
+  }, [sigungu, regionFoldOpen]);
   /*
     지도 그려 두기(W4b · 결정 0039 §4-11) — 휴대폰에서 한 번 보인 지도는 탭을 옮겨도 언마운트하지 않고 `hidden` 으로 숨긴다
     (돌아오면 `relayout` 한 번 → 확대·이동·누른 상권 그대로). 첫 방문(그 지도 탭에 아직 안 간 사람)은 지금처럼 안 그린다
     (카카오·상권 파일을 안 받는다). ⛔ 구·꼴이 바뀌면 다시 보일 때 새로 그린다 — 숨은(크기 0) 칸에서 태어나면 첫 범위가 틀린다.
-    넓은 화면은 지금 그대로(접히면 안 그림 — S1).
+    넓은 화면(721~1023)은 지금 그대로(접히면 안 그림 — S1). PC 두 칸(1024+)은 휴대폰과 같은 길 — 왼쪽 칸을 띠로 접어도 그려 둔
+    지도는 남기고 숨기기만 한다 → 펼치면 relayout 한 번(👤 2026-10-21 W5 「가」 · W4b 배선 재사용).
+    ⓘ 꼴 칸에 `cols`(두 칸)를 따로 둔다 — 1023↔1024 를 넘나들면 지도 칸 폭이 크게 바뀌므로 새 칸 크기에서 다시 태어나게.
   */
-  const mapKey = `map:${sigungu ?? '__none__'}:${isPhone ? 'phone' : 'wide'}:${mapLayout}`;
+  const mapKey = `map:${sigungu ?? '__none__'}:${isPhone ? 'phone' : isWide ? 'cols' : 'wide'}:${mapLayout}`;
   const [mapSeenKey, setMapSeenKey] = useState<string | null>(null);
-  if (isPhone && showMap && sigungu !== null && mapSeenKey !== mapKey) setMapSeenKey(mapKey);
-  const mapMounted = showMap || (isPhone && mapSeenKey === mapKey);
+  if ((isPhone || isWide) && showMap && sigungu !== null && mapSeenKey !== mapKey) setMapSeenKey(mapKey);
+  const mapMounted = showMap || ((isPhone || isWide) && mapSeenKey === mapKey);
   /*
     입구 카드 둘(LH·단가 흐름)을 세울 때 — 구를 골랐고 되살리는 중이 아니고, 넓은 화면은 건물을 안 열었을 때만(지금 그대로).
     휴대폰은 건물을 열어 둔 채여도 찾기 탭에 선다(보던 건물이 남는 탭 꼴이라 · 검사 🟠 F2) — 다른 탭에선 CSS 가 숨기고,
@@ -282,9 +322,51 @@ export default function App() {
       pickTab('find');
       return;
     }
+    // PC 두 칸 — 왼쪽 칸이 늘 서 있다(접혀 있으면 펼친 뒤) · 입력칸에 커서.
+    if (isWide) {
+      if (leftCollapsed) expandLeft('search');
+      else entryRef.current?.querySelector<HTMLInputElement>('.search__input')?.focus();
+      return;
+    }
     if (entryOpen) entryRef.current?.querySelector<HTMLInputElement>('.search__input')?.focus();
     else openEntry('search');
   }
+  /*
+    PC 두 칸 왼쪽 칸 접기·펼치기(W5 · 👤 2026-10-21 「가 · 세로 띠 56px」). 커서가 숨는 칸에 남아 문서 맨 앞으로 날아가지 않게
+    접으면 띠의 펼치기 단추로, 펼치면 누른 단추가 가리킨 자리(접기 단추 · 지도 · 입력칸)로 옮긴다 — 그리기와 상관없어 ref 다.
+  */
+  const railExpandRef = useRef<HTMLButtonElement>(null);
+  const leftFocusRef = useRef<'rail' | 'fold' | 'map' | 'search' | null>(null);
+  function collapseLeft() {
+    leftFocusRef.current = 'rail';
+    setLeftCollapsed(true);
+  }
+  function expandLeft(target: 'fold' | 'map' | 'search') {
+    leftFocusRef.current = target;
+    setLeftCollapsed(false);
+  }
+  useEffect(() => {
+    const target = leftFocusRef.current;
+    if (target === null) return;
+    leftFocusRef.current = null;
+    if (target === 'rail') {
+      railExpandRef.current?.focus({ preventScroll: true });
+      return;
+    }
+    const root = entryRef.current;
+    if (target === 'search') {
+      root?.querySelector<HTMLInputElement>('.search__input')?.focus();
+      return;
+    }
+    if (target === 'map') {
+      const map = root?.querySelector('.dmap');
+      map?.querySelector<HTMLButtonElement>('.dmap__toggle')?.focus({ preventScroll: true });
+      // 왼쪽 칸 안에서만 굴린다(칸이 화면에 붙어 있다) · jsdom 에는 scrollIntoView 가 없다.
+      map?.scrollIntoView?.({ block: 'nearest' });
+      return;
+    }
+    root?.querySelector<HTMLButtonElement>('.entry__fold')?.focus({ preventScroll: true });
+  }, [leftCollapsed]);
   useEffect(() => {
     const target = entryFocusRef.current;
     const root = entryRef.current;
@@ -338,6 +420,9 @@ export default function App() {
     setSelected(null);
     if (regionOpen) stripFocusRef.current = true; // 닫은 뒤 커서를 띠 단추로(위 effect · C2)
     setRegionOpen(false); // 띠로 펼쳤으면 구를 고른 뒤 닫는다(다른 구를 골라도 · W4b)
+    // PC 두 칸 — 구를 고르면 칩 상자를 다시 접고 커서는 「바꾸기」로(D2). 구를 풀면 한 줄이 없어져 칩 상자 그대로다.
+    if (isWide && code !== null) regionFoldFocusRef.current = true;
+    setRegionFoldOpen(false);
   }
 
   // 검색으로 건물을 고르면 "링크로 들어왔다가 실패한 상태"는 끝난 것이다.
@@ -571,7 +656,9 @@ export default function App() {
         onSearchStart={() => {
           userActedRef.current = true;
           // 휴대폰 탭 꼴은 보던 건물을 남긴다 — 「건물」 탭으로 돌아가면 그대로(👤 확정 결정 0039 §7-1).
-          if (!isPhone) setSelected(null);
+          // PC 두 칸도 같은 규칙(👤 2026-10-21 W5 보완 D1 「가 · 건물은 그대로 남김」) — 오른쪽 건물은 결과를 눌러 고를 때 바뀐다.
+          // ⓘ 한 열(721~1023)은 지금 그대로 비운다(2026-08-08 「새 검색에도 옛 건물」 회귀 막이 — 위 주석).
+          if (!isPhone && !isWide) setSelected(null);
         }}
         selectedBldId={selected?.bld_id ?? null}
         sigungu={sigungu}
@@ -638,12 +725,20 @@ export default function App() {
   const placeLabel = sigunguName
     ? [SIDOS.find((s) => s.code === sigungu?.slice(0, 2))?.name, sigunguName].filter(Boolean).join(' ')
     : '';
+  /* PC 두 칸 지역 한 줄(D2) — 구를 골랐고 그 이름을 알 때만(되살리는 중 이름을 모르면 칩 상자 그대로) · 「바꾸기」로 펼친 동안은 칩 상자도 보인다. */
+  const showRegionFold = isWide && sigungu !== null && placeLabel !== '';
+  const regionFolded = showRegionFold && !regionFoldOpen;
 
   return (
     <div
       className={`app${headFolded ? ' app--folded' : ''}${isPhone ? ' app--tabs' : ''}${
         isPhone && selected !== null ? ' app--bld' : ''
-      }${mapFull ? ' app--mapfull' : ''}${mapFull && regionOpen ? ' app--regionopen' : ''}`}
+      }${mapFull ? ' app--mapfull' : ''}${mapFull && regionOpen ? ' app--regionopen' : ''}${
+        // PC 두 칸(W5) — 꼴 · 왼쪽 띠로 접힘 · 건물을 연 채(종이 = 오른쪽만) · 「상권 지도 넣기」 켬(종이에 지도). 종이는 이 이름표로 가른다.
+        isWide ? ' app--wide' : ''
+      }${isWide && leftCollapsed ? ' app--lcollapsed' : ''}${isWide && (selected !== null || restoring) ? ' app--wbld' : ''}${
+        isWide && selected !== null && sigungu !== null && printMap ? ' app--printmap' : ''
+      }${regionFolded ? ' app--rfold' : ''}`}
       data-tab={isPhone ? curTab : undefined}
     >
       {/*
@@ -695,7 +790,8 @@ export default function App() {
           그 자리로 옮긴다. 펼친 동안은 같은 자리(펼친 덩어리 맨 위)에 '위 칸 접기' 하나 — 위를 보는 사람이 찾게.
           ⓘ 기호(←·▾·▲)는 낭독기가 기호 이름으로 읽지 않게 따로 감춘다(`aria-hidden`) · 종이에서는 빠진다.
         */}
-        {isPhone ? null : folded ? (
+        {/* PC 두 칸(1024+)은 바 대신 왼쪽 칸 머리의 「왼쪽 칸 접기」·접힌 띠(W5 · 결정 0039 §4-13) — 바 DOM 0. */}
+        {isPhone || isWide ? null : folded ? (
           <div className="entrybar">
             {placeLabel && <span className="entrybar__place">{placeLabel}</span>}
             {/* 창업자가 고른 업종(👤 2026-10-15 G2) — 카드의 굵은 줄이 왜 굵은지 접힌 채로도 보이게. '전체'면 안 적는다. */}
@@ -763,8 +859,30 @@ export default function App() {
           />
         )}
 
-        {/* ⓘ 접힌 동안 `hidden` 으로 숨기기만 한다 — 안의 검색창·지역 고르개가 다시 태어나지 않게(위 `entryOpen`). */}
-        <div className="entry" id="entry-panel" ref={entryRef} hidden={entryHidden}>
+        {/*
+          PC 두 칸에서 왼쪽 칸을 접은 띠(W5 · 56px · 👤 2026-10-21 「가」) — 왼쪽 열에 `.entry` 대신 선다(`.entry` 는 CSS 로 숨김).
+        */}
+        {isWide && leftCollapsed && (
+          <LeftRail place={placeLabel} hasMap={sigungu !== null} onExpand={expandLeft} expandRef={railExpandRef} />
+        )}
+
+        {/*
+          ⓘ 접힌 동안 `hidden` 으로 숨기기만 한다 — 안의 검색창·지역 고르개가 다시 태어나지 않게(위 `entryOpen`).
+          PC 두 칸에서 띠로 접은 동안은 `hidden` 이 아니라 CSS(`.app--lcollapsed .entry`)로 숨기고 `inert`(키보드·낭독기 0 · W5).
+        */}
+        <div className="entry" id="entry-panel" ref={entryRef} hidden={entryHidden} inert={isWide && leftCollapsed}>
+          {/* PC 두 칸 왼쪽 칸 머리(지역 줄 위) — S1 바 대신 「왼쪽 칸 접기」(W5 · §4-13). 종이에서 빠진다(`.entry__fold`). */}
+          {isWide && (
+            <button
+              type="button"
+              className="entry__fold"
+              aria-expanded={!leftCollapsed}
+              aria-controls="entry-panel"
+              onClick={collapseLeft}
+            >
+              왼쪽 칸 접기<span aria-hidden="true"> ‹</span>
+            </button>
+          )}
           {/*
             역할 단추 줄 — 지역 고르기 바로 위(👤 결정 0036 결정 18 ⑧). 아직 안 물어봤으면 그 자리에 큰 카드
             (결정 0039 Q3 · W3) — 카드가 서 있는 동안 작은 줄은 숨긴다(같은 질문이 두 번 안 보이게).
@@ -776,11 +894,30 @@ export default function App() {
             <RolePicker role={viewerRole} onChange={handlePickRole} />
           )}
 
+          {/*
+            PC 두 칸 지역 한 줄(W5 보완 D2 · 👤 2026-10-21 「가」) — 구를 고르면 칩 상자(아래 `RegionPicker` · 같은 하나)는 CSS 로 접고
+            「서울 강남구 · 바꾸기」만. 「바꾸기」를 누르면 칩 상자가 펼쳐지고 구를 고르면 다시 접힌다. 종이에서 빠진다(`.regionfold`).
+          */}
+          {showRegionFold && (
+            <div className="regionfold">
+              <span className="regionfold__place">{placeLabel}</span>
+              <button
+                type="button"
+                className="regionfold__btn"
+                aria-expanded={regionFoldOpen}
+                aria-controls="region-panel"
+                onClick={() => setRegionFoldOpen((v) => !v)}
+              >
+                바꾸기
+              </button>
+            </div>
+          )}
+
           <RegionPicker
             selectedSigungu={sigungu}
             onSelectSigungu={handleSelectSigungu}
             onSigunguNameResolved={handleSigunguNameResolved}
-            id={mapFull ? 'region-panel' : undefined}
+            id={mapFull || isWide ? 'region-panel' : undefined}
           />
 
           {/*
@@ -805,6 +942,14 @@ export default function App() {
           ⓘ `key` 를 일부러 안 준다 — 같은 시도 안에서 구만 바꾸면(강남구 → 서초구) 답이
             같으므로 다시 묻지 않는 것이 맞다. 카드가 시도 코드에만 매여 있다.
         */}
+        {/*
+          PC 두 칸에서 건물이 없을 때 오른쪽 맨 위 한 줄(👤 2026-10-21 W5 「가」 — 글자 그대로) · 그 아래 입구 카드 둘이 오른쪽 열에 선다.
+          ⓘ 두 칸에서는 아래 「위에서 건물을 검색해…」 줄 대신 이 줄이다(왼쪽이 찾기 칸) · 종이에서 빠진다(화면 안내).
+        */}
+        {isWide && selected === null && !restoring && !restoreFailed && (
+          <p className="rpane-empty">왼쪽에서 건물을 고르면 여기에 층별 화면이 섭니다</p>
+        )}
+
         {showEntryCards && <LhNoticeSection sigungu={sigungu} />}
 
         {/*
@@ -831,6 +976,17 @@ export default function App() {
             <div className="takeout">
               <ShareButton url={shareUrl} label={selected.bld_nm} />
               <PrintButton onBeforePrint={handleBeforePrint} />
+              {/*
+                「상권 지도 넣기」(결정 0039 §7-2 · W5) — PC 두 칸에서만(721~1023 은 10-15 「지도는 펼쳤을 때만 종이에」 그대로).
+                기본 끔 = 종이는 오른쪽(건물)만 · 켜면 왼쪽 칸의 지도 덩어리가 종이에(`.app--printmap` · Ctrl+P 도 같은 종이).
+                ⛔ 저장하지 않는다 · 이 고르기 자체는 종이에서 빠진다(`.mapprint` · `.takeout`).
+              */}
+              {isWide && sigungu !== null && (
+                <label className="mapprint">
+                  <input type="checkbox" checked={printMap} onChange={(e) => setPrintMap(e.target.checked)} />
+                  상권 지도 넣기
+                </label>
+              )}
               {showUnitPicker && (
                 <UnitPrintPicker
                   mode={unitPrintMode}
@@ -917,7 +1073,8 @@ export default function App() {
               </button>
             </section>
           )
-        ) : (
+        ) : isWide ? null : (
+          // PC 두 칸은 위 `.rpane-empty` 한 줄이 대신한다(W5 — 찾기는 위가 아니라 왼쪽).
           <p className="msg msg--idle">위에서 건물을 검색해 선택해 주세요.</p>
         )}
 

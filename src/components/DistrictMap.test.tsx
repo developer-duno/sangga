@@ -1377,3 +1377,82 @@ describe('DistrictMap — 휴대폰 지도 가득 보완(W4b 보완 1)', () => {
     expect(inert()).toEqual([false, false]);
   });
 });
+
+// ── PC 두 칸 보완(결정 0039 W5 보완 1 · F3 종이 지도 폭 · F7 relayout 안 쌓임) ─────────────────────────────
+describe('DistrictMap — PC 두 칸 보완(W5 보완 1)', () => {
+  const base = { sigungu: '11680', sigunguName: '강남구', selected: null, onSelectBuilding: () => {} };
+  const VIEW = { swLat: 37.5, swLng: 127.0, neLat: 37.6, neLng: 127.1 };
+  async function idleAt(w: number, h: number) {
+    await act(async () => {
+      kakao.mapProps?.onIdle?.({
+        getBounds: () => ({
+          getSouthWest: () => ({ getLat: () => VIEW.swLat, getLng: () => VIEW.swLng }),
+          getNorthEast: () => ({ getLat: () => VIEW.neLat, getLng: () => VIEW.neLng }),
+        }),
+        getNode: () => ({ clientWidth: w, clientHeight: h }),
+        getLevel: () => 6,
+        getCenter: () => ({ lat: 37.55, lng: 127.05 }),
+      });
+    });
+  }
+  const canvas = () => document.querySelector<HTMLElement>('.dmap__canvas')!;
+
+  it('★ F3 화면에서 잰 지도 칸 폭을 `--dmap-w` 로 남긴다(카드 꼴) · 못 잰(0×0) 멈춤은 안 적는다 · 휴대폰 가득 꼴은 안 적는다', async () => {
+    await renderMap();
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    expect(canvas().style.getPropertyValue('--dmap-w')).toBe('');
+    // 숨은 칸(0×0)의 멈춤 — 버린다(양성 대조의 반대편).
+    await idleAt(0, 0);
+    expect(canvas().style.getPropertyValue('--dmap-w')).toBe('');
+    await idleAt(367, 300);
+    expect(canvas().style.getPropertyValue('--dmap-w')).toBe('367px');
+    // 칸이 넓어진 뒤 다시 멈추면 새 폭.
+    await idleAt(405, 300);
+    expect(canvas().style.getPropertyValue('--dmap-w')).toBe('405px');
+    cleanup();
+
+    await renderMap({ layout: 'full' });
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await idleAt(412, 600);
+    expect(canvas().style.getPropertyValue('--dmap-w')).toBe('');
+  });
+
+  it('★ F3 종이 — 「상권 지도 넣기」 종이의 지도 칸 폭 = `var(--dmap-w` (가운데) · 인쇄 묶음 안 · 양성 대조(갈래를 지운 꼴)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const css = readFileSync('src/styles.css', 'utf8');
+    const has = (src: string) =>
+      cssRules(src).some(
+        (r) =>
+          r.media === '@media print' &&
+          r.sel.includes('.app--printmap .dmap__canvas') &&
+          /width:\s*var\(--dmap-w/.test(r.body) &&
+          /margin-left:\s*auto/.test(r.body),
+      );
+    expect(has(css)).toBe(true);
+    const cut = css.replace(/\.app--printmap \.dmap__canvas\s*\{[^}]*\}/, '');
+    expect(cut).not.toBe(css);
+    expect(has(cut)).toBe(false);
+    // 화면 묶음으로 옮긴 꼴도 못 지난다.
+    expect(has(`${cut}\n@media screen {\n  .app--printmap .dmap__canvas { width: var(--dmap-w); margin-left: auto; }\n}`)).toBe(false);
+  });
+
+  it('★ F7 숨은 채(왼쪽 칸 접힘) 건물을 여러 번 바꿔도 relayout 0 — 다시 보일 때 한 번', async () => {
+    const DistrictMap = await load();
+    const { rerender } = render(<DistrictMap {...base} visible />);
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    rerender(<DistrictMap {...base} visible={false} />);
+    for (const [lat, lng, n] of [
+      [37.55, 127.05, '1'],
+      [37.56, 127.06, '2'],
+      [37.57, 127.07, '3'],
+    ] as const) {
+      rerender(<DistrictMap {...base} visible={false} selected={building({ lat, lng, bld_id: `b${n}` })} />);
+    }
+    expect(kakao.relayout).not.toHaveBeenCalled();
+    rerender(<DistrictMap {...base} visible selected={building({ lat: 37.57, lng: 127.07, bld_id: 'b3' })} />);
+    expect(kakao.relayout).toHaveBeenCalledTimes(1);
+    // 보이는 채로 건물을 바꿔도 더 안 부른다(칸 크기가 안 바뀐다).
+    rerender(<DistrictMap {...base} visible selected={building({ lat: 37.58, lng: 127.08, bld_id: 'b4' })} />);
+    expect(kakao.relayout).toHaveBeenCalledTimes(1);
+  });
+});
