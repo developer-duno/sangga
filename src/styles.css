@@ -1614,6 +1614,70 @@ body {
   cursor: pointer;
 }
 
+/* 호 목록 위의 호실 크기 칸 한 줄(결정 0038 G · V3) — 칸 폭 = 전용면적 비례(%) · **한 색**(사실 색 `--fact-2` · 범주 아님 · §2-7).
+   ⛔ 칸 사이 흰 줄은 `box-shadow`(자리를 안 먹는다) — `border` 로 두면 1px 보다 좁은 칸이 1px 로 커져 칸 폭 합이 100% 를 넘는다.
+   ⛔ 칸(`.ucell`)에 `overflow: hidden` 을 걸지 않는다 — 글자가 넘치면 잘려 숨지 말고 E2E 가 잡게 한다(글자는 계산으로 칸 안).
+   ⓘ 칸 안 글자는 기본(넓은 화면·종이) = `--w` 벌 · 휴대폰은 `@media screen and (max-width: 720px)` 묶음에서 `--n` 벌. 글자 13px. */
+.ucells {
+  margin: 0 0 8px;
+}
+
+.ucells__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ucells__strip {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 22px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--warn-bg);
+}
+
+.ucell {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  background: var(--fact-2);
+}
+
+.ucell + .ucell {
+  box-shadow: inset 1px 0 0 var(--card);
+}
+
+.ucell__lab {
+  display: none;
+  padding: 0 4px;
+  font-size: 13px;
+  line-height: 16px;
+  white-space: nowrap;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.ucell__lab--w {
+  display: block;
+}
+
+.ucells__rest {
+  flex: none;
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.ucells__note {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
 /* 긴 목록(층 목록 · 이 땅 거래)의 「전부 보기」/「접기」 단추(S2 · 👤 2026-10-15).
    넘치는 줄을 숨기는 규칙과 종이에서 빼는 규칙은 아래 `@media screen`·`@media print` 에 있다. */
 .list__fold {
@@ -3821,6 +3885,16 @@ body {
     display: block;
   }
 
+  /* 호실 크기 칸 안 글자(결정 0038 G · V3) — 휴대폰은 휴대폰 기준 폭(`UNIT_CELL_REF.*.narrow`)으로 고른 벌만.
+     ⛔ `--n` 이 `--w` 뒤여야 둘 다 붙은 글자가 선다(같은 무게 · 뒤가 이긴다). */
+  .ucell__lab--w {
+    display: none;
+  }
+
+  .ucell__lab--n {
+    display: block;
+  }
+
   /* ── 휴대폰 아래 탭(결정 0039 Q1 · W4a) ──────────────────────────────────────────────
      `.app--tabs` · `data-tab` 은 App 이 휴대폰 꼴일 때만 붙인다(`useIsPhone` — 이 묶음과 같은 질의). 탭에 안 맞는 덩어리는
      여기서만 숨긴다 → ⛔ **`screen` 안이라 종이에는 안 먹는다**(건물·안내 글은 어느 탭에서 뽑아도 종이에 남는다 — 👤 「건물 한 장」).
@@ -5443,7 +5517,9 @@ body {
   /* 세 잣대(물결 1-C2) — 층 하나의 세 값이 한 줄이다. ⛔ 카드 통째(`.gap`)에는 걸지 않는다. */
   .gap__row,
   /* 고른 층의 호 목록 줄(물결 1-C2) — 이름과 면적이 한 줄. */
-  .floor__unitprint-list li {
+  .floor__unitprint-list li,
+  /* 호실 크기 칸 줄(결정 0038 G · V3) — 그림 덩어리에만(§2-9 · 층·카드 통째에는 걸지 않는다). */
+  .ucells__row {
     break-inside: avoid;
   }
 

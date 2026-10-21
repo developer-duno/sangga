@@ -57,6 +57,13 @@ import {
   unitSummaryText,
 } from '../lib/unitTable';
 import {
+  UNIT_CELLS_NOTE,
+  UNIT_CELL_REF,
+  unitCells,
+  unitCellsBlankText,
+  unitCellsRestText,
+} from '../lib/unitViz';
+import {
   UNKNOWN_SPEC,
   describeElevator,
   describeHoCnt,
@@ -1714,6 +1721,61 @@ function TxDotPlot({ plot }: { plot: TxPlot }) {
 }
 
 /**
+ * 호 목록 위의 「호실 크기 칸」 한 줄(결정 0038 G · V3) — 칸 하나 = 호 하나 · 폭 = 전용면적 비례(계산 `unitCells`).
+ *
+ * ⛔ 칸 줄은 목록과 **같은 내용**이라 `aria-hidden`(두 번 읽히지 않게) — 「그 밖 N호」·설명 글은 글이라 그대로 읽힌다.
+ * ⛔ 칸 폭은 % 로만(DOM 을 재지 않는다) · 칸 안 글자는 넓은 화면·종이 벌(`--w`)과 휴대폰 벌(`--n`)을 미리 정해 CSS 가 고른다.
+ * ⓘ 칸을 하나도 못 그리면(전부 면적 없음) 칸 줄 없이 면적 없는 호 한 줄만.
+ */
+function UnitCellRow({
+  units,
+  total,
+  kind,
+}: {
+  units: FloorUnit[];
+  total: number | null;
+  kind: keyof typeof UNIT_CELL_REF;
+}) {
+  const c = unitCells(units, total, UNIT_CELL_REF[kind]);
+  if (c === null) return null;
+  const blank = unitCellsBlankText(c.blanks);
+  if (c.cells.length === 0) {
+    return (
+      <div className="ucells">
+        <p className="ucells__note">
+          {blank}
+          {c.rest > 0 && ` · ${unitCellsRestText(c.rest)}`}
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="ucells">
+      <div className="ucells__row">
+        <div className="ucells__strip" aria-hidden="true">
+          {c.cells.map((cell, i) => (
+            <span key={i} className="ucell" style={{ width: `${cell.pct}%` }}>
+              {(cell.labWide || cell.labNarrow) && (
+                <span
+                  className={`ucell__lab${cell.labWide ? ' ucell__lab--w' : ''}${cell.labNarrow ? ' ucell__lab--n' : ''}`}
+                >
+                  {cell.text}
+                </span>
+              )}
+            </span>
+          ))}
+        </div>
+        {c.rest > 0 && <span className="ucells__rest">{unitCellsRestText(c.rest)}</span>}
+      </div>
+      <p className="ucells__note">
+        {UNIT_CELLS_NOTE}
+        {blank && ` ${blank}.`} {UNIT_MULTI_FLOOR_NOTE}
+      </p>
+    </div>
+  );
+}
+
+/**
  * 호실 구성표 고르기로 받은 한 층의 호 목록(물결 1-C2) — 층 줄 아래, 화면·종이 같은 것.
  * 첫 쪽보다 많으면 남은 수를 한 줄로(👤 글자 · 종이에도). 받은 것이 0줄이면 아무것도 안 그린다.
  */
@@ -1722,6 +1784,7 @@ function PrintedUnitList({ printed }: { printed: PrintedUnits }) {
   const rest = printed.total - printed.units.length;
   return (
     <div className="floor__unitprint">
+      <UnitCellRow units={printed.units} total={printed.total} kind="print" />
       <ul className="floor__unitprint-list">
         {printed.units.map((u, i) => (
           <li key={i}>
@@ -1872,6 +1935,7 @@ function FloorUnits({ bldId, unitRow }: { bldId: string; unitRow: UnitFloorSumma
               <strong>아직 담지 않았습니다</strong>.
             </p>
           )}
+          {units.length > 0 && <UnitCellRow units={units} total={total} kind="detail" />}
           {units.length > 0 && (
             <ul className="detail__list units__list">
               {units.map((u, i) => (
