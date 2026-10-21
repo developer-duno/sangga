@@ -16,7 +16,9 @@
 ----
     python scripts/publish_snapshot.py --show          # 표지 두 칸·시각·행수 + 점포 표 분기별 행수 + 요약표 여섯의 분기
     python scripts/publish_snapshot.py --loaded 202609 # '다 들어온 분기'만 적는다(보여 주는 분기는 그대로 · 앞으로만 —
-                                                       #  지금 다 들어온 분기보다 옛 분기는 거부, 같은 분기는 쓰기 0)
+                                                       #  지금 다 들어온 분기보다 옛 분기는 거부, 같은 분기는 쓰기 0 ·
+                                                       #  그 분기에 '지하인데 층 모름' 칸이 빈 행이 있으면 거부 —
+                                                       #  칸이 없는 DB(2026-10-14a 전)는 [주의] 뒤 진행 · 물결 2-2c)
     python scripts/publish_snapshot.py --ym 202606     # 되돌리기 전용 — 두 칸을 **모두** 그 분기로(점포 표에 있는 분기만)
     → 이어서 python scripts/post_load.py               # 요약표를 그 분기로 굽고, 확인이 끝나면 표지를 올린다
 
@@ -118,6 +120,43 @@ def build_set_loaded_sql(ym):
 FLAG_YMS_SQL = ("select coalesce((select loaded_ym || '|' || published_ym "
                 "from snapshot_release where id = 1), '');")
 
+# '지하인데 층 모름' 칸(2026-10-14a)이 있나 — '1' 또는 '0'. ⛔ ASCII 만(psql -c).
+BASEMENT_COL_SQL = ("select count(*) from information_schema.columns where table_schema = 'public' "
+                    "and table_name = 'unit_business' and column_name = 'floor_basement_unknown';")
+
+
+def build_basement_null_sql(ym):
+    """그 분기 행 중 floor_basement_unknown 이 null 인 행 수 — 적재기의 적재 직후 확인과 같은 물음(물결 2-2c)."""
+    if not YM_RE.match(ym or ""):
+        raise ValueError("분기 모양이 다릅니다: {!r}".format(ym))
+    return ("select count(*) from unit_business where snapshot_ym = '{}' "
+            "and floor_basement_unknown is null;").format(ym)
+
+
+def basement_null_problem(ym):
+    """--loaded 가 표지를 올리기 직전의 null 확인. 막아야 하면 안내 글, 지나가도 되면 None.
+
+    새 적재기가 넣은 행은 늘 true/false 다 — null 이 있으면 칸이 생기기 전 적재기로 넣은 행이 섞인 분기다
+    (시·도 접두 모드로 나눠 넣은 뒤 손으로 표지를 올리는 길이 적재기의 같은 확인을 건너뛰던 틈 · 적대 검사 🟡5).
+    칸이 없는 DB(2026-10-14a 전)는 [주의] 한 줄만 찍고 지나간다. 조회가 이상하면(빈 출력·숫자 아님) 막는다.
+    """
+    col = query_one(BASEMENT_COL_SQL).strip()
+    if col == "0":
+        print("[주의] '지하인데 층 모름' 칸이 없는 DB(2026-10-14a 전)라 null 확인을 건너뜁니다.")
+        return None
+    if col != "1":
+        return "'지하인데 층 모름' 칸 조회 실패({!r}) — 표지를 올리지 않습니다.".format(col)
+    nulls = query_one(build_basement_null_sql(ym)).strip()
+    if not nulls.isdigit():
+        return "'지하인데 층 모름' 칸 null 수 조회 실패({!r}) — 표지를 올리지 않습니다.".format(nulls)
+    print("  floor_basement_unknown null {:,}행 (기대 0)  [{}]".format(
+        int(nulls), "일치" if int(nulls) == 0 else "섞임 — 확인 필요"))
+    if int(nulls) != 0:
+        return ("{} 분기에 '지하인데 층 모름' 칸이 빈 행이 {:,}개 있습니다 — 칸이 생기기 전 적재기로 넣은 행이 "
+                "섞인 분기라 표지를 올리지 않습니다(append-only 라 새 적재기로 다시 돌려도 그 행은 안 바뀝니다 — "
+                "어떻게 할지 먼저 정하세요).").format(ym, int(nulls))
+    return None
+
 
 def has_quarter(count_text):
     """build_exists_sql 의 답(행 수 글자)이 1 이상인가."""
@@ -200,6 +239,10 @@ def set_loaded(ym):
     n = query_one(build_exists_sql(ym))
     if not has_quarter(n):
         print("[에러] 점포 표(unit_business)에 {} 분기 행이 없습니다 — 다 들어온 분기로 적을 수 없습니다.".format(ym))
+        return 1
+    problem = basement_null_problem(ym)
+    if problem:
+        print("[에러] {}".format(problem))
         return 1
     rc = dbx.run_sql(build_set_loaded_sql(ym), quiet=True)
     if rc != 0:

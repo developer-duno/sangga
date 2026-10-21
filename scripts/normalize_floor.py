@@ -193,6 +193,37 @@ def normalize_floor(raw) -> Optional[int]:
     return min(non_rooftop) if non_rooftop else ROOFTOP
 
 
+# 숫자 없이 '지하'라는 방향만 적힌 표기 — 공백을 뗀 값이 이 셋 중 하나일 때만.
+# 2026-10-13 원본 실측(202603·202606 전국)에서 실제로 나온 꼴은 '지' 한 글자뿐이고
+# '지하'·'지하층'은 0건이다(나와도 뜻이 같아 함께 둔다). 'B' 단독은 넣지 않는다 —
+# 자료 0건이라 그것이 지하인지 B동인지 가를 근거가 없다(물결 2-2c 플랜 v2 §2).
+_BASEMENT_ONLY_MARKS = frozenset({"지", "지하", "지하층"})
+
+
+def is_basement_without_number(raw) -> bool:
+    """층 번호는 모르지만 지하라는 것만은 적힌 표기인가 (물결 2-2c · unit_business.floor_basement_unknown).
+
+    normalize_floor(raw) 가 None 이고, 공백을 뗀 값이 '지'·'지하'·'지하층' 일 때만 True.
+    층 번호를 지어내지 않는다 — normalize_floor 는 그대로 None 을 내고(절대 규칙 4),
+    이 함수는 "지하인데 층 모름" 표시 하나만 따로 낸다.
+
+    예시:
+        >>> is_basement_without_number("지"), is_basement_without_number(" 지 ")
+        (True, True)
+        >>> is_basement_without_number("지하"), is_basement_without_number("지하층")
+        (True, True)
+        >>> is_basement_without_number("지1"), is_basement_without_number("B")
+        (False, False)
+        >>> is_basement_without_number(""), is_basement_without_number(None)
+        (False, False)
+    """
+    if raw is None:
+        return False
+    if str(raw).strip() not in _BASEMENT_ONLY_MARKS:
+        return False
+    return normalize_floor(raw) is None
+
+
 def floor_label(floor: Optional[int]) -> str:
     """정규화된 층 정수를 사람이 읽는 표기로 되돌린다."""
     if floor is None:

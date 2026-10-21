@@ -481,6 +481,31 @@ create table if not exists unit_business (
 comment on table unit_business is '분기 스냅샷. append only. 이전 분기에 있고 이번에 없으면 폐업/이전 = 공실 후보';
 comment on column unit_business.biz_no is '업종분류 개편(837→247) 시 번호가 새로 생성되어 과거와 연계 불가. 주소+상호명 재매칭 필요';
 
+-- ── 지하인데 층 모름 칸 (2026-10-14a · 물결 2-2c · 결정 0036) ─────────────────────
+-- 원본 층정보가 숫자 없이 지하 표시만('지' — 2026-10-13 원본 전수 실측으로 이 꼴뿐)인 가게. floor_no 는 NULL
+-- 그대로 두고(절대 규칙 4) 이 칸만 true. 판정 = scripts/normalize_floor.py is_basement_without_number(재구현 금지).
+-- ⛔ 👤 D1(2026-10-13) — 이 칸이 생긴 뒤 적재한 분기만 true/false, 그 전 분기는 NULL(append only · 거슬러 채우지 않는다).
+-- ⚠️ 표 정의부가 아니라 여기 있는 이유: 라이브는 마이그레이션 2026-10-14a 가 표 **맨 뒤**에 붙였고,
+--    정본↔마이그레이션 대조 가드(tests/test_schema_migration_sync.py)는 `add column <이름>` 꼴을 알아본다
+--    (building 의 2026-10-11c 칸과 같은 꼴). 칸 차례에 기대는 곳은 없다(api.unit_business 의 `select *`
+--    를 쓰는 적재기는 이름으로 쓴다).
+alter table unit_business
+  add column if not exists floor_basement_unknown boolean;
+
+comment on column unit_business.floor_basement_unknown is
+  '지하인데 층 모름 — 원본 층정보가 숫자 없이 지하 표시만(실측 "지") · floor_no 는 NULL 그대로(층 번호를 지어내지 않는다). '
+  '이 칸이 생긴 뒤 적재한 분기만 true/false, 그 전 분기는 null(append only — 거슬러 채우지 않는다 · 👤 2026-10-13 D1). '
+  '판정 = scripts/normalize_floor.py is_basement_without_number(2026-10-14a)';
+
+-- 칸이 true 면 floor_no 는 NULL — 층을 아는 가게에 '층 모름' 표시가 붙으면 업종 층 줄이 한 가게를 두 번 센다.
+-- ⓘ 라이브는 NOT VALID 로 붙인 뒤 VALIDATE 했다(2026-10-14a — 1.5GB 를 ACCESS EXCLUSIVE 안에서 훑지 않으려고).
+--    새 환경은 표가 비어 있어 바로 검증된 제약으로 붙인다(결과 상태가 같다 — convalidated = true).
+--    drop … if exists 를 앞에 둔 것은 이 파일을 다시 돌려도 멈추지 않게(add constraint 에는 if not exists 가 없다).
+alter table unit_business
+  drop constraint if exists chk_ub_basement_unknown,
+  add constraint chk_ub_basement_unknown
+  check (floor_basement_unknown is not true or floor_no is null);
+
 create index if not exists idx_ub_unit     on unit_business (unit_id, snapshot_ym);
 -- ⚠️ 옛 `idx_ub_pnu (pnu, snapshot_ym)` 자리다(2026-08-22c 에서 지웠다). 앞 두 칸이 같고
 --    업종 네 칸이 include 로 더 붙어 있어 **완전한 대체**다 — 옛것을 되살리면 105MB 를
