@@ -19,6 +19,16 @@ import {
 } from '../lib/appConstants';
 import { LAND_PRICE_BADGE, landPriceText, parseLandPrice } from '../lib/landPrice';
 import { TX_STAT_BADGE } from '../lib/floorGap';
+import {
+  TX_SHAPE_LABEL,
+  txBandAxisMaxWon,
+  txBandMark,
+  txPlot,
+  type TxBandMark,
+  type TxPlot,
+  type TxShape,
+} from '../lib/txViz';
+import { cssVar, VIZ_TONES } from '../lib/viz';
 import type {
   BasePrice,
   BuildingDistricts,
@@ -1425,7 +1435,11 @@ function ParcelTxList({ txs }: { txs: ParcelTransaction[] }) {
   const [all, setAll] = useState(false);
   // 설명 줄은 **화면에 보이는 줄**에 지분이 있을 때만 화면에 선다(👤 2026-10-16) — 숨은 줄에만 있으면
   // 줄은 그리되 숨은 줄과 같은 이름표를 달아 `@media screen` 에서만 숨긴다(종이에는 줄이 전부 나오니 설명도 늘).
-  const shownShare = all ? hasShare : txs.slice(0, LIST_FOLD_AT).some((t) => t.is_share === true);
+  // 점그림(결정 0038 B · V2) — 목록의 거래가 5건 이상이고 찍을 점이 있을 때만. 그림이 서면 숨은 줄의 지분도 점(빈 꼴)으로
+  // 화면에 보이므로 설명 줄은 **늘** 선다(위 `shownShare` 의 예외 · 지분이 0건이면 지금처럼 줄 자체가 없다).
+  const plot = txPlot(txs);
+  const shownShare =
+    plot !== null || (all ? hasShare : txs.slice(0, LIST_FOLD_AT).some((t) => t.is_share === true));
   const listId = useId();
   return (
     <div className="tx__block">
@@ -1437,6 +1451,7 @@ function ParcelTxList({ txs }: { txs: ParcelTransaction[] }) {
           <span className="tx__cap"> (최근 {TX_LIST_CAP}건까지)</span>
         )}
       </h4>
+      {plot !== null && <TxDotPlot plot={plot} />}
       <ul className="tx__list" id={listId}>
         {txs.map((t, i) => (
           <li key={i} className={!all && i >= LIST_FOLD_AT ? 'list__folded' : undefined}>
@@ -1490,6 +1505,8 @@ function SigunguTxBands({ stats }: { stats: SigunguTxStat[] }) {
   const guName = stats.find((s) => s.sigungu_nm)?.sigungu_nm ?? null;
   const from = stats.find((s) => s.window_from)?.window_from ?? null;
   const total = stats.reduce((sum, s) => sum + (s.n ?? 0), 0);
+  // 띠 축(결정 0038 B · V2) — 0 ~ 값을 내는 줄의 최댓값 올림. 값을 내는 줄이 없으면 띠·축 없이 지금 글만.
+  const axisMax = txBandAxisMaxWon(stats);
 
   return (
     <div className="tx__block">
@@ -1497,12 +1514,13 @@ function SigunguTxBands({ stats }: { stats: SigunguTxStat[] }) {
       <h4 className="tx__sub">
         {guName ? `${guName} 층대별 거래 단가 (상가 거래 기준)` : '층대별 거래 단가 (상가 거래 기준)'}
       </h4>
-      <ul className="tx__bands">
+      <ul className={`tx__bands${axisMax !== null ? ' tx__bands--viz' : ''}`}>
         {stats.map((s) => {
           const enough = s.n >= MIN_SAMPLE;
           return (
             <li key={s.floor_band}>
               <span className="tx__band">{s.floor_band}</span>
+              {axisMax !== null && <TxBandViz mark={txBandMark(s, axisMax)} />}
               <span className={`tx__val${enough ? '' : ' tx__val--none'}`}>
                 {enough ? (
                   <>
@@ -1522,6 +1540,15 @@ function SigunguTxBands({ stats }: { stats: SigunguTxStat[] }) {
           );
         })}
       </ul>
+      {axisMax !== null && (
+        // 띠 축의 눈금 글 한 줄 — 그림 밖 HTML(§2-2) · 띠 칸과 같은 자리 · 띠와 함께 읽는 글이라 띠처럼 낭독기에서 뺀다.
+        <div className="tx__axis" aria-hidden="true">
+          <span className="tx__axis-scale">
+            <span>0</span>
+            <span>㎡당 {formatManWon(axisMax)}</span>
+          </span>
+        </div>
+      )}
       <p className="grade">
         {/* 구 층대 가운데값 = 우리가 세어 낸 집계 — 세 잣대 칸·요약 타일과 같은 배지(결정 0041 보완 1차 · 꼬리말 약속). */}
         <span className="grade__badge">{TX_STAT_BADGE}</span>
@@ -1535,6 +1562,152 @@ function SigunguTxBands({ stats }: { stats: SigunguTxStat[] }) {
         {/* 날짜 말투는 카드 머리 날짜 줄과 같은 '2024년 10월'(F1 · 👤 2026-10-16 ④) — 못 읽으면 원본 그대로. */}
         {from ? ` ${formatMonthKo(from) ?? from} 이후 계약분` : ''} 집계 · 지분 거래 제외 · 전체 표본{' '}
         {total.toLocaleString('ko-KR')}건.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * 구 층대 줄 하나의 띠(결정 0038 B · V2) — p25~p75 띠 + 가운데값 세로 눈금 · 축 = 0 ~ 블록 상한(㎡당).
+ * 사실 색(호박) · 사분위가 없거나 폭 0 이면 눈금만 · 값을 안 내는 줄은 "–"(까닭 「표본 부족」은 옆 글에 그대로 · 0 으로 안 그린다).
+ * 옆 글과 같은 내용이라 낭독기에서 뺀다(§2-1). 크기는 % 로만(§2-3 — DOM 을 재지 않는다).
+ */
+function TxBandViz({ mark }: { mark: TxBandMark }) {
+  if (mark.kind === 'none') {
+    return (
+      <span className="tx__viz tx__viz--none" aria-hidden="true">
+        –
+      </span>
+    );
+  }
+  return (
+    <span className="tx__viz" aria-hidden="true">
+      <span className="tx__track" style={{ background: cssVar(VIZ_TONES.fact.bg), borderColor: cssVar(VIZ_TONES.fact.line) }}>
+        {mark.kind === 'band' && (
+          <span
+            className="tx__range"
+            style={{ left: `${mark.left}%`, width: `${mark.width}%`, background: cssVar(VIZ_TONES.fact.steps[1]) }}
+          />
+        )}
+        <span className="tx__tick" style={{ left: `${mark.x}%`, background: cssVar(VIZ_TONES.fact.steps[3]) }} />
+      </span>
+    </span>
+  );
+}
+
+/**
+ * 점 하나의 꼴(결정 0038 B) — ● 1층 · ■ 2층 · ▲ 3층 이상 · ◆ 지하 · 회색 ● 층 미상 · 지분은 같은 꼴의 빈 꼴.
+ * SVG 에는 도형만(§2-2) · 고정 viewBox 라 칸이 줄어도 꼴이 찌그러지지 않는다(자리는 바깥 span 의 %).
+ * 색은 styles.css 의 `.tx__shape` 규칙이 `data-shape`·`data-hollow` 로 칠한다(사실 호박 `--fact-3`·`--fact-4` · 층 미상 `--viz-na` ·
+ * 빈 꼴 `--card`) — ⛔ SVG 속성(`fill="var(--…)"`)에 변수를 넣지 않는다(속성 값의 var() 는 브라우저마다 안 먹을 수 있다).
+ */
+function TxShapeIcon({ shape, hollow }: { shape: TxShape; hollow: boolean }) {
+  return (
+    <svg className="tx__shape" viewBox="0 0 10 10" data-shape={shape} data-hollow={hollow ? '1' : '0'} focusable="false">
+      {shape === '2' ? (
+        <rect x="1.4" y="1.4" width="7.2" height="7.2" />
+      ) : shape === '3+' ? (
+        <polygon points="5,0.9 9.3,8.9 0.7,8.9" />
+      ) : shape === 'b' ? (
+        <polygon points="5,0.6 9.4,5 5,9.4 0.6,5" />
+      ) : (
+        <circle cx="5" cy="5" r="4" />
+      )}
+    </svg>
+  );
+}
+
+/**
+ * 이 땅 거래 점그림(결정 0038 B · V2) — 세로 = ㎡당 단가(0 ~ 최댓값 올림) · 가로 = 계약 시기(가장 이른 달 ~ 가장 늦은 달).
+ * 바로 아래 목록과 같은 거래라 그림·눈금·범례는 낭독기에서 뺀다(§2-1). 눈금·범례 글자는 SVG 밖 HTML(§2-2).
+ * 점이 없는 거래(㎡당 값 없음 등)는 0 에 찍지 않고 그 수를 한 줄로 말한다(§2-4).
+ */
+function TxDotPlot({ plot }: { plot: TxPlot }) {
+  const from = formatMonthKo(plot.fromYm) ?? plot.fromYm;
+  const to = formatMonthKo(plot.toYm) ?? plot.toYm;
+  // 세로 눈금 글(보완 1 F4) — 값만(맨 아래 「0」) · 단위 「㎡당」은 눈금 칸 위 한 줄(눈금 칸을 좁혀 점 칸을 넓힌다 — 휴대폰).
+  const tickText = (k: number, won: number) => (k === 0 ? '0' : formatManWon(won));
+  const top = tickText(plot.ticks.length - 1, plot.yMaxWon);
+  return (
+    <div className="tx__plot" aria-hidden="true">
+      <div className="tx__plot-frame">
+        <span className="tx__plot-unit">㎡당</span>
+        <span className="tx__plot-y">
+          {/* 칸 폭을 가장 긴 눈금 글로 잡는 빈 자리(눈금 글은 아래 % 자리에 겹쳐 선다 · DOM 을 재지 않는다). */}
+          <span className="tx__plot-yw">{top}</span>
+          <span className="tx__plot-yin">
+            {plot.ticks.map((t, k) => (
+              <span key={k} className="tx__tick-y" style={{ bottom: `${t.y}%` }}>
+                {tickText(k, t.won)}
+              </span>
+            ))}
+          </span>
+        </span>
+        <span className="tx__plot-area" style={{ background: cssVar(VIZ_TONES.fact.bg), borderColor: cssVar(VIZ_TONES.fact.line) }}>
+          <span className="tx__plot-in">
+            {plot.ticks.map((t, k) => (
+              <span key={`g${k}`} className="tx__grid" style={{ bottom: `${t.y}%` }} />
+            ))}
+            {plot.points.map((p, i) => (
+              <span key={i} className="tx__dot" style={{ left: `${p.x}%`, bottom: `${p.y}%` }}>
+                <TxShapeIcon shape={p.shape} hollow={p.hollow} />
+              </span>
+            ))}
+            {/* 점 금액 글자(보완 1 F1~F3) — 넓은 화면·종이용과 휴대폰용 두 벌 중 CSS 가 하나만 보인다(@media screen 720 묶음). */}
+            {(['wide', 'narrow'] as const).map((kind) => (
+              <span key={kind} className={`tx__labs tx__labs--${kind}`}>
+                {plot.labels[kind].map((l, i) => (
+                  <span
+                    key={i}
+                    className={`tx__lab tx__lab--${l.side}`}
+                    // 칸 끝에 붙인 글자('L'·'R')는 칸 왼쪽·오른쪽 끝 기준 · 나머지는 제 점 자리 기준.
+                    style={
+                      l.side === 'L'
+                        ? { left: 0, bottom: `${l.y}%` }
+                        : l.side === 'R'
+                          ? { right: 0, bottom: `${l.y}%` }
+                          : { left: `${l.x}%`, bottom: `${l.y}%` }
+                    }
+                  >
+                    {l.text}
+                  </span>
+                ))}
+              </span>
+            ))}
+          </span>
+        </span>
+        <span className="tx__plot-x">
+          <span>{from}</span>
+          {to !== from && <span>{to}</span>}
+        </span>
+      </div>
+      {/* 글자를 못 단 점이 있으면 한 줄(보완 3 G1) — 벌마다 따로(넓은 화면·종이 / 휴대폰 · 글자 벌과 같은 CSS 로 고른다). */}
+      {(['wide', 'narrow'] as const).map((kind) =>
+        plot.unlabeled[kind] > 0 ? (
+          <p key={kind} className={`tx__plot-note tx__plot-note--${kind}`}>
+            {/* 「거래 전부 보기」 포함 — 글자 없는 점의 거래가 접힌 10건 밖일 수 있다(보완 4 · 재검사 🟡). */}
+            글자 자리가 없는 점 {plot.unlabeled[kind].toLocaleString('ko-KR')}개 — 금액은 아래 거래 목록(「거래 전부 보기」 포함)에 있습니다
+          </p>
+        ) : null,
+      )}
+      <p className="tx__keys">
+        {plot.shapes.map((s) => (
+          <span key={s} className="tx__key">
+            <TxShapeIcon shape={s} hollow={false} />
+            {TX_SHAPE_LABEL[s]}
+          </span>
+        ))}
+        {plot.hasHollow && (
+          <span className="tx__key">
+            <TxShapeIcon shape="1" hollow />
+            속이 빈 꼴 = 지분
+          </span>
+        )}
+        {plot.skipped > 0 && (
+          <span className="tx__key tx__key--skip">
+            ㎡당 값이나 계약 달이 없는 거래 {plot.skipped.toLocaleString('ko-KR')}건은 점이 없습니다
+          </span>
+        )}
       </p>
     </div>
   );

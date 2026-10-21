@@ -1258,6 +1258,249 @@ describe('FloorStack — 실거래 기록 (Stage A · 결정 0012)', () => {
   });
 });
 
+describe('FloorStack — 실거래 그림 (결정 0038 B · V2)', () => {
+  /**
+   * 지키는 것: ① 글은 한 글자도 안 바뀐다(그림은 옆에 더할 뿐) ② 표본 부족 층대는 띠 없이 "–" ③ 점그림은 목록 거래 5건 이상만
+   * ④ 점 꼴 = 층 묶음 · 지분 = 빈 꼴 ⑤ 그림이 서면 지분 설명 줄은 늘 선다 ⑥ 그림은 낭독기에서 뺀다(옆 글과 같은 내용).
+   * ⓘ jsdom 은 CSS 를 못 본다 — 자리(인라인 % · 색 변수)만 본다. 실제 폭·넘침·종이는 E2E 「BX」.
+   */
+  const bandRow = (c: HTMLElement, name: string) =>
+    [...c.querySelectorAll('.tx__bands li')].find((li) => li.querySelector('.tx__band')?.textContent === name)!;
+
+  it('구 층대 띠 — 값을 내는 층대만 p25~p75 띠 + 가운데값 눈금(사실 색) · 표본 부족은 "–" · 축 글 한 줄', async () => {
+    responses.txStats = { data: bands({ '1층': 213, '2층': 4 }), error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelector('.tx__bands--viz')).toBeTruthy());
+    const one = bandRow(container, '1층');
+    const range = one.querySelector<HTMLElement>('.tx__range')!;
+    // 축 = 5,000만(p75 3,730만 올림) → 띠 27.6% ~ 74.6% · 눈금 45%.
+    expect(parseFloat(range.style.left)).toBeCloseTo(27.6, 6);
+    expect(parseFloat(range.style.width)).toBeCloseTo(47, 6);
+    expect(range.style.background).toBe('var(--fact-2)');
+    const tick = one.querySelector<HTMLElement>('.tx__tick')!;
+    expect(parseFloat(tick.style.left)).toBeCloseTo(45, 6);
+    expect(tick.style.background).toBe('var(--fact-4)');
+    expect(one.querySelector('.tx__viz')!.getAttribute('aria-hidden')).toBe('true');
+    // 표본 부족 층대 — 띠도 눈금도 없이 "–"(0 으로 그리지 않는다) · 까닭 글은 그대로.
+    const two = bandRow(container, '2층');
+    expect(two.querySelector('.tx__range')).toBeNull();
+    expect(two.querySelector('.tx__tick')).toBeNull();
+    expect(two.querySelector('.tx__viz--none')!.textContent).toBe('–');
+    expect(two.querySelector('.tx__val')!.textContent).toBe('표본 부족');
+    // 축 글 — 그림 밖 HTML · 낭독기에서 뺀다.
+    const axis = container.querySelector('.tx__axis')!;
+    expect(axis.textContent).toBe('0㎡당 5,000만');
+    expect(axis.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('구 층대 글은 그림이 서도 한 글자도 안 바뀐다', async () => {
+    responses.txStats = { data: bands({ '1층': 213 }), error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelector('.tx__bands--viz')).toBeTruthy());
+    const one = bandRow(container, '1층');
+    expect(one.querySelector('.tx__val')!.textContent).toBe('중앙값 ㎡당 2,250만 (가운데 절반 1,380만~3,730만)');
+    expect(one.querySelector('.tx__n')!.textContent).toBe('표본 213건');
+  });
+
+  it('값을 내는 층대가 하나도 없으면 띠·축 없이 지금 글만', async () => {
+    responses.txStats = { data: bands({ '1층': 4, '2층': 3 }), error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText('표본 4건')).toBeTruthy());
+    expect(container.querySelector('.tx__bands--viz')).toBeNull();
+    expect(container.querySelector('.tx__viz')).toBeNull();
+    expect(container.querySelector('.tx__axis')).toBeNull();
+  });
+
+  it('점그림 문턱 — 목록 거래 4건이면 없음 · 5건이면 선다(점 5개 · 낭독기에서 뺀다)', async () => {
+    responses.txs = { data: Array.from({ length: 4 }, () => tx()), error: null };
+    const four = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(screen.getByText(/이 땅에서 신고된 거래 4건/)).toBeTruthy());
+    expect(four.container.querySelector('.tx__plot')).toBeNull();
+    four.unmount();
+
+    responses.txs = { data: Array.from({ length: 5 }, (_, i) => tx({ unit_price: (i + 1) * 1_000_000 })), error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelector('.tx__plot')).toBeTruthy());
+    expect(container.querySelectorAll('.tx__plot-in .tx__dot')).toHaveLength(5);
+    expect(container.querySelector('.tx__plot')!.getAttribute('aria-hidden')).toBe('true');
+    // 그림은 제목 아래 · 목록 위.
+    const plot = container.querySelector('.tx__plot')!;
+    const list = container.querySelector('.tx__list')!;
+    expect(plot.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('점 꼴 = 층 묶음 다섯 · 지분 = 빈 꼴 · 범례는 그려진 꼴만(+ 지분 칸)', async () => {
+    responses.txs = {
+      data: [
+        tx({ floor_no: 1, contract_ym: '202401' }),
+        tx({ floor_no: 2 }),
+        tx({ floor_no: 4 }),
+        tx({ floor_no: -1 }),
+        tx({ floor_no: null }),
+        tx({ floor_no: 2, is_share: true, unit_price: 1_480_000 }),
+      ],
+      error: null,
+    };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelector('.tx__plot')).toBeTruthy());
+    const dots = [...container.querySelectorAll('.tx__plot-in .tx__shape')];
+    expect(dots.map((d) => d.getAttribute('data-shape'))).toEqual(['1', '2', '3+', 'b', 'na', '2']);
+    expect(dots.map((d) => d.getAttribute('data-hollow'))).toEqual(['0', '0', '0', '0', '0', '1']);
+    // 색(빈 꼴 = 바탕색 · 찬 꼴 = 호박 · 층 미상 = 회색)은 CSS 규칙이 data 이름표로 칠한다 — 실제 칠은 E2E 「BX」가 본다.
+    // 꼴마다 다른 도형.
+    expect(dots[0].firstElementChild!.tagName.toLowerCase()).toBe('circle');
+    expect(dots[1].firstElementChild!.tagName.toLowerCase()).toBe('rect');
+    expect(dots[2].firstElementChild!.tagName.toLowerCase()).toBe('polygon');
+    expect(dots[3].firstElementChild!.tagName.toLowerCase()).toBe('polygon');
+    expect(dots[2].firstElementChild!.getAttribute('points')).not.toBe(dots[3].firstElementChild!.getAttribute('points'));
+    const keys = [...container.querySelectorAll('.tx__key')].map((k) => k.textContent);
+    expect(keys).toEqual(['1층', '2층', '3층 이상', '지하', '층 미상', '속이 빈 꼴 = 지분']);
+    // 눈금 글 — 세로 0 · ¼ · ½ · ¾ · ㎡당 상한(보완 1 F4) · 가로 가장 이른 달 ~ 가장 늦은 달.
+    expect([...container.querySelectorAll('.tx__plot-yin .tx__tick-y')].map((t) => t.textContent)).toEqual([
+      '0',
+      '125만',
+      '250만',
+      '375만',
+      '500만',
+    ]);
+    expect(container.querySelector('.tx__plot-unit')!.textContent).toBe('㎡당');
+    expect(container.querySelector('.tx__plot-x')!.textContent).toBe('2024년 1월2026년 5월');
+  });
+
+  it('지분이 없으면 범례에 지분 칸이 없다 · ㎡당 값 없는 거래는 점 없이 그 수를 말한다', async () => {
+    responses.txs = {
+      data: [tx(), tx(), tx(), tx(), tx({ unit_price: null, bld_area_m2: null })],
+      error: null,
+    };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelector('.tx__plot')).toBeTruthy());
+    // 같은 달·같은 값·같은 꼴 넷은 점 하나 + 「×4」(보완 1 F2).
+    expect(container.querySelectorAll('.tx__plot-in .tx__dot')).toHaveLength(1);
+    expect(container.querySelector('.tx__labs--wide .tx__lab')!.textContent).toBe('380만 ×4');
+    const keys = [...container.querySelectorAll('.tx__key')].map((k) => k.textContent);
+    // 이 파일의 기본 거래는 3층(`tx()`).
+    expect(keys).toEqual(['3층 이상', '㎡당 값이나 계약 달이 없는 거래 1건은 점이 없습니다']);
+    // 지분 0건 — 설명 줄도 없다(그림이 서도).
+    expect(container.querySelector('.tx__share-note')).toBeNull();
+    expect(container.querySelector('.tx')?.textContent).not.toContain('시세');
+  });
+
+  it('★ 그림이 서면 지분 설명 줄은 늘 선다 — 지분이 숨은 줄(11번째 이후)에만 있어도 · 펼쳐도 접어도', async () => {
+    responses.txs = { data: Array.from({ length: 14 }, (_, i) => tx({ is_share: i === 12 })), error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    const fold = () => container.querySelector<HTMLButtonElement>('.tx__list ~ .list__fold');
+    await waitFor(() => expect(fold()).toBeTruthy());
+    expect(container.querySelector('.tx__plot')).toBeTruthy();
+    const note = () => container.querySelector('.tx__share-note')!;
+    expect(note().classList.contains('list__folded')).toBe(false);
+    fireEvent.click(fold()!);
+    expect(note().classList.contains('list__folded')).toBe(false);
+    fireEvent.click(fold()!);
+    expect(note().classList.contains('list__folded')).toBe(false);
+    // 숨은 줄의 지분도 그림에는 빈 꼴로 있다.
+    expect(container.querySelectorAll('.tx__plot-in .tx__shape[data-hollow="1"]')).toHaveLength(1);
+  });
+
+  it('보완 1 — 유니온 꼴 12건: 점 금액 글자(목록과 같은 서식) · 겹친 지분 둘 = 점 하나 「260만 ×2」 · 가로 눈금선 다섯 · 두 벌', async () => {
+    responses.txs = {
+      data: [
+        tx({ floor_no: 11, contract_ym: '202608', unit_price: 9_000_000 }),
+        tx({ floor_no: 2, contract_ym: '202603', unit_price: 2_600_000, is_share: true }),
+        tx({ floor_no: 2, contract_ym: '202603', unit_price: 2_600_000, is_share: true }),
+        tx({ floor_no: 5, contract_ym: '202507', unit_price: 7_380_000 }),
+        tx({ floor_no: 7, contract_ym: '202507', unit_price: 7_290_000 }),
+        tx({ floor_no: 9, contract_ym: '202507', unit_price: 7_720_000 }),
+        tx({ floor_no: 1, contract_ym: '202511', unit_price: 6_100_000 }),
+        tx({ floor_no: 4, contract_ym: '202504', unit_price: 6_900_000 }),
+        tx({ floor_no: 2, contract_ym: '202502', unit_price: 4_200_000 }),
+        tx({ floor_no: -1, contract_ym: '202410', unit_price: 3_000_000 }),
+        tx({ floor_no: null, contract_ym: '202405', unit_price: 3_500_000 }),
+        tx({ floor_no: 1, contract_ym: '202402', unit_price: 5_000_000 }),
+      ],
+      error: null,
+    };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelector('.tx__plot')).toBeTruthy());
+    // 겹친 지분 둘은 점 하나 — 점 11 · 거래 목록은 12줄 그대로.
+    expect(container.querySelectorAll('.tx__plot-in .tx__dot')).toHaveLength(11);
+    expect(container.querySelectorAll('.tx__list > li')).toHaveLength(12);
+    const wide = [...container.querySelectorAll('.tx__labs--wide .tx__lab')].map((l) => l.textContent);
+    expect(wide).toEqual(['900만', '260만 ×2', '738만', '729만', '772만', '610만', '690만', '420만', '300만', '350만', '500만']);
+    // 목록의 ㎡당 표기와 같은 함수(formatManWon) — 목록 첫 줄 「㎡당 900만」의 숫자 부분이 점 글자와 같다.
+    expect(container.querySelector('.tx__list > li .tx__unit')!.textContent).toBe('㎡당 900만');
+    // 휴대폰 벌도 같은 건수(묶었으면 ×N 합) — 화면에 어느 쪽이 보일지는 CSS(E2E BX).
+    const narrow = [...container.querySelectorAll('.tx__labs--narrow .tx__lab')].map((l) => l.textContent ?? '');
+    expect(narrow.reduce((s, t) => s + Number(/×(\d+)$/.exec(t)?.[1] ?? 1), 0)).toBe(12);
+    // 가로 눈금선 다섯(0 · ¼ · ½ · ¾ · 끝) + 눈금 글.
+    expect([...container.querySelectorAll('.tx__plot-in .tx__grid')].map((g) => (g as HTMLElement).style.bottom)).toEqual([
+      '0%',
+      '25%',
+      '50%',
+      '75%',
+      '100%',
+    ]);
+    expect([...container.querySelectorAll('.tx__plot-yin .tx__tick-y')].map((t) => t.textContent)).toEqual([
+      '0',
+      '250만',
+      '500만',
+      '750만',
+      '1,000만',
+    ]);
+    // 그림은 통째로 낭독기에서 뺀다(글자가 늘어도) · 사실 블록에 '시세' 0.
+    expect(container.querySelector('.tx__plot')!.getAttribute('aria-hidden')).toBe('true');
+    expect(container.querySelector('.tx')?.textContent).not.toContain('시세');
+  });
+
+  it('보완 3 G1 · 보완 4 — 글자를 다 못 단 점그림엔 안내 줄 「글자 자리가 없는 점 N개 — 금액은 아래 거래 목록(「거래 전부 보기」 포함)에 있습니다」 · 다 단 그림엔 없다', async () => {
+    let seed = 7;
+    const rnd = () => {
+      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+      return seed / 2_147_483_648;
+    };
+    responses.txs = {
+      data: Array.from({ length: 100 }, () =>
+        tx({
+          contract_ym: `${2024 + Math.floor(rnd() * 3)}${String(1 + Math.floor(rnd() * 12)).padStart(2, '0')}`,
+          unit_price: Math.round(1_000_000 + rnd() * 9_000_000),
+        }),
+      ),
+      error: null,
+    };
+    const dense = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(dense.container.querySelector('.tx__plot')).toBeTruthy());
+    const note = dense.container.querySelector('.tx__plot-note--narrow');
+    expect(note?.textContent).toMatch(/^글자 자리가 없는 점 \d+개 — 금액은 아래 거래 목록\(「거래 전부 보기」 포함\)에 있습니다$/);
+    // 거래가 10건을 넘어 「거래 전부 보기」 단추가 실제로 있다(문구가 가리키는 것이 화면에 있다).
+    expect(dense.container.querySelector('.tx__list ~ .list__fold')?.textContent).toBe('거래 전부 보기 (100건)');
+    // 글자 수 + 안내 줄의 N = 점 수(휴대폰 벌).
+    const n = Number(/점 (\d+)개/.exec(note!.textContent!)![1]);
+    const dots = dense.container.querySelectorAll('.tx__plot-in .tx__dot').length;
+    const covered = dense.container.querySelectorAll('.tx__labs--narrow .tx__lab').length;
+    expect(n).toBeGreaterThan(0);
+    expect(covered).toBeGreaterThan(0);
+    expect(n).toBeLessThan(dots);
+    // 안내 줄은 점그림 안(범례 줄 바로 위) — 그림과 함께 낭독기에서 빠진다.
+    expect(note!.closest('.tx__plot')).toBeTruthy();
+    expect(note!.nextElementSibling?.classList.contains('tx__keys')).toBe(true);
+    dense.unmount();
+
+    responses.txs = { data: Array.from({ length: 5 }, (_, i) => tx({ unit_price: (i + 1) * 1_000_000 })), error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelector('.tx__plot')).toBeTruthy());
+    expect(container.querySelector('.tx__plot-note')).toBeNull();
+  });
+
+  it('목록은 그대로 — 처음 10건 + 「거래 전부 보기 (N건)」 · 줄 글자 그대로', async () => {
+    responses.txs = { data: Array.from({ length: 12 }, () => tx()), error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelector('.tx__plot')).toBeTruthy());
+    expect(container.querySelectorAll('.tx__list > li')).toHaveLength(12);
+    expect(container.querySelectorAll('.tx__list > li:not(.list__folded)')).toHaveLength(10);
+    expect(container.querySelector('.tx__list ~ .list__fold')!.textContent).toBe('거래 전부 보기 (12건)');
+    expect(container.querySelector('.tx__list > li')!.textContent).toBe('3층2026-0584.3㎡ (26평)3억 2,000만㎡당 380만집합');
+  });
+});
+
 describe('FloorStack — 국세청 기준시가 (『층별 공표값 나란히』 카드 안 · 결정 0041 ㉤)', () => {
   /**
    * 내린 참고 매매 시세 카드 안에 있던 기준시가 줄을 층별 공표값 카드의 기준시가 칸으로 옮겼다(정보 손실 0).
@@ -2864,11 +3107,14 @@ describe('FloorStack — 긴 카드 창 (S2)', () => {
   // (종이에는 줄이 전부 나오니 설명도 늘 나온다), 숨은 줄에만 있으면 `list__folded` 이름표로 화면에서만 숨는다.
   // ⓘ jsdom 은 CSS 를 못 보니 이름표만 본다 — 실제로 숨는지는 E2E 「BB」.
   const shareNote = (c: HTMLElement) => c.querySelector('.tx__share-note');
-  const txsWithShareAt = (n: number, at: number[]) =>
-    Array.from({ length: n }, (_, i) => tx({ is_share: at.includes(i) }));
+  const txsWithShareAt = (n: number, at: number[], over: Partial<ParcelTransaction> = {}) =>
+    Array.from({ length: n }, (_, i) => tx({ is_share: at.includes(i), ...over }));
+  // ⓘ 점그림(결정 0038 B · V2)이 서면 설명 줄은 늘 선다(아래 「점그림」 묶음). 숨김 갈래(`shownShare`)는 그림이 **안 서는**
+  //   목록에서만 살아 있다 — 11건 이상인데 그림이 안 서는 꼴 = 찍을 점이 없는 목록(㎡당 값이 전부 없음)으로 지킨다.
+  const NO_PLOT = { unit_price: null };
 
   it('★ 지분이 숨은 줄(11번째 이후)에만 있으면 접힌 화면에선 설명 줄에 숨김 이름표 · 펼치면 떼고 · 다시 접으면 다시 붙는다', async () => {
-    responses.txs = { data: txsWithShareAt(14, [11, 12]), error: null };
+    responses.txs = { data: txsWithShareAt(14, [11, 12], NO_PLOT), error: null };
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => expect(txFold(container)).toBeTruthy());
     // 줄은 DOM 에 있다(종이용) — 화면에서만 숨는 이름표.
@@ -2883,9 +3129,10 @@ describe('FloorStack — 긴 카드 창 (S2)', () => {
   });
 
   it('★ 경계 — 지분이 11번째 줄(첫 숨은 줄)에만 있으면 접힌 화면에선 숨김 이름표 · 펼치면 뗀다', async () => {
-    responses.txs = { data: txsWithShareAt(14, [10]), error: null };
+    responses.txs = { data: txsWithShareAt(14, [10], NO_PLOT), error: null };
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => expect(txFold(container)).toBeTruthy());
+    expect(container.querySelector('.tx__plot')).toBeNull();
     expect(shareNote(container)!.classList.contains('list__folded')).toBe(true);
     fireEvent.click(txFold(container)!);
     expect(shareNote(container)!.classList.contains('list__folded')).toBe(false);
