@@ -1845,6 +1845,194 @@ body {
   line-height: 1.6;
 }
 
+/* ── 그림: 구 층대별 단가 띠 (결정 0038 B · V2) ─────────────────────────────────────
+   넓은 화면·종이 = 층대 | 띠 | 글(지금 글 그대로) | 표본. 띠 = p25~p75 · 세로 눈금 = 가운데값 · 축 = 0 ~ 블록 상한(아래 `.tx__axis`).
+   사실 색(호박 — 값은 viz.ts 가 인라인으로 준다) · 값을 안 내는 줄은 "–"(까닭 「표본 부족」은 옆 글 그대로).
+   ⛔ 띠 칸 말고는 전부 **고정 폭**이다 — 표본 칸을 `auto` 로 두면 줄마다 글 폭이 달라 띠 칸 폭이 줄마다 달라지고,
+      같은 ㎡당 값이 줄마다 다른 자리에 선다(축 글 줄과도 어긋난다).
+   ⓘ 휴대폰은 `@media screen and (max-width: 720px)` 묶음에서 글을 아래 줄로(층대 | 띠 / 글 | 표본).
+   ⛔ 크기는 % 로만 — DOM 을 재지 않는다(접힌 카드는 폭 0 · 종이 백지 · §2-3). */
+.tx__bands--viz li {
+  grid-template-columns: 72px minmax(0, 2fr) minmax(0, 3fr) 88px;
+  align-items: center;
+}
+
+.tx__bands--viz .tx__n {
+  white-space: nowrap;
+}
+
+.tx__viz {
+  display: block;
+  min-width: 0;
+}
+
+/* 값을 안 내는 줄의 "–" — 까닭 글은 옆(`.tx__val--none`)에 그대로 있다. */
+.tx__viz--none {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.tx__track {
+  position: relative;
+  display: block;
+  height: 12px;
+  border: 1px solid;
+  border-radius: 3px;
+}
+
+.tx__range {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 2px;
+}
+
+.tx__tick {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+}
+
+/* 축 눈금 글 — 띠 칸과 같은 칸 자리(줄과 같은 칸 틀 · 같은 틈 10px). */
+.tx__axis {
+  display: none;
+}
+
+.tx__bands--viz + .tx__axis {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 2fr) minmax(0, 3fr) 88px;
+  column-gap: 10px;
+  padding: 2px 0 4px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+
+.tx__axis-scale {
+  grid-column: 2;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+/* ── 그림: 이 땅 거래 점그림 (결정 0038 B · V2) ──────────────────────────────────────
+   세로 = ㎡당 단가(0 ~ 최댓값 올림 · 왼쪽 눈금 글) · 가로 = 계약 시기(아래 눈금 글) · 점 꼴 = 층 묶음 · 지분 = 빈 꼴.
+   눈금·범례 글자는 SVG 밖 HTML(§2-2) · 점은 칸 안 % 자리(가장자리 꼴이 칸 밖으로 안 나가게 안쪽 여백 `.tx__plot-in`). */
+.tx__plot {
+  margin: 0 0 10px;
+}
+
+.tx__plot-frame {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: 132px auto;
+  column-gap: 6px;
+}
+
+.tx__plot-y {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  text-align: right;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.tx__plot-area {
+  grid-column: 2;
+  grid-row: 1;
+  position: relative;
+  display: block;
+  min-width: 0;
+  border: 1px solid;
+  border-radius: 4px;
+}
+
+.tx__plot-in {
+  position: absolute;
+  inset: 8px 10px;
+}
+
+.tx__dot {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  transform: translate(-50%, 50%);
+}
+
+.tx__shape {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+/* 점 꼴의 색 — 사실 색(호박 · `src/lib/viz.ts` VIZ_TONES.fact.steps 3·4단) · 층 미상 회색 · 지분 = 같은 꼴의 빈 꼴(속 = 바탕색).
+   ⓘ 흑백 종이에서도 꼴(●■▲◆)과 속 참/빔으로 갈린다 — 색에만 기대지 않는다. */
+.tx__shape > * {
+  fill: var(--fact-3);
+  stroke: var(--fact-4);
+  stroke-width: 1.4;
+}
+
+.tx__shape[data-shape='na'] > * {
+  fill: var(--viz-na);
+  stroke: var(--muted);
+}
+
+.tx__shape[data-hollow='1'] > * {
+  fill: var(--card);
+}
+
+.tx__plot-x {
+  grid-column: 2;
+  grid-row: 2;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 10px 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* 계약 달이 하나뿐이면 점이 가운데(50%) — 글도 가운데. */
+.tx__plot-x > span:only-child {
+  margin: 0 auto;
+}
+
+.tx__keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.tx__key {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tx__key .tx__shape {
+  flex: none;
+  width: 10px;
+  height: 10px;
+}
+
 /* 옥탑도 지하와 같은 "근거 없는 층"이다(결정 0001 가드 4). */
 .floor--roof .floor__label {
   color: var(--under);
@@ -3483,6 +3671,41 @@ body {
     align-self: center;
   }
 
+  /* 구 층대별 단가 띠(결정 0038 B · V2) — 휴대폰은 층대 | 띠 를 한 줄, 글 | 표본 을 아래 줄로(글은 한 글자도 안 바뀐다).
+     ⛔ 표본 칸은 여기서도 고정 폭 — 띠 칸이 줄마다 같은 폭이어야 같은 값이 같은 자리에 선다(축 글 줄과도). */
+  .tx__bands--viz li {
+    grid-template-columns: 72px minmax(0, 1fr) 88px;
+    grid-template-areas:
+      'band viz viz'
+      'val val n';
+    gap: 4px 10px;
+  }
+
+  .tx__bands--viz .tx__band {
+    grid-area: band;
+  }
+
+  .tx__bands--viz .tx__viz {
+    grid-area: viz;
+  }
+
+  .tx__bands--viz .tx__val {
+    grid-area: val;
+  }
+
+  .tx__bands--viz .tx__n {
+    grid-area: n;
+    text-align: right;
+  }
+
+  .tx__bands--viz + .tx__axis {
+    grid-template-columns: 72px minmax(0, 1fr) 88px;
+  }
+
+  .tx__axis-scale {
+    grid-column: 2 / 4;
+  }
+
   /* ── 휴대폰 아래 탭(결정 0039 Q1 · W4a) ──────────────────────────────────────────────
      `.app--tabs` · `data-tab` 은 App 이 휴대폰 꼴일 때만 붙인다(`useIsPhone` — 이 묶음과 같은 질의). 탭에 안 맞는 덩어리는
      여기서만 숨긴다 → ⛔ **`screen` 안이라 종이에는 안 먹는다**(건물·안내 글은 어느 탭에서 뽑아도 종이에 남는다 — 👤 「건물 한 장」).
@@ -5074,6 +5297,8 @@ body {
   .flow__rows li,
   .tx__list li,
   .tx__bands li,
+  /* 이 땅 거래 점그림(결정 0038 B · V2) — 눈금 글·범례와 한 덩어리(그림 덩어리에만 · 카드 통째 금지 §2-9). */
+  .tx__plot,
   .mix__bars li,
   /* 값과 그 값이 어느 상권·어느 분기 것인지가 한 줄에 있다 — 갈리면 근거 없는 숫자가 된다. */
   .rent__rows li,
@@ -5126,6 +5351,11 @@ body {
      ⛔ 카드 통째(`.mix`)에는 걸지 않는다(위 설명 참조 — 장수가 늘고 흰 종이가 남는다). */
   .mix__stack {
     break-after: avoid;
+  }
+
+  /* 구 층대 띠의 눈금 글은 위 띠 목록과 같은 장에(결정 0038 B · V2). */
+  .tx__axis {
+    break-before: avoid;
   }
 
   /* 제목만 페이지 끝에 혼자 남는 것을 막는다. */

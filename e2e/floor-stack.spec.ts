@@ -3386,7 +3386,7 @@ test.describe('긴 카드 창', () => {
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
     await mockFloorStack(
       page,
-      // 지분 거래는 숨는 12번째 줄에만 — 접힌 화면엔 설명 줄이 없고 펼치거나 종이면 선다(👤 2026-10-16).
+      // 지분 거래는 숨는 12번째 줄에만 — 점그림이 서서 설명 줄은 늘 선다(결정 0038 B · V2 · 그 전엔 👤 2026-10-16 「접힌 화면엔 없음」).
       Array.from({ length: 12 }, (_, i) => parcelTx({ is_share: i === 11 })),
       Array.from({ length: 12 }, (_, i) => floorRow({ floor_no: 12 - i })),
     );
@@ -3424,10 +3424,12 @@ test.describe('긴 카드 창', () => {
       await expect(btn).toHaveCSS('font-size', '13px');
     }
 
-    // 지분은 숨은 12번째 줄에만 — 접힌 화면엔 설명 줄이 안 보인다(줄은 DOM 에 있다 · 종이용).
+    // 지분은 숨은 12번째 줄에만 — 그래도 거래가 5건 이상이라 점그림이 서고(결정 0038 B · V2), 그림에는 숨은 줄의 지분도
+    // 빈 꼴로 보이므로 설명 줄은 **늘** 선다(`shownShare` 의 예외). 그림이 안 서는 목록의 숨김 갈래는 vitest(S2 묶음)가 본다.
     const shareNote = page.locator('section.tx .tx__share-note');
     await expect(shareNote).toHaveCount(1);
-    await expect(shareNote).toBeHidden();
+    await expect(page.locator('section.tx .tx__plot')).toBeVisible();
+    await expect(shareNote).toBeVisible();
 
     // 펼치면 전부 → 같은 자리 단추로 다시 접으면 10줄 + 그 카드 머리가 화면 안으로 굴러온다.
     // ⓘ 접기 전에 단추를 화면 맨 위로 올려 카드 머리를 화면 **밖**으로 내보낸다 — 머리가 처음부터 화면 안이면
@@ -3451,7 +3453,7 @@ test.describe('긴 카드 창', () => {
     await txFold.click();
     await expect(page.locator('section.tx .tx__list > li:visible')).toHaveCount(10);
     await expect(txHead).toBeInViewport({ ratio: 0.9 });
-    await expect(shareNote).toBeHidden();
+    await expect(shareNote).toBeVisible();
 
     // ⛔ 종이에는 늘 전부(접힌 상태에서 뽑아도) — 단추는 누르는 장치라 빠진다. 지분 설명 줄도 종이엔 늘 선다.
     await page.emulateMedia({ media: 'print' });
@@ -4802,6 +4804,147 @@ test.describe('PC 두 칸', () => {
     await expect(page.locator('section.dmap')).toBeVisible();
     await page.emulateMedia({ media: 'print' });
     await expect(page.locator('section.dmap')).toBeVisible();
+    await page.emulateMedia({ media: null });
+  });
+});
+
+// 실거래 기록 카드의 그림(결정 0038 B · V2 · 👤 2026-10-21 「계획대로 둘 다」) — 그림이 깨져도 글자 시험은 초록이다(§2-10).
+// 폭·자리·색은 CSS 라 jsdom(vitest)은 못 본다 — 넓은 화면(1280 두 칸)·휴대폰(412)·종이에서 여기서만 잰다.
+test.describe('실거래 그림', () => {
+  // 12건 — 층 묶음 다섯 꼴 + 지분 둘(숨는 11·12번째 줄 포함) · 계약 달 2024-01 ~ 2026-05 · ㎡당 최대 920만(축 1,000만).
+  const TXS = [
+    parcelTx({ floor_no: 1, contract_ym: '202605', unit_price: 9_200_000 }),
+    parcelTx({ floor_no: 1, contract_ym: '202511', unit_price: 6_100_000 }),
+    parcelTx({ floor_no: 2, contract_ym: '202508', unit_price: 4_200_000 }),
+    parcelTx({ floor_no: 2, contract_ym: '202503', unit_price: 3_900_000 }),
+    parcelTx({ floor_no: 5, contract_ym: '202501', unit_price: 3_100_000 }),
+    parcelTx({ floor_no: 99, contract_ym: '202410', unit_price: 2_400_000 }),
+    parcelTx({ floor_no: -1, contract_ym: '202407', unit_price: 2_000_000 }),
+    parcelTx({ floor_no: null, contract_ym: '202404', unit_price: 3_500_000 }),
+    parcelTx({ floor_no: 3, contract_ym: '202403', unit_price: 2_800_000 }),
+    parcelTx({ floor_no: 1, contract_ym: '202402', unit_price: 5_000_000 }),
+    parcelTx({ floor_no: 1, contract_ym: '202401', unit_price: 1_000_000, is_share: true }),
+    parcelTx({ floor_no: 2, contract_ym: '202402', unit_price: 1_500_000, is_share: true }),
+  ];
+
+  test('BX. 구 층대 띠(사실 색 · p25~p75 폭 비례 · 줄마다 같은 자 · 표본 부족 "–") + 이 땅 거래 점그림(층 묶음 꼴 · 지분 빈 꼴 · 자리 비례 · 설명 줄 늘) · 넓은 화면 글 오른쪽 · 휴대폰 글 아래 줄·넘침 0 · 13px · 종이에 그대로', async ({
+    page,
+  }, testInfo) => {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page, TXS);
+    // 1층·2층 = 값을 냄(픽스처 값 1,380만~3,730만 · 가운데 2,250만) · 지하 = 4건(표본 부족). 나중에 등록한 것이 먼저 잡힌다.
+    await mockJson(page, TX_STATS_PATTERN, sigunguTxStats({ 지하: 4, '1층': 213, '2층': 9 }));
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+
+    const card = page.locator('section.tx');
+    await expect(card.locator('.tx__bands--viz')).toBeVisible();
+    const phone = (page.viewportSize()?.width ?? 0) <= 720;
+    const row = (name: string) =>
+      card.locator('.tx__bands li').filter({ has: page.locator('.tx__band', { hasText: new RegExp(`^${name}$`) }) });
+    const box = async (sel: ReturnType<Page['locator']>) => (await sel.boundingBox())!;
+
+    // ① 띠 — 축 5,000만(p75 3,730만 올림) → 띠 27.6% ~ 74.6% · 눈금 45%. 띠 칸 안쪽(테두리 1px 뺀 폭) 기준.
+    const track = await box(row('1층').locator('.tx__track'));
+    const range = await box(row('1층').locator('.tx__range'));
+    const tick = await box(row('1층').locator('.tx__tick'));
+    const inner = track.width - 2;
+    expect(inner).toBeGreaterThan(60);
+    expect(Math.abs((range.x - (track.x + 1)) / inner - 0.276)).toBeLessThan(0.012);
+    expect(Math.abs(range.width / inner - 0.47)).toBeLessThan(0.012);
+    expect(Math.abs((tick.x + tick.width / 2 - (track.x + 1)) / inner - 0.45)).toBeLessThan(0.012);
+    // 사실 색(호박) — 띠 = --fact-2 · 눈금 = --fact-4 · 바탕 = --warn-bg.
+    await expect(row('1층').locator('.tx__range')).toHaveCSS('background-color', 'rgb(224, 180, 90)');
+    await expect(row('1층').locator('.tx__tick')).toHaveCSS('background-color', 'rgb(125, 84, 20)');
+    await expect(row('1층').locator('.tx__track')).toHaveCSS('background-color', 'rgb(253, 243, 227)');
+    // 줄마다 같은 자 — 같은 값의 2층 띠가 1층 띠와 같은 자리·같은 폭 · 축 글 줄도 띠 칸과 같은 자리.
+    const track2 = await box(row('2층').locator('.tx__track'));
+    const range2 = await box(row('2층').locator('.tx__range'));
+    expect(Math.abs(track2.x - track.x)).toBeLessThan(1);
+    expect(Math.abs(track2.width - track.width)).toBeLessThan(1);
+    expect(Math.abs(range2.x - range.x)).toBeLessThan(1);
+    const axis = await box(card.locator('.tx__axis-scale'));
+    expect(Math.abs(axis.x - track.x)).toBeLessThan(1.5);
+    expect(Math.abs(axis.x + axis.width - (track.x + track.width))).toBeLessThan(1.5);
+    await expect(card.locator('.tx__axis')).toHaveText('0㎡당 5,000만');
+    // 표본 부족 — 띠 없이 "–" · 까닭 글 그대로 · 0 으로 안 그린다.
+    await expect(row('지하').locator('.tx__viz--none')).toHaveText('–');
+    await expect(row('지하').locator('.tx__range')).toHaveCount(0);
+    await expect(row('지하').locator('.tx__val')).toHaveText('표본 부족');
+    // 글은 한 글자도 안 바뀐다 — 넓은 화면은 띠 오른쪽, 휴대폰은 띠 아래 줄.
+    await expect(row('1층').locator('.tx__val')).toHaveText('중앙값 ㎡당 2,250만 (가운데 절반 1,380만~3,730만)');
+    const val = await box(row('1층').locator('.tx__val'));
+    if (phone) expect(val.y).toBeGreaterThanOrEqual(track.y + track.height - 1);
+    else expect(val.x).toBeGreaterThanOrEqual(track.x + track.width - 1);
+
+    // ② 점그림 — 12건 전부 점 · 지분 둘은 빈 꼴 · 꼴 다섯.
+    const plot = card.locator('.tx__plot');
+    await expect(plot).toBeVisible();
+    const dots = plot.locator('.tx__plot-in .tx__dot');
+    await expect(dots).toHaveCount(12);
+    await expect(plot.locator('.tx__plot-in .tx__shape[data-hollow="1"]')).toHaveCount(2);
+    const shapes = await plot.locator('.tx__plot-in .tx__shape').evaluateAll((els) => els.map((e) => e.getAttribute('data-shape')));
+    expect(shapes).toEqual(['1', '1', '2', '2', '3+', '3+', 'b', 'na', '3+', '1', '1', '2']);
+    // 칠 — 찬 꼴 = 호박(--fact-3) · 층 미상 = 회색(--viz-na) · 빈 꼴 = 바탕(--card 흰색).
+    // ⓘ 이 파일은 DOM 타입을 안 싣는다 — getComputedStyle 대신 toHaveCSS.
+    const shapeEl = (i: number) => plot.locator('.tx__plot-in .tx__shape').nth(i).locator(':scope > *');
+    await expect(shapeEl(0)).toHaveCSS('fill', 'rgb(185, 132, 42)');
+    await expect(shapeEl(7)).toHaveCSS('fill', 'rgb(180, 183, 191)');
+    await expect(shapeEl(10)).toHaveCSS('fill', 'rgb(255, 255, 255)');
+    // 자리 — 세로 = ㎡당 값 ÷ 1,000만(아래가 0) · 가로 = 2024-01(왼쪽 끝) ~ 2026-05(오른쪽 끝) · 점은 그림 칸 밖으로 안 나간다.
+    const area = await box(plot.locator('.tx__plot-in'));
+    const frame = await box(plot.locator('.tx__plot-area'));
+    const center = async (i: number) => {
+      const b = await box(dots.nth(i));
+      return { x: b.x + b.width / 2, y: b.y + b.height / 2, b };
+    };
+    for (const [i, won] of [[0, 9_200_000], [6, 2_000_000], [10, 1_000_000]] as const) {
+      const c = await center(i);
+      expect(Math.abs((area.y + area.height - c.y) / area.height - won / 10_000_000)).toBeLessThan(0.02);
+    }
+    expect(Math.abs((await center(0)).x - (area.x + area.width))).toBeLessThan(1.5);
+    expect(Math.abs((await center(10)).x - area.x)).toBeLessThan(1.5);
+    for (let i = 0; i < 12; i += 1) {
+      const { b } = await center(i);
+      expect(b.x).toBeGreaterThanOrEqual(frame.x);
+      expect(b.x + b.width).toBeLessThanOrEqual(frame.x + frame.width);
+      expect(b.y).toBeGreaterThanOrEqual(frame.y);
+      expect(b.y + b.height).toBeLessThanOrEqual(frame.y + frame.height);
+    }
+    await expect(plot.locator('.tx__plot-y')).toHaveText('㎡당 1,000만0');
+    await expect(plot.locator('.tx__plot-x')).toHaveText('2024년 1월2026년 5월');
+    await expect(plot.locator('.tx__key')).toHaveText(['1층', '2층', '3층 이상', '지하', '층 미상', '속이 빈 꼴 = 지분']);
+    // 그림은 목록과 같은 내용이라 낭독기에서 뺀다 · 목록은 그대로(처음 10건 + 전부 보기).
+    await expect(plot).toHaveAttribute('aria-hidden', 'true');
+    await expect(card.locator('.tx__list > li:visible')).toHaveCount(10);
+    await expect(card.locator('.list__fold')).toHaveText('거래 전부 보기 (12건)');
+    // 지분은 숨는 11·12번째 줄에만 — 그림이 서서 설명 줄은 접힌 화면에도 선다.
+    await expect(card.locator('.tx__share-note')).toBeVisible();
+    // 글자 13px 이상(S4) — 눈금·범례·"–".
+    for (const sel of ['.tx__plot-y', '.tx__plot-x', '.tx__keys', '.tx__axis', '.tx__viz--none']) {
+      await expect(card.locator(sel).first()).toHaveCSS('font-size', '13px');
+    }
+    // 가로 넘침 0(문서·카드).
+    expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+    expect(await card.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+    await card.screenshot({ path: testInfo.outputPath(`bx-tx-${testInfo.project.name}.png`) });
+
+    // ③ 종이 — 그림이 그대로 서고(폭 0 백지 아님), 휴대폰 배치(screen 묶음)는 종이에 안 샌다(글은 띠 오른쪽).
+    await page.emulateMedia({ media: 'print' });
+    await expect(plot).toBeVisible();
+    await expect(row('1층').locator('.tx__range')).toBeVisible();
+    const pTrack = await box(row('1층').locator('.tx__track'));
+    expect(pTrack.width).toBeGreaterThan(40);
+    const pVal = await box(row('1층').locator('.tx__val'));
+    expect(pVal.x).toBeGreaterThanOrEqual(pTrack.x + pTrack.width - 1);
+    await expect(plot).toHaveCSS('break-inside', 'avoid');
+    await expect(card.locator('.tx__list > li:visible')).toHaveCount(12);
+    await expect(card.locator('.tx__share-note')).toBeVisible();
+    await card.screenshot({ path: testInfo.outputPath(`bx-tx-print-${testInfo.project.name}.png`) });
     await page.emulateMedia({ media: null });
   });
 });
