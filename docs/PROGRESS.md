@@ -2957,5 +2957,15 @@ pytest **4,457 passed**(본 폴더) · vitest **960 passed** · tsc 0 · oxlint 
 
 **시험 수 실측(10-21 · main `d67f732` 와 같은 코드)**: pytest 수집 5,403 · vitest 전체 실행 1,670 passed(73파일) · E2E 시험 70개(`@onecol` 9 → 149회 · 실행은 10-21 W5 보완 1 때 149 passed) — CLAUDE.md 기준선과 같아 숫자는 안 바꿨다(측정 날짜만 덧붙임).
 
-**다음**: 0038 V2 착수 전 0041 로 바뀐 전제를 대조해 👤께 여쭘 · 2-2c(마이그 2026-10-14a 운영 적용 👤 결정 → DB 먼저 → #303 → 14c → 14b → #307).
+**다음**: 0038 V2 착수 전 0041 로 바뀐 전제를 대조해 👤께 여쭘 · 2-2c(마이그 2026-10-14a 운영 적용 👤 결정 → DB 먼저 → #303 → 14c → 14b → #307). → 둘 다 같은 날 👤 결정(추천안) — V2 = 계획대로 띠·점그림 둘 다 · 2-2c = 아래 (4).
+
+## 2026-10-21 (4) — 물결 2-2c 운영 적용: 숫자 없는 지하('지')를 업종별 층 줄 지하 칸에 (마이그 14a·14c·14b · #303 · #307)
+
+**결재**: 👤 10-21 12시대 「지금 순서대로」(AskUserQuestion · 추천안) → 전/후 그림(가짜 데이터 · https://claude.ai/artifact/61WG62GqBNHmEhJnUEygGj — 넓은 화면·Pixel 7) 뒤 「진행」.
+
+**순서(DB 먼저 → 머지)**: ① 두 가지에 main 을 합침(PR① 충돌 0 · PR② 는 CLAUDE.md·e2e-catalog·feature-notes 문서 셋만 충돌 → 숫자는 main 쪽, 기능 메모는 둘 다) ② PR① 전체 pytest 5,458 passed · 3 skipped → CI 초록 → **14a 운영 적용 12:33:50~57**(칸 boolean · 제약 validate 완료 · api 뷰 칸 · anon 닫힘 그대로) → `post_load.py --check` 사고·주의 0 → #303 머지 `0e9904d` ③ PR② 전체 pytest 5,500 passed · 3 skipped · vitest 1,680 + hubHead 1 부하 시간 초과(혼자 40/40) · tsc·oxlint 0 · E2E 149 passed → 디스크 판정(5,918MB + 300MB + 1GB = 12GB 의 59%) → **14c 12:47:23~56**(`idx_ub_pnu_cat` 315MB · include 에 새 칸 · valid) → **14b 12:53:44~54:32**(요약표 120,528행 다시 굽기) → `api.list_industry_floors(강남 1168010600109420015, I2)` 열쇠 다섯(b·1·2·3+·na) · `basement_unknown_counted` false(202606 은 칸이 NULL) → #307 머지 `a2e90ef` → `post_load.py --check` 사고·주의 0(정본 색인 52 · 함수 63 일치) · DB 5,933MB.
+
+**화면**: 지금은 그대로다. 새 문구 두 줄(「층 미상 — … 읽을 수 없는 가게입니다.」 · 「지하 — 몇 층인지 없이 '지하'라고만 적힌 가게도 지하에 셉니다.」)은 **상권 3분기(202609) 적재 + post_load 뒤**부터 보인다. ⚠️ 그 적재 때 적재기가 칸을 늘 채우는지(null 0) 끝에서 확인한다(PR① 관문).
+
+**정리**: 워크트리 `D:/sangga-wt-2-2c-pr1`·`-pr2` 지움(정션 먼저) · 가지 로컬·원격 지움.
 
