@@ -1451,7 +1451,7 @@ describe('FloorStack — 실거래 그림 (결정 0038 B · V2)', () => {
     expect(container.querySelector('.tx')?.textContent).not.toContain('시세');
   });
 
-  it('보완 3 G1 — 글자를 다 못 단 점그림엔 안내 줄 「글자 자리가 없는 점 N개 — 금액은 아래 목록에 있습니다」 · 다 단 그림엔 없다', async () => {
+  it('보완 3 G1 · 보완 4 — 글자를 다 못 단 점그림엔 안내 줄 「글자 자리가 없는 점 N개 — 금액은 아래 거래 목록(「거래 전부 보기」 포함)에 있습니다」 · 다 단 그림엔 없다', async () => {
     let seed = 7;
     const rnd = () => {
       seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
@@ -1469,7 +1469,9 @@ describe('FloorStack — 실거래 그림 (결정 0038 B · V2)', () => {
     const dense = render(<FloorStack building={building()} />);
     await waitFor(() => expect(dense.container.querySelector('.tx__plot')).toBeTruthy());
     const note = dense.container.querySelector('.tx__plot-note--narrow');
-    expect(note?.textContent).toMatch(/^글자 자리가 없는 점 \d+개 — 금액은 아래 목록에 있습니다$/);
+    expect(note?.textContent).toMatch(/^글자 자리가 없는 점 \d+개 — 금액은 아래 거래 목록\(「거래 전부 보기」 포함\)에 있습니다$/);
+    // 거래가 10건을 넘어 「거래 전부 보기」 단추가 실제로 있다(문구가 가리키는 것이 화면에 있다).
+    expect(dense.container.querySelector('.tx__list ~ .list__fold')?.textContent).toBe('거래 전부 보기 (100건)');
     // 글자 수 + 안내 줄의 N = 점 수(휴대폰 벌).
     const n = Number(/점 (\d+)개/.exec(note!.textContent!)![1]);
     const dots = dense.container.querySelectorAll('.tx__plot-in .tx__dot').length;

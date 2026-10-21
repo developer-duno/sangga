@@ -1685,7 +1685,8 @@ function TxDotPlot({ plot }: { plot: TxPlot }) {
       {(['wide', 'narrow'] as const).map((kind) =>
         plot.unlabeled[kind] > 0 ? (
           <p key={kind} className={`tx__plot-note tx__plot-note--${kind}`}>
-            글자 자리가 없는 점 {plot.unlabeled[kind].toLocaleString('ko-KR')}개 — 금액은 아래 목록에 있습니다
+            {/* 「거래 전부 보기」 포함 — 글자 없는 점의 거래가 접힌 10건 밖일 수 있다(보완 4 · 재검사 🟡). */}
+            글자 자리가 없는 점 {plot.unlabeled[kind].toLocaleString('ko-KR')}개 — 금액은 아래 거래 목록(「거래 전부 보기」 포함)에 있습니다
           </p>
         ) : null,
       )}

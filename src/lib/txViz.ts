@@ -145,7 +145,7 @@ export type TxPlot = {
   ticks: Array<{ y: number; won: number }>;
   /** 점 금액 글자 두 벌 — 넓은 화면·종이용(`wide`)과 휴대폰용(`narrow` · 더 좁은 기준 폭으로 비켜 적음). */
   labels: { wide: TxLabel[]; narrow: TxLabel[] };
-  /** 글자를 못 단 점 수(벌마다 · 보완 3 G1) — 0 보다 크면 화면이 「글자 자리가 없는 점 N개 — 금액은 아래 목록에 있습니다」를 적는다. */
+  /** 글자를 못 단 점 수(벌마다 · 보완 3 G1) — 0 보다 크면 화면이 「글자 자리가 없는 점 N개 — 금액은 아래 거래 목록(「거래 전부 보기」 포함)에 있습니다」를 적는다(보완 4 문구). */
   unlabeled: { wide: number; narrow: number };
   /** 가로 축 양 끝 계약 달(원본 'YYYYMM'). */
   fromYm: string;
@@ -309,7 +309,10 @@ export function txPlotLabels(points: TxPlotPoint[], ref: { w: number; maxW: numb
       const ys = s.members.map((i) => (points[i].y / 100) * ref.h);
       out.push({ span: { side: 'c', alpha, c: -w / 2, w }, heights: [Math.max(...ys) + ABOVE, Math.min(...ys) - ABOVE] });
     }
-    if (out.length === 0) out.push({ span: alpha < 0.5 ? { side: 'L', alpha: 0, c: 0, w } : { side: 'R', alpha: 1, c: -w, w }, heights: null });
+    // 칸 끝 자리는 글자가 칸 폭 안에 들 때만(보완 4 — 칸보다 넓은 글자를 끝에 붙이면 반대쪽이 칸 밖으로 나간다).
+    if (out.length === 0 && w <= ref.w) {
+      out.push({ span: alpha < 0.5 ? { side: 'L', alpha: 0, c: 0, w } : { side: 'R', alpha: 1, c: -w, w }, heights: null });
+    }
     return out;
   };
 
@@ -422,6 +425,9 @@ export function txPlotLabels(points: TxPlotPoint[], ref: { w: number; maxW: numb
       ay: members.reduce((sum, m) => sum + (points[m].y / 100) * ref.h, 0) / members.length,
       tier: 1,
     };
+    // 묶은 새 글자가 칸보다 넓다(「· 여러 달」 꼬리까지 붙은 뒤에 잰다) — 묶지 않고 가장 높은 점부터 낱개로(보완 4 ·
+    // 재검사: 「111만~3,568만 ×3 · 여러 달」 190px 이 휴대폰 기준 160px 칸 밖으로 나갔다 — 위 검사는 묶기 전 글자만 봤다).
+    if (txLabelWidth(textOf(merged)) > ref.w) return partial();
     seeds = [...seeds.filter((_, j) => j !== fail!.i && j !== partner), merged];
   }
   // 닿지 않는 자리(위 ③ 설명 — 단계 수에 끝이 있다) — 그래도 글자 0 으로 끝내지 않는다.

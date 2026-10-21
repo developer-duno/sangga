@@ -571,6 +571,44 @@ describe('txPlotLabels — 점 금액 글자 자리(보완 1 F1·F3)', () => {
     }
   });
 
+  it('보완 4 — 무작위 600건(재검사 꼴: 5~44건 · 1~40달 흩어짐 · 「· 여러 달」 묶음이 칸보다 넓어지는 자료 포함): 두 벌 모든 글자 상자가 칸 안 · 겹침 0', () => {
+    let seed = 20261021;
+    const rnd = () => {
+      seed = (seed * 1_664_525 + 1_013_904_223) % 4_294_967_296;
+      return seed / 4_294_967_296;
+    };
+    const ym = (i: number) => `${2024 + Math.floor(i / 12)}${String((i % 12) + 1).padStart(2, '0')}`;
+    const bad: string[] = [];
+    let multiSeen = 0;
+    for (let t = 0; t < 600; t += 1) {
+      const n = 5 + Math.floor(rnd() * 40);
+      const span = 1 + Math.floor(rnd() * (rnd() < 0.5 ? 3 : 40));
+      const top = rnd() < 0.5 ? 60_000_000 : 8_000_000;
+      const txs = Array.from({ length: n }, () =>
+        tx({
+          contract_ym: ym(Math.floor(rnd() * span)),
+          unit_price: rnd() < 0.08 ? null : Math.max(1, Math.round(rnd() * top * (rnd() < 0.2 ? 0.02 : 1))),
+          floor_no: [1, 2, 3, -1, null, 99][Math.floor(rnd() * 6)],
+          is_share: rnd() < 0.15,
+        }),
+      );
+      const p = txPlot(txs);
+      if (!p) continue;
+      for (const kind of ['wide', 'narrow'] as const) {
+        const ref = TX_PLOT_REF[kind];
+        const labels = p.labels[kind];
+        multiSeen += labels.filter((l) => l.text.endsWith(TX_LABEL_MULTI_MONTH)).length;
+        for (const l of labels) if (txLabelWidth(l.text) > ref.w) bad.push(`${t} ${kind} 칸보다 넓음 ${l.text}`);
+        bad.push(...outOfBox(labels, ref).map((x) => `${t} ${kind} 칸 밖 ${x}`));
+        bad.push(...problemsAtWidths(labels, ref).map((x) => `${t} ${kind} ${x}`));
+        bad.push(...overlapPairs(labels).map((x) => `${t} ${kind} ${x}`));
+      }
+    }
+    expect(bad.slice(0, 10)).toEqual([]);
+    // 이 자료엔 다른 달 묶음이 실제로 있다(「여러 달」 글자가 칸 안에 앉는 길을 지난다 — 빈 검사가 아니다).
+    expect(multiSeen).toBeGreaterThan(0);
+  });
+
   it('보완 3 G2 — 다른 달이 섞인 묶음 글자만 「· 여러 달」 · 같은 달 묶음엔 없다', () => {
     let seed = 7;
     const rnd = () => {
