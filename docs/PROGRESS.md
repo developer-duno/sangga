@@ -2918,3 +2918,18 @@ pytest **4,457 passed**(본 폴더) · vitest **960 passed** · tsc 0 · oxlint 
 **보완 1**(2026-10-21 08:1x · 검사관 3인 + 메인 실사진(진짜 지도) + 👤 결정 3 · 결정 0039 §7-11 끝): ① 검색해도 오른쪽 건물 그대로(D1 · §7-1 과 같은 규칙) ② 구를 고르면 칩 상자를 접고 「서울 강남구 · 바꾸기」 한 줄(D2 · PC 두 칸만) ③ 직행 링크 PC 는 지도 바로 그대로(D3 · §4-11 의 PC 예외 · 요청 2 · 약 1.2MB · 코드 0) · 첫 방문 큰 카드 왼쪽 칸 세로 쌓기(F1) · 1024~1279 층 줄 칸 줄임(F2 · 1024×768 가로 넘침 62px → 0) · 종이 지도 폭 = 화면에서 그린 폭(F3 · `--dmap-w` · 오른쪽 1/3 빈 회색 막음) · 좁은 두 칸 표지 이름 숨김(F4) · playwright 셋째 프로젝트 `desktop-1000`(F5 · `@onecol` 9개) · 접은 채 1023↔1024 왕복이면 펼친 채로(F6) · 숨은 채 relayout 0 시험(F7) · `useIsWide` 가 인쇄 질의 change 도 듣는다(E2E BW 병렬 실측 — 인쇄를 마치자마자 좁아지면 「두 칸」이 남던 틈). **시험**: vitest +12(`App.wide.test` +7 · `DistrictMap.test` +3 · `useIsWide.test` +2) · 전체 vitest 73파일 **1,670 passed** · tsc·oxlint·build exit 0 · 변이 8종 전부 빨강 · E2E 149회(149 = 70×2 + desktop-1000 9 · **149 passed** · 실패 0) · **어디**: `src/App.tsx`(`onSearchStart` · `regionFoldOpen`·`.regionfold`·`app--rfold` · `prevWide`) · `src/components/DistrictMap.tsx`(`--dmap-w`) · `src/lib/useIsWide.ts`(인쇄 질의) · `src/styles.css`(두 칸 묶음 + 1279 갈래 · 44px 목록 · 인쇄 갈래) · `playwright.config.ts` · `e2e/floor-stack.spec.ts`.
 
 **운영 확인(2026-10-21 09:1x · 메인 · 코드 변경 0)**: PR #335 squash → main `1319432` · Vercel 묶음 `index-KDsGxGkg.js` · `check_live_health.py` 정상 · playwright(크롬): 1280×720 두 칸 왼쪽 405 / 오른쪽 811 · 「왼쪽 칸 접기」 → 띠 + 건물 1,160 · 「상권 지도 넣기」 켠 종이 = 지도 365px(화면 폭 그대로) · 검색·지역 빠짐 · 검색해도 건물 남음(D1) · 지역 한 줄 「서울 강남구 · 바꾸기」(D2) · 1024×768 가로 넘침 0 · 1366×768 정상 · 1023 한 열(지금 그대로) · Pixel 7 = W4b 그대로(지도 632 · 탭 막대) · 페이지 오류 0 · 사진 = `D:/tmp/sangga-w4b/w5-live/`.
+
+## 2026-10-21 (2) — 건축물대장 2026년 9월 판 30구 · 인허가 9월분 · LH 공고 1건 (DB 변경 — 적재 · 코드 변경 1줄)
+
+**👤 지시(10-21 05:4x)**: 「지금 당장 할 수 있는 작업 네가 찾아서 · 어제 못한 것도 전부」 → 매달 할 일 ①·② 가운데 ②(대장)와 LH·인허가를 메인이 직접(수집·적재는 Claude 몫 · 운영 7계명).
+
+**건축HUB 9월 판**: `fetch_bldrgst_bulk.py` 넷(표제부 651MB · 층별개요 615MB · 전유공용면적 3.3GB · 인허가 기본개요 420MB · 2분) → `convert_bldrgst_bulk.py --src-dir data/raw/bldrgst_bulk/202609 --out-dir data/raw/bldrgst_bulk_converted_202609`(2,002만 행 · 30구 · 79분 — ⚠️ 첫 판은 `timeout 5400` 에 84M 행에서 끊겨 폴더를 지우고 다시 · 4시간 제한) → 30구 `load_building_ledger.py --snapshot-ym 202606`(사슬 스크립트 · 구당 3~8분 · 08:41~10:35) · 29구 「적재 완료」(각 구 끝의 §5.6 조인률 보고만 `unit_business` statement timeout 으로 exit 1 — 「2026-10-14」 절의 옛 꼴 그대로) · **강남 11680 만 unit 옛 행 정리 select 가 57014** → vacuum 뒤에도 같음 → PostgREST 탐침(200 PNU 첫 덩어리 캐시 식으면 9.2초 > 8초 · 두 번째 0.8초 · 50 PNU 0.66초) → **`STALE_PNU_CHUNK` 200 → 50**(이 PR · 표적 pytest 181) → 3회차 적재 완료. 합(30구) 건물 242,190행 적재 · DB 실측 `building` **242,760** · `building_floor` **1,639,907** · `unit` **2,952,567** · DB 5,782 → **5,918MB**(12GB 의 49%). `publish_ledger_release.py --ym 202609`(판정 통과 · 11:25) → `post_load.py` exit 0 → `--check` exit 0(사고·주의 0 · 허용 30 · 색인 52 · 함수 63 · 대장 표지 202609) · 신선도 지난 줄 0 · `build_sitemap.py` 13,303 → **13,305동** · 허브 30(파일 합 5.78MB) → 이 PR → 배포 뒤 `indexnow_ping.py --from-sitemap sitemap-buildings-1.xml` · `sitemap-hubs.xml` → `backup_raw.py` 완료(485파일 · 91.4GB · F:).
+
+**인허가 9월분(결정 0023)**: `load_arch_permits.py --dry-run` 관문 5종 통과(행수·칸 수·날짜·연면적·조립률 · 중간 파일 88.5MB) → 적재 완료(06:01) → post_load 는 대장과 함께.
+
+**LH 공고**: 10-20 판교 제2테크노밸리 기업지원허브 1건 → `collect_lh_notices.py` 적재(창고 593 → 594) → 기준선 20261020 PR #334 main 77121a3.
+
+**게시 확인(10-21)**: 상권 3분기 없음 · 상권 원천 변경 없음 · 서울 개폐업 20263 미게시(INFO-200 · 0행) · 부동산원 3분기 미발표(보통 10월 말) · 감시 그물 멈춤 없음.
+
+**서치콘솔(10-21)**: 상가 속성은 크롬 u/2(authuser=2) — 색인 370 · 색인 안 됨 12,955 · 사이트맵 색인 10-18 읽음 13,304 · 허브 사이트맵은 색인 안에 있음 · 허브 색인 요청 → 「할당량 초과」(10-19·10-21 두 번) → 요청은 보류, 사이트맵 재읽기로.
+
