@@ -142,7 +142,7 @@ pnpm exec oxlint                                # 프론트 린트
 ```
 
 ```bash
-python -m pytest tests/ -q                      # 파이썬 테스트 (5,403개 — 10-19 noindex 판 수집 실측(--collect-only) · 그 앞 후속 묶음 판 전체 실행 5,398 passed · 3 skipped(수집 5,401) + 이번 표적 2 · vitest 1,670 = 10-21 W5 보완 1 뒤 전체 실행 1,670(73파일 전부 통과) · E2E 70 은 e2e/floor-stack.spec.ts 의 시험 수 — 10-21 W5 보완 1 뒤 149회 실행 실측(전체 149 = 70×2 + desktop-1000 9 · 149 passed · 실패 0)) · 워크트리는 원본 자료가 없어 몇 개를 건너뛴다(10-06 실측 3) · CI 는 로컬 PostgreSQL·shapely 가 없어 약 30개를 더 건너뛴다(test_district_openclose_migration 실행 시험 16 · test_industry_median_migration 실행 시험 11 · test_backtest_openclose 도형 1 등) · 지난 개수 이력은 git log -p CLAUDE.md)
+python -m pytest tests/ -q                      # 파이썬 테스트 (5,403개 — 10-19 noindex 판 수집 실측(--collect-only) · 10-21 W6 재실측 같음(수집 5,403 · vitest 전체 실행 1,670 · E2E 시험 70 · @onecol 9) · 그 앞 후속 묶음 판 전체 실행 5,398 passed · 3 skipped(수집 5,401) + 이번 표적 2 · vitest 1,670 = 10-21 W5 보완 1 뒤 전체 실행 1,670(73파일 전부 통과) · E2E 70 은 e2e/floor-stack.spec.ts 의 시험 수 — 10-21 W5 보완 1 뒤 149회 실행 실측(전체 149 = 70×2 + desktop-1000 9 · 149 passed · 실패 0)) · 워크트리는 원본 자료가 없어 몇 개를 건너뛴다(10-06 실측 3) · CI 는 로컬 PostgreSQL·shapely 가 없어 약 30개를 더 건너뛴다(test_district_openclose_migration 실행 시험 16 · test_industry_median_migration 실행 시험 11 · test_backtest_openclose 도형 1 등) · 지난 개수 이력은 git log -p CLAUDE.md)
 python scripts/check_new_sangkwon_quarter.py    # 새 분기 스냅샷이 떴나 (읽기만, 키 불필요)
 python scripts/check_district_source_update.py  # 상권 원천(서울·소진공) 수정일이 바뀌었나 (읽기만, 키 불필요)
 python scripts/check_watch_heartbeat.py         # 예약 6종이 아직 돌고 있나 (읽기만, 키 불필요 — 멈춤=exit 1 · 조회·판정 실패=2 · 결과 쓰기 실패=4)
