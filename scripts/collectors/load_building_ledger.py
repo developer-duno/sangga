@@ -130,7 +130,7 @@ TIMEOUT_SEC = 120
 # 유령 행 정리(delete_stale_units)에서 URL 하나에 담을 값 개수. PostgREST의
 # in.(...)은 URL 쿼리스트링이라 값이 많으면 URL 길이 제한에 걸린다. PNU는
 # 19자리 고정이라 넉넉히, unit_id는 호실명(한글·기호)이 붙어 길고 가변이라 짧게.
-STALE_PNU_CHUNK = 200
+STALE_PNU_CHUNK = 50  # 2026-10-21: 200 이면 강남(한 PNU 에 호실 4,924개 등)의 첫 덩어리가 캐시가 식었을 때 PostgREST 8초 제한(57014)에 걸린다 — 같은 덩어리가 두 번째부턴 0.8초(실측) · 50 이면 식어도 안 걸린다
 STALE_DELETE_CHUNK = 100
 
 # §5.6 목표선 (docs/상세계획.md)
