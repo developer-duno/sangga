@@ -180,9 +180,44 @@ comment on column building.bcr is
 
 create index if not exists idx_building_pnu on building (pnu);
 create index if not exists idx_building_nm  on building using gin (bld_nm gin_trgm_ops);
--- get_data_freshness 의 `max(t.updated_at) from building t` 를 받친다(2026-09-27 실측 64ms —
--- 지금은 체감 없음, 전국 확장 때 조용히 느려지는 자리라 미리 건다). 마이그레이션 2026-09-27b
+-- 마이그레이션 2026-09-27b — get_data_freshness 의 `max(t.updated_at) from building t` 를 받치려고 걸었다
+-- (2026-09-27 실측 64ms). ⓘ 2026-10-15a 부터 신선도 함수는 이 칸을 안 읽는다(건축물대장 줄 = 판 표지
+--   ledger_release.release_ym). 표지 명령(publish_ledger_release.py)도 구로 묶어 building 전체를 훑으므로
+--   이 색인을 안 쓴다 — 지금 이 색인을 쓰는 곳은 없다(10-15a 를 되돌리면 다시 쓴다). 지울지는 별건.
 create index if not exists idx_building_updated_at on building (updated_at);
+
+-- ── 건축물대장 판 표지 ledger_release (2026-10-15a) ──────────────────────────────
+-- 신선도 표 건축물대장 줄의 기준(판 YYYYMM)을 읽는 한 줄 표지. building 표엔 판 칸이 없고
+-- max(updated_at) 은 적재가 반쯤 끝난 순간에도 '오늘'이 된다 — 그래서 30개 구를 다 넣은 뒤
+-- 사람이 scripts/publish_ledger_release.py --ym <판> 으로 올린다. get_data_freshness 보다 **앞**에 둔다.
+create table if not exists ledger_release (
+  id          int primary key default 1 check (id = 1),
+  release_ym  char(6) not null check (release_ym ~ '^\d{6}$'),
+  loaded_at   timestamptz not null default now()
+);
+
+comment on table ledger_release is
+  '건축물대장 판 표지 — 한 줄뿐(id = 1 · 2026-10-15a). 신선도 표 건축물대장 줄의 기준(판)이 이 칸을 읽는다. '
+  '30개 구를 다 넣은 뒤 사람이 python scripts/publish_ledger_release.py --ym <판> 으로 올린다(앞으로만 · '
+  '열린 구 전부가 지난 표지 뒤에 적재됐을 때만). 0줄이면 신선도 줄의 기준이 비고 post_load.py --check 가 '
+  '[사고]로 잡는다. 공개키 접근 0(RLS 켬 + 정책 0 + 권한 회수)';
+comment on column ledger_release.release_ym is
+  '지금 다 들어 있는 건축물대장 판(YYYYMM — 건축HUB 일괄 파일의 기준월). N월 판은 (N+1)월 20일 무렵 게시된다';
+comment on column ledger_release.loaded_at is
+  '표지를 적은 시각. publish_ledger_release.py 가 다음 판을 올릴 때 열린 구마다 max(building.updated_at) 이 '
+  '이 시각 뒤인지 본다(대장 적재기가 갱신 행에도 적재 시각을 싣는다 — 2026-10-15)';
+
+alter table ledger_release enable row level security;
+
+-- ⛔ Supabase 는 새 표를 anon 에 자동으로 연다(pg_default_acl) — 만든 자리에서 닫는다.
+revoke all on ledger_release from public, anon, authenticated;
+
+-- 처음 한 줄 = 10-14 대장 8월 판 30개 구 적재가 끝난 시각(운영 DB 실측 2026-10-15: 새 건물 99동의 마지막
+-- updated_at = 15:46:41 KST · 15:48 은 그 세션 기록). 이미 있으면 건드리지 않는다
+-- (정본을 다시 돌려도 지금 표지를 되돌리지 않게).
+insert into ledger_release (id, release_ym, loaded_at)
+values (1, '202608', '2026-10-14 15:48:00+09')
+on conflict (id) do nothing;
 
 -- =====================================================================
 -- 건물 표시명 — 동명칭 폴백 + 개인 성명 가리기 (2026-08-08e)
@@ -205,7 +240,7 @@ create index if not exists idx_building_updated_at on building (updated_at);
 -- search_path 고정(2026-09-23a — 보안 고문 경고 "Function Search Path Mutable" 해소).
 -- ⚠️ SET 절이 붙은 SQL 함수는 플래너가 인라인하지 못한다. 이 함수는 재 보니 차이가 작아
 --    (list_parcel_buildings 20~23ms vs 18~20ms) 고정을 유지한다. 행마다 불려 차이가 컸던
---    search_key · price_floor_band 는 일부러 안 박았다(2026-09-23b·c, 각 함수 머리 참조).
+--    search_key 는 일부러 안 박았다(2026-09-23b·c, 그 함수 머리 참조 · 같은 이유의 price_floor_band 는 결정 0041 로 지움).
 create or replace function mask_person_name(nm text)
 returns text
 language sql
@@ -2204,6 +2239,66 @@ comment on function list_parcel_transactions(text) is
   '나가는 것은 층·계약시점·면적·금액·단가·거래유형·지분 여부뿐(상호명·개인정보 없음). '
   '2026-10-08a: is_share = 지분 거래(건물 일부 몫) — 목록에서 지우지 않고 그대로 낸다(단가 계산에서만 뺀다)';
 
+-- ── ①-1 용도 묶음 (2026-10-18a · 결정 0040) ─────────────────────────────────
+-- 참고 시세·구 층대 단가·동네 단가 흐름이 **같은 용도끼리** 세게 하는 자. 묶음은 넷 + 둘:
+--   shop(상가 = 1·2종 근린생활·판매) / office(업무) / lodging(숙박) / other(기타 — 교육연구·그 밖)
+--   + 대장 층에만 있는 resid(주거 = 단독·공동주택) · 비어 있으면 NULL.
+-- 묶음표는 **여기 두 함수 한 곳**에만 둔다. 2026-10-18a(결정 0041) 뒤 쓰는 곳 = 구 층대 단가·동네 단가 흐름 두 요약표의
+-- price_use_group_nm(main_use) = 'shop' 조건(참고 시세 사다리와 그 백테스트는 결정 0041 로 내렸다 · cd 는 지금 쓰는 곳 0 — 결정 0041 ㉦ 으로 남김).
+-- ⛔ 두 함수에 `set search_path`·`security definer` 를 붙이지 않는다 — 붙이면 SQL 함수 인라인이
+--    막혀 요약표 33만 행 스캔에서 행마다 함수 호출이 남는다(옛 형제 price_floor_band 의 2.3배 선례).
+--    표를 한 줄도 안 읽는 순수 계산이라 search_path 가 필요 없다.
+-- ⚠️ 모르는 글자는 조용히 other 가 된다 — `post_load.py --check` 가 "transaction.main_use 가
+--    7종 밖인 행 수"를 [주의]로 센다(0 이 기대).
+create or replace function price_use_group_cd(p_cd text)
+returns text
+language sql
+immutable
+parallel safe
+as $$
+  -- 대장 주용도코드(building_floor.main_purps_cd) 앞 두 자리. Z3(옛 기타근린생활)·Z6(옛 판매및영업)은
+  -- 옛 분류라 상가로 본다(Z3 에는 사무소·공공시설이 약 1할 섞여 있다 — 알려진한계). Z8 등 그 밖은 other.
+  select case
+    when nullif(p_cd, '') is null                          then null
+    when left(p_cd, 2) in ('03', '04', '07', 'Z3', 'Z6')   then 'shop'
+    when left(p_cd, 2) in ('14')                           then 'office'
+    when left(p_cd, 2) in ('15')                           then 'lodging'
+    when left(p_cd, 2) in ('01', '02')                     then 'resid'
+    else                                                        'other'
+  end
+$$;
+
+comment on function price_use_group_cd(text) is
+  '결정 0040 용도 묶음(대장 코드) — main_purps_cd 앞 두 자리: 03·04·07·Z3·Z6=shop(상가) / 14=office(업무) / '
+  '15=lodging(숙박) / 01·02=resid(주거) / NULL·빈 글자=NULL / 그 밖=other(기타). '
+  '인라인되게 search_path 를 안 박는다. 내부용';
+
+revoke all on function price_use_group_cd(text) from public, anon, authenticated;
+
+create or replace function price_use_group_nm(p_nm text)
+returns text
+language sql
+immutable
+parallel safe
+as $$
+  -- 실거래 건물 주용도(transaction.main_use — 국토부 buildingUse 이름 7종). 주거 묶음은 없다
+  -- (상업업무용 실거래에는 주택이 안 온다).
+  select case
+    when nullif(p_nm, '') is null                              then null
+    when p_nm in ('제1종근린생활', '제2종근린생활', '판매')     then 'shop'
+    when p_nm in ('업무')                                      then 'office'
+    when p_nm in ('숙박')                                      then 'lodging'
+    else                                                            'other'
+  end
+$$;
+
+comment on function price_use_group_nm(text) is
+  '결정 0040 용도 묶음(실거래 이름) — transaction.main_use: 제1종근린생활·제2종근린생활·판매=shop(상가) / '
+  '업무=office / 숙박=lodging / NULL·빈 글자=NULL / 교육연구·기타·모르는 글자=other(기타). '
+  '구 층대 단가·동네 단가 흐름 요약표가 shop 만 센다. 인라인되게 search_path 를 안 박는다. 내부용';
+
+revoke all on function price_use_group_nm(text) from public, anon, authenticated;
+
 -- ── ② 구 × 층대 단가 분포 (사전계산) ────────────────────────────────────────
 -- 왜 집합만: 통건물(일반)은 지번이 100% 마스킹되고 건물 한 채 값이라 ㎡당 단가의 성격이
 --   다르다. 섞으면 분포가 오염된다.
@@ -2218,6 +2313,9 @@ comment on function list_parcel_transactions(text) is
 -- ⚠️ 옥탑(99)은 '3층이상'에 들어간다(결정 0012 의 층대 정의가 ">=3").
 -- ⛔ 지분 거래는 뺀다(2026-10-08a) — 건물 일부 몫만 사고판 거래라 ㎡당 단가가 약 0.39배로 낮게
 --    나와 분포를 끌어내린다. n(표본 수)도 지분을 뺀 수다(단가의 근거 수이므로).
+-- ⛔ 상가(근생·판매) 거래만 센다(2026-10-18a · 결정 0040 D3) — 업무·숙박이 섞이면 구 안에서 비중이
+--    해마다 바뀌어 단가가 조용히 출렁인다(강남 3층+ 업무 834만 vs 2종근생 1,621만). 화면 제목이
+--    「상가 거래 기준」이라 이 조건을 빼면 제목이 거짓말이 된다.
 create materialized view if not exists mv_sigungu_tx_stats as
 with win as (
   select to_char((now() at time zone 'Asia/Seoul') - interval '24 months', 'YYYYMM') as from_ym
@@ -2241,12 +2339,14 @@ cross join win w
 where t.tx_type = '집합'
   and t.unit_price is not null
   and not t.is_share
+  and price_use_group_nm(t.main_use) = 'shop'
   and t.contract_ym >= w.from_ym
 group by t.sigungu_code, 2;
 
 comment on materialized view mv_sigungu_tx_stats is
   'Stage A(결정 0012) 구×층대 실거래 단가 분포 — 집합(구분소유) 거래만, 갱신 시점 기준 24개월. '
   '2026-10-08a: 지분 거래(is_share)는 뺀다 — 건물 일부 몫이라 ㎡당 단가가 낮게 나온다. '
+  '2026-10-18a: 상가(근생·판매) 거래만 — 결정 0040 D3(price_use_group_nm(main_use) = shop · 업무·숙박·기타는 안 센다). '
   'window_from 은 그 창의 시작 달을 굳혀 둔 것이다(화면이 "최근 24개월"만 적으면 갱신을 미룬 날 '
   '그 문구가 조용히 거짓말이 된다). n 은 단가를 낼 수 있었던 행 수 = 중앙값의 실제 근거 수다. '
   '⚠️ 자료를 새로 넣으면 `python scripts/post_load.py` 로 갱신할 것. '
@@ -2298,7 +2398,8 @@ comment on function get_sigungu_tx_stats(text) is
   '표본이 없는 층대는 물질화뷰에 행이 없으므로 여기서 n=0 으로 채운다(칸이 사라지면 '
   '"그 층은 아예 안 판다"처럼 읽힌다). 화면은 n<5 면 수치를 감추고 "표본 부족"만 적는다. '
   'window_from 은 집계한 창의 시작 달, sigungu_nm 은 구 이름(화면에 지역명을 박지 않기 위해 '
-  '서버가 준다). security definer — 물질화뷰가 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다';
+  '서버가 준다). security definer — 물질화뷰가 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. '
+  '상가(근생·판매) 거래만 — 결정 0040 D3·D8(2026-10-18a)';
 
 revoke all on function list_parcel_transactions(text) from public, anon, authenticated;
 revoke all on function get_sigungu_tx_stats(text) from public, anon, authenticated;
@@ -2317,6 +2418,8 @@ revoke all on function get_sigungu_tx_stats(text) from public, anon, authenticat
 -- ⛔ 지분 거래(2026-10-08a): 단가 셋·n·median_area_m2 에서는 **빼고**, n_all·floor_missing·
 --    ym_cnt·first_ym·last_ym 에는 **그대로 센다**(👤 결정 — 그 해 거래 N건은 실제로 있던 거래 수다).
 --    그래서 where 가 아니라 filter 다 — where 에 걸면 건수까지 줄어든다.
+-- ⛔ 상가(근생·판매) 거래만(2026-10-18a · 결정 0040 D3·D8) — 이건 **where** 다. 단가·건수·층 미상 %가
+--    같은 거래 집단(상가)을 말해야 한다("그 해 거래 N건"도 상가 거래 수). 지분과 거꾸로다 — 헷갈리지 말 것.
 create materialized view if not exists mv_sigungu_tx_yearly as
 select
   t.sigungu_code,
@@ -2341,6 +2444,7 @@ select
   max(t.contract_ym)                                                            as last_ym
 from transaction t
 where t.tx_type = '집합'
+  and price_use_group_nm(t.main_use) = 'shop'
 group by t.sigungu_code, substr(t.contract_ym, 1, 4);
 
 comment on materialized view mv_sigungu_tx_yearly is
@@ -2350,6 +2454,7 @@ comment on materialized view mv_sigungu_tx_yearly is
   '2026-09-09b: median_area_m2 = 그 해 단가의 근거가 된 거래 **한 건**의 건물면적 중앙값(㎡) — '
   '단가와 같은 모집단에서 잰다. 다른 해보다 유난히 작으면 초소형 구획이 무더기로 거래된 해다. '
   '2026-10-08a: 지분 거래(is_share)는 단가 셋·n·median_area_m2 에서 빼고 n_all·floor_missing·ym_cnt·first_ym·last_ym 에는 센다. '
+  '2026-10-18a: 상가(근생·판매) 거래만 — 결정 0040 D3·D8(where — 단가·n_all·floor_missing·ym_cnt·first_ym·last_ym 모두 상가 거래만). '
   '⚠️ 자료를 새로 넣으면 `python scripts/post_load.py` 로 갱신할 것. '
   '⛔ anon 에게 열지 않는다 — 화면은 api.get_sigungu_tx_yearly() 로만 읽는다.';
 
@@ -2395,446 +2500,24 @@ comment on function get_sigungu_tx_yearly(text) is
   '화면은 n<5 면 수치를 감추고 "표본 부족"만 적는다(절대 규칙 3). security definer — 물질화뷰가 '
   'anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. sigungu_nm 은 구 이름(화면에 지역명을 박지 않기 위해). '
   '2026-09-09b: median_area_m2 = 그 해 단가의 근거가 된 거래 한 건의 건물면적 중앙값(㎡). '
-  '⛔ 숫자를 거르는 칸이 아니다 — 초소형 구획이 무더기로 거래된 해를 사람이 알아보게 하는 사실 한 칸이다.';
+  '⛔ 숫자를 거르는 칸이 아니다 — 초소형 구획이 무더기로 거래된 해를 사람이 알아보게 하는 사실 한 칸이다. '
+  '상가(근생·판매) 거래만 — 결정 0040 D3·D8(2026-10-18a)';
 
 revoke all on function get_sigungu_tx_yearly(text) from public, anon, authenticated;
 
 
 -- =====================================================================
--- Stage B — 참고 시세 밴드의 **서버 쪽** (2026-08-16, 결정 0013)
--- =====================================================================
--- 결정 0012 는 시세 표시를 두 단계로 갈랐고, Stage A(사실 표시)는 2026-08-15a 로 이미
--- 라이브에 있다. 여기서 만드는 것은 **Stage B** — 곁의 실거래로 "이 언저리"를 어림해
--- 밴드로 내보내는 길이다. 그 착수 여부는 성적표 v1(`docs/backtest/성적표-v1.md`)을 들고
--- 사장님이 재결재했고, 그 결재문이 결정 0013 이다.
---
--- ⛔ 절대 규칙 2 — 감정평가사 독점 업무를 연상시키는 표현(CLAUDE.md 금지 목록)은 이 파일
---    어디에도 쓰지 않는다. 여기 있는 것은 전부 **참고·추정**이며, 근거 단계(stage)와
---    표본 수(n)를 함께 낸다(절대 규칙 3). 근거를 숨긴 숫자는 내보내지 않는다.
---
--- 세 가지를 만든다:
---   ① price_gate_sigungu   — "이 구에서 참고 시세를 내도 되는가"의 정본 (결정 0013 §2)
---   ② price_floor_band()   — 층 번호 → 층대 이름 (백테스트와 **같은** 정의)
---   ③ list_price_bands()   — 이 필지의 층마다 밴드(또는 안 내는 이유)를 돌려준다
---
--- ## 왜 구 단위 게이트인가 (전 지역에 켜지 않는가)
---
--- 성적표 v1 은 "어디서나 믿을 만하다"를 보여주지 못했다. 어떤 구에서는 사다리가
--- **구 평균보다도 못하다**(금천구: 사다리 26.0% vs 구 평균 17.6%). 이미 화면에 있는
--- 구 평균보다 못한 값을 "추정"이라며 얹으면 후퇴다. 그래서 두 조건을 모두 만족한
--- 구에서만 켠다 — ① 운영 MdAPE ≤ 30% ② 같은 구에서 사다리가 구 평균을 이길 것.
---
--- ## 왜 목록을 표(DB)에 두나 — 화면·문서가 아니라
---
--- 목록을 화면 코드나 문서에 복사하면 성적표를 다시 뽑는 날 그 사본만 조용히 낡는다
--- (`list_open_sigungu()` 때 실제로 겪은 드리프트 — 확정 설계 9). 통과 구의 진실은
--- 서버 한 곳이고, 그 표를 채우는 것은 사람 손이 아니라 백테스트 산출물이다:
---   python scripts/backtest_price.py      → docs/backtest/통과구.csv
---   python scripts/load_price_gate.py     → price_gate_sigungu
-
--- =====================================================================
--- ① price_gate_sigungu — 참고 시세를 켜도 되는 구
--- =====================================================================
--- ## 왜 판정 근거(n_paired·ladder_mdape·base_mdape)까지 같이 넣나
---
--- 참·거짓만 남기면 "왜 이 구가 꺼져 있나"를 다음 사람이 성적표를 다시 뽑아야 알 수 있다.
--- 판정과 그 근거를 같은 줄에 두면, 표 한 번 조회로 "26.0% 인데 구 평균이 17.6% 라 졌다"
--- 까지 말할 수 있다. 숫자는 **짝지은 비교**(두 방법 모두 성립한 거래만)의 MdAPE 다.
-create table if not exists price_gate_sigungu (
-  sigungu_code  text        primary key,          -- PNU 앞 5자리
-  sigungu_nm    text,
-  n_paired      int,                              -- 짝지은 비교에 쓴 검증 거래 수
-  ladder_mdape  numeric,                          -- 운영 모드(사다리) 오차 중앙값 (0~1)
-  base_mdape    numeric,                          -- 대조군(구 평균) 오차 중앙값 (0~1)
-  gate_pass     boolean     not null,
-  loaded_at     timestamptz not null default now()
-);
-
-comment on table price_gate_sigungu is
-  '결정 0013 §2 참고 시세 출시 기준선 — 이 구에서 밴드를 화면에 내도 되는가의 정본. '
-  '조건 둘을 모두 만족해야 true: ① 사다리 MdAPE <= 30% ② 사다리가 BASE(구 평균)를 이김. '
-  '⛔ 손으로 구를 넣고 빼지 않는다 — scripts/backtest_price.py 가 만든 docs/backtest/통과구.csv 를 '
-  'scripts/load_price_gate.py 로만 갱신한다(결정 0013 §4). 기준선 자체를 바꾸는 것은 재결재 사항이다. '
-  '⛔ anon 에게 열지 않는다 — 화면은 list_price_bands() 로만 읽는다.';
-
-comment on column price_gate_sigungu.ladder_mdape is
-  '짝지은 비교(두 방법 모두 성립한 거래만) 기준 운영 모드 MdAPE. 비율이다(0.29 = 29%)';
-comment on column price_gate_sigungu.base_mdape is
-  '같은 집합에서 잰 구 평균(BASE)의 MdAPE. 이 값보다 ladder_mdape 가 작아야 통과다';
-
--- 2026-08-13f 가 기본 권한을 바꿔 뒀지만, 그 명령이 닿지 않는 경로(대시보드가 만든 것 등)가
--- 남아 있으므로 **만든 자리에서 한 번 더 닫는다.** 라이브 확인은 post_load.py --check 가 한다.
-revoke all on price_gate_sigungu from public, anon, authenticated;
-
--- ⛔ **이 표만 RLS 선언이 빠져 있었다** (2026-09-01 감사에서 기계 대조로 발견 — 정본의
---    `create table` 17개 vs `enable row level security` 16개, 빠진 하나가 이것이었다).
---    라이브는 켜져 있으니(17/17 실측) 지금 바뀌는 것은 없고, **정본으로 새 창고를 만들 때만**
---    이 표가 이중 잠금의 한 겹을 잃는다. 그 상태에서 누가 이 표를 대시보드로 다시 만들면
---    Supabase 가 새 객체에 anon 권한을 자동으로 붙이는 경로(2026-08-13 mv_search_parcel 사고)
---    에 그대로 노출된다.
--- ⓘ 다른 표와 같이 **정책은 하나도 만들지 않는다** — "RLS 켬 + 정책 0개" 가 곧 전부 거부다.
--- ⚠️ 이 표는 다른 16개와 성격이 하나 다르다: **유일한 독자가 정의자 함수 하나**(list_price_bands)
---    다. 그 함수는 이 표의 소유자와 같은 롤(postgres)이 만들므로 소유자 RLS 면제로 그대로
---    돈다(force 미사용). ⛔ 소유자가 갈리는 환경에서는 게이트가 통째로 0행이 되어 **전 구가
---    조용히 gate_fail 로 뒤집힌다** — 에러가 안 나므로 아무도 모른다.
-alter table price_gate_sigungu enable row level security;
-
--- =====================================================================
--- ② price_floor_band — 층 번호 → 층대 이름
--- =====================================================================
--- ## 왜 mv_sigungu_tx_stats 의 CASE 를 안 쓰고 새로 만드나 (정의가 셋이 되는데도)
---
--- Stage A 의 층대(mv_sigungu_tx_stats)는 **옥탑(99)을 '3층이상'에 흡수**한다. 결정 0012 의
--- 층대 정의가 ">=3" 이라서다. 그런데 Stage B 의 근거인 백테스트(`scripts/backtest_price.py`
--- 의 `floor_band()`)는 옥탑을 **따로** 센다 — 그래서 성적표가 "옥탑은 근거 0건"이라고
--- 말할 수 있었고, 결정 0013 §3 이 옥탑을 미제공으로 정할 수 있었다.
--- 두 정의를 하나로 합치면 둘 중 하나가 근거와 어긋난다: Stage A 로 맞추면 옥탑이 3층+
--- 표본에 섞여 "검증된 적 없는 층"에 값이 나가고, Stage B 로 맞추면 이미 라이브에 나가는
--- Stage A 화면의 칸이 하루아침에 바뀐다. 그래서 **Stage B 는 자기 근거와 같은 자를 쓴다.**
--- ⛔ 그러니 이 함수와 mv_sigungu_tx_stats 의 CASE 를 "중복"이라며 합치지 말 것.
---
--- ## 왜 search_path 를 안 박나
---
--- 이 함수는 표를 한 줄도 읽지 않는다(순수 계산). SET 절을 붙이면 SQL 함수 인라인이 막혀
--- 후보 한 줄마다 함수 호출이 남는다 — 같은 이유로 형제 함수 search_key() 도 안 박았다.
--- 2026-09-23a 에서 보안 고문 경고를 지우려 한 번 박았다가 list_price_bands 가
--- 45~56ms → 105~110ms(약 2.3배)로 느려져 되돌렸다(2026-09-23c). 경고 1건은 일부러 남긴다.
-create or replace function price_floor_band(p_floor smallint)
-returns text
-language sql
-immutable
-parallel safe
-as $$
-  select case
-    when p_floor is null then '층미상'
-    when p_floor < 0     then '지하'
-    when p_floor = 1     then '1층'
-    when p_floor = 2     then '2층'
-    when p_floor = 99    then '옥탑'
-    else                      '3층+'
-  end
-$$;
-
-comment on function price_floor_band(smallint) is
-  'Stage B(결정 0013) 층대 이름 — scripts/backtest_price.py 의 floor_band() 와 **같은 정의**다. '
-  '지하=음수 / 1층 / 2층 / 3층+ / 옥탑=99 / 층미상=NULL(절대 규칙 4: 0 은 쓰지 않는다). '
-  '⚠️ mv_sigungu_tx_stats 의 층대(옥탑을 3층이상에 흡수)와 일부러 다르다 — Stage A 와 Stage B 는 '
-  '각자의 근거와 같은 자를 쓴다. 내부용이라 anon 에게 열지 않는다';
-
-revoke all on function price_floor_band(smallint) from public, anon, authenticated;
-
--- =====================================================================
 -- 반경 조회용 지리 인덱스
 -- =====================================================================
 -- 기존 idx_parcel_geom 은 **geometry** 인덱스라 미터 단위 반경 질의(geography)에 붙지 않는다.
--- 4326 geometry 로 거리를 재면 단위가 '도(degree)'라 위도에 따라 실제 거리가 달라진다 —
--- 백테스트는 haversine(미터)로 쟀으므로 화면도 미터로 잰다. 다만 "같은 자로 쟀다"가
--- "성적표 숫자가 곧 이 화면의 성적"이라는 뜻은 아니다 — 아래 사다리 주석 참조.
+-- 4326 geometry 로 거리를 재면 단위가 '도(degree)'라 위도에 따라 실제 거리가 달라진다 — 그래서 미터로 잰다
+-- (아래 둘레의 업종 분포·인허가 반경 500m 가 이 색인을 탄다 · 처음 이 색인을 낳은 참고 시세 사다리는 결정 0041 로 내렸다).
 -- ⚠️ 이 인덱스를 만드는 동안 parcel(1.1M 행)에 **쓰기가 잠긴다**(SHARE 락 — 읽기는 된다).
 --    대시보드 SQL Editor 는 한 트랜잭션이라 concurrently 를 쓸 수 없다. 적재 작업과
 --    겹치지 않는 시간에 적용할 것.
 -- ⓘ 좌표는 지금 parcel.lat/lng 와 geom 이 같은 값에서 나온다(load_sangkwon_snapshot 이
 --    lat/lng 로 geom 을 만든다). 둘이 어긋나지 않게 하는 제약은 아직 없다(별건).
 create index if not exists idx_parcel_geog on parcel using gist ((geom::geography));
-
--- =====================================================================
--- 반경 이웃 찾기 전용 요약표 — 거래가 있는 필지만 (2026-09-27c)
--- =====================================================================
--- list_price_bands 의 반경 100m·500m 이웃은 L4·L5 의 `t.pnu = any(…)` 에만 쓰인다 — 거래가
--- 없는 필지는 이웃 배열에 들어 있어도 아무것도 안 건진다. 그런데 예전에는 그 이웃을
--- parcel(전국 111만 행 · 힙 416MB · idx_parcel_geog 90MB)에서 찾아, 첫 방문(찬 캐시)마다
--- 반경 안 필지 수백 곳을 훑느라 창고에서 수백 쪽을 꺼냈다(2026-09-27 라이브 실측 —
--- 이 함수 찬 캐시 첫 호출 74~789쪽의 대부분). 거래가 있고 좌표가 있는 필지는 4,384곳뿐이다(2026-09-27 기준).
--- ⛔ **거래 조건을 좁히지 말 것**(집합·단가 있음·24개월 등). 그 조건은 L4·L5 가 거래 쪽에서
---    이미 건다 — 여기서 또 걸면 두 곳이 같은 규칙을 따로 들게 되고, 한쪽만 고치는 날 조용히
---    갈린다. 이 표는 "거래가 한 건이라도 있는 필지"라는 가장 넓은 상한만 진다.
--- ⛔ 좌표는 parcel.geom 에서만 뽑는다(lat/lng 칸을 쓰면 검색·상권판정과 자리가 갈린다).
--- ⚠️ **자료를 새로 넣으면 `python scripts/post_load.py`** — 안 하면 새로 거래가 생긴 필지가
---    이웃에서 조용히 빠진다(에러 0 — 형제 요약표들과 같은 방식).
-create materialized view if not exists mv_tx_parcel_geog as
-select p.pnu,
-       p.geom::geography as geog
-  from parcel p
- where p.geom is not null
-   and exists (select 1 from transaction t where t.pnu = p.pnu);
-
-comment on materialized view mv_tx_parcel_geog is
-  'list_price_bands 반경 이웃 찾기 전용(2026-09-27c) — 거래가 한 건이라도 있고 좌표가 있는 필지만. '
-  '이웃 배열은 L4·L5 의 t.pnu = any(…) 에만 쓰여 거래 없는 필지를 빼도 결과가 같다. '
-  'parcel 전국 111만 행 대신 이 표(수천 행)를 훑어 찬 캐시 첫 호출의 창고 읽기를 줄인다. '
-  '⚠️ 자료를 새로 넣으면 `python scripts/post_load.py` 를 반드시 돌릴 것 — '
-  '안 하면 새 거래 필지가 이웃에서 조용히 빠진다(에러가 아니다).';
-
--- ⛔ 유니크가 없으면 `refresh materialized view concurrently` 가 아예 안 된다(post_load.py).
-create unique index if not exists idx_mtpg_pnu  on mv_tx_parcel_geog (pnu);
--- 반경 조회(st_dwithin geography)를 받치는 색인 — 없으면 이 표를 통째로 훑는다.
-create index if not exists idx_mtpg_geog        on mv_tx_parcel_geog using gist (geog);
-
-analyze mv_tx_parcel_geog;
-
--- ⛔ 이 표는 정본(schema.sql) 아래쪽의 기본권한 회수보다 먼저 만들어진다 — 새 환경에서 이 줄이
---    없으면 anon 이 거래 있는 필지 목록과 좌표를 REST 로 통째 읽는다. 화면은 함수로만 읽는다.
-revoke all on mv_tx_parcel_geog from public, anon, authenticated;
-
--- =====================================================================
--- ③ list_price_bands — 이 필지의 층별 참고 시세 밴드
--- =====================================================================
--- ## 무엇을 돌려주나
---
--- 층 하나에 한 줄. `status` 가 그 줄의 성격을 말한다:
---   gate_fail    — 이 구는 아직 참고 시세를 내지 않는다(결정 0013 §2). 층 나열도 하지 않는다
---   floor_1f     — 1층은 제공하지 않는다(백테스트 MdAPE 45.2% — 코너·전면 여부가 자료에 없다)
---   no_evidence  — 지하·옥탑·층미상. 백테스트 표본이 **0건**이라 아무 말도 할 수 없다
---   no_estimate  — 사다리가 어느 단계도 못 세웠다("표본 부족")
---   ok           — 밴드를 낸다. stage(근거 단계)와 n(표본 수)을 반드시 함께 쓴다
---
--- ## 왜 밴드가 p25~p75 인가
---
--- 추정 한 점(중앙값)만 내면 "이 가격이다"로 읽힌다. 성적표가 말하는 것은 "이 언저리다"뿐이다
--- (전체 MdAPE 29.1%). 그래서 후보 거래 단가의 **사분위 폭**을 그대로 내보낸다 — 폭이 곧
--- "곁의 가게들이 실제로 이만큼 갈렸다"는 사실이다. 총액 환산은 화면이 median_area_m2 로 한다.
---
--- ## 사다리 (결정 0012 §6.2 · 백테스트와 같은 순서·같은 최소 표본)
---
---   L2  같은 필지 + 같은 층          최소 1건
---   L4  반경 100m + 같은 층          최소 3건
---   L5  반경 500m + 같은 층          최소 5건
---   L6  같은 법정동 + 같은 층대      최소 1건
---
--- ⛔ 이 최소 표본은 `scripts/backtest_price.py` 의 `MIN_SAMPLES` 와 **같은 값이라야 한다.**
---    갈라지면 화면과 성적표가 서로 다른 방법이 되는데 어디서도 에러가 안 난다.
--- ⚠️ 다만 **같아지는 것은 사다리 규칙과 최소 표본까지**다. 후보를 고르는 창은 서로 다르다:
---    백테스트는 학습 구간(~202512)의 거래만 후보로 쓰고, 여기서는 **오늘 기준 롤링 24개월**을
---    쓴다(검증 구간의 거래도 후보가 된다). 그래서 성적표의 29.1%·45.2% 같은 숫자는 이 함수의
---    성적이 아니라 **참고치**다 — "이 규칙이 그때 그 자료에서 이 정도였다"까지만 말한다.
--- ⚠️ BASE(구 평균)는 사다리에 넣지 않는다. 대조군이지 단계가 아니다(성적표 §1).
---
--- ## 왜 후보를 한 번만 모으고 층마다 다시 안 재나
---
--- 반경은 **필지 위치**로 정해지므로 층이 바뀌어도 이웃은 그대로다. 건물 한 채에 층이
--- 열몇 개니, 층마다 반경을 다시 재면 같은 지리 조회를 열몇 번 반복하게 된다.
---
--- ## 왜 24개월인가 · 왜 KST 인가
---
--- Stage A 의 구 분포(mv_sigungu_tx_stats)와 같은 창을 쓴다 — 한 화면에서 두 숫자가 서로
--- 다른 기간을 말하면 비교가 거짓말이 된다. now() 는 UTC 라 월말·월초에 한 달이 어긋나므로
--- KST 로 고정한다(timezone 룰).
---
--- ⚠️ 파라미터를 p_ 로 시작하는 이유: `pnu`·`floor_no` 는 컬럼 이름과 겹친다. 겹치면
---    PostgreSQL 이 컬럼을 우선 집어 `where t.pnu = t.pnu`(= 전 국토 거래)가 된다
---    (list_parcel_transactions·list_building_districts 가 밟을 뻔한 함정).
-create or replace function list_price_bands(p_pnu text)
-returns table (
-  floor_no        smallint,
-  status          text,
-  stage           text,
-  n               int,
-  p25             numeric,
-  median          numeric,
-  p75             numeric,
-  median_area_m2  numeric,
-  window_from     text
-)
-language plpgsql
-stable
-security definer
-set search_path = public
-as $$
-declare
-  -- ⛔ **파라미터를 그대로 쓰지 말 것.** 서명은 text 인데 pnu 컬럼은 세 표(parcel·
-  --    building_floor·transaction) 모두 char(19) 다. `char컬럼 = text파라미터` 는 컬럼 쪽이
-  --    text 로 캐스트돼 인덱스가 통째로 무력해진다(2026-08-16b 라이브 실측):
-  --      · building_floor 층 목록: text 비교 cost 31,239 · 459.8ms ↔ char 비교 cost 2.07 · 0.796ms
-  --      · 함수 전체:              707~733ms          ↔ char(19) 파라미터 복제본 73~101ms
-  --    L4 주석의 배열 이야기와 **같은 병의 스칼라판**이다 — 파라미터와 컬럼의 타입을 맞춘다.
-  -- ⓘ 변수 대입(text→char(19))은 19자를 넘는 입력에서 **자르지 않고 에러**(value too long)를
-  --    낸다 — 끝 공백만 조용히 버린다(2026-09-27 라이브 실측, 예전 주석의 "자른다"는 틀렸다).
-  --    화면은 19자 pnu 만 보내므로 무해하다(더 긴 입력은 애초에 pnu 가 아니다).
-  v_pnu      char(19) := p_pnu;
-  -- ⚠️ **char(6) 이다.** contract_ym 컬럼이 char(6) 인데 여기를 text 로 두면
-  --    `char컬럼 >= text변수` 비교에서 컬럼이 text 로 캐스트돼 인덱스 조건으로
-  --    못 들어간다(2026-08-16b 가 pnu 에서 겪은 것과 **같은 병**). 나갈 때만
-  --    `::text` 로 되돌린다 — window_from 은 text 로 약속돼 있다.
-  v_from     char(6);
-  v_gate     boolean;
-  v_geog     geography;
-  -- ⚠️ text[] 가 아니라 char(19)[] 인 이유: transaction.pnu 가 char(19) 라 text 와 견주면
-  --    캐스트가 끼어 배열 조건이 인덱스 안으로 못 들어간다(아래 L4 주석의 실측 참조).
-  v_near100  char(19)[];
-  v_near500  char(19)[];
-  v_floor    smallint;
-  v_band     text;
-  v_stage    text;
-  v_n        int;
-  v_p25      numeric;
-  v_med      numeric;
-  v_p75      numeric;
-  v_area     numeric;
-begin
-  v_from := to_char((now() at time zone 'Asia/Seoul') - interval '24 months', 'YYYYMM');
-
-  -- ⓘ 여기만 `::char(5)` 가 없는 것은 실수가 아니다(2026-08-22 라이브 실측).
-  --    price_gate_sigungu.sigungu_code 는 **text** 다(mv_open_sigungu·parcel·transaction
-  --    쪽 sigungu_code 가 char(5) 인 것과 다르다). substr() 의 결과도 text 라 지금이
-  --    이미 타입이 맞은 상태다 — 여기에 ::char(5) 를 붙이면 text→char(5)→text 로
-  --    되돌아가는 군더더기 캐스트가 생기고, 덤으로 bpchar 의 뒤 공백 무시 규칙까지
-  --    끌어들인다. 타입을 맞추라는 규칙(2026-08-16b)은 **상대 컬럼의 타입**을 보라는
-  --    뜻이지 char 로 통일하라는 뜻이 아니다.
-  select g.gate_pass into v_gate
-    from price_gate_sigungu g
-   where g.sigungu_code = substr(v_pnu, 1, 5);
-
-  -- 아직 판정이 없는 구(표에 줄이 없음)도 '아니오'다 — 모르면 안 낸다.
-  if v_gate is not true then
-    return query select null::smallint, 'gate_fail'::text, null::text, null::int,
-                        null::numeric, null::numeric, null::numeric, null::numeric, v_from::text;
-    return;
-  end if;
-
-  select p.geom::geography into v_geog from parcel p where p.pnu = v_pnu;
-
-  -- 500m 안을 한 번만 훑고 100m 는 거기서 걸러 쓴다(백테스트 neighbors_within 과 같은 방식).
-  -- 좌표가 없으면 두 배열이 비고, 반경 단계는 후보 0건이 되어 저절로 건너뛴다
-  -- (백테스트의 coords_missing 과 같은 취급 — 죽지 않고 아래 단계로 내려간다).
-  -- 마지막 인자 false = **구면**으로 잰다(기본값 true 는 회전타원체). 백테스트가 쓴
-  -- haversine 이 구면이라 자를 맞춘 것이다. 남는 차이는 반지름 소수점뿐이고
-  -- (PostGIS 6,371,008.7714m vs 백테스트 6,371,008.8m) 500m 에서 1mm 미만이라 무시한다.
-  -- ⛔ 이웃은 parcel(전국 111만 행)이 아니라 **거래가 있는 필지만 모은 요약표**
-  --    mv_tx_parcel_geog 에서 찾는다(2026-09-27c). 이웃 배열은 아래 L4·L5 의
-  --    `t.pnu = any(…)` 에만 쓰이므로, 거래가 없는 필지는 들어 있어도 아무것도 안 건진다
-  --    — 빼도 결과가 같다(라이브 md5 대조로 증명). 찬 캐시에서 parcel 의 GiST·힙을 훑던
-  --    수백 쪽이 수십 쪽으로 준다. ⚠️ 새 실거래를 넣고 `post_load.py` 를 안 돌리면 그
-  --    필지가 이웃에서 조용히 빠진다(요약표 갱신 목록 REFRESH_MVS 에 들어 있다).
-  if v_geog is not null then
-    select coalesce(array_agg(p.pnu) filter (
-             where st_dwithin(p.geog, v_geog, 100, false)), '{}'),
-           coalesce(array_agg(p.pnu), '{}')
-      into v_near100, v_near500
-      from mv_tx_parcel_geog p
-     where st_dwithin(p.geog, v_geog, 500, false);
-  end if;
-  v_near100 := coalesce(v_near100, '{}');
-  v_near500 := coalesce(v_near500, '{}');
-
-  for v_floor in
-    select distinct bf.floor_no from building_floor bf
-     where bf.pnu = v_pnu
-     order by 1
-  loop
-    -- 1층은 값이 자리(코너·전면·골목)로 갈리는데 그 자리가 공공데이터에 없다.
-    -- 백테스트 MdAPE 45.2% — 다른 층대의 두 배다. 그래서 "모른다"고 말한다(결정 0013 §3).
-    if v_floor = 1 then
-      return query select v_floor, 'floor_1f'::text, null::text, null::int,
-                          null::numeric, null::numeric, null::numeric, null::numeric, v_from::text;
-      continue;
-    end if;
-
-    -- 지하(음수)·옥탑(99)·층미상은 백테스트 표본이 **0건**이다(2017년부터 실거래 원본에
-    -- 지하층 표기가 오지 않는다 — 알려진한계). 검증된 적 없는 층에는 값을 내지 않는다.
-    if v_floor is null or v_floor < 0 or v_floor = 99 then
-      return query select v_floor, 'no_evidence'::text, null::text, null::int,
-                          null::numeric, null::numeric, null::numeric, null::numeric, v_from::text;
-      continue;
-    end if;
-
-    v_band := price_floor_band(v_floor);
-
-    select a.lvl, a.cnt, a.q25, a.q50, a.q75, a.area_med
-      into v_stage, v_n, v_p25, v_med, v_p75, v_area
-      from (
-        select c.lvl,
-               count(*)::int                                              as cnt,
-               -- 자리수를 원본 컬럼과 맞춘다(unit_price=numeric(14,2)·bld_area_m2=numeric(10,2)).
-               -- 보간 결과는 소수점이 끝없이 늘어나 화면·JSON 에 의미 없는 자리가 실린다.
-               (percentile_cont(0.25) within group (order by c.unit_price))
-                 ::numeric(14,2)                                           as q25,
-               (percentile_cont(0.5)  within group (order by c.unit_price))
-                 ::numeric(14,2)                                           as q50,
-               (percentile_cont(0.75) within group (order by c.unit_price))
-                 ::numeric(14,2)                                           as q75,
-               -- 총액 환산의 자 — 화면이 "㎡당 단가 × 이 면적"으로 억 단위를 만든다.
-               -- 면적이 없는 행은 빼고 잰다(있는 것처럼 0 을 섞으면 총액이 작아진다).
-               (percentile_cont(0.5)  within group (order by c.bld_area_m2)
-                 filter (where c.bld_area_m2 is not null))
-                 ::numeric(10,2)                                           as area_med
-          from (
-            -- ⛔ 네 갈래 **모두** 지분 거래(is_share)를 뺀다(2026-10-08a) — 건물 일부 몫만 사고판
-            --    거래라 ㎡당 단가가 약 0.39배로 낮게 나온다. 한 갈래만 빠뜨리면 그 단계의 밴드만
-            --    조용히 내려앉는다(에러 0). 칸 조건이라 색인(idx_tx_pnu·idx_tx_pnu10_ym)은 그대로 탄다.
-            -- L2 — 같은 필지 같은 층
-            select 'L2'::text as lvl, t.unit_price, t.bld_area_m2
-              from transaction t
-             where t.tx_type = '집합' and t.unit_price is not null and not t.is_share
-               and t.contract_ym >= v_from
-               and t.pnu = v_pnu and t.floor_no = v_floor
-            union all
-            -- L4 — 반경 100m 같은 층
-            -- ⚠️ 배열의 타입이 성능을 가른다(2026-08-16 라이브 EXPLAIN 실측, 이웃 839필지):
-            --    · `t.pnu::text = any(text[])` → 배열이 **힙 필터**로 밀려 1,957행을 읽고 버림
-            --      (buffers 618 · 4.4~5.7ms)
-            --    · `join unnest(...) on t.pnu = nb.pnu` → 해시 조인이라 1,934행을 먼저 뜸
-            --      (buffers 610 · 8.1~8.2ms)
-            --    · `t.pnu = any(char(19)[])` → **Index Cond** 로 들어가 idx_tx_pnu 를 그대로 탐
-            --      (buffers 133 · heap blocks 392→5 · 2.5~2.7ms) ← 이것을 쓴다
-            --    핵심은 캐스트를 없애 **컬럼과 배열의 타입을 맞추는 것**이다.
-            select 'L4', t.unit_price, t.bld_area_m2
-              from transaction t
-             where t.tx_type = '집합' and t.unit_price is not null and not t.is_share
-               and t.contract_ym >= v_from
-               and t.floor_no = v_floor and t.pnu = any(v_near100)
-            union all
-            -- L5 — 반경 500m 같은 층
-            select 'L5', t.unit_price, t.bld_area_m2
-              from transaction t
-             where t.tx_type = '집합' and t.unit_price is not null and not t.is_share
-               and t.contract_ym >= v_from
-               and t.floor_no = v_floor and t.pnu = any(v_near500)
-            union all
-            -- L6 — 같은 법정동(PNU 앞 10자리) 같은 층대
-            -- "행정동" 이 아니라 법정동인 이유: 실거래의 동은 문자, 건물의 동은 코드라
-            -- 이름 대조가 조용히 어긋난다(성적표 §1 · 결정 0012 §4).
-            select 'L6', t.unit_price, t.bld_area_m2
-              from transaction t
-             where t.tx_type = '집합' and t.unit_price is not null and not t.is_share
-               and t.contract_ym >= v_from
-               and t.pnu is not null
-               and substr(t.pnu, 1, 10) = substr(v_pnu, 1, 10)
-               and price_floor_band(t.floor_no) = v_band
-          ) c
-         group by c.lvl
-      ) a
-      -- 최소 표본은 백테스트 MIN_SAMPLES 와 같은 값이다(위 ⛔ 주석 참조).
-      join (values ('L2', 1, 1), ('L4', 2, 3), ('L5', 3, 5), ('L6', 4, 1))
-             as s(lvl, ord, min_n) on s.lvl = a.lvl
-     where a.cnt >= s.min_n
-     order by s.ord
-     limit 1;   -- 처음 성립하는 단계를 채택한다(사다리 걷기)
-
-    if v_stage is null then
-      return query select v_floor, 'no_estimate'::text, null::text, null::int,
-                          null::numeric, null::numeric, null::numeric, null::numeric, v_from::text;
-    else
-      return query select v_floor, 'ok'::text, v_stage, v_n,
-                          v_p25, v_med, v_p75, v_area, v_from::text;
-    end if;
-  end loop;
-  return;
-end;
-$$;
-
-comment on function list_price_bands(text) is
-  'Stage B(결정 0013) 이 필지의 층별 참고 시세 밴드 — 곁의 실거래(최근 24개월·집합·지분 거래 제외 — 2026-10-08a)로 어림한 '
-  '추정값이며 감정평가가 아니다. 한 층에 한 줄이고 status 가 그 줄의 성격을 말한다: '
-  'gate_fail(이 구는 기준선 미달 — 층 나열 없이 한 줄) / floor_1f(1층 미제공) / '
-  'no_evidence(지하·옥탑·층미상 — 백테스트 표본 0건) / no_estimate(표본 부족) / ok(밴드). '
-  'ok 인 줄은 stage(L2·L4·L5·L6)와 n(표본 수)을 **반드시 함께** 표시한다(절대 규칙 3). '
-  'p25/median/p75 는 ㎡당 단가, median_area_m2 는 총액 환산용 후보 면적 중앙값이다. '
-  'security definer — transaction·parcel·price_gate_sigungu 가 anon 에게 닫혀 있어 '
-  '소유자 권한으로 대신 읽는다. 나가는 것은 층·통계값뿐(개별 거래·상호명은 나가지 않는다)';
-
--- public 원본은 닫는다 — 화면이 부르는 것은 api.list_price_bands 뿐(2026-09-05a)
-revoke all on function list_price_bands(text) from public, anon, authenticated;
-
 
 -- =====================================================================
 -- 둘레의 업종 분포 (결정 0014 · 마이그레이션 2026-08-22c)
@@ -2857,8 +2540,8 @@ revoke all on function list_price_bands(text) from public, anon, authenticated;
 --
 -- ## 왜 반경을 이웃 필지로 재나
 --
--- list_price_bands 가 같은 화면에서 이미 "반경 500m"를 이웃 필지로 정의해 쓴다. 두 블록이
--- 서로 다른 자로 500m 를 재면 비교가 거짓말이 된다. 두 자의 답을 8곳에서 대조해 최대
+-- (처음엔) 참고 시세 사다리가 같은 화면에서 "반경 500m"를 이웃 필지로 정의해 썼다 — 두 블록이
+-- 서로 다른 자로 500m 를 재면 비교가 거짓말이 된다(그 사다리는 결정 0041 로 내렸다). 두 자의 답을 8곳에서 대조해 최대
 -- 차이 1.4% 임을 확인했다(unit_business.pnu 채움률 99.94%).
 --
 -- ⓘ 이 조인은 상권 쪽 색인 idx_district_geom 으로 간다(점포 표는 최신 분기만 순차로 훑는다 —
@@ -3673,9 +3356,6 @@ revoke all on mv_sigungu_tx_yearly from public, anon, authenticated;
 -- 훑을 때 열린 표로 읽힌다(중복 revoke 는 무해하다). ⛔ 이 표가 열리면 **구 전체의 상호가
 -- REST 로 통째** 나간다 — 화면은 search_stores 함수로만 읽는다.
 revoke all on mv_parcel_store_names from public, anon, authenticated;
--- 반경 이웃 찾기 전용 요약표(2026-09-27c). 새 표 블록에도 같은 줄이 있다(위와 같은 이유로
--- 목록에 한 번 더). 열리면 거래가 있는 필지 목록과 좌표가 통째로 나간다.
-revoke all on mv_tx_parcel_geog from public, anon, authenticated;
 
 -- 그리고 **앞으로 만들 것도 자동으로 안 열리게** 기본값 자체를 바꾼다.
 -- 이게 없으면 다음에 표를 하나 더 만들 때 같은 일이 또 난다(사람 기억에 의존하게 된다).
@@ -4012,24 +3692,6 @@ security definer
 set search_path = ''
 as $$ select * from public.get_sigungu_tx_yearly(sigungu) $$;
 
-create or replace function api.list_price_bands(p_pnu text)
-returns table (
-  floor_no        smallint,
-  status          text,
-  stage           text,
-  n               int,
-  p25             numeric,
-  median          numeric,
-  p75             numeric,
-  median_area_m2  numeric,
-  window_from     text
-)
-language sql
-stable
-security definer
-set search_path = ''
-as $$ select * from public.list_price_bands(p_pnu) $$;
-
 create or replace function api.list_industry_mix(p_pnu text)
 returns jsonb
 language sql
@@ -4079,7 +3741,6 @@ revoke all on function api.list_building_districts(text)      from public, anon,
 revoke all on function api.list_parcel_transactions(text)     from public, anon, authenticated;
 revoke all on function api.get_sigungu_tx_stats(text)         from public, anon, authenticated;
 revoke all on function api.get_sigungu_tx_yearly(text)        from public, anon, authenticated;
-revoke all on function api.list_price_bands(text)             from public, anon, authenticated;
 revoke all on function api.list_industry_mix(text)            from public, anon, authenticated;
 revoke all on function api.list_industry_detail(text, text)   from public, anon, authenticated;
 revoke all on function api.list_industry_floors(text, text, text[]) from public, anon, authenticated;
@@ -4093,7 +3754,6 @@ grant execute on function api.list_building_districts(text)      to anon, authen
 grant execute on function api.list_parcel_transactions(text)     to anon, authenticated;
 grant execute on function api.get_sigungu_tx_stats(text)         to anon, authenticated;
 grant execute on function api.get_sigungu_tx_yearly(text)        to anon, authenticated;
-grant execute on function api.list_price_bands(text)             to anon, authenticated;
 grant execute on function api.list_industry_mix(text)            to anon, authenticated;
 grant execute on function api.list_industry_detail(text, text)   to anon, authenticated;
 grant execute on function api.list_industry_floors(text, text, text[]) to anon, authenticated;
@@ -4102,7 +3762,7 @@ grant execute on function api.list_industry_median_m(text, text) to anon, authen
 
 -- ── 수집·적재기가 REST 로 쓰는 표 — pass-through 뷰 ──────────────────────────
 -- 이 목록은 스크립트를 훑어 뽑은 것이다(`/rest/v1/` 와 upsert 대상). 여기 **없는 것**은
--- 일부러 없다 — district·district_rone_map·price_gate_sigungu·물질화뷰들은 psql(dbx.py)
+-- 일부러 없다 — district·district_rone_map·물질화뷰들은 psql(dbx.py)
 -- 로만 다루므로 REST 경로가 필요 없고, 안 만드는 것이 곧 노출면을 줄이는 일이다.
 --
 -- ⚠️ **뷰는 RLS 를 우회한다.** 아래 표는 전부 RLS 가 켜져 있지만 이 뷰는 소유자 권한으로
@@ -4534,7 +4194,8 @@ revoke all on sequence nts_base_price_id_seq from public, anon, authenticated;
 -- ⛔ **여러 해가 쌓여도 한 해만 본다.** 필터 없이 묶으면 2026년과 2027년 값의 중앙값이라는
 --    뜻 없는 숫자가 나온다. 그 필지에 있는 **가장 최근 고시일자**만 골라 그 안에서 센다.
 -- ⚠️ 파라미터를 p_ 로 시작하는 이유: `pnu` 는 컬럼 이름과 겹친다. 겹치면 PostgreSQL 이
---    컬럼을 우선 집어 `where n.pnu = n.pnu`(= 전 국토)가 된다(list_price_bands 와 같은 함정).
+--    컬럼을 우선 집어 `where n.pnu = n.pnu`(= 전 국토)가 된다(결정 0041 로 지운 옛 list_price_bands 와
+--    같은 함정).
 create or replace function list_base_prices(p_pnu text)
 returns table (
   floor_no             smallint,
@@ -5773,95 +5434,6 @@ grant execute on function api.list_floor_units(text, int, int, int) to anon, aut
 notify pgrst, 'reload schema';
 
 -- =====================================================================
--- 성적표 공개 — 통과 구 게이트를 화면이 읽는 길 (2026-09-05e)
--- =====================================================================
--- 로드맵 Wave 4 『성적표 공개 + 방법 공개』. 표는 하나도 안 만든다 — 위 ①
--- `price_gate_sigungu`(결정 0013 §2 의 정본)를 **목록으로** 읽는 길을 뚫는 것뿐이다.
---
--- 지금까지 이 표의 유일한 독자는 `list_price_bands` 하나였다(그 함수는 "이 구가
--- 통과했나"만 보고 밴드를 낼지 말지 정한다). 화면이 "어느 구가 왜 켜지고 꺼졌나"를
--- 보여주려면 같은 표를 목록으로 읽어야 하는데, 그 길이 없으면 화면·문서에 목록을 베끼는
--- 수밖에 없다 — 그게 바로 결정 0013 §4 가 금지한 사본 드리프트다.
---
--- ⛔ 나가는 것은 **구별 요약 한 줄씩**이다. 검증 거래 하나하나(필지·층·단가)는 이 표에
---    아예 없다(`docs/backtest/검증거래별원자료.csv` 소관이고, 그것을 밖으로 내보내는 것은
---    별건 판단이다).
--- ⛔ 통과한 구만 거르지 않는다 — 탈락 사유(구평균을 못 이겼다 등)가 이 화면의 본론이다.
-
-create or replace function list_price_gate()
-returns table (
-  sigungu_code  text,
-  sigungu_nm    text,
-  n_paired      int,
-  ladder_mdape  numeric,
-  base_mdape    numeric,
-  gate_pass     boolean,
-  loaded_at     timestamptz
-)
-language sql
-stable
-security definer
-set search_path = public
-as $$
-  -- 표를 **그대로** 나른다. 여기서 거르거나 정렬 규칙을 새로 정하지 않는다 —
-  -- 통과한 구만 주면 "왜 우리 구는 없나"에 답할 수 없고(탈락 사유가 이 화면의 본론이다),
-  -- 화면이 다시 계산하면 판정이 두 곳에 생겨 언젠가 갈린다.
-  -- ⓘ 30개 구뿐이라 상한(limit)을 두지 않는다. 이 표는 성적표를 다시 뽑아야 늘고,
-  --   그때도 열린 지역 수만큼이다(형제 함수들의 limit 은 수만 행짜리 목록에 있는 것이다).
-  select g.sigungu_code,
-         g.sigungu_nm,
-         g.n_paired,
-         g.ladder_mdape,
-         g.base_mdape,
-         g.gate_pass,
-         g.loaded_at
-  from price_gate_sigungu g
-  order by g.sigungu_code;
-$$;
-
-comment on function list_price_gate() is
-  '2026-09-05e 참고 시세 게이트(결정 0013 §2)의 구별 판정과 그 근거 — 구 코드·이름, '
-  '짝지은 검증 거래 수, 사다리 MdAPE, 구평균(BASE) MdAPE, 통과 여부, 적재 시각. '
-  '⛔ 나가는 것은 구별 요약뿐이다 — 검증 거래 하나하나(필지·층·단가)는 이 표에 아예 없다. '
-  '⛔ 통과 구 목록의 정본은 이 표 한 곳이다(결정 0013 §4) — 화면·문서가 목록을 베끼지 '
-  '않게 하려고 이 읽기 길을 뚫었다. 표를 채우는 것은 사람 손이 아니라 backtest_price.py → '
-  'load_price_gate.py 다. ⛔ 통과한 구만 거르지 않는다 — 탈락 사유(구평균을 못 이겼다 등)를 '
-  '말하려면 떨어진 구도 함께 있어야 한다. '
-  'security definer (price_gate_sigungu 가 anon 에게 통째로 닫혀 있어 소유자 권한으로 '
-  '대신 읽는다).';
-
--- ⚠️ create or replace 는 권한을 유지하지만, 대시보드가 같은 함수를 다시 만들면
---    Supabase 기본 권한이 anon 을 자동으로 붙인다. 만든 자리에서 다시 닫는다.
-revoke all on function list_price_gate() from public, anon, authenticated;
-
--- 화면이 실제로 부르는 것. public 은 REST 노출에서 빠져 있어(2026-08-24 옛 문 닫기)
--- api 쪽에 통과 함수가 없으면 화면에서 못 부른다.
-create or replace function api.list_price_gate()
-returns table (
-  sigungu_code  text,
-  sigungu_nm    text,
-  n_paired      int,
-  ladder_mdape  numeric,
-  base_mdape    numeric,
-  gate_pass     boolean,
-  loaded_at     timestamptz
-)
-language sql
-stable
-security definer
-set search_path = ''
-as $$ select * from public.list_price_gate() $$;
-
-revoke all on function api.list_price_gate() from public, anon, authenticated;
-grant execute on function api.list_price_gate() to anon, authenticated;
-
--- ⛔ public.list_price_gate 는 끝까지 닫아 둔다 — 통과 함수가 security definer 라
---    소유자 권한으로 부르므로 anon 에게 열 필요가 없다.
--- ⛔ 표 price_gate_sigungu 자체는 열지 않는다(위 ① 의 revoke + RLS 그대로).
-
-notify pgrst, 'reload schema';
-
--- =====================================================================
 -- 표·함수: district_openclose / list_district_openclose — 서울 상권 개업·폐업 (2026-10-05b · 결정 0033)
 -- =====================================================================
 -- 서울시 상권분석서비스 「점포-상권」(OA-15577) 공표값을 그대로 담고 그대로 나른다 — 우리가
@@ -6190,11 +5762,12 @@ grant execute on function api.get_parcel_land_price(text) to anon, authenticated
 --    거짓말을 한다(코드는 한 줄도 안 고쳤는데 화면이 옛 분기를 말한다). 기준일은 창고에서
 --    읽고, "다음 갱신 예정"은 **규칙으로 계산**한다 — 어느 쪽도 사람이 적는 숫자가 아니다.
 --
--- 규칙은 넷뿐이고 함수 안에 한 번씩만 적혀 있다: 분기 자료는 분기말 + 5개월 - 하루(다음
---    분기가 공개되는 달의 말일), 월간 자료는 기준월 + 3개월 - 하루(다음 판이 공개되는 달의
---    말일), 국세청 기준시가는 고시일의 다음 해 3월 31일, 필지(개별공시지가)는 공시 연도의
---    다음 해 6월 30일(2026-10-12b · 사장님 결정). 주기가 없는 자료는 null 이다 —
---    없는 주기를 지어내면 "늦었다"는 거짓 신호가 화면에 뜬다.
+-- 규칙은 다섯뿐이고 함수 안에 한 번씩만 적혀 있다: 분기 자료는 분기말 + 5개월 - 하루(다음
+--    분기가 공개되는 달의 말일), 월간 자료(인허가 기준월 · 건축물대장 판 — 2026-10-15a)는
+--    기준월 + 3개월 - 하루(다음 판이 공개되는 달의 말일), 실거래는 계약월 + 2개월 - 하루
+--    (2026-10-15a · 사장님 결정 — 매달 최근 6개월을 다시 받는다), 국세청 기준시가는 고시일의
+--    다음 해 3월 31일, 필지(개별공시지가)는 공시 연도의 다음 해 6월 30일(2026-10-12b · 사장님
+--    결정). 주기가 없는 자료는 null 이다 — 없는 주기를 지어내면 "늦었다"는 거짓 신호가 화면에 뜬다.
 --
 -- ⓘ 월간 규칙은 2026-10-01a 에 바뀌었다(사장님 결정 2026-10-01). 옛 규칙(기준월 + 2개월 - 하루)은
 --    **지금 들어 있는 판이 게시된 달**의 말일을 띄웠다 — 건축HUB 인허가 월간 파일은 그 달 다음 달
@@ -6232,14 +5805,17 @@ as $$
            'sangkwon'::text             as rule_kind,
            '분기마다 (다음 분기 자료가 공개되면 사람이 적재)'::text as cadence
     union all
+    -- 2026-10-15a — 실거래는 매달 최근 6개월을 다시 받는다(사장님 결정 2026-10-15 · 규칙 'tx').
     select 2, '실거래 (매매)', '계약월',
            (select max(t.contract_ym)::text from transaction t),
-           'none',
-           '수시 (서울·대전 전부 활성화 뒤 확대)'
+           'tx',
+           '월 1회 (최근 6개월 다시 받기)'
     union all
-    select 3, '건축물대장', '적재일',
-           (select (max(t.updated_at) at time zone 'Asia/Seoul')::date::text from building t),
-           'none',
+    -- 2026-10-15a — 기준은 적재일(max(building.updated_at))이 아니라 표지의 판이다(30개 구를 다 넣은 뒤
+    --   사람이 올린다). 규칙은 인허가와 같은 월간 갈래 — 건축HUB 일괄 파일도 다음 달 20일 무렵 게시된다.
+    select 3, '건축물대장', '판',
+           (select r.release_ym::text from ledger_release r),
+           'permit',
            '월간 파일 (사람이 적재)'
     union all
     select 4, '상권 경계', '계산일',
@@ -6267,12 +5843,7 @@ as $$
            'rone',
            '분기마다'
     union all
-    select 9, '참고 시세 성적표', '적재일',
-           (select (max(t.loaded_at) at time zone 'Asia/Seoul')::date::text
-              from price_gate_sigungu t),
-           'none',
-           '재생성 때 (결재 사항)'
-    union all
+    -- ⓘ 9번(옛 성적표 줄)은 2026-10-18a(결정 0041)에 뺐다 — 뒤 번호는 그대로 둔다(순서만 정하는 칸이다).
     -- 2026-10-12b — 기준은 우리가 받아 둔 날(updated_at)이 아니라 개별공시지가의 공시 연도다
     --   (사장님 결정 2026-10-12). smallint 라 '2026' 네 자리로 나온다.
     select 10, '필지 (토지 특성)', '공시 연도',
@@ -6310,9 +5881,12 @@ as $$
            -- 분기 자료: 다음 분기가 **공개되는 달**의 말일(분기말 + 5개월 - 하루).
            when n.q_ym is not null
              then (to_date(n.q_ym, 'YYYYMM') + interval '5 months' - interval '1 day')::date
-           -- 월간 자료: 다음 판이 **공개되는 달**의 말일(기준월 + 3개월 - 하루).
+           -- 월간 자료(인허가 기준월 · 건축물대장 판): 다음 판이 **공개되는 달**의 말일(기준월 + 3개월 - 하루).
            when n.rule_kind = 'permit' and n.basis ~ '^\d{4}(0[1-9]|1[0-2])$'
              then (to_date(n.basis, 'YYYYMM') + interval '3 months' - interval '1 day')::date
+           -- 실거래: 계약월 + 2개월 - 하루(사장님 결정 2026-10-15 — 매달 최근 6개월을 다시 받는다).
+           when n.rule_kind = 'tx' and n.basis ~ '^\d{4}(0[1-9]|1[0-2])$'
+             then (to_date(n.basis, 'YYYYMM') + interval '2 months' - interval '1 day')::date
            -- 연 1회: 다음 해 3월 31일(국세청 고시가 매년 3월).
            when n.rule_kind = 'nts' and n.basis ~ '^\d{4}-\d{2}-\d{2}$'
              then make_date(left(n.basis, 4)::int + 1, 3, 31)
@@ -6327,13 +5901,14 @@ as $$
 $$;
 
 comment on function get_data_freshness() is
-  '화면 아래 "이 자료는 언제 것인가" 표. 열한 갈래 자료의 가장 최근 도장(분기·계약월·적재일·'
+  '화면 아래 "이 자료는 언제 것인가" 표. 열 갈래 자료의 가장 최근 도장(분기·계약월·판·'
   '계산일·수집일·기준월·고시일·공시 연도)을 창고에서 읽어 한 줄씩 준다. '
   '⛔ 숫자를 화면에 박지 않기 위한 함수다 — 신선도를 글자로 적어 두면 적재하는 순간부터 '
   '그 글자만 거짓말을 한다. next_expected 도 사람이 적는 값이 아니라 규칙으로 계산한다: '
   '분기 자료는 분기말 달 + 5개월 - 하루(다음 분기가 공개되는 달의 말일 — 분기 꼴 셋 '
-  '''YYYYMM''·''YYYYQn''·''YYYYQ''(서울시 다섯 자리)를 같은 분기말 달로 맞춘 뒤 한 번만 계산), 월간 자료는 '
-  '기준월 + 3개월 - 하루(다음 판이 공개되는 달의 말일), 국세청 기준시가는 고시일의 다음 해 3월 31일, '
+  '''YYYYMM''·''YYYYQn''·''YYYYQ''(서울시 다섯 자리)를 같은 분기말 달로 맞춘 뒤 한 번만 계산), 월간 자료'
+  '(인허가 기준월·건축물대장 판)는 기준월 + 3개월 - 하루(다음 판이 공개되는 달의 말일), 실거래는 계약월 + '
+  '2개월 - 하루(매달 최근 6개월을 다시 받는다), 국세청 기준시가는 고시일의 다음 해 3월 31일, '
   '필지(개별공시지가)는 공시 연도의 다음 해 6월 30일(기준값이 네 자리 연도일 때만). '
   '주기가 없는 자료는 null 이다 — 없는 주기를 지어내면 "늦었다"는 거짓 신호가 뜬다. '
   '기준값이 그 모양이 아니면 계산하지 않고 그 칸만 비운다(to_date 가 터지면 표가 통째로 '
@@ -6342,9 +5917,10 @@ comment on function get_data_freshness() is
   '⛔ api_quota_log 는 안 본다 — 그건 우리 호출 장부이지 자료의 나이가 아니고, 하한선일 뿐이다. '
   '자료가 0행이면 basis 가 null 이고 줄은 그대로 나온다(화면이 "자료 없음"이라 적는다 — '
   '줄을 빼면 "그런 자료를 안 쓴다"로 읽힌다). '
-  'security definer (열한 표가 전부 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. '
-  '나가는 것은 집계 도장 열한 개뿐이고 원본 행은 한 줄도 안 나간다). 2026-09-05d · 월간 규칙 2026-10-01a · '
-  '서울 개업·폐업 2026-10-05b · 필지 공시 연도 2026-10-12b';
+  'security definer (열 표가 전부 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. '
+  '나가는 것은 집계 도장 열 개뿐이고 원본 행은 한 줄도 안 나간다). 2026-09-05d · 월간 규칙 2026-10-01a · '
+  '서울 개업·폐업 2026-10-05b · 필지 공시 연도 2026-10-12b · 실거래·대장 판 월간 규칙 2026-10-15a · '
+  '성적표 줄 뺌 2026-10-18a(결정 0041)';
 
 -- ⚠️ create or replace 는 권한을 유지하지만, 대시보드가 같은 함수를 다시 만들면
 --    Supabase 기본 권한이 anon 을 자동으로 붙인다. 만든 자리에서 다시 닫는다.

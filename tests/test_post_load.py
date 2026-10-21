@@ -97,11 +97,14 @@ def p7_alarms_quiet(monkeypatch):
     monkeypatch.setattr(post_load, "report_slow_functions", lambda: [])
     monkeypatch.setattr(post_load, "report_canonical_indexes", lambda: [])
     monkeypatch.setattr(post_load, "report_function_drift", lambda: [])
-    monkeypatch.setattr(post_load, "report_tx_geog_freshness", lambda: ("1", "1", False))
     # 별관 경보(2026-10-05)도 같은 까닭으로 뺀다 — 판정은 tests/test_post_load_toast.py.
     monkeypatch.setattr(post_load, "report_toast_evictions", lambda: [])
+    # 실거래 용도 이름 7종 밖(2026-10-18a · 결정 0040)도 뺀다 — 판정은 tests/test_price_use_group_migration.py.
+    monkeypatch.setattr(post_load, "report_tx_main_use_unknown", lambda: 0)
     # 분기 표지(2026-10-07a · 결정 0035)도 뺀다 — 판정·배선은 아래 TestSnapshotRelease 가 본다.
     monkeypatch.setattr(post_load, "report_snapshot_release", lambda *a: (False, False))
+    # 건축물대장 판 표지(2026-10-15a)도 뺀다 — 판정·진짜 배선은 tests/test_freshness_monthly_rules_migration.py.
+    monkeypatch.setattr(post_load, "report_ledger_release", lambda: False)
     monkeypatch.setattr(post_load, "precheck_snapshot_release", lambda: (False, "202606", ""))
     # 가게 이름 요약표 분기(2026-10-07 · 일곱 번째 판정)도 뺀다 — 판정은 아래 TestStoreNamesFreshness.
     monkeypatch.setattr(post_load, "report_store_names_freshness", lambda: ("202606", "202606", False))
@@ -522,7 +525,7 @@ class TestAnonExposure:
             "api.search_buildings", "api.search_scope", "api.list_open_sigungu",
             "api.list_building_districts",
             "api.list_parcel_transactions", "api.get_sigungu_tx_stats",
-            "api.list_price_bands",
+            # ⓘ api.list_price_bands(Stage B 참고 시세)는 결정 0041(2026-10-18a)로 지웠다.
             "api.list_industry_mix", "api.list_industry_detail",
             # 업종별 층 분포(2026-10-09b · 물결 2-2). 요약표 mv_district_industry_floor 와 층 묶음
             # 함수 industry_floor_band 는 **여기 없다** — 층 묶음 개수만 나간다.
@@ -549,10 +552,7 @@ class TestAnonExposure:
             # **여기 없다** — 열리면 상권 경계(geom)와 전국 24만 동 대장이 그대로 나간다.
             # 점포는 **땅 단위 개수**만 나가고 상호명·업종은 한 글자도 안 나간다.
             "api.list_district_buildings", "api.list_parcel_buildings",
-            # 성적표 공개(2026-09-05e · 로드맵 Wave 4). 표 price_gate_sigungu 는
-            # **여기 없다** — 나가는 것은 구별 요약 한 줄씩이고, 검증 거래 하나하나는
-            # 그 표에 아예 없다.
-            "api.list_price_gate",
+            # ⓘ api.list_price_gate(성적표 공개)는 결정 0041(2026-10-18a)로 표와 함께 지웠다.
             # 이 자료는 언제 것인가(2026-09-05d). 열 갈래 자료의 max() 도장만 내보낸다 —
             # 원본 행은 한 줄도 안 나간다. api_quota_log 는 아예 안 본다.
             "api.get_data_freshness",
@@ -582,8 +582,9 @@ class TestAnonExposure:
             # 그 상권의 그 대분류 가게 수와 중분류별 가운데값(백분율)·모집단 수만 나간다.
             "api.list_industry_median_m",
         )
-        # 읽기 4 + 부르기 28 = `--check` 총계 32(2026-10-12a 업종 비중 비교로 30 → 31 · 2026-10-13a 중분류로 31 → 32).
-        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 32
+        # 읽기 4 + 부르기 26 = `--check` 총계 30(2026-10-12a 업종 비중 비교로 30 → 31 · 2026-10-13a 중분류로 31 → 32 ·
+        # 2026-10-18a 결정 0041 로 참고 시세·성적표 둘을 빼 32 → 30).
+        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 30
 
     def test_pending_list_is_empty_after_2026_09_05a(self):
         """⛔ **비어 있어야 한다** — 잔존 노출 9개는 2026-09-05a 로 닫혔다.
@@ -638,13 +639,11 @@ class TestAnonExposure:
             "mv_district_industry_mix"
         ]
 
-    def test_stage_b_internals_are_never_allowed(self):
-        """⛔ Stage B(결정 0013)에서 화면이 부르는 것은 list_price_bands 하나뿐이다.
-
-        게이트 표가 열리면 "어느 구가 켜져 있나"를 통째로 긁어갈 수 있고, 층대 도우미가
-        열리면 노출면만 늘 뿐 화면에 쓸모가 없다. 둘 다 열려 있으면 사고다.
+    def test_stage_b_names_are_never_allowed(self):
+        """⛔ Stage B(결정 0013) 참고 시세는 결정 0041(2026-10-18a)로 통째로 지웠다 — 그 이름 넷이 다시
+        허용 목록에 들어오면(되살림인데 허용만 먼저 생긴 것) 사고다.
         """
-        for name in ("price_gate_sigungu", "price_floor_band"):
+        for name in ("price_gate_sigungu", "price_floor_band", "list_price_bands", "list_price_gate"):
             assert allowlist_hits(name) == [], name
             assert post_load.unexpected_anon_readables([name]) == [name]
 
@@ -1364,7 +1363,7 @@ class TestPublishTxSql:
             "mv_district_industry_floor", "mv_industry_mix_median", "mv_industry_mix_median_m")
         assert set(post_load.QUARTER_MVS) | set(post_load.NON_QUARTER_MVS) == set(post_load.REFRESH_MVS)
         assert not set(post_load.QUARTER_MVS) & set(post_load.NON_QUARTER_MVS)
-        assert len(post_load.NON_QUARTER_MVS) == 5
+        assert len(post_load.NON_QUARTER_MVS) == 4   # 결정 0041 로 mv_tx_parcel_geog 를 빼 5 → 4
 
     def test_wrapped_in_one_transaction(self):
         sql = post_load.build_publish_tx_sql()
@@ -1771,7 +1770,6 @@ def _apply_flow(monkeypatch, pre=(False, "202606", ""), non_quarter_stale=False,
         ("report_freshness", lambda: ("1", "1", non_quarter_stale)),
         ("report_map_freshness", lambda: ({}, False)),
         ("report_tx_window_freshness", lambda: ("", "", False)),
-        ("report_tx_geog_freshness", lambda: ("1", "1", False)),
         ("report_coverage_freshness", lambda: ("", "", False)),
         ("report_industry_mix_freshness", lambda: ("", "", False)),
         ("report_store_names_freshness", lambda: ("", "", names_stale)),
@@ -1804,7 +1802,6 @@ class TestApplyFlow:
             ("report_freshness", lambda: ("1", "1", False)),
             ("report_map_freshness", lambda: ({}, False)),
             ("report_tx_window_freshness", lambda: ("", "", False)),
-            ("report_tx_geog_freshness", lambda: ("1", "1", False)),
             ("report_coverage_freshness", lambda: ("", "", False)),
             ("report_industry_mix_freshness", lambda: ("", "", False)),
             ("report_store_names_freshness", lambda: ("", "", False)),

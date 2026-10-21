@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { EMPTY_PRINTED_BODY, EMPTY_PRINTED_TITLE } from '../lib/appTabs';
 import type { RecentPrinted as RecentPrintedEntry } from '../lib/recentPrintedStore';
 
 /**
@@ -14,21 +15,39 @@ type Props = {
   items: readonly RecentPrintedEntry[];
   onPick: (item: RecentPrintedEntry) => void;
   onClear: () => void;
+  /**
+   * 휴대폰 「뽑은 건물」 탭 안(결정 0039 W4a · 👤 2번 「가」) — 접지 않고 펼친 채 · 목록이 비어도 서서 빈 안내를 적는다.
+   * ⓘ 넓은 화면(검색 아래 접힌 줄)은 지금 그대로.
+   */
+  inTab?: boolean;
 };
 
-export function RecentPrinted({ items, onPick, onClear }: Props) {
-  const [open, setOpen] = useState(false);
-  if (items.length === 0) return null;
+export function RecentPrinted({ items, onPick, onClear, inTab = false }: Props) {
+  const [opened, setOpen] = useState(false);
+  const open = inTab || opened;
+  if (items.length === 0) {
+    if (!inTab) return null;
+    return (
+      <section className="recent recent--tab" aria-label="최근 뽑은 건물">
+        <p className="tabempty__title">{EMPTY_PRINTED_TITLE}</p>
+        <p className="tabempty__body">{EMPTY_PRINTED_BODY}</p>
+      </section>
+    );
+  }
   return (
-    <section className="recent" aria-label="최근 뽑은 건물">
-      <button
-        type="button"
-        className="recent__toggle"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-      >
-        최근 뽑은 건물 {items.length} <span aria-hidden="true">{open ? '▾' : '▸'}</span>
-      </button>
+    <section className={`recent${inTab ? ' recent--tab' : ''}`} aria-label="최근 뽑은 건물">
+      {inTab ? (
+        <p className="recent__h">최근 뽑은 건물 {items.length}</p>
+      ) : (
+        <button
+          type="button"
+          className="recent__toggle"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+        >
+          최근 뽑은 건물 {items.length} <span aria-hidden="true">{open ? '▾' : '▸'}</span>
+        </button>
+      )}
       {open && (
         <div className="recent__body">
           <ul className="recent__list">

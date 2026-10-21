@@ -37,11 +37,12 @@ CANONICAL = "https://sangga-one.vercel.app/"
 TITLE = "상가 층별 스택뷰 — 서울·대전 상가 건물 층별 공공데이터"
 DESCRIPTION = (
     "서울·대전 상가 건물을 찾으면 층마다 용도·면적·점포를 쌓아 보여 주고, "
-    "실거래·참고 시세, 둘레의 업종 분포와 개업·폐업, 임대 동향까지 공공데이터로 봅니다. "
+    # 결정 0041(2026-10-18) — 「참고 시세」를 내리고 공표값 나열로 바꿨다(밴드·성적표를 화면에서 내림).
+    "실거래·국세청 기준시가·구 상가 단가, 둘레의 업종 분포와 개업·폐업, 임대 동향까지 공공데이터로 봅니다. "
     "무료 · 로그인 없음."
 )
 
-# 절대 규칙 2 금지어 — 정본은 tests/test_backtest_price.py(import 하지 않고 같은 다섯 낱말을 적는다).
+# 절대 규칙 2 금지어 다섯 낱말(CLAUDE.md 표 — 옛 정본이던 백테스트 시험은 결정 0041 로 지웠다).
 BANNED_TERMS = ("적정가격", "적정가", "평가액", "감정가", "가치평가")
 BANNED_SPACED = (("적정", "가격"), ("가치", "평가"))
 
@@ -395,6 +396,55 @@ def intro_problems(html):
 
 def test_index_root_has_static_intro():
     assert intro_problems(_index()) == []
+
+
+_H1_RE = re.compile(r'<h1 class="seo-title">([^<]*)</h1>')
+_NAV_RE = re.compile(r'<nav class="seo-links"[^>]*>(.*?)</nav>', re.S)
+_CRUMB = "<!--seo-breadcrumb-->"
+
+
+def placeholder_problems(html):
+    """결정 0042 치환 자리의 문제를 글 목록으로 낸다(빈 목록 = 정상) — 서버 조각(`buildingHead.ts`)이 건물 주소에서
+    정확히 1번씩 바꾸는 자리라 첫 화면 HTML 에 **하나씩 · 비어 있게** 있어야 한다.
+    - h1.seo-title 1개 · 글자 = 첫 화면 제목(TITLE)
+    - #root 안 nav.seo-links 1개 · 안이 비었음(첫 화면엔 서버가 없다 — 지역 링크는 화면이 그린다)
+    - 머리(head) 안 빵부스러기 자리 주석 1개(첫 화면엔 JSON-LD 를 더 두지 않는다 — 빈 JSON-LD 는 구글이 오류로 본다)
+    ⚠️ 못 보는 것: 주석 안의 태그 · 치환 자리의 뜻(글자만 본다)."""
+    problems = []
+    h1s = _H1_RE.findall(html)
+    if len(re.findall(r"<h1\b", html)) != 1 or len(h1s) != 1:
+        problems.append(f"h1 개수 {len(re.findall(r'<h1', html))}")
+    elif h1s[0] != TITLE:
+        problems.append(f"h1 글자 다름: {h1s[0]}")
+    root = _ROOT_RE.search(html)
+    navs = _NAV_RE.findall(html)
+    if len(navs) != 1 or not root or len(_NAV_RE.findall(root.group(1))) != 1:
+        problems.append(f"#root 안 seo-links 개수 {len(navs)}")
+    elif navs[0].strip():
+        problems.append("seo-links 가 비어 있지 않음")
+    head = html.split("</head>", 1)[0]
+    if html.count(_CRUMB) != 1 or head.count(_CRUMB) != 1:
+        problems.append(f"빵부스러기 자리 개수 {html.count(_CRUMB)}")
+    return problems
+
+
+def test_index_placeholders_0042():
+    assert placeholder_problems(_index()) == []
+
+
+def test_control_placeholders_0042_are_caught():
+    two_nav = _fake("</nav>", '</nav><nav class="seo-links"></nav>')
+    assert any("seo-links 개수 2" in p for p in placeholder_problems(two_nav))
+    filled = _fake('aria-label="관련 페이지"></nav>', 'aria-label="관련 페이지"><a href="/">x</a></nav>')
+    assert "seo-links 가 비어 있지 않음" in placeholder_problems(filled)
+    no_crumb = _fake(_CRUMB, "")
+    assert "빵부스러기 자리 개수 0" in placeholder_problems(no_crumb)
+    body_crumb = _fake("</body>", _CRUMB + "</body>").replace(_CRUMB, "", 1)
+    assert any("빵부스러기 자리" in p for p in placeholder_problems(body_crumb))
+    h1_text = _fake('<h1 class="seo-title">', '<h1 class="seo-title">다른 ')
+    assert any("h1 글자 다름" in p for p in placeholder_problems(h1_text))
+    two_h1 = _fake("<p class=\"seo-intro\">", '<h1 class="seo-title">둘째</h1><p class="seo-intro">')
+    assert any(p.startswith("h1 개수") for p in placeholder_problems(two_h1))
 
 
 def test_control_intro_missing_banned_and_outside_are_caught():

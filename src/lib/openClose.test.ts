@@ -286,19 +286,19 @@ describe('industryRateShown — 업종 줄 비율의 표본 규칙 (2026-10-06)'
  */
 describe('franchiseText — 프랜차이즈 N곳 (점포의 x%)', () => {
   it('★ 분모는 점포(프랜차이즈 포함) — 120 ÷ 665 = 18.05%', () => {
-    expect(franchiseText(120, 665)).toBe('프랜차이즈 120곳 (점포의 18.05%)');
+    expect(franchiseText(120, 665)).toBe('프랜차이즈 120곳 (점포의 18.05% · 서울시 공표 개수로 계산)');
     // 63 ÷ 441 = 14.29% · stor_co(378)로 나누면 16.67% 가 된다 — 그 값이 아니어야 한다.
-    expect(franchiseText(63, 441)).toBe('프랜차이즈 63곳 (점포의 14.29%)');
+    expect(franchiseText(63, 441)).toBe('프랜차이즈 63곳 (점포의 14.29% · 서울시 공표 개수로 계산)');
     expect(franchiseText(63, 441)).not.toContain('16.67');
   });
 
   it('★ 분모가 30곳 미만이면 비율 없이 개수만 — 30 은 비율, 29 는 개수만(큰 숫자 줄과 같은 30)', () => {
-    expect(franchiseText(3, 30)).toBe('프랜차이즈 3곳 (점포의 10%)');
+    expect(franchiseText(3, 30)).toBe('프랜차이즈 3곳 (점포의 10% · 서울시 공표 개수로 계산)');
     expect(franchiseText(3, 29)).toBe('프랜차이즈 3곳');
     expect(franchiseText(0, 0)).toBe('프랜차이즈 0곳');
   });
 
   it('0곳은 값이다 — 0%', () => {
-    expect(franchiseText(0, 441)).toBe('프랜차이즈 0곳 (점포의 0%)');
+    expect(franchiseText(0, 441)).toBe('프랜차이즈 0곳 (점포의 0% · 서울시 공표 개수로 계산)');
   });
 });

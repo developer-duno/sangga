@@ -12,7 +12,6 @@ import type {
   CoverageStats,
   FloorRow,
   ParcelTransaction,
-  PriceBand,
   SigunguTxStat,
 } from '../types';
 
@@ -44,10 +43,6 @@ const responses = {
   txs: { data: [] as unknown, error: null as unknown },
   /** 서버 함수 get_sigungu_tx_stats 의 응답(구 층대별 단가). */
   txStats: { data: [] as unknown, error: null as unknown },
-  /** 서버 함수 list_price_bands 의 응답(층별 참고 시세 · Stage B). */
-  bands: { data: [] as unknown, error: null as unknown },
-  /** true 면 밴드 응답을 영영 돌려주지 않는다 — "아직 안 옴" 상태를 보려고 둔 스위치다. */
-  bandsPending: false,
   /**
    * 서버 함수 list_base_prices 의 응답(층별 국세청 기준시가).
    *
@@ -124,9 +119,6 @@ vi.mock('../lib/supabase', () => ({
       rpcCalls.push({ fn, args });
       if (fn === 'list_parcel_transactions') return Promise.resolve(responses.txs);
       if (fn === 'get_sigungu_tx_stats') return Promise.resolve(responses.txStats);
-      if (fn === 'list_price_bands') {
-        return responses.bandsPending ? new Promise(() => {}) : Promise.resolve(responses.bands);
-      }
       // 국세청 기준시가. 갈라 답하지 않으면 상권 응답(객체)이 흘러들어 "배열인가" 검사에
       // 걸려 늘 미표시가 된다 — 그러면 이 아래 시험들이 통째로 헛돈다.
       if (fn === 'list_base_prices') return Promise.resolve(responses.basePrices);
@@ -247,46 +239,6 @@ function bands(counts: Partial<Record<string, number>> = {}): SigunguTxStat[] {
   });
 }
 
-/** 층별 참고 시세 한 줄(함수 list_price_bands). 기본은 강남 실측값 그대로. */
-function priceBand(over: Partial<PriceBand> = {}): PriceBand {
-  return {
-    floor_no: 2,
-    status: 'ok',
-    stage: 'L5',
-    n: 15,
-    p25: 7_465_269.63,
-    median: 16_265_452.18,
-    p75: 19_045_698.84,
-    median_area_m2: 32.8,
-    window_from: '202408',
-    ...over,
-  };
-}
-
-/** 값을 못 내는 줄은 사분위·근거가 전부 비어서 온다. */
-const NO_VALUE = {
-  stage: null,
-  n: null,
-  p25: null,
-  median: null,
-  p75: null,
-  median_area_m2: null,
-} as const;
-
-/**
- * 서버가 주는 한 벌 — **오름차순**이다(화면이 뒤집는지 보려면 이 순서 그대로 줘야 한다).
- * 지하1층 no_evidence · 1층 floor_1f · 2층 ok · 3층 no_estimate · 옥탑 no_evidence.
- */
-function priceBands(): PriceBand[] {
-  return [
-    priceBand({ floor_no: -1, status: 'no_evidence', ...NO_VALUE }),
-    priceBand({ floor_no: 1, status: 'floor_1f', ...NO_VALUE }),
-    priceBand({ floor_no: 2 }),
-    priceBand({ floor_no: 3, status: 'no_estimate', ...NO_VALUE }),
-    priceBand({ floor_no: 99, status: 'no_evidence', ...NO_VALUE }),
-  ];
-}
-
 /** 국세청 기준시가 한 줄(함수 list_base_prices). */
 function basePrice(over: Partial<BasePrice> = {}): BasePrice {
   return {
@@ -296,11 +248,6 @@ function basePrice(over: Partial<BasePrice> = {}): BasePrice {
     notice_date: '2026-01-01',
     ...over,
   };
-}
-
-/** 기준선을 못 넘은 구 — floor_no 가 null 인 **한 줄**로만 온다. */
-function priceBandGate(): PriceBand[] {
-  return [priceBand({ floor_no: null, status: 'gate_fail', ...NO_VALUE })];
 }
 
 beforeEach(() => {
@@ -313,9 +260,6 @@ beforeEach(() => {
   };
   responses.txs = { data: [], error: null };
   responses.txStats = { data: bands({ '1층': 213 }), error: null };
-  // 기본은 빈 배열 = 참고 시세 섹션 미표시. 이 파일의 다른 테스트는 영향을 안 받는다.
-  responses.bands = { data: [], error: null };
-  responses.bandsPending = false;
   // 기본은 빈 배열 = 기준시가 줄 미표시. 이 파일의 다른 테스트는 영향을 안 받는다.
   responses.basePrices = { data: [], error: null };
   // 기본은 오류 = 업종 섹션 미표시(마이그레이션 적용 전 라이브와 같은 상태).
@@ -413,7 +357,7 @@ describe('FloorStack — 본체', () => {
   it('지하층은 부호를 떼고 "지하 n층"으로 쌓는다', async () => {
     responses.floors = { data: [floor({ floor_no: -1, floor_label: null })], error: null };
     const { container } = render(<FloorStack building={building()} />);
-    // 층 이름은 세 잣대 카드(물결 1-C2)의 줄 머리에도 나온다 — 층 목록 카드 안으로 좁혀 본다.
+    // 층 이름은 층별 공표값 카드(물결 1-C2)의 줄 머리에도 나온다 — 층 목록 카드 안으로 좁혀 본다.
     await waitFor(() => expect(container.querySelector('.card--floors .floor__label')?.textContent).toBe('지하 1층'));
   });
 
@@ -423,10 +367,166 @@ describe('FloorStack — 본체', () => {
     await waitFor(() => expect(screen.getByText(/이 땅에 건물이 3동 있습니다/)).toBeTruthy());
   });
 
+  describe('내부 링크 줄 · h1 (결정 0042 H1·H5)', () => {
+    const dong = (bld_id: string, dong_nm: string | null, bld_nm: string | null = '테스트빌딩') => ({
+      bld_id,
+      bld_nm,
+      dong_nm,
+      total_area_m2: 100,
+      floor_cnt: 2,
+      min_floor: 1,
+      max_floor: 2,
+      has_roof: false,
+    });
+    const DONGS = [dong('1168010100-1', 'A동'), dong('1168010100-2', 'B동'), dong('1168010100-3', null, null)];
+
+    it('건물 이름이 h1(하나)', async () => {
+      render(<FloorStack building={building()} />);
+      const h1 = await screen.findByRole('heading', { level: 1 });
+      expect(h1.textContent).toBe('테스트빌딩');
+      expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+    });
+
+    it('★ 같은 땅 여러 동 — 「같은 땅 다른 동: …」(자기는 뺀다 · 이름 + 동 구분) + 「○○구 다른 건물 찾기」 · 진짜 href', async () => {
+      responses.floors = { data: [floor({ bld_cnt_in_pnu: 3 })], error: null };
+      const { container } = render(
+        <FloorStack building={building({ bld_cnt_in_pnu: 3 })} dongs={DONGS} sigunguName="강남구" />,
+      );
+      // 보완 F3 — 렌더 h1 에도 동 구분(첫 HTML h1·탭 제목과 같은 글).
+      await screen.findByRole('heading', { level: 1, name: '테스트빌딩 A동' });
+      const nav = container.querySelector('header.stack__head nav.stack__links')!;
+      expect(nav.getAttribute('aria-label')).toBe('관련 페이지');
+      expect([...nav.querySelectorAll('a')].map((a) => [a.getAttribute('href'), a.textContent])).toEqual([
+        ['/?sgg=11680&bld=1168010100-2', '테스트빌딩 B동'],
+        ['/?sgg=11680&bld=1168010100-3', '(같은 땅 3동 중 3번째)'],
+        ['/?sgg=11680', '강남구 다른 건물 찾기'],
+      ]);
+      expect(nav.querySelector('.stack__links-row')!.textContent).toBe(
+        '같은 땅 다른 동: 테스트빌딩 B동 · (같은 땅 3동 중 3번째)',
+      );
+    });
+
+    it('★ 보통 누름 = 화면 안에서 그 동으로(땅 칸은 지금 건물 · 동 칸은 목록) / 구 찾기 · Ctrl 누름은 그대로 링크', async () => {
+      const onSelectBuilding = vi.fn();
+      const onFindInSigungu = vi.fn();
+      responses.floors = { data: [floor({ bld_cnt_in_pnu: 3 })], error: null };
+      render(
+        <FloorStack
+          building={building({ bld_cnt_in_pnu: 3, lat: 37.5, lng: 127 })}
+          dongs={DONGS}
+          sigunguName="강남구"
+          onSelectBuilding={onSelectBuilding}
+          onFindInSigungu={onFindInSigungu}
+        />,
+      );
+      const b = await screen.findByRole('link', { name: '테스트빌딩 B동' });
+      expect(fireEvent.click(b, { ctrlKey: true })).toBe(true);
+      expect(onSelectBuilding).not.toHaveBeenCalled();
+      expect(fireEvent.click(b)).toBe(false);
+      expect(onSelectBuilding).toHaveBeenCalledWith({
+        bld_id: '1168010100-2',
+        pnu: '1168010100100010000',
+        bld_nm: '테스트빌딩',
+        road_addr: '서울 강남구 테헤란로 1',
+        jibun_addr: undefined,
+        lat: 37.5,
+        lng: 127,
+        bld_cnt_in_pnu: 3,
+        floor_cnt: 2,
+        min_floor: 1,
+        max_floor: 2,
+        has_roof: false,
+      });
+      expect(fireEvent.click(screen.getByRole('link', { name: '강남구 다른 건물 찾기' }))).toBe(false);
+      expect(onFindInSigungu).toHaveBeenCalledTimes(1);
+    });
+
+    it('다른 동 링크는 첫 HTML 과 같은 10개까지 · 넘치면 「외 N동」(102동 단지 실측)', async () => {
+      const many = Array.from({ length: 14 }, (_, i) => dong(`1168010100-${i + 1}`, `${101 + i}동`));
+      responses.floors = { data: [floor({ bld_cnt_in_pnu: 14 })], error: null };
+      const { container } = render(<FloorStack building={building({ bld_cnt_in_pnu: 14 })} dongs={many} />);
+      await screen.findByRole('heading', { level: 1, name: '테스트빌딩 101동' });
+      const row = container.querySelector('nav.stack__links .stack__links-row')!;
+      expect(row.querySelectorAll('a')).toHaveLength(10);
+      expect(row.textContent!.endsWith('테스트빌딩 111동 외 3동')).toBe(true);
+    });
+
+    it('★ 재검사 🟡 — 화면 링크도 공용 앞뒤 창(siblingWindow): 14동 중 자기 차례 8번째 → 3~13번째(자기 제외) + 외 3동', async () => {
+      const many = Array.from({ length: 14 }, (_, i) => dong(`1168010100-${i + 1}`, `${101 + i}동`));
+      const self = many[7]; // 8번째 = 108동
+      responses.floors = { data: [floor({ bld_id: self.bld_id, bld_cnt_in_pnu: 14 })], error: null };
+      const { container } = render(
+        <FloorStack building={building({ bld_id: self.bld_id, bld_cnt_in_pnu: 14 })} dongs={many} />,
+      );
+      await screen.findByRole('heading', { level: 1, name: '테스트빌딩 108동' });
+      const row = container.querySelector('nav.stack__links .stack__links-row')!;
+      // 앞에서 10개(101~111동 중 자기 뺌)로 돌아가면 101·102동이 끼고 112·113동이 빠진다.
+      expect([...row.querySelectorAll('a')].map((a) => a.textContent)).toEqual(
+        [103, 104, 105, 106, 107, 109, 110, 111, 112, 113].map((n) => `테스트빌딩 ${n}동`),
+      );
+      expect(row.textContent!.endsWith(' 외 3동')).toBe(true);
+    });
+
+    it('★ 보완 F3 — 같은 땅 두 동의 렌더 h1 이 서로 다르다 · 동명칭이 비면 차례(N = 뷰 동 수)', async () => {
+      responses.floors = { data: [floor({ bld_id: '1168010100-2', bld_cnt_in_pnu: 5 })], error: null };
+      const b = render(<FloorStack building={building({ bld_id: '1168010100-2', bld_cnt_in_pnu: 5 })} dongs={DONGS} />);
+      await screen.findByRole('heading', { level: 1, name: '테스트빌딩 B동' });
+      b.unmount();
+      responses.floors = { data: [floor({ bld_id: '1168010100-3', bld_cnt_in_pnu: 5 })], error: null };
+      render(<FloorStack building={building({ bld_id: '1168010100-3', bld_nm: null, bld_cnt_in_pnu: 5 })} dongs={DONGS} />);
+      // 층 행의 이름이 '테스트빌딩'이라 이름 + 차례(함수 줄 3 · 뷰 5).
+      await screen.findByRole('heading', { level: 1, name: '테스트빌딩 (같은 땅 5동 중 3번째)' });
+    });
+
+    it('★ 보완 F4 — 불러오는 중·오류·층 0개에서도 h1 은 건물 이름 하나', async () => {
+      let release: (v: unknown) => void = () => {};
+      responses.floors = new Promise((r) => (release = r)) as unknown as typeof responses.floors;
+      const loading = render(<FloorStack building={building({ bld_cnt_in_pnu: 3 })} dongs={DONGS} />);
+      expect(screen.getByText('층 정보를 불러오는 중…')).toBeTruthy();
+      expect(screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent)).toEqual(['테스트빌딩 A동']);
+      release({ data: [], error: null });
+      loading.unmount();
+
+      responses.floors = { data: null, error: { message: 'x' } };
+      const failed = render(<FloorStack building={building()} />);
+      await waitFor(() => expect(failed.container.querySelector('.msg--error')).not.toBeNull());
+      expect(screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent)).toEqual(['테스트빌딩']);
+      failed.unmount();
+
+      responses.floors = { data: [], error: null };
+      render(<FloorStack building={building()} />);
+      await screen.findByText('이 건물에는 층 정보가 없습니다.');
+      expect(screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent)).toEqual(['테스트빌딩']);
+    });
+
+    it('동이 하나거나 목록이 없으면 다른 동 줄 없음 · 구 이름도 없으면 줄 자체가 없다', async () => {
+      const { container, unmount } = render(<FloorStack building={building()} dongs={null} sigunguName="강남구" />);
+      await screen.findByRole('heading', { level: 1, name: '테스트빌딩' });
+      expect(container.querySelector('nav.stack__links')!.textContent).toBe('강남구 다른 건물 찾기');
+      unmount();
+      // 뷰가 동 1개라 말하면 목록이 와도 줄을 안 세운다(옛 목록이 남은 그림 · 다른 땅 목록 방어).
+      const again = render(<FloorStack building={building()} dongs={DONGS} />);
+      await screen.findByRole('heading', { level: 1, name: '테스트빌딩' });
+      expect(again.container.querySelector('nav.stack__links')).toBeNull();
+    });
+  });
+
   it('D등급 배지를 항상 함께 보여준다', async () => {
     // 추정값 출력 시 근거 레벨 병기는 프로젝트 절대 규칙 3이다.
     render(<FloorStack building={building()} />);
     await waitFor(() => expect(screen.getByText(/D등급 · 간접 추론/)).toBeTruthy());
+  });
+
+  it('★ 맨 아래 설명 글 — 「미상」 문장 바로 뒤에 승강기·대장 호수 칸을 두지 않는 까닭 한 문장(👤 2026-10-19 글자 그대로)', async () => {
+    render(<FloorStack building={building()} />);
+    const badge = await screen.findByText('D등급 · 간접 추론');
+    const text = badge.closest('p.grade')!.textContent!;
+    expect(text).toContain(
+      '0을 값으로 적으면 없는 사실이 생깁니다. 승강기는 5층 이하 건물에서 대장에 0대로 적혀 있으면 칸을 두지 않고, ' +
+        '공동주택·단독주택은 대장 호수가 세대 수라 칸을 두지 않습니다.',
+    );
+    // 호실 목록 안내(있을 때)보다 앞 — 이 건물엔 호실 목록이 없어 문장으로 끝난다.
+    expect(text.endsWith('칸을 두지 않습니다.')).toBe(true);
   });
 
   it('점포 0곳(확정)과 정보 없음(null)을 구분해 보여준다', async () => {
@@ -944,7 +1044,7 @@ describe('FloorStack — 실거래 기록 (Stage A · 결정 0012)', () => {
    *   ① 있는 것만 말한다 (이력이 없으면 그 블록을 아예 안 그린다)
    *   ② 표본이 모자란 층대는 수치를 감춘다 (숫자 모양만 통계인 값을 화면에 안 낸다)
    *   ③ 금칙어("적정가격" 계열)가 한 글자도 없고, 이 블록 안에는 "시세"라는 말조차 없다
-   *      (절대 규칙 2 — '참고 매매 시세'는 추정을 내는 아래 `.band` 섹션만 쓰는 말이다)
+   *      (절대 규칙 2 — 추정을 내던 참고 매매 시세 카드는 결정 0041 로 내렸고, 사실 블록은 그 말을 쓰지 않는다)
    */
 
   it('이 땅의 거래가 있으면 층·시점·면적·금액·단가·유형을 그대로 보여준다', async () => {
@@ -996,7 +1096,7 @@ describe('FloorStack — 실거래 기록 (Stage A · 결정 0012)', () => {
     const list = container.querySelector('.tx__list')!;
     expect(list.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(note.textContent).toBe(
-      '지분 = 건물 일부 몫만 사고판 거래라 ㎡당 값이 낮게 나옵니다 — 층대별 단가·참고 가격대 계산에서는 뺍니다.',
+      '지분 = 건물 일부 몫만 사고판 거래라 ㎡당 값이 낮게 나옵니다 — 층대별 단가 계산에서는 뺍니다.',
     );
   });
 
@@ -1050,7 +1150,7 @@ describe('FloorStack — 실거래 기록 (Stage A · 결정 0012)', () => {
   it('이 땅의 거래가 없으면 그 블록을 아예 그리지 않는다 (구 단가는 그대로 나온다)', async () => {
     responses.txs = { data: [], error: null };
     render(<FloorStack building={building()} />);
-    await waitFor(() => expect(screen.getByText(/강남구 층대별 거래 단가/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/강남구 층대별 거래 단가 \(상가 거래 기준\)/)).toBeTruthy());
     expect(screen.queryByText(/이 땅에서 신고된 거래/)).toBeNull();
   });
 
@@ -1068,7 +1168,7 @@ describe('FloorStack — 실거래 기록 (Stage A · 결정 0012)', () => {
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => expect(screen.getByText('표본 4건')).toBeTruthy());
     // 4건짜리는 수치가 없고, 5건짜리는 있다 — 경계가 정확히 5에서 갈려야 한다.
-    // ⚠️ 참고 시세 밴드(Stage B)도 "표본 부족"이라는 같은 글자를 쓴다(2026-08-16) —
+    // ⚠️ 층별 공표값 카드도 "표본 부족"이라는 같은 글자를 쓴다 —
     //    화면 전체에서 세면 그쪽 줄까지 함께 잡힌다. 이 블록 안만 센다.
     expect(container.querySelectorAll('.tx__bands .tx__val--none')).toHaveLength(4);
     expect(screen.getAllByText(/중앙값 ㎡당/)).toHaveLength(1);
@@ -1093,8 +1193,8 @@ describe('FloorStack — 실거래 기록 (Stage A · 결정 0012)', () => {
       error: null,
     };
     const { container } = render(<FloorStack building={building()} />);
-    await waitFor(() => expect(screen.getByText(/유성구 층대별 거래 단가/)).toBeTruthy());
-    expect(screen.getByText(/2025-01 이후 계약분/)).toBeTruthy();
+    await waitFor(() => expect(screen.getByText(/유성구 층대별 거래 단가 \(상가 거래 기준\)/)).toBeTruthy());
+    expect(screen.getByText(/2025년 1월 이후 계약분/)).toBeTruthy();
     // ⚠️ '강남구'는 이 건물 주소에도 들어 있다 — 실거래 블록 안만 본다.
     expect(container.querySelector('.tx')?.textContent).not.toContain('강남구');
     // 기간을 글자로 박으면 창이 바뀌는 날 문구만 조용히 거짓말이 된다(밴드 출처 줄과 같은 가드).
@@ -1111,8 +1211,8 @@ describe('FloorStack — 실거래 기록 (Stage A · 결정 0012)', () => {
   it('출처(국토교통부)와 A등급 배지를 항상 함께 보여준다', async () => {
     // 절대 규칙 3 — 근거 레벨 + 표본 수 병기.
     const { container } = render(<FloorStack building={building()} />);
-    // 같은 배지가 세 잣대 카드(물결 1-C2) 칸 머리에도 선다 — 실거래 카드 안으로 좁혀 본다.
-    await waitFor(() => expect(container.querySelector('section.tx')?.textContent).toMatch(/A등급 · 실거래/));
+    // 같은 배지가 층별 공표값 카드(물결 1-C2) 칸 머리에도 선다 — 실거래 카드 안으로 좁혀 본다.
+    await waitFor(() => expect(container.querySelector('section.tx')?.textContent).toMatch(/A등급 · 실거래 집계/));
     expect(screen.getByText(/국토교통부 상업업무용 부동산 매매 실거래가/)).toBeTruthy();
     expect(screen.getByText(/전체 표본 213건/)).toBeTruthy();
   });
@@ -1122,7 +1222,7 @@ describe('FloorStack — 실거래 기록 (Stage A · 결정 0012)', () => {
     responses.txs = { data: null, error: { message: 'permission denied' } };
     responses.txStats = { data: null, error: { message: 'permission denied' } };
     const { container } = render(<FloorStack building={building()} />);
-    // '1층'은 세 잣대 카드(물결 1-C2)의 줄 머리에도 나온다 — 층 목록 카드 안으로 좁혀 본다.
+    // '1층'은 층별 공표값 카드(물결 1-C2)의 줄 머리에도 나온다 — 층 목록 카드 안으로 좁혀 본다.
     await waitFor(() => expect(container.querySelector('.card--floors .floor__label')?.textContent).toBe('1층'));
     expect(screen.queryByText(/실거래 기록/)).toBeNull();
     expect(screen.queryByText(/permission denied/)).toBeNull();
@@ -1141,10 +1241,9 @@ describe('FloorStack — 실거래 기록 (Stage A · 결정 0012)', () => {
   });
 
   it('Stage A 블록 안에는 "시세"라는 말이 없다 (사실과 추정을 어휘로도 가른다)', async () => {
-    // 추정을 내는 것은 아래 `.band` 섹션뿐이다. 이 블록이 그 말을 쓰기 시작하면
-    // 신고된 사실과 어림한 값의 경계가 문구에서부터 흐려진다.
+    // 신고된 사실을 세는 블록이 '시세'라는 말을 쓰기 시작하면 사실과 어림한 값의 경계가
+    // 문구에서부터 흐려진다(추정 밴드 카드는 결정 0041 로 내렸다).
     responses.txs = { data: [tx()], error: null };
-    responses.bands = { data: priceBands(), error: null };
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => expect(screen.getByText(/실거래 기록/)).toBeTruthy());
     expect(container.querySelector('.tx')?.textContent).not.toContain('시세');
@@ -1153,612 +1252,143 @@ describe('FloorStack — 실거래 기록 (Stage A · 결정 0012)', () => {
   it('지분 거래 설명 줄이 선 상태에서도 Stage A 블록 안에 "시세"가 없다', async () => {
     // 설명 줄은 지분 행이 있을 때만 그려진다 — 지분 없는 거래로만 보면 그 줄을 영영 못 본다.
     responses.txs = { data: [tx({ is_share: true }), tx()], error: null };
-    responses.bands = { data: priceBands(), error: null };
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => expect(container.querySelector('.tx__share-note')).toBeTruthy());
     expect(container.querySelector('.tx')?.textContent).not.toContain('시세');
   });
 });
 
-describe('FloorStack — 참고 매매 시세 (Stage B · 결정 0013)', () => {
+describe('FloorStack — 국세청 기준시가 (『층별 공표값 나란히』 카드 안 · 결정 0041 ㉤)', () => {
   /**
-   * 이 섹션은 이 화면에서 **추정값이 나오는 유일한 자리**다. 그래서 지키는 것이 넷이다:
-   *   ① 값과 근거는 한 몸이다 (근거 단계·표본 수 없이 숫자만 내지 않는다 — 절대 규칙 3)
-   *   ② 안 내는 이유 넷을 절대 같은 말로 뭉뚱그리지 않는다 (모름 ≠ 없음 ≠ 방침)
-   *   ③ 같은 값을 층마다 뿌려 "층마다 따로 쟀다"는 착시를 주지 않는다
-   *   ④ 사실(A등급)과 추정(C등급)이 눈으로 갈라 보인다
+   * 내린 참고 매매 시세 카드 안에 있던 기준시가 줄을 층별 공표값 카드의 기준시가 칸으로 옮겼다(정보 손실 0).
+   * 지키는 것:
+   *   ① 값과 표본(호 수)·고시일을 한 칸에 함께 낸다 (절대 규칙 3)
+   *   ② 총액으로 환산하지 않는다 — 서버가 면적을 안 준다
+   *   ③ 없거나 못 읽으면 **그 칸만 '–'** (카드의 나머지는 그대로다)
+   *   ④ 부기("시세가 아니다")는 카드 안에서 **한 번만** 한다
+   *   ⑤ 구 관문이 없다 — 어느 구에서든, 1층에서도 선다(밴드처럼 1층·게이트 구를 빼지 않는다)
    */
+  const baseCell = (container: HTMLElement, no: number, part: 'val' | 'sub') =>
+    container.querySelector(`.gap__row[data-floor="${no}"] .gap__cell--base .gap__${part}`)?.textContent ?? '';
 
-  /** 이 건물의 층을 서버가 주는 순서(내림차순)로 만든다. */
-  function floorsDesc(...floorNos: number[]) {
-    return { data: floorNos.map((no) => floor({ floor_no: no })), error: null };
+  function floorsDesc(...nos: number[]) {
+    return { data: nos.map((n) => floor({ floor_no: n })), error: null };
   }
 
-  /**
-   * 렌더한 뒤 참고 시세 카드를 **한 번 펼친다.**
-   *
-   * 이 카드는 첫 화면에서 접혀 있다(`SECTION_PLAN.band.defaultOpen === false` —
-   * 로드맵 Wave 2 『펼침 상한 4장』). 여기 시험들은 카드 **안**의 값·문구를 보는 곳이라
-   * 펼치는 것이 전제다. "기본이 접힘인가"는 `SectionCard.test.tsx` 가 따로 지킨다.
-   *
-   * ⚠️ 카드가 아예 안 그려지는 경우(조회 실패·빈 응답·아직 안 옴)는 이 헬퍼를 쓰지 않는다
-   *    — 그 상태 자체가 시험 대상이라 `render` 를 그대로 쓴다.
-   */
-  async function renderBand(b = building()) {
-    const result = render(<FloorStack building={b} />);
-    const toggle = await screen.findByRole('button', { name: /참고 매매 시세/ });
-    if (toggle.getAttribute('aria-expanded') === 'false') fireEvent.click(toggle);
-    return result;
-  }
-
-  it('구가 기준선을 못 넘으면 층 나열 없이 한 문단만 낸다', async () => {
-    responses.bands = { data: priceBandGate(), error: null };
-    const { container } = await renderBand();
-    await waitFor(() =>
-      expect(screen.getByText(/구 전체는 아직 참고 시세를 내지 않습니다/)).toBeTruthy(),
-    );
-    expect(container.querySelectorAll('.band__row')).toHaveLength(0);
-  });
-
-  it('기준선 안내는 "떨어졌다"고 단정하지 않고 오차율·구 개수도 적지 않는다', async () => {
-    // 서버는 판정이 **아예 없는 구**도 같은 값으로 준다(`if v_gate is not true`) —
-    // 낙방으로 단정하면 사실이 아닌 말을 하게 된다. 통과 구 목록·수치는 서버가 정본이라
-    // 화면에 복사하지 않는다(결정 0013 §4).
-    responses.bands = { data: priceBandGate(), error: null };
-    const { container } = await renderBand();
-    await waitFor(() => expect(container.querySelector('.band__gate')).toBeTruthy());
-    const text = container.querySelector('.band__gate')?.textContent ?? '';
-    expect(text).toContain('아직 시험을 보지 않았거나');
-    expect(text).not.toContain('표본 부족');
-    expect(text).not.toContain('%');
-  });
-
-  it('기준선 안내에는 C등급 배지도 출처도 붙이지 않는다 (계산한 것이 없다)', async () => {
-    responses.bands = { data: priceBandGate(), error: null };
-    const { container } = await renderBand();
-    await waitFor(() => expect(container.querySelector('.band__gate')).toBeTruthy());
-    const band = container.querySelector('.band');
-    expect(band?.textContent).not.toContain('C등급');
-    expect(band?.querySelector('.band__src')).toBeNull();
-  });
-
-  it('값을 낼 때는 총액·㎡당·가운데값·근거 단계·표본 수를 한 줄에 함께 낸다', async () => {
-    // 절대 규칙 3 — 근거 레벨 + 표본 수 병기. 숫자만 떼어 내보내지 않는다.
+  it('층마다 값·호 수·고시일을 한 칸에 함께 적는다', async () => {
     responses.floors = floorsDesc(2);
-    responses.bands = { data: [priceBand({ floor_no: 2 })], error: null };
-    const { container } = await renderBand();
-    await waitFor(() => expect(container.querySelector('.band__val')).toBeTruthy());
-    expect(container.querySelector('.band__val')?.textContent).toBe(
-      '비슷한 호실 한 칸 32.8㎡ (10평) 기준 2.4억~6.2억',
-    );
-    const sub = container.querySelector('.band__sub')?.textContent ?? '';
-    expect(sub).toContain('㎡당 747만~1,905만');
-    expect(sub).toContain('가운데값 ㎡당 1,627만');
-    expect(sub).toContain('근거: 500m 안 같은 층');
-    expect(sub).toContain('거래 15건');
+    responses.basePrices = { data: [basePrice({ floor_no: 2 })], error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(baseCell(container, 2, 'val')).toBe('300만'));
+    // 값만 떼어 내보내지 않는다 — 이 값은 그 층 호실들의 가운데값이다.
+    expect(baseCell(container, 2, 'sub')).toBe(' (호 12개 가운데값 · 2026년 1월 1일 고시)');
   });
 
-  it('총액 앞에 주어가 붙어 "이 층 값"으로 읽히지 않는다', async () => {
-    // median_area_m2 는 곁 거래들의 면적 중앙값이지 이 층 면적이 아니다. 층 목록의
-    // 300㎡(층 전체 연면적)와 나란히 두면 9배 오독이 난다.
+  it('아주 싼 층(1만 원 미만)도 단위가 겹치지 않게 적는다', async () => {
+    // 원본 최저값이 5,000원/㎡ 라 이 층이 실제로 있다(2026-08-27 적재 담당 실측).
     responses.floors = floorsDesc(2);
-    responses.bands = { data: [priceBand({ floor_no: 2 })], error: null };
-    const { container } = await renderBand();
-    await waitFor(() => expect(container.querySelector('.band__val')).toBeTruthy());
-    expect(container.querySelector('.band__val')?.textContent).toContain('비슷한 호실 한 칸');
-    expect(container.textContent ?? '').not.toContain('이 층 32.8');
+    responses.basePrices = { data: [basePrice({ floor_no: 2, median_price_per_m2: 5_000 })], error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(baseCell(container, 2, 'val')).toBe('5,000원'));
   });
 
-  it('환산할 면적이 없으면 총액을 지어내지 않고 ㎡당만 낸다', async () => {
+  it('세무 기준가격이라는 사실과 A등급 배지를 함께 적는다 (C등급과 다른 모양)', async () => {
     responses.floors = floorsDesc(2);
-    responses.bands = { data: [priceBand({ floor_no: 2, median_area_m2: null })], error: null };
-    const { container } = await renderBand();
-    await waitFor(() => expect(container.querySelector('.band__val')).toBeTruthy());
-    const val = container.querySelector('.band__val')?.textContent ?? '';
-    expect(val).toBe('㎡당 747만~1,905만');
-    expect(val).not.toContain('억');
-    expect(val).not.toContain('—');
+    responses.basePrices = { data: [basePrice({ floor_no: 2 })], error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(baseCell(container, 2, 'val')).toBe('300만'));
+    const gap = container.querySelector('.gap')!;
+    expect(gap.textContent).toContain('세무 기준가격 — 시세가 아닙니다');
+    const badge = gap.querySelector('.gap__head--base .grade__badge')!;
+    expect(badge.textContent).toBe('A등급 · 공식 고시');
+    expect(badge.className).not.toContain('grade__badge--est');
   });
 
-  it('곁 거래가 한 건뿐이면 밴드가 아니라 사실로 적는다', async () => {
-    // 사분위 셋이 같은 값이면 '2.4억~2.4억'이 되는데, 사람은 그걸 "아주 정확하다"로
-    // 읽는다. 사실은 거래 한 건을 그대로 베낀 값이다.
-    responses.floors = floorsDesc(3);
-    responses.bands = {
-      data: [
-        priceBand({
-          floor_no: 3,
-          stage: 'L6',
-          n: 1,
-          p25: 16_265_452.18,
-          p75: 16_265_452.18,
-        }),
-      ],
+  it('부기는 카드 안에서 한 번만 한다 (줄마다 반복하지 않는다)', async () => {
+    responses.floors = floorsDesc(3, 2);
+    responses.basePrices = {
+      data: [basePrice({ floor_no: 2 }), basePrice({ floor_no: 3, median_price_per_m2: 4_100_000 })],
       error: null,
     };
-    const { container } = await renderBand();
-    await waitFor(() => expect(container.querySelector('.band__val')).toBeTruthy());
-    const val = container.querySelector('.band__val')?.textContent ?? '';
-    expect(val).toContain('곁의 거래 1건뿐');
-    expect(val).not.toContain('~');
-    expect(container.querySelector('.band__sub')?.textContent).toContain('5.3억 안팎');
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(baseCell(container, 3, 'val')).toBe('410만'));
+    const text = container.querySelector('.gap')?.textContent ?? '';
+    expect(text.split('시세가 아닙니다')).toHaveLength(2); // = 딱 한 번 나온다
   });
 
-  it('여러 건이 모두 같은 값이라 폭이 0일 때 "1건뿐"이라 말하지 않는다', async () => {
-    // 폭이 0인 까닭은 둘이다 — 한 건뿐이거나, 여러 건이 전부 같은 단가로 신고됐거나.
-    // 둘을 한 문장으로 뭉뚱그리면 "1건뿐"이라 적어 놓고 바로 밑에서 "거래 4건"이라 말하는
-    // 자기모순이 난다(라이브에 n=10·n=6·n=5 사례가 실제로 있다).
-    responses.floors = floorsDesc(2);
-    responses.bands = {
-      data: [
-        priceBand({
-          floor_no: 2,
-          stage: 'L2',
-          n: 4,
-          p25: 16_265_452.18,
-          p75: 16_265_452.18,
-        }),
-      ],
+  it('총액(억)으로 환산하지 않는다 — 서버가 면적을 안 준다', async () => {
+    // ⚠️ "'억'이라는 글자가 없다"로는 못 잡는다 — 총액이 만원대면(9,840만) 그 검사를
+    //    그대로 빠져나간다. 그래서 **값 칸의 모양 자체**를 못 박는다: ㎡당 단가 하나뿐이다.
+    responses.floors = floorsDesc(3, 2);
+    responses.basePrices = {
+      data: [basePrice({ floor_no: 2 }), basePrice({ floor_no: 3, median_price_per_m2: 4_100_000 })],
       error: null,
     };
-    const { container } = await renderBand();
-    await waitFor(() => expect(container.querySelector('.band__val')).toBeTruthy());
-    const val = container.querySelector('.band__val')?.textContent ?? '';
-    expect(val).not.toContain('1건뿐');
-    expect(val).toContain('곁 거래 4건이 모두 같은 값');
-    expect(val).not.toContain('~'); // 폭 0을 '2.4억~2.4억'으로 적지는 않는다
-    const sub = container.querySelector('.band__sub')?.textContent ?? '';
-    expect(sub).toContain('거래 4건');
-    expect(sub).toContain('표본 적음');
-    // 표식을 붙였으면 그 뜻을 설명하는 각주도 따라와야 한다(둘 중 하나만 나오면 미아가 된다).
-    expect(container.querySelector('.band__why')?.textContent).toContain(
-      '곁 거래가 다섯 건이 안 된다는 뜻',
-    );
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(baseCell(container, 3, 'val')).toBe('410만'));
+    const vals = [...container.querySelectorAll('.gap__cell--base .gap__val')].map((el) => el.textContent ?? '');
+    expect(vals).toHaveLength(2);
+    for (const v of vals) expect(v).toMatch(/^[\d,]+(만|원)$/);
+    const cells = [...container.querySelectorAll('.gap__cell--base')].map((el) => el.textContent ?? '').join(' ');
+    expect(cells).not.toContain('평');
+    expect(cells).not.toContain('억');
   });
 
-  it('L6은 "이 동네 층대 평균"임을 라벨과 문구가 함께 말한다', async () => {
-    // 사다리의 마지막 칸은 층이 아니라 **층대**로 잰 값이다 — 라벨만 읽고도 알아야 한다.
-    responses.floors = floorsDesc(5);
-    responses.bands = { data: [priceBand({ floor_no: 5, stage: 'L6' })], error: null };
-    const { container } = await renderBand();
-    await waitFor(() => expect(container.querySelector('.band__sub')).toBeTruthy());
-    const sub = container.querySelector('.band__sub')?.textContent ?? '';
-    expect(sub).toContain('이 동네(법정동) 3층 이상 평균');
-    expect(sub).toContain('층별로 따로 잰 값이 아닙니다');
-  });
-
-  it('먼 근거(L5·L6)에는 표식과 그 뜻을 설명하는 각주가 함께 나온다', async () => {
-    responses.floors = floorsDesc(2);
-    responses.bands = { data: [priceBand({ floor_no: 2, stage: 'L5' })], error: null };
-    const { container } = await renderBand();
-    await waitFor(() => expect(container.querySelector('.band__sub')).toBeTruthy());
-    expect(container.querySelector('.band__sub')?.textContent).toContain('먼 근거');
-    expect(container.querySelector('.band__why')?.textContent).toContain(
-      '이 땅에서 멀리 떨어진 거래로 어림했다는 뜻',
-    );
-  });
-
-  it('가까운 근거(L2·L4)에는 "먼 근거" 표식을 붙이지 않는다', async () => {
-    responses.floors = floorsDesc(2);
-    responses.bands = { data: [priceBand({ floor_no: 2, stage: 'L2', n: 6 })], error: null };
-    const { container } = await renderBand();
-    await waitFor(() => expect(container.querySelector('.band__sub')).toBeTruthy());
-    expect(container.querySelector('.band')?.textContent).not.toContain('먼 근거');
-    expect(container.querySelector('.band__sub')?.textContent).toContain('이 땅 같은 층');
-  });
-
-  it('곁 거래가 다섯 건이 안 되면 "표본 적음" 표식이 붙는다 (경계는 정확히 5)', async () => {
-    responses.floors = floorsDesc(4, 2);
-    responses.bands = {
-      data: [
-        priceBand({ floor_no: 2, stage: 'L4', n: 5 }),
-        priceBand({ floor_no: 4, stage: 'L4', n: 4 }),
-      ],
-      error: null,
-    };
-    const { container } = await renderBand();
-    await waitFor(() => expect(container.querySelectorAll('.band__sub')).toHaveLength(2));
-    const subs = [...container.querySelectorAll('.band__sub')].map((el) => el.textContent ?? '');
-    expect(subs[0]).toContain('표본 적음'); // 4건 (위가 4층)
-    expect(subs[1]).not.toContain('표본 적음'); // 5건
-    expect(container.querySelector('.band__why')?.textContent).toContain(
-      '곁 거래가 다섯 건이 안 된다는 뜻',
-    );
-  });
-
-  it('모르는 근거 단계면 값을 내지 않는다 (근거를 못 적으면 값도 못 낸다)', async () => {
-    responses.floors = floorsDesc(2);
-    responses.bands = { data: [priceBand({ floor_no: 2, stage: 'L9' })], error: null };
-    const { container } = await renderBand();
-    await waitFor(() => expect(container.querySelector('.band__none')).toBeTruthy());
-    expect(container.querySelector('.band__none')?.textContent).toContain('근거를 표시할 수 없어');
-    expect(container.querySelector('.band__val')).toBeNull();
-  });
-
-  it('1층은 값 대신 정직 문구를 적고 그 줄에 "표본"이라는 말이 없다', async () => {
-    // 자료가 모자란 게 아니라 길·상권까지 맞춰도 오차가 기준선 밖이다 — 다른 이유는 다른 말로.
+  it('★ 1층에도 기준시가를 그린다 — 밴드처럼 1층을 빼지 않는다(국세청이 낸 값이다)', async () => {
     responses.floors = floorsDesc(1);
-    responses.bands = {
-      data: [priceBand({ floor_no: 1, status: 'floor_1f', ...NO_VALUE })],
-      error: null,
-    };
-    const { container } = await renderBand();
-    await waitFor(() => expect(container.querySelector('.band__none')).toBeTruthy());
-    const none = container.querySelector('.band__none')?.textContent ?? '';
-    expect(none).toContain('1층은 내지 않습니다');
-    expect(none).not.toContain('표본');
-    // ⛔ 옛 문구의 틀린 말이 다시 들어오지 않는다 — 도로접면·상권 안팎은 자료에 있다
-    //    (docs/backtest/1층-유형축-검증.md). 숫자 대신 첫 화면 성적표 카드로 안내한다.
-    expect(none).not.toContain('공공데이터에 없');
-    expect(none).toContain('「참고 시세는 얼마나 맞나」 카드');
+    responses.basePrices = { data: [basePrice({ floor_no: 1 })], error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(baseCell(container, 1, 'val')).toBe('300만'));
   });
 
-  it('지하·옥탑은 줄로 반복하지 않고 각주에서 층 이름을 모아 한 번만 말한다', async () => {
-    responses.floors = floorsDesc(99, 2, -1);
-    responses.bands = {
-      data: [
-        priceBand({ floor_no: -1, status: 'no_evidence', ...NO_VALUE }),
-        priceBand({ floor_no: 2 }),
-        priceBand({ floor_no: 99, status: 'no_evidence', ...NO_VALUE }),
-      ],
-      error: null,
-    };
-    const { container } = await renderBand();
-    await waitFor(() => expect(container.querySelector('.band__none-note')).toBeTruthy());
-    expect(container.querySelectorAll('.band__none-note')).toHaveLength(1);
-    expect(container.querySelectorAll('.band__row')).toHaveLength(1); // 값이 있는 2층 하나뿐
-    expect(container.querySelector('.band__none-note')?.textContent).toContain(
-      '참고 시세를 내지 않은 층: 옥탑 · 지하 1층',
-    );
-  });
-
-  it('근거가 아예 없는 층에는 "표본 부족"이라 적지 않는다 (결정 0001)', async () => {
-    // "조금만 더 모으면 나오나?"라는 오해를 만든다 — 쌓여도 안 나오는 층이다.
-    responses.floors = floorsDesc(-1);
-    responses.bands = {
-      data: [priceBand({ floor_no: -1, status: 'no_evidence', ...NO_VALUE })],
-      error: null,
-    };
-    const { container } = await renderBand();
-    await waitFor(() => expect(container.querySelector('.band__none-note')).toBeTruthy());
-    const note = container.querySelector('.band__none-note')?.textContent ?? '';
-    expect(note).toContain('검증한 적이 없습니다');
-    expect(note).toContain('원래 자료에 없는 것');
-    expect(note).not.toContain('표본 부족');
-    // 지하가 섞였을 때는 층 표기가 안 오는 사실도 함께 적는다.
-    expect(note).toContain('2017년부터');
-  });
-
-  it('곁 거래를 못 찾은 층은 "쌓이면 나온다"고 말한다 (근거 없음과 다른 말이다)', async () => {
-    responses.floors = floorsDesc(3);
-    responses.bands = {
-      data: [priceBand({ floor_no: 3, status: 'no_estimate', ...NO_VALUE })],
-      error: null,
-    };
-    const { container } = await renderBand();
-    await waitFor(() => expect(container.querySelector('.band__none')).toBeTruthy());
-    const none = container.querySelector('.band__none')?.textContent ?? '';
-    expect(none).toContain('표본 부족');
-    expect(none).toContain('거래가 쌓이면 나올 수 있습니다');
-  });
-
-  it('C등급 배지가 값과 함께 나오고 A등급과 다른 모양을 쓴다', async () => {
-    // 상세계획 §7.4 — A와 C가 같은 모양이면 같은 무게로 읽힌다. 색은 어떤 테스트도
-    // 보지 못하므로 클래스 유무로 못 박는다.
+  it('★ 기준시가만 있는 건물에서도 카드가 선다(결정 0041 E2 — 값 든 칸 하나면 선다)', async () => {
     responses.floors = floorsDesc(2);
-    responses.bands = { data: [priceBand({ floor_no: 2 })], error: null };
-    const { container } = await renderBand();
-    await waitFor(() => expect(screen.getByText(/C등급 · 파생 추정/)).toBeTruthy());
-    const badge = container.querySelector('.band .grade__badge');
-    expect(badge?.className).toContain('grade__badge--est');
+    responses.txStats = { data: [], error: null };
+    responses.basePrices = { data: [basePrice({ floor_no: 2 })], error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(baseCell(container, 2, 'val')).toBe('300만'));
+    expect(container.querySelector('.gap__row[data-floor="2"] .gap__cell--tx .gap__val')?.textContent).toBe('–');
   });
 
-  it('출처와 집계 시작 달은 화면이 지어내지 않고 서버가 준 값을 쓴다', async () => {
-    responses.floors = floorsDesc(2);
-    responses.bands = { data: [priceBand({ floor_no: 2, window_from: '202501' })], error: null };
-    const { container } = await renderBand();
-    await waitFor(() => expect(container.querySelector('.band__src')).toBeTruthy());
-    const src = container.querySelector('.band__src')?.textContent ?? '';
-    expect(src).toContain('국토교통부 상업업무용 부동산 매매 실거래가');
-    expect(src).toContain('2025-01 이후 계약분');
-    // 기간을 글자로 박으면 창이 바뀌는 날 문구만 조용히 거짓말이 된다.
-    expect(src).not.toContain('24개월');
-    // 모집단 — 서버 사다리 네 갈래가 지분 거래를 뺀다(2026-10-08a).
-    expect(src).toContain('지분 거래 제외');
+  it('자료가 없으면(빈 배열) 그 칸만 – 이고 카드는 그대로다 — 「기준시가 없음」이라 적지 않는다', async () => {
+    responses.floors = floorsDesc(1);
+    responses.basePrices = { data: [], error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelector('.gap')).toBeTruthy());
+    expect(baseCell(container, 1, 'val')).toBe('–');
+    expect(container.querySelector('.gap')?.textContent).not.toContain('기준시가 없음');
+    // 이유 한 줄(👤 2026-10-18 ② · 보완 2차 C1) — 빈 배열 = 상가 기준시가 없음(실패 글과 섞지 않는다).
+    const note = container.querySelector('.gap__head--base .gap__head-note')?.textContent;
+    expect(note).toBe('이 건물에는 국세청이 고시한 상가 기준시가가 없습니다(오피스텔 호실은 주거 가격이라 싣지 않습니다)');
+  });
+
+  it('서버에 함수가 아직 없어도(PGRST202) 카드의 나머지는 정상이다', async () => {
+    responses.basePrices = { data: null, error: { code: 'PGRST202', message: 'function does not exist' } };
+    responses.floors = floorsDesc(1);
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelector('.gap')).toBeTruthy());
+    expect(baseCell(container, 1, 'val')).toBe('–');
+    expect(container.querySelector('.gap__row[data-floor="1"] .gap__cell--tx .gap__val')?.textContent).toBe('㎡당 2,250만');
+    expect(container.textContent ?? '').not.toContain('PGRST202');
+    // 실패 = 「불러오지 못했습니다」(상가 기준시가가 없다고 말하지 않는다 — 모르는 것을 없다고 하지 않는다).
+    expect(container.querySelector('.gap__head--base .gap__head-note')?.textContent).toBe('기준시가를 불러오지 못했습니다');
+    expect(container.textContent).not.toContain('상가 기준시가가 없습니다');
   });
 
   it('pnu 를 p_pnu 라는 이름으로 보낸다 (라이브 전용 오류를 막는 유일한 가드)', async () => {
-    // 형제 함수는 bld_id·pnu·sigungu 인데 이 함수만 p_pnu 다. 목은 인자 이름을 안 보므로
-    // 여기서 안 잡으면 테스트는 전부 초록인 채 라이브에서만 PGRST202 가 난다.
+    // 목은 인자 **이름**을 안 보므로, 여기서 안 잡으면 테스트는 전부 초록인 채
+    // 라이브에서만 PGRST202 가 난다(형제 함수 둘은 pnu·sigungu 다).
     render(<FloorStack building={building({ pnu: '3020010600100010000' })} />);
     await waitFor(() => expect(screen.getByText(/층대별 거래 단가/)).toBeTruthy());
-    const call = rpcCalls.find((c) => c.fn === 'list_price_bands');
+    const call = rpcCalls.find((c) => c.fn === 'list_base_prices');
     expect(call?.args).toEqual({ p_pnu: '3020010600100010000' });
   });
 
-  it('서버가 오름차순으로 줘도 고층부터 그리고, 이 건물에 없는 층은 안 그린다', async () => {
-    // 서버는 **필지** 전체의 층을 오름차순으로 준다 — 인덱스로 맞추면 층이 뒤집히고
-    // 복수동 필지에서는 옆 동 층까지 샌다.
-    responses.floors = floorsDesc(3, 2);
-    responses.bands = {
-      data: [
-        priceBand({ floor_no: 2, stage: 'L5', n: 15 }),
-        priceBand({ floor_no: 3, stage: 'L4', n: 6 }),
-        priceBand({ floor_no: 7, stage: 'L5', n: 9 }), // 옆 동 층
-      ],
-      error: null,
-    };
-    const { container } = await renderBand();
-    await waitFor(() => expect(container.querySelectorAll('.band__row')).toHaveLength(2));
-    const labels = [...container.querySelectorAll('.band__floor')].map((el) => el.textContent);
-    expect(labels).toEqual(['3층', '2층']);
-    expect(container.querySelector('.band')?.textContent).not.toContain('7층');
-  });
-
-  it('값이 같은 연속한 층은 한 줄로 묶어 범위로 적는다', async () => {
-    // 사다리의 마지막 칸은 층대별로 한 번만 계산되므로 3층 이상 전체가 같은 값이다.
-    // 층마다 한 줄씩 뿌리면 "층마다 따로 계산했다"는 착시를 준다(라이브 실측).
-    responses.floors = floorsDesc(5, 4, 3, 2);
-    responses.bands = {
-      data: [
-        priceBand({ floor_no: 2, stage: 'L5', n: 15 }),
-        priceBand({ floor_no: 3, stage: 'L6', n: 8 }),
-        priceBand({ floor_no: 4, stage: 'L6', n: 8 }),
-        priceBand({ floor_no: 5, stage: 'L6', n: 8 }),
-      ],
-      error: null,
-    };
-    const { container } = await renderBand();
-    await waitFor(() => expect(container.querySelectorAll('.band__row')).toHaveLength(2));
-    const labels = [...container.querySelectorAll('.band__floor')].map((el) => el.textContent);
-    expect(labels).toEqual(['3층~5층', '2층']);
-  });
-
-  it('밴드 줄을 누르면 그 층이 펼쳐지고 줄에 표시가 붙는다', async () => {
-    responses.floors = floorsDesc(2);
-    responses.bands = { data: [priceBand({ floor_no: 2 })], error: null };
-    const { container } = await renderBand();
-    await waitFor(() => expect(container.querySelector('.band__hit')).toBeTruthy());
-    expect(container.querySelector('.detail')).toBeNull();
-
-    fireEvent.click(container.querySelector('.band__hit')!);
-
-    expect(container.querySelector('.detail')).toBeTruthy();
-    expect(container.querySelector('.band__row')?.className).toContain('band__row--on');
-  });
-
-  it('조회에 실패하면 섹션을 아예 그리지 않는다 (본체는 정상)', async () => {
-    // 못 읽었을 때 "참고 시세 없음"이라고 적으면 모르는 것을 아는 것처럼 말하게 된다.
-    responses.bands = { data: null, error: { message: 'permission denied' } };
-    // ⚠️ 카드 자체가 없어야 하는 시험이라 펼치는 헬퍼를 쓰지 않는다.
+  it('★ 내린 참고 시세 함수를 더 부르지 않는다 · 「참고 매매 시세」 카드가 없다(결정 0041 E1)', async () => {
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => expect(screen.getByText(/층대별 거래 단가/)).toBeTruthy());
-    expect(container.querySelector('.band')).toBeNull();
-    expect(container.textContent ?? '').not.toContain('permission denied');
-  });
-
-  it('아직 안 왔으면 자리를 잡아 두고 "불러오는 중"이라고 말한다 (모름 ≠ 없음)', async () => {
-    responses.bandsPending = true;
-    // 접힌 채로도 "불러오는 중"이 보여야 한다 — 그래서 일부러 안 펼친다(접힘 ≠ 숨김).
-    const { container } = render(<FloorStack building={building()} />);
-    await waitFor(() => expect(screen.getByText(/층대별 거래 단가/)).toBeTruthy());
-    expect(container.querySelector('.band--wait')).toBeTruthy();
-    expect(container.querySelector('.band--wait')?.textContent).toContain('불러오는 중');
-  });
-
-  it('옥탑 층에도 지하와 같은 표시를 붙인다 (근거 없는 층이라는 뜻)', async () => {
-    responses.floors = floorsDesc(99, 1, -1);
-    // 밴드 응답이 빈 배열이라 카드가 아예 없다 — 펼칠 것도 없다.
-    const { container } = render(<FloorStack building={building()} />);
-    await waitFor(() => expect(container.querySelectorAll('.floor')).toHaveLength(3));
-    expect(container.querySelector('.floor--roof')).toBeTruthy();
-    expect(container.querySelector('.floor--under')).toBeTruthy();
-  });
-
-  it('값이 나가는 상태에서도 금칙어 5종이 한 글자도 없다', async () => {
-    responses.floors = floorsDesc(99, 3, 2, 1, -1);
-    responses.txs = { data: [tx()], error: null };
-    responses.bands = { data: priceBands(), error: null };
-    const { container } = await renderBand();
-    await waitFor(() => expect(container.querySelector('.band__val')).toBeTruthy());
-    const text = container.textContent ?? '';
-    for (const banned of ['적정가격', '적정가', '평가액', '감정가', '가치평가']) {
-      expect(text.includes(banned)).toBe(false);
-    }
-  });
-
-  it('값을 못 내는 층이 있으면 대신 볼 수 있는 곳을 이름으로 가리킨다', async () => {
-    // "아래" 같은 위치 지시어를 쓰면, 그 블록이 조회 실패로 사라진 날 화면이 없는 곳을
-    // 가리키게 된다.
-    responses.floors = floorsDesc(3, 2, 1);
-    responses.bands = { data: priceBands(), error: null };
-    const { container } = await renderBand();
-    await waitFor(() => expect(container.querySelector('.band__alt')).toBeTruthy());
-    const alt = container.querySelector('.band__alt')?.textContent ?? '';
-    expect(alt).toContain('층대별 거래 단가');
-    expect(alt).not.toContain('아래');
-  });
-
-  describe('국세청 기준시가 (같은 카드 안, 다른 자료)', () => {
-    /**
-     * 이 줄은 **추정이 아니다.** 그래서 지키는 것이 넷이다:
-     *   ① 값과 표본(호 수)·고시일을 한 줄에 함께 낸다 (절대 규칙 3)
-     *   ② 위 추정 밴드와 **섞이지 않는다** — 숫자도, 어휘도, 배지 모양도 갈라 둔다
-     *   ③ 없거나 못 읽으면 **그 줄만 조용히 빠진다** (카드의 나머지는 그대로다)
-     *   ④ 부기("시세가 아니다")는 카드 안에서 **한 번만** 한다
-     */
-
-    it('층마다 값·호 수·고시일을 한 줄에 함께 적는다', async () => {
-      responses.floors = floorsDesc(2);
-      responses.bands = { data: [priceBand({ floor_no: 2 })], error: null };
-      responses.basePrices = { data: [basePrice({ floor_no: 2 })], error: null };
-      const { container } = await renderBand();
-      await waitFor(() => expect(container.querySelector('.band__base')).toBeTruthy());
-
-      const block = container.querySelector('.band__base')!;
-      expect(block.querySelector('.band__base-h')?.textContent).toBe('국세청 기준시가');
-      expect(block.querySelector('.band__base-floor')?.textContent).toBe('2층');
-      expect(block.querySelector('.band__base-val')?.textContent).toBe('㎡당 300만');
-      // 값만 떼어 내보내지 않는다 — 이 값은 그 층 호실들의 가운데값이다.
-      const sub = block.querySelector('.band__base-sub')?.textContent ?? '';
-      expect(sub).toContain('호 12개 가운데값');
-      expect(sub).toContain('2026-01-01 고시');
-    });
-
-    it('아주 싼 층(1만 원 미만)도 단위가 겹치지 않게 적는다', async () => {
-      // 원본 최저값이 5,000원/㎡ 라 이 층이 실제로 있다(2026-08-27 적재 담당 실측).
-      // 값 뒤에 '원'을 덧붙이는 순간 그 줄만 '㎡당 5,000원 원'이 된다.
-      responses.floors = floorsDesc(2);
-      responses.bands = { data: [priceBand({ floor_no: 2 })], error: null };
-      responses.basePrices = {
-        data: [basePrice({ floor_no: 2, median_price_per_m2: 5_000 })],
-        error: null,
-      };
-      const { container } = await renderBand();
-      await waitFor(() => expect(container.querySelector('.band__base')).toBeTruthy());
-      expect(container.querySelector('.band__base-val')?.textContent).toBe('㎡당 5,000원');
-    });
-
-    it('세무 기준가격이라는 사실과 A등급 배지를 함께 적는다 (C등급과 다른 모양)', async () => {
-      // 사실(호박)과 추정(회청)을 색으로 가르는 규칙 그대로다 — 같은 모양이면 같은
-      // 무게로 읽힌다(상세계획 §7.4).
-      responses.floors = floorsDesc(2);
-      responses.bands = { data: [priceBand({ floor_no: 2 })], error: null };
-      responses.basePrices = { data: [basePrice({ floor_no: 2 })], error: null };
-      const { container } = await renderBand();
-      await waitFor(() => expect(container.querySelector('.band__base')).toBeTruthy());
-
-      const block = container.querySelector('.band__base')!;
-      expect(block.textContent).toContain('시세가 아닙니다');
-      expect(block.textContent).toContain('세금 매길 때 쓰는 기준가격');
-      const badge = block.querySelector('.grade__badge')!;
-      expect(badge.textContent).toContain('A등급 · 공식 고시');
-      expect(badge.className).not.toContain('grade__badge--est');
-    });
-
-    it('부기는 카드 안에서 한 번만 한다 (줄마다 반복하지 않는다)', async () => {
-      responses.floors = floorsDesc(3, 2);
-      responses.bands = {
-        data: [priceBand({ floor_no: 2 }), priceBand({ floor_no: 3, stage: 'L4', n: 6 })],
-        error: null,
-      };
-      responses.basePrices = {
-        data: [basePrice({ floor_no: 2 }), basePrice({ floor_no: 3, median_price_per_m2: 4_100_000 })],
-        error: null,
-      };
-      const { container } = await renderBand();
-      await waitFor(() => expect(container.querySelectorAll('.band__base-rows li')).toHaveLength(2));
-      const text = container.querySelector('.band')?.textContent ?? '';
-      expect(text.split('시세가 아닙니다')).toHaveLength(2); // = 딱 한 번 나온다
-    });
-
-    it('추정 밴드와 숫자도 어휘도 섞이지 않는다', async () => {
-      // 사람은 나란히 놓인 두 숫자를 자동으로 "같은 것의 두 측정"으로 읽는다. 두 값은
-      // 다른 자로 잰 다른 값이라, 한 줄에 섞이면 그 순간 화면이 거짓말을 시작한다.
-      responses.floors = floorsDesc(2);
-      responses.bands = { data: [priceBand({ floor_no: 2 })], error: null };
-      responses.basePrices = { data: [basePrice({ floor_no: 2 })], error: null };
-      const { container } = await renderBand();
-      await waitFor(() => expect(container.querySelector('.band__base')).toBeTruthy());
-
-      // 밴드 줄에는 고시가격도 '고시'라는 말도 없다.
-      const row = container.querySelector('.band__row')?.textContent ?? '';
-      expect(row).toContain('1,627만'); // 추정 가운데값은 그대로 있고…
-      expect(row).not.toContain('300만'); // …고시가격은 흘러들지 않았다
-      expect(row).not.toContain('고시');
-      // 기준시가 줄에는 추정 어휘(근거 단계·표본 건수)가 없다.
-      const block = container.querySelector('.band__base')?.textContent ?? '';
-      expect(block).not.toContain('1,627만');
-      expect(block).not.toContain('근거:');
-      expect(block).not.toContain('거래 15건');
-      // 두 값을 견준 새 숫자(몇 배·차이)를 만들지 않는다 — 결재받은 적 없는 추정이다.
-      expect(block).not.toContain('배');
-    });
-
-    it('총액(억)으로 환산하지 않는다 — 서버가 면적을 안 준다', async () => {
-      // ⛔ 바로 위 밴드 줄에는 `비슷한 호실 한 칸 … 2.4억~6.2억`이 있어 베껴 오기 딱 좋다.
-      //    그런데 그 면적은 **곁 거래들의** 전용면적 중앙값이라 고시가격과 아무 상관이 없고,
-      //    고시가격의 총액은 애초에 (전용 + 공유)를 곱해야 한다(2026-08-27 적재 담당 확인).
-      //    없는 면적으로 만든 총액은 그럴듯해서 더 위험하다.
-      responses.floors = floorsDesc(2);
-      responses.bands = { data: [priceBand({ floor_no: 2 })], error: null };
-      responses.basePrices = { data: [basePrice({ floor_no: 2 })], error: null };
-      const { container } = await renderBand();
-      await waitFor(() => expect(container.querySelector('.band__base')).toBeTruthy());
-
-      // ⚠️ "'억'이라는 글자가 없다"로는 못 잡는다 — 총액이 만원대면(9,840만) 그 검사를
-      //    그대로 빠져나간다. 그래서 **값 칸의 모양 자체**를 못 박는다: ㎡당 하나뿐이다.
-      const vals = [...container.querySelectorAll('.band__base-val')].map(
-        (el) => el.textContent ?? '',
-      );
-      expect(vals).toHaveLength(1);
-      for (const v of vals) expect(v).toMatch(/^㎡당 [\d,]+(만|원)$/);
-      // 면적·평 같은 환산 재료도 이 블록에 없다(있으면 다음 사람이 곱하기 시작한다).
-      const block = container.querySelector('.band__base')?.textContent ?? '';
-      expect(block).not.toContain('평');
-      expect(block).not.toContain('㎡ ('); // '32.8㎡ (10평)' 꼴의 면적 표기
-    });
-
-    it('값을 못 내는 층에도 기준시가는 그린다 (서로 다른 자료다)', async () => {
-      // 1층은 방침상 추정을 안 내지만, 고시가격은 국세청이 낸 값이라 그것과 무관하다.
-      responses.floors = floorsDesc(1);
-      responses.bands = {
-        data: [priceBand({ floor_no: 1, status: 'floor_1f', ...NO_VALUE })],
-        error: null,
-      };
-      responses.basePrices = { data: [basePrice({ floor_no: 1 })], error: null };
-      const { container } = await renderBand();
-      await waitFor(() => expect(container.querySelector('.band__base')).toBeTruthy());
-      expect(container.querySelector('.band__base-floor')?.textContent).toBe('1층');
-      // 추정 쪽 문구는 그대로 남는다(하나가 다른 하나를 밀어내지 않는다).
-      expect(container.querySelector('.band__none')?.textContent).toContain('1층은 내지 않습니다');
-    });
-
-    it('자료가 없으면(빈 배열) 그 줄만 빠지고 카드는 그대로다', async () => {
-      responses.floors = floorsDesc(2);
-      responses.bands = { data: [priceBand({ floor_no: 2 })], error: null };
-      responses.basePrices = { data: [], error: null };
-      const { container } = await renderBand();
-      await waitFor(() => expect(container.querySelector('.band__val')).toBeTruthy());
-      expect(container.querySelector('.band__base')).toBeNull();
-      // "기준시가 없음"이라고 적지 않는다 — 없는 것과 모르는 것은 다르다.
-      expect(container.querySelector('.band')?.textContent).not.toContain('기준시가');
-    });
-
-    it('서버에 함수가 아직 없어도(PGRST202) 카드의 나머지는 정상이다', async () => {
-      // 마이그레이션 적용 전 라이브가 바로 이 상태다 — 업종 분포와 같은 관행으로
-      // 그 줄만 조용히 뺀다(카드도 값도 그대로 나와야 한다).
-      responses.basePrices = {
-        data: null,
-        error: { code: 'PGRST202', message: 'function does not exist' },
-      };
-      responses.floors = floorsDesc(2);
-      responses.bands = { data: [priceBand({ floor_no: 2 })], error: null };
-      const { container } = await renderBand();
-      await waitFor(() => expect(container.querySelector('.band__val')).toBeTruthy());
-      expect(container.querySelector('.band__base')).toBeNull();
-      expect(container.querySelector('.band__val')?.textContent).toContain('2.4억~6.2억');
-      expect(container.textContent ?? '').not.toContain('PGRST202');
-    });
-
-    it('구가 기준선을 못 넘으면 기준시가도 안 낸다 (카드 노출 규칙을 따른다)', async () => {
-      // v1 의 의도된 한계다 — 게이트에 걸린 구에서는 이 카드가 한 문단만 내므로,
-      // 그 안에 다른 자료를 몰래 끼워 넣지 않는다.
-      responses.bands = { data: priceBandGate(), error: null };
-      responses.basePrices = { data: [basePrice({ floor_no: 1 })], error: null };
-      const { container } = await renderBand();
-      await waitFor(() => expect(container.querySelector('.band__gate')).toBeTruthy());
-      expect(container.querySelector('.band__base')).toBeNull();
-    });
-
-    it('pnu 를 p_pnu 라는 이름으로 보낸다 (라이브 전용 오류를 막는 유일한 가드)', async () => {
-      // 목은 인자 **이름**을 안 보므로, 여기서 안 잡으면 테스트는 전부 초록인 채
-      // 라이브에서만 PGRST202 가 난다(형제 함수 셋은 bld_id·pnu·sigungu 다).
-      render(<FloorStack building={building({ pnu: '3020010600100010000' })} />);
-      await waitFor(() => expect(screen.getByText(/층대별 거래 단가/)).toBeTruthy());
-      const call = rpcCalls.find((c) => c.fn === 'list_base_prices');
-      expect(call?.args).toEqual({ p_pnu: '3020010600100010000' });
-    });
+    expect(rpcCalls.map((c) => c.fn)).not.toContain(['list', 'price', 'bands'].join('_'));
+    expect(container.textContent).not.toContain('참고 매매 시세');
   });
 });
 
@@ -1818,8 +1448,7 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     };
     responses.industryMix = { data: MIX, error: null };
     responses.txs = { data: [tx()], error: null };
-    responses.bands = { data: priceBands(), error: null };
-    // 세 잣대 카드(물결 1-C2)는 국세청·부동산원 중 하나라도 값이 있어야 선다 — 국세청 한 층을 준다.
+    // 층별 공표값 카드는 값 든 칸이 하나라도 있으면 선다(결정 0041 E2) — 국세청 한 층도 준다.
     responses.basePrices = {
       data: [{ floor_no: 1, median_price_per_m2: 4_100_000, ho_cnt: 12, notice_date: '2026-01-01' }],
       error: null,
@@ -1883,9 +1512,8 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       '층 목록',
       '둘레의 업종 분포',
       '실거래 기록',
-      '참고 매매 시세 (추정값)',
-      // 세 잣대(물결 1-C2 · 👤) — 참고 매매 시세 바로 뒤 · 접힌 채 시작.
-      '층 차이 세 잣대 (공표값 나란히)',
+      // 층별 공표값(결정 0041 E2) — 내린 참고 매매 시세 카드의 자리 · 접힌 채 시작.
+      '층별 공표값 나란히 — 국세청 기준시가 · 구 상가 단가 · 부동산원 임대료',
       '상권 임대 동향 (부동산원 조사)',
       '상권 개업·폐업 (서울시 공표)',
       // 빈 카드 셋(결정 0036 결정 2 · 물결 1-B) — 역할 없음 차례에서는 맨 끝.
@@ -1894,14 +1522,14 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       '이 자리 가게 이력',
     ]);
     expect(cards.map((c) => c.role)).toEqual([
-      '공통', '공통', '창업자', '투자자', '투자자', '공통', '투자자', '창업자', '창업자', '창업자', '창업자',
+      '공통', '공통', '창업자', '투자자', '공통', '투자자', '창업자', '창업자', '창업자', '창업자',
     ]);
-    // 공통 둘 + 역할마다 하나씩 = 넷을 펼치고, 투자자의 나머지 둘(추정값·임대)은 접는다.
+    // 공통 둘 + 역할마다 하나씩 = 넷을 펼치고, 층별 공표값·임대는 접는다.
     // ⛔ 임대 카드의 defaultOpen 이 실수로 true 가 되는 날 여기서 잡힌다(예산 4장 초과).
     // ⛔ 개업·폐업 카드(결정 0033)도 접힌다 — 이 건물이 아니라 상권 전체의 값이다.
     // ⛔ 빈 카드 셋도 접힌 채 시작한다(👤 — 지금은 "비어 있음" 한 줄뿐이다).
     expect(cards.map((c) => c.open)).toEqual([
-      true, true, true, true, false, false, false, false, false, false, false,
+      true, true, true, true, false, false, false, false, false, false,
     ]);
   });
 
@@ -1927,8 +1555,8 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       ['속한 상권', true],
       ['층 목록', true],
       ['실거래 기록', true],
-      ['참고 매매 시세 (추정값)', true],
-      ['층 차이 세 잣대 (공표값 나란히)', false],
+      // 결정 0041 E2 — 층별 공표값이 내린 밴드의 자리와 펼침을 이어받는다.
+      ['층별 공표값 나란히 — 국세청 기준시가 · 구 상가 단가 · 부동산원 임대료', true],
       ['상권 임대 동향 (부동산원 조사)', false],
       ['둘레의 업종 분포', false],
       ['상권 개업·폐업 (서울시 공표)', false],
@@ -1946,16 +1574,15 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       ['유동인구', false],
       ['이 자리 가게 이력', false],
       ['실거래 기록', false],
-      ['참고 매매 시세 (추정값)', false],
-      ['층 차이 세 잣대 (공표값 나란히)', false],
+      ['층별 공표값 나란히 — 국세청 기준시가 · 구 상가 단가 · 부동산원 임대료', false],
       ['상권 임대 동향 (부동산원 조사)', false],
     ],
     중개사: [
       ['층 목록', true],
       ['실거래 기록', true],
       ['속한 상권', true],
-      ['참고 매매 시세 (추정값)', true],
-      ['층 차이 세 잣대 (공표값 나란히)', false],
+      // 결정 0041 E2 — 자리만 이어받고 접힘 그대로(중개사 펼침은 셋).
+      ['층별 공표값 나란히 — 국세청 기준시가 · 구 상가 단가 · 부동산원 임대료', false],
       ['상권 임대 동향 (부동산원 조사)', false],
       ['둘레의 업종 분포', false],
       ['상권 개업·폐업 (서울시 공표)', false],
@@ -1969,8 +1596,7 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     ['층 목록', true],
     ['둘레의 업종 분포', true],
     ['실거래 기록', true],
-    ['참고 매매 시세 (추정값)', false],
-    ['층 차이 세 잣대 (공표값 나란히)', false],
+    ['층별 공표값 나란히 — 국세청 기준시가 · 구 상가 단가 · 부동산원 임대료', false],
     ['상권 임대 동향 (부동산원 조사)', false],
     ['상권 개업·폐업 (서울시 공표)', false],
     ['업종별 추정매출', false],
@@ -2050,14 +1676,16 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       expect(container.textContent).not.toContain('불러오는 중');
     });
 
-    const band = container.querySelector('.band')!;
+    const gap = container.querySelector('.gap')!;
     // 본문(값·근거·출처)은 아직 **안 보인다**…
     //
     // ⚠️ "DOM 에 없다"가 아니라 "감춰져 있다"를 본다. 접힌 본문은 자리에 남겨 둔다 —
     //    안 그러면 종이로 뽑을 때 이 카드가 통째로 빠진다(결정 0020).
-    expect(band.querySelector('.card__body')?.hasAttribute('hidden')).toBe(true);
-    // …그래도 "무엇이 몇 개 있는지"는 접은 채로 읽힌다.
-    expect(band.querySelector('.card__summary')?.textContent).toBe('값을 낸 층 1개');
+    expect(gap.querySelector('.card__body')?.hasAttribute('hidden')).toBe(true);
+    // …그래도 "무엇이 들어 있는지"는 접은 채로 읽힌다.
+    expect(gap.querySelector('.card__summary')?.textContent).toBe(
+      '국세청 기준시가 · 구 상가 단가 · 부동산원 임대료 — 층마다 나란히',
+    );
   });
 
   it('접힌 카드를 누르면 그 자리에서 내용이 펼쳐진다', async () => {
@@ -2070,9 +1698,9 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       expect(container.textContent).not.toContain('불러오는 중');
     });
 
-    fireEvent.click(container.querySelector('.band .card__toggle')!);
-    expect(container.querySelector('.band .band__val')).toBeTruthy();
-    expect(screen.getByText(/C등급 · 파생 추정/)).toBeTruthy();
+    fireEvent.click(container.querySelector('.gap .card__toggle')!);
+    expect(container.querySelector('.gap .card__body')?.hasAttribute('hidden')).toBe(false);
+    expect(container.querySelector('.gap__row[data-floor="1"] .gap__cell--base .gap__val')?.textContent).toBe('410만');
   });
 
   it('펼쳐진 카드를 누르면 접히고, 요약만 남는다', async () => {
@@ -2112,7 +1740,7 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     }
   });
 
-  it('요약 줄에는 추정 **값**을 적지 않는다 (값과 근거는 한 몸이다 — 절대 규칙 3)', async () => {
+  it('요약 줄에는 **값**을 적지 않는다 (값과 근거는 한 몸이다 — 절대 규칙 3)', async () => {
     // 요약 한 줄에는 근거 단계·표본 수를 함께 실을 자리가 없다. 그래서 여기에는
     // "몇 개인지"만 적고 금액·단가는 본문에서만 낸다.
     const { container } = render(<FloorStack building={building()} />);
@@ -2124,7 +1752,7 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       expect(container.textContent).not.toContain('불러오는 중');
     });
 
-    const summary = container.querySelector('.band .card__summary')?.textContent ?? '';
+    const summary = container.querySelector('.gap .card__summary')?.textContent ?? '';
     expect(summary).not.toContain('억');
     expect(summary).not.toContain('㎡당');
   });
@@ -2145,10 +1773,9 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       '역삼역(발달상권)출처: 서울특별시 상권분석서비스',
       '층 2개 · 점포 4곳',
       '속한 상권 1개 · 반경 500m 이내 402곳',
-      '이 땅 거래 1건 · 강남구 층대별 단가',
-      '값을 낸 층 1개',
-      // 세 잣대 — 값 없이 무엇이 들어 있는지만(👤 물결 1-C2 · 비율 0).
-      '국세청 · 구 실거래 · 부동산원 — 층마다 나란히',
+      '이 땅 거래 1건 · 강남구 층대별 단가 (상가 거래 기준)',
+      // 층별 공표값 — 값 없이 무엇이 들어 있는지만(👤 물결 1-C2 · 비율 0 · 결정 0041 제목과 맞춤).
+      '국세청 기준시가 · 구 상가 단가 · 부동산원 임대료 — 층마다 나란히',
       // ⛔ 임대 카드는 첫 화면에서 **접혀 있다** — 그래서 이 한 줄이 접은 채로 읽히는
       //    유일한 내용이다(2026-09-01 감사 전까지 이 줄은 한 번도 검사된 적이 없었다).
       '공실률 · ㎡당 임대료 · 투자수익률 · 2026년 2분기 조사',
@@ -2194,7 +1821,7 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     });
 
     const summary = container.querySelector('.tx .card__summary')?.textContent ?? '';
-    expect(summary).toBe('이 땅 거래 1건 · 층대별 단가');
+    expect(summary).toBe('이 땅 거래 1건 · 층대별 단가 (상가 거래 기준)');
     expect(summary).not.toContain('null');
     expect(summary).not.toContain('undefined');
   });
@@ -2265,37 +1892,6 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     const sections = container.querySelectorAll('.stack > section');
     expect(sections).toHaveLength(Object.keys(SECTION_PLAN).length);
     for (const el of sections) expect(el.classList.contains('card')).toBe(true);
-  });
-
-  it('층 목록을 접어 둔 채로 시세 줄을 눌러도 그 층이 보인다', async () => {
-    // ⛔ 이게 없으면 눌러도 **화면이 안 변한다** — 층은 펼쳐졌는데 그 층이 접힌 카드
-    //    안에 있기 때문이다. 사람은 그걸 고장으로 읽는다.
-    const { container } = render(<FloorStack building={building()} />);
-    await waitFor(() => {
-      expect(container.querySelectorAll('.card')).toHaveLength(Object.keys(SECTION_PLAN).length);
-      // 로딩 카드도 한 장으로 세어지므로 장수만 기다리면 경주가 남는다 — 응답이
-      // 전부 자리 잡은 뒤에만 배치·상태·요약을 읽는다(본문 없는 카드는 버튼이 없어
-      // aria-expanded 판독이 false 로 읽히는 것이 이 경주의 증상이었다).
-      expect(container.textContent).not.toContain('불러오는 중');
-    });
-
-    // 시세 카드를 펼치고, 층 목록은 접는다.
-    fireEvent.click(container.querySelector('.band .card__toggle')!);
-    fireEvent.click(container.querySelector('.card--floors .card__toggle')!);
-    expect(
-      container.querySelector('.card--floors .card__body')?.hasAttribute('hidden'),
-    ).toBe(true);
-    // 층 목록이 접혀 있는 동안에는 "펼쳐진 층"도 없다고 말한다(거짓말 금지).
-    expect(container.querySelector('.band__row--on')).toBeNull();
-
-    fireEvent.click(container.querySelector('.band__hit')!);
-
-    // 층 목록이 저절로 다시 펼쳐지고, 그 층이 열려 있다.
-    expect(container.querySelector('.card--floors .card__toggle')?.getAttribute('aria-expanded')).toBe(
-      'true',
-    );
-    expect(container.querySelector('.detail')).toBeTruthy();
-    expect(container.querySelector('.band__row--on')).toBeTruthy();
   });
 
   it('상권 카드는 답과 출처를 요약에 두고, 읽는 법만 본문에 둔다', async () => {
@@ -3033,5 +2629,284 @@ describe('FloorStack — 개별공시지가 한 줄 (결정 0036 결정 7)', () 
     releaseOld({ data: [{ land_price: 45_230_000, land_price_year: 2026 }], error: null });
     await new Promise((r) => setTimeout(r, 0));
     expect(container.querySelector('.stack__land-text')?.textContent).toBe(NEW);
+  });
+});
+
+/**
+ * 긴 카드 창(S2 · 👤 2026-10-15 "처음 10줄만 먼저 보여 주고 「전부 보기」로 펼친다" · "펼친 뒤 다시 짧게 접는 단추도 둔다").
+ * 층 목록은 검사 뒤 다시 여쭤 **「아래 10줄」**(👤 2026-10-15 저녁) — 서버 순서(위층부터)는 그대로, 앞쪽 위층 줄이 숨고
+ * 단추 「위층 전부 보기 (N개 층 더)」는 목록 맨 위. 거래 목록은 처음 10건 + 아래 단추 그대로.
+ * ⓘ jsdom 은 styles.css 를 안 읽으므로 '화면에서 숨음'은 이름표 `list__folded` 로 본다 — 실제로 숨는지·종이에
+ *   전부 나오는지는 E2E 「BB」가 본다. 줄은 늘 전부 DOM 에 있다(`floor-N` id 가 늘 있어야 건너뛰기가 된다).
+ */
+describe('FloorStack — 긴 카드 창 (S2)', () => {
+  /** 층을 서버 순서(내림차순)로 n개 — n층부터 1층까지. */
+  function stackOf(n: number) {
+    return { data: Array.from({ length: n }, (_, i) => floor({ floor_no: n - i })), error: null };
+  }
+  const floorFold = (c: HTMLElement) => c.querySelector<HTMLButtonElement>('.card--floors .list__fold');
+  const txFold = (c: HTMLElement) => c.querySelector<HTMLButtonElement>('.tx__list ~ .list__fold');
+  /** 화면에 보이는(숨김 이름표가 없는) 층 줄의 id. */
+  const shownFloors = (c: HTMLElement) =>
+    [...c.querySelectorAll('.floors > li:not(.list__folded)')].map((li) => li.id);
+  const foldedFloors = (c: HTMLElement) =>
+    [...c.querySelectorAll('.floors > li.list__folded')].map((li) => li.id);
+  const shownTx = (c: HTMLElement) => c.querySelectorAll('.tx__list > li:not(.list__folded)').length;
+
+  let scrolled: Element[];
+  beforeEach(() => {
+    scrolled = [];
+    // jsdom 에는 scrollIntoView 가 없다 — 어느 요소로 굴렀는지만 적어 둔다.
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      writable: true,
+      value: function (this: Element) {
+        scrolled.push(this);
+      },
+    });
+  });
+  afterEach(() => {
+    delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+
+  it('★ 층이 11줄 이상이면 아래 10줄만 보이고 목록 맨 위에 「위층 전부 보기 (N개 층 더)」 — 줄은 전부 DOM 에', async () => {
+    responses.floors = stackOf(12);
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelectorAll('.floors > li')).toHaveLength(12));
+    // 아래 10줄 — 서버 순서(위층부터) 그대로, 앞쪽 위층 둘이 숨는다.
+    expect(shownFloors(container)).toEqual(Array.from({ length: 10 }, (_, i) => `floor-${10 - i}`));
+    expect(foldedFloors(container)).toEqual(['floor-12', 'floor-11']);
+    const btn = floorFold(container)!;
+    expect(btn.textContent).toBe('위층 전부 보기 (2개 층 더)');
+    expect(btn.getAttribute('aria-expanded')).toBe('false');
+    const list = container.querySelector('.floors')!;
+    expect(btn.getAttribute('aria-controls')).toBe(list.id);
+    expect(document.getElementById(btn.getAttribute('aria-controls')!)).toBe(list);
+    // 단추는 목록 **위**(👤 그림).
+    expect(btn.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('★ 위층 전부 보기 → 전부 · 다시 접기 → 아래 10줄 + 층 목록 카드 머리로 굴린다', async () => {
+    responses.floors = stackOf(12);
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(floorFold(container)).toBeTruthy());
+    fireEvent.click(floorFold(container)!);
+    expect(shownFloors(container)).toHaveLength(12);
+    expect(floorFold(container)!.textContent).toBe('층 목록 접기');
+    expect(floorFold(container)!.getAttribute('aria-expanded')).toBe('true');
+    // 펼칠 때는 굴리지 않는다.
+    expect(scrolled).toHaveLength(0);
+
+    fireEvent.click(floorFold(container)!);
+    expect(foldedFloors(container)).toEqual(['floor-12', 'floor-11']);
+    expect(floorFold(container)!.textContent).toBe('위층 전부 보기 (2개 층 더)');
+    await waitFor(() => expect(scrolled).toHaveLength(1));
+    expect(scrolled[0]).toBe(container.querySelector('.card--floors .card__h'));
+  });
+
+  it('★ 경계 — 10줄이면 단추도 숨김도 없고(지금 그대로), 11줄이면 맨 위 한 줄이 숨고 단추가 선다(양성 대조)', async () => {
+    responses.floors = stackOf(10);
+    const first = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(first.container.querySelectorAll('.floors > li')).toHaveLength(10));
+    expect(floorFold(first.container)).toBeNull();
+    expect(first.container.querySelector('.list__folded')).toBeNull();
+    first.unmount();
+
+    responses.floors = stackOf(11);
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelectorAll('.floors > li')).toHaveLength(11));
+    expect(floorFold(container)?.textContent).toBe('위층 전부 보기 (1개 층 더)');
+    expect(foldedFloors(container)).toEqual(['floor-11']);
+  });
+
+  it('★ 다른 건물을 열면 층 목록은 다시 아래 10줄', async () => {
+    responses.floors = stackOf(12);
+    const { container, rerender } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(floorFold(container)).toBeTruthy());
+    fireEvent.click(floorFold(container)!);
+    expect(shownFloors(container)).toHaveLength(12);
+    rerender(<FloorStack building={building({ bld_id: '1168010100-9' })} />);
+    await waitFor(() => expect(shownFloors(container)).toHaveLength(10));
+    expect(floorFold(container)!.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  /** 12층~1층 + 지하 1층 = 13줄 — 숨는 줄은 앞쪽 셋(12·11·10층). */
+  const WITH_BASEMENT = {
+    data: [...Array.from({ length: 12 }, (_, i) => floor({ floor_no: 12 - i })), floor({ floor_no: -1 })],
+    error: null,
+  };
+
+  /** 층마다 호 목록이 있는 상가 층 요약 + 한 쪽짜리 호 목록(호실 구성표 고르기용). */
+  function unitsFor(nos: number[]) {
+    responses.unitSummary = {
+      data: nos.map((n) => ({
+        floor_no: n,
+        unit_cnt: 2,
+        median_area_m2: 4,
+        min_area_m2: null,
+        max_area_m2: null,
+        floor_kind: 'commercial',
+      })),
+      error: null,
+    };
+    responses.floorUnits = (args) => ({
+      data: [{ ho: `${Number(args.p_floor_no)}-1호`, excl_area_m2: 4, total_cnt: 1 }],
+      error: null,
+    });
+  }
+  const NOS_WITH_BASEMENT = [...Array.from({ length: 12 }, (_, i) => 12 - i), -1];
+
+  it('★ 호실 구성표를 직접 골랐는데 고른 층 중 숨은 위층이 있으면 층 목록을 전부로 펼친다(맹점 B)', async () => {
+    responses.floors = WITH_BASEMENT;
+    unitsFor(NOS_WITH_BASEMENT);
+    const { container, rerender } = render(
+      <FloorStack building={building()} unitPrintMode="low" unitPrintOpenSignal={0} />,
+    );
+    await waitFor(() => expect(foldedFloors(container)).toHaveLength(3));
+    // '전부' = 12층까지 — 숨은 12·11·10층이 고른 층에 든다.
+    rerender(<FloorStack building={building()} unitPrintMode="all" unitPrintOpenSignal={1} />);
+    await waitFor(() => expect(foldedFloors(container)).toHaveLength(0));
+    expect(floorFold(container)!.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('호실 구성표를 직접 골라도 고른 층이 다 보이는 줄이면 층 목록은 접힌 그대로(양성 대조)', async () => {
+    responses.floors = WITH_BASEMENT;
+    unitsFor(NOS_WITH_BASEMENT);
+    const { container, rerender } = render(
+      <FloorStack building={building()} unitPrintMode="none" unitPrintOpenSignal={0} />,
+    );
+    await waitFor(() => expect(foldedFloors(container)).toHaveLength(3));
+    // '지하~3층' = 지하 1·1·2·3층 — 전부 보이는 아래 10줄 안.
+    rerender(<FloorStack building={building()} unitPrintMode="low" unitPrintOpenSignal={1} />);
+    await waitFor(() => expect(container.querySelectorAll('.floor__unitprint')).toHaveLength(4));
+    expect(foldedFloors(container)).toEqual(['floor-12', 'floor-11', 'floor-10']);
+  });
+
+  /** 그 층의 줄 단추를 눌러 펼친다. */
+  const openRow = (no: number) =>
+    fireEvent.click(document.getElementById(`floor-${no}`)!.querySelector('.floor__row')!);
+
+  it('★ 접으면 숨는 줄에 열린 층이 있으면 닫는다(맹점 C)', async () => {
+    responses.floors = stackOf(12);
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(floorFold(container)).toBeTruthy());
+    fireEvent.click(floorFold(container)!);
+    openRow(12);
+    expect(container.querySelector('#floor-12 .detail')).toBeTruthy();
+    fireEvent.click(floorFold(container)!);
+    expect(container.querySelector('.floors .detail')).toBeNull();
+    // 접기가 부른 굴리기를 이 시험 안에서 끝낸다(안 기다리면 다음 시험의 기록에 섞인다).
+    await waitFor(() => expect(scrolled).toHaveLength(1));
+  });
+
+  it('접어도 보이는 줄에 열린 층은 그대로(양성 대조)', async () => {
+    responses.floors = stackOf(12);
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(floorFold(container)).toBeTruthy());
+    fireEvent.click(floorFold(container)!);
+    openRow(1);
+    fireEvent.click(floorFold(container)!);
+    expect(container.querySelector('#floor-1 .detail')).toBeTruthy();
+    await waitFor(() => expect(scrolled).toHaveLength(1));
+  });
+
+  it('★ 거래가 11건 이상이면 처음 10건 + 「거래 전부 보기 (N건)」 · 전부 · 다시 접기', async () => {
+    responses.txs = { data: Array.from({ length: 12 }, (_, i) => tx({ price_won: (i + 1) * 10_000_000 })), error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(txFold(container)).toBeTruthy());
+    expect(container.querySelectorAll('.tx__list > li')).toHaveLength(12);
+    expect(shownTx(container)).toBe(10);
+    const btn = txFold(container)!;
+    expect(btn.textContent).toBe('거래 전부 보기 (12건)');
+    expect(btn.getAttribute('aria-expanded')).toBe('false');
+    expect(document.getElementById(btn.getAttribute('aria-controls')!)).toBe(container.querySelector('.tx__list'));
+
+    fireEvent.click(btn);
+    expect(shownTx(container)).toBe(12);
+    expect(txFold(container)!.textContent).toBe('거래 목록 접기');
+    expect(txFold(container)!.getAttribute('aria-expanded')).toBe('true');
+
+    fireEvent.click(txFold(container)!);
+    expect(shownTx(container)).toBe(10);
+    await waitFor(() => expect(scrolled).toHaveLength(1));
+    expect(scrolled[0]).toBe(container.querySelector('section.tx .card__h'));
+  });
+
+  it('★ 거래 경계 — 10건이면 단추·숨김 없음, 11건이면 단추(양성 대조)', async () => {
+    responses.txs = { data: Array.from({ length: 10 }, () => tx()), error: null };
+    const first = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(first.container.querySelectorAll('.tx__list > li')).toHaveLength(10));
+    expect(txFold(first.container)).toBeNull();
+    expect(first.container.querySelector('.tx__list > li.list__folded')).toBeNull();
+    first.unmount();
+
+    responses.txs = { data: Array.from({ length: 11 }, () => tx()), error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(txFold(container)?.textContent).toBe('거래 전부 보기 (11건)'));
+    expect(container.querySelectorAll('.tx__list > li.list__folded')).toHaveLength(1);
+  });
+
+  it('★ 다른 건물을 열면(같은 땅의 다른 동이라도) 거래 목록은 다시 처음 10건 — 동작만 본다', async () => {
+    // ⓘ 무엇이 되돌리는지는 가리지 않는다 — 이 시험에서는 새 건물의 층을 받는 동안 카드가 내려갔다 다시 서며 되돌아가고,
+    //   실제 화면은 App 이 건물마다 FloorStack 을 새로 만든다(`key`). `ParcelTxList` 의 `key={bldId}` 는 그 둘이 없어져도
+    //   남는 덧댐이라 빼도 이 시험은 초록이다(검사 M6) — 그 열쇠 자체를 지키는 시험이 아니다.
+    responses.txs = { data: Array.from({ length: 12 }, () => tx()), error: null };
+    const { container, rerender } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(txFold(container)).toBeTruthy());
+    fireEvent.click(txFold(container)!);
+    expect(shownTx(container)).toBe(12);
+    rerender(<FloorStack building={building({ bld_id: '1168010100-2' })} />);
+    await waitFor(() => expect(shownTx(container)).toBe(10));
+    expect(txFold(container)!.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  // 지분 설명 줄(👤 2026-10-16) — 화면에 보이는 줄에 지분이 있을 때만 화면에. 줄 자체는 지분이 하나라도 있으면 늘 DOM 에 있고
+  // (종이에는 줄이 전부 나오니 설명도 늘 나온다), 숨은 줄에만 있으면 `list__folded` 이름표로 화면에서만 숨는다.
+  // ⓘ jsdom 은 CSS 를 못 보니 이름표만 본다 — 실제로 숨는지는 E2E 「BB」.
+  const shareNote = (c: HTMLElement) => c.querySelector('.tx__share-note');
+  const txsWithShareAt = (n: number, at: number[]) =>
+    Array.from({ length: n }, (_, i) => tx({ is_share: at.includes(i) }));
+
+  it('★ 지분이 숨은 줄(11번째 이후)에만 있으면 접힌 화면에선 설명 줄에 숨김 이름표 · 펼치면 떼고 · 다시 접으면 다시 붙는다', async () => {
+    responses.txs = { data: txsWithShareAt(14, [11, 12]), error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(txFold(container)).toBeTruthy());
+    // 줄은 DOM 에 있다(종이용) — 화면에서만 숨는 이름표.
+    expect(shareNote(container)).not.toBeNull();
+    expect(shareNote(container)!.classList.contains('list__folded')).toBe(true);
+
+    fireEvent.click(txFold(container)!);
+    expect(shareNote(container)!.classList.contains('list__folded')).toBe(false);
+
+    fireEvent.click(txFold(container)!);
+    expect(shareNote(container)!.classList.contains('list__folded')).toBe(true);
+  });
+
+  it('★ 경계 — 지분이 11번째 줄(첫 숨은 줄)에만 있으면 접힌 화면에선 숨김 이름표 · 펼치면 뗀다', async () => {
+    responses.txs = { data: txsWithShareAt(14, [10]), error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(txFold(container)).toBeTruthy());
+    expect(shareNote(container)!.classList.contains('list__folded')).toBe(true);
+    fireEvent.click(txFold(container)!);
+    expect(shareNote(container)!.classList.contains('list__folded')).toBe(false);
+  });
+
+  it('보이는 줄(처음 10건)에 지분이 있으면 접혀 있어도 펼쳐도 설명 줄이 보인다(양성 대조)', async () => {
+    responses.txs = { data: txsWithShareAt(14, [9]), error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(txFold(container)).toBeTruthy());
+    expect(shareNote(container)).not.toBeNull();
+    expect(shareNote(container)!.classList.contains('list__folded')).toBe(false);
+    fireEvent.click(txFold(container)!);
+    expect(shareNote(container)!.classList.contains('list__folded')).toBe(false);
+  });
+
+  it('지분이 아예 없으면 11건 이상이어도 설명 줄이 없다 — 접혀 있어도 펼쳐도', async () => {
+    responses.txs = { data: txsWithShareAt(14, []), error: null };
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(txFold(container)).toBeTruthy());
+    expect(shareNote(container)).toBeNull();
+    fireEvent.click(txFold(container)!);
+    expect(shareNote(container)).toBeNull();
   });
 });

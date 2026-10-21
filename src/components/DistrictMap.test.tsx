@@ -1,6 +1,7 @@
 /// <reference types="node" />
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, act, waitFor } from '@testing-library/react';
+import { useState } from 'react';
 import type { BuildingHit, DistrictFeature, DistrictGeoJson, Ring } from '../types';
 
 /**
@@ -20,38 +21,66 @@ const kakao = vi.hoisted(() => ({
   mapProps: null as {
     onClick?: (m: unknown, e: unknown) => void;
     onZoomChanged?: (m: { getLevel: () => number }) => void;
+    onIdle?: (m: unknown) => void;
   } | null,
   setBounds: vi.fn(),
   panTo: vi.fn(),
   setLevel: vi.fn(),
+  /** 지도 칸 크기를 바꾼 뒤 부르는 것(W4b — 숨겼다 보일 때 · 판 단계가 바뀐 뒤). */
+  relayout: vi.fn(),
+  /** 다시 보일 때 마지막으로 잰 중심을 되돌린다(W4b 보완 B2). */
+  setCenter: vi.fn(),
+  /** 지금 보이는 범위 — 누른 자리가 화면 안인지(`contain`) 볼 때 쓴다(W4b 보완 B3). */
+  getBounds: vi.fn(),
+  map: null as unknown,
 }));
+kakao.map = {
+  setBounds: kakao.setBounds,
+  panTo: kakao.panTo,
+  setLevel: kakao.setLevel,
+  relayout: kakao.relayout,
+  setCenter: kakao.setCenter,
+  getBounds: kakao.getBounds,
+};
 
-vi.mock('react-kakao-maps-sdk', () => ({
-  useKakaoLoader: () => [false, undefined],
-  useMap: () => ({ setBounds: kakao.setBounds, panTo: kakao.panTo, setLevel: kakao.setLevel }),
-  Map: (props: {
-    children?: React.ReactNode;
-    onClick?: (m: unknown, e: unknown) => void;
-    onZoomChanged?: (m: { getLevel: () => number }) => void;
-  }) => {
-    kakao.mapProps = props;
-    return <div data-testid="map">{props.children}</div>;
-  },
-  // 이름표가 타는 오버레이. **클릭을 막는 스위치(clickable)** 를 볼 수 있게 그대로 내건다.
-  CustomOverlayMap: (props: {
-    children?: React.ReactNode;
-    clickable?: boolean;
-    position: { lat: number; lng: number };
-  }) => (
-    <div data-testid="label" data-clickable={String(props.clickable)} data-lat={props.position.lat}>
-      {props.children}
-    </div>
-  ),
-  Polygon: (props: { fillColor?: string }) => <div data-testid="polygon" data-fill={props.fillColor} />,
-  MapMarker: (props: { position: { lat: number; lng: number } }) => (
-    <div data-testid="marker" data-lat={props.position.lat} data-lng={props.position.lng} />
-  ),
-}));
+vi.mock('react-kakao-maps-sdk', async () => {
+  const { useEffect } = await import('react');
+  return {
+    useKakaoLoader: () => [false, undefined],
+    // ⓘ 진짜 SDK 처럼 **같은 지도 객체**를 돌려준다 — 부를 때마다 새 객체면 `[map, bounds]` effect 가 매 렌더 다시 돌아
+    //   "구를 바꿀 때만 다시 맞춘다"를 셀 수 없다(결정 0039 W1).
+    useMap: () => kakao.map,
+    Map: (props: {
+      children?: React.ReactNode;
+      onClick?: (m: unknown, e: unknown) => void;
+      onZoomChanged?: (m: { getLevel: () => number }) => void;
+      onIdle?: (m: unknown) => void;
+      onCreate?: (m: unknown) => void;
+    }) => {
+      kakao.mapProps = props;
+      // 진짜 SDK 처럼 지도를 만든 뒤 한 번 `onCreate` 로 지도 객체를 건넨다(W4b relayout 시험).
+      const { onCreate } = props;
+      useEffect(() => {
+        onCreate?.(kakao.map);
+      }, [onCreate]);
+      return <div data-testid="map">{props.children}</div>;
+    },
+    // 이름표가 타는 오버레이. **클릭을 막는 스위치(clickable)** 를 볼 수 있게 그대로 내건다.
+    CustomOverlayMap: (props: {
+      children?: React.ReactNode;
+      clickable?: boolean;
+      position: { lat: number; lng: number };
+    }) => (
+      <div data-testid="label" data-clickable={String(props.clickable)} data-lat={props.position.lat}>
+        {props.children}
+      </div>
+    ),
+    Polygon: (props: { fillColor?: string }) => <div data-testid="polygon" data-fill={props.fillColor} />,
+    MapMarker: (props: { position: { lat: number; lng: number } }) => (
+      <div data-testid="marker" data-lat={props.position.lat} data-lng={props.position.lng} />
+    ),
+  };
+});
 
 // 지도 시점 맞추기가 쓰는 전역. 값은 안 쓰고 "불렸는지"만 본다.
 vi.stubGlobal('kakao', {
@@ -215,6 +244,10 @@ beforeEach(() => {
   kakao.setBounds.mockReset();
   kakao.panTo.mockReset();
   kakao.setLevel.mockReset();
+  kakao.relayout.mockReset();
+  kakao.setCenter.mockReset();
+  kakao.getBounds.mockReset();
+  kakao.getBounds.mockImplementation(() => ({ contain: () => true }));
   fetchMock.mockReset();
   fetchMock.mockImplementation(() => okJson(geojson()));
   vi.stubGlobal('fetch', fetchMock);
@@ -614,5 +647,812 @@ describe('DistrictMap — 접기와 캐시', () => {
 
     // 파일 하나에 전국이 다 들어 있다 — 구별로 거르기만 하면 된다.
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * CSS 를 주석 빼고 `@media` 묶음 밖(기본 규칙)과 안으로 갈라 규칙 목록(선택자 · 본문 · 묶음 머리)으로 편다.
+ * ⓘ 이 파일의 CSS 가드 셋이 같은 함수를 지난다 — 양성 대조도 같은 함수로 본다.
+ * 못 보는 것: `@media` 안의 또 다른 `@media`·`@supports` 겹 묶음(이 파일에 없다) · 문자열 안의 중괄호.
+ */
+function cssRules(css: string): { sel: string[]; body: string; media: string | null }[] {
+  const src = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const out: { sel: string[]; body: string; media: string | null }[] = [];
+  const take = (chunk: string, media: string | null) => {
+    for (const m of chunk.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      out.push({ sel: m[1].split(',').map((x) => x.trim()), body: m[2], media });
+    }
+  };
+  let i = 0;
+  let plain = '';
+  while (i < src.length) {
+    const at = src.indexOf('@media', i);
+    if (at < 0) {
+      plain += src.slice(i);
+      break;
+    }
+    plain += src.slice(i, at);
+    const open = src.indexOf('{', at);
+    let depth = 1;
+    let j = open + 1;
+    while (j < src.length && depth > 0) {
+      if (src[j] === '{') depth += 1;
+      else if (src[j] === '}') depth -= 1;
+      j += 1;
+    }
+    take(src.slice(open + 1, j - 1), src.slice(at, open).trim());
+    i = j;
+  }
+  take(plain, null);
+  return out;
+}
+
+// ── 지도 배율 — 몰린 곳에 맞추기 (결정 0039 W1) ──────────────────────────────────────────────
+// ⓘ E2E 에는 지도 키가 없어 지도가 안 그려진다 — 첫 범위·화면 밖 표지·멀리서의 점+이름의 화면 가드는 여기가 전부다.
+describe('DistrictMap — 지도 배율(결정 0039 W1)', () => {
+  /** `setBounds` 로 받은 LatLngBounds 흉내(위 stub — {sw, ne})를 숫자로 편다. */
+  function fitted(call: unknown[]) {
+    const b = call[0] as { sw: { lat: number; lng: number }; ne: { lat: number; lng: number } };
+    return { swLat: b.sw.lat, swLng: b.sw.lng, neLat: b.ne.lat, neLng: b.ne.lng };
+  }
+
+  /** 카카오가 멈춤(idle) 때 주는 지도 객체 흉내 — 지금 범위·지도 칸 크기·배율. */
+  async function idleAt(view: { swLat: number; swLng: number; neLat: number; neLng: number }, level = 6) {
+    await act(async () => {
+      kakao.mapProps?.onIdle?.({
+        getBounds: () => ({
+          getSouthWest: () => ({ getLat: () => view.swLat, getLng: () => view.swLng }),
+          getNorthEast: () => ({ getLat: () => view.neLat, getLng: () => view.neLng }),
+        }),
+        getNode: () => ({ clientWidth: 1000, clientHeight: 1000 }),
+        getLevel: () => level,
+        getCenter: () => ({ lat: (view.swLat + view.neLat) / 2, lng: (view.swLng + view.neLng) / 2 }),
+      });
+    });
+  }
+
+  /** 서구(30170)에 상권 여섯 — 서쪽에 겹친 넷 + 옆에 하나 + 멀리 동쪽에 작은 하나. */
+  function sixGeo(): DistrictGeoJson {
+    const at = (id: string, r: Ring) =>
+      feature({ id, nm: id, type: '골목상권', gu: '30170', source: '소상공인시장진흥공단', ring: r });
+    return {
+      type: 'FeatureCollection',
+      meta: { district_cnt: 6, max_computed_at: '2026-08-13T23:18:22.882729Z' },
+      features: [
+        at('X1', ring(127.3, 36.3, 127.31, 36.31)),
+        at('X2', ring(127.3, 36.3, 127.31, 36.31)),
+        at('X3', ring(127.3, 36.3, 127.31, 36.31)),
+        at('X4', ring(127.3, 36.3, 127.31, 36.31)),
+        at('Y', ring(127.32, 36.3, 127.323, 36.31)),
+        at('Z', ring(127.4, 36.3, 127.401, 36.31)),
+      ],
+    };
+  }
+
+  it('첫 범위는 여백 네 개(위·오른쪽·아래·왼쪽)와 함께 맞춘다', async () => {
+    await renderMap();
+    await waitFor(() => expect(kakao.setBounds).toHaveBeenCalled());
+    const call = kakao.setBounds.mock.calls[0];
+    expect(call).toHaveLength(5);
+    const pads = call.slice(1) as number[];
+    // 카카오 기본(32)보다 넓게 — 가장자리 표지가 몰린 곳을 가리지 않게.
+    expect(pads.every((p) => typeof p === 'number' && p > 32)).toBe(true);
+    expect(new Set(pads).size).toBe(1);
+  });
+
+  it('상권 5곳 이하 구는 전부 담는 상자로 맞춘다', async () => {
+    await renderMap(); // 강남 2곳
+    await waitFor(() => expect(kakao.setBounds).toHaveBeenCalled());
+    expect(fitted(kakao.setBounds.mock.calls[0])).toEqual({ swLat: 37.5, swLng: 127.0, neLat: 37.6, neLng: 127.1 });
+  });
+
+  it('6곳부터는 몰린 곳 상자 — 멀리 떨어진 작은 상권 쪽으로 넓히지 않는다', async () => {
+    fetchMock.mockImplementation(() => okJson(sixGeo()));
+    await renderMap({ sigungu: '30170', sigunguName: '서구' });
+    await waitFor(() => expect(kakao.setBounds).toHaveBeenCalled());
+    const b = fitted(kakao.setBounds.mock.calls[0]);
+    expect(b.swLng).toBeGreaterThanOrEqual(127.3);
+    expect(b.neLng).toBeLessThan(127.33); // 전부 담으면 127.401
+  });
+
+  it('구를 바꾸면 사용자가 배율을 바꾼 뒤라도 새 구의 상자로 다시 맞춘다', async () => {
+    const DistrictMap = await load();
+    const { rerender } = render(
+      <DistrictMap sigungu="11680" sigunguName="강남구" selected={null} onSelectBuilding={() => {}} />,
+    );
+    await waitFor(() => expect(kakao.setBounds).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      kakao.mapProps?.onZoomChanged?.({ getLevel: () => 3 });
+    });
+    rerender(<DistrictMap sigungu="30170" sigunguName="서구" selected={null} onSelectBuilding={() => {}} />);
+    await waitFor(() => expect(kakao.setBounds).toHaveBeenCalledTimes(2));
+    expect(fitted(kakao.setBounds.mock.calls[1])).toEqual({ swLat: 36.3, swLng: 127.3, neLat: 36.4, neLng: 127.4 });
+  });
+
+  it('멈춘 뒤 화면 밖 상권이 있으면 가장자리 표지가 서고, 누르면 그쪽으로 옮긴다', async () => {
+    await renderMap();
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: /화면 밖 상권/ })).toBeNull();
+
+    // 지금 화면 = 강남 상권 둘보다 서쪽 → 둘 다 오른쪽 밖.
+    await idleAt({ swLat: 37.5, swLng: 126.8, neLat: 37.6, neLng: 126.9 });
+    const btn = screen.getByRole('button', { name: /화면 밖 상권/ });
+    // 접근 이름에 방향·곳 수·면적 큰 이름(파일 첫째 = 역삼역 — 시험 자료는 면적이 같아 앞의 것).
+    expect(btn.getAttribute('aria-label')).toBe('오른쪽 화면 밖 상권 2곳(역삼역 등) — 그쪽으로 옮기기');
+    expect(btn.className).toContain('dmap__off--e');
+    expect(btn.textContent).toBe('→역삼역등2곳');
+
+    fireEvent.click(btn);
+    expect(kakao.panTo).toHaveBeenCalledTimes(1);
+    const to = kakao.panTo.mock.calls[0][0] as { lat: number; lng: number };
+    expect(to.lat).toBeCloseTo(37.55, 6);
+    expect(to.lng).toBeCloseTo(127.05, 6);
+  });
+
+  it('화면 안에 다 들면 표지가 없다', async () => {
+    await renderMap();
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await idleAt({ swLat: 37.4, swLng: 126.9, neLat: 37.7, neLng: 127.2 });
+    expect(screen.queryByRole('button', { name: /화면 밖 상권/ })).toBeNull();
+  });
+
+  it('⛔ 다른 구에서 잰 화면으로는 표지를 세지 않는다 — 구를 바꾼 직후 전부 화면 밖으로 그려지지 않는다', async () => {
+    const DistrictMap = await load();
+    const { rerender } = render(
+      <DistrictMap sigungu="11680" sigunguName="강남구" selected={null} onSelectBuilding={() => {}} />,
+    );
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await idleAt({ swLat: 37.4, swLng: 126.9, neLat: 37.7, neLng: 127.2 });
+    rerender(<DistrictMap sigungu="30170" sigunguName="서구" selected={null} onSelectBuilding={() => {}} />);
+    await waitFor(() => expect(screen.getByText(/출처: 소상공인시장진흥공단/)).toBeTruthy());
+    expect(screen.queryByRole('button', { name: /화면 밖 상권/ })).toBeNull();
+  });
+
+  it('멀리(level 6)에서는 화면에서 작은 상권만 점 + 이름 — 누르기를 넘기고(clickable false), 확대하면 이름표가 대신한다', async () => {
+    await renderMap();
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    // 1000px 에 2° → 1px = 0.002°. 역삼역(0.1° = 50px)은 면이 보이고, 역삼골목(0.02° = 10px)만 점이다.
+    await idleAt({ swLat: 36.5, swLng: 126.0, neLat: 38.5, neLng: 128.0 }, 6);
+    const fars = document.querySelectorAll('.dmap__far');
+    expect(fars).toHaveLength(1);
+    expect(fars[0].textContent).toBe('역삼골목');
+    expect(fars[0].parentElement?.getAttribute('data-clickable')).toBe('false');
+
+    await act(async () => {
+      kakao.mapProps?.onZoomChanged?.({ getLevel: () => 5 });
+    });
+    expect(document.querySelectorAll('.dmap__far')).toHaveLength(0);
+    expect(screen.getAllByTestId('label')).toHaveLength(2);
+  });
+
+  it('점은 브라우저 쪽에서도 클릭 대상이 아니다(pointer-events: none)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const css = readFileSync('src/styles.css', 'utf8');
+    const block = css.slice(css.indexOf('.dmap__far {'));
+    expect(block.slice(0, block.indexOf('}'))).toMatch(/pointer-events:\s*none/);
+  });
+
+  it('화면 밖 표지는 종이에서 빠지고, 휴대폰 꼴(이름 숨김)은 화면 720 묶음 안에만 있다', async () => {
+    const { readFileSync } = await import('node:fs');
+    const css = readFileSync('src/styles.css', 'utf8');
+    const print = css.slice(css.indexOf('@media print {'));
+    expect(print.slice(0, print.indexOf('display: none !important;'))).toMatch(/\.dmap__off,/);
+    // 휴대폰 규칙이 든 묶음의 머리가 `@media screen and (max-width: 720px)` 인지 — 기본 규칙이면 종이·넓은 화면까지 바뀐다.
+    const at = css.indexOf('.dmap__off-nm,\n  .dmap__off-etc {\n    display: none;');
+    const at2 = at >= 0 ? at : css.indexOf('.dmap__off-nm,\r\n  .dmap__off-etc {\r\n    display: none;');
+    expect(at2).toBeGreaterThan(0);
+    const head = css.lastIndexOf('@media', at2);
+    expect(css.slice(head, css.indexOf('{', head))).toBe('@media screen and (max-width: 720px) ');
+  });
+
+  it('⛔ 아래 줄 표지(↙ ↓ ↘)는 카카오 로고·축척 막대(약 25~30px) 위에 뜬다', async () => {
+    const { readFileSync } = await import('node:fs');
+    const rules = cssRules(readFileSync('src/styles.css', 'utf8'));
+    for (const dir of ['sw', 's', 'se']) {
+      const bottoms = rules
+        .filter((r) => r.media === null && r.sel.includes(`.dmap__off--${dir}`))
+        .flatMap((r) => [...r.body.matchAll(/bottom:\s*(\d+)px/g)].map((m) => Number(m[1])));
+      expect(bottoms, dir).toHaveLength(1);
+      expect(bottoms[0], dir).toBeGreaterThanOrEqual(30);
+      // 화면 묶음에서 다시 낮추지 않는다.
+      const lowered = rules.filter((r) => r.media !== null && r.sel.includes(`.dmap__off--${dir}`) && /bottom:/.test(r.body));
+      expect(lowered, dir).toHaveLength(0);
+    }
+  });
+
+  it('표지는 화면 전체의 「누르는 것은 44px 이상」 목록에 든다', async () => {
+    const { readFileSync } = await import('node:fs');
+    const rules = cssRules(readFileSync('src/styles.css', 'utf8'));
+    const tall = rules.filter((r) => r.media === '@media screen' && /min-height:\s*44px/.test(r.body));
+    expect(tall.some((r) => r.sel.includes('.dmap__off'))).toBe(true);
+  });
+
+  it('넓은 화면에서는 표지 이름이 보인다 — 기본 규칙(모든 @media 밖)에서 이름을 숨기지 않는다', async () => {
+    const { readFileSync } = await import('node:fs');
+    const hides = (css: string) =>
+      cssRules(css).some(
+        (r) =>
+          r.media === null &&
+          (r.sel.includes('.dmap__off-nm') || r.sel.includes('.dmap__off-etc')) &&
+          /display:\s*none|visibility:\s*hidden/.test(r.body),
+      );
+    const css = readFileSync('src/styles.css', 'utf8');
+    expect(hides(css)).toBe(false);
+    // 양성 대조 — 흔한 꼴(이름 하나) + 변형 꼴(선택자 목록 · 줄바꿈 다른 꼴)을 실제로 잡는다.
+    expect(hides(`${css}\n.dmap__off-nm { display: none; }`)).toBe(true);
+    expect(hides(`${css}\r\n.x,\r\n.dmap__off-etc {\r\n  display:none;\r\n}`)).toBe(true);
+    // 720 묶음 안의 숨김은 기본 규칙이 아니다(지금 저장소가 그 꼴이다).
+    expect(hides('@media screen and (max-width: 720px) { .dmap__off-nm { display: none; } }')).toBe(false);
+  });
+});
+
+// ── 다시 그려져도 누른 상권·목록 되살리기 (👤 2026-10-15 G1) ─────────────────────────────
+// 입구가 접히면(S1) 지도는 안 그려진다. App 이 기억(`pick`)을 쥐고 넘기면, 다시 그릴 때 아까 누른 상권과 펼친 건물
+// 목록이 그대로 선다. ⓘ E2E 는 지도 키가 비어 알맹이가 안 그려지므로 이 가짜 SDK 시험이 대신한다.
+describe('DistrictMap — 다시 그려져도 누른 상권·목록 되살리기 (G1)', () => {
+  async function clickAt(lng: number, lat: number) {
+    await act(async () => {
+      kakao.mapProps?.onClick?.(null, { latLng: { getLat: () => lat, getLng: () => lng } });
+    });
+  }
+
+  it('★ 위가 기억을 쥐면, 지도를 치웠다 다시 그려도 누른 상권과 펼친 건물 목록이 그대로 선다', async () => {
+    const DistrictMap = await load();
+    const { EMPTY_MAP_PICK } = await import('../lib/districtMapPick');
+    type Pick = typeof EMPTY_MAP_PICK;
+    const seen: Pick[] = [];
+    function Host({ show }: { show: boolean }) {
+      const [pick, setPick] = useState<Pick>(EMPTY_MAP_PICK);
+      return show ? (
+        <DistrictMap
+          sigungu="11680"
+          sigunguName="강남구"
+          selected={null}
+          onSelectBuilding={() => {}}
+          pick={pick}
+          onPickChange={(next) => {
+            seen.push(next);
+            setPick(next);
+          }}
+        />
+      ) : null;
+    }
+    const { rerender } = render(<Host show />);
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await clickAt(127.09, 37.59);
+    fireEvent.click(screen.getByRole('button', { name: /역삼역/ }));
+    await screen.findByText('역삼빌딩');
+    // 기억에는 구와 상권 **번호**만 실린다.
+    expect(seen.at(-1)).toEqual({ sigungu: '11680', pickedIds: ['big'], openId: 'big' });
+
+    rerender(<Host show={false} />);
+    expect(screen.queryByTestId('map')).toBeNull();
+    rerender(<Host show />);
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    expect(screen.getByRole('button', { name: /역삼역/ }).getAttribute('aria-expanded')).toBe('true');
+    expect(await screen.findByText('역삼빌딩')).toBeTruthy();
+  });
+
+  it('양성 대조 — 기억을 안 넘기면(스스로 쥐면) 다시 그릴 때 처음부터다', async () => {
+    const DistrictMap = await load();
+    function Host({ show }: { show: boolean }) {
+      return show ? (
+        <DistrictMap sigungu="11680" sigunguName="강남구" selected={null} onSelectBuilding={() => {}} />
+      ) : null;
+    }
+    const { rerender } = render(<Host show />);
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await clickAt(127.09, 37.59);
+    expect(screen.getByRole('button', { name: /역삼역/ })).toBeTruthy();
+    rerender(<Host show={false} />);
+    rerender(<Host show />);
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: /역삼역/ })).toBeNull();
+    expect(screen.getByText(/지도를 누르면 그 자리의 상권을 알려드립니다/)).toBeTruthy();
+  });
+
+  it('⛔ 다른 구에서 누른 기억은 쓰지 않는다 — 처음 안내가 선다', async () => {
+    await renderMap({
+      pick: { sigungu: '30170', pickedIds: ['big'], openId: 'big' },
+      onPickChange: () => {},
+    });
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: /역삼역/ })).toBeNull();
+    expect(screen.queryByText('역삼빌딩')).toBeNull();
+    expect(screen.getByText(/지도를 누르면 그 자리의 상권을 알려드립니다/)).toBeTruthy();
+  });
+});
+
+// ── 휴대폰 지도 가득 · 끌어올리는 상권 판 · relayout (👤 2026-10-19 결정 0039 W4b) ─────────────────────────────
+// ⓘ E2E 에는 카카오 키가 없어 지도 칸은 안내 글뿐이다 — 판·relayout 의 배선은 이 가짜 SDK 시험이 본다(판 자체는 E2E BT 도 본다).
+describe('DistrictMap — 휴대폰 지도 가득(결정 0039 W4b)', () => {
+  async function clickAt(lng: number, lat: number) {
+    await act(async () => {
+      kakao.mapProps?.onClick?.(null, { latLng: { getLat: () => lat, getLng: () => lng } });
+    });
+  }
+  const sheet = () => document.querySelector('.dsheet');
+  const handle = () => document.querySelector<HTMLButtonElement>('.dsheet__handle')!;
+  const stageOf = () => /dsheet--(\w+)/.exec(sheet()!.className)![1];
+
+  it('★ full 꼴 — 제목·접기 단추 없이 지도 칸 + 엿보기 글(구 이름 · 상권 수) · 카드 꼴엔 판이 없다', async () => {
+    await renderMap({ layout: 'full' });
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    expect(document.querySelector('.dmap__toggle')).toBeNull();
+    expect(document.querySelector('.dmap__title')).toBeNull();
+    expect(document.querySelector('section.dmap')!.classList.contains('dmap--full')).toBe(true);
+    expect(sheet()!.querySelector('.dsheet__title')!.textContent).toBe('강남구 상권 2곳');
+    expect(sheet()!.querySelector('.dsheet__hint')!.textContent).toBe('지도를 누르면 그 자리 상권');
+    expect(stageOf()).toBe('peek');
+    cleanup();
+
+    await renderMap();
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    expect(sheet()).toBeNull();
+    expect(document.querySelector('.dmap__toggle')).not.toBeNull();
+    expect(document.querySelector('section.dmap')!.classList.contains('dmap--full')).toBe(false);
+  });
+
+  it('★ 손잡이는 단추 — 이름과 펼침이 단계마다 바뀌며 엿보기 → 반 → 가득 → 엿보기 · 「접기」는 반·가득에서만 → 엿보기', async () => {
+    await renderMap({ layout: 'full' });
+    await waitFor(() => expect(sheet()).not.toBeNull());
+    const seen: [string, string | null, string | null][] = [];
+    for (let i = 0; i < 4; i += 1) {
+      seen.push([stageOf(), handle().getAttribute('aria-label'), handle().getAttribute('aria-expanded')]);
+      if (i < 3) fireEvent.click(handle());
+    }
+    expect(seen).toEqual([
+      ['peek', '상권 판 펼치기', 'false'],
+      ['half', '상권 판 더 펼치기', 'true'],
+      ['full', '상권 판 접기', 'true'],
+      ['peek', '상권 판 펼치기', 'false'],
+    ]);
+    expect(screen.queryByRole('button', { name: '접기' })).toBeNull();
+    fireEvent.click(handle());
+    fireEvent.click(screen.getByRole('button', { name: '접기' }));
+    expect(stageOf()).toBe('peek');
+    fireEvent.click(handle());
+    fireEvent.click(handle());
+    fireEvent.click(screen.getByRole('button', { name: '접기' }));
+    expect(stageOf()).toBe('peek');
+  });
+
+  it('★ 손가락 끌기 — 30px 넘게 올리면 한 단계 위 · 내리면 한 단계 아래 · 그만큼 안 움직이면 그대로(끈 뒤 따라오는 click 은 안 먹는다)', async () => {
+    await renderMap({ layout: 'full' });
+    await waitFor(() => expect(sheet()).not.toBeNull());
+    const bar = () => document.querySelector('.dsheet__bar')!;
+    const drag = (from: number, to: number) => {
+      fireEvent.pointerDown(bar(), { pointerId: 1, clientY: from });
+      fireEvent.pointerMove(bar(), { pointerId: 1, clientY: to });
+      fireEvent.pointerUp(bar(), { pointerId: 1, clientY: to });
+    };
+    drag(500, 490); // 10px — 단계 그대로
+    expect(stageOf()).toBe('peek');
+    drag(500, 450); // 위로 50px
+    expect(stageOf()).toBe('half');
+    fireEvent.click(handle()); // 끈 뒤 따라오는 click — 한 번 더 돌리지 않는다
+    expect(stageOf()).toBe('half');
+    drag(300, 250);
+    expect(stageOf()).toBe('full');
+    drag(100, 160); // 아래로
+    expect(stageOf()).toBe('half');
+    drag(100, 160);
+    expect(stageOf()).toBe('peek');
+    fireEvent.click(handle()); // 끈 뒤 click 은 버림
+    fireEvent.click(handle()); // 그다음 누름은 먹는다
+    expect(stageOf()).toBe('half');
+  });
+
+  it('★ 지도를 누르면 그 자리 상권 + 판이 반으로(엿보기일 때만 — 반·가득이면 그대로) · 머리 글은 지금 누른 자리 글 그대로', async () => {
+    await renderMap({ layout: 'full' });
+    await waitFor(() => expect(sheet()).not.toBeNull());
+    await clickAt(127.05, 37.55);
+    expect(stageOf()).toBe('half');
+    expect(sheet()!.querySelector('.dsheet__title')!.textContent).toBe('누른 자리 (2곳):');
+    expect(screen.getByRole('button', { name: /역삼골목/ })).toBeTruthy();
+    fireEvent.click(handle()); // 가득
+    await clickAt(126.0, 30.0); // 경계 밖
+    expect(stageOf()).toBe('full');
+    expect(sheet()!.querySelector('.dsheet__title')!.textContent).toBe('어느 상권 경계에도 들지 않는 위치입니다.');
+    fireEvent.click(screen.getByRole('button', { name: '접기' }));
+    fireEvent.click(handle()); // 반
+    await clickAt(127.05, 37.55);
+    expect(stageOf()).toBe('half');
+  });
+
+  it('★ 구가 바뀌면 판은 엿보기로', async () => {
+    const DistrictMap = await load();
+    const { rerender } = render(
+      <DistrictMap sigungu="11680" sigunguName="강남구" selected={null} onSelectBuilding={() => {}} layout="full" />,
+    );
+    await waitFor(() => expect(sheet()).not.toBeNull());
+    fireEvent.click(handle());
+    fireEvent.click(handle());
+    expect(stageOf()).toBe('full');
+    rerender(<DistrictMap sigungu="30170" sigunguName="서구" selected={null} onSelectBuilding={() => {}} layout="full" />);
+    await waitFor(() => expect(sheet()!.querySelector('.dsheet__title')!.textContent).toBe('서구 상권 1곳'));
+    expect(stageOf()).toBe('peek');
+  });
+
+  it('★ 판 안 차례 = 범례 → 누른 자리 상권 → 건물 목록 → 출처(지금 카드 아래 것 그대로)', async () => {
+    await renderMap({ layout: 'full' });
+    await waitFor(() => expect(sheet()).not.toBeNull());
+    await clickAt(127.09, 37.59);
+    fireEvent.click(screen.getByRole('button', { name: /역삼역/ }));
+    await screen.findByText('역삼빌딩');
+    const body = sheet()!.querySelector('.dsheet__body')!;
+    const order = [...body.children].map((c) => c.className.split(' ')[0]);
+    expect(order).toEqual(['dmap__legend', 'dmap__picked', 'dbld', 'dmap__src']);
+    // 판 바깥에는 범례·출처가 없다.
+    expect(document.querySelectorAll('.dmap__legend')).toHaveLength(1);
+  });
+
+  it('★ 숨겼다 다시 보이면 relayout 한 번(true→true 는 0 · 양성/음성) · 판 단계가 바뀐 뒤에도 한 번', async () => {
+    const DistrictMap = await load();
+    const props = {
+      sigungu: '11680',
+      sigunguName: '강남구',
+      selected: null,
+      onSelectBuilding: () => {},
+      layout: 'full' as const,
+    };
+    const { rerender } = render(<DistrictMap {...props} visible />);
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    rerender(<DistrictMap {...props} visible />);
+    expect(kakao.relayout).not.toHaveBeenCalled();
+    rerender(<DistrictMap {...props} visible={false} />);
+    expect(document.querySelector('section.dmap')!.hasAttribute('hidden')).toBe(true);
+    expect(kakao.relayout).not.toHaveBeenCalled();
+    rerender(<DistrictMap {...props} visible />);
+    expect(kakao.relayout).toHaveBeenCalledTimes(1);
+    // 같은 지도 — 다시 맞추지 않았다(첫 범위 한 번뿐 · 확대·이동이 그대로).
+    expect(kakao.setBounds).toHaveBeenCalledTimes(1);
+    fireEvent.click(handle());
+    expect(kakao.relayout).toHaveBeenCalledTimes(2);
+  });
+
+  it('★ 카드 꼴도 숨겼다 보이면 relayout 을 받는다(중개사 지도) · 기본은 숨김 속성 없음', async () => {
+    const DistrictMap = await load();
+    const props = { sigungu: '11680', sigunguName: '강남구', selected: null, onSelectBuilding: () => {} };
+    const { rerender } = render(<DistrictMap {...props} />);
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    expect(document.querySelector('section.dmap')!.hasAttribute('hidden')).toBe(false);
+    rerender(<DistrictMap {...props} visible={false} />);
+    rerender(<DistrictMap {...props} visible />);
+    expect(kakao.relayout).toHaveBeenCalledTimes(1);
+  });
+
+  it('★ 키가 없어도 full 꼴은 판이 선다(지도 칸에는 키 안내 글) — 카드 꼴은 지금처럼 파일을 안 받는다(위 「키가 없을 때」)', async () => {
+    vi.stubEnv('VITE_KAKAO_JS_KEY', '');
+    await renderMap({ layout: 'full' });
+    await waitFor(() => expect(sheet()).not.toBeNull());
+    expect(document.querySelector('.dmap__canvas')!.textContent).toMatch(/지도 키가 설정되지 않았습니다/);
+    expect(sheet()!.querySelector('.dsheet__title')!.textContent).toBe('강남구 상권 2곳');
+    fireEvent.click(handle());
+    expect(screen.getByText(/출처: 서울특별시 상권분석서비스/)).toBeTruthy();
+    expect(screen.queryByTestId('map')).toBeNull();
+  });
+
+  it('판 규칙은 전부 휴대폰 화면 묶음 안 · 종이에서 빠진다 · 손잡이·접기는 44px 목록 · 엿보기는 안 굴린다', async () => {
+    const { readFileSync } = await import('node:fs');
+    const css = readFileSync('src/styles.css', 'utf8');
+    const medias = (src: string) =>
+      cssRules(src)
+        .filter((r) => r.media !== '@media print' && r.sel.some((s) => /\.dsheet|\.dmap--full/.test(s)))
+        .filter((r) => !(r.media === '@media screen' && /min-height:\s*44px/.test(r.body)))
+        .map((r) => r.media);
+    expect(medias(css).length).toBeGreaterThan(10);
+    expect(new Set(medias(css))).toEqual(new Set(['@media screen and (max-width: 720px)']));
+    // 양성 대조 — 기본 규칙 꼴 + 다른 묶음 속 선택자 목록 꼴(줄바꿈 다른 꼴).
+    expect(medias(`${css}\n.dsheet { position: fixed; }`)).toContain(null);
+    expect(medias(`${css}\n@media (max-width: 720px) {\r\n  .a,\r\n  .dsheet--half { height: 1px; }\r\n}`)).toContain(
+      '@media (max-width: 720px)',
+    );
+    const rules = cssRules(css);
+    const hide = rules.filter((r) => r.media === '@media print' && /display:\s*none/.test(r.body)).flatMap((r) => r.sel);
+    // 종이에서는 손잡이·「접기」·안내만 빠진다 — 판 통째는 남는다(W4b 보완 A3 · 아래 「종이」 시험).
+    for (const s of ['.dsheet__handle', '.dsheet__fold', '.dsheet__hint']) expect(hide, s).toContain(s);
+    const tall = rules.filter((r) => r.media === '@media screen' && /min-height:\s*44px/.test(r.body)).flatMap((r) => r.sel);
+    for (const s of ['.dsheet__handle', '.dsheet__fold']) expect(tall, s).toContain(s);
+    expect(
+      rules.some(
+        (r) =>
+          r.media === '@media screen and (max-width: 720px)' &&
+          r.sel.includes('.dsheet--peek .dsheet__body') &&
+          /display:\s*none/.test(r.body),
+      ),
+    ).toBe(true);
+  });
+});
+
+// ── W4b 보완 1 — 검사관 3인 + 메인 실사진(겹침·두 번 쓴 글·종이 출처·숨은 지도의 안전·inert) ──────────────────────
+describe('DistrictMap — 휴대폰 지도 가득 보완(W4b 보완 1)', () => {
+  const PHONE = '@media screen and (max-width: 720px)';
+  const base = {
+    sigungu: '11680',
+    sigunguName: '강남구',
+    selected: null,
+    onSelectBuilding: () => {},
+    layout: 'full' as const,
+  };
+  async function clickAt(lng: number, lat: number) {
+    await act(async () => {
+      kakao.mapProps?.onClick?.(null, { latLng: { getLat: () => lat, getLng: () => lng } });
+    });
+  }
+  /** 카카오 멈춤(idle) 흉내 — 칸 크기·배율·중심을 고른다(숨은 칸 = 0×0). */
+  async function idle(
+    view: { swLat: number; swLng: number; neLat: number; neLng: number },
+    size: { w: number; h: number },
+    level = 6,
+    center: unknown = { lat: (view.swLat + view.neLat) / 2, lng: (view.swLng + view.neLng) / 2 },
+  ) {
+    await act(async () => {
+      kakao.mapProps?.onIdle?.({
+        getBounds: () => ({
+          getSouthWest: () => ({ getLat: () => view.swLat, getLng: () => view.swLng }),
+          getNorthEast: () => ({ getLat: () => view.neLat, getLng: () => view.neLng }),
+        }),
+        getNode: () => ({ clientWidth: size.w, clientHeight: size.h }),
+        getLevel: () => level,
+        getCenter: () => center,
+      });
+    });
+  }
+  /** 상권(127.0~127.1 · 37.5~37.6)이 하나도 안 드는 먼 화면 — 표지가 서야 하는 범위. */
+  const FAR = { swLat: 37.0, swLng: 126.0, neLat: 37.01, neLng: 126.01 };
+  const sheet = () => document.querySelector('.dsheet');
+  const handle = () => document.querySelector<HTMLButtonElement>('.dsheet__handle')!;
+  const stageOf = () => /dsheet--(\w+)/.exec(sheet()!.className)![1];
+
+  /**
+   * 판이 화면 밖 표지 위에 오나(A1) — 휴대폰 묶음의 판 규칙(`.dsheet`·`.dsheet--단계`) z-index 가 전부 표지(`.dmap__off`) 보다 크고
+   * 띠(19) 보다 작은가. 가드 본체와 양성 대조가 이 함수를 같이 지난다.
+   * 못 보는 것: 같은 선택자가 뒤 규칙에서 z-index 없이 덮이는 꼴 · `.dsheet` 를 다른 이름표 조합(`.x .dsheet`)으로 고친 꼴.
+   */
+  function sheetAboveBadge(src: string): boolean {
+    const rules = cssRules(src);
+    const z = (body: string) => Number(/z-index:\s*(-?\d+)/.exec(body)![1]);
+    const badge = rules.filter((r) => r.sel.includes('.dmap__off') && /z-index/.test(r.body)).map((r) => z(r.body));
+    const sheets = rules
+      .filter((r) => r.media === PHONE && r.sel.some((s) => /^\.dsheet(--\w+)?$/.test(s)) && /z-index/.test(r.body))
+      .map((r) => z(r.body));
+    if (badge.length === 0 || sheets.length === 0) return false;
+    return sheets.every((s) => s > Math.max(...badge) && s < 19);
+  }
+
+  it('A1 판(엿보기·반·가득)의 층이 화면 밖 표지보다 위 · 띠보다 아래 · 양성 대조(되돌린 꼴 · 띠를 넘는 꼴 · 표지를 올린 꼴)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const css = readFileSync('src/styles.css', 'utf8');
+    expect(sheetAboveBadge(css)).toBe(true);
+    expect(sheetAboveBadge(`${css}\n${PHONE} {\n  .dsheet { z-index: 2; }\n}`)).toBe(false);
+    expect(sheetAboveBadge(`${css}\n${PHONE} {\r\n  .a,\r\n  .dsheet--full { z-index: 25; }\r\n}`)).toBe(false);
+    expect(sheetAboveBadge(`${css}\n.dmap__off { z-index: 30; }`)).toBe(false);
+  });
+
+  it('★ A2 판 안에서는 「누른 자리」·「경계 밖」 글이 한 번(판 머리만) — 카드 꼴은 지금 그대로(목록 머리 · 양성 대조)', async () => {
+    const count = (re: RegExp) => (document.body.textContent!.match(re) ?? []).length;
+    await renderMap({ layout: 'full' });
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await clickAt(127.05, 37.55);
+    expect(stageOf()).toBe('half');
+    expect(count(/누른 자리/g)).toBe(1);
+    expect(sheet()!.querySelector('.dsheet__title')!.textContent).toBe('누른 자리 (2곳):');
+    expect(document.querySelector('.dmap__picked-key')).toBeNull();
+    // 이름 단추(건물 목록 열기)는 그대로 판 안에 있다.
+    expect(screen.getByRole('button', { name: /역삼골목/ })).toBeTruthy();
+    await clickAt(126.0, 30.0);
+    expect(count(/어느 상권 경계에도 들지 않는 위치입니다/g)).toBe(1);
+    cleanup();
+
+    await renderMap();
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await clickAt(127.05, 37.55);
+    expect(document.querySelector('.dmap__picked-key')!.textContent).toBe('누른 자리 (2곳):');
+    expect(count(/누른 자리/g)).toBe(1);
+    await clickAt(126.0, 30.0);
+    expect(document.querySelector('.dmap__picked-key')!.textContent).toBe('누른 자리:');
+    expect(count(/어느 상권 경계에도 들지 않는 위치입니다/g)).toBe(1);
+  });
+
+  it('A3 종이 — 판 통째·범례·출처는 남고 손잡이·「접기」·안내만 빠진다 · 판은 흐름(static)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const print = cssRules(readFileSync('src/styles.css', 'utf8')).filter((r) => r.media === '@media print');
+    const hide = print.filter((r) => /display:\s*none/.test(r.body)).flatMap((r) => r.sel);
+    for (const s of ['.dsheet__handle', '.dsheet__fold', '.dsheet__hint']) expect(hide, s).toContain(s);
+    for (const s of ['.dsheet', '.dsheet__body', '.dsheet__head', '.dmap__legend', '.dmap__src', '.dmap--full']) {
+      expect(hide, s).not.toContain(s);
+    }
+    expect(print.some((r) => r.sel.includes('.dsheet') && /position:\s*static/.test(r.body))).toBe(true);
+  });
+
+  it('★ B1 숨은 채 태어나면 지도를 만들지 않는다(자료·판은 받는다) — 처음 보일 때 하나 만들고 첫 범위 한 번 · 다시 숨겨도 치우지 않는다', async () => {
+    const DistrictMap = await load();
+    const { rerender } = render(<DistrictMap {...base} visible={false} />);
+    await waitFor(() => expect(sheet()).not.toBeNull());
+    expect(screen.queryByTestId('map')).toBeNull();
+    expect(kakao.setBounds).not.toHaveBeenCalled();
+    rerender(<DistrictMap {...base} visible />);
+    await waitFor(() => expect(screen.getAllByTestId('map')).toHaveLength(1));
+    expect(kakao.setBounds).toHaveBeenCalledTimes(1);
+    // 보이는 칸에서 태어났다 — 되맞출 것이 없다.
+    expect(kakao.relayout).not.toHaveBeenCalled();
+    rerender(<DistrictMap {...base} visible={false} />);
+    expect(screen.getAllByTestId('map')).toHaveLength(1);
+    expect(kakao.setBounds).toHaveBeenCalledTimes(1);
+  });
+
+  it('★ B2 숨은(0×0) 칸의 멈춤은 버린다 — 표지도 안 세고 되돌릴 중심도 안 적는다 · 양성 대조(제 크기면 표지가 선다)', async () => {
+    const DistrictMap = await load();
+    const { rerender } = render(<DistrictMap {...base} visible />);
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await idle(FAR, { w: 0, h: 0 });
+    expect(document.querySelectorAll('.dmap__off')).toHaveLength(0);
+    await idle(FAR, { w: 412, h: 0 });
+    expect(document.querySelectorAll('.dmap__off')).toHaveLength(0);
+    rerender(<DistrictMap {...base} visible={false} />);
+    rerender(<DistrictMap {...base} visible />);
+    expect(kakao.relayout).toHaveBeenCalledTimes(1);
+    expect(kakao.setLevel).not.toHaveBeenCalled();
+    expect(kakao.setCenter).not.toHaveBeenCalled();
+    await idle(FAR, { w: 412, h: 600 });
+    expect(document.querySelectorAll('.dmap__off').length).toBeGreaterThan(0);
+  });
+
+  it('★ B2 숨었다 다시 보이면 relayout → 배율 → 중심 차례로 「마지막으로 제대로 잰」 값을 되돌린다(0×0 멈춤은 안 덮는다)', async () => {
+    const DistrictMap = await load();
+    const { rerender } = render(<DistrictMap {...base} visible />);
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    const good = { tag: '제대로 잰 중심' };
+    await idle(FAR, { w: 412, h: 600 }, 4, good);
+    rerender(<DistrictMap {...base} visible={false} />);
+    await idle(FAR, { w: 0, h: 0 }, 9, { tag: '숨은 칸 중심' });
+    rerender(<DistrictMap {...base} visible />);
+    expect(kakao.relayout).toHaveBeenCalledTimes(1);
+    expect(kakao.setLevel).toHaveBeenCalledTimes(1);
+    expect(kakao.setLevel).toHaveBeenCalledWith(4);
+    expect(kakao.setCenter).toHaveBeenCalledTimes(1);
+    expect(kakao.setCenter.mock.calls[0][0]).toBe(good);
+    const order = [kakao.relayout, kakao.setLevel, kakao.setCenter].map((f) => f.mock.invocationCallOrder[0]);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+
+  it('★ B3 지도를 눌러 판이 반으로 오른 뒤 — 누른 자리가 줄어든 화면 밖이면 relayout 다음에 그쪽으로 한 번 옮긴다', async () => {
+    kakao.getBounds.mockImplementation(() => ({ contain: () => false }));
+    await renderMap({ layout: 'full' });
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await clickAt(127.05, 37.55);
+    expect(stageOf()).toBe('half');
+    expect(kakao.relayout).toHaveBeenCalledTimes(1);
+    expect(kakao.panTo).toHaveBeenCalledTimes(1);
+    const at = kakao.panTo.mock.calls[0][0] as { getLat: () => number; getLng: () => number };
+    expect([at.getLat(), at.getLng()]).toEqual([37.55, 127.05]);
+    expect(kakao.relayout.mock.invocationCallOrder[0]).toBeLessThan(kakao.panTo.mock.invocationCallOrder[0]);
+  });
+
+  it('★ B3 누른 자리가 화면 안이면 옮기지 않는다(음성) · 아직 안 눌렀으면 단계를 바꿔도 옮기지 않는다', async () => {
+    await renderMap({ layout: 'full' });
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    fireEvent.click(handle()); // 반 — 누른 자리 없음
+    expect(kakao.relayout).toHaveBeenCalledTimes(1);
+    expect(kakao.getBounds).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '접기' }));
+    await clickAt(127.05, 37.55); // 기본 = 화면 안(contain true)
+    expect(stageOf()).toBe('half');
+    expect(kakao.relayout).toHaveBeenCalledTimes(3);
+    expect(kakao.getBounds).toHaveBeenCalled();
+    expect(kakao.panTo).not.toHaveBeenCalled();
+  });
+
+  it('★ B3 누른 자리는 한 번만 쓴다 — 그 뒤 판 단계를 바꿔도(사용자가 지도를 옮겼어도) 옛 누른 자리로 다시 옮기지 않는다(재검사 🟠)', async () => {
+    kakao.getBounds.mockImplementation(() => ({ contain: () => false }));
+    await renderMap({ layout: 'full' });
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await clickAt(127.05, 37.55);
+    expect(stageOf()).toBe('half');
+    expect(kakao.panTo).toHaveBeenCalledTimes(1);
+    fireEvent.click(handle()); // 가득 — 화면 밖(contain false)이어도 옛 누른 자리로는 안 간다
+    expect(stageOf()).toBe('full');
+    expect(kakao.panTo).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: '접기' }));
+    expect(kakao.panTo).toHaveBeenCalledTimes(1);
+    // 다시 누르면 다시 한 번(양성 대조).
+    await clickAt(127.06, 37.56);
+    expect(kakao.panTo).toHaveBeenCalledTimes(2);
+  });
+
+  it('★ C2 판이 가득이면 칩 줄·지도 칸은 inert(판 자체는 아님) — 엿보기·반에서는 아니다', async () => {
+    await renderMap({ layout: 'full', headExtra: <span>칩 줄</span> });
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    const inert = () =>
+      ['.dmap__head', '.dmap__canvas'].map((s) => document.querySelector(s)!.hasAttribute('inert'));
+    expect(inert()).toEqual([false, false]);
+    fireEvent.click(handle()); // 반
+    expect(inert()).toEqual([false, false]);
+    fireEvent.click(handle()); // 가득
+    expect(stageOf()).toBe('full');
+    expect(inert()).toEqual([true, true]);
+    expect(sheet()!.closest('[inert]')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '접기' }));
+    expect(inert()).toEqual([false, false]);
+  });
+});
+
+// ── PC 두 칸 보완(결정 0039 W5 보완 1 · F3 종이 지도 폭 · F7 relayout 안 쌓임) ─────────────────────────────
+describe('DistrictMap — PC 두 칸 보완(W5 보완 1)', () => {
+  const base = { sigungu: '11680', sigunguName: '강남구', selected: null, onSelectBuilding: () => {} };
+  const VIEW = { swLat: 37.5, swLng: 127.0, neLat: 37.6, neLng: 127.1 };
+  async function idleAt(w: number, h: number) {
+    await act(async () => {
+      kakao.mapProps?.onIdle?.({
+        getBounds: () => ({
+          getSouthWest: () => ({ getLat: () => VIEW.swLat, getLng: () => VIEW.swLng }),
+          getNorthEast: () => ({ getLat: () => VIEW.neLat, getLng: () => VIEW.neLng }),
+        }),
+        getNode: () => ({ clientWidth: w, clientHeight: h }),
+        getLevel: () => 6,
+        getCenter: () => ({ lat: 37.55, lng: 127.05 }),
+      });
+    });
+  }
+  const canvas = () => document.querySelector<HTMLElement>('.dmap__canvas')!;
+
+  it('★ F3 화면에서 잰 지도 칸 폭을 `--dmap-w` 로 남긴다(카드 꼴) · 못 잰(0×0) 멈춤은 안 적는다 · 휴대폰 가득 꼴은 안 적는다', async () => {
+    await renderMap();
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    expect(canvas().style.getPropertyValue('--dmap-w')).toBe('');
+    // 숨은 칸(0×0)의 멈춤 — 버린다(양성 대조의 반대편).
+    await idleAt(0, 0);
+    expect(canvas().style.getPropertyValue('--dmap-w')).toBe('');
+    await idleAt(367, 300);
+    expect(canvas().style.getPropertyValue('--dmap-w')).toBe('367px');
+    // 칸이 넓어진 뒤 다시 멈추면 새 폭.
+    await idleAt(405, 300);
+    expect(canvas().style.getPropertyValue('--dmap-w')).toBe('405px');
+    cleanup();
+
+    await renderMap({ layout: 'full' });
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    await idleAt(412, 600);
+    expect(canvas().style.getPropertyValue('--dmap-w')).toBe('');
+  });
+
+  it('★ F3 종이 — 「상권 지도 넣기」 종이의 지도 칸 폭 = `var(--dmap-w` (가운데) · 인쇄 묶음 안 · 양성 대조(갈래를 지운 꼴)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const css = readFileSync('src/styles.css', 'utf8');
+    const has = (src: string) =>
+      cssRules(src).some(
+        (r) =>
+          r.media === '@media print' &&
+          r.sel.includes('.app--printmap .dmap__canvas') &&
+          /width:\s*var\(--dmap-w/.test(r.body) &&
+          /margin-left:\s*auto/.test(r.body),
+      );
+    expect(has(css)).toBe(true);
+    const cut = css.replace(/\.app--printmap \.dmap__canvas\s*\{[^}]*\}/, '');
+    expect(cut).not.toBe(css);
+    expect(has(cut)).toBe(false);
+    // 화면 묶음으로 옮긴 꼴도 못 지난다.
+    expect(has(`${cut}\n@media screen {\n  .app--printmap .dmap__canvas { width: var(--dmap-w); margin-left: auto; }\n}`)).toBe(false);
+  });
+
+  it('★ F7 숨은 채(왼쪽 칸 접힘) 건물을 여러 번 바꿔도 relayout 0 — 다시 보일 때 한 번', async () => {
+    const DistrictMap = await load();
+    const { rerender } = render(<DistrictMap {...base} visible />);
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    rerender(<DistrictMap {...base} visible={false} />);
+    for (const [lat, lng, n] of [
+      [37.55, 127.05, '1'],
+      [37.56, 127.06, '2'],
+      [37.57, 127.07, '3'],
+    ] as const) {
+      rerender(<DistrictMap {...base} visible={false} selected={building({ lat, lng, bld_id: `b${n}` })} />);
+    }
+    expect(kakao.relayout).not.toHaveBeenCalled();
+    rerender(<DistrictMap {...base} visible selected={building({ lat: 37.57, lng: 127.07, bld_id: 'b3' })} />);
+    expect(kakao.relayout).toHaveBeenCalledTimes(1);
+    // 보이는 채로 건물을 바꿔도 더 안 부른다(칸 크기가 안 바뀐다).
+    rerender(<DistrictMap {...base} visible selected={building({ lat: 37.58, lng: 127.08, bld_id: 'b4' })} />);
+    expect(kakao.relayout).toHaveBeenCalledTimes(1);
   });
 });

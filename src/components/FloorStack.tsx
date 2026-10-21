@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { supabase } from '../lib/supabase';
 import { startSidePrefetch, type SidePrefetch } from '../lib/sidePrefetch';
 import {
@@ -7,7 +7,6 @@ import {
   BUILDING_DISTRICTS_FN,
   PARCEL_TX_FN,
   SIGUNGU_TX_STATS_FN,
-  PRICE_BANDS_FN,
   BASE_PRICES_FN,
   TX_LIST_CAP,
   TX_OPEN_SINCE_LABEL,
@@ -19,6 +18,7 @@ import {
   LAND_PRICE_FN,
 } from '../lib/appConstants';
 import { LAND_PRICE_BADGE, landPriceText, parseLandPrice } from '../lib/landPrice';
+import { TX_STAT_BADGE } from '../lib/floorGap';
 import type {
   BasePrice,
   BuildingDistricts,
@@ -27,8 +27,8 @@ import type {
   FloorRow,
   ParcelLandPrice,
   FloorUnit,
+  ParcelBuilding,
   ParcelTransaction,
-  PriceBand,
   SigunguTxStat,
   UnitFloorSummary,
 } from '../types';
@@ -57,11 +57,12 @@ import {
   formatFloor,
   formatJiphap,
   formatManWon,
+  formatMonthKo,
   formatParking,
   formatQuarter,
   formatWon,
   formatYearMonth,
-  oneInEvery,
+  floorMissingPhrase,
 } from '../lib/format';
 import { FOUNDER_CHIP_ALL, type FounderChip } from '../lib/founderChips';
 import {
@@ -74,9 +75,11 @@ import {
   unitPrintPlan,
   type UnitPrintMode,
 } from '../lib/unitPrint';
-import { KNOWN_BAND_STATUS } from '../lib/priceBand';
 import { lacksCoord } from '../lib/rentStats';
 import { buildingFromFloorRows } from '../lib/restoreBuilding';
+import { dongSuffix, moreDongCount, siblingName, siblingWindow } from '../lib/buildingHead';
+import { siblingToHit } from '../lib/districtBuildings';
+import { isPlainLeftClick } from '../lib/spaLink';
 import {
   SECTION_PLAN,
   sectionOrder,
@@ -85,13 +88,13 @@ import {
   type SectionPlan,
   type ViewerRole,
 } from '../lib/sectionCards';
-import { PriceBandSection } from './PriceBandSection';
 import { IndustryMixSection } from './IndustryMixSection';
 import { RentStatSection } from './RentStatSection';
 import { OpenCloseSection } from './OpenCloseSection';
 import { EmptySection } from './EmptySection';
 import { FloorGapSection } from './FloorGapSection';
 import { SectionCard } from './SectionCard';
+import { RoleSummary } from './RoleSummary';
 
 /**
  * 구 단가에서 수치를 보여줄 최소 표본 수(결정 0012).
@@ -195,7 +198,7 @@ function topCategories(floors: FloorRow[]) {
  * 위가 고층, 아래가 지하로 쌓는다. 막대 길이는 그 층의 임대 가능 면적에 비례한다.
  *
  * ⚠️ 층 행에 채우는 칸은 층·용도·면적·점포 4개뿐이다 — 여기에는 여전히 **사실만** 그린다.
- *    추정은 아래 참고 시세 섹션(`PriceBandSection`)이 카드를 갈라 따로 낸다. 공실 이력은
+ *    (참고 매매 시세 추정 카드는 결정 0041 로 내렸다 — 층마다 공표값은 『층별 공표값 나란히』가 모은다.) 공실 이력은
  *    Phase 5 산출물이라 아직 없다(빈칸을 그럴듯하게 채우면 없는 근거를 있는 것처럼
  *    보이게 만든다).
  */
@@ -229,24 +232,122 @@ type Props = {
    * 요약을 못 받았으면 부르지 않는다(App 은 모름 = 숨김으로 읽는다).
    */
   onUnitListedCount?: (bldId: string, count: number) => void;
+  /**
+   * 역할 요약 판(결정 0039 W2)의 「한 장으로 뽑기」가 인쇄 창 **전에** 부른다 — App 의 `handleBeforePrint`(인쇄 단추와 같은 것).
+   * 안 줌 = 기록 없이 인쇄만.
+   */
+  onBeforePrint?: () => void;
+  /**
+   * 같은 땅의 동 목록(결정 0042 H5 · `list_parcel_buildings` — App 이 `bld_cnt_in_pnu > 1` 일 때 한 번 받는다).
+   * 2줄 이상이면 머리 사양 칸 아래 「같은 땅 다른 동: …」 링크 줄. null·안 줌 = 그 줄 없음.
+   */
+  dongs?: readonly ParcelBuilding[] | null;
+  /** 이 건물이 있는 구의 이름(지역 고르개가 서버 목록에서 알려 준 것) — 있으면 「○○구 다른 건물 찾기」 링크. */
+  sigunguName?: string | null;
+  /** 같은 땅 다른 동 링크의 보통 누름 — 화면 안에서 그 동으로(App 의 `handleSelectBuilding`). */
+  onSelectBuilding?: (hit: BuildingHit) => void;
+  /** 「○○구 다른 건물 찾기」의 보통 누름 — 화면 안에서 찾기 칸으로(넓은 화면 = 위 칸 펼침 · 휴대폰 = 찾기 탭). */
+  onFindInSigungu?: () => void;
 };
 
 /** 고른 층 하나의 첫 쪽 호 목록(받은 줄 + 그 층 전체 호실 수). */
 type PrintedUnits = { units: FloorUnit[]; total: number };
 
+/**
+ * 긴 목록 창(S2 · 👤 2026-10-15) — 이만큼만 **화면에** 보이고 나머지는 「전부 보기」로 펼친다.
+ * 이 줄 수 이하면 단추도 없다(지금 그대로).
+ *  · 층 목록 = **아래 10줄**(👤 검사 뒤 다시 여쭘 — 지하·1층·2층이 바로 보이게). 서버 순서(위층부터)는
+ *    그대로 두고 앞쪽(위층) 줄을 숨긴다 · 단추는 목록 맨 위. → `floorFoldCut`
+ *  · 이 땅 거래 목록 = 처음 10건 · 단추는 목록 아래.
+ * ⛔ 줄은 늘 전부 그린다 — 넘치는 줄에는 `list__folded` 이름표만 붙고, 숨김은 styles.css 의
+ *    `@media screen` 규칙이 한다. 그래서 종이에는 늘 전부 나오고 `floor-N` id 도 늘 있다.
+ */
+const LIST_FOLD_AT = 10;
+
+/**
+ * 층 목록에서 화면에 숨는 줄의 수 — 서버 순서(위층부터)의 **앞쪽** 이만큼(index < 이 값)이 숨는다.
+ * 펼쳤거나 10줄 이하면 0. 건너뛰기·호실 고르기·접기 정리가 모두 이 한 곳으로 '숨은 줄인가'를 판다.
+ */
+function floorFoldCut(count: number, all: boolean): number {
+  return all ? 0 : Math.max(0, count - LIST_FOLD_AT);
+}
+
+/** 다음 그림이 그려진 뒤에 부른다(jsdom 처럼 requestAnimationFrame 이 없으면 setTimeout). */
+function afterPaint(cb: () => void) {
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(cb);
+  else setTimeout(cb, 0);
+}
+
+/**
+ * 긴 목록의 「전부 보기」/「접기」 단추(S2). 펼친 뒤에도 같은 자리에 남아 다시 접는다(👤 "둔다").
+ * 접을 때는 그 카드 머리가 화면 안에 오게 굴린다 — 긴 목록 아래에서 접으면 화면이 엉뚱한 카드에 가 있다.
+ * ⛔ 종이에는 안 나온다(`@media print` · 누르는 장치).
+ */
+function ListFoldButton({
+  expanded,
+  controls,
+  moreText,
+  lessText,
+  onToggle,
+}: {
+  expanded: boolean;
+  /** 이 단추가 펼치고 접는 목록의 id. */
+  controls: string;
+  moreText: string;
+  lessText: string;
+  onToggle: (expanded: boolean) => void;
+}) {
+  const ref = useRef<HTMLButtonElement>(null);
+  return (
+    <button
+      ref={ref}
+      type="button"
+      className="list__fold"
+      aria-expanded={expanded}
+      aria-controls={controls}
+      onClick={() => {
+        onToggle(!expanded);
+        if (expanded) {
+          // 줄이 줄어든 **뒤에** 재야 자리가 맞다. jsdom 에는 scrollIntoView 가 없어 `?.`.
+          const head = ref.current?.closest('.card')?.querySelector('.card__h');
+          afterPaint(() => head?.scrollIntoView?.({ block: 'nearest' }));
+        }
+      }}
+    >
+      {expanded ? lessText : moreText}
+    </button>
+  );
+}
+
 export function FloorStack({
   building,
   viewerRole = null,
   founderChip = FOUNDER_CHIP_ALL,
+  onBeforePrint,
   unitPrintMode = 'none',
   unitPrintOpenSignal = 0,
   onUnitListedCount,
+  dongs = null,
+  sigunguName = null,
+  onSelectBuilding,
+  onFindInSigungu,
 }: Props) {
   const plans = sectionPlansFor(viewerRole);
   const [floors, setFloors] = useState<FloorRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [openFloor, setOpenFloor] = useState<number | null>(null);
+  /** 층 목록을 「전부 보기」로 펼쳤나(S2). 건물이 바뀌면 다시 처음 10줄 — 주소·이 기기에 남기지 않는다. */
+  const [floorsAll, setFloorsAll] = useState(false);
+  const floorsListId = useId();
+  /** 지금 화면에서 숨은 위층 줄의 수(앞쪽 index < 이 값). */
+  const floorCut = floorFoldCut(floors.length, floorsAll);
+  /** 그 층이 **접힌 창**에서 숨는 줄인가(지금 펼쳐져 있어도 접힌 기준으로 판다). null·없는 층 = 아니다. */
+  const isFloorFolded = (no: number | null) => {
+    if (no === null) return false;
+    const idx = floors.findIndex((f) => f.floor_no === no);
+    return idx >= 0 && idx < floorFoldCut(floors.length, false);
+  };
   /** 각주에 쓸 집계. 건물과 무관하므로 처음 한 번만 읽는다. */
   const [stats, setStats] = useState<CoverageStats | null>(null);
   /** 이 건물이 속한 상권. 못 읽으면 null로 남고, 그때는 그 줄을 아예 그리지 않는다. */
@@ -255,17 +356,15 @@ export function FloorStack({
   const [txs, setTxs] = useState<ParcelTransaction[] | null>(null);
   /** 이 구의 층대별 단가 분포(Stage A). 못 읽으면 null로 남고 그 블록만 안 그린다. */
   const [txStats, setTxStats] = useState<SigunguTxStat[] | null>(null);
-  /** 이 필지의 층별 참고 시세(Stage B · 결정 0013). null = 아직 안 옴. */
-  const [bands, setBands] = useState<PriceBand[] | null>(null);
-  /** 못 읽었나. 못 읽었으면 그 섹션을 아예 안 그린다(모르는 것을 없다고 말하지 않는다). */
-  const [bandsFailed, setBandsFailed] = useState(false);
   /**
-   * 이 필지의 층별 국세청 기준시가. null = 아직 안 왔거나 못 읽음.
+   * 이 필지의 층별 국세청 기준시가. null = 아직 안 왔거나 못 읽음. 『층별 공표값 나란히』와 역할 요약 판(투자자)이 쓴다.
    *
-   * ⓘ 밴드와 달리 "못 읽음"을 따로 두지 않는다 — 둘 다 **그 줄을 안 그리는 것**으로 끝나기
-   *   때문이다(카드 자체는 밴드가 정한다). 상태를 하나 더 만들면 쓰는 곳 없이 갈래만 는다.
+   * ⓘ "못 읽음"을 따로 두지 않는다 — 둘 다 **그 칸을 '–' 로 두는 것**으로 끝나기 때문이다.
+   *   상태를 하나 더 만들면 쓰는 곳 없이 갈래만 는다.
    */
   const [basePrices, setBasePrices] = useState<BasePrice[] | null>(null);
+  /** 기준시가 조회가 실패했나 — 층별 공표값 칸 머리의 이유 줄이 「불러오지 못했습니다」와 「상가 기준시가 없음」(빈 배열)을 가른다(👤 2026-10-18 ②). */
+  const [basePricesFailed, setBasePricesFailed] = useState(false);
   /**
    * 이 건물의 층별 호실 요약(결정 0032). null = 아직 안 왔거나 **못 읽음** — 그때는 요약 줄도
    * "자료 없음" 안내도 안 그린다. 빈 배열 = 물어봤더니 호실 자료가 없는 건물(안내가 선다).
@@ -277,23 +376,12 @@ export function FloorStack({
    */
   const [landPrice, setLandPrice] = useState<ParcelLandPrice | null>(null);
   /**
-   * 층 목록 카드를 **펼치라고 부르는 신호**. 참고 시세 줄을 누를 때마다 1씩 올린다.
+   * 층 목록 카드를 **펼치라고 부르는 신호**. 호실 구성표 고르기가 1씩 올린다.
    *
-   * ⛔ 이게 없으면 사용자가 층 목록을 접어 둔 상태에서 시세 줄을 눌렀을 때 **아무 일도
-   *    안 일어난다** — 층은 펼쳐졌는데 그 층이 접힌 카드 안에 있기 때문이다. 눌렀는데
-   *    화면이 안 변하면 사람은 고장 났다고 읽는다.
+   * ⛔ 이게 없으면 사용자가 층 목록을 접어 둔 상태에서 고른 층이 **접힌 카드 안에** 있어
+   *    눌렀는데 화면이 안 변한다 — 사람은 고장 났다고 읽는다.
    */
   const [floorsOpenSignal, setFloorsOpenSignal] = useState(0);
-  /**
-   * 층 목록 카드가 지금 펼쳐져 있나(카드가 알려 준다).
-   *
-   * 참고 시세 줄이 `aria-expanded` 로 "그 층이 펼쳐져 있다"고 말하는데, 정작 층 목록이
-   * 접혀 있으면 그 말이 거짓이 된다 — 그래서 접혀 있는 동안에는 시세 쪽에 "펼쳐진 층
-   * 없음"으로 넘긴다. 카드의 상태를 위로 끌어올린 것이 아니라 **알림만** 받는다.
-   */
-  // ⚠️ `<boolean>` 을 명시한다. `SECTION_PLAN` 이 `as const` 라 `defaultOpen` 의 타입이
-  //    `true`(값 하나짜리 타입)라서, 안 적으면 "true 만 담는 상태"가 되어 접힐 수가 없다.
-  const [floorsCardOpen, setFloorsCardOpen] = useState<boolean>(plans.floors.defaultOpen);
   /**
    * 곁 카드(업종 분포·둘레 인허가·임대 동향·개업·폐업) 요청을 건물을 고른 순간 먼저 보내 둔 것.
    * 카드들은 층 목록이 온 뒤에야 마운트되므로, 여기서 먼저 보내 두면 그만큼 일찍 온다
@@ -353,6 +441,7 @@ export function FloorStack({
     setLoading(true);
     setError(null);
     setOpenFloor(null);
+    setFloorsAll(false);
 
     supabase
       .from(FLOOR_STACK_VIEW)
@@ -491,6 +580,17 @@ export function FloorStack({
   useEffect(() => {
     if (unitPrintOpenSignal > 0) setFloorsOpenSignal((n) => n + 1);
   }, [unitPrintOpenSignal]);
+  /*
+    손님이 직접 고른 순간(신호가 바뀐 그림) 고른 층 중 하나라도 숨은 위층이면 층 목록을 '전부'로 — 안 그러면 받은 호
+    목록이 숨은 줄에 붙어 화면에서 안 보인다(S2 검사 맹점 B · 종이에는 늘 나온다). 신호와 고르기는 App 이 한 번에 바꾸므로
+    같은 그림의 고르기를 읽는다. ⓘ 그리는 도중에 상태를 맞추는 React 공식 꼴(SectionCard 와 같은 꼴) — 층·고르기가 바뀔
+    때마다 다시 펼치지 않고 신호가 바뀐 그 한 번만 판다.
+  */
+  const [seenUnitSignal, setSeenUnitSignal] = useState(unitPrintOpenSignal);
+  if (seenUnitSignal !== unitPrintOpenSignal) {
+    setSeenUnitSignal(unitPrintOpenSignal);
+    if (unitPrintOpenSignal > 0 && unitPlan.floors.some((no) => isFloorFolded(no))) setFloorsAll(true);
+  }
 
   // 호 목록이 있는 층 수를 App 에 알린다(0개면 고르기 줄을 숨긴다). 요약을 못 받았으면 알리지 않는다.
   const listedCount =
@@ -538,9 +638,8 @@ export function FloorStack({
     let cancelled = false;
     setTxs(null);
     setTxStats(null);
-    setBands(null);
-    setBandsFailed(false);
     setBasePrices(null);
+    setBasePricesFailed(false);
 
     supabase.rpc(PARCEL_TX_FN, { pnu: building.pnu }).then(({ data, error: err }) => {
       if (cancelled) return;
@@ -563,41 +662,17 @@ export function FloorStack({
         setTxStats(data as SigunguTxStat[]);
       });
 
-    // ── 참고 매매 시세 밴드 (Stage B · 결정 0013) ──────────────────────────
-    //
-    // ⚠️ 인자 이름이 이 함수만 `p_pnu` 다(형제 셋은 bld_id·pnu·sigungu). 습관대로
-    //    `{ pnu: … }` 로 부르면 목(mock)은 인자 이름을 안 보므로 vitest·E2E 가 전부
-    //    초록인 채 **라이브에서만** PGRST202 가 난다.
-    supabase.rpc(PRICE_BANDS_FN, { p_pnu: building.pnu }).then(({ data, error: err }) => {
-      if (cancelled) return;
-      if (err || !data) {
-        // 못 읽었으면 "참고 시세 없음"이라고 적지 않는다 — 없는 것과 모르는 것은 다르다.
-        console.warn('참고 시세 조회 실패 — 그 섹션 없이 표시합니다', err);
-        setBandsFailed(true);
-        return;
-      }
-      const rows = data as PriceBand[];
-      // 서버가 여섯 번째 status 를 늘리면 화면은 그 층을 조용히 안 그린다(뜻을 지어내지
-      // 않는다). 눈에 안 띄므로 콘솔에는 반드시 남긴다 — status 를 늘리는 날 화면도 같은
-      // 커밋에서 고쳐야 한다는 신호다.
-      const unknown = [...new Set(rows.map((b) => b.status))].filter(
-        (s) => !KNOWN_BAND_STATUS.has(s),
-      );
-      if (unknown.length > 0) console.warn('모르는 status 라 그 층은 그리지 않습니다', unknown);
-      setBands(rows);
-    });
-
     // ── 국세청 기준시가 ────────────────────────────────────────────────────
     //
-    // ⚠️ 인자 이름이 여기도 `p_pnu` 다(위 밴드와 같은 이유 — 컬럼명 `pnu` 와 겹친다).
+    // ⚠️ 인자 이름이 이 함수만 `p_pnu` 다(형제 둘은 pnu·sigungu — 컬럼명 `pnu` 와 겹친다).
     //    목은 인자 이름을 안 보므로 습관대로 `{ pnu: … }` 로 부르면 테스트는 전부 초록인 채
     //    **라이브에서만** PGRST202 가 난다.
-    // ⓘ 못 읽었으면 그 줄만 조용히 뺀다 — 마이그레이션 적용 전 라이브가 바로 그 상태다
-    //   (업종 분포와 같은 관행). 카드 자체는 밴드가 정하므로 여기서 손대지 않는다.
+    // ⓘ 못 읽었으면 그 칸만 '–' 이고, 칸 머리 아래에 「기준시가를 불러오지 못했습니다」 한 줄(빈 배열의 「상가 기준시가 없음」과 섞지 않는다).
     supabase.rpc(BASE_PRICES_FN, { p_pnu: building.pnu }).then(({ data, error: err }) => {
       if (cancelled) return;
       if (err || !Array.isArray(data)) {
         console.warn('기준시가 조회 실패 — 그 줄 없이 표시합니다', err);
+        setBasePricesFailed(true);
         return;
       }
       setBasePrices(data as BasePrice[]);
@@ -608,9 +683,38 @@ export function FloorStack({
     };
   }, [building.pnu]);
 
-  if (loading) return <p className="msg msg--loading">층 정보를 불러오는 중…</p>;
-  if (error) return <p className="msg msg--error">{error}</p>;
-  if (floors.length === 0) return <p className="msg">이 건물에는 층 정보가 없습니다.</p>;
+  /*
+    h1 글 = 건물 이름 + 같은 땅 동 구분(결정 0042 보완 F3 — 첫 HTML h1·탭 제목과 같은 `dongSuffix` · 동 목록은 App 이 이미 받는다 ·
+    동이 하나면 이름 그대로). 일찍 끝나는 갈래(불러오는 중·오류·층 0개)도 이 h1 을 그린다 — 건물을 연 동안 App 은 사이트 이름을
+    p 로 내리므로 여기서 안 그리면 h1 이 0개가 된다(보완 F4).
+  */
+  const dongLabel =
+    dongs && building.bld_cnt_in_pnu > 1 ? dongSuffix(building.bld_id, dongs, building.bld_cnt_in_pnu) : null;
+  const titleText = (name: string | null | undefined) =>
+    [name?.trim() || null, dongLabel].filter(Boolean).join(' ') || '(이름 없는 건물)';
+  const bareTitle = <h1 className="stack__title">{titleText(building.bld_nm)}</h1>;
+
+  if (loading)
+    return (
+      <>
+        {bareTitle}
+        <p className="msg msg--loading">층 정보를 불러오는 중…</p>
+      </>
+    );
+  if (error)
+    return (
+      <>
+        {bareTitle}
+        <p className="msg msg--error">{error}</p>
+      </>
+    );
+  if (floors.length === 0)
+    return (
+      <>
+        {bareTitle}
+        <p className="msg">이 건물에는 층 정보가 없습니다.</p>
+      </>
+    );
 
   const head = floors[0];
   const roadContact = displayRoadContact(head.road_contact);
@@ -656,11 +760,8 @@ export function FloorStack({
 
   // 각주 숫자는 DB에서 계산해 온다. 못 불러왔으면 숫자를 빼고 경고만 남긴다
   // — 옛 숫자로 되돌리면 이 코드가 고치려던 문제(화면만 틀려지는 것)가 그대로 살아난다.
-  const missingEvery = stats ? oneInEvery(stats.floor_missing_pct) : null;
-  const missingPhrase =
-    stats && missingEvery
-      ? `약 ${missingEvery}곳 중 1곳(${stats.floor_missing_pct}%)`
-      : '적지 않은 수';
+  // 글은 `floorMissingPhrase` 하나에서 — 역할 요약 판의 1층 칸이 같은 글을 쓴다(결정 0039 W2).
+  const missingPhrase = floorMissingPhrase(stats?.floor_missing_pct) ?? '적지 않은 수';
   // "서비스 지역"을 밝히는 이유: 뷰가 세는 범위가 **지금 볼 수 있는 구**뿐이다(2026-08-22a).
   // 예전에는 전국을 세서, 화면이 보여주지도 않는 지역까지 섞인 숫자를 각주가 말했다.
   const basisPhrase = stats
@@ -685,7 +786,6 @@ export function FloorStack({
         className="card--floors"
         summary={`층 ${floors.length}개 · 점포 ${totalStores.toLocaleString('ko-KR')}곳`}
         openSignal={floorsOpenSignal}
-        onToggle={setFloorsCardOpen}
       >
         {head.bld_cnt_in_pnu > 1 && (
           <p className="warn">
@@ -715,8 +815,23 @@ export function FloorStack({
           <p className="floor__unitprint-failed">{unitPrintFailedText(unitLoad.failed)}</p>
         )}
 
-        <ol className="floors">
-          {floors.map((f) => {
+        {/* 아래 10줄 창의 단추는 목록 **맨 위**(숨은 위층이 단추 바로 아래에서 펼쳐진다 · 👤 그림). */}
+        {floors.length > LIST_FOLD_AT && (
+          <ListFoldButton
+            expanded={floorsAll}
+            controls={floorsListId}
+            moreText={`위층 전부 보기 (${(floors.length - LIST_FOLD_AT).toLocaleString('ko-KR')}개 층 더)`}
+            lessText="층 목록 접기"
+            onToggle={(next) => {
+              setFloorsAll(next);
+              // 접으면 숨는 줄에 열린 층이 있으면 닫는다 — 안 그러면 안 보이는 층이
+              // '펼쳐져 있음'으로 남는다(검사 맹점 C).
+              if (!next && isFloorFolded(openFloor)) setOpenFloor(null);
+            }}
+          />
+        )}
+        <ol className="floors" id={floorsListId}>
+          {floors.map((f, i) => {
             // 면적이 아예 없는 층(그 층이 전부 연면적 제외분 — 전체의 약 3%)에는 막대를
             // 그리지 않는다. 최소 폭 2%를 강제하면 "면적 미상"이 "아주 좁은 층"처럼 보인다.
             const hasArea = f.floor_area_m2 != null;
@@ -730,13 +845,16 @@ export function FloorStack({
             const printed = unitsOpen ? undefined : printedUnits.get(f.floor_no);
             return (
               // 옥탑도 지하와 같은 "근거 없는 층"이라 색으로 갈라 둔다(결정 0001 가드 4).
-              // id 는 참고 시세 줄에서 이 층으로 스크롤할 때 쓴다.
+              // id 는 이 층을 바로 찾을 때 쓰는 이름표다(`floor--1` = 지하 1층).
               <li
                 key={f.floor_no}
                 id={`floor-${f.floor_no}`}
                 className={`floor${
                   f.floor_no < 0 ? ' floor--under' : f.floor_no === 99 ? ' floor--roof' : ''
-                }${unitsOpen ? ' floor--units-open' : ''}${printed ? ' floor--unitprint' : ''}`}
+                }${unitsOpen ? ' floor--units-open' : ''}${printed ? ' floor--unitprint' : ''}${
+                  // 아래 10줄만 남기고 위층 줄은 펼치기 전까지 화면에서만 숨는다(S2 — 종이에는 늘 전부).
+                  i < floorCut ? ' list__folded' : ''
+                }`}
               >
                 {/*
                   층 줄 + 호실 요약 둘째 줄을 한 덩어리로 묶는다 — 종이에서 둘이 갈리지 않게.
@@ -821,45 +939,16 @@ export function FloorStack({
         chip={founderChip}
       />
     ),
-    tx: <TransactionSection txs={txs} stats={txStats} plan={plans.tx} />,
-    band: (
-      <PriceBandSection
-        bands={bands}
-        basePrices={basePrices}
-        failed={bandsFailed}
-        floors={floors}
-        hasTxStats={txStats !== null && txStats.length > 0}
-        // 층 목록이 접혀 있으면 "펼쳐진 층"이 없는 것이다 — 접힌 카드 속의 층을 두고
-        // 시세 줄이 "펼쳐져 있음"이라 말하면 그 말이 그대로 거짓이 된다.
-        openFloor={floorsCardOpen ? openFloor : null}
-        onPickFloor={(no) => {
-          setOpenFloor(no);
-          // 층 목록을 접어 뒀더라도 다시 펼친다 — 안 그러면 눌러도 화면이 안 변한다.
-          setFloorsOpenSignal((n) => n + 1);
-          // ⚠️ 스크롤은 **다음 그림이 그려진 뒤**로 미룬다. 카드가 접혀 있었다면 이 순간
-          //    그 층은 아직 화면에 없어서, 지금 찾으면 못 찾는다.
-          // ⚠️ getElementById 로 찾는다 — 지하 층의 id 는 "floor--1" 이라
-          //    querySelector('#floor--1') 는 잘못된 선택자로 예외가 난다.
-          //    jsdom 에는 scrollIntoView 가 없어 `?.` 를 반드시 붙인다.
-          const paint =
-            typeof requestAnimationFrame === 'function'
-              ? requestAnimationFrame
-              : (cb: () => void) => setTimeout(cb, 0);
-          paint(() => {
-            document.getElementById(`floor-${no}`)?.scrollIntoView?.({ block: 'nearest' });
-          });
-        }}
-        plan={plans.band}
-      />
-    ),
+    tx: <TransactionSection txs={txs} stats={txStats} plan={plans.tx} bldId={building.bld_id} />,
     /*
-      층 차이 세 잣대(결정 0036 결정 15 · 물결 1-C2). 이미 받은 기준시가·구 단가를 그대로 넘기고,
-      부동산원 조사값은 임대 카드와 같은 미리 보낸 답을 카드가 스스로 받는다. ⛔ 비율 계산 0.
+      층별 공표값 나란히(결정 0036 결정 15 · 물결 1-C2 → 결정 0041 — 내린 참고 매매 시세 카드의 자리). 이미 받은
+      기준시가·구 단가를 그대로 넘기고, 부동산원 조사값은 임대 카드와 같은 미리 보낸 답을 카드가 스스로 받는다. ⛔ 비율 계산 0.
     */
     floorgap: (
       <FloorGapSection
         floors={floors}
         basePrices={basePrices}
+        basePricesFailed={basePricesFailed}
         txStats={txStats}
         pnu={building.pnu}
         prefetch={sidePrefetch}
@@ -871,10 +960,8 @@ export function FloorStack({
       상권 임대 동향(결정 0024). 자기가 알아서 묻고, 못 읽으면 스스로 사라진다
       — 마이그레이션 적용 전 라이브에서는 함수가 없어(PGRST202) 그 상태가 된다.
 
-      ⚠️ 바로 위 참고 시세(추정)와 **다른 자로 잰 다른 값**이다 — 이쪽은 우리가 어림한
-         것이 아니라 부동산원이 조사해 공표한 값이고, 대상도 이 건물이 아니라 이 건물이
-         속한 상권이다. 두 카드를 나란히 두되 **한 줄에 섞거나 서로 견주는 문구를 쓰지
-         않는다**(카드 안의 첫 줄과 등급 문단이 그 경계를 지킨다).
+      ⚠️ 대상이 이 건물이 아니라 이 건물이 속한 상권이다 — 다른 카드의 값과 **한 줄에 섞거나
+         서로 견주는 문구를 쓰지 않는다**(카드 안의 첫 줄과 등급 문단이 그 경계를 지킨다).
     */
     rent: (
       <RentStatSection
@@ -906,10 +993,37 @@ export function FloorStack({
     history: <EmptySection kind="history" pnu={building.pnu} plan={plans.history} />,
   };
 
+  /*
+    내부 링크 줄(결정 0042 H5) — 같은 땅 다른 동(동 목록이 이 땅 것이고 2줄 이상일 때만)과 구 코드.
+    실을 동 = 자기 차례 앞뒤 창(`siblingWindow` — 첫 HTML 과 같은 함수 · 보완 F2) · 「외 N동」의 N 도 같은 셈(`moreDongCount`).
+  */
+  const shownDongs = dongs && head.bld_cnt_in_pnu > 1 ? siblingWindow(building.bld_id, dongs) : [];
+  const moreDongs = dongs && shownDongs.length > 0 ? moreDongCount(head.bld_cnt_in_pnu, dongs, shownDongs.length) : 0;
+  const sggCode = building.pnu.slice(0, 5);
+
   return (
     <section className="stack">
+      {/*
+        역할 요약 판(결정 0039 W2) — 건물 머리 **위**(첫 3초에 보이게). 역할이 없으면 아무것도 안 그린다.
+        ⓘ 층 행이 이 건물 것이 아니면(건물이 바뀐 첫 그림) 판이 스스로 안 그린다(`roleSummaryView`) · 곁 카드 값은 판이 pnu 로 대조한다.
+      */}
+      <RoleSummary
+        role={viewerRole}
+        chip={founderChip}
+        building={building}
+        floors={floors}
+        stats={stats}
+        txs={txs}
+        txStats={txStats}
+        basePrices={basePrices}
+        landPrice={landPrice}
+        noCoord={lacksCoord(building)}
+        prefetch={sidePrefetch}
+        onBeforePrint={onBeforePrint}
+      />
       <header className="stack__head">
-        <h2 className="stack__title">{head.bld_nm || '(이름 없는 건물)'}</h2>
+        {/* 건물을 연 동안 이 이름이 화면의 h1(결정 0042 H1 — 사이트 이름은 App 머리에서 p 로 내려간다 · h1 은 정확히 1개). */}
+        <h1 className="stack__title">{titleText(head.bld_nm)}</h1>
         <p className="stack__addr">{head.road_addr || '주소 없음'}</p>
         <dl className="stack__facts">
           <div>
@@ -1009,6 +1123,65 @@ export function FloorStack({
             <span className="stack__land-text">{landPriceText(landPrice)}</span>
           </p>
         )}
+        {/*
+          내부 링크 줄(결정 0042 H5) — 진짜 `<a href>` 라 검색 봇이 따라가고, 사람의 보통 누름은 화면 안에서 처리한다.
+          ⓘ 글자 = 동 목록 함수 값(`siblingName` — 첫 HTML 링크와 같은 함수) · 구 이름은 지역 고르개가 준 것 · 틀 두 줄은 메인 판단.
+          ⛔ 종이에서는 빠진다(`@media print` 의 `.stack__links` — 누르는 문).
+          ⓘ 휴대폰은 첫 줄 「같은 땅 다른 동 (외 N동)」 + 한 줄 칩(옆으로 밀기 · 👤 2026-10-19 「가」) — 칸을 span 으로만 나눠
+            넓은 화면 그림·글(textContent)은 그대로 두고, 휴대폰 묶음(`@media screen and (max-width: 720px)`)이 점을 숨기고 칩으로 바꾼다.
+            한 벌만 그린다(숨긴 점은 `display: none` 이라 낭독기도 안 읽는다). ⛔ 첫 줄 「같은 땅 다른 동:」은 쪼개지 않는다 — 쌍점만 칸으로
+            감싸면 넓은 화면 글자 자리가 밀린다(휴대폰은 styles.css 가 이 글을 0 크기로 두고 `::before` 로 쌍점 없이 다시 쓴다 — 글자를 바꾸면 거기도).
+        */}
+        {(shownDongs.length > 0 || sigunguName) && (
+          <nav className="stack__links" aria-label="관련 페이지">
+            {shownDongs.length > 0 && dongs && (
+              <p className="stack__links-row stack__links-row--dongs">
+                <span className="stack__links-lead">같은 땅 다른 동:</span>{' '}
+                <span className="stack__links-chips">
+                  {shownDongs.map((d, i) => (
+                    <Fragment key={d.bld_id}>
+                      {i > 0 && <span className="stack__links-sep"> · </span>}
+                      <a
+                        className="stack__links-a"
+                        href={`/?sgg=${sggCode}&bld=${d.bld_id}`}
+                        onClick={(e) => {
+                          if (!onSelectBuilding || !isPlainLeftClick(e)) return;
+                          e.preventDefault();
+                          onSelectBuilding(siblingToHit(building, d));
+                        }}
+                      >
+                        {siblingName(d, dongs, head.bld_cnt_in_pnu)}
+                      </a>
+                    </Fragment>
+                  ))}
+                </span>
+                {/* 첫 HTML 과 같은 상한(10) — 한 땅에 102동인 단지도 있다(DMC파크뷰자이 실측). 넘치면 수만 적는다(N = 뷰 동 수 − 자기 − 보인 수).
+                    ⓘ 앞 띄어쓰기는 칸 밖 글이다 — 휴대폰 묶음(flex)에서는 빈 글이라 사라지고, 괄호는 그 묶음의 ::before·::after 가 단다. */}
+                {moreDongs > 0 && (
+                  <>
+                    {' '}
+                    <span className="stack__links-more">외 {moreDongs}동</span>
+                  </>
+                )}
+              </p>
+            )}
+            {sigunguName && (
+              <p className="stack__links-row">
+                <a
+                  className="stack__links-a"
+                  href={`/?sgg=${sggCode}`}
+                  onClick={(e) => {
+                    if (!onFindInSigungu || !isPlainLeftClick(e)) return;
+                    e.preventDefault();
+                    onFindInSigungu();
+                  }}
+                >
+                  {sigunguName} 다른 건물 찾기
+                </a>
+              </p>
+            )}
+          </nav>
+        )}
       </header>
 
       {sectionOrder(viewerRole).map((k) => (
@@ -1020,7 +1193,10 @@ export function FloorStack({
         점포 목록은 호수가 아니라 <strong>“땅 + 층”</strong>으로 맞춘 값입니다. 어느 호실인지까지는
         알 수 없습니다. 면적·용도와 위 건물 스펙(연면적·용적률·건폐율·주차)은 건축물대장{' '}
         <strong>실측(A등급)</strong>입니다. 대장에 안 적힌 칸은 “미상”으로 둡니다 — 원본이
-        미기재를 <strong>0</strong>으로 주기 때문에 0을 값으로 적으면 없는 사실이 생깁니다.
+        미기재를 <strong>0</strong>으로 주기 때문에 0을 값으로 적으면 없는 사실이 생깁니다.{' '}
+        {/* 👤 2026-10-19 「한 문장 더한다」 — 승강기·대장 호수 칸을 두지 않는 까닭(물결 2-1 PR② 의 숨김 규칙) · 글자 그대로. */}
+        승강기는 5층 이하 건물에서 대장에 0대로 적혀 있으면 칸을 두지 않고, 공동주택·단독주택은 대장 호수가 세대 수라
+        칸을 두지 않습니다.
         {/*
           결정 0032 — 호실 면적을 적는 요약(목록 제공 층)이 층 줄에 하나라도 붙었을 때만 보탠다
           (주거·오피스텔 층뿐인 건물은 면적을 안 적으므로 곱셈 안내가 할 말이 아니다).
@@ -1195,9 +1371,8 @@ function BizSummary({ floors }: { floors: FloorRow[] }) {
  * "실거래" 섹션 — Stage A(결정 0012).
  *
  * ⛔ 여기에 **추정값을 넣지 말 것.** Stage A 는 신고된 거래를 그대로 보여주거나 세는
- *    것만 한다. 추정 밴드(Stage B)는 결정 0013 으로 결재됐고, 기준을 넘은 구 × 2층·3층+
- *    에서만 아래 `PriceBandSection` 이 카드를 갈라 낸다 — **이 블록에는 여전히 넣지 않는다.**
- *    사실과 추정을 가르는 것이 이 화면의 신뢰이기 때문이다.
+ *    것만 한다(추정 밴드 Stage B 는 결정 0041 로 화면에서 내렸다). 사실과 추정을 가르는 것이
+ *    이 화면의 신뢰이기 때문이다.
  *
  * 두 블록이 하는 말이 다르다:
  *  ① 이 땅의 이력 — 있는 건물에만 나온다(자기 거래가 있는 필지는 서울 1.8% 뿐이다).
@@ -1207,10 +1382,13 @@ function TransactionSection({
   txs,
   stats,
   plan = SECTION_PLAN.tx,
+  bldId,
 }: {
   txs: ParcelTransaction[] | null;
   stats: SigunguTxStat[] | null;
   plan?: SectionPlan;
+  /** 거래 목록의 「전부 보기」를 건물마다 새로 세우는 열쇠(S2) — 같은 땅의 다른 동으로 넘어가도 처음 10건부터. */
+  bldId: string;
 }) {
   // 둘 다 아직 안 왔거나 못 읽었으면 섹션 자체를 그리지 않는다(빈 제목만 남기지 않는다).
   const hasHistory = txs !== null && txs.length > 0;
@@ -1224,14 +1402,14 @@ function TransactionSection({
   const guName = stats?.find((s) => s.sigungu_nm)?.sigungu_nm ?? null;
   const summary = [
     hasHistory ? `이 땅 거래 ${txs!.length.toLocaleString('ko-KR')}건` : null,
-    hasStats ? `${guName ? `${guName} ` : ''}층대별 단가` : null,
+    hasStats ? `${guName ? `${guName} ` : ''}층대별 단가 (상가 거래 기준)` : null,
   ]
     .filter((s): s is string => s !== null)
     .join(' · ');
 
   return (
     <SectionCard plan={plan} className="tx" summary={summary}>
-      {hasHistory && <ParcelTxList txs={txs!} />}
+      {hasHistory && <ParcelTxList key={bldId} txs={txs!} />}
       {hasStats && <SigunguTxBands stats={stats!} />}
     </SectionCard>
   );
@@ -1243,6 +1421,12 @@ function ParcelTxList({ txs }: { txs: ParcelTransaction[] }) {
   // 있을 때만** — 없는 목록에 붙이면 읽을 이유가 없는 글이 된다. `=== true` 인 이유: 옛 서버는
   // 이 칸을 안 준다(undefined).
   const hasShare = txs.some((t) => t.is_share === true);
+  // 처음 10건만 화면에(S2) — 펼침은 이 목록의 상태라 건물이 바뀌면(key) 다시 접힌다.
+  const [all, setAll] = useState(false);
+  // 설명 줄은 **화면에 보이는 줄**에 지분이 있을 때만 화면에 선다(👤 2026-10-16) — 숨은 줄에만 있으면
+  // 줄은 그리되 숨은 줄과 같은 이름표를 달아 `@media screen` 에서만 숨긴다(종이에는 줄이 전부 나오니 설명도 늘).
+  const shownShare = all ? hasShare : txs.slice(0, LIST_FOLD_AT).some((t) => t.is_share === true);
+  const listId = useId();
   return (
     <div className="tx__block">
       <h4 className="tx__sub">
@@ -1253,9 +1437,9 @@ function ParcelTxList({ txs }: { txs: ParcelTransaction[] }) {
           <span className="tx__cap"> (최근 {TX_LIST_CAP}건까지)</span>
         )}
       </h4>
-      <ul className="tx__list">
+      <ul className="tx__list" id={listId}>
         {txs.map((t, i) => (
-          <li key={i}>
+          <li key={i} className={!all && i >= LIST_FOLD_AT ? 'list__folded' : undefined}>
             <span className="tx__floor">
               {t.floor_no === null ? '층 미상' : formatFloor(t.floor_no, null)}
             </span>
@@ -1270,9 +1454,18 @@ function ParcelTxList({ txs }: { txs: ParcelTransaction[] }) {
           </li>
         ))}
       </ul>
+      {txs.length > LIST_FOLD_AT && (
+        <ListFoldButton
+          expanded={all}
+          controls={listId}
+          moreText={`거래 전부 보기 (${txs.length.toLocaleString('ko-KR')}건)`}
+          lessText="거래 목록 접기"
+          onToggle={setAll}
+        />
+      )}
       {hasShare && (
-        <p className="tx__note tx__share-note">
-          지분 = 건물 일부 몫만 사고판 거래라 ㎡당 값이 낮게 나옵니다 — 층대별 단가·참고 가격대 계산에서는 뺍니다.
+        <p className={`tx__note tx__share-note${shownShare ? '' : ' list__folded'}`}>
+          지분 = 건물 일부 몫만 사고판 거래라 ㎡당 값이 낮게 나옵니다 — 층대별 단가 계산에서는 뺍니다.
         </p>
       )}
       <p className="tx__note">
@@ -1300,7 +1493,10 @@ function SigunguTxBands({ stats }: { stats: SigunguTxStat[] }) {
 
   return (
     <div className="tx__block">
-      <h4 className="tx__sub">{guName ? `${guName} 층대별 거래 단가` : '층대별 거래 단가'}</h4>
+      {/* 상가(근생·판매) 거래만 센 표다(결정 0040 D3 · 서버 mv_sigungu_tx_stats 의 where) — 제목이 그 사실을 말한다. */}
+      <h4 className="tx__sub">
+        {guName ? `${guName} 층대별 거래 단가 (상가 거래 기준)` : '층대별 거래 단가 (상가 거래 기준)'}
+      </h4>
       <ul className="tx__bands">
         {stats.map((s) => {
           const enough = s.n >= MIN_SAMPLE;
@@ -1327,15 +1523,17 @@ function SigunguTxBands({ stats }: { stats: SigunguTxStat[] }) {
         })}
       </ul>
       <p className="grade">
-        <span className="grade__badge">A등급 · 실거래</span>
+        {/* 구 층대 가운데값 = 우리가 세어 낸 집계 — 세 잣대 칸·요약 타일과 같은 배지(결정 0041 보완 1차 · 꼬리말 약속). */}
+        <span className="grade__badge">{TX_STAT_BADGE}</span>
         추정한 값이 아니라 <strong>신고된 거래를 그대로 센 값</strong>입니다. 표본이{' '}
         {MIN_SAMPLE}건 미만인 층대는 수치를 적지 않습니다 — 몇 건으로 낸 가운데값은 숫자
         모양만 통계이기 때문입니다.
       </p>
       <p className="tx__src">
         출처: 국토교통부 상업업무용 부동산 매매 실거래가 ·{' '}
-        {guName ? `${guName} ` : ''}집합(구분소유) 거래
-        {from ? ` ${formatYearMonth(from)} 이후 계약분` : ''} 집계 · 지분 거래 제외 · 전체 표본{' '}
+        {guName ? `${guName} ` : ''}상가(근린생활·판매) 집합(구분소유) 거래
+        {/* 날짜 말투는 카드 머리 날짜 줄과 같은 '2024년 10월'(F1 · 👤 2026-10-16 ④) — 못 읽으면 원본 그대로. */}
+        {from ? ` ${formatMonthKo(from) ?? from} 이후 계약분` : ''} 집계 · 지분 거래 제외 · 전체 표본{' '}
         {total.toLocaleString('ko-KR')}건.
       </p>
     </div>

@@ -12,6 +12,9 @@
   ⛔ 뷰(`api.v_floor_stack`)에 있는 사실만 쓴다 — 지어낸 숫자·금지어(절대 규칙 2) 0.
   ⛔ 치환은 태그마다 **정확히 1번** — 첫 HTML 에 같은 태그가 0개·2개면 throw(봇마다 아무거나 고른다).
   ⓘ 사이트 이름·정식 주소는 `seo.ts`·`index.html` 과 같은 글자다(시험이 대조한다).
+  ⓘ 결정 0042 — h1(`h1.seo-title`)도 건물 이름으로 · 같은 땅 여러 동은 이름에 동 구분(`dongSuffix`) ·
+    소개문 뒤 빈 `nav.seo-links` 에 진짜 내부 링크 · 빈 자리 주석 `<!--seo-breadcrumb-->` 를 빵부스러기 JSON-LD 로.
+    치환 자리는 전부 `index.html` 에 미리 둔 것이고 규칙(정확히 1번 · 함수 치환 · 뷰·함수 값만)은 그대로다.
 */
 
 export const SITE_ORIGIN = 'https://sangga-one.vercel.app';
@@ -29,6 +32,14 @@ const BLD_RE = /^\d{19}_\d{1,32}$/;
  */
 export const RESIDENTIAL_RE = /(주택|주거|아파트|다세대|연립|기숙사|주차|기계|전기|계단|승강|옥탑|부속|창고|관리|경비|대피|물탱크|펌프|발전|보일러|쓰레기|분리수거)/;
 
+/**
+ * 이름에 글자(한글 음절·호환 자모·영문·한자)가 하나라도 있나 — 하나도 없으면(「.」「1」「---------」) 첫 HTML 도 noindex
+ * (👤 2026-10-19 「단다」 — 사이트맵·구 허브에서 뺀 것과 같은 뜻을 끝까지).
+ * ⛔ `scripts/build_sitemap.py` 의 NAME_LETTER_RE 와 **글자까지 같아야** 한다(tests/test_build_sitemap.py 가 대조).
+ * ⛔ 범위는 이스케이프 표기(역슬래시 u + 16진 넷)로만 적는다 — 소스에 드문 글자를 직접 넣지 않는다(편집 도구가 표기를 글자로 바꿔 넣은 일이 있다).
+ */
+export const NAME_LETTER_RE = /[\uac00-\ud7a3\u3131-\u3163A-Za-z\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
+
 const NOINDEX = '<meta name="robots" content="noindex" />';
 
 /** 서버 조각이 뷰에서 받아 오는 칸(`select=` 와 같은 목록). */
@@ -45,7 +56,25 @@ export type BuildingRow = {
   /** 화면에 보일 이름(display_nm — 개인 성명 가려짐). */
   bld_nm: string | null;
   road_addr: string | null;
+  /** 같은 땅(필지)의 동 수(결정 0042) — 1 보다 크면 서버 조각이 동 목록을 한 번 더 받는다. */
+  bld_cnt_in_pnu?: number | null;
 };
+
+/**
+ * `list_parcel_buildings(p_pnu)` 의 한 줄 중 쓰는 칸(결정 0042) — 층 자료 있는 동만 · 연면적 큰 순.
+ * `dong_nm` 은 동명칭 **원문**(성명 가림만 거친 것) — `bld_nm`(display_nm)은 '101동' 꼴을 가려 같은 땅 동끼리 같아진다.
+ */
+export type ParcelSibling = {
+  bld_id: string;
+  bld_nm: string | null;
+  dong_nm: string | null;
+};
+
+/** 첫 HTML 내부 링크에 싣는 같은 땅 다른 동의 최대 수(결정 0042 H3). */
+export const MAX_SIBLING_LINKS = 10;
+
+/** `dongSuffix` 의 차례 꼴 「(같은 땅 N동 중 k번째)」로 끝나는가(설명 글 괄호 겹침 막기 · 보완 F12). */
+const ORDINAL_SUFFIX_RE = /\(같은 땅 \d+동 중 \d+번째\)$/;
 
 export type FloorFact = {
   floorNo: number | null;
@@ -67,6 +96,8 @@ export type BuildingFacts = {
   segments: number;
   /** floor_no 오름차순(불명은 맨 뒤). */
   floors: FloorFact[];
+  /** 같은 땅 동 수(뷰 `bld_cnt_in_pnu` · 결정 0042 보완 F1·F10) — 안 왔으면 null. */
+  bldCnt: number | null;
 };
 
 export function isBldId(s: string | null | undefined): boolean {
@@ -163,6 +194,7 @@ export function buildingFacts(rows: BuildingRow[]): BuildingFacts | null {
       use: clean(r.main_use),
       segments: r.segment_cnt,
     })),
+    bldCnt: typeof head.bld_cnt_in_pnu === 'number' ? head.bld_cnt_in_pnu : null,
   };
 }
 
@@ -207,7 +239,12 @@ export function buildingTitle(f: BuildingFacts & { name: string }): string {
 }
 
 export function buildingDescription(f: BuildingFacts & { name: string }): string {
-  const who = f.roadAddr ? `${f.name}(${f.roadAddr})` : f.name;
+  // 이름이 동 구분 「(같은 땅 N동 중 k번째)」로 끝나면 괄호가 겹치지 않게 「 — 주소」 꼴(결정 0042 보완 F12 · 원래 괄호로 끝나는 이름은 그대로).
+  const who = f.roadAddr
+    ? ORDINAL_SUFFIX_RE.test(f.name)
+      ? `${f.name} — ${f.roadAddr}`
+      : `${f.name}(${f.roadAddr})`
+    : f.name;
   const phrase = floorsPhrase(f);
   const shape = phrase ? `${phrase}, 층별개요 구간 ${f.segments}개.` : `층별개요 구간 ${f.segments}개.`;
   return (
@@ -255,6 +292,127 @@ export function buildingJsonLd(f: BuildingFacts & { name: string }): string {
   return JSON.stringify(ld).replace(/</g, '\\u003c');
 }
 
+// ── 결정 0042 — 같은 땅 동 구분 · 내부 링크 · 빵부스러기 ─────────────────────────
+
+/**
+ * 같은 땅 여러 동일 때 이름 뒤에 붙일 동 구분(결정 0042 H2). 붙일 것이 없으면 null.
+ * - 동 목록이 2줄 미만이거나 그 동이 목록에 없으면 null(구분 없이 지금 제목).
+ * - 원문 `dong_nm` 이 있고 그 땅에서 **하나뿐**이면 그 글자(「101동」) — 이름에 이미 들어 있으면(이름이 동명칭으로
+ *   대신된 동) null(「101동 101동」이 되지 않게 · 이름 자체가 이미 다르다).
+ * - 비었거나 같은 동명칭이 둘 이상이면 「(같은 땅 N동 중 k번째)」 — N = **뷰의 `bld_cnt_in_pnu`**(`bldCnt` · 화면 「이 땅에 N동」과
+ *   같은 수 — 함수는 층 자료 있는 동만 주어 줄 수가 더 적을 수 있다 · 결정 0042 보완 F1) · 없으면 목록 줄 수 · k = 함수가 준 차례(연면적 큰 순).
+ * ⛔ 첫 HTML 제목·h1 과 화면 탭 제목(`seo.ts` `pageTitle`)·화면 h1 이 **같은 함수**를 쓴다 — 갈리면 구글은 화면이 그린 것을 본다.
+ */
+export function dongSuffix(
+  bldId: string,
+  siblings: readonly ParcelSibling[] | null | undefined,
+  bldCnt?: number | null,
+): string | null {
+  if (!siblings || siblings.length < 2) return null;
+  const k = siblings.findIndex((s) => s.bld_id === bldId);
+  if (k < 0) return null;
+  const self = siblings[k];
+  const dong = clean(self.dong_nm);
+  if (dong && siblings.filter((s) => clean(s.dong_nm) === dong).length === 1) {
+    return nameHasDong(clean(self.bld_nm), dong) ? null : dong;
+  }
+  const n = typeof bldCnt === 'number' && bldCnt > 0 ? bldCnt : siblings.length;
+  return `(같은 땅 ${n}동 중 ${k + 1}번째)`;
+}
+
+/**
+ * 이름이 이미 그 동명칭을 담았나(보완 F5) — 낱말로 들었거나(공백으로 갈린 한 낱말), 이름 **끝**에 붙었고 바로 앞 글자가
+ * 숫자·영문이 아닐 때만. 「제1동상가」·「제11동」은 「1동」을 담은 것이 아니다(가운데 · 앞이 숫자).
+ */
+function nameHasDong(name: string | null, dong: string): boolean {
+  if (!name) return false;
+  if (name.split(/\s+/).includes(dong)) return true;
+  if (!name.endsWith(dong)) return false;
+  const before = name.charAt(name.length - dong.length - 1);
+  return before === '' || !/[0-9A-Za-z]/.test(before);
+}
+
+/** 이름 + 동 구분 — 링크 글자·제목 이름. 이름도 구분도 없으면 화면과 같은 「(이름 없는 건물)」. */
+export function siblingName(s: ParcelSibling, siblings: readonly ParcelSibling[], bldCnt?: number | null): string {
+  return [clean(s.bld_nm), dongSuffix(s.bld_id, siblings, bldCnt)].filter(Boolean).join(' ') || '(이름 없는 건물)';
+}
+
+/**
+ * 같은 땅 다른 동 링크로 실을 동들(보완 F2) — **자기 차례 앞뒤 창**: 자기를 뺀 목록에서 자기 자리를 가운데로 최대 `max`개
+ * (앞 5 · 뒤 5 · 끝에 닿으면 반대쪽으로 채운다). 큰 동 10개 고정이면 102동 땅의 작은 동끼리는 아무 링크도 못 받는다 —
+ * 창이면 차례로 이어져 모든 동이 사슬로 닿는다. 첫 HTML(`seoLinksInner`)·화면(FloorStack)이 같은 함수를 쓴다.
+ * 자기가 목록에 없으면 앞에서부터. 목록이 2줄 미만이면 빈 배열.
+ */
+export function siblingWindow<T extends ParcelSibling>(
+  bldId: string,
+  siblings: readonly T[] | null | undefined,
+  max: number = MAX_SIBLING_LINKS,
+): T[] {
+  if (!siblings || siblings.length < 2) return [];
+  const k = Math.max(0, siblings.findIndex((s) => s.bld_id === bldId));
+  const others = siblings.filter((s) => s.bld_id !== bldId);
+  const lo = Math.min(Math.max(0, k - Math.floor(max / 2)), Math.max(0, others.length - max));
+  return others.slice(lo, lo + max);
+}
+
+/**
+ * 「외 N동」의 N(보완 F10) — 뷰 `bld_cnt_in_pnu` 에서 자기와 보인 링크 수를 뺀 것(뷰가 없으면 목록 줄 수로) · 0 이하면 0.
+ * 첫 HTML·화면이 같은 셈을 쓴다.
+ */
+export function moreDongCount(bldCnt: number | null | undefined, siblings: readonly ParcelSibling[], shown: number): number {
+  const total = typeof bldCnt === 'number' && bldCnt > 0 ? bldCnt : siblings.length;
+  return Math.max(0, total - 1 - shown);
+}
+
+/** 도로명주소 둘째 낱말이 구·군·시로 끝나면 그 이름(「서대문구」) — 아니면 null(지어내지 않는다). */
+export function guNameFromRoad(roadAddr: string | null | undefined): string | null {
+  const parts = roadAddr?.trim().split(/\s+/) ?? [];
+  return parts.length > 2 && /[구군시]$/.test(parts[1]) ? parts[1] : null;
+}
+
+/** 구 입구 주소(이스케이프 전 · 상대) — `/?sgg=<pnu 앞 5자리>`. */
+function guPath(pnu: string): string {
+  return `/?sgg=${pnu.slice(0, 5)}`;
+}
+
+/**
+ * 첫 HTML 소개문 뒤 내부 링크 묶음의 **안쪽**(결정 0042 H3) — 이미 이스케이프된 HTML.
+ * ⓐ 같은 땅 다른 동(자기 차례 앞뒤 창 최대 10 · 넘치면 「외 N동」) ⓑ 「○○구 상가 건물 찾기」 ⓒ 「첫 화면」.
+ * 글자는 뷰·함수 값과 정한 틀뿐. 구 이름을 도로명에서 못 얻으면 ⓑ 는 「같은 구 상가 건물 찾기」.
+ */
+export function seoLinksInner(f: BuildingFacts, siblings: readonly ParcelSibling[] | null | undefined): string {
+  const parts: string[] = [];
+  const others = siblingWindow(f.bldId, siblings);
+  if (others.length > 0 && siblings) {
+    const links = others.map(
+      (s) =>
+        `<a href="${escapeHtml(`/?sgg=${f.pnu.slice(0, 5)}&bld=${s.bld_id}`)}">${escapeHtml(siblingName(s, siblings, f.bldCnt))}</a>`,
+    );
+    const more = moreDongCount(f.bldCnt, siblings, others.length);
+    parts.push(`<p>같은 땅 다른 동: ${links.join(' · ')}${more > 0 ? ` 외 ${more}동` : ''}</p>`);
+  }
+  const gu = guNameFromRoad(f.roadAddr);
+  parts.push(
+    `<p><a href="${escapeHtml(guPath(f.pnu))}">${escapeHtml(gu ? `${gu} 상가 건물 찾기` : '같은 구 상가 건물 찾기')}</a>` +
+      ' · <a href="/">첫 화면</a></p>',
+  );
+  return parts.join('');
+}
+
+/** 빵부스러기 JSON-LD(결정 0042 H6) — 첫 화면 → ○○구 → 건물. 구 이름을 못 얻으면 가운데를 뺀다. */
+export function breadcrumbJsonLd(f: BuildingFacts & { name: string }): string {
+  const items: { name: string; item: string }[] = [{ name: SITE_NAME, item: `${SITE_ORIGIN}/` }];
+  const gu = guNameFromRoad(f.roadAddr);
+  if (gu) items.push({ name: gu, item: `${SITE_ORIGIN}${guPath(f.pnu)}` });
+  items.push({ name: f.name, item: buildingCanonical(f.pnu, f.bldId) });
+  const ld = {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: items.map((x, i) => ({ '@type': 'ListItem', position: i + 1, name: x.name, item: x.item })),
+  };
+  return JSON.stringify(ld).replace(/</g, '\\u003c');
+}
+
 /**
  * `pattern`(g 플래그)이 html 에 **정확히 1번** 나올 때만 바꾼다. 0번·2번+ 이면 throw.
  * 치환 글자는 함수로 넘긴다 — 문자열로 넘기면 `$&`·`$1` 이 특수 패턴으로 읽힌다.
@@ -273,17 +431,27 @@ function metaPattern(attr: 'name' | 'property', key: string): RegExp {
  * 첫 화면 HTML 의 머리글·소개문을 그 건물 것으로 바꾼다.
  * 행이 없거나 이름이 없으면 null(호출부가 첫 화면 HTML 을 그대로 쓴다).
  * 바꿀 태그가 정확히 1개가 아니면 throw.
- * 비주거 층이 없으면(`isNonResidential` false) `</head>` 앞에 noindex 한 줄을 더한다.
+ * 비주거 층이 없거나(`isNonResidential` false) 이름에 글자가 하나도 없으면(`NAME_LETTER_RE`) `</head>` 앞에 noindex 한 줄을 더한다.
+ * `siblings`(결정 0042) = 같은 땅 동 목록(`list_parcel_buildings` · 없거나 실패면 null) — 있으면 제목·설명·og·
+ * JSON-LD·h1 의 이름에 동 구분을 붙이고 내부 링크에 다른 동을 싣는다. 소개문은 원래 이름 그대로.
  */
-export function renderBuildingHtml(homeHtml: string, rows: BuildingRow[]): string | null {
+export function renderBuildingHtml(
+  homeHtml: string,
+  rows: BuildingRow[],
+  siblings: readonly ParcelSibling[] | null = null,
+): string | null {
   const facts = buildingFacts(rows);
   if (!facts || !facts.name) return null;
-  const f = { ...facts, name: facts.name };
+  const suffix = dongSuffix(facts.bldId, siblings, facts.bldCnt);
+  // 제목 이름 = 이름 + 동 구분(결정 0042 H2) · 소개문만 원래 이름(문장 조사가 이름에 맞춰져 있다).
+  const f = { ...facts, name: suffix ? `${facts.name} ${suffix}` : facts.name };
 
   const title = escapeHtml(buildingTitle(f));
   const desc = escapeHtml(buildingDescription(f));
   const url = escapeHtml(buildingCanonical(f.pnu, f.bldId));
-  const intro = escapeHtml(buildingIntro(f));
+  const intro = escapeHtml(buildingIntro({ ...facts, name: facts.name }));
+  const h1 = escapeHtml(f.name);
+  const links = seoLinksInner(facts, siblings);
 
   let html = homeHtml;
   html = replaceExactlyOnce(html, /<title>[^<]*<\/title>/g, `<title>${title}</title>`, '<title>');
@@ -300,7 +468,23 @@ export function renderBuildingHtml(homeHtml: string, rows: BuildingRow[]): strin
     `<script type="application/ld+json">${buildingJsonLd(f)}</script>`,
     'JSON-LD',
   );
+  // 빵부스러기(결정 0042 H6) — 위 JSON-LD 치환 **뒤에** 빈 자리 주석을 바꾼다(앞에서 바꾸면 덩어리가 둘이라 위 가드가 throw).
+  html = replaceExactlyOnce(
+    html,
+    /<!--seo-breadcrumb-->/g,
+    `<script type="application/ld+json">${breadcrumbJsonLd(f)}</script>`,
+    '빵부스러기 자리',
+  );
+  html = replaceExactlyOnce(html, /<h1 class="seo-title">[^<]*<\/h1>/g, `<h1 class="seo-title">${h1}</h1>`, 'h1');
   html = replaceExactlyOnce(html, /<p class="seo-intro">[\s\S]*?<\/p>/g, `<p class="seo-intro">${intro}</p>`, '소개문');
-  // 비주거 층이 없는 건물(아파트 동 등) — 미리보기는 건물 것이되 검색 색인에는 안 담는다.
-  return isNonResidential(rows) ? html : withNoindex(html);
+  html = replaceExactlyOnce(
+    html,
+    /<nav class="seo-links"[^>]*>[\s\S]*?<\/nav>/g,
+    `<nav class="seo-links" aria-label="관련 페이지">${links}</nav>`,
+    '내부 링크 자리',
+  );
+  // 비주거 층이 없는 건물(아파트 동 등) **또는** 이름에 글자가 하나도 없는 건물(「.」「1」 — 👤 2026-10-19) —
+  // 미리보기는 건물 것이되 검색 색인에는 안 담는다. 이름은 동 구분을 붙이기 전 원래 이름(사이트맵이 보는 `display_nm` 과 같은 칸) —
+  // 붙인 뒤 이름으로 보면 「(같은 땅 3동 중 2번째)」의 한글 때문에 늘 통과한다.
+  return isNonResidential(rows) && NAME_LETTER_RE.test(facts.name) ? html : withNoindex(html);
 }

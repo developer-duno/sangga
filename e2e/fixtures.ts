@@ -14,11 +14,7 @@ import type {
   LhNotice,
   NearbyPermits,
   ParcelTransaction,
-  PriceBand,
-  PriceGateRow,
   RentStat,
-  Scorecard,
-  ScorecardOpsMode,
   SigunguTxStat,
   StoreHit,
   UnitFloorSummary,
@@ -113,56 +109,10 @@ export function sigunguTxStats(counts: Record<string, number> = { '1층': 213 })
 }
 
 /**
- * 층별 참고 매매 시세 한 줄(함수 list_price_bands). Stage B — 결정 0013.
- * 필드·기본값은 단위 테스트(src/components/FloorStack.test.tsx 의 priceBand())와 같다.
- */
-export function priceBand(over: Partial<PriceBand> = {}): PriceBand {
-  return {
-    floor_no: 2,
-    status: 'ok',
-    stage: 'L5',
-    n: 15,
-    p25: 7_465_269.63,
-    median: 16_265_452.18,
-    p75: 19_045_698.84,
-    median_area_m2: 32.8,
-    window_from: '202408',
-    ...over,
-  };
-}
-
-/** 값을 못 내는 줄은 사분위·근거가 전부 비어서 온다. */
-const NO_VALUE = {
-  stage: null,
-  n: null,
-  p25: null,
-  median: null,
-  p75: null,
-  median_area_m2: null,
-} as const;
-
-/**
- * 서버가 주는 한 벌 — **오름차순**이다(화면이 뒤집는지 보려면 이 순서 그대로 줘야 한다).
- * 지하1층 no_evidence · 1층 floor_1f · 2층 ok.
- */
-export function priceBands(): PriceBand[] {
-  return [
-    priceBand({ floor_no: -1, status: 'no_evidence', ...NO_VALUE }),
-    priceBand({ floor_no: 1, status: 'floor_1f', ...NO_VALUE }),
-    priceBand({ floor_no: 2 }),
-  ];
-}
-
-/** 기준선을 못 넘은 구 — floor_no 가 null 인 **한 줄**로만 온다(층 목록이 아예 없다). */
-export function priceBandGate(): PriceBand[] {
-  return [priceBand({ floor_no: null, status: 'gate_fail', ...NO_VALUE })];
-}
-
-/**
  * 국세청 기준시가 한 줄(함수 list_base_prices).
  *
- * ⛔ **시세가 아니라 세무 기준가격**이다 — 위 `priceBand`(추정)와 다른 자로 잰 다른 값이라
- *    화면에서도 카드 맨 끝에 갈라 그린다. 필드·기본값은 단위 테스트
+ * ⛔ **시세가 아니라 세무 기준가격**이다 — 『층별 공표값 나란히』 카드의 기준시가 칸에 들어간다(결정 0041).
+ *    필드·기본값은 단위 테스트
  *    (src/components/FloorStack.test.tsx 의 basePrice())와 같다.
  */
 export function basePrice(over: Partial<BasePrice> = {}): BasePrice {
@@ -415,7 +365,7 @@ export function lhNotice(over: Partial<LhNotice> = {}): LhNotice {
 /**
  * 상권 임대 동향 한 줄(함수 `list_rent_stats`). 결정 0024.
  *
- * ⛔ **조사값이지 추정이 아니다** — 위 `priceBand`(우리가 어림한 것)와 다른 자로 잰 다른
+ * ⛔ **조사값이지 추정이 아니다** — 이 건물 값(기준시가)과 다른 자로 잰 다른
  *    값이라 화면에서도 카드를 갈라 그린다. 필드·기본값은 단위 테스트
  *    (src/components/RentStatSection.test.tsx 의 stat())와 같다.
  * ⚠️ `rent_per_m2` 는 **천원/㎡**(부동산원 공표 단위 그대로)다 — 74.6 이 화면에서
@@ -475,85 +425,9 @@ export function rentStats(): RentStat[] {
 }
 
 /**
- * 참고 시세 게이트 한 줄(함수 `list_price_gate`). 입구 성적표 카드에만 쓴다.
- *
- * ⚠️ 서버는 **열린 구 전부**를 준다 — 통과한 구만 오는 것이 아니다. 그래서 아래
- *    `priceGate()` 가 통과 하나 + 탈락 하나를 함께 준다(탈락 사유 표시가 스펙 AB 의
- *    관심사라 둘 다 있어야 한다). 필드셋은 단위 시험
- *    (src/components/ScorecardSection.test.tsx 의 gateRows())과 같다.
- */
-export function priceGateRow(over: Partial<PriceGateRow> = {}): PriceGateRow {
-  return {
-    sigungu_code: '11680',
-    sigungu_nm: '강남구',
-    n_paired: 262,
-    ladder_mdape: 0.283,
-    base_mdape: 0.492,
-    gate_pass: true,
-    loaded_at: '2026-08-16T10:00:00+09:00',
-    ...over,
-  };
-}
-
-/** 통과 구 하나 + **오차는 기준선 안인데 구 평균에 진** 구 하나(금천구 사례). */
-export function priceGate(): PriceGateRow[] {
-  return [
-    priceGateRow({
-      sigungu_code: '11545',
-      sigungu_nm: '금천구',
-      n_paired: 99,
-      ladder_mdape: 0.26,
-      base_mdape: 0.176,
-      gate_pass: false,
-    }),
-    priceGateRow(),
-  ];
-}
-
-function opsMode(over: Partial<ScorecardOpsMode> = {}): ScorecardOpsMode {
-  return {
-    kind: '채택단계',
-    axis_value: 'L2',
-    axis_name: 'L2',
-    n_verified: 100,
-    n_estimated: 100,
-    coverage: 1,
-    mdape: 0.2,
-    mape: 0.3,
-    hit20: 0.5,
-    ...over,
-  };
-}
-
-/**
- * 구워 둔 성적표 파일(`/scorecard-v2.json`)의 **작은 판**.
- *
- * ⚠️ 진짜 파일(180+41+30줄)을 그대로 쓰지 않는다 — 스펙이 보려는 것은 "맨 위에 무엇이
- *    오나"이고, 그 판정에 필요한 것은 비중이 다른 줄 두엇뿐이다. 여기서는 L6 이 가장
- *    흔하도록 지어 둔다(진짜 자료도 그렇다).
- * ⓘ `stages` 는 빈 배열이어도 된다 — 화면이 읽는 것은 `ops_modes` 뿐이다.
- */
-export function scorecard(over: Partial<Scorecard> = {}): Scorecard {
-  return {
-    version: 'v2',
-    generated_at: '2026-08-15T23:44:00+09:00',
-    sources: { '통과구.csv': 'a'.repeat(64) },
-    stages: [],
-    ops_modes: [
-      opsMode({ kind: '전체', axis_value: '전체', axis_name: '전체', n_verified: 1000, coverage: 0.9 }),
-      opsMode({ axis_value: 'L2', axis_name: 'L2', n_verified: 300, mdape: 0.13 }),
-      opsMode({ axis_value: 'L6', axis_name: 'L6', n_verified: 600, mdape: 0.4 }),
-      // 층대 셋 — 1층은 기준선을 넘게 지어 둔다(진짜 자료도 그렇다).
-      opsMode({ kind: '층대', axis_value: '1층', axis_name: '1층', n_estimated: 739, mdape: 0.45 }),
-      opsMode({ kind: '층대', axis_value: '2층', axis_name: '2층', n_estimated: 527, mdape: 0.29 }),
-      opsMode({ kind: '층대', axis_value: '3층+', axis_name: '3층+', n_estimated: 1525, mdape: 0.22 }),
-    ],
-    ...over,
-  };
-}
-
-/**
- * 화면 아래 신선도 표. 라이브와 같은 **열 줄**을 준다(2026-09-05d).
+ * 화면 아래 신선도 표. 라이브와 같은 **열 줄**을 준다(2026-09-05d · 2026-10-16 운영 모양 — 결정 0041 로 성적표 줄을 뺐다 — 실거래·건축물대장은
+ * 2026-10-15a 부터 규칙으로 날짜를 주고 건축물대장 기준 종류는 '판' · 서울시 개업·폐업 줄은 결정 0033).
+ * ⓘ 카드 머리 날짜 줄(S3)도 이 표에서 읽는다 — 기준값은 2026-10-16 운영 값 그대로라 시안 글자와 같다.
  *
  * ⚠️ 값을 손으로 계산해 적지 않는다 — 여기 적힌 `next_expected` 는 서버가 규칙으로 계산해
  *    주는 값을 흉내 낸 것이고, 규칙이 맞는지는 파이썬 가드와 라이브가 본다. 여기서는
@@ -575,35 +449,36 @@ export function dataFreshness(): DataFreshnessRow[] {
     {
       src: '실거래 (매매)',
       basis_kind: '계약월',
-      basis: '202608',
-      next_expected: null,
-      cadence: '수시 (서울·대전 전부 활성화 뒤 확대)',
+      basis: '202610',
+      next_expected: '2099-11-30',
+      cadence: '월 1회 (최근 6개월 다시 받기)',
     },
     {
       src: '건축물대장',
-      basis_kind: '적재일',
-      basis: '2026-06-30',
-      next_expected: null,
+      basis_kind: '판',
+      basis: '202608',
+      next_expected: '2099-10-31',
       cadence: '월간 파일 (사람이 적재)',
     },
     {
       src: '상권 경계',
       basis_kind: '계산일',
-      basis: '2026-08-15',
+      basis: '2026-09-08',
       next_expected: null,
       cadence: '비정기 (원천이 바뀌면)',
     },
     {
       src: 'LH 상가 공고',
       basis_kind: '수집일',
-      basis: '2026-08-28',
+      basis: '2026-10-12',
       next_expected: null,
       cadence: '주 1회 감시 · 적재는 사람',
     },
     {
+      // ⓘ 이 줄만 일부러 확실한 과거 예정일이다('지났습니다, 갱신 전' 을 보려고 — 운영 값은 202608 · 2026-10-31).
       src: '건축 인허가',
       basis_kind: '기준월',
-      basis: '202607',
+      basis: '202608',
       next_expected: '2026-08-31',
       cadence: '월 1회',
     },
@@ -622,13 +497,6 @@ export function dataFreshness(): DataFreshnessRow[] {
       cadence: '분기마다',
     },
     {
-      src: '참고 시세 성적표',
-      basis_kind: '적재일',
-      basis: '2026-08-16',
-      next_expected: null,
-      cadence: '재생성 때 (결재 사항)',
-    },
-    {
       // 자료가 아직 한 행도 없는 갈래도 **줄은 나온다**(화면이 '자료 없음'이라 적는다).
       // 2026-10-12b 서버 모양 — 기준 종류 '공시 연도'. 자료가 0행이면 basis 가 null 이고, 서버 규칙은
       // 네 자리 연도일 때만 날짜를 내므로 next_expected 도 null 이다(값이 있으면 '2026' · '2027-06-30').
@@ -637,6 +505,14 @@ export function dataFreshness(): DataFreshnessRow[] {
       basis: null,
       next_expected: null,
       cadence: '연 1회 (브이월드)',
+    },
+    {
+      // 결정 0033 — 서울시 분기 꼴은 Q 없는 다섯 자리('20262').
+      src: '상권 개업·폐업 (서울시)',
+      basis_kind: '분기',
+      basis: '20262',
+      next_expected: '2099-12-31',
+      cadence: '분기마다',
     },
   ];
 }

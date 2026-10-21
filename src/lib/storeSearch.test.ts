@@ -246,7 +246,7 @@ describe('hasMoreStores · isMissingFunction', () => {
 
 
 /**
- * ★ **화면 코드 원문 가드** — 형제 `txFlow.test.ts`·`scorecard.test.ts` 와 같은 모양.
+ * ★ **화면 코드 원문 가드** — 형제 `txFlow.test.ts` 와 같은 모양.
  *
  * 여기서 막는 것 셋
  * ------------------

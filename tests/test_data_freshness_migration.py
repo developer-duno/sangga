@@ -45,6 +45,13 @@ DB 없이 SQL 글자만 본다(CI 에는 DB 가 없다) — 대신 아래는 글
    'land_year')로 바뀌었다. 10-05b 도 이제 원장이라 본문 불변식·규칙 검사의 두 벌을 **(정본, 10-12b)** 로
    옮겼고, 10-05b 는 "옛 필지 줄 그대로 남아 있나"(test_the_10_05b_ledger_is_left_as_applied)만 따로 본다.
    새 규칙의 날짜는 로컬 PostgreSQL 이 있으면 실제로 돌려 본다(TestLandYearRealRun — CI 는 건너뛴다).
+
+ⓘ 2026-10-15a(사장님 결정 2026-10-15 · F3+F5)에 2번 줄(실거래)이 새 규칙 'tx'(계약월 + 2개월 - 하루)를,
+   3번 줄(건축물대장)이 기준 '판'(ledger_release.release_ym) + 월간 규칙 'permit' 을 쓰게 됐다. 10-12b 도
+   이제 원장이라 두 벌을 **(정본, 10-15a)** 로 옮겼고, 10-12b 는 "옛 실거래·대장 줄 그대로 남아 있나"
+   (test_the_10_12b_ledger_is_left_as_applied)만 따로 본다. '+2개월' 은 이제 'tx' 갈래 한 자리에만 있어야
+   하고, 인허가·대장의 'permit' 갈래는 그대로 '+3개월' 이다(monthly_rule_months 교차 변이).
+   10-15a 전용 시험(표·표지 명령·실제 날짜)은 tests/test_freshness_monthly_rules_migration.py.
 """
 
 import os
@@ -67,6 +74,11 @@ OPENCLOSE_MIGRATION = os.path.join(
 # 10번째 줄(필지)의 기준을 공시 연도로 바꾼 마이그레이션(2026-10-12b · 사장님 결정 2026-10-12).
 LAND_MIGRATION = os.path.join(
     ROOT, "supabase", "migrations", "2026-10-12b_freshness_land_price_year.sql")
+# 2번(실거래)·3번(건축물대장) 줄에 월간 규칙을 건 마이그레이션(2026-10-15a · 사장님 결정 2026-10-15).
+# 2026-10-18a(결정 0041) — 9번 줄(참고 시세 성적표)을 빼고 신선도 함수를 다시 만든 가장 최근 판. 정본과 글자가 같아야 하는 쪽.
+DROP_GATE_MIGRATION = os.path.join(ROOT, "supabase", "migrations", "2026-10-18a_price_use_group.sql")
+MONTHLY_MIGRATION = os.path.join(
+    ROOT, "supabase", "migrations", "2026-10-15a_freshness_monthly_rules.sql")
 SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
 
 FN = "get_data_freshness"
@@ -88,10 +100,20 @@ SOURCE_LABELS = (
     "필지 (토지 특성)",
     "상권 개업·폐업 (서울시)",
 )
+# 결정 0041(2026-10-18a)로 정본에서 뺀 갈래 — 적용된 원장(10-15a)에만 남는다.
+SCHEMA_DROPPED_LABELS = ("참고 시세 성적표",)
+
+
+def labels_for(request):
+    """public_body 가 정본이면 뺀 갈래를 걷은 목록, 원장(10-15a)이면 열한 갈래 그대로."""
+    if "schema" in request.node.callspec.id:
+        return tuple(x for x in SOURCE_LABELS if x not in SCHEMA_DROPPED_LABELS)
+    return SOURCE_LABELS
 
 # `timestamptz` 를 날짜로 자르는 자리 — 전부 한국 시각으로 옮긴 뒤 잘라야 한다.
 # ⓘ parcel 은 2026-10-12b 부터 timestamptz 가 아니라 공시 연도(smallint)를 읽는다 — 이 목록에서 뺐다.
-TIMESTAMPTZ_TABLES = ("building", "district", "lh_notice", "price_gate_sigungu")
+# ⓘ building 은 2026-10-15a 부터 timestamptz 가 아니라 판 표지(ledger_release.release_ym)를 읽는다 — 뺐다.
+TIMESTAMPTZ_TABLES = ("district", "lh_notice", "price_gate_sigungu")
 
 
 def read(path):
@@ -157,7 +179,7 @@ def function_body(sql, name):
     return m.group(1)
 
 
-@pytest.fixture(scope="module", params=(SCHEMA, LAND_MIGRATION), ids=("schema", "2026-10-12b"))
+@pytest.fixture(scope="module", params=(SCHEMA, MONTHLY_MIGRATION), ids=("schema", "2026-10-15a"))
 def public_body(request):
     """public 함수의 본문에서 **주석을 걷어낸 실제 SQL**.
 
@@ -168,7 +190,8 @@ def public_body(request):
     ⓘ **지금 정본(schema.sql)과 가장 최근에 이 함수를 다시 만든 마이그레이션 두 벌**을 본다 —
        05d·10-01a 는 라이브에 적용된 날짜 원장이라 그때의 정의를 그대로 간직해야 하므로
        (test_the_old_ledger_is_left_as_applied · test_the_10_01a_ledger_is_left_as_applied),
-       이 fixture 의 대상에서 뺐다(2026-10-05b 로 10-01a → 10-05b 이동 · 2026-10-12b 로 10-05b → 10-12b 이동).
+       이 fixture 의 대상에서 뺐다(2026-10-05b 로 10-01a → 10-05b 이동 · 2026-10-12b 로 10-05b → 10-12b 이동 ·
+       2026-10-15a 로 10-12b → 10-15a 이동).
     """
     return statements(function_body(read(request.param), FN))
 
@@ -217,7 +240,7 @@ class TestReturnedColumns:
 
 class TestEverySourceIsListed:
     @pytest.mark.parametrize("label", SOURCE_LABELS)
-    def test_source_row_is_present(self, public_body, label):
+    def test_source_row_is_present(self, request, public_body, label):
         """⛔ 한 갈래가 빠지면 그 줄이 **조용히** 사라진다 — 에러가 아니라 누락이다.
 
         ⚠️ **따옴표까지 붙여 SQL 문자열 그대로** 찾는다. 이름만 부분일치로 보면
@@ -226,16 +249,24 @@ class TestEverySourceIsListed:
            바뀌었는데도 가드는 초록이다.
         """
         literal = "'{}'".format(label)
+        if label not in labels_for(request):
+            # 결정 0041 — 정본에서는 그 줄이 **없어야** 한다(되살아나면 지운 게이트 표를 읽는다).
+            assert literal not in public_body
+            return
         assert literal in public_body, (
             "{} 줄이 함수에서 빠졌거나 이름이 바뀌었습니다 — 화면 표에서 그 자료가 통째로 "
             "사라지고, 보는 사람은 '그런 자료는 안 쓰나 보다'로 읽습니다".format(literal)
         )
 
-    def test_there_are_exactly_eleven_rows(self, public_body):
-        """줄 수를 못 박는다 — 자료를 늘리거나 줄이면 이 시험과 화면 시험이 함께 걸린다."""
-        assert public_body.count("union all") == len(SOURCE_LABELS) - 1, (
+    def test_there_are_exactly_eleven_rows(self, request, public_body):
+        """줄 수를 못 박는다 — 자료를 늘리거나 줄이면 이 시험과 화면 시험이 함께 걸린다.
+
+        ⓘ 정본은 2026-10-18a(결정 0041)부터 열 줄, 원장 10-15a 는 열한 줄 그대로다.
+        """
+        labels = labels_for(request)
+        assert public_body.count("union all") == len(labels) - 1, (
             "자료 갈래 수가 {}개가 아닙니다 — 늘렸다면 SOURCE_LABELS 와 화면 시험도 "
-            "함께 고치세요".format(len(SOURCE_LABELS))
+            "함께 고치세요".format(len(labels))
         )
 
     def test_rows_are_ordered_deterministically(self, public_body):
@@ -247,12 +278,16 @@ class TestEverySourceIsListed:
 
 class TestTimezone:
     @pytest.mark.parametrize("table", TIMESTAMPTZ_TABLES)
-    def test_timestamptz_is_converted_to_seoul(self, public_body, table):
+    def test_timestamptz_is_converted_to_seoul(self, request, public_body, table):
         """⛔ 이 DB 는 UTC 다 — 그냥 날짜로 자르면 한국 새벽 0~9시에 어제 날짜가 찍힌다.
 
         그 시간대에 보는 사람만 겪으므로 재현이 거의 안 된다. 글자로 못 박아 둔다.
         """
         m = re.search(r"from\s+" + re.escape(table) + r"\s+t\)", public_body)
+        if table == "price_gate_sigungu" and "schema" in request.node.callspec.id:
+            # 결정 0041 — 정본은 게이트 표를 더는 읽지 않는다(표를 지웠다).
+            assert m is None
+            return
         assert m, "{} 를 읽는 자리를 못 찾았습니다".format(table)
         # 그 줄(또는 바로 앞줄)에서 max() 를 한국 시각으로 옮겼는지 본다.
         window = public_body[max(0, m.start() - 200): m.end()]
@@ -275,25 +310,59 @@ class TestForbiddenSource:
         assert "api_quota_log" not in function_body(schema, FN)
 
 
+def monthly_rule_months(body):
+    """{'permit': N, 'tx': M} — 각 갈래가 `to_date(n.basis,'YYYYMM') + interval 'N months' - interval '1 day'` 로
+    더하는 달 수. 갈래가 없거나 꼴이 다르면 그 열쇠가 빠진다(가드 본체와 교차 변이가 같은 함수를 지난다).
+
+    못 보는 것: 별칭이 n 이 아닌 꼴 · 한 갈래가 두 번 적힌 꼴(앞의 것만 본다 — 개수는 가드가 따로 센다).
+    """
+    out = {}
+    for kind in ("permit", "tx"):
+        m = re.search(
+            r"when\s+n\.rule_kind\s*=\s*'" + kind + r"'[^\n]*\n\s*then\s*\(to_date\(n\.basis,\s*'YYYYMM'\)"
+            r"\s*\+\s*interval\s+'(\d+) months'\s*-\s*interval\s+'1 day'\)::date", body)
+        if m:
+            out[kind] = int(m.group(1))
+    return out
+
+
 class TestNextExpectedRules:
-    @pytest.mark.parametrize("path", (SCHEMA, LAND_MIGRATION), ids=("schema", "2026-10-12b"))
+    @pytest.mark.parametrize("path", (SCHEMA, MONTHLY_MIGRATION), ids=("schema", "2026-10-15a"))
     def test_each_rule_is_written_exactly_once(self, path):
         """규칙이 두 벌이면 한쪽만 고쳐지는 날 두 자료가 서로 다른 주기를 말한다.
 
-        ⛔ 05d·10-01a·10-05b 원장이 아니라 **지금 정본과 그것을 라이브에 올리는 2026-10-12b** 를 본다.
-           월간 = 기준월 + 3개월 - 하루(다음 판이 공개되는 달의 말일 — 사장님 결정 2026-10-01).
-           옛 '2 months' 가 한 글자라도 남으면 매달 1일~20일 무렵 지난 날짜가 화면에 선다.
+        ⛔ 05d·10-01a·10-05b·10-12b 원장이 아니라 **지금 정본과 그것을 라이브에 올리는 2026-10-15a** 를 본다.
+           월간(인허가·대장 판) = 기준월 + 3개월 - 하루(다음 판이 공개되는 달의 말일 — 사장님 결정 2026-10-01).
+           실거래 = 계약월 + 2개월 - 하루(새 갈래 'tx' — 사장님 결정 2026-10-15).
+           '+2개월' 은 'tx' 갈래 **한 자리에만** 있어야 한다 — 인허가 갈래로 새면 매달 1일~20일 무렵 지난
+           날짜가 화면에 선다(2026-10-01a 이전 사고). 갈래별 달 수는 monthly_rule_months 가 따로 본다.
         """
         body = statements(function_body(read(path), FN))
         assert body.count("interval '5 months'") == 1, "분기 규칙이 한 번이 아닙니다"
         assert body.count("interval '3 months'") == 1, "월간 규칙(+3개월)이 한 번이 아닙니다"
-        assert body.count("interval '2 months'") == 0, (
-            "옛 월간 규칙(+2개월)이 남아 있습니다 — 지금 판이 게시된 달의 말일을 띄워 "
-            "매달 초 이미 지난 날짜가 화면에 섭니다")
+        assert body.count("interval '2 months'") == 1, "실거래 규칙(+2개월)이 한 번이 아닙니다"
+        assert monthly_rule_months(body) == {"permit": 3, "tx": 2}, (
+            "인허가·대장(permit) = +3개월 · 실거래(tx) = +2개월 이 아닙니다: {}".format(monthly_rule_months(body)))
         # 연 1회 규칙은 둘이다 — 국세청(다음 해 3월 31일)·필지 공시 연도(다음 해 6월 30일, 2026-10-12b).
         assert body.count("make_date(") == 2, "연 1회 규칙(국세청·필지)이 두 자리가 아닙니다"
 
-    @pytest.mark.parametrize("path", (SCHEMA, LAND_MIGRATION), ids=("schema", "2026-10-12b"))
+    @pytest.mark.parametrize("old,new,kind", [
+        # tx 2 → 3: 실거래가 대장·인허가와 같은 날짜를 말한다
+        ("then (to_date(n.basis, 'YYYYMM') + interval '2 months' - interval '1 day')::date",
+         "then (to_date(n.basis, 'YYYYMM') + interval '3 months' - interval '1 day')::date", "tx"),
+        # permit 3 → 2: 옛 월간 규칙(지금 판이 게시된 달의 말일)으로 되돌아간다
+        ("then (to_date(n.basis, 'YYYYMM') + interval '3 months' - interval '1 day')::date",
+         "then (to_date(n.basis, 'YYYYMM') + interval '2 months' - interval '1 day')::date", "permit"),
+    ], ids=("tx-2-to-3", "permit-3-to-2"))
+    def test_mutation_swapping_the_month_counts_is_noticed(self, old, new, kind):
+        """교차 변이 — 한쪽 갈래의 달 수만 바꿔도 가드가 빨강이다(개수 세기만으로는 2↔3 맞바꿈을 못 본다)."""
+        body = statements(function_body(read(SCHEMA), FN))
+        assert body.count(old) == 1, "전제: 그 갈래 글자가 지금 판에 한 번 있다"
+        broken = body.replace(old, new, 1)
+        got = monthly_rule_months(broken)
+        assert got.get(kind) != {"permit": 3, "tx": 2}[kind], got
+
+    @pytest.mark.parametrize("path", (SCHEMA, MONTHLY_MIGRATION), ids=("schema", "2026-10-15a"))
     def test_the_monthly_rule_belongs_to_permit(self, path):
         """+3개월 이 **인허가 줄**의 규칙인지 본다 — 숫자만 세면 다른 갈래로 옮겨 가도 초록이다."""
         body = statements(function_body(read(path), FN))
@@ -314,8 +383,9 @@ class TestNextExpectedRules:
 
         (unit_business.snapshot_ym 은 컬럼 주석이 '2026Q3' 형식도 허용한다.)
         """
-        assert public_body.count(r"^\d{4}(0[1-9]|1[0-2])$") == 2, (
-            "'YYYYMM' 모양 검사가 두 자리(상권정보·인허가)에 다 있지 않습니다"
+        # 2026-10-15a — 실거래 'tx' 갈래가 셋째 자리(대장 판은 인허가 'permit' 갈래를 같이 쓴다).
+        assert public_body.count(r"^\d{4}(0[1-9]|1[0-2])$") == 3, (
+            "'YYYYMM' 모양 검사가 세 자리(상권정보·인허가/대장·실거래)에 다 있지 않습니다"
         )
         assert r"^\d{4}Q[1-4]$" in public_body, "부동산원 분기 모양 검사가 없습니다"
         assert r"^\d{4}[1-4]$" in public_body, "서울시 분기(YYYYQ 다섯 자리) 모양 검사가 없습니다"
@@ -462,8 +532,8 @@ class TestPermitRuleMigration:
         assert begin.start() < create.start() < revoke.start() < commit.start() < notify, (
             "begin → create → revoke → commit → notify 순서가 아닙니다")
 
-    @pytest.mark.parametrize("path", (PERMIT_MIGRATION, OPENCLOSE_MIGRATION, LAND_MIGRATION),
-                             ids=("2026-10-01a", "2026-10-05b", "2026-10-12b"))
+    @pytest.mark.parametrize("path", (PERMIT_MIGRATION, OPENCLOSE_MIGRATION, LAND_MIGRATION, MONTHLY_MIGRATION),
+                             ids=("2026-10-01a", "2026-10-05b", "2026-10-12b", "2026-10-15a"))
     def test_function_head_matches_the_schema(self, path, schema):
         """함수 머리(`returns table`·`language sql`·`stable`·`security definer`·`search_path`)가
 
@@ -498,11 +568,12 @@ class TestPermitRuleMigration:
         assert re.search(r"(?im)^stable\s*$", migration_head), "stable 한 줄이 없습니다"
 
     def test_comment_matches_the_schema(self, schema):
-        r"""`comment on function … is '…';` 문자열이 정본과 **가장 최근 마이그레이션(10-12b)** 에서 같아야 한다.
+        r"""`comment on function … is '…';` 문자열이 정본과 **가장 최근 마이그레이션(10-15a)** 에서 같아야 한다.
 
         ⓘ 2026-10-05b 로 comment 가 '열한 갈래'로 바뀌었다 — 10-01a 의 comment 는 원장이라 옛 글
         그대로 남고(test_the_10_01a_ledger_is_left_as_applied), 정본과 대조하는 쪽은 10-05b 였다.
         2026-10-12b 로 필지 공시 연도 규칙 한 구절이 더해져 대조 쪽이 10-12b 로 옮겼다.
+        2026-10-15a 로 실거래·대장 판 월간 규칙 구절이 더해져 대조 쪽이 10-15a 로 옮겼다.
 
         본문과 머리는 같은데 comment 만 다르면 `pg_description`(라이브 설명)이 schema.sql
         의 서술과 갈라진다 — 다음 사람이 schema.sql 을 읽고 다른 설명을 믿게 된다.
@@ -521,9 +592,10 @@ class TestPermitRuleMigration:
             return m.group(0).replace("\r\n", "\n")
 
         schema_comment = extract_comment(schema)
-        migration_comment = extract_comment(read(LAND_MIGRATION))
+        # ⓘ 2026-10-18a(결정 0041)로 '열 갈래'·성적표 줄 뺌이 comment 에 들어가 대조 쪽이 10-18a 로 옮겼다.
+        migration_comment = extract_comment(read(DROP_GATE_MIGRATION))
         assert migration_comment == schema_comment, (
-            "10-12b 의 comment 가 정본(schema.sql)과 글자가 다릅니다 — 라이브 설명이 "
+            "10-18a 의 comment 가 정본(schema.sql)과 글자가 다릅니다 — 라이브 설명이 "
             "schema.sql 의 서술과 갈라집니다"
         )
 
@@ -746,8 +818,12 @@ class TestLandYearMigrationShape:
             r"from\s+public,\s*anon,\s*authenticated\s*;".format(FN),
             statements(land_migration))
 
-    def test_function_text_equals_the_schema(self, land_migration, schema):
-        """머리·본문·comment·revoke 덩어리가 정본과 글자 그대로 — 드리프트 가드는 본문만 본다."""
+    def test_function_text_equals_the_schema(self, schema):
+        """머리·본문·comment·revoke 덩어리가 정본과 글자 그대로 — 드리프트 가드는 본문만 본다.
+
+        ⓘ 2026-10-15a 부터 정본과 같아야 하는 쪽은 10-15a 였고, 2026-10-18a(결정 0041 — 9번 줄 뺌)부터는
+          10-18a 다(10-12b·10-15a 는 원장).
+        """
         def block(sql):
             m = re.search(
                 r"(?ms)^create\s+or\s+replace\s+function\s+get_data_freshness\s*\(.*?"
@@ -755,7 +831,16 @@ class TestLandYearMigrationShape:
                 sql.replace("\r\n", "\n"))
             assert m, "덩어리를 못 찾았습니다"
             return m.group(0)
-        assert block(land_migration) == block(schema)
+        assert block(read(DROP_GATE_MIGRATION)) == block(schema)
+
+    def test_the_10_12b_ledger_is_left_as_applied(self, land_migration):
+        """⛔ 10-12b 는 라이브에 적용된 원장이다 — 옛 실거래('none'·'수시')·대장('적재일'·building) 줄 그대로."""
+        body = statements(function_body(land_migration, FN))
+        assert "'수시 (서울·대전 전부 활성화 뒤 확대)'" in body
+        assert "'적재일'" in body and "from building t" in body
+        assert "'tx'" not in body and "ledger_release" not in body
+        assert body.count("interval '2 months'") == 0
+        assert "2026-10-15a" not in land_migration
 
     def test_schema_has_the_index(self, schema):
         assert re.search(
@@ -785,6 +870,8 @@ create table rent_stat (quarter char(6));
 create table price_gate_sigungu (loaded_at timestamptz);
 create table parcel (pnu char(19) primary key, land_price_year smallint, updated_at timestamptz);
 create table district_openclose (quarter text);
+-- 2026-10-15a — 정본 함수의 건축물대장 줄이 이 표지를 읽는다(없으면 함수 만들기가 실패한다).
+create table ledger_release (release_ym text);
 -- 모양 시험용 — 필지 줄의 basis 를 아무 글자로나 바꿔 넣는 자리(실제 함수에는 없다).
 create table land_basis_override (v text);
 """
@@ -849,7 +936,9 @@ def _land_row(conn, fn_sql, parcel_years=(), override=None):
         cur.execute("insert into parcel values (%s, %s, now())", ("{:019d}".format(i + 1), y))
     cur.execute("select src, basis_kind, basis, next_expected from get_data_freshness()")
     rows = cur.fetchall()
-    assert len(rows) == 11, "열한 줄이 아닙니다: {}".format(len(rows))
+    # 정본은 2026-10-18a(결정 0041)부터 열 줄 · 원장(10-12b)은 열한 줄(성적표 줄이 든 판).
+    want = 11 if "'참고 시세 성적표'" in fn_sql else 10
+    assert len(rows) == want, "{}줄이 아닙니다: {}".format(want, len(rows))
     land = [r for r in rows if r[0] == "필지 (토지 특성)"]
     assert len(land) == 1
     return land[0][1:]

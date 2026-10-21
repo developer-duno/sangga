@@ -1,8 +1,10 @@
+import type { ReactNode } from 'react';
 import type { FeedbackContext } from '../lib/feedback';
 
 import { DataFreshness } from './DataFreshness';
 import { FeedbackBox } from './FeedbackBox';
 import { HandoffLinks } from './HandoffLinks';
+import { HomeScreenHint } from './HomeScreenHint';
 
 /**
  * 화면 맨 아래 — 이 자료를 어떻게 받아들여야 하는지 + 한마디 남기는 자리.
@@ -25,11 +27,26 @@ import { HandoffLinks } from './HandoffLinks';
 interface Props {
   /** 무엇을 보던 중이었나. 의견함이 함께 실어 보낸다. */
   feedbackContext?: FeedbackContext;
+  /**
+   * 휴대폰 「더보기」 탭(결정 0039 W4a · 메인 판단 ⑨) — 맨 앞에 끼울 것(작은 역할 단추 줄)과 차례 바꾸기.
+   * 눈 차례 = 맨 앞 → 의견함 → 안내 → 넘기기 링크 → 형제 사이트 → 자료 신선도 — CSS `order`(`.foot--phone` · 720 화면 묶음)로만 바꾼다.
+   * ⛔ 의견함 DOM 자리는 늘 맨 뒤(넓은 화면과 같은 자리) — 폰을 돌려 720 경계를 넘어도 의견함이 다시 태어나 쓰던 글이 지워지지
+   *    않게(검사 🟡 F8). 그래서 낭독기·탭 키 차례는 의견함이 맨 뒤다.
+   * ⓘ 넓은 화면은 둘 다 안 준다 — 지금 차례 그대로. 종이는 `screen` 묶음이 안 먹어 DOM 차례 그대로.
+   */
+  lead?: ReactNode;
+  phoneOrder?: boolean;
 }
 
-export function AppFooter({ feedbackContext }: Props) {
+export function AppFooter({ feedbackContext, lead = null, phoneOrder = false }: Props) {
   return (
-    <footer className="foot">
+    <footer className={`foot${phoneOrder ? ' foot--phone' : ''}`}>
+      {lead}
+      {/*
+        홈 화면에 두고 앱처럼 쓰기(👤 2026-10-19 W4b 3번 「가」) — 휴대폰 「더보기」에서만(넓은 화면 DOM 0). 눈 차례 = 역할 줄 → 의견함 →
+        **이 상자** → 안내 → …(의견함만 order 1 · 나머지는 order 2 라 DOM 차례대로 — 그래서 안내 앞 DOM 자리에 둔다).
+      */}
+      {phoneOrder && <HomeScreenHint />}
       <div className="foot__notice">
         <p className="foot__lead">이 화면을 어디까지 믿어도 되나</p>
         <ul className="foot__list">
@@ -38,8 +55,10 @@ export function AppFooter({ feedbackContext }: Props) {
             입니다. 감정평가가 아니며, 그 대신으로 쓸 수 없습니다.
           </li>
           <li>
-            <strong>추정한 값에는 "추정"이라고 적고, 근거와 표본 수를 함께 적습니다.</strong>{' '}
-            그 표시가 없는 숫자는 원본 자료를 그대로 옮긴 것입니다.
+            <strong>
+              신고·고시·조사된 값은 원본 그대로 나르고, 우리가 세어 낸 집계에는 '집계'·'비교값'이라고
+              적습니다.
+            </strong>
           </li>
           <li>
             원본이 안 적어 둔 칸은 <strong>"미상"</strong>으로 보입니다 — 값이 0이라는 뜻이
