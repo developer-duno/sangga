@@ -5213,10 +5213,22 @@ body {
   .rlist .stores__row,
   .rlist .dbld__row {
     display: grid;
-    grid-template-columns: minmax(0, 2fr) minmax(0, 2fr) minmax(9em, 1.4fr) minmax(7em, 1.2fr);
     gap: 4px 14px;
     /* 칸 위 끝 맞춤 — 기준선 맞춤이면 빈 칸(검색 결과의 점포 칸)이 아래로 내려앉는다(E2E CD 실측 18px). */
     align-items: start;
+  }
+
+  /* 네 칸 — 가게 이름 결과 · 상권 건물 목록(점포 칸 = 그 땅 점포). */
+  .rtable__head,
+  .rlist .stores__row,
+  .rlist .dbld__row {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 2fr) minmax(9em, 1.4fr) minmax(7em, 1.2fr);
+  }
+
+  /* 세 칸 — 건물 검색 결과(👤 2026-10-22 「검색 결과는 세 칸」 — 서버가 점포 수를 안 줘 점포 칸 자체를 뺀다 · 빈 칸·「–」 0). */
+  .rtable__head--3,
+  .rlist .hit {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 2fr) minmax(9em, 1.4fr);
   }
 
   .rtable__head {

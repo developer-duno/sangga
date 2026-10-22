@@ -1144,7 +1144,15 @@ describe('BuildingSearch — 오른쪽 목록 자리 (방법 나)', () => {
     go(input, '스타벅스');
     await waitFor(() => expect(host.querySelectorAll('.hit')).toHaveLength(2));
     expect(document.querySelector('section.search')!.querySelector('.hit, .stores__row')).toBeNull();
-    expect(host.querySelectorAll('.rtable__head')).toHaveLength(2); // 건물 표 · 가게 표 머리
+    // 머리 둘 — 건물 표는 세 칸(👤 2026-10-22 「검색 결과는 세 칸」 · 점포 칸 자체가 없다) · 가게 이름 표는 네 칸.
+    const heads = [...host.querySelectorAll('.rtable__head')].map((h) => [...h.children].map((c) => c.textContent));
+    expect(heads).toEqual([
+      ['이름', '길 주소', '층'],
+      ['이름', '길 주소', '층', '점포'],
+    ]);
+    expect(host.querySelector('.hit')!.querySelectorAll(':scope > .rcell')).toHaveLength(3);
+    expect(host.querySelector('.hit .rcell--store')).toBeNull();
+    expect(host.querySelector('.stores__row')!.querySelectorAll(':scope > .rcell')).toHaveLength(4);
     expect(host.querySelector('.hit .rcell--name .hit__own')!.textContent).toBe('집합건물 · 사용승인 2003년 5월 · 주차 120대');
     const store = host.querySelector('.stores__row')!;
     expect(store.querySelector('.rcell--store')!.textContent).toBe('이 땅에 가게 4곳 일치');

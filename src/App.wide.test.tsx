@@ -919,21 +919,21 @@ describe('PC 두 칸 오른쪽 목록 — 배선 (👤 2026-10-22 방법 나)', 
     expect(rlist().querySelectorAll('.hit')).toHaveLength(2);
     expect(entry().querySelector('.hit, .hits, .search__count')).toBeNull();
     expect(panes().map((p) => p.hidden)).toEqual([false, true]);
-    // 표 머리 네 칸 · 줄마다 같은 네 칸.
+    // 건물 검색 결과 표는 세 칸(👤 2026-10-22 「검색 결과는 세 칸」 — 점포 칸 자체가 없다 · 빈 칸·「–」 0) · 줄마다 같은 세 칸.
     const head = [...rlist().querySelectorAll('.rtable__head .rcell')].map((e) => e.textContent);
-    expect(head).toEqual(['이름', '길 주소', '층', '점포']);
+    expect(head).toEqual(['이름', '길 주소', '층']);
+    expect(rlist().querySelector('.rtable__head')!.className).toBe('rtable__head rtable__head--3');
     const row = rlist().querySelector('.hit')!;
     expect([...row.children].map((c) => c.className)).toEqual([
       'rcell rcell--name',
       'rcell rcell--addr',
       'rcell rcell--floor',
-      'rcell rcell--store',
     ]);
-    // 지번 · 「같은 땅에 N동」은 주소 칸 아래(R4) · 주소는 길 이름부터(L2 그대로) · 점포 칸은 빈다(서버가 점포 수를 안 준다 · DB 0).
+    expect(rlist().querySelector('.hits .rcell--store')).toBeNull();
+    // 지번 · 「같은 땅에 N동」은 주소 칸 아래(R4) · 주소는 길 이름부터(L2 그대로).
     const addr = row.querySelector('.rcell--addr')!;
     expect([...addr.children].map((c) => c.textContent)).toEqual(['테헤란로 1', '지번 역삼동 823-4', '같은 땅에 3동']);
     expect(row.querySelector('.rcell--floor')!.textContent).toBe('지하 2층 ~ 9층 · 12개 층');
-    expect(row.querySelector('.rcell--store')!.textContent).toBe('');
     // 큰 카드는 물러나고 왼쪽 작은 줄(건물을 열었을 때와 같은 처리) · 오른쪽 안내 한 줄 없음 · 보던 건물이 없어 「← 보던 건물로」 없음.
     expect(container.querySelector('section.rolecards')).toBeNull();
     expect(entry().querySelector('section.role')).not.toBeNull();
@@ -1024,6 +1024,10 @@ describe('PC 두 칸 오른쪽 목록 — 배선 (👤 2026-10-22 방법 나)', 
     expect(panes().map((p) => p.hidden)).toEqual([true, false]);
     expect(entry().querySelector('.dbld, .dbld__row')).toBeNull();
     const row = rlist().querySelector('.dbld__row')!;
+    // 상권 건물 목록 표는 네 칸 그대로(점포 칸 = 그 땅 점포 · 👤 「검색 결과는 세 칸」은 건물 검색 결과만).
+    const dHead = [...panes()[1].querySelectorAll('.rtable__head .rcell')].map((e) => e.textContent);
+    expect(dHead).toEqual(['이름', '길 주소', '층', '점포']);
+    expect(row.querySelectorAll(':scope > .rcell')).toHaveLength(4);
     expect(row.querySelector('.rcell--store')!.textContent).toBe('점포 317곳');
     expect(row.querySelector('.rcell--floor')!.textContent).toBe('지하 1층 ~ 5층');
     expect(row.querySelector('.rcell--addr')!.textContent).toBe('테헤란로 7');
@@ -1070,12 +1074,16 @@ function rlistRules(src: string) {
   const print = all.filter((r) => r.media === PRINT);
   const has = (rs: Rule[], sel: string, re: RegExp) => rs.some((r) => r.sel.includes(sel) && re.test(r.body));
   const fourCols = /grid-template-columns:\s*minmax\(0,\s*2fr\)\s+minmax\(0,\s*2fr\)\s+minmax\([^)]*\)\s+minmax\([^)]*\)\s*(;|$)/;
+  // 세 칸 = 건물 검색 결과(👤 2026-10-22 「검색 결과는 세 칸」) — 넷째 칸이 붙으면 아니다.
+  const threeCols = /grid-template-columns:\s*minmax\(0,\s*2fr\)\s+minmax\(0,\s*2fr\)\s+minmax\([^)]*\)\s*(;|$)/;
   const tall = all.filter((r) => r.media === '@media screen' && /min-height:\s*44px/.test(r.body)).flatMap((r) => r.sel);
   return {
     hideOthers: has(wide, '.app--wide.app--wlist .app__main > :not(.entry):not(.lrail):not(.rlist)', /display:\s*none/),
     // 숨김은 화면 두 칸 묶음에만 — 종이(인쇄 묶음)·기본 규칙에는 `.app--wlist` 0(종이는 건물 그대로).
     hideScreenOnly: !all.some((r) => r.media !== WIDE && r.sel.some((s) => s.includes('.app--wlist'))),
-    table: ['.rtable__head', '.rlist .hit', '.rlist .stores__row', '.rlist .dbld__row'].every((s) => has(wide, s, fourCols)),
+    table: ['.rtable__head', '.rlist .stores__row', '.rlist .dbld__row'].every((s) => has(wide, s, fourCols)),
+    // 건물 검색 결과는 세 칸 — 세 칸 규칙이 있고, 같은 선택자에 네 칸 규칙이 없다(뒤 규칙이 덮어쓰는 꼴도 막는다).
+    table3: ['.rtable__head--3', '.rlist .hit'].every((s) => has(wide, s, threeCols) && !has(wide, s, fourCols)),
     storeRight: has(wide, '.rlist .rcell--store', /text-align:\s*right/),
     noEllipsis: ['.rlist .hit__name', '.rlist .stores__name', '.rlist .dbld__name', '.rlist .hit__addr'].every((s) =>
       has(wide, s, /white-space:\s*normal/),
@@ -1099,6 +1107,7 @@ describe('PC 두 칸 오른쪽 목록 — CSS (👤 2026-10-22 방법 나)', () 
     hideOthers: true,
     hideScreenOnly: true,
     table: true,
+    table3: true,
     storeRight: true,
     noEllipsis: true,
     oneScroll: true,
@@ -1123,8 +1132,11 @@ describe('PC 두 칸 오른쪽 목록 — CSS (👤 2026-10-22 방법 나)', () 
     // 숨김이 종이로 샌 꼴(변형 — 인쇄 묶음 안 선택자 목록 끝).
     expect(rlistRules(`${css}\n${PRINT} {\n  .x,\n  .app--wlist .stack { display: none; }\n}`).hideScreenOnly).toBe(false);
     // 세 칸으로 줄인 꼴.
-    expect(swap(/(\.rlist \.dbld__row \{\s*display: grid;\s*grid-template-columns: )[^;]*;/, '$1minmax(0, 2fr) minmax(0, 2fr) auto;').table).toBe(false);
+    expect(swap(/(\.rlist \.dbld__row \{\s*grid-template-columns: )[^;]*;/, '$1minmax(0, 2fr) minmax(0, 2fr) auto;').table).toBe(false);
     expect(swap('.rlist .rcell--store {', '.rlist .rcell--storex {').storeRight).toBe(false);
+    // 건물 검색 결과에도 넷째(점포) 칸을 단 꼴 — 흔한 꼴(세 칸 규칙 값 되돌림) + 변형 꼴(네 칸 규칙 목록에 다시 넣음).
+    expect(swap(/(\.rlist \.hit \{\s*grid-template-columns: [^;]*1\.4fr\));/, '$1 minmax(7em, 1.2fr);').table3).toBe(false);
+    expect(swap(/(\.rtable__head,)(\r?\n {2}\.rlist \.stores__row,)/, '$1\n  .rlist .hit,$2').table3).toBe(false);
     expect(swap(/ {2}\.rlist,\r?\n {2}\.rback,\r?\n/, '').printOut).toBe(false);
     expect(swap('height: var(--dmap-h, 300px);', 'height: 300px;').printMapH).toBe(false);
     expect(swap('height: clamp(300px, calc(100vh - 360px), 560px);', 'height: 300px;').bigMap).toBe(false);

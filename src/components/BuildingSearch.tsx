@@ -384,7 +384,8 @@ export function BuildingSearch({
     결과 넷 — 못 찾음 · 건물 결과 · 가게 이름 실패 · 가게 이름 결과. 휴대폰·한 열은 지금 자리·지금 꼴 그대로(DOM 0 변화),
     PC 두 칸은 오른쪽 자리(`listHost`)에 표 꼴로(R4 — 이름 · 길 주소 · 층 · 점포 네 칸 · 지번과 「같은 땅에 N동」은 주소 칸 아래 작은 글자 ·
     중개사 소유 구조·일치 상호·갈 수 없는 까닭은 이름 칸 아래). ⛔ 글은 빼지 않는다 — 자리만(R7).
-    ⓘ 건물 결과는 서버(`search_buildings`)가 점포 수를 안 줘서 점포 칸이 빈다(DB 0 — 상권 목록·가게 이름 결과만 채운다).
+    ⓘ 건물 결과는 서버(`search_buildings`)가 점포 수를 안 줘서 표가 점포 칸 없이 세 칸이다(👤 2026-10-22 「검색 결과는 세 칸」 · DB 0 —
+      가게 이름 결과·상권 목록은 네 칸).
   */
   const notFoundEl = searched && !loading && hits.length === 0 && !error && (
     <p className="msg">
@@ -406,7 +407,8 @@ export function BuildingSearch({
           </span>
         )}
       </p>
-      {table && <ListTableHead />}
+      {/* 건물 검색 결과 표는 세 칸(👤 2026-10-22 「검색 결과는 세 칸」 — 서버가 점포 수를 안 줘 점포 칸 자체를 뺀다). */}
+      {table && <ListTableHead store={false} />}
       <ul className="hits">
         {hits.map((h) => {
           const own = showOwnership && describeOwnership(h) !== null && (
@@ -434,7 +436,6 @@ export function BuildingSearch({
                         {describeRange(h)} · {h.floor_cnt}개 층
                       </span>
                     </span>
-                    <span className="rcell rcell--store" />
                   </>
                 ) : (
                   <>

@@ -5283,11 +5283,17 @@ test.describe('PC 두 칸', () => {
       const entryBox = (await page.locator('.entry').boundingBox())!;
       const listBox = (await rlist.boundingBox())!;
       expect(listBox.x, `${width} 오른쪽 칸`).toBeGreaterThan(entryBox.x + entryBox.width);
-      // R4 — 머리 네 칸 · 줄마다 네 칸이 한 줄(칸 위 끝이 같다 · 왼쪽부터 차례) · 이름 칸은 이름 머리와 같은 자리.
-      await expect(rlist.locator('.rtable__head').first().locator('.rcell')).toHaveText(['이름', '길 주소', '층', '점포']);
+      // R4 — 건물 검색 결과 표는 세 칸(👤 2026-10-22 「검색 결과는 세 칸」 — 점포 칸 자체가 없다) · 가게 이름 표는 네 칸 ·
+      //   줄마다 칸이 한 줄(칸 위 끝이 같다 · 왼쪽부터 차례) · 이름 칸은 이름 머리와 같은 자리.
+      await expect(rlist.locator('.rtable__head').first().locator('.rcell')).toHaveText(['이름', '길 주소', '층']);
+      await expect(rlist.locator('.search__stores .rtable__head .rcell')).toHaveText(['이름', '길 주소', '층', '점포']);
+      await expect(rlist.locator('.hits .rcell--store')).toHaveCount(0);
       const cells = await row(LONG).locator('.rcell').evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).map((r) => ({ x: r.x, y: r.y, w: r.width })));
-      expect(cells).toHaveLength(4);
-      for (let i = 1; i < 4; i += 1) {
+      expect(cells).toHaveLength(3);
+      // 셋째(층) 칸이 줄 오른쪽 끝까지 — 빈 넷째 자리가 남지 않는다(줄 안쪽 오른쪽 여백 = 줄 왼쪽 여백 · 2px 안).
+      const rowBox = (await row(LONG).boundingBox())!;
+      expect(Math.abs(rowBox.x + rowBox.width - (cells[2].x + cells[2].w) - (cells[0].x - rowBox.x)), `${width} 세 칸 꽉 참`).toBeLessThan(2);
+      for (let i = 1; i < 3; i += 1) {
         expect(Math.abs(cells[i].y - cells[0].y), `${width} 칸 ${i} 같은 줄`).toBeLessThan(4);
         expect(cells[i].x, `${width} 칸 ${i} 차례`).toBeGreaterThan(cells[i - 1].x + cells[i - 1].w - 1);
       }
