@@ -936,6 +936,120 @@ describe('BuildingSearch — 검색창 문구', () => {
   });
 });
 
+// ── PC 두 칸 왼쪽 칸(👤 2026-10-22 왼쪽 칸 다듬기 L2·L5) ─────────────────────────────────────────
+
+describe('BuildingSearch — PC 두 칸 왼쪽 칸(paneArea)', () => {
+  const AREA = { sido: '서울특별시', sigungu: '강남구' };
+
+  function setup(paneArea: { sido: string; sigungu: string } | null) {
+    render(
+      <BuildingSearch
+        onSelect={vi.fn()}
+        onSearchStart={vi.fn()}
+        selectedBldId={null}
+        sigungu="11680"
+        sigunguName="강남구"
+        paneArea={paneArea}
+      />,
+    );
+    return screen.getByLabelText('건물명 또는 주소') as HTMLInputElement;
+  }
+
+  it('L5 안내 글 짧게 — 「건물명·주소·가게 이름」 · 구를 아직 몰라도(빈 이름) 짧게 · 이름(aria-label)은 그대로', () => {
+    const input = setup(AREA);
+    expect(input.placeholder).toBe('건물명·주소·가게 이름');
+    expect(input.getAttribute('aria-label')).toBe('건물명 또는 주소');
+    cleanup();
+    expect(setup({ sido: '', sigungu: '' }).placeholder).toBe('건물명·주소·가게 이름');
+  });
+
+  it('보완 1 — 검색칸 바로 아래 예시 한 줄(긴 안내 글의 예시 낱말 그대로 · 점 앞 줄 안 바뀌는 공백) · 입력칸이 그 줄을 설명으로 가리킨다 · 글을 쳐도 남는다 · paneArea 없으면 줄 0', () => {
+    const input = setup(AREA);
+    const eg = document.querySelector('.search__eg')!;
+    expect(eg.textContent).toBe('예: 미도맨션\u00a0· 테헤란로 117\u00a0· 역삼동 823-4\u00a0· 스타벅스');
+    // 긴 안내 글(휴대폰·한 열)의 예시 낱말과 같다.
+    for (const w of ['미도맨션', '테헤란로 117', '역삼동 823-4', '스타벅스']) expect(eg.textContent).toContain(w);
+    // 바로 아래 = 폼 다음 형제.
+    expect(input.closest('form')!.nextElementSibling).toBe(eg);
+    expect(input.getAttribute('aria-describedby')).toBe(eg.id);
+    fireEvent.change(input, { target: { value: '역삼' } });
+    expect(document.querySelector('.search__eg')).toBe(eg);
+    cleanup();
+    const plain = setup(null);
+    expect(document.querySelector('.search__eg')).toBeNull();
+    expect(plain.hasAttribute('aria-describedby')).toBe(false);
+  });
+
+  it('L2 가게 이름 결과 줄도 길 이름부터(도로명·지번) · 다른 구 땅은 그대로 · paneArea 없으면 지금 그대로', async () => {
+    rpc.mockImplementation((fn: string) =>
+      Promise.resolve({
+        data:
+          fn === 'search_stores'
+            ? [
+                {
+                  pnu: '1168010100100010000',
+                  bld_id: 'S-1',
+                  bld_nm: '가게건물',
+                  road_addr: '서울특별시 강남구 테헤란로 1',
+                  jibun_addr: '서울특별시 강남구 역삼동 823-4',
+                  lat: 37.5,
+                  lng: 127.03,
+                  bld_cnt_in_pnu: 1,
+                  floor_cnt: 5,
+                  min_floor: 1,
+                  max_floor: 5,
+                  has_roof: false,
+                  matched_names: ['스타벅스역삼점'],
+                  match_store_cnt: 1,
+                  total_parcel_cnt: 2,
+                  total_store_cnt: 2,
+                  too_broad: false,
+                  store_snapshot_ym: '202606',
+                },
+                {
+                  pnu: '1165010100100010000',
+                  bld_id: 'S-2',
+                  bld_nm: '옆구건물',
+                  road_addr: '서울특별시 서초구 강남대로 2',
+                  jibun_addr: null,
+                  lat: 37.5,
+                  lng: 127.03,
+                  bld_cnt_in_pnu: 1,
+                  floor_cnt: 5,
+                  min_floor: 1,
+                  max_floor: 5,
+                  has_roof: false,
+                  matched_names: ['스타벅스강남점'],
+                  match_store_cnt: 1,
+                  total_parcel_cnt: 2,
+                  total_store_cnt: 2,
+                  too_broad: false,
+                  store_snapshot_ym: '202606',
+                },
+              ]
+            : [],
+        error: null,
+      }),
+    );
+    for (const area of [AREA, null]) {
+      const input = setup(area);
+      fireEvent.change(input, { target: { value: '스타벅스' } });
+      fireEvent.submit(input.closest('form')!);
+      await screen.findByText('옆구건물');
+      const addrs = [...document.querySelectorAll('.stores__addr')].map((e) => e.textContent);
+      const jibun = document.querySelector('.stores__jibun')!.textContent;
+      if (area) {
+        expect(addrs).toEqual(['테헤란로 1', '서울특별시 서초구 강남대로 2']);
+        expect(jibun).toBe('지번 역삼동 823-4');
+      } else {
+        expect(addrs).toEqual(['서울특별시 강남구 테헤란로 1', '서울특별시 서초구 강남대로 2']);
+        expect(jibun).toBe('지번 서울특별시 강남구 역삼동 823-4');
+      }
+      cleanup();
+    }
+  });
+});
+
 describe('BuildingSearch — 중개사 소유 구조 줄 (결정 0036 결정 5·18 ⑩)', () => {
   async function run(showOwnership: boolean | undefined, rows: BuildingHit[]) {
     rpc.mockImplementation((fn: string) =>

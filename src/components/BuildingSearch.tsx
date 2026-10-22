@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { ReactNode, SubmitEvent } from 'react';
 import { supabase } from '../lib/supabase';
 import {
@@ -17,6 +17,7 @@ import {
   type RpcAnswer,
   type StoreState,
 } from '../lib/storeSearch';
+import { shortAddr, type AddrArea } from '../lib/shortAddr';
 import type { BuildingHit, StoreHit } from '../types';
 
 /**
@@ -95,7 +96,23 @@ type Props = {
    * 구가 바뀌어 이 부품이 key 로 다시 태어나도 목록은 그대로다(접힘만 처음으로 돌아간다).
    */
   belowInput?: ReactNode;
+  /**
+   * PC 두 칸 왼쪽 칸이면 고른 시·구(👤 2026-10-22 왼쪽 칸 다듬기 L2·L5) — 결과 줄의 주소를 길 이름부터(`shortAddr`) 적고,
+   * 검색칸 안내 글을 짧은 꼴로 쓴다. 없으면(휴대폰·한 열) 지금 그대로.
+   * ⓘ 두 칸이면 구를 아직 안 골라도 준다(빈 이름 — 주소는 그대로 · 안내 글만 짧게).
+   */
+  paneArea?: AddrArea | null;
 };
+
+/** 검색칸 안내 글 — 기본(휴대폰·한 열) · PC 두 칸 왼쪽 칸(약 320px 칸에서 잘리지 않게 · L5). */
+const PLACEHOLDER_FULL = '건물명 · 도로명주소 · 지번 · 가게 이름 (예: 미도맨션, 테헤란로 117, 역삼동 823-4, 스타벅스)';
+const PLACEHOLDER_PANE = '건물명·주소·가게 이름';
+/**
+ * PC 두 칸에서 검색칸 바로 아래 예시 한 줄(👤 2026-10-22 「검색칸 아래 예시 한 줄」 — 칸에 글을 쳐도 남는다).
+ * 낱말은 긴 안내 글(`PLACEHOLDER_FULL`)의 예시와 같다. 점 앞은 줄이 안 바뀌는 공백(이스케이프 표기) — 좁아져 줄이 넘어가도
+ * 줄 맨 앞에 가운뎃점이 오지 않는다.
+ */
+const EXAMPLE_PANE = '예: 미도맨션\u00a0· 테헤란로 117\u00a0· 역삼동 823-4\u00a0· 스타벅스';
 
 export function BuildingSearch({
   onSelect,
@@ -105,7 +122,11 @@ export function BuildingSearch({
   sigunguName,
   showOwnership = false,
   belowInput,
+  paneArea = null,
 }: Props) {
+  /** 왼쪽 칸이면 길 이름부터(L2) — 다른 구 주소·구를 모를 때는 그대로(`shortAddr`). */
+  const addr = (a: string) => (paneArea ? shortAddr(a, paneArea) : a);
+  const exampleId = useId();
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<BuildingHit[]>([]);
   /** 검색어에 걸린 전체 건물 수(보여주는 수가 아니다). */
@@ -341,13 +362,21 @@ export function BuildingSearch({
           className="search__input"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="건물명 · 도로명주소 · 지번 · 가게 이름 (예: 미도맨션, 테헤란로 117, 역삼동 823-4, 스타벅스)"
+          placeholder={paneArea ? PLACEHOLDER_PANE : PLACEHOLDER_FULL}
           aria-label="건물명 또는 주소"
+          aria-describedby={paneArea ? exampleId : undefined}
         />
         <button className="search__btn" type="submit" disabled={loading || !query.trim()}>
           {loading ? '찾는 중…' : '검색'}
         </button>
       </form>
+
+      {/* PC 두 칸만 — 검색칸 바로 아래 예시 한 줄(👤 2026-10-22 · 휴대폰·한 열은 긴 안내 글이 예시를 품는다 · 종이에서는 `.search` 째 빠진다). */}
+      {paneArea && (
+        <p className="search__eg" id={exampleId}>
+          {EXAMPLE_PANE}
+        </p>
+      )}
 
       {belowInput}
 
@@ -411,9 +440,9 @@ export function BuildingSearch({
                   onClick={() => onSelect(h)}
                 >
                   <span className="hit__name">{h.bld_nm || '(이름 없는 건물)'}</span>
-                  <span className="hit__addr">{h.road_addr || '주소 없음'}</span>
+                  <span className="hit__addr">{h.road_addr ? addr(h.road_addr) : '주소 없음'}</span>
                   {/* 지번으로 찾은 사람이 "왜 이게 나왔나"를 알 수 있게 함께 보여준다. */}
-                  {h.jibun_addr && <span className="hit__jibun">지번 {h.jibun_addr}</span>}
+                  {h.jibun_addr && <span className="hit__jibun">지번 {addr(h.jibun_addr)}</span>}
                   <span className="hit__meta">
                     {describeRange(h)} · {h.floor_cnt}개 층
                     {h.bld_cnt_in_pnu > 1 && (
@@ -484,8 +513,8 @@ export function BuildingSearch({
               const body = (
                 <>
                   <span className="stores__name">{s.bld_nm || '(이름 없는 건물)'}</span>
-                  <span className="stores__addr">{s.road_addr || '주소 없음'}</span>
-                  {s.jibun_addr && <span className="stores__jibun">지번 {s.jibun_addr}</span>}
+                  <span className="stores__addr">{s.road_addr ? addr(s.road_addr) : '주소 없음'}</span>
+                  {s.jibun_addr && <span className="stores__jibun">지번 {addr(s.jibun_addr)}</span>}
                   {names && <span className="stores__names">{names}</span>}
                   <span className="stores__meta">
                     {/* ⛔ 건물이 아니라 **이 땅에** 다 — 층별 화면의 점포 칸과

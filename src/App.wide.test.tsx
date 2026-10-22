@@ -16,6 +16,8 @@ import { WIDE_QUERY } from './lib/useIsWide';
 const rpc = vi.fn();
 const from = vi.fn();
 const relayout = vi.fn();
+/** 가짜 지도가 받은 `paneArea`(👤 10-22 L2 — 상권 건물 목록 주소 줄이기는 DistrictMap 을 거쳐 넘어간다). */
+const mapPaneArea = vi.fn();
 
 function makeQuery(result: { data: unknown; error: unknown }) {
   const q: Record<string, unknown> = {};
@@ -31,7 +33,16 @@ vi.mock('./lib/supabase', () => ({
   },
 }));
 
-function FakeMap({ sigungu, visible = true }: { sigungu: string | null; visible?: boolean }) {
+function FakeMap({
+  sigungu,
+  visible = true,
+  paneArea = null,
+}: {
+  sigungu: string | null;
+  visible?: boolean;
+  paneArea?: { sido: string; sigungu: string } | null;
+}) {
+  mapPaneArea(paneArea);
   const was = useRef(visible);
   useEffect(() => {
     const before = was.current;
@@ -123,6 +134,7 @@ beforeEach(() => {
   rpc.mockReset();
   from.mockReset();
   relayout.mockReset();
+  mapPaneArea.mockReset();
   from.mockImplementation((view: string) =>
     makeQuery(view === 'v_coverage_stats' ? { data: [], error: null } : { data: [floorRow()], error: null }),
   );
@@ -602,7 +614,7 @@ describe('PC 두 칸 보완 1 — CSS', () => {
   const css = readFileSync('src/styles.css', 'utf8');
   const rules = cssRules(css);
 
-  it('★ F2 1024~1279 층 줄 = 칸 합 640px 미만 · 사양 칸 틈 18 · F4 화면 밖 표지 이름 숨김 — 두 칸 묶음 안 1279 갈래 · 양성 대조(갈래 삭제 · 기본 폭으로 되돌린 꼴)', () => {
+  it('★ F2 1024~1279 층 줄 = 칸 합 640px 미만 · 사양 칸 틈 18 — 두 칸 묶음 안 1279 갈래 · 양성 대조(갈래 삭제 · 기본 폭으로 되돌린 꼴) · F4 표지 이름 숨김은 두 칸 전체로 옮김(👤 10-22 L4 — 아래 「왼쪽 칸 다듬기」)', () => {
     const narrow = narrowRules(css);
     const row = narrow.find((r) => r.sel.includes('.app--wide .floor__row'))!;
     expect(floorRowPx(row.body)).toBeLessThan(640);
@@ -610,9 +622,6 @@ describe('PC 두 칸 보완 1 — CSS', () => {
     const baseRow = rules.find((r) => r.media === null && r.sel.includes('.floor__row') && /grid-template-columns/.test(r.body))!;
     expect(floorRowPx(baseRow.body)).toBeGreaterThan(640);
     expect(narrow.find((r) => r.sel.includes('.app--wide .stack__facts'))!.body).toMatch(/gap:\s*18px/);
-    const off = narrow.find((r) => r.sel.includes('.app--wide .dmap__off-nm'))!;
-    expect(off.sel).toContain('.app--wide .dmap__off-etc');
-    expect(off.body).toMatch(/display:\s*none/);
     // 양성 대조 — 갈래를 통째로 지운 꼴 · 층 줄을 기본 칸으로 되돌린 꼴.
     const noBranch = css.replace(/@media \(max-width: 1279px\) \{[\s\S]*?\r?\n {2}\}\r?\n/, '');
     expect(noBranch).not.toBe(css);
@@ -626,12 +635,15 @@ describe('PC 두 칸 보완 1 — CSS', () => {
     expect(floorRowPx(back.body)).toBeGreaterThanOrEqual(640);
   });
 
-  it('★ F1 첫 방문 큰 카드 — 두 칸 묶음에서 세로 쌓기 · 「그냥 둘러보기」 가운데 · 기본 규칙은 한 줄 그대로', () => {
-    const wide = rules.filter((r) => r.media === WIDE);
-    expect(wide.find((r) => r.sel.includes('.app--wide .rolecards__list'))!.body).toMatch(/flex-direction:\s*column/);
-    expect(wide.find((r) => r.sel.includes('.app--wide .rolecards__browse'))!.body).toMatch(/align-self:\s*center/);
-    const base = rules.filter((r) => r.media === null && r.sel.includes('.rolecards__list'));
-    expect(base.some((r) => /flex-direction:\s*column/.test(r.body))).toBe(false);
+  it('★ 첫 방문 큰 카드 — 두 칸에서는 오른쪽 칸(👤 10-22 L6)이라 한 줄에 셋: 두 칸 묶음에 세로 쌓기 규칙 0(W5 보완 F1 걷음) · 기본 규칙도 한 줄 그대로', () => {
+    const stacked = (src: string) =>
+      cssRules(src).some(
+        (r) => (r.media === WIDE || r.media === null) && r.sel.some((s) => s.includes('.rolecards__list')) && /flex-direction:\s*column/.test(r.body),
+      );
+    expect(stacked(css)).toBe(false);
+    // 양성 대조 — 두 칸 묶음 꼴 · 기본 규칙 꼴(선택자 목록 변형)을 실제로 잡는다.
+    expect(stacked(`${css}\n${WIDE} {\n  .app--wide .rolecards__list { flex-direction: column; }\n}`)).toBe(true);
+    expect(stacked(`${css}\n.x,\n.rolecards__list {\n  flex-direction:column;\n}`)).toBe(true);
   });
 
   it('★ D2 지역 한 줄 — 접힘이면 칩 상자 숨김(두 칸 묶음) · 「바꾸기」 44px 목록 · 한 줄은 종이에서 빠진다', () => {
@@ -641,5 +653,201 @@ describe('PC 두 칸 보완 1 — CSS', () => {
     expect(tall).toContain('.regionfold__btn');
     const hide = rules.filter((r) => r.media === PRINT && /display:\s*none/.test(r.body)).flatMap((r) => r.sel);
     expect(hide).toContain('.regionfold');
+  });
+});
+
+// ── 왼쪽 칸 다듬기(👤 2026-10-22 「가」 · 분석 페이지 RgXTDKCXH9ACziRd8rhvek) ─────────────────────────────────
+// 화면 배선(큰 카드 자리 · 주소 길 이름부터 · 짧은 안내 글)은 여기, 실제 자리(말줄임 0 · 굴림 하나)는 E2E 「CC」가 잰다.
+describe('PC 두 칸 왼쪽 칸 다듬기 — 배선 (👤 2026-10-22)', () => {
+  const PANE_PLACEHOLDER = '건물명·주소·가게 이름';
+  /** 점 앞은 줄이 안 바뀌는 공백(U+00A0 — 이스케이프 표기로 적는다). */
+  const PANE_EXAMPLE = '예: 미도맨션\u00a0· 테헤란로 117\u00a0· 역삼동 823-4\u00a0· 스타벅스';
+
+  function searchWith(rows: BuildingHit[]) {
+    rpc.mockImplementation((fn: string) => {
+      if (fn === 'list_open_sigungu') return Promise.resolve({ data: [gu()], error: null });
+      if (fn === 'search_buildings') return Promise.resolve({ data: rows, error: null });
+      return Promise.resolve({ data: [], error: null });
+    });
+  }
+
+  it('★ L6 첫 방문 큰 카드 = 오른쪽 빈 칸(`.app__main` 의 오른쪽 덩어리 · 왼쪽 칸 밖) · 그동안 왼쪽엔 역할 줄 0 · 고르면 사라지고 왼쪽 작은 줄 + 커서 · 저장', async () => {
+    window.localStorage.clear();
+    mediaAt(1280);
+    const { container } = render(<App />);
+    const cards = container.querySelector('section.rolecards')!;
+    expect(cards).not.toBeNull();
+    expect(entry().contains(cards)).toBe(false);
+    expect(cards.parentElement).toBe(container.querySelector('.app__main'));
+    // 오른쪽 맨 위 — 왼쪽 칸 바로 다음 · 오른쪽 안내 한 줄 앞.
+    expect(cards.previousElementSibling).toBe(entry());
+    expect(cards.nextElementSibling!.className).toBe('rpane-empty');
+    expect(entry().querySelector('section.role')).toBeNull();
+    await pickGu();
+    // 구를 골라도 그대로 오른쪽(입구 카드 둘 위).
+    expect(container.querySelector('section.rolecards')).toBe(cards);
+    fireEvent.click(screen.getByRole('button', { name: /가게를 열려고/ }));
+    expect(container.querySelector('section.rolecards')).toBeNull();
+    const chip = entry().querySelector<HTMLButtonElement>('section.role button[aria-pressed="true"]')!;
+    expect(chip.textContent).toBe('창업자');
+    expect(document.activeElement).toBe(chip);
+    expect(window.localStorage.getItem('sangga.viewerRole')).toBe('창업자');
+  });
+
+  it('★ L6 보완 1 — 왼쪽 칸을 띠로 접은 채 오른쪽 큰 카드를 고르면 커서는 띠의 펼치기 단추(숨은 칸·BODY 아님 · 검사 🟡d)', async () => {
+    window.localStorage.clear();
+    mediaAt(1280);
+    const { container } = render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '왼쪽 칸 접기' }));
+    expect(entry().hasAttribute('inert')).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: /투자·매입하려고/ }));
+    expect(container.querySelector('section.rolecards')).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '왼쪽 칸 펼치기' }));
+    expect(window.localStorage.getItem('sangga.viewerRole')).toBe('투자자');
+  });
+
+  it('★ L6 아직 안 물어본 채 건물을 열면 오른쪽은 건물 — 큰 카드는 숨고 왼쪽에 작은 줄(질문 한 번) · 저장 0', async () => {
+    window.localStorage.clear();
+    mediaAt(1280);
+    const { container } = render(<App />);
+    await pickGu();
+    await searchAndOpen();
+    expect(container.querySelector('section.rolecards')).toBeNull();
+    expect(entry().querySelector('section.role')).not.toBeNull();
+    expect(window.localStorage.getItem('sangga.viewerRole')).toBeNull();
+  });
+
+  it('L6 양성 대조 — 1023 한 열은 지금 그대로 왼쪽(입구) 맨 위 · 건물 직행 링크(1280)는 어디에도 안 뜬다(W3 ①)', async () => {
+    window.localStorage.clear();
+    mediaAt(1023);
+    const r1 = render(<App />);
+    const cards = r1.container.querySelector('section.rolecards')!;
+    expect(entry().contains(cards)).toBe(true);
+    cleanup();
+
+    window.history.replaceState(null, '', `/?sgg=11680&bld=${BLD}`);
+    mediaAt(1280);
+    const r2 = render(<App />);
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+    expect(r2.container.querySelector('section.rolecards')).toBeNull();
+    expect(window.localStorage.getItem('sangga.viewerRole')).toBeNull();
+  });
+
+  it('★ L2·L5 1280 — 검색칸 안내 글 짧게 · 결과 주소는 고른 구면 길 이름부터(도로명·지번) · 다른 구는 그대로 · 지도에도 같은 시·구', async () => {
+    searchWith([
+      hit({ road_addr: '서울특별시 강남구 테헤란로 1', jibun_addr: '서울특별시 강남구 역삼동 823-4' }),
+      hit({ bld_id: `${BLD}9`, bld_nm: '둘째빌딩', road_addr: '서울특별시 서초구 강남대로 2', jibun_addr: null }),
+    ]);
+    mediaAt(1280);
+    const { container } = render(<App />);
+    expect((screen.getByLabelText('건물명 또는 주소') as HTMLInputElement).placeholder).toBe(PANE_PLACEHOLDER);
+    // 보완 1 — 검색칸 바로 아래 예시 한 줄(두 칸만 · 글을 쳐도 남는다).
+    expect(container.querySelector('.search__eg')!.textContent).toBe(PANE_EXAMPLE);
+    await pickGu();
+    const input = screen.getByLabelText('건물명 또는 주소') as HTMLInputElement;
+    expect(input.placeholder).toBe(PANE_PLACEHOLDER);
+    fireEvent.change(input, { target: { value: '테헤란로' } });
+    fireEvent.submit(input.closest('form')!);
+    await screen.findByRole('button', { name: /둘째빌딩/ });
+    const addrs = [...container.querySelectorAll('.hit__addr')].map((e) => e.textContent);
+    expect(addrs).toEqual(['테헤란로 1', '서울특별시 서초구 강남대로 2']);
+    expect(container.querySelector('.hit__jibun')!.textContent).toBe('지번 역삼동 823-4');
+    expect(container.querySelector('.search__eg')!.textContent).toBe(PANE_EXAMPLE);
+    expect(mapPaneArea).toHaveBeenLastCalledWith({ sido: '서울특별시', sigungu: '강남구' });
+  });
+
+  it('L2·L5 양성 대조 — 1023 한 열은 안내 글·주소 지금 그대로 · 지도에 시·구를 안 넘긴다', async () => {
+    searchWith([hit({ road_addr: '서울특별시 강남구 테헤란로 1', jibun_addr: '서울특별시 강남구 역삼동 823-4' })]);
+    mediaAt(1023);
+    const { container } = render(<App />);
+    await pickGu();
+    const input = screen.getByLabelText('건물명 또는 주소') as HTMLInputElement;
+    expect(input.placeholder).not.toBe(PANE_PLACEHOLDER);
+    expect(input.placeholder).toContain('스타벅스');
+    fireEvent.change(input, { target: { value: '테헤란로' } });
+    fireEvent.submit(input.closest('form')!);
+    await screen.findByRole('button', { name: /테스트빌딩/ });
+    expect(container.querySelector('.hit__addr')!.textContent).toBe('서울특별시 강남구 테헤란로 1');
+    expect(container.querySelector('.hit__jibun')!.textContent).toBe('지번 서울특별시 강남구 역삼동 823-4');
+    expect(container.querySelector('.search__eg')).toBeNull();
+    expect(mapPaneArea).toHaveBeenLastCalledWith(null);
+  });
+});
+
+/**
+ * 왼쪽 칸 다듬기 CSS(L1 두 줄 · L3 굴림 하나 · L4 표지 짧게) — 두 칸 묶음 안의 규칙을 본다. 가드 본체와 양성 대조가 이 함수를 같이 지난다.
+ * 못 보는 것: 실제 픽셀(말줄임 0·안쪽 굴림 0·표지 겹침 0)은 jsdom 이 못 잰다 → E2E 「CC」(표지는 E2E 에 지도 키가 없어 계산으로만).
+ */
+function paneRules(src: string) {
+  const wide = cssRules(src).filter((r) => r.media === WIDE);
+  const find = (sel: string) => wide.filter((r) => r.sel.includes(sel));
+  const has = (sel: string, re: RegExp) => find(sel).some((r) => re.test(r.body));
+  return {
+    unscrolled: ['.app--wide .entry .hits', '.app--wide .entry .stores', '.app--wide .entry .dbld__list'].every(
+      (s) =>
+        has(s, /max-height:\s*none/) &&
+        has(s, /overflow-y:\s*visible/) &&
+        // 칸 폭을 왼쪽 칸에 묶는다 — 없으면 아주 긴 한 줄 글이 줄을 칸 밖으로 민다(E2E CC 의 긴 주소).
+        has(s, /grid-template-columns:\s*minmax\(0,\s*1fr\)/),
+    ),
+    rowsWrap: ['.app--wide .entry .hit', '.app--wide .entry .dbld__row', '.app--wide .entry .stores__row'].every(
+      (s) => has(s, /display:\s*flex/) && has(s, /flex-wrap:\s*wrap/),
+    ),
+    namesWhole: ['.app--wide .entry .hit__name', '.app--wide .entry .dbld__name', '.app--wide .entry .stores__name'].every(
+      (s) => has(s, /flex:\s*0 0 100%/) && has(s, /white-space:\s*normal/) && has(s, /overflow:\s*visible/),
+    ),
+    metaFirst: ['.app--wide .entry .hit__meta', '.app--wide .entry .dbld__meta', '.app--wide .entry .stores__meta'].every(
+      (s) => has(s, /order:\s*1/) && has(s, /white-space:\s*normal/),
+    ),
+    // 보완 1 — 구분점은 앞 칸 끝(`::after` · 점 앞 줄 안 바뀌는 공백 `\a0`)에만 · 두 칸 묶음에 「·」를 머리(`::before`)에 다는 규칙 0.
+    dotsAfter:
+      ['.app--wide .entry .hit__meta::after', '.app--wide .entry .dbld__meta::after', '.app--wide .entry .stores__meta::after'].every((s) =>
+        has(s, /content:\s*'\\a0·'/),
+      ) && !wide.some((r) => r.sel.some((s) => s.includes('::before')) && /content:[^;]*·/.test(r.body)),
+    example13: has('.app--wide .search__eg', /font-size:\s*13px/),
+    offShort:
+      has('.app--wide .dmap__off-nm', /display:\s*none/) &&
+      has('.app--wide .dmap__off-etc', /display:\s*none/) &&
+      !narrowRules(src).some((r) => r.sel.some((s) => s.includes('.dmap__off'))),
+  };
+}
+
+describe('PC 두 칸 왼쪽 칸 다듬기 — CSS (👤 2026-10-22)', () => {
+  const css = readFileSync('src/styles.css', 'utf8');
+
+  it('★ L1 두 줄(이름 전체 · 점포·층 먼저 · 주소 끝 줄임) · L3 안쪽 굴림 0 · L4 표지 짧게(두 칸 전체 — 1279 갈래 밖) — 전부 두 칸 묶음', () => {
+    expect(paneRules(css)).toEqual({
+      unscrolled: true,
+      rowsWrap: true,
+      namesWhole: true,
+      metaFirst: true,
+      dotsAfter: true,
+      example13: true,
+      offShort: true,
+    });
+  });
+
+  it('양성 대조 — 규칙을 하나씩 걷은 꼴을 실제로 잡는다(흔한 꼴 + 변형 꼴)', () => {
+    const drop = (from: string, to: string) => {
+      const out = css.replace(from, to);
+      expect(out).not.toBe(css);
+      return paneRules(out);
+    };
+    expect(drop('.app--wide .entry .dbld__list {', '.app--wide .entry .dbld__listx {').unscrolled).toBe(false);
+    // 변형 꼴 — 선택자는 그대로 두고 값만 되돌린 꼴(목록 셋을 묶은 규칙의 굴림 값).
+    const capped = css.replace(/(\.app--wide \.entry \.dbld__list \{[^}]*?)max-height: none;/, '$1max-height: 360px;');
+    expect(capped).not.toBe(css);
+    expect(paneRules(capped).unscrolled).toBe(false);
+    expect(drop('.app--wide .entry .stores__name {', '.app--wide .entry .stores__namex {').namesWhole).toBe(false);
+    expect(drop('.app--wide .entry .stores__row {', '.app--wide .entry .stores__rowx {').rowsWrap).toBe(false);
+    // 구분점을 뒤 칸 머리(`::before`)로 되돌린 꼴(보완 1 이전) — 흔한 꼴 + 선택자 목록 변형.
+    expect(paneRules(`${css}\n${WIDE} {\n  .app--wide .entry .hit__jibun::before { content: '· '; }\n}`).dotsAfter).toBe(false);
+    expect(paneRules(`${css}\n${WIDE} {\n  .x,\n  .app--wide .entry .dbld__addr::before {\n    content:"· ";\n  }\n}`).dotsAfter).toBe(false);
+    // 표지 숨김을 1279 갈래로 되돌린 꼴(옛 W5 F4) — 두 칸 전체에서 걷고 갈래에 넣는다.
+    const back = css
+      .replace(/ {2}\.app--wide \.dmap__off-nm,\r?\n {2}\.app--wide \.dmap__off-etc \{\r?\n {4}display: none;\r?\n {2}\}\r?\n/, '')
+      .replace(/(\.app--wide \.stack__facts \{\r?\n {6}gap: 18px;\r?\n {4}\})/, '$1\n    .app--wide .dmap__off-nm,\n    .app--wide .dmap__off-etc { display: none; }');
+    expect(back).not.toBe(css);
+    expect(paneRules(back).offShort).toBe(false);
   });
 });

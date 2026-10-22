@@ -42,6 +42,7 @@ import { buildAppSearch, buildShareUrl, isSameSearch, parseAppUrl } from './lib/
 import { pageTitle } from './lib/seo';
 import { hubPlace, hubTitle } from './lib/hubHead';
 import { SIDOS } from './lib/regions';
+import type { AddrArea } from './lib/shortAddr';
 import { useIsPhone } from './lib/useIsPhone';
 import { useIsWide } from './lib/useIsWide';
 import {
@@ -292,6 +293,11 @@ export default function App() {
   */
   const showEntryCards = sigungu !== null && !restoring && (selected === null || isPhone);
   /*
+    PC 두 칸에서 첫 방문 큰 카드를 오른쪽 빈 칸에 세우나(👤 2026-10-22 L6) — 건물이 없을 때(되살리는 중 아님)만.
+    ⓘ 건물 직행 링크로 온 방문은 `showRoleCards` 가 이미 거짓이라 여기도 거짓(W3 ① 그대로).
+  */
+  const roleCardsRight = isWide && showRoleCards && selected === null && !restoring;
+  /*
     큰 카드에서 고른 뒤(위 `handlePickFromCards`) — 역할을 골랐으면 눌린 단추, 「그냥 둘러보기」면 첫 단추에 커서.
     ⓘ 화면은 굴리지 않는다(`preventScroll`) — 작은 줄은 카드가 있던 바로 그 자리라 이미 화면 안이다.
   */
@@ -301,6 +307,12 @@ export default function App() {
     // 휴대폰은 작은 줄이 「더보기」 탭(숨음)에 있다 — 지금 고른 탭 단추에 커서(body 로 떨어지지 않게 · 검사 🟡 F4).
     if (phoneRef.current) {
       document.querySelector<HTMLButtonElement>('.tabbar__btn[aria-current="page"]')?.focus({ preventScroll: true });
+      return;
+    }
+    // PC 두 칸에서 왼쪽 칸을 띠로 접은 채 오른쪽 큰 카드로 골랐다 — 작은 줄은 숨은(inert) 칸 안이라 커서가 BODY 로 떨어진다
+    // → 띠의 펼치기 단추로(보완 1 · 👤 2026-10-22 검사 🟡d). 띠는 접힌 동안에만 서므로 그 ref 가 있으면 접힌 것이다.
+    if (railExpandRef.current) {
+      railExpandRef.current.focus({ preventScroll: true });
       return;
     }
     const row = entryRef.current?.querySelector('.role');
@@ -636,6 +648,14 @@ export default function App() {
   });
 
   /*
+    PC 두 칸 왼쪽 칸의 고른 시·구(👤 2026-10-22 왼쪽 칸 다듬기 「가」 L2·L5) — 목록 주소를 길 이름부터 적고 검색칸 안내 글을 짧게.
+    두 칸이 아니면 null(휴대폰·한 열 변화 0) · 두 칸이면 구를 아직 몰라도 빈 이름으로 준다(주소는 그대로 · 안내 글만 짧게).
+  */
+  const paneArea: AddrArea | null = isWide
+    ? { sido: SIDOS.find((s) => s.code === sigungu?.slice(0, 2))?.fullName ?? '', sigungu: sigunguName ?? '' }
+    : null;
+
+  /*
     입구 두 덩어리 — 그리는 차례는 아래 `entryBlockOrder` 가 정한다(층별 카드의 `sectionOrder` 와 같은 꼴).
   */
   const entryBlocks: Record<EntryBlockKey, ReactNode> = {
@@ -664,6 +684,7 @@ export default function App() {
         sigungu={sigungu}
         sigunguName={sigunguName}
         showOwnership={viewerRole === '중개사'}
+        paneArea={paneArea}
         /*
           중개사만 — 검색 입력칸 바로 아래·결과 목록 위(👤 결정 0036 결정 18 ⑩ "검색창 바로 아래").
           ⓘ 목록·지우기 상태는 App 이 쥔다 — 구가 바뀌어 검색창이 key 로 다시 태어나도 목록은 그대로다.
@@ -710,6 +731,7 @@ export default function App() {
             onPickChange={setMapPick}
             layout={mapLayout}
             visible={showMap}
+            paneArea={paneArea}
             headExtra={
               viewerRole === '창업자' ? (
                 <FounderChips chip={founderChip} onChange={setFounderChip} />
@@ -887,9 +909,11 @@ export default function App() {
             역할 단추 줄 — 지역 고르기 바로 위(👤 결정 0036 결정 18 ⑧). 아직 안 물어봤으면 그 자리에 큰 카드
             (결정 0039 Q3 · W3) — 카드가 서 있는 동안 작은 줄은 숨긴다(같은 질문이 두 번 안 보이게).
           */}
-          {showRoleCards ? (
+          {showRoleCards && !isWide ? (
             <RoleCards onPick={handlePickFromCards} />
-          ) : isPhone ? null : (
+          ) : isPhone || roleCardsRight ? null : (
+            // PC 두 칸은 큰 카드가 오른쪽 빈 칸에 선다(아래 `roleCardsRight` · 👤 2026-10-22 L6) — 그동안 작은 줄은 안 그린다(질문 한 번).
+            // 아직 안 물어본 채 건물을 열면 오른쪽은 건물 차지라 큰 카드는 숨고 여기 작은 줄이 선다(건물을 닫으면 다시 오른쪽 큰 카드).
             // 휴대폰은 「더보기」 탭 맨 위(아래 꼬리말 `lead` · 0036 ⑧ → 결정 0039 §5 W4a) — 큰 카드는 이 자리 그대로.
             <RolePicker role={viewerRole} onChange={handlePickRole} />
           )}
@@ -946,6 +970,12 @@ export default function App() {
           PC 두 칸에서 건물이 없을 때 오른쪽 맨 위 한 줄(👤 2026-10-21 W5 「가」 — 글자 그대로) · 그 아래 입구 카드 둘이 오른쪽 열에 선다.
           ⓘ 두 칸에서는 아래 「위에서 건물을 검색해…」 줄 대신 이 줄이다(왼쪽이 찾기 칸) · 종이에서 빠진다(화면 안내).
         */}
+        {/*
+          PC 두 칸 첫 방문 큰 카드(결정 0039 W3 → 👤 2026-10-22 왼쪽 칸 다듬기 「가」 L6) — 오른쪽 빈 칸 맨 위(덮개 아님 · 제자리 카드).
+          왼쪽은 지역·검색·지도가 바로 보이게. 언제·저장·건물 직행 링크 예외는 W3 규칙 그대로(`showRoleCards`) · 종이에서 빠진다(`.rolecards`).
+        */}
+        {roleCardsRight && <RoleCards onPick={handlePickFromCards} />}
+
         {isWide && selected === null && !restoring && !restoreFailed && (
           <p className="rpane-empty">왼쪽에서 건물을 고르면 여기에 층별 화면이 섭니다</p>
         )}
