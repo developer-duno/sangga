@@ -320,7 +320,8 @@ async function openCard(page: Page, title: RegExp) {
 
 async function search(page: Page, text: string) {
   await page.getByLabel('건물명 또는 주소').fill(text);
-  await page.getByRole('button', { name: '검색' }).click();
+  // 이름 그대로(exact) — PC 두 칸 「← 목록으로(테헤란로 검색 1곳)」 단추도 '검색' 을 품는다(👤 2026-10-22 방법 나 R3 글).
+  await page.getByRole('button', { name: '검색', exact: true }).click();
 }
 
 /**
@@ -475,7 +476,8 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await expect(page.locator('section.stack')).toBeVisible();
 
     await page.unroute(SEARCH_PATTERN);
-    await mockJson(page, SEARCH_PATTERN, [searchHit({ bld_id: 'other', bld_nm: '다른빌딩' })], 300);
+    // 1초 늦춘다 — 답을 기다리는 동안의 화면(두 칸 「찾는 중…」 · 보완 3)을 붙잡을 틈.
+    await mockJson(page, SEARCH_PATTERN, [searchHit({ bld_id: 'other', bld_nm: '다른빌딩' })], 1000);
 
     // 건물을 열면 입구가 한 줄로 접힌다(S1) — 바의 「다른 건물 찾기」로 검색창을 펼친다.
     await unfoldEntry(page);
@@ -490,11 +492,18 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
       return;
     }
     if (await isTwoCols(page)) {
-      // PC 두 칸도 같은 규칙(👤 2026-10-21 W5 보완 D1 「가 · 건물은 그대로 남김」) — 오른쪽 건물은 결과를 눌러야 바뀐다.
-      //   늦게 오는 응답을 기다리는 동안에도 · 결과가 선 뒤에도 그대로 · 빈 오른쪽 안내 줄은 안 선다.
-      await expect(page.locator('section.stack').getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
+      // PC 두 칸은 건물을 쥐고 있되(👤 2026-10-21 W5 보완 D1) 오른쪽이 목록으로 바뀐다(👤 2026-10-22 방법 나 R2) — 옛 건물은 화면에서
+      //   숨고(DOM 은 그대로) 목록 위 「← 보던 건물(이름)로」 · 늦게 오는 응답을 기다리는 동안에도 옛 건물이 보이지 않는다 · 빈 오른쪽 안내 줄 0.
+      await expect(page.locator('section.stack')).toHaveCount(1);
+      await expect(page.locator('section.stack')).toBeHidden();
+      // 답이 오기 전 — 오른쪽 목록 자리에 「찾는 중…」 한 줄(13px · 낭독 자리 안 · 보완 3).
+      const loadingLine = page.locator('section.rlist .msg--live[role="status"] .rlist__loading');
+      await expect(loadingLine).toHaveText('찾는 중…');
+      await expect(loadingLine).toHaveCSS('font-size', '13px');
       await expect(page.getByRole('button', { name: /다른빌딩/ })).toBeVisible();
-      await expect(page.locator('section.stack').getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
+      await expect(loadingLine).toHaveCount(0);
+      await expect(page.locator('section.stack')).toBeHidden();
+      await expect(page.getByRole('button', { name: '보던 건물(테스트빌딩)로' })).toBeVisible();
       await expect(page.locator('.rpane-empty')).toHaveCount(0);
       return;
     }
@@ -526,9 +535,12 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await expect(page.getByText(/강남구에서 찾지 못했습니다/)).toBeVisible();
     // 휴대폰 탭 꼴은 보던 건물을 남긴다(§7-1) — 찾기 탭에선 숨어 있다.
     if (await isPhoneTabs(page)) await expect(page.locator('section.stack')).toBeHidden();
-    // PC 두 칸(W5 보완 D1)도 보던 건물을 남긴다 — 오른쪽에 그대로 보인다.
-    else if (await isTwoCols(page))
-      await expect(page.locator('section.stack').getByRole('heading', { name: '테스트빌딩' })).toBeVisible();
+    // PC 두 칸(W5 보완 D1)도 보던 건물을 쥐고 있다 — 오른쪽은 「못 찾음」 목록이라 화면에선 숨고 「← 보던 건물로」(👤 10-22 방법 나 R2).
+    else if (await isTwoCols(page)) {
+      await expect(page.locator('section.stack')).toBeHidden();
+      await expect(page.locator('section.rlist').getByText(/강남구에서 찾지 못했습니다/)).toBeVisible();
+      await expect(page.getByRole('button', { name: '보던 건물(테스트빌딩)로' })).toBeVisible();
+    }
     else await expect(page.locator('section.stack')).toHaveCount(0);
   });
 
@@ -1798,11 +1810,11 @@ test.describe('검색 — 가게 이름으로 찾은 땅', () => {
     expect(namesHeight).toBeGreaterThan(oneLineHeight * 1.3);
     expect(namesHeight).toBeLessThanOrEqual(oneLineHeight * 2 + 2);
 
-    // 양성 대조 — 다른 줄은 여전히 한 줄 말줄임이다.
+    // 양성 대조 — 다른 줄은 여전히 한 줄 말줄임이다. ⓘ PC 두 칸 오른쪽 표(👤 2026-10-22 방법 나 R4)는 칸 안 말줄임 0 이라 줄을 넘긴다.
     const addrWhiteSpace = await addrEl.evaluate(
       (el) => el.ownerDocument.defaultView!.getComputedStyle(el).whiteSpace,
     );
-    expect(addrWhiteSpace).toBe('nowrap');
+    expect(addrWhiteSpace).toBe((await isTwoCols(page)) ? 'normal' : 'nowrap');
   });
 });
 
@@ -3641,9 +3653,9 @@ test.describe('누르는 것 44px · 글자 13px', () => {
     expect(title.y).toBeGreaterThanOrEqual(0);
     expect(title.y + title.height).toBeLessThanOrEqual(vh);
     // 커서는 바의 첫 단추(고른 결과 줄이 숨어 커서가 문서 맨 앞으로 날아가지 않게) · 휴대폰은 고른 탭(건물).
-    // PC 두 칸은 결과 줄이 숨지 않는다 — 누른 결과 줄에 그대로(문서 맨 앞으로 안 날아간다).
+    // PC 두 칸은 결과가 오른쪽 목록이라(👤 2026-10-22 방법 나) 고르면 목록이 숨는다 — 건물 맨 위 「← 목록으로」에 커서(문서 맨 앞으로 안 날아간다).
     if (phone) await expect(tabButton(page, '건물')).toBeFocused();
-    else if (cols) await expect(last).toBeFocused();
+    else if (cols) await expect(page.locator('.rback__btn')).toBeFocused();
     else await expect(page.getByRole('button', { name: '다른 건물 찾기' })).toBeFocused();
   });
 });
@@ -4393,7 +4405,8 @@ test.describe('휴대폰 아래 탭', () => {
     await page.getByRole('button', { name: /테스트빌딩/ }).click();
     await expect(page.locator('section.stack .stack__head')).toBeVisible();
     if (testInfo.project.name !== 'mobile') {
-      expect(await len()).toBe(before); // 넓은 화면은 지금처럼 replaceState 만
+      // PC 두 칸은 오른쪽 목록에서 고르면 한 칸(👤 2026-10-22 방법 나 R3 — 뒤로가기 = 목록 · CD 가 오가기를 본다). 같은 표식이라 여럿 열어도 한 칸.
+      expect(await len()).toBe(before + 1);
       return;
     }
     expect(await len()).toBe(before + 1);
@@ -5092,7 +5105,7 @@ test.describe('PC 두 칸', () => {
     왼쪽 칸 다듬기(👤 2026-10-22 「가」) — 목록 줄 두 줄(이름 전체 · 말줄임 0) · 주소는 길 이름부터 · 안쪽 굴림 0(왼쪽 칸 굴림 하나) ·
     검색칸 안내 글 짧게(잘림 0). ⓘ 상권 건물 목록·화면 밖 표지는 지도 키가 없어 여기서 안 선다 → vitest CSS 가드(App.wide.test).
   */
-  test('CC. 왼쪽 칸 다듬기 — 1280·1024 두 칸: 이름 말줄임 0(두 줄 · 점포·층 줄은 이름 아래) · 주소 길 이름부터 · 목록 안쪽 굴림 0 · 안내 글 잘림 0 · 가로 넘침 0 · 1000 한 열 · 휴대폰은 그대로', async ({
+  test('CC. 왼쪽 칸 다듬기 — 1280·1024 두 칸: 안내 글 잘림 0 · 예시 줄 · 주소 길 이름부터 · 왼쪽 칸엔 목록 0(→ CD 오른쪽 표) · 가로 넘침 0 · 1000 한 열 · 휴대폰은 그대로', async ({
     page,
   }, testInfo) => {
     // 왼쪽 칸(약 370px 글 자리)보다 긴 이름 — 1280 에서도 한 줄에 안 들어가 두 줄로 넘어가야 한다.
@@ -5193,42 +5206,21 @@ test.describe('PC 두 칸', () => {
       });
       expect(leadDots, `${width} 줄 맨 앞 가운뎃점`).toEqual([]);
 
-      // L1 — 이름 말줄임 0(건물 결과 · 가게 결과 전부) · 점포·층 줄은 이름 아래.
-      for (const sel of ['.hit__name', '.stores__name']) {
-        const cut = await page.locator(sel).evaluateAll((els) => els.filter((e) => e.scrollWidth > e.clientWidth + 0.5).length);
-        expect(cut, `${width} ${sel} 잘림`).toBe(0);
-      }
-      const first = page.locator('.hit').first();
-      const nm = (await first.locator('.hit__name').boundingBox())!;
-      const meta = (await first.locator('.hit__meta').boundingBox())!;
-      expect(meta.y).toBeGreaterThanOrEqual(nm.y + nm.height - 1);
-      expect(nm.height).toBeGreaterThan(30); // 긴 이름은 줄을 넘긴다(두 줄 이상)
-      // 층 글(「지하 3층 ~ 12층 · 15개 층」)은 잘리지 않는다.
-      expect(await first.locator('.hit__meta').evaluate((e) => e.scrollWidth - e.clientWidth)).toBeLessThanOrEqual(0.5);
+      // 👤 2026-10-22 방법 나 — 목록은 왼쪽 칸에 안 선다(오른쪽 표 · L1 두 줄·L3 굴림 하나는 걷었다 → 오른쪽 자리·말줄임 0·굴림 하나는 CD).
+      await expect(page.locator('.entry').locator('.hit, .stores__row, .dbld__row')).toHaveCount(0);
 
-      // L2 — 고른 구 주소는 길 이름부터 · 다른 구는 그대로.
+      // L2 — 고른 구 주소는 길 이름부터 · 다른 구는 그대로(오른쪽 표에서도 같은 글).
       await expect(page.locator('.hit__addr').nth(0)).toHaveText('테헤란로 100');
       await expect(page.locator('.hit__jibun').nth(0)).toHaveText('지번 역삼동 823-4');
-      const other = page.locator('.hit__addr').nth(1);
-      await expect(other).toHaveText(OTHER_GU);
-      // 아주 긴 다른 구 주소 = 끝이 줄어든다(줄은 왼쪽 칸 안 — 아래 가로 넘침 0).
-      expect(await other.evaluate((e) => e.scrollWidth - e.clientWidth)).toBeGreaterThan(0);
+      await expect(page.locator('.hit__addr').nth(1)).toHaveText(OTHER_GU);
       await expect(page.locator('.stores__addr').first()).toHaveText('테헤란로 300');
 
-      // L3 — 목록 안쪽 굴림 0 · 굴림은 왼쪽 칸 하나 · 왼쪽 칸·문서 가로 넘침 0.
-      for (const sel of ['.hits', '.stores']) {
-        const inner = await page
-          .locator(sel)
-          .evaluate((el) => ({ oy: el.ownerDocument.defaultView!.getComputedStyle(el).overflowY, extra: el.scrollHeight - el.clientHeight }));
-        expect(inner.oy, `${width} ${sel}`).toBe('visible');
-        expect(inner.extra, `${width} ${sel}`).toBeLessThanOrEqual(0);
-      }
+      // 왼쪽 칸 굴림은 칸 안 하나 · 왼쪽 칸·문서 가로 넘침 0.
       const pane = await page.locator('.entry').evaluate((el) => ({
         oy: el.ownerDocument.defaultView!.getComputedStyle(el).overflowY,
-        tall: el.scrollHeight > el.clientHeight,
         wide: el.scrollWidth - el.clientWidth,
       }));
-      expect(pane).toEqual({ oy: 'auto', tall: true, wide: 0 });
+      expect(pane).toEqual({ oy: 'auto', wide: 0 });
       expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
       await page.screenshot({ path: testInfo.outputPath(`cc-left-${width}.png`) });
     }
@@ -5245,6 +5237,237 @@ test.describe('PC 두 칸', () => {
     expect(one).toEqual({ mh: '320px', oy: 'auto' });
     await expect(page.locator('.search__eg')).toHaveCount(0);
     expect(await page.locator('.hit__name').first().evaluate((el) => el.ownerDocument.defaultView!.getComputedStyle(el).whiteSpace)).toBe('nowrap');
+  });
+
+  /*
+    방법 나(👤 2026-10-22 · R1~R7) — 검색 결과·가게 이름 결과는 PC 두 칸에서 오른쪽 넓은 칸에 표(이름 · 길 주소 · 층 · 점포)로 선다.
+    목록에서 고르면 오른쪽 = 건물 + 「← 목록으로(…)」 · 브라우저 뒤로가기도 목록으로(굴린 자리 그대로) · 목록 위 「← 보던 건물(이름)로」.
+    ⓘ 상권 건물 목록·지도 칸 높이는 지도 키가 없어 여기서 안 선다 → vitest(App.wide.test 배선 · CSS 가드).
+  */
+  test('CD. 오른쪽 목록 — 1280·1024 두 칸: 목록이 오른쪽 표 네 칸(한 줄 · 이름 말줄임 0 · 점포 오른쪽 맞춤) · 왼쪽엔 목록 0 · 고르면 건물 + 「← 목록으로」 · 뒤로가기·단추로 오가기(굴린 자리 그대로) · 종이 = 건물 · 휴대폰은 그대로', async ({
+    page,
+  }, testInfo) => {
+    const LONG = '아주아주긴이름의강남역삼테헤란로제일종합상가빌딩신관동과구관동과별관동부속동';
+    const hits = [
+      searchHit({ bld_nm: LONG, road_addr: '서울특별시 강남구 테헤란로 100', jibun_addr: '서울특별시 강남구 역삼동 823-4', bld_cnt_in_pnu: 3, min_floor: -3, max_floor: 12, floor_cnt: 15, total_cnt: 25 }),
+      // 건물 번호는 진짜 꼴(19자리_번호) — 주소 쓰기가 그 꼴만 적는다(`urlState` BLD_RE).
+      ...Array.from({ length: 24 }, (_, i) =>
+        searchHit({ bld_id: `11680101001000${String(i).padStart(5, '0')}_${1000 + i}`, bld_nm: `역삼빌딩${i + 1}`, road_addr: `서울특별시 강남구 테헤란로 ${200 + i}`, jibun_addr: `서울특별시 강남구 역삼동 ${900 + i}`, total_cnt: 25 }),
+      ),
+    ];
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, hits);
+    await mockJson(
+      page,
+      SEARCH_STORES_PATTERN,
+      Array.from({ length: 3 }, (_, i) =>
+        storeHit({ pnu: `11680101001000${String(i).padStart(5, '0')}`, bld_id: `s${i}`, bld_nm: `가게건물${i}`, road_addr: `서울특별시 강남구 테헤란로 ${300 + i}`, match_store_cnt: 10 ** i, total_parcel_cnt: 3, total_store_cnt: 111 }),
+      ),
+    );
+    await mockFloorStack(page);
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await expect(page.getByRole('button', { name: new RegExp(LONG) })).toBeVisible();
+
+    if (!(await isTwoCols(page))) {
+      // 휴대폰 = 변화 0 — 결과는 찾기 탭 검색칸 아래 지금 꼴(표 머리·칸 이름표·오른쪽 자리 0).
+      await expect(page.locator('.entry .hit')).toHaveCount(25);
+      await expect(page.locator('section.rlist, .rtable__head, .rcell')).toHaveCount(0);
+      return;
+    }
+
+    const rlist = page.locator('section.rlist');
+    // ⓘ e2e 타입 설정엔 DOM 이 없다 — 창 굴림 값은 globalThis 로 읽는다(BA 와 같은 꼴).
+    const readScrollY = () => page.evaluate(() => (globalThis as unknown as { scrollY: number }).scrollY);
+    const row = (name: string) => rlist.locator('.hit').filter({ has: page.locator('.hit__name', { hasText: new RegExp(`^${name}$`) }) });
+    for (const width of [1280, 1024]) {
+      await page.setViewportSize({ width, height: 800 });
+      // R1 — 목록은 오른쪽 칸(왼쪽 칸 오른쪽 끝보다 오른쪽) · 왼쪽 칸엔 목록 0.
+      await expect(rlist).toBeVisible();
+      await expect(page.locator('.entry').locator('.hit, .stores__row')).toHaveCount(0);
+      const entryBox = (await page.locator('.entry').boundingBox())!;
+      const listBox = (await rlist.boundingBox())!;
+      expect(listBox.x, `${width} 오른쪽 칸`).toBeGreaterThan(entryBox.x + entryBox.width);
+      // R4 — 건물 검색 결과 표는 세 칸(👤 2026-10-22 「검색 결과는 세 칸」 — 점포 칸 자체가 없다) · 가게 이름 표는 네 칸 ·
+      //   줄마다 칸이 한 줄(칸 위 끝이 같다 · 왼쪽부터 차례) · 이름 칸은 이름 머리와 같은 자리.
+      await expect(rlist.locator('.rtable__head').first().locator('.rcell')).toHaveText(['이름', '길 주소', '층']);
+      // 가게 이름 표도 세 칸(👤 2026-10-23 D4 「빈 층 칸을 빼고 이름·길 주소·일치 가게 세 칸」).
+      await expect(rlist.locator('.search__stores .rtable__head .rcell')).toHaveText(['이름', '길 주소', '일치 가게']);
+      await expect(rlist.locator('.stores__row').first().locator(':scope > .rcell')).toHaveCount(3);
+      // 「목록 닫기 ✕」(👤 10-23 D2) — 목록 머리 줄 오른쪽 끝 · 44px 이상.
+      const closeBox = (await rlist.getByRole('button', { name: '목록 닫기' }).boundingBox())!;
+      expect(closeBox.height).toBeGreaterThanOrEqual(44);
+      expect(Math.abs(closeBox.x + closeBox.width - (listBox.x + listBox.width))).toBeLessThan(2);
+      await expect(rlist.locator('.hits .rcell--store')).toHaveCount(0);
+      const cells = await row(LONG).locator('.rcell').evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).map((r) => ({ x: r.x, y: r.y, w: r.width })));
+      expect(cells).toHaveLength(3);
+      // 셋째(층) 칸이 줄 오른쪽 끝까지 — 빈 넷째 자리가 남지 않는다(줄 안쪽 오른쪽 여백 = 줄 왼쪽 여백 · 2px 안).
+      const rowBox = (await row(LONG).boundingBox())!;
+      expect(Math.abs(rowBox.x + rowBox.width - (cells[2].x + cells[2].w) - (cells[0].x - rowBox.x)), `${width} 세 칸 꽉 참`).toBeLessThan(2);
+      for (let i = 1; i < 3; i += 1) {
+        expect(Math.abs(cells[i].y - cells[0].y), `${width} 칸 ${i} 같은 줄`).toBeLessThan(4);
+        expect(cells[i].x, `${width} 칸 ${i} 차례`).toBeGreaterThan(cells[i - 1].x + cells[i - 1].w - 1);
+      }
+      const headName = (await rlist.locator('.rtable__head').first().locator('.rcell--name').boundingBox())!;
+      expect(Math.abs(headName.x - cells[0].x)).toBeLessThan(2);
+      // 이름 말줄임 0(긴 이름은 칸 안에서 줄을 넘긴다) · 층 글 잘림 0 · 주소 칸 아래 지번·「같은 땅에 3동」.
+      for (const sel of ['.hit__name', '.stores__name', '.hit__meta', '.hit__addr']) {
+        const cut = await rlist.locator(sel).evaluateAll((els) => els.filter((e) => e.scrollWidth > e.clientWidth + 0.5).length);
+        expect(cut, `${width} ${sel} 잘림`).toBe(0);
+      }
+      await expect(row(LONG).locator('.rcell--addr > *')).toHaveText(['테헤란로 100', '지번 역삼동 823-4', '같은 땅에 3동']);
+      await expect(row(LONG).locator('.rcell--floor')).toHaveText('지하 3층 ~ 12층 · 15개 층');
+      // 점포 칸 = 오른쪽 맞춤(가게 이름 결과 · 1 · 10 · 100곳) — 글 오른쪽 끝이 칸 오른쪽 끝에 붙는다.
+      const storeCells = rlist.locator('.stores__row .rcell--store');
+      await expect(storeCells).toHaveText(['이 땅에 가게 1곳 일치', '이 땅에 가게 10곳 일치', '이 땅에 가게 100곳 일치']);
+      const rightGap = await storeCells.evaluateAll((els) =>
+        els.map((e) => {
+          const range = e.ownerDocument.createRange();
+          range.selectNodeContents(e);
+          const rects = Array.from(range.getClientRects()) as { right: number }[];
+          return e.getBoundingClientRect().right - Math.max(...rects.map((r) => r.right));
+        }),
+      );
+      for (const g of rightGap) expect(g, `${width} 점포 오른쪽 맞춤`).toBeLessThan(2);
+      // 13px 이상 · 가로 넘침 0(오른쪽 칸 · 문서).
+      for (const sel of ['.hit__jibun', '.hit__warn', '.rtable__head']) await expect(rlist.locator(sel).first()).toHaveCSS('font-size', '13px');
+      expect(await rlist.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+      expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+      await page.screenshot({ path: testInfo.outputPath(`cd-list-${width}.png`), fullPage: true });
+    }
+
+    // R3 — 목록을 내려 고른다 → 오른쪽 = 건물(맨 위) + 「← 목록으로(테헤란로 검색)」(수 없음 · 할루 🟡a) · 목록은 숨음.
+    await page.setViewportSize({ width: 1280, height: 720 });
+    const pick = row('역삼빌딩20');
+    await pick.scrollIntoViewIfNeeded();
+    const listY = await readScrollY();
+    expect(listY).toBeGreaterThan(200);
+    await pick.click();
+    await expect(page.locator('section.stack')).toBeVisible();
+    await expect(rlist).toBeHidden();
+    const backBtn = page.getByRole('button', { name: '목록으로(테헤란로 검색)' });
+    await expect(backBtn).toBeVisible();
+    await expect(backBtn).toHaveText('← 목록으로(테헤란로 검색)');
+    await expect(page).toHaveURL(/bld=1168010100100000019_1019/);
+    expect(await readScrollY()).toBeLessThan(5);
+    const bldTop = (await backBtn.boundingBox())!;
+    expect(bldTop.y).toBeLessThan(200); // 건물 맨 위(단추 → 담아 가기 → 층별 머리)
+    await page.screenshot({ path: testInfo.outputPath('cd-building-1280.png') });
+
+    // 브라우저 뒤로가기 = 목록(보던 자리 그대로 · 주소 꼴 그대로) · 커서 = 「← 보던 건물로」.
+    await page.goBack();
+    await expect(rlist).toBeVisible();
+    await expect(page.locator('section.stack')).toBeHidden();
+    await expect.poll(() => readScrollY()).toBeGreaterThan(listY - 3);
+    expect(Math.abs((await readScrollY()) - listY)).toBeLessThan(3);
+    const toBld = page.getByRole('button', { name: '보던 건물(역삼빌딩20)로' });
+    await expect(toBld).toBeFocused();
+    // 주소 꼴 그대로 — 건물은 쥐고 있으니 목록 보기에서도 같은 건물 주소(목록 상태는 안 싣는다 · 결정 0019).
+    await expect(page).toHaveURL(/\?sgg=11680&bld=1168010100100000019_1019$/);
+    // 「← 보던 건물로」 → 건물 · 다시 「← 목록으로」 단추 → 목록(같은 자리). ⓘ 커서가 이미 단추에 있어 자판으로 누른다 — 마우스 click 은
+    //   화면 밖(목록 맨 위) 단추를 먼저 화면 안으로 굴려 '보던 자리'를 바꿔 버린다(시험이 만드는 굴림).
+    await page.keyboard.press('Enter');
+    await expect(page.locator('section.stack')).toBeVisible();
+    await expect(backBtn).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(rlist).toBeVisible();
+    await expect(toBld).toBeFocused();
+    await expect.poll(() => readScrollY()).toBeGreaterThan(listY - 3);
+    expect(Math.abs((await readScrollY()) - listY)).toBeLessThan(3);
+
+    // 종이 — 목록이 오른쪽에 선 채 뽑아도 종이 = 건물(목록·「← 보던 건물로」 빠짐 · 건물 머리 보임).
+    await page.emulateMedia({ media: 'print' });
+    await expect(rlist).toBeHidden();
+    await expect(page.locator('section.stack .stack__head')).toBeVisible();
+    await expect(page.locator('.rback')).toHaveCount(0); // 목록 보기 중엔 「← 목록으로」 자체가 없다
+    await page.emulateMedia({ media: null });
+    // 건물 보기에서 뽑아도 「← 목록으로」는 종이에 없다.
+    await toBld.click();
+    await page.emulateMedia({ media: 'print' });
+    await expect(page.locator('.rback')).toBeHidden();
+    await expect(page.locator('section.stack .stack__head')).toBeVisible();
+    await page.emulateMedia({ media: null });
+
+    // 1000 한 열 = 변화 0 — 결과는 입구 검색칸 아래 지금 꼴(오른쪽 자리·표 0).
+    await page.setViewportSize({ width: 1000, height: 768 });
+    await expect(page.locator('section.rlist, .rtable__head, .rback')).toHaveCount(0);
+  });
+
+  /*
+    👤 2026-10-23 D3 「지도와 「누른 자리」가 굴리지 않고 첫 화면에 들어오게」 — E2E 엔 지도 키가 없어 지도 칸·범례·누른 자리가 안 선다.
+    그래서 지도 덩어리 안에 그 셋을 **진짜와 같은 이름표**로 세워(`DistrictMap` 의 카드 꼴 · `PickedList` 의 「누른 자리 (1곳):」 + 상권 단추 하나 ·
+    범례 다섯 유형) 실제 CSS 가 정한 높이·자리를 잰다 — 「누른 자리」 줄의 아래 끝이 첫 화면(굴리기 전) 안 · 지도 칸 300px 이상.
+  */
+  test('CE. 지도 첫 화면 — 1280×900 · 1024×768 · 1440×900 · 1920×1080 두 칸에서 지도 칸(300px 이상)과 「누른 자리」 줄 아래 끝이 굴리지 않고 첫 화면 안 · 휴대폰·1000 은 그대로', async ({
+    page,
+  }, testInfo) => {
+    await mockOpenSigungu(page);
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    if (!(await isTwoCols(page))) {
+      // 휴대폰 = 변화 0(지도 탭 가득 · 이 규칙은 두 칸 묶음 안).
+      await expect(page.locator('.app')).not.toHaveClass(/app--wide/);
+      return;
+    }
+    const PROBE = [
+      '<div class="dmap__canvas" data-probe="1"></div>',
+      '<ul class="dmap__legend" data-probe="1">',
+      ...['골목상권', '발달상권', '전통시장', '관광특구', '주요상권'].map((t) => `<li><span class="dmap__swatch"></span>${t}</li>`),
+      '</ul>',
+      '<div class="dmap__picked" data-probe="1"><span class="dmap__picked-key">누른 자리 (1곳):</span>',
+      '<ul class="dmap__picked-list"><li><button type="button" class="dmap__picked-btn"><span class="dmap__swatch"></span>',
+      '<span class="dmap__picked-nm">대전향촌우편취급국</span><span class="dmap__picked-ty">골목상권</span></button></li></ul></div>',
+    ].join('');
+    // 위를 줄인 두 가지(👤 10-23 D3) — 「왼쪽 칸 접기」는 사이트 제목 줄(제목 바로 옆 · 같은 줄) · 역할 안내 글은 보이는 줄 0(단추 설명으로 · 글자 그대로).
+    const fold = page.locator('.app__head .entry__fold');
+    await expect(fold).toBeVisible();
+    await expect(page.locator('.entry .entry__fold')).toHaveCount(0);
+    const titleBox = (await page.locator('.app__head .app__title').boundingBox())!;
+    const foldBox = (await fold.boundingBox())!;
+    expect(Math.abs(foldBox.y + foldBox.height / 2 - (titleBox.y + titleBox.height / 2))).toBeLessThan(12);
+    expect(foldBox.x).toBeGreaterThan(titleBox.x + titleBox.width);
+    expect(foldBox.height).toBeGreaterThanOrEqual(44);
+    await expect(page.locator('.entry .role__note')).toBeHidden();
+    await expect(page.locator('.entry .role__chip').first()).toHaveAttribute('title', '고르면 화면 순서가 맞춰집니다 · 이 기기에만 저장 · 다시 누르면 해제');
+
+    type Probe = { canvasTop: number; canvasH: number; pickedBottom: number };
+    const measure = (w: number, h: number) =>
+      page.locator('.entry section.dmap').evaluate((sec, html): Probe => {
+        // ⓘ e2e 타입 설정엔 DOM 이 없다 — 쓰는 것만 좁게 적는다.
+        type El = { remove(): void; hidden: boolean; getBoundingClientRect(): { top: number; height: number; bottom: number } };
+        const root = sec as unknown as {
+          ownerDocument: { defaultView: { scrollTo(x: number, y: number): void } };
+          querySelectorAll(s: string): { forEach(f: (e: El) => void): void };
+          querySelector(s: string): El;
+          insertAdjacentHTML(at: string, html: string): void;
+        };
+        root.ownerDocument.defaultView.scrollTo(0, 0);
+        root.querySelectorAll('[data-probe]').forEach((e) => e.remove());
+        root.querySelectorAll(':scope > .msg').forEach((e) => {
+          e.hidden = true;
+        });
+        root.insertAdjacentHTML('beforeend', html);
+        const box = (s: string) => root.querySelector(s).getBoundingClientRect();
+        return { canvasTop: box('.dmap__canvas').top, canvasH: box('.dmap__canvas').height, pickedBottom: box('.dmap__picked').bottom };
+      }, PROBE).then((m) => ({ ...m, w, h }));
+
+    const rows: string[] = [];
+    for (const [w, h] of [[1280, 900], [1024, 768], [1440, 900], [1920, 1080]] as const) {
+      await page.setViewportSize({ width: w, height: h });
+      await expect(page.locator('.app')).toHaveClass(/app--wide/);
+      const m = await measure(w, h);
+      rows.push(`${w}×${h} 지도 y ${Math.round(m.canvasTop)} 높이 ${Math.round(m.canvasH)} · 누른 자리 아래 끝 ${Math.round(m.pickedBottom)}`);
+      expect.soft(m.canvasH, `${w}×${h} 지도 칸 300px 이상`).toBeGreaterThanOrEqual(299.5);
+      expect.soft(m.canvasH, `${w}×${h} 지도 칸 상한 640px`).toBeLessThanOrEqual(640.5);
+      // ⓘ 1024×768 은 위를 줄여도 들지 않는다(지도 300 · 아래 끝 약 887 — 👤 10-23 「억지로 더 빼지 말 것 · 숫자와 함께 보고」) → 숫자만 남긴다.
+      if (w !== 1024) expect.soft(m.pickedBottom, `${w}×${h} 누른 자리 아래 끝 ≤ 창 높이`).toBeLessThanOrEqual(h);
+      await page.screenshot({ path: testInfo.outputPath(`ce-map-${w}x${h}.png`) });
+    }
+    // 큰 창은 지도가 더 크다(남는 높이를 받는다 — 1920×1080 은 300 보다 크다).
+    const big = await measure(1920, 1080);
+    expect(big.canvasH).toBeGreaterThan(400);
+    testInfo.annotations.push({ type: '지도 첫 화면', description: rows.join(' / ') });
   });
 });
 

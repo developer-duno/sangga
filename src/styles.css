@@ -4948,6 +4948,10 @@ body {
   .lrail__btn,
   .mapprint,
   .regionfold__btn,
+  /* PC 두 칸 오른쪽 목록 위 「← 보던 건물로」 · 건물 위 「← 목록으로」(👤 2026-10-22 방법 나 — 1024px 이상에서만 그려진다). */
+  .rlist__back,
+  .rlist__close,
+  .rback__btn,
   /* 휴대폰 지도 탭 띠 · 끌어올리는 판의 손잡이·접기 · 홈 화면 추가 단추(결정 0039 W4b — 휴대폰에서만 그려진다). */
   .rstrip__btn,
   .dsheet__handle,
@@ -5070,15 +5074,63 @@ body {
     display: none;
   }
 
-  /* 지도 칸은 왼쪽 폭에 맞춰 낮춘다(기본 420px → 300px). */
-  .app--wide .entry .dmap__canvas {
-    height: 300px;
+  /* 지도 칸 높이 = 왼쪽 칸의 남은 높이(👤 2026-10-23 D3 「위를 줄여 올리기」 — 「지도는 남은 높이(최소 300px)」 · 옛 방법 나 R5 의
+     `clamp(300px, 100vh - 360px, 560px)` 는 지도 위 덩어리를 셈에 못 넣어 「누른 자리」가 첫 화면 밖이었다 — 1280×900 아래 끝 1208).
+     왼쪽 칸 = 세로 flex · 높이 = 첫 화면에서 본문 위 끝(`--wide-top` — App 이 잰다) 아래 남은 높이 → 지도 덩어리가 남는 높이를 받고 그 안에서
+     지도 칸이 범례·누른 자리·출처를 뺀 나머지를 채운다(최소 300px · 큰 창 상한 640px — 왼쪽 칸 폭 400px 안팎에 세로로 너무 길면 지도가 기둥 꼴이 된다 ·
+     구현자 판단). 남는 높이가 모자라면 300px 에서 멈추고 왼쪽 칸 안에서 굴린다(지금처럼).
+     ⓘ 칸 크기가 바뀌면(지역 칩 상자 펼침 · 창 크기) `DistrictMapBody` 가 relayout 을 직접 부른다(칸 크기 감시 + 창 크기 · 디바운스 하나 · 보완 3 —
+       공식 문서 https://apis.map.kakao.com/web/documentation/#Map_relayout 의 「window의 resize 이벤트에 대해서는 자동으로 호출한다」에 기대지 않는다) ·
+     숨었다 보이는 때는 W4b 배선 그대로. 종이 높이는 화면에서 그린 높이(`--dmap-h` · 인쇄 묶음). */
+  .app--wide .app__main > .entry {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - var(--wide-top, 0px) - 16px);
   }
 
-  /* 왼쪽 칸 머리 「왼쪽 칸 접기 ‹」 — 지역 줄 위(S1 바 대신 · 44px 는 위 '누르는 것' 목록). */
+  .app--wide .app__main > .entry > * {
+    flex: none;
+  }
+
+  .app--wide .app__main > .entry > .dmap:not([hidden]) {
+    display: flex;
+    flex: 1 0 auto;
+    flex-direction: column;
+  }
+
+  .app--wide .app__main > .entry > .dmap > * {
+    flex: none;
+  }
+
+  /* ⛔ 선택자 무게를 위 `> .dmap > *`(flex: none) 보다 높게 — 같으면 지도 칸이 자라지 않는다. */
+  .app--wide .app__main > .entry > .dmap > .dmap__canvas {
+    flex: 1 0 300px;
+    height: auto;
+    min-height: 300px;
+    max-height: 640px;
+  }
+
+  /* 「왼쪽 칸 접기 ‹」 — 👤 2026-10-23 D3 로 왼쪽 칸 머리에서 사이트 제목 줄 옆으로(S1 바 대신 · 44px 는 위 '누르는 것' 목록).
+     제목 줄 = 감싸는 flex 줄 — 제목 → 접기 단추 → 소개 한 줄(줄 전체 · 다음 줄). ⓘ 왼쪽 칸 오른쪽 끝에 두면 1024 에서 제목과 겹친다(왼쪽 칸 약 317px). */
+  .app--wide .app__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: 16px;
+  }
+
+  .app--wide .app__head > .entry__fold {
+    order: 1;
+  }
+
+  .app--wide .app__head > .app__sub {
+    order: 2;
+    flex: 0 0 100%;
+  }
+
   .entry__fold {
     display: block;
-    margin: 0 0 12px auto;
+    margin: 0 0 6px;
     padding: 0 14px;
     border: 1px solid var(--line);
     border-radius: 999px;
@@ -5152,86 +5204,153 @@ body {
        W5 보완 F1 의 「왼쪽 칸 세로 쌓기」 규칙은 걷었다.
      ⛔ 글은 빼지 않는다 — 자리·줄만 바꾼다(L7). 주소 앞 시·구 빼기(L2)는 CSS 가 아니라 `shortAddr`(App 이 두 칸일 때만 넘긴다). */
 
-  /* L3 굴림 하나 — 목록 안쪽 굴림(검색 결과 320 · 가게 이름 320 · 상권 건물 360)을 풀어 왼쪽 칸 굴림 하나로.
-     ⛔ 목록 칸 폭을 왼쪽 칸 폭에 묶는다(`minmax(0, 1fr)`) — 저절로 생기는 칸(auto)은 줄 안 한 줄 글(아주 긴 주소)의 최소 폭만큼 늘어나
-        줄이 왼쪽 칸 밖으로 넘친다(말줄임도 안 걸린다). */
-  .app--wide .entry .hits,
-  .app--wide .entry .stores,
-  .app--wide .entry .dbld__list {
+  /* ── 오른쪽 목록(👤 2026-10-22 방법 나 · 분석 페이지 RgXTDKCXH9ACziRd8rhvek) ─────────────────────────────────────
+     검색 결과·가게 이름 결과·상권 건물 목록은 오른쪽 넓은 칸(`.rlist` — App 이 맨 뒤에 둔다 · 부품이 포털로 그려 넣는다)에 표로 선다.
+     ⓘ 왼쪽 칸 다듬기(가)의 L1 두 줄·L3 굴림 하나 규칙은 걷었다 — 두 칸에서 왼쪽 칸에 목록이 안 선다(규칙이 맞출 줄이 없다).
+     ⛔ 글은 빼지 않는다 — 자리만(R7). 휴대폰·한 열은 목록이 지금 자리·지금 꼴 그대로(포털 0 · 이 묶음 밖).
+     ⛔ 숨김은 화면 묶음(여기)에만 — 종이는 이 묶음이 안 먹어 건물 그대로 나오고 목록(`.rlist`)은 인쇄 감춤 목록이 뺀다(종이 = 건물). */
+
+  /* 오른쪽이 목록이면(`.app--wlist`) 오른쪽의 다른 덩어리(건물·「← 목록으로」·안내·입구 카드·큰 카드)는 숨긴다 — 숨기기만(건물 상태 그대로). */
+  .app--wide.app--wlist .app__main > :not(.entry):not(.lrail):not(.rlist) {
+    display: none;
+  }
+
+  /* 오른쪽 머리 단추 — 목록 위 「← 보던 건물(이름)로」(R2) · 건물 위 「← 목록으로(…)」(R3). 44px 는 위 '누르는 것' 목록. */
+  .rback {
+    margin: 0 0 12px;
+  }
+
+  /* 「찾는 중…」(보완 3) — 답이 오기 전 오른쪽 목록 자리의 한 줄(낭독 자리 `.msg--live` 안 · 13px). */
+  .rlist__loading {
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  /* 목록 머리 줄 — 「← 보던 건물로」 왼쪽 · 「목록 닫기 ✕」 오른쪽 끝(👤 2026-10-23 D2). */
+  .rlist__bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    margin: 0 0 12px;
+  }
+
+  .rlist__back,
+  .rlist__close,
+  .rback__btn {
+    margin: 0;
+    padding: 0 14px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--card);
+    color: var(--text);
+    font: inherit;
+    font-size: 14px;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  /* 닫기는 머리 줄 오른쪽 끝(위 공통 규칙의 margin 뒤에 둔다 — 앞에 두면 `margin: 0` 이 덮는다). */
+  .rlist__close {
+    margin-left: auto;
+  }
+
+  .rlist__back:hover,
+  .rlist__close:hover,
+  .rback__btn:hover {
+    border-color: var(--accent);
+  }
+
+  /* 목록은 안쪽 굴림 없이 페이지 굴림 하나(오른쪽 칸 · R1 「굴림도 하나」) · 줄 칸 폭은 오른쪽 칸에 묶는다. */
+  .rlist .hits,
+  .rlist .stores,
+  .rlist .dbld__list {
     grid-template-columns: minmax(0, 1fr);
     max-height: none;
     overflow-y: visible;
   }
 
-  /* L1 목록 줄 두 줄 — 첫 줄 = 건물 이름 전체(길면 줄 넘김 · 말줄임 0) · 둘째 줄 = 점포·층(넘치면 줄 넘김) · 주소(끝은 잘려도 됨).
-     DOM 차례(이름·주소·…·점포)는 그대로 두고 자리만(`order`) — 휴대폰·한 열의 세 칸 grid 는 손대지 않는다. */
-  .app--wide .entry .hit,
-  .app--wide .entry .dbld__row,
-  .app--wide .entry .stores__row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 2px 6px;
+  /* R4 표 — 머리 줄과 줄마다 같은 네 칸: 이름 · 길 주소 · 층 · 점포. ⓘ 1024 오른쪽 칸(약 600px 글 자리)에서도 층·점포 칸이 최소 폭을 지킨다. */
+  .rtable__head,
+  .rlist .hit,
+  .rlist .stores__row,
+  .rlist .dbld__row {
+    display: grid;
+    gap: 4px 14px;
+    /* 칸 위 끝 맞춤 — 기준선 맞춤이면 빈 칸(검색 결과의 점포 칸)이 아래로 내려앉는다(E2E CD 실측 18px). */
+    align-items: start;
   }
 
-  .app--wide .entry .hit__name,
-  .app--wide .entry .dbld__name,
-  .app--wide .entry .stores__name {
-    flex: 0 0 100%;
+  /* 네 칸 — 상권 건물 목록(점포 칸 = 그 땅 점포). */
+  .rtable__head,
+  .rlist .dbld__row {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 2fr) minmax(9em, 1.4fr) minmax(7em, 1.2fr);
+  }
+
+  /* 세 칸 — 건물 검색 결과 = 이름 · 길 주소 · 층(👤 2026-10-22 「검색 결과는 세 칸」 — 서버가 점포 수를 안 준다) ·
+     가게 이름 결과 = 이름 · 길 주소 · 일치 가게(👤 2026-10-23 D4 — 서버가 층 범위를 안 준다). 빈 칸·「–」 0. */
+  .rtable__head--3,
+  .rlist .hit,
+  .rlist .stores__row {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 2fr) minmax(9em, 1.4fr);
+  }
+
+  .rtable__head {
+    padding: 0 15px 6px;
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  /* 칸 하나 = 위아래로 쌓인 글(주소 칸: 도로명 → 지번 → 「같은 땅에 N동」 · 이름 칸: 이름 → 소유 구조·일치 상호·갈 수 없는 까닭). */
+  .rlist .rcell {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    /* 한글 낱말 가운데서 줄을 꺾지 않는다(「일치」·「15개 층」이 「일 / 치」로 갈리던 것 · 메인 사진 실측) — 아주 긴 낱말(이름)은 아래 anywhere 가 꺾는다. */
+    word-break: keep-all;
+  }
+
+  /* 점포 수는 오른쪽 맞춤 · 자릿수 폭 같게 — 줄끼리 견주기 쉽게(R4). */
+  .rtable__head .rcell--store,
+  .rlist .rcell--store {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 칸 안 글은 말줄임 없이 줄을 넘긴다(이름 말줄임 0 · 칸 폭이 좁으면 칸 안에서 두 줄). */
+  .rlist .hit__name,
+  .rlist .hit__addr,
+  .rlist .hit__jibun,
+  .rlist .hit__meta,
+  .rlist .stores__name,
+  .rlist .stores__addr,
+  .rlist .stores__jibun,
+  .rlist .stores__meta,
+  .rlist .stores__note,
+  .rlist .dbld__name,
+  .rlist .dbld__addr,
+  .rlist .dbld__meta {
     overflow: visible;
     white-space: normal;
     overflow-wrap: anywhere;
   }
 
-  .app--wide .entry .hit__meta,
-  .app--wide .entry .dbld__meta,
-  .app--wide .entry .stores__meta {
-    order: 1;
-    flex: 0 1 auto;
-    max-width: 100%;
-    white-space: normal;
+  /* 작은 글자도 13px 이상(S4 · 화면 묶음 안 — 종이에선 목록이 빠진다). 층 칸 글은 기본 결과 줄의 층 글과 같은 꼴. */
+  .rlist .hit__jibun,
+  .rlist .hit__own,
+  .rlist .hit__warn,
+  .rlist .stores__jibun,
+  .rlist .stores__warn,
+  .rlist .dbld__warn,
+  .rlist .dbld__range,
+  .rlist .dbld__note {
+    font-size: 13px;
   }
 
-  /* 주소는 점포·층 뒤에 잇고 끝을 줄인다(기본 규칙의 말줄임 그대로). 도로명은 제 길이만(지번이 바로 붙게) · 줄의 마지막 칸(지번 ·
-     상권 목록의 도로명)이 남는 자리를 받는다 — 남은 자리가 6em 보다 좁으면 다음 줄로 넘어가 거기서 줄인다. */
-  .app--wide .entry .hit__addr,
-  .app--wide .entry .stores__addr {
-    order: 2;
-    flex: 0 1 auto;
-    min-width: 0;
-  }
-
-  .app--wide .entry .dbld__addr,
-  .app--wide .entry .hit__jibun,
-  .app--wide .entry .stores__jibun {
-    order: 2;
-    flex: 1 1 0;
-    min-width: 6em;
-  }
-
-  .app--wide .entry .hit__jibun,
-  .app--wide .entry .stores__jibun {
-    order: 3;
-  }
-
-  /* 구분점은 **앞 칸의 끝**(`::after`)에 붙인다(보완 1 · 👤 2026-10-22 검사 — 뒤 칸 머리(`::before`)에 두면 그 칸이 다음 줄로 넘어갈 때
-     줄 맨 앞이 「· 지번 …」이 됐다 · 1024 에서 33줄 중 32줄). 점 앞은 줄이 안 바뀌는 공백(`\a0`)이라 점만 따로 다음 줄로 가지 않는다 →
-     어느 폭에서도 점은 윗줄 끝에 남는다. 점포·층 뒤 = 늘(주소 칸은 '주소 없음' 이라도 늘 선다) · 도로명 뒤 = 지번이 이어질 때만.
-     ⓘ 도로명이 끝이 줄어든 꼴이면 그 뒤 점도 말줄임에 가려진다(그때 지번은 다음 줄이라 점이 없어도 갈린다). */
-  .app--wide .entry .hit__meta::after,
-  .app--wide .entry .dbld__meta::after,
-  .app--wide .entry .stores__meta::after,
-  .app--wide .entry .hit__addr:has(+ .hit__jibun)::after,
-  .app--wide .entry .stores__addr:has(+ .stores__jibun)::after {
-    content: '\a0·';
-  }
-
-  /* 줄 전체를 쓰는 덧줄(중개사 소유 구조 · 일치한 상호 · 갈 수 없는 까닭)은 둘째 줄 뒤. */
-  .app--wide .entry .hit__own,
-  .app--wide .entry .stores__names,
-  .app--wide .entry .stores__note {
-    order: 4;
-    flex: 0 0 100%;
+  .rlist .dbld__range {
+    color: var(--muted);
   }
 
   /* 검색칸 바로 아래 예시 한 줄(보완 1 · 👤 2026-10-22 「검색칸 아래 예시 한 줄」) — 두 칸에서만 그린다(BuildingSearch 의 `paneArea`) ·
@@ -5364,6 +5483,10 @@ body {
   .mapprint,
   .rpane-empty,
   .regionfold,
+  /* PC 두 칸 오른쪽 목록 · 건물 위 「← 목록으로」(👤 2026-10-22 방법 나) — 목록이 오른쪽에 선 채 Ctrl+P 를 눌러도 종이 = 건물(건물을 쥐고
+     있으면 · 화면에서 건물을 숨기는 규칙은 화면 묶음에만 있다). 휴대폰·한 열에서 목록이 `.search` 안에서 종이에서 빠지던 것과 같은 결. */
+  .rlist,
+  .rback,
   /* ⛔ PC 두 칸에서 건물을 연 채 뽑으면 종이 = 오른쪽(건물)만(Q5 · 0020) — 왼쪽 칸(지도 포함)을 뺀다. 「상권 지도 넣기」를 켰으면
      (`.app--printmap`) 남기고, 그 안의 역할·지역·검색은 위 줄(`.role`·`.region`·`.search` 등)이 빼서 지도 덩어리만 남는다(§7-2).
      `.app--wide` 는 인쇄 중에도 그대로다(`useIsWide` 가 인쇄 중 값을 얼린다). 721~1023 은 이 이름표가 없어 10-15 규칙 그대로. */
@@ -5526,9 +5649,10 @@ body {
     display: block;
   }
 
-  /* 두 칸에서 종이에 나오는 지도(지도 넣기 · 또는 건물 없이 뽑은 입구)는 화면의 두 칸 높이 그대로. */
+  /* 두 칸에서 종이에 나오는 지도(지도 넣기 · 또는 건물 없이 뽑은 입구)는 화면의 두 칸 높이 그대로 — 그 높이가 창 높이를 따르므로
+     (👤 2026-10-22 R5) 화면에서 그린 높이(`--dmap-h` · `DistrictMapBody` 가 `onIdle` 로 잰다)를 쓴다 · 아직 못 쟀으면 옛 300px. */
   .app--wide .entry .dmap__canvas {
-    height: 300px;
+    height: var(--dmap-h, 300px);
   }
 
   /*

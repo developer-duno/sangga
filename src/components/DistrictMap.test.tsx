@@ -1409,12 +1409,17 @@ describe('DistrictMap — PC 두 칸 보완(W5 보완 1)', () => {
     // 칸이 넓어진 뒤 다시 멈추면 새 폭.
     await idleAt(405, 300);
     expect(canvas().style.getPropertyValue('--dmap-w')).toBe('405px');
+    // 높이도 같은 자리(👤 2026-10-22 방법 나 R5 — 두 칸 지도 칸 높이가 창 높이를 따른다 · 종이는 그린 높이).
+    expect(canvas().style.getPropertyValue('--dmap-h')).toBe('300px');
+    await idleAt(405, 540);
+    expect(canvas().style.getPropertyValue('--dmap-h')).toBe('540px');
     cleanup();
 
     await renderMap({ layout: 'full' });
     await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
     await idleAt(412, 600);
     expect(canvas().style.getPropertyValue('--dmap-w')).toBe('');
+    expect(canvas().style.getPropertyValue('--dmap-h')).toBe('');
   });
 
   it('★ F3 종이 — 「상권 지도 넣기」 종이의 지도 칸 폭 = `var(--dmap-w` (가운데) · 인쇄 묶음 안 · 양성 대조(갈래를 지운 꼴)', async () => {
@@ -1434,6 +1439,38 @@ describe('DistrictMap — PC 두 칸 보완(W5 보완 1)', () => {
     expect(has(cut)).toBe(false);
     // 화면 묶음으로 옮긴 꼴도 못 지난다.
     expect(has(`${cut}\n@media screen {\n  .app--printmap .dmap__canvas { width: var(--dmap-w); margin-left: auto; }\n}`)).toBe(false);
+  });
+
+  it('★ 보완 3 창 크기가 바뀌면 relayout 을 직접 부른다 — 디바운스 하나(여러 번 → 멈춘 뒤 한 번) · 숨은(크기 0) 칸은 안 부름 · 사라지면 듣기를 멈춘다', async () => {
+    await renderMap();
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    // 가짜 SDK 가 지도 객체를 effect 로 건넨 뒤의 다시 그리기까지 마친다(그래야 창 크기를 듣기 시작한다).
+    await act(async () => {});
+    kakao.relayout.mockClear();
+    vi.useFakeTimers();
+    try {
+      // jsdom 의 칸 크기는 늘 0 — 숨은 칸과 같다 → 안 부른다.
+      window.dispatchEvent(new Event('resize'));
+      vi.advanceTimersByTime(200);
+      expect(kakao.relayout).not.toHaveBeenCalled();
+      // 보이는 칸(400×500)에서 창을 끌어 세 번 바꾼다 — 멈춘 뒤 한 번만.
+      Object.defineProperty(canvas(), 'clientWidth', { value: 400, configurable: true });
+      Object.defineProperty(canvas(), 'clientHeight', { value: 500, configurable: true });
+      for (let i = 0; i < 3; i += 1) {
+        window.dispatchEvent(new Event('resize'));
+        vi.advanceTimersByTime(50);
+      }
+      expect(kakao.relayout).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(200);
+      expect(kakao.relayout).toHaveBeenCalledTimes(1);
+      // 사라진 뒤의 창 크기 변화는 안 듣는다.
+      cleanup();
+      window.dispatchEvent(new Event('resize'));
+      vi.advanceTimersByTime(200);
+      expect(kakao.relayout).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('★ F7 숨은 채(왼쪽 칸 접힘) 건물을 여러 번 바꿔도 relayout 0 — 다시 보일 때 한 번', async () => {

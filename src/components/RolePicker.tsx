@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { VIEWER_ROLES, type ViewerRole } from '../lib/sectionCards';
 
 /**
@@ -12,9 +13,19 @@ import { VIEWER_ROLES, type ViewerRole } from '../lib/sectionCards';
 type Props = {
   role: ViewerRole | null;
   onChange: (role: ViewerRole | null) => void;
+  /**
+   * 안내 글을 눈에 보이는 줄 대신 단추 설명으로 — PC 두 칸 왼쪽 칸(👤 2026-10-23 D3 「위를 줄여 올리기」 — 「역할 줄 아래 안내 글을 두 칸에서는
+   * 역할 단추에 마우스를 올리면 보이는 설명으로 넣습니다」). 단추마다 마우스를 올리면 보이는 `title` + 낭독기용 `aria-describedby`(숨은 같은 글).
+   * ⓘ 글자는 그대로 · 휴대폰·한 열은 지금처럼 보이는 줄.
+   */
+  noteAsTip?: boolean;
 };
 
-export function RolePicker({ role, onChange }: Props) {
+/** 역할 안내 글 — 보이는 줄과 단추 설명이 같은 글(한 곳). */
+export const ROLE_NOTE = '고르면 화면 순서가 맞춰집니다 · 이 기기에만 저장 · 다시 누르면 해제';
+
+export function RolePicker({ role, onChange, noteAsTip = false }: Props) {
+  const noteId = useId();
   return (
     <section className="role" aria-label="역할 고르기">
       <span className="role__lead">나는</span>
@@ -27,6 +38,8 @@ export function RolePicker({ role, onChange }: Props) {
                 type="button"
                 className={`role__chip${on ? ' role__chip--on' : ''}`}
                 aria-pressed={on}
+                title={noteAsTip ? ROLE_NOTE : undefined}
+                aria-describedby={noteAsTip ? noteId : undefined}
                 onClick={() => onChange(on ? null : r)}
               >
                 {r}
@@ -35,7 +48,10 @@ export function RolePicker({ role, onChange }: Props) {
           );
         })}
       </ul>
-      <p className="role__note">고르면 화면 순서가 맞춰집니다 · 이 기기에만 저장 · 다시 누르면 해제</p>
+      {/* 두 칸이면 숨은 글 — 낭독기는 단추 설명(`aria-describedby`)으로 읽는다(숨은 요소도 설명으로 쓸 수 있다 · accname 규칙). */}
+      <p className="role__note" id={noteId} hidden={noteAsTip}>
+        {ROLE_NOTE}
+      </p>
     </section>
   );
 }

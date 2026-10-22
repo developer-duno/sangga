@@ -83,6 +83,9 @@ type Props = {
   visible?: boolean;
   /** PC 두 칸 왼쪽 칸이면 고른 시·구 — 상권 건물 목록 주소를 길 이름부터(👤 2026-10-22 L2 · `DistrictBuildings` 로 넘기기만). */
   paneArea?: AddrArea | null;
+  /** PC 두 칸 오른쪽 목록 자리 · 목록 이름 알리기(👤 2026-10-22 방법 나 R1 · `DistrictBuildings` 로 넘기기만). */
+  listHost?: HTMLElement | null;
+  onListChange?: (label: string | null) => void;
 };
 
 /**
@@ -109,6 +112,9 @@ const INITIAL_LEVEL = 6;
  * 표지 밑에 깔리지 않게 한다(결정 0039 Q4 · W1).
  */
 const MAP_PADDING_PX = 40;
+
+/** 지도 칸 크기 변화 → relayout 디바운스(ms) — 창을 끌어 늘리는 동안 매 프레임 부르지 않고 멈춘 뒤 한 번(보완 3). */
+const RELAYOUT_DEBOUNCE_MS = 150;
 
 /**
  * 유형별 색. 자료에 있는 5종(골목·발달·전통시장·관광특구·주요)을 여기서 색으로만 잇는다.
@@ -144,6 +150,8 @@ export function DistrictMap({
   layout = 'card',
   visible = true,
   paneArea = null,
+  listHost = null,
+  onListChange,
 }: Props) {
   const [open, setOpen] = useState(true);
   const full = layout === 'full';
@@ -282,6 +290,8 @@ export function DistrictMap({
           selectedBldId={selected?.bld_id ?? null}
           chip={chip}
           paneArea={paneArea}
+          listHost={listHost}
+          onListChange={onListChange}
         />
       )}
 
@@ -462,6 +472,48 @@ function DistrictMapBody({
     lastClick.current = null;
     if (c && c.sigungu === sigungu && !map.getBounds().contain(c.at)) map.panTo(c.at);
   }, [map, stage, visible, sigungu]);
+  /*
+    지도 칸 크기가 바뀌면 relayout(👤 2026-10-23 D3 — PC 두 칸 지도 칸은 왼쪽 칸의 남은 높이를 채워 **창 높이를 따라** 크기가 바뀐다 ·
+    창 크기가 그대로여도 왼쪽 칸 안(지역 칩 상자를 「바꾸기」로 펼침 · 역할·칩 줄)이 바뀌면 칸 크기가 바뀐다).
+    ⓘ 공식 문서(https://apis.map.kakao.com/web/documentation/#Map_relayout — 2026-10-22 원문 확인): 「지도를 표시하는 HTML elemente의 크기를
+      변경한 후에는 반드시 이 함수를 호출해야 한다. 단, window의 resize 이벤트에 대해서는 자동으로 호출한다.」 — 그래도 창 크기 변화에도 **직접**
+      부른다(보완 3 · 화면 적대검증 🟡 — 자동 호출은 칸 크기를 CSS 가 다시 정한 **뒤**라는 보장이 문서에 없다 · 두 번 불러도 해가 없다).
+    → 두 신호(칸 크기 감시 · 창 크기)를 **디바운스 하나**(150ms)로 묶어 마지막에 한 번만 부른다. 숨은(크기 0) 칸에서는 안 부른다 —
+      0 ↔ 크기(숨김·다시 보임)는 위 `visible` effect 몫이다(그쪽이 relayout 뒤 배율·중심을 되돌린다 — 겹쳐 부르면 순서가 엇갈린다).
+    ⓘ jsdom 에는 ResizeObserver 가 없다 — 그때는 창 크기 신호만 쓴다.
+  */
+  const canvasRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!map || !el) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const soon = () => {
+      if (timer !== null) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        if (el.clientWidth > 0 && el.clientHeight > 0) map.relayout();
+      }, RELAYOUT_DEBOUNCE_MS);
+    };
+    let last = { w: el.clientWidth, h: el.clientHeight };
+    const ro =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(() => {
+            const now = { w: el.clientWidth, h: el.clientHeight };
+            const was = last;
+            last = now;
+            if (now.w === 0 || now.h === 0 || was.w === 0 || was.h === 0) return;
+            if (now.w === was.w && now.h === was.h) return;
+            soon();
+          });
+    ro?.observe(el);
+    window.addEventListener('resize', soon);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener('resize', soon);
+      if (timer !== null) clearTimeout(timer);
+    };
+  }, [map]);
 
   /**
    * 이름표를 놓을 자리 — 면 하나에 한 곳. 자리를 못 잡는 도형은 아예 빠진다.
@@ -513,11 +565,15 @@ function DistrictMapBody({
     「상권 지도 넣기」를 켠 종이는 이 폭 그대로 가운데 놓는다(인쇄 묶음 `.app--printmap .dmap__canvas`). 종이 폭으로 늘리면 카카오가
     화면 폭만큼만 타일을 그려 둬 오른쪽이 빈 회색이 된다 — 인쇄 직전 relayout 뒤 비동기 타일은 믿지 않는다.
     ⓘ 카드 꼴만(휴대폰 지도 가득은 DOM 그대로) · 아직 못 쟀거나 다른 구에서 잰 값이면 안 적는다(0 은 `onIdle` 이 이미 버린다).
+    높이도 같은 까닭으로 `--dmap-h` 에 남긴다(👤 2026-10-22 방법 나 R5 — 두 칸 지도 칸 높이가 창 높이를 따라 300px 보다 커졌다 ·
+    종이는 그린 높이 그대로 · 인쇄 묶음 `.app--wide .entry .dmap__canvas`).
   */
   const canvasStyle =
-    !full && view !== null && view.widthPx > 0 ? ({ '--dmap-w': `${view.widthPx}px` } as CSSProperties) : undefined;
+    !full && view !== null && view.widthPx > 0
+      ? ({ '--dmap-w': `${view.widthPx}px`, '--dmap-h': `${view.heightPx}px` } as CSSProperties)
+      : undefined;
   const canvas = (
-    <div className="dmap__canvas" inert={covered} style={canvasStyle}>
+    <div className="dmap__canvas" inert={covered} style={canvasStyle} ref={canvasRef}>
       <Map
         center={{ lat: (bounds.swLat + bounds.neLat) / 2, lng: (bounds.swLng + bounds.neLng) / 2 }}
         style={{ width: '100%', height: '100%' }}

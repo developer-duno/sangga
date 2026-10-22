@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { ReactNode, SubmitEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { supabase } from '../lib/supabase';
+import { ListTableHead } from './ListTableHead';
 import {
   SEARCH_BUILDINGS_FN,
   SEARCH_SCOPE_FN,
@@ -78,8 +80,11 @@ type ScopeNotice =
 
 type Props = {
   onSelect: (hit: BuildingHit) => void;
-  /** 새 검색이 시작될 때. 아래 스택뷰가 옛 건물을 계속 그리지 않도록 선택을 비운다. */
-  onSearchStart: () => void;
+  /**
+   * 새 검색이 시작될 때. 아래 스택뷰가 옛 건물을 계속 그리지 않도록 선택을 비운다.
+   * `cleared` = 서버를 부르지 않고 옛 결과만 비운 꼴(한 글자·구 미선택 안내) — PC 두 칸은 그때 오른쪽 목록을 세우지 않는다(👤 10-23 D1).
+   */
+  onSearchStart: (cleared?: boolean) => void;
   selectedBldId: string | null;
   /** 지금 고른 시군구 코드. 없으면 검색을 막고 먼저 고르라고 안내한다. */
   sigungu: string | null;
@@ -102,6 +107,19 @@ type Props = {
    * ⓘ 두 칸이면 구를 아직 안 골라도 준다(빈 이름 — 주소는 그대로 · 안내 글만 짧게).
    */
   paneArea?: AddrArea | null;
+  /**
+   * PC 두 칸 오른쪽 목록 자리(👤 2026-10-22 방법 나 R1) — 있으면 결과(못 찾음 · 건물 결과 · 가게 이름 결과)를 이 자리에 표로 그린다
+   * (React 포털 — 상태는 이 부품이 그대로 쥔다). 없으면(휴대폰·한 열·두 칸이 아직 자리를 안 만든 첫 그림) 지금 그대로 검색칸 아래.
+   * ⓘ 오류 한 줄 · 너무 넓은 검색 한 줄(늘 서 있는 낭독 자리) · 안내창은 검색칸 곁에 남는다.
+   */
+  listHost?: HTMLElement | null;
+  /** 지금 목록의 이름(「둔산 검색」 — 목록이 없으면 null)을 App 에 알린다 — 오른쪽 「← 목록으로(…)」 글과 오른쪽을 목록으로 둘지. */
+  onListChange?: (label: string | null) => void;
+  /**
+   * 값이 바뀌면(0 제외) 결과를 비운다 — PC 두 칸 「목록 닫기 ✕」(👤 2026-10-23 D2). 검색어는 칸에 남긴다(다시 찾기 쉽게) ·
+   * `onSearchStart` 는 부르지 않는다(App 이 이미 오른쪽을 정했다).
+   */
+  clearSignal?: number;
 };
 
 /** 검색칸 안내 글 — 기본(휴대폰·한 열) · PC 두 칸 왼쪽 칸(약 320px 칸에서 잘리지 않게 · L5). */
@@ -123,7 +141,12 @@ export function BuildingSearch({
   showOwnership = false,
   belowInput,
   paneArea = null,
+  listHost = null,
+  onListChange,
+  clearSignal = 0,
 }: Props) {
+  /** 오른쪽 표 꼴인가(PC 두 칸 · R4 — 건물 결과 = 이름 · 길 주소 · 층 · 가게 이름 결과 = 이름 · 길 주소 · 일치 가게). */
+  const table = listHost !== null;
   /** 왼쪽 칸이면 길 이름부터(L2) — 다른 구 주소·구를 모를 때는 그대로(`shortAddr`). */
   const addr = (a: string) => (paneArea ? shortAddr(a, paneArea) : a);
   const exampleId = useId();
@@ -151,6 +174,11 @@ export function BuildingSearch({
    *    거짓 목록이다. 오프셋만 맞고 검색어가 다르면 그 목록은 아무 뜻이 없다.
    */
   const [ranWith, setRanWith] = useState<{ q: string; sigungu: string } | null>(null);
+  /**
+   * 지금 묻고 있는(또는 마지막으로 물은) 검색어 — PC 두 칸 목록 이름(「둔산 검색」)을 답이 오기 **전**부터 적으려고 둔다(보완 3).
+   * ⓘ `ranWith` 는 답이 온 순간에야 적혀서 찾는 동안엔 비어 있다(그래서 따로 둔다). 비우기(안내창·「목록 닫기」)면 null.
+   */
+  const [askQ, setAskQ] = useState<string | null>(null);
   /**
    * 늦게 도착한 옛 검색 응답이 최신 결과를 덮는 것을 막는다.
    *
@@ -207,7 +235,8 @@ export function BuildingSearch({
     // '더 보기'가 무엇의 다음 쪽인지 가리키는 손가락도 지운다 — 지금은 `store.at === 'done'`
     // 뒤에만 그 버튼이 서서 무해하지만, 잠금이 풀리는 날 남는 유일한 옛 포인터다.
     setRanWith(null);
-    if (hadResults) onSearchStart();
+    setAskQ(null);
+    if (hadResults) onSearchStart(true);
   }
 
   async function runSearch(e: SubmitEvent<HTMLFormElement>) {
@@ -231,6 +260,7 @@ export function BuildingSearch({
     }
 
     const runId = ++latestRun.current;
+    setAskQ(q);
     setLoading(true);
     setError(null);
     setNotice(null);
@@ -352,6 +382,305 @@ export function BuildingSearch({
 
   const shownAll = total > 0 && total <= hits.length;
 
+  /*
+    지금 목록이 있나 · 그 이름(PC 두 칸 오른쪽 「← 목록으로(둔산 검색)」 · 👤 2026-10-22 R3).
+    ⓘ 수는 싣지 않는다(할루 검사 🟡a · 구현자 판단) — 건물 표(건물 수)와 가게 이름 표(땅 수)는 세는 대상이 달라 합치면 같은 건물을
+      두 번 셀 수 있고, 어느 한쪽 수만 적으면 다른 표 머리와 어긋난다. 몇 곳인지는 목록의 두 머리 줄이 말한다.
+    ⓘ 못 찾음(0건)도 목록이다(오른쪽에 「찾지 못했습니다」가 선다) · 찾는 중에는 앞 결과가 그대로라 그 이름 그대로 · 오류·안내창만이면 없음.
+  */
+  /*
+    → 보완 3(화면 적대검증 🟡): 찾는 중·오류·너무 넓음(건물·가게)도 목록이다 — 검색을 누르면 오른쪽이 곧바로 이 목록(「찾는 중…」)이 되고,
+    끝나면 같은 자리에서 결과·안내로 바뀐다(목록이 사라졌다 다시 서는 깜빡임 0). 이름은 지금 물은 검색어(`askQ`)로 — 답이 오기 전부터 같다.
+  */
+  const hasList =
+    loading ||
+    error !== null ||
+    notice?.kind === 'broad' ||
+    store.at !== 'hidden' ||
+    hits.length > 0 ||
+    (searched && !error);
+  const listLabel = hasList && askQ !== null ? `${askQ} 검색` : null;
+  /* 「목록 닫기 ✕」(D2) — 결과를 비운다(한 글자 안내와 같은 비우기 · 날아가 있는 답도 번호를 올려 버린다). 검색어는 그대로. */
+  useEffect(() => {
+    if (clearSignal === 0) return;
+    latestRun.current += 1;
+    setLoading(false);
+    setError(null);
+    setHits([]);
+    setTotal(0);
+    setSearched(false);
+    setNotice(null);
+    setStore({ at: 'hidden' });
+    setMoreFailed(false);
+    setMoreLoading(false);
+    setRanWith(null);
+    setAskQ(null);
+  }, [clearSignal]);
+  useEffect(() => {
+    onListChange?.(listLabel);
+  }, [listLabel, onListChange]);
+  // 사라질 때(구를 바꿔 key 로 다시 태어남 등) 목록도 없어진다.
+  useEffect(() => () => onListChange?.(null), [onListChange]);
+
+  /*
+    결과 넷 — 못 찾음 · 건물 결과 · 가게 이름 실패 · 가게 이름 결과. 휴대폰·한 열은 지금 자리·지금 꼴 그대로(DOM 0 변화),
+    PC 두 칸은 오른쪽 자리(`listHost`)에 표 꼴로(R4 — 세 칸씩: 건물 = 이름 · 길 주소 · 층 / 가게 이름 = 이름 · 길 주소 · 일치 가게(👤 10-23 D4) · 지번과 「같은 땅에 N동」은 주소 칸 아래 작은 글자 ·
+    중개사 소유 구조·일치 상호·갈 수 없는 까닭은 이름 칸 아래). ⛔ 글은 빼지 않는다 — 자리만(R7).
+    ⓘ 건물 결과는 서버(`search_buildings`)가 점포 수를 안 줘서 표가 점포 칸 없이 세 칸이다(👤 2026-10-22 「검색 결과는 세 칸」 · DB 0 —
+      가게 이름 결과·상권 목록은 네 칸).
+  */
+  const errorEl = error && <p className="msg msg--error">{error}</p>;
+
+  /*
+    ③너무 넓은 검색은 **안내창이 아니라 건물 결과 자리의 한 줄**로 말한다(결정 0028
+    §백로그 🟡-10).
+    ⛔ 덮개(`.modal__back`)는 `position:fixed; inset:0` 이라 화면을 통째로 덮는다 — 건물이
+       0건이어도 **가게 이름 구역은 멀쩡히 서 있을 수 있고**, 덮개가 그 답을 가리는 데다
+       클릭까지 삼킨다. 아래 가게 쪽(`store.at === 'broad'`)이 이미 같은 이유로 한 줄이다.
+    ⛔ 이 자리는 **늘 서 있고 내용만 바뀐다** — 조건을 요소 바깥이 아니라 **안**에 둔 이유다.
+       화면을 읽어 주는 기기는 먼저 있던 자리의 내용이 바뀐 것만 읽어 주고, **글자와 함께
+       새로 나타난 요소는 `role="status"` 가 붙어 있어도 못 읽는다.** 안내창을 걷어내면서
+       초점이 옮겨 가던 길까지 함께 없어졌으므로, 자리가 미리 서 있지 않으면 눈으로 화면을
+       못 보는 사람에게 이 안내는 **아무 일도 일어나지 않은 것과 같다**(FeedbackBox 의 항상
+       서 있는 `<p role="status">` 가 선례).
+    ⓘ 빈 자리가 여백을 먹지 않게 하는 것은 `.msg--live:empty` 다 — 거기서 `display:none` 을
+      쓰면 접근성 트리에서 빠져 이 설계가 통째로 무의미해진다(그 규칙에 적어 뒀다).
+    ⚠️ 같은 모양의 줄이 둘 더 있다 — 위의 `error` 한 줄과 아래 "찾지 못했습니다" 한 줄.
+       둘 다 글자와 함께 나타나며 `role` 이 없어 **아직 낭독기가 못 읽는다.** 이번엔 결정 0028
+       §백로그 🟡-10 의 두 줄(너무 넓은 검색)만 고쳤고, 그 둘은 일부러 남겼다(별건 — 한 번에
+       손대면 "무엇이 무엇을 고쳤는지" 못 가른다). 다 고친 것으로 읽지 말 것.
+    → PC 두 칸 오른쪽 자리(보완 3 · 화면 적대검증 🟡)에서는 찾는 동안 이 줄이 「찾는 중…」을 말한다(같은 자리 · 13px) — 결과가 오기 전
+      오른쪽이 비지 않게. 휴대폰·한 열은 지금 그대로(찾는 동안 앞 결과가 서 있다).
+  */
+  const liveBldEl = (
+    <p className="msg msg--live" role="status" aria-live="polite">
+      {table && loading ? (
+        <span className="rlist__loading">찾는 중…</span>
+      ) : (
+        notice?.kind === 'broad' && (
+          <>
+            ‘{notice.word}’ — 건물·주소로 찾기엔 너무 넓은 검색이에요. 이 검색어에는{' '}
+            <strong>{notice.count.toLocaleString('ko-KR')}곳</strong>이 걸립니다. 동 이름(
+            <strong>역삼동</strong>)·건물 이름(<strong>그랑프리빌딩</strong>)·지번·도로명(
+            <strong>역삼동 823-4</strong>, <strong>테헤란로 117</strong>) 중 하나를 넣어 주세요.
+          </>
+        )
+      )}
+    </p>
+  );
+
+  /*
+    ⓘ 건물 쪽처럼 **안내창(모달)을 띄우지 않는다.** 건물 결과는 멀쩡히 서 있을 수 있는데
+      그 위를 덮으면 사람이 이미 얻은 답을 가린다. 문구는 건물 안내창의 뜻을 그대로
+      빌리되("더 좁혀 주세요") 숫자는 가게 수다.
+    ⛔ 건물 쪽 한 줄과 **같은 이유로 늘 서 있고 내용만 바뀐다**(위 설명 참조).
+    ⛔ 이 한 줄만은 `<section aria-label=…>` 으로 감싸지 않는다 — 감싸개를 조건부로 두면
+       그 안의 줄도 결국 **글자와 함께 나타나** 다시 안 읽힌다. 목록·실패 쪽은 읽어 주는
+       자리가 아니라 구역이라 그대로 감싼다.
+  */
+  const liveStoresEl = (
+    <p className="msg msg--live msg--live-stores" role="status" aria-live="polite">
+      {store.at === 'broad' && (
+        <>
+          ‘{store.word}’ 이름의 가게가{' '}
+          <strong>{store.count.toLocaleString('ko-KR')}곳</strong>입니다 — 더 좁혀 주세요.
+        </>
+      )}
+    </p>
+  );
+
+  const notFoundEl = searched && !loading && hits.length === 0 && !error && (
+    <p className="msg">
+      {/* ⚠️ 구 단위 검색으로 바뀐 뒤에도 "전체 열린 지역"을 안내하면 엉뚱하다 —
+          사용자는 이미 한 구를 골랐고, 없는 것은 **그 구 안에서** 없는 것이다. */}
+      <strong>{sigunguName ?? '고른 지역'}</strong>에서 찾지 못했습니다. 건물 이름이나
+      지번을 다시 확인해 주시거나, {table ? '왼쪽' : '위'}에서 다른 구를 골라 보세요.
+    </p>
+  );
+
+  const hitsEl = hits.length > 0 && (
+    <>
+      <p className="search__count">
+        {sigunguName && `${sigunguName}에서 `}건물 {total.toLocaleString('ko-KR')}개
+        {!shownAll && (
+          <span className="search__hint">
+            {' '}
+            · 이 중 {hits.length}개만 보여드립니다. 검색어를 좁혀 주세요
+          </span>
+        )}
+      </p>
+      {/* 건물 검색 결과 표는 세 칸(👤 2026-10-22 「검색 결과는 세 칸」 — 서버가 점포 수를 안 줘 점포 칸 자체를 뺀다). */}
+      {table && <ListTableHead kind="building" />}
+      <ul className="hits">
+        {hits.map((h) => {
+          const own = showOwnership && describeOwnership(h) !== null && (
+            <span className="hit__own">{describeOwnership(h)}</span>
+          );
+          return (
+            <li key={h.bld_id}>
+              <button
+                className={`hit${h.bld_id === selectedBldId ? ' hit--on' : ''}`}
+                onClick={() => onSelect(h)}
+              >
+                {table ? (
+                  <>
+                    <span className="rcell rcell--name">
+                      <span className="hit__name">{h.bld_nm || '(이름 없는 건물)'}</span>
+                      {own}
+                    </span>
+                    <span className="rcell rcell--addr">
+                      <span className="hit__addr">{h.road_addr ? addr(h.road_addr) : '주소 없음'}</span>
+                      {h.jibun_addr && <span className="hit__jibun">지번 {addr(h.jibun_addr)}</span>}
+                      {h.bld_cnt_in_pnu > 1 && <span className="hit__warn">같은 땅에 {h.bld_cnt_in_pnu}동</span>}
+                    </span>
+                    <span className="rcell rcell--floor">
+                      <span className="hit__meta">
+                        {describeRange(h)} · {h.floor_cnt}개 층
+                      </span>
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="hit__name">{h.bld_nm || '(이름 없는 건물)'}</span>
+                    <span className="hit__addr">{h.road_addr ? addr(h.road_addr) : '주소 없음'}</span>
+                    {/* 지번으로 찾은 사람이 "왜 이게 나왔나"를 알 수 있게 함께 보여준다. */}
+                    {h.jibun_addr && <span className="hit__jibun">지번 {addr(h.jibun_addr)}</span>}
+                    <span className="hit__meta">
+                      {describeRange(h)} · {h.floor_cnt}개 층
+                      {h.bld_cnt_in_pnu > 1 && (
+                        <span className="hit__warn"> · 같은 땅에 {h.bld_cnt_in_pnu}동</span>
+                      )}
+                    </span>
+                    {/* 중개사만 — 소유 구조 한 줄(결정 0036 결정 5·18 ⑩ · null=미상, 칸이 안 오면 줄 없음). */}
+                    {own}
+                  </>
+                )}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </>
+  );
+
+  /*
+    ── 가게 이름으로 찾은 땅 (결정 0028) ────────────────────────────────
+    ⛔ 휴대폰·한 열에서는 반드시 `<section className="search">` 의 **자손**이어야 한다 — `.search` 가
+       `@media print` 에서 통째로 빠지므로, 형제로 빼면 이 구역만 종이에 남는다. PC 두 칸 오른쪽 자리는
+       `.rlist` 째 종이에서 빠진다(같은 결).
+    ⛔ `hidden` 상태에서는 아무것도 그리지 않는다(0건 · 서버에 함수가 아직 없음).
+  */
+  const storesFailedEl = store.at === 'failed' && (
+    <section className="search__stores" aria-label="가게 이름으로 찾은 땅">
+      {/* ⛔ 조용히 생략하지 않는다 — 사람이 누른 결과다(0025 규칙). */}
+      <p className="msg msg--error" role="alert">
+        가게 이름 결과를 불러오지 못했습니다.
+      </p>
+    </section>
+  );
+
+  const storesDoneEl = store.at === 'done' && (
+    <section className="search__stores" aria-label="가게 이름으로 찾은 땅">
+      <p className="search__count">
+        이 이름의 가게가 있는 땅 {store.rows[0].total_parcel_cnt.toLocaleString('ko-KR')}곳 ·
+        가게 {store.rows[0].total_store_cnt.toLocaleString('ko-KR')}곳
+        {/* ⛔ 분기를 화면에 글자로 박지 않는다 — 서버가 준 값을 옮길 뿐이다. */}
+        {formatMonthKo(store.rows[0].store_snapshot_ym) && (
+          <span className="stores__stamp">
+            {' '}
+            · {formatMonthKo(store.rows[0].store_snapshot_ym)} 기준 점포 자료
+          </span>
+        )}
+      </p>
+      {/* 가게 이름 결과 표는 세 칸 — 이름 · 길 주소 · 일치 가게(👤 2026-10-23 D4 · 서버가 층 범위를 안 줘 빈 층 칸을 뺀다). */}
+      {table && <ListTableHead kind="store" />}
+      <ul className="stores">
+        {store.rows.map((s) => {
+          const names = matchedLabel(s);
+          const many = (s.bld_cnt_in_pnu ?? 1) > 1;
+          /*
+            ⚠️ 대표 동이 없을 수 있다(그 땅에 건물 기록이 없는 경우). 그때는 누를 곳이
+               없으므로 **버튼이 아니라 그냥 줄**로 그리고 왜 못 가는지 적는다 —
+               목록에서 빼 버리면 "그 이름의 가게가 여기 없다"는 거짓말이 된다.
+          */
+          const bldId = s.bld_id;
+          const flat = bldId === null || bldId === undefined;
+          const note = flat && <span className="stores__note">건물 자료가 없어 층별 화면으로 갈 수 없습니다</span>;
+          const meta = (
+            /* ⛔ 건물이 아니라 **이 땅에** 다 — 층별 화면의 점포 칸과 세는 대상이 다르다(결정 0025 의 함정). */
+            <>이 땅에 가게 {(s.match_store_cnt ?? 0).toLocaleString('ko-KR')}곳 일치</>
+          );
+          const body = table ? (
+            <>
+              <span className="rcell rcell--name">
+                <span className="stores__name">{s.bld_nm || '(이름 없는 건물)'}</span>
+                {names && <span className="stores__names">{names}</span>}
+                {note}
+              </span>
+              <span className="rcell rcell--addr">
+                <span className="stores__addr">{s.road_addr ? addr(s.road_addr) : '주소 없음'}</span>
+                {s.jibun_addr && <span className="stores__jibun">지번 {addr(s.jibun_addr)}</span>}
+                {many && <span className="stores__warn">같은 땅에 {s.bld_cnt_in_pnu}동</span>}
+              </span>
+              <span className="rcell rcell--store">
+                <span className="stores__meta">{meta}</span>
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="stores__name">{s.bld_nm || '(이름 없는 건물)'}</span>
+              <span className="stores__addr">{s.road_addr ? addr(s.road_addr) : '주소 없음'}</span>
+              {s.jibun_addr && <span className="stores__jibun">지번 {addr(s.jibun_addr)}</span>}
+              {names && <span className="stores__names">{names}</span>}
+              <span className="stores__meta">
+                {meta}
+                {many && <span className="stores__warn"> · 같은 땅에 {s.bld_cnt_in_pnu}동</span>}
+              </span>
+              {note}
+            </>
+          );
+          return (
+            <li key={s.pnu}>
+              {flat ? (
+                <div className="stores__row stores__row--flat">{body}</div>
+              ) : (
+                <button
+                  type="button"
+                  className={`stores__row${bldId === selectedBldId ? ' stores__row--on' : ''}`}
+                  onClick={() => onSelect(storeToHit({ ...s, bld_id: bldId }))}
+                >
+                  {body}
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+
+      {hasMoreStores(store.rows) && (
+        <button
+          type="button"
+          className="stores__more"
+          disabled={moreLoading}
+          onClick={() => loadMoreStores(store.rows)}
+        >
+          {moreLoading ? '불러오는 중…' : '더 보기'}
+        </button>
+      )}
+      {moreFailed && (
+        <p className="msg msg--error" role="alert">
+          더 불러오지 못했습니다.
+        </p>
+      )}
+
+      {/* ⛔ 무엇을 센 숫자인지 밝힌다(상권 건물 목록과 같은 규칙). */}
+      <p className="stores__src">
+        가게 수는 <strong>그 땅 전체</strong>를 센 것이라, 한 땅에 여러 동이 서 있으면 그
+        동들이 같은 수를 함께 씁니다. 몇 층인지는 건물을 고른 뒤 층별 화면에서 봅니다.
+      </p>
+    </section>
+  );
+
   return (
     <section className="search">
       {/* ⛔ `aria-label` 은 **바꾸지 않는다** — 이 이름을 부르는 시험이 vitest 9곳·E2E 2곳이고,
@@ -380,204 +709,39 @@ export function BuildingSearch({
 
       {belowInput}
 
-      {error && <p className="msg msg--error">{error}</p>}
+      {table ? null : errorEl}
+
+      {/* ⓘ PC 두 칸(`listHost`)은 아래 낭독 줄·오류 줄·결과가 모두 오른쪽 목록 자리로 간다(맨 아래 포털 · 보완 3). */}
+      {table ? null : liveBldEl}
+
+      {table ? null : <>{notFoundEl}{hitsEl}{storesFailedEl}</>}
+
+      {table ? null : liveStoresEl}
+
+      {table ? null : storesDoneEl}
 
       {/*
-        ③너무 넓은 검색은 **안내창이 아니라 건물 결과 자리의 한 줄**로 말한다(결정 0028
-        §백로그 🟡-10).
-        ⛔ 덮개(`.modal__back`)는 `position:fixed; inset:0` 이라 화면을 통째로 덮는다 — 건물이
-           0건이어도 **가게 이름 구역은 멀쩡히 서 있을 수 있고**, 덮개가 그 답을 가리는 데다
-           클릭까지 삼킨다. 아래 가게 쪽(`store.at === 'broad'`)이 이미 같은 이유로 한 줄이다.
-        ⛔ 이 자리는 **늘 서 있고 내용만 바뀐다** — 조건을 요소 바깥이 아니라 **안**에 둔 이유다.
-           화면을 읽어 주는 기기는 먼저 있던 자리의 내용이 바뀐 것만 읽어 주고, **글자와 함께
-           새로 나타난 요소는 `role="status"` 가 붙어 있어도 못 읽는다.** 안내창을 걷어내면서
-           초점이 옮겨 가던 길까지 함께 없어졌으므로, 자리가 미리 서 있지 않으면 눈으로 화면을
-           못 보는 사람에게 이 안내는 **아무 일도 일어나지 않은 것과 같다**(FeedbackBox 의 항상
-           서 있는 `<p role="status">` 가 선례).
-        ⓘ 빈 자리가 여백을 먹지 않게 하는 것은 `.msg--live:empty` 다 — 거기서 `display:none` 을
-          쓰면 접근성 트리에서 빠져 이 설계가 통째로 무의미해진다(그 규칙에 적어 뒀다).
-        ⚠️ 같은 모양의 줄이 둘 더 있다 — 위의 `error` 한 줄과 아래 "찾지 못했습니다" 한 줄.
-           둘 다 글자와 함께 나타나며 `role` 이 없어 **아직 낭독기가 못 읽는다.** 이번엔 결정 0028
-           §백로그 🟡-10 의 두 줄(너무 넓은 검색)만 고쳤고, 그 둘은 일부러 남겼다(별건 — 한 번에
-           손대면 "무엇이 무엇을 고쳤는지" 못 가른다). 다 고친 것으로 읽지 말 것.
+        PC 두 칸 오른쪽 목록 자리 — 차례는 낭독 줄(찾는 중… · 너무 넓은 검색) → 오류 → 못 찾음·건물 결과 → 가게 이름 실패 → 가게 낭독 줄 →
+        가게 이름 결과. ⓘ 찾는 동안(`loading`)에는 앞 검색의 결과를 숨기고 「찾는 중…」 한 줄만(화면 적대검증 🟡 — 느린 검색 2.5초 동안 줄 0 ·
+        건물을 보던 중이면 건물이 사라진 채 「← 보던 건물로」만 남던 것) · 너무 넓음·오류로 끝나도 같은 자리에서 그 안내로 바뀐다(깜빡임 0).
       */}
-      <p className="msg msg--live" role="status" aria-live="polite">
-        {notice?.kind === 'broad' && (
+      {listHost &&
+        createPortal(
           <>
-            ‘{notice.word}’ — 건물·주소로 찾기엔 너무 넓은 검색이에요. 이 검색어에는{' '}
-            <strong>{notice.count.toLocaleString('ko-KR')}곳</strong>이 걸립니다. 동 이름(
-            <strong>역삼동</strong>)·건물 이름(<strong>그랑프리빌딩</strong>)·지번·도로명(
-            <strong>역삼동 823-4</strong>, <strong>테헤란로 117</strong>) 중 하나를 넣어 주세요.
-          </>
-        )}
-      </p>
-
-      {searched && !loading && hits.length === 0 && !error && (
-        <p className="msg">
-          {/* ⚠️ 구 단위 검색으로 바뀐 뒤에도 "전체 열린 지역"을 안내하면 엉뚱하다 —
-              사용자는 이미 한 구를 골랐고, 없는 것은 **그 구 안에서** 없는 것이다. */}
-          <strong>{sigunguName ?? '고른 지역'}</strong>에서 찾지 못했습니다. 건물 이름이나
-          지번을 다시 확인해 주시거나, 위에서 다른 구를 골라 보세요.
-        </p>
-      )}
-
-      {hits.length > 0 && (
-        <>
-          <p className="search__count">
-            {sigunguName && `${sigunguName}에서 `}건물 {total.toLocaleString('ko-KR')}개
-            {!shownAll && (
-              <span className="search__hint">
-                {' '}
-                · 이 중 {hits.length}개만 보여드립니다. 검색어를 좁혀 주세요
-              </span>
+            {liveBldEl}
+            {errorEl}
+            {!loading && (
+              <>
+                {notFoundEl}
+                {hitsEl}
+                {storesFailedEl}
+              </>
             )}
-          </p>
-          <ul className="hits">
-            {hits.map((h) => (
-              <li key={h.bld_id}>
-                <button
-                  className={`hit${h.bld_id === selectedBldId ? ' hit--on' : ''}`}
-                  onClick={() => onSelect(h)}
-                >
-                  <span className="hit__name">{h.bld_nm || '(이름 없는 건물)'}</span>
-                  <span className="hit__addr">{h.road_addr ? addr(h.road_addr) : '주소 없음'}</span>
-                  {/* 지번으로 찾은 사람이 "왜 이게 나왔나"를 알 수 있게 함께 보여준다. */}
-                  {h.jibun_addr && <span className="hit__jibun">지번 {addr(h.jibun_addr)}</span>}
-                  <span className="hit__meta">
-                    {describeRange(h)} · {h.floor_cnt}개 층
-                    {h.bld_cnt_in_pnu > 1 && (
-                      <span className="hit__warn"> · 같은 땅에 {h.bld_cnt_in_pnu}동</span>
-                    )}
-                  </span>
-                  {/* 중개사만 — 소유 구조 한 줄(결정 0036 결정 5·18 ⑩ · null=미상, 칸이 안 오면 줄 없음). */}
-                  {showOwnership && describeOwnership(h) !== null && (
-                    <span className="hit__own">{describeOwnership(h)}</span>
-                  )}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-
-      {/*
-        ── 가게 이름으로 찾은 땅 (결정 0028) ────────────────────────────────
-        ⛔ 반드시 `<section className="search">` 의 **자손**이어야 한다 — `.search` 가
-           `@media print` 에서 통째로 빠지므로, 형제로 빼면 이 구역만 종이에 남는다.
-        ⛔ `hidden` 상태에서는 아무것도 그리지 않는다(0건 · 서버에 함수가 아직 없음).
-      */}
-      {store.at === 'failed' && (
-        <section className="search__stores" aria-label="가게 이름으로 찾은 땅">
-          {/* ⛔ 조용히 생략하지 않는다 — 사람이 누른 결과다(0025 규칙). */}
-          <p className="msg msg--error" role="alert">
-            가게 이름 결과를 불러오지 못했습니다.
-          </p>
-        </section>
-      )}
-
-      {/*
-        ⓘ 건물 쪽처럼 **안내창(모달)을 띄우지 않는다.** 건물 결과는 멀쩡히 서 있을 수 있는데
-          그 위를 덮으면 사람이 이미 얻은 답을 가린다. 문구는 건물 안내창의 뜻을 그대로
-          빌리되("더 좁혀 주세요") 숫자는 가게 수다.
-        ⛔ 건물 쪽 한 줄과 **같은 이유로 늘 서 있고 내용만 바뀐다**(위 설명 참조).
-        ⛔ 이 한 줄만은 `<section aria-label=…>` 으로 감싸지 않는다 — 감싸개를 조건부로 두면
-           그 안의 줄도 결국 **글자와 함께 나타나** 다시 안 읽힌다. 목록·실패 쪽은 읽어 주는
-           자리가 아니라 구역이라 그대로 감싼다.
-      */}
-      <p className="msg msg--live msg--live-stores" role="status" aria-live="polite">
-        {store.at === 'broad' && (
-          <>
-            ‘{store.word}’ 이름의 가게가{' '}
-            <strong>{store.count.toLocaleString('ko-KR')}곳</strong>입니다 — 더 좁혀 주세요.
-          </>
+            {liveStoresEl}
+            {!loading && storesDoneEl}
+          </>,
+          listHost,
         )}
-      </p>
-
-      {store.at === 'done' && (
-        <section className="search__stores" aria-label="가게 이름으로 찾은 땅">
-          <p className="search__count">
-            이 이름의 가게가 있는 땅 {store.rows[0].total_parcel_cnt.toLocaleString('ko-KR')}곳 ·
-            가게 {store.rows[0].total_store_cnt.toLocaleString('ko-KR')}곳
-            {/* ⛔ 분기를 화면에 글자로 박지 않는다 — 서버가 준 값을 옮길 뿐이다. */}
-            {formatMonthKo(store.rows[0].store_snapshot_ym) && (
-              <span className="stores__stamp">
-                {' '}
-                · {formatMonthKo(store.rows[0].store_snapshot_ym)} 기준 점포 자료
-              </span>
-            )}
-          </p>
-          <ul className="stores">
-            {store.rows.map((s) => {
-              const names = matchedLabel(s);
-              const many = (s.bld_cnt_in_pnu ?? 1) > 1;
-              const body = (
-                <>
-                  <span className="stores__name">{s.bld_nm || '(이름 없는 건물)'}</span>
-                  <span className="stores__addr">{s.road_addr ? addr(s.road_addr) : '주소 없음'}</span>
-                  {s.jibun_addr && <span className="stores__jibun">지번 {addr(s.jibun_addr)}</span>}
-                  {names && <span className="stores__names">{names}</span>}
-                  <span className="stores__meta">
-                    {/* ⛔ 건물이 아니라 **이 땅에** 다 — 층별 화면의 점포 칸과
-                        세는 대상이 다르다(결정 0025 의 함정). */}
-                    이 땅에 가게 {(s.match_store_cnt ?? 0).toLocaleString('ko-KR')}곳 일치
-                    {many && (
-                      <span className="stores__warn"> · 같은 땅에 {s.bld_cnt_in_pnu}동</span>
-                    )}
-                  </span>
-                </>
-              );
-              /*
-                ⚠️ 대표 동이 없을 수 있다(그 땅에 건물 기록이 없는 경우). 그때는 누를 곳이
-                   없으므로 **버튼이 아니라 그냥 줄**로 그리고 왜 못 가는지 적는다 —
-                   목록에서 빼 버리면 "그 이름의 가게가 여기 없다"는 거짓말이 된다.
-              */
-              const bldId = s.bld_id;
-              return (
-                <li key={s.pnu}>
-                  {bldId === null || bldId === undefined ? (
-                    <div className="stores__row stores__row--flat">
-                      {body}
-                      <span className="stores__note">
-                        건물 자료가 없어 층별 화면으로 갈 수 없습니다
-                      </span>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      className={`stores__row${bldId === selectedBldId ? ' stores__row--on' : ''}`}
-                      onClick={() => onSelect(storeToHit({ ...s, bld_id: bldId }))}
-                    >
-                      {body}
-                    </button>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-
-          {hasMoreStores(store.rows) && (
-            <button
-              type="button"
-              className="stores__more"
-              disabled={moreLoading}
-              onClick={() => loadMoreStores(store.rows)}
-            >
-              {moreLoading ? '불러오는 중…' : '더 보기'}
-            </button>
-          )}
-          {moreFailed && (
-            <p className="msg msg--error" role="alert">
-              더 불러오지 못했습니다.
-            </p>
-          )}
-
-          {/* ⛔ 무엇을 센 숫자인지 밝힌다(상권 건물 목록과 같은 규칙). */}
-          <p className="stores__src">
-            가게 수는 <strong>그 땅 전체</strong>를 센 것이라, 한 땅에 여러 동이 서 있으면 그
-            동들이 같은 수를 함께 씁니다. 몇 층인지는 건물을 고른 뒤 층별 화면에서 봅니다.
-          </p>
-        </section>
-      )}
 
       {/*
         ①한 글자 ②구 미선택만 안내창으로 남는다 — 서버를 부르기 전이라 **덮을 새 결과가
