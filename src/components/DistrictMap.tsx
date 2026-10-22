@@ -469,6 +469,29 @@ function DistrictMapBody({
     lastClick.current = null;
     if (c && c.sigungu === sigungu && !map.getBounds().contain(c.at)) map.panTo(c.at);
   }, [map, stage, visible, sigungu]);
+  /*
+    PC 두 칸 지도 칸은 왼쪽 칸의 남은 높이를 채운다(👤 2026-10-23 D3 「지도는 남은 높이(최소 300px)」) — 창 크기가 그대로여도 왼쪽 칸 안
+    (지역 칩 상자를 「바꾸기」로 펼침 · 역할·칩 줄이 늘어남)이 바뀌면 칸 크기가 바뀐다. 카카오는 창 크기 변화만 스스로 relayout 한다
+    (공식 문서 Map.relayout 「window의 resize 이벤트에 대해서는 자동으로 호출한다」) → 보이는 칸이 **크기만** 바뀌면 한 번 relayout.
+    ⓘ 0 ↔ 크기(숨김·다시 보임)는 위 `visible` effect 몫이라 건너뛴다(그쪽이 relayout 뒤 배율·중심을 되돌린다 — 두 번 부르면 순서가 엇갈린다).
+    ⓘ jsdom 에는 ResizeObserver 가 없다 — 그때는 아무것도 안 한다.
+  */
+  const canvasRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!map || !el || typeof ResizeObserver === 'undefined') return;
+    let last = { w: el.clientWidth, h: el.clientHeight };
+    const ro = new ResizeObserver(() => {
+      const now = { w: el.clientWidth, h: el.clientHeight };
+      const was = last;
+      last = now;
+      if (now.w === 0 || now.h === 0 || was.w === 0 || was.h === 0) return;
+      if (now.w === was.w && now.h === was.h) return;
+      map.relayout();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [map]);
 
   /**
    * 이름표를 놓을 자리 — 면 하나에 한 곳. 자리를 못 잡는 도형은 아예 빠진다.
@@ -528,7 +551,7 @@ function DistrictMapBody({
       ? ({ '--dmap-w': `${view.widthPx}px`, '--dmap-h': `${view.heightPx}px` } as CSSProperties)
       : undefined;
   const canvas = (
-    <div className="dmap__canvas" inert={covered} style={canvasStyle}>
+    <div className="dmap__canvas" inert={covered} style={canvasStyle} ref={canvasRef}>
       <Map
         center={{ lat: (bounds.swLat + bounds.neLat) / 2, lng: (bounds.swLng + bounds.neLng) / 2 }}
         style={{ width: '100%', height: '100%' }}

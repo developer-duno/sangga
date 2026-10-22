@@ -301,7 +301,7 @@ export function DistrictBuildings({
       {/* ⓘ 목록에 **이름표를 붙인다** — 예전에는 `id` 만 달아 두고 아무도 가리키지 않아
           읽어 주는 기기에는 그냥 "목록"이었다. 머릿글이 이미 "◯◯의 건물 — N곳"이라
           말하므로 그 글을 이름으로 빌린다(글을 두 번 적지 않는다). */}
-      {table && <ListTableHead />}
+      {table && <ListTableHead kind="district" />}
       <ul className="dbld__list" aria-labelledby={headId}>
         {lands.map((land) => {
           const many = land.bld_cnt_in_pnu > 1;

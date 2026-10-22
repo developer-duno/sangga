@@ -35,6 +35,9 @@ vi.mock('./lib/supabase', () => ({
   },
 }));
 
+/** 가짜 지도의 「누른 자리」(지도를 처음 누른 것 흉내 — 한 배열). */
+const FAKE_PICKED = ['D1'];
+
 function FakeMap({
   sigungu,
   visible = true,
@@ -75,7 +78,10 @@ function FakeMap({
         type="button"
         className="dmap__picked-btn"
         aria-expanded={openId === 'D1'}
-        onClick={() => onPickChange?.({ sigungu, pickedIds: ['D1'], openId: openId === 'D1' ? null : 'D1' })}
+        // 진짜 `PickedList` 처럼 누른 자리(같은 배열)는 그대로 두고 펼친 상권만 바꾼다 — 지도를 새로 누를 때만 새 배열이 온다(App 이 둘을 가른다 · B2).
+        onClick={() =>
+          onPickChange?.({ sigungu, pickedIds: pick?.pickedIds ?? FAKE_PICKED, openId: openId === 'D1' ? null : 'D1' })
+        }
       >
         가짜상권
       </button>
@@ -898,6 +904,14 @@ describe('PC 두 칸 오른쪽 목록 — 배선 (👤 2026-10-22 방법 나)', 
   }
 
   afterEach(() => scrollAt(0));
+  /*
+    쌓은 뒤로가기 칸 수 = `pushState` 를 부른 횟수(그대로 지나가는 감시). ⓘ `history.length` 는 못 믿는다 — jsdom 창 하나를 시험들이
+    나눠 써서, 앞 시험이 뒤로 간 자리에서 새 칸을 쌓으면 앞쪽 칸이 잘려 길이가 그대로일 수 있다.
+  */
+  beforeEach(() => {
+    vi.spyOn(window.history, 'pushState');
+  });
+  const pushes = () => vi.mocked(window.history.pushState).mock.calls.length;
 
   async function search(word = '테헤란로') {
     const input = screen.getByLabelText('건물명 또는 주소');
@@ -942,7 +956,7 @@ describe('PC 두 칸 오른쪽 목록 — 배선 (👤 2026-10-22 방법 나)', 
     expect(window.localStorage.getItem('sangga.viewerRole')).toBeNull();
   });
 
-  it('★ R3 목록에서 고르면 오른쪽 = 건물 + 「← 목록으로(테헤란로 검색 2곳)」 · 뒤로가기 한 칸 · 단추 = 뒤로가기 → 목록(굴린 자리 그대로 · 커서 「← 보던 건물로」) · 보던 건물로 → 건물 자리 · 다시 뒤로가기 = 목록', async () => {
+  it('★ R3 목록에서 고르면 오른쪽 = 건물 + 「← 목록으로(테헤란로 검색)」 · 뒤로가기 한 칸 · 단추 = 뒤로가기 → 목록(굴린 자리 그대로 · 커서 「← 보던 건물로」) · 보던 건물로 = 앞으로가기 → 건물 자리 · 다시 뒤로가기 = 목록', async () => {
     serve(TWO);
     mediaAt(1280);
     const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
@@ -954,8 +968,9 @@ describe('PC 두 칸 오른쪽 목록 — 배선 (👤 2026-10-22 방법 나)', 
     await screen.findByRole('heading', { name: '테스트빌딩' });
     expect(app().classList.contains('app--wlist')).toBe(false);
     expect(rlist().hidden).toBe(true);
-    const back = screen.getByRole('button', { name: '목록으로(테헤란로 검색 2곳)' });
-    expect(back.textContent).toBe('← 목록으로(테헤란로 검색 2곳)');
+    // 단추 글에 수는 없다(할루 🟡a — 건물 표·가게 표 수가 갈려 합친 수는 표 머리와 어긋난다).
+    const back = screen.getByRole('button', { name: '목록으로(테헤란로 검색)' });
+    expect(back.textContent).toBe('← 목록으로(테헤란로 검색)');
     // 누른 줄이 숨어도 커서는 BODY 가 아니라 「← 목록으로」 · 건물은 맨 위부터.
     expect(document.activeElement).toBe(back);
     expect(scrollTo).toHaveBeenLastCalledWith(0, 0);
@@ -974,9 +989,12 @@ describe('PC 두 칸 오른쪽 목록 — 배선 (👤 2026-10-22 방법 나)', 
     expect(screen.getByRole('heading', { name: '테스트빌딩' })).toBeTruthy();
     expect(window.location.search).toContain(`bld=${BLD}`);
 
+    // 「← 보던 건물로」 = 앞 칸(건물)으로 앞으로가기 — 칸을 새로 쌓지 않는다(👤 10-23 D1 · 칸이 헛돌지 않게).
     scrollAt(120);
+    const len = pushes();
     fireEvent.click(toBld);
-    expect(app().classList.contains('app--wlist')).toBe(false);
+    await vi.waitFor(() => expect(app().classList.contains('app--wlist')).toBe(false));
+    expect(pushes()).toBe(len);
     expect(scrollTo).toHaveBeenLastCalledWith(0, 30);
     expect(document.activeElement).toBe(container.querySelector('.rback__btn'));
     expect(window.history.state?.sanggaTab).toBe('bld');
@@ -1010,10 +1028,91 @@ describe('PC 두 칸 오른쪽 목록 — 배선 (👤 2026-10-22 방법 나)', 
     expect(screen.getByRole('heading', { name: '테스트빌딩' })).toBeTruthy(); // 쥐고 있다(D1)
     fireEvent.click(await screen.findByRole('button', { name: /둘째빌딩/ }));
     expect(app().classList.contains('app--wlist')).toBe(false);
-    await screen.findByRole('button', { name: '목록으로(다른동 검색 2곳)' });
+    await screen.findByRole('button', { name: '목록으로(다른동 검색)' });
   });
 
-  it('★ R1 상권 건물 목록도 오른쪽 자리(표 · 점포 칸 = 그 땅 점포) · 왼쪽 지도 아래엔 0 · 고르면 「← 목록으로(가짜상권 상권 2곳)」 · 그 뒤 검색하면 오른쪽은 검색 목록(마지막에 연 것) · 상권을 접으면 남은 검색 목록', async () => {
+  it('★ D1 건물을 쥔 채 검색하면 뒤로가기 한 칸 — 목록에서 뒤로가기 = 보던 건물(사이트를 안 떠남) · 다시 검색해도 칸은 하나 · 건물 없이 검색하면 칸 0(뒤로가기 = 이전 페이지)', async () => {
+    serve(TWO);
+    mediaAt(1280);
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    render(<App />);
+    await pickGu();
+    // 건물 없이 검색 — 칸 0(지금처럼 이전 페이지로).
+    const len0 = pushes();
+    await search();
+    expect(pushes()).toBe(len0);
+    expect(window.history.state?.sanggaTab).toBeUndefined();
+    // 목록에서 건물을 연다(R3 — 여기서 한 칸).
+    fireEvent.click(screen.getByRole('button', { name: /테스트빌딩/ }));
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+    const len1 = pushes(); // 목록에서 골라 한 칸(R3)
+    const input = screen.getByLabelText('건물명 또는 주소');
+    fireEvent.change(input, { target: { value: '다른동' } });
+    fireEvent.submit(input.closest('form')!);
+    expect(app().classList.contains('app--wlist')).toBe(true);
+    expect(pushes()).toBe(len1 + 1);
+    expect(window.history.state?.sanggaTab).toBe('base');
+    await screen.findByRole('button', { name: /둘째빌딩/ });
+    // 목록이 선 채 또 검색 — 칸을 더 쌓지 않는다.
+    fireEvent.change(input, { target: { value: '테헤란로' } });
+    fireEvent.submit(input.closest('form')!);
+    expect(pushes()).toBe(len1 + 1);
+    // 브라우저 뒤로가기 = 보던 건물(「← 보던 건물로」와 같다).
+    act(() => window.history.back());
+    await vi.waitFor(() => expect(app().classList.contains('app--wlist')).toBe(false));
+    expect(screen.getByRole('heading', { name: '테스트빌딩' })).toBeTruthy();
+    expect(window.history.state?.sanggaTab).toBe('bld');
+    // 그 칸에서 「← 목록으로」 = 앞 칸(목록)으로 앞으로가기.
+    fireEvent.click(screen.getByRole('button', { name: '목록으로(테헤란로 검색)' }));
+    await vi.waitFor(() => expect(app().classList.contains('app--wlist')).toBe(true));
+    expect(pushes()).toBe(len1 + 1);
+  });
+
+  it('★ D2 「목록 닫기 ✕」 — 건물을 쥐고 있으면 건물로(목록은 비움 · 「← 목록으로」 없음 · 뒤로가기 칸 헛돌지 않음) · 건물 없이 닫으면 입구 카드(LH·단가 흐름)·큰 카드로 · 커서 · 상권 목록도 닫힘', async () => {
+    window.localStorage.clear(); // 큰 카드가 다시 서는지도 본다
+    serve(TWO);
+    mediaAt(1280);
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    const { container } = render(<App />);
+    await pickGu();
+    await search();
+    const close = screen.getByRole('button', { name: '목록 닫기' });
+    expect(close.textContent).toBe('목록 닫기 ✕');
+    // 건물 없이 닫기 → 입구 카드 둘 · 오른쪽 안내 한 줄 · 큰 카드 · 결과 비움 · 커서 = 검색칸(검색어 그대로).
+    fireEvent.click(close);
+    expect(app().classList.contains('app--wlist')).toBe(false);
+    expect(container.querySelector('.lh')).not.toBeNull();
+    expect(container.querySelector('.flow')).not.toBeNull();
+    expect(container.querySelector('.rpane-empty')).not.toBeNull();
+    expect(container.querySelector('section.rolecards')).not.toBeNull();
+    expect(container.querySelector('.hit')).toBeNull();
+    const input = screen.getByLabelText('건물명 또는 주소') as HTMLInputElement;
+    expect(input.value).toBe('테헤란로');
+    expect(document.activeElement).toBe(input);
+    // 건물을 쥔 채 검색 → 닫기 → 건물(뒤로가기 칸으로 돌아감 · 「← 목록으로」 없음 · 커서 = 건물 첫 단추).
+    await search();
+    fireEvent.click(screen.getByRole('button', { name: /테스트빌딩/ }));
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+    await search('다른동');
+    const len = pushes();
+    fireEvent.click(screen.getByRole('button', { name: '목록 닫기' }));
+    // 이웃 칸(건물)으로 뒤로 간다 — 그 이동은 비동기라 표식을 기다린다.
+    await vi.waitFor(() => expect(window.history.state?.sanggaTab).toBe('bld'));
+    expect(app().classList.contains('app--wlist')).toBe(false);
+    expect(pushes()).toBe(len);
+    expect(container.querySelector('.rback')).toBeNull();
+    expect(container.querySelector('.hit')).toBeNull();
+    expect(document.activeElement).toBe(container.querySelector('.takeout button'));
+    // 상권 목록도 「목록 닫기」로 닫힌다(펼친 상권 접힘).
+    fireEvent.click(screen.getByRole('button', { name: '가짜상권' }));
+    await vi.waitFor(() => expect(rlist().querySelectorAll('.dbld__row')).toHaveLength(2));
+    fireEvent.click(screen.getByRole('button', { name: '목록 닫기' }));
+    await vi.waitFor(() => expect(app().classList.contains('app--wlist')).toBe(false));
+    expect(screen.getByRole('button', { name: '가짜상권' }).getAttribute('aria-expanded')).toBe('false');
+    expect(container.querySelector('.dbld__row')).toBeNull();
+  });
+
+  it('★ R1 상권 건물 목록도 오른쪽 자리(표 · 점포 칸 = 그 땅 점포) · 왼쪽 지도 아래엔 0 · 고르면 「← 목록으로(가짜상권 상권 2곳)」 · 그 뒤 검색하면 오른쪽은 검색 목록(마지막에 연 것) · B2 숨은 상권 목록의 단추 = 앞으로 불러오기 · B1 보이는 상권 목록을 접으면 보던 건물', async () => {
     serve(TWO);
     mediaAt(1280);
     const { container } = render(<App />);
@@ -1038,13 +1137,88 @@ describe('PC 두 칸 오른쪽 목록 — 배선 (👤 2026-10-22 방법 나)', 
     await search();
     expect(panes().map((p) => p.hidden)).toEqual([false, true]);
     expect(container.querySelector('.rlist__back')!.textContent).toBe('← 보던 건물(상권빌딩)로');
-    // 상권 목록은 (숨은 채) 열려 있다 — 접으면 오른쪽은 남은 검색 목록 그대로 · 다시 열면 오른쪽이 상권 목록.
+    // B2 — 상권 목록은 (검색 목록 뒤에 숨은 채) 열려 있다 → 그 상권 단추 첫 누름 = 앞으로 불러오기(접지 않는다 · 맹점 검사 B2).
     fireEvent.click(screen.getByRole('button', { name: '가짜상권' }));
-    expect(panes().map((p) => p.hidden)).toEqual([false, true]);
+    expect(panes().map((p) => p.hidden)).toEqual([true, false]);
     expect(app().classList.contains('app--wlist')).toBe(true);
+    expect(screen.getByRole('button', { name: '가짜상권' }).getAttribute('aria-expanded')).toBe('true');
+    expect(rlist().querySelectorAll('.dbld__row')).toHaveLength(2);
+    // B1 — 보이는 상권 목록을 접으면 남은 옛 검색 목록이 아니라 보던 건물(상권빌딩).
+    fireEvent.click(screen.getByRole('button', { name: '가짜상권' }));
+    await vi.waitFor(() => expect(app().classList.contains('app--wlist')).toBe(false));
+    // 보던 건물 = 상권 목록에서 고른 그 건물(주소에 그 번호 · ⓘ 층 화면 제목은 가짜 층 자료의 이름이라 번호로 본다).
+    expect(document.querySelector('section.stack')).not.toBeNull();
+    expect(rlist().hidden).toBe(true);
+    expect(window.location.search).toContain(`bld=${BLD}7`);
+    expect(screen.getByRole('button', { name: '가짜상권' }).getAttribute('aria-expanded')).toBe('false');
+    expect(container.querySelector('.rback')).toBeNull(); // 닫힌 목록으로 가는 단추는 없다
+  });
+
+  it('★ B1 건물 → 상권 목록 열기(뒤로가기 한 칸 · D1) → 접기 = 보던 건물 · 옛 검색 목록이 서지 않는다 · 건물 없이 접으면 입구 카드', async () => {
+    serve(TWO);
+    mediaAt(1280);
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    render(<App />);
+    await pickGu();
+    await searchAndOpen();
+    const len = pushes();
     fireEvent.click(screen.getByRole('button', { name: '가짜상권' }));
     await vi.waitFor(() => expect(rlist().querySelectorAll('.dbld__row')).toHaveLength(2));
-    expect(panes().map((p) => p.hidden)).toEqual([true, false]);
+    expect(app().classList.contains('app--wlist')).toBe(true);
+    expect(pushes()).toBe(len + 1);
+    fireEvent.click(screen.getByRole('button', { name: '가짜상권' }));
+    // 이웃 칸(건물)으로 뒤로 간다 — 비동기라 표식을 기다린다(안 기다리면 다음 시험에 popstate 가 샌다).
+    await vi.waitFor(() => expect(window.history.state?.sanggaTab).toBe('bld'));
+    expect(app().classList.contains('app--wlist')).toBe(false);
+    expect(screen.getByRole('heading', { name: '테스트빌딩' })).toBeTruthy();
+    // 닫힌 목록 대신 옛 검색 목록으로 가는 「← 목록으로」도 서지 않는다(남은 목록으로 넘어가는 갈래 0).
+    expect(document.querySelector('.rback')).toBeNull();
+    cleanup();
+    window.history.replaceState(null, '', '/');
+
+    // 건물 없이 — 검색한 뒤 상권 목록을 열었다 접으면 옛 검색 목록이 아니라 입구 카드(뒤로가기 칸 0 · D2 와 같은 결).
+    mediaAt(1280);
+    render(<App />);
+    await pickGu();
+    await search();
+    const len0 = pushes();
+    fireEvent.click(screen.getByRole('button', { name: '가짜상권' }));
+    await vi.waitFor(() => expect(rlist().querySelectorAll('.dbld__row')).toHaveLength(2));
+    fireEvent.click(screen.getByRole('button', { name: '가짜상권' }));
+    expect(app().classList.contains('app--wlist')).toBe(false);
+    expect(document.querySelector('.lh')).not.toBeNull();
+    expect(document.querySelector('.rpane-empty')).not.toBeNull();
+    expect(pushes()).toBe(len0);
+  });
+
+  it('★ D3 위를 줄여 올리기 — 「왼쪽 칸 접기」는 사이트 제목 줄(왼쪽 칸 안 0 · 접힌 동안 없음 · 펼치면 다시 커서) · 역할 안내 글은 보이는 줄 0 → 단추 설명(title · aria-describedby · 글자 그대로) · 1023 은 둘 다 지금 그대로', async () => {
+    const NOTE = '고르면 화면 순서가 맞춰집니다 · 이 기기에만 저장 · 다시 누르면 해제';
+    mediaAt(1280);
+    const { container } = render(<App />);
+    const head = container.querySelector('.app__head')!;
+    const fold = screen.getByRole('button', { name: '왼쪽 칸 접기' });
+    expect(head.contains(fold)).toBe(true);
+    expect(entry().querySelector('.entry__fold')).toBeNull();
+    const note = entry().querySelector<HTMLElement>('.role__note')!;
+    expect(note.hidden).toBe(true);
+    expect(note.textContent).toBe(NOTE);
+    const chip = entry().querySelector<HTMLButtonElement>('.role__chip')!;
+    expect(chip.title).toBe(NOTE);
+    expect(chip.getAttribute('aria-describedby')).toBe(note.id);
+    // 접으면 제목 줄의 단추는 사라지고(띠가 대신) · 펼치면 다시 서고 커서가 간다.
+    fireEvent.click(fold);
+    expect(container.querySelector('.app__head .entry__fold')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '왼쪽 칸 펼치기' }));
+    expect(document.activeElement).toBe(container.querySelector('.app__head .entry__fold'));
+    cleanup();
+
+    mediaAt(1023);
+    const r = render(<App />);
+    expect(r.container.querySelector('.entry__fold')).toBeNull();
+    const note2 = entry().querySelector<HTMLElement>('.role__note')!;
+    expect(note2.hidden).toBe(false);
+    expect(entry().querySelector<HTMLButtonElement>('.role__chip')!.hasAttribute('title')).toBe(false);
+    expect(entry().querySelector<HTMLButtonElement>('.role__chip')!.hasAttribute('aria-describedby')).toBe(false);
   });
 
   it('양성 대조 — 1023 한 열은 결과가 왼쪽(입구) 지금 꼴 그대로 · 오른쪽 목록 자리·표 머리·「← 목록으로」 0 · 뒤로가기 표식 0', async () => {
@@ -1081,9 +1255,11 @@ function rlistRules(src: string) {
     hideOthers: has(wide, '.app--wide.app--wlist .app__main > :not(.entry):not(.lrail):not(.rlist)', /display:\s*none/),
     // 숨김은 화면 두 칸 묶음에만 — 종이(인쇄 묶음)·기본 규칙에는 `.app--wlist` 0(종이는 건물 그대로).
     hideScreenOnly: !all.some((r) => r.media !== WIDE && r.sel.some((s) => s.includes('.app--wlist'))),
-    table: ['.rtable__head', '.rlist .stores__row', '.rlist .dbld__row'].every((s) => has(wide, s, fourCols)),
-    // 건물 검색 결과는 세 칸 — 세 칸 규칙이 있고, 같은 선택자에 네 칸 규칙이 없다(뒤 규칙이 덮어쓰는 꼴도 막는다).
-    table3: ['.rtable__head--3', '.rlist .hit'].every((s) => has(wide, s, threeCols) && !has(wide, s, fourCols)),
+    table: ['.rtable__head', '.rlist .dbld__row'].every((s) => has(wide, s, fourCols)),
+    // 건물 검색 결과·가게 이름 결과는 세 칸(👤 10-22 · 10-23 D4) — 세 칸 규칙이 있고, 같은 선택자에 네 칸 규칙이 없다(덮어쓰는 꼴도 막는다).
+    table3: ['.rtable__head--3', '.rlist .hit', '.rlist .stores__row'].every(
+      (s) => has(wide, s, threeCols) && !has(wide, s, fourCols),
+    ),
     storeRight: has(wide, '.rlist .rcell--store', /text-align:\s*right/),
     noEllipsis: ['.rlist .hit__name', '.rlist .stores__name', '.rlist .dbld__name', '.rlist .hit__addr'].every((s) =>
       has(wide, s, /white-space:\s*normal/),
@@ -1094,10 +1270,22 @@ function rlistRules(src: string) {
     small13: ['.rlist .hit__jibun', '.rlist .hit__own', '.rlist .stores__jibun', '.rlist .dbld__warn'].every((s) =>
       has(wide, s, /font-size:\s*13px/),
     ),
-    bigMap: has(wide, '.app--wide .entry .dmap__canvas', /height:\s*clamp\(300px,\s*calc\(100vh - \d+px\),\s*\d+px\)/),
+    // 👤 2026-10-23 D3 — 왼쪽 칸 = 세로 flex · 높이 = 첫 화면 남은 높이(`--wide-top`) · 지도 덩어리가 자라고 지도 칸이 남는 높이를 채운다(최소 300 · 상한 640).
+    fillMap:
+      has(wide, '.app--wide .app__main > .entry', /height:\s*calc\(100vh - var\(--wide-top/) &&
+      has(wide, '.app--wide .app__main > .entry', /flex-direction:\s*column/) &&
+      has(wide, '.app--wide .app__main > .entry > .dmap:not([hidden])', /flex:\s*1 0 auto/) &&
+      has(wide, '.app--wide .app__main > .entry > .dmap > .dmap__canvas', /flex:\s*1 0 300px/) &&
+      has(wide, '.app--wide .app__main > .entry > .dmap > .dmap__canvas', /min-height:\s*300px/) &&
+      has(wide, '.app--wide .app__main > .entry > .dmap > .dmap__canvas', /max-height:\s*640px/),
+    // 「왼쪽 칸 접기」는 제목 줄 옆(D3) — 제목 줄 flex · 접기 단추가 제목 다음 · 소개 한 줄은 다음 줄 전체.
+    foldInHead:
+      has(wide, '.app--wide .app__head', /display:\s*flex/) &&
+      has(wide, '.app--wide .app__head > .entry__fold', /order:\s*1/) &&
+      has(wide, '.app--wide .app__head > .app__sub', /flex:\s*0 0 100%/),
     printOut: ['.rlist', '.rback'].every((s) => print.some((r) => r.sel.includes(s) && /display:\s*none/.test(r.body))),
     printMapH: has(print, '.app--wide .entry .dmap__canvas', /height:\s*var\(--dmap-h,\s*300px\)/),
-    tall44: ['.rlist__back', '.rback__btn'].every((s) => tall.includes(s)),
+    tall44: ['.rlist__back', '.rlist__close', '.rback__btn'].every((s) => tall.includes(s)),
   };
 }
 
@@ -1112,7 +1300,8 @@ describe('PC 두 칸 오른쪽 목록 — CSS (👤 2026-10-22 방법 나)', () 
     noEllipsis: true,
     oneScroll: true,
     small13: true,
-    bigMap: true,
+    fillMap: true,
+    foldInHead: true,
     printOut: true,
     printMapH: true,
     tall44: true,
@@ -1135,10 +1324,13 @@ describe('PC 두 칸 오른쪽 목록 — CSS (👤 2026-10-22 방법 나)', () 
     expect(swap(/(\.rlist \.dbld__row \{\s*grid-template-columns: )[^;]*;/, '$1minmax(0, 2fr) minmax(0, 2fr) auto;').table).toBe(false);
     expect(swap('.rlist .rcell--store {', '.rlist .rcell--storex {').storeRight).toBe(false);
     // 건물 검색 결과에도 넷째(점포) 칸을 단 꼴 — 흔한 꼴(세 칸 규칙 값 되돌림) + 변형 꼴(네 칸 규칙 목록에 다시 넣음).
-    expect(swap(/(\.rlist \.hit \{\s*grid-template-columns: [^;]*1\.4fr\));/, '$1 minmax(7em, 1.2fr);').table3).toBe(false);
-    expect(swap(/(\.rtable__head,)(\r?\n {2}\.rlist \.stores__row,)/, '$1\n  .rlist .hit,$2').table3).toBe(false);
+    expect(swap(/(\.rlist \.stores__row \{\s*grid-template-columns: [^;]*1\.4fr\));/, '$1 minmax(7em, 1.2fr);').table3).toBe(false);
+    expect(swap(/(\.rtable__head,)(\r?\n {2}\.rlist \.dbld__row \{)/, '$1\n  .rlist .hit,$2').table3).toBe(false);
     expect(swap(/ {2}\.rlist,\r?\n {2}\.rback,\r?\n/, '').printOut).toBe(false);
     expect(swap('height: var(--dmap-h, 300px);', 'height: 300px;').printMapH).toBe(false);
-    expect(swap('height: clamp(300px, calc(100vh - 360px), 560px);', 'height: 300px;').bigMap).toBe(false);
+    // 지도 칸을 고정 높이로 되돌린 꼴(흔한 꼴) · 지도 칸 규칙 무게를 낮춰 `> *`(flex: none)에 지는 꼴(변형 꼴 — 선택자만 바꿈).
+    expect(swap(/ {4}flex: 1 0 300px;(\r?\n)/, '    height: 300px;$1').fillMap).toBe(false);
+    expect(swap('.app--wide .app__main > .entry > .dmap > .dmap__canvas {', '.app--wide .entry .dmap__canvas {').fillMap).toBe(false);
+    expect(swap('.app--wide .app__head > .entry__fold {', '.app--wide .app__head > .entry__foldx {').foldInHead).toBe(false);
   });
 });

@@ -1133,7 +1133,7 @@ describe('BuildingSearch — 오른쪽 목록 자리 (방법 나)', () => {
     fireEvent.submit(input.closest('form')!);
   }
 
-  it('★ 자리가 있으면 건물·가게 결과가 그 자리에 표로(검색 덩어리 밖) · 소유 구조는 이름 칸 · 가게 수는 점포 칸 · 이름 = 「스타벅스 검색 3곳」', async () => {
+  it('★ 자리가 있으면 건물·가게 결과가 그 자리에 표로(검색 덩어리 밖) · 소유 구조는 이름 칸 · 가게 수는 일치 가게 칸 · 이름 = 「스타벅스 검색」(수 없음)', async () => {
     const host = document.createElement('div');
     document.body.appendChild(host);
     serve(
@@ -1144,26 +1144,58 @@ describe('BuildingSearch — 오른쪽 목록 자리 (방법 나)', () => {
     go(input, '스타벅스');
     await waitFor(() => expect(host.querySelectorAll('.hit')).toHaveLength(2));
     expect(document.querySelector('section.search')!.querySelector('.hit, .stores__row')).toBeNull();
-    // 머리 둘 — 건물 표는 세 칸(👤 2026-10-22 「검색 결과는 세 칸」 · 점포 칸 자체가 없다) · 가게 이름 표는 네 칸.
+    // 머리 둘 — 건물 표 세 칸(👤 2026-10-22 「검색 결과는 세 칸」 · 점포 칸 자체가 없다) · 가게 이름 표도 세 칸
+    // (👤 2026-10-23 D4 「빈 층 칸을 빼고 이름·길 주소·일치 가게 세 칸」).
     const heads = [...host.querySelectorAll('.rtable__head')].map((h) => [...h.children].map((c) => c.textContent));
     expect(heads).toEqual([
       ['이름', '길 주소', '층'],
-      ['이름', '길 주소', '층', '점포'],
+      ['이름', '길 주소', '일치 가게'],
     ]);
     expect(host.querySelector('.hit')!.querySelectorAll(':scope > .rcell')).toHaveLength(3);
     expect(host.querySelector('.hit .rcell--store')).toBeNull();
-    expect(host.querySelector('.stores__row')!.querySelectorAll(':scope > .rcell')).toHaveLength(4);
+    expect(
+      [...host.querySelector('.stores__row')!.querySelectorAll(':scope > .rcell')].map((c) => c.className),
+    ).toEqual(['rcell rcell--name', 'rcell rcell--addr', 'rcell rcell--store']);
     expect(host.querySelector('.hit .rcell--name .hit__own')!.textContent).toBe('집합건물 · 사용승인 2003년 5월 · 주차 120대');
     const store = host.querySelector('.stores__row')!;
     expect(store.querySelector('.rcell--store')!.textContent).toBe('이 땅에 가게 4곳 일치');
     expect(store.querySelector('.rcell--name .stores__names')!.textContent).toBe('스타벅스역삼점 외 3곳');
     expect(store.querySelector('.rcell--addr')!.textContent).toBe('서울 강남구 테헤란로 1지번 서울 강남구 역삼동 823-4같은 땅에 2동');
-    expect(store.querySelector('.rcell--floor')!.textContent).toBe('');
-    expect(onListChange).toHaveBeenLastCalledWith('스타벅스 검색 3곳');
+    expect(store.querySelector('.rcell--floor')).toBeNull();
+    // 이름에 수를 싣지 않는다(할루 🟡a — 건물 표와 가게 표는 세는 대상이 달라 합치면 같은 건물을 두 번 셀 수 있다).
+    expect(onListChange).toHaveBeenLastCalledWith('스타벅스 검색');
     host.remove();
   });
 
-  it('못 찾음도 그 자리(「왼쪽에서 다른 구를」) · 이름 = 「없는말 검색 0곳」 · 사라지면 null', async () => {
+  it('★ D2 「목록 닫기」 신호 — 결과(건물·가게)를 비우고 이름은 null · 검색어는 칸에 남는다 · 새 검색 시작 알림은 안 보낸다', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    serve([hit()], [storeHit()]);
+    const onSearchStart = vi.fn();
+    const onListChange = vi.fn();
+    const props = {
+      onSelect: vi.fn(),
+      onSearchStart,
+      selectedBldId: null,
+      sigungu: '11680',
+      sigunguName: '강남구',
+      listHost: host,
+      onListChange,
+    };
+    const { rerender } = render(<BuildingSearch {...props} clearSignal={0} />);
+    const input = screen.getByLabelText('건물명 또는 주소') as HTMLInputElement;
+    go(input, '스타벅스');
+    await waitFor(() => expect(host.querySelectorAll('.hit')).toHaveLength(1));
+    expect(onSearchStart).toHaveBeenCalledTimes(1);
+    rerender(<BuildingSearch {...props} clearSignal={1} />);
+    expect(host.querySelector('.hit, .stores__row, .search__count')).toBeNull();
+    expect(onListChange).toHaveBeenLastCalledWith(null);
+    expect(input.value).toBe('스타벅스');
+    expect(onSearchStart).toHaveBeenCalledTimes(1);
+    host.remove();
+  });
+
+  it('못 찾음도 그 자리(「왼쪽에서 다른 구를」) · 이름 = 「없는말 검색」 · 사라지면 null', async () => {
     const host = document.createElement('div');
     document.body.appendChild(host);
     serve([], []);
@@ -1171,7 +1203,7 @@ describe('BuildingSearch — 오른쪽 목록 자리 (방법 나)', () => {
     go(input, '없는말');
     await waitFor(() => expect(host.textContent).toContain('강남구에서 찾지 못했습니다'));
     expect(host.textContent).toContain('왼쪽에서 다른 구를 골라 보세요');
-    expect(onListChange).toHaveBeenLastCalledWith('없는말 검색 0곳');
+    expect(onListChange).toHaveBeenLastCalledWith('없는말 검색');
     cleanup();
     expect(onListChange).toHaveBeenLastCalledWith(null);
     host.remove();

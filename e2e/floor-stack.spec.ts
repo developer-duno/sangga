@@ -5286,7 +5286,13 @@ test.describe('PC 두 칸', () => {
       // R4 — 건물 검색 결과 표는 세 칸(👤 2026-10-22 「검색 결과는 세 칸」 — 점포 칸 자체가 없다) · 가게 이름 표는 네 칸 ·
       //   줄마다 칸이 한 줄(칸 위 끝이 같다 · 왼쪽부터 차례) · 이름 칸은 이름 머리와 같은 자리.
       await expect(rlist.locator('.rtable__head').first().locator('.rcell')).toHaveText(['이름', '길 주소', '층']);
-      await expect(rlist.locator('.search__stores .rtable__head .rcell')).toHaveText(['이름', '길 주소', '층', '점포']);
+      // 가게 이름 표도 세 칸(👤 2026-10-23 D4 「빈 층 칸을 빼고 이름·길 주소·일치 가게 세 칸」).
+      await expect(rlist.locator('.search__stores .rtable__head .rcell')).toHaveText(['이름', '길 주소', '일치 가게']);
+      await expect(rlist.locator('.stores__row').first().locator(':scope > .rcell')).toHaveCount(3);
+      // 「목록 닫기 ✕」(👤 10-23 D2) — 목록 머리 줄 오른쪽 끝 · 44px 이상.
+      const closeBox = (await rlist.getByRole('button', { name: '목록 닫기' }).boundingBox())!;
+      expect(closeBox.height).toBeGreaterThanOrEqual(44);
+      expect(Math.abs(closeBox.x + closeBox.width - (listBox.x + listBox.width))).toBeLessThan(2);
       await expect(rlist.locator('.hits .rcell--store')).toHaveCount(0);
       const cells = await row(LONG).locator('.rcell').evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).map((r) => ({ x: r.x, y: r.y, w: r.width })));
       expect(cells).toHaveLength(3);
@@ -5325,7 +5331,7 @@ test.describe('PC 두 칸', () => {
       await page.screenshot({ path: testInfo.outputPath(`cd-list-${width}.png`), fullPage: true });
     }
 
-    // R3 — 목록을 내려 고른다 → 오른쪽 = 건물(맨 위) + 「← 목록으로(테헤란로 검색 28곳)」 · 목록은 숨음.
+    // R3 — 목록을 내려 고른다 → 오른쪽 = 건물(맨 위) + 「← 목록으로(테헤란로 검색)」(수 없음 · 할루 🟡a) · 목록은 숨음.
     await page.setViewportSize({ width: 1280, height: 720 });
     const pick = row('역삼빌딩20');
     await pick.scrollIntoViewIfNeeded();
@@ -5334,9 +5340,9 @@ test.describe('PC 두 칸', () => {
     await pick.click();
     await expect(page.locator('section.stack')).toBeVisible();
     await expect(rlist).toBeHidden();
-    const backBtn = page.getByRole('button', { name: '목록으로(테헤란로 검색 28곳)' });
+    const backBtn = page.getByRole('button', { name: '목록으로(테헤란로 검색)' });
     await expect(backBtn).toBeVisible();
-    await expect(backBtn).toHaveText('← 목록으로(테헤란로 검색 28곳)');
+    await expect(backBtn).toHaveText('← 목록으로(테헤란로 검색)');
     await expect(page).toHaveURL(/bld=1168010100100000019_1019/);
     expect(await readScrollY()).toBeLessThan(5);
     const bldTop = (await backBtn.boundingBox())!;
@@ -5380,6 +5386,82 @@ test.describe('PC 두 칸', () => {
     // 1000 한 열 = 변화 0 — 결과는 입구 검색칸 아래 지금 꼴(오른쪽 자리·표 0).
     await page.setViewportSize({ width: 1000, height: 768 });
     await expect(page.locator('section.rlist, .rtable__head, .rback')).toHaveCount(0);
+  });
+
+  /*
+    👤 2026-10-23 D3 「지도와 「누른 자리」가 굴리지 않고 첫 화면에 들어오게」 — E2E 엔 지도 키가 없어 지도 칸·범례·누른 자리가 안 선다.
+    그래서 지도 덩어리 안에 그 셋을 **진짜와 같은 이름표**로 세워(`DistrictMap` 의 카드 꼴 · `PickedList` 의 「누른 자리 (1곳):」 + 상권 단추 하나 ·
+    범례 다섯 유형) 실제 CSS 가 정한 높이·자리를 잰다 — 「누른 자리」 줄의 아래 끝이 첫 화면(굴리기 전) 안 · 지도 칸 300px 이상.
+  */
+  test('CE. 지도 첫 화면 — 1280×900 · 1024×768 · 1440×900 · 1920×1080 두 칸에서 지도 칸(300px 이상)과 「누른 자리」 줄 아래 끝이 굴리지 않고 첫 화면 안 · 휴대폰·1000 은 그대로', async ({
+    page,
+  }, testInfo) => {
+    await mockOpenSigungu(page);
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    if (!(await isTwoCols(page))) {
+      // 휴대폰 = 변화 0(지도 탭 가득 · 이 규칙은 두 칸 묶음 안).
+      await expect(page.locator('.app')).not.toHaveClass(/app--wide/);
+      return;
+    }
+    const PROBE = [
+      '<div class="dmap__canvas" data-probe="1"></div>',
+      '<ul class="dmap__legend" data-probe="1">',
+      ...['골목상권', '발달상권', '전통시장', '관광특구', '주요상권'].map((t) => `<li><span class="dmap__swatch"></span>${t}</li>`),
+      '</ul>',
+      '<div class="dmap__picked" data-probe="1"><span class="dmap__picked-key">누른 자리 (1곳):</span>',
+      '<ul class="dmap__picked-list"><li><button type="button" class="dmap__picked-btn"><span class="dmap__swatch"></span>',
+      '<span class="dmap__picked-nm">대전향촌우편취급국</span><span class="dmap__picked-ty">골목상권</span></button></li></ul></div>',
+    ].join('');
+    // 위를 줄인 두 가지(👤 10-23 D3) — 「왼쪽 칸 접기」는 사이트 제목 줄(제목 바로 옆 · 같은 줄) · 역할 안내 글은 보이는 줄 0(단추 설명으로 · 글자 그대로).
+    const fold = page.locator('.app__head .entry__fold');
+    await expect(fold).toBeVisible();
+    await expect(page.locator('.entry .entry__fold')).toHaveCount(0);
+    const titleBox = (await page.locator('.app__head .app__title').boundingBox())!;
+    const foldBox = (await fold.boundingBox())!;
+    expect(Math.abs(foldBox.y + foldBox.height / 2 - (titleBox.y + titleBox.height / 2))).toBeLessThan(12);
+    expect(foldBox.x).toBeGreaterThan(titleBox.x + titleBox.width);
+    expect(foldBox.height).toBeGreaterThanOrEqual(44);
+    await expect(page.locator('.entry .role__note')).toBeHidden();
+    await expect(page.locator('.entry .role__chip').first()).toHaveAttribute('title', '고르면 화면 순서가 맞춰집니다 · 이 기기에만 저장 · 다시 누르면 해제');
+
+    type Probe = { canvasTop: number; canvasH: number; pickedBottom: number };
+    const measure = (w: number, h: number) =>
+      page.locator('.entry section.dmap').evaluate((sec, html): Probe => {
+        // ⓘ e2e 타입 설정엔 DOM 이 없다 — 쓰는 것만 좁게 적는다.
+        type El = { remove(): void; hidden: boolean; getBoundingClientRect(): { top: number; height: number; bottom: number } };
+        const root = sec as unknown as {
+          ownerDocument: { defaultView: { scrollTo(x: number, y: number): void } };
+          querySelectorAll(s: string): { forEach(f: (e: El) => void): void };
+          querySelector(s: string): El;
+          insertAdjacentHTML(at: string, html: string): void;
+        };
+        root.ownerDocument.defaultView.scrollTo(0, 0);
+        root.querySelectorAll('[data-probe]').forEach((e) => e.remove());
+        root.querySelectorAll(':scope > .msg').forEach((e) => {
+          e.hidden = true;
+        });
+        root.insertAdjacentHTML('beforeend', html);
+        const box = (s: string) => root.querySelector(s).getBoundingClientRect();
+        return { canvasTop: box('.dmap__canvas').top, canvasH: box('.dmap__canvas').height, pickedBottom: box('.dmap__picked').bottom };
+      }, PROBE).then((m) => ({ ...m, w, h }));
+
+    const rows: string[] = [];
+    for (const [w, h] of [[1280, 900], [1024, 768], [1440, 900], [1920, 1080]] as const) {
+      await page.setViewportSize({ width: w, height: h });
+      await expect(page.locator('.app')).toHaveClass(/app--wide/);
+      const m = await measure(w, h);
+      rows.push(`${w}×${h} 지도 y ${Math.round(m.canvasTop)} 높이 ${Math.round(m.canvasH)} · 누른 자리 아래 끝 ${Math.round(m.pickedBottom)}`);
+      expect.soft(m.canvasH, `${w}×${h} 지도 칸 300px 이상`).toBeGreaterThanOrEqual(299.5);
+      expect.soft(m.canvasH, `${w}×${h} 지도 칸 상한 640px`).toBeLessThanOrEqual(640.5);
+      // ⓘ 1024×768 은 위를 줄여도 들지 않는다(지도 300 · 아래 끝 약 887 — 👤 10-23 「억지로 더 빼지 말 것 · 숫자와 함께 보고」) → 숫자만 남긴다.
+      if (w !== 1024) expect.soft(m.pickedBottom, `${w}×${h} 누른 자리 아래 끝 ≤ 창 높이`).toBeLessThanOrEqual(h);
+      await page.screenshot({ path: testInfo.outputPath(`ce-map-${w}x${h}.png`) });
+    }
+    // 큰 창은 지도가 더 크다(남는 높이를 받는다 — 1920×1080 은 300 보다 크다).
+    const big = await measure(1920, 1080);
+    expect(big.canvasH).toBeGreaterThan(400);
+    testInfo.annotations.push({ type: '지도 첫 화면', description: rows.join(' / ') });
   });
 });
 

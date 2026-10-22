@@ -80,8 +80,11 @@ type ScopeNotice =
 
 type Props = {
   onSelect: (hit: BuildingHit) => void;
-  /** 새 검색이 시작될 때. 아래 스택뷰가 옛 건물을 계속 그리지 않도록 선택을 비운다. */
-  onSearchStart: () => void;
+  /**
+   * 새 검색이 시작될 때. 아래 스택뷰가 옛 건물을 계속 그리지 않도록 선택을 비운다.
+   * `cleared` = 서버를 부르지 않고 옛 결과만 비운 꼴(한 글자·구 미선택 안내) — PC 두 칸은 그때 오른쪽 목록을 세우지 않는다(👤 10-23 D1).
+   */
+  onSearchStart: (cleared?: boolean) => void;
   selectedBldId: string | null;
   /** 지금 고른 시군구 코드. 없으면 검색을 막고 먼저 고르라고 안내한다. */
   sigungu: string | null;
@@ -110,8 +113,13 @@ type Props = {
    * ⓘ 오류 한 줄 · 너무 넓은 검색 한 줄(늘 서 있는 낭독 자리) · 안내창은 검색칸 곁에 남는다.
    */
   listHost?: HTMLElement | null;
-  /** 지금 목록의 이름(「둔산 검색 25곳」 — 목록이 없으면 null)을 App 에 알린다 — 오른쪽 「← 목록으로(…)」 글과 오른쪽을 목록으로 둘지. */
+  /** 지금 목록의 이름(「둔산 검색」 — 목록이 없으면 null)을 App 에 알린다 — 오른쪽 「← 목록으로(…)」 글과 오른쪽을 목록으로 둘지. */
   onListChange?: (label: string | null) => void;
+  /**
+   * 값이 바뀌면(0 제외) 결과를 비운다 — PC 두 칸 「목록 닫기 ✕」(👤 2026-10-23 D2). 검색어는 칸에 남긴다(다시 찾기 쉽게) ·
+   * `onSearchStart` 는 부르지 않는다(App 이 이미 오른쪽을 정했다).
+   */
+  clearSignal?: number;
 };
 
 /** 검색칸 안내 글 — 기본(휴대폰·한 열) · PC 두 칸 왼쪽 칸(약 320px 칸에서 잘리지 않게 · L5). */
@@ -135,8 +143,9 @@ export function BuildingSearch({
   paneArea = null,
   listHost = null,
   onListChange,
+  clearSignal = 0,
 }: Props) {
-  /** 오른쪽 표 꼴인가(PC 두 칸 — 이름 · 길 주소 · 층 · 점포 네 칸 · R4). */
+  /** 오른쪽 표 꼴인가(PC 두 칸 · R4 — 건물 결과 = 이름 · 길 주소 · 층 · 가게 이름 결과 = 이름 · 길 주소 · 일치 가게). */
   const table = listHost !== null;
   /** 왼쪽 칸이면 길 이름부터(L2) — 다른 구 주소·구를 모를 때는 그대로(`shortAddr`). */
   const addr = (a: string) => (paneArea ? shortAddr(a, paneArea) : a);
@@ -221,7 +230,7 @@ export function BuildingSearch({
     // '더 보기'가 무엇의 다음 쪽인지 가리키는 손가락도 지운다 — 지금은 `store.at === 'done'`
     // 뒤에만 그 버튼이 서서 무해하지만, 잠금이 풀리는 날 남는 유일한 옛 포인터다.
     setRanWith(null);
-    if (hadResults) onSearchStart();
+    if (hadResults) onSearchStart(true);
   }
 
   async function runSearch(e: SubmitEvent<HTMLFormElement>) {
@@ -367,13 +376,28 @@ export function BuildingSearch({
   const shownAll = total > 0 && total <= hits.length;
 
   /*
-    지금 목록이 있나 · 그 이름(PC 두 칸 오른쪽 「← 목록으로(둔산 검색 25곳)」 · 👤 2026-10-22 R3) — 결과 줄(건물 + 가게 이름) 수를 센다.
+    지금 목록이 있나 · 그 이름(PC 두 칸 오른쪽 「← 목록으로(둔산 검색)」 · 👤 2026-10-22 R3).
+    ⓘ 수는 싣지 않는다(할루 검사 🟡a · 구현자 판단) — 건물 표(건물 수)와 가게 이름 표(땅 수)는 세는 대상이 달라 합치면 같은 건물을
+      두 번 셀 수 있고, 어느 한쪽 수만 적으면 다른 표 머리와 어긋난다. 몇 곳인지는 목록의 두 머리 줄이 말한다.
     ⓘ 못 찾음(0건)도 목록이다(오른쪽에 「찾지 못했습니다」가 선다) · 찾는 중에는 앞 결과가 그대로라 그 이름 그대로 · 오류·안내창만이면 없음.
   */
-  const storeRows = store.at === 'done' ? store.rows.length : 0;
   const hasList = hits.length > 0 || store.at === 'done' || store.at === 'failed' || (searched && !error);
-  const listLabel =
-    hasList && ranWith !== null ? `${ranWith.q} 검색 ${(hits.length + storeRows).toLocaleString('ko-KR')}곳` : null;
+  const listLabel = hasList && ranWith !== null ? `${ranWith.q} 검색` : null;
+  /* 「목록 닫기 ✕」(D2) — 결과를 비운다(한 글자 안내와 같은 비우기 · 날아가 있는 답도 번호를 올려 버린다). 검색어는 그대로. */
+  useEffect(() => {
+    if (clearSignal === 0) return;
+    latestRun.current += 1;
+    setLoading(false);
+    setError(null);
+    setHits([]);
+    setTotal(0);
+    setSearched(false);
+    setNotice(null);
+    setStore({ at: 'hidden' });
+    setMoreFailed(false);
+    setMoreLoading(false);
+    setRanWith(null);
+  }, [clearSignal]);
   useEffect(() => {
     onListChange?.(listLabel);
   }, [listLabel, onListChange]);
@@ -382,7 +406,7 @@ export function BuildingSearch({
 
   /*
     결과 넷 — 못 찾음 · 건물 결과 · 가게 이름 실패 · 가게 이름 결과. 휴대폰·한 열은 지금 자리·지금 꼴 그대로(DOM 0 변화),
-    PC 두 칸은 오른쪽 자리(`listHost`)에 표 꼴로(R4 — 이름 · 길 주소 · 층 · 점포 네 칸 · 지번과 「같은 땅에 N동」은 주소 칸 아래 작은 글자 ·
+    PC 두 칸은 오른쪽 자리(`listHost`)에 표 꼴로(R4 — 세 칸씩: 건물 = 이름 · 길 주소 · 층 / 가게 이름 = 이름 · 길 주소 · 일치 가게(👤 10-23 D4) · 지번과 「같은 땅에 N동」은 주소 칸 아래 작은 글자 ·
     중개사 소유 구조·일치 상호·갈 수 없는 까닭은 이름 칸 아래). ⛔ 글은 빼지 않는다 — 자리만(R7).
     ⓘ 건물 결과는 서버(`search_buildings`)가 점포 수를 안 줘서 표가 점포 칸 없이 세 칸이다(👤 2026-10-22 「검색 결과는 세 칸」 · DB 0 —
       가게 이름 결과·상권 목록은 네 칸).
@@ -408,7 +432,7 @@ export function BuildingSearch({
         )}
       </p>
       {/* 건물 검색 결과 표는 세 칸(👤 2026-10-22 「검색 결과는 세 칸」 — 서버가 점포 수를 안 줘 점포 칸 자체를 뺀다). */}
-      {table && <ListTableHead store={false} />}
+      {table && <ListTableHead kind="building" />}
       <ul className="hits">
         {hits.map((h) => {
           const own = showOwnership && describeOwnership(h) !== null && (
@@ -490,7 +514,8 @@ export function BuildingSearch({
           </span>
         )}
       </p>
-      {table && <ListTableHead />}
+      {/* 가게 이름 결과 표는 세 칸 — 이름 · 길 주소 · 일치 가게(👤 2026-10-23 D4 · 서버가 층 범위를 안 줘 빈 층 칸을 뺀다). */}
+      {table && <ListTableHead kind="store" />}
       <ul className="stores">
         {store.rows.map((s) => {
           const names = matchedLabel(s);
@@ -519,7 +544,6 @@ export function BuildingSearch({
                 {s.jibun_addr && <span className="stores__jibun">지번 {addr(s.jibun_addr)}</span>}
                 {many && <span className="stores__warn">같은 땅에 {s.bld_cnt_in_pnu}동</span>}
               </span>
-              <span className="rcell rcell--floor" />
               <span className="rcell rcell--store">
                 <span className="stores__meta">{meta}</span>
               </span>
