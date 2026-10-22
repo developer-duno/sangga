@@ -963,6 +963,23 @@ describe('BuildingSearch — PC 두 칸 왼쪽 칸(paneArea)', () => {
     expect(setup({ sido: '', sigungu: '' }).placeholder).toBe('건물명·주소·가게 이름');
   });
 
+  it('보완 1 — 검색칸 바로 아래 예시 한 줄(긴 안내 글의 예시 낱말 그대로 · 점 앞 줄 안 바뀌는 공백) · 입력칸이 그 줄을 설명으로 가리킨다 · 글을 쳐도 남는다 · paneArea 없으면 줄 0', () => {
+    const input = setup(AREA);
+    const eg = document.querySelector('.search__eg')!;
+    expect(eg.textContent).toBe('예: 미도맨션\u00a0· 테헤란로 117\u00a0· 역삼동 823-4\u00a0· 스타벅스');
+    // 긴 안내 글(휴대폰·한 열)의 예시 낱말과 같다.
+    for (const w of ['미도맨션', '테헤란로 117', '역삼동 823-4', '스타벅스']) expect(eg.textContent).toContain(w);
+    // 바로 아래 = 폼 다음 형제.
+    expect(input.closest('form')!.nextElementSibling).toBe(eg);
+    expect(input.getAttribute('aria-describedby')).toBe(eg.id);
+    fireEvent.change(input, { target: { value: '역삼' } });
+    expect(document.querySelector('.search__eg')).toBe(eg);
+    cleanup();
+    const plain = setup(null);
+    expect(document.querySelector('.search__eg')).toBeNull();
+    expect(plain.hasAttribute('aria-describedby')).toBe(false);
+  });
+
   it('L2 가게 이름 결과 줄도 길 이름부터(도로명·지번) · 다른 구 땅은 그대로 · paneArea 없으면 지금 그대로', async () => {
     rpc.mockImplementation((fn: string) =>
       Promise.resolve({

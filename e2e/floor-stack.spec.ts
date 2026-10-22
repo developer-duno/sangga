@@ -5126,6 +5126,7 @@ test.describe('PC 두 칸', () => {
       expect(await input.getAttribute('placeholder')).toContain('스타벅스');
       await expect(page.locator('.hit__addr').first()).toHaveText('서울특별시 강남구 테헤란로 100');
       expect(await page.locator('.hits').evaluate((el) => el.ownerDocument.defaultView!.getComputedStyle(el).maxHeight)).toBe('320px');
+      await expect(page.locator('.search__eg')).toHaveCount(0);
       return;
     }
 
@@ -5143,6 +5144,54 @@ test.describe('PC 두 칸', () => {
         return room - ctx.measureText(el.getAttribute('placeholder') ?? '').width;
       });
       expect(fit, `${width} 안내 글 여유`).toBeGreaterThanOrEqual(0);
+      // 보완 1 — 검색칸 바로 아래 예시 한 줄(두 칸만 · 13px · 글을 쳐 둔 채로도 남음).
+      const eg = page.locator('.search__eg');
+      await expect(eg).toBeVisible();
+      await expect(eg).toHaveText('예: 미도맨션\u00a0· 테헤란로 117\u00a0· 역삼동 823-4\u00a0· 스타벅스');
+      expect(await eg.evaluate((el) => el.ownerDocument.defaultView!.getComputedStyle(el).fontSize)).toBe('13px');
+      const inBox = (await input.boundingBox())!;
+      const egBox = (await eg.boundingBox())!;
+      expect(egBox.y).toBeGreaterThanOrEqual(inBox.y + inBox.height);
+      expect(egBox.y).toBeLessThan(inBox.y + inBox.height + 24);
+
+      // 보완 1 — 보이는 줄마다 첫 글자가 가운뎃점이 아니다(목록 줄 · 예시 줄). 줄을 여는 칸의 머리 장식(::before)과 글 속 점을 둘 다 본다.
+      const leadDots = await page.locator('.entry').evaluate((root) => {
+        const doc = root.ownerDocument;
+        const view = doc.defaultView!;
+        const found: string[] = [];
+        // ⓘ e2e 타입 설정엔 DOM 이 없다 — 찾은 요소를 root 와 같은 타입으로 본다.
+        const rows = Array.from(root.querySelectorAll('.hit, .stores__row, .dbld__row, .search__eg')) as (typeof root)[];
+        for (const row of rows) {
+          const rr = row.getBoundingClientRect();
+          const rcs = view.getComputedStyle(row);
+          const left = rr.left + parseFloat(rcs.borderLeftWidth) + parseFloat(rcs.paddingLeft);
+          // ① 줄 맨 앞에 선 칸의 머리 장식이 점인가(flex 줄은 늘 줄의 왼쪽 끝에서 시작한다).
+          for (const c of Array.from(row.children) as (typeof root)[]) {
+            const r0 = c.getClientRects()[0];
+            if (r0 && Math.abs(r0.left - left) < 2 && view.getComputedStyle(c, '::before').content.includes('·')) {
+              found.push(`머리 장식: ${row.textContent?.slice(0, 20)}`);
+            }
+          }
+          // ② 글 속 점 — 앞 글자(빈칸 빼고)가 윗줄에 있거나 없으면 그 점이 줄 맨 앞이다.
+          const walker = doc.createTreeWalker(row, 4);
+          let prev: { top: number } | null = null;
+          for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+            const text = n.textContent ?? '';
+            for (let i = 0; i < text.length; i += 1) {
+              if (/\s/.test(text[i])) continue;
+              const range = doc.createRange();
+              range.setStart(n, i);
+              range.setEnd(n, i + 1);
+              const rect = range.getClientRects()[0];
+              if (!rect || rect.width === 0) continue; // 말줄임에 가려진 글자
+              if (text[i] === '·' && (prev === null || prev.top < rect.top - 2)) found.push(`글: ${text.slice(Math.max(0, i - 8), i + 8)}`);
+              prev = { top: rect.top };
+            }
+          }
+        }
+        return found;
+      });
+      expect(leadDots, `${width} 줄 맨 앞 가운뎃점`).toEqual([]);
 
       // L1 — 이름 말줄임 0(건물 결과 · 가게 결과 전부) · 점포·층 줄은 이름 아래.
       for (const sel of ['.hit__name', '.stores__name']) {
@@ -5194,6 +5243,7 @@ test.describe('PC 두 칸', () => {
       return { mh: cs.maxHeight, oy: cs.overflowY };
     });
     expect(one).toEqual({ mh: '320px', oy: 'auto' });
+    await expect(page.locator('.search__eg')).toHaveCount(0);
     expect(await page.locator('.hit__name').first().evaluate((el) => el.ownerDocument.defaultView!.getComputedStyle(el).whiteSpace)).toBe('nowrap');
   });
 });

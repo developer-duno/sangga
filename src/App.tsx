@@ -309,6 +309,12 @@ export default function App() {
       document.querySelector<HTMLButtonElement>('.tabbar__btn[aria-current="page"]')?.focus({ preventScroll: true });
       return;
     }
+    // PC 두 칸에서 왼쪽 칸을 띠로 접은 채 오른쪽 큰 카드로 골랐다 — 작은 줄은 숨은(inert) 칸 안이라 커서가 BODY 로 떨어진다
+    // → 띠의 펼치기 단추로(보완 1 · 👤 2026-10-22 검사 🟡d). 띠는 접힌 동안에만 서므로 그 ref 가 있으면 접힌 것이다.
+    if (railExpandRef.current) {
+      railExpandRef.current.focus({ preventScroll: true });
+      return;
+    }
     const row = entryRef.current?.querySelector('.role');
     (
       row?.querySelector<HTMLButtonElement>('.role__chip[aria-pressed="true"]') ??

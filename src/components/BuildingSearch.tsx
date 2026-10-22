@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { ReactNode, SubmitEvent } from 'react';
 import { supabase } from '../lib/supabase';
 import {
@@ -107,6 +107,12 @@ type Props = {
 /** 검색칸 안내 글 — 기본(휴대폰·한 열) · PC 두 칸 왼쪽 칸(약 320px 칸에서 잘리지 않게 · L5). */
 const PLACEHOLDER_FULL = '건물명 · 도로명주소 · 지번 · 가게 이름 (예: 미도맨션, 테헤란로 117, 역삼동 823-4, 스타벅스)';
 const PLACEHOLDER_PANE = '건물명·주소·가게 이름';
+/**
+ * PC 두 칸에서 검색칸 바로 아래 예시 한 줄(👤 2026-10-22 「검색칸 아래 예시 한 줄」 — 칸에 글을 쳐도 남는다).
+ * 낱말은 긴 안내 글(`PLACEHOLDER_FULL`)의 예시와 같다. 점 앞은 줄이 안 바뀌는 공백(이스케이프 표기) — 좁아져 줄이 넘어가도
+ * 줄 맨 앞에 가운뎃점이 오지 않는다.
+ */
+const EXAMPLE_PANE = '예: 미도맨션\u00a0· 테헤란로 117\u00a0· 역삼동 823-4\u00a0· 스타벅스';
 
 export function BuildingSearch({
   onSelect,
@@ -120,6 +126,7 @@ export function BuildingSearch({
 }: Props) {
   /** 왼쪽 칸이면 길 이름부터(L2) — 다른 구 주소·구를 모를 때는 그대로(`shortAddr`). */
   const addr = (a: string) => (paneArea ? shortAddr(a, paneArea) : a);
+  const exampleId = useId();
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<BuildingHit[]>([]);
   /** 검색어에 걸린 전체 건물 수(보여주는 수가 아니다). */
@@ -357,11 +364,19 @@ export function BuildingSearch({
           onChange={(e) => setQuery(e.target.value)}
           placeholder={paneArea ? PLACEHOLDER_PANE : PLACEHOLDER_FULL}
           aria-label="건물명 또는 주소"
+          aria-describedby={paneArea ? exampleId : undefined}
         />
         <button className="search__btn" type="submit" disabled={loading || !query.trim()}>
           {loading ? '찾는 중…' : '검색'}
         </button>
       </form>
+
+      {/* PC 두 칸만 — 검색칸 바로 아래 예시 한 줄(👤 2026-10-22 · 휴대폰·한 열은 긴 안내 글이 예시를 품는다 · 종이에서는 `.search` 째 빠진다). */}
+      {paneArea && (
+        <p className="search__eg" id={exampleId}>
+          {EXAMPLE_PANE}
+        </p>
+      )}
 
       {belowInput}
 

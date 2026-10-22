@@ -660,6 +660,8 @@ describe('PC 두 칸 보완 1 — CSS', () => {
 // 화면 배선(큰 카드 자리 · 주소 길 이름부터 · 짧은 안내 글)은 여기, 실제 자리(말줄임 0 · 굴림 하나)는 E2E 「CC」가 잰다.
 describe('PC 두 칸 왼쪽 칸 다듬기 — 배선 (👤 2026-10-22)', () => {
   const PANE_PLACEHOLDER = '건물명·주소·가게 이름';
+  /** 점 앞은 줄이 안 바뀌는 공백(U+00A0 — 이스케이프 표기로 적는다). */
+  const PANE_EXAMPLE = '예: 미도맨션\u00a0· 테헤란로 117\u00a0· 역삼동 823-4\u00a0· 스타벅스';
 
   function searchWith(rows: BuildingHit[]) {
     rpc.mockImplementation((fn: string) => {
@@ -690,6 +692,18 @@ describe('PC 두 칸 왼쪽 칸 다듬기 — 배선 (👤 2026-10-22)', () => {
     expect(chip.textContent).toBe('창업자');
     expect(document.activeElement).toBe(chip);
     expect(window.localStorage.getItem('sangga.viewerRole')).toBe('창업자');
+  });
+
+  it('★ L6 보완 1 — 왼쪽 칸을 띠로 접은 채 오른쪽 큰 카드를 고르면 커서는 띠의 펼치기 단추(숨은 칸·BODY 아님 · 검사 🟡d)', async () => {
+    window.localStorage.clear();
+    mediaAt(1280);
+    const { container } = render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '왼쪽 칸 접기' }));
+    expect(entry().hasAttribute('inert')).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: /투자·매입하려고/ }));
+    expect(container.querySelector('section.rolecards')).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '왼쪽 칸 펼치기' }));
+    expect(window.localStorage.getItem('sangga.viewerRole')).toBe('투자자');
   });
 
   it('★ L6 아직 안 물어본 채 건물을 열면 오른쪽은 건물 — 큰 카드는 숨고 왼쪽에 작은 줄(질문 한 번) · 저장 0', async () => {
@@ -727,6 +741,8 @@ describe('PC 두 칸 왼쪽 칸 다듬기 — 배선 (👤 2026-10-22)', () => {
     mediaAt(1280);
     const { container } = render(<App />);
     expect((screen.getByLabelText('건물명 또는 주소') as HTMLInputElement).placeholder).toBe(PANE_PLACEHOLDER);
+    // 보완 1 — 검색칸 바로 아래 예시 한 줄(두 칸만 · 글을 쳐도 남는다).
+    expect(container.querySelector('.search__eg')!.textContent).toBe(PANE_EXAMPLE);
     await pickGu();
     const input = screen.getByLabelText('건물명 또는 주소') as HTMLInputElement;
     expect(input.placeholder).toBe(PANE_PLACEHOLDER);
@@ -736,6 +752,7 @@ describe('PC 두 칸 왼쪽 칸 다듬기 — 배선 (👤 2026-10-22)', () => {
     const addrs = [...container.querySelectorAll('.hit__addr')].map((e) => e.textContent);
     expect(addrs).toEqual(['테헤란로 1', '서울특별시 서초구 강남대로 2']);
     expect(container.querySelector('.hit__jibun')!.textContent).toBe('지번 역삼동 823-4');
+    expect(container.querySelector('.search__eg')!.textContent).toBe(PANE_EXAMPLE);
     expect(mapPaneArea).toHaveBeenLastCalledWith({ sido: '서울특별시', sigungu: '강남구' });
   });
 
@@ -752,6 +769,7 @@ describe('PC 두 칸 왼쪽 칸 다듬기 — 배선 (👤 2026-10-22)', () => {
     await screen.findByRole('button', { name: /테스트빌딩/ });
     expect(container.querySelector('.hit__addr')!.textContent).toBe('서울특별시 강남구 테헤란로 1');
     expect(container.querySelector('.hit__jibun')!.textContent).toBe('지번 서울특별시 강남구 역삼동 823-4');
+    expect(container.querySelector('.search__eg')).toBeNull();
     expect(mapPaneArea).toHaveBeenLastCalledWith(null);
   });
 });
@@ -781,6 +799,12 @@ function paneRules(src: string) {
     metaFirst: ['.app--wide .entry .hit__meta', '.app--wide .entry .dbld__meta', '.app--wide .entry .stores__meta'].every(
       (s) => has(s, /order:\s*1/) && has(s, /white-space:\s*normal/),
     ),
+    // 보완 1 — 구분점은 앞 칸 끝(`::after` · 점 앞 줄 안 바뀌는 공백 `\a0`)에만 · 두 칸 묶음에 「·」를 머리(`::before`)에 다는 규칙 0.
+    dotsAfter:
+      ['.app--wide .entry .hit__meta::after', '.app--wide .entry .dbld__meta::after', '.app--wide .entry .stores__meta::after'].every((s) =>
+        has(s, /content:\s*'\\a0·'/),
+      ) && !wide.some((r) => r.sel.some((s) => s.includes('::before')) && /content:[^;]*·/.test(r.body)),
+    example13: has('.app--wide .search__eg', /font-size:\s*13px/),
     offShort:
       has('.app--wide .dmap__off-nm', /display:\s*none/) &&
       has('.app--wide .dmap__off-etc', /display:\s*none/) &&
@@ -792,7 +816,15 @@ describe('PC 두 칸 왼쪽 칸 다듬기 — CSS (👤 2026-10-22)', () => {
   const css = readFileSync('src/styles.css', 'utf8');
 
   it('★ L1 두 줄(이름 전체 · 점포·층 먼저 · 주소 끝 줄임) · L3 안쪽 굴림 0 · L4 표지 짧게(두 칸 전체 — 1279 갈래 밖) — 전부 두 칸 묶음', () => {
-    expect(paneRules(css)).toEqual({ unscrolled: true, rowsWrap: true, namesWhole: true, metaFirst: true, offShort: true });
+    expect(paneRules(css)).toEqual({
+      unscrolled: true,
+      rowsWrap: true,
+      namesWhole: true,
+      metaFirst: true,
+      dotsAfter: true,
+      example13: true,
+      offShort: true,
+    });
   });
 
   it('양성 대조 — 규칙을 하나씩 걷은 꼴을 실제로 잡는다(흔한 꼴 + 변형 꼴)', () => {
@@ -808,6 +840,9 @@ describe('PC 두 칸 왼쪽 칸 다듬기 — CSS (👤 2026-10-22)', () => {
     expect(paneRules(capped).unscrolled).toBe(false);
     expect(drop('.app--wide .entry .stores__name {', '.app--wide .entry .stores__namex {').namesWhole).toBe(false);
     expect(drop('.app--wide .entry .stores__row {', '.app--wide .entry .stores__rowx {').rowsWrap).toBe(false);
+    // 구분점을 뒤 칸 머리(`::before`)로 되돌린 꼴(보완 1 이전) — 흔한 꼴 + 선택자 목록 변형.
+    expect(paneRules(`${css}\n${WIDE} {\n  .app--wide .entry .hit__jibun::before { content: '· '; }\n}`).dotsAfter).toBe(false);
+    expect(paneRules(`${css}\n${WIDE} {\n  .x,\n  .app--wide .entry .dbld__addr::before {\n    content:"· ";\n  }\n}`).dotsAfter).toBe(false);
     // 표지 숨김을 1279 갈래로 되돌린 꼴(옛 W5 F4) — 두 칸 전체에서 걷고 갈래에 넣는다.
     const back = css
       .replace(/ {2}\.app--wide \.dmap__off-nm,\r?\n {2}\.app--wide \.dmap__off-etc \{\r?\n {4}display: none;\r?\n {2}\}\r?\n/, '')

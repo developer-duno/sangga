@@ -5214,12 +5214,16 @@ body {
     order: 3;
   }
 
-  .app--wide .entry .hit__addr::before,
-  .app--wide .entry .dbld__addr::before,
-  .app--wide .entry .stores__addr::before,
-  .app--wide .entry .hit__jibun::before,
-  .app--wide .entry .stores__jibun::before {
-    content: '· ';
+  /* 구분점은 **앞 칸의 끝**(`::after`)에 붙인다(보완 1 · 👤 2026-10-22 검사 — 뒤 칸 머리(`::before`)에 두면 그 칸이 다음 줄로 넘어갈 때
+     줄 맨 앞이 「· 지번 …」이 됐다 · 1024 에서 33줄 중 32줄). 점 앞은 줄이 안 바뀌는 공백(`\a0`)이라 점만 따로 다음 줄로 가지 않는다 →
+     어느 폭에서도 점은 윗줄 끝에 남는다. 점포·층 뒤 = 늘(주소 칸은 '주소 없음' 이라도 늘 선다) · 도로명 뒤 = 지번이 이어질 때만.
+     ⓘ 도로명이 끝이 줄어든 꼴이면 그 뒤 점도 말줄임에 가려진다(그때 지번은 다음 줄이라 점이 없어도 갈린다). */
+  .app--wide .entry .hit__meta::after,
+  .app--wide .entry .dbld__meta::after,
+  .app--wide .entry .stores__meta::after,
+  .app--wide .entry .hit__addr:has(+ .hit__jibun)::after,
+  .app--wide .entry .stores__addr:has(+ .stores__jibun)::after {
+    content: '\a0·';
   }
 
   /* 줄 전체를 쓰는 덧줄(중개사 소유 구조 · 일치한 상호 · 갈 수 없는 까닭)은 둘째 줄 뒤. */
@@ -5228,6 +5232,14 @@ body {
   .app--wide .entry .stores__note {
     order: 4;
     flex: 0 0 100%;
+  }
+
+  /* 검색칸 바로 아래 예시 한 줄(보완 1 · 👤 2026-10-22 「검색칸 아래 예시 한 줄」) — 두 칸에서만 그린다(BuildingSearch 의 `paneArea`) ·
+     13px(화면 묶음 안 · 종이에서는 `.search` 째 빠진다). */
+  .app--wide .search__eg {
+    margin: 6px 0 0 4px;
+    color: var(--muted);
+    font-size: 13px;
   }
 
   /* L4 지도 화면 밖 표지 짧게 — 「↓ 3곳」만(휴대폰 720 묶음과 같은 꼴 · W5 보완 F4 의 1279 갈래를 두 칸 전체로 넓혔다).
