@@ -2198,7 +2198,7 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
     }
   });
 
-  test('CB. 종이 95%(👤 2026-10-22 결정 0038 V3 보완 3) — 실제 page.pdf 장수가 옛 판(넘침 때문에 크롬이 저절로 줄이던 때)과 같다 · 95% 를 빼면 한 장 는다 · 화면 크기는 그대로', async ({
+  test('CB. 종이 95%(👤 2026-10-22 결정 0038 V3 보완 3) — 실제 page.pdf 장수가 옛 판(넘침 때문에 크롬이 저절로 줄이던 때)과 같다 · 95% 를 빼면 같거나 는다 · 종이에 그려진 크기 0.95 · 화면 크기는 그대로', async ({
     page,
   }, testInfo) => {
     // page.pdf 는 크롬(headless)에만 있다 — 휴대폰 꼴(mobile)도 크롬 엔진이지만 같은 PDF 라 한 벌만 본다.
@@ -2225,11 +2225,27 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
     const old = await pages('@media print { html { zoom: 1 !important; } .floors { grid-template-columns: none !important; } }');
     // 보완 2 판(77e60f2) = 넘침만 고치고 95% 없음 — 한 장 늘던 회귀(양성 대조).
     const noZoom = await pages('@media print { html { zoom: 1 !important; } }');
-    expect([now, old, noZoom]).toEqual([5, 5, 6]);
-    // 종이 흉내에서 95% 가 실제로 걸린다(계산값).
+    // ⛔ 장수를 숫자로 박지 않는다 — 글꼴이 다른 CI(우분투)에서는 같은 가짜 건물이 [6, 6, 6] 이었다(윈도우 [5, 5, 6]).
+    // ① 지킬 핵심: 95% 규칙 = 옛 판과 같은 장수 ② 95% 를 빼면 장수가 같거나 는다(윈도우는 실제로 한 장 는다 — 리눅스는 같을 수 있다).
+    expect(now, `장수 지금 ${now} · 옛 판 ${old} · 95% 뺌 ${noZoom}`).toBe(old);
+    expect(noZoom).toBeGreaterThanOrEqual(now);
+    // ③ 95% 가 실제로 먹는가는 장수 말고 그려진 크기로(글꼴과 무관) — 높이가 CSS 로 고정된 층 막대(`.floor__bar`)의 그려진 높이 ÷ 계산된
+    //    높이(줄이기 전 값)가 종이 흉내에서 0.95 · 화면에서 1 · 95% 를 덮어 끄면 종이에서도 1(양성 대조).
+    //    ⓘ 맨 아래 층(`.last()`) — 화면은 층 목록 아래 10줄만 보여 위층 막대는 숨어 높이가 0 이다(S2).
+    //    ⓘ 리눅스에서는 ①②가 95% 를 빼도 초록일 수 있다(장수가 안 갈림) — 95% 규칙을 지키는 것은 이 ③ 이다.
+    const barRatio = () =>
+      page.locator('.card--floors .floor__bar').last().evaluate((b) => {
+        const h = parseFloat(b.ownerDocument.defaultView!.getComputedStyle(b).height);
+        return b.getBoundingClientRect().height / h;
+      });
+    expect(await barRatio()).toBeCloseTo(1, 2);
     await page.emulateMedia({ media: 'print' });
     try {
       expect(await page.locator('html').evaluate((h) => h.ownerDocument.defaultView!.getComputedStyle(h).zoom)).toBe('0.95');
+      expect(await barRatio()).toBeCloseTo(0.95, 2);
+      const off = await page.addStyleTag({ content: '@media print { html { zoom: 1 !important; } }' });
+      expect(await barRatio()).toBeCloseTo(1, 2);
+      await off.evaluate((e) => e.remove());
     } finally {
       await page.emulateMedia({ media: null });
     }
