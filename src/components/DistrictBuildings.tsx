@@ -15,6 +15,7 @@ import {
 } from '../lib/districtBuildings';
 import { chipMatch, FOUNDER_CHIP_ALL, type FounderChip } from '../lib/founderChips';
 import { describeRange } from '../lib/format';
+import { shortAddr, type AddrArea } from '../lib/shortAddr';
 import type { BuildingHit, DistrictLand, ParcelBuilding } from '../types';
 
 /**
@@ -51,6 +52,11 @@ type Props = {
    * ⓘ App 의 `activeChip` 만 따른다 — 다른 역할은 늘 '전체'다.
    */
   chip?: FounderChip;
+  /**
+   * PC 두 칸 왼쪽 칸이면 고른 시·구 — 줄의 주소를 길 이름부터 적는다(👤 2026-10-22 L2 · `shortAddr` · 다른 구 땅은 그대로).
+   * 없으면(휴대폰·한 열) 지금 그대로.
+   */
+  paneArea?: AddrArea | null;
 };
 
 /**
@@ -70,6 +76,7 @@ export function DistrictBuildings({
   onSelect,
   selectedBldId,
   chip = FOUNDER_CHIP_ALL,
+  paneArea = null,
 }: Props) {
   const match = chipMatch(chip);
   const [lands, setLands] = useState<DistrictLand[] | null>(null);
@@ -290,7 +297,9 @@ export function DistrictBuildings({
                 onClick={() => (many ? toggle(land) : onSelect(landToHit(land)))}
               >
                 <span className="dbld__name">{land.bld_nm || '(이름 없는 건물)'}</span>
-                <span className="dbld__addr">{land.road_addr || '주소 없음'}</span>
+                <span className="dbld__addr">
+                  {land.road_addr ? (paneArea ? shortAddr(land.road_addr, paneArea) : land.road_addr) : '주소 없음'}
+                </span>
                 <span className="dbld__meta">
                   {landStoreText(land, chip)} · {describeRange(landToHit(land))}
                   {many && <span className="dbld__warn"> · 같은 땅에 {land.bld_cnt_in_pnu}동</span>}

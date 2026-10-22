@@ -20,6 +20,7 @@ import {
 } from '../lib/districtMapView';
 import { FOUNDER_CHIP_ALL, type FounderChip } from '../lib/founderChips';
 import { EMPTY_MAP_PICK, type DistrictMapPick } from '../lib/districtMapPick';
+import type { AddrArea } from '../lib/shortAddr';
 import type { BuildingHit, DistrictFeature } from '../types';
 import { DistrictBuildings } from './DistrictBuildings';
 import { DistrictSheet, type SheetStage } from './DistrictSheet';
@@ -80,6 +81,8 @@ type Props = {
    * 다시 보이면 카카오 `relayout()` 을 한 번 부른다. 넓은 화면은 늘 true(속성 없음 — DOM 그대로).
    */
   visible?: boolean;
+  /** PC 두 칸 왼쪽 칸이면 고른 시·구 — 상권 건물 목록 주소를 길 이름부터(👤 2026-10-22 L2 · `DistrictBuildings` 로 넘기기만). */
+  paneArea?: AddrArea | null;
 };
 
 /**
@@ -140,6 +143,7 @@ export function DistrictMap({
   onPickChange,
   layout = 'card',
   visible = true,
+  paneArea = null,
 }: Props) {
   const [open, setOpen] = useState(true);
   const full = layout === 'full';
@@ -277,6 +281,7 @@ export function DistrictMap({
           onSelect={onSelectBuilding}
           selectedBldId={selected?.bld_id ?? null}
           chip={chip}
+          paneArea={paneArea}
         />
       )}
 

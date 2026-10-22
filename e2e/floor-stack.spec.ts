@@ -4154,23 +4154,32 @@ test.describe('첫 화면 — 역할 고르기 큰 카드', () => {
     await expect(box).toBeVisible();
     await expect(box.getByText('무엇을 하러 오셨나요?')).toBeVisible();
     await expect(page.locator('section.role')).toHaveCount(0);
-    // 덮개가 아니다 — 지역 고르기가 카드 **아래**에 그대로 보인다.
+    // 덮개가 아니다 — 지역 고르기가 그대로 보인다. 한 열·휴대폰 = 카드 **아래** · PC 두 칸 = 카드는 오른쪽 빈 칸 · 왼쪽 칸 맨 위가
+    // 지역 고르기(👤 2026-10-22 왼쪽 칸 다듬기 L6 — 지역·검색·지도가 바로 보이게).
     const region = page.getByRole('button', { name: /^서울$/ });
     await expect(region).toBeVisible();
-    expect((await region.boundingBox())!.y).toBeGreaterThan((await box.boundingBox())!.y);
+    if (await isTwoCols(page)) {
+      const left = (await page.locator('.entry').boundingBox())!;
+      const b = (await box.boundingBox())!;
+      expect(b.x).toBeGreaterThanOrEqual(left.x + left.width);
+      expect(await page.locator('.entry section.rolecards').count()).toBe(0);
+      expect((await region.boundingBox())!.y).toBeLessThan(left.y + 200);
+    } else {
+      expect((await region.boundingBox())!.y).toBeGreaterThan((await box.boundingBox())!.y);
+    }
 
     const cards = box.locator('.rolecards__card');
     await expect(cards).toHaveCount(3);
     const rects = await Promise.all([0, 1, 2].map(async (i) => (await cards.nth(i).boundingBox())!));
     for (const r of rects) expect(r.height).toBeGreaterThanOrEqual(56);
-    // 휴대폰 · PC 두 칸 왼쪽 칸(약 400px · W5 보완 F1)은 세로로 쌓기 · 한 열 넓은 화면(desktop-1000)은 한 줄에 셋.
-    if (testInfo.project.name === 'mobile' || (await isTwoCols(page))) {
+    // 휴대폰은 세로로 쌓기 · 한 열 넓은 화면(desktop-1000)·PC 두 칸 오른쪽 빈 칸(L6)은 한 줄에 셋.
+    if (testInfo.project.name === 'mobile') {
       // 세로로 쌓기 — 왼쪽 끝이 같고 위에서 아래로.
       expect(rects[1].y).toBeGreaterThanOrEqual(rects[0].y + rects[0].height);
       expect(rects[2].y).toBeGreaterThanOrEqual(rects[1].y + rects[1].height);
       expect(Math.abs(rects[1].x - rects[0].x)).toBeLessThanOrEqual(1);
     } else {
-      // 한 열 넓은 화면 = 한 줄에 셋.
+      // 한 열 넓은 화면 · PC 두 칸 오른쪽 = 한 줄에 셋.
       expect(Math.abs(rects[1].y - rects[0].y)).toBeLessThanOrEqual(1);
       expect(Math.abs(rects[2].y - rects[0].y)).toBeLessThanOrEqual(1);
       expect(rects[1].x).toBeGreaterThan(rects[0].x + rects[0].width - 1);
@@ -5077,6 +5086,115 @@ test.describe('PC 두 칸', () => {
     await page.emulateMedia({ media: 'print' });
     await expect(page.locator('section.dmap')).toBeVisible();
     await page.emulateMedia({ media: null });
+  });
+
+  /*
+    왼쪽 칸 다듬기(👤 2026-10-22 「가」) — 목록 줄 두 줄(이름 전체 · 말줄임 0) · 주소는 길 이름부터 · 안쪽 굴림 0(왼쪽 칸 굴림 하나) ·
+    검색칸 안내 글 짧게(잘림 0). ⓘ 상권 건물 목록·화면 밖 표지는 지도 키가 없어 여기서 안 선다 → vitest CSS 가드(App.wide.test).
+  */
+  test('CC. 왼쪽 칸 다듬기 — 1280·1024 두 칸: 이름 말줄임 0(두 줄 · 점포·층 줄은 이름 아래) · 주소 길 이름부터 · 목록 안쪽 굴림 0 · 안내 글 잘림 0 · 가로 넘침 0 · 1000 한 열 · 휴대폰은 그대로', async ({
+    page,
+  }, testInfo) => {
+    // 왼쪽 칸(약 370px 글 자리)보다 긴 이름 — 1280 에서도 한 줄에 안 들어가 두 줄로 넘어가야 한다.
+    const LONG = '아주아주긴이름의강남역삼테헤란로제일종합상가빌딩신관동과구관동과별관동부속동';
+    const OTHER_GU = '서울특별시 서초구 강남대로 2 (서초동, 아주아주긴부속건물이름이붙은주소 지하상가 연결통로 쪽 출입구)';
+    const hits = [
+      searchHit({ bld_nm: LONG, road_addr: '서울특별시 강남구 테헤란로 100', jibun_addr: '서울특별시 강남구 역삼동 823-4', min_floor: -3, max_floor: 12, floor_cnt: 15, total_cnt: 26 }),
+      // 다른 구 · 아주 긴 주소 — 줄이 왼쪽 칸 밖으로 밀리지 않고 끝이 줄어야 한다.
+      searchHit({ bld_id: 'other-gu', bld_nm: '옆구빌딩', road_addr: OTHER_GU, min_floor: -1, max_floor: 5, total_cnt: 26 }),
+      ...Array.from({ length: 23 }, (_, i) =>
+        searchHit({ bld_id: `b${i}`, bld_nm: `역삼빌딩${i + 1}`, road_addr: `서울특별시 강남구 테헤란로 ${200 + i}`, jibun_addr: `서울특별시 강남구 역삼동 ${900 + i}`, total_cnt: 26 }),
+      ),
+    ];
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, hits);
+    await mockJson(
+      page,
+      SEARCH_STORES_PATTERN,
+      Array.from({ length: 8 }, (_, i) =>
+        storeHit({ pnu: `11680101001000${String(i).padStart(5, '0')}`, bld_id: `s${i}`, bld_nm: i === 0 ? `${LONG}별관` : `가게건물${i}`, road_addr: `서울특별시 강남구 테헤란로 ${300 + i}`, jibun_addr: `서울특별시 강남구 역삼동 ${700 + i}`, total_parcel_cnt: 8, total_store_cnt: 16 }),
+      ),
+    );
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await expect(page.getByRole('button', { name: new RegExp(LONG) }).first()).toBeVisible();
+    const input = page.getByLabel('건물명 또는 주소');
+
+    if (testInfo.project.name === 'mobile') {
+      // 휴대폰 = 변화 0 — 안내 글 긴 꼴 · 주소 전체 · 목록 안쪽 굴림 그대로(320px).
+      expect(await input.getAttribute('placeholder')).toContain('스타벅스');
+      await expect(page.locator('.hit__addr').first()).toHaveText('서울특별시 강남구 테헤란로 100');
+      expect(await page.locator('.hits').evaluate((el) => el.ownerDocument.defaultView!.getComputedStyle(el).maxHeight)).toBe('320px');
+      return;
+    }
+
+    for (const width of [1280, 1024]) {
+      await page.setViewportSize({ width, height: 800 });
+      await expect(page.locator('.app')).toHaveClass(/app--wide/);
+      // L5 — 짧은 안내 글이 입력칸 글 자리 안에 들어간다(글 폭을 그 칸의 글꼴로 잰다).
+      expect(await input.getAttribute('placeholder')).toBe('건물명·주소·가게 이름');
+      const fit = await input.evaluate((el) => {
+        const doc = el.ownerDocument;
+        const cs = doc.defaultView!.getComputedStyle(el);
+        const ctx = doc.createElement('canvas').getContext('2d')!;
+        ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+        const room = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+        return room - ctx.measureText(el.getAttribute('placeholder') ?? '').width;
+      });
+      expect(fit, `${width} 안내 글 여유`).toBeGreaterThanOrEqual(0);
+
+      // L1 — 이름 말줄임 0(건물 결과 · 가게 결과 전부) · 점포·층 줄은 이름 아래.
+      for (const sel of ['.hit__name', '.stores__name']) {
+        const cut = await page.locator(sel).evaluateAll((els) => els.filter((e) => e.scrollWidth > e.clientWidth + 0.5).length);
+        expect(cut, `${width} ${sel} 잘림`).toBe(0);
+      }
+      const first = page.locator('.hit').first();
+      const nm = (await first.locator('.hit__name').boundingBox())!;
+      const meta = (await first.locator('.hit__meta').boundingBox())!;
+      expect(meta.y).toBeGreaterThanOrEqual(nm.y + nm.height - 1);
+      expect(nm.height).toBeGreaterThan(30); // 긴 이름은 줄을 넘긴다(두 줄 이상)
+      // 층 글(「지하 3층 ~ 12층 · 15개 층」)은 잘리지 않는다.
+      expect(await first.locator('.hit__meta').evaluate((e) => e.scrollWidth - e.clientWidth)).toBeLessThanOrEqual(0.5);
+
+      // L2 — 고른 구 주소는 길 이름부터 · 다른 구는 그대로.
+      await expect(page.locator('.hit__addr').nth(0)).toHaveText('테헤란로 100');
+      await expect(page.locator('.hit__jibun').nth(0)).toHaveText('지번 역삼동 823-4');
+      const other = page.locator('.hit__addr').nth(1);
+      await expect(other).toHaveText(OTHER_GU);
+      // 아주 긴 다른 구 주소 = 끝이 줄어든다(줄은 왼쪽 칸 안 — 아래 가로 넘침 0).
+      expect(await other.evaluate((e) => e.scrollWidth - e.clientWidth)).toBeGreaterThan(0);
+      await expect(page.locator('.stores__addr').first()).toHaveText('테헤란로 300');
+
+      // L3 — 목록 안쪽 굴림 0 · 굴림은 왼쪽 칸 하나 · 왼쪽 칸·문서 가로 넘침 0.
+      for (const sel of ['.hits', '.stores']) {
+        const inner = await page
+          .locator(sel)
+          .evaluate((el) => ({ oy: el.ownerDocument.defaultView!.getComputedStyle(el).overflowY, extra: el.scrollHeight - el.clientHeight }));
+        expect(inner.oy, `${width} ${sel}`).toBe('visible');
+        expect(inner.extra, `${width} ${sel}`).toBeLessThanOrEqual(0);
+      }
+      const pane = await page.locator('.entry').evaluate((el) => ({
+        oy: el.ownerDocument.defaultView!.getComputedStyle(el).overflowY,
+        tall: el.scrollHeight > el.clientHeight,
+        wide: el.scrollWidth - el.clientWidth,
+      }));
+      expect(pane).toEqual({ oy: 'auto', tall: true, wide: 0 });
+      expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+      await page.screenshot({ path: testInfo.outputPath(`cc-left-${width}.png`) });
+    }
+
+    // 1000 한 열 = 변화 0 — 안내 글 긴 꼴 · 주소 전체 · 목록 안쪽 굴림(320px) 그대로 · 이름은 한 줄 말줄임.
+    await page.setViewportSize({ width: 1000, height: 768 });
+    await expect(page.locator('.app')).not.toHaveClass(/app--wide/);
+    expect(await input.getAttribute('placeholder')).toContain('스타벅스');
+    await expect(page.locator('.hit__addr').first()).toHaveText('서울특별시 강남구 테헤란로 100');
+    const one = await page.locator('.hits').evaluate((el) => {
+      const cs = el.ownerDocument.defaultView!.getComputedStyle(el);
+      return { mh: cs.maxHeight, oy: cs.overflowY };
+    });
+    expect(one).toEqual({ mh: '320px', oy: 'auto' });
+    expect(await page.locator('.hit__name').first().evaluate((el) => el.ownerDocument.defaultView!.getComputedStyle(el).whiteSpace)).toBe('nowrap');
   });
 });
 

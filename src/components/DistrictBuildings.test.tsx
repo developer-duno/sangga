@@ -154,6 +154,28 @@ describe('DistrictBuildings — 목록', () => {
     await screen.findByText('롯데호텔 및 백화점');
     expect(screen.getByText(/경계에 걸친 땅은/)).toBeTruthy();
   });
+
+  it('PC 두 칸 왼쪽 칸(paneArea · 👤 2026-10-22 L2) — 고른 구의 땅은 길 이름부터 · 다른 구 땅은 그대로 · 없으면 지금 그대로', async () => {
+    responses.lands = {
+      data: [land(), land({ pnu: '1114011100100020000', bld_id: 'B-2', bld_nm: '옆구건물', road_addr: '서울특별시 종로구 종로 1' })],
+      error: null,
+    };
+    for (const paneArea of [{ sido: '서울특별시', sigungu: '중구' }, null]) {
+      render(
+        <DistrictBuildings
+          districtId="3001492"
+          districtNm="명동 남대문 관광특구"
+          onSelect={() => {}}
+          selectedBldId={null}
+          paneArea={paneArea}
+        />,
+      );
+      await screen.findByText('옆구건물');
+      const addrs = [...document.querySelectorAll('.dbld__addr')].map((e) => e.textContent);
+      expect(addrs).toEqual([paneArea ? '남대문로 81' : '서울특별시 중구 남대문로 81', '서울특별시 종로구 종로 1']);
+      cleanup();
+    }
+  });
 });
 
 describe('DistrictBuildings — 한 땅에 여러 동', () => {
