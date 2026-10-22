@@ -1104,3 +1104,77 @@ describe('BuildingSearch — 중개사 소유 구조 줄 (결정 0036 결정 5·
     expect(document.querySelector('.hit__own')).toBeNull();
   });
 });
+
+// ── PC 두 칸 오른쪽 목록 자리(👤 2026-10-22 방법 나) — 결과가 주어진 자리에 표로 · 목록 이름 알리기 ─────────────
+describe('BuildingSearch — 오른쪽 목록 자리 (방법 나)', () => {
+  function setup(host: HTMLElement | null, onListChange = vi.fn(), showOwnership = false) {
+    render(
+      <BuildingSearch
+        onSelect={vi.fn()}
+        onSearchStart={vi.fn()}
+        selectedBldId={null}
+        sigungu="11680"
+        sigunguName="강남구"
+        showOwnership={showOwnership}
+        listHost={host}
+        onListChange={onListChange}
+      />,
+    );
+    const input = screen.getByLabelText('건물명 또는 주소') as HTMLInputElement;
+    return { input, onListChange };
+  }
+  function serve(bld: BuildingHit[], stores: StoreHit[]) {
+    rpc.mockImplementation((fn: string) =>
+      Promise.resolve({ data: fn === 'search_buildings' ? bld : fn === 'search_stores' ? stores : [], error: null }),
+    );
+  }
+  function go(input: HTMLInputElement, text: string) {
+    fireEvent.change(input, { target: { value: text } });
+    fireEvent.submit(input.closest('form')!);
+  }
+
+  it('★ 자리가 있으면 건물·가게 결과가 그 자리에 표로(검색 덩어리 밖) · 소유 구조는 이름 칸 · 가게 수는 점포 칸 · 이름 = 「스타벅스 검색 3곳」', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    serve(
+      [hit({ is_jiphap: true, approve_date: '2003-05-14', parking_cnt: 120 }), hit({ bld_id: 'b2', bld_nm: '둘째' })],
+      [storeHit({ match_store_cnt: 4, bld_cnt_in_pnu: 2 })],
+    );
+    const { input, onListChange } = setup(host, vi.fn(), true);
+    go(input, '스타벅스');
+    await waitFor(() => expect(host.querySelectorAll('.hit')).toHaveLength(2));
+    expect(document.querySelector('section.search')!.querySelector('.hit, .stores__row')).toBeNull();
+    expect(host.querySelectorAll('.rtable__head')).toHaveLength(2); // 건물 표 · 가게 표 머리
+    expect(host.querySelector('.hit .rcell--name .hit__own')!.textContent).toBe('집합건물 · 사용승인 2003년 5월 · 주차 120대');
+    const store = host.querySelector('.stores__row')!;
+    expect(store.querySelector('.rcell--store')!.textContent).toBe('이 땅에 가게 4곳 일치');
+    expect(store.querySelector('.rcell--name .stores__names')!.textContent).toBe('스타벅스역삼점 외 3곳');
+    expect(store.querySelector('.rcell--addr')!.textContent).toBe('서울 강남구 테헤란로 1지번 서울 강남구 역삼동 823-4같은 땅에 2동');
+    expect(store.querySelector('.rcell--floor')!.textContent).toBe('');
+    expect(onListChange).toHaveBeenLastCalledWith('스타벅스 검색 3곳');
+    host.remove();
+  });
+
+  it('못 찾음도 그 자리(「왼쪽에서 다른 구를」) · 이름 = 「없는말 검색 0곳」 · 사라지면 null', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    serve([], []);
+    const { input, onListChange } = setup(host);
+    go(input, '없는말');
+    await waitFor(() => expect(host.textContent).toContain('강남구에서 찾지 못했습니다'));
+    expect(host.textContent).toContain('왼쪽에서 다른 구를 골라 보세요');
+    expect(onListChange).toHaveBeenLastCalledWith('없는말 검색 0곳');
+    cleanup();
+    expect(onListChange).toHaveBeenLastCalledWith(null);
+    host.remove();
+  });
+
+  it('양성 대조 — 자리가 없으면(휴대폰·한 열) 결과는 검색 덩어리 안 · 지금 꼴(칸 이름표·표 머리 0 · 「위에서」)', async () => {
+    serve([hit()], [storeHit()]);
+    const { input } = setup(null);
+    go(input, '스타벅스');
+    await waitFor(() => expect(document.querySelectorAll('section.search .hit')).toHaveLength(1));
+    expect(document.querySelector('.rcell, .rtable__head')).toBeNull();
+    expect(document.querySelector('section.search .stores__row .stores__meta')!.textContent).toBe('이 땅에 가게 1곳 일치');
+  });
+});

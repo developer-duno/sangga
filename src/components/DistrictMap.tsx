@@ -83,6 +83,9 @@ type Props = {
   visible?: boolean;
   /** PC 두 칸 왼쪽 칸이면 고른 시·구 — 상권 건물 목록 주소를 길 이름부터(👤 2026-10-22 L2 · `DistrictBuildings` 로 넘기기만). */
   paneArea?: AddrArea | null;
+  /** PC 두 칸 오른쪽 목록 자리 · 목록 이름 알리기(👤 2026-10-22 방법 나 R1 · `DistrictBuildings` 로 넘기기만). */
+  listHost?: HTMLElement | null;
+  onListChange?: (label: string | null) => void;
 };
 
 /**
@@ -144,6 +147,8 @@ export function DistrictMap({
   layout = 'card',
   visible = true,
   paneArea = null,
+  listHost = null,
+  onListChange,
 }: Props) {
   const [open, setOpen] = useState(true);
   const full = layout === 'full';
@@ -282,6 +287,8 @@ export function DistrictMap({
           selectedBldId={selected?.bld_id ?? null}
           chip={chip}
           paneArea={paneArea}
+          listHost={listHost}
+          onListChange={onListChange}
         />
       )}
 
@@ -513,9 +520,13 @@ function DistrictMapBody({
     「상권 지도 넣기」를 켠 종이는 이 폭 그대로 가운데 놓는다(인쇄 묶음 `.app--printmap .dmap__canvas`). 종이 폭으로 늘리면 카카오가
     화면 폭만큼만 타일을 그려 둬 오른쪽이 빈 회색이 된다 — 인쇄 직전 relayout 뒤 비동기 타일은 믿지 않는다.
     ⓘ 카드 꼴만(휴대폰 지도 가득은 DOM 그대로) · 아직 못 쟀거나 다른 구에서 잰 값이면 안 적는다(0 은 `onIdle` 이 이미 버린다).
+    높이도 같은 까닭으로 `--dmap-h` 에 남긴다(👤 2026-10-22 방법 나 R5 — 두 칸 지도 칸 높이가 창 높이를 따라 300px 보다 커졌다 ·
+    종이는 그린 높이 그대로 · 인쇄 묶음 `.app--wide .entry .dmap__canvas`).
   */
   const canvasStyle =
-    !full && view !== null && view.widthPx > 0 ? ({ '--dmap-w': `${view.widthPx}px` } as CSSProperties) : undefined;
+    !full && view !== null && view.widthPx > 0
+      ? ({ '--dmap-w': `${view.widthPx}px`, '--dmap-h': `${view.heightPx}px` } as CSSProperties)
+      : undefined;
   const canvas = (
     <div className="dmap__canvas" inert={covered} style={canvasStyle}>
       <Map

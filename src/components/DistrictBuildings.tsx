@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { supabase } from '../lib/supabase';
+import { ListTableHead } from './ListTableHead';
 import { DISTRICT_BUILDINGS_FN, DISTRICT_BUILDINGS_PAGE, PARCEL_BUILDINGS_FN } from '../lib/appConstants';
 import {
   districtLandsArgs,
@@ -57,6 +59,13 @@ type Props = {
    * 없으면(휴대폰·한 열) 지금 그대로.
    */
   paneArea?: AddrArea | null;
+  /**
+   * PC 두 칸 오른쪽 목록 자리(👤 2026-10-22 방법 나 R1) — 있으면 이 목록(불러오는 중·실패·빈 목록 안내 포함)을 그 자리에 표로 그린다
+   * (React 포털 — 상태는 이 부품이 그대로 쥔다). 없으면(휴대폰·한 열) 지금 그대로 지도 아래.
+   */
+  listHost?: HTMLElement | null;
+  /** 지금 목록의 이름(「둔산라이프 상권 174곳」)을 App 에 알린다 — 오른쪽 「← 목록으로(…)」 글. 사라지면 null. */
+  onListChange?: (label: string | null) => void;
 };
 
 /**
@@ -77,7 +86,13 @@ export function DistrictBuildings({
   selectedBldId,
   chip = FOUNDER_CHIP_ALL,
   paneArea = null,
+  listHost = null,
+  onListChange,
 }: Props) {
+  /** 오른쪽 표 꼴인가(PC 두 칸 — 이름 · 길 주소 · 층 · 점포 네 칸 · R4). */
+  const table = listHost !== null;
+  /** 그릴 것을 제자리(지도 아래) 또는 오른쪽 자리에 둔다. */
+  const place = (node: ReactNode) => (listHost ? createPortal(node, listHost) : node);
   const match = chipMatch(chip);
   const [lands, setLands] = useState<DistrictLand[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -209,6 +224,17 @@ export function DistrictBuildings({
   }
 
   /*
+    오른쪽 「← 목록으로(둔산라이프 상권 174곳)」 글(👤 2026-10-22 R3) — 받기 전에는 상권 이름만 · 받으면 서버가 센 땅 수(머릿글과 같은 수).
+    ⓘ 이 목록이 서 있는 동안 늘 알린다(불러오는 중·실패·빈 목록도 오른쪽에 그 안내가 선다) · 사라지면(접음·다른 상권·구 바꿈) null.
+  */
+  const listLabel =
+    lands === null ? `${districtNm} 상권` : `${districtNm} 상권 ${(lands[0]?.total_parcel_cnt ?? 0).toLocaleString('ko-KR')}곳`;
+  useEffect(() => {
+    onListChange?.(listLabel);
+  }, [listLabel, onListChange]);
+  useEffect(() => () => onListChange?.(null), [onListChange]);
+
+  /*
     ⓘ 이 조각의 메시지 역할 규약 — **알림은 `role="status"`, 실패는 `role="alert"`** 한 벌로만 쓴다.
 
     왜 갈랐나: 이 목록은 사람이 **직접 누른** 결과라 결과가 화면에 나타나는 것을 읽어 주는
@@ -220,18 +246,18 @@ export function DistrictBuildings({
        않는다 — 두 역할이 이미 그 뜻을 담고 있고, 섞이면 어느 쪽이 옳은지 흐려진다).
   */
   if (loading && lands === null) {
-    return (
+    return place(
       <p className="dbld__msg" role="status">
         {districtNm}의 건물을 불러오는 중…
-      </p>
+      </p>,
     );
   }
 
   if (failed && lands === null) {
-    return (
+    return place(
       <p className="dbld__msg dbld__msg--error" role="alert">
         건물 목록을 불러오지 못했습니다.
-      </p>
+      </p>,
     );
   }
 
@@ -241,14 +267,14 @@ export function DistrictBuildings({
     // ⓘ 상권 1,687곳 중 10곳은 실제로 건물이 한 동도 없다(라이브 실측). 빈 목록을 띄우고
     //   "왜 아무것도 없지?" 하게 두는 대신, 자료가 없다고 말한다(지도의 빈 구와 같은 규칙).
     // ⓘ 칩을 골랐으면 그 업종이 있는 땅이 없다는 뜻이다 — 건물 자료가 없다고 말하지 않는다.
-    return (
+    return place(
       <p className="dbld__msg" role="status">
         {noLandText(chip) ?? '이 상권에는 아직 건물 자료가 없습니다.'}
-      </p>
+      </p>,
     );
   }
 
-  return (
+  return place(
     <div className="dbld">
       <p className="dbld__head" id={headId}>
         {/* 칩을 골랐으면 무엇을 거른 목록인지 머릿글이 먼저 말한다(👤 2026-10-11 — '명동에서 카페가 있는 땅'). */}
@@ -275,12 +301,14 @@ export function DistrictBuildings({
       {/* ⓘ 목록에 **이름표를 붙인다** — 예전에는 `id` 만 달아 두고 아무도 가리키지 않아
           읽어 주는 기기에는 그냥 "목록"이었다. 머릿글이 이미 "◯◯의 건물 — N곳"이라
           말하므로 그 글을 이름으로 빌린다(글을 두 번 적지 않는다). */}
+      {table && <ListTableHead />}
       <ul className="dbld__list" aria-labelledby={headId}>
         {lands.map((land) => {
           const many = land.bld_cnt_in_pnu > 1;
           const open = expanded[land.pnu];
           /** 이 줄이 펼치는 칸의 id. 훅을 줄마다 못 부르므로 앞머리에 땅을 붙여 만든다. */
           const panelId = `${idBase}-${land.pnu}`;
+          const road = land.road_addr ? (paneArea ? shortAddr(land.road_addr, paneArea) : land.road_addr) : '주소 없음';
           return (
             <li key={land.pnu}>
               <button
@@ -296,14 +324,33 @@ export function DistrictBuildings({
                 aria-controls={many ? panelId : undefined}
                 onClick={() => (many ? toggle(land) : onSelect(landToHit(land)))}
               >
-                <span className="dbld__name">{land.bld_nm || '(이름 없는 건물)'}</span>
-                <span className="dbld__addr">
-                  {land.road_addr ? (paneArea ? shortAddr(land.road_addr, paneArea) : land.road_addr) : '주소 없음'}
-                </span>
-                <span className="dbld__meta">
-                  {landStoreText(land, chip)} · {describeRange(landToHit(land))}
-                  {many && <span className="dbld__warn"> · 같은 땅에 {land.bld_cnt_in_pnu}동</span>}
-                </span>
+                {table ? (
+                  /* PC 두 칸 오른쪽 표(R4) — 이름 · 길 주소(아래 「같은 땅에 N동」) · 층 · 점포(오른쪽 맞춤). 글은 그대로 · 자리만. */
+                  <>
+                    <span className="rcell rcell--name">
+                      <span className="dbld__name">{land.bld_nm || '(이름 없는 건물)'}</span>
+                    </span>
+                    <span className="rcell rcell--addr">
+                      <span className="dbld__addr">{road}</span>
+                      {many && <span className="dbld__warn">같은 땅에 {land.bld_cnt_in_pnu}동</span>}
+                    </span>
+                    <span className="rcell rcell--floor">
+                      <span className="dbld__range">{describeRange(landToHit(land))}</span>
+                    </span>
+                    <span className="rcell rcell--store">
+                      <span className="dbld__meta">{landStoreText(land, chip)}</span>
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="dbld__name">{land.bld_nm || '(이름 없는 건물)'}</span>
+                    <span className="dbld__addr">{road}</span>
+                    <span className="dbld__meta">
+                      {landStoreText(land, chip)} · {describeRange(landToHit(land))}
+                      {many && <span className="dbld__warn"> · 같은 땅에 {land.bld_cnt_in_pnu}동</span>}
+                    </span>
+                  </>
+                )}
               </button>
 
               {many && open?.at === 'loading' && (
@@ -367,6 +414,6 @@ export function DistrictBuildings({
         상권 경계 안에 <strong>땅의 대표 위치</strong>가 들어가는 건물만 셉니다. 경계에 걸친 땅은
         그 위치에 따라 빠질 수 있습니다.
       </p>
-    </div>
+    </div>,
   );
 }

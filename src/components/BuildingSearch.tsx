@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { ReactNode, SubmitEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { supabase } from '../lib/supabase';
+import { ListTableHead } from './ListTableHead';
 import {
   SEARCH_BUILDINGS_FN,
   SEARCH_SCOPE_FN,
@@ -102,6 +104,14 @@ type Props = {
    * ⓘ 두 칸이면 구를 아직 안 골라도 준다(빈 이름 — 주소는 그대로 · 안내 글만 짧게).
    */
   paneArea?: AddrArea | null;
+  /**
+   * PC 두 칸 오른쪽 목록 자리(👤 2026-10-22 방법 나 R1) — 있으면 결과(못 찾음 · 건물 결과 · 가게 이름 결과)를 이 자리에 표로 그린다
+   * (React 포털 — 상태는 이 부품이 그대로 쥔다). 없으면(휴대폰·한 열·두 칸이 아직 자리를 안 만든 첫 그림) 지금 그대로 검색칸 아래.
+   * ⓘ 오류 한 줄 · 너무 넓은 검색 한 줄(늘 서 있는 낭독 자리) · 안내창은 검색칸 곁에 남는다.
+   */
+  listHost?: HTMLElement | null;
+  /** 지금 목록의 이름(「둔산 검색 25곳」 — 목록이 없으면 null)을 App 에 알린다 — 오른쪽 「← 목록으로(…)」 글과 오른쪽을 목록으로 둘지. */
+  onListChange?: (label: string | null) => void;
 };
 
 /** 검색칸 안내 글 — 기본(휴대폰·한 열) · PC 두 칸 왼쪽 칸(약 320px 칸에서 잘리지 않게 · L5). */
@@ -123,7 +133,11 @@ export function BuildingSearch({
   showOwnership = false,
   belowInput,
   paneArea = null,
+  listHost = null,
+  onListChange,
 }: Props) {
+  /** 오른쪽 표 꼴인가(PC 두 칸 — 이름 · 길 주소 · 층 · 점포 네 칸 · R4). */
+  const table = listHost !== null;
   /** 왼쪽 칸이면 길 이름부터(L2) — 다른 구 주소·구를 모를 때는 그대로(`shortAddr`). */
   const addr = (a: string) => (paneArea ? shortAddr(a, paneArea) : a);
   const exampleId = useId();
@@ -352,6 +366,218 @@ export function BuildingSearch({
 
   const shownAll = total > 0 && total <= hits.length;
 
+  /*
+    지금 목록이 있나 · 그 이름(PC 두 칸 오른쪽 「← 목록으로(둔산 검색 25곳)」 · 👤 2026-10-22 R3) — 결과 줄(건물 + 가게 이름) 수를 센다.
+    ⓘ 못 찾음(0건)도 목록이다(오른쪽에 「찾지 못했습니다」가 선다) · 찾는 중에는 앞 결과가 그대로라 그 이름 그대로 · 오류·안내창만이면 없음.
+  */
+  const storeRows = store.at === 'done' ? store.rows.length : 0;
+  const hasList = hits.length > 0 || store.at === 'done' || store.at === 'failed' || (searched && !error);
+  const listLabel =
+    hasList && ranWith !== null ? `${ranWith.q} 검색 ${(hits.length + storeRows).toLocaleString('ko-KR')}곳` : null;
+  useEffect(() => {
+    onListChange?.(listLabel);
+  }, [listLabel, onListChange]);
+  // 사라질 때(구를 바꿔 key 로 다시 태어남 등) 목록도 없어진다.
+  useEffect(() => () => onListChange?.(null), [onListChange]);
+
+  /*
+    결과 넷 — 못 찾음 · 건물 결과 · 가게 이름 실패 · 가게 이름 결과. 휴대폰·한 열은 지금 자리·지금 꼴 그대로(DOM 0 변화),
+    PC 두 칸은 오른쪽 자리(`listHost`)에 표 꼴로(R4 — 이름 · 길 주소 · 층 · 점포 네 칸 · 지번과 「같은 땅에 N동」은 주소 칸 아래 작은 글자 ·
+    중개사 소유 구조·일치 상호·갈 수 없는 까닭은 이름 칸 아래). ⛔ 글은 빼지 않는다 — 자리만(R7).
+    ⓘ 건물 결과는 서버(`search_buildings`)가 점포 수를 안 줘서 점포 칸이 빈다(DB 0 — 상권 목록·가게 이름 결과만 채운다).
+  */
+  const notFoundEl = searched && !loading && hits.length === 0 && !error && (
+    <p className="msg">
+      {/* ⚠️ 구 단위 검색으로 바뀐 뒤에도 "전체 열린 지역"을 안내하면 엉뚱하다 —
+          사용자는 이미 한 구를 골랐고, 없는 것은 **그 구 안에서** 없는 것이다. */}
+      <strong>{sigunguName ?? '고른 지역'}</strong>에서 찾지 못했습니다. 건물 이름이나
+      지번을 다시 확인해 주시거나, {table ? '왼쪽' : '위'}에서 다른 구를 골라 보세요.
+    </p>
+  );
+
+  const hitsEl = hits.length > 0 && (
+    <>
+      <p className="search__count">
+        {sigunguName && `${sigunguName}에서 `}건물 {total.toLocaleString('ko-KR')}개
+        {!shownAll && (
+          <span className="search__hint">
+            {' '}
+            · 이 중 {hits.length}개만 보여드립니다. 검색어를 좁혀 주세요
+          </span>
+        )}
+      </p>
+      {table && <ListTableHead />}
+      <ul className="hits">
+        {hits.map((h) => {
+          const own = showOwnership && describeOwnership(h) !== null && (
+            <span className="hit__own">{describeOwnership(h)}</span>
+          );
+          return (
+            <li key={h.bld_id}>
+              <button
+                className={`hit${h.bld_id === selectedBldId ? ' hit--on' : ''}`}
+                onClick={() => onSelect(h)}
+              >
+                {table ? (
+                  <>
+                    <span className="rcell rcell--name">
+                      <span className="hit__name">{h.bld_nm || '(이름 없는 건물)'}</span>
+                      {own}
+                    </span>
+                    <span className="rcell rcell--addr">
+                      <span className="hit__addr">{h.road_addr ? addr(h.road_addr) : '주소 없음'}</span>
+                      {h.jibun_addr && <span className="hit__jibun">지번 {addr(h.jibun_addr)}</span>}
+                      {h.bld_cnt_in_pnu > 1 && <span className="hit__warn">같은 땅에 {h.bld_cnt_in_pnu}동</span>}
+                    </span>
+                    <span className="rcell rcell--floor">
+                      <span className="hit__meta">
+                        {describeRange(h)} · {h.floor_cnt}개 층
+                      </span>
+                    </span>
+                    <span className="rcell rcell--store" />
+                  </>
+                ) : (
+                  <>
+                    <span className="hit__name">{h.bld_nm || '(이름 없는 건물)'}</span>
+                    <span className="hit__addr">{h.road_addr ? addr(h.road_addr) : '주소 없음'}</span>
+                    {/* 지번으로 찾은 사람이 "왜 이게 나왔나"를 알 수 있게 함께 보여준다. */}
+                    {h.jibun_addr && <span className="hit__jibun">지번 {addr(h.jibun_addr)}</span>}
+                    <span className="hit__meta">
+                      {describeRange(h)} · {h.floor_cnt}개 층
+                      {h.bld_cnt_in_pnu > 1 && (
+                        <span className="hit__warn"> · 같은 땅에 {h.bld_cnt_in_pnu}동</span>
+                      )}
+                    </span>
+                    {/* 중개사만 — 소유 구조 한 줄(결정 0036 결정 5·18 ⑩ · null=미상, 칸이 안 오면 줄 없음). */}
+                    {own}
+                  </>
+                )}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </>
+  );
+
+  /*
+    ── 가게 이름으로 찾은 땅 (결정 0028) ────────────────────────────────
+    ⛔ 휴대폰·한 열에서는 반드시 `<section className="search">` 의 **자손**이어야 한다 — `.search` 가
+       `@media print` 에서 통째로 빠지므로, 형제로 빼면 이 구역만 종이에 남는다. PC 두 칸 오른쪽 자리는
+       `.rlist` 째 종이에서 빠진다(같은 결).
+    ⛔ `hidden` 상태에서는 아무것도 그리지 않는다(0건 · 서버에 함수가 아직 없음).
+  */
+  const storesFailedEl = store.at === 'failed' && (
+    <section className="search__stores" aria-label="가게 이름으로 찾은 땅">
+      {/* ⛔ 조용히 생략하지 않는다 — 사람이 누른 결과다(0025 규칙). */}
+      <p className="msg msg--error" role="alert">
+        가게 이름 결과를 불러오지 못했습니다.
+      </p>
+    </section>
+  );
+
+  const storesDoneEl = store.at === 'done' && (
+    <section className="search__stores" aria-label="가게 이름으로 찾은 땅">
+      <p className="search__count">
+        이 이름의 가게가 있는 땅 {store.rows[0].total_parcel_cnt.toLocaleString('ko-KR')}곳 ·
+        가게 {store.rows[0].total_store_cnt.toLocaleString('ko-KR')}곳
+        {/* ⛔ 분기를 화면에 글자로 박지 않는다 — 서버가 준 값을 옮길 뿐이다. */}
+        {formatMonthKo(store.rows[0].store_snapshot_ym) && (
+          <span className="stores__stamp">
+            {' '}
+            · {formatMonthKo(store.rows[0].store_snapshot_ym)} 기준 점포 자료
+          </span>
+        )}
+      </p>
+      {table && <ListTableHead />}
+      <ul className="stores">
+        {store.rows.map((s) => {
+          const names = matchedLabel(s);
+          const many = (s.bld_cnt_in_pnu ?? 1) > 1;
+          /*
+            ⚠️ 대표 동이 없을 수 있다(그 땅에 건물 기록이 없는 경우). 그때는 누를 곳이
+               없으므로 **버튼이 아니라 그냥 줄**로 그리고 왜 못 가는지 적는다 —
+               목록에서 빼 버리면 "그 이름의 가게가 여기 없다"는 거짓말이 된다.
+          */
+          const bldId = s.bld_id;
+          const flat = bldId === null || bldId === undefined;
+          const note = flat && <span className="stores__note">건물 자료가 없어 층별 화면으로 갈 수 없습니다</span>;
+          const meta = (
+            /* ⛔ 건물이 아니라 **이 땅에** 다 — 층별 화면의 점포 칸과 세는 대상이 다르다(결정 0025 의 함정). */
+            <>이 땅에 가게 {(s.match_store_cnt ?? 0).toLocaleString('ko-KR')}곳 일치</>
+          );
+          const body = table ? (
+            <>
+              <span className="rcell rcell--name">
+                <span className="stores__name">{s.bld_nm || '(이름 없는 건물)'}</span>
+                {names && <span className="stores__names">{names}</span>}
+                {note}
+              </span>
+              <span className="rcell rcell--addr">
+                <span className="stores__addr">{s.road_addr ? addr(s.road_addr) : '주소 없음'}</span>
+                {s.jibun_addr && <span className="stores__jibun">지번 {addr(s.jibun_addr)}</span>}
+                {many && <span className="stores__warn">같은 땅에 {s.bld_cnt_in_pnu}동</span>}
+              </span>
+              <span className="rcell rcell--floor" />
+              <span className="rcell rcell--store">
+                <span className="stores__meta">{meta}</span>
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="stores__name">{s.bld_nm || '(이름 없는 건물)'}</span>
+              <span className="stores__addr">{s.road_addr ? addr(s.road_addr) : '주소 없음'}</span>
+              {s.jibun_addr && <span className="stores__jibun">지번 {addr(s.jibun_addr)}</span>}
+              {names && <span className="stores__names">{names}</span>}
+              <span className="stores__meta">
+                {meta}
+                {many && <span className="stores__warn"> · 같은 땅에 {s.bld_cnt_in_pnu}동</span>}
+              </span>
+              {note}
+            </>
+          );
+          return (
+            <li key={s.pnu}>
+              {flat ? (
+                <div className="stores__row stores__row--flat">{body}</div>
+              ) : (
+                <button
+                  type="button"
+                  className={`stores__row${bldId === selectedBldId ? ' stores__row--on' : ''}`}
+                  onClick={() => onSelect(storeToHit({ ...s, bld_id: bldId }))}
+                >
+                  {body}
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+
+      {hasMoreStores(store.rows) && (
+        <button
+          type="button"
+          className="stores__more"
+          disabled={moreLoading}
+          onClick={() => loadMoreStores(store.rows)}
+        >
+          {moreLoading ? '불러오는 중…' : '더 보기'}
+        </button>
+      )}
+      {moreFailed && (
+        <p className="msg msg--error" role="alert">
+          더 불러오지 못했습니다.
+        </p>
+      )}
+
+      {/* ⛔ 무엇을 센 숫자인지 밝힌다(상권 건물 목록과 같은 규칙). */}
+      <p className="stores__src">
+        가게 수는 <strong>그 땅 전체</strong>를 센 것이라, 한 땅에 여러 동이 서 있으면 그
+        동들이 같은 수를 함께 씁니다. 몇 층인지는 건물을 고른 뒤 층별 화면에서 봅니다.
+      </p>
+    </section>
+  );
+
   return (
     <section className="search">
       {/* ⛔ `aria-label` 은 **바꾸지 않는다** — 이 이름을 부르는 시험이 vitest 9곳·E2E 2곳이고,
@@ -412,68 +638,7 @@ export function BuildingSearch({
         )}
       </p>
 
-      {searched && !loading && hits.length === 0 && !error && (
-        <p className="msg">
-          {/* ⚠️ 구 단위 검색으로 바뀐 뒤에도 "전체 열린 지역"을 안내하면 엉뚱하다 —
-              사용자는 이미 한 구를 골랐고, 없는 것은 **그 구 안에서** 없는 것이다. */}
-          <strong>{sigunguName ?? '고른 지역'}</strong>에서 찾지 못했습니다. 건물 이름이나
-          지번을 다시 확인해 주시거나, 위에서 다른 구를 골라 보세요.
-        </p>
-      )}
-
-      {hits.length > 0 && (
-        <>
-          <p className="search__count">
-            {sigunguName && `${sigunguName}에서 `}건물 {total.toLocaleString('ko-KR')}개
-            {!shownAll && (
-              <span className="search__hint">
-                {' '}
-                · 이 중 {hits.length}개만 보여드립니다. 검색어를 좁혀 주세요
-              </span>
-            )}
-          </p>
-          <ul className="hits">
-            {hits.map((h) => (
-              <li key={h.bld_id}>
-                <button
-                  className={`hit${h.bld_id === selectedBldId ? ' hit--on' : ''}`}
-                  onClick={() => onSelect(h)}
-                >
-                  <span className="hit__name">{h.bld_nm || '(이름 없는 건물)'}</span>
-                  <span className="hit__addr">{h.road_addr ? addr(h.road_addr) : '주소 없음'}</span>
-                  {/* 지번으로 찾은 사람이 "왜 이게 나왔나"를 알 수 있게 함께 보여준다. */}
-                  {h.jibun_addr && <span className="hit__jibun">지번 {addr(h.jibun_addr)}</span>}
-                  <span className="hit__meta">
-                    {describeRange(h)} · {h.floor_cnt}개 층
-                    {h.bld_cnt_in_pnu > 1 && (
-                      <span className="hit__warn"> · 같은 땅에 {h.bld_cnt_in_pnu}동</span>
-                    )}
-                  </span>
-                  {/* 중개사만 — 소유 구조 한 줄(결정 0036 결정 5·18 ⑩ · null=미상, 칸이 안 오면 줄 없음). */}
-                  {showOwnership && describeOwnership(h) !== null && (
-                    <span className="hit__own">{describeOwnership(h)}</span>
-                  )}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-
-      {/*
-        ── 가게 이름으로 찾은 땅 (결정 0028) ────────────────────────────────
-        ⛔ 반드시 `<section className="search">` 의 **자손**이어야 한다 — `.search` 가
-           `@media print` 에서 통째로 빠지므로, 형제로 빼면 이 구역만 종이에 남는다.
-        ⛔ `hidden` 상태에서는 아무것도 그리지 않는다(0건 · 서버에 함수가 아직 없음).
-      */}
-      {store.at === 'failed' && (
-        <section className="search__stores" aria-label="가게 이름으로 찾은 땅">
-          {/* ⛔ 조용히 생략하지 않는다 — 사람이 누른 결과다(0025 규칙). */}
-          <p className="msg msg--error" role="alert">
-            가게 이름 결과를 불러오지 못했습니다.
-          </p>
-        </section>
-      )}
+      {listHost ? createPortal(<>{notFoundEl}{hitsEl}{storesFailedEl}{storesDoneEl}</>, listHost) : <>{notFoundEl}{hitsEl}{storesFailedEl}</>}
 
       {/*
         ⓘ 건물 쪽처럼 **안내창(모달)을 띄우지 않는다.** 건물 결과는 멀쩡히 서 있을 수 있는데
@@ -493,91 +658,7 @@ export function BuildingSearch({
         )}
       </p>
 
-      {store.at === 'done' && (
-        <section className="search__stores" aria-label="가게 이름으로 찾은 땅">
-          <p className="search__count">
-            이 이름의 가게가 있는 땅 {store.rows[0].total_parcel_cnt.toLocaleString('ko-KR')}곳 ·
-            가게 {store.rows[0].total_store_cnt.toLocaleString('ko-KR')}곳
-            {/* ⛔ 분기를 화면에 글자로 박지 않는다 — 서버가 준 값을 옮길 뿐이다. */}
-            {formatMonthKo(store.rows[0].store_snapshot_ym) && (
-              <span className="stores__stamp">
-                {' '}
-                · {formatMonthKo(store.rows[0].store_snapshot_ym)} 기준 점포 자료
-              </span>
-            )}
-          </p>
-          <ul className="stores">
-            {store.rows.map((s) => {
-              const names = matchedLabel(s);
-              const many = (s.bld_cnt_in_pnu ?? 1) > 1;
-              const body = (
-                <>
-                  <span className="stores__name">{s.bld_nm || '(이름 없는 건물)'}</span>
-                  <span className="stores__addr">{s.road_addr ? addr(s.road_addr) : '주소 없음'}</span>
-                  {s.jibun_addr && <span className="stores__jibun">지번 {addr(s.jibun_addr)}</span>}
-                  {names && <span className="stores__names">{names}</span>}
-                  <span className="stores__meta">
-                    {/* ⛔ 건물이 아니라 **이 땅에** 다 — 층별 화면의 점포 칸과
-                        세는 대상이 다르다(결정 0025 의 함정). */}
-                    이 땅에 가게 {(s.match_store_cnt ?? 0).toLocaleString('ko-KR')}곳 일치
-                    {many && (
-                      <span className="stores__warn"> · 같은 땅에 {s.bld_cnt_in_pnu}동</span>
-                    )}
-                  </span>
-                </>
-              );
-              /*
-                ⚠️ 대표 동이 없을 수 있다(그 땅에 건물 기록이 없는 경우). 그때는 누를 곳이
-                   없으므로 **버튼이 아니라 그냥 줄**로 그리고 왜 못 가는지 적는다 —
-                   목록에서 빼 버리면 "그 이름의 가게가 여기 없다"는 거짓말이 된다.
-              */
-              const bldId = s.bld_id;
-              return (
-                <li key={s.pnu}>
-                  {bldId === null || bldId === undefined ? (
-                    <div className="stores__row stores__row--flat">
-                      {body}
-                      <span className="stores__note">
-                        건물 자료가 없어 층별 화면으로 갈 수 없습니다
-                      </span>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      className={`stores__row${bldId === selectedBldId ? ' stores__row--on' : ''}`}
-                      onClick={() => onSelect(storeToHit({ ...s, bld_id: bldId }))}
-                    >
-                      {body}
-                    </button>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-
-          {hasMoreStores(store.rows) && (
-            <button
-              type="button"
-              className="stores__more"
-              disabled={moreLoading}
-              onClick={() => loadMoreStores(store.rows)}
-            >
-              {moreLoading ? '불러오는 중…' : '더 보기'}
-            </button>
-          )}
-          {moreFailed && (
-            <p className="msg msg--error" role="alert">
-              더 불러오지 못했습니다.
-            </p>
-          )}
-
-          {/* ⛔ 무엇을 센 숫자인지 밝힌다(상권 건물 목록과 같은 규칙). */}
-          <p className="stores__src">
-            가게 수는 <strong>그 땅 전체</strong>를 센 것이라, 한 땅에 여러 동이 서 있으면 그
-            동들이 같은 수를 함께 씁니다. 몇 층인지는 건물을 고른 뒤 층별 화면에서 봅니다.
-          </p>
-        </section>
-      )}
+      {listHost ? null : storesDoneEl}
 
       {/*
         ①한 글자 ②구 미선택만 안내창으로 남는다 — 서버를 부르기 전이라 **덮을 새 결과가

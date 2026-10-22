@@ -2,8 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, act } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import { useEffect, useRef } from 'react';
-import type { BuildingHit, FloorRow, OpenSigungu } from './types';
+import type { BuildingHit, DistrictLand, FloorRow, OpenSigungu } from './types';
 import { WIDE_QUERY } from './lib/useIsWide';
+import type { DistrictMapPick } from './lib/districtMapPick';
+import { DistrictBuildings } from './components/DistrictBuildings';
 
 /**
  * PC 두 칸(결정 0039 Q5 · W5 · §4-13 · 👤 2026-10-21) — App 의 배선을 본다. jsdom 에는 `matchMedia` 가 없어 다른 App 시험은 전부
@@ -37,10 +39,22 @@ function FakeMap({
   sigungu,
   visible = true,
   paneArea = null,
+  pick,
+  onPickChange,
+  onSelectBuilding,
+  selected = null,
+  listHost = null,
+  onListChange,
 }: {
   sigungu: string | null;
   visible?: boolean;
   paneArea?: { sido: string; sigungu: string } | null;
+  pick?: DistrictMapPick;
+  onPickChange?: (next: DistrictMapPick) => void;
+  onSelectBuilding?: (hit: BuildingHit) => void;
+  selected?: BuildingHit | null;
+  listHost?: HTMLElement | null;
+  onListChange?: (label: string | null) => void;
 }) {
   mapPaneArea(paneArea);
   const was = useRef(visible);
@@ -49,12 +63,33 @@ function FakeMap({
     was.current = visible;
     if (visible && !before) relayout();
   }, [visible]);
+  const openId = pick?.openId ?? null;
   return sigungu ? (
     <section className="dmap" hidden={!visible}>
       <button type="button" className="dmap__toggle">
         지도 접기
       </button>
       가짜 지도
+      {/* 누른 자리의 상권 단추 흉내(👤 10-22 방법 나) — 진짜처럼 App 이 쥔 누른 것을 바꾸고, 열린 상권이면 진짜 상권 건물 목록을 그린다. */}
+      <button
+        type="button"
+        className="dmap__picked-btn"
+        aria-expanded={openId === 'D1'}
+        onClick={() => onPickChange?.({ sigungu, pickedIds: ['D1'], openId: openId === 'D1' ? null : 'D1' })}
+      >
+        가짜상권
+      </button>
+      {openId === 'D1' && onSelectBuilding && (
+        <DistrictBuildings
+          districtId="D1"
+          districtNm="가짜상권"
+          onSelect={onSelectBuilding}
+          selectedBldId={selected?.bld_id ?? null}
+          paneArea={paneArea}
+          listHost={listHost}
+          onListChange={onListChange}
+        />
+      )}
     </section>
   ) : null;
 }
@@ -185,8 +220,9 @@ describe('PC 두 칸 (결정 0039 W5)', () => {
     await pickGu();
     const main = container.querySelector('.app__main')!;
     const kids = [...main.children].map((c) => c.className.split(' ')[0]);
-    // DOM 차례 = 입구 → 안내 → LH → 단가 흐름(grid 자리만 바뀐다).
-    expect(kids).toEqual(['entry', 'rpane-empty', 'card', 'card']);
+    // DOM 차례 = 입구 → 안내 → LH → 단가 흐름 → (숨은) 오른쪽 목록 자리(👤 10-22 방법 나 · grid 자리만 바뀐다).
+    expect(kids).toEqual(['entry', 'rpane-empty', 'card', 'card', 'rlist']);
+    expect((main.querySelector('.rlist') as HTMLElement).hidden).toBe(true);
     expect(main.querySelector('.lh')).not.toBeNull();
     expect(main.querySelector('.flow')).not.toBeNull();
     expect(container.querySelector('.entrybar')).toBeNull();
@@ -371,7 +407,7 @@ function cssRules(raw: string): Rule[] {
 }
 
 const W5_NAME =
-  /\.app--wide|\.app--lcollapsed|\.app--wbld|\.app--printmap|\.app--rfold|\.lrail|\.entry__fold|\.rpane-empty|\.mapprint|\.regionfold/;
+  /\.app--wide|\.app--lcollapsed|\.app--wbld|\.app--printmap|\.app--rfold|\.app--wlist|\.lrail|\.entry__fold|\.rpane-empty|\.mapprint|\.regionfold|\.rlist|\.rback|\.rtable/;
 
 /**
  * W5 이름표가 나오는 규칙의 묶음 머리들 — 인쇄 묶음과 '누르는 것 44px' 목록(`@media screen` 의 min-height 44)은 뺀다.
@@ -783,27 +819,8 @@ function paneRules(src: string) {
   const find = (sel: string) => wide.filter((r) => r.sel.includes(sel));
   const has = (sel: string, re: RegExp) => find(sel).some((r) => re.test(r.body));
   return {
-    unscrolled: ['.app--wide .entry .hits', '.app--wide .entry .stores', '.app--wide .entry .dbld__list'].every(
-      (s) =>
-        has(s, /max-height:\s*none/) &&
-        has(s, /overflow-y:\s*visible/) &&
-        // 칸 폭을 왼쪽 칸에 묶는다 — 없으면 아주 긴 한 줄 글이 줄을 칸 밖으로 민다(E2E CC 의 긴 주소).
-        has(s, /grid-template-columns:\s*minmax\(0,\s*1fr\)/),
-    ),
-    rowsWrap: ['.app--wide .entry .hit', '.app--wide .entry .dbld__row', '.app--wide .entry .stores__row'].every(
-      (s) => has(s, /display:\s*flex/) && has(s, /flex-wrap:\s*wrap/),
-    ),
-    namesWhole: ['.app--wide .entry .hit__name', '.app--wide .entry .dbld__name', '.app--wide .entry .stores__name'].every(
-      (s) => has(s, /flex:\s*0 0 100%/) && has(s, /white-space:\s*normal/) && has(s, /overflow:\s*visible/),
-    ),
-    metaFirst: ['.app--wide .entry .hit__meta', '.app--wide .entry .dbld__meta', '.app--wide .entry .stores__meta'].every(
-      (s) => has(s, /order:\s*1/) && has(s, /white-space:\s*normal/),
-    ),
-    // 보완 1 — 구분점은 앞 칸 끝(`::after` · 점 앞 줄 안 바뀌는 공백 `\a0`)에만 · 두 칸 묶음에 「·」를 머리(`::before`)에 다는 규칙 0.
-    dotsAfter:
-      ['.app--wide .entry .hit__meta::after', '.app--wide .entry .dbld__meta::after', '.app--wide .entry .stores__meta::after'].every((s) =>
-        has(s, /content:\s*'\\a0·'/),
-      ) && !wide.some((r) => r.sel.some((s) => s.includes('::before')) && /content:[^;]*·/.test(r.body)),
+    // 👤 2026-10-22 방법 나 — 왼쪽 칸 목록 규칙(L1 두 줄 · L3 굴림 하나)은 걷었다(두 칸에서 왼쪽 칸에 목록이 안 선다). 남은 것이 0 인가.
+    leftListGone: !wide.some((r) => r.sel.some((s) => /\.entry \.(hits|hit|stores|stores__row|dbld__list|dbld__row)\b/.test(s))),
     example13: has('.app--wide .search__eg', /font-size:\s*13px/),
     offShort:
       has('.app--wide .dmap__off-nm', /display:\s*none/) &&
@@ -815,39 +832,301 @@ function paneRules(src: string) {
 describe('PC 두 칸 왼쪽 칸 다듬기 — CSS (👤 2026-10-22)', () => {
   const css = readFileSync('src/styles.css', 'utf8');
 
-  it('★ L1 두 줄(이름 전체 · 점포·층 먼저 · 주소 끝 줄임) · L3 안쪽 굴림 0 · L4 표지 짧게(두 칸 전체 — 1279 갈래 밖) — 전부 두 칸 묶음', () => {
-    expect(paneRules(css)).toEqual({
-      unscrolled: true,
-      rowsWrap: true,
-      namesWhole: true,
-      metaFirst: true,
-      dotsAfter: true,
-      example13: true,
-      offShort: true,
-    });
+  it('★ L4 표지 짧게(두 칸 전체 — 1279 갈래 밖) · 예시 줄 13px · 왼쪽 칸 목록 규칙(L1·L3)은 걷음(👤 10-22 방법 나) — 전부 두 칸 묶음', () => {
+    expect(paneRules(css)).toEqual({ leftListGone: true, example13: true, offShort: true });
   });
 
   it('양성 대조 — 규칙을 하나씩 걷은 꼴을 실제로 잡는다(흔한 꼴 + 변형 꼴)', () => {
-    const drop = (from: string, to: string) => {
-      const out = css.replace(from, to);
-      expect(out).not.toBe(css);
-      return paneRules(out);
-    };
-    expect(drop('.app--wide .entry .dbld__list {', '.app--wide .entry .dbld__listx {').unscrolled).toBe(false);
-    // 변형 꼴 — 선택자는 그대로 두고 값만 되돌린 꼴(목록 셋을 묶은 규칙의 굴림 값).
-    const capped = css.replace(/(\.app--wide \.entry \.dbld__list \{[^}]*?)max-height: none;/, '$1max-height: 360px;');
-    expect(capped).not.toBe(css);
-    expect(paneRules(capped).unscrolled).toBe(false);
-    expect(drop('.app--wide .entry .stores__name {', '.app--wide .entry .stores__namex {').namesWhole).toBe(false);
-    expect(drop('.app--wide .entry .stores__row {', '.app--wide .entry .stores__rowx {').rowsWrap).toBe(false);
-    // 구분점을 뒤 칸 머리(`::before`)로 되돌린 꼴(보완 1 이전) — 흔한 꼴 + 선택자 목록 변형.
-    expect(paneRules(`${css}\n${WIDE} {\n  .app--wide .entry .hit__jibun::before { content: '· '; }\n}`).dotsAfter).toBe(false);
-    expect(paneRules(`${css}\n${WIDE} {\n  .x,\n  .app--wide .entry .dbld__addr::before {\n    content:"· ";\n  }\n}`).dotsAfter).toBe(false);
+    // 왼쪽 칸 목록 규칙이 되살아난 꼴 — 흔한 꼴 + 선택자 목록 변형.
+    expect(paneRules(`${css}\n${WIDE} {\n  .app--wide .entry .hit { display: flex; }\n}`).leftListGone).toBe(false);
+    expect(paneRules(`${css}\n${WIDE} {\n  .x,\n  .app--wide .entry .dbld__list {\n    max-height: none;\n  }\n}`).leftListGone).toBe(false);
     // 표지 숨김을 1279 갈래로 되돌린 꼴(옛 W5 F4) — 두 칸 전체에서 걷고 갈래에 넣는다.
     const back = css
       .replace(/ {2}\.app--wide \.dmap__off-nm,\r?\n {2}\.app--wide \.dmap__off-etc \{\r?\n {4}display: none;\r?\n {2}\}\r?\n/, '')
       .replace(/(\.app--wide \.stack__facts \{\r?\n {6}gap: 18px;\r?\n {4}\})/, '$1\n    .app--wide .dmap__off-nm,\n    .app--wide .dmap__off-etc { display: none; }');
     expect(back).not.toBe(css);
     expect(paneRules(back).offShort).toBe(false);
+  });
+});
+
+// ── 오른쪽 목록(👤 2026-10-22 방법 나 · R1~R8) ──────────────────────────────────────────────────────────────
+// 배선(목록이 어느 칸에 서나 · 건물 ↔ 목록 · 뒤로가기 · 굴린 자리 · 단추 글자)은 여기, 실제 자리(표 네 칸 · 말줄임 0 · 넘침 0)는 E2E 「CD」.
+describe('PC 두 칸 오른쪽 목록 — 배선 (👤 2026-10-22 방법 나)', () => {
+  function land(over: Partial<DistrictLand> = {}): DistrictLand {
+    return {
+      pnu: '1168010100100020000',
+      store_cnt: 317,
+      bld_cnt_in_pnu: 1,
+      bld_id: `${BLD}7`,
+      bld_nm: '상권빌딩',
+      road_addr: '서울특별시 강남구 테헤란로 7',
+      jibun_addr: null,
+      lat: null,
+      lng: null,
+      floor_cnt: 6,
+      min_floor: -1,
+      max_floor: 5,
+      has_roof: false,
+      total_parcel_cnt: 2,
+      total_bld_cnt: 3,
+      ...over,
+    };
+  }
+
+  function serve(hits: BuildingHit[]) {
+    rpc.mockImplementation((fn: string) => {
+      if (fn === 'list_open_sigungu') return Promise.resolve({ data: [gu()], error: null });
+      if (fn === 'search_buildings') return Promise.resolve({ data: hits, error: null });
+      if (fn === 'list_district_buildings')
+        return Promise.resolve({
+          data: [land(), land({ pnu: '1168010100100030000', bld_id: `${BLD}8`, bld_nm: '둘동땅', bld_cnt_in_pnu: 2, store_cnt: 12 })],
+          error: null,
+        });
+      return Promise.resolve({ data: [], error: null });
+    });
+  }
+
+  const TWO = [
+    hit({ road_addr: '서울특별시 강남구 테헤란로 1', jibun_addr: '서울특별시 강남구 역삼동 823-4', bld_cnt_in_pnu: 3, min_floor: -2, max_floor: 9, floor_cnt: 12 }),
+    hit({ bld_id: `${BLD}9`, bld_nm: '둘째빌딩' }),
+  ];
+  const rlist = () => document.querySelector<HTMLElement>('section.rlist')!;
+  const panes = () => [...document.querySelectorAll<HTMLElement>('.rlist__pane')];
+  /** 오른쪽 굴린 자리 흉내 — jsdom 은 굴리지 않는다(창 굴림 값만 바꿔 둔다). */
+  function scrollAt(y: number) {
+    Object.defineProperty(window, 'scrollY', { value: y, configurable: true, writable: true });
+  }
+
+  afterEach(() => scrollAt(0));
+
+  async function search(word = '테헤란로') {
+    const input = screen.getByLabelText('건물명 또는 주소');
+    fireEvent.change(input, { target: { value: word } });
+    fireEvent.submit(input.closest('form')!);
+    await screen.findByRole('button', { name: /둘째빌딩/ });
+  }
+
+  it('★ R1·R4 1280 — 검색 결과는 오른쪽 목록 자리에 표(이름 · 길 주소 · 층 · 점포) · 왼쪽 칸엔 목록 0 · 다른 오른쪽 덩어리는 숨김 이름표 · 큰 카드는 물러나 왼쪽 작은 줄(저장 0)', async () => {
+    window.localStorage.clear(); // 아직 안 물어봄 — 큰 카드가 오른쪽에 서 있다
+    serve(TWO);
+    mediaAt(1280);
+    const { container } = render(<App />);
+    await pickGu();
+    expect(container.querySelector('section.rolecards')).not.toBeNull();
+    await search();
+    expect(app().classList.contains('app--wlist')).toBe(true);
+    expect(rlist().hidden).toBe(false);
+    expect(rlist().querySelectorAll('.hit')).toHaveLength(2);
+    expect(entry().querySelector('.hit, .hits, .search__count')).toBeNull();
+    expect(panes().map((p) => p.hidden)).toEqual([false, true]);
+    // 표 머리 네 칸 · 줄마다 같은 네 칸.
+    const head = [...rlist().querySelectorAll('.rtable__head .rcell')].map((e) => e.textContent);
+    expect(head).toEqual(['이름', '길 주소', '층', '점포']);
+    const row = rlist().querySelector('.hit')!;
+    expect([...row.children].map((c) => c.className)).toEqual([
+      'rcell rcell--name',
+      'rcell rcell--addr',
+      'rcell rcell--floor',
+      'rcell rcell--store',
+    ]);
+    // 지번 · 「같은 땅에 N동」은 주소 칸 아래(R4) · 주소는 길 이름부터(L2 그대로) · 점포 칸은 빈다(서버가 점포 수를 안 준다 · DB 0).
+    const addr = row.querySelector('.rcell--addr')!;
+    expect([...addr.children].map((c) => c.textContent)).toEqual(['테헤란로 1', '지번 역삼동 823-4', '같은 땅에 3동']);
+    expect(row.querySelector('.rcell--floor')!.textContent).toBe('지하 2층 ~ 9층 · 12개 층');
+    expect(row.querySelector('.rcell--store')!.textContent).toBe('');
+    // 큰 카드는 물러나고 왼쪽 작은 줄(건물을 열었을 때와 같은 처리) · 오른쪽 안내 한 줄 없음 · 보던 건물이 없어 「← 보던 건물로」 없음.
+    expect(container.querySelector('section.rolecards')).toBeNull();
+    expect(entry().querySelector('section.role')).not.toBeNull();
+    expect(container.querySelector('.rpane-empty')).toBeNull();
+    expect(container.querySelector('.rlist__back')).toBeNull();
+    expect(window.localStorage.getItem('sangga.viewerRole')).toBeNull();
+  });
+
+  it('★ R3 목록에서 고르면 오른쪽 = 건물 + 「← 목록으로(테헤란로 검색 2곳)」 · 뒤로가기 한 칸 · 단추 = 뒤로가기 → 목록(굴린 자리 그대로 · 커서 「← 보던 건물로」) · 보던 건물로 → 건물 자리 · 다시 뒤로가기 = 목록', async () => {
+    serve(TWO);
+    mediaAt(1280);
+    const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    const { container } = render(<App />);
+    await pickGu();
+    await search();
+    scrollAt(500); // 목록을 내려 고른다
+    fireEvent.click(screen.getByRole('button', { name: /테스트빌딩/ }));
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+    expect(app().classList.contains('app--wlist')).toBe(false);
+    expect(rlist().hidden).toBe(true);
+    const back = screen.getByRole('button', { name: '목록으로(테헤란로 검색 2곳)' });
+    expect(back.textContent).toBe('← 목록으로(테헤란로 검색 2곳)');
+    // 누른 줄이 숨어도 커서는 BODY 가 아니라 「← 목록으로」 · 건물은 맨 위부터.
+    expect(document.activeElement).toBe(back);
+    expect(scrollTo).toHaveBeenLastCalledWith(0, 0);
+    expect(window.history.state?.sanggaTab).toBe('bld');
+    expect(window.location.search).toContain(`bld=${BLD}`);
+
+    scrollAt(30); // 건물을 조금 내려 본 뒤 목록으로
+    fireEvent.click(back);
+    await vi.waitFor(() => expect(app().classList.contains('app--wlist')).toBe(true));
+    expect(window.history.state?.sanggaTab).toBe('base');
+    expect(scrollTo).toHaveBeenLastCalledWith(0, 500);
+    const toBld = container.querySelector<HTMLButtonElement>('.rlist__back')!;
+    expect(toBld.textContent).toBe('← 보던 건물(테스트빌딩)로');
+    expect(document.activeElement).toBe(toBld);
+    // 건물은 쥐고 있다(화면에서 숨기만) · 주소 꼴 그대로.
+    expect(screen.getByRole('heading', { name: '테스트빌딩' })).toBeTruthy();
+    expect(window.location.search).toContain(`bld=${BLD}`);
+
+    scrollAt(120);
+    fireEvent.click(toBld);
+    expect(app().classList.contains('app--wlist')).toBe(false);
+    expect(scrollTo).toHaveBeenLastCalledWith(0, 30);
+    expect(document.activeElement).toBe(container.querySelector('.rback__btn'));
+    expect(window.history.state?.sanggaTab).toBe('bld');
+    // 브라우저 뒤로가기 = 다시 목록(굴린 자리 120).
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate', { state: { sanggaTab: 'base' } }));
+    });
+    expect(app().classList.contains('app--wlist')).toBe(true);
+    expect(scrollTo).toHaveBeenLastCalledWith(0, 120);
+    // 앞으로 = 건물.
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate', { state: { sanggaTab: 'bld' } }));
+    });
+    expect(app().classList.contains('app--wlist')).toBe(false);
+  });
+
+  it('★ R2 건물을 보다가 새로 검색하면 오른쪽이 목록 + 「← 보던 건물(이름)로」 · 건물은 쥐고 있다(D1) · 새 목록은 맨 위부터 · 목록에서 다른 건물 → 그 건물', async () => {
+    serve(TWO);
+    mediaAt(1280);
+    const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    render(<App />);
+    await pickGu();
+    await searchAndOpen();
+    scrollAt(800);
+    const input = screen.getByLabelText('건물명 또는 주소');
+    fireEvent.change(input, { target: { value: '다른동' } });
+    fireEvent.submit(input.closest('form')!);
+    expect(app().classList.contains('app--wlist')).toBe(true);
+    expect(scrollTo).toHaveBeenLastCalledWith(0, 0);
+    expect(screen.getByRole('button', { name: '보던 건물(테스트빌딩)로' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '테스트빌딩' })).toBeTruthy(); // 쥐고 있다(D1)
+    fireEvent.click(await screen.findByRole('button', { name: /둘째빌딩/ }));
+    expect(app().classList.contains('app--wlist')).toBe(false);
+    await screen.findByRole('button', { name: '목록으로(다른동 검색 2곳)' });
+  });
+
+  it('★ R1 상권 건물 목록도 오른쪽 자리(표 · 점포 칸 = 그 땅 점포) · 왼쪽 지도 아래엔 0 · 고르면 「← 목록으로(가짜상권 상권 2곳)」 · 그 뒤 검색하면 오른쪽은 검색 목록(마지막에 연 것) · 상권을 접으면 남은 검색 목록', async () => {
+    serve(TWO);
+    mediaAt(1280);
+    const { container } = render(<App />);
+    await pickGu();
+    fireEvent.click(screen.getByRole('button', { name: '가짜상권' }));
+    await screen.findByRole('button', { name: /상권빌딩/ });
+    expect(app().classList.contains('app--wlist')).toBe(true);
+    expect(panes().map((p) => p.hidden)).toEqual([true, false]);
+    expect(entry().querySelector('.dbld, .dbld__row')).toBeNull();
+    const row = rlist().querySelector('.dbld__row')!;
+    expect(row.querySelector('.rcell--store')!.textContent).toBe('점포 317곳');
+    expect(row.querySelector('.rcell--floor')!.textContent).toBe('지하 1층 ~ 5층');
+    expect(row.querySelector('.rcell--addr')!.textContent).toBe('테헤란로 7');
+    expect(rlist().querySelectorAll('.dbld__row')[1].querySelector('.rcell--addr')!.textContent).toBe('테헤란로 7같은 땅에 2동');
+    fireEvent.click(row);
+    await screen.findByRole('heading', { name: '상권빌딩' });
+    expect(screen.getByRole('button', { name: '목록으로(가짜상권 상권 2곳)' })).toBeTruthy();
+    await search();
+    expect(panes().map((p) => p.hidden)).toEqual([false, true]);
+    expect(container.querySelector('.rlist__back')!.textContent).toBe('← 보던 건물(상권빌딩)로');
+    // 상권 목록은 (숨은 채) 열려 있다 — 접으면 오른쪽은 남은 검색 목록 그대로 · 다시 열면 오른쪽이 상권 목록.
+    fireEvent.click(screen.getByRole('button', { name: '가짜상권' }));
+    expect(panes().map((p) => p.hidden)).toEqual([false, true]);
+    expect(app().classList.contains('app--wlist')).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: '가짜상권' }));
+    await vi.waitFor(() => expect(rlist().querySelectorAll('.dbld__row')).toHaveLength(2));
+    expect(panes().map((p) => p.hidden)).toEqual([true, false]);
+  });
+
+  it('양성 대조 — 1023 한 열은 결과가 왼쪽(입구) 지금 꼴 그대로 · 오른쪽 목록 자리·표 머리·「← 목록으로」 0 · 뒤로가기 표식 0', async () => {
+    serve(TWO);
+    mediaAt(1023);
+    const { container } = render(<App />);
+    await pickGu();
+    await search();
+    expect(container.querySelector('section.rlist')).toBeNull();
+    expect(container.querySelector('.rtable__head')).toBeNull();
+    expect(entry().querySelectorAll('.hit')).toHaveLength(2);
+    expect(entry().querySelector('.hit .rcell')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /테스트빌딩/ }));
+    await screen.findByRole('heading', { name: '테스트빌딩' });
+    expect(container.querySelector('.rback')).toBeNull();
+    expect(window.history.state?.sanggaTab).toBeUndefined();
+  });
+});
+
+/**
+ * 오른쪽 목록 CSS(👤 2026-10-22 방법 나) — 가드 본체와 양성 대조가 이 함수를 같이 지난다.
+ * 못 보는 것: 실제 픽셀(표 네 칸이 한 줄 · 말줄임 0 · 넘침 0 · 지도 높이)은 jsdom 이 못 잰다 → E2E 「CD」.
+ */
+function rlistRules(src: string) {
+  const all = cssRules(src);
+  const wide = all.filter((r) => r.media === WIDE);
+  const print = all.filter((r) => r.media === PRINT);
+  const has = (rs: Rule[], sel: string, re: RegExp) => rs.some((r) => r.sel.includes(sel) && re.test(r.body));
+  const fourCols = /grid-template-columns:\s*minmax\(0,\s*2fr\)\s+minmax\(0,\s*2fr\)\s+minmax\([^)]*\)\s+minmax\([^)]*\)\s*(;|$)/;
+  const tall = all.filter((r) => r.media === '@media screen' && /min-height:\s*44px/.test(r.body)).flatMap((r) => r.sel);
+  return {
+    hideOthers: has(wide, '.app--wide.app--wlist .app__main > :not(.entry):not(.lrail):not(.rlist)', /display:\s*none/),
+    // 숨김은 화면 두 칸 묶음에만 — 종이(인쇄 묶음)·기본 규칙에는 `.app--wlist` 0(종이는 건물 그대로).
+    hideScreenOnly: !all.some((r) => r.media !== WIDE && r.sel.some((s) => s.includes('.app--wlist'))),
+    table: ['.rtable__head', '.rlist .hit', '.rlist .stores__row', '.rlist .dbld__row'].every((s) => has(wide, s, fourCols)),
+    storeRight: has(wide, '.rlist .rcell--store', /text-align:\s*right/),
+    noEllipsis: ['.rlist .hit__name', '.rlist .stores__name', '.rlist .dbld__name', '.rlist .hit__addr'].every((s) =>
+      has(wide, s, /white-space:\s*normal/),
+    ),
+    oneScroll: ['.rlist .hits', '.rlist .stores', '.rlist .dbld__list'].every(
+      (s) => has(wide, s, /max-height:\s*none/) && has(wide, s, /overflow-y:\s*visible/),
+    ),
+    small13: ['.rlist .hit__jibun', '.rlist .hit__own', '.rlist .stores__jibun', '.rlist .dbld__warn'].every((s) =>
+      has(wide, s, /font-size:\s*13px/),
+    ),
+    bigMap: has(wide, '.app--wide .entry .dmap__canvas', /height:\s*clamp\(300px,\s*calc\(100vh - \d+px\),\s*\d+px\)/),
+    printOut: ['.rlist', '.rback'].every((s) => print.some((r) => r.sel.includes(s) && /display:\s*none/.test(r.body))),
+    printMapH: has(print, '.app--wide .entry .dmap__canvas', /height:\s*var\(--dmap-h,\s*300px\)/),
+    tall44: ['.rlist__back', '.rback__btn'].every((s) => tall.includes(s)),
+  };
+}
+
+describe('PC 두 칸 오른쪽 목록 — CSS (👤 2026-10-22 방법 나)', () => {
+  const css = readFileSync('src/styles.css', 'utf8');
+  const ALL = {
+    hideOthers: true,
+    hideScreenOnly: true,
+    table: true,
+    storeRight: true,
+    noEllipsis: true,
+    oneScroll: true,
+    small13: true,
+    bigMap: true,
+    printOut: true,
+    printMapH: true,
+    tall44: true,
+  };
+
+  it('★ 목록이 서면 다른 오른쪽 덩어리 숨김(화면만) · 표 네 칸 · 점포 오른쪽 맞춤 · 말줄임 0 · 굴림 하나 · 13px · 지도 크게 · 종이 = 목록·「← 목록으로」 빠짐 + 지도 높이 = 그린 높이 · 44px', () => {
+    expect(rlistRules(css)).toEqual(ALL);
+  });
+
+  it('양성 대조 — 규칙을 하나씩 걷은·되돌린 꼴을 실제로 잡는다(흔한 꼴 + 변형 꼴)', () => {
+    const swap = (from: string | RegExp, to: string) => {
+      const out = css.replace(from, to);
+      expect(out).not.toBe(css);
+      return rlistRules(out);
+    };
+    expect(swap('.app--wide.app--wlist .app__main > :not(.entry)', '.app--wide.app--wlistx .app__main > :not(.entry)').hideOthers).toBe(false);
+    // 숨김이 종이로 샌 꼴(변형 — 인쇄 묶음 안 선택자 목록 끝).
+    expect(rlistRules(`${css}\n${PRINT} {\n  .x,\n  .app--wlist .stack { display: none; }\n}`).hideScreenOnly).toBe(false);
+    // 세 칸으로 줄인 꼴.
+    expect(swap(/(\.rlist \.dbld__row \{\s*display: grid;\s*grid-template-columns: )[^;]*;/, '$1minmax(0, 2fr) minmax(0, 2fr) auto;').table).toBe(false);
+    expect(swap('.rlist .rcell--store {', '.rlist .rcell--storex {').storeRight).toBe(false);
+    expect(swap(/ {2}\.rlist,\r?\n {2}\.rback,\r?\n/, '').printOut).toBe(false);
+    expect(swap('height: var(--dmap-h, 300px);', 'height: 300px;').printMapH).toBe(false);
+    expect(swap('height: clamp(300px, calc(100vh - 360px), 560px);', 'height: 300px;').bigMap).toBe(false);
   });
 });

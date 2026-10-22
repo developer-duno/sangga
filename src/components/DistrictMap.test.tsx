@@ -1409,12 +1409,17 @@ describe('DistrictMap — PC 두 칸 보완(W5 보완 1)', () => {
     // 칸이 넓어진 뒤 다시 멈추면 새 폭.
     await idleAt(405, 300);
     expect(canvas().style.getPropertyValue('--dmap-w')).toBe('405px');
+    // 높이도 같은 자리(👤 2026-10-22 방법 나 R5 — 두 칸 지도 칸 높이가 창 높이를 따른다 · 종이는 그린 높이).
+    expect(canvas().style.getPropertyValue('--dmap-h')).toBe('300px');
+    await idleAt(405, 540);
+    expect(canvas().style.getPropertyValue('--dmap-h')).toBe('540px');
     cleanup();
 
     await renderMap({ layout: 'full' });
     await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
     await idleAt(412, 600);
     expect(canvas().style.getPropertyValue('--dmap-w')).toBe('');
+    expect(canvas().style.getPropertyValue('--dmap-h')).toBe('');
   });
 
   it('★ F3 종이 — 「상권 지도 넣기」 종이의 지도 칸 폭 = `var(--dmap-w` (가운데) · 인쇄 묶음 안 · 양성 대조(갈래를 지운 꼴)', async () => {

@@ -67,6 +67,9 @@ import {
 import { UNIT_PRINT_DEFAULT, type UnitPrintMode } from './lib/unitPrint';
 import type { BuildingHit, FloorRow, ParcelBuilding } from './types';
 
+/** PC 두 칸 오른쪽 목록의 출처(👤 2026-10-22 방법 나) — 검색(건물·가게 이름 결과) · 지도의 상권 건물 목록. */
+type ListSrc = 'search' | 'district';
+
 export default function App() {
   /*
     주소에 담겨 온 것(구·건물)을 **첫 그림 한 번만** 읽는다. 그 뒤로는 화면 상태가
@@ -140,6 +143,77 @@ export default function App() {
   */
   const [regionFoldOpen, setRegionFoldOpen] = useState(false);
   const regionFoldFocusRef = useRef(false);
+  /*
+    PC 두 칸 오른쪽 목록(👤 2026-10-22 방법 나 · R1~R3) — 검색 결과·가게 이름 결과·상권 건물 목록은 두 칸이면 오른쪽 넓은 칸에 표로 선다.
+    목록의 상태(검색어·결과·펼친 땅·더 받은 쪽)는 지금처럼 각 부품(`BuildingSearch`·`DistrictBuildings`)이 쥐고, 두 칸일 때만 아래
+    오른쪽 빈 칸(`searchHost`·`districtHost`)에 그려 넣는다(React 포털 — 부품은 왼쪽 칸 안에 그대로 있어 다시 태어나지 않는다).
+    `listLabels` = 부품이 알려 준 지금 목록의 이름(「둔산 검색 25곳」 · 목록이 없으면 null) · `listSrc` = 마지막에 연 목록 ·
+    `rightView` = 건물을 연 채 오른쪽이 목록인가 건물인가(건물이 없으면 목록이 있을 때 늘 목록).
+    ⛔ 화면만 — 주소·이 기기 저장·의견함에 안 싣는다(결정 0019 · `districtMapPick` 그대로). 휴대폰·721~1023 은 지금 그대로(포털 0).
+  */
+  const [searchHost, setSearchHost] = useState<HTMLDivElement | null>(null);
+  const [districtHost, setDistrictHost] = useState<HTMLDivElement | null>(null);
+  const [listLabels, setListLabels] = useState<Record<ListSrc, string | null>>({ search: null, district: null });
+  const [listSrc, setListSrc] = useState<ListSrc | null>(null);
+  const [rightView, setRightView] = useState<'list' | 'building'>('building');
+  // 마지막에 연 목록이 닫혔으면(상권 목록 접음 등) 남은 다른 목록으로.
+  const activeList: ListSrc | null = !isWide
+    ? null
+    : listSrc !== null && listLabels[listSrc] !== null
+      ? listSrc
+      : listLabels.search !== null
+        ? 'search'
+        : listLabels.district !== null
+          ? 'district'
+          : null;
+  const listRight = activeList !== null && (selected === null || rightView === 'list');
+  const backToList = isWide && selected !== null && !listRight && activeList !== null;
+  const reportSearchList = useCallback(
+    (label: string | null) => setListLabels((p) => (p.search === label ? p : { ...p, search: label })),
+    [],
+  );
+  const reportDistrictList = useCallback(
+    (label: string | null) => setListLabels((p) => (p.district === label ? p : { ...p, district: label })),
+    [],
+  );
+  /*
+    목록 ↔ 건물을 오갈 때 굴린 자리(R3 「목록은 보던 자리 그대로」) — 오른쪽은 페이지 굴림이라 `window.scrollY` 를 적어 둔다.
+    `rightMoveRef` = 다음 그림에서 할 일(굴릴 자리 · 커서를 둘 머리 단추) — 그리기와 상관없어 ref 다.
+    `listRightRef`·`wideRef` = 첫 그림의 것을 쥐는 콜백(`handleSelectBuilding`·뒤로가기)이 지금 값을 읽게.
+  */
+  const listScrollRef = useRef(0);
+  const bldScrollRef = useRef(0);
+  const rightMoveRef = useRef<{ y: number; focus: 'list' | 'building' | null } | null>(null);
+  const [rightSignal, setRightSignal] = useState(0);
+  const listRightRef = useRef(listRight);
+  const wideRef = useRef(isWide);
+  listRightRef.current = listRight;
+  wideRef.current = isWide;
+  /** 오른쪽을 목록으로 — 건물에서 오면 그 굴린 자리를 적어 두고 `y`(null = 목록이 보던 자리)로 굴린다. */
+  function toListView(y: number | null, focus: boolean) {
+    if (!listRightRef.current) bldScrollRef.current = window.scrollY;
+    setRightView('list');
+    rightMoveRef.current = { y: y ?? listScrollRef.current, focus: focus ? 'list' : null };
+    setRightSignal((n) => n + 1);
+  }
+  /** 오른쪽을 보던 건물로 — 목록에서 오면 그 굴린 자리를 적어 두고 건물이 보던 자리로 굴린다. */
+  function toBuildingView(focus: boolean) {
+    if (listRightRef.current) listScrollRef.current = window.scrollY;
+    setRightView('building');
+    rightMoveRef.current = { y: bldScrollRef.current, focus: focus ? 'building' : null };
+    setRightSignal((n) => n + 1);
+  }
+  useEffect(() => {
+    const mv = rightMoveRef.current;
+    if (mv === null) return;
+    rightMoveRef.current = null;
+    window.scrollTo(0, mv.y);
+    if (mv.focus === null) return;
+    // 누른 단추가 숨어 커서가 문서 맨 앞으로 날아가지 않게 — 목록 = 「← 보던 건물로」 · 건물 = 「← 목록으로」.
+    document
+      .querySelector<HTMLButtonElement>(mv.focus === 'list' ? '.rlist__back' : '.rback__btn')
+      ?.focus({ preventScroll: true });
+  }, [rightSignal]);
   const [tab, setTab] = useState<AppTab>(() => firstTab(viewerRole, openedWith.bldId !== null));
   const curTab = tabAfterRoleChange(tab, viewerRole);
   const phoneRef = useRef(isPhone);
@@ -170,18 +244,32 @@ export default function App() {
     if (tabRef.current !== 'building') returnTabRef.current = tabRef.current;
     tabScrollRef.current.building = 0;
     setTab('building');
-    if (historyMarkOf(window.history.state) !== 'bld') {
-      window.history.replaceState({ ...(window.history.state ?? {}), [HISTORY_KEY]: 'base' }, '');
-      window.history.pushState({ [HISTORY_KEY]: 'bld' }, '', window.location.href);
-    }
+    pushBldMark();
+  }
+  /*
+    뒤로가기 한 칸 — 지금 칸에 앞 표식(base)을 적고 건물 칸(bld)을 하나 쌓는다. 이미 건물 칸이면 더 쌓지 않는다(늘 한 칸).
+    휴대폰 = 건물 탭을 열 때 · PC 두 칸 = 오른쪽 목록에서 건물로 갈 때(👤 2026-10-22 R3 「뒤로가기도 목록으로」). 주소 꼴은 그대로다.
+  */
+  function pushBldMark() {
+    if (historyMarkOf(window.history.state) === 'bld') return;
+    window.history.replaceState({ ...(window.history.state ?? {}), [HISTORY_KEY]: 'base' }, '');
+    window.history.pushState({ [HISTORY_KEY]: 'bld' }, '', window.location.href);
   }
   /* 뒤로·앞으로 — 건물 칸이면 건물 탭, 그 앞 칸이면 열기 직전 탭. 그 칸의 주소는 옛것이라 다시 적는다(`popSeq`). */
   const [popSeq, setPopSeq] = useState(0);
   useEffect(() => {
     function onPop(e: PopStateEvent) {
-      // 넓은 화면은 탭이 없다 — 휴대폰에서 쌓인 칸이 남아 있어도 탭·주소 다시 쓰기는 안 한다(W4a 전과 같게 · 검사 🟡 F9).
-      if (!phoneRef.current) return;
       const mark = historyMarkOf(e.state);
+      // PC 두 칸 — 앞 칸(base) = 오른쪽 목록(보던 자리 그대로) · 건물 칸(bld) = 보던 건물(R3). 건물은 그대로 쥐고 있어 주소만 다시 적는다.
+      if (wideRef.current) {
+        if (mark === null) return;
+        if (mark === 'bld') toBuildingView(true);
+        else toListView(null, true);
+        setPopSeq((n) => n + 1);
+        return;
+      }
+      // 한 열(721~1023)은 탭이 없다 — 휴대폰에서 쌓인 칸이 남아 있어도 탭·주소 다시 쓰기는 안 한다(W4a 전과 같게 · 검사 🟡 F9).
+      if (!phoneRef.current) return;
       if (mark === null) return;
       setTab(mark === 'bld' ? 'building' : returnTabRef.current);
       setPopSeq((n) => n + 1);
@@ -295,8 +383,9 @@ export default function App() {
   /*
     PC 두 칸에서 첫 방문 큰 카드를 오른쪽 빈 칸에 세우나(👤 2026-10-22 L6) — 건물이 없을 때(되살리는 중 아님)만.
     ⓘ 건물 직행 링크로 온 방문은 `showRoleCards` 가 이미 거짓이라 여기도 거짓(W3 ① 그대로).
+    오른쪽에 목록이 서면(방법 나) 큰 카드는 물러나고 왼쪽에 작은 줄 — 건물을 열었을 때와 같은 처리(질문 한 번 · 저장 0).
   */
-  const roleCardsRight = isWide && showRoleCards && selected === null && !restoring;
+  const roleCardsRight = isWide && showRoleCards && selected === null && !restoring && !listRight;
   /*
     큰 카드에서 고른 뒤(위 `handlePickFromCards`) — 역할을 골랐으면 눌린 단추, 「그냥 둘러보기」면 첫 단추에 커서.
     ⓘ 화면은 굴리지 않는다(`preventScroll`) — 작은 줄은 카드가 있던 바로 그 자리라 이미 화면 안이다.
@@ -437,14 +526,58 @@ export default function App() {
     setRegionFoldOpen(false);
   }
 
+  /*
+    지도에서 누른 것이 바뀌었다(App 이 쥔다 · G1). PC 두 칸에서 상권 건물 목록을 **새로 열면** 오른쪽이 그 목록으로(R1·R2 —
+    건물을 보던 중이어도 · 위 「← 보던 건물로」). 접거나 지도를 다시 누르면 목록이 닫혀 남은 목록·건물·빈 칸으로 돌아간다.
+  */
+  function handleMapPickChange(next: DistrictMapPick) {
+    if (isWide && next.openId !== null && next.openId !== mapPick.openId) {
+      setListSrc('district');
+      toListView(0, false);
+    }
+    setMapPick(next);
+  }
+  /*
+    「← 목록으로」(R3) — 목록에서 고른 건물이면(뒤로가기 한 칸이 쌓여 있다) 브라우저 뒤로가기와 같은 길로 간다(칸이 헛돌지 않게 ·
+    `onPop` 이 목록을 세운다). 칸이 없으면(새 검색으로 목록이 생긴 뒤 건물로 돌아온 경우 등) 바로 목록으로.
+  */
+  function handleBackToList() {
+    if (historyMarkOf(window.history.state) === 'bld') {
+      window.history.back();
+      return;
+    }
+    toListView(null, true);
+  }
+  /* 「← 보던 건물(이름)로」(R2) — 보던 건물로 돌아가고 뒤로가기 한 칸을 쌓는다(뒤로가기 = 다시 목록). */
+  function handleBackToBuilding() {
+    toBuildingView(true);
+    pushBldMark();
+  }
+
   // 검색으로 건물을 고르면 "링크로 들어왔다가 실패한 상태"는 끝난 것이다.
   const handleSelectBuilding = useCallback((hit: BuildingHit) => {
     userActedRef.current = true;
     setRestoreFailed(false);
     setSelected(hit);
     openBuildingTab(); // 휴대폰만 — 지금 폭·탭은 ref 로 읽는다
+    openBuildingRight(); // PC 두 칸만 — 오른쪽 목록에서 골랐으면 뒤로가기 한 칸
     foldEntry(true); // 첫 그림의 것을 쥐어도 된다 — setState·ref 만 쓴다
   }, []);
+  /*
+    PC 두 칸에서 건물을 골랐다 → 오른쪽 = 건물(맨 위부터 · `foldEntry(true)`). 오른쪽에 목록이 서 있었으면 그 굴린 자리를 적고
+    뒤로가기 한 칸을 쌓는다(R3 — 뒤로가기 = 목록). 지도 표지·같은 땅 다른 동처럼 목록 밖에서 고른 것은 칸을 안 쌓는다.
+  */
+  function openBuildingRight() {
+    if (!wideRef.current) return;
+    if (listRightRef.current) {
+      listScrollRef.current = window.scrollY;
+      pushBldMark();
+      // 누른 목록 줄이 숨어 커서가 문서 맨 앞(BODY)으로 떨어지지 않게 — 건물 맨 위 「← 목록으로」에 커서(굴림은 맨 위 · `foldEntry(true)` 와 같다).
+      rightMoveRef.current = { y: 0, focus: 'building' };
+      setRightSignal((n) => n + 1);
+    }
+    setRightView('building');
+  }
 
   /*
     중개사 「최근 뽑은 건물」(결정 0036 결정 18 ⑥⑩). 목록의 주인은 **이 기기 저장소**이고 이 상태는
@@ -509,6 +642,7 @@ export default function App() {
     }
     setSelected({ ...item });
     openBuildingTab();
+    openBuildingRight();
     foldEntry(true);
   }
 
@@ -676,15 +810,22 @@ export default function App() {
         onSearchStart={() => {
           userActedRef.current = true;
           // 휴대폰 탭 꼴은 보던 건물을 남긴다 — 「건물」 탭으로 돌아가면 그대로(👤 확정 결정 0039 §7-1).
-          // PC 두 칸도 같은 규칙(👤 2026-10-21 W5 보완 D1 「가 · 건물은 그대로 남김」) — 오른쪽 건물은 결과를 눌러 고를 때 바뀐다.
+          // PC 두 칸도 건물은 쥐고 있되(👤 2026-10-21 W5 보완 D1) 오른쪽은 목록으로 바뀐다(👤 2026-10-22 방법 나 R2 「오른쪽이 목록으로」 —
+          // 목록 위 「← 보던 건물(이름)로」 · 0039 §7-11 재확인 ① 「검색해도 건물 그대로」를 두 칸에서 바꿈) · 새 목록은 맨 위부터.
           // ⓘ 한 열(721~1023)은 지금 그대로 비운다(2026-08-08 「새 검색에도 옛 건물」 회귀 막이 — 위 주석).
           if (!isPhone && !isWide) setSelected(null);
+          if (isWide) {
+            setListSrc('search');
+            toListView(0, false);
+          }
         }}
         selectedBldId={selected?.bld_id ?? null}
         sigungu={sigungu}
         sigunguName={sigunguName}
         showOwnership={viewerRole === '중개사'}
         paneArea={paneArea}
+        listHost={isWide ? searchHost : null}
+        onListChange={reportSearchList}
         /*
           중개사만 — 검색 입력칸 바로 아래·결과 목록 위(👤 결정 0036 결정 18 ⑩ "검색창 바로 아래").
           ⓘ 목록·지우기 상태는 App 이 쥔다 — 구가 바뀌어 검색창이 key 로 다시 태어나도 목록은 그대로다.
@@ -728,10 +869,12 @@ export default function App() {
             onSelectBuilding={handleSelectBuilding}
             chip={activeChip}
             pick={mapPick}
-            onPickChange={setMapPick}
+            onPickChange={handleMapPickChange}
             layout={mapLayout}
             visible={showMap}
             paneArea={paneArea}
+            listHost={isWide ? districtHost : null}
+            onListChange={reportDistrictList}
             headExtra={
               viewerRole === '창업자' ? (
                 <FounderChips chip={founderChip} onChange={setFounderChip} />
@@ -760,7 +903,10 @@ export default function App() {
         isWide ? ' app--wide' : ''
       }${isWide && leftCollapsed ? ' app--lcollapsed' : ''}${isWide && (selected !== null || restoring) ? ' app--wbld' : ''}${
         isWide && selected !== null && sigungu !== null && printMap ? ' app--printmap' : ''
-      }${regionFolded ? ' app--rfold' : ''}`}
+      }${regionFolded ? ' app--rfold' : ''}${
+        // PC 두 칸 오른쪽이 목록(방법 나) — 화면에서는 오른쪽의 다른 덩어리(건물·안내·입구 카드)를 숨긴다(종이는 건물 그대로).
+        listRight ? ' app--wlist' : ''
+      }`}
       data-tab={isPhone ? curTab : undefined}
     >
       {/*
@@ -976,7 +1122,7 @@ export default function App() {
         */}
         {roleCardsRight && <RoleCards onPick={handlePickFromCards} />}
 
-        {isWide && selected === null && !restoring && !restoreFailed && (
+        {isWide && selected === null && !restoring && !restoreFailed && !listRight && (
           <p className="rpane-empty">왼쪽에서 건물을 고르면 여기에 층별 화면이 섭니다</p>
         )}
 
@@ -1003,6 +1149,17 @@ export default function App() {
               링크와 종이를 **한 줄에 둔다.** 둘 다 "다 보고 나서 남기는 방법"이라, 떨어뜨려
               놓으면 하나만 있는 줄 안다(결정 0020).
             */}
+            {/*
+              PC 두 칸 — 목록에서 고른 건물이면 맨 위에 「← 목록으로(둔산 검색 25곳)」(👤 2026-10-22 R3 · 브라우저 뒤로가기도 같은 일).
+              목록은 보던 자리 그대로 · 종이에서 빠진다(`.rback` — 누르는 장치).
+            */}
+            {backToList && activeList !== null && (
+              <div className="rback">
+                <button type="button" className="rback__btn" onClick={handleBackToList}>
+                  <span aria-hidden="true">← </span>목록으로({listLabels[activeList]})
+                </button>
+              </div>
+            )}
             <div className="takeout">
               <ShareButton url={shareUrl} label={selected.bld_nm} />
               <PrintButton onBeforePrint={handleBeforePrint} />
@@ -1116,6 +1273,24 @@ export default function App() {
             onPick={handlePickRecent}
             onClear={() => setRecentPrinted(clearRecentPrinted())}
           />
+        )}
+
+        {/*
+          PC 두 칸 오른쪽 목록(👤 2026-10-22 방법 나 R1) — 검색 결과·가게 이름 결과(`searchHost`)와 상권 건물 목록(`districtHost`)을
+          왼쪽 부품이 여기에 그려 넣는다(포털). 지금 연 목록 하나만 보인다 · 다른 목록은 숨기기만(굴린 자리·펼친 땅 그대로).
+          건물을 쥐고 있으면 맨 위 「← 보던 건물(이름)로」(R2). ⓘ 맨 뒤에 두는 까닭 = DOM 차례는 그대로 두고 grid 자리만(목록이 서면
+          `.app--wlist` 가 오른쪽의 다른 덩어리를 숨겨 이것이 오른쪽 맨 위다). 종이에서 빠진다(`.rlist` — 종이 = 건물).
+        */}
+        {isWide && (
+          <section className="rlist" aria-label="찾은 목록" hidden={!listRight}>
+            {selected !== null && (
+              <button type="button" className="rlist__back" onClick={handleBackToBuilding}>
+                <span aria-hidden="true">← </span>보던 건물({selected.bld_nm?.trim() || '이름 없는 건물'})로
+              </button>
+            )}
+            <div className="rlist__pane" ref={setSearchHost} hidden={activeList !== 'search'} />
+            <div className="rlist__pane" ref={setDistrictHost} hidden={activeList !== 'district'} />
+          </section>
         )}
       </main>
 
