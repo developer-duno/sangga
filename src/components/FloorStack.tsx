@@ -1776,6 +1776,26 @@ function UnitCellRow({
   );
 }
 
+/** 펼친 층 셋째 칸이 위로 올리는 것 — 받은 호 목록 · 전체 수 · 첫 쪽을 받는 중인가. */
+type ShownUnits = { units: FloorUnit[]; total: number | null; pending: boolean };
+
+/**
+ * 칸 줄 자리 미리 잡기(V3 보완 2) — 목록이 오기 전 칸 줄과 **같은 꼴**(빈 띠 + 설명 글 한 벌)을 안 보이게(`visibility: hidden`)
+ * 둔다. 같은 꼴이라 높이가 같다(「그 밖 N호」는 띠 옆이라 높이를 안 바꾼다 · 「–」 줄만 드물게 한 줄 더). 읽는 기기에도 안 읽힌다.
+ */
+function UnitCellPlaceholder() {
+  return (
+    <div className="ucells ucells--detail ucells--pending" aria-hidden="true">
+      <div className="ucells__row">
+        <div className="ucells__strip" />
+      </div>
+      <p className="ucells__note">
+        {UNIT_CELLS_NOTE} {UNIT_MULTI_FLOOR_NOTE}
+      </p>
+    </div>
+  );
+}
+
 /**
  * 호실 구성표 고르기로 받은 한 층의 호 목록(물결 1-C2) — 층 줄 아래, 화면·종이 같은 것.
  * 첫 쪽보다 많으면 남은 수를 한 줄로(👤 글자 · 종이에도). 받은 것이 0줄이면 아무것도 안 그린다.
@@ -1823,12 +1843,22 @@ function FloorDetail({
     여기로 올려 **세 칸 위 가로 전체 폭**에 한 줄로 그린다(셋째 칸 안에는 안 그린다 — 두 번 그리지 않기).
     휴대폰은 세 칸이 세로로 쌓이므로 그 맨 위. DOM 차례도 세 칸보다 앞이라 읽는 차례 = 보이는 차례.
   */
-  const [shownUnits, setShownUnits] = useState<{ units: FloorUnit[]; total: number | null }>({ units: [], total: null });
+  /*
+    ⓘ 자리 미리 잡기(V3 보완 2 · 적대 🟡①): 층 줄 요약이 호실이 있다고 말하는 목록 층(`unit_cnt > 0`)은 목록이 오기 **전**부터
+      칸 줄 높이만큼 빈 자리(`UnitCellPlaceholder` — 안 보임)를 둔다 — 안 그러면 목록이 온 뒤 칸 줄이 끼어들어 세 칸이 약 34px
+      밀린다(휴대폰은 맨 위라 읽는 중에 내려간다). 목록이 0줄·실패로 오면 `pending` 이 거짓이 되어 자리를 거둔다.
+      처음 값도 같은 판정으로 — 셋째 칸의 첫 알림(effect)을 기다리면 첫 그림이 자리 없이 그려져 한 번 밀린다.
+  */
+  const expectUnits =
+    unitRow !== undefined && hasUnitList(unitRow.floor_kind) && unitRow.unit_cnt > 0 && unitRow.floor_no !== null;
+  const [shownUnits, setShownUnits] = useState<ShownUnits>({ units: [], total: null, pending: expectUnits });
 
   return (
     <div className={`detail${unitCol ? ' detail--units' : ''}`}>
-      {shownUnits.units.length > 0 && (
+      {shownUnits.units.length > 0 ? (
         <UnitCellRow units={shownUnits.units} total={shownUnits.total} kind="detail" />
+      ) : (
+        expectUnits && shownUnits.pending && <UnitCellPlaceholder />
       )}
       <div className="detail__col">
         <h4 className="detail__h">용도별 구획 {uses.length > 0 && `(${uses.length})`}</h4>
@@ -1890,22 +1920,24 @@ function FloorUnits({
 }: {
   bldId: string;
   unitRow: UnitFloorSummary;
-  /** 받은 호 목록·전체 수를 상세 맨 위 칸 줄(`FloorDetail`)로 올린다(결정 0038 G · 👤 2026-10-22). */
-  onUnits?: (shown: { units: FloorUnit[]; total: number | null }) => void;
+  /** 받은 호 목록·전체 수·첫 쪽을 받는 중인가를 상세 맨 위 칸 줄(`FloorDetail`)로 올린다(결정 0038 G · 👤 2026-10-22). */
+  onUnits?: (shown: ShownUnits) => void;
 }) {
   const listed = hasUnitList(unitRow.floor_kind);
   const floorNo = unitRow.floor_no;
   const [units, setUnits] = useState<FloorUnit[]>([]);
   const [total, setTotal] = useState<number | null>(null);
-  useEffect(() => {
-    onUnits?.({ units, total });
-  }, [units, total, onUnits]);
   const [loading, setLoading] = useState(listed);
   const [failed, setFailed] = useState(false);
   // 더 보기를 누를 때마다 1씩 올린다 — 0 이 첫 쪽이다.
   const [page, setPage] = useState(0);
   /** 다음 쪽이 0줄로 왔다 = 더 받을 것이 없다(더 보기를 거둔다). */
   const [ended, setEnded] = useState(false);
+  // 첫 쪽을 받는 동안만 `pending`(실패하면 loading 이 거짓이 되어 자리를 거둔다 · 0줄도 같다).
+  const pending = listed && loading && units.length === 0;
+  useEffect(() => {
+    onUnits?.({ units, total, pending });
+  }, [units, total, pending, onUnits]);
 
   useEffect(() => {
     if (!listed || floorNo === null) return;

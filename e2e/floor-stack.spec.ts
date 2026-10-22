@@ -2018,8 +2018,28 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
     await expect(card.locator('#floor-5 .ucells')).toHaveCount(0);
     // 주거 층(35층)은 목록이 0줄이라 칸도 없다.
     await expect(card.locator('#floor-35 .ucells')).toHaveCount(0);
+    // V3 보완 2 — 목록이 늦게 와도 세 칸이 안 밀린다: 5층 목록 답을 붙잡아 두고 펼치면 칸 줄 자리가 먼저(안 보이게) 서 있고,
+    // 답이 온 뒤 세 칸의 높이 자리 그대로 · 진짜 칸 줄 높이 = 미리 잡은 자리 높이.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    await page.route(FLOOR_UNITS_PATTERN, async (route) => {
+      const a = (route.request().postDataJSON() ?? {}) as Record<string, number>;
+      if (route.request().method() === 'POST' && a.p_floor_no === 5) await gate;
+      await route.fallback();
+    });
     await floorRowOf(page, '5층').click();
+    const pend = card.locator('#floor-5 .detail > .ucells--pending');
+    await expect(pend).toHaveCount(1);
+    await expect(pend).toHaveCSS('visibility', 'hidden');
+    await expect(pend).toHaveAttribute('aria-hidden', 'true');
+    const colY = async () => (await card.locator('#floor-5 .detail > .detail__col').first().boundingBox())!.y;
+    const yBefore = await colY();
+    const hBefore = (await pend.boundingBox())!.height;
+    release();
     await expect(card.locator('#floor-5 .detail > .ucells .ucell')).toHaveCount(2);
+    await expect(pend).toHaveCount(0);
+    expect(Math.abs((await colY()) - yBefore), '세 칸이 밀리지 않음').toBeLessThan(1);
+    expect(Math.abs((await card.locator('#floor-5 .detail > .ucells').boundingBox())!.height - hBefore)).toBeLessThan(1);
     // 👤 2026-10-22 「펼친 칸 위 전체 폭」 — 칸 줄은 상세 세 칸(용도별 구획 · 점포 · 호실) **위** 가로 전체 한 줄 ·
     // 호실 칸 안에는 없다(두 번 그리지 않기) · 그림은 목록과 같은 내용이라 aria-hidden · 한 색(사실 색 --fact-2).
     await expect(card.locator('#floor-5 .units .ucells')).toHaveCount(0);
@@ -2133,6 +2153,40 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
     try {
       await check('#floor-1 .floor__unitprint .ucells', SH1, ['101호 · 300.0㎡', '102호 · 150.0㎡'], 480, 'print 703');
       await check('#floor-5 .detail > .ucells', SH5, ['900.0㎡'], 500, 'print 703');
+      /*
+        V3 보완 2(메인 운영 종이 실측 — 인쇄 구성표 칸 줄·목록이 카드 오른쪽 테두리 밖으로). 종이 흉내 폭 740 = 720 묶음이 안 걸려 층 줄이
+        여러 칸이고 카드 안쪽(약 620px)이 층 줄 버튼 최소 폭(약 682px)보다 좁은 꼴(운영 page.pdf 와 같은 꼴) — 구성표 칸 줄·목록·펼친 상세의
+        오른쪽 끝 ≤ 카드 안쪽 오른쪽. 층 줄 버튼 글자 자리는 고치기 전과 같다(옛 규칙을 덮어 견준다 · 덮은 쪽은 실제로 넘친다 = 양성 대조).
+      */
+      for (const pw of [740, 760, 800]) {
+        await page.setViewportSize({ width: pw, height: 900 });
+        const edges = () =>
+          card.evaluate((c) => {
+            const right = (s: string) => [...c.querySelectorAll(s)].map((e) => e.getBoundingClientRect().right);
+            const cs = c.ownerDocument.defaultView!.getComputedStyle(c);
+            return {
+              inner: c.getBoundingClientRect().right - parseFloat(cs.borderRightWidth) - parseFloat(cs.paddingRight),
+              blocks: right('.floor__unitprint .ucells__row, .floor__unitprint-list, .floor__unitprint-more, .detail'),
+              head: [...c.querySelectorAll('#floor-1 .floor__row > *')].map((e) => Math.round(e.getBoundingClientRect().left)),
+            };
+          });
+        const now = await edges();
+        expect(now.blocks.length, `print ${pw} 덩어리 수`).toBeGreaterThanOrEqual(6);
+        for (const r of now.blocks) expect(r, `print ${pw} 카드 안쪽 오른쪽 ${now.inner}`).toBeLessThanOrEqual(now.inner + 0.5);
+        const old = await card.evaluate(async (c) => {
+          const doc = c.ownerDocument;
+          const st = doc.createElement('style');
+          st.textContent = '.floors{grid-template-columns:none!important}';
+          doc.head.appendChild(st);
+          const blocks = [...c.querySelectorAll('.floor__unitprint-list')].map((e) => e.getBoundingClientRect().right);
+          const head = [...c.querySelectorAll('#floor-1 .floor__row > *')].map((e) => Math.round(e.getBoundingClientRect().left));
+          st.remove();
+          return { blocks, head };
+        });
+        expect(old.head, `print ${pw} 층 줄 글자 자리 그대로`).toEqual(now.head);
+        if (pw === 740) expect(Math.max(...old.blocks), '양성 대조 — 옛 규칙이면 넘친다').toBeGreaterThan(now.inner + 1);
+      }
+      await page.setViewportSize({ width: 703, height: 900 });
       await expect(card.locator('#floor-1 .ucells__row')).toHaveCSS('break-inside', 'avoid');
       await expect(card.locator('#floor-1 .ucells')).toHaveCSS('break-inside', 'auto');
       await card.screenshot({ path: testInfo.outputPath(`v3-cells-print-${testInfo.project.name}.png`) });

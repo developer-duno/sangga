@@ -2914,6 +2914,62 @@ describe('FloorStack — 호실 크기 칸 (결정 0038 G · V3)', () => {
     }
   });
 
+  it('★ 자리 미리 잡기(보완 2) — 목록을 받는 동안 상세 맨 위에 안 보이는 같은 꼴 자리 · 오면 진짜 칸 줄로 바뀐다', async () => {
+    let resolve: (v: { data: unknown; error: unknown }) => void = () => {};
+    responses.floorUnits = (args) =>
+      Number(args.p_floor_no) === 5
+        ? (new Promise<{ data: unknown; error: unknown }>((r) => (resolve = r)) as unknown as Promise<never>)
+        : pageFor(args);
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(4));
+    open(container, '5층');
+    const detail = () => container.querySelector('#floor-5 .detail')!;
+    // 첫 그림부터 자리가 있다(셋째 칸의 알림을 기다리지 않는다) — 상세의 첫 자식 · 같은 꼴(빈 띠 + 설명 글) · 칸 0 · aria-hidden.
+    const pend = detail().firstElementChild!;
+    expect(pend.className).toBe('ucells ucells--detail ucells--pending');
+    expect(pend.getAttribute('aria-hidden')).toBe('true');
+    expect(pend.querySelector('.ucells__strip')).not.toBeNull();
+    expect(pend.querySelectorAll('.ucell')).toHaveLength(0);
+    expect(pend.querySelector('.ucells__note')?.textContent).toBe(
+      '크기 비교이지 자리 배치가 아닙니다. 여러 층에 걸친 호실은 걸친 층마다 한 번씩 셉니다.',
+    );
+    resolve({ data: FIXED[5], error: null });
+    await waitFor(() => expect(detail().querySelectorAll(':scope > .ucells .ucell')).toHaveLength(2));
+    expect(detail().querySelector('.ucells--pending')).toBeNull();
+    expect(detail().querySelectorAll(':scope > .ucells')).toHaveLength(1);
+  });
+
+  it('자리 거두기 — 목록이 0줄이거나 실패면 자리도 없다 · 주거 층·호실 0칸 층은 처음부터 자리 없음', async () => {
+    responses.floorUnits = (args) => (Number(args.p_floor_no) === 5 ? { data: [], error: null } : pageFor(args));
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(4));
+    open(container, '5층');
+    await waitFor(() => expect(container.querySelector('#floor-5 .units')?.textContent).toContain('이 층의 호 목록이 없습니다.'));
+    expect(container.querySelector('#floor-5 .ucells')).toBeNull();
+    // 실패.
+    responses.floorUnits = () => ({ data: null, error: { message: 'boom' } });
+    open(container, '1층');
+    await waitFor(() => expect(container.querySelector('#floor-1 .units')?.textContent).toContain('호 목록을 불러오지 못했습니다.'));
+    expect(container.querySelector('#floor-1 .ucells')).toBeNull();
+    // 주거 층 — 목록을 안 부르니 자리도 없다(첫 그림부터).
+    open(container, '35층');
+    expect(container.querySelector('#floor-35 .detail')).not.toBeNull();
+    expect(container.querySelector('#floor-35 .ucells')).toBeNull();
+  });
+
+  it('요약이 호실 0칸이라 말하는 목록 층은 자리를 안 잡는다', async () => {
+    responses.unitSummary = {
+      data: [{ floor_no: 5, unit_cnt: 0, median_area_m2: null, min_area_m2: null, max_area_m2: null, floor_kind: 'commercial' }],
+      error: null,
+    };
+    responses.floorUnits = () => new Promise(() => {}) as Promise<never>;
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(1));
+    open(container, '5층');
+    expect(container.querySelector('#floor-5 .detail')).not.toBeNull();
+    expect(container.querySelector('#floor-5 .ucells')).toBeNull();
+  });
+
   it('50호 넘는 층 — 칸 50 + 「그 밖 493호」 · 더 보기로 목록이 100줄이 돼도 칸은 50 그대로', async () => {
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(4));
@@ -2949,7 +3005,7 @@ describe('FloorStack — 호실 크기 칸 (결정 0038 G · V3)', () => {
       const { container } = render(<FloorStack building={building()} />);
       await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(4));
       open(container, '5층');
-      await waitFor(() => expect(container.querySelector('#floor-5 .ucells__note')).not.toBeNull());
+      await waitFor(() => expect(container.querySelector('#floor-5 .ucells--pending')).toBeNull());
       expect(container.querySelector('#floor-5 .ucells__strip')).toBeNull();
       expect(container.querySelector('#floor-5 .ucells__note')?.textContent).toBe(
         '전용면적 값이 없는 호(칸 없음): 501호 – · 502호 –',
