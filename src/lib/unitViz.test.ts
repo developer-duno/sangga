@@ -12,6 +12,7 @@ import {
   unitCellLabelFits,
   unitCellText,
   unitCells,
+  unitNameIsBlank,
   unitCellsBlankText,
   unitCellsRestText,
 } from './unitViz';
@@ -44,10 +45,24 @@ describe('unitCells — 폭 % (결정 0038 G1)', () => {
     expect(c.cells[0].pct).toBe(100);
   });
 
-  it('칸 글자는 목록과 같은 서식 함수 — 빈 이름은 「(호 이름 없음)」 · 면적은 소수 첫째 자리', () => {
+  it('칸 글자는 목록과 같은 서식 함수(이름 원문 · 면적 소수 첫째 자리)', () => {
     expect(unitCellText('101호', 54)).toBe('101호 · 54.0㎡');
-    expect(unitCellText(null, 1234.56)).toBe('(호 이름 없음) · 1,234.6㎡');
-    expect(unitCellText('', 3)).toBe('(호 이름 없음) · 3.0㎡');
+    expect(unitCellText('B01', 1234.56)).toBe('B01 · 1,234.6㎡');
+  });
+
+  it('★ 이름이 사실상 없으면 면적만(👤 2026-10-22 — 운영 「호 · 793.8㎡」 결함) · 「호」가 든 진짜 이름은 그대로', () => {
+    for (const ho of [null, '', '  ', '호', ' 호 ']) {
+      expect(unitNameIsBlank(ho), String(ho)).toBe(true);
+      expect(unitCellText(ho, 793.8), String(ho)).toBe('793.8㎡');
+    }
+    // 양성 대조 — 이름이 있는 꼴은 이름을 지우지 않는다.
+    for (const ho of ['101호', '호1', '1호', '가']) {
+      expect(unitNameIsBlank(ho), ho).toBe(false);
+      expect(unitCellText(ho, 10)).toBe(`${ho} · 10.0㎡`);
+    }
+    // 칸 줄에서도 — 빈 이름 칸은 면적만 글자로.
+    const c = unitCells([u('호', 793.8, 2), u('101호', 10, 2)], 2, REF)!;
+    expect(c.cells.map((x) => x.text)).toEqual(['793.8㎡', '101호 · 10.0㎡']);
   });
 });
 
@@ -150,8 +165,8 @@ describe('unitCells — 넓은 칸에만 글자 (G8 · 가장 좁은 폭 기준 
     expect(unitCells([u('001호', 100, 60)], 60, { wide: need + restW, narrow: need })!.cells[0].labWide).toBe(true);
   });
 
-  it('기준 폭 표 — 펼친 상세 셋째 칸(넓은 150 · 휴대폰 180) · 인쇄 구성표(넓은 480 · 휴대폰 230)', () => {
-    expect(UNIT_CELL_REF).toEqual({ detail: { wide: 150, narrow: 180 }, print: { wide: 480, narrow: 230 } });
+  it('기준 폭 표 — 펼친 상세 세 칸 위 전체 폭(넓은 500 · 휴대폰 180 · 👤 2026-10-22) · 인쇄 구성표(넓은 480 · 휴대폰 230)', () => {
+    expect(UNIT_CELL_REF).toEqual({ detail: { wide: 500, narrow: 180 }, print: { wide: 480, narrow: 230 } });
   });
 });
 
@@ -220,6 +235,15 @@ describe('CSS 가드 — 호실 크기 칸(결정 0038 G · V3)', () => {
       expect(mediaAt(css, `\n${sel} {`), sel).toEqual([]);
       expect(rule(sel), sel).toMatch(/font-size:\s*13px/);
     }
+  });
+
+  it('펼친 상세에서는 그리드 첫 줄 가로 전체(`grid-column: 1 / -1` · 👤 2026-10-22) — 기본 규칙(어느 폭·종이에서나)', () => {
+    expect(mediaAt(css, '\n.ucells.ucells--detail {')).toEqual([]);
+    expect(rule('.ucells.ucells--detail')).toMatch(/grid-column:\s*1 \/ -1/);
+    // 양성 대조 — 셋째 칸 한 칸만 쓰는 꼴이면 걸린다.
+    const moved = css.replace('.ucells.ucells--detail {\n  grid-column: 1 / -1;', '.ucells.ucells--detail {\n  grid-column: 3;');
+    expect(moved).not.toBe(css);
+    expect(rule('.ucells.ucells--detail', moved)).not.toMatch(/grid-column:\s*1 \/ -1/);
   });
 
   it('종이 — 칸 줄에만 break-inside: avoid(층·카드 통째 아님)', () => {

@@ -1622,6 +1622,13 @@ body {
   margin: 0 0 8px;
 }
 
+/* 펼친 층 상세에서는 세 칸(용도별 구획 · 점포 · 호실) **위 가로 전체 폭** 한 줄(👤 2026-10-22 「펼친 칸 위 전체 폭」) —
+   상세(`.detail`) 그리드의 첫 줄을 통째로 쓴다. 휴대폰은 세 칸이 세로로 쌓이므로 그 맨 위. 칸 사이 틈은 그리드 gap 이 준다. */
+.ucells.ucells--detail {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
 .ucells__row {
   display: flex;
   align-items: center;

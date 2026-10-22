@@ -1721,7 +1721,8 @@ function TxDotPlot({ plot }: { plot: TxPlot }) {
 }
 
 /**
- * 호 목록 위의 「호실 크기 칸」 한 줄(결정 0038 G · V3) — 칸 하나 = 호 하나 · 폭 = 전용면적 비례(계산 `unitCells`).
+ * 「호실 크기 칸」 한 줄(결정 0038 G · V3) — 칸 하나 = 호 하나 · 폭 = 전용면적 비례(계산 `unitCells`).
+ * 자리 = 펼친 층 상세의 세 칸 위 가로 전체 폭(`kind="detail"` · `FloorDetail` · 👤 2026-10-22) · 인쇄 구성표 목록 위(`kind="print"`).
  *
  * ⛔ 칸 줄은 목록과 **같은 내용**이라 `aria-hidden`(두 번 읽히지 않게) — 「그 밖 N호」·설명 글은 글이라 그대로 읽힌다.
  * ⛔ 칸 폭은 % 로만(DOM 을 재지 않는다) · 칸 안 글자는 넓은 화면·종이 벌(`--w`)과 휴대폰 벌(`--n`)을 미리 정해 CSS 가 고른다.
@@ -1741,7 +1742,7 @@ function UnitCellRow({
   const blank = unitCellsBlankText(c.blanks);
   if (c.cells.length === 0) {
     return (
-      <div className="ucells">
+      <div className={`ucells ucells--${kind}`}>
         <p className="ucells__note">
           {blank}
           {c.rest > 0 && ` · ${unitCellsRestText(c.rest)}`}
@@ -1750,7 +1751,7 @@ function UnitCellRow({
     );
   }
   return (
-    <div className="ucells">
+    <div className={`ucells ucells--${kind}`}>
       <div className="ucells__row">
         <div className="ucells__strip" aria-hidden="true">
           {c.cells.map((cell, i) => (
@@ -1817,9 +1818,18 @@ function FloorDetail({
     (hasUnitList(unitRow.floor_kind) ||
       unitRow.floor_kind === 'residential' ||
       unitRow.floor_kind === 'officetel');
+  /*
+    호실 크기 칸 줄(결정 0038 G · V3 → 👤 2026-10-22 「펼친 칸 위 전체 폭」) — 목록은 셋째 칸(`FloorUnits`)이 받고, 받은 것을
+    여기로 올려 **세 칸 위 가로 전체 폭**에 한 줄로 그린다(셋째 칸 안에는 안 그린다 — 두 번 그리지 않기).
+    휴대폰은 세 칸이 세로로 쌓이므로 그 맨 위. DOM 차례도 세 칸보다 앞이라 읽는 차례 = 보이는 차례.
+  */
+  const [shownUnits, setShownUnits] = useState<{ units: FloorUnit[]; total: number | null }>({ units: [], total: null });
 
   return (
     <div className={`detail${unitCol ? ' detail--units' : ''}`}>
+      {shownUnits.units.length > 0 && (
+        <UnitCellRow units={shownUnits.units} total={shownUnits.total} kind="detail" />
+      )}
       <div className="detail__col">
         <h4 className="detail__h">용도별 구획 {uses.length > 0 && `(${uses.length})`}</h4>
         {uses.length === 0 ? (
@@ -1857,7 +1867,7 @@ function FloorDetail({
         )}
       </div>
 
-      {unitCol && unitRow && <FloorUnits bldId={bldId} unitRow={unitRow} />}
+      {unitCol && unitRow && <FloorUnits bldId={bldId} unitRow={unitRow} onUnits={setShownUnits} />}
     </div>
   );
 }
@@ -1873,11 +1883,23 @@ function FloorDetail({
  *    있다. 우리가 아직 안 담은 것을 대장 탓으로 말하면 안 된다(결정 0032 `:147-148`).
  * ⛔ 사람이 눌러 연 칸이라, 불러오지 못하면 조용히 비우지 않고 그렇다고 적는다(0025 규칙).
  */
-function FloorUnits({ bldId, unitRow }: { bldId: string; unitRow: UnitFloorSummary }) {
+function FloorUnits({
+  bldId,
+  unitRow,
+  onUnits,
+}: {
+  bldId: string;
+  unitRow: UnitFloorSummary;
+  /** 받은 호 목록·전체 수를 상세 맨 위 칸 줄(`FloorDetail`)로 올린다(결정 0038 G · 👤 2026-10-22). */
+  onUnits?: (shown: { units: FloorUnit[]; total: number | null }) => void;
+}) {
   const listed = hasUnitList(unitRow.floor_kind);
   const floorNo = unitRow.floor_no;
   const [units, setUnits] = useState<FloorUnit[]>([]);
   const [total, setTotal] = useState<number | null>(null);
+  useEffect(() => {
+    onUnits?.({ units, total });
+  }, [units, total, onUnits]);
   const [loading, setLoading] = useState(listed);
   const [failed, setFailed] = useState(false);
   // 더 보기를 누를 때마다 1씩 올린다 — 0 이 첫 쪽이다.
@@ -1935,7 +1957,6 @@ function FloorUnits({ bldId, unitRow }: { bldId: string; unitRow: UnitFloorSumma
               <strong>아직 담지 않았습니다</strong>.
             </p>
           )}
-          {units.length > 0 && <UnitCellRow units={units} total={total} kind="detail" />}
           {units.length > 0 && (
             <ul className="detail__list units__list">
               {units.map((u, i) => (

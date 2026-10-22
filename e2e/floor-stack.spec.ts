@@ -1997,8 +1997,9 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
         { ho: '103호', excl_area_m2: 20, total_cnt: 4 },
         { ho: '104호', excl_area_m2: 0, total_cnt: 4 },
       ],
+      // 큰 호는 대장 호 이름이 비고 꼬리 「호」만 붙은 꼴(운영 개포주공 7단지상가 실측) — 칸 글자는 면적만 「900.0㎡」.
       5: [
-        { ho: '501호', excl_area_m2: 900, total_cnt: 2 },
+        { ho: '호', excl_area_m2: 900, total_cnt: 2 },
         { ho: '502호', excl_area_m2: 40, total_cnt: 2 },
       ],
     };
@@ -2018,11 +2019,29 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
     // 주거 층(35층)은 목록이 0줄이라 칸도 없다.
     await expect(card.locator('#floor-35 .ucells')).toHaveCount(0);
     await floorRowOf(page, '5층').click();
-    await expect(card.locator('#floor-5 .units .ucell')).toHaveCount(2);
-    // 칸 줄은 호 목록 **위** · 그림은 목록과 같은 내용이라 aria-hidden · 한 색(사실 색 --fact-2).
-    const strip5 = card.locator('#floor-5 .units .ucells__strip');
+    await expect(card.locator('#floor-5 .detail > .ucells .ucell')).toHaveCount(2);
+    // 👤 2026-10-22 「펼친 칸 위 전체 폭」 — 칸 줄은 상세 세 칸(용도별 구획 · 점포 · 호실) **위** 가로 전체 한 줄 ·
+    // 호실 칸 안에는 없다(두 번 그리지 않기) · 그림은 목록과 같은 내용이라 aria-hidden · 한 색(사실 색 --fact-2).
+    await expect(card.locator('#floor-5 .units .ucells')).toHaveCount(0);
+    const strip5 = card.locator('#floor-5 .detail > .ucells .ucells__strip');
     await expect(strip5).toHaveAttribute('aria-hidden', 'true');
-    expect((await strip5.boundingBox())!.y).toBeLessThan((await card.locator('#floor-5 .units__list').boundingBox())!.y);
+    const fullWidth = async () => {
+      const row = (await card.locator('#floor-5 .detail > .ucells').boundingBox())!;
+      const detail = await card.locator('#floor-5 .detail').evaluate((el) => {
+        const cs = el.ownerDocument.defaultView!.getComputedStyle(el);
+        const b = el.getBoundingClientRect();
+        return { x: b.x + parseFloat(cs.borderLeftWidth) + parseFloat(cs.paddingLeft), w: el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) };
+      });
+      const cols = await card.locator('#floor-5 .detail > .detail__col').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().y));
+      return { row, detail, cols };
+    };
+    {
+      const f = await fullWidth();
+      expect(Math.abs(f.row.x - f.detail.x)).toBeLessThan(1);
+      expect(Math.abs(f.row.width - f.detail.w)).toBeLessThan(1);
+      expect(f.cols).toHaveLength(3);
+      for (const y of f.cols) expect(f.row.y + f.row.height).toBeLessThanOrEqual(y + 0.5);
+    }
     for (const c of await card.locator('.ucell').all()) await expect(c).toHaveCSS('background-color', 'rgb(224, 180, 90)');
     // 글 — 설명 · 「그 밖 N호」 · 「–」 · 복층 각주(옆 글이 읽히고 그림만 숨는다).
     const note1 = card.locator('#floor-1 .floor__unitprint .ucells__note');
@@ -2077,8 +2096,8 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
       // 인쇄 구성표 꼴(기준 넓은 480 · 휴대폰 230) — 휴대폰은 101호만, 넓은 화면은 102호까지.
       await check('#floor-1 .floor__unitprint .ucells', SH1, phone ? ['101호 · 300.0㎡'] : ['101호 · 300.0㎡', '102호 · 150.0㎡'], phone ? 230 : 480, where);
       await check('#floor-3 .floor__unitprint .ucells', SH3, [], phone ? 230 : 480, where);
-      // 펼친 상세 셋째 칸 꼴(기준 넓은 150 · 휴대폰 180).
-      await check('#floor-5 .units .ucells', SH5, ['501호 · 900.0㎡'], phone ? 180 : 150, where);
+      // 펼친 상세 세 칸 위 전체 폭 꼴(기준 넓은 500 · 휴대폰 180 · 👤 2026-10-22).
+      await check('#floor-5 .detail > .ucells', SH5, ['900.0㎡'], phone ? 180 : 500, where);
       // 가로 넘침 — 칸 줄이 더한 넘침 0(칸 줄을 숨긴 쪽과 같다). ⓘ 721 한 열은 이 시험 전부터 층 줄(`.floor__head`)이
       //   21px 넘친다(칸 줄·인쇄 구성표·상세를 숨겨도 같고 층 줄을 숨기면 0 — 2026-10-21 실측 · V3 밖) — 그래서 0 이 아니라 '같음'을 본다.
       const [over, overWithout] = await page.locator('html').evaluate((html) => {
@@ -2101,11 +2120,11 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
 
     // 3층을 펼치면 상세에도 칸 50 + 「그 밖 493호」(더 보기로 목록이 늘어도 칸 줄은 첫 50호 그대로).
     await floorRowOf(page, '3층').click();
-    await expect(card.locator('#floor-3 .units .ucell')).toHaveCount(50);
-    await expect(card.locator('#floor-3 .units .ucells__rest')).toHaveText('그 밖 493호');
+    await expect(card.locator('#floor-3 .detail > .ucells .ucell')).toHaveCount(50);
+    await expect(card.locator('#floor-3 .detail > .ucells .ucells__rest')).toHaveText('그 밖 493호');
     await card.locator('#floor-3 .units__more').click();
     await expect(card.locator('#floor-3 .units__list li')).toHaveCount(100);
-    await expect(card.locator('#floor-3 .units .ucell')).toHaveCount(50);
+    await expect(card.locator('#floor-3 .detail > .ucells .ucell')).toHaveCount(50);
     await floorRowOf(page, '5층').click();
 
     // 종이(A4 폭 703 흉내) — 넓은 벌 글자 · 칸 줄에만 break-inside: avoid · 층·카드 통째에는 안 건다.
@@ -2113,7 +2132,7 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
     await page.emulateMedia({ media: 'print' });
     try {
       await check('#floor-1 .floor__unitprint .ucells', SH1, ['101호 · 300.0㎡', '102호 · 150.0㎡'], 480, 'print 703');
-      await check('#floor-5 .units .ucells', SH5, ['501호 · 900.0㎡'], 150, 'print 703');
+      await check('#floor-5 .detail > .ucells', SH5, ['900.0㎡'], 500, 'print 703');
       await expect(card.locator('#floor-1 .ucells__row')).toHaveCSS('break-inside', 'avoid');
       await expect(card.locator('#floor-1 .ucells')).toHaveCSS('break-inside', 'auto');
       await card.screenshot({ path: testInfo.outputPath(`v3-cells-print-${testInfo.project.name}.png`) });

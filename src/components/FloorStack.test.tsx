@@ -2853,29 +2853,35 @@ describe('FloorStack — 호실 크기 칸 (결정 0038 G · V3)', () => {
   const labs = (root: Element | null) =>
     [...(root?.querySelectorAll('.ucell__lab') ?? [])].map((l) => [l.className, l.textContent]);
 
-  it('펼친 층 — 호 목록 **위**에 칸 줄 · 폭 % = 면적 비례(차례 그대로) · 면적 0 은 칸 없이 「–」 · 그림만 aria-hidden · 글 · 목록은 그대로', async () => {
+  it('펼친 층 — 칸 줄은 세 칸(구획·점포·호실) **위** 상세 첫 자식 한 줄(👤 2026-10-22 전체 폭) · 호실 칸 안엔 없음 · 폭 % = 면적 비례 · 면적 0 은 「–」 · 그림만 aria-hidden · 목록은 그대로', async () => {
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(4));
     open(container, '1층');
-    await waitFor(() => expect(container.querySelectorAll('#floor-1 .units .ucell')).toHaveLength(3));
-    const units = container.querySelector('#floor-1 .units')!;
-    const w = widths(units);
+    await waitFor(() => expect(container.querySelectorAll('#floor-1 .detail > .ucells .ucell')).toHaveLength(3));
+    const detail = container.querySelector('#floor-1 .detail')!;
+    const row = detail.querySelector(':scope > .ucells')!;
+    // 상세의 **첫 자식**(세 칸보다 앞 — 읽는 차례 = 보이는 차례) · 전체 폭 이름표 · 호실 칸 안에는 칸 줄 0.
+    expect(detail.firstElementChild).toBe(row);
+    expect(row.classList.contains('ucells--detail')).toBe(true);
+    expect(detail.querySelectorAll('.ucells')).toHaveLength(1);
+    expect(detail.querySelector('.units .ucells')).toBeNull();
+    const w = widths(row);
     [300 / 470, 150 / 470, 20 / 470].forEach((s, i) => expect(w[i]).toBeCloseTo(s * 100, 6));
-    const strip = units.querySelector('.ucells__strip')!;
-    expect(strip.getAttribute('aria-hidden')).toBe('true');
-    // 칸 줄이 목록보다 앞(위)에 있다.
-    expect(strip.compareDocumentPosition(units.querySelector('.units__list')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(row.querySelector('.ucells__strip')!.getAttribute('aria-hidden')).toBe('true');
     // 설명 글 · 「–」 · 복층 각주 — 글이라 aria-hidden 밖.
-    const note = units.querySelector('.ucells__note')!;
+    const note = row.querySelector('.ucells__note')!;
     expect(note.closest('[aria-hidden]')).toBeNull();
     expect(note.textContent).toBe(
       '크기 비교이지 자리 배치가 아닙니다. 전용면적 값이 없는 호(칸 없음): 104호 –. 여러 층에 걸친 호실은 걸친 층마다 한 번씩 셉니다.',
     );
-    expect(units.querySelector('.ucells__rest')).toBeNull();
-    // 상세 셋째 칸 기준 폭(넓은 150 · 휴대폰 180)에선 63.8% 칸도 글자 자리가 모자란다 — 글자 0.
-    expect(labs(units)).toEqual([]);
+    expect(row.querySelector('.ucells__rest')).toBeNull();
+    // 전체 폭 기준(넓은 500 · 휴대폰 180) — 넓은 벌은 101호·102호 · 휴대폰 벌은 없음(63.8% × 180 < 글자 폭).
+    expect(labs(row)).toEqual([
+      ['ucell__lab ucell__lab--w', '101호 · 300.0㎡'],
+      ['ucell__lab ucell__lab--w', '102호 · 150.0㎡'],
+    ]);
     // 목록 글은 한 글자도 안 바뀐다(104호 — 그대로).
-    expect([...units.querySelectorAll('.units__list li')].map((li) => li.textContent)).toEqual([
+    expect([...container.querySelectorAll('#floor-1 .units__list li')].map((li) => li.textContent)).toEqual([
       '101호300.0㎡',
       '102호150.0㎡',
       '103호20.0㎡',
@@ -2883,27 +2889,43 @@ describe('FloorStack — 호실 크기 칸 (결정 0038 G · V3)', () => {
     ]);
   });
 
-  it('넓은 칸 하나(95.7%)면 상세에도 글자 「501호 · 900.0㎡」 — 넓은 벌·휴대폰 벌 둘 다', async () => {
+  it('넓은 칸 하나(95.7%)면 휴대폰 벌도 글자 「501호 · 900.0㎡」 · ★ 이름이 「호」뿐인 호는 면적만 「900.0㎡」(👤 2026-10-22)', async () => {
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(4));
     open(container, '5층');
-    await waitFor(() => expect(container.querySelectorAll('#floor-5 .units .ucell')).toHaveLength(2));
-    expect(labs(container.querySelector('#floor-5 .units'))).toEqual([
+    await waitFor(() => expect(container.querySelectorAll('#floor-5 .detail > .ucells .ucell')).toHaveLength(2));
+    expect(labs(container.querySelector('#floor-5 .detail > .ucells'))).toEqual([
       ['ucell__lab ucell__lab--w ucell__lab--n', '501호 · 900.0㎡'],
     ]);
+    cleanup();
+    FIXED[5][0].ho = '호';
+    try {
+      const again = render(<FloorStack building={building()} />).container;
+      await waitFor(() => expect(again.querySelectorAll('.floor__units')).toHaveLength(4));
+      open(again, '5층');
+      await waitFor(() => expect(again.querySelectorAll('#floor-5 .detail > .ucells .ucell')).toHaveLength(2));
+      expect(labs(again.querySelector('#floor-5 .detail > .ucells'))).toEqual([
+        ['ucell__lab ucell__lab--w ucell__lab--n', '900.0㎡'],
+      ]);
+      // 목록은 원문 그대로(「호」).
+      expect(again.querySelector('#floor-5 .units__list li')?.textContent).toBe('호900.0㎡');
+    } finally {
+      FIXED[5][0].ho = '501호';
+    }
   });
 
   it('50호 넘는 층 — 칸 50 + 「그 밖 493호」 · 더 보기로 목록이 100줄이 돼도 칸은 50 그대로', async () => {
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(4));
     open(container, '3층');
-    await waitFor(() => expect(container.querySelectorAll('#floor-3 .units .ucell')).toHaveLength(50));
-    expect(container.querySelector('#floor-3 .units .ucells__rest')?.textContent).toBe('그 밖 493호');
-    expect(widths(container.querySelector('#floor-3 .units')).every((v) => Math.abs(v - 2) < 1e-9)).toBe(true);
+    const row = () => container.querySelector('#floor-3 .detail > .ucells');
+    await waitFor(() => expect(row()?.querySelectorAll('.ucell')).toHaveLength(50));
+    expect(row()?.querySelector('.ucells__rest')?.textContent).toBe('그 밖 493호');
+    expect(widths(row()).every((v) => Math.abs(v - 2) < 1e-9)).toBe(true);
     fireEvent.click(container.querySelector<HTMLElement>('#floor-3 .units__more')!);
     await waitFor(() => expect(container.querySelectorAll('#floor-3 .units__list li')).toHaveLength(100));
-    expect(container.querySelectorAll('#floor-3 .units .ucell')).toHaveLength(50);
-    expect(container.querySelector('#floor-3 .units .ucells__rest')?.textContent).toBe('그 밖 493호');
+    expect(row()?.querySelectorAll('.ucell')).toHaveLength(50);
+    expect(row()?.querySelector('.ucells__rest')?.textContent).toBe('그 밖 493호');
   });
 
   it('주거 층은 목록이 0줄이라 칸도 없다 · 목록을 못 받으면 칸도 없다', async () => {

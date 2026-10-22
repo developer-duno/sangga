@@ -33,16 +33,18 @@ export const UNIT_CELL_REST_GAP = 8;
 
 /**
  * 기준 폭(px · 칸 줄 바깥 상자 `.ucells__row` 의 가장 좁은 폭 이하) — 꼴 둘 × 벌 둘.
- *  · `detail` = 펼친 층 상세의 셋째 칸 「호실」 안 · `print` = 호실 구성표 고르기로 받은 층 줄 아래(`.floor__unitprint`).
+ *  · `detail` = 펼친 층 상세의 세 칸(용도별 구획 · 점포 · 호실) **위 가로 전체 폭**(👤 2026-10-22 — 처음엔 셋째 칸 「호실」 안이었다)
+ *    · `print` = 호실 구성표 고르기로 받은 층 줄 아래(`.floor__unitprint`).
  *  · `wide` = 721px 이상 화면 + 종이(A4 · 여백 12mm) · `narrow` = 휴대폰(720px 이하 화면 · 360px 까지 덮는다).
- * 2026-10-21 E2E 실측(칸 줄 바깥 폭 px) — 아래 값은 그 최솟값 아래로 내림:
- *    detail: 1280 두 칸 211 · **1024 두 칸 157** · 1023 한 열 241 · 721 한 열 195 · 종이(703 · 한 칸으로 접힘) 529 / 412 238 · **360 186**
- *    print : 1280 653 · **1024 492** · 1023 742 · 721 604 · 종이(703) 583 / 412 292 · **360 240**
+ * E2E 실측(칸 줄 바깥 폭 px) — 아래 값은 그 최솟값 아래로 내림:
+ *    detail(10-22): 1280 두 칸 677 · **1024 두 칸 516** · 1023 한 열 766 · 721 한 열 628 · 종이(703 · 한 칸으로 접힘) 529 / 412 238 · **360 186**
+ *      (셋째 칸 안이던 10-21 판: 1024 157 · 360 186 → 기준 150/180)
+ *    print(10-21) : 1280 653 · **1024 492** · 1023 742 · 721 604 · 종이(703) 583 / 412 292 · **360 240**
  *  ⓘ 320px 전화(더 좁다)는 못 덮는다 · playwright 가 휴대폰 폭(412)을 그대로 둔 채 흉내 낸 종이(print 292)도 못 덮는다 —
  *    실제 종이는 A4 폭(703)이다. E2E CA 가 실제 폭 ≥ 기준 폭과 글자가 칸 안인지 다시 잰다.
  */
 export const UNIT_CELL_REF = {
-  detail: { wide: 150, narrow: 180 },
+  detail: { wide: 500, narrow: 180 },
   print: { wide: 480, narrow: 230 },
 } as const;
 
@@ -70,8 +72,22 @@ export function unitCellsRestText(rest: number): string {
   return `그 밖 ${rest.toLocaleString('ko-KR')}호`;
 }
 
-/** 칸 안 글자 — 목록과 같은 서식 함수(`unitDisplayName` · `formatUnitArea`) · 예 「101호 · 54.0㎡」. */
+/**
+ * 호 이름이 사실상 없는가 — null · 빈 글 · 빈칸뿐 · 「호」 한 글자뿐(대장 호 이름이 비고 꼬리 「호」만 붙은 꼴 —
+ * 2026-10-22 운영 개포주공 7단지상가 1층 실측 「호 · 793.8㎡」).
+ */
+export function unitNameIsBlank(ho: string | null): boolean {
+  if (ho === null) return true;
+  const t = ho.trim();
+  return t === '' || t === '호';
+}
+
+/**
+ * 칸 안 글자 — 목록과 같은 서식 함수(`unitDisplayName` · `formatUnitArea`) · 예 「101호 · 54.0㎡」.
+ * 이름이 사실상 없으면(`unitNameIsBlank`) 면적만 「793.8㎡」(👤 2026-10-22 보완 1 — 「호 · 793.8㎡」 결함).
+ */
 export function unitCellText(ho: string | null, area: number): string {
+  if (unitNameIsBlank(ho)) return formatUnitArea(area);
   return `${unitDisplayName(ho)} · ${formatUnitArea(area)}`;
 }
 
