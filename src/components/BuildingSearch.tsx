@@ -175,6 +175,11 @@ export function BuildingSearch({
    */
   const [ranWith, setRanWith] = useState<{ q: string; sigungu: string } | null>(null);
   /**
+   * 지금 묻고 있는(또는 마지막으로 물은) 검색어 — PC 두 칸 목록 이름(「둔산 검색」)을 답이 오기 **전**부터 적으려고 둔다(보완 3).
+   * ⓘ `ranWith` 는 답이 온 순간에야 적혀서 찾는 동안엔 비어 있다(그래서 따로 둔다). 비우기(안내창·「목록 닫기」)면 null.
+   */
+  const [askQ, setAskQ] = useState<string | null>(null);
+  /**
    * 늦게 도착한 옛 검색 응답이 최신 결과를 덮는 것을 막는다.
    *
    * ⛔ **건물 질의와 가게 질의가 이 번호 하나를 함께 본다**(결정 0028 결정 4). 구역마다
@@ -230,6 +235,7 @@ export function BuildingSearch({
     // '더 보기'가 무엇의 다음 쪽인지 가리키는 손가락도 지운다 — 지금은 `store.at === 'done'`
     // 뒤에만 그 버튼이 서서 무해하지만, 잠금이 풀리는 날 남는 유일한 옛 포인터다.
     setRanWith(null);
+    setAskQ(null);
     if (hadResults) onSearchStart(true);
   }
 
@@ -254,6 +260,7 @@ export function BuildingSearch({
     }
 
     const runId = ++latestRun.current;
+    setAskQ(q);
     setLoading(true);
     setError(null);
     setNotice(null);
@@ -381,8 +388,18 @@ export function BuildingSearch({
       두 번 셀 수 있고, 어느 한쪽 수만 적으면 다른 표 머리와 어긋난다. 몇 곳인지는 목록의 두 머리 줄이 말한다.
     ⓘ 못 찾음(0건)도 목록이다(오른쪽에 「찾지 못했습니다」가 선다) · 찾는 중에는 앞 결과가 그대로라 그 이름 그대로 · 오류·안내창만이면 없음.
   */
-  const hasList = hits.length > 0 || store.at === 'done' || store.at === 'failed' || (searched && !error);
-  const listLabel = hasList && ranWith !== null ? `${ranWith.q} 검색` : null;
+  /*
+    → 보완 3(화면 적대검증 🟡): 찾는 중·오류·너무 넓음(건물·가게)도 목록이다 — 검색을 누르면 오른쪽이 곧바로 이 목록(「찾는 중…」)이 되고,
+    끝나면 같은 자리에서 결과·안내로 바뀐다(목록이 사라졌다 다시 서는 깜빡임 0). 이름은 지금 물은 검색어(`askQ`)로 — 답이 오기 전부터 같다.
+  */
+  const hasList =
+    loading ||
+    error !== null ||
+    notice?.kind === 'broad' ||
+    store.at !== 'hidden' ||
+    hits.length > 0 ||
+    (searched && !error);
+  const listLabel = hasList && askQ !== null ? `${askQ} 검색` : null;
   /* 「목록 닫기 ✕」(D2) — 결과를 비운다(한 글자 안내와 같은 비우기 · 날아가 있는 답도 번호를 올려 버린다). 검색어는 그대로. */
   useEffect(() => {
     if (clearSignal === 0) return;
@@ -397,6 +414,7 @@ export function BuildingSearch({
     setMoreFailed(false);
     setMoreLoading(false);
     setRanWith(null);
+    setAskQ(null);
   }, [clearSignal]);
   useEffect(() => {
     onListChange?.(listLabel);
@@ -411,6 +429,66 @@ export function BuildingSearch({
     ⓘ 건물 결과는 서버(`search_buildings`)가 점포 수를 안 줘서 표가 점포 칸 없이 세 칸이다(👤 2026-10-22 「검색 결과는 세 칸」 · DB 0 —
       가게 이름 결과·상권 목록은 네 칸).
   */
+  const errorEl = error && <p className="msg msg--error">{error}</p>;
+
+  /*
+    ③너무 넓은 검색은 **안내창이 아니라 건물 결과 자리의 한 줄**로 말한다(결정 0028
+    §백로그 🟡-10).
+    ⛔ 덮개(`.modal__back`)는 `position:fixed; inset:0` 이라 화면을 통째로 덮는다 — 건물이
+       0건이어도 **가게 이름 구역은 멀쩡히 서 있을 수 있고**, 덮개가 그 답을 가리는 데다
+       클릭까지 삼킨다. 아래 가게 쪽(`store.at === 'broad'`)이 이미 같은 이유로 한 줄이다.
+    ⛔ 이 자리는 **늘 서 있고 내용만 바뀐다** — 조건을 요소 바깥이 아니라 **안**에 둔 이유다.
+       화면을 읽어 주는 기기는 먼저 있던 자리의 내용이 바뀐 것만 읽어 주고, **글자와 함께
+       새로 나타난 요소는 `role="status"` 가 붙어 있어도 못 읽는다.** 안내창을 걷어내면서
+       초점이 옮겨 가던 길까지 함께 없어졌으므로, 자리가 미리 서 있지 않으면 눈으로 화면을
+       못 보는 사람에게 이 안내는 **아무 일도 일어나지 않은 것과 같다**(FeedbackBox 의 항상
+       서 있는 `<p role="status">` 가 선례).
+    ⓘ 빈 자리가 여백을 먹지 않게 하는 것은 `.msg--live:empty` 다 — 거기서 `display:none` 을
+      쓰면 접근성 트리에서 빠져 이 설계가 통째로 무의미해진다(그 규칙에 적어 뒀다).
+    ⚠️ 같은 모양의 줄이 둘 더 있다 — 위의 `error` 한 줄과 아래 "찾지 못했습니다" 한 줄.
+       둘 다 글자와 함께 나타나며 `role` 이 없어 **아직 낭독기가 못 읽는다.** 이번엔 결정 0028
+       §백로그 🟡-10 의 두 줄(너무 넓은 검색)만 고쳤고, 그 둘은 일부러 남겼다(별건 — 한 번에
+       손대면 "무엇이 무엇을 고쳤는지" 못 가른다). 다 고친 것으로 읽지 말 것.
+    → PC 두 칸 오른쪽 자리(보완 3 · 화면 적대검증 🟡)에서는 찾는 동안 이 줄이 「찾는 중…」을 말한다(같은 자리 · 13px) — 결과가 오기 전
+      오른쪽이 비지 않게. 휴대폰·한 열은 지금 그대로(찾는 동안 앞 결과가 서 있다).
+  */
+  const liveBldEl = (
+    <p className="msg msg--live" role="status" aria-live="polite">
+      {table && loading ? (
+        <span className="rlist__loading">찾는 중…</span>
+      ) : (
+        notice?.kind === 'broad' && (
+          <>
+            ‘{notice.word}’ — 건물·주소로 찾기엔 너무 넓은 검색이에요. 이 검색어에는{' '}
+            <strong>{notice.count.toLocaleString('ko-KR')}곳</strong>이 걸립니다. 동 이름(
+            <strong>역삼동</strong>)·건물 이름(<strong>그랑프리빌딩</strong>)·지번·도로명(
+            <strong>역삼동 823-4</strong>, <strong>테헤란로 117</strong>) 중 하나를 넣어 주세요.
+          </>
+        )
+      )}
+    </p>
+  );
+
+  /*
+    ⓘ 건물 쪽처럼 **안내창(모달)을 띄우지 않는다.** 건물 결과는 멀쩡히 서 있을 수 있는데
+      그 위를 덮으면 사람이 이미 얻은 답을 가린다. 문구는 건물 안내창의 뜻을 그대로
+      빌리되("더 좁혀 주세요") 숫자는 가게 수다.
+    ⛔ 건물 쪽 한 줄과 **같은 이유로 늘 서 있고 내용만 바뀐다**(위 설명 참조).
+    ⛔ 이 한 줄만은 `<section aria-label=…>` 으로 감싸지 않는다 — 감싸개를 조건부로 두면
+       그 안의 줄도 결국 **글자와 함께 나타나** 다시 안 읽힌다. 목록·실패 쪽은 읽어 주는
+       자리가 아니라 구역이라 그대로 감싼다.
+  */
+  const liveStoresEl = (
+    <p className="msg msg--live msg--live-stores" role="status" aria-live="polite">
+      {store.at === 'broad' && (
+        <>
+          ‘{store.word}’ 이름의 가게가{' '}
+          <strong>{store.count.toLocaleString('ko-KR')}곳</strong>입니다 — 더 좁혀 주세요.
+        </>
+      )}
+    </p>
+  );
+
   const notFoundEl = searched && !loading && hits.length === 0 && !error && (
     <p className="msg">
       {/* ⚠️ 구 단위 검색으로 바뀐 뒤에도 "전체 열린 지역"을 안내하면 엉뚱하다 —
@@ -631,59 +709,39 @@ export function BuildingSearch({
 
       {belowInput}
 
-      {error && <p className="msg msg--error">{error}</p>}
+      {table ? null : errorEl}
+
+      {/* ⓘ PC 두 칸(`listHost`)은 아래 낭독 줄·오류 줄·결과가 모두 오른쪽 목록 자리로 간다(맨 아래 포털 · 보완 3). */}
+      {table ? null : liveBldEl}
+
+      {table ? null : <>{notFoundEl}{hitsEl}{storesFailedEl}</>}
+
+      {table ? null : liveStoresEl}
+
+      {table ? null : storesDoneEl}
 
       {/*
-        ③너무 넓은 검색은 **안내창이 아니라 건물 결과 자리의 한 줄**로 말한다(결정 0028
-        §백로그 🟡-10).
-        ⛔ 덮개(`.modal__back`)는 `position:fixed; inset:0` 이라 화면을 통째로 덮는다 — 건물이
-           0건이어도 **가게 이름 구역은 멀쩡히 서 있을 수 있고**, 덮개가 그 답을 가리는 데다
-           클릭까지 삼킨다. 아래 가게 쪽(`store.at === 'broad'`)이 이미 같은 이유로 한 줄이다.
-        ⛔ 이 자리는 **늘 서 있고 내용만 바뀐다** — 조건을 요소 바깥이 아니라 **안**에 둔 이유다.
-           화면을 읽어 주는 기기는 먼저 있던 자리의 내용이 바뀐 것만 읽어 주고, **글자와 함께
-           새로 나타난 요소는 `role="status"` 가 붙어 있어도 못 읽는다.** 안내창을 걷어내면서
-           초점이 옮겨 가던 길까지 함께 없어졌으므로, 자리가 미리 서 있지 않으면 눈으로 화면을
-           못 보는 사람에게 이 안내는 **아무 일도 일어나지 않은 것과 같다**(FeedbackBox 의 항상
-           서 있는 `<p role="status">` 가 선례).
-        ⓘ 빈 자리가 여백을 먹지 않게 하는 것은 `.msg--live:empty` 다 — 거기서 `display:none` 을
-          쓰면 접근성 트리에서 빠져 이 설계가 통째로 무의미해진다(그 규칙에 적어 뒀다).
-        ⚠️ 같은 모양의 줄이 둘 더 있다 — 위의 `error` 한 줄과 아래 "찾지 못했습니다" 한 줄.
-           둘 다 글자와 함께 나타나며 `role` 이 없어 **아직 낭독기가 못 읽는다.** 이번엔 결정 0028
-           §백로그 🟡-10 의 두 줄(너무 넓은 검색)만 고쳤고, 그 둘은 일부러 남겼다(별건 — 한 번에
-           손대면 "무엇이 무엇을 고쳤는지" 못 가른다). 다 고친 것으로 읽지 말 것.
+        PC 두 칸 오른쪽 목록 자리 — 차례는 낭독 줄(찾는 중… · 너무 넓은 검색) → 오류 → 못 찾음·건물 결과 → 가게 이름 실패 → 가게 낭독 줄 →
+        가게 이름 결과. ⓘ 찾는 동안(`loading`)에는 앞 검색의 결과를 숨기고 「찾는 중…」 한 줄만(화면 적대검증 🟡 — 느린 검색 2.5초 동안 줄 0 ·
+        건물을 보던 중이면 건물이 사라진 채 「← 보던 건물로」만 남던 것) · 너무 넓음·오류로 끝나도 같은 자리에서 그 안내로 바뀐다(깜빡임 0).
       */}
-      <p className="msg msg--live" role="status" aria-live="polite">
-        {notice?.kind === 'broad' && (
+      {listHost &&
+        createPortal(
           <>
-            ‘{notice.word}’ — 건물·주소로 찾기엔 너무 넓은 검색이에요. 이 검색어에는{' '}
-            <strong>{notice.count.toLocaleString('ko-KR')}곳</strong>이 걸립니다. 동 이름(
-            <strong>역삼동</strong>)·건물 이름(<strong>그랑프리빌딩</strong>)·지번·도로명(
-            <strong>역삼동 823-4</strong>, <strong>테헤란로 117</strong>) 중 하나를 넣어 주세요.
-          </>
+            {liveBldEl}
+            {errorEl}
+            {!loading && (
+              <>
+                {notFoundEl}
+                {hitsEl}
+                {storesFailedEl}
+              </>
+            )}
+            {liveStoresEl}
+            {!loading && storesDoneEl}
+          </>,
+          listHost,
         )}
-      </p>
-
-      {listHost ? createPortal(<>{notFoundEl}{hitsEl}{storesFailedEl}{storesDoneEl}</>, listHost) : <>{notFoundEl}{hitsEl}{storesFailedEl}</>}
-
-      {/*
-        ⓘ 건물 쪽처럼 **안내창(모달)을 띄우지 않는다.** 건물 결과는 멀쩡히 서 있을 수 있는데
-          그 위를 덮으면 사람이 이미 얻은 답을 가린다. 문구는 건물 안내창의 뜻을 그대로
-          빌리되("더 좁혀 주세요") 숫자는 가게 수다.
-        ⛔ 건물 쪽 한 줄과 **같은 이유로 늘 서 있고 내용만 바뀐다**(위 설명 참조).
-        ⛔ 이 한 줄만은 `<section aria-label=…>` 으로 감싸지 않는다 — 감싸개를 조건부로 두면
-           그 안의 줄도 결국 **글자와 함께 나타나** 다시 안 읽힌다. 목록·실패 쪽은 읽어 주는
-           자리가 아니라 구역이라 그대로 감싼다.
-      */}
-      <p className="msg msg--live msg--live-stores" role="status" aria-live="polite">
-        {store.at === 'broad' && (
-          <>
-            ‘{store.word}’ 이름의 가게가{' '}
-            <strong>{store.count.toLocaleString('ko-KR')}곳</strong>입니다 — 더 좁혀 주세요.
-          </>
-        )}
-      </p>
-
-      {listHost ? null : storesDoneEl}
 
       {/*
         ①한 글자 ②구 미선택만 안내창으로 남는다 — 서버를 부르기 전이라 **덮을 새 결과가

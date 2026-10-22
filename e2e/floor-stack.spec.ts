@@ -476,7 +476,8 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await expect(page.locator('section.stack')).toBeVisible();
 
     await page.unroute(SEARCH_PATTERN);
-    await mockJson(page, SEARCH_PATTERN, [searchHit({ bld_id: 'other', bld_nm: '다른빌딩' })], 300);
+    // 1초 늦춘다 — 답을 기다리는 동안의 화면(두 칸 「찾는 중…」 · 보완 3)을 붙잡을 틈.
+    await mockJson(page, SEARCH_PATTERN, [searchHit({ bld_id: 'other', bld_nm: '다른빌딩' })], 1000);
 
     // 건물을 열면 입구가 한 줄로 접힌다(S1) — 바의 「다른 건물 찾기」로 검색창을 펼친다.
     await unfoldEntry(page);
@@ -495,7 +496,12 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
       //   숨고(DOM 은 그대로) 목록 위 「← 보던 건물(이름)로」 · 늦게 오는 응답을 기다리는 동안에도 옛 건물이 보이지 않는다 · 빈 오른쪽 안내 줄 0.
       await expect(page.locator('section.stack')).toHaveCount(1);
       await expect(page.locator('section.stack')).toBeHidden();
+      // 답이 오기 전 — 오른쪽 목록 자리에 「찾는 중…」 한 줄(13px · 낭독 자리 안 · 보완 3).
+      const loadingLine = page.locator('section.rlist .msg--live[role="status"] .rlist__loading');
+      await expect(loadingLine).toHaveText('찾는 중…');
+      await expect(loadingLine).toHaveCSS('font-size', '13px');
       await expect(page.getByRole('button', { name: /다른빌딩/ })).toBeVisible();
+      await expect(loadingLine).toHaveCount(0);
       await expect(page.locator('section.stack')).toBeHidden();
       await expect(page.getByRole('button', { name: '보던 건물(테스트빌딩)로' })).toBeVisible();
       await expect(page.locator('.rpane-empty')).toHaveCount(0);

@@ -1191,6 +1191,111 @@ describe('PC 두 칸 오른쪽 목록 — 배선 (👤 2026-10-22 방법 나)', 
     expect(pushes()).toBe(len0);
   });
 
+  it('★ 보완 3 찾는 중 — 느린 검색은 답이 오기 전 오른쪽에 「찾는 중…」 한 줄(낭독 자리 · 앞 결과·옛 줄 0) · 답이 오면 같은 자리에서 결과 · 너무 넓음·오류로 끝나도 같은 자리에서 그 안내(깜빡임 0)', async () => {
+    serve(TWO);
+    mediaAt(1280);
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    render(<App />);
+    await pickGu();
+    await searchAndOpen(); // 건물을 보던 중
+    // 다음 검색은 답을 손으로 늦춘다(느린 응답 흉내).
+    let release: (rows: BuildingHit[]) => void = () => {};
+    const slow = new Promise<{ data: BuildingHit[]; error: null }>((res) => {
+      release = (rows) => res({ data: rows, error: null });
+    });
+    let scope: { too_broad: boolean; match_cnt: number } | null = null;
+    let fail = false;
+    rpc.mockImplementation((fn: string) => {
+      if (fn === 'search_buildings') return fail ? Promise.reject(new Error('boom')) : slow;
+      if (fn === 'search_scope') return Promise.resolve({ data: scope ? [scope] : [], error: null });
+      return Promise.resolve({ data: [], error: null });
+    });
+    const input = screen.getByLabelText('건물명 또는 주소');
+    fireEvent.change(input, { target: { value: '느린동' } });
+    fireEvent.submit(input.closest('form')!);
+    // 오른쪽 = 목록 · 「찾는 중…」(13px 이름표 · 낭독 자리 안) · 앞 검색의 건물 줄은 숨는다 · 「← 목록으로」 글은 지금 물은 검색어.
+    expect(app().classList.contains('app--wlist')).toBe(true);
+    const live = rlist().querySelector<HTMLElement>('.msg--live[role="status"]')!;
+    expect(live.getAttribute('aria-live')).toBe('polite');
+    expect(live.querySelector('.rlist__loading')!.textContent).toBe('찾는 중…');
+    expect(rlist().querySelector('.hit')).toBeNull();
+    expect(screen.getByRole('button', { name: '보던 건물(테스트빌딩)로' })).toBeTruthy();
+    // 너무 넓음으로 끝나도 같은 낭독 자리에서 그 안내로(목록이 사라졌다 다시 서지 않는다).
+    scope = { too_broad: true, match_cnt: 1234 };
+    await act(async () => {
+      release([]);
+      await slow;
+    });
+    await vi.waitFor(() => expect(live.textContent).toContain('너무 넓은 검색'));
+    expect(rlist().querySelector('.msg--live[role="status"]')).toBe(live);
+    expect(app().classList.contains('app--wlist')).toBe(true);
+    expect(live.querySelector('.rlist__loading')).toBeNull();
+    // 오류로 끝나도 오른쪽 목록 자리에서 그 안내(왼쪽 칸엔 0).
+    fail = true;
+    fireEvent.change(input, { target: { value: '오류동' } });
+    fireEvent.submit(input.closest('form')!);
+    await vi.waitFor(() => expect(rlist().querySelector('.msg--error')).not.toBeNull());
+    expect(entry().querySelector('.msg--error')).toBeNull();
+    expect(app().classList.contains('app--wlist')).toBe(true);
+  });
+
+  it('★ 보완 3 찾는 중 → 결과 — 답이 오면 「찾는 중…」이 결과 줄로 바뀐다 · 1023 한 열은 「찾는 중…」 0(지금 그대로)', async () => {
+    serve(TWO);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((res) => {
+      release = res;
+    });
+    rpc.mockImplementation((fn: string) => {
+      if (fn === 'list_open_sigungu') return Promise.resolve({ data: [gu()], error: null });
+      if (fn === 'search_buildings') return gate.then(() => ({ data: TWO, error: null }));
+      return Promise.resolve({ data: [], error: null });
+    });
+    mediaAt(1280);
+    render(<App />);
+    await pickGu();
+    const input = screen.getByLabelText('건물명 또는 주소');
+    fireEvent.change(input, { target: { value: '테헤란로' } });
+    fireEvent.submit(input.closest('form')!);
+    // 첫 검색(앞 결과 0) — 답이 오기 전부터 오른쪽이 목록(숨은 자리 안의 글이 아니라 보이는 목록)이고 그 글이 「찾는 중…」.
+    expect(app().classList.contains('app--wlist')).toBe(true);
+    expect(rlist().hidden).toBe(false);
+    expect(rlist().querySelector('.rlist__loading')!.textContent).toBe('찾는 중…');
+    expect(rlist().querySelector('.rlist__pane')!.hasAttribute('hidden')).toBe(false);
+    await act(async () => {
+      release();
+      await gate;
+    });
+    await screen.findByRole('button', { name: /둘째빌딩/ });
+    expect(rlist().querySelector('.rlist__loading')).toBeNull();
+    expect(rlist().querySelectorAll('.hit')).toHaveLength(2);
+    cleanup();
+    window.history.replaceState(null, '', '/');
+
+    // 1023 한 열 — 찾는 동안에도 「찾는 중…」 0(지금 그대로 · 검색 단추가 「찾는 중…」을 말한다).
+    let release2: () => void = () => {};
+    const gate2 = new Promise<void>((res) => {
+      release2 = res;
+    });
+    rpc.mockImplementation((fn: string) => {
+      if (fn === 'list_open_sigungu') return Promise.resolve({ data: [gu()], error: null });
+      if (fn === 'search_buildings') return gate2.then(() => ({ data: TWO, error: null }));
+      return Promise.resolve({ data: [], error: null });
+    });
+    mediaAt(1023);
+    const r = render(<App />);
+    await pickGu();
+    const input2 = screen.getByLabelText('건물명 또는 주소');
+    fireEvent.change(input2, { target: { value: '테헤란로' } });
+    fireEvent.submit(input2.closest('form')!);
+    expect(r.container.querySelector('.rlist__loading')).toBeNull();
+    expect(entry().querySelector('.msg--live')!.textContent).toBe('');
+    await act(async () => {
+      release2();
+      await gate2;
+    });
+    await screen.findByRole('button', { name: /둘째빌딩/ });
+  });
+
   it('★ D3 위를 줄여 올리기 — 「왼쪽 칸 접기」는 사이트 제목 줄(왼쪽 칸 안 0 · 접힌 동안 없음 · 펼치면 다시 커서) · 역할 안내 글은 보이는 줄 0 → 단추 설명(title · aria-describedby · 글자 그대로) · 1023 은 둘 다 지금 그대로', async () => {
     const NOTE = '고르면 화면 순서가 맞춰집니다 · 이 기기에만 저장 · 다시 누르면 해제';
     mediaAt(1280);

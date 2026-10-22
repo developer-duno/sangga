@@ -1441,6 +1441,38 @@ describe('DistrictMap — PC 두 칸 보완(W5 보완 1)', () => {
     expect(has(`${cut}\n@media screen {\n  .app--printmap .dmap__canvas { width: var(--dmap-w); margin-left: auto; }\n}`)).toBe(false);
   });
 
+  it('★ 보완 3 창 크기가 바뀌면 relayout 을 직접 부른다 — 디바운스 하나(여러 번 → 멈춘 뒤 한 번) · 숨은(크기 0) 칸은 안 부름 · 사라지면 듣기를 멈춘다', async () => {
+    await renderMap();
+    await waitFor(() => expect(screen.getByTestId('map')).toBeTruthy());
+    // 가짜 SDK 가 지도 객체를 effect 로 건넨 뒤의 다시 그리기까지 마친다(그래야 창 크기를 듣기 시작한다).
+    await act(async () => {});
+    kakao.relayout.mockClear();
+    vi.useFakeTimers();
+    try {
+      // jsdom 의 칸 크기는 늘 0 — 숨은 칸과 같다 → 안 부른다.
+      window.dispatchEvent(new Event('resize'));
+      vi.advanceTimersByTime(200);
+      expect(kakao.relayout).not.toHaveBeenCalled();
+      // 보이는 칸(400×500)에서 창을 끌어 세 번 바꾼다 — 멈춘 뒤 한 번만.
+      Object.defineProperty(canvas(), 'clientWidth', { value: 400, configurable: true });
+      Object.defineProperty(canvas(), 'clientHeight', { value: 500, configurable: true });
+      for (let i = 0; i < 3; i += 1) {
+        window.dispatchEvent(new Event('resize'));
+        vi.advanceTimersByTime(50);
+      }
+      expect(kakao.relayout).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(200);
+      expect(kakao.relayout).toHaveBeenCalledTimes(1);
+      // 사라진 뒤의 창 크기 변화는 안 듣는다.
+      cleanup();
+      window.dispatchEvent(new Event('resize'));
+      vi.advanceTimersByTime(200);
+      expect(kakao.relayout).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('★ F7 숨은 채(왼쪽 칸 접힘) 건물을 여러 번 바꿔도 relayout 0 — 다시 보일 때 한 번', async () => {
     const DistrictMap = await load();
     const { rerender } = render(<DistrictMap {...base} visible />);
