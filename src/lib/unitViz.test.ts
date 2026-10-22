@@ -259,6 +259,15 @@ describe('CSS 가드 — 호실 크기 칸(결정 0038 G · V3)', () => {
     );
   });
 
+  it('보완 3 — 종이 전체 95%(`html { zoom: 0.95 }`)는 @media print 에만 · 그 밖 zoom 0', () => {
+    expect(mediaAt(css, '  html {\n    zoom: 0.95;')).toEqual(['@media print']);
+    expect(css.split('zoom: 0.95;')).toHaveLength(2);
+    expect(css.match(/\bzoom\s*:/g)).toHaveLength(1);
+    // 양성 대조 — 화면(맨 바깥)에 두면 머리가 비어 걸린다.
+    const moved = 'html {\n  zoom: 0.95;\n}\n' + css.replace('  html {\n    zoom: 0.95;', '  html {\n    zoom: 1;');
+    expect(mediaAt(moved, 'html {\n  zoom: 0.95;')).toEqual([]);
+  });
+
   it('종이 — 칸 줄에만 break-inside: avoid(층·카드 통째 아님)', () => {
     expect(mediaAt(css, '  .ucells__row {\n    break-inside: avoid;')).toEqual(['@media print']);
     expect(/\n\s*\.ucells\s*\{\s*break-inside/.test(css)).toBe(false);

@@ -2163,9 +2163,12 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
         const edges = () =>
           card.evaluate((c) => {
             const right = (s: string) => [...c.querySelectorAll(s)].map((e) => e.getBoundingClientRect().right);
-            const cs = c.ownerDocument.defaultView!.getComputedStyle(c);
+            const win = c.ownerDocument.defaultView!;
+            const cs = win.getComputedStyle(c);
+            // 종이 95%(보완 3) — 계산된 테두리·안쪽 여백은 줄이기 전 값이라 상자(줄인 값)와 단위를 맞춘다.
+            const z = parseFloat(win.getComputedStyle(c.ownerDocument.documentElement).zoom) || 1;
             return {
-              inner: c.getBoundingClientRect().right - parseFloat(cs.borderRightWidth) - parseFloat(cs.paddingRight),
+              inner: c.getBoundingClientRect().right - (parseFloat(cs.borderRightWidth) + parseFloat(cs.paddingRight)) * z,
               blocks: right('.floor__unitprint .ucells__row, .floor__unitprint-list, .floor__unitprint-more, .detail'),
               head: [...c.querySelectorAll('#floor-1 .floor__row > *')].map((e) => Math.round(e.getBoundingClientRect().left)),
             };
@@ -2190,6 +2193,43 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
       await expect(card.locator('#floor-1 .ucells__row')).toHaveCSS('break-inside', 'avoid');
       await expect(card.locator('#floor-1 .ucells')).toHaveCSS('break-inside', 'auto');
       await card.screenshot({ path: testInfo.outputPath(`v3-cells-print-${testInfo.project.name}.png`) });
+    } finally {
+      await page.emulateMedia({ media: null });
+    }
+  });
+
+  test('CB. 종이 95%(👤 2026-10-22 결정 0038 V3 보완 3) — 실제 page.pdf 장수가 옛 판(넘침 때문에 크롬이 저절로 줄이던 때)과 같다 · 95% 를 빼면 한 장 는다 · 화면 크기는 그대로', async ({
+    page,
+  }, testInfo) => {
+    // page.pdf 는 크롬(headless)에만 있다 — 휴대폰 꼴(mobile)도 크롬 엔진이지만 같은 PDF 라 한 벌만 본다.
+    test.skip(testInfo.project.name !== 'chromium', 'page.pdf 는 chromium 한 벌만');
+    // 가짜 41층 건물(강남파이낸스센터 꼴 층 수) — 호실 요약 0줄(구성표 없음 · 층 줄만 쌓인다).
+    const floors = Array.from({ length: 41 }, (_, i) => floorRow({ floor_no: 41 - i, main_use: '기타일반업무시설' }));
+    await openBuilding(page, [], floors);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await expect(page.locator('.card--floors .floor__row')).toHaveCount(41);
+    await page.waitForLoadState('networkidle');
+    // 화면에는 줄이기가 없다.
+    expect(await page.locator('html').evaluate((h) => h.ownerDocument.defaultView!.getComputedStyle(h).zoom)).toBe('1');
+    const pages = async (css?: string) => {
+      const st = css ? await page.addStyleTag({ content: css }) : null;
+      try {
+        const buf = await page.pdf({ format: 'A4' });
+        return (buf.toString('latin1').match(/\/Type\s*\/Page[^s]/g) ?? []).length;
+      } finally {
+        await st?.evaluate((e) => e.remove());
+      }
+    };
+    const now = await pages();
+    // 옛 판(e603758) = 층 목록 묶음 규칙도 95% 도 없던 때 — 넘침 때문에 크롬이 저절로 약 95% 로 줄였다.
+    const old = await pages('@media print { html { zoom: 1 !important; } .floors { grid-template-columns: none !important; } }');
+    // 보완 2 판(77e60f2) = 넘침만 고치고 95% 없음 — 한 장 늘던 회귀(양성 대조).
+    const noZoom = await pages('@media print { html { zoom: 1 !important; } }');
+    expect([now, old, noZoom]).toEqual([5, 5, 6]);
+    // 종이 흉내에서 95% 가 실제로 걸린다(계산값).
+    await page.emulateMedia({ media: 'print' });
+    try {
+      expect(await page.locator('html').evaluate((h) => h.ownerDocument.defaultView!.getComputedStyle(h).zoom)).toBe('0.95');
     } finally {
       await page.emulateMedia({ media: null });
     }

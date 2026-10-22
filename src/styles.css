@@ -2463,12 +2463,14 @@ body {
   overflow: visible;
 }
 
+/* ⓘ 가운데 맞춤은 `translateX(-50%)`(V3 보완 3) — 예전 `margin-left: -5px` 는 종이 95%(`zoom`)에서 테두리(5px)만 기기 화소로 내림돼
+   ▲ 상자가 좁아지고 여백은 그대로라 ▲ 가 왼쪽으로 약 0.75px 비켰다(휴대폰 막대에서 약 1%p · E2E BD 종이 단계). 화면(줄이기 없음)에서는 같은 자리. */
 .mix__mark {
   position: absolute;
   top: 100%;
   width: 0;
   height: 0;
-  margin-left: -5px;
+  transform: translateX(-50%);
   border-left: 5px solid transparent;
   border-right: 5px solid transparent;
   border-bottom: 6px solid var(--est-ink);
@@ -5223,6 +5225,18 @@ body {
   */
   @page {
     margin: 15mm 12mm;
+  }
+
+  /*
+    종이 전체를 95% 로 찍는다(👤 2026-10-22 결정 0038 V3 보완 3 · 선택지 원문 「종이에서만 크기를 95%로 명시합니다. 장수와 글자 크기가
+    지금 종이와 같고, 넘침도 없습니다. 우연이던 축소가 정해진 규칙이 됩니다」).
+    ⓘ 까닭: 보완 2 전까지는 층 목록 줄(최소 약 682px)이 종이 폭(703px)을 넘쳐 크롬이 종이 전체를 **저절로** 약 95%(703/739)로 줄여
+      찍었다 — 그 넘침을 고치자(아래 `.floors` 묶음) 줄이기가 사라져 장수가 한 장씩 늘었다(강남파이낸스센터 11 → 12 · 개포종합상가 7 → 8).
+      그 축소를 규칙으로 못 박아 장수·글자 크기를 그대로 둔다. ⛔ **종이에만**(이 묶음) — 화면 크기는 그대로.
+    ⛔ 이 값을 바꾸거나 빼면 장수가 바뀐다 — E2E `CB`(page.pdf 로 가짜 41층 건물 장수 고정)가 지킨다.
+  */
+  html {
+    zoom: 0.95;
   }
 
   /*

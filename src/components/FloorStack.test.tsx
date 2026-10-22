@@ -2945,12 +2945,12 @@ describe('FloorStack — 호실 크기 칸 (결정 0038 G · V3)', () => {
     await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(4));
     open(container, '5층');
     await waitFor(() => expect(container.querySelector('#floor-5 .units')?.textContent).toContain('이 층의 호 목록이 없습니다.'));
-    expect(container.querySelector('#floor-5 .ucells')).toBeNull();
+    await waitFor(() => expect(container.querySelector('#floor-5 .ucells')).toBeNull());
     // 실패.
     responses.floorUnits = () => ({ data: null, error: { message: 'boom' } });
     open(container, '1층');
     await waitFor(() => expect(container.querySelector('#floor-1 .units')?.textContent).toContain('호 목록을 불러오지 못했습니다.'));
-    expect(container.querySelector('#floor-1 .ucells')).toBeNull();
+    await waitFor(() => expect(container.querySelector('#floor-1 .ucells')).toBeNull());
     // 주거 층 — 목록을 안 부르니 자리도 없다(첫 그림부터).
     open(container, '35층');
     expect(container.querySelector('#floor-35 .detail')).not.toBeNull();
@@ -2993,7 +2993,7 @@ describe('FloorStack — 호실 크기 칸 (결정 0038 G · V3)', () => {
     responses.floorUnits = () => ({ data: null, error: { message: 'boom' } });
     open(container, '1층');
     await waitFor(() => expect(container.querySelector('#floor-1 .units')?.textContent).toContain('호 목록을 불러오지 못했습니다.'));
-    expect(container.querySelector('.ucells')).toBeNull();
+    await waitFor(() => expect(container.querySelector('.ucells')).toBeNull());
   });
 
   it('전부 면적이 없으면 칸 줄 없이 「–」 한 줄만', async () => {
