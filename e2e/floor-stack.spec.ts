@@ -1830,7 +1830,13 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
    * 건물을 연다. `summary` 를 안 주면 함수가 없는 상태(mockFloorStack 기본값) 그대로다.
    * 돌려주는 배열에 목록 함수로 나간 요청(인자)이 차례로 쌓인다.
    */
-  async function openBuilding(page: Page, summary?: unknown[], floors = unitFloors()) {
+  async function openBuilding(
+    page: Page,
+    summary?: unknown[],
+    floors = unitFloors(),
+    unitsOf: (floorNo: number, offset: number, limit: number) => unknown[] = (_no, offset, limit) =>
+      floorUnitsPage(offset, limit),
+  ) {
     const unitRequests: Array<Record<string, unknown>> = [];
     page.on('request', (r) => {
       if (r.method() === 'POST' && r.url().includes('/rpc/list_floor_units')) {
@@ -1852,7 +1858,7 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
           status: 200,
           contentType: 'application/json',
           headers: CORS_HEADERS,
-          body: JSON.stringify(floorUnitsPage(args.p_offset ?? 0, args.p_limit ?? 50)),
+          body: JSON.stringify(unitsOf(args.p_floor_no, args.p_offset ?? 0, args.p_limit ?? 50)),
         });
       });
     }
@@ -1977,6 +1983,272 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
     await expect(card.locator('.detail')).toBeVisible();
     await expect(card.locator('.units')).toHaveCount(0);
     expect(unitRequests).toHaveLength(0);
+  });
+
+  test('CA. 호실 크기 칸 한 줄(결정 0038 G · V3) — 호 목록 위 · 인쇄 구성표에도 · 폭 = 전용면적 비례 · 한 색 · 50칸 + 「그 밖 N호」 · 면적 없음 「–」 · 넓은 칸에만 「101호 · 300.0㎡」(글자는 칸 안 · 13px) · 넘침 0 · 종이에 그대로', async ({
+    page,
+  }, testInfo) => {
+    // 1층(인쇄 구성표 · 기본 지하~3층) = 300 · 150 · 20 · 0 → 칸 셋 63.8% · 31.9% · 4.3% + 「104호 –」.
+    // 5층(펼친 상세) = 900 · 40 → 95.7% · 4.3% · 3층 = 543호(칸 50 + 그 밖 493호).
+    const units: Record<number, Array<{ ho: string; excl_area_m2: number; total_cnt: number }>> = {
+      1: [
+        { ho: '101호', excl_area_m2: 300, total_cnt: 4 },
+        { ho: '102호', excl_area_m2: 150, total_cnt: 4 },
+        { ho: '103호', excl_area_m2: 20, total_cnt: 4 },
+        { ho: '104호', excl_area_m2: 0, total_cnt: 4 },
+      ],
+      // 큰 호는 대장 호 이름이 비고 꼬리 「호」만 붙은 꼴(운영 개포주공 7단지상가 실측) — 칸 글자는 면적만 「900.0㎡」.
+      5: [
+        { ho: '호', excl_area_m2: 900, total_cnt: 2 },
+        { ho: '502호', excl_area_m2: 40, total_cnt: 2 },
+      ],
+    };
+    const summary = [
+      ...unitSummary(),
+      { floor_no: 5, unit_cnt: 2, median_area_m2: 470, min_area_m2: 40, max_area_m2: 900, floor_kind: 'commercial' },
+    ];
+    await openBuilding(page, summary, unitFloors(), (no, offset, limit) =>
+      units[no] ? (offset === 0 ? units[no] : []) : floorUnitsPage(offset, limit),
+    );
+    const card = page.locator('.card--floors');
+    const phone = testInfo.project.name === 'mobile';
+    // 호실 구성표 기본값(지하~3층)이라 1·3층 층 줄 아래에 인쇄 구성표 칸 줄이 먼저 선다(5층은 계획 밖 — 칸 줄 없음).
+    await expect(card.locator('#floor-1 .floor__unitprint .ucell')).toHaveCount(3);
+    await expect(card.locator('#floor-3 .floor__unitprint .ucell')).toHaveCount(50);
+    await expect(card.locator('#floor-5 .ucells')).toHaveCount(0);
+    // 주거 층(35층)은 목록이 0줄이라 칸도 없다.
+    await expect(card.locator('#floor-35 .ucells')).toHaveCount(0);
+    // V3 보완 2 — 목록이 늦게 와도 세 칸이 안 밀린다: 5층 목록 답을 붙잡아 두고 펼치면 칸 줄 자리가 먼저(안 보이게) 서 있고,
+    // 답이 온 뒤 세 칸의 높이 자리 그대로 · 진짜 칸 줄 높이 = 미리 잡은 자리 높이.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    await page.route(FLOOR_UNITS_PATTERN, async (route) => {
+      const a = (route.request().postDataJSON() ?? {}) as Record<string, number>;
+      if (route.request().method() === 'POST' && a.p_floor_no === 5) await gate;
+      await route.fallback();
+    });
+    await floorRowOf(page, '5층').click();
+    const pend = card.locator('#floor-5 .detail > .ucells--pending');
+    await expect(pend).toHaveCount(1);
+    await expect(pend).toHaveCSS('visibility', 'hidden');
+    await expect(pend).toHaveAttribute('aria-hidden', 'true');
+    const colY = async () => (await card.locator('#floor-5 .detail > .detail__col').first().boundingBox())!.y;
+    const yBefore = await colY();
+    const hBefore = (await pend.boundingBox())!.height;
+    release();
+    await expect(card.locator('#floor-5 .detail > .ucells .ucell')).toHaveCount(2);
+    await expect(pend).toHaveCount(0);
+    expect(Math.abs((await colY()) - yBefore), '세 칸이 밀리지 않음').toBeLessThan(1);
+    expect(Math.abs((await card.locator('#floor-5 .detail > .ucells').boundingBox())!.height - hBefore)).toBeLessThan(1);
+    // 👤 2026-10-22 「펼친 칸 위 전체 폭」 — 칸 줄은 상세 세 칸(용도별 구획 · 점포 · 호실) **위** 가로 전체 한 줄 ·
+    // 호실 칸 안에는 없다(두 번 그리지 않기) · 그림은 목록과 같은 내용이라 aria-hidden · 한 색(사실 색 --fact-2).
+    await expect(card.locator('#floor-5 .units .ucells')).toHaveCount(0);
+    const strip5 = card.locator('#floor-5 .detail > .ucells .ucells__strip');
+    await expect(strip5).toHaveAttribute('aria-hidden', 'true');
+    const fullWidth = async () => {
+      const row = (await card.locator('#floor-5 .detail > .ucells').boundingBox())!;
+      const detail = await card.locator('#floor-5 .detail').evaluate((el) => {
+        const cs = el.ownerDocument.defaultView!.getComputedStyle(el);
+        const b = el.getBoundingClientRect();
+        return { x: b.x + parseFloat(cs.borderLeftWidth) + parseFloat(cs.paddingLeft), w: el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) };
+      });
+      const cols = await card.locator('#floor-5 .detail > .detail__col').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().y));
+      return { row, detail, cols };
+    };
+    {
+      const f = await fullWidth();
+      expect(Math.abs(f.row.x - f.detail.x)).toBeLessThan(1);
+      expect(Math.abs(f.row.width - f.detail.w)).toBeLessThan(1);
+      expect(f.cols).toHaveLength(3);
+      for (const y of f.cols) expect(f.row.y + f.row.height).toBeLessThanOrEqual(y + 0.5);
+    }
+    for (const c of await card.locator('.ucell').all()) await expect(c).toHaveCSS('background-color', 'rgb(224, 180, 90)');
+    // 글 — 설명 · 「그 밖 N호」 · 「–」 · 복층 각주(옆 글이 읽히고 그림만 숨는다).
+    const note1 = card.locator('#floor-1 .floor__unitprint .ucells__note');
+    await expect(note1).toHaveText(
+      '크기 비교이지 자리 배치가 아닙니다. 전용면적 값이 없는 호(칸 없음): 104호 –. 여러 층에 걸친 호실은 걸친 층마다 한 번씩 셉니다.',
+    );
+    await expect(card.locator('#floor-3 .floor__unitprint .ucells__rest')).toHaveText('그 밖 493호');
+    await expect(card.locator('#floor-1 .ucells__rest')).toHaveCount(0);
+
+    const measure = (sel: string) =>
+      card.locator(sel).evaluate((root) => {
+        const win = root.ownerDocument.defaultView!;
+        const r = (el: { getBoundingClientRect(): { x: number; width: number } }) => el.getBoundingClientRect();
+        const row = root.querySelector('.ucells__row')!;
+        const strip = root.querySelector('.ucells__strip')!;
+        const cells = [...root.querySelectorAll('.ucell')].map((c) => {
+          const lab = c.querySelector('.ucell__lab');
+          const shown = lab !== null && win.getComputedStyle(lab).display !== 'none';
+          return {
+            x: r(c).x,
+            w: r(c).width,
+            lab: shown ? { x: r(lab!).x, w: r(lab!).width, fs: win.getComputedStyle(lab!).fontSize, t: lab!.textContent } : null,
+          };
+        });
+        return { row: r(row).width, strip: { x: r(strip).x, w: r(strip).width }, cells };
+      });
+    /**
+     * 한 칸 줄 단언 — 칸 폭 비율 · 폭 합 = 줄 · 줄 바깥 폭 ≥ 기준 폭(`UNIT_CELL_REF` 와 같은 수) · 보이는 글자 = 기대 ·
+     * 글자 상자가 제 칸 안 · 13px.
+     */
+    const check = async (sel: string, shares: number[], labs: string[], refW: number, where: string) => {
+      const m = await measure(sel);
+      expect(m.row, `${where} ${sel} 줄 폭`).toBeGreaterThanOrEqual(refW);
+      expect(m.cells.map((c) => c.w / m.strip.w).map((v, i) => Math.abs(v - shares[i]) < 0.01)).toEqual(shares.map(() => true));
+      expect(Math.abs(m.cells.reduce((s, c) => s + c.w, 0) - m.strip.w), `${where} 폭 합`).toBeLessThan(1);
+      const last = m.cells[m.cells.length - 1];
+      expect(last.x + last.w, `${where} 넘침`).toBeLessThanOrEqual(m.strip.x + m.strip.w + 0.5);
+      expect(m.cells.filter((c) => c.lab).map((c) => c.lab!.t), `${where} ${sel} 글자`).toEqual(labs);
+      for (const c of m.cells) {
+        if (!c.lab) continue;
+        expect(c.lab.fs).toBe('13px');
+        expect(c.lab.x, `${where} ${c.lab.t} 왼쪽`).toBeGreaterThanOrEqual(c.x - 0.5);
+        expect(c.lab.x + c.lab.w, `${where} ${c.lab.t} 오른쪽`).toBeLessThanOrEqual(c.x + c.w + 0.5);
+      }
+    };
+    const SH1 = [300 / 470, 150 / 470, 20 / 470];
+    const SH5 = [900 / 940, 40 / 940];
+    const SH3 = Array.from({ length: 50 }, () => 1 / 50);
+    for (const vw of phone ? [412, 360] : [1280, 1024, 1023, 721]) {
+      await page.setViewportSize({ width: vw, height: 900 });
+      const where = `${testInfo.project.name} ${vw}`;
+      // 인쇄 구성표 꼴(기준 넓은 480 · 휴대폰 230) — 휴대폰은 101호만, 넓은 화면은 102호까지.
+      await check('#floor-1 .floor__unitprint .ucells', SH1, phone ? ['101호 · 300.0㎡'] : ['101호 · 300.0㎡', '102호 · 150.0㎡'], phone ? 230 : 480, where);
+      await check('#floor-3 .floor__unitprint .ucells', SH3, [], phone ? 230 : 480, where);
+      // 펼친 상세 세 칸 위 전체 폭 꼴(기준 넓은 500 · 휴대폰 180 · 👤 2026-10-22).
+      await check('#floor-5 .detail > .ucells', SH5, ['900.0㎡'], phone ? 180 : 500, where);
+      // 가로 넘침 — 칸 줄이 더한 넘침 0(칸 줄을 숨긴 쪽과 같다). ⓘ 721 한 열은 이 시험 전부터 층 줄(`.floor__head`)이
+      //   21px 넘친다(칸 줄·인쇄 구성표·상세를 숨겨도 같고 층 줄을 숨기면 0 — 2026-10-21 실측 · V3 밖) — 그래서 0 이 아니라 '같음'을 본다.
+      const [over, overWithout] = await page.locator('html').evaluate((html) => {
+        const doc = html.ownerDocument;
+        const w = () => html.scrollWidth - doc.defaultView!.innerWidth;
+        const st = doc.createElement('style');
+        const a = w();
+        st.textContent = '.ucells{display:none!important}';
+        doc.head.appendChild(st);
+        const b = w();
+        st.remove();
+        return [a, b];
+      });
+      expect(over, `${where} 칸 줄이 더한 가로 넘침`).toBe(overWithout);
+      if (vw !== 721) expect(over, `${where} 가로 넘침`).toBeLessThanOrEqual(0);
+      await expect(card.locator('.ucells__note').first()).toHaveCSS('font-size', '13px');
+      await expect(card.locator('.ucells__rest').first()).toHaveCSS('font-size', '13px');
+    }
+    await card.screenshot({ path: testInfo.outputPath(`v3-cells-${testInfo.project.name}.png`) });
+
+    // 3층을 펼치면 상세에도 칸 50 + 「그 밖 493호」(더 보기로 목록이 늘어도 칸 줄은 첫 50호 그대로).
+    await floorRowOf(page, '3층').click();
+    await expect(card.locator('#floor-3 .detail > .ucells .ucell')).toHaveCount(50);
+    await expect(card.locator('#floor-3 .detail > .ucells .ucells__rest')).toHaveText('그 밖 493호');
+    await card.locator('#floor-3 .units__more').click();
+    await expect(card.locator('#floor-3 .units__list li')).toHaveCount(100);
+    await expect(card.locator('#floor-3 .detail > .ucells .ucell')).toHaveCount(50);
+    await floorRowOf(page, '5층').click();
+
+    // 종이(A4 폭 703 흉내) — 넓은 벌 글자 · 칸 줄에만 break-inside: avoid · 층·카드 통째에는 안 건다.
+    await page.setViewportSize({ width: 703, height: 900 });
+    await page.emulateMedia({ media: 'print' });
+    try {
+      await check('#floor-1 .floor__unitprint .ucells', SH1, ['101호 · 300.0㎡', '102호 · 150.0㎡'], 480, 'print 703');
+      await check('#floor-5 .detail > .ucells', SH5, ['900.0㎡'], 500, 'print 703');
+      /*
+        V3 보완 2(메인 운영 종이 실측 — 인쇄 구성표 칸 줄·목록이 카드 오른쪽 테두리 밖으로). 종이 흉내 폭 740 = 720 묶음이 안 걸려 층 줄이
+        여러 칸이고 카드 안쪽(약 620px)이 층 줄 버튼 최소 폭(약 682px)보다 좁은 꼴(운영 page.pdf 와 같은 꼴) — 구성표 칸 줄·목록·펼친 상세의
+        오른쪽 끝 ≤ 카드 안쪽 오른쪽. 층 줄 버튼 글자 자리는 고치기 전과 같다(옛 규칙을 덮어 견준다 · 덮은 쪽은 실제로 넘친다 = 양성 대조).
+      */
+      for (const pw of [740, 760, 800]) {
+        await page.setViewportSize({ width: pw, height: 900 });
+        const edges = () =>
+          card.evaluate((c) => {
+            const right = (s: string) => [...c.querySelectorAll(s)].map((e) => e.getBoundingClientRect().right);
+            const win = c.ownerDocument.defaultView!;
+            const cs = win.getComputedStyle(c);
+            // 종이 95%(보완 3) — 계산된 테두리·안쪽 여백은 줄이기 전 값이라 상자(줄인 값)와 단위를 맞춘다.
+            const z = parseFloat(win.getComputedStyle(c.ownerDocument.documentElement).zoom) || 1;
+            return {
+              inner: c.getBoundingClientRect().right - (parseFloat(cs.borderRightWidth) + parseFloat(cs.paddingRight)) * z,
+              blocks: right('.floor__unitprint .ucells__row, .floor__unitprint-list, .floor__unitprint-more, .detail'),
+              head: [...c.querySelectorAll('#floor-1 .floor__row > *')].map((e) => Math.round(e.getBoundingClientRect().left)),
+            };
+          });
+        const now = await edges();
+        expect(now.blocks.length, `print ${pw} 덩어리 수`).toBeGreaterThanOrEqual(6);
+        for (const r of now.blocks) expect(r, `print ${pw} 카드 안쪽 오른쪽 ${now.inner}`).toBeLessThanOrEqual(now.inner + 0.5);
+        const old = await card.evaluate(async (c) => {
+          const doc = c.ownerDocument;
+          const st = doc.createElement('style');
+          st.textContent = '.floors{grid-template-columns:none!important}';
+          doc.head.appendChild(st);
+          const blocks = [...c.querySelectorAll('.floor__unitprint-list')].map((e) => e.getBoundingClientRect().right);
+          const head = [...c.querySelectorAll('#floor-1 .floor__row > *')].map((e) => Math.round(e.getBoundingClientRect().left));
+          st.remove();
+          return { blocks, head };
+        });
+        expect(old.head, `print ${pw} 층 줄 글자 자리 그대로`).toEqual(now.head);
+        if (pw === 740) expect(Math.max(...old.blocks), '양성 대조 — 옛 규칙이면 넘친다').toBeGreaterThan(now.inner + 1);
+      }
+      await page.setViewportSize({ width: 703, height: 900 });
+      await expect(card.locator('#floor-1 .ucells__row')).toHaveCSS('break-inside', 'avoid');
+      await expect(card.locator('#floor-1 .ucells')).toHaveCSS('break-inside', 'auto');
+      await card.screenshot({ path: testInfo.outputPath(`v3-cells-print-${testInfo.project.name}.png`) });
+    } finally {
+      await page.emulateMedia({ media: null });
+    }
+  });
+
+  test('CB. 종이 95%(👤 2026-10-22 결정 0038 V3 보완 3) — 실제 page.pdf 장수가 옛 판(넘침 때문에 크롬이 저절로 줄이던 때)과 같다 · 95% 를 빼면 같거나 는다 · 종이에 그려진 크기 0.95 · 화면 크기는 그대로', async ({
+    page,
+  }, testInfo) => {
+    // page.pdf 는 크롬(headless)에만 있다 — 휴대폰 꼴(mobile)도 크롬 엔진이지만 같은 PDF 라 한 벌만 본다.
+    test.skip(testInfo.project.name !== 'chromium', 'page.pdf 는 chromium 한 벌만');
+    // 가짜 41층 건물(강남파이낸스센터 꼴 층 수) — 호실 요약 0줄(구성표 없음 · 층 줄만 쌓인다).
+    const floors = Array.from({ length: 41 }, (_, i) => floorRow({ floor_no: 41 - i, main_use: '기타일반업무시설' }));
+    await openBuilding(page, [], floors);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await expect(page.locator('.card--floors .floor__row')).toHaveCount(41);
+    await page.waitForLoadState('networkidle');
+    // 화면에는 줄이기가 없다.
+    expect(await page.locator('html').evaluate((h) => h.ownerDocument.defaultView!.getComputedStyle(h).zoom)).toBe('1');
+    const pages = async (css?: string) => {
+      const st = css ? await page.addStyleTag({ content: css }) : null;
+      try {
+        const buf = await page.pdf({ format: 'A4' });
+        return (buf.toString('latin1').match(/\/Type\s*\/Page[^s]/g) ?? []).length;
+      } finally {
+        await st?.evaluate((e) => e.remove());
+      }
+    };
+    const now = await pages();
+    // 옛 판(e603758) = 층 목록 묶음 규칙도 95% 도 없던 때 — 넘침 때문에 크롬이 저절로 약 95% 로 줄였다.
+    const old = await pages('@media print { html { zoom: 1 !important; } .floors { grid-template-columns: none !important; } }');
+    // 보완 2 판(77e60f2) = 넘침만 고치고 95% 없음 — 한 장 늘던 회귀(양성 대조).
+    const noZoom = await pages('@media print { html { zoom: 1 !important; } }');
+    // ⛔ 장수를 숫자로 박지 않는다 — 글꼴이 다른 CI(우분투)에서는 같은 가짜 건물이 [6, 6, 6] 이었다(윈도우 [5, 5, 6]).
+    // ① 지킬 핵심: 95% 규칙 = 옛 판과 같은 장수 ② 95% 를 빼면 장수가 같거나 는다(윈도우는 실제로 한 장 는다 — 리눅스는 같을 수 있다).
+    expect(now, `장수 지금 ${now} · 옛 판 ${old} · 95% 뺌 ${noZoom}`).toBe(old);
+    expect(noZoom).toBeGreaterThanOrEqual(now);
+    // ③ 95% 가 실제로 먹는가는 장수 말고 그려진 크기로(글꼴과 무관) — 높이가 CSS 로 고정된 층 막대(`.floor__bar`)의 그려진 높이 ÷ 계산된
+    //    높이(줄이기 전 값)가 종이 흉내에서 0.95 · 화면에서 1 · 95% 를 덮어 끄면 종이에서도 1(양성 대조).
+    //    ⓘ 맨 아래 층(`.last()`) — 화면은 층 목록 아래 10줄만 보여 위층 막대는 숨어 높이가 0 이다(S2).
+    //    ⓘ 리눅스에서는 ①②가 95% 를 빼도 초록일 수 있다(장수가 안 갈림) — 95% 규칙을 지키는 것은 이 ③ 이다.
+    const barRatio = () =>
+      page.locator('.card--floors .floor__bar').last().evaluate((b) => {
+        const h = parseFloat(b.ownerDocument.defaultView!.getComputedStyle(b).height);
+        return b.getBoundingClientRect().height / h;
+      });
+    expect(await barRatio()).toBeCloseTo(1, 2);
+    await page.emulateMedia({ media: 'print' });
+    try {
+      expect(await page.locator('html').evaluate((h) => h.ownerDocument.defaultView!.getComputedStyle(h).zoom)).toBe('0.95');
+      expect(await barRatio()).toBeCloseTo(0.95, 2);
+      const off = await page.addStyleTag({ content: '@media print { html { zoom: 1 !important; } }' });
+      expect(await barRatio()).toBeCloseTo(1, 2);
+      await off.evaluate((e) => e.remove());
+    } finally {
+      await page.emulateMedia({ media: null });
+    }
   });
 });
 

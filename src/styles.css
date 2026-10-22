@@ -1614,6 +1614,82 @@ body {
   cursor: pointer;
 }
 
+/* 호 목록 위의 호실 크기 칸 한 줄(결정 0038 G · V3) — 칸 폭 = 전용면적 비례(%) · **한 색**(사실 색 `--fact-2` · 범주 아님 · §2-7).
+   ⛔ 칸 사이 흰 줄은 `box-shadow`(자리를 안 먹는다) — `border` 로 두면 1px 보다 좁은 칸이 1px 로 커져 칸 폭 합이 100% 를 넘는다.
+   ⛔ 칸(`.ucell`)에 `overflow: hidden` 을 걸지 않는다 — 글자가 넘치면 잘려 숨지 말고 E2E 가 잡게 한다(글자는 계산으로 칸 안).
+   ⓘ 칸 안 글자는 기본(넓은 화면·종이) = `--w` 벌 · 휴대폰은 `@media screen and (max-width: 720px)` 묶음에서 `--n` 벌. 글자 13px. */
+.ucells {
+  margin: 0 0 8px;
+}
+
+/* 펼친 층 상세에서는 세 칸(용도별 구획 · 점포 · 호실) **위 가로 전체 폭** 한 줄(👤 2026-10-22 「펼친 칸 위 전체 폭」) —
+   상세(`.detail`) 그리드의 첫 줄을 통째로 쓴다. 휴대폰은 세 칸이 세로로 쌓이므로 그 맨 위. 칸 사이 틈은 그리드 gap 이 준다. */
+.ucells.ucells--detail {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+/* 목록이 오기 전 칸 줄 자리(V3 보완 2) — 같은 꼴로 자리만 잡고 안 보인다(읽는 기기에도 안 읽힌다 · 목록이 오면 진짜 줄로 바뀐다). */
+.ucells.ucells--pending {
+  visibility: hidden;
+}
+
+.ucells__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ucells__strip {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 22px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--warn-bg);
+}
+
+.ucell {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  background: var(--fact-2);
+}
+
+.ucell + .ucell {
+  box-shadow: inset 1px 0 0 var(--card);
+}
+
+.ucell__lab {
+  display: none;
+  padding: 0 4px;
+  font-size: 13px;
+  line-height: 16px;
+  white-space: nowrap;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.ucell__lab--w {
+  display: block;
+}
+
+.ucells__rest {
+  flex: none;
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.ucells__note {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
 /* 긴 목록(층 목록 · 이 땅 거래)의 「전부 보기」/「접기」 단추(S2 · 👤 2026-10-15).
    넘치는 줄을 숨기는 규칙과 종이에서 빼는 규칙은 아래 `@media screen`·`@media print` 에 있다. */
 .list__fold {
@@ -2387,12 +2463,14 @@ body {
   overflow: visible;
 }
 
+/* ⓘ 가운데 맞춤은 `translateX(-50%)`(V3 보완 3) — 예전 `margin-left: -5px` 는 종이 95%(`zoom`)에서 테두리(5px)만 기기 화소로 내림돼
+   ▲ 상자가 좁아지고 여백은 그대로라 ▲ 가 왼쪽으로 약 0.75px 비켰다(휴대폰 막대에서 약 1%p · E2E BD 종이 단계). 화면(줄이기 없음)에서는 같은 자리. */
 .mix__mark {
   position: absolute;
   top: 100%;
   width: 0;
   height: 0;
-  margin-left: -5px;
+  transform: translateX(-50%);
   border-left: 5px solid transparent;
   border-right: 5px solid transparent;
   border-bottom: 6px solid var(--est-ink);
@@ -3821,6 +3899,16 @@ body {
     display: block;
   }
 
+  /* 호실 크기 칸 안 글자(결정 0038 G · V3) — 휴대폰은 휴대폰 기준 폭(`UNIT_CELL_REF.*.narrow`)으로 고른 벌만.
+     ⛔ `--n` 이 `--w` 뒤여야 둘 다 붙은 글자가 선다(같은 무게 · 뒤가 이긴다). */
+  .ucell__lab--w {
+    display: none;
+  }
+
+  .ucell__lab--n {
+    display: block;
+  }
+
   /* ── 휴대폰 아래 탭(결정 0039 Q1 · W4a) ──────────────────────────────────────────────
      `.app--tabs` · `data-tab` 은 App 이 휴대폰 꼴일 때만 붙인다(`useIsPhone` — 이 묶음과 같은 질의). 탭에 안 맞는 덩어리는
      여기서만 숨긴다 → ⛔ **`screen` 안이라 종이에는 안 먹는다**(건물·안내 글은 어느 탭에서 뽑아도 종이에 남는다 — 👤 「건물 한 장」).
@@ -5140,6 +5228,19 @@ body {
   }
 
   /*
+    종이 전체를 95% 로 찍는다(👤 2026-10-22 결정 0038 V3 보완 3 · 선택지 원문 「종이에서만 크기를 95%로 명시합니다. 장수와 글자 크기가
+    지금 종이와 같고, 넘침도 없습니다. 우연이던 축소가 정해진 규칙이 됩니다」).
+    ⓘ 까닭: 보완 2 전까지는 층 목록 줄(최소 약 682px)이 종이 폭(703px)을 넘쳐 크롬이 종이 전체를 **저절로** 약 95%(703/739)로 줄여
+      찍었다 — 그 넘침을 고치자(아래 `.floors` 묶음) 줄이기가 사라져 장수가 한 장씩 늘었다(강남파이낸스센터 11 → 12 · 개포종합상가 7 → 8).
+      그 축소를 규칙으로 못 박아 장수·글자 크기를 그대로 둔다. ⛔ **종이에만**(이 묶음) — 화면 크기는 그대로.
+    ⛔ 이 값을 바꾸거나 빼면 장수가 바뀐다 — E2E `CB` 가 지킨다(page.pdf 장수 「지금 = 옛 판」 + 종이에 그려진 층 막대 높이 비율 0.95 ·
+       장수는 글꼴 따라 달라 숫자로 박지 않는다).
+  */
+  html {
+    zoom: 0.95;
+  }
+
+  /*
     종이에서 누를 수 없는 것은 종이에 있으면 안 된다. 인쇄 규칙 없이 뽑아 보니 첫 장의 위
     절반이 검색창·구 칩·버튼이었다(2026-08-25 실측).
   */
@@ -5443,8 +5544,20 @@ body {
   /* 세 잣대(물결 1-C2) — 층 하나의 세 값이 한 줄이다. ⛔ 카드 통째(`.gap`)에는 걸지 않는다. */
   .gap__row,
   /* 고른 층의 호 목록 줄(물결 1-C2) — 이름과 면적이 한 줄. */
-  .floor__unitprint-list li {
+  .floor__unitprint-list li,
+  /* 호실 크기 칸 줄(결정 0038 G · V3) — 그림 덩어리에만(§2-9 · 층·카드 통째에는 걸지 않는다). */
+  .ucells__row {
     break-inside: avoid;
+  }
+
+  /*
+    층 목록 줄(li)이 카드 안쪽 폭을 넘지 않게(결정 0038 V3 보완 2 · 메인 운영 종이 실측 개포주공 7단지상가 — 인쇄 호실 구성표의 칸 줄과
+    호 목록이 카드 오른쪽 테두리 밖, 종이 오른쪽 끝까지 나갔다). 까닭 = 목록 그리드의 자동 칸이 층 줄 버튼의 최소 폭(고정 칸 합 약 682px)
+    까지 넓어져 li 가 카드보다 넓어진다 → li 칸을 카드 안쪽 폭(`minmax(0, 1fr)`)으로 묶는다. 층 줄 버튼의 글자 자리는 그대로(버튼은 원래도
+    최소 폭이라 같은 자리 · 숨긴 ▼ 칸만 li 밖으로) · 구성표·펼친 상세가 카드 안으로 들어온다. ⓘ 화면(721~741px 한 열)의 같은 넘침은 V3 밖 — 안 건드린다.
+  */
+  .floors {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   /* ⛔ 호실 구성표를 고른 층도 줄 단위로 끊는다(아래 펼친 층과 같은 이유 — 50줄이면 한 장보다 클 수 있다). */

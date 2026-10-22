@@ -2798,6 +2798,243 @@ describe('FloorStack — 호실 구성표 고르기 보완 (물결 1-C2)', () =>
   });
 });
 
+describe('FloorStack — 호실 크기 칸 (결정 0038 G · V3)', () => {
+  const kinds: Record<number, string> = { 35: 'residential', 5: 'commercial', 3: 'mixed', 1: 'commercial' };
+  const NOS = [35, 5, 3, 1];
+  /** 1층 = 300 · 150 · 20 · 0 · 5층 = 900 · 40 · 3층 = 543호(쪽마다 50). */
+  const FIXED: Record<number, Array<{ ho: string; excl_area_m2: number; total_cnt: number }>> = {
+    1: [
+      { ho: '101호', excl_area_m2: 300, total_cnt: 4 },
+      { ho: '102호', excl_area_m2: 150, total_cnt: 4 },
+      { ho: '103호', excl_area_m2: 20, total_cnt: 4 },
+      { ho: '104호', excl_area_m2: 0, total_cnt: 4 },
+    ],
+    5: [
+      { ho: '501호', excl_area_m2: 900, total_cnt: 2 },
+      { ho: '502호', excl_area_m2: 40, total_cnt: 2 },
+    ],
+  };
+  function pageFor(args: Record<string, unknown>) {
+    const no = Number(args.p_floor_no);
+    const offset = Number(args.p_offset ?? 0);
+    if (FIXED[no]) return { data: offset === 0 ? FIXED[no] : [], error: null };
+    const rows = [];
+    for (let i = offset; i < Math.min(offset + 50, 543); i++) {
+      rows.push({ ho: `3-${String(i + 1).padStart(3, '0')}호`, excl_area_m2: 4.0, total_cnt: 543 });
+    }
+    return { data: rows, error: null };
+  }
+
+  beforeEach(() => {
+    responses.floors = { data: NOS.map((n) => floor({ floor_no: n })), error: null };
+    responses.unitSummary = {
+      data: NOS.map((n) => ({
+        floor_no: n,
+        unit_cnt: 4,
+        median_area_m2: kinds[n] === 'residential' ? null : 4,
+        min_area_m2: null,
+        max_area_m2: null,
+        floor_kind: kinds[n],
+      })),
+      error: null,
+    };
+    responses.floorUnits = pageFor;
+  });
+
+  function open(container: HTMLElement, label: string) {
+    const btn = [...container.querySelectorAll<HTMLElement>('.floor__row')].find(
+      (b) => b.querySelector('.floor__label')?.textContent === label,
+    );
+    if (!btn) throw new Error(`층 줄을 못 찾음: ${label}`);
+    fireEvent.click(btn);
+  }
+  const widths = (root: Element | null) =>
+    [...(root?.querySelectorAll<HTMLElement>('.ucell') ?? [])].map((c) => parseFloat(c.style.width));
+  const labs = (root: Element | null) =>
+    [...(root?.querySelectorAll('.ucell__lab') ?? [])].map((l) => [l.className, l.textContent]);
+
+  it('펼친 층 — 칸 줄은 세 칸(구획·점포·호실) **위** 상세 첫 자식 한 줄(👤 2026-10-22 전체 폭) · 호실 칸 안엔 없음 · 폭 % = 면적 비례 · 면적 0 은 「–」 · 그림만 aria-hidden · 목록은 그대로', async () => {
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(4));
+    open(container, '1층');
+    await waitFor(() => expect(container.querySelectorAll('#floor-1 .detail > .ucells .ucell')).toHaveLength(3));
+    const detail = container.querySelector('#floor-1 .detail')!;
+    const row = detail.querySelector(':scope > .ucells')!;
+    // 상세의 **첫 자식**(세 칸보다 앞 — 읽는 차례 = 보이는 차례) · 전체 폭 이름표 · 호실 칸 안에는 칸 줄 0.
+    expect(detail.firstElementChild).toBe(row);
+    expect(row.classList.contains('ucells--detail')).toBe(true);
+    expect(detail.querySelectorAll('.ucells')).toHaveLength(1);
+    expect(detail.querySelector('.units .ucells')).toBeNull();
+    const w = widths(row);
+    [300 / 470, 150 / 470, 20 / 470].forEach((s, i) => expect(w[i]).toBeCloseTo(s * 100, 6));
+    expect(row.querySelector('.ucells__strip')!.getAttribute('aria-hidden')).toBe('true');
+    // 설명 글 · 「–」 · 복층 각주 — 글이라 aria-hidden 밖.
+    const note = row.querySelector('.ucells__note')!;
+    expect(note.closest('[aria-hidden]')).toBeNull();
+    expect(note.textContent).toBe(
+      '크기 비교이지 자리 배치가 아닙니다. 전용면적 값이 없는 호(칸 없음): 104호 –. 여러 층에 걸친 호실은 걸친 층마다 한 번씩 셉니다.',
+    );
+    expect(row.querySelector('.ucells__rest')).toBeNull();
+    // 전체 폭 기준(넓은 500 · 휴대폰 180) — 넓은 벌은 101호·102호 · 휴대폰 벌은 없음(63.8% × 180 < 글자 폭).
+    expect(labs(row)).toEqual([
+      ['ucell__lab ucell__lab--w', '101호 · 300.0㎡'],
+      ['ucell__lab ucell__lab--w', '102호 · 150.0㎡'],
+    ]);
+    // 목록 글은 한 글자도 안 바뀐다(104호 — 그대로).
+    expect([...container.querySelectorAll('#floor-1 .units__list li')].map((li) => li.textContent)).toEqual([
+      '101호300.0㎡',
+      '102호150.0㎡',
+      '103호20.0㎡',
+      '104호—',
+    ]);
+  });
+
+  it('넓은 칸 하나(95.7%)면 휴대폰 벌도 글자 「501호 · 900.0㎡」 · ★ 이름이 「호」뿐인 호는 면적만 「900.0㎡」(👤 2026-10-22)', async () => {
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(4));
+    open(container, '5층');
+    await waitFor(() => expect(container.querySelectorAll('#floor-5 .detail > .ucells .ucell')).toHaveLength(2));
+    expect(labs(container.querySelector('#floor-5 .detail > .ucells'))).toEqual([
+      ['ucell__lab ucell__lab--w ucell__lab--n', '501호 · 900.0㎡'],
+    ]);
+    cleanup();
+    FIXED[5][0].ho = '호';
+    try {
+      const again = render(<FloorStack building={building()} />).container;
+      await waitFor(() => expect(again.querySelectorAll('.floor__units')).toHaveLength(4));
+      open(again, '5층');
+      await waitFor(() => expect(again.querySelectorAll('#floor-5 .detail > .ucells .ucell')).toHaveLength(2));
+      expect(labs(again.querySelector('#floor-5 .detail > .ucells'))).toEqual([
+        ['ucell__lab ucell__lab--w ucell__lab--n', '900.0㎡'],
+      ]);
+      // 목록은 원문 그대로(「호」).
+      expect(again.querySelector('#floor-5 .units__list li')?.textContent).toBe('호900.0㎡');
+    } finally {
+      FIXED[5][0].ho = '501호';
+    }
+  });
+
+  it('★ 자리 미리 잡기(보완 2) — 목록을 받는 동안 상세 맨 위에 안 보이는 같은 꼴 자리 · 오면 진짜 칸 줄로 바뀐다', async () => {
+    let resolve: (v: { data: unknown; error: unknown }) => void = () => {};
+    responses.floorUnits = (args) =>
+      Number(args.p_floor_no) === 5
+        ? (new Promise<{ data: unknown; error: unknown }>((r) => (resolve = r)) as unknown as Promise<never>)
+        : pageFor(args);
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(4));
+    open(container, '5층');
+    const detail = () => container.querySelector('#floor-5 .detail')!;
+    // 첫 그림부터 자리가 있다(셋째 칸의 알림을 기다리지 않는다) — 상세의 첫 자식 · 같은 꼴(빈 띠 + 설명 글) · 칸 0 · aria-hidden.
+    const pend = detail().firstElementChild!;
+    expect(pend.className).toBe('ucells ucells--detail ucells--pending');
+    expect(pend.getAttribute('aria-hidden')).toBe('true');
+    expect(pend.querySelector('.ucells__strip')).not.toBeNull();
+    expect(pend.querySelectorAll('.ucell')).toHaveLength(0);
+    expect(pend.querySelector('.ucells__note')?.textContent).toBe(
+      '크기 비교이지 자리 배치가 아닙니다. 여러 층에 걸친 호실은 걸친 층마다 한 번씩 셉니다.',
+    );
+    resolve({ data: FIXED[5], error: null });
+    await waitFor(() => expect(detail().querySelectorAll(':scope > .ucells .ucell')).toHaveLength(2));
+    expect(detail().querySelector('.ucells--pending')).toBeNull();
+    expect(detail().querySelectorAll(':scope > .ucells')).toHaveLength(1);
+  });
+
+  it('자리 거두기 — 목록이 0줄이거나 실패면 자리도 없다 · 주거 층·호실 0칸 층은 처음부터 자리 없음', async () => {
+    responses.floorUnits = (args) => (Number(args.p_floor_no) === 5 ? { data: [], error: null } : pageFor(args));
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(4));
+    open(container, '5층');
+    await waitFor(() => expect(container.querySelector('#floor-5 .units')?.textContent).toContain('이 층의 호 목록이 없습니다.'));
+    await waitFor(() => expect(container.querySelector('#floor-5 .ucells')).toBeNull());
+    // 실패.
+    responses.floorUnits = () => ({ data: null, error: { message: 'boom' } });
+    open(container, '1층');
+    await waitFor(() => expect(container.querySelector('#floor-1 .units')?.textContent).toContain('호 목록을 불러오지 못했습니다.'));
+    await waitFor(() => expect(container.querySelector('#floor-1 .ucells')).toBeNull());
+    // 주거 층 — 목록을 안 부르니 자리도 없다(첫 그림부터).
+    open(container, '35층');
+    expect(container.querySelector('#floor-35 .detail')).not.toBeNull();
+    expect(container.querySelector('#floor-35 .ucells')).toBeNull();
+  });
+
+  it('요약이 호실 0칸이라 말하는 목록 층은 자리를 안 잡는다', async () => {
+    responses.unitSummary = {
+      data: [{ floor_no: 5, unit_cnt: 0, median_area_m2: null, min_area_m2: null, max_area_m2: null, floor_kind: 'commercial' }],
+      error: null,
+    };
+    responses.floorUnits = () => new Promise(() => {}) as Promise<never>;
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(1));
+    open(container, '5층');
+    expect(container.querySelector('#floor-5 .detail')).not.toBeNull();
+    expect(container.querySelector('#floor-5 .ucells')).toBeNull();
+  });
+
+  it('50호 넘는 층 — 칸 50 + 「그 밖 493호」 · 더 보기로 목록이 100줄이 돼도 칸은 50 그대로', async () => {
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(4));
+    open(container, '3층');
+    const row = () => container.querySelector('#floor-3 .detail > .ucells');
+    await waitFor(() => expect(row()?.querySelectorAll('.ucell')).toHaveLength(50));
+    expect(row()?.querySelector('.ucells__rest')?.textContent).toBe('그 밖 493호');
+    expect(widths(row()).every((v) => Math.abs(v - 2) < 1e-9)).toBe(true);
+    fireEvent.click(container.querySelector<HTMLElement>('#floor-3 .units__more')!);
+    await waitFor(() => expect(container.querySelectorAll('#floor-3 .units__list li')).toHaveLength(100));
+    expect(row()?.querySelectorAll('.ucell')).toHaveLength(50);
+    expect(row()?.querySelector('.ucells__rest')?.textContent).toBe('그 밖 493호');
+  });
+
+  it('주거 층은 목록이 0줄이라 칸도 없다 · 목록을 못 받으면 칸도 없다', async () => {
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(4));
+    open(container, '35층');
+    await waitFor(() => expect(container.querySelector('#floor-35 .units')).not.toBeNull());
+    expect(container.querySelector('.ucells')).toBeNull();
+    responses.floorUnits = () => ({ data: null, error: { message: 'boom' } });
+    open(container, '1층');
+    await waitFor(() => expect(container.querySelector('#floor-1 .units')?.textContent).toContain('호 목록을 불러오지 못했습니다.'));
+    await waitFor(() => expect(container.querySelector('.ucells')).toBeNull());
+  });
+
+  it('전부 면적이 없으면 칸 줄 없이 「–」 한 줄만', async () => {
+    FIXED[5] = [
+      { ho: '501호', excl_area_m2: 0, total_cnt: 2 },
+      { ho: '502호', excl_area_m2: -1, total_cnt: 2 },
+    ];
+    try {
+      const { container } = render(<FloorStack building={building()} />);
+      await waitFor(() => expect(container.querySelectorAll('.floor__units')).toHaveLength(4));
+      open(container, '5층');
+      await waitFor(() => expect(container.querySelector('#floor-5 .ucells--pending')).toBeNull());
+      expect(container.querySelector('#floor-5 .ucells__strip')).toBeNull();
+      expect(container.querySelector('#floor-5 .ucells__note')?.textContent).toBe(
+        '전용면적 값이 없는 호(칸 없음): 501호 – · 502호 –',
+      );
+    } finally {
+      FIXED[5] = [
+        { ho: '501호', excl_area_m2: 900, total_cnt: 2 },
+        { ho: '502호', excl_area_m2: 40, total_cnt: 2 },
+      ];
+    }
+  });
+
+  it('인쇄 호실 구성표(지하~3층)에도 같은 칸 줄 — 목록 위 · 넓은 기준(480)에선 102호까지 글자 · 휴대폰 기준(230)은 101호만', async () => {
+    const { container } = render(<FloorStack building={building()} unitPrintMode="low" />);
+    await waitFor(() => expect(container.querySelectorAll('#floor-1 .floor__unitprint .ucell')).toHaveLength(3));
+    const box = container.querySelector('#floor-1 .floor__unitprint')!;
+    expect(box.querySelector('.ucells')!.compareDocumentPosition(box.querySelector('.floor__unitprint-list')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(labs(box)).toEqual([
+      ['ucell__lab ucell__lab--w ucell__lab--n', '101호 · 300.0㎡'],
+      ['ucell__lab ucell__lab--w', '102호 · 150.0㎡'],
+    ]);
+    await waitFor(() => expect(container.querySelectorAll('#floor-3 .floor__unitprint .ucell')).toHaveLength(50));
+    expect(container.querySelector('#floor-3 .floor__unitprint .ucells__rest')?.textContent).toBe('그 밖 493호');
+    // 5층(계획 밖)·35층(주거)은 칸 줄 없음.
+    expect(container.querySelector('#floor-5 .ucells')).toBeNull();
+    expect(container.querySelector('#floor-35 .ucells')).toBeNull();
+  });
+});
+
 describe('FloorStack — 개별공시지가 한 줄 (결정 0036 결정 7)', () => {
   const LINE = '개별공시지가 땅 1㎡당 4,523만원 · 2026년 공시 (이 건물이 선 땅 · 공시가격 — 시세가 아닙니다)';
 
