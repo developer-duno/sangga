@@ -72,6 +72,15 @@ type ListSrc = 'search' | 'district';
 /** PC 두 칸 뒤로가기 칸의 이웃 표식(👤 2026-10-23 D1) — 칸 상태에 바로 뒤·앞 칸이 목록('list')인지 건물('bld')인지 적는다. */
 const NEAR_PREV = 'sanggaPrev';
 const NEAR_NEXT = 'sanggaNext';
+/**
+ * 뒤로가기 칸의 차례 번호(후속 PR · 적대 재검사 🟡) — 쌓을 때마다 1씩 커진다. 칸을 옮겼을 때 번호가 작아졌으면 뒤로, 커졌으면 앞으로 간 것이다
+ * (popstate 는 방향을 알려 주지 않는다). 번호가 없는 칸(처음 칸)은 0.
+ */
+const STEP_KEY = 'sanggaStep';
+function stepOf(state: unknown): number {
+  const v = typeof state === 'object' && state !== null ? (state as Record<string, unknown>)[STEP_KEY] : undefined;
+  return typeof v === 'number' ? v : 0;
+}
 
 export default function App() {
   /*
@@ -190,6 +199,13 @@ export default function App() {
   const wideRef = useRef(isWide);
   listRightRef.current = listRight;
   wideRef.current = isWide;
+  /* 뒤로가기 처리(첫 그림의 것을 쥔다)가 지금 쥔 건물·지금 목록을 읽게 — 「빈 칸 지나치기」(후속 PR). */
+  const selectedRef = useRef(selected);
+  const activeListRef = useRef(activeList);
+  selectedRef.current = selected;
+  activeListRef.current = activeList;
+  /** 다음 뒤로·앞으로 이동에서 커서를 옮기지 말라는 표시(지도 단추로 상권 목록을 접을 때 — 커서는 누른 단추에 · 후속 PR). */
+  const popQuietRef = useRef(false);
   /** 오른쪽을 목록으로 — 건물에서 오면 그 굴린 자리를 적어 두고 `y`(null = 목록이 보던 자리)로 굴린다. */
   function toListView(y: number | null, focus: boolean) {
     if (!listRightRef.current) bldScrollRef.current = window.scrollY;
@@ -267,10 +283,26 @@ export default function App() {
       '',
     );
     window.history.pushState(
-      { [HISTORY_KEY]: 'bld', ...(fromList ? { [NEAR_PREV]: 'list' } : {}) },
+      {
+        [HISTORY_KEY]: 'bld',
+        ...(fromList ? { [NEAR_PREV]: 'list' } : {}),
+        // 차례 번호는 PC 두 칸에서만 쓴다(빈 칸 지나치기) — 휴대폰 칸 상태는 그대로 둔다.
+        ...(wideRef.current ? { [STEP_KEY]: nextStep() } : {}),
+      },
       '',
       window.location.href,
     );
+  }
+  /*
+    칸 차례 번호(`STEP_KEY`) — `stepTopRef` = 이제껏 준 가장 큰 번호 · `stepNowRef` = 지금 칸의 번호. 새로고침 뒤에도 칸 상태는 남으므로
+    지금 칸의 번호에서 이어 센다(뒤 칸은 더 작고, 앞 칸은 새로 쌓는 순간 지워진다 — 번호 차례가 어긋나지 않는다).
+  */
+  const stepTopRef = useRef(stepOf(window.history.state));
+  const stepNowRef = useRef(stepOf(window.history.state));
+  function nextStep() {
+    stepTopRef.current = Math.max(stepTopRef.current, stepNowRef.current) + 1;
+    stepNowRef.current = stepTopRef.current;
+    return stepNowRef.current;
   }
   /*
     PC 두 칸에서 건물을 쥔 채 목록을 세운다(검색·상권 목록 · 👤 2026-10-23 D1 「목록에서 뒤로가기 = 「← 보던 건물로」와 같습니다. 실수로
@@ -280,7 +312,7 @@ export default function App() {
   function pushListMark() {
     if (historyMarkOf(window.history.state) === 'base') return;
     window.history.replaceState({ ...(window.history.state ?? {}), [HISTORY_KEY]: 'bld', [NEAR_NEXT]: 'list' }, '');
-    window.history.pushState({ [HISTORY_KEY]: 'base', [NEAR_PREV]: 'bld' }, '', window.location.href);
+    window.history.pushState({ [HISTORY_KEY]: 'base', [NEAR_PREV]: 'bld', [STEP_KEY]: nextStep() }, '', window.location.href);
   }
   /** 지금 칸의 이웃 — 'prev' = 바로 뒤 칸 · 'next' = 바로 앞 칸이 무엇인가(목록·건물 · 모르면 null). */
   function nearOf(dir: 'prev' | 'next'): 'list' | 'bld' | null {
@@ -293,11 +325,28 @@ export default function App() {
   useEffect(() => {
     function onPop(e: PopStateEvent) {
       const mark = historyMarkOf(e.state);
+      // 차례 번호로 방향을 안다(작아졌으면 뒤로) — 아래 「빈 칸 지나치기」가 같은 방향으로 한 칸 더 간다.
+      const step = stepOf(e.state);
+      const back = step < stepNowRef.current;
+      stepNowRef.current = step;
+      // 이 칸으로 커서를 옮기지 말라는 표시(지도 단추로 상권 목록을 접어 건물로 돌아가는 길 — 커서는 누른 단추에 · 후속 PR).
+      const quiet = popQuietRef.current;
+      popQuietRef.current = false;
       // PC 두 칸 — 앞 칸(base) = 오른쪽 목록(보던 자리 그대로) · 건물 칸(bld) = 보던 건물(R3). 건물은 그대로 쥐고 있어 주소만 다시 적는다.
       if (wideRef.current) {
         if (mark === null) return;
-        if (mark === 'bld') toBuildingView(true);
-        else toListView(null, true);
+        /*
+          빈 칸 지나치기(후속 PR · 적대 재검사 🟡) — 목록 칸인데 그 목록이 이미 닫혔거나(「목록 닫기」·구 바꿈·상권 접기) 건물 칸인데 쥔 건물이
+          없으면 그 칸에서는 화면이 안 바뀐다(뒤로가기 한 번 헛돎) → 같은 방향으로 한 칸 더 간다. 맨 끝까지 비었으면 이전 페이지로 나간다.
+        */
+        const dead = mark === 'bld' ? selectedRef.current === null : activeListRef.current === null;
+        if (dead) {
+          if (back) window.history.back();
+          else window.history.forward();
+          return;
+        }
+        if (mark === 'bld') toBuildingView(!quiet);
+        else toListView(null, !quiet);
         setPopSeq((n) => n + 1);
         return;
       }
@@ -573,16 +622,19 @@ export default function App() {
     오른쪽 목록을 떠나 보던 건물(없으면 입구 카드)로 — 「목록 닫기」·보이던 상권 목록 접기·「← 보던 건물로」가 쓴다.
     이웃 칸이 건물이면 그 칸으로 back/forward(뒤로가기 칸이 헛돌지 않게 · `onPop` 이 건물을 세운다) · 아니면 바로 건물(`push` 면 칸 하나 쌓기).
   */
-  function leaveListToBuilding(push: boolean) {
+  function leaveListToBuilding(push: boolean, focus = true) {
+    // `focus` 거짓 = 커서를 그대로(지도 단추로 상권 목록을 접을 때 — 누른 단추에 남는다 · 후속 PR). 칸 이동이면 그 이동에 표시를 넘긴다.
     if (selected !== null && nearOf('next') === 'bld') {
+      popQuietRef.current = !focus;
       window.history.forward();
       return;
     }
     if (selected !== null && nearOf('prev') === 'bld') {
+      popQuietRef.current = !focus;
       window.history.back();
       return;
     }
-    toBuildingView(true);
+    toBuildingView(focus);
     if (push && selected !== null) pushBldMark(true);
   }
   /*
@@ -603,7 +655,8 @@ export default function App() {
           raiseList('district'); // 숨은 목록을 앞으로 — 접지 않는다(B2)
           return;
         }
-        leaveListToBuilding(false);
+        // 지도의 상권 단추로 접었다 — 커서는 누른 그 단추에 둔다(건물 첫 단추·검색칸으로 안 보낸다 · 후속 PR · 적대 재검사 🟡).
+        leaveListToBuilding(false, false);
       }
     }
     setMapPick(next);
