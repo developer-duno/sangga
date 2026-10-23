@@ -1191,6 +1191,83 @@ describe('PC 두 칸 오른쪽 목록 — 배선 (👤 2026-10-22 방법 나)', 
     expect(pushes()).toBe(len0);
   });
 
+  it('★ 후속 빈 칸 지나치기 — 검색 → 건물 → 새 검색 → 「목록 닫기」 → 뒤로 = 닫힌 옛 목록 칸에서 멈추지 않고 한 칸 더(뒤로) · 앞으로 가다 닿아도 한 칸 더(앞으로) · 목록이 살아 있으면 그 목록(지나치지 않음)', async () => {
+    serve(TWO);
+    mediaAt(1280);
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    render(<App />);
+    await pickGu();
+    await searchAndOpen(); // 검색 → 건물(목록에서 골라 한 칸)
+    await search('다른동'); // 새 검색(D1 — 목록 칸 하나)
+    fireEvent.click(screen.getByRole('button', { name: '목록 닫기' })); // ✕ → 이웃 칸(건물)으로 뒤로
+    await vi.waitFor(() => expect(window.history.state?.sanggaTab).toBe('bld'));
+    expect(app().classList.contains('app--wlist')).toBe(false);
+    // 이제 뒤로가기 — 뒤 칸은 첫 검색의 목록 칸인데 그 목록은 닫혔다(「목록 닫기」가 검색 결과를 비웠다) → 한 칸 더 뒤로.
+    // ⓘ jsdom 은 시험들이 창 하나를 나눠 써서 진짜 뒤로가기는 앞 시험의 칸으로 샌다 — 칸 이동을 흉내 내고 앱이 부르는 것만 본다.
+    const back = vi.spyOn(window.history, 'back').mockImplementation(() => {});
+    const fwd = vi.spyOn(window.history, 'forward').mockImplementation(() => {});
+    const step = window.history.state?.sanggaStep as number;
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate', { state: { sanggaTab: 'base', sanggaStep: step - 1 } }));
+    });
+    expect(back).toHaveBeenCalledTimes(1);
+    expect(fwd).not.toHaveBeenCalled();
+    expect(app().classList.contains('app--wlist')).toBe(false); // 화면은 그대로 건물
+    // 앞으로 가다 빈 목록 칸에 닿아도 한 칸 더(앞으로).
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate', { state: { sanggaTab: 'base', sanggaStep: step + 5 } }));
+    });
+    expect(fwd).toHaveBeenCalledTimes(1);
+    expect(back).toHaveBeenCalledTimes(1);
+    // 양성 대조 — 목록이 살아 있으면(다시 검색) 목록 칸에서 그 목록을 세운다(지나치지 않는다).
+    await search('테헤란로');
+    expect(app().classList.contains('app--wlist')).toBe(true);
+    // 건물 칸으로(앞으로 흉내) → 다시 뒤로 목록 칸(흉내) — 목록이 살아 있으니 그 목록이 선다.
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate', { state: { sanggaTab: 'bld', sanggaStep: step + 9 } }));
+    });
+    expect(app().classList.contains('app--wlist')).toBe(false);
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate', { state: { sanggaTab: 'base', sanggaStep: 0 } }));
+    });
+    expect(app().classList.contains('app--wlist')).toBe(true);
+    expect(back).toHaveBeenCalledTimes(1);
+  });
+
+  it('★ 후속 커서 — 지도의 상권 단추로 상권 목록을 접으면 커서는 그 단추에 그대로(건물 첫 단추·검색칸으로 안 감) · 건물을 쥐었든(칸 이동) 안 쥐었든', async () => {
+    serve(TWO);
+    mediaAt(1280);
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    render(<App />);
+    await pickGu();
+    // 건물 없이 — 바로 입구 카드로.
+    const btn = () => screen.getByRole('button', { name: '가짜상권' });
+    btn().focus();
+    fireEvent.click(btn());
+    await vi.waitFor(() => expect(rlist().querySelectorAll('.dbld__row')).toHaveLength(2));
+    btn().focus();
+    fireEvent.click(btn());
+    expect(app().classList.contains('app--wlist')).toBe(false);
+    expect(document.activeElement).toBe(btn());
+    // 건물을 쥔 채 — 상권 목록을 열면 목록 칸(D1) · 접으면 이웃 칸(건물)으로 뒤로 가는데 커서는 그대로.
+    await searchAndOpen();
+    btn().focus();
+    fireEvent.click(btn());
+    await vi.waitFor(() => expect(rlist().querySelectorAll('.dbld__row')).toHaveLength(2));
+    btn().focus();
+    fireEvent.click(btn());
+    await vi.waitFor(() => expect(window.history.state?.sanggaTab).toBe('bld'));
+    expect(app().classList.contains('app--wlist')).toBe(false);
+    expect(document.activeElement).toBe(btn());
+    // 양성 대조 — 「목록 닫기」로 닫으면 커서는 건물 첫 단추(지금 규칙 그대로).
+    btn().focus();
+    fireEvent.click(btn());
+    await vi.waitFor(() => expect(rlist().querySelectorAll('.dbld__row')).toHaveLength(2));
+    fireEvent.click(screen.getByRole('button', { name: '목록 닫기' }));
+    await vi.waitFor(() => expect(window.history.state?.sanggaTab).toBe('bld'));
+    await vi.waitFor(() => expect(document.activeElement).toBe(document.querySelector('.takeout button')));
+  });
+
   it('★ 보완 3 찾는 중 — 느린 검색은 답이 오기 전 오른쪽에 「찾는 중…」 한 줄(낭독 자리 · 앞 결과·옛 줄 0) · 답이 오면 같은 자리에서 결과 · 너무 넓음·오류로 끝나도 같은 자리에서 그 안내(깜빡임 0)', async () => {
     serve(TWO);
     mediaAt(1280);

@@ -5395,6 +5395,33 @@ test.describe('PC 두 칸', () => {
   });
 
   /*
+    후속 PR(적대 재검사 🟡) — 진짜 브라우저 뒤로가기로 재현 순서 그대로: 검색 → 건물 → 새 검색 → 「목록 닫기」(이웃 칸 = 건물로) → 뒤로.
+    뒤 칸은 첫 검색의 목록 칸인데 그 목록은 이미 닫혔다 → 그 칸에서 멈추면 화면이 안 바뀐다(헛눌림) → 한 칸 더 가서 이전 페이지(빈 탭)로 나간다.
+    ⓘ vitest 는 jsdom 창 하나를 시험들이 나눠 써서 진짜 칸 이동을 못 본다 — 여기서 본다.
+  */
+  test('CF. 뒤로가기 빈 칸 지나치기 — 검색 → 건물 → 새 검색 → 「목록 닫기」 → 뒤로 한 번 = 닫힌 옛 목록 칸에서 멈추지 않고 이전 페이지로 · 휴대폰은 그대로', async ({
+    page,
+  }) => {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit(), searchHit({ bld_id: '1168010100100020000_2', bld_nm: '다른빌딩' })]);
+    await mockFloorStack(page);
+    await page.goto('/');
+    if (!(await isTwoCols(page))) return; // 휴대폰 = 이 갈래 없음(탭 꼴의 칸 규칙 그대로)
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+    await expect(page.locator('section.stack')).toBeVisible();
+    await search(page, '다른동');
+    await expect(page.getByRole('button', { name: /다른빌딩/ })).toBeVisible();
+    await page.getByRole('button', { name: '목록 닫기' }).click();
+    await expect(page.locator('section.stack')).toBeVisible();
+    await expect(page.locator('section.rlist')).toBeHidden();
+    // 뒤로 한 번 — 앱 안의 빈 칸(닫힌 목록)을 지나 이전 페이지(빈 탭)로.
+    await page.goBack();
+    await expect.poll(() => page.url()).toBe('about:blank');
+  });
+
+  /*
     👤 2026-10-23 D3 「지도와 「누른 자리」가 굴리지 않고 첫 화면에 들어오게」 — E2E 엔 지도 키가 없어 지도 칸·범례·누른 자리가 안 선다.
     그래서 지도 덩어리 안에 그 셋을 **진짜와 같은 이름표**로 세워(`DistrictMap` 의 카드 꼴 · `PickedList` 의 「누른 자리 (1곳):」 + 상권 단추 하나 ·
     범례 다섯 유형) 실제 CSS 가 정한 높이·자리를 잰다 — 「누른 자리」 줄의 아래 끝이 첫 화면(굴리기 전) 안 · 지도 칸 300px 이상.
