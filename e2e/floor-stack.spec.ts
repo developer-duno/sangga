@@ -100,6 +100,10 @@ const NEARBY_PERMITS_PATTERN = '**/rest/v1/rpc/count_nearby_permits*';
 // ⚠️ 기본값은 역시 **함수가 없는 상태**다 — 마이그레이션 적용 전 라이브이 그것이고,
 //    그때 카드가 통째로 조용히 빠지는지가 테스트 AA 의 관심사다.
 const RENT_STATS_PATTERN = '**/rest/v1/rpc/list_rent_stats*';
+// 임대 동향의 8분기 흐름(결정 0038 C · V5) — 건물을 고르는 순간 곁 카드와 함께 미리 나간다.
+// ⚠️ 기본값은 **함수가 없는 상태**다 — 그때 흐름만 조용히 빠지고 임대 카드는 그대로라 다른 스펙이 영향을 안 받는다.
+//    흐름을 보는 것은 스펙 CI 뿐이다. ⓘ 위 `list_rent_stats*` 꼴은 이 이름(`list_rent_stat_history`)과 안 겹친다.
+const RENT_HISTORY_PATTERN = '**/rest/v1/rpc/list_rent_stat_history*';
 // 상권 개업·폐업(결정 0033). ⚠️ 기본값은 **함수가 없는 상태**다(임대 동향과 같은 이유) — 다른
 // 스펙들의 카드 수·화면이 그대로 남는다. 카드를 보는 것은 스펙 AI 뿐이다.
 const OPEN_CLOSE_PATTERN = '**/rest/v1/rpc/list_district_openclose*';
@@ -216,6 +220,8 @@ async function mockFloorStack(
   } else {
     await mockJson(page, RENT_STATS_PATTERN, rents);
   }
+  // 임대 8분기 흐름도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 스펙 CI 만 덮어쓴다.
+  await mockMissingFunction(page, RENT_HISTORY_PATTERN);
   // 상권 개업·폐업도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 스펙 AI 만 덮어쓴다.
   await mockMissingFunction(page, OPEN_CLOSE_PATTERN);
   // 호실 구성표 둘도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 호실을 보는 스펙은
@@ -5947,5 +5953,210 @@ test.describe('층별 스택뷰 — 층 목록 업종 띠 (결정 0038 D · V4)'
     await expect(page.locator('.card--floors .floor__ind--pending')).toHaveCount(0);
     await expect(page.locator('.card--floors .floor__ind')).toHaveCount(0);
     await expect(page.locator('.card--floors .floor__ind-unknown')).toHaveCount(0);
+  });
+});
+
+test.describe('층별 스택뷰 — 임대 계단 막대 · 8분기 흐름 (결정 0038 C · V5)', () => {
+  const Q8 = ['2024Q3', '2024Q4', '2025Q1', '2025Q2', '2025Q3', '2025Q4', '2026Q1', '2026Q2'];
+  /** 집합상가 공실률 8분기 — 2025Q1 은 줄이 없다(공표 안 됨) · 마지막 = 카드 줄 값(rentStats() 의 10.08). */
+  const COLL_VAC = [2.79, 2.79, null, 4.31, 7.65, 6.42, 6.74, 10.08];
+  /** 집합상가 투자수익률 — 2025Q3 음수(0 선 아래로). */
+  const COLL_YLD = [1.96, 1.47, null, 1.53, -0.5, 2.07, 2.3, 0.82];
+  const OFF_VAC = [3.0, 2.43, 2.86, 3.05, 4.07, 3.93, 4.82, 5.5];
+
+  /** `list_rent_stat_history` 응답 — 테헤란로 집합상가(2025Q1 줄 없음) · 오피스 8분기. 마지막 분기 = rentStats() 의 카드 줄 값. */
+  function history() {
+    const rows: unknown[] = [];
+    Q8.forEach((q, i) => {
+      if (COLL_VAC[i] !== null) {
+        rows.push({
+          rone_region_nm: '서울>강남>테헤란로',
+          bld_type: '집합상가',
+          quarter: q,
+          vacancy_rate: COLL_VAC[i],
+          rent_per_m2: i === 7 ? 74.6 : 73.5 + i * 0.1,
+          yield_rate: COLL_YLD[i],
+          income_yield_rate: 0.9,
+        });
+      }
+      rows.push({
+        rone_region_nm: '서울>강남>테헤란로',
+        bld_type: '오피스',
+        quarter: q,
+        vacancy_rate: OFF_VAC[i],
+        rent_per_m2: i === 7 ? 18.4 : 17.5 + i * 0.1,
+        yield_rate: i === 7 ? 1.1 : 1.0,
+        income_yield_rate: 0.84,
+      });
+    });
+    return rows;
+  }
+
+  /** 건물을 열고 임대 카드를 펼친다. `hist` 를 안 주면 흐름 함수가 없는 상태(mockFloorStack 기본값). */
+  async function openRent(page: Page, hist?: unknown[], onHistory?: () => void) {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()], industryMix(), undefined, undefined, rentStats());
+    if (hist !== undefined) {
+      await page.route(RENT_HISTORY_PATTERN, async (route) => {
+        if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS_HEADERS });
+        onHistory?.();
+        await route.fulfill({ status: 200, contentType: 'application/json', headers: CORS_HEADERS, body: JSON.stringify(hist) });
+      });
+    }
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+    const rent = page.locator('section.stack section.rent');
+    await expect(rent).toBeVisible();
+    await openCard(page, /상권 임대 동향/);
+    return rent;
+  }
+
+  const box = async (sel: ReturnType<Page['locator']>) => (await sel.boundingBox())!;
+  const noOverflow = async (page: Page, rent: ReturnType<Page['locator']>, what: string) => {
+    expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth), `${what} 문서 넘침`).toBeLessThanOrEqual(0);
+    expect(await rent.evaluate((el) => el.scrollWidth - el.clientWidth), `${what} 카드 넘침`).toBeLessThanOrEqual(0);
+  };
+
+  /** 계단 막대 — 1층(가장 비싼 구간)이 칸 끝 · 2층 막대 폭 ÷ 1층 막대 폭 = 32.48 ÷ 74.6. */
+  async function expectSteps(rent: ReturnType<Page['locator']>, what: string) {
+    const fill = (k: string) => rent.locator(`.rent__floors tr[data-floor="${k}"] .rent__step-fill`);
+    const cell = await box(rent.locator('.rent__floors tr[data-floor="1"] .rent__step'));
+    const one = await box(fill('1'));
+    const two = await box(fill('2'));
+    expect(one.width, `${what} 1층 막대 폭`).toBeGreaterThan(20);
+    expect(Math.abs(two.width / one.width - 32.48 / 74.6), `${what} 2층 ÷ 1층`).toBeLessThan(0.02);
+    // 1층 막대 = 칸 안쪽 끝까지(왼쪽 여백 12px 뺀 폭).
+    expect(Math.abs(one.x + one.width - (cell.x + cell.width)), `${what} 1층 막대 끝`).toBeLessThan(1.5);
+    // 금액 글과 막대 사이 틈 12px(글에 막대가 붙어 숫자의 일부처럼 읽히지 않게).
+    const val = await box(rent.locator('.rent__floors tr[data-floor="1"] td').first());
+    expect(one.x - (val.x + val.width), `${what} 금액 ↔ 막대 틈`).toBeGreaterThanOrEqual(11);
+  }
+
+  /** 8분기 흐름 — 공실률 막대 높이 ÷ 그림 높이 = 값 ÷ 위 끝(10%) · 빠진 분기는 「–」. */
+  async function expectTrend(rent: ReturnType<Page['locator']>, what: string) {
+    const vac = rent.locator('.rent-trend__chart[data-metric="vacancy"]');
+    const plot = await box(vac.locator('.rent-trend__plot'));
+    expect(plot.height, `${what} 그림 높이`).toBeGreaterThan(40);
+    for (const [i, q] of Q8.entries()) {
+      const col = vac.locator(`.rent-trend__col[data-quarter="${q}"]`);
+      const v = COLL_VAC[i];
+      if (v === null) {
+        await expect(col.locator('.rent-trend__gap')).toHaveText('–');
+        await expect(col.locator('.rent-trend__bar')).toHaveCount(0);
+        continue;
+      }
+      const bar = await box(col.locator('.rent-trend__bar'));
+      expect(Math.abs(bar.height / plot.height - v / 20), `${what} ${q} 높이`).toBeLessThan(0.03);
+      expect(bar.width, `${what} ${q} 폭`).toBeGreaterThan(2);
+    }
+  }
+
+  test('CI. 임대 카드 — 층별 표 줄마다 계단 막대(사실 색 · 값에 비례) + 8분기 흐름 그림 셋(그림마다 제 눈금 · 빠진 분기 「–」 · 음수는 0 선 아래) · 종류 바꿔도 다시 안 부름 · 휴대폰 한 칸씩 · 1024·1000 · 넘침 0 · 13px · 종이 740·703 · 함수 없으면 흐름만 빠짐', async ({
+    page,
+  }, testInfo) => {
+    let historyHits = 0;
+    const rent = await openRent(page, history(), () => {
+      historyHits += 1;
+    });
+    const phone = (page.viewportSize()?.width ?? 0) <= 720;
+
+    // ① 계단 막대 — 층별 표 안 · 사실 색(호박 --fact-3) · 층 목록 면적 막대(파랑)와 다른 색 · 글은 그대로.
+    await expect(rent.locator('.rent__floors caption')).toHaveText('층별 ㎡당 월 임대료 — 조사 상권 평균, 이 건물 값이 아님');
+    await expect(rent.locator('.rent__floors tbody tr').first()).toHaveText(/6층 이상\s*22,700원/);
+    await expect(rent.locator('.rent__step-fill')).toHaveCount(7);
+    await expectSteps(rent, '넓은·휴대폰');
+    await expect(rent.locator('.rent__step-fill').first()).toHaveCSS('background-color', 'rgb(185, 132, 42)');
+    await expect(page.locator('.card--floors .floor__fill').first()).not.toHaveCSS('background-color', 'rgb(185, 132, 42)');
+    await expect(rent.locator('.rent__step').first()).toHaveAttribute('aria-hidden', 'true');
+
+    // ② 8분기 흐름 — 머리 「이 건물 값이 아님」 · 그림 셋 · 그림마다 제 눈금(공실률 0~20% · 임대료 0~100,000원 · 수익률 -0.5~2.5%).
+    const fig = rent.locator('.rent__rows li .rent-trend');
+    await expect(fig).toBeVisible();
+    await expect(fig.locator('figcaption')).toContainText('최근 8분기 흐름 — 조사 상권 평균, 이 건물 값이 아님');
+    await expect(fig.locator('.rent-trend__dir')).toHaveText('왼쪽 2024년 3분기 → 오른쪽 2026년 2분기');
+    await expect(fig.locator('.rent-trend__chart')).toHaveCount(3);
+    await expect(fig.locator('.rent-trend__scale')).toHaveText(['눈금 0 ~ 20%', '눈금 0 ~ 100,000원', '눈금 -0.5% ~ 2.5%']);
+    await expectTrend(rent, '넓은·휴대폰');
+    await expect(fig.locator('.rent-trend__note')).toHaveText('‘–’ = 그 분기에 부동산원이 이 값을 공표하지 않았습니다(0 이 아닙니다).');
+    await expect(fig.locator('.rent-trend__bar').first()).toHaveCSS('background-color', 'rgb(185, 132, 42)');
+    // 음수(2025Q3 -0.5%)는 0 선 아래로 — 막대 위 끝 = 0 선.
+    const yld = fig.locator('.rent-trend__chart[data-metric="yield"]');
+    const zero = await box(yld.locator('.rent-trend__zero'));
+    const neg = await box(yld.locator('.rent-trend__col[data-quarter="2025Q3"] .rent-trend__bar'));
+    expect(Math.abs(neg.y - zero.y)).toBeLessThan(1.5);
+    expect(neg.height).toBeGreaterThan(5);
+    await expect(yld).toHaveAttribute('role', 'img');
+    await expect(yld).toHaveAttribute('aria-label', /2025년 1분기 공표값 없음 · .*2025년 3분기 -0\.5%/);
+    // 13px · 가로 넘침 0.
+    for (const sel of ['.rent-trend__cap', '.rent-trend__name', '.rent-trend__scale', '.rent-trend__note']) {
+      await expect(fig.locator(sel).first()).toHaveCSS('font-size', '13px');
+    }
+    await noOverflow(page, rent, '처음 폭');
+    // 넓은 화면 = 그림 셋 한 줄 · 휴대폰 = 한 칸씩 위아래(그림마다 폭 전체).
+    const c0 = await box(fig.locator('.rent-trend__chart').nth(0));
+    const c1 = await box(fig.locator('.rent-trend__chart').nth(1));
+    if (phone) {
+      expect(c1.y).toBeGreaterThan(c0.y + c0.height - 1);
+      expect(Math.abs(c1.width - c0.width)).toBeLessThan(1);
+    } else {
+      expect(Math.abs(c1.y - c0.y)).toBeLessThan(1);
+      expect(c1.x).toBeGreaterThan(c0.x + c0.width);
+    }
+    await rent.screenshot({ path: testInfo.outputPath(`ci-rent-${testInfo.project.name}.png`) });
+
+    // ③ 종류를 바꾸면 그 종류의 흐름 — 흐름 요청은 다시 안 나간다(한 번 받은 네 종류에서 고른다).
+    expect(historyHits).toBe(1);
+    await rent.getByLabel('건물 종류 골라보기').selectOption('오피스');
+    await expect(rent.locator('.rent-trend__chart[data-metric="vacancy"]')).toHaveAttribute('aria-label', /2026년 2분기 5\.5%/);
+    await expect(rent.locator('.rent-trend__chart[data-metric="vacancy"]')).not.toHaveAttribute('aria-label', /10\.08%/);
+    await expect(rent.locator('.rent-trend__note')).toHaveCount(0);
+    await expect(rent.locator('.rent__floors tbody tr').first()).toHaveText(/11층 이상\s*28,620원/);
+    await expect(rent.locator('.rent__step-fill')).toHaveCount(8);
+    expect(historyHits).toBe(1);
+    await rent.getByLabel('건물 종류 골라보기').selectOption('집합상가');
+    await expect(rent.locator('.rent-trend__note')).toHaveCount(1);
+
+    // ④ PC 두 칸 1024 · 한 열 PC 1000 · 360 — 그 폭에서도 비례 · 넘침 0.
+    const widths = phone ? [360] : [1024, 1000];
+    for (const width of widths) {
+      await page.setViewportSize({ width, height: 800 });
+      await expectSteps(rent, `${width}px`);
+      await expectTrend(rent, `${width}px`);
+      await noOverflow(page, rent, `${width}px`);
+      await rent.screenshot({ path: testInfo.outputPath(`ci-rent-${width}.png`) });
+    }
+    await page.setViewportSize(phone ? { width: 412, height: 839 } : { width: 1280, height: 720 });
+
+    // ⑤ 종이 — 막대·그림이 그대로(폭 0 백지 아님) · 색 그대로 · 흐름 덩어리 avoid · A4 흉내 폭 740·703 에서 넘침·잘림 0.
+    await page.emulateMedia({ media: 'print' });
+    await expect(fig).toBeVisible();
+    await expect(fig).toHaveCSS('break-inside', 'avoid');
+    await expect(fig.locator('.rent-trend__bar').first()).toHaveCSS('print-color-adjust', 'exact');
+    await expect(rent.locator('.rent__step-fill').first()).toHaveCSS('background-color', 'rgb(185, 132, 42)');
+    const paper = phone ? [412] : [740, 703];
+    for (const pw of paper) {
+      await page.setViewportSize({ width: pw, height: 900 });
+      await expectSteps(rent, `종이 ${pw}`);
+      await expectTrend(rent, `종이 ${pw}`);
+      await noOverflow(page, rent, `종이 ${pw}`);
+      const figBox = await box(fig);
+      const card = await box(rent);
+      expect(figBox.x + figBox.width, `종이 ${pw} 그림 오른쪽 잘림`).toBeLessThanOrEqual(card.x + card.width + 0.5);
+    }
+    await rent.screenshot({ path: testInfo.outputPath(`ci-rent-print-${testInfo.project.name}.png`) });
+    await page.emulateMedia({ media: null });
+
+    // ⑥ 흐름 함수가 없으면(PGRST202 · mockFloorStack 기본값) 흐름만 빠지고 카드·층별 표·계단 막대는 그대로.
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+    await page.setViewportSize(phone ? { width: 412, height: 839 } : { width: 1280, height: 720 });
+    const rent2 = await openRent(page);
+    await expect(rent2.getByText('㎡당 임대료 74,600원')).toBeVisible();
+    await expect(rent2.locator('.rent__floors')).toBeVisible();
+    await expect(rent2.locator('.rent__step-fill')).toHaveCount(7);
+    await expect(rent2.locator('.rent-trend')).toHaveCount(0);
+    await expect(rent2).not.toContainText('8분기');
   });
 });

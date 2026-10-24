@@ -380,6 +380,25 @@ export type RentStat = {
   floor_rent?: Record<string, number> | null;
 };
 
+/**
+ * 함수 `list_rent_stat_history(p_pnu)` 한 줄 — 조사구역 하나 × 종류 하나 × **분기 하나**(결정 0038 C · V5 · 2026-10-24b).
+ * 임대 카드 줄(`RentStat` — 최신 한 줄)과 같은 조사구역을 같은 길로 찾는다. 값은 공표값 그대로(단위도 `RentStat` 와 같다).
+ * ⓘ 빠진 분기는 줄이 없다 — 화면은 그 분기를 "–" 로 둔다(0 으로 안 그린다).
+ */
+export type RentStatHistory = {
+  /** 부동산원 조사구역 이름 전체 경로 — `RentStat.rone_region_nm` 과 짝짓는 열쇠. */
+  rone_region_nm: string;
+  bld_type: string;
+  /** '2026Q2'. */
+  quarter: string;
+  vacancy_rate: number | null;
+  /** 천원/㎡(공표 단위 그대로). */
+  rent_per_m2: number | null;
+  /** 투자수익률(%) · 분기 값. 음수도 값이다. */
+  yield_rate: number | null;
+  income_yield_rate: number | null;
+};
+
 // ── 업종 분포 (결정 0014 "상권 지표 계산" 1단계) ────────────────────────────
 //
 // ⚠️ 여기 오는 값은 **추정이 아니다.** 상권정보에 등록된 점포를 그대로 센 개수다.

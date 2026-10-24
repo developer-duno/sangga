@@ -584,10 +584,14 @@ class TestAnonExposure:
             # 층 목록 업종 띠(2026-10-24a · 결정 0038 D · V4). 점포 표 unit_business 는 **여기 없다** —
             # 이 땅의 (층, 대분류)별 점포 수만 나간다.
             "api.list_floor_industry",
+            # 상권 임대 동향의 8분기 흐름(2026-10-24b · 결정 0038 C · V5). 표 rent_stat 은 **여기 없다** —
+            # 조사구역 이름과 분기별 공표 통계값만 나간다.
+            "api.list_rent_stat_history",
         )
-        # 읽기 4 + 부르기 27 = `--check` 총계 31(2026-10-12a 업종 비중 비교로 30 → 31 · 2026-10-13a 중분류로 31 → 32 ·
-        # 2026-10-18a 결정 0041 로 참고 시세·성적표 둘을 빼 32 → 30 · 2026-10-24a 층 목록 업종 띠로 30 → 31).
-        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 31
+        # 읽기 4 + 부르기 28 = `--check` 총계 32(2026-10-12a 업종 비중 비교로 30 → 31 · 2026-10-13a 중분류로 31 → 32 ·
+        # 2026-10-18a 결정 0041 로 참고 시세·성적표 둘을 빼 32 → 30 · 2026-10-24a 층 목록 업종 띠로 30 → 31 ·
+        # 2026-10-24b 임대 8분기 흐름으로 31 → 32).
+        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 32
 
     def test_pending_list_is_empty_after_2026_09_05a(self):
         """⛔ **비어 있어야 한다** — 잔존 노출 9개는 2026-09-05a 로 닫혔다.

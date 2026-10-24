@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { RENT_STATS_FN } from '../lib/appConstants';
+import { RENT_HISTORY_FN, RENT_STATS_FN } from '../lib/appConstants';
 import { SECTION_PLAN, type SectionPlan } from '../lib/sectionCards';
 import { SectionCard } from './SectionCard';
 import {
@@ -11,7 +11,16 @@ import {
   toRentRows,
   typeOptions,
 } from '../lib/rentStats';
-import type { RentStat } from '../types';
+import {
+  isRentHistoryList,
+  RENT_TREND_QUARTERS,
+  rentStepWidths,
+  rentTrend,
+  TREND_GAP,
+  TREND_GAP_NOTE,
+  type RentTrend,
+} from '../lib/rentViz';
+import type { RentStat, RentStatHistory } from '../types';
 import { takePrefetched, type RpcResult, type SidePrefetch } from '../lib/sidePrefetch';
 
 /**
@@ -71,6 +80,11 @@ export function RentStatSection({
   const [rows, setRows] = useState<RentStat[] | null>(null);
   /** 고른 건물 종류. null = 아직 안 골랐다(그때는 있는 것 중 첫째를 본다). */
   const [picked, setPicked] = useState<string | null>(null);
+  /**
+   * 8분기 흐름의 재료(결정 0038 C · V5 — 네 종류 × 전 분기를 **한 번에** 받는다 · 종류를 바꿀 때 다시 안 묻는다).
+   * null = 아직 안 왔거나 못 읽었다(함수 없음 PGRST202 · 오류 · 모양 이상) — 그때는 흐름만 안 그린다(카드는 선다).
+   */
+  const [history, setHistory] = useState<RentStatHistory[] | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -78,6 +92,7 @@ export function RentStatSection({
     // 붙어 보이고, 그 짧은 순간이 그대로 틀린 정보다(다른 카드들과 같은 원칙).
     setRows(null);
     setPicked(null);
+    setHistory(null);
 
     // 부모가 먼저 보내 둔 이 필지의 답이 있으면 그것을 받는다(`lib/sidePrefetch.ts`).
     const req: PromiseLike<RpcResult> =
@@ -94,6 +109,19 @@ export function RentStatSection({
         return;
       }
       setRows(data);
+    });
+
+    // 8분기 흐름(결정 0038 V5) — 곁 카드 미리 부르기의 일곱째. 실패는 흐름만 조용히 뺀다(카드는 위 답으로 선다).
+    const histReq: PromiseLike<RpcResult> =
+      takePrefetched(prefetch, RENT_HISTORY_FN, pnu) ??
+      supabase.rpc(RENT_HISTORY_FN, { p_pnu: pnu });
+    histReq.then(({ data, error }) => {
+      if (cancelled) return;
+      if (error || !isRentHistoryList(data)) {
+        console.warn('상권 임대 8분기 흐름 조회 실패 — 흐름 없이 표시합니다', error ?? data);
+        return;
+      }
+      setHistory(data);
     });
 
     return () => {
@@ -160,6 +188,8 @@ export function RentStatSection({
   // 그 밖의 종류(부동산원이 늘리는 날)는 기준을 모르므로 아무 말도 붙이지 않는다.
   const isShop = bldType === '집합상가' || bldType === '중대형상가' || bldType === '소규모상가';
   const isOffice = bldType === '오피스';
+  // 카드 줄 → 그 줄의 원본(최신 한 줄). 같은 조사구역·같은 종류면 값도 같다(상권이 둘이어도 조사구역 값은 하나).
+  const statOf = (regionNm: string) => rows.find((s) => s.bld_type === bldType && s.rone_region_nm === regionNm);
 
   return (
     <SectionCard plan={plan} className="rent" summary={summary}>
@@ -199,50 +229,64 @@ export function RentStatSection({
         <p className="rent__none">이 종류는 이번 조사에서 값이 나오지 않았습니다.</p>
       ) : (
         <ul className="rent__rows">
-          {shown.map((r) => (
-            <li key={r.key}>
-              <span className="rent__where">{r.districtNm}</span>
-              {/*
-                우리 상권 이름과 부동산원 조사구역 이름은 **다른 이름**이라 함께 적는다.
-                한 상권이 조사구역 둘에 이어져 있으면 같은 상권 아래 줄이 둘 서는데, 이
-                이름이 없으면 사람은 같은 것을 두 번 보는 줄 안다.
-              */}
-              <span className="rent__scope">부동산원 조사구역 {r.regionNm}</span>
-              <span className="rent__vals">
-                {r.metrics.map((m) => (
-                  <span className="rent__val" key={m.key}>
-                    {/* 한 덩어리 글자로 낸다 — 조각으로 쪼개면 화면에는 같아 보여도
-                        "공실률 3.5%"를 한 낱말로 찾는 시험이 못 찾는다. */}
-                    <strong className={`rent__num rent__num--${m.key}`}>{`${m.label} ${m.value}`}</strong>
-                  </span>
-                ))}
-              </span>
-              {/*
-                층별 표 — **이 줄(조사구역 × 보는 중인 종류) 바로 아래**에 선다. 줄이 여럿이면
-                표도 여럿이라 어느 조사구역의 표인지 섞이지 않는다(결정 0031).
-                ⛔ 머리글에 "이 건물 값이 아님"을 박는다 — 표 모양이 층 목록과 닮아 이 건물의
-                   층 임대료로 읽히기 쉽다. 없거나 모양이 이상하면 이 표만 빠진다.
-              */}
-              {r.floorRents.length > 0 && (
-                <table className="rent__floors">
-                  <caption className="rent__floors-cap">
-                    층별 ㎡당 월 임대료 — 조사 상권 평균, 이 건물 값이 아님
-                  </caption>
-                  <tbody>
-                    {r.floorRents.map((f) => (
-                      <tr key={f.key} data-floor={f.key}>
-                        <th scope="row">{f.label}</th>
-                        <td>{f.value}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-              {/* ⛔ 분기 도장을 지우지 말 것 — 줄마다 최신 분기가 다를 수 있고, 임대 자료는
-                  "언제 것인가"가 값만큼 중요하다. 못 읽었으면 지어내지 않고 뺀다. */}
-              {r.quarter && <span className="rent__quarter">{r.quarter} 조사</span>}
-            </li>
-          ))}
+          {shown.map((r) => {
+            const stat = statOf(r.regionNm);
+            const steps = rentStepWidths(stat?.floor_rent);
+            const trend = rentTrend(history, stat);
+            return (
+              <li key={r.key}>
+                <span className="rent__where">{r.districtNm}</span>
+                {/*
+                  우리 상권 이름과 부동산원 조사구역 이름은 **다른 이름**이라 함께 적는다.
+                  한 상권이 조사구역 둘에 이어져 있으면 같은 상권 아래 줄이 둘 서는데, 이
+                  이름이 없으면 사람은 같은 것을 두 번 보는 줄 안다.
+                */}
+                <span className="rent__scope">부동산원 조사구역 {r.regionNm}</span>
+                <span className="rent__vals">
+                  {r.metrics.map((m) => (
+                    <span className="rent__val" key={m.key}>
+                      {/* 한 덩어리 글자로 낸다 — 조각으로 쪼개면 화면에는 같아 보여도
+                          "공실률 3.5%"를 한 낱말로 찾는 시험이 못 찾는다. */}
+                      <strong className={`rent__num rent__num--${m.key}`}>{`${m.label} ${m.value}`}</strong>
+                    </span>
+                  ))}
+                </span>
+                {/*
+                  층별 표 — **이 줄(조사구역 × 보는 중인 종류) 바로 아래**에 선다. 줄이 여럿이면
+                  표도 여럿이라 어느 조사구역의 표인지 섞이지 않는다(결정 0031).
+                  ⛔ 머리글에 "이 건물 값이 아님"을 박는다 — 표 모양이 층 목록과 닮아 이 건물의
+                     층 임대료로 읽히기 쉽다. 없거나 모양이 이상하면 이 표만 빠진다.
+                */}
+                {r.floorRents.length > 0 && (
+                  <table className="rent__floors">
+                    <caption className="rent__floors-cap">
+                      층별 ㎡당 월 임대료 — 조사 상권 평균, 이 건물 값이 아님
+                    </caption>
+                    <tbody>
+                      {r.floorRents.map((f) => {
+                        const w = steps.get(f.key);
+                        return (
+                          <tr key={f.key} data-floor={f.key}>
+                            <th scope="row">{f.label}</th>
+                            <td>{f.value}</td>
+                            {/* 계단 막대(결정 0038 C · V5) — 길이 = 이 표에서 가장 비싼 구간 대비(값은 바로 옆 글 그대로라
+                                읽는 기기에는 숨긴다 · §2-1). 상권 평균 색(호박) · 층 목록 막대(파랑)와 다른 색 · 이 표 안에만. */}
+                            <td className="rent__step" aria-hidden="true">
+                              {w !== undefined && <span className="rent__step-fill" style={{ width: `${w}%` }} />}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+                {/* ⛔ 분기 도장을 지우지 말 것 — 줄마다 최신 분기가 다를 수 있고, 임대 자료는
+                    "언제 것인가"가 값만큼 중요하다. 못 읽었으면 지어내지 않고 뺀다. */}
+                {r.quarter && <span className="rent__quarter">{r.quarter} 조사</span>}
+                {trend && <RentTrendFigure trend={trend} />}
+              </li>
+            );
+          })}
         </ul>
       )}
 
@@ -314,5 +358,61 @@ export function RentStatSection({
       </ul>
       <p className="rent__src">출처: 한국부동산원 상업용부동산 임대동향조사.</p>
     </SectionCard>
+  );
+}
+
+/**
+ * 8분기 흐름 — 공실률 · ㎡당 임대료 · 투자수익률 작은 그림 셋(결정 0038 C · V5 · 👤 2026-10-17 「나」).
+ *
+ * ⛔ **그림마다 제 눈금**(§2-7 — 한 눈금에 자료 하나 · 셋을 한 축에 올리지 않는다) · 눈금 글은 그림 머리의 HTML 이다.
+ * ⛔ 상권 평균이다 — 머리 글이 「조사 상권 평균, 이 건물 값이 아님」을 박는다(§2-5 · 절대 규칙 5).
+ * ⛔ 없는 분기는 막대 대신 「–」(0 막대가 아니다) + 까닭 한 줄 · 0 과 음수는 값이라 0 선에서 그린다.
+ * ⓘ 분기마다 값은 옆 글에 없으므로 그림마다 `role="img"` + `aria-label`(§2-1) · 막대마다 `title`(마우스는 덤).
+ * ⓘ 크기는 % 로만(DOM 안 잼 — 접힌 카드·종이 · §2-3) · 막대는 CSS(새 라이브러리 0 · §2-2).
+ */
+function RentTrendFigure({ trend }: { trend: RentTrend }) {
+  return (
+    <figure className="rent-trend">
+      <figcaption className="rent-trend__cap">
+        {`최근 ${RENT_TREND_QUARTERS}분기 흐름 — 조사 상권 평균, 이 건물 값이 아님`}
+        <span className="rent-trend__dir">{`왼쪽 ${trend.first} → 오른쪽 ${trend.last}`}</span>
+      </figcaption>
+      <div className="rent-trend__charts">
+        {trend.charts.map((c) => (
+          <div className="rent-trend__chart" key={c.key} data-metric={c.key} role="img" aria-label={c.aria}>
+            <p className="rent-trend__name">
+              {c.label}
+              <span className="rent-trend__scale">{c.scale}</span>
+            </p>
+            <div className="rent-trend__plot">
+              <span className="rent-trend__zero" style={{ bottom: `${c.zero}%` }} />
+              <div
+                className="rent-trend__cols"
+                style={{ gridTemplateColumns: `repeat(${c.bars.length}, minmax(0, 1fr))` }}
+              >
+                {c.bars.map((b) => (
+                  <span
+                    className="rent-trend__col"
+                    key={b.quarter}
+                    data-quarter={b.quarter}
+                    title={`${b.label} ${b.text ?? '공표값 없음'}`}
+                  >
+                    {b.geom ? (
+                      <span
+                        className={`rent-trend__bar${b.geom.neg ? ' rent-trend__bar--neg' : ''}`}
+                        style={{ bottom: `${b.geom.bottom}%`, height: `${b.geom.height}%` }}
+                      />
+                    ) : (
+                      <span className="rent-trend__gap">{TREND_GAP}</span>
+                    )}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+      {trend.hasGap && <p className="rent-trend__note">{TREND_GAP_NOTE}</p>}
+    </figure>
   );
 }

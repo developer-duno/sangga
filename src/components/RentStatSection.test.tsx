@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import type { RentStat } from '../types';
 import { RENT_NO_COORD_TEXT } from '../lib/rentStats';
@@ -20,7 +20,15 @@ import { RENT_NO_COORD_TEXT } from '../lib/rentStats';
  *     `{ pnu: … }` 로 잘못 불러도 시험은 전부 초록이고 라이브만 PGRST202 가 난다.
  */
 
-const responses = { rent: { data: null as unknown, error: null as unknown } };
+const responses = {
+  rent: { data: null as unknown, error: null as unknown },
+  /**
+   * 8분기 흐름(`list_rent_stat_history` · 결정 0038 V5). 기본은 **함수가 없는 상태**(PGRST202) — 이 파일의 옛 시험들은
+   * 흐름 없이 카드가 그대로 서는지를 본다. 흐름을 보는 시험만 덮어쓴다.
+   */
+  history: null as unknown as PromiseLike<{ data: unknown; error: unknown }> | { data: unknown; error: unknown },
+};
+const HISTORY_MISSING = { data: null, error: { code: 'PGRST202' } };
 
 /** 마지막 rpc 호출들. 함수 이름과 **인자 이름·값**을 여기서 확인한다. */
 const rpcCalls: Array<{ fn: string; args: unknown }> = [];
@@ -29,6 +37,7 @@ vi.mock('../lib/supabase', () => ({
   supabase: {
     rpc: (fn: string, args?: unknown) => {
       rpcCalls.push({ fn, args });
+      if (fn === 'list_rent_stat_history') return Promise.resolve(responses.history);
       return Promise.resolve(responses.rent);
     },
   },
@@ -41,7 +50,10 @@ const { resetDataFreshnessCache } = await import('../lib/loadDataFreshness');
  * 이 카드가 부른 것만 — 카드 머리 날짜 줄(S3)의 신선도 요청은 뺀다(맨 아래 표와 나눠 쓰는 한 번의 요청이라
  * 이 카드의 질문이 아니다). ⓘ 그 요청은 시험마다 새로 나간다(아래 beforeEach 가 보관을 비운다) — 시험 차례에 기대지 않게.
  */
-const cardCalls = () => rpcCalls.filter((c) => c.fn !== 'get_data_freshness');
+const cardCalls = () =>
+  rpcCalls.filter((c) => c.fn !== 'get_data_freshness' && c.fn !== 'list_rent_stat_history');
+/** 8분기 흐름 요청(결정 0038 V5) — 카드 요청과 따로 센다(종류를 바꿔도 다시 안 나가는지 본다). */
+const historyCalls = () => rpcCalls.filter((c) => c.fn === 'list_rent_stat_history');
 
 function stat(over: Partial<RentStat> = {}): RentStat {
   return {
@@ -62,9 +74,14 @@ beforeEach(() => {
   rpcCalls.length = 0;
   resetDataFreshnessCache();
   responses.rent = { data: [stat()], error: null };
+  responses.history = HISTORY_MISSING;
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 /** 카드를 펼친다 — 이 카드는 접힌 채로 선다(첫 화면 펼침 상한 4장). */
 async function openCard() {
@@ -128,6 +145,8 @@ describe('RentStatSection — 조사값이 있을 때', () => {
     await screen.findByText('상권 임대 동향 (부동산원 조사)');
 
     expect(cardCalls()).toEqual([{ fn: 'list_rent_stats', args: { p_pnu: PNU } }]);
+    // 8분기 흐름도 같은 이름의 인자 하나로(결정 0038 V5).
+    await waitFor(() => expect(historyCalls()).toEqual([{ fn: 'list_rent_stat_history', args: { p_pnu: PNU } }]));
   });
 });
 
@@ -525,5 +544,219 @@ describe('RentStatSection — 건물이 바뀔 때', () => {
       { p_pnu: PNU },
       { p_pnu: '1168010100100020000' },
     ]);
+  });
+});
+
+describe('RentStatSection — 계단 막대 · 8분기 흐름 (결정 0038 C · V5)', () => {
+  /** 운영 읽기 값(서울>강남>테헤란로 · 2026-10-24 — 천원/㎡). */
+  const COLLECTIVE = { '1': 74.6, '2': 32.48, '3': 23.54, '4': 23.73, '5': 25.0, '-1': 16.95, '6+': 22.7 };
+  const OFFICE = { '1': 38.99, '2': 31.4, '3': 27.09, '4': 26.6, '5': 26.51, '-1': 13.93, '11+': 28.62, '6-10': 26.8 };
+  const QUARTERS = ['2024Q3', '2024Q4', '2025Q1', '2025Q2', '2025Q3', '2025Q4', '2026Q1', '2026Q2'];
+  /** 집합상가 8분기(운영 읽기 값 — 마지막 분기 = 카드 줄 값) · 오피스 8분기. */
+  const COLL_VAC = [2.79, 2.79, 4.14, 4.31, 7.65, 6.42, 6.74, 6.74];
+  const OFF_VAC = [3.0, 2.43, 2.86, 3.05, 4.07, 3.93, 4.82, 4.56];
+
+  function hist(type: string, vac: number[], over: (i: number) => Record<string, unknown> = () => ({})) {
+    return QUARTERS.map((q, i) => ({
+      rone_region_nm: '서울>강남>테헤란로',
+      bld_type: type,
+      quarter: q,
+      vacancy_rate: vac[i],
+      rent_per_m2: type === '오피스' ? 27.69 : 74.6,
+      yield_rate: type === '오피스' ? 1.1 : 0.82,
+      income_yield_rate: 0.9,
+      ...over(i),
+    }));
+  }
+
+  function twoTypes() {
+    return [
+      stat({ rent_per_m2: 74.6, vacancy_rate: 6.74, floor_rent: COLLECTIVE }),
+      stat({ bld_type: '오피스', vacancy_rate: 4.56, rent_per_m2: 27.69, yield_rate: 1.1, floor_rent: OFFICE }),
+    ];
+  }
+
+  beforeEach(() => {
+    responses.rent = { data: twoTypes(), error: null };
+    responses.history = { data: [...hist('집합상가', COLL_VAC), ...hist('오피스', OFF_VAC)], error: null };
+  });
+
+  const widthOf = (container: HTMLElement, key: string) =>
+    (container.querySelector(`.rent__floors tr[data-floor="${key}"] .rent__step-fill`) as HTMLElement | null)?.style
+      .width ?? null;
+
+  it('★ 층별 표 줄마다 계단 막대 — 길이 = 그 표에서 가장 비싼 구간이 칸 끝 · 읽는 기기엔 숨김 · 글은 그대로', async () => {
+    const { container } = render(<RentStatSection pnu={PNU} />);
+    await openCard();
+
+    expect(widthOf(container, '1')).toBe('100%');
+    expect(parseFloat(widthOf(container, '2') ?? '')).toBeCloseTo((32.48 / 74.6) * 100, 5);
+    expect(parseFloat(widthOf(container, '-1') ?? '')).toBeCloseTo((16.95 / 74.6) * 100, 5);
+    expect(parseFloat(widthOf(container, '6+') ?? '')).toBeCloseTo((22.7 / 74.6) * 100, 5);
+    for (const td of container.querySelectorAll('.rent__step')) expect(td.getAttribute('aria-hidden')).toBe('true');
+    // 글(층 · 금액)은 한 글자도 안 빠졌다.
+    expect(container.querySelector('.rent__floors tr[data-floor="1"]')?.textContent).toBe('1층74,600원');
+  });
+
+  it('★ 오피스 — 11층 이상 · 6~10층 둘 다 막대(세 잣대의 열쇠 규칙 그대로)', async () => {
+    const { container } = render(<RentStatSection pnu={PNU} />);
+    await openCard();
+    fireEvent.change(screen.getByLabelText('건물 종류 골라보기'), { target: { value: '오피스' } });
+
+    expect(widthOf(container, '1')).toBe('100%');
+    expect(parseFloat(widthOf(container, '11+') ?? '')).toBeCloseTo((28.62 / 38.99) * 100, 5);
+    expect(parseFloat(widthOf(container, '6-10') ?? '')).toBeCloseTo((26.8 / 38.99) * 100, 5);
+  });
+
+  it('★ 8분기 흐름 — 그림 셋 · 그림마다 제 눈금 · 막대 높이가 값에 비례 · 이 건물 값 아님 머리 · 분기마다 값은 그림 이름에', async () => {
+    const { container } = render(<RentStatSection pnu={PNU} />);
+    await openCard();
+
+    const fig = await waitFor(() => {
+      const f = container.querySelector('.rent__rows li .rent-trend');
+      expect(f).not.toBeNull();
+      return f!;
+    });
+    expect(fig.querySelector('figcaption')?.textContent).toBe(
+      '최근 8분기 흐름 — 조사 상권 평균, 이 건물 값이 아님왼쪽 2024년 3분기 → 오른쪽 2026년 2분기',
+    );
+    const charts = [...container.querySelectorAll('.rent-trend__chart')];
+    expect(charts.map((c) => c.getAttribute('data-metric'))).toEqual(['vacancy', 'rent', 'yield']);
+    // 그림마다 제 눈금 — 공실률 위 끝 10%(7.65 → 10) · 임대료 100,000원(74.6 → 100) · 수익률 1%(0.82 → 1).
+    expect(charts.map((c) => c.querySelector('.rent-trend__scale')?.textContent)).toEqual([
+      '눈금 0 ~ 10%',
+      '눈금 0 ~ 100,000원',
+      '눈금 0 ~ 1%',
+    ]);
+    const heights = [...charts[0].querySelectorAll('.rent-trend__bar')].map((b) =>
+      parseFloat((b as HTMLElement).style.height),
+    );
+    expect(heights).toHaveLength(8);
+    heights.forEach((h, i) => expect(h).toBeCloseTo(COLL_VAC[i] * 10, 5));
+    expect(charts[0].getAttribute('role')).toBe('img');
+    expect(charts[0].getAttribute('aria-label')).toBe(
+      '공실률 최근 8분기(옛 분기부터): 2024년 3분기 2.79% · 2024년 4분기 2.79% · 2025년 1분기 4.14% · 2025년 2분기 4.31% · ' +
+        '2025년 3분기 7.65% · 2025년 4분기 6.42% · 2026년 1분기 6.74% · 2026년 2분기 6.74%',
+    );
+    // 빠진 분기가 없으면 까닭 줄도 없다.
+    expect(container.querySelector('.rent-trend__note')).toBeNull();
+    // ⛔ 추정·시세 말이 섞이지 않는다.
+    expect(container.textContent).not.toMatch(/추정|시세/);
+  });
+
+  it('★ 종류를 바꾸면 그 종류의 흐름 — 서버를 다시 부르지 않는다(한 번 받은 네 종류에서 고른다)', async () => {
+    const { container } = render(<RentStatSection pnu={PNU} />);
+    await openCard();
+    await waitFor(() => expect(container.querySelector('.rent-trend')).not.toBeNull());
+    expect(historyCalls()).toHaveLength(1);
+
+    fireEvent.change(screen.getByLabelText('건물 종류 골라보기'), { target: { value: '오피스' } });
+    const vac = container.querySelector('.rent-trend__chart[data-metric="vacancy"]');
+    expect(vac?.getAttribute('aria-label')).toContain('2026년 2분기 4.56%');
+    // ⛔ 종류를 섞지 않는다 — 집합상가 공실률이 오피스 그림에 남아 있지 않다.
+    expect(vac?.getAttribute('aria-label')).not.toContain('6.74%');
+    expect(historyCalls()).toHaveLength(1);
+    expect(cardCalls()).toHaveLength(1);
+  });
+
+  it('★ 빠진 분기는 0 막대가 아니라 「–」 + 까닭 한 줄 · 음수 투자수익률은 0 선 아래로', async () => {
+    responses.history = {
+      data: hist('집합상가', COLL_VAC, (i) => (i === 2 ? { vacancy_rate: null } : i === 4 ? { yield_rate: -0.5 } : {}))
+        // 2025Q2 줄은 아예 없다(공표 안 됨).
+        .filter((r) => r.quarter !== '2025Q2'),
+      error: null,
+    };
+    responses.rent = { data: [stat({ vacancy_rate: 6.74, rent_per_m2: 74.6, floor_rent: COLLECTIVE })], error: null };
+    const { container } = render(<RentStatSection pnu={PNU} />);
+    await openCard();
+
+    const vac = await waitFor(() => {
+      const el = container.querySelector('.rent-trend__chart[data-metric="vacancy"]');
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    const gapsOf = (el: Element) =>
+      [...el.querySelectorAll('.rent-trend__col')].filter((c) => c.querySelector('.rent-trend__gap'));
+    expect(gapsOf(vac).map((c) => c.getAttribute('data-quarter'))).toEqual(['2025Q1', '2025Q2']);
+    expect(gapsOf(vac)[0].textContent).toBe('–');
+    expect(vac.querySelectorAll('.rent-trend__bar')).toHaveLength(6);
+    expect(vac.getAttribute('aria-label')).toContain('2025년 1분기 공표값 없음');
+    expect(container.querySelector('.rent-trend__note')?.textContent).toBe(
+      '‘–’ = 그 분기에 부동산원이 이 값을 공표하지 않았습니다(0 이 아닙니다).',
+    );
+    const yld = container.querySelector('.rent-trend__chart[data-metric="yield"]')!;
+    expect(yld.querySelector('.rent-trend__scale')?.textContent).toBe('눈금 -0.5% ~ 1%');
+    const neg = yld.querySelector('.rent-trend__col[data-quarter="2025Q3"] .rent-trend__bar') as HTMLElement;
+    expect(neg.classList.contains('rent-trend__bar--neg')).toBe(true);
+    // 0 선 = 0.5 / 1.5 → 33.33% · 음수 막대는 그 아래로 33.33% 만큼.
+    expect(parseFloat((yld.querySelector('.rent-trend__zero') as HTMLElement).style.bottom)).toBeCloseTo(100 / 3, 5);
+    expect(parseFloat(neg.style.bottom)).toBeCloseTo(0, 5);
+    expect(parseFloat(neg.style.height)).toBeCloseTo(100 / 3, 5);
+  });
+
+  it('★ 흐름 함수가 없으면(PGRST202) 흐름만 빠지고 카드·층별 표·계단 막대는 그대로', async () => {
+    responses.history = HISTORY_MISSING;
+    const { container } = render(<RentStatSection pnu={PNU} />);
+    await openCard();
+    await waitFor(() => expect(historyCalls()).toHaveLength(1));
+    await act(async () => {});
+
+    expect(container.querySelector('.rent-trend')).toBeNull();
+    expect(container.querySelector('.rent__floors')).not.toBeNull();
+    expect(widthOf(container, '1')).toBe('100%');
+    expect(screen.getByText('공실률 6.74%')).toBeTruthy();
+  });
+
+  it.each([
+    ['모양 이상(한 줄 값이 글자)', () => [...hist('집합상가', COLL_VAC), { ...hist('집합상가', COLL_VAC)[0], yield_rate: '1' }]],
+    ['빈 답', () => []],
+    ['마지막 분기 값이 카드 줄과 다름(다른 조사구역)', () => hist('집합상가', COLL_VAC, (i) => (i === 7 ? { vacancy_rate: 9.99 } : {}))],
+    ['같은 분기 둘', () => [...hist('집합상가', COLL_VAC), hist('집합상가', COLL_VAC)[3]]],
+    ['다른 조사구역뿐', () => hist('집합상가', COLL_VAC).map((r) => ({ ...r, rone_region_nm: '서울>강남>신사역' }))],
+  ])('★ %s → 흐름만 조용히 빠진다', async (_name, data) => {
+    responses.history = { data: data(), error: null };
+    const { container } = render(<RentStatSection pnu={PNU} />);
+    await openCard();
+    await waitFor(() => expect(historyCalls()).toHaveLength(1));
+    await act(async () => {});
+
+    expect(container.querySelector('.rent-trend')).toBeNull();
+    expect(container.querySelector('.rent__floors')).not.toBeNull();
+  });
+
+  it('★ 필지가 바뀌면 늦게 온 옛 필지 흐름 답은 버린다(cancelled)', async () => {
+    let resolveOld: (v: { data: unknown; error: unknown }) => void = () => {};
+    responses.history = new Promise((r) => {
+      resolveOld = r;
+    });
+    const { rerender, container } = render(<RentStatSection pnu={PNU} />);
+    await openCard();
+
+    // 새 필지: 카드 답은 같은 꼴 · 흐름은 실패.
+    responses.history = HISTORY_MISSING;
+    rerender(<RentStatSection pnu="1168010100100020000" />);
+    await screen.findByText('상권 임대 동향 (부동산원 조사)');
+    // 늦게 온 **옛 필지** 흐름 답 — 새 필지 카드에 붙으면 안 된다.
+    await act(async () => {
+      resolveOld({ data: [...hist('집합상가', COLL_VAC), ...hist('오피스', OFF_VAC)], error: null });
+    });
+    if (!container.querySelector('.rent__rows')) fireEvent.click(screen.getByRole('button', { name: /상권 임대 동향/ }));
+    expect(container.querySelector('.rent__rows')).not.toBeNull();
+    expect(container.querySelector('.rent-trend')).toBeNull();
+    expect(historyCalls().map((c) => c.args)).toEqual([{ p_pnu: PNU }, { p_pnu: '1168010100100020000' }]);
+  });
+
+  it('★ 받아 둔 흐름이 있어도 필지가 바뀌면 비운다(새 필지 흐름이 실패해도 옛 그림이 안 남는다)', async () => {
+    const { rerender, container } = render(<RentStatSection pnu={PNU} />);
+    await openCard();
+    await waitFor(() => expect(container.querySelector('.rent-trend')).not.toBeNull());
+
+    responses.history = HISTORY_MISSING;
+    rerender(<RentStatSection pnu="1168010100100020000" />);
+    await waitFor(() => expect(historyCalls()).toHaveLength(2));
+    await act(async () => {});
+    if (!container.querySelector('.rent__rows')) fireEvent.click(screen.getByRole('button', { name: /상권 임대 동향/ }));
+    expect(container.querySelector('.rent__rows')).not.toBeNull();
+    expect(container.querySelector('.rent-trend')).toBeNull();
   });
 });
