@@ -164,6 +164,9 @@ describe('rentTrend — 카드 줄 하나의 8분기 흐름', () => {
     ['분기를 못 읽음', eight(), stat({ quarter: '2026-2' })],
     ['같은 분기 둘', [...eight(), h('2025Q3')], stat()],
     ['마지막 분기 값이 카드 줄과 다름', eight((_q, i) => (i === 7 ? { rent_per_m2: 70 } : {})), stat()],
+    // 짝 대조는 세 값 하나하나를 본다 — 하나만 달라도 버린다(보완 1 · 변이 X10: 수익률 조건을 지워도 초록이던 구멍).
+    ['마지막 분기 투자수익률만 다름', eight((_q, i) => (i === 7 ? { yield_rate: 1.9 } : {})), stat()],
+    ['마지막 분기 공실률만 다름', eight((_q, i) => (i === 7 ? { vacancy_rate: 6.75 } : {})), stat()],
     ['마지막 분기 줄이 없음', eight().slice(0, 7), stat()],
     ['다른 조사구역', eight().map((r) => ({ ...r, rone_region_nm: '서울>강남>신사역' })), stat()],
     ['창 안 분기가 하나', [eight()[7]], stat()],
@@ -191,6 +194,9 @@ describe('isRentHistoryList — 응답 모양', () => {
     ['값이 글자', [h('2026Q2', { yield_rate: '1' as unknown as number })]],
     ['조사구역 없음', [{ ...h('2026Q2'), rone_region_nm: null }]],
     ['분기 없음', [{ ...h('2026Q2'), quarter: undefined }]],
+    // 정상 줄 여덟 + 이상한 줄 하나 — 한 줄이라도 이상하면 통째로 거부(보완 1 · 변이 X11: every → some 이 초록이던 구멍).
+    ['정상 줄 + 이상한 줄 하나', [...eight(), { ...h('2026Q2'), vacancy_rate: '6.74' }]],
+    ['이상한 줄이 맨 앞', [{ ...h('2024Q3'), bld_type: 3 }, ...eight()]],
   ])('%s → 거부', (_n, x) => {
     expect(isRentHistoryList(x)).toBe(false);
   });

@@ -229,10 +229,13 @@ export function RentStatSection({
         <p className="rent__none">이 종류는 이번 조사에서 값이 나오지 않았습니다.</p>
       ) : (
         <ul className="rent__rows">
-          {shown.map((r) => {
+          {shown.map((r, i) => {
             const stat = statOf(r.regionNm);
             const steps = rentStepWidths(stat?.floor_rent);
-            const trend = rentTrend(history, stat);
+            // 땅이 상권 둘 이상에 걸쳐 **같은 조사구역**(보는 종류는 하나)에 이어지면 흐름 그림은 첫 줄 아래 **한 번만**
+            // (👤 2026-10-25 — 같은 그림이 되풀이되지 않게 · 값 줄은 상권마다 그대로). 다른 조사구역이면 줄마다 따로.
+            const firstOfRegion = shown.findIndex((x) => x.regionNm === r.regionNm) === i;
+            const trend = firstOfRegion ? rentTrend(history, stat) : null;
             return (
               <li key={r.key}>
                 <span className="rent__where">{r.districtNm}</span>

@@ -724,6 +724,49 @@ describe('RentStatSection — 계단 막대 · 8분기 흐름 (결정 0038 C · 
     expect(container.querySelector('.rent__floors')).not.toBeNull();
   });
 
+  it('★ 상권 둘이 같은 조사구역이면 흐름 그림은 첫 줄 아래 한 번만 · 값 줄은 상권마다 그대로 (👤 2026-10-25)', async () => {
+    responses.rent = {
+      data: [
+        stat({ district_nm: '역삼역', vacancy_rate: 6.74, rent_per_m2: 74.6, floor_rent: COLLECTIVE }),
+        stat({ district_nm: '강남역', vacancy_rate: 6.74, rent_per_m2: 74.6, floor_rent: COLLECTIVE }),
+      ],
+      error: null,
+    };
+    const { container } = render(<RentStatSection pnu={PNU} />);
+    await openCard();
+    await waitFor(() => expect(container.querySelector('.rent-trend')).not.toBeNull());
+
+    const rows = [...container.querySelectorAll('.rent__rows > li')];
+    expect(rows.map((li) => li.querySelector('.rent__where')?.textContent)).toEqual(['역삼역', '강남역']);
+    expect(container.querySelectorAll('.rent-trend')).toHaveLength(1);
+    expect(rows[0].querySelector('.rent-trend')).not.toBeNull();
+    expect(rows[1].querySelector('.rent-trend')).toBeNull();
+    // 값 줄·층별 표는 두 줄 다 그대로.
+    expect(container.querySelectorAll('.rent__rows .rent__floors')).toHaveLength(2);
+    expect(screen.getAllByText('공실률 6.74%')).toHaveLength(2);
+  });
+
+  it('★ 상권 둘이 다른 조사구역이면 흐름 그림은 줄마다 따로(둘)', async () => {
+    const OTHER = '서울>강남>강남대로';
+    responses.rent = {
+      data: [
+        stat({ district_nm: '역삼역', vacancy_rate: 6.74, rent_per_m2: 74.6, floor_rent: COLLECTIVE }),
+        stat({ district_nm: '강남역', rone_region_nm: OTHER, vacancy_rate: 6.74, rent_per_m2: 74.6, floor_rent: COLLECTIVE }),
+      ],
+      error: null,
+    };
+    responses.history = {
+      data: [...hist('집합상가', COLL_VAC), ...hist('집합상가', COLL_VAC).map((r) => ({ ...r, rone_region_nm: OTHER }))],
+      error: null,
+    };
+    const { container } = render(<RentStatSection pnu={PNU} />);
+    await openCard();
+    await waitFor(() => expect(container.querySelectorAll('.rent-trend')).toHaveLength(2));
+
+    const rows = [...container.querySelectorAll('.rent__rows > li')];
+    expect(rows.map((li) => li.querySelectorAll('.rent-trend').length)).toEqual([1, 1]);
+  });
+
   it('★ 필지가 바뀌면 늦게 온 옛 필지 흐름 답은 버린다(cancelled)', async () => {
     let resolveOld: (v: { data: unknown; error: unknown }) => void = () => {};
     responses.history = new Promise((r) => {
