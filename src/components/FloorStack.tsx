@@ -1046,7 +1046,7 @@ export function FloorStack({
           <p className="floor__ind-unknown">{unknownStoresText(industryView.unknown)}</p>
         )}
         {industryView?.placeless && (
-          <p className="floor__ind-placeless">{placelessStoresText(industryView.placeless)}</p>
+          <p className="floor__ind-placeless">{placelessStoresText(industryView.placeless, head.bld_cnt_in_pnu > 1)}</p>
         )}
         {orphanLine && <p className="floor__units-orphan">{orphanLine}</p>}
         {hasAttachedUnits && (

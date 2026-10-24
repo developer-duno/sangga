@@ -177,8 +177,13 @@ export function unknownStoresText(band: FloorBand): string {
   );
 }
 
-/** 카드 아래 「자리 없는 점포」 한 줄(👤 결정 D) — `자리 없는 점포 3곳 — 이 건물 층 목록에 없는 층에 적힌 가게 (7층 2곳 · 지하 3층 1곳)`. */
-export function placelessStoresText(p: NonNullable<FloorIndustryView['placeless']>): string {
+/**
+ * 카드 아래 「자리 없는 점포」 한 줄(👤 결정 D) — `자리 없는 점포 3곳 — 이 건물 층 목록에 없는 층에 적힌 가게 (7층 2곳 · 지하 3층 1곳)`.
+ * 한 땅에 건물이 여러 동이면(`multiDong` — 층 줄의 `bld_cnt_in_pnu > 1`) 「 · 이 땅의 다른 동 가게일 수 있습니다」를 더한다(👤 2026-10-24 ·
+ * 점포는 땅 단위라 옆 동 층의 가게가 여기 든다). 한 동짜리 땅은 그대로.
+ */
+export function placelessStoresText(p: NonNullable<FloorIndustryView['placeless']>, multiDong = false): string {
   const floors = p.floors.map((f) => `${formatFloor(f.floor_no, null)} ${f.n.toLocaleString('ko-KR')}곳`).join(' · ');
-  return `자리 없는 점포 ${p.total.toLocaleString('ko-KR')}곳 — 이 건물 층 목록에 없는 층에 적힌 가게 (${floors})`;
+  const dong = multiDong ? ' · 이 땅의 다른 동 가게일 수 있습니다' : '';
+  return `자리 없는 점포 ${p.total.toLocaleString('ko-KR')}곳 — 이 건물 층 목록에 없는 층에 적힌 가게${dong} (${floors})`;
 }

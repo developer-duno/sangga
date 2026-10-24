@@ -3205,6 +3205,16 @@ describe('FloorStack — 층 목록 업종 띠 (결정 0038 D · V4)', () => {
     expect(list.compareDocumentPosition(legend) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it('★ 한 땅에 건물이 여러 동이면 「자리 없는 점포」 줄에 「이 땅의 다른 동 가게일 수 있습니다」(👤 2026-10-24) — 한 동이면 그대로(위 시험)', async () => {
+    responses.floors = { data: FLOORS().map((f) => ({ ...f, bld_cnt_in_pnu: 2 })), error: null };
+    responses.floorIndustry = () => ({ data: ROWS, error: null });
+    const { container } = render(<FloorStack building={building({ bld_cnt_in_pnu: 2 })} />);
+    await waitFor(() => expect(container.querySelector('.floor__ind-placeless')).not.toBeNull());
+    expect(container.querySelector('.floor__ind-placeless')?.textContent).toBe(
+      '자리 없는 점포 2곳 — 이 건물 층 목록에 없는 층에 적힌 가게 · 이 땅의 다른 동 가게일 수 있습니다 (7층 2곳)',
+    );
+  });
+
   it('★ 답이 오기 전엔 점포 있는 층에만 빈 자리(안 보이는 꼴 · aria-hidden) — 답이 오면 그 자리에 띠', async () => {
     let release: (v: { data: unknown; error: unknown }) => void = () => {};
     responses.floorIndustry = () =>

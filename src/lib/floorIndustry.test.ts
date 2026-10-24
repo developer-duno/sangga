@@ -195,6 +195,13 @@ describe('글 — 범례 · 층 모름 · 자리 없는 점포 · 띠 이름', (
     expect(placelessStoresText({ total: 3, floors: [{ floor_no: 7, n: 2 }, { floor_no: -3, n: 1 }] })).toBe(
       '자리 없는 점포 3곳 — 이 건물 층 목록에 없는 층에 적힌 가게 (7층 2곳 · 지하 3층 1곳)',
     );
+    // 한 땅에 건물이 여러 동이면 한마디 더(👤 2026-10-24) · 한 동이면(기본·false) 그대로.
+    expect(placelessStoresText({ total: 53, floors: [{ floor_no: 12, n: 53 }] }, true)).toBe(
+      '자리 없는 점포 53곳 — 이 건물 층 목록에 없는 층에 적힌 가게 · 이 땅의 다른 동 가게일 수 있습니다 (12층 53곳)',
+    );
+    expect(placelessStoresText({ total: 53, floors: [{ floor_no: 12, n: 53 }] }, false)).toBe(
+      '자리 없는 점포 53곳 — 이 건물 층 목록에 없는 층에 적힌 가게 (12층 53곳)',
+    );
     expect(bandLabel(1, null, v.byFloor.get(1)!)).toBe('1층 가게 업종(대분류): 음식 12곳 · 소매 1곳 · 과학·기술 1곳');
     expect(bandLabel(-1, null, v.byFloor.get(-1)!)).toBe('지하 1층 가게 업종(대분류): 음식 3곳');
   });
@@ -204,6 +211,7 @@ describe('글 — 범례 · 층 모름 · 자리 없는 점포 · 띠 이름', (
       FLOOR_INDUSTRY_LEGEND_LEAD,
       unknownStoresText(v.unknown!),
       placelessStoresText(v.placeless!),
+      placelessStoresText(v.placeless!, true),
       ...[...v.byFloor.entries()].map(([no, b]) => bandLabel(no, null, b)),
     ];
     for (const t of texts) {
