@@ -5781,6 +5781,86 @@ grant execute on function api.get_parcel_land_price(text) to anon, authenticated
 -- ⛔ public.get_parcel_land_price 는 끝까지 닫아 둔다 — 통과 함수가 security definer 다.
 
 -- =====================================================================
+-- 함수: list_floor_industry — 층 목록의 층별 업종 띠 (2026-10-24a · 결정 0038 D · V4)
+-- =====================================================================
+-- 마이그레이션 supabase/migrations/2026-10-24a_floor_industry.sql 머리말 참조.
+-- 층 목록 카드의 층 줄마다 면적 막대 아래 **가는 업종 띠**를 그린다(결정 0038 D · V4) — 색 = 소진공 대분류 ·
+-- 길이 = 이 땅 점포 수. 층 줄의 「점포 N」(v_floor_stack.store_cnt)과 **같은 행 집합**을 센다 — 같은 땅(pnu) ·
+-- 같은 분기(snapshot_release.published_ym) · 같은 층 번호. 그래서 층 목록에 있는 층이면 그 층 줄들의 합이 곧
+-- 그 층의 store_cnt 다(화면이 그 합을 대조해 어긋나면 띠를 통째로 버린다).
+-- 층 번호가 없는 가게(floor_no null — 원본에 층이 비었거나 읽을 수 없거나, 숫자 없이 '지'만 적힌 가게)는
+-- **한 묶음(na)** 으로 floor_no null 줄에 센다 — 숨기지 않는다(화면 카드 아래 「층 모름 N곳」).
+-- ⓘ 층 목록(층별개요)에 없는 층 번호의 가게도 그 층 번호 그대로 나간다 — 「자리 없는 점포」로 묶는 것은 화면이 한다
+--   (이 함수는 건물을 모르고 땅만 안다 — 같은 땅 여러 동이면 동마다 같은 답이다 · store_cnt 와 같은 D등급).
+-- ⓘ 업종은 대분류(cat_l_cd · cat_l_nm)까지만 나간다 — 상호·소분류·biz_no·좌표는 한 글자도 안 나간다.
+-- ⚠️ 파라미터를 p_ 로 시작하는 이유: 반환 칸 이름(floor_no·store_cnt …)과 표 칸이 겹쳐도 인자가 섞이지 않게.
+create or replace function list_floor_industry(p_pnu text)
+returns table (
+  floor_no  smallint,
+  cat_l_cd  text,
+  cat_l_nm  text,
+  store_cnt integer
+)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  -- ⛔ **파라미터를 그대로 쓰지 말 것.** 서명은 text 인데 pnu 칸은 char(19) 다.
+  --    `char칸 = text파라미터` 는 칸 쪽이 text 로 캐스트돼 **색인이 무력해진다**
+  --    (2026-08-16b 라이브 실측: 459.8ms ↔ 0.796ms). 안에서 char(19) 로 받아 쓴다.
+  v_pnu char(19) := p_pnu;
+begin
+  -- ⓘ 반환 칸 이름이 plpgsql 변수가 되므로 표 칸은 늘 별칭(u.·r.)을 붙여 읽는다(이름 충돌 오류 방지).
+  -- ⓘ idx_ub_pnu_cat (pnu, snapshot_ym) include (cat_l_cd, cat_l_nm, …, floor_no …) 하나로 힙에 안 간다
+  --   (2026-10-24 운영 읽기 실측 강남파이낸스센터 115점포: Index Only Scan · Heap Fetches 0 · 2.3ms).
+  -- ⛔ 분기 조건은 v_floor_stack 의 store_cnt 와 글자 그대로 같다 — 다르면 띠 합이 「점포 N」과 어긋난다.
+  return query
+    select u.floor_no,
+           u.cat_l_cd::text,
+           u.cat_l_nm,
+           count(*)::int
+      from unit_business u
+     where u.pnu = v_pnu
+       and u.snapshot_ym = (select r.published_ym from snapshot_release r)
+     group by u.floor_no, u.cat_l_cd, u.cat_l_nm
+     order by u.floor_no desc nulls last, u.cat_l_cd nulls last, u.cat_l_nm nulls last;
+end;
+$$;
+
+comment on function list_floor_industry(text) is
+  '이 필지의 점포를 (층, 소진공 대분류)로 센다 — 층 목록 카드의 층별 업종 띠(결정 0038 D · V4 · 2026-10-24a). '
+  '분기 = snapshot_release.published_ym · 같은 땅·같은 분기·같은 층이라 층 목록에 있는 층이면 합이 v_floor_stack.store_cnt 와 같다. '
+  '층 번호가 없는 가게는 floor_no null 줄 하나의 묶음(na) · 층 목록에 없는 층 번호는 그대로 나가고 화면이 「자리 없는 점포」로 묶는다. '
+  '점포는 땅 단위라 같은 땅 여러 동이면 동마다 같은 답이다(D등급). '
+  'security definer (unit_business 가 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. 나가는 것은 층·대분류·개수뿐이다).';
+
+-- ⚠️ create or replace 는 권한을 유지하지만, 대시보드가 같은 함수를 다시 만들면
+--    Supabase 기본 권한이 anon 을 자동으로 붙인다. 만든 자리에서 다시 닫는다.
+revoke all on function list_floor_industry(text) from public, anon, authenticated;
+
+-- 화면이 실제로 부르는 것. public 은 REST 노출에서 빠져 있어(2026-08-24 옛 문 닫기)
+-- api 쪽에 통과 함수가 없으면 화면에서 못 부른다.
+create or replace function api.list_floor_industry(p_pnu text)
+returns table (
+  floor_no  smallint,
+  cat_l_cd  text,
+  cat_l_nm  text,
+  store_cnt integer
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$ select * from public.list_floor_industry(p_pnu) $$;
+
+revoke all on function api.list_floor_industry(text) from public, anon, authenticated;
+grant execute on function api.list_floor_industry(text) to anon, authenticated;
+
+-- ⛔ public.list_floor_industry 는 끝까지 닫아 둔다 — 통과 함수가 security definer 다.
+
+-- =====================================================================
 -- 함수: get_data_freshness — 이 자료는 언제 것인가 (2026-09-05d)
 -- =====================================================================
 -- 마이그레이션 2026-09-05d. 화면 아래 푸터의 표 한 장이 이 함수 하나만 부른다.

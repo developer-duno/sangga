@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { supabase } from '../lib/supabase';
-import { startSidePrefetch, type SidePrefetch } from '../lib/sidePrefetch';
+import { startSidePrefetch, takePrefetched, type SidePrefetch } from '../lib/sidePrefetch';
 import {
   FLOOR_STACK_VIEW,
   COVERAGE_STATS_VIEW,
@@ -16,6 +16,7 @@ import {
   FLOOR_UNITS_FN,
   FLOOR_UNITS_PAGE,
   LAND_PRICE_FN,
+  FLOOR_INDUSTRY_FN,
 } from '../lib/appConstants';
 import { LAND_PRICE_BADGE, landPriceText, parseLandPrice } from '../lib/landPrice';
 import { TX_STAT_BADGE } from '../lib/floorGap';
@@ -29,11 +30,23 @@ import {
   type TxShape,
 } from '../lib/txViz';
 import { cssVar, VIZ_TONES } from '../lib/viz';
+import {
+  FLOOR_INDUSTRY_LEGEND_LEAD,
+  bandLabel,
+  bandSegments,
+  floorIndustryView,
+  industryCatLabel,
+  legendCats,
+  parseFloorIndustry,
+  placelessStoresText,
+  unknownStoresText,
+} from '../lib/floorIndustry';
 import type {
   BasePrice,
   BuildingDistricts,
   BuildingHit,
   CoverageStats,
+  FloorIndustryRow,
   FloorRow,
   ParcelLandPrice,
   FloorUnit,
@@ -393,6 +406,13 @@ export function FloorStack({
    */
   const [landPrice, setLandPrice] = useState<ParcelLandPrice | null>(null);
   /**
+   * 이 땅의 (층, 대분류)별 점포 수(결정 0038 D · V4). null = 아직 안 옴 — 그동안 점포가 있는 층 줄 아래 띠 **자리만** 잡아 둔다
+   * (답이 늦게 와도 층 줄이 안 밀린다). `floorIndustryFailed` = 못 읽음(함수 없음 PGRST202 포함 · 모양 이상) — 자리를 거두고
+   * 띠·「층 모름」 줄을 안 그린다(카드는 그대로).
+   */
+  const [floorIndustry, setFloorIndustry] = useState<FloorIndustryRow[] | null>(null);
+  const [floorIndustryFailed, setFloorIndustryFailed] = useState(false);
+  /**
    * 층 목록 카드를 **펼치라고 부르는 신호**. 호실 구성표 고르기가 1씩 올린다.
    *
    * ⛔ 이게 없으면 사용자가 층 목록을 접어 둔 상태에서 고른 층이 **접힌 카드 안에** 있어
@@ -642,6 +662,50 @@ export function FloorStack({
     };
   }, [building.pnu]);
 
+  // ── 층 목록 업종 띠 (결정 0038 D · V4) ─────────────────────────────────────
+  //
+  // ⓘ 곁 카드 미리 부르기의 여섯째 — 건물을 고른 순간 이미 출발한 요청을 받는다(`sidePrefetchRef` 는 위 effect 가 이 effect
+  //   **앞에서** 채운다 · 같은 필지면 StrictMode 이중 실행에도 같은 요청 하나). 미리 보낸 것이 없으면(다른 필지) 스스로 묻는다.
+  // ⛔ 실패(함수 없음 PGRST202 포함)·모양 이상이면 띠·「층 모름」 줄만 생략 — 카드는 그대로 선다.
+  // ⓘ 늦게 온 옛 필지의 답은 `cancelled` 로 버린다.
+  useEffect(() => {
+    let cancelled = false;
+    setFloorIndustry(null);
+    setFloorIndustryFailed(false);
+
+    const pre = takePrefetched(sidePrefetchRef.current, FLOOR_INDUSTRY_FN, building.pnu);
+    const req =
+      pre ?? Promise.resolve(supabase.rpc(FLOOR_INDUSTRY_FN, { p_pnu: building.pnu }).then((r) => r));
+    req.then(
+      ({ data, error: err }) => {
+        if (cancelled) return;
+        const rows = err ? null : parseFloorIndustry(data);
+        if (rows === null) {
+          console.warn('층별 업종 조회 실패 — 업종 띠 없이 표시합니다', err);
+          setFloorIndustryFailed(true);
+          return;
+        }
+        setFloorIndustry(rows);
+      },
+      (e: unknown) => {
+        if (cancelled) return;
+        console.warn('층별 업종 조회 실패 — 업종 띠 없이 표시합니다', e);
+        setFloorIndustryFailed(true);
+      },
+    );
+
+    return () => {
+      cancelled = true;
+    };
+  }, [building.pnu]);
+
+  // 띠 합이 층 줄 「점포 N」과 어긋나 띠를 버린 날은 콘솔에 한 줄(화면은 조용히 — 띠·「층 모름」 줄만 빠진다).
+  useEffect(() => {
+    if (floorIndustry && floors.length > 0 && !floorIndustryView(floorIndustry, floors)) {
+      console.warn('층별 업종 띠 합이 층 줄 점포 수와 달라 띠 없이 표시합니다');
+    }
+  }, [floorIndustry, floors]);
+
   // ── 실거래 사실 표시 (Stage A · 결정 0012) ────────────────────────────────
   //
   // 두 질문을 따로 던진다. 하나는 "이 땅에서 무슨 거래가 있었나"(대부분 빈 배열이 정답),
@@ -743,6 +807,12 @@ export function FloorStack({
   const ledgerHo = describeHoCnt(head.is_jiphap, head.ho_cnt, head.bld_main_use);
   const maxArea = Math.max(...floors.map((f) => f.floor_area_m2 ?? 0), 1);
   const totalStores = floors.reduce((sum, f) => sum + (f.store_cnt ?? 0), 0);
+
+  // 층별 업종 띠(결정 0038 D · V4). 답이 오기 전엔 점포가 있는 층 줄에 자리만 · 답이 오면 띠 합을 층 줄 「점포 N」과 대조해
+  // 한 층이라도 어긋나면 통째로 버린다(`floorIndustryView` 가 null — 띠와 옆 글이 다른 수를 말하지 않게).
+  const industryPending = floorIndustry === null && !floorIndustryFailed;
+  const industryView = floorIndustry ? floorIndustryView(floorIndustry, floors) : null;
+  const industryLegend = industryView ? legendCats(industryView) : [];
 
   // 층 뱃지용 — 어느 층에서 몇 건이 신고됐나. 층이 없는 거래(2017년부터 흔하다)는 어느
   // 층에도 붙일 수 없으니 여기서 세지 않는다. 대신 아래 목록에 "층 미상"으로 그대로 남는다
@@ -905,6 +975,31 @@ export function FloorStack({
                     <span className="floor__tx">{txCount > 0 ? `거래 ${txCount}건` : ''}</span>
                     <span className="floor__caret">{isOpen ? '▲' : '▼'}</span>
                   </button>
+                  {/*
+                    업종 띠(결정 0038 D · V4) — 층 줄 버튼 **밖**(버튼 이름·칸 수 불변 · 휴대폰 세 줄 묶음의 넷째 줄) · 막대 칸과 같은 가로 자리.
+                    답 전엔 점포가 있는 층만 같은 꼴의 빈 자리(안 보임 · 안 읽힘). 옆 글에 없는 업종을 말하므로 `role="img"` + 이름.
+                  */}
+                  {industryPending && (f.store_cnt ?? 0) > 0 && (
+                    <div className="floor__ind floor__ind--pending" aria-hidden="true" />
+                  )}
+                  {(() => {
+                    const band = industryView?.byFloor.get(f.floor_no);
+                    const segs = band && industryView ? bandSegments(band, industryView.max) : null;
+                    if (!band || !segs) return null;
+                    const label = bandLabel(f.floor_no, f.floor_label, band);
+                    return (
+                      <div className="floor__ind" role="img" aria-label={label} title={label}>
+                        {segs.map((s) => (
+                          <span
+                            key={s.key}
+                            className="floor__ind-seg"
+                            data-cat={s.key}
+                            style={{ width: `${s.pct}%` }}
+                          />
+                        ))}
+                      </div>
+                    );
+                  })()}
                   {unitRow && <p className="floor__units">{unitSummaryText(unitRow)}</p>}
                 </div>
 
@@ -923,6 +1018,30 @@ export function FloorStack({
           ⛔ `unitSummary === null`(아직 안 옴 · 실패 · 함수 없음)이면 아무것도 안 그린다 —
              실패를 "자료 없음"이라 적으면 거짓이다. 빈 배열일 때만 "자료 없음" 안내가 선다.
         */}
+        {/*
+          업종 띠 범례 · 층 모름 · 자리 없는 점포(결정 0038 D · V4). 범례를 목록 **아래**에 두는 까닭 — 답이 늦게 와도 층 줄이 안 밀린다
+          (목록 위에 두면 범례가 서는 순간 층 줄 전부가 내려간다). 띠 안 순서 = 이 범례 순서(흑백 종이에서도 순서로 읽힌다).
+        */}
+        {industryLegend.length > 0 && (
+          <p className="floor__ind-legend">
+            {FLOOR_INDUSTRY_LEGEND_LEAD}:{' '}
+            {industryLegend.map((k, i) => (
+              <Fragment key={k}>
+                {i > 0 && ' · '}
+                <span className="floor__ind-key">
+                  <span className="floor__ind-swatch" data-cat={k} aria-hidden="true" />
+                  {industryCatLabel(k)}
+                </span>
+              </Fragment>
+            ))}
+          </p>
+        )}
+        {industryView?.unknown && (
+          <p className="floor__ind-unknown">{unknownStoresText(industryView.unknown)}</p>
+        )}
+        {industryView?.placeless && (
+          <p className="floor__ind-placeless">{placelessStoresText(industryView.placeless)}</p>
+        )}
         {orphanLine && <p className="floor__units-orphan">{orphanLine}</p>}
         {hasAttachedUnits && (
           <p className="floor__units-note">

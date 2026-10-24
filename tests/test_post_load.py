@@ -581,10 +581,13 @@ class TestAnonExposure:
             # 업종 비중 비교 중분류(2026-10-13a · 물결 2-3b). 요약표 mv_industry_mix_median_m 은 **여기 없다** —
             # 그 상권의 그 대분류 가게 수와 중분류별 가운데값(백분율)·모집단 수만 나간다.
             "api.list_industry_median_m",
+            # 층 목록 업종 띠(2026-10-24a · 결정 0038 D · V4). 점포 표 unit_business 는 **여기 없다** —
+            # 이 땅의 (층, 대분류)별 점포 수만 나간다.
+            "api.list_floor_industry",
         )
-        # 읽기 4 + 부르기 26 = `--check` 총계 30(2026-10-12a 업종 비중 비교로 30 → 31 · 2026-10-13a 중분류로 31 → 32 ·
-        # 2026-10-18a 결정 0041 로 참고 시세·성적표 둘을 빼 32 → 30).
-        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 30
+        # 읽기 4 + 부르기 27 = `--check` 총계 31(2026-10-12a 업종 비중 비교로 30 → 31 · 2026-10-13a 중분류로 31 → 32 ·
+        # 2026-10-18a 결정 0041 로 참고 시세·성적표 둘을 빼 32 → 30 · 2026-10-24a 층 목록 업종 띠로 30 → 31).
+        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 31
 
     def test_pending_list_is_empty_after_2026_09_05a(self):
         """⛔ **비어 있어야 한다** — 잔존 노출 9개는 2026-09-05a 로 닫혔다.

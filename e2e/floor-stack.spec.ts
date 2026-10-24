@@ -112,6 +112,10 @@ const FLOOR_UNITS_PATTERN = '**/rest/v1/rpc/list_floor_units*';
 // ⚠️ 기본값은 **함수가 없는 상태**다 — 그때 줄이 조용히 빠지고 머리 모양이 그대로라 다른 스펙이 영향을
 //    안 받는다. 값을 보는 것은 스펙 AP 뿐이다(안 막으면 실존하지 않는 도메인으로 나가 DNS 에 좌우된다).
 const LAND_PRICE_PATTERN = '**/rest/v1/rpc/get_parcel_land_price*';
+// 층 목록 업종 띠(결정 0038 D · V4) — 건물을 고르는 순간 곁 카드와 함께 미리 나간다.
+// ⚠️ 기본값은 **함수가 없는 상태**다 — 그때 띠·「층 모름」 줄이 조용히 빠지고 층 목록 모양이 그대로라 다른 스펙이 영향을
+//    안 받는다. 띠를 보는 것은 스펙 CG·CH·AF 뿐이다(안 막으면 실존하지 않는 도메인으로 나가 DNS 에 좌우된다).
+const FLOOR_INDUSTRY_PATTERN = '**/rest/v1/rpc/list_floor_industry*';
 // 의견함(2026-08-24b). 화면에서 창고로 **나가는** 유일한 길이라, 여기만 방향이 반대다.
 const FEEDBACK_PATTERN = '**/rest/v1/rpc/submit_feedback*';
 // LH 상가 분양·입점 공고 — 유일하게 **입구**(건물을 고르기 전)에서 나가는 요청이다.
@@ -220,6 +224,8 @@ async function mockFloorStack(
   await mockMissingFunction(page, FLOOR_UNITS_PATTERN);
   // 개별공시지가 한 줄도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 스펙 AP 만 덮어쓴다.
   await mockMissingFunction(page, LAND_PRICE_PATTERN);
+  // 층 목록 업종 띠도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 스펙 CG·AF 만 덮어쓴다.
+  await mockMissingFunction(page, FLOOR_INDUSTRY_PATTERN);
 }
 
 /**
@@ -1848,6 +1854,8 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
     floors = unitFloors(),
     unitsOf: (floorNo: number, offset: number, limit: number) => unknown[] = (_no, offset, limit) =>
       floorUnitsPage(offset, limit),
+    /** 층 목록 업종 띠(결정 0038 V4) 응답 — 안 주면 함수 없음(mockFloorStack 기본값). */
+    industry?: unknown[],
   ) {
     const unitRequests: Array<Record<string, unknown>> = [];
     page.on('request', (r) => {
@@ -1858,6 +1866,7 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
     await mockFloorStack(page, [], floors);
+    if (industry !== undefined) await mockJson(page, FLOOR_INDUSTRY_PATTERN, industry);
     if (summary !== undefined) {
       await mockJson(page, UNIT_SUMMARY_PATTERN, summary);
       await page.route(FLOOR_UNITS_PATTERN, async (route) => {
@@ -1892,8 +1901,12 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
   test('AF. 층 줄 아래 요약이 서고, 섞인 층을 펼치면 목록·안내·더 보기 — 주거 층은 목록 요청이 안 나간다', async ({
     page,
   }, testInfo) => {
-    const unitRequests = await openBuilding(page, unitSummary());
+    // 업종 띠(결정 0038 V4)도 함께 — 5층은 점포 0(띠 없음)이라 아래 모양 비교가 「요약·띠 둘 다 있는 층 ↔ 둘 다 없는 층」이 된다.
+    const floors = unitFloors().map((f) => (f.floor_no === 5 ? { ...f, store_cnt: 0 } : f));
+    const industry = [35, 3, 1].map((no) => ({ floor_no: no, cat_l_cd: 'I2', cat_l_nm: '음식', store_cnt: 2 }));
+    const unitRequests = await openBuilding(page, unitSummary(), floors, undefined, industry);
     const card = page.locator('.card--floors');
+    await expect(card.locator('.floor__ind:not(.floor__ind--pending)')).toHaveCount(3);
 
     // ① 요약 둘째 줄 — 요약이 있는 층만(5층은 없다).
     const lines = card.locator('.floor__units');
@@ -1903,8 +1916,8 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
     await expect(lines.nth(2)).toHaveText('호실 690칸 · 보통 4.0㎡ · 3.2~13.1㎡');
     await expect(card.getByText(/'보통'은 그 층 호실 전용면적의 가운데값입니다/)).toBeVisible();
 
-    // ⛔ 요약 줄 때문에 층 줄의 칸 수가 늘지 않는다(좁은 화면 포함) — 요약이 있는 층(3층)과 없는
-    //    층(5층)의 층 줄이 같은 칸 배치·같은 높이여야 한다(요약은 층 줄 **밖** 둘째 줄이다).
+    // ⛔ 요약 줄·업종 띠 때문에 층 줄의 칸 수가 늘지 않는다(좁은 화면 포함) — 요약·띠가 있는 층(3층)과 없는
+    //    층(5층)의 층 줄이 같은 칸 배치·같은 높이여야 한다(요약·띠는 층 줄 **밖** 둘째 줄이다 · 결정 0038 V4).
     const shape = (label: string) =>
       floorRowOf(page, label).evaluate((el) => ({
         cols: el.ownerDocument.defaultView!.getComputedStyle(el).gridTemplateColumns,
@@ -1912,6 +1925,8 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
         h: Math.round(el.getBoundingClientRect().height),
       }));
     expect(await shape('3층')).toEqual(await shape('5층'));
+    await expect(card.locator('#floor-3 .floor__head .floor__ind')).toHaveCount(1);
+    await expect(card.locator('#floor-5 .floor__head .floor__ind')).toHaveCount(0);
 
     // ② 주거 층은 수만 — 펼쳐도 목록을 부르지 않는다.
     await floorRowOf(page, '35층').click();
@@ -5715,5 +5730,203 @@ test.describe('실거래 그림', () => {
     await expect(card.locator('.tx__share-note')).toBeVisible();
     await card.screenshot({ path: testInfo.outputPath(`bx-tx-print-${testInfo.project.name}.png`) });
     await page.emulateMedia({ media: null });
+  });
+});
+
+test.describe('층별 스택뷰 — 층 목록 업종 띠 (결정 0038 D · V4)', () => {
+  /** 층 목록 넷 — 3층·지하 1층은 점포 0(띠 없음 · 모양을 견줄 짝) · 2층 4곳(가장 많은 층) · 1층 2곳. */
+  function bandFloors() {
+    return [
+      floorRow({ floor_no: 3, store_cnt: 0 }),
+      floorRow({ floor_no: 2, store_cnt: 4 }),
+      floorRow({ floor_no: 1, store_cnt: 2 }),
+      floorRow({ floor_no: -1, store_cnt: 0 }),
+    ];
+  }
+
+  /** `list_floor_industry` 응답 — 층 목록에 없는 7층 2곳 · 층 모름 5곳. 층마다 합 = 위 store_cnt. */
+  const BAND_ROWS = [
+    { floor_no: 7, cat_l_cd: 'P1', cat_l_nm: '교육', store_cnt: 2 },
+    { floor_no: 2, cat_l_cd: 'I2', cat_l_nm: '음식', store_cnt: 1 },
+    { floor_no: 2, cat_l_cd: 'M1', cat_l_nm: '과학·기술', store_cnt: 3 },
+    { floor_no: 1, cat_l_cd: 'G2', cat_l_nm: '소매', store_cnt: 1 },
+    { floor_no: 1, cat_l_cd: 'I2', cat_l_nm: '음식', store_cnt: 1 },
+    { floor_no: null, cat_l_cd: 'I2', cat_l_nm: '음식', store_cnt: 4 },
+    { floor_no: null, cat_l_cd: 'L1', cat_l_nm: '부동산', store_cnt: 1 },
+  ];
+
+  /** 건물을 연다. `rows` 를 안 주면 함수가 없는 상태(mockFloorStack 기본값) 그대로. */
+  async function openBand(page: Page, rows?: unknown[], delayMs = 0) {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page, [], bandFloors());
+    if (rows !== undefined) await mockJson(page, FLOOR_INDUSTRY_PATTERN, rows, delayMs);
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+    await expect(page.locator('section.stack')).toBeVisible();
+  }
+
+  const headOf = (page: Page, no: number) => page.locator(`.card--floors #floor-${no} .floor__head`);
+  const box = async (sel: ReturnType<Page['locator']>) => (await sel.boundingBox())!;
+
+  /** 띠 자리(바깥 상자)와 막대(`.floor__bar`)의 왼·오른 끝이 같은가 — 1.5px 안. */
+  async function expectBandUnderBar(page: Page, no: number, what: string) {
+    const bar = await box(headOf(page, no).locator('.floor__bar'));
+    const ind = await box(headOf(page, no).locator('.floor__ind'));
+    expect(Math.abs(ind.x - bar.x), `${what} 왼쪽 끝`).toBeLessThan(1.5);
+    expect(Math.abs(ind.x + ind.width - (bar.x + bar.width)), `${what} 오른쪽 끝`).toBeLessThan(1.5);
+    return ind;
+  }
+
+  test('CG. 층 목록 업종 띠 — 막대 아래 같은 가로 자리 · 조각 폭 = 점포 수 ÷ 가장 많은 층 · 범주 색 · 범례(대분류)·층 모름·자리 없는 점포 · 층 줄 모양 그대로 · 답이 늦어도 층 줄이 안 밀림 · 휴대폰 넷째 줄 · 1024·1000 · 넘침 0 · 13px · 종이에 그대로 · 함수가 없으면 띠만 빠짐', async ({
+    page,
+  }, testInfo) => {
+    // 답을 1.5초 늦춘다 — 자리를 미리 잡아 두었는지(층 줄이 안 밀리는지) 본다.
+    await openBand(page, BAND_ROWS, 1500);
+    const card = page.locator('.card--floors');
+    const phone = (page.viewportSize()?.width ?? 0) <= 720;
+
+    // ⓪ 답 전 — 점포 있는 층(2·1층)에만 빈 자리 · 답 뒤 1층 줄 자리가 그대로(답이 늦어도 안 밀린다).
+    await expect(card.locator('.floor__ind--pending')).toHaveCount(2);
+    const rowY = async () => (await box(card.locator('#floor-1 .floor__row'))).y;
+    const beforeY = await rowY();
+    const listBefore = await box(card.locator('ol.floors'));
+    await expect(card.locator('.floor__ind:not(.floor__ind--pending)')).toHaveCount(2);
+    await expect(card.locator('.floor__ind--pending')).toHaveCount(0);
+    expect(Math.abs((await rowY()) - beforeY)).toBeLessThan(0.5);
+    expect(Math.abs((await box(card.locator('ol.floors'))).height - listBefore.height)).toBeLessThan(0.5);
+
+    // ① 띠는 버튼 밖 · 점포 0 층은 띠 줄 자체가 없다 · 층 줄 모양(칸 틀·칸 수·높이)은 띠 있는 층과 없는 층이 같다.
+    await expect(card.locator('.floor__row .floor__ind')).toHaveCount(0);
+    await expect(headOf(page, 3).locator('.floor__ind')).toHaveCount(0);
+    await expect(headOf(page, -1).locator('.floor__ind')).toHaveCount(0);
+    const shape = (no: number) =>
+      headOf(page, no)
+        .locator('.floor__row')
+        .evaluate((el) => ({
+          cols: el.ownerDocument.defaultView!.getComputedStyle(el).gridTemplateColumns,
+          kids: el.children.length,
+          h: Math.round(el.getBoundingClientRect().height),
+        }));
+    expect(await shape(2)).toEqual(await shape(3));
+    await expect(headOf(page, 2).getByRole('button')).toHaveCount(1);
+
+    // ② 가로 자리 = 막대 칸 · 조각 폭 = n ÷ 4(2층) — 2층 띠 = 칸 전체 · 1층 띠 = 절반.
+    const ind2 = await expectBandUnderBar(page, 2, '2층');
+    const seg2 = headOf(page, 2).locator('.floor__ind-seg');
+    await expect(seg2).toHaveCount(2);
+    expect(await seg2.evaluateAll((els) => els.map((e) => e.getAttribute('data-cat')))).toEqual(['food', 'sci']);
+    const food2 = await box(seg2.nth(0));
+    const sci2 = await box(seg2.nth(1));
+    expect(Math.abs(food2.width / ind2.width - 0.25)).toBeLessThan(0.02);
+    expect(Math.abs(sci2.width / ind2.width - 0.75)).toBeLessThan(0.02);
+    expect(Math.abs(food2.x - ind2.x)).toBeLessThan(0.5);
+    const ind1 = await expectBandUnderBar(page, 1, '1층');
+    const seg1 = headOf(page, 1).locator('.floor__ind-seg');
+    expect(await seg1.evaluateAll((els) => els.map((e) => e.getAttribute('data-cat')))).toEqual(['food', 'retail']);
+    const last1 = await box(seg1.nth(1));
+    expect(Math.abs((last1.x + last1.width - ind1.x) / ind1.width - 0.5)).toBeLessThan(0.02);
+    expect(ind2.height).toBeGreaterThanOrEqual(5);
+    // 색 토큰(§2-7 고정) — 음식 파랑 · 소매 주황 · 과학·기술 청록.
+    await expect(seg2.nth(0)).toHaveCSS('background-color', 'rgb(42, 120, 214)');
+    await expect(seg2.nth(1)).toHaveCSS('background-color', 'rgb(27, 175, 122)');
+    await expect(seg1.nth(1)).toHaveCSS('background-color', 'rgb(235, 104, 52)');
+    // 띠는 옆 글에 없는 업종을 말한다 — 그림 이름.
+    await expect(headOf(page, 2).locator('.floor__ind')).toHaveAttribute('role', 'img');
+    await expect(headOf(page, 2).locator('.floor__ind')).toHaveAttribute(
+      'aria-label',
+      '2층 가게 업종(대분류): 음식 1곳 · 과학·기술 3곳',
+    );
+    // 휴대폰 — 세 줄 묶음 아래 넷째 줄(점포 글 아래) · 막대와 같은 폭 전체. 넓은 화면 — 층 줄 버튼 바로 아래.
+    const stores2 = await box(headOf(page, 2).locator('.floor__stores'));
+    const btn2 = await box(headOf(page, 2).locator('.floor__row'));
+    if (phone) expect(ind2.y).toBeGreaterThanOrEqual(stores2.y + stores2.height - 1);
+    expect(ind2.y).toBeGreaterThanOrEqual(btn2.y + btn2.height - 10);
+    expect(ind2.y).toBeLessThanOrEqual(btn2.y + btn2.height + 1);
+
+    // ③ 카드 아래 줄 — 범례(대분류 · 이 땅의 가게 · 소분류 · 그려진 범주만 고정 차례) · 층 모름 · 자리 없는 점포.
+    await expect(card.locator('.floor__ind-legend')).toHaveText(
+      '막대 아래 가는 띠 = 이 땅의 가게 수와 업종 대분류(층을 펼치면 나오는 가게 목록은 소분류): 음식 · 소매 · 과학·기술',
+    );
+    await expect(card.locator('.floor__ind-swatch').nth(1)).toHaveCSS('background-color', 'rgb(235, 104, 52)');
+    await expect(card.locator('.floor__ind-unknown')).toHaveText(
+      '층 모름 5곳 — 원본에 층이 비어 있거나 읽을 수 없는 가게, 숫자 없이 "지하"라고만 적힌 가게 (음식 4 · 부동산 1)',
+    );
+    await expect(card.locator('.floor__ind-placeless')).toHaveText(
+      '자리 없는 점포 2곳 — 이 건물 층 목록에 없는 층에 적힌 가게 (7층 2곳)',
+    );
+    for (const sel of ['.floor__ind-legend', '.floor__ind-unknown', '.floor__ind-placeless']) {
+      await expect(card.locator(sel)).toHaveCSS('font-size', '13px');
+    }
+    // 글은 그대로 — 「점포 4」·「점포 2」.
+    await expect(headOf(page, 2).locator('.floor__stores')).toHaveText('점포 4');
+    await expect(headOf(page, 1).locator('.floor__stores')).toHaveText('점포 2');
+    // 가로 넘침 0(문서·카드).
+    expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+    expect(await card.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+    await card.screenshot({ path: testInfo.outputPath(`cg-floors-${testInfo.project.name}.png`) });
+
+    // ④ PC 두 칸 1024(층 줄 칸을 줄인 폭 · W5) · 한 열 PC 1000 — 그 폭에서도 막대 아래 같은 자리 · 카드 밖으로 안 넘친다.
+    if (!phone) {
+      for (const width of [1024, 1000]) {
+        await page.setViewportSize({ width, height: 768 });
+        await expectBandUnderBar(page, 2, `${width}px 2층`);
+        await expectBandUnderBar(page, 1, `${width}px 1층`);
+        expect(await card.evaluate((el) => el.scrollWidth - el.clientWidth), `${width}px 카드 넘침`).toBeLessThanOrEqual(0);
+        expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+        await card.screenshot({ path: testInfo.outputPath(`cg-floors-${width}.png`) });
+      }
+      await page.setViewportSize({ width: 1280, height: 720 });
+    } else {
+      await page.setViewportSize({ width: 360, height: 780 });
+      await expectBandUnderBar(page, 2, '360px 2층');
+      expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+      await page.setViewportSize({ width: 412, height: 839 });
+    }
+
+    // ⑤ 종이 — 띠가 그대로 서고(폭 0 백지 아님 · 색 그대로) · 층 줄+띠는 한 덩어리(.floor__head avoid) · 카드 아래 줄도 그대로.
+    await page.emulateMedia({ media: 'print' });
+    await expect(headOf(page, 2).locator('.floor__ind')).toHaveCount(1);
+    if (!phone) {
+      await expect(headOf(page, 2).locator('.floor__ind')).toBeVisible();
+      const pInd = await expectBandUnderBar(page, 2, '종이 2층');
+      expect(pInd.width).toBeGreaterThan(40);
+    } else {
+      // ⓘ 휴대폰 폭(412)을 둔 채 흉내 낸 종이는 층 줄이 옛 `@media (max-width: 720px)` 묶음으로 한 칸이 되는데, 띠의 휴대폰 자리는
+      //   screen 묶음에만 있어(§2-8 — 종이 모양을 안 바꾼다) 넓은 자리(왼 97 · 오른 505)가 그대로라 띠 폭이 0 으로 준다 —
+      //   카드 밖으로는 안 나간다(실제 A4 종이 폭에서는 넓다 · V2·V3 와 같은 알려진 틈).
+      expect(await card.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+    }
+    await expect(seg2.nth(0)).toHaveCSS('background-color', 'rgb(42, 120, 214)');
+    await expect(seg2.nth(0)).toHaveCSS('print-color-adjust', 'exact');
+    await expect(headOf(page, 2)).toHaveCSS('break-inside', 'avoid');
+    await expect(card.locator('.floor__ind-legend')).toBeVisible();
+    await expect(card.locator('.floor__ind-unknown')).toBeVisible();
+    await card.screenshot({ path: testInfo.outputPath(`cg-floors-print-${testInfo.project.name}.png`) });
+    await page.emulateMedia({ media: null });
+  });
+
+  test('CH. 층 목록 업종 띠 — 함수가 없거나(PGRST202) 띠 합이 「점포 N」과 다르면 띠·범례·층 모름 줄만 빠지고 카드는 그대로', async ({
+    page,
+  }) => {
+    // ① 함수 없음(mockFloorStack 기본값).
+    await openBand(page);
+    const card = page.locator('.card--floors');
+    await expect(card.locator('.floor__row')).toHaveCount(4);
+    await expect(card.locator('.floor__ind--pending')).toHaveCount(0);
+    await expect(card.locator('.floor__ind')).toHaveCount(0);
+    await expect(card.locator('.floor__ind-legend')).toHaveCount(0);
+    await expect(card.locator('.floor__ind-unknown')).toHaveCount(0);
+    await expect(headOf(page, 2).locator('.floor__stores')).toHaveText('점포 4');
+
+    // ② 띠 합이 다름(2층 5 ≠ 4) — 통째로 버린다(띠와 옆 글이 다른 수를 말하지 않게).
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+    await openBand(page, [...BAND_ROWS, { floor_no: 2, cat_l_cd: 'I2', cat_l_nm: '음식', store_cnt: 1 }]);
+    await expect(page.locator('.card--floors .floor__row')).toHaveCount(4);
+    await expect(page.locator('.card--floors .floor__ind--pending')).toHaveCount(0);
+    await expect(page.locator('.card--floors .floor__ind')).toHaveCount(0);
+    await expect(page.locator('.card--floors .floor__ind-unknown')).toHaveCount(0);
   });
 });
