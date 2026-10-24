@@ -414,3 +414,15 @@ export const LAND_PRICE_FN = 'get_parcel_land_price';
  * ⛔ 실패(함수 없음 PGRST202 포함)·모양 이상·층 줄 「점포 N」과 합이 어긋남이면 **띠·「층 모름」 줄을 안 그린다** — 카드는 그대로 선다.
  */
 export const FLOOR_INDUSTRY_FN = 'list_floor_industry';
+
+/**
+ * 이 필지가 속한 부동산원 조사구역마다 임대동향조사 값의 **전 분기**(네 종류 한 번에) — 상권 임대 동향 카드의 8분기 흐름
+ * (결정 0038 C · V5 · 2026-10-24b). 옛 `list_rent_stats` 는 무변경(임대 카드와 세 잣대가 그 응답을 나눠 쓴다).
+ *
+ * ⚠️ **인자 이름이 `p_pnu` 다** — 목(mock)은 인자 이름을 안 보므로 `{ pnu: … }` 로 잘못 불러도 vitest·E2E 는 초록이고
+ *    라이브에서만 PGRST202 가 난다.
+ * ⓘ 곁 카드 미리 부르기(`sidePrefetch`)의 일곱째다 — 인자가 `{ p_pnu }` 하나라 보관 열쇠(함수 + pnu)가 그대로 맞는다.
+ *   종류를 바꿀 때 서버를 다시 부르지 않는다(이 한 번의 답에서 고른다).
+ * ⛔ 실패(함수 없음 PGRST202 포함)·모양 이상·빈 답이면 **흐름만 안 그린다** — 카드·층별 표·계단 막대는 그대로 선다.
+ */
+export const RENT_HISTORY_FN = 'list_rent_stat_history';

@@ -2993,7 +2993,8 @@ body {
 */
 .rent__floors {
   flex: 1 1 100%;
-  max-width: 320px;
+  /* 520px = 두 칸(층 · 금액) + 계단 막대 칸(결정 0038 V5 — 예전 320px 은 막대 칸이 없을 때 폭). */
+  max-width: 520px;
   margin: 4px 0 2px;
   border-collapse: collapse;
   font-size: 12.5px;
@@ -3025,7 +3026,7 @@ body {
   white-space: nowrap;
 }
 
-/* 표가 있으면 분기 도장을 표 **아래 한 줄**로 내린다 — 표 폭이 좁아(최대 320px) 그대로 두면
+/* 표가 있으면 분기 도장을 표 **아래 한 줄**로 내린다 — 표 폭이 좁아(최대 520px) 그대로 두면
    도장이 표 옆 첫 줄 높이에 떠서 "6층 이상" 줄에만 딸린 말처럼 보인다(1280px 실측). */
 .rent__floors + .rent__quarter {
   flex-basis: 100%;
@@ -3056,6 +3057,125 @@ body {
 
 .rent__why li + li {
   margin-top: 4px;
+}
+
+/* ── 그림: 층별 임대료 계단 막대 · 8분기 흐름 (결정 0038 C · V5) ─────────────────────────────
+   ⛔ 상권 평균이다 — 이 카드 안 「이 건물 값이 아님」 머리 아래에만 선다(층 목록 카드 밖 · §2-5 · 절대 규칙 5).
+   색 = 사실 색(호박 `--fact-3` — 임대 공표값 · §2-6) · 층 목록 면적 막대(`--accent` 파랑)와 다른 색.
+   ⛔ 크기는 % 로만 — DOM 을 재지 않는다(접힌 카드는 폭 0 · 종이 백지 · §2-3). 휴대폰은 `@media screen and (max-width: 720px)` 묶음에.
+   ⓘ 새 글자 칸은 처음부터 13px(S4) — 13px 묶음에 안 더한다. */
+/* ⚠️ 표 이름까지 붙여 무게를 올린다 — `.rent__floors td { padding: 3px 0 }`(0,1,1)가 이름표 하나(0,1,0)를 이긴다. */
+.rent__floors .rent__step {
+  width: 100%;
+  padding-left: 12px;
+}
+
+/* 막대 길이 = 이 표에서 가장 비싼 구간이 칸 끝(값은 바로 옆 글 그대로). 칸 안 왼쪽부터 — 높은 층이 위라 계단꼴. */
+.rent__step-fill {
+  display: block;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--fact-3);
+}
+
+/* 8분기 흐름 — 카드 줄(조사구역 × 종류) 안, 분기 도장 아래 한 줄을 통째로 쓴다. */
+.rent-trend {
+  flex: 1 1 100%;
+  margin: 8px 0 2px;
+}
+
+.rent-trend__cap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* 그림 셋 — 넓은 화면·종이는 한 줄에 셋(그림마다 제 눈금). 휴대폰은 한 칸씩(screen 720 묶음). */
+.rent-trend__charts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px 16px;
+}
+
+.rent-trend__chart {
+  min-width: 0;
+}
+
+.rent-trend__name {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+/* 눈금 글은 이름 아래 한 줄 — 그림 안(도형)에는 글자를 두지 않는다(§2-2). */
+.rent-trend__scale {
+  display: block;
+  color: var(--muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.rent-trend__plot {
+  position: relative;
+  height: 56px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* 0 선 — 음수(투자수익률)가 있으면 그림 가운데쯤으로 올라온다. */
+.rent-trend__zero {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  border-top: 1px solid var(--muted);
+}
+
+/* 칸 수는 창(8분기)이라 화면이 `grid-template-columns` 를 인라인으로 준다(개업·폐업 그림과 같은 꼴). */
+.rent-trend__cols {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.rent-trend__col {
+  position: relative;
+  min-width: 0;
+}
+
+.rent-trend__bar {
+  position: absolute;
+  left: 15%;
+  right: 15%;
+  background: var(--fact-3);
+}
+
+/* 음수 막대는 한 단 옅게(0 선 아래로) — 같은 자료라 색 계열은 같다. */
+.rent-trend__bar--neg {
+  background: var(--fact-2);
+}
+
+/* 빠진 분기 — 막대 대신 「–」(0 막대와 헷갈리지 않게 글자로). */
+.rent-trend__gap {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.rent-trend__note {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 /* ── 상권 개업·폐업 (서울시 공표 · 결정 0033) ─────────────────────────────── */
@@ -4561,6 +4681,11 @@ body {
     font-size: 14px;
     cursor: pointer;
   }
+
+  /* 임대 8분기 흐름(결정 0038 V5) — 좁은 화면은 그림 셋을 한 칸씩 위아래로(그림마다 폭 전체 · 제 눈금). */
+  .rent-trend__charts {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* ── 가지고 나가기(링크 복사) ──────────────────────────────────────────────
@@ -5848,6 +5973,8 @@ body {
      브라우저가 avoid 를 포기하는데, 그때도 한 층의 이름과 금액은 갈리지 않는다.
      ⛔ 카드 통째(`.rent`)에는 걸지 않는다(위 설명 참조 — 장수가 늘고 흰 종이가 남는다). */
   .rent__floors tr,
+  /* 임대 8분기 흐름(결정 0038 C · V5) — 머리 글·그림 셋·까닭 한 줄이 한 덩어리(그림 덩어리에만 · 카드 통째 금지 §2-9). */
+  .rent-trend,
   /* 개업·폐업 카드(결정 0033) — 큰 숫자 줄 · 추이 그림 한 벌 · 업종 표 줄은 갈리면 근거 없는 숫자가
      된다. ⛔ 카드 통째(`.oc`)에는 걸지 않는다(위 설명 참조). */
   .oc__latest,

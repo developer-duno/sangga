@@ -582,7 +582,8 @@ class TestFile:
         """
         # ⓘ 2026-10-18a(결정 0041)가 api.list_price_bands·api.list_price_gate 를 지워 32 → 30(이 마이그레이션 몫 아님).
         # ⓘ 2026-10-24a(결정 0038 V4)가 api.list_floor_industry 를 더해 30 → 31(이 마이그레이션 몫 아님).
-        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 31
+        # ⓘ 2026-10-24b(결정 0038 V5)가 api.list_rent_stat_history 를 더해 31 → 32(이 마이그레이션 몫 아님).
+        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 32
         assert "api.list_industry_median" in post_load.ANON_CALLABLE_ALLOWLIST
         assert "api.list_industry_median_m" in post_load.ANON_CALLABLE_ALLOWLIST
         assert "api.search_buildings" in post_load.ANON_CALLABLE_ALLOWLIST

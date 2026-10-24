@@ -5861,6 +5861,107 @@ grant execute on function api.list_floor_industry(text) to anon, authenticated;
 -- ⛔ public.list_floor_industry 는 끝까지 닫아 둔다 — 통과 함수가 security definer 다.
 
 -- =====================================================================
+-- 함수: list_rent_stat_history — 상권 임대 동향의 8분기 흐름 (2026-10-24b · 결정 0038 C · V5)
+-- =====================================================================
+-- 마이그레이션 supabase/migrations/2026-10-24b_rent_stat_history.sql 머리말 참조.
+-- 상권 임대 동향 카드의 **8분기 흐름**(공실률 · ㎡당 임대료 · 투자수익률 작은 그림 셋 · 결정 0038 C · V5)을 먹인다.
+-- 이 땅이 속한 부동산원 조사구역마다 **네 종류 × 전 분기**를 한 번에 준다 — 화면은 종류를 바꿀 때 서버를 다시
+-- 부르지 않고 이 답에서 고른다.
+-- ⛔ 조사구역은 list_rent_stats 와 **같은 길**(필지 → 상권(st_contains) → district_rone_map)로 찾는다 — 아래
+--    me·hit·pair 는 그 함수의 글 그대로다(tests/test_rent_stat_history_migration.py 가 글자로 대조한다). 길이
+--    갈리면 카드의 값과 흐름이 서로 다른 조사구역을 말한다(에러 없이).
+-- ⛔ 역산·환산·평균을 하지 않는다 — 공표값을 그대로 나른다(절대 규칙 5 · 결정 0031). 층별효용비율은 안 나간다.
+-- ⛔ 종류(bld_type)끼리 섞지 않는다 — 줄마다 종류를 함께 내보낸다.
+-- ⓘ 상권이 여럿이어도 같은 조사구역은 **한 벌만** 나간다(`in (select …)` — 상권마다 되풀이하지 않는다).
+--   어느 상권의 줄인지는 list_rent_stats 가 말하고, 화면은 조사구역 이름으로 짝짓는다.
+-- ⓘ 빠진 분기는 줄이 없다 — 화면이 "–" 로 둔다(0 으로 메우지 않는다).
+-- ⛔ `p_pnu::char(19)` 캐스트를 지우지 말 것 — 컬럼이 char(19) 라 text 와 견주면 **컬럼 쪽**이
+--    캐스트돼 인덱스가 통째로 죽는다(2026-08-16b 실측 459.8ms↔0.796ms).
+create or replace function list_rent_stat_history(p_pnu text)
+returns table (
+  rone_region_nm    text,
+  bld_type          text,
+  quarter           text,
+  vacancy_rate      numeric,
+  rent_per_m2       numeric,
+  yield_rate        numeric,
+  income_yield_rate numeric
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with me as (
+    -- 좌표가 없으면 아예 답하지 않는다. 여기를 열어 두면 빈손이 "이 자리는 조사 대상이
+    -- 아니다"라는 **단정**으로 새어 나간다(list_building_districts 와 같은 원칙).
+    select p.geom as g
+    from parcel p
+    where p.pnu = p_pnu::char(19) and p.geom is not null
+  ),
+  hit as (
+    -- 술어를 st_contains 로 맞춘다 — 결정 0008·0011·0014 의 실측이 이 술어로 나온 숫자다.
+    select d.district_id, d.district_nm, d.area_m2
+    from district d cross join me
+    where st_contains(d.geom, me.g)
+  ),
+  pair as (
+    -- 이을 근거가 없는 상권은 여기서 저절로 빠진다(district_rone_map 에 행이 없다).
+    select h.district_id, h.district_nm, h.area_m2, m.rone_region_nm
+    from hit h
+    join district_rone_map m on m.district_id = h.district_id
+  )
+  -- ⛔ floor_util_ratio·floor_rent 는 넣지 않는다 — 층별 표는 list_rent_stats 의 최신 한 줄이 맡는다.
+  select r.region_nm,
+         r.bld_type,
+         r.quarter::text,
+         r.vacancy_rate,
+         r.rent_per_m2,
+         r.yield_rate,
+         r.income_yield_rate
+  from rent_stat r
+  where r.region_nm in (select p.rone_region_nm from pair p)
+  order by r.region_nm, r.bld_type, r.quarter;
+$$;
+
+comment on function list_rent_stat_history(text) is
+  '결정 0038 C(V5 · 2026-10-24b) 이 필지가 속한 상권의 부동산원 조사구역마다 임대동향조사 값의 **전 분기** — '
+  '조사구역 이름, 건물 종류, 분기, 공실률(%), ㎡당 임대료(천원/㎡ 공표 단위 그대로), 투자수익률(%, 분기 값), '
+  '소득수익률(%, 분기 값). 네 종류를 한 번에 준다(화면이 종류를 바꿀 때 서버를 다시 부르지 않는다). '
+  '조사구역은 list_rent_stats 와 같은 길(필지 → 상권 → district_rone_map)로 찾는다. '
+  '⛔ 역산·환산·평균을 하지 않는다(조사값 그대로 — 층별효용비율은 안 나간다). '
+  '⛔ 이을 근거가 없으면 줄이 아예 없다 — 시·도 평균으로 메우지 않는다. 빠진 분기는 줄이 없다(0 으로 안 메운다). '
+  'security definer (district·district_rone_map·rent_stat·parcel 이 anon 에게 닫혀 있어 '
+  '소유자 권한으로 대신 읽는다. 나가는 것은 조사구역 이름과 공표 통계값뿐이다).';
+
+-- ⚠️ create or replace 는 권한을 유지하지만, 대시보드가 같은 함수를 다시 만들면
+--    Supabase 기본 권한이 anon 을 자동으로 붙인다. 만든 자리에서 다시 닫는다.
+revoke all on function list_rent_stat_history(text) from public, anon, authenticated;
+
+-- 화면이 실제로 부르는 것. public 은 REST 노출에서 빠져 있어(2026-08-24 옛 문 닫기)
+-- api 쪽에 통과 함수가 없으면 화면에서 못 부른다.
+create or replace function api.list_rent_stat_history(p_pnu text)
+returns table (
+  rone_region_nm    text,
+  bld_type          text,
+  quarter           text,
+  vacancy_rate      numeric,
+  rent_per_m2       numeric,
+  yield_rate        numeric,
+  income_yield_rate numeric
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$ select * from public.list_rent_stat_history(p_pnu) $$;
+
+revoke all on function api.list_rent_stat_history(text) from public, anon, authenticated;
+grant execute on function api.list_rent_stat_history(text) to anon, authenticated;
+
+-- ⛔ public.list_rent_stat_history 는 끝까지 닫아 둔다 — 통과 함수가 security definer 다.
+
+-- =====================================================================
 -- 함수: get_data_freshness — 이 자료는 언제 것인가 (2026-09-05d)
 -- =====================================================================
 -- 마이그레이션 2026-09-05d. 화면 아래 푸터의 표 한 장이 이 함수 하나만 부른다.

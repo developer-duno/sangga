@@ -32,6 +32,8 @@ const SIDE_FNS = [
   'list_industry_median',
   // 층 목록 업종 띠(결정 0038 D · V4) — 받는 쪽은 카드가 아니라 FloorStack 자신이다(인자 `{ p_pnu }` 하나).
   'list_floor_industry',
+  // 임대 동향의 8분기 흐름(결정 0038 C · V5) — 받는 쪽은 임대 카드(인자 `{ p_pnu }` 하나).
+  'list_rent_stat_history',
 ] as const;
 type SideFn = (typeof SIDE_FNS)[number];
 
@@ -153,6 +155,20 @@ function mixOf(pnu: string): IndustryMix {
   };
 }
 
+/** 8분기 흐름(결정 0038 V5) — 두 분기 · 앞 분기 공실률이 필지마다 다르다(가 1.11 · 나 2.22) · 마지막 분기 = 카드 줄 값. */
+function rentHistoryOf(pnu: string) {
+  const row = (quarter: string, vacancy_rate: number) => ({
+    rone_region_nm: '서울>강남>테헤란로',
+    bld_type: '집합상가',
+    quarter,
+    vacancy_rate,
+    rent_per_m2: 27.06,
+    yield_rate: 0.82,
+    income_yield_rate: null,
+  });
+  return [row('2026Q1', pnu === A.pnu ? 1.11 : 2.22), row('2026Q2', 10.08)];
+}
+
 function rentOf(pnu: string): RentStat[] {
   const tag = pnu === A.pnu ? '가' : '나';
   return [
@@ -220,6 +236,7 @@ function okSide(fn: SideFn, pnu: string): Res {
   if (fn === 'list_industry_mix') return { data: mixOf(pnu), error: null };
   if (fn === 'list_industry_median') return { data: medianOf(pnu), error: null };
   if (fn === 'list_rent_stats') return { data: rentOf(pnu), error: null };
+  if (fn === 'list_rent_stat_history') return { data: rentHistoryOf(pnu), error: null };
   if (fn === 'list_district_openclose') return { data: openCloseOf(pnu), error: null };
   // 층 목록 업종 띠 — 필지마다 다른 대분류(가 = 음식 · 나 = 교육). 층 목록(floorsOf)은 1층 점포 2곳이라 합 2.
   if (fn === 'list_floor_industry') {
@@ -247,7 +264,7 @@ afterEach(() => {
 });
 
 describe('FloorStack — 곁 카드 요청을 먼저 보낸다 (P3)', () => {
-  it('(a) 층 목록이 아직 안 왔는데도 여섯 요청은 이미 출발했다', async () => {
+  it('(a) 층 목록이 아직 안 왔는데도 일곱 요청은 이미 출발했다', async () => {
     // 층 목록은 영영 안 온다(state.floors 비어 있음).
     render(<FloorStack building={building(A)} />);
     expect(screen.getByText('층 정보를 불러오는 중…')).toBeTruthy();
@@ -293,6 +310,10 @@ describe('FloorStack — 곁 카드 요청을 먼저 보낸다 (P3)', () => {
     // 층 목록 업종 띠(결정 0038 V4)도 B 것만(교육) — A 의 음식 띠가 붙지 않는다.
     expect(container.querySelector('.floor__ind-seg[data-cat="edu"]')).not.toBeNull();
     expect(container.querySelector('.floor__ind-seg[data-cat="food"]')).toBeNull();
+    // 임대 8분기 흐름(결정 0038 V5)도 B 것만 — A 의 앞 분기 공실률(1.11%)이 붙지 않는다.
+    const vac = container.querySelector('.rent-trend__chart[data-metric="vacancy"]');
+    expect(vac?.getAttribute('aria-label')).toContain('2026년 1분기 2.22%');
+    expect(vac?.getAttribute('aria-label')).not.toContain('1.11%');
   });
 
   it('(c) 미리 보낸 요청이 실패하면 카드는 지금의 실패 화면과 같다 — 다시 묻지 않는다', async () => {
@@ -327,7 +348,7 @@ describe('FloorStack — 곁 카드 요청을 먼저 보낸다 (P3)', () => {
     expect(screen.queryByText(/새로 올라오는 상가 건물/)).toBeNull();
   });
 
-  it('(d) 건물 한 번 보는 데 여섯 함수 각각 정확히 1회', async () => {
+  it('(d) 건물 한 번 보는 데 일곱 함수 각각 정확히 1회', async () => {
     state.floors.set(A.bld_id, floorsOf(A));
     render(<FloorStack building={building(A)} />);
     await screen.findByText('임대상권가');
@@ -387,9 +408,20 @@ describe('곁 카드 — 다른 필지의 미리 보낸 답은 받지 않는다 
   });
 
   it('임대 동향 카드: A 몫을 받은 채 B 로 그려지면 B 값만 보인다', async () => {
-    render(<RentStatSection pnu={B.pnu} prefetch={prefetchOfA()} />);
+    const { container } = render(<RentStatSection pnu={B.pnu} prefetch={prefetchOfA()} />);
     expect(await screen.findByText('임대상권나')).toBeTruthy();
     expect(screen.queryByText('임대상권가')).toBeNull();
+    // 8분기 흐름도 B 를 스스로 묻고 B 값만(결정 0038 V5).
+    await waitFor(() => expect(container.querySelector('.rent-trend')).not.toBeNull());
+    expect(container.querySelector('.rent-trend__chart[data-metric="vacancy"]')?.getAttribute('aria-label')).toContain('2.22%');
+    expect(countFetches('list_rent_stat_history', B.pnu)).toBe(1);
+  });
+
+  it('임대 동향 카드: 이 필지 몫을 미리 받았으면 흐름도 그 답을 쓰고 다시 묻지 않는다', async () => {
+    const { container } = render(<RentStatSection pnu={A.pnu} prefetch={prefetchOfA()} />);
+    await waitFor(() => expect(container.querySelector('.rent-trend')).not.toBeNull());
+    expect(container.querySelector('.rent-trend__chart[data-metric="vacancy"]')?.getAttribute('aria-label')).toContain('1.11%');
+    expect(countFetches('list_rent_stat_history')).toBe(0);
   });
 
   it('개업·폐업 카드: A 몫을 받은 채 B 로 그려지면 B 를 스스로 묻고 B 값만 보인다', async () => {

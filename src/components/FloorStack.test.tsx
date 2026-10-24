@@ -2062,7 +2062,11 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     // 빈 카드 셋은 종이에서 빠지는 이름표를 단다(인쇄 규칙은 E2E 가 본다).
     expect(container.querySelectorAll('.card--empty')).toHaveLength(3);
     // ⛔ 부른 함수는 원래 카드들 것뿐이다 — 빈 카드용 함수 이름이 하나도 없다.
-    for (const c of rpcCalls) expect(c.fn).not.toMatch(/sales|pop|history|empty/i);
+    // ⓘ `list_rent_stat_history`(임대 동향의 8분기 흐름 · 결정 0038 V5)는 임대 카드 것이다 — 이름에 'history' 가 들어 있어 이 목록에서만 뺀다.
+    for (const c of rpcCalls.filter((x) => x.fn !== 'list_rent_stat_history')) {
+      expect(c.fn).not.toMatch(/sales|pop|history|empty/i);
+    }
+    expect(rpcCalls.some((x) => x.fn === 'list_rent_stat_history')).toBe(true);
   });
 
   it('구 이름을 모르면 그 조각을 빼고 적는다 ("null 층대별 단가"가 되지 않게)', async () => {
