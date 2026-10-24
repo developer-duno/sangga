@@ -976,11 +976,15 @@ export function FloorStack({
                     <span className="floor__caret">{isOpen ? '▲' : '▼'}</span>
                   </button>
                   {/*
-                    업종 띠(결정 0038 D · V4) — 층 줄 버튼 **밖**(버튼 이름·칸 수 불변 · 휴대폰 세 줄 묶음의 넷째 줄) · 막대 칸과 같은 가로 자리.
-                    답 전엔 점포가 있는 층만 같은 꼴의 빈 자리(안 보임 · 안 읽힘). 옆 글에 없는 업종을 말하므로 `role="img"` + 이름.
+                    업종 띠(결정 0038 D · V4) — 층 줄 버튼 **밖**(버튼 이름·칸 수 불변 · 휴대폰 세 줄 묶음의 넷째 줄) · 막대 칸과 같은 가로 자리
+                    (넓은 폭에서는 바깥 상자가 층 줄과 **같은 칸 틀**이고 띠(`.floor__ind-strip`)가 막대 칸에 선다 — 종이에서 층 줄이 카드보다
+                    넓어져도 같이 넓어진다 · V4 보완 1). 답 전엔 점포가 있는 층만 같은 꼴의 빈 자리(안 보임 · 안 읽힘).
+                    옆 글에 없는 업종을 말하므로 `role="img"` + 이름.
                   */}
                   {industryPending && (f.store_cnt ?? 0) > 0 && (
-                    <div className="floor__ind floor__ind--pending" aria-hidden="true" />
+                    <div className="floor__ind floor__ind--pending" aria-hidden="true">
+                      <div className="floor__ind-strip" />
+                    </div>
                   )}
                   {(() => {
                     const band = industryView?.byFloor.get(f.floor_no);
@@ -989,14 +993,16 @@ export function FloorStack({
                     const label = bandLabel(f.floor_no, f.floor_label, band);
                     return (
                       <div className="floor__ind" role="img" aria-label={label} title={label}>
-                        {segs.map((s) => (
-                          <span
-                            key={s.key}
-                            className="floor__ind-seg"
-                            data-cat={s.key}
-                            style={{ width: `${s.pct}%` }}
-                          />
-                        ))}
+                        <div className="floor__ind-strip">
+                          {segs.map((s) => (
+                            <span
+                              key={s.key}
+                              className="floor__ind-seg"
+                              data-cat={s.key}
+                              style={{ width: `${s.pct}%` }}
+                            />
+                          ))}
+                        </div>
                       </div>
                     );
                   })()}

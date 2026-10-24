@@ -2232,9 +2232,16 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
     test.skip(testInfo.project.name !== 'chromium', 'page.pdf 는 chromium 한 벌만');
     // 가짜 41층 건물(강남파이낸스센터 꼴 층 수) — 호실 요약 0줄(구성표 없음 · 층 줄만 쌓인다).
     const floors = Array.from({ length: 41 }, (_, i) => floorRow({ floor_no: 41 - i, main_use: '기타일반업무시설' }));
-    await openBuilding(page, [], floors);
+    // 층 목록 업종 띠(결정 0038 V4 보완 1)도 선 채로 잰다 — 층마다 점포 2곳(픽스처 store_cnt) + 층 모름 3곳.
+    const industry = [
+      ...floors.map((f) => ({ floor_no: f.floor_no, cat_l_cd: 'I2', cat_l_nm: '음식', store_cnt: 2 })),
+      { floor_no: null, cat_l_cd: 'G2', cat_l_nm: '소매', store_cnt: 3 },
+    ];
+    await openBuilding(page, [], floors, undefined, industry);
     await page.setViewportSize({ width: 1280, height: 900 });
     await expect(page.locator('.card--floors .floor__row')).toHaveCount(41);
+    await expect(page.locator('.card--floors .floor__ind:not(.floor__ind--pending)')).toHaveCount(41);
+    await expect(page.locator('.card--floors .floor__ind-unknown')).toBeVisible();
     await page.waitForLoadState('networkidle');
     // 화면에는 줄이기가 없다.
     expect(await page.locator('html').evaluate((h) => h.ownerDocument.defaultView!.getComputedStyle(h).zoom)).toBe('1');
@@ -5771,10 +5778,10 @@ test.describe('층별 스택뷰 — 층 목록 업종 띠 (결정 0038 D · V4)'
   const headOf = (page: Page, no: number) => page.locator(`.card--floors #floor-${no} .floor__head`);
   const box = async (sel: ReturnType<Page['locator']>) => (await sel.boundingBox())!;
 
-  /** 띠 자리(바깥 상자)와 막대(`.floor__bar`)의 왼·오른 끝이 같은가 — 1.5px 안. */
+  /** 띠(`.floor__ind-strip` — 조각이 서는 칸)와 막대(`.floor__bar`)의 왼·오른 끝이 같은가 — 1.5px 안. */
   async function expectBandUnderBar(page: Page, no: number, what: string) {
     const bar = await box(headOf(page, no).locator('.floor__bar'));
-    const ind = await box(headOf(page, no).locator('.floor__ind'));
+    const ind = await box(headOf(page, no).locator('.floor__ind-strip'));
     expect(Math.abs(ind.x - bar.x), `${what} 왼쪽 끝`).toBeLessThan(1.5);
     expect(Math.abs(ind.x + ind.width - (bar.x + bar.width)), `${what} 오른쪽 끝`).toBeLessThan(1.5);
     return ind;
@@ -5889,14 +5896,26 @@ test.describe('층별 스택뷰 — 층 목록 업종 띠 (결정 0038 D · V4)'
     // ⑤ 종이 — 띠가 그대로 서고(폭 0 백지 아님 · 색 그대로) · 층 줄+띠는 한 덩어리(.floor__head avoid) · 카드 아래 줄도 그대로.
     await page.emulateMedia({ media: 'print' });
     await expect(headOf(page, 2).locator('.floor__ind')).toHaveCount(1);
+    await expect(headOf(page, 2).locator('.floor__ind')).toBeVisible();
     if (!phone) {
-      await expect(headOf(page, 2).locator('.floor__ind')).toBeVisible();
-      const pInd = await expectBandUnderBar(page, 2, '종이 2층');
-      expect(pInd.width).toBeGreaterThan(40);
+      /*
+        V4 보완 1 — A4 종이 흉내 폭(740 = V3 보완 2 가 「운영 page.pdf 와 같은 꼴」이라 쓴 폭 · 703 · 800)에서 띠 끝 = 막대 끝.
+        740 은 `.floors` 가 카드 안쪽 폭으로 묶여 층 줄이 최소 폭(칸 합)으로 카드보다 넓은 꼴 — 띠 상자가 층 줄과 같은 칸 틀이라 같이 넓어진다
+        (옛 바깥 여백 97·505px 판은 막대 76 · 띠 54 로 짧았다).
+      */
+      const measured: string[] = [];
+      for (const pw of [740, 703, 800]) {
+        await page.setViewportSize({ width: pw, height: 900 });
+        const pInd = await expectBandUnderBar(page, 2, `종이 ${pw} 2층`);
+        expect(pInd.width, `종이 ${pw} 띠 폭`).toBeGreaterThan(40);
+        const pBar = await box(headOf(page, 2).locator('.floor__bar'));
+        measured.push(`${pw}: 막대 ${pBar.width.toFixed(1)} · 띠 ${pInd.width.toFixed(1)}`);
+      }
+      testInfo.annotations.push({ type: '종이 폭별 막대·띠(px)', description: measured.join(' / ') });
+      await page.setViewportSize({ width: 1280, height: 720 });
     } else {
-      // ⓘ 휴대폰 폭(412)을 둔 채 흉내 낸 종이는 층 줄이 옛 `@media (max-width: 720px)` 묶음으로 한 칸이 되는데, 띠의 휴대폰 자리는
-      //   screen 묶음에만 있어(§2-8 — 종이 모양을 안 바꾼다) 넓은 자리(왼 97 · 오른 505)가 그대로라 띠 폭이 0 으로 준다 —
-      //   카드 밖으로는 안 나간다(실제 A4 종이 폭에서는 넓다 · V2·V3 와 같은 알려진 틈).
+      // 휴대폰 폭(412)을 둔 채 흉내 낸 종이 — 층 줄이 옛 `@media (max-width: 720px)` 묶음으로 한 칸이 되어 막대가 폭 전체 · 띠도 폭 전체(기본 규칙).
+      await expectBandUnderBar(page, 2, '종이 412 2층');
       expect(await card.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
     }
     await expect(seg2.nth(0)).toHaveCSS('background-color', 'rgb(42, 120, 214)');

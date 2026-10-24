@@ -3285,6 +3285,24 @@ describe('FloorStack — 층 목록 업종 띠 (결정 0038 D · V4)', () => {
     expect(container.querySelector('.floor__ind-seg[data-cat="sci"]')).toBeNull();
     expect(container.querySelector('.floor__ind-unknown')).toBeNull();
   });
+
+  it('★ 필지가 바뀌면 받아 둔 옛 답을 비운다 — 새 필지 요청이 실패해도 옛 「층 모름」 줄이 남지 않는다(V4 보완 1)', async () => {
+    // 층 전부 점포 0 — 옛 필지의 답(층 모름 줄만)이 새 필지 층 목록과도 합이 맞아, 비우지 않으면 그대로 그려지는 장면.
+    responses.floors = { data: [floor({ floor_no: 1, store_cnt: 0 })], error: null };
+    const OTHER = '1168010100100090000';
+    responses.floorIndustry = (args) =>
+      args.p_pnu === PNU
+        ? { data: [{ floor_no: null, cat_l_cd: 'I2', cat_l_nm: '음식', store_cnt: 3 }], error: null }
+        : { data: null, error: { message: 'boom' } };
+    const { rerender, container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelector('.floor__ind-unknown')).not.toBeNull());
+    rerender(<FloorStack building={building({ bld_id: '1168010100-9', pnu: OTHER })} />);
+    await waitFor(() => expect(calls().some((c) => (c.args as { p_pnu: string }).p_pnu === OTHER)).toBe(true));
+    await screen.findByText('테스트빌딩');
+    await act(async () => {});
+    expect(container.querySelector('.floor__ind-unknown')).toBeNull();
+    expect(container.querySelector('.floor__ind-legend')).toBeNull();
+  });
 });
 
 /**

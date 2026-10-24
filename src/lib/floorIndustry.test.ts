@@ -235,57 +235,58 @@ function mediaAt(css: string, needle: string): string[] | null {
   return stack.filter((s): s is string => s !== null);
 }
 
-/**
- * 층 줄 칸 틀(`grid-template-columns` · `gap` · 안쪽 여백 10 · 테두리 1)에서 막대 칸의 왼·오른 바깥 거리(px).
- * 막대 칸 = 둘째 칸(`minmax(…, 1fr)`) — 그 앞 칸 하나 · 뒤 칸 다섯.
- */
-function barInset(cols: string, gap: number): { left: number; right: number } {
-  const parts = cols.replace(/minmax\([^)]*\)/, 'BAR').trim().split(/\s+/);
-  const px = (s: string) => Number(/^(\d+)px$/.exec(s)?.[1] ?? Number.NaN);
-  const bar = parts.indexOf('BAR');
-  const before = parts.slice(0, bar).map(px);
-  const after = parts.slice(bar + 1).map(px);
-  const edge = 1 + 10;
-  return {
-    left: edge + before.reduce((s, x) => s + x, 0) + gap * before.length,
-    right: edge + after.reduce((s, x) => s + x, 0) + gap * after.length,
-  };
-}
-
 describe('CSS 가드 — 층 목록 업종 띠(결정 0038 D · V4)', () => {
   const css = readFileSync('src/styles.css', 'utf8').replace(/\r\n/g, '\n');
   const rule = (sel: string, src = css) =>
     new RegExp(`(?:^|\\n)\\s*${sel.replace(/[.+[\]=']/g, (c) => `\\${c}`)}\\s*\\{([^}]*)\\}`).exec(src)?.[1] ?? '';
-  const margin = (body: string) => /margin:\s*([^;]+);/.exec(body)?.[1].trim() ?? '';
+  const prop = (body: string, name: string) => new RegExp(`(?:^|[;\\s])${name}:\\s*([^;]+);`).exec(body)?.[1].trim() ?? '';
+  /** `needle` 바로 뒤 `{ … }` 몸통. */
+  const bodyAt = (needle: string) => {
+    const at = css.indexOf(needle);
+    return at < 0 ? '' : css.slice(css.indexOf('{', at) + 1, css.indexOf('}', at));
+  };
 
-  it('★ 띠의 왼·오른 바깥 여백 = 층 줄 칸 틀에서 셈한 막대 칸 자리(넓은 화면 기본)', () => {
+  it('★ 721px 이상(화면·종이) — 띠 상자는 층 줄과 같은 칸 틀 · 같은 틈 · 좌우 11(= 층 줄 테두리 1 + 안쪽 여백 10) · 띠는 막대 칸(둘째 칸)', () => {
     const row = rule('.floor__row');
-    const cols = /grid-template-columns:\s*([^;]+);/.exec(row)![1];
-    const gap = Number(/gap:\s*(\d+)px/.exec(row)![1]);
+    const at = '  .floor__ind {\n    display: grid;';
+    // ⛔ screen 묶음이 아니다 — 종이(A4 폭)에서도 같은 칸 틀이어야 막대 끝 = 띠 끝(V4 보완 1).
+    expect(mediaAt(css, at)).toEqual(['@media (min-width: 721px)']);
+    const ind = bodyAt(at);
+    expect(prop(ind, 'grid-template-columns')).toBe(prop(row, 'grid-template-columns'));
+    expect(prop(ind, 'column-gap')).toBe(prop(row, 'gap'));
     expect(row).toMatch(/padding:\s*9px 10px/);
     expect(row).toMatch(/border:\s*1px solid/);
-    const { left, right } = barInset(cols, gap);
-    expect([left, right]).toEqual([97, 505]);
-    expect(margin(rule('.floor__ind'))).toBe(`-8px ${right}px 4px ${left}px`);
-    // 양성 대조 — 칸 하나를 넓히면 셈이 달라진다.
-    expect(barInset(cols.replace('118px', '130px'), gap).right).toBe(517);
+    expect(prop(ind, 'padding')).toBe('0 11px');
+    const cols = prop(row, 'grid-template-columns').replace(/minmax\([^)]*\)/, 'BAR').split(/\s+/);
+    expect(cols.indexOf('BAR') + 1).toBe(2);
+    expect(prop(bodyAt('  .floor__ind-strip {\n    grid-column'), 'grid-column')).toBe('2');
+    // 양성 대조 — 층 줄 칸 하나만 바꾸면 두 칸 틀 글이 갈린다 · screen 묶음으로 옮기면 머리가 달라진다.
+    expect(prop(row.replace('118px', '130px'), 'grid-template-columns')).not.toBe(prop(ind, 'grid-template-columns'));
+    const screenOnly = css.replace('@media (min-width: 721px) {\n  .floor__ind {', '@media screen and (min-width: 721px) {\n  .floor__ind {');
+    expect(screenOnly).not.toBe(css);
+    expect(mediaAt(screenOnly, at)).toEqual(['@media screen and (min-width: 721px)']);
   });
 
-  it('★ 1024~1279 두 칸 — 줄인 칸 틀과 같은 묶음 · 같은 셈', () => {
+  it('★ 1024~1279 두 칸 — 줄인 층 줄 칸 틀과 같은 묶음 · 같은 칸 틀 · 같은 틈', () => {
     const at = '    .app--wide .floor__ind {';
     expect(mediaAt(css, at)).toEqual(['@media screen and (min-width: 1024px)', '@media (max-width: 1279px)']);
-    const rowBody = /\n {4}\.app--wide \.floor__row \{([^}]*)\}/.exec(css)![1];
-    const cols = /grid-template-columns:\s*([^;]+);/.exec(rowBody)![1];
-    const gap = Number(/gap:\s*(\d+)px/.exec(rowBody)![1]);
-    const { left, right } = barInset(cols, gap);
-    expect([left, right]).toEqual([83, 427]);
-    const body = /\n {4}\.app--wide \.floor__ind \{([^}]*)\}/.exec(css)![1];
-    expect(margin(body)).toBe(`-8px ${right}px 4px ${left}px`);
+    const row = bodyAt('    .app--wide .floor__row {');
+    const ind = bodyAt(at);
+    expect(prop(ind, 'grid-template-columns')).toBe(prop(row, 'grid-template-columns'));
+    expect(prop(ind, 'column-gap')).toBe(prop(row, 'gap'));
   });
 
-  it('휴대폰(넷째 줄 · 폭 전체)은 screen 720 묶음에만(옛 720 묶음 금지 — 종이가 바뀐다)', () => {
-    expect(mediaAt(css, '  .floor__ind {\n    margin: -6px 11px 4px;')).toEqual(['@media screen and (max-width: 720px)']);
-    expect(mediaAt(css, '\n.floor__ind {\n')).toEqual([]);
+  it('720px 이하(휴대폰 화면 · 좁은 종이) — 기본 규칙 = 막대처럼 폭 전체(좌우 11) · 옛 720 묶음엔 띠 규칙이 없다', () => {
+    expect(mediaAt(css, '\n.floor__ind {\n  margin: -6px 11px 4px;')).toEqual([]);
+    expect(prop(bodyAt('\n.floor__ind-strip {'), 'height')).toBe('6px');
+    // 옛 `@media (max-width: 720px)` 묶음·휴대폰 screen 묶음 어디에도 .floor__ind 규칙을 두지 않는다(기본 규칙이 그 몫).
+    const src = css.replace(/\/\*[\s\S]*?\*\//g, (m) => ' '.repeat(m.length));
+    const heads: Array<string[] | null> = [];
+    for (let i = src.indexOf('.floor__ind {'); i >= 0; i = src.indexOf('.floor__ind {', i + 1)) {
+      heads.push(mediaAt(`${css.slice(0, i)}§`, '§'));
+    }
+    expect(heads).toHaveLength(3); // 기본 · 721 이상 · 1024~1279 두 칸
+    expect(heads.some((h) => h?.some((m) => m.includes('max-width: 720px')))).toBe(false);
     // 양성 대조 — 옛 묶음에 넣으면 그 머리가 나온다.
     const moved = '@media (max-width: 720px) {\n  .floor__ind {\n    margin: 0 9px;\n  }\n}\n' + css;
     expect(mediaAt(moved, '  .floor__ind {\n    margin: 0 9px;')).toEqual(['@media (max-width: 720px)']);
