@@ -30,6 +30,8 @@ const SIDE_FNS = [
   'list_district_openclose',
   // 업종 비중 비교(물결 2-3) — 업종 분포 카드의 상권 블록 비교 글. 인자 `{ p_pnu }` 하나라 함께 미리 보낸다.
   'list_industry_median',
+  // 층 목록 업종 띠(결정 0038 D · V4) — 받는 쪽은 카드가 아니라 FloorStack 자신이다(인자 `{ p_pnu }` 하나).
+  'list_floor_industry',
 ] as const;
 type SideFn = (typeof SIDE_FNS)[number];
 
@@ -219,6 +221,10 @@ function okSide(fn: SideFn, pnu: string): Res {
   if (fn === 'list_industry_median') return { data: medianOf(pnu), error: null };
   if (fn === 'list_rent_stats') return { data: rentOf(pnu), error: null };
   if (fn === 'list_district_openclose') return { data: openCloseOf(pnu), error: null };
+  // 층 목록 업종 띠 — 필지마다 다른 대분류(가 = 음식 · 나 = 교육). 층 목록(floorsOf)은 1층 점포 2곳이라 합 2.
+  if (fn === 'list_floor_industry') {
+    return { data: [{ floor_no: 1, cat_l_cd: pnu === A.pnu ? 'I2' : 'P1', cat_l_nm: null, store_cnt: 2 }], error: null };
+  }
   const total = pnu === A.pnu ? 3 : 7;
   return { data: { total_cnt: total, started_cnt: 2, base_ym: '202607' }, error: null };
 }
@@ -241,7 +247,7 @@ afterEach(() => {
 });
 
 describe('FloorStack — 곁 카드 요청을 먼저 보낸다 (P3)', () => {
-  it('(a) 층 목록이 아직 안 왔는데도 다섯 요청은 이미 출발했다', async () => {
+  it('(a) 층 목록이 아직 안 왔는데도 여섯 요청은 이미 출발했다', async () => {
     // 층 목록은 영영 안 온다(state.floors 비어 있음).
     render(<FloorStack building={building(A)} />);
     expect(screen.getByText('층 정보를 불러오는 중…')).toBeTruthy();
@@ -284,6 +290,9 @@ describe('FloorStack — 곁 카드 요청을 먼저 보낸다 (P3)', () => {
     // 비교 글(물결 2-3)도 B 것만.
     expect(text).toContain('서울 발달상권 가운데 22.2%');
     expect(text).not.toContain('가운데 11.1%');
+    // 층 목록 업종 띠(결정 0038 V4)도 B 것만(교육) — A 의 음식 띠가 붙지 않는다.
+    expect(container.querySelector('.floor__ind-seg[data-cat="edu"]')).not.toBeNull();
+    expect(container.querySelector('.floor__ind-seg[data-cat="food"]')).toBeNull();
   });
 
   it('(c) 미리 보낸 요청이 실패하면 카드는 지금의 실패 화면과 같다 — 다시 묻지 않는다', async () => {
@@ -318,7 +327,7 @@ describe('FloorStack — 곁 카드 요청을 먼저 보낸다 (P3)', () => {
     expect(screen.queryByText(/새로 올라오는 상가 건물/)).toBeNull();
   });
 
-  it('(d) 건물 한 번 보는 데 다섯 함수 각각 정확히 1회', async () => {
+  it('(d) 건물 한 번 보는 데 여섯 함수 각각 정확히 1회', async () => {
     state.floors.set(A.bld_id, floorsOf(A));
     render(<FloorStack building={building(A)} />);
     await screen.findByText('임대상권가');

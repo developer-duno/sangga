@@ -1046,3 +1046,18 @@ export type ParcelLandPrice = {
   /** 공시 기준연도. */
   land_price_year: number;
 };
+
+/**
+ * 함수 `list_floor_industry(p_pnu)` 한 줄 — 이 땅의 점포를 (층, 소진공 대분류)로 센 수(결정 0038 D · V4).
+ * ⓘ 층 목록 줄의 「점포 N」(`v_floor_stack.store_cnt`)과 같은 행 집합(같은 땅 · 같은 보여 주는 분기 · 같은 층 번호)이라
+ *   층 목록에 있는 층이면 그 층 줄들의 합이 그 층의 store_cnt 다. 점포는 땅 단위 — 같은 땅 여러 동이면 동마다 같은 답(D등급).
+ */
+export type FloorIndustryRow = {
+  /** 지상 n=n / 지하 n=-n / 옥탑=99. **null = 층 모름 묶음(na)** — 원본에 층이 없거나 읽을 수 없거나 숫자 없는 '지'. */
+  floor_no: number | null;
+  /** 소진공 대분류 코드(I2 음식 · G2 소매 · M1 과학·기술 · P1 교육 · L1 부동산 …). 비어 있으면 null. */
+  cat_l_cd: string | null;
+  cat_l_nm: string | null;
+  /** 그 (층, 대분류)의 점포 수 — 1 이상(0 인 줄은 서버가 안 준다). */
+  store_cnt: number;
+};

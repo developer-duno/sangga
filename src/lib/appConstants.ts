@@ -403,3 +403,14 @@ export const FLOOR_UNITS_PAGE = 50;
  * ⛔ 0줄·실패(함수 없음 PGRST202 포함)·모양 이상이면 **줄을 안 그린다** — '자료 없음'이라 적지 않는다.
  */
 export const LAND_PRICE_FN = 'get_parcel_land_price';
+
+/**
+ * 이 **땅(필지)** 의 점포를 (층, 소진공 대분류)로 센 수 — 층 목록 카드의 층별 업종 띠(결정 0038 D · V4 · 2026-10-24a).
+ *
+ * ⚠️ **인자 이름이 `p_pnu` 다** — 목(mock)은 인자 이름을 안 보므로 `{ pnu: … }` 로 잘못 불러도 vitest·E2E 는 초록이고
+ *    라이브에서만 PGRST202 가 난다.
+ * ⓘ 곁 카드 미리 부르기(`sidePrefetch`)의 여섯째다 — 인자가 `{ p_pnu }` 하나라 보관 열쇠(함수 + pnu)가 그대로 맞고, 점포는
+ *   땅 단위라 같은 땅 다른 동이면 같은 답이다(호실 요약과 달리 섞일 것이 없다).
+ * ⛔ 실패(함수 없음 PGRST202 포함)·모양 이상·층 줄 「점포 N」과 합이 어긋남이면 **띠·「층 모름」 줄을 안 그린다** — 카드는 그대로 선다.
+ */
+export const FLOOR_INDUSTRY_FN = 'list_floor_industry';

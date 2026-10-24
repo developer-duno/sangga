@@ -96,6 +96,15 @@ const responses = {
     data: null as unknown,
     error: { code: 'PGRST202', message: 'function does not exist' } as unknown,
   })) as (args: Record<string, unknown>) => { data: unknown; error: unknown } | Promise<unknown>,
+  /**
+   * 서버 함수 list_floor_industry 의 응답(층 목록 업종 띠 · 결정 0038 D · V4).
+   * 기본값을 **함수 없음(PGRST202)** 으로 둔다 — 띠·「층 모름」 줄이 안 서서 다른 시험의 층 목록 모양이 그대로다.
+   * ⓘ 함수로 두면 인자(pnu)를 보고 답한다 · 프라미스를 돌려주면 그대로 따른다(늦은 답 · 받는 중).
+   */
+  floorIndustry: (() => ({
+    data: null as unknown,
+    error: { code: 'PGRST202', message: 'function does not exist' } as unknown,
+  })) as (args: Record<string, unknown>) => { data: unknown; error: unknown } | Promise<unknown>,
 };
 
 /** 마지막 rpc 호출의 인자. "구 코드를 pnu 에서 뽑아 보내는가"를 여기서 확인한다. */
@@ -148,6 +157,10 @@ vi.mock('../lib/supabase', () => ({
       // 늘 '모양 이상 → 줄 없음'으로 굳는다(거짓 초록).
       if (fn === 'get_parcel_land_price') {
         return Promise.resolve(responses.landPrice((args ?? {}) as Record<string, unknown>));
+      }
+      // 층 목록 업종 띠(결정 0038 D · V4). 갈라 답하지 않으면 상권 응답(객체)이 흘러들어 늘 '모양 이상 → 띠 없음'으로 굳는다.
+      if (fn === 'list_floor_industry') {
+        return Promise.resolve(responses.floorIndustry((args ?? {}) as Record<string, unknown>));
       }
       return Promise.resolve(responses.districts);
     },
@@ -278,6 +291,11 @@ beforeEach(() => {
   responses.floorUnits = () => ({ data: [], error: null });
   // 기본은 함수 없음 = 개별공시지가 줄 미표시. 그 줄을 보는 시험만 덮어쓴다.
   responses.landPrice = () => ({
+    data: null,
+    error: { code: 'PGRST202', message: 'function does not exist' },
+  });
+  // 기본은 함수 없음 = 업종 띠·「층 모름」 줄 미표시. 그 띠를 보는 시험만 덮어쓴다.
+  responses.floorIndustry = () => ({
     data: null,
     error: { code: 'PGRST202', message: 'function does not exist' },
   });
@@ -3109,6 +3127,191 @@ describe('FloorStack — 개별공시지가 한 줄 (결정 0036 결정 7)', () 
     releaseOld({ data: [{ land_price: 45_230_000, land_price_year: 2026 }], error: null });
     await new Promise((r) => setTimeout(r, 0));
     expect(container.querySelector('.stack__land-text')?.textContent).toBe(NEW);
+  });
+});
+
+describe('FloorStack — 층 목록 업종 띠 (결정 0038 D · V4)', () => {
+  const PNU = '1168010100100010000';
+  const ROWS = [
+    { floor_no: 2, cat_l_cd: 'M1', cat_l_nm: '과학·기술', store_cnt: 3 },
+    { floor_no: 2, cat_l_cd: 'I2', cat_l_nm: '음식', store_cnt: 1 },
+    { floor_no: 1, cat_l_cd: 'I2', cat_l_nm: '음식', store_cnt: 1 },
+    { floor_no: 1, cat_l_cd: 'S2', cat_l_nm: '수리·개인', store_cnt: 1 },
+    { floor_no: 7, cat_l_cd: 'G2', cat_l_nm: '소매', store_cnt: 2 },
+    { floor_no: null, cat_l_cd: 'I2', cat_l_nm: '음식', store_cnt: 4 },
+    { floor_no: null, cat_l_cd: 'L1', cat_l_nm: '부동산', store_cnt: 1 },
+  ];
+  const FLOORS = () => [
+    floor({ floor_no: 3, store_cnt: 0 }),
+    floor({ floor_no: 2, store_cnt: 4 }),
+    floor({ floor_no: 1, store_cnt: 2 }),
+  ];
+  const head = (c: HTMLElement, no: number) => c.querySelector(`#floor-${no} .floor__head`) as HTMLElement;
+  const calls = () => rpcCalls.filter((x) => x.fn === 'list_floor_industry');
+
+  beforeEach(() => {
+    responses.floors = { data: FLOORS(), error: null };
+  });
+
+  it('★ 값이 오면 점포 있는 층 줄 아래(버튼 밖)에 띠 · 조각 폭 = 점포 수 ÷ 가장 많은 층 · 차례 = 범례 · 인자 p_pnu', async () => {
+    responses.floorIndustry = () => ({ data: ROWS, error: null });
+    const { container } = render(<FloorStack building={building()} />);
+    await screen.findByText('테스트빌딩');
+    await waitFor(() => expect(container.querySelectorAll('.floor__ind:not(.floor__ind--pending)')).toHaveLength(2));
+    // 2층(4곳 = 가장 많은 층) — 음식 1 · 과학·기술 3 → 25% · 75%(합 100)
+    const two = head(container, 2).querySelector('.floor__ind')!;
+    expect(two.getAttribute('role')).toBe('img');
+    expect(two.getAttribute('aria-label')).toBe('2층 가게 업종(대분류): 음식 1곳 · 과학·기술 3곳');
+    const segs2 = [...two.querySelectorAll<HTMLElement>('.floor__ind-seg')];
+    expect(segs2.map((s) => s.dataset.cat)).toEqual(['food', 'sci']);
+    expect(segs2.map((s) => s.style.width)).toEqual(['25%', '75%']);
+    // 1층(2곳) — 음식 1 · 그 밖 1 → 25% · 25%(띠 전체 50%)
+    const one = head(container, 1).querySelector('.floor__ind')!;
+    expect([...one.querySelectorAll<HTMLElement>('.floor__ind-seg')].map((s) => [s.dataset.cat, s.style.width])).toEqual([
+      ['food', '25%'],
+      ['other', '25%'],
+    ]);
+    // 점포 0 층은 띠 줄 자체가 없다 · 띠는 층 줄 버튼 밖(버튼 이름·칸 수 불변)
+    expect(head(container, 3).querySelector('.floor__ind')).toBeNull();
+    expect(container.querySelector('.floor__row .floor__ind')).toBeNull();
+    expect(two.previousElementSibling?.classList.contains('floor__row')).toBe(true);
+    expect(calls()).toEqual([{ fn: 'list_floor_industry', args: { p_pnu: PNU } }]);
+  });
+
+  it('★ 범례(대분류 · 이 땅의 가게 · 소분류) · 층 모름 N곳 · 자리 없는 점포 N곳 — 카드 아래', async () => {
+    responses.floorIndustry = () => ({ data: ROWS, error: null });
+    const { container } = render(<FloorStack building={building()} />);
+    const legend = await waitFor(() => {
+      const el = container.querySelector('.floor__ind-legend');
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    expect(legend.textContent).toBe(
+      '막대 아래 가는 띠 = 이 땅의 가게 수와 업종 대분류(층을 펼치면 나오는 가게 목록은 소분류): 음식 · 과학·기술 · 그 밖',
+    );
+    expect([...legend.querySelectorAll<HTMLElement>('.floor__ind-swatch')].map((s) => s.dataset.cat)).toEqual([
+      'food',
+      'sci',
+      'other',
+    ]);
+    expect(container.querySelector('.floor__ind-unknown')?.textContent).toBe(
+      '층 모름 5곳 — 원본에 층이 비어 있거나 읽을 수 없는 가게, 숫자 없이 "지하"라고만 적힌 가게 (음식 4 · 부동산 1)',
+    );
+    expect(container.querySelector('.floor__ind-placeless')?.textContent).toBe(
+      '자리 없는 점포 2곳 — 이 건물 층 목록에 없는 층에 적힌 가게 (7층 2곳)',
+    );
+    // 범례는 목록 **아래**(답이 늦어도 층 줄이 안 밀린다).
+    const list = container.querySelector('ol.floors')!;
+    expect(list.compareDocumentPosition(legend) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('★ 한 땅에 건물이 여러 동이면 「자리 없는 점포」 줄에 「이 땅의 다른 동 가게일 수 있습니다」(👤 2026-10-24) — 한 동이면 그대로(위 시험)', async () => {
+    responses.floors = { data: FLOORS().map((f) => ({ ...f, bld_cnt_in_pnu: 2 })), error: null };
+    responses.floorIndustry = () => ({ data: ROWS, error: null });
+    const { container } = render(<FloorStack building={building({ bld_cnt_in_pnu: 2 })} />);
+    await waitFor(() => expect(container.querySelector('.floor__ind-placeless')).not.toBeNull());
+    expect(container.querySelector('.floor__ind-placeless')?.textContent).toBe(
+      '자리 없는 점포 2곳 — 이 건물 층 목록에 없는 층에 적힌 가게 · 이 땅의 다른 동 가게일 수 있습니다 (7층 2곳)',
+    );
+  });
+
+  it('★ 답이 오기 전엔 점포 있는 층에만 빈 자리(안 보이는 꼴 · aria-hidden) — 답이 오면 그 자리에 띠', async () => {
+    let release: (v: { data: unknown; error: unknown }) => void = () => {};
+    responses.floorIndustry = () =>
+      new Promise((resolve) => {
+        release = resolve;
+      });
+    const { container } = render(<FloorStack building={building()} />);
+    await screen.findByText('테스트빌딩');
+    const pending = container.querySelectorAll('.floor__ind.floor__ind--pending');
+    expect(pending).toHaveLength(2);
+    expect([...pending].every((p) => p.getAttribute('aria-hidden') === 'true')).toBe(true);
+    expect(head(container, 3).querySelector('.floor__ind')).toBeNull();
+    expect(container.querySelector('.floor__ind-legend')).toBeNull();
+    await act(async () => {
+      release({ data: ROWS, error: null });
+    });
+    expect(container.querySelectorAll('.floor__ind--pending')).toHaveLength(0);
+    expect(container.querySelectorAll('.floor__ind')).toHaveLength(2);
+  });
+
+  it.each([
+    ['함수 없음(PGRST202)', { data: null, error: { code: 'PGRST202', message: 'function does not exist' } }],
+    ['그 밖의 오류', { data: null, error: { message: 'boom' } }],
+    ['모양 이상(점포 수가 글자)', { data: [{ floor_no: 1, cat_l_cd: 'I2', cat_l_nm: '음식', store_cnt: '2' }], error: null }],
+    // 띠 합 ≠ 층 줄 「점포 N」(1층 3 ≠ 2) — 통째로 버린다
+    ['★ 띠 합이 점포 수와 다름', { data: [...ROWS, { floor_no: 1, cat_l_cd: 'I2', cat_l_nm: '음식', store_cnt: 1 }], error: null }],
+  ])('%s 이면 띠·범례·층 모름 줄이 다 없고 카드는 그대로', async (_l, res) => {
+    responses.floorIndustry = () => res;
+    const { container } = render(<FloorStack building={building()} />);
+    await screen.findByText('테스트빌딩');
+    await waitFor(() => expect(calls()).toHaveLength(1));
+    await waitFor(() => expect(container.querySelectorAll('.floor__ind--pending')).toHaveLength(0));
+    expect(container.querySelector('.floor__ind')).toBeNull();
+    expect(container.querySelector('.floor__ind-legend')).toBeNull();
+    expect(container.querySelector('.floor__ind-unknown')).toBeNull();
+    expect(container.querySelector('.floor__ind-placeless')).toBeNull();
+    expect(container.querySelectorAll('.floor__row')).toHaveLength(3);
+    expect(container.textContent).toContain('점포 4');
+    expect(container.textContent).not.toContain('PGRST202');
+  });
+
+  it('점포가 한 곳도 없는 건물은 띠 자리부터 없다 · 층 모름만 있으면 그 줄만', async () => {
+    responses.floors = { data: [floor({ floor_no: 1, store_cnt: 0 })], error: null };
+    responses.floorIndustry = () => ({
+      data: [{ floor_no: null, cat_l_cd: 'I2', cat_l_nm: '음식', store_cnt: 3 }],
+      error: null,
+    });
+    const { container } = render(<FloorStack building={building()} />);
+    await screen.findByText('테스트빌딩');
+    expect(container.querySelector('.floor__ind')).toBeNull();
+    await waitFor(() => expect(container.querySelector('.floor__ind-unknown')).not.toBeNull());
+    expect(container.querySelector('.floor__ind')).toBeNull();
+    expect(container.querySelector('.floor__ind-legend')).toBeNull();
+  });
+
+  it('★ 필지가 바뀐 뒤 늦게 온 옛 필지의 답은 버린다', async () => {
+    let releaseOld: (v: { data: unknown; error: unknown }) => void = () => {};
+    const OTHER = '1168010100100090000';
+    responses.floorIndustry = (args) =>
+      args.p_pnu === PNU
+        ? new Promise((resolve) => {
+            releaseOld = resolve;
+          })
+        : {
+            data: [
+              { floor_no: 2, cat_l_cd: 'P1', cat_l_nm: '교육', store_cnt: 4 },
+              { floor_no: 1, cat_l_cd: 'P1', cat_l_nm: '교육', store_cnt: 2 },
+            ],
+            error: null,
+          };
+    const { rerender, container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(calls()).toHaveLength(1));
+    rerender(<FloorStack building={building({ bld_id: '1168010100-9', pnu: OTHER })} />);
+    await waitFor(() => expect(container.querySelector('.floor__ind-seg[data-cat="edu"]')).not.toBeNull());
+    await act(async () => {
+      releaseOld({ data: ROWS, error: null });
+    });
+    expect(container.querySelector('.floor__ind-seg[data-cat="sci"]')).toBeNull();
+    expect(container.querySelector('.floor__ind-unknown')).toBeNull();
+  });
+
+  it('★ 필지가 바뀌면 받아 둔 옛 답을 비운다 — 새 필지 요청이 실패해도 옛 「층 모름」 줄이 남지 않는다(V4 보완 1)', async () => {
+    // 층 전부 점포 0 — 옛 필지의 답(층 모름 줄만)이 새 필지 층 목록과도 합이 맞아, 비우지 않으면 그대로 그려지는 장면.
+    responses.floors = { data: [floor({ floor_no: 1, store_cnt: 0 })], error: null };
+    const OTHER = '1168010100100090000';
+    responses.floorIndustry = (args) =>
+      args.p_pnu === PNU
+        ? { data: [{ floor_no: null, cat_l_cd: 'I2', cat_l_nm: '음식', store_cnt: 3 }], error: null }
+        : { data: null, error: { message: 'boom' } };
+    const { rerender, container } = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(container.querySelector('.floor__ind-unknown')).not.toBeNull());
+    rerender(<FloorStack building={building({ bld_id: '1168010100-9', pnu: OTHER })} />);
+    await waitFor(() => expect(calls().some((c) => (c.args as { p_pnu: string }).p_pnu === OTHER)).toBe(true));
+    await screen.findByText('테스트빌딩');
+    await act(async () => {});
+    expect(container.querySelector('.floor__ind-unknown')).toBeNull();
+    expect(container.querySelector('.floor__ind-legend')).toBeNull();
   });
 });
 
