@@ -81,6 +81,10 @@ function stepOf(state: unknown): number {
   const v = typeof state === 'object' && state !== null ? (state as Record<string, unknown>)[STEP_KEY] : undefined;
   return typeof v === 'number' ? v : 0;
 }
+/** 칸에 차례 번호가 적혀 있나 — 없는 칸(휴대폰에서 쌓은 칸 · 주소창에 `#…` 를 쳐서 생긴 칸)은 방향을 가르는 데 쓰지 않는다(2026-10-26 재검사). */
+function hasStep(state: unknown): boolean {
+  return typeof state === 'object' && state !== null && typeof (state as Record<string, unknown>)[STEP_KEY] === 'number';
+}
 
 export default function App() {
   /*
@@ -279,7 +283,12 @@ export default function App() {
   function pushBldMark(fromList = false) {
     if (historyMarkOf(window.history.state) === 'bld') return;
     window.history.replaceState(
-      { ...(window.history.state ?? {}), [HISTORY_KEY]: 'base', ...(fromList ? { [NEAR_NEXT]: 'bld' } : {}) },
+      {
+        ...(window.history.state ?? {}),
+        [HISTORY_KEY]: 'base',
+        ...(fromList ? { [NEAR_NEXT]: 'bld' } : {}),
+        ...curStepStamp(),
+      },
       '',
     );
     window.history.pushState(
@@ -305,13 +314,23 @@ export default function App() {
     return stepNowRef.current;
   }
   /*
+    지금 칸에 번호가 없으면 지금 번호를 적는다(PC 두 칸만 — 휴대폰·한 열 칸 상태는 그대로) · 처음 칸은 표식만 받고 번호가 없어서,
+    번호 없는 칸은 안 지나치는 `onPop` 규칙이 정상 순서의 마지막 지나치기(처음 칸 → 이전 페이지)를 막지 않게(2026-10-26 재검사).
+  */
+  function curStepStamp() {
+    return wideRef.current && !hasStep(window.history.state) ? { [STEP_KEY]: stepNowRef.current } : {};
+  }
+  /*
     PC 두 칸에서 건물을 쥔 채 목록을 세운다(검색·상권 목록 · 👤 2026-10-23 D1 「목록에서 뒤로가기 = 「← 보던 건물로」와 같습니다. 실수로
     사이트를 떠나지 않습니다」) — 지금 칸(건물)에 건물 표식을 적고 목록 칸(base)을 하나 쌓는다. 이미 목록 칸이면 더 쌓지 않는다.
     ⓘ 건물이 없으면 부르지 않는다 — 목록에서 뒤로가기는 지금처럼 이전 페이지.
   */
   function pushListMark() {
     if (historyMarkOf(window.history.state) === 'base') return;
-    window.history.replaceState({ ...(window.history.state ?? {}), [HISTORY_KEY]: 'bld', [NEAR_NEXT]: 'list' }, '');
+    window.history.replaceState(
+      { ...(window.history.state ?? {}), [HISTORY_KEY]: 'bld', [NEAR_NEXT]: 'list', ...curStepStamp() },
+      '',
+    );
     window.history.pushState({ [HISTORY_KEY]: 'base', [NEAR_PREV]: 'bld', [STEP_KEY]: nextStep() }, '', window.location.href);
   }
   /** 지금 칸의 이웃 — 'prev' = 바로 뒤 칸 · 'next' = 바로 앞 칸이 무엇인가(목록·건물 · 모르면 null). */
@@ -326,9 +345,13 @@ export default function App() {
     function onPop(e: PopStateEvent) {
       const mark = historyMarkOf(e.state);
       // 차례 번호로 방향을 안다(작아졌으면 뒤로) — 아래 「빈 칸 지나치기」가 같은 방향으로 한 칸 더 간다.
+      // 방향이 확실한 것은 그 칸에 번호가 있고 지금 번호와 다를 때뿐이다(2026-10-26 재검사) — 번호 없는 칸을 0 으로 읽으면 방향이 뒤집혀
+      // 지나치기가 되튕기고, 뒤로가기가 끝없이 헛돈다(휴대폰 폭에서 연 건물을 넓은 화면으로 · 주소창 `#…` 칸). 번호 없는 칸은 지금 번호도 안 바꾼다.
+      const numbered = hasStep(e.state);
       const step = stepOf(e.state);
       const back = step < stepNowRef.current;
-      stepNowRef.current = step;
+      const sure = numbered && step !== stepNowRef.current;
+      if (numbered) stepNowRef.current = step;
       // 이 칸으로 커서를 옮기지 말라는 표시(지도 단추로 상권 목록을 접어 건물로 돌아가는 길 — 커서는 누른 단추에 · 후속 PR).
       const quiet = popQuietRef.current;
       popQuietRef.current = false;
@@ -341,6 +364,7 @@ export default function App() {
         */
         const dead = mark === 'bld' ? selectedRef.current === null : activeListRef.current === null;
         if (dead) {
+          if (!sure) return; // 방향을 모르면 지나치지 않는다(이 한 번은 헛눌림 — 끝없이 돌지는 않는다)
           if (back) window.history.back();
           else window.history.forward();
           return;
