@@ -1234,6 +1234,174 @@ describe('PC 두 칸 오른쪽 목록 — 배선 (👤 2026-10-22 방법 나)', 
     expect(back).toHaveBeenCalledTimes(1);
   });
 
+  /*
+    가짜 뒤로가기 칸(2026-10-26 재검사 🟡) — 앱이 쌓은 칸(상태 · 주소)을 그대로 들고 있다가 뒤로·앞으로 때 **그 칸에 적힌 상태 그대로**
+    popstate 를 보낸다(진짜 브라우저처럼 비동기). 위 시험처럼 차례 번호를 손으로 지어 넣으면 앱이 칸에 번호를 안 적어도 초록이라,
+    번호가 실제로 방향을 가르는지는 이 흉내로만 보인다. ⓘ jsdom 의 진짜 뒤로가기는 시험끼리 창을 나눠 써 앞 시험 칸으로 샌다(위 시험 주석).
+    `left` = 맨 앞 칸에서 더 뒤로(= 이전 페이지로 나감) · `moves` 가 30 을 넘으면 끝없이 도는 것으로 보고 멈춘다(`runaway`).
+  */
+  function fakeHistory() {
+    const realReplace = (s: unknown, url?: string) =>
+      url === undefined
+        ? History.prototype.replaceState.call(window.history, s, '')
+        : History.prototype.replaceState.call(window.history, s, '', url);
+    const entries: { state: unknown; url: string }[] = [{ state: window.history.state, url: window.location.href }];
+    const h = { at: 0, left: false, runaway: false, moves: 0, pending: 0, entries };
+    vi.mocked(window.history.pushState).mockImplementation((s, _t, url) => {
+      entries.splice(h.at + 1);
+      entries.push({ state: s, url: url ? String(url) : window.location.href });
+      h.at += 1;
+      realReplace(s, url ? String(url) : undefined);
+    });
+    vi.spyOn(window.history, 'replaceState').mockImplementation((s, _t, url) => {
+      realReplace(s, url ? String(url) : undefined);
+      entries[h.at] = { state: s, url: window.location.href };
+    });
+    function go(d: number) {
+      h.pending += 1;
+      setTimeout(() => {
+        h.pending -= 1;
+        h.moves += 1;
+        if (h.moves > 30) {
+          h.runaway = true;
+          return;
+        }
+        const to = h.at + d;
+        if (to < 0) {
+          h.left = true;
+          return;
+        }
+        if (to >= entries.length) return; // 앞 칸이 없다 — 브라우저도 아무 일 없음
+        h.at = to;
+        realReplace(entries[to].state, entries[to].url);
+        window.dispatchEvent(new PopStateEvent('popstate', { state: entries[to].state }));
+      }, 0);
+    }
+    vi.spyOn(window.history, 'back').mockImplementation(() => go(-1));
+    vi.spyOn(window.history, 'forward').mockImplementation(() => go(1));
+    /** 뒤로·앞으로가 다 끝날 때까지(앱이 이어 부른 지나치기 포함). */
+    async function settle() {
+      for (let i = 0; i < 40 && (i === 0 || h.pending > 0); i++) {
+        await act(async () => {
+          await new Promise((r) => setTimeout(r, 0));
+        });
+      }
+    }
+    return { h, go, settle };
+  }
+
+  it('★ 재검사 🟡 목록 칸 차례 번호 — 검색 → 건물 → 새 검색 → 「목록 닫기」 → 앞으로 → 뒤로 = 보던 건물(사이트를 안 떠남) → 뒤로 = 이전 페이지 · 칸에 적힌 번호 그대로 흉내(목록 칸 번호 > 건물 칸 번호)', async () => {
+    serve(TWO);
+    mediaAt(1280);
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    const { h, go, settle } = fakeHistory();
+    render(<App />);
+    await pickGu();
+    await searchAndOpen(); // 칸 [첫 검색 목록(base) · 건물(bld)]
+    await search('다른동'); // D1 — 목록 칸 하나 더 [… · 새 검색 목록(base)]
+    expect(h.entries).toHaveLength(3);
+    const stepAt = (i: number) => (h.entries[i].state as Record<string, unknown>).sanggaStep as number;
+    // 번호는 쌓은 차례대로 커진다 — 목록 칸(`pushListMark`)에도 번호가 있어야 그 칸에 앞으로 닿았는지 뒤로 닿았는지 안다.
+    expect(stepAt(2)).toBeGreaterThan(stepAt(1));
+    fireEvent.click(screen.getByRole('button', { name: '목록 닫기' })); // 이웃 칸(건물)으로 뒤로
+    await settle();
+    expect(h.at).toBe(1);
+    expect(app().classList.contains('app--wlist')).toBe(false);
+    // 앞으로 = 닫힌 새 검색 목록 칸 → 같은 방향(앞으로)으로 한 칸 더 → 앞 칸이 없어 그 자리에 선다(화면은 건물 그대로).
+    // ⛔ 목록 칸 번호가 없으면(0) 「뒤로 닿았다」로 읽혀 건물 칸으로 되튕기고, 다음 뒤로가기가 첫 검색 목록 칸까지 지나쳐 사이트를 떠난다.
+    go(1);
+    await settle();
+    expect(h.at).toBe(2);
+    expect(app().classList.contains('app--wlist')).toBe(false);
+    // 뒤로 = 보던 건물(사이트를 안 떠남).
+    go(-1);
+    await settle();
+    expect(h.left).toBe(false);
+    expect(h.at).toBe(1);
+    expect(screen.getByRole('heading', { name: '테스트빌딩' })).toBeTruthy();
+    // 뒤로 한 번 더 = 첫 검색 목록 칸도 닫혀 있다(「목록 닫기」가 결과를 비웠다) → 지나쳐 이전 페이지로(한 번에 · 헛눌림 0).
+    // ⛔ 건물 칸 번호가 없거나(`pushBldMark`) 빈 칸 지나치기가 없으면 여기서 사이트에 남는다.
+    go(-1);
+    await settle();
+    expect(h.left).toBe(true);
+    expect(h.runaway).toBe(false);
+  });
+
+  it('★ 재검사 🟡 번호 없는 칸 (1) — 건물을 쥔 채 새 검색 → 주소창에 #x(상태 없는 칸) → 「목록 닫기」 → 뒤로 = 헛눌림 2번 뒤 셋째에 이전 페이지(끝없이 돌지 않음)', async () => {
+    serve(TWO);
+    mediaAt(1280);
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    const { h, go, settle } = fakeHistory();
+    render(<App />);
+    await pickGu();
+    await searchAndOpen();
+    await search('다른동'); // 칸 [첫 검색 목록 · 건물 · 새 검색 목록(살아 있음)]
+    // 처음 칸에도 번호가 적힌다(PC 두 칸 — 번호 없는 칸은 안 지나치므로 마지막 지나치기를 위해).
+    expect(h.entries.map((e) => typeof (e.state as Record<string, unknown>).sanggaStep)).toEqual(['number', 'number', 'number']);
+    // 사람이 주소창에 #x 를 쳤다 — 같은 문서의 새 칸(상태 null) + popstate(null).
+    h.entries.push({ state: null, url: `${window.location.href}#x` });
+    h.at += 1;
+    History.prototype.replaceState.call(window.history, null, '', h.entries[h.at].url);
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
+    });
+    fireEvent.click(screen.getByRole('button', { name: '목록 닫기' })); // 이웃 칸을 모른다(그 칸 상태가 null) → 바로 건물
+    await settle();
+    expect(h.at).toBe(3);
+    expect(app().classList.contains('app--wlist')).toBe(false);
+    const leftAfter: boolean[] = [];
+    for (let i = 0; i < 3; i++) {
+      go(-1);
+      await settle();
+      leftAfter.push(h.left);
+      expect(screen.getByRole('heading', { name: '테스트빌딩' })).toBeTruthy(); // 화면은 그대로 건물
+    }
+    // ⛔ 번호 없는 칸을 0 으로 읽으면 닫힌 목록 칸에 「앞으로 닿았다」고 읽어 #x 칸으로 되튕기고, 뒤로가기가 영영 그 자리에서 돈다.
+    expect(leftAfter).toEqual([false, false, true]);
+    expect(h.runaway).toBe(false);
+  });
+
+  it('★ 재검사 🟡 번호 없는 칸 (2) — 휴대폰 폭에서 건물을 연 뒤(번호 없는 칸) 창을 1280 으로 넓힘 → 뒤로 = 헛눌림 1번 뒤 둘째에 이전 페이지 · 휴대폰 칸 상태는 그대로(번호 0)', async () => {
+    serve(TWO);
+    // 창 폭을 도중에 바꾸는 흉내 `matchMedia` — 값은 지금 폭으로 다시 읽고, 바꿀 때 change 알림을 보낸다.
+    let width = 412;
+    const listeners: (() => void)[] = [];
+    window.matchMedia = ((q: string) => ({
+      media: q,
+      get matches() {
+        const min = /min-width:\s*(\d+)px/.exec(q);
+        const max = /max-width:\s*(\d+)px/.exec(q);
+        return q !== 'print' && (!min || width >= Number(min[1])) && (!max || width <= Number(max[1]));
+      },
+      addEventListener: (_: string, f: () => void) => listeners.push(f),
+      removeEventListener: () => {},
+    })) as unknown as typeof window.matchMedia;
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    const { h, go, settle } = fakeHistory();
+    render(<App />);
+    await pickGu();
+    const input = screen.getByLabelText('건물명 또는 주소');
+    fireEvent.change(input, { target: { value: '테헤란로' } });
+    fireEvent.submit(input.closest('form')!);
+    fireEvent.click(await screen.findByRole('button', { name: /테스트빌딩/ }));
+    await settle();
+    // 휴대폰 칸 상태는 한 글자도 안 바뀐다(번호 없음).
+    expect(h.entries.map((e) => e.state)).toEqual([{ sanggaTab: 'base' }, { sanggaTab: 'bld' }]);
+    width = 1280;
+    act(() => listeners.forEach((f) => f()));
+    await settle();
+    expect(app().classList.contains('app--wide')).toBe(true);
+    go(-1);
+    await settle();
+    expect(h.left).toBe(false); // 헛눌림 1번(앞 칸은 빈 목록 칸 · 방향을 몰라 안 지나침)
+    expect(h.at).toBe(0);
+    go(-1);
+    await settle();
+    // ⛔ 번호 없는 칸을 0 으로 읽으면 「앞으로」로 읽어 건물 칸으로 되튕기고, 뒤로가기가 영영 헛돈다.
+    expect(h.left).toBe(true);
+    expect(h.runaway).toBe(false);
+  });
+
   it('★ 후속 커서 — 지도의 상권 단추로 상권 목록을 접으면 커서는 그 단추에 그대로(건물 첫 단추·검색칸으로 안 감) · 건물을 쥐었든(칸 이동) 안 쥐었든', async () => {
     serve(TWO);
     mediaAt(1280);
