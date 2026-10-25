@@ -946,4 +946,65 @@ describe('OpenCloseSection — 전부 보기 (결정 0038 H · V6)', () => {
     expect(container.querySelector('.oc__scroll')).toBeNull();
     expect(container.querySelectorAll('.oc__col')).toHaveLength(8);
   });
+
+  /**
+   * 넓은 그림의 시작 자리(👤 2026-10-25 「최근 분기부터」) — 휴대폰 화면 묶음(`@media screen and (max-width: 720px)`) 안에만
+   * 밀기 상자 `direction: rtl` + 안쪽 칸 줄 `direction: ltr` 이 있고, 그 밖(기본 규칙·종이·다른 묶음)에는 `.oc__scroll` 계열 `direction` 이 없는가.
+   * ⓘ 가드 본체와 양성 대조가 이 함수 하나를 지난다.
+   * 못 보는 것: 묶음 안의 겹 묶음 · 문자열 안의 중괄호 · `.oc__scroll` 을 거치지 않는 선택자(예: `.oc__cols--wide { direction: … }`).
+   */
+  function ocScrollStartsRight(css: string): boolean {
+    const src = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    const rules: { sel: string[]; body: string; media: string | null }[] = [];
+    const take = (chunk: string, media: string | null) => {
+      for (const m of chunk.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        rules.push({ sel: m[1].split(',').map((x) => x.trim().replace(/\s+/g, ' ')), body: m[2], media });
+      }
+    };
+    let i = 0;
+    let plain = '';
+    while (i < src.length) {
+      const at = src.indexOf('@media', i);
+      if (at < 0) {
+        plain += src.slice(i);
+        break;
+      }
+      plain += src.slice(i, at);
+      const open = src.indexOf('{', at);
+      let depth = 1;
+      let j = open + 1;
+      while (j < src.length && depth > 0) {
+        if (src[j] === '{') depth += 1;
+        else if (src[j] === '}') depth -= 1;
+        j += 1;
+      }
+      take(src.slice(open + 1, j - 1), src.slice(at, open).trim().replace(/\s+/g, ' '));
+      i = j;
+    }
+    take(plain, null);
+    const PHONE = '@media screen and (max-width: 720px)';
+    const dir = (body: string) => body.match(/(?:^|[;\s{])direction\s*:\s*(\w+)/)?.[1] ?? null;
+    const scrollRules = rules.filter((r) => r.sel.some((s) => s.includes('.oc__scroll')) && dir(r.body) !== null);
+    const inPhone = scrollRules.filter((r) => r.media === PHONE);
+    const outside = scrollRules.filter((r) => r.media !== PHONE);
+    const rtl = inPhone.some((r) => r.sel.includes('.oc__scroll') && dir(r.body) === 'rtl');
+    const ltr = inPhone.some((r) => r.sel.includes('.oc__scroll > .oc__cols') && dir(r.body) === 'ltr');
+    return rtl && ltr && outside.length === 0;
+  }
+
+  it('★ 휴대폰 넓은 그림은 최근 분기부터 — rtl·안쪽 ltr 은 휴대폰 화면 묶음에만 · 종이·기본 규칙엔 direction 0 (👤 2026-10-25)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const css = readFileSync('src/styles.css', 'utf-8');
+    expect(ocScrollStartsRight(css)).toBe(true);
+    // 종이 묶음 안 `.oc__scroll` 규칙에 direction 이 없음을 따로 한 번 더(글자로).
+    const print = css.slice(css.indexOf('@media print {'));
+    const printScroll = print.slice(print.indexOf('.oc__scroll {'));
+    expect(printScroll.slice(0, printScroll.indexOf('}'))).not.toMatch(/(?:^|[;\s{])direction\s*:/);
+    // 양성 대조 — 공통 자리로 옮김(흔한 꼴 · 선택자 목록 변형 꼴) · 종이 묶음에 샘 · 안쪽 ltr 빠짐 · rtl 빠짐.
+    expect(ocScrollStartsRight(`${css}\n.oc__scroll { direction: rtl; }`)).toBe(false);
+    expect(ocScrollStartsRight(`${css}\n.a,\n.oc__scroll\n{\n  direction:rtl;\n}`)).toBe(false);
+    expect(ocScrollStartsRight(`${css}\n@media print {\n  .oc__scroll > .oc__cols { direction: ltr; }\n}`)).toBe(false);
+    expect(ocScrollStartsRight(css.replace(/(?<![-\w])direction:\s*ltr;/, ''))).toBe(false);
+    expect(ocScrollStartsRight(css.replace(/(?<![-\w])direction:\s*rtl;/, ''))).toBe(false);
+  });
 });

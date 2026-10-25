@@ -6330,11 +6330,22 @@ test.describe('층별 스택뷰 — 개업·폐업 전부 보기 (결정 0038 H 
       expect(await scroll.evaluate((el) => el.scrollWidth - el.clientWidth), `${what} 그림이 밀기 상자보다 넓다`).toBeGreaterThan(0);
     };
     await wideOk('처음 폭');
-    const moved = await scroll.evaluate((el) => {
-      el.scrollLeft = 10000;
+    if (phone) {
+      // 휴대폰은 최근 분기부터(👤 2026-10-25 · styles.css 720 화면 묶음의 rtl) — 열자마자 마지막 칸(최근)이 보이고 첫 칸(옛)은 왼쪽 밖.
+      const sb = await box(scroll);
+      const lastCol = await box(first.locator('.oc__col').last());
+      const firstCol = await box(first.locator('.oc__col').first());
+      expect(lastCol.x + lastCol.width, '휴대폰 최근 분기 칸이 밀기 상자 안').toBeLessThanOrEqual(sb.x + sb.width + 1);
+      expect(lastCol.x, '휴대폰 최근 분기 칸이 밀기 상자 안(왼쪽)').toBeGreaterThanOrEqual(sb.x - 1);
+      expect(firstCol.x, '휴대폰 옛 분기 칸은 왼쪽 밖').toBeLessThan(sb.x);
+    }
+    // 휴대폰(rtl)은 왼쪽으로 밀면 scrollLeft 가 음수(크롬 표준) · 넓은 화면은 오른쪽으로 밀면 양수.
+    const moved = await scroll.evaluate((el, toLeft) => {
+      el.scrollLeft = toLeft ? -10000 : 10000;
       return el.scrollLeft;
-    });
-    expect(moved).toBeGreaterThan(0);
+    }, phone);
+    if (phone) expect(moved).toBeLessThan(0);
+    else expect(moved).toBeGreaterThan(0);
     await oc.screenshot({ path: testInfo.outputPath(`cj-oc-all-${testInfo.project.name}.png`) });
 
     // ④ PC 두 칸 1024 · 한 열 PC 1000 · 360 — 그 폭에서도 문서·카드 넘침 0.
