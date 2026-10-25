@@ -2156,8 +2156,7 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
       await check('#floor-3 .floor__unitprint .ucells', SH3, [], phone ? 230 : 480, where);
       // 펼친 상세 세 칸 위 전체 폭 꼴(기준 넓은 500 · 휴대폰 180 · 👤 2026-10-22).
       await check('#floor-5 .detail > .ucells', SH5, ['900.0㎡'], phone ? 180 : 500, where);
-      // 가로 넘침 — 칸 줄이 더한 넘침 0(칸 줄을 숨긴 쪽과 같다). ⓘ 721 한 열은 이 시험 전부터 층 줄(`.floor__head`)이
-      //   21px 넘친다(칸 줄·인쇄 구성표·상세를 숨겨도 같고 층 줄을 숨기면 0 — 2026-10-21 실측 · V3 밖) — 그래서 0 이 아니라 '같음'을 본다.
+      // 가로 넘침 — 칸 줄이 더한 넘침 0(칸 줄을 숨긴 쪽과 같다) · 문서 넘침 0(721 도 — 2026-10-26 한 열 721~819 층 줄 칸 틀 · CL).
       const [over, overWithout] = await page.locator('html').evaluate((html) => {
         const doc = html.ownerDocument;
         const w = () => html.scrollWidth - doc.defaultView!.innerWidth;
@@ -2170,7 +2169,7 @@ test.describe('층별 스택뷰 — 호실 구성표', () => {
         return [a, b];
       });
       expect(over, `${where} 칸 줄이 더한 가로 넘침`).toBe(overWithout);
-      if (vw !== 721) expect(over, `${where} 가로 넘침`).toBeLessThanOrEqual(0);
+      expect(over, `${where} 가로 넘침`).toBeLessThanOrEqual(0);
       await expect(card.locator('.ucells__note').first()).toHaveCSS('font-size', '13px');
       await expect(card.locator('.ucells__rest').first()).toHaveCSS('font-size', '13px');
     }
@@ -5958,6 +5957,62 @@ test.describe('층별 스택뷰 — 층 목록 업종 띠 (결정 0038 D · V4)'
     await expect(page.locator('.card--floors .floor__ind--pending')).toHaveCount(0);
     await expect(page.locator('.card--floors .floor__ind')).toHaveCount(0);
     await expect(page.locator('.card--floors .floor__ind-unknown')).toHaveCount(0);
+  });
+
+  /*
+    한 열 좁은 폭(721~819 · 2026-10-26) — 기본 층 줄 칸 틀(최소 682px)이 카드 안쪽(721 → 601 · 760 → 640)보다 넓어
+    721~741 은 문서가 가로로 넘치고 742~801 은 층 줄·▼ 가 카드 테두리 밖으로 나갔다 → 두 칸 1279 갈래와 같은 칸 틀.
+    820 · 1023 은 기본 칸 틀 그대로(경계 양쪽을 함께 잰다). 휴대폰(720 이하)은 세 줄 묶음이라 해당 없음.
+  */
+  test('CL. 한 열 좁은 폭 721~819 — 층 줄·▼ 가 층 목록 카드 안 · 문서 가로 넘침 0 · 업종 띠는 막대 아래 같은 자리 · 820·1023 도 그대로', async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name === 'mobile', '휴대폰(720px 이하)은 세 줄 묶음 — 이 폭 갈래가 없다');
+    await openBand(page, BAND_ROWS);
+    const card = page.locator('.card--floors');
+    await expect(card.locator('.floor__ind:not(.floor__ind--pending)')).toHaveCount(2);
+    const measured: string[] = [];
+    for (const vw of [721, 741, 760, 801, 819, 820, 1023]) {
+      await page.setViewportSize({ width: vw, height: 900 });
+      await expect(page.locator('.app--wide')).toHaveCount(0);
+      const m = await card.evaluate((el) => {
+        const cs = el.ownerDocument.defaultView!.getComputedStyle(el);
+        const r = el.getBoundingClientRect();
+        const innerRight = r.right - parseFloat(cs.borderRightWidth) - parseFloat(cs.paddingRight);
+        const shown = [...el.querySelectorAll('.floors > li:not(.list__folded)')];
+        const right = (sel: string) => shown.map((li) => li.querySelector(sel)?.getBoundingClientRect().right ?? -1);
+        const html = el.ownerDocument.documentElement;
+        const bar = el.querySelector('#floor-2 .floor__bar')!.getBoundingClientRect().width;
+        return {
+          innerRight,
+          li: shown.map((li) => li.getBoundingClientRect().right),
+          row: right('.floor__row'),
+          caret: right('.floor__caret'),
+          over: html.scrollWidth - html.clientWidth,
+          bar,
+        };
+      });
+      const where = `${vw}px`;
+      expect(m.li.length, `${where} 보이는 층 줄`).toBe(4);
+      expect(m.over, `${where} 문서 가로 넘침`).toBeLessThanOrEqual(0);
+      for (const [i, x] of m.li.entries()) expect(x, `${where} ${i}번째 층 줄(li) 오른쪽`).toBeLessThanOrEqual(m.innerRight + 0.5);
+      for (const [i, x] of m.row.entries()) expect(x, `${where} ${i}번째 층 줄 단추 오른쪽`).toBeLessThanOrEqual(m.innerRight + 0.5);
+      for (const [i, x] of m.caret.entries()) {
+        expect(x, `${where} ${i}번째 ▼ 있음`).toBeGreaterThan(0);
+        expect(x, `${where} ${i}번째 ▼ 오른쪽`).toBeLessThanOrEqual(m.innerRight);
+      }
+      // 업종 띠 = 막대 칸(왼·오른 끝 ±1px) — 띠 칸 틀이 층 줄과 같은 묶음에서 같이 줄었는지.
+      for (const no of [2, 1]) {
+        const bar = await box(headOf(page, no).locator('.floor__bar'));
+        const ind = await box(headOf(page, no).locator('.floor__ind-strip'));
+        expect(Math.abs(ind.x - bar.x), `${where} ${no}층 띠 왼쪽 끝`).toBeLessThanOrEqual(1);
+        expect(Math.abs(ind.x + ind.width - (bar.x + bar.width)), `${where} ${no}층 띠 오른쪽 끝`).toBeLessThanOrEqual(1);
+      }
+      measured.push(`${vw}: 카드 안쪽 오른쪽 ${m.innerRight.toFixed(1)} · 층 줄 오른쪽 ${Math.max(...m.row).toFixed(1)} · 막대 ${m.bar.toFixed(1)}`);
+    }
+    testInfo.annotations.push({ type: '폭별 카드 안쪽·층 줄·막대(px)', description: measured.join(' / ') });
+    await page.setViewportSize({ width: 721, height: 900 });
+    await card.screenshot({ path: testInfo.outputPath(`cl-floors-721-${testInfo.project.name}.png`) });
   });
 });
 
