@@ -278,6 +278,17 @@ export const RENT_STATS_FN = 'list_rent_stats';
 export const OPEN_CLOSE_FN = 'list_district_openclose';
 
 /**
+ * 개업·폐업 카드의 「전부 보기」(결정 0038 H · V6) — `OPEN_CLOSE_FN` 과 **같은 모양**(같은 모양 검사기)인데 창이
+ * 표 전체 분기 전부이고 칸 `total_quarters`(그 개수 — 단추 「전부 보기 (N분기)」의 N)가 하나 더 붙는다.
+ *
+ * ⓘ 미리 부르기(`SIDE_PREFETCH_FNS`)에 넣지 않는다 — 카드가 8분기 답에서 **상권 줄**을 받았을 때만 스스로 부른다
+ *   (대전·상권 밖·좌표 없음 건물은 단추가 없으니 부르지 않는다).
+ * ⓘ 함수가 아직 없으면(PGRST202)·오류·모양 이상이면 단추만 빠진다 — 카드와 8분기 막대는 그대로 선다.
+ * ⛔ 옛 이름에 인자를 더하지 않은 까닭: 같은 이름에 서명이 둘이면 PostgREST 가 못 고른다(PGRST203 · 운영 카드 즉시 소멸).
+ */
+export const OPEN_CLOSE_ALL_FN = 'list_district_openclose_all';
+
+/**
  * 화면에서 온 짧은 글 한 통을 창고에 넣는 서버 함수. 2026-08-24b.
  *
  * ⚠️ **인자 이름이 `p_kind`·`p_body`·`p_context` 다**(

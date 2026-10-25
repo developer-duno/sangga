@@ -1233,6 +1233,9 @@ ANON_CALLABLE_ALLOWLIST = (
     # 상권 임대 동향의 8분기 흐름(2026-10-24b · 결정 0038 C · V5). 표 rent_stat·district_rone_map 은 **여기 없다** —
     # 화면은 이 함수 하나로만 읽고, 나가는 것은 이 필지가 속한 조사구역의 이름과 분기별 공표 통계값뿐이다(층별효용비율은 안 나간다).
     "api.list_rent_stat_history",
+    # 개업·폐업 「전부 보기」(2026-10-25a · 결정 0038 H · V6). 표 district_openclose 는 **여기 없다** — 화면은 이 함수
+    # 하나로만 읽고, 나가는 것은 list_district_openclose 와 같은 상권 합산·업종 상위 10줄 + '그 밖' 합(창만 표 전체 분기 전부)뿐이다.
+    "api.list_district_openclose_all",
 )
 
 # ── 공개키가 아직 못 닫은 "대기" 함수 — 지금은 비어 있다 ─────────────────

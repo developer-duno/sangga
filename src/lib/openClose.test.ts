@@ -3,14 +3,17 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { DistrictOpenClose, OpenCloseQuarter } from '../types';
 import {
+  allQuartersCount,
   franchiseText,
   industryRateShown,
   industryRows,
   OPEN_CLOSE_MIN_SAMPLE,
+  isOpenCloseAllList,
   isOpenCloseList,
   openCloseQuarterLabel,
   openCloseSummary,
   otherIndustries,
+  scaleText,
   sidoNameOfPnu,
   trendCells,
   trendScaleMax,
@@ -300,5 +303,56 @@ describe('franchiseText — 프랜차이즈 N곳 (점포의 x%)', () => {
 
   it('0곳은 값이다 — 0%', () => {
     expect(franchiseText(0, 441)).toBe('프랜차이즈 0곳 (점포의 0% · 서울시 공표 개수로 계산)');
+  });
+});
+
+/**
+ * 「전부 보기」(결정 0038 H · V6) — 전부 답의 모양 검사 · 단추 글의 N · 눈금 글.
+ * ⛔ N 은 서버 칸 total_quarters 값 그대로다(화면이 세거나 박지 않는다).
+ */
+describe('전부 보기 (결정 0038 H · V6)', () => {
+  const ALL = [...WINDOW, '20242', '20241', '20234'];
+  const allOf = (r: DistrictOpenClose, n = ALL.length, w: string[] = ALL) => ({ ...r, window_quarters: w, total_quarters: n });
+
+  it('isOpenCloseAllList — 8분기와 같은 검사기를 지나고, total_quarters 가 모든 줄에 같은 정수 = 창 길이', () => {
+    expect(isOpenCloseAllList([allOf(okRow()), allOf(okRow({ district_id: 'x' }))])).toBe(true);
+    expect(isOpenCloseAllList([allOf(headRow('not_seoul'))])).toBe(true);
+    // 칸 없음 · 수가 아님 · 줄마다 다름 · 창 길이와 다름 · 정수 아님
+    expect(isOpenCloseAllList([{ ...okRow(), window_quarters: ALL }])).toBe(false);
+    expect(isOpenCloseAllList([{ ...allOf(okRow()), total_quarters: '11' }])).toBe(false);
+    expect(isOpenCloseAllList([allOf(okRow()), allOf(okRow({ district_id: 'x' }), 10, ALL.slice(0, 10))])).toBe(false);
+    expect(isOpenCloseAllList([allOf(okRow(), 12)])).toBe(false);
+    expect(isOpenCloseAllList([allOf(okRow(), 10.5)])).toBe(false);
+    // 8분기 검사기가 거부하는 것은 그대로 거부(같은 검사기를 지난다) — 빈 배열 · ok 줄의 숫자 칸 빠짐.
+    expect(isOpenCloseAllList([])).toBe(false);
+    const { stor_co: _drop, ...noStor } = q({ quarter: '20262' });
+    expect(isOpenCloseAllList([allOf(okRow({ quarters: [noStor as OpenCloseQuarter] }))])).toBe(false);
+  });
+
+  it('allQuartersCount — 전부 답의 total_quarters 를 그대로 · 단추를 둘 까닭이 없으면 null', () => {
+    const eight = [okRow()];
+    expect(allQuartersCount(eight, [allOf(okRow())])).toBe(11);
+    // ⛔ 8분기 창 길이(8)가 아니다 — 서버 칸 값이 다르면 그 값을 따른다.
+    expect(allQuartersCount(eight, [allOf(okRow(), 9, ALL.slice(0, 9))])).toBe(9);
+    expect(allQuartersCount(eight, null)).toBeNull();
+    expect(allQuartersCount(eight, [])).toBeNull();
+    // 전부가 지금 창보다 길지 않으면 단추가 없다.
+    expect(allQuartersCount(eight, [allOf(okRow(), 8, WINDOW)])).toBeNull();
+    // 상권 줄이 없으면(대전 등) 단추가 없다.
+    expect(allQuartersCount([headRow('not_seoul')], [allOf(headRow('not_seoul'))])).toBeNull();
+    // no_data 상권만 있어도 단추는 선다(전부 창에서 ok 가 될 수 있다).
+    expect(allQuartersCount([okRow({ status: 'no_data', quarters: null, latest_quarter: null })], [allOf(okRow())])).toBe(11);
+  });
+
+  it('scaleText — 눈금 글은 보는 창 기준임을 밝힌다', () => {
+    expect(scaleText(4, WINDOW)).toBe('막대가 꽉 차면 4%(분기) · 보는 기간(최근 2년(8분기))의 가장 큰 값 기준');
+    expect(scaleText(57.45, ALL)).toBe('막대가 꽉 차면 57.45%(분기) · 보는 기간(최근 11분기)의 가장 큰 값 기준');
+  });
+
+  it('trendScaleMax — 전부 창이면 옛 분기의 큰 값이 눈금이 된다(8분기 창 밖이라 8분기 눈금엔 안 든다)', () => {
+    const old = q({ quarter: '20234', opbiz_rt: 57.45, clsbiz_rt: 3 });
+    const row = okRow({ quarters: [...(okRow().quarters ?? []), old] });
+    expect(trendScaleMax([row])).toBe(4);
+    expect(trendScaleMax([allOf(row)])).toBe(57.45);
   });
 });

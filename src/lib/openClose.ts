@@ -1,5 +1,6 @@
 import type {
   DistrictOpenClose,
+  DistrictOpenCloseAll,
   OpenCloseIndustry,
   OpenCloseOther,
   OpenCloseQuarter,
@@ -381,4 +382,44 @@ function isRow(x: unknown): x is DistrictOpenClose {
  */
 export function isOpenCloseList(x: unknown): x is DistrictOpenClose[] {
   return Array.isArray(x) && x.length > 0 && x.every(isRow);
+}
+
+// ── 전부 보기 (결정 0038 H · V6) ────────────────────────────────────────────
+
+/**
+ * 「전부 보기」 응답(`list_district_openclose_all`)의 모양 — **8분기 응답과 같은 검사기**(`isOpenCloseList`)를 지나고,
+ * 칸 `total_quarters` 가 모든 줄에 같은 정수이며 그 줄의 창 길이와 같아야 한다(서버가 그 둘을 같은 창에서 낸다).
+ * 하나라도 어긋나면 false → 단추만 빠진다(카드·8분기 막대는 그대로).
+ */
+export function isOpenCloseAllList(x: unknown): x is DistrictOpenCloseAll[] {
+  if (!isOpenCloseList(x)) return false;
+  const first = (x[0] as Record<string, unknown>).total_quarters;
+  return x.every((row) => {
+    const n = (row as Record<string, unknown>).total_quarters;
+    return Number.isInteger(n) && n === first && n === row.window_quarters.length;
+  });
+}
+
+/**
+ * 「전부 보기 (N분기)」의 N — 전부 응답의 `total_quarters` 칸 값 그대로(화면이 분기 수를 세거나 박지 않는다).
+ * 단추를 둘 까닭이 없으면 null: 전부 응답이 없음 · 상권 줄이 없음(대전·상권 밖·좌표 없음) · 전부가 지금 창보다 길지 않음.
+ */
+export function allQuartersCount(
+  eight: readonly DistrictOpenClose[],
+  all: readonly DistrictOpenCloseAll[] | null,
+): number | null {
+  if (all === null || all.length === 0) return null;
+  if (!eight.some((r) => r.status === 'ok' || r.status === 'no_data')) return null;
+  const n = all[0].total_quarters;
+  const shown = eight[0]?.window_quarters.length ?? 0;
+  return n > shown ? n : null;
+}
+
+/**
+ * 막대 눈금 한 줄 — '막대가 꽉 차면 4%(분기) · 보는 기간(최근 2년(8분기))의 가장 큰 값 기준'.
+ * ⓘ 눈금은 **보는 창** 기준이다 — 전부 보기로 바꾸면 옛 분기(코로나 무렵 등)의 큰 값 때문에 같은 비율 막대가 짧아질
+ *   수 있어, 어느 기간의 가장 큰 값인지를 글로 밝힌다(결정 0038 §7).
+ */
+export function scaleText(scaleMax: number, windowQuarters: readonly string[]): string {
+  return `막대가 꽉 차면 ${formatRate(scaleMax)}(분기) · 보는 기간(${windowText(windowQuarters)})의 가장 큰 값 기준`;
 }

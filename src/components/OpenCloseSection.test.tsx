@@ -13,13 +13,24 @@ import type { DistrictOpenClose, OpenCloseQuarter } from '../types';
  *  ⑤ 인자 이름이 `p_pnu` 다.
  */
 
-const responses = { oc: { data: null as unknown, error: null as unknown } };
+const responses = {
+  oc: { data: null as unknown, error: null as unknown },
+  /** 「전부 보기」 함수(결정 0038 H · V6)의 답 — 기본은 함수 없음(PGRST202): 단추 없이 지금 그대로. */
+  all: { data: null as unknown, error: { code: 'PGRST202' } as unknown },
+};
+/** 전부 보기 답을 늦게 돌려주고 싶을 때 — 주면 그 Promise 를 쓴다(늦은 답 버리기 시험). */
+const allGate: { next: Promise<{ data: unknown; error: unknown }> | null } = { next: null };
 const rpcCalls: Array<{ fn: string; args: unknown }> = [];
 
 vi.mock('../lib/supabase', () => ({
   supabase: {
     rpc: (fn: string, args?: unknown) => {
       rpcCalls.push({ fn, args });
+      if (fn === 'list_district_openclose_all') {
+        const gated = allGate.next;
+        allGate.next = null;
+        return gated ?? Promise.resolve(responses.all);
+      }
       return Promise.resolve(responses.oc);
     },
   },
@@ -32,7 +43,9 @@ const { resetDataFreshnessCache } = await import('../lib/loadDataFreshness');
  * 이 카드가 부른 것만 — 카드 머리 날짜 줄(S3)의 신선도 요청은 뺀다(맨 아래 표와 나눠 쓰는 한 번의 요청이라
  * 이 카드의 질문이 아니다). ⓘ 그 요청은 시험마다 새로 나간다(아래 beforeEach 가 보관을 비운다) — 시험 차례에 기대지 않게.
  */
-const ocCalls = () => rpcCalls.filter((c) => c.fn !== 'get_data_freshness');
+const ocCalls = () => rpcCalls.filter((c) => c.fn === 'list_district_openclose');
+/** 「전부 보기」 함수를 부른 것만. */
+const allCalls = () => rpcCalls.filter((c) => c.fn === 'list_district_openclose_all');
 
 const PNU = '1168010500101590000';
 const DAEJEON = '3011010700108770000';
@@ -118,6 +131,8 @@ function headRow(status: DistrictOpenClose['status']): DistrictOpenClose {
 
 beforeEach(() => {
   rpcCalls.length = 0;
+  allGate.next = null;
+  responses.all = { data: null, error: { code: 'PGRST202' } };
   resetDataFreshnessCache();
   responses.oc = {
     data: [okRow(), okRow({ district_id: '3001496', district_nm: '강남 마이스 관광특구', district_type: '관광특구' })],
@@ -147,8 +162,11 @@ describe('OpenCloseSection — 서울 자료가 있을 때', () => {
     expect(screen.getByRole('button').getAttribute('aria-expanded')).toBe('false');
     expect(container.querySelector('.card__body')?.hasAttribute('hidden')).toBe(true);
     // ⓘ 카드 머리 날짜 줄(S3)이 신선도 표를 묻는 것은 뺀다 — 맨 아래 표와 나눠 쓰는 한 번의 요청이라 이 카드의 질문이 아니다.
+    // 상권 줄이 왔으니 「전부 보기」 함수도 한 번(같은 p_pnu · 결정 0038 H · V6) — 미리 부르기가 아니라 카드가 묻는다.
+    await waitFor(() => expect(allCalls()).toHaveLength(1));
     expect(rpcCalls.filter((c) => c.fn !== 'get_data_freshness')).toEqual([
       { fn: 'list_district_openclose', args: { p_pnu: PNU } },
+      { fn: 'list_district_openclose_all', args: { p_pnu: PNU } },
     ]);
   });
 
@@ -343,7 +361,9 @@ describe('OpenCloseSection — 서울 자료가 있을 때', () => {
     };
     const { container } = render(<OpenCloseSection pnu={PNU} />);
     await openCard();
-    expect(container.querySelector('.oc__scale')?.textContent).toBe('막대가 꽉 차면 4%(분기)');
+    expect(container.querySelector('.oc__scale')?.textContent).toBe(
+      '막대가 꽉 차면 4%(분기) · 보는 기간(최근 2년(8분기))의 가장 큰 값 기준',
+    );
     const h = (el: Element | null) => parseFloat((el as HTMLElement).style.height);
     const blocks = container.querySelectorAll('.oc__district');
     const lastOf = (b: Element) => [...b.querySelectorAll('.oc__col')].pop()!;
@@ -368,7 +388,9 @@ describe('OpenCloseSection — 서울 자료가 있을 때', () => {
     };
     const { container } = render(<OpenCloseSection pnu={PNU} />);
     await openCard();
-    expect(container.querySelector('.oc__scale')?.textContent).toBe('막대가 꽉 차면 8%(분기)');
+    expect(container.querySelector('.oc__scale')?.textContent).toBe(
+      '막대가 꽉 차면 8%(분기) · 보는 기간(최근 2년(8분기))의 가장 큰 값 기준',
+    );
     const h = (el: Element | null) => parseFloat((el as HTMLElement).style.height);
     const blocks = container.querySelectorAll('.oc__district');
     const lastOf = (b: Element) => [...b.querySelectorAll('.oc__col')].pop()!;
@@ -699,5 +721,207 @@ describe('OpenCloseSection — 창업자 업종 칩 (검사 뒤 보완)', () => 
     rerender(<OpenCloseSection pnu={PNU} chip="편의점" />);
     expect(screen.getByText('고른 업종(편의점)은 이 상권 점포 수 상위 업종에 없습니다')).toBeTruthy();
     expect(screen.queryByText(PART)).toBeNull();
+  });
+});
+
+/**
+ * 「전부 보기 (N분기)」(결정 0038 H · V6) — 기본 8분기 그대로 + 단추. N 은 서버 칸 `total_quarters` 값 그대로.
+ * 전부 답에서 8분기 창의 no_data 가 ok 로 바뀐 상권은 '이 상권 자료는 ○년 ○분기까지' 가 꼭 함께 선다.
+ * 실패(함수 없음·오류·모양 이상)면 단추만 없다 · 늦은 답은 버린다 · 필지가 바뀌면 전부 보기 상태를 비운다.
+ */
+describe('OpenCloseSection — 전부 보기 (결정 0038 H · V6)', () => {
+  /** 최신 → 옛 n 분기(표 전체 창). 분기 글자는 시험 안에서만 만든다. */
+  function windowOf(n: number): string[] {
+    const out: string[] = [];
+    let y = 2026;
+    let qq = 2;
+    for (let i = 0; i < n; i++) {
+      out.push(`${y}${qq}`);
+      qq -= 1;
+      if (qq === 0) {
+        qq = 4;
+        y -= 1;
+      }
+    }
+    return out;
+  }
+
+  /** 전부 답의 한 줄 — 8분기 줄에 옛 분기(들)를 더하고 창·total_quarters 를 바꾼다. */
+  function allRowOf(row: DistrictOpenClose, n: number, extra: OpenCloseQuarter[] = []) {
+    return {
+      ...row,
+      quarters: row.quarters === null ? (extra.length ? extra : null) : [...row.quarters, ...extra],
+      window_quarters: windowOf(n),
+      total_quarters: n,
+    };
+  }
+
+  const OLD = windowOf(13)[12]; // 13분기 창의 가장 옛 분기 — 8분기 창 밖
+  const bigOld = q({ quarter: OLD, opbiz_rt: 5, clsbiz_rt: 20 });
+
+  async function allButton() {
+    return (await screen.findByRole('button', { name: /^전부 보기 \(/ })) as HTMLButtonElement;
+  }
+
+  it('★ 단추 글의 N 은 total_quarters 칸 값 그대로(13 — 8 도 22 도 아니다) · 답이 오기 전엔 단추가 없다', async () => {
+    let release!: (v: { data: unknown; error: unknown }) => void;
+    allGate.next = new Promise((r) => (release = r));
+    const { container } = render(<OpenCloseSection pnu={PNU} />);
+    await openCard();
+    expect(container.querySelector('.oc__all')).toBeNull();
+    const eight = responses.oc.data as DistrictOpenClose[];
+    release({ data: eight.map((r) => allRowOf(r, 13, [bigOld])), error: null });
+    expect((await allButton()).textContent).toBe('전부 보기 (13분기)');
+    expect((await allButton()).getAttribute('aria-expanded')).toBe('false');
+    expect(allCalls()).toEqual([{ fn: 'list_district_openclose_all', args: { p_pnu: PNU } }]);
+  });
+
+  it('★ 누르면 모든 상권이 전부 창 — 옛 → 최신 · 넓은 그림은 밀기 상자 안 · 눈금은 그 창 기준 · 서버 재호출 0 · 되돌리기', async () => {
+    const eight = responses.oc.data as DistrictOpenClose[];
+    responses.all = { data: eight.map((r) => allRowOf(r, 13, [bigOld])), error: null };
+    const { container } = render(<OpenCloseSection pnu={PNU} />);
+    await openCard();
+    expect(container.querySelectorAll('.oc__district')[0].querySelectorAll('.oc__col')).toHaveLength(8);
+    expect(container.querySelector('.oc__scroll')).toBeNull();
+    fireEvent.click(await allButton());
+
+    const blocks = [...container.querySelectorAll('.oc__district')];
+    expect(blocks).toHaveLength(2);
+    for (const b of blocks) {
+      const cols = [...b.querySelectorAll('.oc__col')] as HTMLElement[];
+      expect(cols.map((c) => c.dataset.quarter)).toEqual([...windowOf(13)].reverse());
+      expect(b.querySelector('.oc__scroll .oc__cols.oc__cols--wide')).not.toBeNull();
+      expect((b.querySelector('.oc__cols') as HTMLElement).style.getPropertyValue('--oc-n')).toBe('13');
+      // 빠진 분기는 빈 칸 그대로(0 막대가 아니다).
+      expect(cols[1].className).toContain('oc__col--missing');
+      expect(cols[1].querySelectorAll('.oc__bar')).toHaveLength(0);
+    }
+    expect(blocks[0].querySelector('.oc__trend-cap')?.textContent).toContain('분기별 개업률·폐업률 — 최근 13분기');
+    // 눈금 = 보는 창(13분기)의 최댓값 20% — 옛 분기 하나 때문에 커진다는 것을 글이 밝힌다.
+    expect(container.querySelector('.oc__scale')?.textContent).toBe(
+      '막대가 꽉 차면 20%(분기) · 보는 기간(최근 13분기)의 가장 큰 값 기준',
+    );
+    const h = (el: Element | null) => parseFloat((el as HTMLElement).style.height);
+    const firstCols = blocks[0].querySelectorAll('.oc__col');
+    expect(h(firstCols[0].querySelector('.oc__bar--close'))).toBeCloseTo(100, 6);
+    expect(h(firstCols[firstCols.length - 2].querySelector('.oc__bar--close'))).toBeCloseTo(20, 6); // 4.0 / 20
+    // 글은 그대로 — 큰 숫자 줄·업종 표는 최신 분기 것 그대로다.
+    expect(blocks[0].querySelector('.oc__quarter')?.textContent).toBe('2026년 2분기');
+    expect(allCalls()).toHaveLength(1);
+
+    const back = screen.getByRole('button', { name: '최근 2년(8분기)만 보기' });
+    expect(back.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(back);
+    expect(container.querySelectorAll('.oc__district')[0].querySelectorAll('.oc__col')).toHaveLength(8);
+    expect(container.querySelector('.oc__scroll')).toBeNull();
+    expect(container.querySelector('.oc__scale')?.textContent).toContain('보는 기간(최근 2년(8분기))');
+    expect(allCalls()).toHaveLength(1);
+  });
+
+  it('★ 8분기 창에서 no_data 이던 상권이 전부 창에서 ok 가 되면 「이 상권 자료는 ○년 ○분기까지」가 꼭 함께 선다', async () => {
+    const nodata = okRow({
+      district_id: '3110001',
+      district_nm: '옛 자료만 있는 상권',
+      status: 'no_data',
+      latest_quarter: null,
+      quarters: null,
+      industries: null,
+      other_industries: null,
+    });
+    responses.oc = { data: [okRow(), nodata], error: null };
+    responses.all = {
+      data: [
+        allRowOf(okRow(), 13, [bigOld]),
+        { ...allRowOf(nodata, 13, [bigOld]), status: 'ok', latest_quarter: OLD },
+      ],
+      error: null,
+    };
+    const { container } = render(<OpenCloseSection pnu={PNU} />);
+    await openCard();
+    const second = () => container.querySelectorAll('.oc__district')[1];
+    expect(second().textContent).toContain('최근 2년(8분기) 동안 서울시가 이 상권의 개업·폐업 자료를 내지 않았습니다.');
+    fireEvent.click(await allButton());
+    expect(second().querySelector('.oc__quarter')?.textContent).toBe('2023년 2분기');
+    expect(second().textContent).toContain('이 상권 자료는 2023년 2분기까지입니다.');
+    // 최신 분기를 가진 첫 상권에는 그 문장이 없다.
+    expect(container.querySelectorAll('.oc__district')[0].textContent).not.toContain('까지입니다');
+  });
+
+  it.each([
+    ['함수 없음(PGRST202)', { data: null, error: { code: 'PGRST202' } }],
+    ['오류', { data: null, error: { message: 'boom' } }],
+    ['total_quarters 칸 없음', 'no-total'],
+    ['total_quarters 가 창 길이와 다름', 'mismatch'],
+    ['전부가 8분기보다 길지 않음', 'eight'],
+  ])('★ %s — 단추만 없고 카드·8분기 그림은 그대로', async (_name, kind) => {
+    const eight = responses.oc.data as DistrictOpenClose[];
+    responses.all =
+      kind === 'no-total'
+        ? { data: eight.map((r) => ({ ...r, window_quarters: windowOf(13) })), error: null }
+        : kind === 'mismatch'
+          ? { data: eight.map((r) => ({ ...allRowOf(r, 13), total_quarters: 22 })), error: null }
+          : kind === 'eight'
+            ? { data: eight.map((r) => allRowOf(r, 8)), error: null }
+            : (kind as { data: unknown; error: unknown });
+    const { container } = render(<OpenCloseSection pnu={PNU} />);
+    await openCard();
+    await waitFor(() => expect(allCalls()).toHaveLength(1));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(container.querySelector('.oc__all')).toBeNull();
+    expect(container.querySelectorAll('.oc__district')).toHaveLength(2);
+    expect(container.querySelectorAll('.oc__district')[0].querySelectorAll('.oc__col')).toHaveLength(8);
+  });
+
+  it('★ 대전·상권 밖·좌표 없음에는 전부 보기를 묻지 않는다', async () => {
+    for (const st of ['not_seoul', 'outside_seoul_district', 'no_coord'] as const) {
+      rpcCalls.length = 0;
+      responses.oc = { data: [headRow(st)], error: null };
+      const { unmount } = render(<OpenCloseSection pnu={st === 'not_seoul' ? DAEJEON : PNU} />);
+      await screen.findByText('상권 개업·폐업 (서울시 공표)');
+      await Promise.resolve();
+      expect(allCalls(), st).toHaveLength(0);
+      unmount();
+    }
+  });
+
+  it('★ 늦은 답은 버린다 — 필지가 바뀐 뒤 도착한 앞 필지의 전부 답으로 단추를 세우지 않는다', async () => {
+    let release!: (v: { data: unknown; error: unknown }) => void;
+    allGate.next = new Promise((r) => (release = r));
+    const eight = responses.oc.data as DistrictOpenClose[];
+    const { container, rerender } = render(<OpenCloseSection pnu={PNU} />);
+    await openCard();
+    await waitFor(() => expect(allCalls()).toHaveLength(1));
+    // 새 필지 = 서울 상권 하나 · 그 필지의 전부 답은 함수 없음(기본값).
+    const other = '1168010100100020000';
+    responses.oc = { data: [okRow({ district_id: '3110002', district_nm: '다른 상권' })], error: null };
+    rerender(<OpenCloseSection pnu={other} />);
+    await waitFor(() => expect(container.querySelector('.oc__name')?.textContent).toContain('다른 상권'));
+    await waitFor(() => expect(allCalls()).toHaveLength(2));
+    release({ data: eight.map((r) => allRowOf(r, 13, [bigOld])), error: null });
+    // 늦은 답이 상태에 들어갔다면 다시 그려질 만큼 기다린다(마이크로태스크 두 번으로는 React 가 아직 안 그린다).
+    await new Promise((r) => setTimeout(r, 50));
+    expect(container.querySelector('.oc__all')).toBeNull();
+    expect(allCalls().map((c) => c.args)).toEqual([{ p_pnu: PNU }, { p_pnu: other }]);
+  });
+
+  it('★ 필지가 바뀌면 전부 보기 상태를 비운다 — 새 필지는 8분기로 시작한다', async () => {
+    const eight = responses.oc.data as DistrictOpenClose[];
+    responses.all = { data: eight.map((r) => allRowOf(r, 13, [bigOld])), error: null };
+    const { container, rerender } = render(<OpenCloseSection pnu={PNU} />);
+    await openCard();
+    fireEvent.click(await allButton());
+    expect(container.querySelector('.oc__scroll')).not.toBeNull();
+
+    const other = '1168010100100020000';
+    const next = [okRow({ district_id: '3110002', district_nm: '다른 상권' })];
+    responses.oc = { data: next, error: null };
+    responses.all = { data: next.map((r) => allRowOf(r, 22)), error: null };
+    rerender(<OpenCloseSection pnu={other} />);
+    await waitFor(() => expect(container.querySelector('.oc__name')?.textContent).toContain('다른 상권'));
+    await openCard(); // 답을 비우는 동안 카드가 내려갔다 다시 서서 접힌 채다
+    expect((await allButton()).textContent).toBe('전부 보기 (22분기)');
+    expect(container.querySelector('.oc__scroll')).toBeNull();
+    expect(container.querySelectorAll('.oc__col')).toHaveLength(8);
   });
 });

@@ -107,6 +107,11 @@ const RENT_HISTORY_PATTERN = '**/rest/v1/rpc/list_rent_stat_history*';
 // 상권 개업·폐업(결정 0033). ⚠️ 기본값은 **함수가 없는 상태**다(임대 동향과 같은 이유) — 다른
 // 스펙들의 카드 수·화면이 그대로 남는다. 카드를 보는 것은 스펙 AI 뿐이다.
 const OPEN_CLOSE_PATTERN = '**/rest/v1/rpc/list_district_openclose*';
+// 개업·폐업 「전부 보기」(결정 0038 H · V6) — 카드가 8분기 답에서 상권 줄을 받으면 스스로 한 번 더 묻는다.
+// ⓘ 위 `list_district_openclose*` 꼴이 이 이름(`list_district_openclose_all`)도 잡는다 — 그래서 기본값(함수 없음)도 같이
+//   받고, 개폐업 답을 덮은 스펙에서는 8분기 답(total_quarters 칸 없음)을 받아 단추만 조용히 빠진다. 단추를 보는 것은 스펙 CJ 뿐이다
+//   (그 스펙은 이 꼴을 **나중에** 등록해 먼저 잡히게 한다).
+const OPEN_CLOSE_ALL_PATTERN = '**/rest/v1/rpc/list_district_openclose_all*';
 // 호실 구성표(결정 0032). 요약은 건물을 열 때 · 목록은 층을 펼칠 때 나간다.
 // ⚠️ 기본값은 둘 다 **함수가 없는 상태**다 — 그때 요약도 "자료 없음" 안내도 조용히 빠지는지가
 //    스펙 AH 의 관심사다(빈 배열로 두면 "호실 자료가 없는 건물"이라는 **다른 답**이 되어 안내가 선다).
@@ -2340,7 +2345,7 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
     await expect(second.locator('.oc__col--missing')).toHaveCount(6);
     await expect(second.locator('.oc__col--missing .oc__bar')).toHaveCount(0);
     // 막대 눈금 — 카드 하나에 하나(두 상권 공통). 최댓값은 첫 상권 가장 옛 분기 폐업률 2.74%.
-    await expect(oc.locator('.oc__scale')).toHaveText('막대가 꽉 차면 2.74%(분기)');
+    await expect(oc.locator('.oc__scale')).toHaveText('막대가 꽉 차면 2.74%(분기) · 보는 기간(최근 2년(8분기))의 가장 큰 값 기준');
     const barPct = async (bar: ReturnType<typeof oc.locator>) =>
       bar.evaluate((el) => {
         // 바탕 칸의 아래 선(1px)은 빼고 잰다(clientHeight).
@@ -6158,5 +6163,224 @@ test.describe('층별 스택뷰 — 임대 계단 막대 · 8분기 흐름 (결�
     await expect(rent2.locator('.rent__step-fill')).toHaveCount(7);
     await expect(rent2.locator('.rent-trend')).toHaveCount(0);
     await expect(rent2).not.toContainText('8분기');
+  });
+});
+
+test.describe('층별 스택뷰 — 개업·폐업 전부 보기 (결정 0038 H · V6)', () => {
+  /** 표 전체 창(최신 → 옛) n 분기. */
+  function windowOf(n: number): string[] {
+    const out: string[] = [];
+    let y = 2026;
+    let qq = 2;
+    for (let i = 0; i < n; i++) {
+      out.push(`${y}${qq}`);
+      qq -= 1;
+      if (qq === 0) {
+        qq = 4;
+        y -= 1;
+      }
+    }
+    return out;
+  }
+  const ALL = windowOf(22);
+  const EIGHT = ALL.slice(0, 8);
+  const quarter = (qq: string, opRt: number, clRt: number) => ({
+    quarter: qq,
+    similr_induty_stor_co: 441,
+    stor_co: 378,
+    frc_stor_co: 63,
+    opbiz_stor_co: 5,
+    clsbiz_stor_co: 9,
+    opbiz_rt: opRt,
+    clsbiz_rt: clRt,
+  });
+  /** 8분기 창에서는 no_data 인 상권(옛 분기 자료만). */
+  const NODATA = {
+    status: 'no_data',
+    district_id: '3110999',
+    district_nm: '옛 자료만 있는 상권',
+    district_type: '골목상권',
+    latest_quarter: null,
+    quarters: null,
+    industries: null,
+    other_industries: null,
+    window_quarters: EIGHT,
+  };
+  /** 첫 상권 가장 옛 분기(코로나 무렵) 폐업률 9% — 전부 창의 눈금이 된다(8분기 창의 눈금은 2.74%). */
+  const BIG = 9;
+
+  function eightAnswer() {
+    return [...openClose(), NODATA];
+  }
+
+  function allAnswer() {
+    const [a, b] = openClose();
+    const older = ALL.slice(8).map((qq, i) => quarter(qq, 1.0, qq === ALL[21] ? BIG : 1.5 + (i % 3) * 0.1));
+    return [
+      { ...a, quarters: [...(a.quarters ?? []), ...older], window_quarters: ALL, total_quarters: ALL.length },
+      { ...b, window_quarters: ALL, total_quarters: ALL.length },
+      {
+        ...NODATA,
+        status: 'ok',
+        latest_quarter: ALL[18],
+        quarters: [quarter(ALL[18], 1.2, 2.4), quarter(ALL[19], 1.1, 2.2)],
+        window_quarters: ALL,
+        total_quarters: ALL.length,
+      },
+    ];
+  }
+
+  /** 건물을 열고 개폐업 카드를 펼친다. `all` 이 null 이면 전부 보기 함수가 없는 상태(PGRST202). */
+  async function openOc(page: Page, all: unknown[] | null, onAll?: () => void) {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()], industryMix());
+    // 나중에 등록한 것이 먼저 잡힌다 — 8분기 꼴(`…openclose*`)이 전부 보기 이름도 잡으므로 전부 보기를 **뒤에** 건다.
+    await mockJson(page, OPEN_CLOSE_PATTERN, eightAnswer());
+    if (all === null) {
+      await mockMissingFunction(page, OPEN_CLOSE_ALL_PATTERN);
+    } else {
+      await page.route(OPEN_CLOSE_ALL_PATTERN, async (route) => {
+        if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS_HEADERS });
+        onAll?.();
+        await route.fulfill({ status: 200, contentType: 'application/json', headers: CORS_HEADERS, body: JSON.stringify(all) });
+      });
+    }
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).click();
+    const oc = page.locator('section.stack section.oc');
+    await expect(oc).toBeVisible();
+    await openCard(page, /상권 개업·폐업/);
+    return oc;
+  }
+
+  const box = async (sel: ReturnType<Page['locator']>) => (await sel.boundingBox())!;
+  const docOverflow = (page: Page) => page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth);
+  /**
+   * 막대 높이 ÷ 바탕 칸 높이(%). 바탕 칸의 아래 선(1px)은 빼고 잰다(clientHeight).
+   * ⓘ 화면 그림 크기(getBoundingClientRect)가 아니라 배치 높이(계산된 height)로 잰다 — 종이는 판 전체를 95%로 줄여 찍어(결정 0038 V3)
+   *   그림 크기만 줄고 clientHeight 는 그대로라 섞어 재면 5% 어긋난다.
+   */
+  const barPct = (bar: ReturnType<Page['locator']>) =>
+    bar.evaluate((el) => (parseFloat(el.ownerDocument.defaultView!.getComputedStyle(el).height) / el.parentElement!.clientHeight) * 100);
+
+  test('CJ. 개업·폐업 「전부 보기 (N분기)」 — N = total_quarters · 누르면 모든 상권 22칸(옛 → 최신 · 다시 안 부름) · 8분기 no_data → ok 상권은 「…까지」 · 눈금 글은 보는 창 기준 · 넓은 그림만 옆으로 밀기(칸 40px · 13px · 44px 단추) · 1024·1000 · 종이 740·703 은 밀기 풀고 잘림 0 · 함수 없으면 단추만 빠짐', async ({
+    page,
+  }, testInfo) => {
+    let allHits = 0;
+    const oc = await openOc(page, allAnswer(), () => {
+      allHits += 1;
+    });
+    const phone = (page.viewportSize()?.width ?? 0) <= 720;
+
+    // ① 기본은 8분기 그대로 + 단추(N = 서버 칸 값 22) · 단추 44px · 13px · 8분기 그림에는 밀기 상자 없음.
+    const btn = oc.locator('.oc__all');
+    await expect(btn).toHaveText('전부 보기 (22분기)');
+    await expect(btn).toHaveAttribute('aria-expanded', 'false');
+    expect((await box(btn)).height).toBeGreaterThanOrEqual(44);
+    await expect(btn).toHaveCSS('font-size', '13px');
+    await expect(oc.locator('.oc__district').first().locator('.oc__col')).toHaveCount(8);
+    await expect(oc.locator('.oc__scroll')).toHaveCount(0);
+    await expect(oc.locator('.oc__district').nth(2)).toContainText(
+      '최근 2년(8분기) 동안 서울시가 이 상권의 개업·폐업 자료를 내지 않았습니다.',
+    );
+    await expect(oc.locator('.oc__scale')).toHaveText('막대가 꽉 차면 2.74%(분기) · 보는 기간(최근 2년(8분기))의 가장 큰 값 기준');
+    expect(allHits).toBe(1);
+
+    // ② 누르면 모든 상권이 같은 22분기 창 — 옛 분기 왼쪽 · 눈금 = 그 창의 가장 큰 값(9%) · 서버는 다시 안 부른다.
+    await btn.click();
+    await expect(btn).toHaveText('최근 2년(8분기)만 보기');
+    await expect(btn).toHaveAttribute('aria-expanded', 'true');
+    const blocks = oc.locator('.oc__district');
+    await expect(blocks).toHaveCount(3);
+    for (let i = 0; i < 3; i++) {
+      const cols = blocks.nth(i).locator('.oc__col');
+      await expect(cols).toHaveCount(22);
+      await expect(cols.first()).toHaveAttribute('data-quarter', ALL[21]);
+      await expect(cols.last()).toHaveAttribute('data-quarter', ALL[0]);
+      await expect(blocks.nth(i).locator('.oc__trend-cap')).toContainText('분기별 개업률·폐업률 — 최근 22분기');
+    }
+    await expect(oc.locator('.oc__scale')).toHaveText(`막대가 꽉 차면 ${BIG}%(분기) · 보는 기간(최근 22분기)의 가장 큰 값 기준`);
+    const first = blocks.first();
+    expect(await barPct(first.locator('.oc__col').first().locator('.oc__bar--close'))).toBeCloseTo(100, 0);
+    // 최신 분기 폐업률 2.04% → 같은 눈금 9% 기준 비례(8분기 창에서는 2.04 ÷ 2.74).
+    expect(await barPct(first.locator('.oc__col').last().locator('.oc__bar--close'))).toBeCloseTo((2.04 / BIG) * 100, 0);
+    // 빠진 분기는 빈 칸 그대로(둘째 상권 · 막대 0).
+    await expect(blocks.nth(1).locator('.oc__col--missing')).toHaveCount(20);
+    await expect(blocks.nth(1).locator('.oc__col--missing .oc__bar')).toHaveCount(0);
+    // ⛔ 8분기 창의 no_data 가 ok 로 — 그 상권의 마지막 분기를 꼭 함께(옛 숫자를 최근처럼 보이지 않게).
+    const third = blocks.nth(2);
+    await expect(third.locator('.oc__quarter')).toHaveText('2021년 4분기');
+    await expect(third).toContainText('이 상권 자료는 2021년 4분기까지입니다.');
+    await expect(first).not.toContainText('까지입니다');
+    // 글은 그대로 — 큰 숫자 줄은 최신 분기.
+    await expect(first.locator('.oc__latest .oc__num').nth(2)).toHaveText('개업 5곳 · 개업률(분기) 1.13%');
+    expect(allHits).toBe(1);
+
+    // ③ 넓은 그림만 옆으로 민다 — 칸마다 40px 이상 · 글자 13px · 문서·카드는 넘치지 않음 · 밀면 움직인다.
+    const scroll = first.locator('.oc__scroll');
+    await expect(scroll).toHaveCSS('overflow-x', 'auto');
+    expect((await box(first.locator('.oc__col').first())).width).toBeGreaterThanOrEqual(39.5);
+    await expect(first.locator('.oc__tick').first()).toHaveCSS('font-size', '13px');
+    const wideOk = async (what: string) => {
+      expect(await docOverflow(page), `${what} 문서 넘침`).toBeLessThanOrEqual(0);
+      expect(await oc.evaluate((el) => el.scrollWidth - el.clientWidth), `${what} 카드 넘침`).toBeLessThanOrEqual(0);
+      expect(await scroll.evaluate((el) => el.scrollWidth - el.clientWidth), `${what} 그림이 밀기 상자보다 넓다`).toBeGreaterThan(0);
+    };
+    await wideOk('처음 폭');
+    const moved = await scroll.evaluate((el) => {
+      el.scrollLeft = 10000;
+      return el.scrollLeft;
+    });
+    expect(moved).toBeGreaterThan(0);
+    await oc.screenshot({ path: testInfo.outputPath(`cj-oc-all-${testInfo.project.name}.png`) });
+
+    // ④ PC 두 칸 1024 · 한 열 PC 1000 · 360 — 그 폭에서도 문서·카드 넘침 0.
+    for (const width of phone ? [360] : [1024, 1000]) {
+      await page.setViewportSize({ width, height: 800 });
+      await wideOk(`${width}px`);
+    }
+    await page.setViewportSize(phone ? { width: 412, height: 839 } : { width: 1280, height: 720 });
+
+    // ⑤ 종이 — 단추 없음 · 밀기를 풀고(visible) 종이 폭에 맞춤(그림 오른쪽 잘림 0) · 막대·색 그대로 · 추이 덩어리 avoid.
+    await page.emulateMedia({ media: 'print' });
+    await expect(btn).toBeHidden();
+    await expect(scroll).toHaveCSS('overflow-x', 'visible');
+    await expect(first.locator('.oc__trend')).toHaveCSS('break-inside', 'avoid');
+    await expect(first.locator('.oc__bar--open').first()).toHaveCSS('print-color-adjust', 'exact');
+    for (const pw of phone ? [412] : [740, 703]) {
+      await page.setViewportSize({ width: pw, height: 900 });
+      expect(await docOverflow(page), `종이 ${pw} 문서 넘침`).toBeLessThanOrEqual(0);
+      const card = await box(oc);
+      for (let i = 0; i < 3; i++) {
+        const cols = blocks.nth(i).locator('.oc__cols');
+        expect(await cols.evaluate((el) => el.scrollWidth - el.clientWidth), `종이 ${pw} 상권 ${i} 칸 넘침`).toBeLessThanOrEqual(0);
+        const c = await box(cols);
+        expect(c.x + c.width, `종이 ${pw} 상권 ${i} 그림 오른쪽 잘림`).toBeLessThanOrEqual(card.x + card.width + 0.5);
+        const lastCol = await box(blocks.nth(i).locator('.oc__col').last());
+        expect(lastCol.x + lastCol.width, `종이 ${pw} 상권 ${i} 마지막 칸`).toBeLessThanOrEqual(c.x + c.width + 0.5);
+      }
+      expect(await barPct(first.locator('.oc__col').first().locator('.oc__bar--close'))).toBeCloseTo(100, 0);
+    }
+    await oc.screenshot({ path: testInfo.outputPath(`cj-oc-all-print-${testInfo.project.name}.png`) });
+    await page.emulateMedia({ media: null });
+    await page.setViewportSize(phone ? { width: 412, height: 839 } : { width: 1280, height: 720 });
+
+    // ⑥ 되돌리면 8분기 그대로(밀기 상자 없음 · 눈금도 8분기 기준) · 그래도 다시 안 부른다.
+    await btn.click();
+    await expect(first.locator('.oc__col')).toHaveCount(8);
+    await expect(oc.locator('.oc__scroll')).toHaveCount(0);
+    await expect(oc.locator('.oc__scale')).toContainText('보는 기간(최근 2년(8분기))');
+    expect(allHits).toBe(1);
+
+    // ⑦ 전부 보기 함수가 없으면(PGRST202) 단추만 빠지고 카드·8분기 그림은 그대로.
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+    const oc2 = await openOc(page, null);
+    await expect(oc2.locator('.oc__district').first().locator('.oc__col')).toHaveCount(8);
+    await expect(oc2.locator('.oc__name')).toHaveCount(3);
+    await expect(oc2.locator('.oc__all')).toHaveCount(0);
+    await expect(oc2).not.toContainText('전부 보기');
   });
 });

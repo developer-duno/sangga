@@ -1056,6 +1056,15 @@ export type DistrictOpenClose = {
 };
 
 /**
+ * 함수 `list_district_openclose_all(p_pnu)` 한 줄(결정 0038 H · V6) — 위 `DistrictOpenClose` 와 같은 모양인데
+ * 창(`window_quarters`)이 **표 전체 분기 전부**이고 그 개수 칸 하나가 더 붙는다.
+ */
+export type DistrictOpenCloseAll = DistrictOpenClose & {
+  /** 표 전체 분기 수 = `window_quarters` 의 길이. **모든 줄에 같은 값**이다. 단추 「전부 보기 (N분기)」의 N. */
+  total_quarters: number;
+};
+
+/**
  * 함수 `get_parcel_land_price(p_pnu)` 한 줄 — 이 땅의 개별공시지가(결정 0036 결정 7).
  * ⛔ 공시가격이지 시세가 아니다 · 땅값만이다(건물 값이 아니다). 값이 없으면 서버가 0줄을 준다.
  */
