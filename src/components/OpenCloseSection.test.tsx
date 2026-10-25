@@ -768,12 +768,92 @@ describe('OpenCloseSection — 전부 보기 (결정 0038 H · V6)', () => {
     allGate.next = new Promise((r) => (release = r));
     const { container } = render(<OpenCloseSection pnu={PNU} />);
     await openCard();
-    expect(container.querySelector('.oc__all')).toBeNull();
+    expect(container.querySelector('button.oc__all')).toBeNull();
     const eight = responses.oc.data as DistrictOpenClose[];
     release({ data: eight.map((r) => allRowOf(r, 13, [bigOld])), error: null });
     expect((await allButton()).textContent).toBe('전부 보기 (13분기)');
     expect((await allButton()).getAttribute('aria-expanded')).toBe('false');
     expect(allCalls()).toEqual([{ fn: 'list_district_openclose_all', args: { p_pnu: PNU } }]);
+  });
+
+  it('★ 보완 2 — 묻는 동안 단추 자리에 빈 상자(aria-hidden · 단추와 같은 이름표) → 답이 오면 그 자리에 단추', async () => {
+    let release!: (v: { data: unknown; error: unknown }) => void;
+    allGate.next = new Promise((r) => (release = r));
+    const { container } = render(<OpenCloseSection pnu={PNU} />);
+    await openCard();
+    const slot = container.querySelector('.oc__all--slot') as HTMLElement;
+    expect(slot).not.toBeNull();
+    expect(slot.tagName).toBe('SPAN');
+    expect(slot.getAttribute('aria-hidden')).toBe('true');
+    expect(slot.className).toBe('oc__all oc__all--slot');
+    expect(slot.textContent).toBe('');
+    // 빈 상자는 단추 자리 — 눈금 줄 바로 앞.
+    expect(slot.nextElementSibling?.className).toBe('oc__scale');
+    expect(screen.queryByRole('button', { name: /전부 보기/ })).toBeNull();
+
+    const eight = responses.oc.data as DistrictOpenClose[];
+    release({ data: eight.map((r) => allRowOf(r, 13, [bigOld])), error: null });
+    const btn = await allButton();
+    expect(container.querySelector('.oc__all--slot')).toBeNull();
+    expect(btn.nextElementSibling?.className).toBe('oc__scale');
+    expect(container.querySelectorAll('.oc__all')).toHaveLength(1);
+  });
+
+  it.each([
+    ['함수 없음(PGRST202)', { data: null, error: { code: 'PGRST202' } }],
+    ['오류', { data: null, error: { message: 'boom' } }],
+    ['모양 이상', { data: [{ nope: 1 }], error: null }],
+  ])('★ 보완 2 — %s 이면 빈 상자를 거둔다(단추도 없다)', async (_name, answer) => {
+    let release!: (v: { data: unknown; error: unknown }) => void;
+    allGate.next = new Promise((r) => (release = r));
+    const { container } = render(<OpenCloseSection pnu={PNU} />);
+    await openCard();
+    expect(container.querySelector('.oc__all--slot')).not.toBeNull();
+    release(answer);
+    await waitFor(() => expect(container.querySelector('.oc__all--slot')).toBeNull());
+    expect(container.querySelector('.oc__all')).toBeNull();
+    expect(container.querySelectorAll('.oc__district')).toHaveLength(2);
+  });
+
+  it('★ 보완 2 — 상권 차례가 갈린 전부 답(적재가 끼어듦)이면 빈 상자도 단추도 없다', async () => {
+    const eight = responses.oc.data as DistrictOpenClose[];
+    responses.all = { data: [...eight].reverse().map((r) => allRowOf(r, 13, [bigOld])), error: null };
+    const { container } = render(<OpenCloseSection pnu={PNU} />);
+    await openCard();
+    await waitFor(() => expect(allCalls()).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(container.querySelector('.oc__all')).toBeNull();
+  });
+
+  it('★ 보완 2 — 대전·상권 밖·좌표 없음 카드에는 빈 상자가 없다', async () => {
+    for (const st of ['not_seoul', 'outside_seoul_district', 'no_coord'] as const) {
+      responses.oc = { data: [headRow(st)], error: null };
+      const { container, unmount } = render(<OpenCloseSection pnu={st === 'not_seoul' ? DAEJEON : PNU} />);
+      await screen.findByText('상권 개업·폐업 (서울시 공표)');
+      await Promise.resolve();
+      expect(container.querySelector('.oc__all'), st).toBeNull();
+      unmount();
+    }
+  });
+
+  it('★ 보완 2 — 빈 상자는 화면에서 보이지 않고(visibility hidden) 종이에서는 단추와 함께 빠진다', async () => {
+    const { readFileSync } = await import('node:fs');
+    const css = readFileSync('src/styles.css', 'utf-8').replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(css).toMatch(/\.oc__all--slot\s*\{[^}]*visibility:\s*hidden/);
+    // 종이 감춤은 이름표 `.oc__all` 한 곳 — 빈 상자도 같은 이름표라 함께 빠진다.
+    const print = css.slice(css.indexOf('@media print'));
+    expect(print).toMatch(/\.oc__all,[\s\S]*?display:\s*none\s*!important/);
+  });
+
+  it('★ 보완 2 — 넓은 그림 밀기 상자 읽어 주기 글은 배치(왼쪽 옛 · 오른쪽 최근)를 말한다', async () => {
+    const eight = responses.oc.data as DistrictOpenClose[];
+    responses.all = { data: eight.map((r) => allRowOf(r, 13, [bigOld])), error: null };
+    const { container } = render(<OpenCloseSection pnu={PNU} />);
+    await openCard();
+    fireEvent.click(await allButton());
+    expect(container.querySelector('.oc__scroll')?.getAttribute('aria-label')).toBe(
+      '분기별 막대 — 최근 13분기 · 왼쪽이 옛 분기, 오른쪽이 최근 · 옆으로 밀어 봅니다',
+    );
   });
 
   it('★ 누르면 모든 상권이 전부 창 — 옛 → 최신 · 넓은 그림은 밀기 상자 안 · 눈금은 그 창 기준 · 서버 재호출 0 · 되돌리기', async () => {

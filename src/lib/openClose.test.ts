@@ -344,6 +344,17 @@ describe('전부 보기 (결정 0038 H · V6)', () => {
     expect(allQuartersCount([okRow({ status: 'no_data', quarters: null, latest_quarter: null })], [allOf(okRow())])).toBe(11);
   });
 
+  it('allQuartersCount — 두 답의 상권 차례(district_id)가 다르면 null (적재가 두 요청 사이에 끼면 갈린다)', () => {
+    const A = okRow({ district_id: 'A' });
+    const B = okRow({ district_id: 'B' });
+    const C = okRow({ district_id: 'C' });
+    const eight = [A, B];
+    expect(allQuartersCount(eight, [allOf(A), allOf(B)])).toBe(11);
+    expect(allQuartersCount(eight, [allOf(B), allOf(A)])).toBeNull();
+    expect(allQuartersCount(eight, [allOf(A)])).toBeNull();
+    expect(allQuartersCount(eight, [allOf(A), allOf(B), allOf(C)])).toBeNull();
+  });
+
   it('scaleText — 눈금 글은 보는 창 기준임을 밝힌다', () => {
     expect(scaleText(4, WINDOW)).toBe('막대가 꽉 차면 4%(분기) · 보는 기간(최근 2년(8분기))의 가장 큰 값 기준');
     expect(scaleText(57.45, ALL)).toBe('막대가 꽉 차면 57.45%(분기) · 보는 기간(최근 11분기)의 가장 큰 값 기준');

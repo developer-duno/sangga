@@ -82,6 +82,8 @@ export function OpenCloseSection({
   const [rowsPnu, setRowsPnu] = useState<string | null>(null);
   /** 「전부 보기」 답(표 전체 분기 전부). 못 받았거나 못 읽었으면 null — 그때는 단추가 없다. */
   const [allRows, setAllRows] = useState<DistrictOpenCloseAll[] | null>(null);
+  /** 「전부 보기」 답이 실패(오류·모양 이상·함수 없음)했나 — 묻는 중(빈 상자를 둔다)과 실패(빈 상자를 거둔다)를 가른다. */
+  const [allFailed, setAllFailed] = useState(false);
   /** 전부 보기로 그리는 중인가. 필지가 바뀌면 기본(8분기)으로 돌아간다. */
   const [showAll, setShowAll] = useState(false);
 
@@ -91,6 +93,7 @@ export function OpenCloseSection({
     // 전부 보기 답·상태도 함께 지운다(앞 건물의 22분기 그림이 새 건물 밑에 남지 않게).
     setRows(null);
     setAllRows(null);
+    setAllFailed(false);
     setShowAll(false);
 
     const req: PromiseLike<RpcResult> =
@@ -127,6 +130,7 @@ export function OpenCloseSection({
       // 함수 없음(PGRST202)·오류·모양 이상이면 단추만 빠진다 — 8분기 카드는 그대로 선다.
       if (error || !isOpenCloseAllList(data)) {
         console.warn('상권 개업·폐업 전부 보기 조회 실패 — 최근 분기만 표시합니다', error ?? data);
+        setAllFailed(true);
         return;
       }
       setAllRows(data);
@@ -183,10 +187,19 @@ export function OpenCloseSection({
         전부 보기 단추(결정 0038 H · V6) — 카드 하나에 하나(모든 상권이 같은 창). 누르는 장치라 종이에는 안 나온다.
         N 은 서버 칸 값이고, 되돌리는 글의 기간도 8분기 답의 창에서 읽는다(분기 수를 박지 않는다).
       */}
-      {allN !== null && (
+      {allN !== null ? (
         <button type="button" className="oc__all" aria-expanded={wide} onClick={() => setShowAll(!wide)}>
           {wide ? `${windowText(rows[0].window_quarters)}만 보기` : `전부 보기 (${allN}분기)`}
         </button>
+      ) : (
+        /*
+          전부 답을 묻는 동안은 단추와 같은 크기의 보이지 않는 빈 상자로 자리를 미리 비운다(👤 「빈 자리 미리」) —
+          답이 와서 단추가 끼어들 때 아래 눈금 줄·상권 그림이 밀리지 않게. 실패하면 거둔다(그때 한 번 접힌다).
+          같은 이름표라 높이·여백이 단추와 같고, 종이에서는 단추와 함께 빠진다.
+        */
+        wantAll &&
+        allRows === null &&
+        !allFailed && <span className="oc__all oc__all--slot" aria-hidden="true" />
       )}
       {/* 막대 눈금 — 눈에 보이는 글로 둔다(인쇄에도 나온다). 그릴 막대가 없으면 줄도 없다. */}
       {scaleMax > 0 && <p className="oc__scale">{scaleText(scaleMax, view[0].window_quarters)}</p>}
@@ -448,7 +461,7 @@ function Trend({ cells, windowLabel, wide }: { cells: TrendCell[]; windowLabel: 
       </figcaption>
       {wide ? (
         // 넓은 그림만 화면에서 옆으로 민다 — 종이에서는 styles.css 가 밀기를 풀고 폭에 맞춘다(오른쪽 잘림 0).
-        <div className="oc__scroll" role="region" aria-label={`분기별 막대 — ${windowLabel} · 옆으로 밀어 봅니다`} tabIndex={0}>
+        <div className="oc__scroll" role="region" aria-label={`분기별 막대 — ${windowLabel} · 왼쪽이 옛 분기, 오른쪽이 최근 · 옆으로 밀어 봅니다`} tabIndex={0}>
           {cols}
         </div>
       ) : (
