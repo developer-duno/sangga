@@ -660,7 +660,7 @@ describe('PC 두 칸 보완 1 — CSS', () => {
     const narrow = narrowRules(css);
     const row = narrow.find((r) => r.sel.includes('.app--wide .floor__row'))!;
     expect(floorRowPx(row.body)).toBeLessThan(640);
-    // 기본 층 줄은 그대로(1280 이상 · 721~1023) — 기본 칸 합은 640 을 넘는다(그래서 갈래가 필요하다).
+    // 기본 층 줄은 그대로(1280 이상 · 820~1023 · 721~819 는 아래 한 열 좁은 폭 묶음) — 기본 칸 합은 640 을 넘는다(그래서 갈래가 필요하다).
     const baseRow = rules.find((r) => r.media === null && r.sel.includes('.floor__row') && /grid-template-columns/.test(r.body))!;
     expect(floorRowPx(baseRow.body)).toBeGreaterThan(640);
     expect(narrow.find((r) => r.sel.includes('.app--wide .stack__facts'))!.body).toMatch(/gap:\s*18px/);
@@ -668,13 +668,75 @@ describe('PC 두 칸 보완 1 — CSS', () => {
     const noBranch = css.replace(/@media \(max-width: 1279px\) \{[\s\S]*?\r?\n {2}\}\r?\n/, '');
     expect(noBranch).not.toBe(css);
     expect(narrowRules(noBranch)).toEqual([]);
-    const wideRow = css.replace(
-      '64px minmax(60px, 1fr) 100px 140px 56px 60px 20px',
-      '74px minmax(80px, 1fr) 118px 168px 62px 66px 20px',
-    );
+    // 같은 칸 틀 글이 한 열 721~819 묶음에도 있다(2026-10-26) — 둘 다 되돌린다(이 시험은 1279 갈래만 본다).
+    const wideRow = css
+      .split('64px minmax(60px, 1fr) 100px 140px 56px 60px 20px')
+      .join('74px minmax(80px, 1fr) 118px 168px 62px 66px 20px');
     expect(wideRow).not.toBe(css);
     const back = narrowRules(wideRow).find((r) => r.sel.includes('.app--wide .floor__row'))!;
     expect(floorRowPx(back.body)).toBeGreaterThanOrEqual(640);
+  });
+
+  /**
+   * 한 열 좁은 폭(721~819) 묶음의 층 줄·업종 띠 규칙 — 가드 본체와 양성 대조가 이 함수를 같이 지난다.
+   * 머리에 `(min-width: 721px) and (max-width: Npx)` 가 든 맨 위 묶음을 찾는다(screen 이 빠진 꼴도 찾아 머리를 견준다).
+   * 못 보는 것: 두 겹 이상 겹친 @media · 머리 차례를 바꾼 꼴(`max-width` 먼저)은 못 찾아 null(= 빨강).
+   */
+  function oneColNarrow(src: string) {
+    const rs = cssRules(src).filter((r) => r.media !== null && /\(min-width: 721px\) and \(max-width: \d+px\)/.test(r.media));
+    const row = rs.find((r) => r.sel.includes('.floor__row'));
+    if (!row) return null;
+    return { media: row.media!, row: row.body, ind: rs.find((r) => r.media === row.media && r.sel.includes('.floor__ind'))?.body ?? '' };
+  }
+
+  it('★ 한 열 721~819 층 줄 = 칸 합 601px(721 카드 안쪽) 이하 · 업종 띠 같은 칸 틀 · screen 묶음 · 상한 819 — 양성 대조(묶음 삭제 · 기본 칸 · 띠만 옛 칸 · screen 빼기)', () => {
+    const cols = (body: string) => /grid-template-columns:\s*([^;]+);/.exec(body)?.[1].trim() ?? '';
+    const colGap = (body: string) => /column-gap:\s*([^;]+);/.exec(body)?.[1].trim() ?? '';
+    const ok = (src: string) => {
+      const n = oneColNarrow(src);
+      return (
+        n !== null &&
+        n.media === '@media screen and (min-width: 721px) and (max-width: 819px)' &&
+        floorRowPx(n.row) <= 601 &&
+        cols(n.ind) === cols(n.row) &&
+        colGap(n.ind) === (/(?:^|[;\s])gap:\s*([^;]+);/.exec(n.row)?.[1].trim() ?? '')
+      );
+    };
+    expect(ok(css)).toBe(true);
+    const n = oneColNarrow(css)!;
+    expect(floorRowPx(n.row)).toBe(570);
+    // 두 칸 1024~1279 갈래와 같은 칸 틀(둘이 같은 글 — 바꾸면 둘 다).
+    expect(cols(n.row)).toBe(cols(narrowRules(css).find((r) => r.sel.includes('.app--wide .floor__row'))!.body));
+    // 기본 층 줄(682px)은 721 카드 안쪽(601)보다 넓다 — 그래서 이 묶음이 있다.
+    const baseRow = rules.find((r) => r.media === null && r.sel.includes('.floor__row') && /grid-template-columns/.test(r.body))!;
+    expect(floorRowPx(baseRow.body)).toBeGreaterThan(601);
+
+    // 양성 대조 — 실제로 잡는가.
+    // 줄바꿈을 LF 로 맞춘 사본에서 묶음을 잘라 고친다(윈도우 작업본은 CRLF).
+    const lf = css.replace(/\r\n/g, '\n');
+    expect(ok(lf)).toBe(true);
+    const head = '@media screen and (min-width: 721px) and (max-width: 819px) {';
+    const at = lf.indexOf(head);
+    expect(at).toBeGreaterThan(0);
+    const end = lf.indexOf('\n}\n', at) + 3;
+    expect(end).toBeGreaterThan(at + head.length);
+    const block = lf.slice(at, end);
+    const swap = (b: string) => lf.slice(0, at) + b + lf.slice(end);
+    const NARROW = '64px minmax(60px, 1fr) 100px 140px 56px 60px 20px';
+    const BASE = '74px minmax(80px, 1fr) 118px 168px 62px 66px 20px';
+    expect(oneColNarrow(swap(''))).toBeNull();
+    expect(ok(swap(''))).toBe(false);
+    const allBase = swap(block.split(NARROW).join(BASE).split('gap: 8px').join('gap: 12px'));
+    expect(allBase).not.toBe(lf);
+    expect(ok(allBase)).toBe(false);
+    const indOnly = swap(block.replace(/(\.floor__ind \{\s*grid-template-columns: )[^;]+;/, `$1${BASE};`));
+    expect(indOnly).not.toBe(lf);
+    expect(ok(indOnly)).toBe(false);
+    const noScreen = swap(block.replace('@media screen and ', '@media '));
+    expect(oneColNarrow(noScreen)?.media).toBe('@media (min-width: 721px) and (max-width: 819px)');
+    expect(ok(noScreen)).toBe(false);
+    const upper = swap(block.replace('(max-width: 819px)', '(max-width: 1023px)'));
+    expect(ok(upper)).toBe(false);
   });
 
   it('★ 첫 방문 큰 카드 — 두 칸에서는 오른쪽 칸(👤 10-22 L6)이라 한 줄에 셋: 두 칸 묶음에 세로 쌓기 규칙 0(W5 보완 F1 걷음) · 기본 규칙도 한 줄 그대로', () => {

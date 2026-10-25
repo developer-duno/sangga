@@ -251,7 +251,7 @@ describe('CSS 가드 — 호실 크기 칸(결정 0038 G · V3)', () => {
     expect(rule('.ucells.ucells--pending')).toMatch(/visibility:\s*hidden/);
     expect(rule('.ucells.ucells--pending')).not.toMatch(/display:\s*none/);
     expect(mediaAt(css, '  .floors {\n    grid-template-columns: minmax(0, 1fr);')).toEqual(['@media print']);
-    // 화면 기본 규칙에는 걸지 않는다(721~741 한 열 넘침은 V3 밖 — 손대지 않음).
+    // 화면 기본 규칙에는 걸지 않는다(721~741 한 열 넘침은 V3 밖 — 손대지 않음 · 2026-10-26 층 줄 칸 틀로 따로 고침).
     expect(rule('.floors')).not.toMatch(/grid-template-columns/);
     // 양성 대조 — 화면 규칙에 넣으면 걸린다.
     expect(rule('.floors', css.replace('.floors {\n  list-style: none;', '.floors {\n  grid-template-columns: minmax(0, 1fr);\n  list-style: none;'))).toMatch(
