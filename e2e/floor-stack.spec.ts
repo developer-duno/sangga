@@ -6230,19 +6230,32 @@ test.describe('층별 스택뷰 — 개업·폐업 전부 보기 (결정 0038 H 
     ];
   }
 
-  /** 건물을 열고 개폐업 카드를 펼친다. `all` 이 null 이면 전부 보기 함수가 없는 상태(PGRST202). */
-  async function openOc(page: Page, all: unknown[] | null, onAll?: () => void) {
+  /**
+   * 건물을 열고 개폐업 카드를 펼친다. `all` 이 null 이면 전부 보기 함수가 없는 상태(PGRST202).
+   * `hold` 를 주면 전부 보기 답을 그 약속이 풀릴 때까지 붙잡는다(답이 늦은 화면 — V6 보완 2).
+   */
+  async function openOc(page: Page, all: unknown[] | null, onAll?: () => void, hold?: Promise<unknown>) {
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
     await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()], industryMix());
     // 나중에 등록한 것이 먼저 잡힌다 — 8분기 꼴(`…openclose*`)이 전부 보기 이름도 잡으므로 전부 보기를 **뒤에** 건다.
     await mockJson(page, OPEN_CLOSE_PATTERN, eightAnswer());
-    if (all === null) {
+    if (all === null && !hold) {
       await mockMissingFunction(page, OPEN_CLOSE_ALL_PATTERN);
     } else {
       await page.route(OPEN_CLOSE_ALL_PATTERN, async (route) => {
         if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS_HEADERS });
         onAll?.();
+        if (hold) await hold;
+        if (all === null) {
+          await route.fulfill({
+            status: 404,
+            contentType: 'application/json',
+            headers: CORS_HEADERS,
+            body: JSON.stringify({ code: 'PGRST202', message: 'function does not exist' }),
+          });
+          return;
+        }
         await route.fulfill({ status: 200, contentType: 'application/json', headers: CORS_HEADERS, body: JSON.stringify(all) });
       });
     }
@@ -6332,12 +6345,16 @@ test.describe('층별 스택뷰 — 개업·폐업 전부 보기 (결정 0038 H 
     await wideOk('처음 폭');
     if (phone) {
       // 휴대폰은 최근 분기부터(👤 2026-10-25 · styles.css 720 화면 묶음의 rtl) — 열자마자 마지막 칸(최근)이 보이고 첫 칸(옛)은 왼쪽 밖.
-      const sb = await box(scroll);
-      const lastCol = await box(first.locator('.oc__col').last());
-      const firstCol = await box(first.locator('.oc__col').first());
-      expect(lastCol.x + lastCol.width, '휴대폰 최근 분기 칸이 밀기 상자 안').toBeLessThanOrEqual(sb.x + sb.width + 1);
-      expect(lastCol.x, '휴대폰 최근 분기 칸이 밀기 상자 안(왼쪽)').toBeGreaterThanOrEqual(sb.x - 1);
-      expect(firstCol.x, '휴대폰 옛 분기 칸은 왼쪽 밖').toBeLessThan(sb.x);
+      // 세 상권 모두 본다(V6 보완 2) — 상권마다 밀기 상자가 따로라 첫 상권만 보면 둘째·셋째가 옛 분기부터 열려도 모른다.
+      for (let i = 0; i < 3; i++) {
+        const b = blocks.nth(i);
+        const sb = await box(b.locator('.oc__scroll'));
+        const lastCol = await box(b.locator('.oc__col').last());
+        const firstCol = await box(b.locator('.oc__col').first());
+        expect(lastCol.x + lastCol.width, `휴대폰 상권 ${i} 최근 분기 칸이 밀기 상자 안`).toBeLessThanOrEqual(sb.x + sb.width + 1);
+        expect(lastCol.x, `휴대폰 상권 ${i} 최근 분기 칸이 밀기 상자 안(왼쪽)`).toBeGreaterThanOrEqual(sb.x - 1);
+        expect(firstCol.x, `휴대폰 상권 ${i} 옛 분기 칸은 왼쪽 밖`).toBeLessThan(sb.x);
+      }
     }
     // 휴대폰(rtl)은 왼쪽으로 밀면 scrollLeft 가 음수(크롬 표준) · 넓은 화면은 오른쪽으로 밀면 양수.
     const moved = await scroll.evaluate((el, toLeft) => {
@@ -6393,5 +6410,55 @@ test.describe('층별 스택뷰 — 개업·폐업 전부 보기 (결정 0038 H 
     await expect(oc2.locator('.oc__name')).toHaveCount(3);
     await expect(oc2.locator('.oc__all')).toHaveCount(0);
     await expect(oc2).not.toContainText('전부 보기');
+  });
+
+  test('CK. 개업·폐업 전부 보기 단추 — 답이 늦어도 그림이 안 밀린다(빈 상자 · 단추와 같은 높이 · 안 보임) · 함수 없음이면 빈 상자가 접히고 단추 0', async ({
+    page,
+  }, testInfo) => {
+    // ① 전부 답을 붙잡아 둔 채 카드를 연다 — 단추 자리에 보이지 않는 빈 상자.
+    let release!: () => void;
+    const hold = new Promise<void>((r) => (release = r));
+    const oc = await openOc(page, allAnswer(), undefined, hold);
+    const slot = oc.locator('.oc__all--slot');
+    const btn = oc.locator('button.oc__all');
+    await expect(slot).toHaveCount(1);
+    await expect(slot).toHaveAttribute('aria-hidden', 'true');
+    await expect(slot).toHaveCSS('visibility', 'hidden');
+    await expect(slot).toBeHidden();
+    await expect(slot).toHaveText('');
+    await expect(btn).toHaveCount(0);
+    await expect(oc.locator('.oc__district')).toHaveCount(3);
+    const firstDistrict = oc.locator('.oc__district').first();
+    const yBefore = (await box(firstDistrict)).y;
+    const scaleYBefore = (await box(oc.locator('.oc__scale'))).y;
+    const slotH = (await box(slot)).height;
+
+    // ② 1.5초 늦게 답한다 → 그 자리에 단추 · 높이 같고 아래가 안 밀린다.
+    await page.waitForTimeout(1500);
+    release();
+    await expect(btn).toHaveText('전부 보기 (22분기)');
+    await expect(slot).toHaveCount(0);
+    const btnH = (await box(btn)).height;
+    const yAfter = (await box(firstDistrict)).y;
+    const scaleYAfter = (await box(oc.locator('.oc__scale'))).y;
+    testInfo.annotations.push({
+      type: 'CK 실측',
+      description: `${testInfo.project.name}: 빈 상자 ${slotH}px · 단추 ${btnH}px · 첫 상권 y ${yBefore} → ${yAfter} · 눈금 y ${scaleYBefore} → ${scaleYAfter}`,
+    });
+    console.log(`[CK 실측] ${testInfo.project.name}: 빈 상자 ${slotH}px · 단추 ${btnH}px · 첫 상권 y ${yBefore} → ${yAfter}`);
+    expect(Math.abs(btnH - slotH), '빈 상자 높이 = 단추 높이').toBeLessThan(0.5);
+    expect(Math.abs(yAfter - yBefore), '첫 상권 줄이 안 밀린다').toBeLessThan(1);
+    expect(Math.abs(scaleYAfter - scaleYBefore), '눈금 줄이 안 밀린다').toBeLessThan(1);
+
+    // ③ 함수 없음(PGRST202)이 늦게 오면 — 그동안 빈 상자 → 답이 오면 접히고 단추 0 · 카드·8분기는 그대로.
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+    let release2!: () => void;
+    const hold2 = new Promise<void>((r) => (release2 = r));
+    const oc2 = await openOc(page, null, undefined, hold2);
+    await expect(oc2.locator('.oc__all--slot')).toHaveCount(1);
+    release2();
+    await expect(oc2.locator('.oc__all--slot')).toHaveCount(0);
+    await expect(oc2.locator('.oc__all')).toHaveCount(0);
+    await expect(oc2.locator('.oc__district').first().locator('.oc__col')).toHaveCount(8);
   });
 });

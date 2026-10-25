@@ -402,14 +402,17 @@ export function isOpenCloseAllList(x: unknown): x is DistrictOpenCloseAll[] {
 
 /**
  * 「전부 보기 (N분기)」의 N — 전부 응답의 `total_quarters` 칸 값 그대로(화면이 분기 수를 세거나 박지 않는다).
- * 단추를 둘 까닭이 없으면 null: 전부 응답이 없음 · 상권 줄이 없음(대전·상권 밖·좌표 없음) · 전부가 지금 창보다 길지 않음.
+ * 단추를 둘 까닭이 없으면 null: 전부 응답이 없음 · 상권 줄이 없음(대전·상권 밖·좌표 없음) · 전부가 지금 창보다 길지 않음 ·
+ * 두 답의 상권 차례(`district_id`)가 다름(두 요청 사이에 적재가 끼면 갈릴 수 있다 — 그때는 8분기만 보인다).
  */
 export function allQuartersCount(
   eight: readonly DistrictOpenClose[],
   all: readonly DistrictOpenCloseAll[] | null,
 ): number | null {
   if (all === null || all.length === 0) return null;
-  if (!eight.some((r) => r.status === 'ok' || r.status === 'no_data')) return null;
+  const districts = eight.filter((r) => r.status === 'ok' || r.status === 'no_data');
+  if (districts.length === 0) return null;
+  if (districts.length !== all.length || districts.some((r, i) => r.district_id !== all[i].district_id)) return null;
   const n = all[0].total_quarters;
   const shown = eight[0]?.window_quarters.length ?? 0;
   return n > shown ? n : null;
