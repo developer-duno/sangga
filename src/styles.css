@@ -3341,6 +3341,39 @@ body {
   display: block;
 }
 
+/* 「전부 보기 (N분기)」 단추(결정 0038 H · V6) — 카드 하나에 하나. 누르는 장치라 종이에서는 뺀다(아래 @media print).
+   44px 높이는 아래 「누르는 것은 44px 이상」 묶음(@media screen)에 이름이 있다. */
+.oc__all {
+  display: block;
+  margin: 0 0 8px;
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  font: inherit;
+  font-size: 13px;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+/* 전부 보기의 넓은 그림(22분기 같은) — 칸마다 최소 폭을 줘 글자가 안 겹치게 하고, 넘치면 그림 안에서만 옆으로 민다.
+   최소 폭은 칸 수(`--oc-n` — 화면이 칸 수만 넘긴다)로만 정한다(DOM 을 재지 않는다 · 결정 0038 §2-3).
+   ⛔ 종이에서는 밀기를 풀고 최소 폭을 0 으로 돌려 폭에 맞춘다(아래 @media print — 안 풀면 오른쪽이 잘린다 · §2-8).
+   ⓘ 8분기 그림은 이 이름표가 없어 지금 그대로다. */
+.oc__scroll {
+  overflow-x: auto;
+}
+
+.oc__cols--wide {
+  max-width: none;
+  min-width: calc(var(--oc-n) * 40px + (var(--oc-n) - 1) * 4px);
+}
+
+/* 넓은 그림의 연도 글은 1분기 칸에만 서므로 옆 칸 둘째 줄로 넘쳐도 겹치지 않는다 — 잘리지 않게 넘침을 연다. */
+.oc__cols--wide .oc__tick {
+  overflow: visible;
+}
+
 /* 업종 표는 접어 둔다(`details`). 표가 좁은 폭보다 넓어지면 표 안에서만 옆으로 민다. */
 .oc__ind {
   margin: 12px 0 0;
@@ -4686,6 +4719,16 @@ body {
   .rent-trend__charts {
     grid-template-columns: minmax(0, 1fr);
   }
+
+  /* 개업·폐업 「전부 보기」 넓은 그림은 휴대폰에서 오른쪽 끝(최근 분기)부터 보인다(👤 2026-10-25 「최근 분기부터」 · 결정 0038 H).
+     DOM 을 재거나 JS 로 밀지 않는다 — 밀기 상자만 rtl 로 시작하고 안쪽 칸 줄은 ltr 로 되돌려 칸 차례·글은 그대로(왼쪽 옛 → 오른쪽 최근). */
+  .oc__scroll {
+    direction: rtl;
+  }
+
+  .oc__scroll > .oc__cols {
+    direction: ltr;
+  }
 }
 
 /* ── 가지고 나가기(링크 복사) ──────────────────────────────────────────────
@@ -5209,7 +5252,9 @@ body {
   .print__btn,
   .office__clear,
   .unitpick__opt,
-  .list__fold {
+  .list__fold,
+  /* 개업·폐업 「전부 보기 (N분기)」(결정 0038 H · V6). */
+  .oc__all {
     min-height: 44px;
   }
 
@@ -5782,6 +5827,8 @@ body {
   .floor__unitprint-loading,
   /* 긴 목록의 「전부 보기」/「접기」(S2) — 누르는 장치다. 줄은 종이에 늘 전부 나온다. */
   .list__fold,
+  /* 개업·폐업 「전부 보기 (N분기)」(결정 0038 H · V6) — 누르는 장치다. 고른 창의 그림은 종이에 그대로 나온다. */
+  .oc__all,
   .modal__back {
     display: none !important;
   }
@@ -5792,6 +5839,40 @@ body {
     position: static !important;
     transform: none !important;
     box-shadow: none;
+  }
+
+  /* 개업·폐업 전부 보기의 넓은 그림(결정 0038 H · V6) — 종이는 옆으로 밀 수가 없다. 밀기를 풀고(`visible`) 칸 최소 폭을
+     0 으로 돌려 종이 폭에 맞춘다 — 안 풀면 그림 오른쪽이 잘리거나 종이 밖으로 나간다(§2-8 · E2E 가 잘림 0 을 잰다). */
+  .oc__scroll {
+    overflow: visible;
+  }
+
+  .oc__cols--wide {
+    min-width: 0;
+  }
+
+  /* 종이 폭에 22칸을 맞추면 칸이 「n분기」 글보다 좁아져 글끼리 겹친다 — 넓은 그림의 종이에서는 해 글(1분기 칸)만 남긴다
+     (분기 차례는 「왼쪽이 옛 분기, 오른쪽이 최근」 글과 막대 차례로 읽힌다 · 분기마다 값은 막대 이름에 그대로).
+     해 글은 칸 위에 띄워(넘쳐도 옆 칸 둘째 줄은 비어 있다) 1분기 칸에서 오른쪽으로 펼치고, 끝에서 셋째 칸 안쪽이면
+     왼쪽으로 펼친다(그림 오른쪽 밖으로 안 나가게 — 이름표 `oc__tick-year--end`). */
+  .oc__cols--wide .oc__tick {
+    position: relative;
+    min-height: 1.3em;
+  }
+
+  .oc__cols--wide .oc__tick-q {
+    display: none;
+  }
+
+  .oc__cols--wide .oc__tick-year {
+    position: absolute;
+    top: 0;
+    left: 0;
+  }
+
+  .oc__cols--wide .oc__tick-year--end {
+    right: 0;
+    left: auto;
   }
 
   /* 이 종이가 무엇이고 언제 것이며 원본이 어디인지 — 첫 줄에 적는다.

@@ -1,21 +1,24 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { supabase } from '../lib/supabase';
-import { OPEN_CLOSE_FN } from '../lib/appConstants';
+import { OPEN_CLOSE_ALL_FN, OPEN_CLOSE_FN } from '../lib/appConstants';
 import { SECTION_PLAN, type SectionPlan } from '../lib/sectionCards';
 import { SectionCard } from './SectionCard';
 import {
   OPEN_CLOSE_MIN_SAMPLE,
+  allQuartersCount,
   countRateText,
   districtName,
   formatStoreCount,
   franchiseText,
   industryRateShown,
   industryRows,
+  isOpenCloseAllList,
   isOpenCloseList,
   latestOf,
   openCloseQuarterLabel,
   openCloseSummary,
   otherIndustries,
+  scaleText,
   sidoNameOfPnu,
   storeTotalText,
   tableCellText,
@@ -25,7 +28,7 @@ import {
   type TrendCell,
 } from '../lib/openClose';
 import { formatRate } from '../lib/rentStats';
-import type { DistrictOpenClose } from '../types';
+import type { DistrictOpenClose, DistrictOpenCloseAll } from '../types';
 import { takePrefetched, type RpcResult, type SidePrefetch } from '../lib/sidePrefetch';
 import { FOUNDER_CHIP_ALL, chipMatch, type FounderChip } from '../lib/founderChips';
 
@@ -40,6 +43,10 @@ import { FOUNDER_CHIP_ALL, chipMatch, type FounderChip } from '../lib/founderChi
  *    문구가 같은 말을 한다. 상권이 여럿이면 **합치지 않고** 상권마다 한 덩어리다(겹치는 자리의
  *    가게가 양쪽에 세어진다).
  * ⛔ **분기·연도 글자를 박지 않는다.** 어느 분기를 그릴지는 서버의 창이 정한다.
+ * ⓘ **「전부 보기 (N분기)」**(결정 0038 H · V6) — 기본은 서버의 최근 8분기 창 그대로. 8분기 답에 상권 줄이 있으면
+ *   `OPEN_CLOSE_ALL_FN`(표 전체 분기 전부 · 같은 모양)을 한 번 더 묻고, 그 답의 `total_quarters` 를 N 으로 단추에 적는다.
+ *   누르면 서버를 다시 부르지 않고 그 답으로 바꿔 그린다(모든 상권이 같은 창 · 눈금도 그 창 기준). 그 답이 없거나
+ *   이상하면 단추만 없다(카드는 선다).
  * ⛔ **지역·상권 이름을 박지 않는다.** 서울 밖 지역 이름은 `regions.ts` 의 표에서 고른다.
  */
 type Props = {
@@ -71,11 +78,20 @@ export function OpenCloseSection({
    * "자료 없음"이라 적지 않는다(없는 것과 모르는 것은 다르다).
    */
   const [rows, setRows] = useState<DistrictOpenClose[] | null>(null);
+  /** 위 rows 가 어느 필지의 답인가(전부 보기 묻기를 그 필지 것일 때만 하려고 · 아래 wantAll). */
+  const [rowsPnu, setRowsPnu] = useState<string | null>(null);
+  /** 「전부 보기」 답(표 전체 분기 전부). 못 받았거나 못 읽었으면 null — 그때는 단추가 없다. */
+  const [allRows, setAllRows] = useState<DistrictOpenCloseAll[] | null>(null);
+  /** 전부 보기로 그리는 중인가. 필지가 바뀌면 기본(8분기)으로 돌아간다. */
+  const [showAll, setShowAll] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     // 필지가 바뀌면 옛 답을 지운다 — 안 지우면 새 건물 밑에 앞 건물 상권의 숫자가 잠깐 붙는다.
+    // 전부 보기 답·상태도 함께 지운다(앞 건물의 22분기 그림이 새 건물 밑에 남지 않게).
     setRows(null);
+    setAllRows(null);
+    setShowAll(false);
 
     const req: PromiseLike<RpcResult> =
       takePrefetched(prefetch, OPEN_CLOSE_FN, pnu) ?? supabase.rpc(OPEN_CLOSE_FN, { p_pnu: pnu });
@@ -88,12 +104,37 @@ export function OpenCloseSection({
         return;
       }
       setRows(data);
+      setRowsPnu(pnu);
     });
 
     return () => {
       cancelled = true;
     };
   }, [pnu, prefetch]);
+
+  // 상권 줄(ok·no_data)이 있을 때만 전부 보기 답을 묻는다 — 대전·상권 밖·좌표 없음에는 단추가 없다.
+  // ⓘ 필지가 바뀐 바로 그 그리기에서는 rows 가 아직 앞 건물 것이라(위 효과가 비우기 전) 묻지 않는다 — 같은 필지를
+  //   두 번 묻지 않게 8분기 답이 이 필지 것일 때만 참이 되도록 rowsPnu 로 가른다.
+  const wantAll =
+    rows !== null && rowsPnu === pnu && rows.some((r) => r.status === 'ok' || r.status === 'no_data');
+
+  useEffect(() => {
+    if (!wantAll) return;
+    let cancelled = false;
+    supabase.rpc(OPEN_CLOSE_ALL_FN, { p_pnu: pnu }).then(({ data, error }) => {
+      // ⛔ 늦은 답은 버린다 — 그 사이 필지가 바뀌었으면 앞 건물 상권의 전부 그림이 새 건물 밑에 붙는다.
+      if (cancelled) return;
+      // 함수 없음(PGRST202)·오류·모양 이상이면 단추만 빠진다 — 8분기 카드는 그대로 선다.
+      if (error || !isOpenCloseAllList(data)) {
+        console.warn('상권 개업·폐업 전부 보기 조회 실패 — 최근 분기만 표시합니다', error ?? data);
+        return;
+      }
+      setAllRows(data);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [pnu, wantAll]);
 
   if (rows === null) return null;
 
@@ -125,19 +166,33 @@ export function OpenCloseSection({
     );
   }
 
-  // 카드 하나에 눈금 하나 — 상권끼리 같은 높이가 같은 비율이 되게 한다(`trendScaleMax`).
-  const scaleMax = trendScaleMax(rows);
+  // 단추 「전부 보기 (N분기)」의 N — 전부 답의 total_quarters 칸 값 그대로. 없으면 단추도 없다.
+  const allN = allQuartersCount(rows, allRows);
+  // 지금 그리는 창 — 전부 보기면 전부 답, 아니면 8분기 답(모든 상권이 같은 창).
+  const view: DistrictOpenClose[] = showAll && allN !== null && allRows !== null ? allRows : rows;
+  const wide = view !== rows;
+  // 카드 하나에 눈금 하나 — 상권끼리 같은 높이가 같은 비율이 되게 한다(`trendScaleMax`). 눈금은 **보는 창** 기준이다.
+  const scaleMax = trendScaleMax(view);
 
   return (
     <SectionCard plan={plan} className="oc" summary={summary}>
       <p className="oc__lead">
         <strong>이 건물이 속한 상권의 개업·폐업입니다</strong> — 서울시가 공표한 점포 수 그대로입니다.
       </p>
+      {/*
+        전부 보기 단추(결정 0038 H · V6) — 카드 하나에 하나(모든 상권이 같은 창). 누르는 장치라 종이에는 안 나온다.
+        N 은 서버 칸 값이고, 되돌리는 글의 기간도 8분기 답의 창에서 읽는다(분기 수를 박지 않는다).
+      */}
+      {allN !== null && (
+        <button type="button" className="oc__all" aria-expanded={wide} onClick={() => setShowAll(!wide)}>
+          {wide ? `${windowText(rows[0].window_quarters)}만 보기` : `전부 보기 (${allN}분기)`}
+        </button>
+      )}
       {/* 막대 눈금 — 눈에 보이는 글로 둔다(인쇄에도 나온다). 그릴 막대가 없으면 줄도 없다. */}
-      {scaleMax > 0 && <p className="oc__scale">{`막대가 꽉 차면 ${formatRate(scaleMax)}(분기)`}</p>}
+      {scaleMax > 0 && <p className="oc__scale">{scaleText(scaleMax, view[0].window_quarters)}</p>}
 
-      {rows.map((r) => (
-        <DistrictBlock key={r.district_id ?? r.status} row={r} scaleMax={scaleMax} chip={chip} />
+      {view.map((r) => (
+        <DistrictBlock key={r.district_id ?? r.status} row={r} scaleMax={scaleMax} chip={chip} wide={wide} />
       ))}
 
       <ul className="oc__why">
@@ -168,10 +223,13 @@ function DistrictBlock({
   row,
   scaleMax,
   chip,
+  wide,
 }: {
   row: DistrictOpenClose;
   scaleMax: number;
   chip: FounderChip;
+  /** 전부 보기 창(넓은 그림 — 화면에서 옆으로 민다). */
+  wide: boolean;
 }) {
   const name = districtName(row);
   const title = row.district_type ? `${name} · ${row.district_type}` : name;
@@ -234,9 +292,10 @@ function DistrictBlock({
           {`표본 ${formatStoreCount(latest.similr_induty_stor_co)}(점포 · 프랜차이즈 포함) — ${OPEN_CLOSE_MIN_SAMPLE}곳이 안 돼 비율은 적지 않습니다.`}
         </p>
       )}
+      {/* ⛔ 전부 보기에서 8분기 창의 no_data 가 ok 로 바뀐 상권도 이 줄을 지난다 — 옛 분기 숫자를 최근처럼 보이지 않게(결정 0033). */}
       {behind && <p className="oc__note">{`이 상권 자료는 ${label}까지입니다.`}</p>}
 
-      {cells.length > 0 && <Trend cells={cells} windowLabel={windowText(row.window_quarters)} />}
+      {cells.length > 0 && <Trend cells={cells} windowLabel={windowText(row.window_quarters)} wide={wide} />}
 
       {hitMissing && (
         <p className="oc__note oc__chip-none">{`고른 업종(${chip})은 이 상권 점포 수 상위 업종에 없습니다`}</p>
@@ -310,7 +369,71 @@ function DistrictBlock({
  * ⓘ 막대마다 값은 `aria-label`(읽어 주기)과 `title`(마우스) 로 단다 — 열여섯 개 숫자를 좁은
  *   화면에 늘어놓으면 서로 겹친다. 최신 분기 숫자는 바로 위 큰 숫자 줄에 글자로 있다.
  */
-function Trend({ cells, windowLabel }: { cells: TrendCell[]; windowLabel: string }) {
+function Trend({ cells, windowLabel, wide }: { cells: TrendCell[]; windowLabel: string; wide: boolean }) {
+  const cols = (
+    <div
+      className={wide ? 'oc__cols oc__cols--wide' : 'oc__cols'}
+      style={
+        {
+          gridTemplateColumns: `repeat(${cells.length}, minmax(0, 1fr))`,
+          // 넓은 그림의 최소 폭은 칸 수로만 정한다(styles.css 의 calc — DOM 을 재지 않는다 · 결정 0038 §2-3).
+          ...(wide ? { '--oc-n': cells.length } : {}),
+        } as CSSProperties
+      }
+    >
+      {cells.map((c, i) => {
+        const showYear = i === 0 || c.q === '1';
+        return (
+          <div key={c.quarter} className={`oc__col oc__col--${c.kind}`} data-quarter={c.quarter}>
+            <div className="oc__bars">
+              {c.kind === 'ok' && (
+                <>
+                  <span
+                    className="oc__bar oc__bar--open"
+                    role="img"
+                    aria-label={`${c.label} 개업률 ${formatRate(c.openRt)}`}
+                    title={`${c.label} 개업률 ${formatRate(c.openRt)}`}
+                    style={{ height: `${c.openH}%` }}
+                  />
+                  <span
+                    className="oc__bar oc__bar--close"
+                    role="img"
+                    aria-label={`${c.label} 폐업률 ${formatRate(c.closeRt)}`}
+                    title={`${c.label} 폐업률 ${formatRate(c.closeRt)}`}
+                    style={{ height: `${c.closeH}%` }}
+                  />
+                </>
+              )}
+              {c.kind === 'missing' && (
+                <span className="oc__gap" role="img" aria-label={`${c.label} 자료 없음`} title={`${c.label} 자료 없음`}>
+                  –
+                </span>
+              )}
+              {c.kind === 'nosample' && (
+                <span
+                  className="oc__gap"
+                  role="img"
+                  aria-label={`${c.label} 표본 ${formatStoreCount(c.similr)} — 비율 없음`}
+                  title={`${c.label} 표본 ${formatStoreCount(c.similr)} — 비율 없음`}
+                >
+                  표본
+                </span>
+              )}
+            </div>
+            <span className="oc__tick">
+              <span className="oc__tick-q">{c.q ? `${c.q}분기` : ''}</span>
+              {showYear && c.year ? (
+                // 끝에서 셋째 칸 안쪽의 해 글은 종이에서 오른쪽에 붙인다(styles.css · 그림 밖으로 안 나가게 — 칸 차례로만 정한다).
+                <span className={wide && cells.length - i <= 3 ? 'oc__tick-year oc__tick-year--end' : 'oc__tick-year'}>
+                  {`${c.year}년`}
+                </span>
+              ) : null}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
   return (
     <figure className="oc__trend">
       <figcaption className="oc__trend-cap">
@@ -323,54 +446,14 @@ function Trend({ cells, windowLabel }: { cells: TrendCell[]; windowLabel: string
           폐업률
         </span>
       </figcaption>
-      <div className="oc__cols" style={{ gridTemplateColumns: `repeat(${cells.length}, minmax(0, 1fr))` }}>
-        {cells.map((c, i) => {
-          const showYear = i === 0 || c.q === '1';
-          return (
-            <div key={c.quarter} className={`oc__col oc__col--${c.kind}`} data-quarter={c.quarter}>
-              <div className="oc__bars">
-                {c.kind === 'ok' && (
-                  <>
-                    <span
-                      className="oc__bar oc__bar--open"
-                      role="img"
-                      aria-label={`${c.label} 개업률 ${formatRate(c.openRt)}`}
-                      title={`${c.label} 개업률 ${formatRate(c.openRt)}`}
-                      style={{ height: `${c.openH}%` }}
-                    />
-                    <span
-                      className="oc__bar oc__bar--close"
-                      role="img"
-                      aria-label={`${c.label} 폐업률 ${formatRate(c.closeRt)}`}
-                      title={`${c.label} 폐업률 ${formatRate(c.closeRt)}`}
-                      style={{ height: `${c.closeH}%` }}
-                    />
-                  </>
-                )}
-                {c.kind === 'missing' && (
-                  <span className="oc__gap" role="img" aria-label={`${c.label} 자료 없음`} title={`${c.label} 자료 없음`}>
-                    –
-                  </span>
-                )}
-                {c.kind === 'nosample' && (
-                  <span
-                    className="oc__gap"
-                    role="img"
-                    aria-label={`${c.label} 표본 ${formatStoreCount(c.similr)} — 비율 없음`}
-                    title={`${c.label} 표본 ${formatStoreCount(c.similr)} — 비율 없음`}
-                  >
-                    표본
-                  </span>
-                )}
-              </div>
-              <span className="oc__tick">
-                {c.q ? `${c.q}분기` : ''}
-                {showYear && c.year ? <span className="oc__tick-year">{`${c.year}년`}</span> : null}
-              </span>
-            </div>
-          );
-        })}
-      </div>
+      {wide ? (
+        // 넓은 그림만 화면에서 옆으로 민다 — 종이에서는 styles.css 가 밀기를 풀고 폭에 맞춘다(오른쪽 잘림 0).
+        <div className="oc__scroll" role="region" aria-label={`분기별 막대 — ${windowLabel} · 옆으로 밀어 봅니다`} tabIndex={0}>
+          {cols}
+        </div>
+      ) : (
+        cols
+      )}
       {cells.some((c) => c.kind !== 'ok') && (
         <p className="oc__note">
           &lsquo;–&rsquo; 칸은 그 분기에 서울시가 이 상권 자료를 내지 않은 것이고, &lsquo;표본&rsquo; 칸은 점포(프랜차이즈
