@@ -1612,7 +1612,9 @@ describe('PC 두 칸 오른쪽 목록 — 배선 (👤 2026-10-22 방법 나)', 
     expect(head.contains(fold)).toBe(true);
     expect(entry().querySelector('.entry__fold')).toBeNull();
     const note = entry().querySelector<HTMLElement>('.role__note')!;
-    expect(note.hidden).toBe(true);
+    // 숨김은 CSS(마우스 있는 기기만 · `hover: hover`)라 hidden 속성이 아니라 이름표로 본다 — 마우스 없는 태블릿은 보이는 줄(👤 2026-10-26).
+    expect(note.hidden).toBe(false);
+    expect(note.classList.contains('role__note--tip')).toBe(true);
     expect(note.textContent).toBe(NOTE);
     const chip = entry().querySelector<HTMLButtonElement>('.role__chip')!;
     expect(chip.title).toBe(NOTE);
@@ -1629,8 +1631,21 @@ describe('PC 두 칸 오른쪽 목록 — 배선 (👤 2026-10-22 방법 나)', 
     expect(r.container.querySelector('.entry__fold')).toBeNull();
     const note2 = entry().querySelector<HTMLElement>('.role__note')!;
     expect(note2.hidden).toBe(false);
+    expect(note2.classList.contains('role__note--tip')).toBe(false);
     expect(entry().querySelector<HTMLButtonElement>('.role__chip')!.hasAttribute('title')).toBe(false);
     expect(entry().querySelector<HTMLButtonElement>('.role__chip')!.hasAttribute('aria-describedby')).toBe(false);
+  });
+
+  it('역할 안내 글 숨김은 마우스 있는 기기(`hover: hover`)에서만 — 마우스 없는 태블릿은 보이는 줄(👤 2026-10-26) · 양성 대조', () => {
+    // 가드 본체와 양성 대조가 같은 함수를 지난다. 못 보는 것: 실제 기기의 hover 판정(→ E2E CE 의 터치 태블릿 갈래).
+    const tipHidden = (src: string) => {
+      const rs = cssRules(src).filter((r) => r.sel.includes('.role__note--tip') && /display:\s*none/.test(r.body));
+      return { inHover: rs.some((r) => r.media === '@media (hover: hover)'), elsewhere: rs.some((r) => r.media !== '@media (hover: hover)') };
+    };
+    const css = readFileSync('src/styles.css', 'utf8');
+    expect(tipHidden(css)).toEqual({ inHover: true, elsewhere: false });
+    // 양성 대조 — 묶음 없이 숨기면(태블릿도 숨음) 잡는다.
+    expect(tipHidden('.role__note--tip { display: none; }').elsewhere).toBe(true);
   });
 
   it('양성 대조 — 1023 한 열은 결과가 왼쪽(입구) 지금 꼴 그대로 · 오른쪽 목록 자리·표 머리·「← 목록으로」 0 · 뒤로가기 표식 0', async () => {
