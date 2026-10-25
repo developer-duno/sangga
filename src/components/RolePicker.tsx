@@ -48,8 +48,9 @@ export function RolePicker({ role, onChange, noteAsTip = false }: Props) {
           );
         })}
       </ul>
-      {/* 두 칸이면 숨은 글 — 낭독기는 단추 설명(`aria-describedby`)으로 읽는다(숨은 요소도 설명으로 쓸 수 있다 · accname 규칙). */}
-      <p className="role__note" id={noteId} hidden={noteAsTip}>
+      {/* 두 칸이면 마우스가 있는 기기에서만 숨은 글(`role__note--tip` · styles.css 의 `hover: hover`) — 마우스 없는 태블릿은
+          올릴 수 없으니 보이는 줄로 둔다(👤 2026-10-26). 낭독기는 단추 설명(`aria-describedby`)으로 읽는다(숨은 요소도 설명으로 쓸 수 있다 · accname 규칙). */}
+      <p className={noteAsTip ? 'role__note role__note--tip' : 'role__note'} id={noteId}>
         {ROLE_NOTE}
       </p>
     </section>

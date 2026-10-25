@@ -5489,6 +5489,30 @@ test.describe('PC 두 칸', () => {
     expect(foldBox.height).toBeGreaterThanOrEqual(44);
     await expect(page.locator('.entry .role__note')).toBeHidden();
     await expect(page.locator('.entry .role__chip').first()).toHaveAttribute('title', '고르면 화면 순서가 맞춰집니다 · 이 기기에만 저장 · 다시 누르면 해제');
+    // 마우스 없는 태블릿(hover: none — 가로로 눕힌 아이패드 등)은 올릴 수 없으니 안내 글이 보이는 줄 그대로(👤 2026-10-26).
+    // ⓘ 크롬 미디어 흉내(Emulation.setEmulatedMedia)는 hover 를 안 바꾼다(10-26 실측) → 터치 창(hasTouch · isMobile)을 따로 연다(hover: none 실측).
+    {
+      const tablet = await page.context().browser()!.newContext({ viewport: { width: 1180, height: 820 }, hasTouch: true, isMobile: true });
+      await tablet.addInitScript(() => {
+        try {
+          if (!localStorage.getItem('sangga.viewerRole')) localStorage.setItem('sangga.viewerRole', '둘러보기');
+        } catch {
+          /* 저장 막힘 — 큰 카드가 서면 아래 단언이 잡는다 */
+        }
+      });
+      const tp = await tablet.newPage();
+      await mockOpenSigungu(tp);
+      await tp.goto(new URL('/', page.url()).href); // 새 창은 프로젝트 baseURL 을 안 물려받는다
+      expect(
+        await tp.evaluate(() => (globalThis as unknown as { matchMedia: (q: string) => { matches: boolean } }).matchMedia('(hover: none)').matches),
+      ).toBe(true);
+      await expect(tp.locator('.app')).toHaveClass(/app--wide/);
+      await expect(tp.locator('.entry .role__note')).toBeVisible();
+      await expect(tp.locator('.entry .role__note')).toHaveText('고르면 화면 순서가 맞춰집니다 · 이 기기에만 저장 · 다시 누르면 해제');
+      await expect(tp.locator('.entry .role__chip').first()).toHaveAttribute('title', '고르면 화면 순서가 맞춰집니다 · 이 기기에만 저장 · 다시 누르면 해제');
+      await tablet.close();
+    }
+    await expect(page.locator('.entry .role__note')).toBeHidden();
 
     type Probe = { canvasTop: number; canvasH: number; pickedBottom: number };
     const measure = (w: number, h: number) =>
