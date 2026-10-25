@@ -924,4 +924,26 @@ describe('OpenCloseSection — 전부 보기 (결정 0038 H · V6)', () => {
     expect(container.querySelector('.oc__scroll')).toBeNull();
     expect(container.querySelectorAll('.oc__col')).toHaveLength(8);
   });
+
+  it('★ 필지가 바뀌면 앞 필지의 전부 답도 비운다 — 새 필지의 전부 답이 함수 없음이면 단추도 넓은 그림도 없다', async () => {
+    // 검사 🟡1 — 위 시험은 새 필지에도 전부 답이 와서 덮어써지므로, 첫 효과의 「전부 답 비우기」를 빼도 초록이었다.
+    const eight = responses.oc.data as DistrictOpenClose[];
+    responses.all = { data: eight.map((r) => allRowOf(r, 13, [bigOld])), error: null };
+    const { container, rerender } = render(<OpenCloseSection pnu={PNU} />);
+    await openCard();
+    fireEvent.click(await allButton());
+    expect(container.querySelector('.oc__scroll')).not.toBeNull();
+
+    const other = '1168010100100020000';
+    responses.oc = { data: [okRow({ district_id: '3110002', district_nm: '다른 상권' })], error: null };
+    responses.all = { data: null, error: { code: 'PGRST202' } };
+    rerender(<OpenCloseSection pnu={other} />);
+    await waitFor(() => expect(container.querySelector('.oc__name')?.textContent).toContain('다른 상권'));
+    await waitFor(() => expect(allCalls()).toHaveLength(2));
+    // 함수 없음 답이 처리되고 다시 그려질 만큼 기다린다.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(container.querySelector('.oc__all')).toBeNull();
+    expect(container.querySelector('.oc__scroll')).toBeNull();
+    expect(container.querySelectorAll('.oc__col')).toHaveLength(8);
+  });
 });
