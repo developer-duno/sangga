@@ -293,7 +293,7 @@ describe('CSS 가드 — 층 목록 업종 띠(결정 0038 D · V4)', () => {
     for (let i = src.indexOf('.floor__ind {'); i >= 0; i = src.indexOf('.floor__ind {', i + 1)) {
       heads.push(mediaAt(`${css.slice(0, i)}§`, '§'));
     }
-    expect(heads).toHaveLength(3); // 기본 · 721 이상 · 1024~1279 두 칸
+    expect(heads).toHaveLength(4); // 기본 · 721 이상 · 한 열 721~819(2026-10-26) · 1024~1279 두 칸
     expect(heads.some((h) => h?.some((m) => m.includes('max-width: 720px')))).toBe(false);
     // 양성 대조 — 옛 묶음에 넣으면 그 머리가 나온다.
     const moved = '@media (max-width: 720px) {\n  .floor__ind {\n    margin: 0 9px;\n  }\n}\n' + css;
