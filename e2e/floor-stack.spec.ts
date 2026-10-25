@@ -5503,7 +5503,9 @@ test.describe('PC 두 칸', () => {
       const tp = await tablet.newPage();
       await mockOpenSigungu(tp);
       await tp.goto(new URL('/', page.url()).href); // 새 창은 프로젝트 baseURL 을 안 물려받는다
-      expect(await tp.evaluate(() => matchMedia('(hover: none)').matches)).toBe(true);
+      expect(
+        await tp.evaluate(() => (globalThis as unknown as { matchMedia: (q: string) => { matches: boolean } }).matchMedia('(hover: none)').matches),
+      ).toBe(true);
       await expect(tp.locator('.app')).toHaveClass(/app--wide/);
       await expect(tp.locator('.entry .role__note')).toBeVisible();
       await expect(tp.locator('.entry .role__note')).toHaveText('고르면 화면 순서가 맞춰집니다 · 이 기기에만 저장 · 다시 누르면 해제');
