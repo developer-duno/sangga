@@ -3103,3 +3103,11 @@ pytest **4,457 passed**(본 폴더) · vitest **960 passed** · tsc 0 · oxlint 
 - **운영 확인**(4fd9e88 · CSS `index-CpfQyA5M.css`): webkit 터치 1180 = 안내 줄 보임 · 크롬 1280 = 숨김 · webkit 휴대폰 390 더보기 탭 = 보임(그대로).
 - **함께 한 것**: 옛 가지 `feat/f3-f5-freshness-monthly` 지움(👤 · 끝 = #309 head) · 서치콘솔 구 허브 색인 요청 강남·마포 들어감 · 서울 중구는 「테스트 중」에 창을 닫아 다시 할 것 · 송파에서 「할당량 초과」 → 남은 8곳은 다음 날부터(크롬 kyh11kyh = `authuser=2`).
 - **다음**: 서치콘솔 남은 8곳 · 상권정보 202609(그물 1호) · 11월 첫 주 실거래 · 11-20 무렵 대장 10월 판 · #348 나머지 🟡(1024×768 굴림 · 칸이 한 열로 폭을 바꾼 뒤 헛돎 · 키보드 경로 등)은 그대로.
+
+## 2026-10-26 (3) — 시험 도구 vitest 4.1.11 → 4.1.12 · 보안 알림 #16 (#363 · 개발 의존성만 · 화면·DB 변경 0)
+
+- **왜**: GitHub 보안 알림 #16(@vitest/mocker · 중간 · GHSA-xp26-3454-mjgp — 윈도우 역슬래시 경로로 redirect 허용 목록 우회)이 10-25 에 열렸는데 Dependabot 보안 갱신 실행(10-25 20:56)이 실패해 PR 이 안 열렸다. 시작 점검의 `gh run list` 에서 `Dependabot Updates failure` 로 발견. 시험 도구라 배포물에는 안 실린다.
+- **바꾼 것**: `package.json` vitest `^4.1.12` · `pnpm-lock.yaml` @vitest/* 꾸러미만 4.1.12(다른 꾸러미 0 — 남은 `4.1.11` 글자 4곳은 zod 판 셋과 vitest 의 선택 peer 요구 문구).
+- **시험·검사**: vitest 78파일 1,927 passed · CI(test·web) 통과 · 검사관 1인(Sonnet · 작은 수정).
+- **함께 한 것**: 서치콘솔은 오늘(10-26) 새벽 이미 할당량이 찬 날이라 더 하지 않음 — 남은 8곳은 10-27 부터.
+- **다음**: 보안 알림 #16 이 닫혔는지(합친 뒤 `gh api repos/developer-duno/sangga/dependabot/alerts/16 --jq .state` = fixed) · 서치콘솔 8곳 · 상권정보 202609 · 11월 실거래·대장.
