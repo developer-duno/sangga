@@ -139,9 +139,11 @@ def test_target_sql_matches_decision():
     assert (
         "exists (select 1 from unit u where u.bld_id = b.bld_id "
         "and u.floor_use is not null and u.floor_use !~ '" + bs.RESIDENTIAL_RE + "' "
-        "and (u.floor_use !~ '" + bs.AMENITY_RE + "' or b.display_nm ~ '" + bs.SHOP_NAME_RE + "'))"
+        "and (b.display_nm ~ '" + bs.SHOP_NAME_RE + "' or exists (select 1 from regexp_split_to_table(u.floor_use, '"
+        + bs.USE_SPLIT_RE + "') p where length(p) >= 2 and p not in ('및', '외', '등', '기타') and p !~ '"
+        + bs.AMENITY_RE + "')))"
     ) in bs.TARGET_WHERE
-    for const in (bs.RESIDENTIAL_RE, bs.AMENITY_RE, bs.SHOP_NAME_RE):
+    for const in (bs.RESIDENTIAL_RE, bs.AMENITY_RE, bs.SHOP_NAME_RE, bs.USE_SPLIT_RE):
         assert "'" not in const  # SQL 따옴표를 깨지 않는다
     # 👤 2026-10-19 — 이름에 글자(한글·영문·한자)가 하나 이상인 건물만.
     assert "and b.display_nm ~ '" + bs.NAME_LETTER_RE + "' " in bs.TARGET_WHERE
@@ -209,22 +211,6 @@ def test_control_amenity_re_drift_is_caught():
     assert ts_const_re(good, "AMENITY_RE") == bs.AMENITY_RE
     assert ts_const_re(good.replace("|노인", ""), "AMENITY_RE") != bs.AMENITY_RE
     assert ts_const_re(good, "SHOP_NAME_RE") is None
-
-
-def test_amenity_rule_in_python_re():
-    """공용 공간만 → 대상 밖 · 이름에 상가 → 대상 · 휴게음식점은 공용 공간 낱말이 아니다(양성 대조)."""
-
-    def nonres(use, name):
-        return re.search(bs.RESIDENTIAL_RE, use) is None and (
-            re.search(bs.AMENITY_RE, use) is None or re.search(bs.SHOP_NAME_RE, name) is not None
-        )
-
-    for use in ("부대시설", "복리시설", "마을공동시설", "공중화장실", "유치원", "어린이집", "영유아보육시설", "노인복지시설"):
-        assert not nonres(use, "OO아파트"), use
-        assert nonres(use, "OO아파트상가동"), use
-    assert nonres("휴게음식점", "OO아파트")
-    assert nonres("소매점", "OO아파트")
-    assert not nonres("아파트", "두원빌라및상가")
 
 
 def test_control_residential_re_drift_is_caught():
@@ -616,6 +602,37 @@ def test_target_sql_runs_on_local_postgres(pg):
     hubs, outside = bs.build_hubs(buildings, gus)
     assert sorted(hubs) == ["11680", "30140"] and outside == 1
     assert list(hubs["11680"]["parcels"]) == [P1]
+
+
+# (이름, 호실 용도, 대상인가) — 👤 2026-10-27 공용 공간 규칙 · buildingHead.test.ts 의 isNonResidential 시험과 같은 꼴.
+AMENITY_CASES = [
+    ("가아파트", "부대시설", False), ("나아파트", "복리시설", False), ("다마을", "마을공동시설", False),
+    ("라공원", "공중화장실", False), ("마유치원", "유치원", False), ("바어린이집", "어린이집", False),
+    ("사보육", "영유아보육시설", False), ("아요양", "노인복지시설", False), ("자아파트", "아파트, 부대시설", False),
+    ("차아파트상가동", "부대시설", True),          # 이름 예외(단지 안 상가동)
+    ("카빌딩", "휴게음식점", True),                # '휴게' 는 공용 공간 낱말이 아니다
+    ("타빌딩", "소매점 및 부대시설", True),        # 가게 조각이 있으면 남는다(검사관 🟠 · TS 조각 판정과 같게)
+    ("파빌딩", "유치원 및 학원", True),
+    ("하빌딩", "부대시설/근린생활시설", True),
+    ("거빌딩", "부대시설 및 기타", False),         # 연결어(및·기타)는 버린다
+    ("너빌라및상가", "아파트", False),             # 주거 목록은 이름 예외 없음(10-09 판정 그대로)
+]
+
+
+def test_target_sql_amenity_rule_on_local_postgres(pg):
+    """공용 공간 규칙을 실제 PostgreSQL 에서 — 조각 나누기·연결어·이름 예외(파이썬으로 다시 쓰지 않고 SQL 을 그대로 돌린다)."""
+    c = pg.cursor()
+    c.execute("drop schema if exists public cascade; create schema public;")
+    c.execute(SHIM)
+    c.execute(_list_parcel_buildings_def())
+    for i, (nm, use, _) in enumerate(AMENITY_CASES):
+        pnu = "116801010010{:03d}0000".format(i)
+        c.execute("insert into building values (%s, %s, %s, null, 10)", (pnu + "_1", pnu, nm))
+        c.execute("insert into unit values (%s, %s)", (pnu + "_1", use))
+    c.execute("insert into v_building_floor_stack select bld_id, 1 from building")
+    c.execute(bs.TARGET_SQL)
+    buildings, _ = bs.parse_rows("\n".join(r[0] for r in c.fetchall()) + "\n")
+    assert sorted(b["bld_nm"] for b in buildings) == sorted(nm for nm, _, keep in AMENITY_CASES if keep)
 
 
 def test_target_sql_name_letter_rule_on_local_postgres(pg):

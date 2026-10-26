@@ -525,7 +525,9 @@ describe('비주거 판정 · noindex(👤 2026-10-09 19:1x — 색인 대상 = 
       expect(count(render(tower({ main_use: use, uses: [{ use }] }))), use).toBe(1);
     }
     // 양성 대조 — 휴게음식점('휴게' 는 목록에 없다)·소매점이 섞인 층은 비주거로 남는다
-    for (const use of ['휴게음식점', '부대시설, 소매점', '유치원 및 학원']) {
+    expect(isNonResidential([row(1, { main_use: '부대시설 및 기타', uses: [{ use: '부대시설 및 기타' }] })])).toBe(false);
+    // tests/test_build_sitemap.py 의 AMENITY_CASES(사이트맵 SQL 을 로컬 PostgreSQL 에서) 와 같은 꼴
+    for (const use of ['휴게음식점', '부대시설, 소매점', '소매점 및 부대시설', '유치원 및 학원', '부대시설/근린생활시설']) {
       expect(isNonResidential([row(1, { main_use: use, uses: [{ use }] })]), use).toBe(true);
     }
   });
