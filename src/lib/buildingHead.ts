@@ -33,6 +33,15 @@ const BLD_RE = /^\d{19}_\d{1,32}$/;
 export const RESIDENTIAL_RE = /(주택|주거|아파트|다세대|연립|기숙사|주차|기계|전기|계단|승강|옥탑|부속|창고|관리|경비|대피|물탱크|펌프|발전|보일러|쓰레기|분리수거)/;
 
 /**
+ * 단지 공용 공간(부대·복리·마을공동시설·공중화장실)과 유치원·어린이집·보육·노인시설 — 이것만 있는 건물도 검색에서 뺀다
+ * (👤 2026-10-27 · 상가 사이트에 내용이 거의 같은 단지 동 페이지가 줄지어 서지 않게 · 화면은 그대로).
+ * 단 이름에 `SHOP_NAME_RE`(상가)가 든 건물은 남긴다 — 단지 안 상가동이 대장에 '부대시설'로만 적힌 일이 있다(아남아파트상가동 등).
+ * ⛔ 두 상수 모두 `scripts/build_sitemap.py` 와 **글자까지 같아야** 한다(tests/test_build_sitemap.py 가 대조).
+ */
+export const AMENITY_RE = /(부대|복리|마을공동|화장실|유치원|어린이집|보육|노인)/;
+export const SHOP_NAME_RE = /(상가)/;
+
+/**
  * 이름에 글자(한글 음절·호환 자모·영문·한자)가 하나라도 있나 — 하나도 없으면(「.」「1」「---------」) 첫 HTML 도 noindex
  * (👤 2026-10-19 「단다」 — 사이트맵·구 허브에서 뺀 것과 같은 뜻을 끝까지).
  * ⛔ `scripts/build_sitemap.py` 의 NAME_LETTER_RE 와 **글자까지 같아야** 한다(tests/test_build_sitemap.py 가 대조).
@@ -114,7 +123,8 @@ const USE_FILLER = new Set(['및', '외', '등', '기타']);
  * 연결어(및·외·등·기타)·두 글자 미만을 뺀 것이 RESIDENTIAL_RE 에 안 걸리면 true.
  * false 면 머리글은 그 건물 것으로 바꾸되 noindex(카카오톡 미리보기는 건물 것 · 구글은 안 담는다).
  */
-export function isNonResidential(rows: BuildingRow[]): boolean {
+export function isNonResidential(rows: BuildingRow[], name: string | null = null): boolean {
+  const shopName = name !== null && SHOP_NAME_RE.test(name);
   for (const r of rows) {
     const names = [r.main_use, ...(r.uses ?? []).map((u) => u?.use ?? null)];
     for (const name of names) {
@@ -122,7 +132,7 @@ export function isNonResidential(rows: BuildingRow[]): boolean {
       for (const piece of name.split(USE_SPLIT_RE)) {
         const t = piece.trim();
         if (t.length < 2 || USE_FILLER.has(t)) continue;
-        if (!RESIDENTIAL_RE.test(t)) return true;
+        if (!RESIDENTIAL_RE.test(t) && (shopName || !AMENITY_RE.test(t))) return true;
       }
     }
   }
@@ -486,5 +496,5 @@ export function renderBuildingHtml(
   // 비주거 층이 없는 건물(아파트 동 등) **또는** 이름에 글자가 하나도 없는 건물(「.」「1」 — 👤 2026-10-19) —
   // 미리보기는 건물 것이되 검색 색인에는 안 담는다. 이름은 동 구분을 붙이기 전 원래 이름(사이트맵이 보는 `display_nm` 과 같은 칸) —
   // 붙인 뒤 이름으로 보면 「(같은 땅 3동 중 2번째)」의 한글 때문에 늘 통과한다.
-  return isNonResidential(rows) && NAME_LETTER_RE.test(facts.name) ? html : withNoindex(html);
+  return isNonResidential(rows, facts.name) && NAME_LETTER_RE.test(facts.name) ? html : withNoindex(html);
 }

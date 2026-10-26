@@ -53,6 +53,14 @@ RESIDENTIAL_RE = (
     "(주택|주거|아파트|다세대|연립|기숙사|주차|기계|전기|계단|승강|옥탑|부속|창고|관리|경비|대피|"
     "물탱크|펌프|발전|보일러|쓰레기|분리수거)"
 )
+# 👤 2026-10-27 — 단지 공용 공간·유치원·어린이집·노인시설만 있는 건물도 검색에서 뺀다(화면은 그대로) ·
+#   단 이름에 '상가'가 든 건물은 남긴다(단지 안 상가동이 대장에 '부대시설'로만 적힌 일 — 아남아파트상가동 등).
+#   ⛔ 두 상수도 src/lib/buildingHead.ts 의 AMENITY_RE·SHOP_NAME_RE 와 글자까지 같아야 한다(tests/test_build_sitemap.py 대조).
+AMENITY_RE = "(부대|복리|마을공동|화장실|유치원|어린이집|보육|노인)"
+SHOP_NAME_RE = "(상가)"
+#   공용 공간 판정은 용도 글을 조각으로 나눠 본다(buildingHead.ts 의 USE_SPLIT_RE·USE_FILLER 와 같은 뜻 — '소매점 및 부대시설' 은 가게 조각이 있어 남는다).
+#   주거 목록(RESIDENTIAL_RE)은 10-09 부터의 통째 글자 판정 그대로(새로 들어오는 장 0).
+USE_SPLIT_RE = "[,·/[:space:]]+"
 # 이름에 글자(한글 음절·자모 · 영문 · 한자)가 하나 이상 — 「.」「1」「---------」 같은 이름은 사이트맵·허브에서 뺀다
 #   (👤 2026-10-19 — 구글에 「. — 강남구 …」 같은 제목이 안 나가게 · 그 건물의 화면·첫 HTML·noindex 규칙은 그대로).
 #   ⓘ 범위를 `\uXXXX` 로 적는다(PostgreSQL 정규식·파이썬 re 둘 다 같은 뜻 — 소스에 드문 글자를 직접 쓰지 않는다).
@@ -63,7 +71,10 @@ TARGET_WHERE = (
     "and b.display_nm ~ '" + NAME_LETTER_RE + "' "
     "and exists (select 1 from v_building_floor_stack s where s.bld_id = b.bld_id) "
     "and exists (select 1 from unit u where u.bld_id = b.bld_id "
-    "and u.floor_use is not null and u.floor_use !~ '" + RESIDENTIAL_RE + "')"
+    "and u.floor_use is not null and u.floor_use !~ '" + RESIDENTIAL_RE + "' "
+    "and (b.display_nm ~ '" + SHOP_NAME_RE + "' or exists (select 1 from regexp_split_to_table(u.floor_use, '"
+    + USE_SPLIT_RE + "') p where length(p) >= 2 and p not in ('및', '외', '등', '기타') and p !~ '"
+    + AMENITY_RE + "')))"
 )
 
 ROOT = os.path.dirname(SCRIPTS_DIR)

@@ -519,6 +519,32 @@ describe('비주거 판정 · noindex(👤 2026-10-09 19:1x — 색인 대상 = 
     }
   });
 
+  it('단지 공용 공간·유치원·어린이집·노인시설만 있으면 noindex(👤 2026-10-27) · 가게가 하나라도 섞이면 그대로 색인', () => {
+    for (const use of ['부대시설', '복리시설', '마을공동시설', '공중화장실', '유치원', '어린이집', '영유아보육시설', '노인복지시설', '아파트, 부대시설']) {
+      expect(isNonResidential([row(1, { main_use: use, uses: [{ use }] })]), use).toBe(false);
+      expect(count(render(tower({ main_use: use, uses: [{ use }] }))), use).toBe(1);
+    }
+    // 양성 대조 — 휴게음식점('휴게' 는 목록에 없다)·소매점이 섞인 층은 비주거로 남는다
+    expect(isNonResidential([row(1, { main_use: '부대시설 및 기타', uses: [{ use: '부대시설 및 기타' }] })])).toBe(false);
+    // tests/test_build_sitemap.py 의 AMENITY_CASES(사이트맵 SQL 을 로컬 PostgreSQL 에서) 와 같은 꼴
+    for (const use of ['휴게음식점', '부대시설, 소매점', '소매점 및 부대시설', '유치원 및 학원', '부대시설/근린생활시설']) {
+      expect(isNonResidential([row(1, { main_use: use, uses: [{ use }] })]), use).toBe(true);
+    }
+  });
+
+  it('이름에 「상가」가 든 건물은 부대시설만 있어도 색인(단지 안 상가동 · 👤 2026-10-27) · 주거만이면 이름이 상가여도 noindex', () => {
+    const amenity = { main_use: '부대시설', uses: [{ use: '부대시설' }] };
+    expect(isNonResidential([row(1, amenity)], '아남아파트상가동')).toBe(true);
+    expect(isNonResidential([row(1, amenity)], '아남아파트')).toBe(false);
+    expect(isNonResidential([row(1, amenity)])).toBe(false);
+    expect(count(render(tower({ ...amenity, bld_nm: '아남아파트상가동' })))).toBe(0);
+    expect(count(render(tower({ ...amenity, bld_nm: '아남아파트 101동' })))).toBe(1);
+    // 이름 예외는 공용 공간 낱말에만 — 옛 주거 목록(아파트·주차장)은 이름이 상가여도 그대로 주거
+    const resid = { main_use: '아파트', uses: [{ use: '아파트' }, { use: '주차장' }] };
+    expect(isNonResidential([row(1, resid)], '두원빌라및상가')).toBe(false);
+    expect(count(render(tower({ ...resid, bld_nm: '두원빌라및상가' })))).toBe(1);
+  });
+
   it('연결어(및·외·등·기타)·한 글자 조각은 버린다 — 주거만 있으면 그대로 noindex', () => {
     for (const use of ['아파트 및 주차장', '공동주택 외', '아파트 등', '기타 아파트', '아파트 / 주차장', '아파트 A']) {
       expect(isNonResidential([row(1, { main_use: use, uses: [{ use }] })]), use).toBe(false);
