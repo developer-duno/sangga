@@ -138,9 +138,11 @@ def test_target_sql_matches_decision():
     assert "exists (select 1 from v_building_floor_stack s where s.bld_id = b.bld_id)" in bs.TARGET_WHERE
     assert (
         "exists (select 1 from unit u where u.bld_id = b.bld_id "
-        "and u.floor_use is not null and u.floor_use !~ '" + bs.RESIDENTIAL_RE + "')"
+        "and u.floor_use is not null and u.floor_use !~ '" + bs.RESIDENTIAL_RE + "' "
+        "and (u.floor_use !~ '" + bs.AMENITY_RE + "' or b.display_nm ~ '" + bs.SHOP_NAME_RE + "'))"
     ) in bs.TARGET_WHERE
-    assert "'" not in bs.RESIDENTIAL_RE  # SQL 따옴표를 깨지 않는다
+    for const in (bs.RESIDENTIAL_RE, bs.AMENITY_RE, bs.SHOP_NAME_RE):
+        assert "'" not in const  # SQL 따옴표를 깨지 않는다
     # 👤 2026-10-19 — 이름에 글자(한글·영문·한자)가 하나 이상인 건물만.
     assert "and b.display_nm ~ '" + bs.NAME_LETTER_RE + "' " in bs.TARGET_WHERE
     assert "'" not in bs.NAME_LETTER_RE
@@ -184,6 +186,45 @@ def test_residential_re_matches_building_head_ts():
     ts = os.path.join(ROOT, "src", "lib", "buildingHead.ts")
     with open(ts, encoding="utf-8") as f:
         assert ts_residential_re(f.read()) == bs.RESIDENTIAL_RE
+
+
+def ts_const_re(text, name):
+    """buildingHead.ts 원문에서 `export const <name> = /…/;` 의 정규식 본문을 꺼낸다(없으면 None)."""
+    m = re.search(r"^export const " + name + r" = /(.*)/;\s*$", text, re.M)
+    return m.group(1) if m else None
+
+
+def test_amenity_and_shop_name_re_match_building_head_ts():
+    """👤 2026-10-27 — 공용 공간 낱말·상가 이름 예외도 함수 쪽과 글자까지 같아야 한다(사이트맵 대상 = noindex 판정)."""
+    ts = os.path.join(ROOT, "src", "lib", "buildingHead.ts")
+    with open(ts, encoding="utf-8") as f:
+        text = f.read()
+    assert ts_const_re(text, "AMENITY_RE") == bs.AMENITY_RE
+    assert ts_const_re(text, "SHOP_NAME_RE") == bs.SHOP_NAME_RE
+
+
+def test_control_amenity_re_drift_is_caught():
+    """양성 대조 — 공용 공간 낱말 하나만 빠져도 다르게 읽힌다."""
+    good = "export const AMENITY_RE = /" + bs.AMENITY_RE + "/;\n"
+    assert ts_const_re(good, "AMENITY_RE") == bs.AMENITY_RE
+    assert ts_const_re(good.replace("|노인", ""), "AMENITY_RE") != bs.AMENITY_RE
+    assert ts_const_re(good, "SHOP_NAME_RE") is None
+
+
+def test_amenity_rule_in_python_re():
+    """공용 공간만 → 대상 밖 · 이름에 상가 → 대상 · 휴게음식점은 공용 공간 낱말이 아니다(양성 대조)."""
+
+    def nonres(use, name):
+        return re.search(bs.RESIDENTIAL_RE, use) is None and (
+            re.search(bs.AMENITY_RE, use) is None or re.search(bs.SHOP_NAME_RE, name) is not None
+        )
+
+    for use in ("부대시설", "복리시설", "마을공동시설", "공중화장실", "유치원", "어린이집", "영유아보육시설", "노인복지시설"):
+        assert not nonres(use, "OO아파트"), use
+        assert nonres(use, "OO아파트상가동"), use
+    assert nonres("휴게음식점", "OO아파트")
+    assert nonres("소매점", "OO아파트")
+    assert not nonres("아파트", "두원빌라및상가")
 
 
 def test_control_residential_re_drift_is_caught():
