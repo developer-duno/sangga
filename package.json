@@ -33,5 +33,11 @@
     "typescript": "~6.0.2",
     "vite": "^8.2.4",
     "vitest": "^4.1.12"
+  },
+  "pnpm": {
+    "overrides": {
+      "undici": "^8.12.2",
+      "zod": "^4.6.6"
+    }
   }
 }

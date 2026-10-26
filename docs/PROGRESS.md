@@ -3111,3 +3111,11 @@ pytest **4,457 passed**(본 폴더) · vitest **960 passed** · tsc 0 · oxlint 
 - **시험·검사**: vitest 78파일 1,927 passed · CI(test·web) 통과 · 검사관 1인(Sonnet · 작은 수정).
 - **함께 한 것**: 서치콘솔은 오늘(10-26) 새벽 이미 할당량이 찬 날이라 더 하지 않음 — 남은 8곳은 10-27 부터.
 - **다음**: 보안 알림 #16 이 닫혔는지(합친 뒤 `gh api repos/developer-duno/sangga/dependabot/alerts/16 --jq .state` = fixed) · 서치콘솔 8곳 · 상권정보 202609 · 11월 실거래·대장.
+
+## 2026-10-26 (4) — 보안 알림 #17(zod) · #20(undici) — 판 강제 지정 (`pnpm.overrides` · 화면·DB 변경 0)
+
+- **왜**: #363 을 합친 직후(10-26 01:09Z) 보안 알림 두 건이 새로 열렸다 — #17 zod(높음 · GHSA-mrhx-c7xc-m3w5 · 큰 묶음 검사 때 메모리 고갈 · < 4.6.6) · #20 undici(높음 · GHSA-xjj6-f33q-929c · 압축 방식이 지나치게 많으면 처리 안 된 오류로 멈춤 · 8.0.0 ~ < 8.12.2). Dependabot 이 PR 을 열지 않아 시작 점검의 「열린 보안 알림 수」 줄(기대 0 · 실측 2)로 발견.
+- **누가 쓰나**: zod 4.1.11 = `@vercel/functions` → `@vercel/oidc` → `@vercel/cli-config`(최신 0.3.3 도 zod 를 `4.1.11` 로 못 박음 → 위 꾸러미를 올려서는 못 고친다). `middleware.ts` 는 `@vercel/functions` 의 `next`·`rewrite` 만 쓰고 zod 는 `./oidc` 하위 경로에서만 불려 실제 위험은 거의 없다. undici 8.11.2 = jsdom(시험 도구 · `^8.9.0`).
+- **바꾼 것**: `package.json` 에 `pnpm.overrides` `undici ^8.12.2` · `zod ^4.6.6` → 잠금 파일 zod 4.6.7 · undici 8.12.3(그 밖 꾸러미 0).
+- **시험**: vitest 78파일 1,927 passed · `pnpm build` 통과 · package.json 을 읽는 파이썬 시험 없음.
+- **되돌리기**: `pnpm` 절을 지우고 `pnpm install`. ⚠️ `@vercel/cli-config` 가 zod 를 고친 판으로 올리면 zod 줄은 지워도 된다.
