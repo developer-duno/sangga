@@ -74,7 +74,13 @@ TARGET_WHERE = (
     "and u.floor_use is not null and u.floor_use !~ '" + RESIDENTIAL_RE + "' "
     "and (b.display_nm ~ '" + SHOP_NAME_RE + "' or exists (select 1 from regexp_split_to_table(u.floor_use, '"
     + USE_SPLIT_RE + "') p where length(p) >= 2 and p not in ('및', '외', '등', '기타') and p !~ '"
-    + AMENITY_RE + "')))"
+    + AMENITY_RE + "') "
+    # 호실이 공용 공간뿐이어도 층별개요에 가게 용도가 있으면 남긴다(10-27 운영 실측 — 더샵팰리스 1층 소매점처럼
+    # 호실 표엔 '부대시설'만 있는 건물) · 첫 HTML noindex(층별개요 main_use·uses 조각)와 같은 재료 · 옛 대상 안에서만.
+    "or exists (select 1 from building_floor f, regexp_split_to_table(f.main_purps_nm, '" + USE_SPLIT_RE + "') p "
+    "where f.bld_id = b.bld_id and not f.area_excluded and f.floor_no is not null "
+    "and length(p) >= 2 and p not in ('및', '외', '등', '기타') and p !~ '" + RESIDENTIAL_RE + "' "
+    "and p !~ '" + AMENITY_RE + "')))"
 )
 
 ROOT = os.path.dirname(SCRIPTS_DIR)

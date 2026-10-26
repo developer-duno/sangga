@@ -141,7 +141,11 @@ def test_target_sql_matches_decision():
         "and u.floor_use is not null and u.floor_use !~ '" + bs.RESIDENTIAL_RE + "' "
         "and (b.display_nm ~ '" + bs.SHOP_NAME_RE + "' or exists (select 1 from regexp_split_to_table(u.floor_use, '"
         + bs.USE_SPLIT_RE + "') p where length(p) >= 2 and p not in ('및', '외', '등', '기타') and p !~ '"
-        + bs.AMENITY_RE + "')))"
+        + bs.AMENITY_RE + "') "
+        "or exists (select 1 from building_floor f, regexp_split_to_table(f.main_purps_nm, '" + bs.USE_SPLIT_RE + "') p "
+        "where f.bld_id = b.bld_id and not f.area_excluded and f.floor_no is not null "
+        "and length(p) >= 2 and p not in ('및', '외', '등', '기타') and p !~ '" + bs.RESIDENTIAL_RE + "' "
+        "and p !~ '" + bs.AMENITY_RE + "')))"
     ) in bs.TARGET_WHERE
     for const in (bs.RESIDENTIAL_RE, bs.AMENITY_RE, bs.SHOP_NAME_RE, bs.USE_SPLIT_RE):
         assert "'" not in const  # SQL 따옴표를 깨지 않는다
@@ -516,7 +520,7 @@ def _list_parcel_buildings_def():
 SHIM = """
 create table building (bld_id text primary key, pnu char(19), display_nm text, dong_nm text, total_area_m2 numeric);
 create table v_building_floor_stack (bld_id text, floor_no smallint);
-create table building_floor (bld_id text, floor_no smallint);
+create table building_floor (bld_id text, floor_no smallint, main_purps_nm text, area_excluded boolean not null default false);
 create table unit (bld_id text, floor_use text);
 create table parcel (pnu char(19) primary key, road_addr text);
 create table mv_open_sigungu (sido_code char(2), sido_nm text, sigungu_code char(5), sigungu_nm text, building_cnt int);
@@ -617,6 +621,13 @@ AMENITY_CASES = [
     ("거빌딩", "부대시설 및 기타", False),         # 연결어(및·기타)는 버린다
     ("너빌라및상가", "아파트", False),             # 주거 목록은 이름 예외 없음(10-09 판정 그대로)
 ]
+# (이름, 호실 용도, 층별개요 [(용도, 연면적 제외)], 대상인가) — 호실이 공용 공간뿐이어도 층별개요에 가게가 있으면 남는다(10-27 운영 실측 더샵팰리스).
+FLOOR_CASES = [
+    ("더아파트", "부대시설", [("소매점", False)], True),
+    ("러아파트", "부대시설", [("부대시설", False), ("아파트", False)], False),
+    ("머아파트", "부대시설", [("소매점", True)], False),          # 연면적 제외 행은 안 본다(뷰 uses 와 같게)
+    ("버아파트", "아파트", [("소매점", False)], False),           # 옛 대상 밖(호실이 주거뿐)은 층별개요로 새로 들이지 않는다
+]
 
 
 def test_target_sql_amenity_rule_on_local_postgres(pg):
@@ -629,10 +640,18 @@ def test_target_sql_amenity_rule_on_local_postgres(pg):
         pnu = "116801010010{:03d}0000".format(i)
         c.execute("insert into building values (%s, %s, %s, null, 10)", (pnu + "_1", pnu, nm))
         c.execute("insert into unit values (%s, %s)", (pnu + "_1", use))
+    base = len(AMENITY_CASES)
+    for j, (nm, use, floors, _) in enumerate(FLOOR_CASES):
+        pnu = "116801010010{:03d}0000".format(base + j)
+        c.execute("insert into building values (%s, %s, %s, null, 10)", (pnu + "_1", pnu, nm))
+        c.execute("insert into unit values (%s, %s)", (pnu + "_1", use))
+        for fuse, excl in floors:
+            c.execute("insert into building_floor values (%s, 1, %s, %s)", (pnu + "_1", fuse, excl))
     c.execute("insert into v_building_floor_stack select bld_id, 1 from building")
     c.execute(bs.TARGET_SQL)
     buildings, _ = bs.parse_rows("\n".join(r[0] for r in c.fetchall()) + "\n")
-    assert sorted(b["bld_nm"] for b in buildings) == sorted(nm for nm, _, keep in AMENITY_CASES if keep)
+    want = [nm for nm, _, keep in AMENITY_CASES if keep] + [nm for nm, _, _, keep in FLOOR_CASES if keep]
+    assert sorted(b["bld_nm"] for b in buildings) == sorted(want)
 
 
 def test_target_sql_name_letter_rule_on_local_postgres(pg):
