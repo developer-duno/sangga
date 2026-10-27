@@ -3146,3 +3146,10 @@ pytest **4,457 passed**(본 폴더) · vitest **960 passed** · tsc 0 · oxlint 
 - **한 것**: `collect_lh_notices.py --dry-run`(상가 528건 · 지역명 옮기기 전건 성공) → 실적재 exit 0 → 창고 594 → **613**(지금 살아 있는 것 79 · 지역 미상 0) → `post_load.py` exit 0 · `post_load.py --check` exit 0(경고 줄 0).
 - **기준선**: 이슈는 20261023 을 적었지만 수집기가 알린 최신 공고일이 **20261027** 이라 그 값으로 올림 → `check_lh_notices.py` exit 0 「새 공고 없음」.
 - **서치콘솔(같은 날 06:0x)**: 구 허브 색인 요청 송파(11710) 요청됨 · 서초(11650) 바로 할당량 초과 — 24시간 뒤에도 하루 1건뿐. 남은 6곳(서초·영등포·종로·대전 서구·유성·대전 중구)은 하루 1곳씩.
+
+## 2026-10-27 (4) — 보안 규칙(CSP) '기록만' → '막기' (👤 결정 · `vercel.json` 한 줄 · 화면·DB 변경 0)
+
+- **왜**: 👤 결정 판의 「CSP 막기 전환」(10-11 #274 부터 기록만). 2주 넘게 기록한 뒤 다시 잼.
+- **재실측(10-27 · 운영 · playwright chromium 1280 + webkit iPhone 13 · 첫 화면 · 구 허브 강남·유성 · 건물 2곳)**: 위반은 카카오 SDK `kakao.js:59` 의 eval 1종뿐(10-11 과 같음). 엔진 안에서 응답 헤더를 막기로 바꿔 씌우면 eval 위반이 `enforce:script-src:eval` 로 실제 막히는데, 지도 그림·Supabase 호출·층 줄·제목·글 길이·페이지 오류가 기록 모드와 똑같다(두 엔진 모두). 화면 코드의 바깥 주소는 다른 사이트로 가는 링크뿐(CSP 무관).
+- **바꾼 것**: `vercel.json` 키 `Content-Security-Policy-Report-Only` → `Content-Security-Policy`(명단 그대로) · `tests/test_vercel_config.py` 가 막기 1줄 · 기록 0줄을 본다(되돌린 변이 → 빨강 확인) · 기능 메모 문장.
+- **되돌리기**: 키 이름에 `-Report-Only` 를 다시 붙이고 시험 함께.

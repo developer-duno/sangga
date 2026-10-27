@@ -162,13 +162,13 @@ def csp_problems(value: str) -> list[str]:
     return problems
 
 
-def test_csp_is_report_only_on_all_paths():
-    """CSP 는 아직 '기록만'(👤 2026-10-10 — 위반은 브라우저에만) · 막는 `Content-Security-Policy` 는 0."""
+def test_csp_is_enforced_on_all_paths():
+    """CSP 는 '막기'(👤 2026-10-27 — 2주 기록 위반은 카카오 SDK eval 하나 · 막아도 지도 정상 엔진 실측) · 기록만 헤더는 0."""
     config = load_config()
     for path in ("/", "/index.html", "/api/building", "/assets/index-abc123.js", "/districts.geojson"):
-        values = matched_header_values(config, path, CSP_RO)
+        values = matched_header_values(config, path, "Content-Security-Policy")
         assert len(values) == 1, path
-        assert matched_header_values(config, path, "Content-Security-Policy") == [], path
+        assert matched_header_values(config, path, CSP_RO) == [], path
         assert csp_problems(values[0]) == [], path
 
 
