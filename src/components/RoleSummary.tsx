@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  DAEJEON_CLOSURE_FN,
   INDUSTRY_MEDIAN_FN,
   INDUSTRY_MIX_FN,
   OPEN_CLOSE_FN,
@@ -9,8 +10,9 @@ import { takePrefetched, type SidePrefetch } from '../lib/sidePrefetch';
 import { isIndustryMedian, isIndustryMix } from '../lib/industryMix';
 import { isOpenCloseList } from '../lib/openClose';
 import { isRentStatList } from '../lib/rentStats';
+import { parseDaejeonClosure } from '../lib/daejeonClosure';
 import { roleSummaryView, type RoleSummaryInput } from '../lib/roleSummary';
-import type { DistrictOpenClose, IndustryMedian, IndustryMix, RentStat } from '../types';
+import type { DaejeonDongClosure, DistrictOpenClose, IndustryMedian, IndustryMix, RentStat } from '../types';
 
 /**
  * 역할 요약 판(결정 0039 W2) — 건물 머리(`.stack__head`) **위**. 고르기는 `lib/roleSummary.ts`, 여기는 그리기만.
@@ -30,13 +32,15 @@ type SideGot = {
   pnu: string;
   rent: RentStat[] | null;
   openClose: DistrictOpenClose[] | null;
+  /** 대전 동네 폐업(결정 0044) — 미리 부르기가 대전 필지에만 보낸 답. */
+  daejeon: DaejeonDongClosure | null;
   mix: IndustryMix | null;
   median: IndustryMedian | null;
 };
 
-const emptyGot = (pnu: string): SideGot => ({ pnu, rent: null, openClose: null, mix: null, median: null });
+const emptyGot = (pnu: string): SideGot => ({ pnu, rent: null, openClose: null, daejeon: null, mix: null, median: null });
 
-type Props = Omit<RoleSummaryInput, 'rent' | 'openClose' | 'mix' | 'median'> & {
+type Props = Omit<RoleSummaryInput, 'rent' | 'openClose' | 'daejeon' | 'mix' | 'median'> & {
   /** 층별 화면이 미리 보낸 곁 카드 요청(이 건물 pnu 것만 쓴다). */
   prefetch: SidePrefetch | null;
   /** 「한 장으로 뽑기」 — 인쇄 창 **전에** 부른다(App 의 `handleBeforePrint` · 중개사 최근 뽑은 건물 기록). */
@@ -70,6 +74,14 @@ export function RoleSummary({ prefetch, onBeforePrint, ...input }: Props) {
     }
     take(RENT_STATS_FN, 'rent', isRentStatList);
     take(OPEN_CLOSE_FN, 'openClose', isOpenCloseList);
+    // 대전 동네 폐업(결정 0044) — 대전 필지에만 미리 보낸 답(서울이면 없음 → 아무것도 안 함). 모양 검사는 카드와 같은 함수.
+    takePrefetched(prefetch, DAEJEON_CLOSURE_FN, pnu)?.then(
+      ({ data, error }) => {
+        const row = cancelled || error ? null : parseDaejeonClosure(data);
+        if (row !== null) setGot((g) => (g.pnu === pnu ? { ...g, daejeon: row } : g));
+      },
+      () => {},
+    );
     take(INDUSTRY_MIX_FN, 'mix', isIndustryMix);
     take(INDUSTRY_MEDIAN_FN, 'median', isIndustryMedian);
     return () => {

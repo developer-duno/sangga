@@ -503,3 +503,67 @@ describe('역할 요약 판 — CSS', () => {
     expect(rules.filter((r) => r.sel.some((s) => /^\.rsum/.test(s)) && /break-inside:\s*avoid/.test(r.body))).toEqual([]);
   });
 });
+
+describe('RoleSummary — 대전 동네 폐업 (결정 0044 · 지시서 #9)', () => {
+  const D = { bld_id: 'D-1', pnu: '3017010100100010000', tag: '다' };
+  const notSeoul: DistrictOpenClose = {
+    status: 'not_seoul',
+    district_id: null,
+    district_nm: null,
+    district_type: null,
+    latest_quarter: null,
+    quarters: null,
+    industries: null,
+    other_industries: null,
+    window_quarters: ['20262'],
+  };
+  const djOk = {
+    status: 'ok',
+    dong_nm: '둔산2동',
+    received_on: '2026-10-28',
+    quarters: [
+      { quarter: '20254', clsbiz_co: 200 },
+      { quarter: '20261', clsbiz_co: 178 },
+    ],
+    sum_quarters: ['20254', '20261'],
+    clsbiz_sum: 378,
+    industries: [{ induty_nm: '음식점업', clsbiz_co: 378 }],
+  };
+
+  function side(dj: Res) {
+    return (fn: string, pnu: string): Promise<Res> =>
+      fn === 'list_district_openclose'
+        ? Promise.resolve({ data: [notSeoul], error: null })
+        : fn === 'get_daejeon_dong_closure'
+          ? Promise.resolve(dj)
+          : Promise.resolve(okRpc(fn, pnu));
+  }
+
+  it('★ 미리 보낸 대전 답이 ok 면 개업·폐업 칸 = 대전시 공표 폐업 · 대전 함수 요청은 미리 부르기 한 번뿐(카드와 판이 나눠 쓴다)', async () => {
+    state.floors.set(D.bld_id, floorsOf(D));
+    state.side = side({ data: [djOk], error: null });
+    const { container } = render(<FloorStack building={building(D)} viewerRole="창업자" />);
+    await waitFor(() =>
+      expect(container.querySelector('.rsum__tile--openclose')?.textContent).toContain(
+        '폐업 378건 · 2025년 4분기~2026년 1분기(가게 업종)',
+      ),
+    );
+    const t = container.querySelector('.rsum__tile--openclose')!;
+    expect(t.querySelector('.rsum__label')?.textContent).toBe('동네 폐업 (대전시 공표)');
+    expect(t.textContent).toContain('둔산2동 · 대전시 공표');
+    await screen.findByText('동네 폐업 (대전시 공표)', { selector: '.card__h *, .card__h' });
+    expect(fetches.filter((f) => f.fn === 'get_daejeon_dong_closure')).toHaveLength(1);
+  });
+
+  it('대전 답이 없으면(함수 없음) 칸은 지금 글 그대로', async () => {
+    state.floors.set(D.bld_id, floorsOf(D));
+    state.side = side({ data: null, error: { code: 'PGRST202' } });
+    const { container } = render(<FloorStack building={building(D)} viewerRole="창업자" />);
+    await waitFor(() =>
+      expect(container.querySelector('.rsum__tile--openclose')?.textContent).toContain(
+        '서울 상권만 다루는 자료라 이 건물(대전)에는 없습니다',
+      ),
+    );
+    expect(container.querySelector('.rsum__tile--openclose .rsum__label')?.textContent).toBe('개업·폐업 (서울시 공표)');
+  });
+});

@@ -55,8 +55,8 @@ RECREATED_LATER = {
     "v_floor_stack": os.path.join(MIG_DIR, "2026-10-11c_building_elevator_ho.sql"),
     # 필지 줄의 기준을 공시 연도로(2026-10-12b) → 실거래·대장 판 월간 규칙(2026-10-15a · 표지 칸 published 는
     # 그대로 · 사장님 결정 2026-10-15). 정본과 대조하는 쪽은 마지막으로 다시 만든 판이다.
-    # → 성적표 줄(9번)을 뺀 2026-10-18a(결정 0041)가 마지막 판이다.
-    "get_data_freshness": os.path.join(MIG_DIR, "2026-10-18a_price_use_group.sql"),
+    # → 성적표 줄(9번)을 뺀 2026-10-18a(결정 0041) → 대전 줄(12번)을 더한 2026-10-29a(결정 0044)가 마지막 판이다.
+    "get_data_freshness": os.path.join(MIG_DIR, "2026-10-29a_daejeon_dong_closure.sql"),
 }
 
 

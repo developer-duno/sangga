@@ -289,6 +289,15 @@ export const OPEN_CLOSE_FN = 'list_district_openclose';
 export const OPEN_CLOSE_ALL_FN = 'list_district_openclose_all';
 
 /**
+ * 대전 건물의 개업·폐업 카드 자리 「동네 폐업 (대전시 공표)」(결정 0044) — 그 건물이 선 행정동의 대전시 공표 폐업 건수.
+ *
+ * ⓘ 인자 `p_pnu` 하나. 미리 부르기(`startSidePrefetch`)는 **대전 필지일 때만** 이 함수를 더 보낸다(서울 건물은 요청 0).
+ *   카드는 `OPEN_CLOSE_FN` 답이 `not_seoul` 이고 대전 필지일 때만 이 답을 쓴다(미리 보낸 것이 없으면 스스로 묻는다).
+ * ⓘ 함수가 아직 없거나(PGRST202)·0줄(받은 날 표지 없음)·오류·모양 이상이면 카드는 지금 대전 화면 그대로 선다.
+ */
+export const DAEJEON_CLOSURE_FN = 'get_daejeon_dong_closure';
+
+/**
  * 화면에서 온 짧은 글 한 통을 창고에 넣는 서버 함수. 2026-08-24b.
  *
  * ⚠️ **인자 이름이 `p_kind`·`p_body`·`p_context` 다**(
