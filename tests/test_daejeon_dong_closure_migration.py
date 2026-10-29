@@ -678,3 +678,52 @@ class TestRealRunMutations:
             assert c.fetchone() == (False,)
         finally:
             _fresh(pg)
+
+
+# ── 보완 1 — 받은 날 앞으로만(적재기 SQL 의 관문을 실제로 돌린다) · 그물 6호 힌트 ──────────
+
+
+def _forward_guard(received):
+    """적재기 build_sql 에서 받은 날 앞으로만 관문(do 블록) 하나만 떼어 낸다 — \copy 는 psycopg2 로 못 돌린다."""
+    sql = L.build_sql({"closure": "c.csv", "pnu": "p.csv", "bjd": "b.csv"}, {"closure": 0, "pnu": 0, "bjd": 0}, received)
+    m = re.search(r"(?ms)^do \$\$\nbegin\n  if exists \(select 1 from daejeon_closure_release where received_on > .*?^end \$\$;", sql)
+    assert m, "받은 날 관문을 못 찾았다"
+    return m.group(0)
+
+
+class TestForwardOnlyRealRun:
+    def test_older_folder_is_refused_and_same_day_is_allowed(self, pg):
+        psycopg2 = pytest.importorskip("psycopg2")
+        c = _fresh(pg)   # 표지 = 2026-10-28
+        try:
+            with pytest.raises(psycopg2.Error, match="옛 판으로 되돌리지 않습니다"):
+                c.execute(_forward_guard(datetime.date(2026, 10, 1)))
+            c.execute(_forward_guard(datetime.date(2026, 10, 28)))     # 같은 날 = 다시 넣기
+            c.execute(_forward_guard(datetime.date(2027, 1, 28)))      # 앞으로
+        finally:
+            _fresh(pg)
+
+    def test_empty_release_lets_the_first_load_through(self, pg):
+        c = _fresh(pg, received=None)
+        try:
+            c.execute(_forward_guard(datetime.date(2026, 10, 28)))
+        finally:
+            _fresh(pg)
+
+
+def test_freshness_issue_hint_for_the_daejeon_row():
+    """그물 6호 — 지난 대전 줄의 이슈 본문에 할 일 한 줄(전부 다시 받기 → 적재 순서) · 다른 줄엔 없다."""
+    import check_data_freshness as cdf  # noqa: PLC0415
+
+    rows = [
+        {"src": "동네 폐업 (대전시)", "basis_kind": "받은 날", "basis": "2026-10-28", "next_expected": "2027-01-28"},
+        {"src": "건축 인허가", "basis_kind": "기준월", "basis": "202608", "next_expected": "2026-10-31"},
+    ]
+    today = datetime.date(2027, 2, 1)
+    bodies = {i["src"]: cdf.build_issue_body(i, today) for i in cdf.find_overdue(rows, today)}
+    dj = bodies["동네 폐업 (대전시)"]
+    assert "2025-01 부터 지난달까지 전부 다시 받기" in dj and "load_daejeon8989_closure.py" in dj
+    assert dj.index("--dry-run") < dj.index("post_load.py") < dj.index("backup_raw.py")
+    assert "load_daejeon8989_closure" not in bodies["건축 인허가"]
+    assert cdf.find_overdue(rows, datetime.date(2027, 1, 28)) == [] or all(
+        i["src"] != "동네 폐업 (대전시)" for i in cdf.find_overdue(rows, datetime.date(2027, 1, 28)))

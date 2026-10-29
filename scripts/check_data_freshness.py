@@ -283,6 +283,11 @@ SOURCE_HINTS = {
     "실거래 (매매)": ("**실거래는 30개 구 `collect_transactions.py --sigungu-code <구> --recollect-months 6 "
                     "--end-ym <이번 달>` 수집 → 30개 구 `load_transactions.py --sigungu-code <구>` 적재 → "
                     "`post_load.py`** 순서입니다(구 인자가 없으면 강남만 적재)."),
+    # 결정 0044(2026-10-29a) — 대전시 동네 폐업. 통째 교체라 몇 달만 받아 넣으면 나머지 달이 사라진다(적재기 관문 ⒡ 가 막는다).
+    "동네 폐업 (대전시)": ("**대전시 상권분석 서비스(https://8989.daejeon.go.kr/dataSet/data_list.do · 「행정동 월별 업종 폐업수」)에서 "
+                       "2025-01 부터 지난달까지 전부 다시 받기**(`data/raw/daejeon_8989/<받은 날 YYYYMMDD>/adstrd_clsbiz_monthly/`) → "
+                       "`load_daejeon8989_closure.py --raw-dir <그 폴더> --dry-run` → 실적재 → `post_load.py` · "
+                       "`post_load.py --check` → `backup_raw.py` 순서입니다(결정 0044)."),
 }
 
 

@@ -30,8 +30,10 @@ import {
 import { formatRate } from '../lib/rentStats';
 import type { DaejeonDongClosure, DistrictOpenClose, DistrictOpenCloseAll } from '../types';
 import {
+  DAEJEON_CHIP_NOTE,
   DAEJEON_CLOSURE_NOTES,
   DAEJEON_CLOSURE_TITLE,
+  DAEJEON_CLOSURE_WAIT_MS,
   DAEJEON_NO_DONG_TEXT,
   closureBigText,
   closureCount,
@@ -39,10 +41,10 @@ import {
   daejeonSummary,
   dongLine,
   industryTable,
-  isDaejeonPnu,
   parseDaejeonClosure,
   quarterRangeText,
   restText,
+  wantsDaejeon,
 } from '../lib/daejeonClosure';
 import { takePrefetched, type RpcResult, type SidePrefetch } from '../lib/sidePrefetch';
 import { FOUNDER_CHIP_ALL, chipMatch, type FounderChip } from '../lib/founderChips';
@@ -165,31 +167,41 @@ export function OpenCloseSection({
     };
   }, [pnu, wantAll]);
 
-  // 대전 필지의 not_seoul 답일 때만 대전시 답을 쓴다(결정 0044) — 서울 건물·상권 밖·좌표 없음은 지금 그대로.
-  const wantDj =
-    rows !== null && rowsPnu === pnu && isDaejeonPnu(pnu) && rows.some((r) => r.status === 'not_seoul');
+  // 대전 필지의 not_seoul·no_coord 답일 때만 대전시 답을 쓴다(결정 0044 · no_coord 는 보완 1 F6 — 대전 함수는 PNU 만 쓴다).
+  // 서울 건물·상권 밖은 지금 그대로.
+  const wantDj = rows !== null && rowsPnu === pnu && wantsDaejeon(pnu, rows.map((r) => r.status));
 
   useEffect(() => {
     if (!wantDj) return;
     let cancelled = false;
+    // 기다림 상한(보완 1 F7) — 이 안에 답이 없으면 지금 대전 카드로 서고, 그 뒤에 온 답은 버린다.
+    const timer = setTimeout(() => {
+      if (cancelled) return;
+      cancelled = true;
+      console.warn('대전 동네 폐업 답이 늦어 — 지금 대전 카드로 표시합니다');
+      setDj({ pnu, row: null });
+    }, DAEJEON_CLOSURE_WAIT_MS);
     const req: PromiseLike<RpcResult> =
       takePrefetched(prefetch, DAEJEON_CLOSURE_FN, pnu) ?? supabase.rpc(DAEJEON_CLOSURE_FN, { p_pnu: pnu });
     req.then(
       ({ data, error }) => {
         // ⛔ 늦은 답은 버린다 — 그 사이 필지가 바뀌었으면 앞 건물 동의 숫자가 새 건물 밑에 붙는다.
         if (cancelled) return;
+        clearTimeout(timer);
         const row = error ? null : parseDaejeonClosure(data);
         if (row === null) console.warn('대전 동네 폐업 조회 실패 — 지금 대전 카드로 표시합니다', error ?? data);
         setDj({ pnu, row });
       },
       (e: unknown) => {
         if (cancelled) return;
+        clearTimeout(timer);
         console.warn('대전 동네 폐업 조회 실패 — 지금 대전 카드로 표시합니다', e);
         setDj({ pnu, row: null });
       },
     );
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [pnu, prefetch, wantDj]);
 
@@ -201,7 +213,7 @@ export function OpenCloseSection({
   if (wantDj) {
     const djRow = dj !== null && dj.pnu === pnu ? dj.row : undefined;
     if (djRow === undefined) return null; // 묻는 중
-    if (djRow !== null) return <DaejeonCard row={djRow} plan={plan} />;
+    if (djRow !== null) return <DaejeonCard row={djRow} plan={plan} chip={chip} />;
     // 실패·0줄·모양 이상 → 아래 지금 대전 화면 그대로.
   }
 
@@ -292,7 +304,7 @@ export function OpenCloseSection({
  * 역할·펼침은 받은 배치 그대로(제목·자료 갈래만 바꿔 끼운다).
  * ⛔ 폐업률(%)·개업·점포 수 없음 — 건수만(대전시가 개업 수를 내지 않는다 · 👤 결정 0044 ⑤).
  */
-function DaejeonCard({ row, plan }: { row: DaejeonDongClosure; plan: SectionPlan }) {
+function DaejeonCard({ row, plan, chip }: { row: DaejeonDongClosure; plan: SectionPlan; chip: FounderChip }) {
   const djPlan: SectionPlan = { ...plan, title: DAEJEON_CLOSURE_TITLE, sources: ['daejeon_closure'] };
   const summary = daejeonSummary(row);
   if (row.status !== 'ok' || row.dong_nm === null || row.quarters === null || row.clsbiz_sum === null) {
@@ -347,6 +359,8 @@ function DaejeonCard({ row, plan }: { row: DaejeonDongClosure; plan: SectionPlan
             ))}
           </div>
         </figure>
+        {/* 창업자 칩을 골랐으면(전체 아님) 한 줄 — 대전시 업종 체계는 칩과 잇지 않는다(👤 보완 1 F11). */}
+        {chip !== FOUNDER_CHIP_ALL && <p className="oc__note oc__chip-none">{DAEJEON_CHIP_NOTE}</p>}
         {top.length > 0 && (
           <table className="oc__table oc__table--dj">
             <thead>

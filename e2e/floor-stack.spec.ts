@@ -2426,7 +2426,7 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
     await expect(oc).not.toContainText('코엑스');
   });
 
-  test('CM. 대전 건물 — 「동네 폐업 (대전시 공표)」 카드(요약은 동·언제까지만) · 펼치면 이름 줄·폐업 378건·기간·분기 막대 다섯(옛 → 최근 · 높이 비례 · 막대 위 건수 13px)·업종 표 5줄 + 그 밖·발 문구 다섯 · 넘침 0 · 창업자 요약 칸 · 종이에 그대로 · 함수 없으면 지금 대전 카드', async ({
+  test('CM. 대전 건물 — 「동네 폐업 (대전시 공표)」 카드(요약은 동·언제까지만) · 펼치면 이름 줄·폐업 378건·기간·분기 막대 다섯(옛 → 최근 · 높이 비례 · 막대 위 건수 13px)·업종 표 5줄 + 그 밖·발 문구 여섯 · 넘침 0 · 창업자 요약 칸 · 종이에 그대로 · 함수 없으면 지금 대전 카드', async ({
     page,
   }, testInfo) => {
     const DJ = '3017010100100010000';
@@ -2465,7 +2465,7 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
     // 창업자 요약 칸(지시서 #9).
     const tile = page.locator('.rsum__tile--openclose');
     await expect(tile.locator('.rsum__label')).toHaveText('동네 폐업 (대전시 공표)');
-    await expect(tile).toContainText('폐업 378건 · 최근 4분기(가게 업종)');
+    await expect(tile).toContainText('폐업 378건 · 2025년 2분기~2026년 1분기(가게 업종)');
     await expect(tile).toContainText('둔산2동 · 대전시 공표');
 
     await openCard(page, /동네 폐업/);
@@ -2491,7 +2491,10 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
       '유원지 및 기타 오락관련 서비스업21건',
       '그 밖 11종 153건',
     ]);
-    await expect(oc.locator('.oc__why li')).toHaveCount(5);
+    await expect(oc.locator('.oc__why li')).toHaveCount(6);
+    await expect(oc.locator('.oc__why li').last()).toHaveText(
+      "업종 이름은 나라 표준 업종(대전시 기준)이라 '업종 분포' 카드(소상공인시장진흥공단)와 다릅니다.",
+    );
     await expect(oc.locator('.oc__why li strong')).toHaveText('동네(행정동) 전체 값이며 이 건물의 값이 아닙니다.');
     await expect(oc).not.toContainText('%');
     const overflow = await page.evaluate(() => {
@@ -2506,7 +2509,7 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
     await page.emulateMedia({ media: 'print' });
     await expect(oc.locator('.oc__bar').first()).toHaveCSS('print-color-adjust', 'exact');
     await expect(oc.locator('.oc__trend')).toHaveCSS('break-inside', 'avoid');
-    await expect(oc.locator('.oc__why li')).toHaveCount(5);
+    await expect(oc.locator('.oc__why li')).toHaveCount(6);
     await page.emulateMedia({ media: null });
 
     // 함수가 없으면(PGRST202) — 지금 대전 카드 그대로(옛 제목 · 옛 문장).

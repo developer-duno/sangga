@@ -544,7 +544,9 @@ describe('RoleSummary — 대전 동네 폐업 (결정 0044 · 지시서 #9)', (
     state.side = side({ data: [djOk], error: null });
     const { container } = render(<FloorStack building={building(D)} viewerRole="창업자" />);
     await waitFor(() =>
-      expect(container.querySelector('.rsum__tile--openclose')?.textContent).toContain('폐업 378건 · 최근 2분기(가게 업종)'),
+      expect(container.querySelector('.rsum__tile--openclose')?.textContent).toContain(
+        '폐업 378건 · 2025년 4분기~2026년 1분기(가게 업종)',
+      ),
     );
     const t = container.querySelector('.rsum__tile--openclose')!;
     expect(t.querySelector('.rsum__label')?.textContent).toBe('동네 폐업 (대전시 공표)');

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
 import type { DistrictOpenClose, OpenCloseQuarter } from '../types';
 
 /**
@@ -1187,6 +1187,7 @@ describe('OpenCloseSection — 대전 동네 폐업 (결정 0044)', () => {
       '대전시는 개업 수를 내지 않아 폐업만 싣습니다.',
       '손님을 받는 가게 업종 33종만 셉니다(부동산 임대·인터넷 판매·도매·사무실 업종 등은 뺍니다).',
       '2024년까지는 대전시 집계 방식이 달라 보이고 최근 6개월은 아직 덜 들어와, 둘 다 싣지 않습니다.',
+      "업종 이름은 나라 표준 업종(대전시 기준)이라 '업종 분포' 카드(소상공인시장진흥공단)와 다릅니다.",
     ]);
     expect(container.querySelector('.oc__why li strong')?.textContent).toBe(
       '동네(행정동) 전체 값이며 이 건물의 값이 아닙니다.',
@@ -1328,8 +1329,80 @@ describe('OpenCloseSection — 대전 동네 폐업 (결정 0044)', () => {
     rerender(<OpenCloseSection pnu="3020010100100010000" />);
     await screen.findByText('은행선화동 · 가게 업종');
     release({ data: [djOk()], error: null });
-    await Promise.resolve();
-    await Promise.resolve();
+    // 다시 그리기를 기다린 뒤 본다(보완 1 F8 — 마이크로태스크 두 번으로는 늦은 답의 setState 뒤 그림까지 못 간다).
+    await new Promise((r) => setTimeout(r, 50));
     expect(screen.queryByText('둔산2동 · 가게 업종')).toBeNull();
+    expect(screen.getByText('은행선화동 · 가게 업종')).toBeTruthy();
+  });
+
+  it('★ 좌표 없는 대전 필지(no_coord)도 대전 카드 — 대전 함수는 PNU 만 쓴다(보완 1 F6)', async () => {
+    responses.oc = { data: [headRow('no_coord')], error: null };
+    responses.dj = { data: [djOk()], error: null };
+    const { container } = render(<OpenCloseSection pnu={DAEJEON} />);
+    await openDj();
+    expect(container.querySelector('.oc__name')?.textContent).toBe('둔산2동 · 가게 업종');
+    expect(djCalls()).toHaveLength(1);
+    // 서울 필지의 no_coord 는 지금 그대로(대전 함수 안 부름).
+    cleanup();
+    rpcCalls.length = 0;
+    const s = render(<OpenCloseSection pnu={PNU} />);
+    await openCard();
+    expect(s.container.querySelector('.oc__lead')?.textContent).toBe('이 건물의 위치 정보가 없어 속한 상권을 찾지 못했습니다.');
+    expect(djCalls()).toHaveLength(0);
+  });
+
+  it('★ 대전 답이 8초 안에 없으면 지금 대전 카드로 선다 · 그 뒤 온 답은 버린다(보완 1 F7 · 가짜 시계)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      let release: (v: { data: unknown; error: unknown }) => void = () => {};
+      djGate.next = new Promise((r) => {
+        release = r;
+      });
+      const { container } = render(<OpenCloseSection pnu={DAEJEON} />);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(djCalls()).toHaveLength(1);
+      await act(async () => {
+        vi.advanceTimersByTime(7999);
+      });
+      expect(container.querySelector('.oc')).toBeNull(); // 아직 기다리는 중 — 카드 없음
+      await act(async () => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(container.querySelector('.card__h')?.textContent).toContain('상권 개업·폐업 (서울시 공표)');
+      expect(container.querySelector('.oc__lead')?.textContent).toBe(OLD_LEAD);
+      await act(async () => {
+        release({ data: [djOk()], error: null });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(container.querySelector('.oc__lead')?.textContent).toBe(OLD_LEAD);
+      expect(container.textContent).not.toContain('둔산2동');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('★ 창업자 칩을 골랐으면(전체 아님) 대전 ok 카드에 한 줄 · 전체·no_dong 에는 없음(👤 보완 1 F11)', async () => {
+    responses.dj = { data: [djOk()], error: null };
+    const a = render(<OpenCloseSection pnu={DAEJEON} chip="카페" />);
+    await openDj();
+    expect(a.container.querySelector('.oc__chip-none')?.textContent).toBe(
+      '고른 업종은 이 카드에 표시되지 않습니다(대전시 업종 체계가 다름).',
+    );
+    cleanup();
+    const b = render(<OpenCloseSection pnu={DAEJEON} chip="전체" />);
+    await openDj();
+    expect(b.container.querySelector('.oc__chip-none')).toBeNull();
+    cleanup();
+    responses.dj = {
+      data: [{ status: 'no_dong', dong_nm: null, received_on: '2026-10-28', quarters: null, sum_quarters: null, clsbiz_sum: null, industries: null }],
+      error: null,
+    };
+    const c = render(<OpenCloseSection pnu={DAEJEON} chip="카페" />);
+    await openDj();
+    expect(c.container.querySelector('.oc__chip-none')).toBeNull();
   });
 });

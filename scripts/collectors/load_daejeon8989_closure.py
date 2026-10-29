@@ -29,7 +29,13 @@
      (조용히 빠지거나 '가게 아님'으로 새지 않게 · 사람이 씨앗에 y/n 을 적은 뒤 다시 돌린다)
   ⒟ 땅 → 동 지도에 없는 행정동 이름(대전시가 동을 나누거나 합친 날)
   ⒠ 폐업 년월이 파일 이름의 달과 다르다
+  ⒡ **달 파일이 빠졌다** — 2025-01 부터 「받은 날의 달 − 1」까지 매달 파일이 하나씩 있어야 한다(대전시는 폐업이 없는 달도
+     머리줄만 든 파일을 낸다 — 2026-10-28 실측 149파일 = 149달). 받은 날이 오늘보다 뒤여도 멈춘다(폴더 이름 오타).
+     ⛔ 통째 교체라서 — 몇 달만 받아 넣으면 나머지 달이 DB 에서 사라진다.
+  ⒢ **반대 방향 동** — 땅 → 동 지도에 쓰인 동 이름이 대전시 원본(아무 달·업종)에 하나라도 없으면 멈춘다 · 소진공 csv 에서
+     동 **이름 하나가 행정동코드 둘 이상**에 걸려도 멈춘다(동이 나뉘거나 이름이 바뀐 날 — 사람이 씨앗·지도를 본다).
   (+ 개수가 1 이상 정수가 아니거나 같은 (달·동·업종) 줄이 둘이면 멈춘다 — 표의 열쇠·check 가 어차피 막는 것을 먼저)
+  (+ 실적재는 **받은 날 앞으로만** — DB 의 받은 날보다 이른 폴더면 적재 SQL 이 멈춘다 · 같은 날이면 다시 넣기 허용)
 
 쓰는 법 (프로젝트 루트에서)
 ---------------------------
@@ -162,6 +168,57 @@ def gate_problems(rows, seed, dongs):
     if dup:
         bad.append("같은 (달·동·업종) 줄이 둘 이상 {}개(예 {})".format(len(dup), dup[0]))
     return bad
+
+
+def month_gaps(file_yms, received):
+    """⒡ 2025-01 부터 「받은 날의 달 − 1」까지 빠진 달 파일 목록(옛것부터). 받은 날이 그 범위를 못 만들면 빈 목록."""
+    have, out = set(file_yms), []
+    last = ym_add(received.strftime("%Y%m"), -1)
+    ym = START_YM
+    while ym <= last:
+        if ym not in have:
+            out.append(ym)
+        ym = ym_add(ym, 1)
+    return out
+
+
+def file_problems(file_yms, received, today):
+    """⒡ — 문제 문장 목록(비면 통과). today 는 시험이 바꿔 넣는 자리(본체는 오늘)."""
+    bad = []
+    if received > today:
+        bad.append("⒡ 받은 날 {} 이 오늘 {} 보다 뒤입니다 — 폴더 이름을 확인하세요".format(received, today))
+    gaps = month_gaps(file_yms, received)
+    if gaps:
+        bad.append("⒡ 빠진 달 파일 {}개 {} — 2025-01 부터 지난달까지 **전부 다시** 받아야 한다(통째 교체)"
+                   .format(len(gaps), gaps))
+    return bad
+
+
+def reverse_dong_problems(map_dong_names, raw_dong_names, store_rows):
+    """⒢ — 지도에 쓰인 동이 원본에 없음 · 소진공 csv 에서 동 이름 하나가 행정동코드 둘 이상. store_rows = [(지번, 동, 동코드)]."""
+    bad = []
+    lost = sorted(set(map_dong_names) - set(raw_dong_names))
+    if lost:
+        bad.append("⒢ 땅 → 동 지도의 동 {}개가 대전시 원본에 없습니다 {} — 동이 나뉘거나 이름이 바뀌었을 수 있다"
+                   .format(len(lost), lost[:10]))
+    codes = collections.defaultdict(set)
+    for _pnu, dong, code in store_rows:
+        dong, code = cell(dong), cell(code)
+        if dong and code:
+            codes[dong].add(code)
+    multi = sorted(d for d, c in codes.items() if len(c) > 1)
+    if multi:
+        bad.append("⒢ 소진공 csv 에서 행정동 이름 하나가 코드 둘 이상에 걸립니다 {} — 이름으로 이을 수 없다"
+                   .format({d: sorted(codes[d]) for d in multi[:5]}))
+    return bad
+
+
+def month_totals(rows):
+    """dry-run 보고 — 달별 합(넣는 줄 · 옛 → 새)."""
+    out = collections.Counter()
+    for ym, _d, _i, n in rows:
+        out[ym] += n
+    return dict(sorted(out.items()))
 
 
 def rows_to_load(rows, seed):
@@ -308,13 +365,13 @@ def default_store_csv():
 
 
 def read_store_csv(path):
-    """소진공 대전 점포 csv(utf-8-sig) → [(지번코드, 행정동명)]."""
+    """소진공 대전 점포 csv(utf-8-sig) → [(지번코드, 행정동명, 행정동코드)]."""
     with io.open(path, encoding="utf-8-sig", newline="") as f:
         r = csv.DictReader(f)
-        missing = [c for c in ("지번코드", "행정동명") if c not in (r.fieldnames or [])]
+        missing = [c for c in ("지번코드", "행정동명", "행정동코드") if c not in (r.fieldnames or [])]
         if missing:
             raise GateError("{}: 칸이 없습니다 {}".format(os.path.basename(path), missing))
-        return [(row["지번코드"], row["행정동명"]) for row in r]
+        return [(row["지번코드"], row["행정동명"], row["행정동코드"]) for row in r]
 
 
 # ── SQL ──────────────────────────────────────────────────────────────────────
@@ -352,6 +409,14 @@ begin
      or (select count(*) from stage_pnu) <> {n_pnu}
      or (select count(*) from stage_bjd) <> {n_bjd} then
     raise exception '올린 행 수가 원본에서 읽은 수(폐업 {n_closure} · 땅 {n_pnu} · 법정동 {n_bjd})와 다릅니다 — 통째로 되돌립니다';
+  end if;
+end $$;
+
+-- 받은 날 앞으로만 — 지금 DB 의 받은 날보다 이른 판을 넣으면 최근 달이 사라진다(같은 날이면 다시 넣기 허용).
+do $$
+begin
+  if exists (select 1 from daejeon_closure_release where received_on > date '{received}') then
+    raise exception '지금 DB 의 받은 날이 {received} 보다 뒤입니다 — 옛 판으로 되돌리지 않습니다(통째로 되돌립니다)';
   end if;
 end $$;
 
@@ -415,8 +480,10 @@ def main(argv=None):
         store_csv = a.store_csv or default_store_csv()
         if not store_csv or not os.path.exists(store_csv):
             raise GateError("소진공 대전 점포 csv 가 없습니다: {}".format(store_csv or STORE_CSV_GLOB))
-        pnu_map, bjd_map, stats = build_dong_map(read_store_csv(store_csv))
+        store_rows = read_store_csv(store_csv)
+        pnu_map, bjd_map, stats = build_dong_map([(p, d) for p, d, _c in store_rows])
         rows, n_files = collect(a.raw_dir)
+        file_yms = [ym for ym, _p in list_month_files(a.raw_dir)]
     except (GateError, OSError) as e:
         print("실패 — DB 에는 아무것도 쓰지 않았습니다: {}".format(e), file=sys.stderr)
         return 1
@@ -446,14 +513,18 @@ def main(argv=None):
             sums = [x + y for x, y in zip(sums, per_q)]
         print("    대전 전체 분기별 폐업(가게 업종) {}".format(dict(zip(quarters, sums))))
 
-    problems = gate_problems(rows, seed, map_dongs(pnu_map, bjd_map))
+    print("  달별 폐업(가게 업종 · {} 이후) {}".format(START_YM, month_totals(load)))
+
+    problems = (gate_problems(rows, seed, map_dongs(pnu_map, bjd_map))
+                + file_problems(file_yms, received, datetime.date.today())
+                + reverse_dong_problems(map_dongs(pnu_map, bjd_map), {r[1] for r in rows}, store_rows))
     if problems:
         print()
         print("관문에 걸렸습니다 — DB 에는 아무것도 쓰지 않았습니다:", file=sys.stderr)
         for m in problems:
             print("  " + m, file=sys.stderr)
         return 1
-    print("  관문 통과 (⒜ · ⒝ · ⒞ · ⒟ · ⒠ · 중복)")
+    print("  관문 통과 (⒜ · ⒝ · ⒞ · ⒟ · ⒠ · ⒡ · ⒢ · 중복)")
 
     if a.dry_run:
         print()

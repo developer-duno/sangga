@@ -37,7 +37,25 @@ export const DAEJEON_CLOSURE_NOTES = [
   '대전시는 개업 수를 내지 않아 폐업만 싣습니다.',
   '손님을 받는 가게 업종 33종만 셉니다(부동산 임대·인터넷 판매·도매·사무실 업종 등은 뺍니다).',
   '2024년까지는 대전시 집계 방식이 달라 보이고 최근 6개월은 아직 덜 들어와, 둘 다 싣지 않습니다.',
+  "업종 이름은 나라 표준 업종(대전시 기준)이라 '업종 분포' 카드(소상공인시장진흥공단)와 다릅니다.",
 ] as const;
+
+/**
+ * 창업자 업종 칩을 골랐을 때(전체 아님) 대전 카드 ok 에만 서는 한 줄(👤 보완 1 F11 원문) — 대전시 업종은
+ * 표준산업분류 소분류라 칩(소진공·서울시 업종 짝)과 잇지 않는다.
+ */
+export const DAEJEON_CHIP_NOTE = '고른 업종은 이 카드에 표시되지 않습니다(대전시 업종 체계가 다름).';
+
+/**
+ * 대전 답을 기다리는 상한(ms). 그동안 카드는 안 그리고(옛 제목이 먼저 섰다 바뀌지 않게), 이 안에 답이 없으면
+ * 지금 대전 카드(옛 제목·옛 문장)로 선다 — 늦게 온 답은 버린다(보완 1 F7).
+ */
+export const DAEJEON_CLOSURE_WAIT_MS = 8000;
+
+/** 대전 갈래를 탈 서버 답인가 — 대전 필지에서 서울 함수가 not_seoul 또는 no_coord(좌표 없음 — 대전 함수는 PNU 만 쓴다 · F6). */
+export function wantsDaejeon(pnu: string, statuses: readonly string[]): boolean {
+  return isDaejeonPnu(pnu) && statuses.some((s) => s === 'not_seoul' || s === 'no_coord');
+}
 
 /** 업종 표에 줄로 세우는 수 — 나머지는 「그 밖 N종 M건」 한 줄. */
 export const DAEJEON_TOP_INDUSTRIES = 5;
@@ -173,11 +191,16 @@ export function daejeonBars(quarters: readonly DaejeonClosureQuarter[]): Daejeon
   }));
 }
 
-/** 역할 요약 칸(👤 지시서 #9 · 메인 추가) — 값 줄 「폐업 378건 · 최근 4분기(가게 업종)」 · 근거 줄 「둔산2동 · 대전시 공표」. */
+/**
+ * 역할 요약 칸(👤 지시서 #9 · 메인 추가) — 값 줄 「폐업 378건 · 2025년 2분기~2026년 1분기(가게 업종)」(카드와 같은 기간 글 ·
+ * 보완 1 F9) · 근거 줄 「둔산2동 · 대전시 공표」.
+ */
 export function daejeonTileLines(row: DaejeonDongClosure): { line: string; basis: string } | null {
   if (row.status !== 'ok' || row.dong_nm === null || row.clsbiz_sum === null || row.sum_quarters === null) return null;
+  const range = quarterRangeText(row.sum_quarters);
+  if (range === null) return null;
   return {
-    line: `${closureBigText(row.clsbiz_sum)} · 최근 ${row.sum_quarters.length}분기(가게 업종)`,
+    line: `${closureBigText(row.clsbiz_sum)} · ${range}(가게 업종)`,
     basis: `${row.dong_nm} · 대전시 공표`,
   };
 }

@@ -30,7 +30,7 @@ import {
   storeTotalText,
 } from './openClose';
 import { MEDIAN_BADGE, districtLabel, medianViewOf, toBars, type MixBar } from './industryMix';
-import { DAEJEON_CLOSURE_TITLE, daejeonTileLines } from './daejeonClosure';
+import { DAEJEON_CLOSURE_TITLE, daejeonTileLines, wantsDaejeon } from './daejeonClosure';
 import {
   UNKNOWN_SPEC,
   describeHoCnt,
@@ -377,7 +377,8 @@ function openCloseTile(input: RoleSummaryInput): SummaryTile | null {
   const lead = rows.find((r) => r.status === 'ok');
   const notOk = rows.some((r) => r.status !== 'ok' && r.status !== 'no_data');
   // 대전 건물(결정 0044 · 지시서 #9) — 대전시 답이 ok 면 「서울 상권만 …」 대신 대전시 공표 폐업. no_dong·실패는 지금 글 그대로.
-  const dj = rows.some((r) => r.status === 'not_seoul') && input.daejeon ? daejeonTileLines(input.daejeon) : null;
+  const dj =
+    wantsDaejeon(input.building.pnu, rows.map((r) => r.status)) && input.daejeon ? daejeonTileLines(input.daejeon) : null;
   if (dj !== null) {
     return { key: 'openclose', label: DAEJEON_CLOSURE_TITLE, lines: [dj.line], basis: [dj.basis], grade: null };
   }

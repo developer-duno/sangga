@@ -377,7 +377,7 @@ describe('창업자 「여기서 장사가 되나」', () => {
     expect(tile(v, 'floor1')!.lines).toEqual(['–']);
   });
 
-  it('대전 동네 폐업(결정 0044 · 지시서 #9) — ok 면 「폐업 N건 · 최근 4분기(가게 업종)」 · 근거 「동 · 대전시 공표」 · no_dong·없음은 지금 글', () => {
+  it('대전 동네 폐업(결정 0044 · 지시서 #9 · 보완 1 F9) — ok 면 「폐업 N건 · <카드와 같은 기간>(가게 업종)」 · 근거 「동 · 대전시 공표」 · no_dong·없음은 지금 글', () => {
     const dj = '3017010100100010000';
     const notSeoul = [{ ...OC[0], status: 'not_seoul' as const, district_id: null, district_nm: null, latest_quarter: null, quarters: null }];
     const ok = {
@@ -393,7 +393,10 @@ describe('창업자 「여기서 장사가 되나」', () => {
     const v = view({ ...base, daejeon: ok });
     const t = tile(v, 'openclose')!;
     expect(t.label).toBe('동네 폐업 (대전시 공표)');
-    expect(t.lines).toEqual(['폐업 378건 · 최근 4분기(가게 업종)']);
+    expect(t.lines).toEqual(['폐업 378건 · 2025년 2분기~2026년 1분기(가게 업종)']);
+    // 좌표 없는 대전 필지(no_coord)도 같은 칸(보완 1 F6).
+    const noCoord = [{ ...notSeoul[0], status: 'no_coord' as const }];
+    expect(tile(view({ ...base, openClose: noCoord, daejeon: ok }), 'openclose')!.label).toBe('동네 폐업 (대전시 공표)');
     expect(t.basis).toEqual(['둔산2동 · 대전시 공표']);
     const noDong = { ...ok, status: 'no_dong' as const, dong_nm: null, quarters: null, sum_quarters: null, clsbiz_sum: null, industries: null };
     for (const daejeon of [noDong, null, undefined]) {

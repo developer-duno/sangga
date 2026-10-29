@@ -31,6 +31,8 @@ const {
   parseDaejeonClosure,
   quarterRangeText,
   restText,
+  wantsDaejeon,
+  DAEJEON_CLOSURE_WAIT_MS,
 } = await import('./daejeonClosure');
 const { startSidePrefetch, SIDE_PREFETCH_FNS } = await import('./sidePrefetch');
 
@@ -112,7 +114,10 @@ describe('글', () => {
     expect(quarterRangeText([])).toBeNull();
     expect(daejeonSummary(r)).toBe('둔산2동 · 2026년 1분기까지 대전시 공표');
     expect(daejeonSummary(r)).not.toMatch(/\d건/);
-    expect(daejeonTileLines(r)).toEqual({ line: '폐업 378건 · 최근 4분기(가게 업종)', basis: '둔산2동 · 대전시 공표' });
+    expect(daejeonTileLines(r)).toEqual({
+      line: '폐업 378건 · 2025년 2분기~2026년 1분기(가게 업종)',
+      basis: '둔산2동 · 대전시 공표',
+    });
     const nd = parseDaejeonClosure([{ status: 'no_dong' }])!;
     expect(daejeonTileLines(nd)).toBeNull();
   });
@@ -141,15 +146,24 @@ describe('글', () => {
     expect(daejeonBars([{ quarter: '20261', clsbiz_co: 0 }])[0].h).toBe(0);
   });
 
-  it('발 문구 다섯 — 👤 지시서 원문 그대로 · 차례 그대로 · 폐업률·적정가 낱말 없음', () => {
+  it('발 문구 여섯 — 👤 지시서 원문 + 보완 1 F10 원문 그대로 · 차례 그대로 · 폐업률·적정가 낱말 없음', () => {
     expect(DAEJEON_CLOSURE_NOTES).toEqual([
       '출처: 대전광역시 상권분석 서비스(8989.daejeon.go.kr)',
       '동네(행정동) 전체 값이며 이 건물의 값이 아닙니다.',
       '대전시는 개업 수를 내지 않아 폐업만 싣습니다.',
       '손님을 받는 가게 업종 33종만 셉니다(부동산 임대·인터넷 판매·도매·사무실 업종 등은 뺍니다).',
       '2024년까지는 대전시 집계 방식이 달라 보이고 최근 6개월은 아직 덜 들어와, 둘 다 싣지 않습니다.',
+      "업종 이름은 나라 표준 업종(대전시 기준)이라 '업종 분포' 카드(소상공인시장진흥공단)와 다릅니다.",
     ]);
     for (const t of DAEJEON_CLOSURE_NOTES) expect(t).not.toMatch(/폐업률|적정가|감정가|평가액/);
+  });
+
+  it('대전 갈래 — 대전 필지의 not_seoul·no_coord 만(보완 1 F6)', () => {
+    expect(wantsDaejeon('3017010100100010000', ['not_seoul'])).toBe(true);
+    expect(wantsDaejeon('3017010100100010000', ['no_coord'])).toBe(true);
+    expect(wantsDaejeon('3017010100100010000', ['ok'])).toBe(false);
+    expect(wantsDaejeon('1168010100100010000', ['no_coord'])).toBe(false);
+    expect(DAEJEON_CLOSURE_WAIT_MS).toBe(8000);
   });
 
   it('대전 필지 판정은 pnu 앞 두 자리 30', () => {

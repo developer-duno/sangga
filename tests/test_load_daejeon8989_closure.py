@@ -247,27 +247,38 @@ def test_received_date_reads_the_folder_name(tmp_path):
     assert L.received_date(str(tmp_path / "20261028") + os.sep) == datetime.date(2026, 10, 28)
 
 
-def _raw(tmp_path, months):
-    raw = tmp_path / "20261028"
+def _all_months(last="202609"):
+    out, ym = [], L.START_YM
+    while ym <= last:
+        out.append(ym)
+        ym = L.ym_add(ym, 1)
+    return out
+
+
+def _raw(tmp_path, months=None, name="20261028"):
+    """받은 날 폴더 — 달 파일을 안 주면 2025-01 부터 받은 날의 지난달까지 전부(관문 ⒡ 를 지나는 꼴)."""
+    raw = tmp_path / name
     d = raw / L.MONTHLY_DIR
     d.mkdir(parents=True)
-    for ym in months:
+    for ym in (months if months is not None else _all_months(L.ym_add(name[:6], -1))):
         (d / "daejeon8989_adstrd_clsbiz_{}.xlsx".format(ym)).write_bytes(b"")
     return raw
 
 
 def _store_csv(tmp_path):
     p = tmp_path / "store.csv"
-    p.write_text("지번코드,행정동명\n{},둔산2동\n{},가수원동\n".format(P1, P3), encoding="utf-8-sig")
+    p.write_text("지번코드,행정동명,행정동코드\n{},둔산2동,30170660\n{},가수원동,30170510\n".format(P1, P3),
+                 encoding="utf-8-sig")
     return p
 
 
 def _fake_reader(files):
-    return lambda path: files[os.path.basename(path)]
+    """없는 달은 머리줄만 든 파일(대전시는 폐업이 없는 달도 그런 파일을 낸다)."""
+    return lambda path: files.get(os.path.basename(path), [HEAD])
 
 
 def test_dry_run_writes_nothing_and_does_not_import_dbx(tmp_path, monkeypatch, capsys):
-    raw = _raw(tmp_path, ["202501", "202502"])
+    raw = _raw(tmp_path)
     monkeypatch.setattr(L, "read_xlsx_rows", _fake_reader({
         "daejeon8989_adstrd_clsbiz_202501.xlsx": month("202501", ("둔산2동", "음식점업", 2)),
         "daejeon8989_adstrd_clsbiz_202502.xlsx": month("202502", ("가수원동", "무점포 소매업", 1)),
@@ -285,7 +296,7 @@ def test_dry_run_writes_nothing_and_does_not_import_dbx(tmp_path, monkeypatch, c
 
 
 def test_gate_failure_exits_1_without_dbx(tmp_path, monkeypatch, capsys):
-    raw = _raw(tmp_path, ["202501"])
+    raw = _raw(tmp_path)
     monkeypatch.setattr(L, "read_xlsx_rows", _fake_reader({
         "daejeon8989_adstrd_clsbiz_202501.xlsx": month("202501", ("둔산2동", "새로 생긴 업종", 2)),
     }))
@@ -297,11 +308,92 @@ def test_gate_failure_exits_1_without_dbx(tmp_path, monkeypatch, capsys):
 
 
 def test_month_mismatch_exits_1(tmp_path, monkeypatch):
-    raw = _raw(tmp_path, ["202501"])
+    raw = _raw(tmp_path)
     monkeypatch.setattr(L, "read_xlsx_rows", _fake_reader({
         "daejeon8989_adstrd_clsbiz_202501.xlsx": month("202412", ("둔산2동", "음식점업", 2)),
     }))
     assert L.main(["--raw-dir", str(raw), "--store-csv", str(_store_csv(tmp_path)), "--dry-run"]) == 1
+
+
+# ── 보완 1 — ⒡ 달 파일 연속 · ⒢ 반대 방향 동 · 받은 날 앞으로만 ───────────────────
+
+
+def _main_ok_files():
+    return {
+        "daejeon8989_adstrd_clsbiz_202501.xlsx": month("202501", ("둔산2동", "음식점업", 2)),
+        "daejeon8989_adstrd_clsbiz_202502.xlsx": month("202502", ("가수원동", "무점포 소매업", 1)),
+    }
+
+
+def test_f1_three_files_only_stops(tmp_path, monkeypatch, capsys):
+    """검사관 재현 1 — 3파일 폴더(202501~202503)로 실적재하면 나머지 달이 DB 에서 사라진다 → exit 1 · dbx 0."""
+    raw = _raw(tmp_path, ["202501", "202502", "202503"])
+    monkeypatch.setattr(L, "read_xlsx_rows", _fake_reader(_main_ok_files()))
+    sys.modules.pop("dbx", None)
+    assert L.main(["--raw-dir", str(raw), "--store-csv", str(_store_csv(tmp_path))]) == 1
+    err = capsys.readouterr().err
+    assert "⒡ 빠진 달 파일 18개" in err and "202504" in err and "202609" in err
+    assert "dbx" not in sys.modules
+
+
+def test_f1_future_folder_stops(tmp_path, monkeypatch, capsys):
+    """검사관 재현 2 — 폴더 이름 20271028(오늘보다 뒤) → exit 1(달 파일이 다 있어도)."""
+    raw = _raw(tmp_path, name="20271028")
+    monkeypatch.setattr(L, "read_xlsx_rows", _fake_reader(_main_ok_files()))
+    assert L.main(["--raw-dir", str(raw), "--store-csv", str(_store_csv(tmp_path)), "--dry-run"]) == 1
+    assert "오늘" in capsys.readouterr().err
+
+
+def test_f1_full_months_pass(tmp_path, monkeypatch):
+    raw = _raw(tmp_path)
+    monkeypatch.setattr(L, "read_xlsx_rows", _fake_reader(_main_ok_files()))
+    assert L.main(["--raw-dir", str(raw), "--store-csv", str(_store_csv(tmp_path)), "--dry-run"]) == 0
+
+
+def test_month_gaps_and_today_boundary():
+    d = datetime.date(2026, 10, 28)
+    assert L.month_gaps(_all_months("202609"), d) == []
+    assert L.month_gaps([m for m in _all_months("202609") if m != "202512"], d) == ["202512"]
+    assert L.month_gaps(_all_months("202608"), d) == ["202609"]           # 지난달이 빠짐
+    assert L.month_gaps(_all_months("202609") + ["201405"], d) == []      # 옛 달 파일은 상관없다
+    assert L.file_problems(_all_months("202609"), d, d) == []              # 받은 날 = 오늘 은 된다
+    assert L.file_problems(_all_months("202609"), d, datetime.date(2026, 10, 27))[0].startswith("⒡ 받은 날")
+
+
+def test_f2_reverse_dong_problems():
+    store = [(P1, "둔산2동", "30170660"), (P3, "가수원동", "30170510")]
+    assert L.reverse_dong_problems({"둔산2동", "가수원동"}, {"둔산2동", "가수원동", "온천1동"}, store) == []
+    lost = L.reverse_dong_problems({"둔산2동", "둔산4동"}, {"둔산2동"}, store)
+    assert len(lost) == 1 and lost[0].startswith("⒢") and "둔산4동" in lost[0]
+    split = L.reverse_dong_problems({"둔산2동"}, {"둔산2동"}, store + [(P2, "둔산2동", "30170661")])
+    assert len(split) == 1 and "30170661" in split[0]
+
+
+def test_f2_map_dong_missing_from_raw_stops_main(tmp_path, monkeypatch, capsys):
+    """지도에는 가수원동이 있는데 원본 어느 달에도 없다 → ⒢ · exit 1."""
+    raw = _raw(tmp_path)
+    monkeypatch.setattr(L, "read_xlsx_rows", _fake_reader({
+        "daejeon8989_adstrd_clsbiz_202501.xlsx": month("202501", ("둔산2동", "음식점업", 2)),
+    }))
+    assert L.main(["--raw-dir", str(raw), "--store-csv", str(_store_csv(tmp_path)), "--dry-run"]) == 1
+    assert "⒢" in capsys.readouterr().err
+
+
+def test_f3_month_totals_and_dry_run_prints_them(tmp_path, monkeypatch, capsys):
+    assert L.month_totals([("202502", "a", "x", 2), ("202501", "b", "y", 1), ("202502", "c", "z", 3)]) == {
+        "202501": 1, "202502": 5}
+    raw = _raw(tmp_path)
+    monkeypatch.setattr(L, "read_xlsx_rows", _fake_reader(_main_ok_files()))
+    L.main(["--raw-dir", str(raw), "--store-csv", str(_store_csv(tmp_path)), "--dry-run"])
+    assert "달별 폐업(가게 업종 · 202501 이후) {'202501': 2}" in capsys.readouterr().out
+
+
+def test_f3_sql_refuses_an_older_received_date_before_replacing():
+    sql = L.build_sql({"closure": "c.csv", "pnu": "p.csv", "bjd": "b.csv"},
+                      {"closure": 1, "pnu": 1, "bjd": 1}, datetime.date(2026, 10, 28))
+    guard = "where received_on > date '2026-10-28'"
+    assert guard in sql
+    assert sql.index(guard) < sql.index("delete from daejeon_dong_closure;")
 
 
 def test_sql_is_one_transaction_with_checks_before_replacing():

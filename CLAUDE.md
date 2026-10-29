@@ -214,7 +214,7 @@ python scripts/collectors/load_seoul_openclose.py --dry-run        # raw(API jso
 python scripts/collectors/load_seoul_openclose.py                  # district_openclose 분기 단위 교체 (한 트랜잭션) → post_load.py · --check
 # ↑ ⚠️ 약 170만 행을 지우고 다시 넣어 디스크가 한 번 크게 는다 — 적재 **전** 디스크 판정(지금 사용량 + 이번 적재 증가(표 크기만큼 · 약 +290MB) + WAL 여유 1GB 가 디스크의 85% 미만일 때만 — 넘으면 확장부터 · 분기 감시 이슈 본문과 같은 판정식 · 2026-10-13)과 앞뒤 `pg_total_relation_size('district_openclose')` 를 재서 PROGRESS 에 적는다(「2026-10-06 (8)」)
 # ↑ 키가 막힌 날의 대비책 = fetch_seoul_openclose_zip.py --year <연도> (연 1회 zip · 인증키 없음)
-# ↓ 대전 동네 폐업(결정 0044 — 대전시 상권분석 서비스 행정동 월별 폐업 · 분기마다 사람이 사이트에서 한 달씩 받아 data/raw/daejeon_8989/<받은 날>/ 에 둔다 · 폴더 이름 = 받은 날)
+# ↓ 대전 동네 폐업(결정 0044 — 대전시 상권분석 서비스 행정동 월별 폐업 · 분기마다 사람이 사이트에서 2025-01 부터 지난달까지 전부(한 달 한 파일) 받아 data/raw/daejeon_8989/<받은 날>/ 에 둔다 · 폴더 이름 = 받은 날)
 python scripts/collectors/load_daejeon8989_closure.py --raw-dir data/raw/daejeon_8989/<받은 날> --dry-run   # 관문·땅→동 지도·넣을 줄·창 미리보기 (DB·파일 쓰기 0 · openpyxl 필요)
 python scripts/collectors/load_daejeon8989_closure.py --raw-dir data/raw/daejeon_8989/<받은 날>             # 가게 업종 33종 · 2025-01 이후만 통째 교체 + 받은 날 (한 트랜잭션) → post_load.py · --check (씨앗에 없는 업종이면 멈춘다 — scripts/seeds/daejeon8989_industries.csv)
 python scripts/load_rone_map.py --dry-run                          # seed → district_rone_map 미리보기(DB 쓰기 0)
