@@ -3346,6 +3346,28 @@ body {
   border-radius: 2px 2px 0 0;
 }
 
+/* 대전 동네 폐업(결정 0044) — 분기마다 막대 하나 + 그 위 건수. 0 건도 「0」 글자가 선다(빠진 분기가 아니라 0 건이다 —
+   서울 카드의 '–' 와 다르다). 막대 높이는 글자 자리(16px)를 뺀 칸의 비율(화면이 style 로 넣는다). */
+.oc__djcol {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  width: 100%;
+  height: 100%;
+}
+
+.oc__djcol .oc__bar {
+  max-width: 18px;
+}
+
+.oc__val {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
 /* 막대가 없는 칸('–' 자료 없음 · '표본' 비율 없음) — 0 막대와 헷갈리지 않게 글자로 둔다. */
 .oc__gap {
   align-self: center;
@@ -5190,6 +5212,7 @@ body {
   .oc__src,
   .oc__trend-cap,
   .oc__gap,
+  .oc__val,
   .oc__tick,
   .oc__ind-sum,
   .oc__table,

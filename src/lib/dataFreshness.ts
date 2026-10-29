@@ -177,6 +177,9 @@ export const CARD_SOURCES = {
   nts: { src: '국세청 기준시가', label: '국세청 기준시가', ending: ' 고시' },
   rone: { src: '상권 임대 동향 (부동산원)', label: '부동산원', ending: ' 조사' },
   openclose: { src: '상권 개업·폐업 (서울시)', label: '서울시 상권분석서비스', ending: '' },
+  // 결정 0044 — 대전 건물의 개업·폐업 카드 자리(「동네 폐업 (대전시 공표)」)만 이 갈래를 쓴다(`SECTION_PLAN` 에는 없다 —
+  // 카드가 대전 답을 받았을 때 plan 을 바꿔 끼운다). 기준 = 사람이 대전시 사이트에서 받은 날.
+  daejeon_closure: { src: '동네 폐업 (대전시)', label: '대전시 상권분석 서비스', ending: ' 받음' },
 } as const satisfies Record<string, { src: string; label: string; ending: string }>;
 
 export type CardSourceKey = keyof typeof CARD_SOURCES;

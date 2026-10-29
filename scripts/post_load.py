@@ -1236,6 +1236,10 @@ ANON_CALLABLE_ALLOWLIST = (
     # 개업·폐업 「전부 보기」(2026-10-25a · 결정 0038 H · V6). 표 district_openclose 는 **여기 없다** — 화면은 이 함수
     # 하나로만 읽고, 나가는 것은 list_district_openclose 와 같은 상권 합산·업종 상위 10줄 + '그 밖' 합(창만 표 전체 분기 전부)뿐이다.
     "api.list_district_openclose_all",
+    # 대전 「동네 폐업 (대전시 공표)」(2026-10-29a · 결정 0044). 표 넷(daejeon_dong_closure · daejeon_pnu_dong ·
+    # daejeon_bjd_dong · daejeon_closure_release)은 **여기 없다** — 화면은 이 함수 하나로만 읽고, 나가는 것은 그 건물이 선
+    # 행정동 이름과 대전시 공표 폐업 수(분기 합 · 업종별 4분기 합)뿐이다.
+    "api.get_daejeon_dong_closure",
 )
 
 # ── 공개키가 아직 못 닫은 "대기" 함수 — 지금은 비어 있다 ─────────────────

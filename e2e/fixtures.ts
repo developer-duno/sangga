@@ -3,6 +3,7 @@ import type {
   BuildingHit,
   CoverageStats,
   DataFreshnessRow,
+  DaejeonDongClosure,
   DistrictOpenClose,
   FloorRow,
   FloorUnit,
@@ -651,6 +652,38 @@ export function openClose(): DistrictOpenClose[] {
 }
 
 /** 대전 필지의 답 — 건물 단위 상태 한 줄(나머지 칸 null · 창만 값). */
+/**
+ * 대전 「동네 폐업 (대전시 공표)」 서버 답(결정 0044 · `get_daejeon_dong_closure`) — 지시서 예시값(둔산2동 ·
+ * 20261028 받음) 그대로: 분기 95·100·80·103·95 · 최근 4분기 378 · 업종 1~5위 + 그 밖 11종 153건.
+ */
+export function daejeonClosure(): DaejeonDongClosure[] {
+  const rest = [19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 8].map((n, i) => ({ induty_nm: `그밖업종${i + 1}`, clsbiz_co: n }));
+  return [
+    {
+      status: 'ok',
+      dong_nm: '둔산2동',
+      received_on: '2026-10-28',
+      quarters: [
+        { quarter: '20251', clsbiz_co: 95 },
+        { quarter: '20252', clsbiz_co: 100 },
+        { quarter: '20253', clsbiz_co: 80 },
+        { quarter: '20254', clsbiz_co: 103 },
+        { quarter: '20261', clsbiz_co: 95 },
+      ],
+      sum_quarters: ['20252', '20253', '20254', '20261'],
+      clsbiz_sum: 378,
+      industries: [
+        { induty_nm: '음식점업', clsbiz_co: 111 },
+        { induty_nm: '주점 및 비알코올 음료점업', clsbiz_co: 35 },
+        { induty_nm: '섬유, 의복, 신발 및 가죽제품 소매업', clsbiz_co: 32 },
+        { induty_nm: '미용, 욕탕 및 유사 서비스업', clsbiz_co: 26 },
+        { induty_nm: '유원지 및 기타 오락관련 서비스업', clsbiz_co: 21 },
+        ...rest,
+      ],
+    },
+  ];
+}
+
 export function openCloseNotSeoul(): DistrictOpenClose[] {
   return [
     {

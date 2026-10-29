@@ -77,6 +77,9 @@ LAND_MIGRATION = os.path.join(
 # 2번(실거래)·3번(건축물대장) 줄에 월간 규칙을 건 마이그레이션(2026-10-15a · 사장님 결정 2026-10-15).
 # 2026-10-18a(결정 0041) — 9번 줄(참고 시세 성적표)을 빼고 신선도 함수를 다시 만든 가장 최근 판. 정본과 글자가 같아야 하는 쪽.
 DROP_GATE_MIGRATION = os.path.join(ROOT, "supabase", "migrations", "2026-10-18a_price_use_group.sql")
+# 2026-10-29a(결정 0044) — 12번 줄(대전시 동네 폐업)을 더해 다시 만든 가장 최근 판. 정본과 글자가 같아야 하는 쪽은 이제 이 파일이다
+# (10-18a 판에 그 줄만 더한 글인지는 tests/test_daejeon_dong_closure_migration.py 가 대조한다).
+DAEJEON_MIGRATION = os.path.join(ROOT, "supabase", "migrations", "2026-10-29a_daejeon_dong_closure.sql")
 MONTHLY_MIGRATION = os.path.join(
     ROOT, "supabase", "migrations", "2026-10-15a_freshness_monthly_rules.sql")
 SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
@@ -99,16 +102,19 @@ SOURCE_LABELS = (
     "참고 시세 성적표",
     "필지 (토지 특성)",
     "상권 개업·폐업 (서울시)",
+    "동네 폐업 (대전시)",
 )
 # 결정 0041(2026-10-18a)로 정본에서 뺀 갈래 — 적용된 원장(10-15a)에만 남는다.
 SCHEMA_DROPPED_LABELS = ("참고 시세 성적표",)
+# 결정 0044(2026-10-29a)로 정본에 더한 갈래 — 원장(10-15a)에는 없다.
+SCHEMA_ADDED_LABELS = ("동네 폐업 (대전시)",)
 
 
 def labels_for(request):
-    """public_body 가 정본이면 뺀 갈래를 걷은 목록, 원장(10-15a)이면 열한 갈래 그대로."""
+    """public_body 가 정본이면 뺀 갈래를 걷은 목록(대전 줄 포함 열한 갈래), 원장(10-15a)이면 대전 줄 없는 열한 갈래."""
     if "schema" in request.node.callspec.id:
         return tuple(x for x in SOURCE_LABELS if x not in SCHEMA_DROPPED_LABELS)
-    return SOURCE_LABELS
+    return tuple(x for x in SOURCE_LABELS if x not in SCHEMA_ADDED_LABELS)
 
 # `timestamptz` 를 날짜로 자르는 자리 — 전부 한국 시각으로 옮긴 뒤 잘라야 한다.
 # ⓘ parcel 은 2026-10-12b 부터 timestamptz 가 아니라 공시 연도(smallint)를 읽는다 — 이 목록에서 뺐다.
@@ -261,7 +267,8 @@ class TestEverySourceIsListed:
     def test_there_are_exactly_eleven_rows(self, request, public_body):
         """줄 수를 못 박는다 — 자료를 늘리거나 줄이면 이 시험과 화면 시험이 함께 걸린다.
 
-        ⓘ 정본은 2026-10-18a(결정 0041)부터 열 줄, 원장 10-15a 는 열한 줄 그대로다.
+        ⓘ 정본은 2026-10-18a(결정 0041)부터 열 줄 → 2026-10-29a(결정 0044 대전 줄)부터 다시 열한 줄,
+          원장 10-15a 는 (성적표 줄이 든) 열한 줄 그대로다.
         """
         labels = labels_for(request)
         assert public_body.count("union all") == len(labels) - 1, (
@@ -339,7 +346,10 @@ class TestNextExpectedRules:
         """
         body = statements(function_body(read(path), FN))
         assert body.count("interval '5 months'") == 1, "분기 규칙이 한 번이 아닙니다"
-        assert body.count("interval '3 months'") == 1, "월간 규칙(+3개월)이 한 번이 아닙니다"
+        # 2026-10-29a(결정 0044) — 정본에는 대전시 동네 폐업의 '받은 날 + 3개월'(날짜 더하기 · to_date 아님)이 하나 더 있다.
+        daejeon = body.count("then (n.basis::date + interval '3 months')::date")
+        assert daejeon == (1 if path == SCHEMA else 0)
+        assert body.count("interval '3 months'") - daejeon == 1, "월간 규칙(+3개월)이 한 번이 아닙니다"
         assert body.count("interval '2 months'") == 1, "실거래 규칙(+2개월)이 한 번이 아닙니다"
         assert monthly_rule_months(body) == {"permit": 3, "tx": 2}, (
             "인허가·대장(permit) = +3개월 · 실거래(tx) = +2개월 이 아닙니다: {}".format(monthly_rule_months(body)))
@@ -592,10 +602,11 @@ class TestPermitRuleMigration:
             return m.group(0).replace("\r\n", "\n")
 
         schema_comment = extract_comment(schema)
-        # ⓘ 2026-10-18a(결정 0041)로 '열 갈래'·성적표 줄 뺌이 comment 에 들어가 대조 쪽이 10-18a 로 옮겼다.
-        migration_comment = extract_comment(read(DROP_GATE_MIGRATION))
+        # ⓘ 2026-10-18a(결정 0041)로 '열 갈래'·성적표 줄 뺌이 comment 에 들어가 대조 쪽이 10-18a 로 옮겼고,
+        #   2026-10-29a(결정 0044)로 '열한 갈래'·대전 줄이 들어가 10-29a 로 옮겼다.
+        migration_comment = extract_comment(read(DAEJEON_MIGRATION))
         assert migration_comment == schema_comment, (
-            "10-18a 의 comment 가 정본(schema.sql)과 글자가 다릅니다 — 라이브 설명이 "
+            "10-29a 의 comment 가 정본(schema.sql)과 글자가 다릅니다 — 라이브 설명이 "
             "schema.sql 의 서술과 갈라집니다"
         )
 
@@ -822,7 +833,7 @@ class TestLandYearMigrationShape:
         """머리·본문·comment·revoke 덩어리가 정본과 글자 그대로 — 드리프트 가드는 본문만 본다.
 
         ⓘ 2026-10-15a 부터 정본과 같아야 하는 쪽은 10-15a 였고, 2026-10-18a(결정 0041 — 9번 줄 뺌)부터는
-          10-18a 다(10-12b·10-15a 는 원장).
+          10-18a 였고, 2026-10-29a(결정 0044 — 대전 줄 더함)부터는 10-29a 다(10-12b·10-15a·10-18a 는 원장).
         """
         def block(sql):
             m = re.search(
@@ -831,7 +842,7 @@ class TestLandYearMigrationShape:
                 sql.replace("\r\n", "\n"))
             assert m, "덩어리를 못 찾았습니다"
             return m.group(0)
-        assert block(read(DROP_GATE_MIGRATION)) == block(schema)
+        assert block(read(DAEJEON_MIGRATION)) == block(schema)
 
     def test_the_10_12b_ledger_is_left_as_applied(self, land_migration):
         """⛔ 10-12b 는 라이브에 적용된 원장이다 — 옛 실거래('none'·'수시')·대장('적재일'·building) 줄 그대로."""
@@ -872,6 +883,8 @@ create table parcel (pnu char(19) primary key, land_price_year smallint, updated
 create table district_openclose (quarter text);
 -- 2026-10-15a — 정본 함수의 건축물대장 줄이 이 표지를 읽는다(없으면 함수 만들기가 실패한다).
 create table ledger_release (release_ym text);
+-- 2026-10-29a(결정 0044) — 정본 함수의 대전시 동네 폐업 줄이 이 표지를 읽는다.
+create table daejeon_closure_release (received_on date);
 -- 모양 시험용 — 필지 줄의 basis 를 아무 글자로나 바꿔 넣는 자리(실제 함수에는 없다).
 create table land_basis_override (v text);
 """
@@ -936,8 +949,9 @@ def _land_row(conn, fn_sql, parcel_years=(), override=None):
         cur.execute("insert into parcel values (%s, %s, now())", ("{:019d}".format(i + 1), y))
     cur.execute("select src, basis_kind, basis, next_expected from get_data_freshness()")
     rows = cur.fetchall()
-    # 정본은 2026-10-18a(결정 0041)부터 열 줄 · 원장(10-12b)은 열한 줄(성적표 줄이 든 판).
-    want = 11 if "'참고 시세 성적표'" in fn_sql else 10
+    # 정본은 2026-10-18a(결정 0041)부터 열 줄 → 2026-10-29a(결정 0044 대전 줄)부터 열한 줄 ·
+    # 원장(10-12b)은 열한 줄(성적표 줄이 든 판).
+    want = 11 if ("'참고 시세 성적표'" in fn_sql or "'동네 폐업 (대전시)'" in fn_sql) else 10
     assert len(rows) == want, "{}줄이 아닙니다: {}".format(want, len(rows))
     land = [r for r in rows if r[0] == "필지 (토지 특성)"]
     assert len(land) == 1

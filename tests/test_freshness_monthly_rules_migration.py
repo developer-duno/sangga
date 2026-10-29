@@ -52,6 +52,17 @@ GATE_ROW = ("    select 9, '참고 시세 성적표', '적재일',\n"
             "           'none',\n"
             "           '재생성 때 (결재 사항)'\n"
             "    union all\n")
+# 2026-10-29a(결정 0044) — 12번 줄(대전시 동네 폐업)을 더한 판. 정본과 글자가 같아야 하는 쪽은 이제 이 파일이다
+# (10-18a 판에 그 줄만 더한 글인지는 tests/test_daejeon_dong_closure_migration.py 의 FRESH_CHANGES 가 대조한다).
+DAEJEON_MIGRATION = os.path.join(ROOT, "supabase", "migrations", "2026-10-29a_daejeon_dong_closure.sql")
+# 정본 본문에서 이 덩어리(대전 줄)를 걷으면 10-18a 본문과 같다 — 그래서 10-15a 대조는 이 줄을 걷은 정본과 한다.
+DAEJEON_ROW = ("    union all\n"
+               "    select 12, '동네 폐업 (대전시)', '받은 날',\n"
+               "           (select r.received_on::text from daejeon_closure_release r),\n"
+               "           'daejeon_closure',\n"
+               "           '분기마다 (사람이 대전시 사이트에서 받음)'\n")
+DAEJEON_BRANCH = ("           when n.rule_kind = 'daejeon_closure' and n.basis ~ '^\\d{4}-\\d{2}-\\d{2}$'\n"
+                  "             then (n.basis::date + interval '3 months')::date\n")
 SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
 FN = "get_data_freshness"
 
@@ -117,14 +128,19 @@ class TestMirrorsTheSchema:
     def test_function_block_equals_the_schema(self, mig, schema):
         """머리·본문·comment·revoke 가 정본과 글자 그대로 — 드리프트 가드는 `$$` 안 본문만 본다.
 
-        ⓘ 2026-10-18a(결정 0041)부터 정본과 글자가 같아야 하는 쪽은 10-18a 다(10-15a 는 적용된 원장 — 9번 줄이 든 판).
-          그래서 둘을 본다: ① 10-18a 덩어리 == 정본 ② 10-15a 본문에서 9번 줄 하나만 걷으면 정본 본문과 같다
-          (결정 0041 이 그 밖의 줄을 건드리지 않았다는 증거).
+        ⓘ 2026-10-18a(결정 0041)부터 정본과 글자가 같아야 하는 쪽은 10-18a 였고(10-15a 는 적용된 원장 — 9번 줄이 든 판),
+          2026-10-29a(결정 0044 — 대전 줄)부터는 10-29a 다. 그래서 셋을 본다: ① 10-29a 덩어리 == 정본
+          ② 정본 본문에서 대전 줄·갈래를 걷으면 10-18a 본문과 같다 ③ 10-15a 본문에서 9번 줄 하나만 걷으면 그 글과 같다
+          (결정 0041·0044 가 그 밖의 줄을 건드리지 않았다는 증거).
         """
-        assert fn_block(read(DROP_GATE_MIGRATION)) == fn_block(schema)
+        assert fn_block(read(DAEJEON_MIGRATION)) == fn_block(schema)
+        now = fn_body(schema)
+        assert now.count(DAEJEON_ROW) == 1 and now.count(DAEJEON_BRANCH) == 1
+        before_daejeon = now.replace(DAEJEON_ROW, "", 1).replace(DAEJEON_BRANCH, "", 1)
+        assert fn_body(read(DROP_GATE_MIGRATION)) == before_daejeon
         old = fn_body(mig)
         assert old.count(GATE_ROW) == 1
-        assert old.replace(GATE_ROW, "", 1) == fn_body(schema)
+        assert old.replace(GATE_ROW, "", 1) == before_daejeon
 
     def test_head_keeps_the_four_properties(self, mig):
         head = fn_block(mig)
@@ -284,8 +300,9 @@ class TestTheTwoRows:
         assert branch(fn_body(read(path)), PERMIT_BRANCH) == (YM_SHAPE, 3)
 
     def test_eleven_rows(self, path):
-        """원장 10-15a 는 열한 줄 · 정본은 2026-10-18a(결정 0041 — 성적표 줄 뺌)부터 열 줄."""
-        assert fn_body(read(path)).count("union all") == (10 if path == MIGRATION else 9)
+        """원장 10-15a 는 열한 줄 · 정본은 2026-10-18a(결정 0041 — 성적표 줄 뺌)부터 열 줄 → 2026-10-29a(결정 0044 —
+        대전 줄 더함)부터 다시 열한 줄."""
+        assert fn_body(read(path)).count("union all") == 10
 
 
 class TestTxDetectorCatches:
@@ -349,6 +366,7 @@ create table rent_stat (quarter char(6));
 create table price_gate_sigungu (loaded_at timestamptz);
 create table parcel (pnu char(19) primary key, land_price_year smallint);
 create table district_openclose (quarter text);
+create table daejeon_closure_release (received_on date);
 create table basis_override (v text);
 """
 LEDGER_BASIS = "(select r.release_ym::text from ledger_release r)"
@@ -466,7 +484,7 @@ class TestRealRun:
         cur = _fresh(pg, read(MIGRATION))
         cur.execute(fn_block(read(SCHEMA)))
         cur.execute("insert into transaction values ('202610')")
-        rows = _rows(cur, 10)   # 정본은 성적표 줄을 뺀 열 줄(결정 0041)
+        rows = _rows(cur, 11)   # 정본은 성적표 줄을 뺀 열 줄(결정 0041) + 대전 줄(결정 0044) = 열한 줄
         assert rows["실거래 (매매)"][2] == "2026-11-30"
         assert rows["건축물대장"][2] == "2026-10-31"
 
@@ -721,7 +739,7 @@ class TestFreshnessIssueHint:
     def test_hint_keys_match_the_server_labels(self):
         """열쇠 글자가 서버 함수의 src 와 같아야 한다 — 다르면 안내가 조용히 안 나온다."""
         labels = server_src_labels(fn_body(read(SCHEMA)))
-        assert len(labels) == 10                                       # 신선도 표 10줄(2026-10-18a 결정 0041 — 11 → 10)
+        assert len(labels) == 11                                       # 신선도 표 11줄(10-18a 결정 0041 11 → 10 · 10-29a 결정 0044 10 → 11)
         for key in check_data_freshness.SOURCE_HINTS:
             assert key in labels, key
 

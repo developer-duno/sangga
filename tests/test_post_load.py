@@ -590,11 +590,15 @@ class TestAnonExposure:
             # 개업·폐업 「전부 보기」(2026-10-25a · 결정 0038 H · V6). 표 district_openclose 는 **여기 없다** —
             # list_district_openclose 와 같은 상권 합산·업종 상위 10줄 + 그 밖 합만 나간다(창만 표 전체 분기 전부).
             "api.list_district_openclose_all",
+            # 대전 「동네 폐업 (대전시 공표)」(2026-10-29a · 결정 0044). 표 넷은 **여기 없다** — 그 건물이 선 행정동 이름과
+            # 대전시 공표 폐업 수만 나간다.
+            "api.get_daejeon_dong_closure",
         )
-        # 읽기 4 + 부르기 29 = `--check` 총계 33(2026-10-12a 업종 비중 비교로 30 → 31 · 2026-10-13a 중분류로 31 → 32 ·
+        # 읽기 4 + 부르기 30 = `--check` 총계 34(2026-10-12a 업종 비중 비교로 30 → 31 · 2026-10-13a 중분류로 31 → 32 ·
         # 2026-10-18a 결정 0041 로 참고 시세·성적표 둘을 빼 32 → 30 · 2026-10-24a 층 목록 업종 띠로 30 → 31 ·
-        # 2026-10-24b 임대 8분기 흐름으로 31 → 32 · 2026-10-25a 개업·폐업 전부 보기로 32 → 33).
-        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 33
+        # 2026-10-24b 임대 8분기 흐름으로 31 → 32 · 2026-10-25a 개업·폐업 전부 보기로 32 → 33 ·
+        # 2026-10-29a 결정 0044 대전 동네 폐업으로 33 → 34).
+        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 34
 
     def test_pending_list_is_empty_after_2026_09_05a(self):
         """⛔ **비어 있어야 한다** — 잔존 노출 9개는 2026-09-05a 로 닫혔다.

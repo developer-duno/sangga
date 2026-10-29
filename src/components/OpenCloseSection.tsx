@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { supabase } from '../lib/supabase';
-import { OPEN_CLOSE_ALL_FN, OPEN_CLOSE_FN } from '../lib/appConstants';
+import { DAEJEON_CLOSURE_FN, OPEN_CLOSE_ALL_FN, OPEN_CLOSE_FN } from '../lib/appConstants';
 import { SECTION_PLAN, type SectionPlan } from '../lib/sectionCards';
 import { SectionCard } from './SectionCard';
 import {
@@ -28,7 +28,22 @@ import {
   type TrendCell,
 } from '../lib/openClose';
 import { formatRate } from '../lib/rentStats';
-import type { DistrictOpenClose, DistrictOpenCloseAll } from '../types';
+import type { DaejeonDongClosure, DistrictOpenClose, DistrictOpenCloseAll } from '../types';
+import {
+  DAEJEON_CLOSURE_NOTES,
+  DAEJEON_CLOSURE_TITLE,
+  DAEJEON_NO_DONG_TEXT,
+  closureBigText,
+  closureCount,
+  daejeonBars,
+  daejeonSummary,
+  dongLine,
+  industryTable,
+  isDaejeonPnu,
+  parseDaejeonClosure,
+  quarterRangeText,
+  restText,
+} from '../lib/daejeonClosure';
 import { takePrefetched, type RpcResult, type SidePrefetch } from '../lib/sidePrefetch';
 import { FOUNDER_CHIP_ALL, chipMatch, type FounderChip } from '../lib/founderChips';
 
@@ -48,6 +63,10 @@ import { FOUNDER_CHIP_ALL, chipMatch, type FounderChip } from '../lib/founderChi
  *   누르면 서버를 다시 부르지 않고 그 답으로 바꿔 그린다(모든 상권이 같은 창 · 눈금도 그 창 기준). 그 답이 없거나
  *   이상하면 단추만 없다(카드는 선다).
  * ⛔ **지역·상권 이름을 박지 않는다.** 서울 밖 지역 이름은 `regions.ts` 의 표에서 고른다.
+ * ⓘ **대전 건물**(결정 0044) — 8분기 답이 `not_seoul` 이고 대전 필지면 `DAEJEON_CLOSURE_FN`(대전시 공표 행정동 폐업)을
+ *   받아 같은 자리에 제목 「동네 폐업 (대전시 공표)」 카드를 세운다(`DaejeonCard` · 글·검사는 `lib/daejeonClosure.ts`).
+ *   그 답이 실패·0줄·모양 이상이면 **지금 대전 화면 그대로**(옛 제목·「그 자료가 없습니다」). 묻는 동안은 카드를 안 그린다
+ *   (옛 제목이 먼저 섰다가 바뀌지 않게 — 미리 부르기가 대전 필지에 이 함수를 함께 보내 둔다).
  */
 type Props = {
   /** 이 필지. 바뀌면 처음부터 다시 묻는다. */
@@ -86,6 +105,11 @@ export function OpenCloseSection({
   const [allFailed, setAllFailed] = useState(false);
   /** 전부 보기로 그리는 중인가. 필지가 바뀌면 기본(8분기)으로 돌아간다. */
   const [showAll, setShowAll] = useState(false);
+  /**
+   * 대전시 동네 폐업 답(결정 0044) — 어느 필지 것인가와 함께. row null = 실패·0줄·모양 이상(옛 대전 화면).
+   * 아직 못 받았으면 상태 자체가 null.
+   */
+  const [dj, setDj] = useState<{ pnu: string; row: DaejeonDongClosure | null } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -95,6 +119,7 @@ export function OpenCloseSection({
     setAllRows(null);
     setAllFailed(false);
     setShowAll(false);
+    setDj(null);
 
     const req: PromiseLike<RpcResult> =
       takePrefetched(prefetch, OPEN_CLOSE_FN, pnu) ?? supabase.rpc(OPEN_CLOSE_FN, { p_pnu: pnu });
@@ -140,10 +165,45 @@ export function OpenCloseSection({
     };
   }, [pnu, wantAll]);
 
+  // 대전 필지의 not_seoul 답일 때만 대전시 답을 쓴다(결정 0044) — 서울 건물·상권 밖·좌표 없음은 지금 그대로.
+  const wantDj =
+    rows !== null && rowsPnu === pnu && isDaejeonPnu(pnu) && rows.some((r) => r.status === 'not_seoul');
+
+  useEffect(() => {
+    if (!wantDj) return;
+    let cancelled = false;
+    const req: PromiseLike<RpcResult> =
+      takePrefetched(prefetch, DAEJEON_CLOSURE_FN, pnu) ?? supabase.rpc(DAEJEON_CLOSURE_FN, { p_pnu: pnu });
+    req.then(
+      ({ data, error }) => {
+        // ⛔ 늦은 답은 버린다 — 그 사이 필지가 바뀌었으면 앞 건물 동의 숫자가 새 건물 밑에 붙는다.
+        if (cancelled) return;
+        const row = error ? null : parseDaejeonClosure(data);
+        if (row === null) console.warn('대전 동네 폐업 조회 실패 — 지금 대전 카드로 표시합니다', error ?? data);
+        setDj({ pnu, row });
+      },
+      (e: unknown) => {
+        if (cancelled) return;
+        console.warn('대전 동네 폐업 조회 실패 — 지금 대전 카드로 표시합니다', e);
+        setDj({ pnu, row: null });
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [pnu, prefetch, wantDj]);
+
   if (rows === null) return null;
 
   const summary = openCloseSummary(rows, pnu);
   const head = rows.find((r) => r.status !== 'ok' && r.status !== 'no_data');
+
+  if (wantDj) {
+    const djRow = dj !== null && dj.pnu === pnu ? dj.row : undefined;
+    if (djRow === undefined) return null; // 묻는 중
+    if (djRow !== null) return <DaejeonCard row={djRow} plan={plan} />;
+    // 실패·0줄·모양 이상 → 아래 지금 대전 화면 그대로.
+  }
 
   /*
     ⛔ 서울 밖·상권 밖·좌표 없음에서도 **카드는 선다.** 그냥 사라지면 "이 서비스는 개업·폐업
@@ -222,6 +282,107 @@ export function OpenCloseSection({
           점포(프랜차이즈 포함) × 100)으로 낸 값입니다 — 서울시 자료는 이 점포 수를 &lsquo;유사 업종 점포
           수&rsquo;라고 부릅니다.
         </li>
+      </ul>
+    </SectionCard>
+  );
+}
+
+/**
+ * 대전 건물의 카드(결정 0044) — 제목 「동네 폐업 (대전시 공표)」 · 날짜 줄은 대전시 받은 날(`daejeon_closure`).
+ * 역할·펼침은 받은 배치 그대로(제목·자료 갈래만 바꿔 끼운다).
+ * ⛔ 폐업률(%)·개업·점포 수 없음 — 건수만(대전시가 개업 수를 내지 않는다 · 👤 결정 0044 ⑤).
+ */
+function DaejeonCard({ row, plan }: { row: DaejeonDongClosure; plan: SectionPlan }) {
+  const djPlan: SectionPlan = { ...plan, title: DAEJEON_CLOSURE_TITLE, sources: ['daejeon_closure'] };
+  const summary = daejeonSummary(row);
+  if (row.status !== 'ok' || row.dong_nm === null || row.quarters === null || row.clsbiz_sum === null) {
+    return (
+      <SectionCard plan={djPlan} className="oc oc--none oc--dj" summary={summary}>
+        <p className="oc__lead">{DAEJEON_NO_DONG_TEXT}</p>
+        <p className="oc__src">{DAEJEON_CLOSURE_NOTES[0]}</p>
+      </SectionCard>
+    );
+  }
+  const range = quarterRangeText(row.sum_quarters ?? []);
+  const bars = daejeonBars(row.quarters);
+  const windowLabel = quarterRangeText(row.quarters.map((q) => q.quarter)) ?? '';
+  const { top, rest } = industryTable(row.industries ?? []);
+  const sumN = (row.sum_quarters ?? []).length;
+  return (
+    <SectionCard plan={djPlan} className="oc oc--dj" summary={summary}>
+      <div className="oc__district">
+        <p className="oc__name">{dongLine(row.dong_nm)}</p>
+        <p className="oc__latest">
+          <strong className="oc__num oc__num--close">{closureBigText(row.clsbiz_sum)}</strong>
+          {range && <span className="oc__quarter">{range}</span>}
+        </p>
+        {/* 분기 막대 — 서울 카드의 추이 막대 모양 그대로(옛 분기 왼쪽 → 최근 오른쪽 · 막대 위 건수 · 0 건도 「0」). */}
+        <figure className="oc__trend">
+          <figcaption className="oc__trend-cap">
+            {`분기별 폐업 건수 — ${windowLabel}`}
+            <span className="oc__dir">왼쪽이 옛 분기, 오른쪽이 최근</span>
+          </figcaption>
+          <div className="oc__cols" style={{ gridTemplateColumns: `repeat(${bars.length}, minmax(0, 1fr))` }}>
+            {bars.map((b, i) => (
+              <div key={b.quarter} className="oc__col oc__col--ok" data-quarter={b.quarter}>
+                <div className="oc__bars">
+                  <span className="oc__djcol">
+                    <span className="oc__val" aria-hidden="true">
+                      {b.count.toLocaleString('ko-KR')}
+                    </span>
+                    <span
+                      className="oc__bar oc__bar--close"
+                      role="img"
+                      aria-label={`${b.label} 폐업 ${closureCount(b.count)}`}
+                      title={`${b.label} 폐업 ${closureCount(b.count)}`}
+                      style={{ height: `calc((100% - 16px) * ${(b.h / 100).toFixed(4)})` }}
+                    />
+                  </span>
+                </div>
+                <span className="oc__tick">
+                  <span className="oc__tick-q">{`${b.q}분기`}</span>
+                  {i === 0 || b.q === '1' ? <span className="oc__tick-year">{`${b.year}년`}</span> : null}
+                </span>
+              </div>
+            ))}
+          </div>
+        </figure>
+        {top.length > 0 && (
+          <table className="oc__table oc__table--dj">
+            <thead>
+              <tr>
+                <th scope="col">업종</th>
+                <th scope="col">{`폐업 ${sumN}분기`}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {top.map((x) => (
+                <tr key={x.induty_nm}>
+                  <th scope="row">{x.induty_nm}</th>
+                  <td>{closureCount(x.clsbiz_co)}</td>
+                </tr>
+              ))}
+              {rest && (
+                <tr className="oc__other">
+                  <th scope="row" colSpan={2}>
+                    {restText(rest)}
+                  </th>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        )}
+      </div>
+      <ul className="oc__why">
+        {DAEJEON_CLOSURE_NOTES.map((t, i) =>
+          i === 0 ? (
+            <li key={t} className="oc__src">
+              {t}
+            </li>
+          ) : (
+            <li key={t}>{i === 1 ? <strong>{t}</strong> : t}</li>
+          ),
+        )}
       </ul>
     </SectionCard>
   );

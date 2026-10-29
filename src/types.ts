@@ -1064,6 +1064,29 @@ export type DistrictOpenCloseAll = DistrictOpenClose & {
   total_quarters: number;
 };
 
+/** 대전 동네 폐업 한 분기(결정 0044) — 그 동의 그 분기 폐업 합. 폐업이 없던 분기도 0 으로 온다. */
+export type DaejeonClosureQuarter = { quarter: string; clsbiz_co: number };
+
+/** 대전 동네 폐업 업종 한 줄 — 최근 4분기 합(1 이상 · 많은 순). 업종 이름은 표준산업분류 소분류 그대로. */
+export type DaejeonClosureIndustry = { induty_nm: string; clsbiz_co: number };
+
+/**
+ * 함수 `get_daejeon_dong_closure(p_pnu)` 한 줄(결정 0044) — 그 건물이 선 행정동의 대전시 공표 폐업 건수.
+ * ⓘ 화면이 받는 것은 `ok`·`no_dong` 둘(대전 필지에만 부른다) — `ok` 가 아니면 숫자 칸은 null.
+ */
+export type DaejeonDongClosure = {
+  status: 'ok' | 'no_dong';
+  dong_nm: string | null;
+  /** 사람이 대전시 사이트에서 받은 날 'YYYY-MM-DD'. */
+  received_on: string | null;
+  /** 창 전부(옛 → 새 · 최근 8분기까지). */
+  quarters: DaejeonClosureQuarter[] | null;
+  /** 큰 숫자·업종 표가 더한 분기(창의 끝 · 최근 4분기까지 · 옛 → 새). */
+  sum_quarters: string[] | null;
+  clsbiz_sum: number | null;
+  industries: DaejeonClosureIndustry[] | null;
+};
+
 /**
  * 함수 `get_parcel_land_price(p_pnu)` 한 줄 — 이 땅의 개별공시지가(결정 0036 결정 7).
  * ⛔ 공시가격이지 시세가 아니다 · 땅값만이다(건물 값이 아니다). 값이 없으면 서버가 0줄을 준다.

@@ -17,7 +17,11 @@ const responses = {
   oc: { data: null as unknown, error: null as unknown },
   /** 「전부 보기」 함수(결정 0038 H · V6)의 답 — 기본은 함수 없음(PGRST202): 단추 없이 지금 그대로. */
   all: { data: null as unknown, error: { code: 'PGRST202' } as unknown },
+  /** 대전 동네 폐업 함수(결정 0044)의 답 — 기본은 함수 없음(PGRST202): 지금 대전 카드 그대로. */
+  dj: { data: null as unknown, error: { code: 'PGRST202' } as unknown },
 };
+/** 대전 답을 늦게 돌려주고 싶을 때(늦은 답 버리기 시험). */
+const djGate: { next: Promise<{ data: unknown; error: unknown }> | null } = { next: null };
 /** 전부 보기 답을 늦게 돌려주고 싶을 때 — 주면 그 Promise 를 쓴다(늦은 답 버리기 시험). */
 const allGate: { next: Promise<{ data: unknown; error: unknown }> | null } = { next: null };
 const rpcCalls: Array<{ fn: string; args: unknown }> = [];
@@ -30,6 +34,11 @@ vi.mock('../lib/supabase', () => ({
         const gated = allGate.next;
         allGate.next = null;
         return gated ?? Promise.resolve(responses.all);
+      }
+      if (fn === 'get_daejeon_dong_closure') {
+        const gated = djGate.next;
+        djGate.next = null;
+        return gated ?? Promise.resolve(responses.dj);
       }
       return Promise.resolve(responses.oc);
     },
@@ -133,6 +142,8 @@ beforeEach(() => {
   rpcCalls.length = 0;
   allGate.next = null;
   responses.all = { data: null, error: { code: 'PGRST202' } };
+  djGate.next = null;
+  responses.dj = { data: null, error: { code: 'PGRST202' } };
   resetDataFreshnessCache();
   responses.oc = {
     data: [okRow(), okRow({ district_id: '3001496', district_nm: '강남 마이스 관광특구', district_type: '관광특구' })],
@@ -1086,5 +1097,239 @@ describe('OpenCloseSection — 전부 보기 (결정 0038 H · V6)', () => {
     expect(ocScrollStartsRight(`${css}\n@media print {\n  .oc__scroll > .oc__cols { direction: ltr; }\n}`)).toBe(false);
     expect(ocScrollStartsRight(css.replace(/(?<![-\w])direction:\s*ltr;/, ''))).toBe(false);
     expect(ocScrollStartsRight(css.replace(/(?<![-\w])direction:\s*rtl;/, ''))).toBe(false);
+  });
+});
+
+/**
+ * 대전 「동네 폐업 (대전시 공표)」(결정 0044) — 8분기 답이 not_seoul 이고 대전 필지면 대전시 답으로 같은 자리에 선다.
+ * 실패·0줄·모양 이상이면 지금 대전 카드 그대로(옛 제목·옛 문장).
+ */
+describe('OpenCloseSection — 대전 동네 폐업 (결정 0044)', () => {
+  const djCalls = () => rpcCalls.filter((c) => c.fn === 'get_daejeon_dong_closure');
+  const OLD_LEAD = '서울시 상권분석서비스는 서울 상권만 다룹니다 — 이 건물(대전)에는 그 자료가 없습니다.';
+  // 그 밖 11종의 합 153 — 위 다섯(225)과 더해 378.
+  const REST = [19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 8].map((n, i) => ({ induty_nm: `그밖업종${i + 1}`, clsbiz_co: n }));
+
+  function djOk(over: Record<string, unknown> = {}) {
+    return {
+      status: 'ok',
+      dong_nm: '둔산2동',
+      received_on: '2026-10-28',
+      quarters: [
+        { quarter: '20251', clsbiz_co: 95 },
+        { quarter: '20252', clsbiz_co: 100 },
+        { quarter: '20253', clsbiz_co: 80 },
+        { quarter: '20254', clsbiz_co: 103 },
+        { quarter: '20261', clsbiz_co: 95 },
+      ],
+      sum_quarters: ['20252', '20253', '20254', '20261'],
+      clsbiz_sum: 378,
+      industries: [
+        { induty_nm: '음식점업', clsbiz_co: 111 },
+        { induty_nm: '주점 및 비알코올 음료점업', clsbiz_co: 35 },
+        { induty_nm: '섬유, 의복, 신발 및 가죽제품 소매업', clsbiz_co: 32 },
+        { induty_nm: '미용, 욕탕 및 유사 서비스업', clsbiz_co: 26 },
+        { induty_nm: '유원지 및 기타 오락관련 서비스업', clsbiz_co: 21 },
+        ...REST,
+      ],
+      ...over,
+    };
+  }
+
+  /** 막대 높이 calc 의 비율(jsdom 은 `calc(k * (100% - 16px))` 꼴로 다시 적는다) — 16px 를 빼는지도 본다. */
+  function barFactor(col: Element): number {
+    const h = (col.querySelector('.oc__bar') as HTMLElement).style.height;
+    const m = /^calc\(([\d.]+) \* \(100% - 16px\)\)$/.exec(h);
+    expect(m, h).not.toBeNull();
+    return Number(m?.[1]);
+  }
+
+  async function openDj() {
+    fireEvent.click(await screen.findByRole('button', { name: /동네 폐업/ }));
+  }
+
+  beforeEach(() => {
+    responses.oc = { data: [headRow('not_seoul')], error: null };
+  });
+
+  it('★ ok — 제목·이름 줄·큰 숫자·기간·분기 막대·업종 표(5줄 + 그 밖)·발 문구 다섯', async () => {
+    responses.dj = { data: [djOk()], error: null };
+    const { container } = render(<OpenCloseSection pnu={DAEJEON} />);
+    await openDj();
+    expect(screen.getByText('동네 폐업 (대전시 공표)')).toBeTruthy();
+    expect(screen.queryByText('상권 개업·폐업 (서울시 공표)')).toBeNull();
+    expect(container.querySelector('.oc__name')?.textContent).toBe('둔산2동 · 가게 업종');
+    expect(container.querySelector('.oc__latest .oc__num')?.textContent).toBe('폐업 378건');
+    expect(container.querySelector('.oc__latest .oc__quarter')?.textContent).toBe('2025년 2분기~2026년 1분기');
+    const cols = [...container.querySelectorAll('.oc__col')];
+    expect(cols.map((c) => c.getAttribute('data-quarter'))).toEqual(['20251', '20252', '20253', '20254', '20261']);
+    expect(cols.map((c) => c.querySelector('.oc__val')?.textContent)).toEqual(['95', '100', '80', '103', '95']);
+    // 막대 높이 — 창 안 최댓값(103) 기준 비례(글자 자리 16px 를 뺀 칸).
+    const h = cols.map((c) => barFactor(c));
+    expect(h[3]).toBe(1);
+    expect(h[2]).toBeCloseTo(80 / 103, 3);
+    expect(h[0]).toBeCloseTo(95 / 103, 3);
+    expect(cols[0].querySelector('.oc__bar')?.getAttribute('aria-label')).toBe('2025년 1분기 폐업 95건');
+    const rows = [...container.querySelectorAll('.oc__table--dj tbody tr')].map((r) => r.textContent);
+    expect(rows).toEqual([
+      '음식점업111건',
+      '주점 및 비알코올 음료점업35건',
+      '섬유, 의복, 신발 및 가죽제품 소매업32건',
+      '미용, 욕탕 및 유사 서비스업26건',
+      '유원지 및 기타 오락관련 서비스업21건',
+      '그 밖 11종 153건',
+    ]);
+    expect(container.querySelector('.oc__table--dj thead')?.textContent).toBe('업종폐업 4분기');
+    const notes = [...container.querySelectorAll('.oc__why li')].map((li) => li.textContent);
+    expect(notes).toEqual([
+      '출처: 대전광역시 상권분석 서비스(8989.daejeon.go.kr)',
+      '동네(행정동) 전체 값이며 이 건물의 값이 아닙니다.',
+      '대전시는 개업 수를 내지 않아 폐업만 싣습니다.',
+      '손님을 받는 가게 업종 33종만 셉니다(부동산 임대·인터넷 판매·도매·사무실 업종 등은 뺍니다).',
+      '2024년까지는 대전시 집계 방식이 달라 보이고 최근 6개월은 아직 덜 들어와, 둘 다 싣지 않습니다.',
+    ]);
+    expect(container.querySelector('.oc__why li strong')?.textContent).toBe(
+      '동네(행정동) 전체 값이며 이 건물의 값이 아닙니다.',
+    );
+    // 접힌 요약에 값 0 — 동과 언제까지만.
+    expect(container.querySelector('.card__summary')?.textContent).toBe('둔산2동 · 2026년 1분기까지 대전시 공표');
+    // 폐업률·개업 없음.
+    expect(container.textContent).not.toMatch(/%|개업 \d/);
+    expect(djCalls().map((c) => c.args)).toEqual([{ p_pnu: DAEJEON }]);
+  });
+
+  it('0 건 분기는 막대 높이 0 + 글자 「0」(빠진 분기가 아니다)', async () => {
+    const quarters = [
+      { quarter: '20254', clsbiz_co: 0 },
+      { quarter: '20261', clsbiz_co: 4 },
+    ];
+    responses.dj = {
+      data: [djOk({ quarters, sum_quarters: ['20254', '20261'], clsbiz_sum: 4, industries: [{ induty_nm: '의원', clsbiz_co: 4 }] })],
+      error: null,
+    };
+    const { container } = render(<OpenCloseSection pnu={DAEJEON} />);
+    await openDj();
+    const cols = [...container.querySelectorAll('.oc__col')];
+    expect(cols[0].querySelector('.oc__val')?.textContent).toBe('0');
+    expect(barFactor(cols[0])).toBe(0);
+    expect(barFactor(cols[1])).toBe(1);
+    expect(container.querySelector('.oc__gap')).toBeNull();
+    expect(container.querySelector('.oc__latest .oc__quarter')?.textContent).toBe('2025년 4분기~2026년 1분기');
+    expect(container.querySelector('.oc__table--dj thead')?.textContent).toBe('업종폐업 2분기');
+    expect(container.querySelector('.oc__other')).toBeNull();
+  });
+
+  it('★ no_dong — 같은 제목 + 동 못 찾음 한 줄', async () => {
+    responses.dj = {
+      data: [
+        {
+          status: 'no_dong',
+          dong_nm: null,
+          received_on: '2026-10-28',
+          quarters: null,
+          sum_quarters: null,
+          clsbiz_sum: null,
+          industries: null,
+        },
+      ],
+      error: null,
+    };
+    const { container } = render(<OpenCloseSection pnu={DAEJEON} />);
+    await openDj();
+    expect(container.querySelector('.oc__lead')?.textContent).toBe(
+      '이 건물의 동(행정동)을 찾지 못해 대전시 자료를 붙이지 못했습니다.',
+    );
+    expect(container.querySelector('.oc__col')).toBeNull();
+    expect(container.querySelector('.oc__src')?.textContent).toBe(
+      '출처: 대전광역시 상권분석 서비스(8989.daejeon.go.kr)',
+    );
+  });
+
+  it.each([
+    ['함수 없음(PGRST202)', { data: null, error: { code: 'PGRST202' } }],
+    ['오류', { data: [{ status: 'ok' }], error: { message: 'boom' } }],
+    ['0줄(받은 날 표지 없음)', { data: [], error: null }],
+    [
+      '모양 이상(합이 안 맞음)',
+      {
+        data: [
+          {
+            status: 'ok',
+            dong_nm: '둔산2동',
+            received_on: '2026-10-28',
+            quarters: [{ quarter: '20261', clsbiz_co: 5 }],
+            sum_quarters: ['20261'],
+            clsbiz_sum: 6,
+            industries: [{ induty_nm: '의원', clsbiz_co: 6 }],
+          },
+        ],
+        error: null,
+      },
+    ],
+    ['모르는 상태', { data: [{ status: 'not_daejeon' }], error: null }],
+  ])('★ 실패 — %s → 지금 대전 카드 그대로(옛 제목·옛 문장)', async (_name, res) => {
+    responses.dj = res;
+    const { container } = render(<OpenCloseSection pnu={DAEJEON} />);
+    await openCard();
+    expect(screen.getByText('상권 개업·폐업 (서울시 공표)')).toBeTruthy();
+    expect(container.querySelector('.oc__lead')?.textContent).toBe(OLD_LEAD);
+    expect(screen.queryByText('동네 폐업 (대전시 공표)')).toBeNull();
+  });
+
+  it('서울 건물(상권 줄)과 대전 밖 not_seoul 은 대전 함수를 부르지 않는다', async () => {
+    responses.oc = { data: [okRow()], error: null };
+    const a = render(<OpenCloseSection pnu={PNU} />);
+    await screen.findByText('상권 개업·폐업 (서울시 공표)');
+    a.unmount();
+    responses.oc = { data: [headRow('not_seoul')], error: null };
+    render(<OpenCloseSection pnu="9911010700108770000" />);
+    await screen.findByText('상권 개업·폐업 (서울시 공표)');
+    expect(djCalls()).toHaveLength(0);
+  });
+
+  it('★ 미리 보낸 대전 답이 있으면 그것을 쓰고 다시 묻지 않는다', async () => {
+    const prefetch = {
+      pnu: DAEJEON,
+      results: new Map<string, Promise<{ data: unknown; error: unknown }>>([
+        ['list_district_openclose', Promise.resolve({ data: [headRow('not_seoul')], error: null })],
+        ['get_daejeon_dong_closure', Promise.resolve({ data: [djOk()], error: null })],
+      ]),
+    };
+    render(<OpenCloseSection pnu={DAEJEON} prefetch={prefetch} />);
+    await screen.findByText('동네 폐업 (대전시 공표)');
+    expect(djCalls()).toHaveLength(0);
+  });
+
+  it('★ 필지가 바뀌면 옛 답을 지운다 — 새 필지 답이 늦어도 앞 동의 숫자가 붙지 않는다', async () => {
+    responses.dj = { data: [djOk()], error: null };
+    const { rerender, container } = render(<OpenCloseSection pnu={DAEJEON} />);
+    await screen.findByText('동네 폐업 (대전시 공표)');
+    let release: (v: { data: unknown; error: unknown }) => void = () => {};
+    djGate.next = new Promise((r) => {
+      release = r;
+    });
+    const B = '3020010100100010000';
+    rerender(<OpenCloseSection pnu={B} />);
+    await waitFor(() => expect(djCalls()).toHaveLength(2));
+    expect(container.textContent).not.toContain('둔산2동');
+    expect(container.textContent).not.toContain('378');
+    release({ data: [djOk({ dong_nm: '은행선화동' })], error: null });
+    await screen.findByText('은행선화동 · 가게 업종');
+  });
+
+  it('★ 늦게 온 앞 필지의 대전 답은 버린다', async () => {
+    let release: (v: { data: unknown; error: unknown }) => void = () => {};
+    djGate.next = new Promise((r) => {
+      release = r;
+    });
+    const { rerender } = render(<OpenCloseSection pnu={DAEJEON} />);
+    await waitFor(() => expect(djCalls()).toHaveLength(1));
+    responses.dj = { data: [djOk({ dong_nm: '은행선화동' })], error: null };
+    rerender(<OpenCloseSection pnu="3020010100100010000" />);
+    await screen.findByText('은행선화동 · 가게 업종');
+    release({ data: [djOk()], error: null });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(screen.queryByText('둔산2동 · 가게 업종')).toBeNull();
   });
 });

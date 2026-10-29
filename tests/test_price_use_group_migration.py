@@ -37,6 +37,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
 MIGS = os.path.join(ROOT, "supabase", "migrations")
 MIG = os.path.join(MIGS, "2026-10-18a_price_use_group.sql")
+# 2026-10-29a(결정 0044) — 신선도 함수를 12번 줄(대전시 동네 폐업)을 더해 다시 만든 판. 정본과 그 함수 글자가 같아야 하는
+# 쪽은 이제 이 파일이다(10-18a 는 원장 · 10-18a 판에 그 줄만 더했는지는 tests/test_daejeon_dong_closure_migration.py 가 본다).
+FRESH_LATER = os.path.join(MIGS, "2026-10-29a_daejeon_dong_closure.sql")
 # 적용 **전** 라이브 모양을 흉내 낼 때 쓰는 원장들(글자 그대로 꺼낸다).
 MIG_LADDER = os.path.join(MIGS, "2026-10-08a_transaction_share_flag.sql")     # list_price_bands 9칸 · 지분 제외 판
 MIG_STAGE_B = os.path.join(MIGS, "2026-08-16a_stage_b_price_band.sql")        # price_floor_band · 게이트 표
@@ -227,7 +230,8 @@ def test_정본에서_지운_객체가_없다():
 def test_정본_신선도_9번_줄이_없고_뒤_번호는_그대로다():
     src = read(SCHEMA)
     assert freshness_gate_row_problems(src) == []
-    assert freshness_ords(src) == [1, 2, 3, 4, 5, 6, 7, 8, 10, 11]
+    # 2026-10-29a(결정 0044) — 대전시 동네 폐업이 12번으로 붙었다(9번은 여전히 비어 있다).
+    assert freshness_ords(src) == [1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12]
 
 
 def test_정본_권한_목록에_지운_api_가_없다():
@@ -350,8 +354,12 @@ def test_마이그_묶음_함수는_요약표보다_먼저_만든다():
 
 @pytest.mark.parametrize("name", list(GROUP_FNS) + ["get_data_freshness", "api.get_data_freshness"])
 def test_마이그_함수가_정본과_글자_일치(name):
-    """머리(security definer·search_path·stable)까지 — create or replace 는 머리를 덮어쓴다."""
-    assert fn_block(name, read(MIG)) == fn_block(name, read(SCHEMA))
+    """머리(security definer·search_path·stable)까지 — create or replace 는 머리를 덮어쓴다.
+
+    ⓘ get_data_freshness 는 2026-10-29a(결정 0044)가 다시 만들어 그 판과 대조한다(10-18a 는 원장).
+    """
+    src = FRESH_LATER if name == "get_data_freshness" else MIG
+    assert fn_block(name, read(src)) == fn_block(name, read(SCHEMA))
 
 
 @pytest.mark.parametrize("pattern", [
@@ -366,7 +374,9 @@ def test_마이그_함수가_정본과_글자_일치(name):
     r"^create unique index if not exists idx_msty_key",
 ])
 def test_마이그_comment_와_색인이_정본과_글자_일치(pattern):
-    assert stmt_at(pattern, read(MIG)) == stmt_at(pattern, read(SCHEMA))
+    # get_data_freshness comment 는 2026-10-29a(결정 0044)가 다시 썼다 — 그 판과 대조한다(10-18a 는 원장).
+    src = FRESH_LATER if "get_data_freshness" in pattern else MIG
+    assert stmt_at(pattern, read(src)) == stmt_at(pattern, read(SCHEMA))
 
 
 @pytest.mark.parametrize("mv", ["mv_sigungu_tx_stats", "mv_sigungu_tx_yearly"])

@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import {
+  DAEJEON_CLOSURE_FN,
   FLOOR_INDUSTRY_FN,
   INDUSTRY_MEDIAN_FN,
   INDUSTRY_MIX_FN,
@@ -8,6 +9,7 @@ import {
   RENT_HISTORY_FN,
   RENT_STATS_FN,
 } from './appConstants';
+import { isDaejeonPnu } from './daejeonClosure';
 
 /**
  * 층별 화면의 곁 카드(둘레의 업종 분포 · 그 비교 글(물결 2-3) · 둘레 인허가 한 줄 · 상권 임대 동향 · 상권 개업·폐업 ·
@@ -45,6 +47,12 @@ export const SIDE_PREFETCH_FNS = [
   RENT_HISTORY_FN,
 ] as const;
 
+/**
+ * 대전 필지(pnu 앞 두 자리 30)일 때만 더 보내는 함수 — 「동네 폐업 (대전시 공표)」(결정 0044 · 인자 `{ p_pnu }`).
+ * 받는 쪽은 개업·폐업 카드(대전 자리)와 역할 요약 판. 서울 건물에는 보내지 않는다(요청 0).
+ */
+export const DAEJEON_PREFETCH_FNS = [DAEJEON_CLOSURE_FN] as const;
+
 export type SidePrefetch = {
   pnu: string;
   results: ReadonlyMap<string, Promise<RpcResult>>;
@@ -52,7 +60,8 @@ export type SidePrefetch = {
 
 export function startSidePrefetch(pnu: string): SidePrefetch {
   const results = new Map<string, Promise<RpcResult>>();
-  for (const fn of SIDE_PREFETCH_FNS) {
+  const fns: readonly string[] = isDaejeonPnu(pnu) ? [...SIDE_PREFETCH_FNS, ...DAEJEON_PREFETCH_FNS] : SIDE_PREFETCH_FNS;
+  for (const fn of fns) {
     // `.then` 을 **지금 한 번** 불러 요청을 출발시킨다(`Promise.resolve(빌더)` 는 다음
     // 틱에야 부른다). 라이브러리 타입이 PromiseLike 라 Promise.resolve 로 감싼다 — 진짜
     // Promise 를 받으면 그대로 돌려줄 뿐 요청을 더 만들지 않는다.

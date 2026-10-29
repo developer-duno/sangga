@@ -2,6 +2,7 @@ import type {
   BasePrice,
   BuildingHit,
   CoverageStats,
+  DaejeonDongClosure,
   DistrictOpenClose,
   FloorRow,
   IndustryMedian,
@@ -29,6 +30,7 @@ import {
   storeTotalText,
 } from './openClose';
 import { MEDIAN_BADGE, districtLabel, medianViewOf, toBars, type MixBar } from './industryMix';
+import { DAEJEON_CLOSURE_TITLE, daejeonTileLines } from './daejeonClosure';
 import {
   UNKNOWN_SPEC,
   describeHoCnt,
@@ -120,6 +122,11 @@ export type RoleSummaryInput = {
   noCoord: boolean;
   rent: RentStat[] | null;
   openClose: DistrictOpenClose[] | null;
+  /**
+   * 대전 동네 폐업(결정 0044 · `get_daejeon_dong_closure` — 미리 부르기가 대전 필지에만 보낸 답 · 모양 검사를 지난 것).
+   * 안 줌·null = 실패·아직·대전 아님 → 개업·폐업 칸은 지금 글 그대로.
+   */
+  daejeon?: DaejeonDongClosure | null;
   mix: IndustryMix | null;
   median: IndustryMedian | null;
 };
@@ -369,6 +376,11 @@ function openCloseTile(input: RoleSummaryInput): SummaryTile | null {
   const label = '개업·폐업 (서울시 공표)';
   const lead = rows.find((r) => r.status === 'ok');
   const notOk = rows.some((r) => r.status !== 'ok' && r.status !== 'no_data');
+  // 대전 건물(결정 0044 · 지시서 #9) — 대전시 답이 ok 면 「서울 상권만 …」 대신 대전시 공표 폐업. no_dong·실패는 지금 글 그대로.
+  const dj = rows.some((r) => r.status === 'not_seoul') && input.daejeon ? daejeonTileLines(input.daejeon) : null;
+  if (dj !== null) {
+    return { key: 'openclose', label: DAEJEON_CLOSURE_TITLE, lines: [dj.line], basis: [dj.basis], grade: null };
+  }
   if (notOk || lead === undefined) {
     // 대상 아님(서울 밖·상권 밖·좌표 없음)·자료 없는 분기 — 카드 요약 글 그대로.
     return { key: 'openclose', label, lines: [openCloseSummary(rows, input.building.pnu)], basis: [], grade: null };

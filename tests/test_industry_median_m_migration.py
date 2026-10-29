@@ -394,11 +394,11 @@ class TestPermissions:
         assert not [n for n in post_load.ANON_READABLE_ALLOWLIST if MV in n]
         assert not [n for n in post_load.ANON_CALLABLE_ALLOWLIST if MV in n]
 
-    def test_allowlist_total_is_33(self):
-        """읽기 4 + 부르기 29 = `--check` 총계 33(2026-10-13a 로 31 → 32 · 2026-10-18a 결정 0041 로 둘을 빼 32 → 30 ·
+    def test_allowlist_total_is_34(self):
+        """읽기 4 + 부르기 30 = `--check` 총계 34(2026-10-13a 로 31 → 32 · 2026-10-18a 결정 0041 로 둘을 빼 32 → 30 ·
         2026-10-24a 결정 0038 V4 층 목록 업종 띠로 30 → 31 · 2026-10-24b 결정 0038 V5 임대 8분기 흐름으로 31 → 32 ·
-        2026-10-25a 결정 0038 V6 개업·폐업 전부 보기로 32 → 33)."""
-        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 33
+        2026-10-25a 결정 0038 V6 개업·폐업 전부 보기로 32 → 33 · 2026-10-29a 결정 0044 대전 동네 폐업으로 33 → 34)."""
+        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 34
         assert "api.list_industry_median_m" in post_load.ANON_CALLABLE_ALLOWLIST
 
 

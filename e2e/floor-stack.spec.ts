@@ -19,6 +19,7 @@ import {
   rentStats,
   openClose,
   openCloseNotSeoul,
+  daejeonClosure,
   dataFreshness,
   storeHit,
   unitSummary,
@@ -112,6 +113,10 @@ const OPEN_CLOSE_PATTERN = '**/rest/v1/rpc/list_district_openclose*';
 //   받고, 개폐업 답을 덮은 스펙에서는 8분기 답(total_quarters 칸 없음)을 받아 단추만 조용히 빠진다. 단추를 보는 것은 스펙 CJ 뿐이다
 //   (그 스펙은 이 꼴을 **나중에** 등록해 먼저 잡히게 한다).
 const OPEN_CLOSE_ALL_PATTERN = '**/rest/v1/rpc/list_district_openclose_all*';
+// 대전 「동네 폐업 (대전시 공표)」(결정 0044) — 대전 필지를 열 때만 곁 카드와 함께 미리 나간다(서울 건물은 요청 0).
+// ⚠️ 기본값은 **함수가 없는 상태**다 — 그때 대전 건물의 개업·폐업 카드는 지금 대전 화면 그대로라 스펙 AI 가 그대로다.
+//    대전 카드를 보는 것은 스펙 CM 뿐이다(안 막으면 실존하지 않는 도메인으로 나가 DNS 에 좌우된다).
+const DAEJEON_CLOSURE_PATTERN = '**/rest/v1/rpc/get_daejeon_dong_closure*';
 // 호실 구성표(결정 0032). 요약은 건물을 열 때 · 목록은 층을 펼칠 때 나간다.
 // ⚠️ 기본값은 둘 다 **함수가 없는 상태**다 — 그때 요약도 "자료 없음" 안내도 조용히 빠지는지가
 //    스펙 AH 의 관심사다(빈 배열로 두면 "호실 자료가 없는 건물"이라는 **다른 답**이 되어 안내가 선다).
@@ -229,6 +234,8 @@ async function mockFloorStack(
   await mockMissingFunction(page, RENT_HISTORY_PATTERN);
   // 상권 개업·폐업도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 스펙 AI 만 덮어쓴다.
   await mockMissingFunction(page, OPEN_CLOSE_PATTERN);
+  // 대전 동네 폐업도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 스펙 CM 만 덮어쓴다.
+  await mockMissingFunction(page, DAEJEON_CLOSURE_PATTERN);
   // 호실 구성표 둘도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 호실을 보는 스펙은
   // 이 뒤에 자기 응답을 한 번 더 등록한다(나중에 등록한 것이 먼저 잡힌다).
   await mockMissingFunction(page, UNIT_SUMMARY_PATTERN);
@@ -2417,6 +2424,106 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
     );
     await expect(oc.locator('.oc__col')).toHaveCount(0);
     await expect(oc).not.toContainText('코엑스');
+  });
+
+  test('CM. 대전 건물 — 「동네 폐업 (대전시 공표)」 카드(요약은 동·언제까지만) · 펼치면 이름 줄·폐업 378건·기간·분기 막대 다섯(옛 → 최근 · 높이 비례 · 막대 위 건수 13px)·업종 표 5줄 + 그 밖·발 문구 다섯 · 넘침 0 · 창업자 요약 칸 · 종이에 그대로 · 함수 없으면 지금 대전 카드', async ({
+    page,
+  }, testInfo) => {
+    const DJ = '3017010100100010000';
+    const BLD = `${DJ}_1`;
+    await page.addInitScript(() => {
+      type Kv = { setItem(k: string, v: string): void };
+      (globalThis as unknown as { localStorage: Kv }).localStorage.setItem('sangga.viewerRole', '창업자');
+    });
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit({ bld_id: BLD, pnu: DJ, bld_nm: '대전빌딩', road_addr: '대전 서구 둔산로 1' })]);
+    await mockFloorStack(page, [], [floorRow({ bld_id: BLD, pnu: DJ, floor_no: 2 }), floorRow({ bld_id: BLD, pnu: DJ })], industryMix());
+    // 나중에 등록한 것이 먼저 잡힌다 — mockFloorStack 의 '함수 없음' 위에 덮는다.
+    await mockJson(page, OPEN_CLOSE_PATTERN, openCloseNotSeoul());
+    const djCalls: string[] = [];
+    await page.route(DAEJEON_CLOSURE_PATTERN, async (route) => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS_HEADERS });
+      djCalls.push(route.request().postData() ?? '');
+      await route.fulfill({ status: 200, contentType: 'application/json', headers: CORS_HEADERS, body: JSON.stringify(daejeonClosure()) });
+    });
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await gotoTab(page, '찾기'); // 휴대폰 창업자는 첫 탭이 지도다(0036 ④)
+    await search(page, '대전빌딩');
+    await page.getByRole('button', { name: /대전빌딩/ }).first().click();
+
+    const stack = page.locator('section.stack');
+    const oc = stack.locator('section.oc');
+    await expect(oc).toBeVisible();
+    await expect(oc.locator('.card__h')).toContainText('동네 폐업 (대전시 공표)');
+    await expect(stack.getByText('상권 개업·폐업 (서울시 공표)')).toHaveCount(0);
+    // 접힌 요약에 값 0 — 동과 언제까지만(서울 카드와 같은 규칙 · 펼침은 역할 배치 그대로).
+    await expect(oc.locator('.card__summary')).toHaveText('둔산2동 · 2026년 1분기까지 대전시 공표');
+    // 미리 부르기 한 번 — 카드와 요약 판이 같은 답을 나눠 쓴다.
+    expect(djCalls).toEqual([JSON.stringify({ p_pnu: DJ })]);
+    // 창업자 요약 칸(지시서 #9).
+    const tile = page.locator('.rsum__tile--openclose');
+    await expect(tile.locator('.rsum__label')).toHaveText('동네 폐업 (대전시 공표)');
+    await expect(tile).toContainText('폐업 378건 · 최근 4분기(가게 업종)');
+    await expect(tile).toContainText('둔산2동 · 대전시 공표');
+
+    await openCard(page, /동네 폐업/);
+    await expect(oc.locator('.oc__name')).toHaveText('둔산2동 · 가게 업종');
+    await expect(oc.locator('.oc__latest .oc__num')).toHaveText('폐업 378건');
+    await expect(oc.locator('.oc__latest .oc__quarter')).toHaveText('2025년 2분기~2026년 1분기');
+    const cols = oc.locator('.oc__col');
+    await expect(cols).toHaveCount(5);
+    await expect(oc.locator('.oc__val')).toHaveText(['95', '100', '80', '103', '95']);
+    // 옛 분기 왼쪽 → 최근 오른쪽 · 막대 높이 비례(103 이 가장 높다 · 80 은 그 약 0.78배).
+    const xs = await cols.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().x));
+    expect([...xs].sort((a, b) => a - b)).toEqual(xs);
+    const hs = await oc.locator('.oc__bar').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height));
+    expect(Math.max(...hs)).toBeCloseTo(hs[3], 3);
+    expect(hs[2] / hs[3]).toBeGreaterThan(0.75);
+    expect(hs[2] / hs[3]).toBeLessThan(0.81);
+    await expect(oc.locator('.oc__val').first()).toHaveCSS('font-size', '13px');
+    await expect(oc.locator('.oc__table--dj tbody tr')).toHaveText([
+      '음식점업111건',
+      '주점 및 비알코올 음료점업35건',
+      '섬유, 의복, 신발 및 가죽제품 소매업32건',
+      '미용, 욕탕 및 유사 서비스업26건',
+      '유원지 및 기타 오락관련 서비스업21건',
+      '그 밖 11종 153건',
+    ]);
+    await expect(oc.locator('.oc__why li')).toHaveCount(5);
+    await expect(oc.locator('.oc__why li strong')).toHaveText('동네(행정동) 전체 값이며 이 건물의 값이 아닙니다.');
+    await expect(oc).not.toContainText('%');
+    const overflow = await page.evaluate(() => {
+      const d = (globalThis as unknown as { document: { documentElement: { scrollWidth: number; clientWidth: number } } })
+        .document.documentElement;
+      return d.scrollWidth - d.clientWidth;
+    });
+    testInfo.annotations.push({ type: 'CM 실측', description: `${testInfo.project.name}: 막대 높이 ${hs.map((h) => h.toFixed(1)).join('·')} · 넘침 ${overflow}` });
+    expect(overflow).toBeLessThanOrEqual(0);
+
+    // 종이 — 펼친 본문이 그대로 나오고 막대 색이 안 지워진다 · 그림은 한 덩어리.
+    await page.emulateMedia({ media: 'print' });
+    await expect(oc.locator('.oc__bar').first()).toHaveCSS('print-color-adjust', 'exact');
+    await expect(oc.locator('.oc__trend')).toHaveCSS('break-inside', 'avoid');
+    await expect(oc.locator('.oc__why li')).toHaveCount(5);
+    await page.emulateMedia({ media: null });
+
+    // 함수가 없으면(PGRST202) — 지금 대전 카드 그대로(옛 제목 · 옛 문장).
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit({ bld_id: BLD, pnu: DJ, bld_nm: '대전빌딩', road_addr: '대전 서구 둔산로 1' })]);
+    await mockFloorStack(page, [], [floorRow({ bld_id: BLD, pnu: DJ, floor_no: 2 }), floorRow({ bld_id: BLD, pnu: DJ })], industryMix());
+    await mockJson(page, OPEN_CLOSE_PATTERN, openCloseNotSeoul());
+    await page.reload();
+    const oc2 = page.locator('section.stack section.oc');
+    await expect(oc2).toBeVisible();
+    await expect(oc2.locator('.card__h')).toContainText('상권 개업·폐업 (서울시 공표)');
+    await openCard(page, /상권 개업·폐업/);
+    await expect(oc2.locator('.oc__lead')).toHaveText(
+      '서울시 상권분석서비스는 서울 상권만 다룹니다 — 이 건물(대전)에는 그 자료가 없습니다.',
+    );
+    await expect(page.locator('.rsum__tile--openclose')).toContainText('서울 상권만 다루는 자료라 이 건물(대전)에는 없습니다');
   });
 });
 
