@@ -34,7 +34,7 @@ const {
   wantsDaejeon,
   DAEJEON_CLOSURE_WAIT_MS,
 } = await import('./daejeonClosure');
-const { startSidePrefetch, SIDE_PREFETCH_FNS } = await import('./sidePrefetch');
+const { startSidePrefetch, SIDE_PREFETCH_FNS, takePrefetched, settledWithin } = await import('./sidePrefetch');
 
 function ok(over: Record<string, unknown> = {}) {
   return {
@@ -186,5 +186,30 @@ describe('미리 부르기 — 대전 필지에만 대전 함수(결정 0044)', 
     const se = startSidePrefetch('1168010100100010000');
     expect([...se.results.keys()]).toEqual([...SIDE_PREFETCH_FNS]);
     expect(rpcCalls).not.toContain('get_daejeon_dong_closure');
+  });
+
+  it('★ 시각 기록(후속 ⓑ)은 카드가 받는 것을 안 바꾼다 — takePrefetched = 같은 Promise 객체 · 같은 값 · 상한은 출발부터', async () => {
+    const T0 = new Date('2026-10-31T00:00:00Z').getTime();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(T0);
+      const pnu = '3017010100100010000';
+      const pre = startSidePrefetch(pnu);
+      const fn = 'get_daejeon_dong_closure';
+      const p = takePrefetched(pre, fn, pnu)!;
+      expect(p).toBe(pre.results.get(fn)); // 카드·요약이 같은 객체를 받는다(감싸지 않았다)
+      expect(takePrefetched(pre, fn, pnu)).toBe(p);
+      expect(pre.startedAt).toBe(T0);
+      expect(settledWithin(pre, fn, pnu, DAEJEON_CLOSURE_WAIT_MS)).toBe(false); // 아직 안 옴
+      vi.setSystemTime(T0 + 7900);
+      await expect(p).resolves.toEqual({ data: null, error: null }); // 흉내 rpc 의 답 그대로
+      expect(pre.settledAt?.get(fn)).toBe(T0 + 7900);
+      expect(settledWithin(pre, fn, pnu, DAEJEON_CLOSURE_WAIT_MS)).toBe(true);
+      expect(settledWithin(pre, fn, pnu, 7900)).toBe(false); // 상한과 같으면 늦은 것(카드 타이머보다 늘 먼저 끊긴다)
+      expect(settledWithin(pre, fn, '3017010100100020000', DAEJEON_CLOSURE_WAIT_MS)).toBe(false); // 다른 필지
+      expect(settledWithin({ pnu, results: pre.results }, fn, pnu, DAEJEON_CLOSURE_WAIT_MS)).toBe(false); // 시각 없는 판
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

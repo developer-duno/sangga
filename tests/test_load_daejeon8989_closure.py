@@ -360,6 +360,19 @@ def test_month_gaps_and_today_boundary():
     assert L.file_problems(_all_months("202609"), d, datetime.date(2026, 10, 27))[0].startswith("⒡ 받은 날")
 
 
+def test_f_latest_file_month_after_received():
+    """⒡ 폴더 이름을 과거로 잘못 적은 날(20251028 ← 20261028) — 파일 중 가장 늦은 달이 받은 날의 달보다 뒤면 멈춘다."""
+    wrong = datetime.date(2025, 10, 28)
+    bad = L.file_problems(_all_months("202609"), wrong, wrong)
+    assert len(bad) == 1 and bad[0].startswith("⒡") and "202609" in bad[0] and "2025-10-28" in bad[0]
+    assert "폴더 이름(받은 날)을 확인하세요" in bad[0]
+    d = datetime.date(2026, 10, 28)
+    assert L.file_problems(_all_months("202609"), d, d) == []                 # 지금 운영 판
+    assert L.file_problems(_all_months("202609") + ["202610"], d, d) == []    # 이번 달 파일이 섞여도 같은 달은 허용
+    empty = L.file_problems([], d, d)                                          # 파일 0개 — 터지지 않는다(⒜ 몫)
+    assert not any("가장 늦은 달" in m for m in empty)
+
+
 def test_f2_reverse_dong_problems():
     store = [(P1, "둔산2동", "30170660"), (P3, "가수원동", "30170510")]
     assert L.reverse_dong_problems({"둔산2동", "가수원동"}, {"둔산2동", "가수원동", "온천1동"}, store) == []

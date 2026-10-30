@@ -31,6 +31,7 @@
   ⒠ 폐업 년월이 파일 이름의 달과 다르다
   ⒡ **달 파일이 빠졌다** — 2025-01 부터 「받은 날의 달 − 1」까지 매달 파일이 하나씩 있어야 한다(대전시는 폐업이 없는 달도
      머리줄만 든 파일을 낸다 — 2026-10-28 실측 149파일 = 149달). 받은 날이 오늘보다 뒤여도 멈춘다(폴더 이름 오타).
+     파일 중 가장 늦은 달이 받은 날의 달보다 뒤여도 멈춘다(폴더 이름을 과거로 잘못 적은 날 — 같은 달은 허용).
      ⛔ 통째 교체라서 — 몇 달만 받아 넣으면 나머지 달이 DB 에서 사라진다.
   ⒢ **반대 방향 동** — 땅 → 동 지도에 쓰인 동 이름이 대전시 원본(아무 달·업종)에 하나라도 없으면 멈춘다 · 소진공 csv 에서
      동 **이름 하나가 행정동코드 둘 이상**에 걸려도 멈춘다(동이 나뉘거나 이름이 바뀐 날 — 사람이 씨앗·지도를 본다).
@@ -187,6 +188,10 @@ def file_problems(file_yms, received, today):
     bad = []
     if received > today:
         bad.append("⒡ 받은 날 {} 이 오늘 {} 보다 뒤입니다 — 폴더 이름을 확인하세요".format(received, today))
+    latest, recv_ym = max(file_yms, default=None), received.strftime("%Y%m")
+    if latest is not None and latest > recv_ym:
+        bad.append("⒡ 파일 중 가장 늦은 달 {} 이 받은 날 {} 의 달보다 뒤입니다 — 폴더 이름(받은 날)을 확인하세요"
+                   .format(latest, received))
     gaps = month_gaps(file_yms, received)
     if gaps:
         bad.append("⒡ 빠진 달 파일 {}개 {} — 2025-01 부터 지난달까지 **전부 다시** 받아야 한다(통째 교체)"

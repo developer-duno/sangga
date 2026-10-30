@@ -6,11 +6,11 @@ import {
   OPEN_CLOSE_FN,
   RENT_STATS_FN,
 } from '../lib/appConstants';
-import { takePrefetched, type SidePrefetch } from '../lib/sidePrefetch';
+import { settledWithin, takePrefetched, type SidePrefetch } from '../lib/sidePrefetch';
 import { isIndustryMedian, isIndustryMix } from '../lib/industryMix';
 import { isOpenCloseList } from '../lib/openClose';
 import { isRentStatList } from '../lib/rentStats';
-import { parseDaejeonClosure } from '../lib/daejeonClosure';
+import { DAEJEON_CLOSURE_WAIT_MS, parseDaejeonClosure } from '../lib/daejeonClosure';
 import { roleSummaryView, type RoleSummaryInput } from '../lib/roleSummary';
 import type { DaejeonDongClosure, DistrictOpenClose, IndustryMedian, IndustryMix, RentStat } from '../types';
 
@@ -75,9 +75,13 @@ export function RoleSummary({ prefetch, onBeforePrint, ...input }: Props) {
     take(RENT_STATS_FN, 'rent', isRentStatList);
     take(OPEN_CLOSE_FN, 'openClose', isOpenCloseList);
     // 대전 동네 폐업(결정 0044) — 대전 필지에만 미리 보낸 답(서울이면 없음 → 아무것도 안 함). 모양 검사는 카드와 같은 함수.
+    // 기다림 상한(후속 ⓑ) — 카드와 같은 `DAEJEON_CLOSURE_WAIT_MS` 를 **미리 부르기 출발부터** 잰다. 출발은 카드 타이머가 서는
+    // 서울 답보다 늘 먼저라, 여기 받는 답 ⊂ 카드가 받는 답(요약만 숫자, 카드는 옛 문장이 안 생긴다) · 역할을 늦게 골라도
+    // 일찍 온 답은 그대로 쓰고, 늦게 온 답은 언제 골라도 안 쓴다. 타이머가 없어 치울 것도 없다.
     takePrefetched(prefetch, DAEJEON_CLOSURE_FN, pnu)?.then(
       ({ data, error }) => {
-        const row = cancelled || error ? null : parseDaejeonClosure(data);
+        const late = !settledWithin(prefetch, DAEJEON_CLOSURE_FN, pnu, DAEJEON_CLOSURE_WAIT_MS);
+        const row = cancelled || error || late ? null : parseDaejeonClosure(data);
         if (row !== null) setGot((g) => (g.pnu === pnu ? { ...g, daejeon: row } : g));
       },
       () => {},

@@ -56,10 +56,19 @@ export const DAEJEON_PREFETCH_FNS = [DAEJEON_CLOSURE_FN] as const;
 export type SidePrefetch = {
   pnu: string;
   results: ReadonlyMap<string, Promise<RpcResult>>;
+  /**
+   * 출발 시각(`Date.now()` ms)과 함수마다 답(성공·실패)이 온 시각 — 역할 요약 판이 대전 답의 기다림 상한을
+   * **출발부터** 재는 데 쓴다(결정 0044 후속 ⓑ · `settledWithin`). 카드가 받는 `results` 는 그대로다.
+   * 시험이 손으로 만든 판에는 없다(그땐 `settledWithin` 이 false).
+   */
+  startedAt?: number;
+  settledAt?: ReadonlyMap<string, number>;
 };
 
 export function startSidePrefetch(pnu: string): SidePrefetch {
   const results = new Map<string, Promise<RpcResult>>();
+  const startedAt = Date.now();
+  const settledAt = new Map<string, number>();
   const fns: readonly string[] = isDaejeonPnu(pnu) ? [...SIDE_PREFETCH_FNS, ...DAEJEON_PREFETCH_FNS] : SIDE_PREFETCH_FNS;
   for (const fn of fns) {
     // `.then` 을 **지금 한 번** 불러 요청을 출발시킨다(`Promise.resolve(빌더)` 는 다음
@@ -70,9 +79,29 @@ export function startSidePrefetch(pnu: string): SidePrefetch {
     // 거부된 Promise 가 "처리 안 된 거부"로 콘솔을 어지럽히지 않게 빈 처리만 붙인다
     // (카드가 받는 `p` 자체는 그대로라 카드 쪽 동작은 지금과 같다).
     p.catch(() => {});
+    // 답이 온 시각 — 받는 쪽보다 **먼저** 붙여 두어 받는 쪽 콜백이 돌 때는 이미 적혀 있다(같은 Promise 의 반응은 붙인 순서대로).
+    const mark = () => {
+      settledAt.set(fn, Date.now());
+    };
+    p.then(mark, mark);
     results.set(fn, p);
   }
-  return { pnu, results };
+  return { pnu, results, startedAt, settledAt };
+}
+
+/**
+ * 이 필지·이 함수의 미리 보낸 답이 **출발 뒤 waitMs 안에** 왔나(결정 0044 후속 ⓑ). 답을 받은 콜백 안에서 부른다
+ * — 아직 안 왔거나, 다른 필지 것이거나, 시각 기록이 없는 판이면 false.
+ */
+export function settledWithin(
+  prefetch: SidePrefetch | null | undefined,
+  fn: string,
+  pnu: string,
+  waitMs: number,
+): boolean {
+  if (!prefetch || prefetch.pnu !== pnu || prefetch.startedAt === undefined) return false;
+  const at = prefetch.settledAt?.get(fn);
+  return at !== undefined && at - prefetch.startedAt < waitMs;
 }
 
 /** 이 함수·이 필지의 미리 보낸 결과. 없거나 다른 필지 것이면 null(그때 카드는 스스로 묻는다). */
