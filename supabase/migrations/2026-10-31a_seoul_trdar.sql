@@ -71,7 +71,7 @@
 -- ------------------------------------------------------------------------
 --   select count(*) from api.get_data_freshness();                                  -- 14
 --   select src, basis_kind, basis, next_expected from api.get_data_freshness() where src like '상권 %(서울시)';
---     → 적재 뒤: 추정매출·길단위인구 = 20262 · 2026-11-30 / 상주·직장 = 「상주 2023년 4분기 · 직장 2024년 4분기」 · null
+--     → 적재 뒤: 추정매출·길단위인구 = 20262 · 2026-10-31(20263 이면 2027-01-31) / 상주·직장 = 「상주 2023년 4분기 · 직장 2024년 4분기」 · null
 --   select tbl, max_quarter, value_quarter from seoul_trdar_release order by tbl;
 --   select status, district_nm, latest_quarter, rest_cnt from api.list_district_sales('<서울 상권 안 필지>');
 --   select status, flow_quarter, resident_value_quarter, worker_value_quarter from api.list_district_pop('<같은 필지>');
