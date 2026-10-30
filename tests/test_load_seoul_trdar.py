@@ -207,6 +207,15 @@ def test_value_quarter_ignores_districts_on_one_side(tmp_path, small_ranges):
     assert L.changed_districts({D1: (1,)}, {D1: (2,), D2: (2,)}) == 1
 
 
+def test_new_district_alone_does_not_move_the_value_quarter(tmp_path, small_ranges):
+    """양성 대조 짝 — ① 상권 하나가 마지막 분기에 새로 생기기만 하고 값은 그대로 → 첫 분기 그대로 ·
+    ② 같은 자료에서 값 하나만 바꾸면 → 그 분기."""
+    rep = scan_three(tmp_path / "a", "resident", (10.0, 10.0, 10.0), extra_last=True)
+    assert rep["value_quarter"] == "20211" and rep["changes"] == {"20212": 0, "20213": 0}
+    rep = scan_three(tmp_path / "b", "resident", (10.0, 10.0, 12.0), extra_last=True)
+    assert rep["value_quarter"] == "20213" and rep["changes"]["20213"] == 1
+
+
 def test_value_quarter_for_sales_compares_all_industries(tmp_path, small_ranges):
     for q, v in zip(("20211", "20212"), (10.0, 10.0)):
         write_q(tmp_path, "sales", q, [raw_row("sales", q, D1, v), raw_row("sales", q, D1, v, "CS100002")])

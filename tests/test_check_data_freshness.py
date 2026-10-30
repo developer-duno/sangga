@@ -1138,3 +1138,24 @@ def test_mixed_issue_goes_through_the_workflow_issue_step_for_real(monkeypatch, 
     assert res.returncode == 0, said
     assert not (tmp_path / "created.txt").exists() or \
         (tmp_path / "created.txt").read_bytes().decode("utf-8").splitlines() == [], said
+
+
+# ── 결정 0045(2026-10-31a) — 서울 상권 4종 줄의 할 일 한 줄 ─────────────────────
+
+
+def test_seoul_trdar_hints_for_sales_and_flow_only():
+    """추정매출·길단위인구 두 줄은 같은 할 일(4종 함께 수집 → 적재) · 상주·직장 줄은 예정일이 없어 힌트도 없다.
+    열쇠 글자 = 정본 신선도 함수의 src 글자 그대로(다르면 안내가 조용히 안 나온다)."""
+    schema = open(os.path.join(ROOT, "supabase", "schema.sql"), encoding="utf-8").read()
+    for src in ("상권 추정매출 (서울시)", "상권 길단위인구 (서울시)"):
+        assert "'{}'".format(src) in schema
+        hint = cdf.source_hint(src)
+        assert hint and "collect_seoul_trdar.py --service all" in hint and "load_seoul_trdar.py --dry-run" in hint
+        assert hint.index("--dry-run") < hint.index("post_load.py")
+    assert cdf.source_hint("상권 상주·직장인구 (서울시)") is None
+    today = datetime.date(2026, 12, 1)
+    rows = [row("상권 추정매출 (서울시)", "2026-11-30", basis="20262", basis_kind="분기"),
+            row("건축 인허가", "2026-10-31")]
+    bodies = {i["src"]: cdf.build_issue_body(i, today) for i in cdf.find_overdue(rows, today)}
+    assert "load_seoul_trdar.py" in bodies["상권 추정매출 (서울시)"]
+    assert "load_seoul_trdar.py" not in bodies["건축 인허가"]
