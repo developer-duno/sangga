@@ -566,4 +566,106 @@ describe('RoleSummary — 대전 동네 폐업 (결정 0044 · 지시서 #9)', (
     );
     expect(container.querySelector('.rsum__tile--openclose .rsum__label')?.textContent).toBe('개업·폐업 (서울시 공표)');
   });
+
+  /*
+    기다림 상한(결정 0044 후속 ⓑ) — 요약 칸은 「미리 부르기 출발 + DAEJEON_CLOSURE_WAIT_MS 안에 온 답」만 쓴다.
+    ⓘ 가짜로 만드는 것은 Date 하나뿐 — 출발·답 온 시각을 `Date.now()` 로 잰다(sidePrefetch). setTimeout 은 진짜라
+      waitFor 가 돌고, 카드의 8초 타이머(서울 답 뒤 시작)는 시험 안에서 안 끝난다 → 카드는 답을 받는다(카드 ⊇ 요약을 함께 본다).
+  */
+  describe('기다림 상한 — 출발부터 잰다(결정 0044 후속 ⓑ)', () => {
+    const T0 = new Date('2026-10-31T00:00:00Z').getTime();
+    const SEOUL_TEXT = '서울 상권만 다루는 자료라 이 건물(대전)에는 없습니다';
+
+    function gated(): Deferred {
+      const gate = deferred();
+      const base = side({ data: null, error: null });
+      state.side = (fn, pnu) => (fn === 'get_daejeon_dong_closure' ? gate.promise : base(fn, pnu));
+      return gate;
+    }
+    /** 출발 뒤 ms 에 대전 답이 온다(그 시각으로 시계를 옮긴 뒤 놓는다). */
+    async function releaseAt(gate: Deferred, ms: number) {
+      vi.setSystemTime(T0 + ms);
+      await act(async () => {
+        gate.resolve({ data: [djOk], error: null });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    }
+    const tileText = (c: HTMLElement) => c.querySelector('.rsum__tile--openclose')?.textContent ?? '';
+    /** 카드가 대전 답을 받아 대전 카드로 섰다. */
+    const cardTookIt = () => screen.findByText('동네 폐업 (대전시 공표)', { selector: '.card__h *, .card__h' });
+
+    /** 대전 건물(D · 흉내 답 꼬리 '나')의 곁 카드가 선 뒤까지. */
+    async function settleD() {
+      await screen.findByText('임대상권나', { selector: '.rent__where' });
+      await act(async () => {});
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(T0);
+      state.floors.set(D.bld_id, floorsOf(D));
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('★ 출발 7.9초에 온 답 → 요약 칸에 「폐업 378건 …」', async () => {
+      const gate = gated();
+      const { container } = render(<FloorStack building={building(D)} viewerRole="창업자" />);
+      await settleD();
+      await waitFor(() => expect(tileText(container)).toContain(SEOUL_TEXT));
+      await releaseAt(gate, 7900);
+      await waitFor(() => expect(tileText(container)).toContain('폐업 378건 · 2025년 4분기~2026년 1분기(가게 업종)'));
+      expect(container.querySelector('.rsum__tile--openclose .rsum__label')?.textContent).toBe('동네 폐업 (대전시 공표)');
+    });
+
+    it('★ 출발 8.1초에 온 답 → 대전 칸 없음(카드는 받는다 — 요약이 받는 답 ⊂ 카드가 받는 답)', async () => {
+      const gate = gated();
+      const { container } = render(<FloorStack building={building(D)} viewerRole="창업자" />);
+      await settleD();
+      await releaseAt(gate, 8100);
+      await cardTookIt();
+      expect(tileText(container)).not.toContain('폐업 378건');
+      expect(tileText(container)).toContain(SEOUL_TEXT);
+      expect(container.querySelector('.rsum__tile--openclose .rsum__label')?.textContent).toBe('개업·폐업 (서울시 공표)');
+    });
+
+    it('상한 전에 화면이 사라지면 → 늦은 답이 와도 경고·오류 0', async () => {
+      const gate = gated();
+      const { unmount } = render(<FloorStack building={building(D)} viewerRole="창업자" />);
+      await settleD();
+      vi.mocked(console.warn).mockClear();
+      vi.mocked(console.error).mockClear();
+      unmount();
+      await releaseAt(gate, 3000);
+      expect(console.warn).not.toHaveBeenCalled();
+      expect(console.error).not.toHaveBeenCalled();
+    });
+
+    it('★ 역할을 늦게 골라도 — 출발 3초에 온 답 → 10초에 창업자를 고르면 보인다', async () => {
+      const gate = gated();
+      const b = building(D);
+      const { container, rerender } = render(<FloorStack building={b} viewerRole={null} />);
+      await settleD();
+      await releaseAt(gate, 3000);
+      await cardTookIt();
+      vi.setSystemTime(T0 + 10_000);
+      rerender(<FloorStack building={b} viewerRole="창업자" />);
+      await waitFor(() => expect(tileText(container)).toContain('폐업 378건'));
+    });
+
+    it('★ 역할을 먼저 골라도 — 2초에 창업자를 고르고 출발 9초에 답이 오면 안 보인다', async () => {
+      const gate = gated();
+      const b = building(D);
+      const { container, rerender } = render(<FloorStack building={b} viewerRole={null} />);
+      await settleD();
+      vi.setSystemTime(T0 + 2000);
+      rerender(<FloorStack building={b} viewerRole="창업자" />);
+      await waitFor(() => expect(tileText(container)).toContain(SEOUL_TEXT));
+      await releaseAt(gate, 9000);
+      await cardTookIt();
+      expect(tileText(container)).not.toContain('폐업 378건');
+    });
+  });
 });

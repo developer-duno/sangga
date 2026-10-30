@@ -3172,3 +3172,10 @@ pytest **4,457 passed**(본 폴더) · vitest **960 passed** · tsc 0 · oxlint 
 - **시험**(전체 실행 한 번씩 · 2026-10-29): pytest 5,817 passed · 3 skipped(워크트리 원본 없음 · 새 `test_load_daejeon8989_closure.py` 49 · `test_daejeon_dong_closure_migration.py` 77 — 로컬 PostgreSQL 통째 실행 포함 · 옛 시험 열 개는 총계 34·신선도 대조 판을 10-29a 로) · vitest 79파일 1,969 passed(새 `daejeonClosure.test` 25 · OpenCloseSection +13 · RoleSummary +2 · roleSummary +1) · E2E 84개 177회(175 passed · 2 skipped · 새 CM) · tsc -b 0 · oxlint 0 · ruff 0.
 - **운영 적용 순서**(메인이 👤께 여쭌 뒤): ① `dbx.py -f supabase/migrations/2026-10-29a_daejeon_dong_closure.sql` ② `load_daejeon8989_closure.py --raw-dir data/raw/daejeon_8989/20261028 --dry-run` → 실적재 ③ `post_load.py` · `--check` ④ 화면 머지 · 그 사이 main 판 `--check` 는 [사고] 둘(허용 목록 · 신선도 함수 정본 대조)이 정상.
 - **다음**: 전/후 캡처(👤 확인 — 접힌 요약 글 · 날짜 줄 · 막대 위 건수 · 업종 표 머리 · 요약 칸 문구) → 검사관 → 운영 적용.
+
+## 2026-10-31 — 결정 0044 후속 셋 (#372 재검사 🟡 · 가지 fix/daejeon-followups · DB·운영 적재 변경 0)
+
+- **ⓐ 받은 날 관문**: 적재기 `file_problems` 가 「파일 중 가장 늦은 달 > 받은 날의 달」이면 멈춘다(⒡ — 폴더 이름을 과거로 잘못 적은 날(20251028 ← 20261028)엔 빠진 달 검사 범위가 짧아져 첫 적재가 통과하고 창·신선도 줄이 틀린 날을 썼다 · 같은 달은 허용 · 파일 0개는 ⒜ 몫).
+- **ⓑ 요약 칸 8초**: 역할 요약 판(창업자)의 대전 칸이 기다림 상한 없이 늦은 답도 받아, 아주 느린 망에서 요약은 「폐업 378건」·카드는 옛 문장이 될 수 있었다. 게다가 역할은 건물을 연 채 고를 수 있어 요약 칸 타이머가 카드(서울 답 뒤 시작)보다 늦게 설 수 있었다 → 미리 부르기(`sidePrefetch.ts`)가 출발 시각·답 온 시각을 따로 적고(`startedAt`·`settledAt` · 카드가 받는 Promise 는 그대로) 요약 칸은 「출발 + `DAEJEON_CLOSURE_WAIT_MS` 안에 온 답」만 쓴다(`settledWithin` · 타이머 0). 출발은 서울 답보다 먼저라 요약이 받는 답 ⊂ 카드가 받는 답.
+- **ⓒ 받는 법 한 줄**: 결정 0044 「받는 법」 3번 아래 — 달 초엔 지난달 파일이 아직 없을 수 있다 → ⒡ 「빠진 달」로 멈추면 며칠 뒤 다시 받는다(언제 내는지는 아직 못 잼).
+- **시험**(전체 실행 한 번씩 · 2026-10-31): pytest 5,829 passed · 3 skipped(새 `test_f_latest_file_month_after_received` 1) · vitest 79파일 1,979 passed(RoleSummary 기다림 상한 5 · 미리 부르기 시각 기록 1) · build 0 · oxlint 0 · ruff 0 · 변이 둘(관문 지움 → 새 시험 빨강 · 「출발 + 8초」 비교 지움 → 8.1초·9초·미리 부르기 시험 빨강).
