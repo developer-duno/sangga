@@ -38,8 +38,10 @@
 -- ----
 -- 새 표·새 색인·새 함수 만들기와 함수 교체(create or replace)뿐이라 이미 있는 표를 ACCESS EXCLUSIVE 로 잠그는
 -- 문장이 없다(PostgreSQL 17 문서 13.3 표 — tests/test_migration_lock_timeout_guard.py 도 그렇게 본다). 다만 새 표의
--- `references district` 는 district 에 SHARE ROW EXCLUSIVE 를 잡는다(같은 표 — 화면 읽기는 안 막고 district 에
--- 쓰는 적재와만 줄을 선다). 형제(2026-10-05b · 2026-10-29a) 관습대로 기다림의 상한 `lock_timeout = '2s'` 를
+-- `references district` 는 district 에 SHARE ROW EXCLUSIVE 를 잡는다(화면 읽기는 안 막고 district 에 쓰는 적재와만
+-- 줄을 선다). 공식 문서(https://www.postgresql.org/docs/17/sql-altertable.html · 2026-10-31 확인): "Note that ADD
+-- FOREIGN KEY also acquires a SHARE ROW EXCLUSIVE lock on the referenced table, in addition to the lock on the table
+-- on which the constraint is declared." 형제(2026-10-05b · 2026-10-29a) 관습대로 기다림의 상한 `lock_timeout = '2s'` 를
 -- **begin 앞**(세션 설정)에 둔다 — 2초 넘게 못 잡으면 통째로 되돌아간다(다시 돌리면 된다 · 전부 멱등).
 --
 -- ⛔ 전부 아니면 전무 — `begin; … commit;`
