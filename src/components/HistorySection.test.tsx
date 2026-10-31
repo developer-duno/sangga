@@ -254,3 +254,23 @@ describe('HistorySection — 필지 바뀜 · 어긋남 줄', () => {
     expect(same.container.querySelector('.hist__lag')).toBeNull();
   });
 });
+
+describe('HistorySection — 보완 1 F-2 줄 key', () => {
+  it('보이는 칸이 전부 같은 줄 둘(같은 가게가 번호 둘)도 둘 다 그리고, 더 보기 뒤에도 그대로', async () => {
+    const twin = row(0, { biz_name: '쌍둥이가게', first_ym: '201903', last_ym: '202312', seen_cnt: 20, is_current: false });
+    const first = [...ALL.slice(0, 6), twin, twin, ...ALL.slice(8, 20)].map((r) => ({ ...r, total_cnt: 22 }));
+    const second = ALL.slice(20, 22).map((r) => ({ ...r, total_cnt: 22 }));
+    state.history = (args) => ({ data: Number(args.p_offset ?? 0) > 0 ? second : first, error: null });
+    // React 는 겹친 key 를 콘솔 오류로만 알리고 일단 둘 다 그린다 — 그 오류가 0 이어야 한다(겹치면 다음 갱신 때 줄이 뒤섞인다).
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { container } = render(<HistorySection pnu={PNU} />);
+    await waitFor(() => expect(container.querySelector('.hist__more')).not.toBeNull());
+    const twins = () => [...container.querySelectorAll('.hist__nm')].filter((n) => n.textContent === '쌍둥이가게');
+    expect(twins()).toHaveLength(2);
+    fireEvent.click(container.querySelector('.hist__more')!);
+    await waitFor(() => expect(container.querySelectorAll('.hist__row')).toHaveLength(22));
+    expect(twins()).toHaveLength(2);
+    const keyWarnings = err.mock.calls.filter((c) => c.some((a) => String(a).includes('same key')));
+    expect(keyWarnings).toEqual([]);
+  });
+});

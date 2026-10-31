@@ -975,7 +975,7 @@ test.describe('화면 아래 — 어디까지 믿을지와 한마디 남기는 �
     //    화면에 박아 두면 적재하는 순간부터 그 글자만 거짓말을 한다.
     const fresh = foot.locator('section.fresh');
     await expect(fresh.getByRole('heading', { name: '이 자료는 언제 것인가' })).toBeVisible();
-    await expect(fresh.locator('tbody tr')).toHaveCount(10); // 결정 0041 로 성적표 줄을 뺀 열 줄
+    await expect(fresh.locator('tbody tr')).toHaveCount(11); // 결정 0041 로 성적표 줄을 뺀 열 줄 + 가게 이력 줄(결정 0045 PR④ 보완 1 F-9)
     await expect(fresh.getByText('점포·업종 (상권정보)')).toBeVisible();
     // '202606' 이 사람 말로 바뀌어 실린다(원본을 그대로 찍지 않는다).
     await expect(fresh.getByText('2026년 2분기').first()).toBeVisible();
@@ -6966,6 +6966,8 @@ test.describe('층별 스택뷰 — 가게 이력 카드 (결정 0045 PR④)', (
       '지금 보이는 가게 6곳 · 전에 보였던 가게 17곳 · 2017년 4분기부터 점포 자료 35분기',
     );
     await expect(hist).not.toHaveClass(/card--empty/);
+    // 날짜 줄(보완 1 F-9) — 가짜 신선도 표의 가게 이력 줄이 점포 줄과 같은 분기라 어긋남 줄은 없다.
+    await expect(hist.locator('.card__src')).toContainText('점포 자료 누적(소상공인시장진흥공단) 2026년 2분기');
     // 첫 쪽은 미리 부르기가 한 번 보냈고 카드는 그 답을 받는다(인자 `{ p_pnu }` 하나 · 다시 안 묻는다).
     expect(asked).toEqual([{ p_pnu: searchHit().pnu }]);
 
@@ -6986,6 +6988,12 @@ test.describe('층별 스택뷰 — 가게 이력 카드 (결정 0045 PR④)', (
     // 더 보기 — 서버 넘기기(p_offset 20) · 다 받으면 단추 없음.
     const more = hist.locator('.hist__more');
     await expect(more).toHaveText('더 보기 (남은 3곳)');
+    // 보완 1 F-1 — 누르기 전(20줄 + 단추) 종이에는 단추가 없다(누르는 장치) · 받은 20줄은 나온다.
+    await page.emulateMedia({ media: 'print' });
+    await expect(more).toBeHidden();
+    await expect(hist.locator('.hist__row:visible')).toHaveCount(20);
+    await page.emulateMedia({ media: null });
+    await expect(more).toBeVisible();
     await more.click();
     await expect(hist.locator('.hist__row')).toHaveCount(23);
     await expect(more).toHaveCount(0);

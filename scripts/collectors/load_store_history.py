@@ -20,7 +20,7 @@
   ⒡ (biz_no_last, last_ym) 중복 0 (표의 주 열쇠 · biz_no_last 빈 칸도 여기서 멈춘다) — 한 분기에 같은 번호는 한 줄이라
      사슬마다 (마지막 번호, 마지막 분기)가 늘 다르다. (biz_no_last, first_ym) 은 같은 가게가 번호 둘로 동시에 올라 있다
      한쪽만 돌아오면 겹칠 수 있다(10-31 빌드 17건 + 본사 번호 이동 2건 — 자료 성질 · 메인 판정 2026-10-31).
-  ⒢ 행수 범위 ROWS_RANGE · 지금 보이는 줄 수 CURRENT_RANGE
+  ⒢ 행수 범위 ROWS_RANGE · 지금 보이는 줄 수 CURRENT_RANGE(넓은 안전망 — 정밀 대조는 DB 안 ⒧)
   ⒣ meta rows = csv 줄 수 · meta sha256 = csv 지문
   ⒤ floor_no = 빈 칸(층 모름) 또는 0 아닌 정수 (절대 규칙 4 · DB check 와 같은 기준 — 범위는 층 정규화 정본을 믿는다:
      운영 unit_business 202606 에도 −40·−26·−18·−17 이 있다 · 메인 판정 2026-10-31)
@@ -28,6 +28,9 @@
   ⒦ (DB 안 · 실적재 SQL 안) meta end_ym = snapshot_release.loaded_ym — 아니면 raise → 통째 롤백.
      「최신 분기 = unit_business 에 적재된 최신 분기」를 **표지로** 읽는다 — 270만 행 max(snapshot_ym) 를 훑지 않고,
      결정 0035 가 「다 들어온 분기」로 정한 칸이 바로 그 값이다(전국 모드 적재 + 교차검증을 지나야 올라간다).
+  ⒧ (DB 안 · 보완 1 F-6) 결과표의 지금 보이는 줄 수 vs 점포 표 그 분기(loaded_ym) · 그 시·도 줄 수 — 차이가 0.5% 를 넘으면
+     raise → 통째 롤백. 둘은 같은 분기·같은 점포를 센다(10-31 실측 634,770 = 554,069 + 80,701 정확히 같음) — 크게 다르면
+     다른 판의 zip 으로 구웠거나 점포 적재가 반쪽이다.
 
 잠금
 ----
@@ -73,8 +76,11 @@ RE_INT = re.compile(r"^-?\d+$")
 EXPECT_SIDO = ["11", "30"]
 EXPECT_START_YM = "201712"
 # 조사 C(2026-10-31): 오늘 가게 서울 554,092 + 대전 80,704 = 634,796 · DB 202606 서울 554,069 + 대전 80,701
+# ⓘ CURRENT_RANGE 는 분기 변동에 멈추지 않게 넓은 안전망이다(보완 1 F-6) — 정밀 대조는 DB 안 ⒧(점포 표와 0.5% 안).
 ROWS_RANGE = (900_000, 2_000_000)
-CURRENT_RANGE = (600_000, 680_000)
+CURRENT_RANGE = (500_000, 900_000)
+# ⒧ 의 허용 차이(비율) — 결과표 지금 보이는 줄 vs 점포 표 그 분기·그 시·도 줄.
+CURRENT_MATCH_TOL = 0.005
 EXAMPLES = 3
 
 
@@ -280,6 +286,20 @@ begin
   end if;
 end $$;
 
+-- ── 관문 ⒧ — 결과표 지금 보이는 줄 수 = 점포 표 그 분기·그 시·도 줄 수(0.5% 안 · 보완 1 F-6) ─────────
+do $$
+declare
+  v_hist bigint;
+  v_ub   bigint;
+begin
+  select count(*) into v_hist from stage_history where is_current;
+  select count(*) into v_ub from unit_business
+   where snapshot_ym = (select loaded_ym from snapshot_release) and left(pnu, 2) in ({sido_list});
+  if v_ub = 0 or abs(v_hist - v_ub) > v_ub * {tol} then
+    raise exception '⒧ 결과표 지금 보이는 줄 % ≠ 점포 표 그 분기 줄 % (허용 {tol_pct}) — 다른 판으로 구웠거나 점포 적재가 반쪽입니다(통째로 되돌립니다)', v_hist, v_ub;
+  end if;
+end $$;
+
 -- 통째 교체 — 결과표는 매 분기 통째 다시 굽는다(결정 0045). 우리 표 · 읽는 곳은 함수 하나.
 truncate store_history;
 insert into store_history ({cols})
@@ -306,7 +326,9 @@ select count(*) as history_rows,
 
 commit;
 """.format(cols=cols, path=copy_path_literal(path), rows=int(rows), start_ym=meta["start_ym"],
-           end_ym=meta["end_ym"], built_on=meta["built_on"])
+           end_ym=meta["end_ym"], built_on=meta["built_on"],
+           sido_list=", ".join("'{}'".format(s) for s in meta["sido"]),
+           tol=CURRENT_MATCH_TOL, tol_pct="{:.1f}%".format(CURRENT_MATCH_TOL * 100))
 
 
 # ── 메인 ─────────────────────────────────────────────────────────────────────
@@ -353,6 +375,8 @@ def main(argv=None):
         return 1
     print("  관문 통과 (⒜ · ⒝ · ⒞ · ⒟ · ⒠ · ⒡ · ⒢ · ⒣ · ⒤ · ⒥)")
     print("  ⒦ (마지막 분기 {} = snapshot_release.loaded_ym) 는 실적재 때 DB 안에서 본다".format(meta["end_ym"]))
+    print("  ⒧ (지금 보이는 줄 {:,} ≈ 점포 표 그 분기·그 시·도 줄 · {:.1f}% 안) 도 실적재 때 DB 안에서 본다".format(
+        stats["current"], CURRENT_MATCH_TOL * 100))
 
     if a.dry_run:
         print()

@@ -1909,6 +1909,13 @@ class TestStoreHistoryRelease:
         assert out.startswith("[주의] 가게 이력 표지 202603 ≠ 보여 주는 분기 202606")
         assert "build_store_history.py → load_store_history.py" in out
 
+    def test_history_ahead_says_post_load_will_lift_it(self, monkeypatch, capsys):
+        """보완 1 F-5 — 이력이 보여 주는 분기보다 앞이면(이력 적재 ~ post_load 사이) 다시 굽지 말라고 안내한다."""
+        out = self._run(monkeypatch, capsys, "201712|202609|1400000|2026-12-01#202606")
+        assert out.startswith("[주의] 가게 이력 표지 202609 > 보여 주는 분기 202606")
+        assert "post_load.py 가 분기 표지를 올리면 풀립니다" in out
+        assert "build_store_history.py" not in out
+
     def test_same_quarter_is_normal(self, monkeypatch, capsys):
         out = self._run(monkeypatch, capsys, "201712|202606|1366004|2026-10-31#202606")
         assert out == "[정상] 가게 이력 표지 202606 = 보여 주는 분기 (줄 1366004 · 빌드 2026-10-31 · 시작 201712)"

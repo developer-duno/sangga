@@ -318,6 +318,8 @@ class TestTablesShape:
         for sql in (mig, schema):
             line = biz_no_comment(sql)
             assert "95~99%" in line and "store_history" in line and "2017Q3" in line
+            # 보완 1 F-7 — 끊긴 분기는 2024Q4 · 20220806 은 발급일 도장(끊기는 자리라고 쓰지 않는다).
+            assert "2024Q4 대량 재발급" in line and "발급일 도장" in line and "2022-08 일괄" not in line
             assert BIZ_NO_OLD not in statements(sql)
 
 

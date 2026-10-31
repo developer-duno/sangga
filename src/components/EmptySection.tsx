@@ -3,7 +3,7 @@ import { emptyCardText, type EmptyCardKey } from '../lib/emptyCards';
 import { SectionCard } from './SectionCard';
 
 /**
- * 빈 카드 하나 — 업종별 추정매출 · 유동인구 · 이 자리 가게 이력(결정 0036 결정 2 · 물결 1-B).
+ * 빈 카드 하나 — 빈 카드 둘(서울 밖 업종별 추정매출 · 유동인구 — 결정 0036 결정 2 · 물결 1-B · 가게 이력은 2026-11-01 부터 제 카드).
  *
  * ⛔ **아무것도 부르지 않는다**(서버 함수 0 · `sidePrefetch` 0) — 글은 `lib/emptyCards.ts` 가 pnu 로 고른다.
  * ⛔ **종이에서는 빠진다**(👤 2026-10-11) — `card--empty` 를 단 동안만 `styles.css` 의 `@media print` 가

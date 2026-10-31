@@ -1073,6 +1073,10 @@ def judge_store_history_release(first_ym, last_ym, row_cnt, built_on, published_
     """가게 이력 표지 판정 — (수준, 말) 한 줄(순수 함수). 수준은 '주의' 또는 '정상'."""
     if not last_ym:
         return ("주의", "가게 이력 표지 없음 — 적재 전(마이그레이션만 들어간 상태)")
+    if published_ym and last_ym > published_ym:
+        # 보완 1 F-5 — 이력이 앞이면(이력 적재 ~ post_load 사이) 다시 굽지 말고 표지만 올리면 된다.
+        return ("주의", "가게 이력 표지 {} > 보여 주는 분기 {} — 이력이 먼저 들어왔습니다. python scripts/post_load.py 가 "
+                       "분기 표지를 올리면 풀립니다(결정 0045 표지 예외)".format(last_ym, published_ym))
     if last_ym != published_ym:
         return ("주의", "가게 이력 표지 {} ≠ 보여 주는 분기 {} — 새 분기 적재 뒤 python scripts/build_store_history.py → "
                        "load_store_history.py 를 돌리세요(결정 0045 표지 예외)".format(last_ym, published_ym or "(없음)"))

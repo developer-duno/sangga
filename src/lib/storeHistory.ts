@@ -37,6 +37,11 @@ function isYm(v: unknown): v is string {
   return typeof v === 'string' && RE_YM.test(v);
 }
 
+/** 숫자 글 — 천 단위 쉼표(형제 `openClose.ts` 와 같은 `toLocaleString('ko-KR')` · 보완 1 F-3). */
+export function countText(n: number): string {
+  return n.toLocaleString('ko-KR');
+}
+
 function isNonNegInt(v: unknown): v is number {
   return typeof v === 'number' && Number.isInteger(v) && v >= 0;
 }
@@ -94,8 +99,8 @@ export function historySummary(rows: StoreHistoryRow[]): string {
   }
   const gone = head.total_cnt - head.current_cnt;
   const k = quartersBetween(head.history_first_ym, head.history_last_ym);
-  const parts = [`지금 보이는 가게 ${head.current_cnt}곳`];
-  if (gone > 0) parts.push(`전에 보였던 가게 ${gone}곳`);
+  const parts = [`지금 보이는 가게 ${countText(head.current_cnt)}곳`];
+  if (gone > 0) parts.push(`전에 보였던 가게 ${countText(gone)}곳`);
   parts.push(`${start}부터 점포 자료 ${k}분기`);
   return parts.join(' · ');
 }
@@ -113,12 +118,18 @@ export function rowText(row: StoreHistoryRow): BoldText {
     }
     return { pre: '자료에 ', bold: span, post: ` 보임 · ${formatQuarter(row.first_ym)}부터` };
   }
+  // 한 분기만 보인 지난 줄은 「○년 ○분기에만 보임」(지금 보이는 1분기 줄의 「○년 ○분기에 처음」과 짝 · 보완 1 F-4).
+  if (row.first_ym === row.last_ym && !row.truncated) {
+    return { pre: `${formatQuarter(row.first_ym)}에만 보임`, bold: '', post: '' };
+  }
   return { pre: `${formatQuarter(row.first_ym)} ~ ${formatQuarter(row.last_ym)} 보임 · `, bold: '', post: span };
 }
 
 /**
  * 어긋남 줄 — 이력의 마지막 분기가 신선도 표 「점포·업종 (상권정보)」 줄의 기준 분기(보여 주는 분기)와 다를 때만
  * (결정 0045 「표지의 예외」 3 · 숨기지 않는다). 표를 못 받았거나 그 줄이 없거나 꼴이 아니면 null(거짓 경고 0).
+ * ⓘ 방향을 가른다(보완 1 F-5) — 이력이 **뒤**면 「이 이력은 ○까지입니다」, 이력이 **앞**이면(이력 적재 ~ post_load
+ *    사이 몇 분 · 다른 카드가 아직 옛 분기) 「점포 자료가 갱신되는 중입니다 — …」.
  */
 export function lagText(rows: StoreHistoryRow[], freshness: DataFreshnessRow[] | null): BoldText | null {
   if (!freshness || rows.length === 0) return null;
@@ -126,6 +137,13 @@ export function lagText(rows: StoreHistoryRow[], freshness: DataFreshnessRow[] |
   const basis = store?.basis ?? null;
   const last = rows[0].history_last_ym;
   if (!isYm(basis) || basis === last) return null;
+  if (last > basis) {
+    return {
+      pre: '점포 자료가 갱신되는 중입니다 — 이 이력은 ',
+      bold: formatQuarter(last),
+      post: `까지 들어 있습니다 (다른 카드는 ${formatQuarter(basis)})`,
+    };
+  }
   return { pre: '이 이력은 ', bold: formatQuarter(last), post: `까지입니다 (점포 자료는 ${formatQuarter(basis)})` };
 }
 
@@ -156,5 +174,5 @@ export function groupCounts(rows: StoreHistoryRow[]): { current: number; gone: n
 
 /** 「더 보기」 단추 글 — 남은 수 = 그 땅 전체 − 받은 줄 수. */
 export function moreText(received: number, total: number): string {
-  return `더 보기 (남은 ${total - received}곳)`;
+  return `더 보기 (남은 ${countText(total - received)}곳)`;
 }

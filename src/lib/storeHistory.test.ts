@@ -208,6 +208,36 @@ describe('각주 · 묶음 · 단추', () => {
   });
 });
 
+describe('보완 1 — 쉼표 · 한 분기만 보인 지난 줄 · 어긋남 방향', () => {
+  it('F-3 요약·단추 숫자에 천 단위 쉼표', () => {
+    const rows = [okRow({ total_cnt: 2972, current_cnt: 1041 })];
+    expect(historySummary(rows)).toBe('지금 보이는 가게 1,041곳 · 전에 보였던 가게 1,931곳 · 2017년 4분기부터 점포 자료 35분기');
+    expect(moreText(20, 1951)).toBe('더 보기 (남은 1,931곳)');
+  });
+
+  it('F-4 한 분기만 보인 지난 줄은 「○년 ○분기에만 보임」 · 첫 분기부터인 한 분기 줄은 「1분기 이상」 그대로', () => {
+    expect(rowText(okRow({ first_ym: '201903', last_ym: '201903', seen_cnt: 1, is_current: false }))).toEqual({
+      pre: '2019년 1분기에만 보임',
+      bold: '',
+      post: '',
+    });
+    expect(rowText(okRow({ first_ym: '201712', last_ym: '201712', seen_cnt: 1, is_current: false, truncated: true }))).toEqual({
+      pre: '2017년 4분기 ~ 2017년 4분기 보임 · ',
+      bold: '',
+      post: '1분기 이상',
+    });
+  });
+
+  it('F-5 이력이 보여 주는 분기보다 앞이면 「점포 자료가 갱신되는 중입니다」(뒤면 원래 글)', () => {
+    expect(lagText([okRow({ history_last_ym: '202609', last_ym: '202609' })], fresh('202606'))).toEqual({
+      pre: '점포 자료가 갱신되는 중입니다 — 이 이력은 ',
+      bold: '2026년 3분기',
+      post: '까지 들어 있습니다 (다른 카드는 2026년 2분기)',
+    });
+    expect(lagText([okRow({ history_last_ym: '202603', last_ym: '202603' })], fresh('202606'))?.pre).toBe('이 이력은 ');
+  });
+});
+
 // ── 가드 ───────────────────────────────────────────────────────────────────
 
 /** ⓐ 분기·연도 글자(형제 카드 가드와 같은 꼴). 못 보는 것: 숫자를 쪼개 이은 꼴 · 계산으로 만든 연도. */
@@ -259,6 +289,9 @@ function allTexts(): string[] {
     historySummary([NO_DATA]),
     ...THREE.flatMap((r) => Object.values(rowText(r))),
     ...Object.values(lag),
+    // 보완 1 F-4·F-5 갈래도 같은 가드를 지난다.
+    ...Object.values(lagText([okRow({ history_last_ym: '202609', last_ym: '202609' })], fresh('202606'))!),
+    ...Object.values(rowText(okRow({ first_ym: '201903', last_ym: '201903', seen_cnt: 1, is_current: false }))),
     n.source,
     ...n.gone,
     n.name,

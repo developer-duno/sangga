@@ -77,6 +77,7 @@ def test_small_result_passes_dry_run_writes_nothing(tmp_path, small_ranges, caps
     out = capsys.readouterr().out
     assert rc == 0
     assert "관문 통과" in out and "⒦" in out and "실적재 때 DB 안에서" in out
+    assert "⒧ (지금 보이는 줄 2 ≈ 점포 표" in out
     assert "줄 3 · 지금 보임 2 · 층 모름 1" in out
     assert not staging.exists()
     assert "dbx" not in sys.modules
@@ -224,6 +225,12 @@ def test_build_sql_shape():
     assert sql.count("<> 1234 then") == 2
     # ⒦ 는 지우기(truncate) 앞에서 본다
     assert sql.index("⒦") < sql.index("truncate store_history;")
+    # ⒧(보완 1 F-6) — 결과표 지금 보이는 줄 vs 점포 표 그 분기·그 시·도 줄 · 0.5% 넘으면 raise · 지우기 앞.
+    assert "select count(*) into v_hist from stage_history where is_current;" in sql
+    assert ("where snapshot_ym = (select loaded_ym from snapshot_release) and left(pnu, 2) in ('11', '30');" in sql)
+    assert "if v_ub = 0 or abs(v_hist - v_ub) > v_ub * 0.005 then" in sql
+    assert "raise exception '⒧" in sql
+    assert sql.index("raise exception '⒧") < sql.index("truncate store_history;")
 
 
 def test_columns_order():

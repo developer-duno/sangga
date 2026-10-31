@@ -225,7 +225,7 @@ python scripts/collectors/load_daejeon8989_closure.py --raw-dir data/raw/daejeon
 python scripts/collectors/load_daejeon8989_closure.py --raw-dir data/raw/daejeon_8989/<받은 날>             # 가게 업종 33종 · 2025-01 이후만 통째 교체 + 받은 날 (한 트랜잭션) → post_load.py · --check (씨앗에 없는 업종이면 멈춘다 — scripts/seeds/daejeon8989_industries.csv)
 # ↓ 이 자리 가게 이력(결정 0045 PR④ — 로컬 zip 을 읽어 굽고 DB 에는 결과표만). ⛔ 운영 순서: 상권 새 분기 전국 모드 적재 → 빌드 → 이력 적재 → post_load.py
 python scripts/build_store_history.py --reproduce-c   # 조사 C 재현(대전 42분기 · 통과/실패 · 약 3~5분 · DB 0)
-python scripts/build_store_history.py   # ★ 새 분기 전국 모드 적재 뒤 — zip 43개를 읽어 data/derived/store_history/<오늘>.csv(+meta · 약 15분 · DB 0 · git 에 안 넣는다)
+python scripts/build_store_history.py   # ★ 새 분기 전국 모드 적재 뒤 — zip 43개(202609 부터 44개)를 읽어 data/derived/store_history/<오늘>.csv(+meta · 약 15분 · DB 0 · git 에 안 넣는다)
 python scripts/collectors/load_store_history.py --dry-run   # 관문 ⒜~⒥ + 요약 (DB·파일 쓰기 0)
 python scripts/collectors/load_store_history.py             # store_history 통째 교체 + 표지 store_history_release (한 트랜잭션 · 관문 ⒦ = 결과표 마지막 분기 ≠ snapshot_release.loaded_ym 이면 롤백) → post_load.py · --check
 python scripts/load_rone_map.py --dry-run                          # seed → district_rone_map 미리보기(DB 쓰기 0)

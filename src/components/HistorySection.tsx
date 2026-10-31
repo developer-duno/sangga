@@ -13,6 +13,7 @@ import {
   HISTORY_LEAD_BOLD,
   HISTORY_LEAD_MID,
   HISTORY_LEAD_STRONG,
+  countText,
   floorText,
   groupCounts,
   historyNotes,
@@ -100,8 +101,11 @@ export function HistorySection({ pnu, prefetch, plan = SECTION_PLAN.history }: P
   const counts = groupCounts(rows);
   const lag = lagText(rows, freshness);
   const notes = historyNotes(rows);
-  const current = rows.filter((r) => r.is_current);
-  const gone = rows.filter((r) => !r.is_current);
+  // 줄 key = 받은 차례 번호(서버 차례 고정 · 「더 보기」는 뒤에 붙기만 한다 — 보완 1 F-2). 보이는 칸이 전부 같은 줄 둘
+  // (같은 가게가 번호 둘로 올라 있던 꼴)도 둘 다 그린다.
+  const numbered = rows.map((r, i) => ({ r, i }));
+  const current = numbered.filter((x) => x.r.is_current);
+  const gone = numbered.filter((x) => !x.r.is_current);
   const canMore = rows.length < head.total_cnt && !moreDead;
 
   const loadMore = () => {
@@ -156,11 +160,11 @@ export function HistorySection({ pnu, prefetch, plan = SECTION_PLAN.history }: P
       {current.length > 0 && (
         <div className="hist__grp">
           <p className="hist__grp-h">
-            <b>{HISTORY_CURRENT_HEAD}</b> {counts.current}곳
+            <b>{HISTORY_CURRENT_HEAD}</b> {countText(counts.current)}곳
           </p>
           <ul className="hist__rows">
-            {current.map((r) => (
-              <HistoryRow key={`${r.first_ym}-${r.last_ym}-${r.biz_name}-${r.floor_no}`} row={r} />
+            {current.map((x) => (
+              <HistoryRow key={x.i} row={x.r} />
             ))}
           </ul>
         </div>
@@ -168,11 +172,11 @@ export function HistorySection({ pnu, prefetch, plan = SECTION_PLAN.history }: P
       {gone.length > 0 && (
         <div className="hist__grp">
           <p className="hist__grp-h">
-            <b>{HISTORY_GONE_HEAD}</b> {counts.gone}곳 <span className="hist__q">{HISTORY_GONE_HEAD_NOTE}</span>
+            <b>{HISTORY_GONE_HEAD}</b> {countText(counts.gone)}곳 <span className="hist__q">{HISTORY_GONE_HEAD_NOTE}</span>
           </p>
           <ul className="hist__rows">
-            {gone.map((r) => (
-              <HistoryRow key={`${r.first_ym}-${r.last_ym}-${r.biz_name}-${r.floor_no}`} row={r} />
+            {gone.map((x) => (
+              <HistoryRow key={x.i} row={x.r} />
             ))}
           </ul>
         </div>

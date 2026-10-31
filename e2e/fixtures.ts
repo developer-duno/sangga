@@ -518,6 +518,14 @@ export function dataFreshness(): DataFreshnessRow[] {
       next_expected: '2099-12-31',
       cadence: '분기마다',
     },
+    {
+      // 결정 0045 PR④ — 가게 이력(16번 줄 · 점포 줄과 같은 분기 · 보완 1 F-9 — 이력 카드 날짜 줄이 서게).
+      src: '가게 이력 (점포 자료 누적)',
+      basis_kind: '분기',
+      basis: '202606',
+      next_expected: '2099-12-31',
+      cadence: '분기마다 (새 분기 점포 자료를 적재한 뒤 다시 굽는다)',
+    },
   ];
 }
 
