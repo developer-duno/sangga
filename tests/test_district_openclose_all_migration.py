@@ -354,9 +354,10 @@ class TestPermissions:
         assert FN not in post_load.ANON_CALLABLE_ALLOWLIST
         assert "public." + FN not in post_load.ANON_CALLABLE_ALLOWLIST
 
-    def test_allowlist_total_is_34(self):
-        """읽기 4 + 부르기 30 = `--check` 총계 34(2026-10-24b 의 32 에 이 함수 하나 → 33 · 2026-10-29a 결정 0044 대전 동네 폐업이 33 → 34 — 이 마이그레이션 몫 아님)."""
-        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 34
+    def test_allowlist_total_is_36(self):
+        """읽기 4 + 부르기 32 = `--check` 총계 36(2026-10-24b 의 32 에 이 함수 하나 → 33 · 2026-10-29a 결정 0044 대전 동네 폐업이 33 → 34 ·
+        2026-10-31a 결정 0045 서울 4종이 34 → 36 — 둘 다 이 마이그레이션 몫 아님)."""
+        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 36
 
 
 class TestMigrationShape:
