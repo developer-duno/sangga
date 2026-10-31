@@ -165,7 +165,31 @@ def test_dup_biz_first_row_only_and_bad_pnu_and_short_rows_are_counted():
     ])
     rows, counts = B.read_quarter_rows(opener_of(data), "x")
     assert [r[3] for r in rows] == ["첫줄"]
-    assert counts == {"read": 4, "short": 1, "bad_pnu": 1, "dup_biz_no": 1}
+    assert counts == {"read": 4, "short": 1, "bad_pnu": 1, "dup_biz_no": 1, "bad_biz_no": 0, "replaced_chars": 0}
+
+
+def test_g6_blank_biz_no_is_skipped_and_counted():
+    """보완 2 G-6 — 빈 상가업소번호 줄은 건너뛰고 센다(빈 번호 둘이 한 사슬로 이어지지 않게)."""
+    data = csv_bytes([(" ", "빈번호가게", "", P1, "1"), ("", "또빈번호", "", P1, "2"), ("A1", "정상", "", P1, "1")])
+    rows, counts = B.read_quarter_rows(opener_of(data), "x")
+    assert [r[0] for r in rows] == ["A1"]
+    assert counts["bad_biz_no"] == 2
+
+
+def test_g6_replaced_chars_are_counted():
+    """보완 2 G-6 — 첫 줄은 utf-8 인데 본문에 cp949 바이트가 섞이면 U+FFFD 로 바뀐 줄을 센다(줄은 그대로)."""
+    head = csv_bytes([], enc="utf-8-sig")
+    body = "A1,".encode("utf-8") + "깨진상호".encode("cp949") + ",,{},1\r\n".format(P1).encode("utf-8")
+    rows, counts = B.read_quarter_rows(opener_of(head + body), "x")
+    assert len(rows) == 1 and "\ufffd" in rows[0][3]
+    assert counts["replaced_chars"] == 1
+
+
+def test_g6_reproduce_with_no_quarters_stops_cleanly(tmp_path, capsys):
+    """보완 2 G-6 — --reproduce-c --end-ym 이 첫 분기보다 앞이면 IndexError 가 아니라 BuildError 한 줄로 멈춘다."""
+    zip_dir = two_quarter_zips(tmp_path)
+    assert B.main(["--reproduce-c", "--zip-dir", zip_dir, "--end-ym", "201503"]) == 1
+    assert "재현 모드" in capsys.readouterr().err
 
 
 # ── 3. 상호 정규화 ───────────────────────────────────────────────────────────
@@ -328,7 +352,7 @@ def two_quarter_zips(tmp_path):
 
 META_KEYS = {"built_on", "start_ym", "end_ym", "sido", "quarters", "rows", "current_rows", "n_links",
              "pnu_changed", "pnu_changed_same_sgg", "pnu_changed_other_sgg", "pnu_changed_other_sido",
-             "dup_biz_no", "bad_pnu", "partial", "sha256"}
+             "dup_biz_no", "bad_pnu", "bad_biz_no", "replaced_chars", "partial", "sha256"}
 
 
 def test_build_writes_csv_and_meta(tmp_path):

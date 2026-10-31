@@ -33,7 +33,7 @@ HEADER = "pnu,floor_no,biz_name,biz_no_last,first_ym,last_ym,seen_cnt,is_current
 def base_rows():
     return [
         [PD, "1", "김밥", "D1", "201712", "201803", "2", "t", "0", "t"],
-        [PS, "", "카페", "S1", "201803", "201803", "1", "t", "1", "f"],
+        [PS, "", "카페", "S1", "201803", "201803", "1", "t", "0", "f"],   # 한 분기 사슬은 이음 0(⒠ links ≤ seen − 1)
         [PD, "-1", "옛가게", "D2", "201712", "201712", "1", "f", "0", "t"],
     ]
 
@@ -60,6 +60,28 @@ def make_result(tmp_path, rows=None, meta=None, name="20261101", header=HEADER, 
     return str(path)
 
 
+class _ForbiddenDbx:
+    """dbx 자리에 끼우는 가짜 — 부르면 바로 실패한다(보완 2 G-1).
+
+    관문이 회귀하면 본 폴더(.env 있음)에서 시험이 운영 DB 로 갈 수 있었다(예전엔 sys.modules 에서 빼기만 했다 — 그러면
+    main 의 `import dbx` 가 진짜 모듈을 다시 불러온다). 이제 어느 시험이든 실적재 길이 dbx 에 닿으면 그 자리에서 멈춘다.
+    """
+
+    def __init__(self):
+        self.calls = []
+
+    def run_sql(self, sql, quiet=False):
+        self.calls.append(sql)
+        raise AssertionError('운영 DB 금지 — 시험이 적재 SQL 을 보내려 했습니다')
+
+
+@pytest.fixture(autouse=True)
+def forbidden_dbx(monkeypatch):
+    fake = _ForbiddenDbx()
+    monkeypatch.setitem(sys.modules, "dbx", fake)
+    return fake
+
+
 @pytest.fixture
 def small_ranges(monkeypatch):
     monkeypatch.setattr(L, "ROWS_RANGE", (1, 10))
@@ -69,10 +91,9 @@ def small_ranges(monkeypatch):
 # ── 1. 양성 대조 ─────────────────────────────────────────────────────────────
 
 
-def test_small_result_passes_dry_run_writes_nothing(tmp_path, small_ranges, capsys):
+def test_small_result_passes_dry_run_writes_nothing(tmp_path, small_ranges, capsys, forbidden_dbx):
     path = make_result(tmp_path)
     staging = tmp_path / "staging"
-    sys.modules.pop("dbx", None)
     rc = L.main(["--csv", path, "--dry-run", "--staging-dir", str(staging)])
     out = capsys.readouterr().out
     assert rc == 0
@@ -80,7 +101,7 @@ def test_small_result_passes_dry_run_writes_nothing(tmp_path, small_ranges, caps
     assert "⒧ (지금 보이는 줄 2 ≈ 점포 표" in out
     assert "줄 3 · 지금 보임 2 · 층 모름 1" in out
     assert not staging.exists()
-    assert "dbx" not in sys.modules
+    assert forbidden_dbx.calls == []
 
 
 # ── 2. 관문 ──────────────────────────────────────────────────────────────────
@@ -88,13 +109,24 @@ def test_small_result_passes_dry_run_writes_nothing(tmp_path, small_ranges, caps
 
 def gate_of(tmp_path, capsys, rows=None, meta=None, header=HEADER, fix_sha=True):
     path = make_result(tmp_path, rows=rows, meta=meta, header=header, fix_sha=fix_sha)
-    sys.modules.pop("dbx", None)
+    fake = sys.modules["dbx"]
+    assert isinstance(fake, _ForbiddenDbx), "전제: 부르면 실패하는 가짜 dbx 가 끼워져 있다"
     rc = L.main(["--csv", path, "--staging-dir", str(tmp_path / "staging")])   # 실적재여도
     err = capsys.readouterr().err
     assert rc == 1
-    assert "dbx" not in sys.modules
+    assert fake.calls == []
     assert not (tmp_path / "staging").exists()
     return err
+
+
+def test_g1_gates_off_hit_the_forbidden_dbx(tmp_path, small_ranges, monkeypatch, forbidden_dbx):
+    """양성 대조(G-1) — 관문을 무력화한 채 실적재 길을 타면 가짜 dbx 가 불려 그 자리에서 멈춘다(운영 DB 로 안 간다)."""
+    path = make_result(tmp_path, rows=edit(0, 1, "0"))   # ⒤ 에 걸릴 줄
+    stats = {"rows": 3, "current": 2, "floor_unknown": 1, "truncated": 2, "n_links": 1, "last_ym_max": "201803"}
+    monkeypatch.setattr(L, "check_csv", lambda csv_path, meta: ([], stats))
+    with pytest.raises(AssertionError, match="운영 DB 금지"):
+        L.main(["--csv", path, "--staging-dir", str(tmp_path / "staging")])
+    assert len(forbidden_dbx.calls) == 1
 
 
 def test_a_missing_meta(tmp_path, small_ranges, capsys):
@@ -142,9 +174,22 @@ def test_d_pnu(tmp_path, small_ranges, capsys, pnu):
     assert "⒟" in gate_of(tmp_path, capsys, rows=edit(0, 0, pnu))
 
 
-@pytest.mark.parametrize("j, value", [(6, "0"), (6, "3"), (8, "-1"), (6, "x")])
+@pytest.mark.parametrize("j, value", [(6, "0"), (6, "3"), (8, "-1"), (6, "x"),
+                                      (6, "1"),        # 보완 2 G-5 — 분기 폭 2 인데 seen 1(사슬은 끊김이 없다)
+                                      (8, "2")])       # 보완 2 G-5 — n_links > seen − 1
 def test_e_counts(tmp_path, small_ranges, capsys, j, value):
     assert "⒠" in gate_of(tmp_path, capsys, rows=edit(0, j, value))
+
+
+def test_e_links_up_to_seen_minus_one_pass(tmp_path, small_ranges, capsys):
+    """양성 대조(G-5) — seen 2 · links 1(= seen − 1)은 통과한다."""
+    path = make_result(tmp_path, rows=edit(0, 8, "1"))
+    assert L.main(["--csv", path, "--dry-run"]) == 0
+
+
+def test_f_blank_biz_no(tmp_path, small_ranges, capsys):
+    """보완 2 G-5 — 빈칸 한 칸 번호도 ⒡ 에 걸린다."""
+    assert "⒡" in gate_of(tmp_path, capsys, rows=edit(0, 3, " "))
 
 
 def test_f_duplicate_key(tmp_path, small_ranges, capsys):
@@ -230,6 +275,10 @@ def test_build_sql_shape():
     assert ("where snapshot_ym = (select loaded_ym from snapshot_release) and left(pnu, 2) in ('11', '30');" in sql)
     assert "if v_ub = 0 or abs(v_hist - v_ub) > v_ub * 0.005 then" in sql
     assert "raise exception '⒧" in sql
+    # 보완 2 G-7 — RAISE 글의 글자 % 는 %% 여야 한다(자리표시자 % 둘 = 인자 둘). 로컬 PG 실행 시험이 잡은 결함.
+    raise_l = sql[sql.index("raise exception '⒧"):].split(";", 1)[0]
+    assert "(허용 0.5%%)" in raise_l
+    assert raise_l.replace("%%", "").count("%") == raise_l.count(", v_")
     assert sql.index("raise exception '⒧") < sql.index("truncate store_history;")
 
 

@@ -274,3 +274,48 @@ describe('HistorySection — 보완 1 F-2 줄 key', () => {
     expect(keyWarnings).toEqual([]);
   });
 });
+
+describe('HistorySection — 보완 2 G-4 늦은 답 버리기', () => {
+  function deferred() {
+    let resolve!: (r: Res) => void;
+    const promise = new Promise<Res>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+
+  it('ⓐ 첫 쪽 답이 오기 전에 필지가 바뀌면 옛 답을 그리지 않는다', async () => {
+    const lateA = deferred();
+    state.history = (args) => (args.p_pnu === PNU ? lateA.promise : { data: null, error: { code: 'PGRST202' } });
+    const { container, rerender } = render(<HistorySection pnu={PNU} />);
+    rerender(<HistorySection pnu={OTHER} />);
+    await settle();
+    await act(async () => {
+      lateA.resolve(paged({}));
+    });
+    await settle();
+    expect(container.querySelector('section.card')).toBeNull();
+  });
+
+  it('ⓑ 더 보기 답이 오기 전에 필지가 바뀌면 새 땅 목록에 붙이지 않는다', async () => {
+    const lateMore = deferred();
+    const otherRows = ALL.map((r, i) => ({ ...r, biz_name: `다른땅${String(i).padStart(2, '0')}` }));
+    state.history = (args) => {
+      const off = Number(args.p_offset ?? 0);
+      if (args.p_pnu === PNU) return off > 0 ? lateMore.promise : paged(args);
+      return { data: otherRows.slice(off, off + 20), error: null };
+    };
+    const { container, rerender } = render(<HistorySection pnu={PNU} />);
+    await waitFor(() => expect(container.querySelector('.hist__more')).not.toBeNull());
+    fireEvent.click(container.querySelector('.hist__more')!);
+    rerender(<HistorySection pnu={OTHER} />);
+    await waitFor(() => expect(container.querySelector('.hist__nm')?.textContent).toBe('다른땅00'));
+    await act(async () => {
+      lateMore.resolve(paged({ p_offset: 20 }));
+    });
+    await settle();
+    const names = [...container.querySelectorAll('.hist__nm')].map((n) => n.textContent ?? '');
+    expect(names).toHaveLength(20);
+    expect(names.every((n) => n.startsWith('다른땅'))).toBe(true);
+  });
+});

@@ -221,14 +221,16 @@ def read_quarter_rows(opener, where):
     """csv 하나 → (줄 목록, 셈). 줄 = (biz_no, pnu, floor_no, name_raw, name_norm).
 
     머리줄에 네 칸이 없으면 멈춘다 · 칸 수가 머리보다 적은 줄은 건너뛴다(short) ·
-    ⓕ 지번코드가 19자리 숫자가 아니면 건너뛴다(bad_pnu) · ⓔ 같은 번호 두 번째 줄부터 건너뛴다(dup_biz_no).
+    ⓕ 지번코드가 19자리 숫자가 아니면 건너뛴다(bad_pnu) · ⓔ 같은 번호 두 번째 줄부터 건너뛴다(dup_biz_no) ·
+    상가업소번호가 비었으면 건너뛴다(bad_biz_no — 이웃 분기의 빈 번호 둘이 한 사슬로 이어지지 않게 · 보완 2 G-6) ·
+    쓰는 네 칸에 바꿔 넣은 글자(U+FFFD — 본문 인코딩이 섞인 줄)가 있으면 센다(replaced_chars · 줄은 그대로 쓴다).
     """
     raw = opener()
     try:
         enc = pick_encoding(raw.readline())
     finally:
         raw.close()
-    counts = {"read": 0, "short": 0, "bad_pnu": 0, "dup_biz_no": 0}
+    counts = {"read": 0, "short": 0, "bad_pnu": 0, "dup_biz_no": 0, "bad_biz_no": 0, "replaced_chars": 0}
     rows, seen = [], set()
     with io.TextIOWrapper(opener(), encoding=enc, errors="replace", newline="") as fh:
         reader = csv.reader(fh)
@@ -248,6 +250,11 @@ def read_quarter_rows(opener, where):
                 counts["bad_pnu"] += 1
                 continue
             biz = r[i_biz].strip()
+            if not biz:
+                counts["bad_biz_no"] += 1
+                continue
+            if "\ufffd" in r[i_biz] or "\ufffd" in r[i_name] or "\ufffd" in r[i_pnu] or "\ufffd" in r[i_floor]:
+                counts["replaced_chars"] += 1
             if biz in seen:
                 counts["dup_biz_no"] += 1
                 continue
@@ -502,6 +509,8 @@ def reproduce_c(zips, end_ym, limit, log=print):
     quarters = select_quarters(zips, REPRO_START_YM, end_ym)
     if limit:
         quarters = quarters[:limit]
+    if not quarters:
+        raise BuildError("{}~{} 사이에 읽을 zip 이 없습니다(재현 모드)".format(REPRO_START_YM, end_ym))
     k1, rule = ChainBook(link=False), ChainBook(link=True)
     log("조사 C 재현 — 대전 · {}~{} · {}분기(201709 뺌)".format(quarters[0][0], quarters[-1][0], len(quarters)))
     run_quarters(quarters, (REPRO_SIDO,), {REPRO_SIDO: [k1, rule]}, log=log)
@@ -549,6 +558,7 @@ def build(zips, sidos, start_ym, end_ym, limit, out_path, today, log=print):
         "pnu_changed_other_sgg": moves["other_sgg"]["chains"],
         "pnu_changed_other_sido": moves["other_sido"]["chains"],
         "dup_biz_no": counts.get("dup_biz_no", 0), "bad_pnu": counts.get("bad_pnu", 0),
+        "bad_biz_no": counts.get("bad_biz_no", 0), "replaced_chars": counts.get("replaced_chars", 0),
         "partial": partial, "sha256": digest,
     }
     with io.open(meta_path_for(out_path), "w", encoding="utf-8", newline="\n") as f:
@@ -561,6 +571,10 @@ def build(zips, sidos, start_ym, end_ym, limit, out_path, today, log=print):
     log("사슬 {:,}(지금 보임 {:,}) · n_links 합 {:,} · pnu 바뀜 {:,} · 중복 번호 {:,} · 나쁜 pnu {:,} · 짧은 줄 {:,}".format(
         len(rows), len(current), meta["n_links"], meta["pnu_changed"], meta["dup_biz_no"], meta["bad_pnu"],
         counts.get("short", 0)))
+    log("빈 상가업소번호 {:,}(건너뜀) · 바꿔 넣은 글자가 든 줄 {:,}".format(meta["bad_biz_no"], meta["replaced_chars"]))
+    if meta["replaced_chars"]:
+        log("[주의] 본문 인코딩이 섞인 줄이 {:,}개 — 상호·층 글자 일부가 U+FFFD 로 바뀌었습니다(줄은 그대로 씀)".format(
+            meta["replaced_chars"]))
     log("지금 보이는 사슬 seen_cnt 중앙값 {} · 8분기 이상 {:.1f}% · {}분기 전부(truncated) {:.1f}%".format(
         st["median"], st["pct8"], len(quarters), sum(1 for r in current if r[9]) / max(len(current), 1) * 100))
     log("(biz_no_last, last_ym) 겹침 {:,}(0 이어야 한다 — 한 분기에 같은 번호는 한 줄)".format(

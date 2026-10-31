@@ -23,6 +23,8 @@ import {
   rowText,
 } from './storeHistory';
 import type { DataFreshnessRow, StoreHistoryRow } from '../types';
+import { CARD_SOURCES } from './dataFreshness';
+import { GUIDE_LINES } from './handoffLinks';
 
 /**
  * 「이 자리 가게 이력 (점포 자료 누적)」 순수 계산 — 결정 0045 PR④.
@@ -333,6 +335,19 @@ describe('⛔ 가드 — 분기·연도 글자 · 비율 · 판단 낱말 · 금
     }
     // 허용 문장은 lib 에 정확히 한 번 있다(컴포넌트는 그 상수를 가져다 쓴다).
     expect(source('./storeHistory.ts').split(HISTORY_GONE_NOTE).length - 1).toBe(1);
+  });
+
+  it('ⓔ·ⓕ 카드 밖에서 이 카드를 말하는 글 둘 — 날짜 줄 이름표(CARD_SOURCES.history) · 안내 줄(GUIDE_LINES.history) (보완 2 G-3)', () => {
+    const outside = [CARD_SOURCES.history.src, CARD_SOURCES.history.label, CARD_SOURCES.history.ending, GUIDE_LINES.history];
+    for (const t of outside) {
+      expect(closureWordsOutside(t, HISTORY_GONE_NOTE), t).toBe(0);
+      expect(businessPeriodOutsideNegation(t), t).toEqual([]);
+      expect(judgmentWords(t), t).toEqual([]);
+      expect(forbiddenWords(t), t).toEqual([]);
+    }
+    // 양성 대조 — 그 글에 「폐업」을 넣으면 걸린다.
+    expect(closureWordsOutside(`${GUIDE_LINES.history} 폐업한 가게도`, HISTORY_GONE_NOTE)).toBe(1);
+    expect(closureWordsOutside(`${CARD_SOURCES.history.label}(폐업 포함)`, HISTORY_GONE_NOTE)).toBe(1);
   });
 
   it('ⓑ·ⓒ·ⓓ·ⓔ·ⓕ 만드는 글', () => {

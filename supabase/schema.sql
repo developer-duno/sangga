@@ -7115,8 +7115,10 @@ set search_path = public
 as $$
   with pa as (
     -- 넘기기 인자 — 한 번에 1~100줄 · 음수 offset 은 0(넘치는 인자로 표를 통째로 긁지 못하게).
+    -- offset 상한 2,000,000 — 한 땅 최대 줄 수(10-31 빌드 1,951)보다 넉넉히 크고, 아래 셈(off + lim)이 정수를 넘지 않게
+    --   (p_offset 2147483647 에서 22003 정수 넘침 — 보완 2 G-2).
     select least(greatest(coalesce(p_limit, 20), 1), 100) as lim,
-           greatest(coalesce(p_offset, 0), 0) as off
+           least(greatest(coalesce(p_offset, 0), 0), 2000000) as off
   ),
   rel as (
     -- 표지. 0줄이면(아직 안 넣음) 이 함수도 0줄.
@@ -7142,7 +7144,7 @@ as $$
   from rel r
   cross join cnt c
   cross join pa
-  left join mine m on m.rn > pa.off and m.rn <= pa.off + pa.lim
+  left join mine m on m.rn > pa.off and m.rn <= pa.off::bigint + pa.lim
   where c.n = 0 or m.rn is not null
   order by m.rn;
 $$;
@@ -7150,7 +7152,7 @@ $$;
 comment on function get_store_history(text, integer, integer) is
   '결정 0045 PR④ 이 자리 가게 이력 — 그 땅(필지)의 가게 줄(건물 값이 아니라 그 땅에 보인 점포 줄). 줄 = 마지막 층·상호·'
   '처음/마지막 보인 분기·보인 분기 수·지금 보임·첫 분기부터인가(truncated). 차례 = 지금 보임 → 보인 분기 수 ↓ → 층(모름 끝) → '
-  '상호. 넘기기 p_limit(1~100 으로 자름 · 기본 20) · p_offset(음수면 0). total_cnt = 그 땅 줄 전체 수(모든 줄에 같은 값) · '
+  '상호. 넘기기 p_limit(1~100 으로 자름 · 기본 20) · p_offset(음수면 0 · 상한 2,000,000 — 넘치는 인자로 정수 넘침이 나지 않게). total_cnt = 그 땅 줄 전체 수(모든 줄에 같은 값) · '
   'current_cnt = 그 땅에서 지금 보이는 줄 수(모든 줄에 같은 값 · no_data 면 0) · history_first_ym·history_last_ym = 표지의 첫·마지막 분기. 표지가 0줄이면 0줄(적재 전 — 화면은 카드째 숨김) · 그 땅에 줄이 없으면 '
   'status no_data 한 줄(total_cnt 0). D등급 — 「N분기 보임」은 자료에 보인 분기 수이지 영업 기간이 아니고, 지금 안 보이는 '
   '가게도 문을 닫았다는 뜻이 아닐 수 있다. security definer (표 둘이 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. '

@@ -16,8 +16,9 @@
   ⒞ 분기 꼴 YYYY(03|06|09|12) · first_ym ≤ last_ym · first_ym ≥ start_ym · last_ym ≤ end_ym ·
      is_current ⇔ last_ym = end_ym · truncated ⇔ first_ym = start_ym (t/f 만)
   ⒟ pnu 19자리 숫자 + 앞 두 자리 ∈ sido
-  ⒠ seen_cnt 1 이상 · first_ym~last_ym 분기 수 이하 · n_links 0 이상 (정수)
-  ⒡ (biz_no_last, last_ym) 중복 0 (표의 주 열쇠 · biz_no_last 빈 칸도 여기서 멈춘다) — 한 분기에 같은 번호는 한 줄이라
+  ⒠ seen_cnt = first_ym~last_ym 분기 수(사슬은 끊김이 없다 — 한 분기라도 빠지면 새 사슬 · 보완 2 G-5) ·
+     0 ≤ n_links ≤ seen_cnt − 1 (정수 · 이음은 분기 경계마다 많아야 한 번)
+  ⒡ (biz_no_last, last_ym) 중복 0 (표의 주 열쇠 · biz_no_last 가 비었거나 빈칸뿐이어도 여기서 멈춘다) — 한 분기에 같은 번호는 한 줄이라
      사슬마다 (마지막 번호, 마지막 분기)가 늘 다르다. (biz_no_last, first_ym) 은 같은 가게가 번호 둘로 동시에 올라 있다
      한쪽만 돌아오면 겹칠 수 있다(10-31 빌드 17건 + 본사 번호 이동 2건 — 자료 성질 · 메인 판정 2026-10-31).
   ⒢ 행수 범위 ROWS_RANGE · 지금 보이는 줄 수 CURRENT_RANGE(넓은 안전망 — 정밀 대조는 DB 안 ⒧)
@@ -176,9 +177,10 @@ def row_problems(r, meta):
         out.append(("⒠", "seen_cnt·n_links 가 정수가 아닙니다 {!r} {!r}".format(seen, links)))
     else:
         span = quarter_span(first, last) if RE_YM.match(first) and RE_YM.match(last) else None
-        if int(seen) < 1 or (span is not None and int(seen) > span) or int(links) < 0:
-            out.append(("⒠", "seen_cnt={} n_links={} (1 ≤ seen ≤ 분기 수 {} · links ≥ 0)".format(seen, links, span)))
-    if not biz:
+        if int(seen) < 1 or (span is not None and int(seen) != span) or not 0 <= int(links) <= int(seen) - 1:
+            out.append(("⒠", "seen_cnt={} n_links={} (seen = 분기 수 {} · 0 ≤ links ≤ seen − 1)".format(
+                seen, links, span)))
+    if not biz.strip():
         out.append(("⒡", "biz_no_last 가 비었습니다"))
     if floor_no != "":
         if not RE_INT.match(floor_no) or int(floor_no) == 0:
@@ -328,7 +330,8 @@ commit;
 """.format(cols=cols, path=copy_path_literal(path), rows=int(rows), start_ym=meta["start_ym"],
            end_ym=meta["end_ym"], built_on=meta["built_on"],
            sido_list=", ".join("'{}'".format(s) for s in meta["sido"]),
-           tol=CURRENT_MATCH_TOL, tol_pct="{:.1f}%".format(CURRENT_MATCH_TOL * 100))
+           # ⛔ RAISE 글 안의 % 는 자리표시자다 — 글자 % 는 %% 로(안 하면 「too few parameters」로 적재가 통째 실패 · 보완 2 G-7 실측).
+           tol=CURRENT_MATCH_TOL, tol_pct="{:.1f}%%".format(CURRENT_MATCH_TOL * 100))
 
 
 # ── 메인 ─────────────────────────────────────────────────────────────────────

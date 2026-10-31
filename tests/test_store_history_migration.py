@@ -242,7 +242,9 @@ class TestHeadsAndReturns:
         assert ("order by h.is_current desc, h.seen_cnt desc, h.floor_no asc nulls last, h.biz_name, h.biz_no_last, "
                 "h.last_ym) as rn" in body)
         assert "least(greatest(coalesce(p_limit, 20), 1), 100)" in body
-        assert "greatest(coalesce(p_offset, 0), 0)" in body
+        # 보완 2 G-2 — offset 상한(정수 넘침 막기) · 셈은 bigint.
+        assert "least(greatest(coalesce(p_offset, 0), 0), 2000000)" in body
+        assert "m.rn <= pa.off::bigint + pa.lim" in body
         assert "biz_no_last" not in body.split("row_number()")[0].split("select h.")[1]   # 번호는 안 나간다
 
 
@@ -546,6 +548,22 @@ class TestRealRunHistory:
         assert [(r["status"], r["biz_name"], r["total_cnt"], r["current_cnt"]) for r in _call(cur, PC)] == \
             [("ok", "아", 1, 1)]
 
+    def test_huge_offset_gives_zero_rows_not_an_error(self, pg):
+        """보완 2 G-2 — p_offset 2147483647 에서 정수 넘침(22003)이 나지 않고 0줄.
+
+        ⚠️ 옛 코드의 넘침은 계획에 달렸다 — 앞 시험들이 같은 표를 오래 쓴 뒤(통계·캐시)에는 넘침 식을 안 거치는 계획이 골라져
+        옛 코드도 통과했다(변이 실측). 그래서 방금 만든 판(새 표 · 첫 호출)에서 본다 — 글자 쪽은 위
+        test_sort_and_paging_clamp 가 상한·bigint 를 따로 지킨다.
+        """
+        c = _fresh(pg)
+        try:
+            c.execute("discard plans")
+            assert _call(c, PA, 100, 2147483647) == []
+            assert [r["status"] for r in _call(c, PB, 100, 2147483647)] == ["no_data"]   # 줄 없는 땅은 넘기기와 무관하게 한 줄
+            assert _call(c, PA, 100, 2000000) == []
+        finally:
+            _fresh(pg)
+
     @pytest.mark.parametrize("limit,offset,n", [(0, 0, 1), (-5, 0, 1), (1000, 0, 7), (3, -4, 3)])
     def test_arguments_are_clamped(self, cur, limit, offset, n):
         rows = _call(cur, PA, limit, offset)
@@ -681,5 +699,96 @@ class TestRealRunPrivilegesAndReplay:
             c.execute("select has_function_privilege('anon', 'public.get_store_history(text, integer, integer)', "
                       "'execute')")
             assert c.fetchone() == (True,)
+        finally:
+            _fresh(pg)
+
+
+# ── ③ 적재 SQL 실행 가드 (보완 2 G-7 · 로컬 PostgreSQL + psql 이 있을 때만) ───────────────────
+# 적재기 build_sql 은 `\copy` 를 쓰므로 psycopg2 로는 못 돌린다 — 같은 흉내 판에 psql 로 파일을 통째로 보낸다.
+# 정상 적재 · ⒦ 어긋남 롤백 · ⒧ 어긋남 롤백 셋을 본다(글자 대조만으로는 raise 가 실제로 통째 되돌리는지 모른다).
+
+LOAD_ROWS = [
+    ["1168010100100010000", "1", "가", "B1", "201712", "201803", "2", "t", "0", "t"],
+    ["3017010100100010000", "", "나", "B2", "201803", "201803", "1", "t", "0", "f"],
+    ["1168010100100010000", "-1", "다", "B3", "201712", "201712", "1", "f", "0", "t"],
+]
+LOAD_META = {"built_on": "2026-11-01", "start_ym": "201712", "end_ym": "201803", "sido": ["11", "30"]}
+
+
+def _load_setup(pg, loaded_ym, ub_rows):
+    """흉내 판 + 적재기가 읽는 칸(snapshot_release.loaded_ym · unit_business 분기·pnu) + 앞서 들어 있던 한 줄."""
+    c = _fresh(pg, fill=False)
+    c.execute("alter table snapshot_release add column loaded_ym char(6)")
+    c.execute("insert into snapshot_release (published_ym, loaded_ym) values (%s, %s)", (loaded_ym, loaded_ym))
+    c.execute("alter table unit_business add column snapshot_ym char(6), add column pnu char(19)")
+    for i in range(ub_rows):
+        c.execute("insert into unit_business (biz_no, snapshot_ym, pnu) values (%s, '201803', %s)",
+                  ("U{}".format(i), "1168010100100010000" if i % 2 else "3017010100100010000"))
+    c.execute("insert into store_history values ('1168010100199990000', 1, '옛가게', 'OLD', '201712', '201712', 1, "
+              "false, 0, true)")
+    c.execute("insert into store_history_release (id, first_ym, last_ym, built_on, row_cnt) "
+              "values (1, '201712', '201712', '2026-08-01', 1)")
+    return c
+
+
+def _run_load_sql(pg, tmp_path):
+    """적재기의 사본 쓰기 + build_sql 그대로 → psql -f. → psql 종료 코드."""
+    psql = shutil.which("psql")
+    if not psql:
+        pytest.skip("psql 이 없다 — 적재 SQL(\\copy) 실행 시험은 psql 이 있을 때만")
+    import load_store_history as lsh  # noqa: PLC0415
+    src = tmp_path / "result.csv"
+    with open(src, "w", encoding="utf-8", newline="") as f:
+        f.write(",".join(lsh.COLUMNS) + "\n" + "".join(",".join(r) + "\n" for r in LOAD_ROWS))
+    staging = str(tmp_path / "staging" / "store_history.csv")
+    n = lsh.write_staging(str(src), staging)
+    sql_path = tmp_path / "load.sql"
+    sql_path.write_text(lsh.build_sql(staging, n, LOAD_META), encoding="utf-8")
+    env = dict(os.environ, PGCLIENTENCODING="UTF8")
+    r = subprocess.run([psql, "-h", "127.0.0.1", "-p", str(pg.info.port), "-U", "postgres", "-d", "postgres",
+                        "-v", "ON_ERROR_STOP=1", "-q", "-f", str(sql_path)],
+                       env=env, stdin=subprocess.DEVNULL, capture_output=True, timeout=120)
+    return r.returncode, r.stderr.decode("utf-8", "replace")
+
+
+def _state(c):
+    c.execute("select count(*), count(*) filter (where is_current), string_agg(biz_no_last, ',' order by biz_no_last) "
+              "from store_history")
+    hist = c.fetchone()
+    c.execute("select first_ym, last_ym, row_cnt from store_history_release")
+    return hist, c.fetchall()
+
+
+class TestRealRunLoadSql:
+    def test_normal_load_replaces_everything_and_writes_the_release(self, pg, tmp_path):
+        c = _load_setup(pg, "201803", ub_rows=2)
+        try:
+            rc, err = _run_load_sql(pg, tmp_path)
+            assert rc == 0, err
+            hist, rel = _state(c)
+            assert hist == (3, 2, "B1,B2,B3")              # 옛 줄(OLD)은 통째 교체로 사라졌다
+            assert rel == [("201712", "201803", 3)]
+        finally:
+            _fresh(pg)
+
+    def test_k_mismatch_rolls_back_everything(self, pg, tmp_path):
+        """⒦ — 결과표 마지막 분기(201803) ≠ snapshot_release.loaded_ym(201712) → raise → 옛 줄·옛 표지 그대로."""
+        c = _load_setup(pg, "201712", ub_rows=2)
+        try:
+            rc, err = _run_load_sql(pg, tmp_path)
+            assert rc != 0 and "⒦" in err
+            hist, rel = _state(c)
+            assert hist == (1, 0, "OLD") and rel == [("201712", "201712", 1)]
+        finally:
+            _fresh(pg)
+
+    def test_l_mismatch_rolls_back_everything(self, pg, tmp_path):
+        """⒧ — 지금 보이는 줄 2 vs 점포 표 그 분기·두 시·도 줄 10(0.5% 넘게 다름) → raise → 옛 줄·옛 표지 그대로."""
+        c = _load_setup(pg, "201803", ub_rows=10)
+        try:
+            rc, err = _run_load_sql(pg, tmp_path)
+            assert rc != 0 and "⒧" in err
+            hist, rel = _state(c)
+            assert hist == (1, 0, "OLD") and rel == [("201712", "201712", 1)]
         finally:
             _fresh(pg)
