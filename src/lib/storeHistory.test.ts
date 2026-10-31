@@ -18,9 +18,11 @@ import {
   historySummary,
   isStoreHistoryList,
   lagText,
+  moreCurrentText,
   moreText,
   quartersBetween,
   rowText,
+  skipToGoneText,
 } from './storeHistory';
 import type { DataFreshnessRow, StoreHistoryRow } from '../types';
 import { CARD_SOURCES } from './dataFreshness';
@@ -198,7 +200,8 @@ describe('각주 · 묶음 · 단추', () => {
     expect(n.gone[0]).toBe('자료에서 안 보이는 것은 폐업이 아닐 수 있습니다.');
     expect(n.gone[1]).toBe(' 자료에 빠졌다 돌아오는 가게가 흔하고, 그때는 새 줄로 셉니다 — 보인 분기 수는 영업 기간이 아닙니다.');
     expect(n.name).toBe(
-      '상호는 자료의 마지막 값입니다 — 옛 분기의 이름이 그 시절 간판이라는 뜻은 아닙니다. 땅 번호가 바뀐 땅(분할·합병)은 옛 줄이 이 땅에 붙지 않습니다.',
+      '상호는 자료의 마지막 값입니다 — 옛 분기의 이름이 그 시절 간판이라는 뜻은 아닙니다. 땅 번호가 바뀐 땅(분할·합병)은 옛 줄이 이 땅에 붙지 않고, ' +
+        '번호가 같은 채 땅 번호가 바뀐 가게는 옛 땅에서 보인 분기도 함께 셉니다.',
     );
     const other = historyNotes([okRow({ history_first_ym: '201812', history_last_ym: '202603', last_ym: '202603' })]);
     expect(other.source).toContain('2018년 4분기~2026년 1분기(30분기)');
@@ -207,6 +210,13 @@ describe('각주 · 묶음 · 단추', () => {
   it('묶음 머리 수는 그 땅 전체(받은 줄 수가 아니다) · 단추 글은 남은 수', () => {
     expect(groupCounts([okRow({ total_cnt: 23, current_cnt: 6 })])).toEqual({ current: 6, gone: 17 });
     expect(moreText(20, 23)).toBe('더 보기 (남은 3곳)');
+  });
+
+  it('보완 3 H-2 단추 글 둘 — 지금 묶음 남은 수 · 전에 묶음 전체 수', () => {
+    expect(moreCurrentText(20, 30)).toBe('지금 보이는 가게 더 보기 (남은 10곳)');
+    expect(moreCurrentText(20, 1041)).toBe('지금 보이는 가게 더 보기 (남은 1,021곳)');
+    expect(skipToGoneText(5)).toBe('전에 보였던 가게 보기 (5곳)');
+    expect(skipToGoneText(1931)).toBe('전에 보였던 가게 보기 (1,931곳)');
   });
 });
 
@@ -217,17 +227,27 @@ describe('보완 1 — 쉼표 · 한 분기만 보인 지난 줄 · 어긋남 �
     expect(moreText(20, 1951)).toBe('더 보기 (남은 1,931곳)');
   });
 
-  it('F-4 한 분기만 보인 지난 줄은 「○년 ○분기에만 보임」 · 첫 분기부터인 한 분기 줄은 「1분기 이상」 그대로', () => {
+  it('F-4 한 분기만 보인 지난 줄은 「○년 ○분기에만 보임」 · H-4 그 분기가 자료 시작이면 「… · 자료 시작이라 그 전은 모름」', () => {
     expect(rowText(okRow({ first_ym: '201903', last_ym: '201903', seen_cnt: 1, is_current: false }))).toEqual({
       pre: '2019년 1분기에만 보임',
       bold: '',
       post: '',
     });
+    // 보완 3 H-4 — 「1분기 이상」 대신 그 사실(분기 글은 서버 값).
     expect(rowText(okRow({ first_ym: '201712', last_ym: '201712', seen_cnt: 1, is_current: false, truncated: true }))).toEqual({
-      pre: '2017년 4분기 ~ 2017년 4분기 보임 · ',
+      pre: '2017년 4분기에만 보임 · 자료 시작이라 그 전은 모름',
       bold: '',
-      post: '1분기 이상',
+      post: '',
     });
+    // 양성 대조 — 지금 보이는 truncated 줄은 그대로 · 여러 분기 지난 truncated 줄도 그대로.
+    expect(rowText(okRow({ first_ym: '201712', seen_cnt: 35, truncated: true }))).toEqual({
+      pre: '자료에 ',
+      bold: '35분기 이상',
+      post: ' 보임 · 자료 시작(2017년 4분기)부터 계속',
+    });
+    expect(rowText(okRow({ first_ym: '201712', last_ym: '202106', seen_cnt: 15, is_current: false, truncated: true })).post).toBe(
+      '15분기 이상',
+    );
   });
 
   it('F-5 이력이 보여 주는 분기보다 앞이면 「점포 자료가 갱신되는 중입니다」(뒤면 원래 글)', () => {
@@ -294,10 +314,14 @@ function allTexts(): string[] {
     // 보완 1 F-4·F-5 갈래도 같은 가드를 지난다.
     ...Object.values(lagText([okRow({ history_last_ym: '202609', last_ym: '202609' })], fresh('202606'))!),
     ...Object.values(rowText(okRow({ first_ym: '201903', last_ym: '201903', seen_cnt: 1, is_current: false }))),
+    // 보완 3 H-4·H-2 갈래도 같은 가드를 지난다.
+    ...Object.values(rowText(okRow({ first_ym: '201712', last_ym: '201712', seen_cnt: 1, is_current: false, truncated: true }))),
     n.source,
     ...n.gone,
     n.name,
     moreText(20, 23),
+    moreCurrentText(20, 30),
+    skipToGoneText(5),
     HISTORY_LEAD_STRONG,
     HISTORY_LEAD_MID,
     HISTORY_LEAD_BOLD,

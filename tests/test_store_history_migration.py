@@ -721,9 +721,9 @@ def _load_setup(pg, loaded_ym, ub_rows):
     c.execute("alter table snapshot_release add column loaded_ym char(6)")
     c.execute("insert into snapshot_release (published_ym, loaded_ym) values (%s, %s)", (loaded_ym, loaded_ym))
     c.execute("alter table unit_business add column snapshot_ym char(6), add column pnu char(19)")
-    for i in range(ub_rows):
-        c.execute("insert into unit_business (biz_no, snapshot_ym, pnu) values (%s, '201803', %s)",
-                  ("U{}".format(i), "1168010100100010000" if i % 2 else "3017010100100010000"))
+    c.execute("insert into unit_business (biz_no, snapshot_ym, pnu) "
+              "select 'U' || g, '201803', case when g %% 2 = 1 then '1168010100100010000' else '3017010100100010000' end "
+              "from generate_series(0, %s - 1) g", (ub_rows,))
     c.execute("insert into store_history values ('1168010100199990000', 1, '옛가게', 'OLD', '201712', '201712', 1, "
               "false, 0, true)")
     c.execute("insert into store_history_release (id, first_ym, last_ym, built_on, row_cnt) "
@@ -731,7 +731,7 @@ def _load_setup(pg, loaded_ym, ub_rows):
     return c
 
 
-def _run_load_sql(pg, tmp_path):
+def _run_load_sql(pg, tmp_path, rows=LOAD_ROWS):
     """적재기의 사본 쓰기 + build_sql 그대로 → psql -f. → psql 종료 코드."""
     psql = shutil.which("psql")
     if not psql:
@@ -739,7 +739,7 @@ def _run_load_sql(pg, tmp_path):
     import load_store_history as lsh  # noqa: PLC0415
     src = tmp_path / "result.csv"
     with open(src, "w", encoding="utf-8", newline="") as f:
-        f.write(",".join(lsh.COLUMNS) + "\n" + "".join(",".join(r) + "\n" for r in LOAD_ROWS))
+        f.write(",".join(lsh.COLUMNS) + "\n" + "".join(",".join(r) + "\n" for r in rows))
     staging = str(tmp_path / "staging" / "store_history.csv")
     n = lsh.write_staging(str(src), staging)
     sql_path = tmp_path / "load.sql"
@@ -790,5 +790,29 @@ class TestRealRunLoadSql:
             assert rc != 0 and "⒧" in err
             hist, rel = _state(c)
             assert hist == (1, 0, "OLD") and rel == [("201712", "201712", 1)]
+        finally:
+            _fresh(pg)
+
+    @staticmethod
+    def _current_rows(n):
+        """지금 보이는 줄 n 개(마지막 분기 201803 · ⒦ 통과) — 두 시·도에 번갈아."""
+        return [["1168010100100010000" if i % 2 else "3017010100100010000", "1", "가", "C{}".format(i),
+                 "201803", "201803", "1", "t", "0", "f"] for i in range(n)]
+
+    @pytest.mark.parametrize("current, passes", [(1004, True), (1006, False)])
+    def test_l_boundary_half_percent(self, pg, tmp_path, current, passes):
+        """⒧ 경계(보완 3 H-5) — 점포 표 1,000줄 · 허용 0.5% = 5줄. 지금 보이는 줄 1,004(차 4) 통과 · 1,006(차 6) raise·롤백.
+        적재기 코드 그대로(build_sql 이 받는 수치) — 허용치를 바꾸면 한쪽이 빨강."""
+        c = _load_setup(pg, "201803", ub_rows=1000)
+        try:
+            rc, err = _run_load_sql(pg, tmp_path, self._current_rows(current))
+            hist, rel = _state(c)
+            if passes:
+                assert rc == 0, err
+                # 표지 첫 분기는 빌드 정보(LOAD_META start_ym)에서 온다.
+                assert hist[:2] == (current, current) and rel == [("201712", "201803", current)]
+            else:
+                assert rc != 0 and "⒧" in err
+                assert hist == (1, 0, "OLD") and rel == [("201712", "201712", 1)]
         finally:
             _fresh(pg)

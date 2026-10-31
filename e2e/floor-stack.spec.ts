@@ -7038,4 +7038,98 @@ test.describe('층별 스택뷰 — 가게 이력 카드 (결정 0045 PR④)', (
     await openIt();
     await expect(page.locator('section.stack section.card--history')).toHaveCount(0);
   });
+
+  test('CQ. 큰 땅 — 첫 쪽 20줄이 전부 지금 보이는 가게면 「지금 보이는 가게 더 보기 (남은 10곳)」 + 「전에 보였던 가게 보기 (5곳)」 · 건너뛰기 = p_offset 30 → 전에 묶음 5줄 + 칩 · 지금 더 보기 = p_offset 20 → 30줄 · 13px · 넘침 0 · 종이에 단추 0 (👤 11-01 · 보완 3 H-2)', async ({
+    page,
+  }, testInfo) => {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()], industryMix());
+    await mockJson(page, DATA_FRESHNESS_PATTERN, dataFreshness());
+    // 지금 보임 30(지금가게01…) → 전에 보임 5(전에가게01…) · 서버 차례 그대로.
+    const base = storeHistory()[0];
+    const over = { total_cnt: 35, current_cnt: 30, truncated: false };
+    const all = [
+      ...Array.from({ length: 30 }, (_v, i) => ({ ...base, ...over, biz_name: `지금가게${String(i + 1).padStart(2, '0')}` })),
+      ...Array.from({ length: 5 }, (_v, i) => ({
+        ...base,
+        ...over,
+        biz_name: `전에가게${String(i + 1).padStart(2, '0')}`,
+        first_ym: '201903',
+        last_ym: '202312',
+        seen_cnt: 20,
+        is_current: false,
+      })),
+    ];
+    const asked: Array<Record<string, unknown>> = [];
+    await page.route(HISTORY_PATTERN, async (route) => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS_HEADERS });
+      const args = JSON.parse(route.request().postData() ?? '{}') as Record<string, unknown>;
+      asked.push(args);
+      const off = Number(args.p_offset ?? 0);
+      const lim = Number(args.p_limit ?? 20);
+      await route.fulfill({ status: 200, contentType: 'application/json', headers: CORS_HEADERS, body: JSON.stringify(all.slice(off, off + lim)) });
+    });
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).first().click();
+    await expect(page.locator('section.stack')).toBeVisible();
+    const hist = page.locator('section.stack section.hist');
+    await expect(hist).toBeVisible();
+    await openCard(page, /가게 이력/);
+
+    const groups = hist.locator('.hist__grp');
+    const more = hist.locator('.hist__more');
+    await expect(groups).toHaveCount(1);
+    await expect(more).toHaveText(['지금 보이는 가게 더 보기 (남은 10곳)', '전에 보였던 가게 보기 (5곳)']);
+    for (const i of [0, 1]) await expect(more.nth(i)).toHaveCSS('font-size', '13px');
+    // 두 단추가 선 채로도 넘침 0(좁으면 다음 줄로) · 단추 높이 44px 이상(화면 묶음).
+    const twoOver = await hist.evaluate((e) => e.scrollWidth - e.clientWidth);
+    const pageOver = await page.evaluate(() => {
+      const d = (globalThis as unknown as { document: { documentElement: { scrollWidth: number; clientWidth: number } } })
+        .document.documentElement;
+      return d.scrollWidth - d.clientWidth;
+    });
+    expect(twoOver).toBeLessThanOrEqual(2);
+    expect(pageOver).toBeLessThanOrEqual(0);
+    for (const i of [0, 1]) expect((await more.nth(i).boundingBox())!.height).toBeGreaterThanOrEqual(44);
+
+    // 종이에는 단추가 없다(누르는 장치) · 받은 20줄은 나온다.
+    await page.emulateMedia({ media: 'print' });
+    await expect(more.first()).toBeHidden();
+    await expect(more.nth(1)).toBeHidden();
+    await expect(hist.locator('.hist__mores').first()).toBeHidden();
+    await expect(hist.locator('.hist__row:visible')).toHaveCount(20);
+    await page.emulateMedia({ media: null });
+
+    // 건너뛰기 — 전에 보였던 가게 묶음 첫 쪽(p_offset = current_cnt 30).
+    await more.nth(1).click();
+    await expect(groups).toHaveCount(2);
+    expect(asked[asked.length - 1]).toEqual({ p_pnu: searchHit().pnu, p_limit: 20, p_offset: 30 });
+    await expect(groups.nth(1).locator('.hist__grp-h')).toHaveText('전에 보였던 가게 5곳 · 지금은 자료에 안 보임');
+    await expect(groups.nth(1).locator('.hist__nm')).toHaveText(all.slice(30).map((r) => r.biz_name));
+    await expect(groups.nth(1).locator('.hist__chip')).toHaveCount(5);
+    await expect(more).toHaveText(['지금 보이는 가게 더 보기 (남은 10곳)']);
+
+    // 지금 더 보기 — p_offset 20(지금 묶음에 받은 줄 뒤) · 딸려 온 전에 줄은 겹쳐 붙지 않는다.
+    await more.click();
+    await expect(hist.locator('.hist__row')).toHaveCount(35);
+    expect(asked[asked.length - 1]).toEqual({ p_pnu: searchHit().pnu, p_limit: 20, p_offset: 20 });
+    await expect(groups.nth(0).locator('.hist__nm')).toHaveText(all.slice(0, 30).map((r) => r.biz_name));
+    await expect(groups.nth(1).locator('.hist__nm')).toHaveText(all.slice(30).map((r) => r.biz_name));
+    await expect(more).toHaveCount(0);
+
+    // 넘침 — 글꼴 차이(우분투 1px 안팎)만큼 2px 까지 허용 · 페이지는 0.
+    const overflow = await page.evaluate(() => {
+      const d = (globalThis as unknown as { document: { documentElement: { scrollWidth: number; clientWidth: number } } })
+        .document.documentElement;
+      return d.scrollWidth - d.clientWidth;
+    });
+    const cardOver = await hist.evaluate((e) => e.scrollWidth - e.clientWidth);
+    testInfo.annotations.push({ type: 'CQ 실측', description: `${testInfo.project.name}: 넘침 ${overflow} · 카드 넘침 ${cardOver}` });
+    expect(overflow).toBeLessThanOrEqual(0);
+    expect(cardOver).toBeLessThanOrEqual(2);
+  });
 });

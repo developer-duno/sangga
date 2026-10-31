@@ -1887,6 +1887,8 @@ body {
 
 .card__title {
   font-weight: 700;
+  /* 긴 제목은 낱말 단위로 줄을 바꾼다 — 휴대폰에서 「누/적」처럼 낱말 중간에서 끊기지 않게(결정 0045 PR④ 보완 3 H-3). */
+  word-break: keep-all;
 }
 
 /* 역할 태그. 누가 특히 보는 카드인지만 말한다 — 값·등급을 뜻하지 않는다. */
@@ -3935,6 +3937,13 @@ body {
 .hist__more:disabled {
   cursor: progress;
   opacity: 0.6;
+}
+
+/* 단추 줄(보완 3 H-2) — 「지금 보이는 가게 더 보기」와 「전에 보였던 가게 보기」가 나란히, 좁으면 다음 줄로. */
+.hist__mores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 8px;
 }
 
 .hist__notes {
@@ -6376,8 +6385,10 @@ body {
   .list__fold,
   /* 개업·폐업 「전부 보기 (N분기)」(결정 0038 H · V6) — 누르는 장치다. 고른 창의 그림은 종이에 그대로 나온다. */
   .oc__all,
-  /* 가게 이력 「더 보기 (남은 N곳)」(결정 0045 PR④ 보완 1 F-1) — 누르는 장치다. 받은 줄은 종이에 나온다. */
+  /* 가게 이력 「더 보기 (남은 N곳)」(결정 0045 PR④ 보완 1 F-1) — 누르는 장치다. 받은 줄은 종이에 나온다.
+     단추 줄 상자(보완 3 H-2)도 함께 뺀다. */
   .hist__more,
+  .hist__mores,
   .modal__back {
     display: none !important;
   }

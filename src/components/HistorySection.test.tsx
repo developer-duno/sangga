@@ -275,14 +275,164 @@ describe('HistorySection — 보완 1 F-2 줄 key', () => {
   });
 });
 
-describe('HistorySection — 보완 2 G-4 늦은 답 버리기', () => {
-  function deferred() {
-    let resolve!: (r: Res) => void;
-    const promise = new Promise<Res>((r) => {
-      resolve = r;
-    });
-    return { promise, resolve };
+function deferred() {
+  let resolve!: (r: Res) => void;
+  const promise = new Promise<Res>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+describe('HistorySection — 보완 3 H-2 「전에 보였던 가게 보기」(묶음마다 제 커서 · 👤 11-01)', () => {
+  /** 서버 차례 그대로의 땅 — 지금 보임 curN(지금00…) → 전에 보임 pastN(전에00…). */
+  function land(curN: number, pastN: number): StoreHistoryRow[] {
+    const over = { total_cnt: curN + pastN, current_cnt: curN };
+    return [
+      ...Array.from({ length: curN }, (_v, i) => row(i, { ...over, biz_name: `지금${String(i).padStart(2, '0')}` })),
+      ...Array.from({ length: pastN }, (_v, i) =>
+        row(i, {
+          ...over,
+          biz_name: `전에${String(i).padStart(2, '0')}`,
+          is_current: false,
+          first_ym: '201903',
+          last_ym: '202312',
+          seen_cnt: 20,
+        }),
+      ),
+    ];
   }
+  const serve = (rows: StoreHistoryRow[]) => (args: Record<string, unknown>) => {
+    const off = Number(args.p_offset ?? 0);
+    return { data: rows.slice(off, off + Number(args.p_limit ?? 20)), error: null };
+  };
+  const buttons = (c: HTMLElement) => [...c.querySelectorAll('.hist__more')].map((b) => b.textContent);
+  const names = (c: HTMLElement, i: number) =>
+    [...c.querySelectorAll('.hist__grp')[i].querySelectorAll('.hist__nm')].map((n) => n.textContent);
+  const byText = (c: HTMLElement, t: string) => [...c.querySelectorAll('.hist__more')].find((b) => b.textContent === t)!;
+
+  it('ⓐ 작은 땅(지금 3 + 전에 5) — 단추 0', async () => {
+    state.history = serve(land(3, 5));
+    const { container } = render(<HistorySection pnu={PNU} />);
+    await waitFor(() => expect(container.querySelectorAll('.hist__row')).toHaveLength(8));
+    expect(buttons(container)).toEqual([]);
+  });
+
+  it('ⓑ 중간 땅(지금 3 + 전에 30) — 「더 보기 (남은 13곳)」 하나 · 누르면 p_offset 20 · 전에 묶음에 붙는다', async () => {
+    state.history = serve(land(3, 30));
+    const { container } = render(<HistorySection pnu={PNU} />);
+    await waitFor(() => expect(container.querySelector('.hist__more')).not.toBeNull());
+    expect(buttons(container)).toEqual(['더 보기 (남은 13곳)']);
+    fireEvent.click(container.querySelector('.hist__more')!);
+    await waitFor(() => expect(container.querySelectorAll('.hist__row')).toHaveLength(33));
+    expect(historyCalls()[1].args).toEqual({ p_pnu: PNU, p_limit: 20, p_offset: 20 });
+    expect(names(container, 1)).toEqual(land(3, 30).slice(3).map((r) => r.biz_name));
+    expect(buttons(container)).toEqual([]);
+  });
+
+  it('ⓒ ★ 큰 땅(첫 쪽 20줄 전부 지금 · 지금 30 · 전체 35) — 단추 둘 · 건너뛰기 p_offset 30 → 지금 더 보기 p_offset 20', async () => {
+    const all = land(30, 5);
+    state.history = serve(all);
+    const { container } = render(<HistorySection pnu={PNU} />);
+    await waitFor(() => expect(container.querySelectorAll('.hist__more')).toHaveLength(2));
+    expect(buttons(container)).toEqual(['지금 보이는 가게 더 보기 (남은 10곳)', '전에 보였던 가게 보기 (5곳)']);
+    // 두 단추는 한 줄 상자 안에 나란히, 지금 묶음 바로 뒤.
+    expect(container.querySelectorAll('.hist__mores')).toHaveLength(1);
+    expect(container.querySelectorAll('.hist__grp')).toHaveLength(1);
+
+    fireEvent.click(byText(container, '전에 보였던 가게 보기 (5곳)'));
+    await waitFor(() => expect(container.querySelectorAll('.hist__grp')).toHaveLength(2));
+    expect(historyCalls()[1].args).toEqual({ p_pnu: PNU, p_limit: 20, p_offset: 30 });
+    expect(names(container, 0)).toEqual(all.slice(0, 20).map((r) => r.biz_name));
+    expect(names(container, 1)).toEqual(all.slice(30).map((r) => r.biz_name));
+    expect(container.querySelectorAll('.hist__grp')[1].querySelectorAll('.hist__chip')).toHaveLength(5);
+    expect(buttons(container)).toEqual(['지금 보이는 가게 더 보기 (남은 10곳)']);
+
+    fireEvent.click(byText(container, '지금 보이는 가게 더 보기 (남은 10곳)'));
+    await waitFor(() => expect(container.querySelectorAll('.hist__row')).toHaveLength(35));
+    expect(historyCalls()[2].args).toEqual({ p_pnu: PNU, p_limit: 20, p_offset: 20 });
+    // 그 답의 뒤 5줄(전에 묶음)은 이미 받은 자리라 겹쳐 붙지 않는다.
+    expect(names(container, 0)).toEqual(all.slice(0, 30).map((r) => r.biz_name));
+    expect(names(container, 1)).toEqual(all.slice(30).map((r) => r.biz_name));
+    expect(buttons(container)).toEqual([]);
+  });
+
+  it('ⓒ′ 큰 땅에서 지금 더 보기를 먼저 누르면 그 답에 딸려 온 전에 줄도 제자리에 · 남은 전에 줄은 「더 보기」', async () => {
+    const all = land(30, 25);
+    state.history = serve(all);
+    const { container } = render(<HistorySection pnu={PNU} />);
+    await waitFor(() => expect(container.querySelectorAll('.hist__more')).toHaveLength(2));
+    fireEvent.click(byText(container, '지금 보이는 가게 더 보기 (남은 10곳)'));
+    await waitFor(() => expect(container.querySelectorAll('.hist__grp')).toHaveLength(2));
+    expect(names(container, 0)).toEqual(all.slice(0, 30).map((r) => r.biz_name));
+    expect(names(container, 1)).toEqual(all.slice(30, 40).map((r) => r.biz_name));
+    expect(buttons(container)).toEqual(['더 보기 (남은 15곳)']);
+    fireEvent.click(container.querySelector('.hist__more')!);
+    await waitFor(() => expect(container.querySelectorAll('.hist__row')).toHaveLength(55));
+    expect(historyCalls()[2].args).toEqual({ p_pnu: PNU, p_limit: 20, p_offset: 40 });
+  });
+
+  it('ⓓ ⛔ 건너뛴 답의 줄이 「지금 보임」이면(그 사이 적재가 바뀜) 버리고 그 단추만 거둔다', async () => {
+    const all = land(30, 5);
+    state.history = (args) =>
+      Number(args.p_offset ?? 0) === 30
+        ? { data: all.slice(30).map((r) => ({ ...r, is_current: true })), error: null }
+        : serve(all)(args);
+    const { container } = render(<HistorySection pnu={PNU} />);
+    await waitFor(() => expect(container.querySelectorAll('.hist__more')).toHaveLength(2));
+    fireEvent.click(byText(container, '전에 보였던 가게 보기 (5곳)'));
+    await waitFor(() => expect(buttons(container)).toEqual(['지금 보이는 가게 더 보기 (남은 10곳)']));
+    expect(container.querySelectorAll('.hist__grp')).toHaveLength(1);
+    expect(container.querySelectorAll('.hist__row')).toHaveLength(20);
+  });
+
+  it('ⓔ 건너뛰기 답이 오기 전에 필지가 바뀌면 새 땅에 붙이지 않는다', async () => {
+    const all = land(30, 5);
+    const late = deferred();
+    const other = land(30, 5).map((r, i) => ({ ...r, biz_name: `다른땅${String(i).padStart(2, '0')}` }));
+    state.history = (args) => {
+      const off = Number(args.p_offset ?? 0);
+      if (args.p_pnu === PNU) return off === 30 ? late.promise : serve(all)(args);
+      return { data: other.slice(off, off + 20), error: null };
+    };
+    const { container, rerender } = render(<HistorySection pnu={PNU} />);
+    await waitFor(() => expect(container.querySelectorAll('.hist__more')).toHaveLength(2));
+    fireEvent.click(byText(container, '전에 보였던 가게 보기 (5곳)'));
+    rerender(<HistorySection pnu={OTHER} />);
+    await waitFor(() => expect(container.querySelector('.hist__nm')?.textContent).toBe('다른땅00'));
+    await act(async () => {
+      late.resolve(serve(all)({ p_offset: 30 }));
+    });
+    await settle();
+    expect(container.querySelectorAll('.hist__grp')).toHaveLength(1);
+    expect(buttons(container)).toEqual(['지금 보이는 가게 더 보기 (남은 10곳)', '전에 보였던 가게 보기 (5곳)']);
+  });
+
+  it('묻는 동안 두 단추 모두 비활성', async () => {
+    const all = land(30, 5);
+    const late = deferred();
+    state.history = (args) => (Number(args.p_offset ?? 0) === 30 ? late.promise : serve(all)(args));
+    const { container } = render(<HistorySection pnu={PNU} />);
+    await waitFor(() => expect(container.querySelectorAll('.hist__more')).toHaveLength(2));
+    fireEvent.click(byText(container, '전에 보였던 가게 보기 (5곳)'));
+    await waitFor(() =>
+      expect([...container.querySelectorAll('.hist__more')].every((b) => (b as HTMLButtonElement).disabled)).toBe(true),
+    );
+    await act(async () => {
+      late.resolve(serve(all)({ p_offset: 30 }));
+    });
+    await waitFor(() => expect(container.querySelectorAll('.hist__grp')).toHaveLength(2));
+  });
+
+  it('⛔ 첫 쪽이 서버 차례와 어긋나면(전에 줄이 지금 줄보다 앞) 카드째 숨긴다', async () => {
+    const all = land(3, 5);
+    state.history = () => ({ data: [all[3], ...all.slice(0, 3), ...all.slice(4)], error: null });
+    const { container } = render(<HistorySection pnu={PNU} />);
+    await settle();
+    expect(container.querySelector('section.card')).toBeNull();
+  });
+});
+
+describe('HistorySection — 보완 2 G-4 늦은 답 버리기', () => {
 
   it('ⓐ 첫 쪽 답이 오기 전에 필지가 바뀌면 옛 답을 그리지 않는다', async () => {
     const lateA = deferred();

@@ -119,8 +119,10 @@ export function rowText(row: StoreHistoryRow): BoldText {
     return { pre: '자료에 ', bold: span, post: ` 보임 · ${formatQuarter(row.first_ym)}부터` };
   }
   // 한 분기만 보인 지난 줄은 「○년 ○분기에만 보임」(지금 보이는 1분기 줄의 「○년 ○분기에 처음」과 짝 · 보완 1 F-4).
-  if (row.first_ym === row.last_ym && !row.truncated) {
-    return { pre: `${formatQuarter(row.first_ym)}에만 보임`, bold: '', post: '' };
+  // 그 한 분기가 자료 시작이면 그 전은 자료가 없어 모른다 — 「1분기 이상」 대신 그 사실을 적는다(보완 3 H-4).
+  if (row.first_ym === row.last_ym) {
+    const only = `${formatQuarter(row.first_ym)}에만 보임`;
+    return { pre: row.truncated ? `${only} · 자료 시작이라 그 전은 모름` : only, bold: '', post: '' };
   }
   return { pre: `${formatQuarter(row.first_ym)} ~ ${formatQuarter(row.last_ym)} 보임 · `, bold: '', post: span };
 }
@@ -162,7 +164,8 @@ export function historyNotes(rows: StoreHistoryRow[]): { source: string; gone: [
     ],
     name:
       '상호는 자료의 마지막 값입니다 — 옛 분기의 이름이 그 시절 간판이라는 뜻은 아닙니다. ' +
-      '땅 번호가 바뀐 땅(분할·합병)은 옛 줄이 이 땅에 붙지 않습니다.',
+      '땅 번호가 바뀐 땅(분할·합병)은 옛 줄이 이 땅에 붙지 않고, ' +
+      '번호가 같은 채 땅 번호가 바뀐 가게는 옛 땅에서 보인 분기도 함께 셉니다.',
   };
 }
 
@@ -172,7 +175,17 @@ export function groupCounts(rows: StoreHistoryRow[]): { current: number; gone: n
   return { current: head.current_cnt, gone: head.total_cnt - head.current_cnt };
 }
 
-/** 「더 보기」 단추 글 — 남은 수 = 그 땅 전체 − 받은 줄 수. */
+/** 「더 보기」 단추 글 — 남은 수 = 그 묶음(또는 땅) 전체 − 받은 줄 수. */
 export function moreText(received: number, total: number): string {
   return `더 보기 (남은 ${countText(total - received)}곳)`;
+}
+
+/** 지금 보이는 가게 묶음 아래 단추 글(👤 11-01 · 보완 3 H-2) — 남은 수 = current_cnt − 받은 지금 줄 수. */
+export function moreCurrentText(received: number, currentCnt: number): string {
+  return `지금 보이는 가게 더 보기 (남은 ${countText(currentCnt - received)}곳)`;
+}
+
+/** 전에 보였던 가게로 건너뛰는 단추 글(👤 11-01 · 보완 3 H-2) — 수 = total − current(그 묶음 전체). */
+export function skipToGoneText(goneCnt: number): string {
+  return `${HISTORY_GONE_HEAD} 보기 (${countText(goneCnt)}곳)`;
 }
