@@ -180,7 +180,8 @@ export const CARD_SOURCES = {
   // 결정 0044 — 대전 건물의 개업·폐업 카드 자리(「동네 폐업 (대전시 공표)」)만 이 갈래를 쓴다(`SECTION_PLAN` 에는 없다 —
   // 카드가 대전 답을 받았을 때 plan 을 바꿔 끼운다). 기준 = 사람이 대전시 사이트에서 받은 날.
   daejeon_closure: { src: '동네 폐업 (대전시)', label: '대전시 상권분석 서비스', ending: ' 받음' },
-  // 결정 0045 PR② — 서울 상권 4종. 카드(PR③)가 아직 없어 지금은 어느 `SECTION_PLAN` 에도 안 붙는다.
+  // 결정 0045 PR② — 서울 상권 4종. PR③ 부터 `SECTION_PLAN.sales`(sales)·`SECTION_PLAN.pop`(pop_flow·pop_people) 이 쓴다
+  //   (서울 밖 건물의 빈 카드는 날짜 줄을 그리지 않는다 — `EmptySection`).
   //   상주·직장 줄의 기준은 「상주 2023년 4분기, 직장 2024년 4분기」 같은 글이라 `basisText` 가 원본 그대로 적는다.
   sales: { src: '상권 추정매출 (서울시)', label: '서울시 상권분석서비스', ending: '' },
   pop_flow: { src: '상권 길단위인구 (서울시)', label: '서울시 상권분석서비스', ending: '' },

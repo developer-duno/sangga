@@ -433,3 +433,38 @@ describe('곁 카드 — 다른 필지의 미리 보낸 답은 받지 않는다 
     expect(countFetches('list_district_openclose', B.pnu)).toBe(1);
   });
 });
+
+describe('서울 필지만 추정매출·상권 인구를 미리 보낸다 (결정 0045 PR③ · SEOUL_PREFETCH_FNS)', () => {
+  const SEOUL_FNS = ['list_district_sales', 'list_district_pop'] as const;
+  const D = { bld_id: 'D-1', pnu: '3011010700108770000', tag: '다' };
+
+  it('서울 건물 — 일곱 함수에 둘을 더해 보내고, 카드는 그 답을 받아 다시 묻지 않는다(각 정확히 1회)', async () => {
+    // 층 목록은 영영 안 온다 — 카드가 서기 전에 이미 출발했는지 본다.
+    render(<FloorStack building={building(A)} />);
+    await waitFor(() => {
+      for (const fn of SEOUL_FNS) expect(countFetches(fn, A.pnu)).toBe(1);
+    });
+    // 층 목록이 와서 카드가 선 뒤에도 더 나가지 않는다.
+    cleanup();
+    fetches.length = 0;
+    state.floors.set(A.bld_id, floorsOf(A));
+    render(
+      <StrictMode>
+        <FloorStack building={building(A)} />
+      </StrictMode>,
+    );
+    await screen.findByText('임대상권가');
+    await act(async () => {});
+    for (const fn of SEOUL_FNS) expect(countFetches(fn)).toBe(1);
+  });
+
+  it('대전 건물 — 추정매출·상권 인구 요청 0(그 자리는 빈 카드)', async () => {
+    state.floors.set(D.bld_id, floorsOf(D));
+    render(<FloorStack building={building(D)} />);
+    await screen.findByText('빌딩다');
+    await act(async () => {});
+    for (const fn of SEOUL_FNS) expect(countFetches(fn)).toBe(0);
+    // 양성 대조 — 같은 화면이 다른 곁 함수는 보냈다(요청 기록이 비어서 0 인 것이 아니다).
+    expect(countFetches('list_district_openclose', D.pnu)).toBe(1);
+  });
+});

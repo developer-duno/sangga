@@ -128,6 +128,14 @@ export function sidoNameOfPnu(pnu: string): string | null {
   return SIDOS.find((s) => s.code === code)?.name ?? null;
 }
 
+/**
+ * 서울시 상권 자료(추정매출·상권 인구 · 결정 0045)를 부를 필지인가 — pnu 앞 두 자리가 서울(11).
+ * `isDaejeonPnu`(lib/daejeonClosure.ts)와 같은 꼴 · 지역 이름은 `regions.ts` 의 표가 정본이다.
+ */
+export function isSeoulPnu(pnu: string): boolean {
+  return pnu.startsWith('11');
+}
+
 /** 창의 크기를 사람 말로 — 네 분기로 나눠지면 '최근 2년(8분기)', 아니면 '최근 N분기'. */
 export function windowText(windowQuarters: readonly string[]): string {
   const n = windowQuarters.length;

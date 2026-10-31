@@ -35,7 +35,8 @@ describe('EmptySection', () => {
   it('★ 접힌 채 서고 제목·역할·요약이 보이며, 본문은 감춰져 있다', () => {
     const { container } = render(<EmptySection kind="sales" pnu="1168010500101590000" />);
     const card = container.querySelector('section.card')!;
-    expect(card.querySelector('.card__title')?.textContent).toBe('업종별 추정매출');
+    // 제목은 정본 한 곳(SECTION_PLAN) — 결정 0045 PR③ 부터 「(서울시 추정)」이 붙는다(서울 건물은 제 컴포넌트가 그린다).
+    expect(card.querySelector('.card__title')?.textContent).toBe('업종별 추정매출 (서울시 추정)');
     expect(card.querySelector('.card__role')?.textContent).toBe('창업자');
     expect(card.querySelector('.card__summary')?.textContent).toBe('지금은 비어 있음');
     expect(screen.getByRole('button').getAttribute('aria-expanded')).toBe('false');
@@ -61,6 +62,14 @@ describe('EmptySection', () => {
     render(<EmptySection kind="pop" pnu="3011010700108770000" />);
     render(<EmptySection kind="history" pnu="3011010700108770000" />);
     await Promise.resolve();
+    expect(rpcCalls).toEqual([]);
+  });
+
+  it('⛔ sales·pop 칸의 자료 칸(서울 카드용 · 결정 0045 PR③)이 있어도 빈 카드에는 날짜 줄이 없고 신선도도 안 묻는다', async () => {
+    const { container } = render(<EmptySection kind="sales" pnu="3011010700108770000" />);
+    render(<EmptySection kind="pop" pnu="3011010700108770000" />);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(container.querySelector('.card__src')).toBeNull();
     expect(rpcCalls).toEqual([]);
   });
 

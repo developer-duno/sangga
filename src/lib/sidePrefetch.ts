@@ -1,6 +1,8 @@
 import { supabase } from './supabase';
 import {
   DAEJEON_CLOSURE_FN,
+  DISTRICT_POP_FN,
+  DISTRICT_SALES_FN,
   FLOOR_INDUSTRY_FN,
   INDUSTRY_MEDIAN_FN,
   INDUSTRY_MIX_FN,
@@ -10,6 +12,7 @@ import {
   RENT_STATS_FN,
 } from './appConstants';
 import { isDaejeonPnu } from './daejeonClosure';
+import { isSeoulPnu } from './openClose';
 
 /**
  * 층별 화면의 곁 카드(둘레의 업종 분포 · 그 비교 글(물결 2-3) · 둘레 인허가 한 줄 · 상권 임대 동향 · 상권 개업·폐업 ·
@@ -24,7 +27,8 @@ import { isDaejeonPnu } from './daejeonClosure';
  *    (postgrest-js `then()` 안에서 매번 `executeWithRetry()` 를 실행). 요청 객체를 그대로
  *    저장해 부모·자식이 각각 `.then` 하면 두 번 나간다 — 목(mock)은 이걸 못 잡는다.
  *    그래서 여기서 **한 번만** `.then` 해 만든 진짜 Promise 를 나눠 쓴다.
- * ⛔ 보관 열쇠 = 함수 이름 + pnu(일곱 함수의 인자는 `p_pnu` 하나뿐이라 이것이 인자 전부다).
+ * ⛔ 보관 열쇠 = 함수 이름 + pnu(일곱 함수 — 서울 필지는 아홉 · 대전 필지는 여덟 — 의 인자는 `p_pnu` 하나뿐이라
+ *    이것이 인자 전부다).
  *    pnu 가 다르면 절대 내주지 않는다 — 건물 A 의 늦은 답이 건물 B 카드에 붙으면 그 순간이
  *    그대로 틀린 정보다. 보관은 **지금 건물 것 한 벌뿐**(부모가 건물이 바뀌면 통째로 갈아 끼운다).
  */
@@ -53,6 +57,12 @@ export const SIDE_PREFETCH_FNS = [
  */
 export const DAEJEON_PREFETCH_FNS = [DAEJEON_CLOSURE_FN] as const;
 
+/**
+ * 서울 필지(pnu 앞 두 자리 11)일 때만 더 보내는 함수 둘 — 「업종별 추정매출 (서울시 추정)」·「상권 인구 (서울시 공표)」
+ * (결정 0045 PR③ · 인자 `{ p_pnu }`). 받는 쪽은 그 두 카드. 서울 밖 건물에는 보내지 않는다(요청 0 — 그 자리는 빈 카드).
+ */
+export const SEOUL_PREFETCH_FNS = [DISTRICT_SALES_FN, DISTRICT_POP_FN] as const;
+
 export type SidePrefetch = {
   pnu: string;
   results: ReadonlyMap<string, Promise<RpcResult>>;
@@ -69,7 +79,11 @@ export function startSidePrefetch(pnu: string): SidePrefetch {
   const results = new Map<string, Promise<RpcResult>>();
   const startedAt = Date.now();
   const settledAt = new Map<string, number>();
-  const fns: readonly string[] = isDaejeonPnu(pnu) ? [...SIDE_PREFETCH_FNS, ...DAEJEON_PREFETCH_FNS] : SIDE_PREFETCH_FNS;
+  const fns: readonly string[] = isDaejeonPnu(pnu)
+    ? [...SIDE_PREFETCH_FNS, ...DAEJEON_PREFETCH_FNS]
+    : isSeoulPnu(pnu)
+      ? [...SIDE_PREFETCH_FNS, ...SEOUL_PREFETCH_FNS]
+      : SIDE_PREFETCH_FNS;
   for (const fn of fns) {
     // `.then` 을 **지금 한 번** 불러 요청을 출발시킨다(`Promise.resolve(빌더)` 는 다음
     // 틱에야 부른다). 라이브러리 타입이 PromiseLike 라 Promise.resolve 로 감싼다 — 진짜
