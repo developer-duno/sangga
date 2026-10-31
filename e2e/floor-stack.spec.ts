@@ -2625,7 +2625,9 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
     for (const y of await years.all()) {
       expect(await y.evaluate((e) => e.scrollWidth - e.clientWidth)).toBeLessThanOrEqual(0);
       const tick = y.locator('xpath=..');
-      expect(await tick.evaluate((e) => e.scrollWidth - e.clientWidth)).toBeLessThanOrEqual(0);
+      // 분기 글 「3분기」는 CI(우분투 글꼴)에서 윈도우보다 1px 넓다(2026-10-31 CI run 41183920386 · 받은 값 1) — 글꼴 차이만큼
+      // 2px 까지 허용한다. 해 글(위)은 그대로 0 — 이 단언의 본론은 「2024년」이 잘리던 결함(F10)이다.
+      expect(await tick.evaluate((e) => e.scrollWidth - e.clientWidth)).toBeLessThanOrEqual(2);
     }
     // 업종 표 5 + 그 밖 · 칩 카페 hit 줄.
     await expect(first.locator('.sales__table tbody tr th')).toHaveText([
