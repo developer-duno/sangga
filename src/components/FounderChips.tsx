@@ -41,7 +41,7 @@ export function FounderChips({ chip, onChange }: Props) {
         })}
       </ul>
       {/* 👤 F4 — 칩이 무엇을 바꾸는지 곁에 적는다. 2026-10-11(👤 · 물결 2-2b)부터 지도의 상권 목록도 칩을 따른다. */}
-      <p className="chips__note">상권 목록과, 건물을 열면 업종 분포·개업·폐업 카드에 반영됩니다</p>
+      <p className="chips__note">상권 목록과, 건물을 열면 업종 분포·개업·폐업·추정매출 카드에 반영됩니다</p>
     </div>
   );
 }

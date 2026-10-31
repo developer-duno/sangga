@@ -2963,7 +2963,7 @@ test.describe('첫 화면 — 창업자 입구 · 업종 칩', () => {
     await expect(chips.getByRole('button')).toHaveText(['카페', '한식', '미용', '학원', '편의점', '전체']);
     await expect(chipBtn('전체')).toHaveAttribute('aria-pressed', 'true');
     // 칩 곁 안내 한 줄(👤 F4) — 글자 그대로.
-    await expect(chips.locator('.chips__note')).toHaveText('상권 목록과, 건물을 열면 업종 분포·개업·폐업 카드에 반영됩니다');
+    await expect(chips.locator('.chips__note')).toHaveText('상권 목록과, 건물을 열면 업종 분포·개업·폐업·추정매출 카드에 반영됩니다');
     // ⛔ 좁은 폭(412px)에서도 칩 줄(안내 한 줄 포함)이 옆으로 넘치지 않는다.
     expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
 

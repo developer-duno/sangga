@@ -51,7 +51,7 @@ describe('FounderChips — 안내 한 줄 (👤 F4)', () => {
   it('칩 줄 곁에 작은 글 — 글자 그대로', () => {
     const { container } = render(<FounderChips chip="전체" onChange={() => {}} />);
     expect(container.querySelector('.chips .chips__note')?.textContent).toBe(
-      '상권 목록과, 건물을 열면 업종 분포·개업·폐업 카드에 반영됩니다',
+      '상권 목록과, 건물을 열면 업종 분포·개업·폐업·추정매출 카드에 반영됩니다',
     );
   });
 });
