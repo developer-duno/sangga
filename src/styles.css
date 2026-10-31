@@ -3501,6 +3501,304 @@ body {
   margin: 0;
 }
 
+/* ── 업종별 추정매출 · 상권 인구 (서울시 · 결정 0045 PR③) ─────────────────────
+   개업·폐업 카드(.oc__*)와 같은 옷 — 색·크기는 그 값 그대로 둔다. 둘 다 이 건물이 아니라 **속한 상권**의 공표값이다.
+   막대는 C등급 추정 톤(--est-band · 최신 칸 --est-ink). ⓘ 휴대폰 미니 막대 배치는 `@media screen and (max-width: 720px)` 묶음에,
+   13px 은 화면 묶음에, 종이는 덩어리·표 줄 단위 avoid(카드 통째 금지). `card--empty` 는 안 붙인다(자료가 찬 카드는 종이에 나온다). */
+.sales,
+.pop {
+  margin: 0 0 24px;
+  padding: 14px 16px 6px;
+  background: #fbfcfd;
+}
+
+.sales__lead,
+.pop__lead {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.sales__badge-line,
+.pop__badge-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin: 0 0 8px;
+}
+
+.sales__scale,
+.pop__scale {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.sales__dir {
+  color: var(--muted);
+}
+
+.sales__district,
+.pop__district {
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.sales__name,
+.pop__name {
+  margin: 0 0 4px;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.sales__big,
+.pop__big {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.sales__num,
+.pop__num {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.sales__q,
+.pop__q {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* 인구 카드의 「YYYY년 기준 (서울시가 ○○○○·○○○○년에는 안 바꿈)」은 길어 좁은 화면에서 낱말 단위로 줄을 바꾼다(검사 뒤 보완 F2). */
+.pop__q {
+  white-space: normal;
+  word-break: keep-all;
+}
+
+/* 인구 배지 옆 작은 글(검사 뒤 보완 F4) — 길어서 좁은 화면에서 줄을 바꾼다(.pop__q 는 한 줄 고정이라 넘친다). */
+.pop__badge-note {
+  color: var(--muted);
+  font-size: 12px;
+  word-break: keep-all;
+}
+
+.sales__note,
+.sales__none,
+.sales__src,
+.pop__note,
+.pop__none,
+.pop__src {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.sales__trend {
+  margin: 12px 0 0;
+}
+
+.sales__trend-cap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.sales__trend-cap b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* 칸 수는 서버의 창 크기라 화면이 `grid-template-columns` 를 인라인으로 준다. */
+.sales__cols,
+.pop__cols {
+  display: grid;
+  gap: 4px;
+  max-width: 520px;
+}
+
+.sales__col,
+.pop__col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sales__bars,
+.pop__bars {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  height: 72px;
+  border-bottom: 1px solid var(--line);
+}
+
+.pop__bars {
+  height: 44px;
+}
+
+.sales__bar,
+.pop__bar {
+  display: block;
+  width: 60%;
+  max-width: 18px;
+  border-radius: 2px 2px 0 0;
+  background: var(--est-band);
+}
+
+.sales__bar--last {
+  background: var(--est-ink);
+}
+
+/* 자료가 없는 분기('–') — 0 막대와 헷갈리지 않게 글자로 둔다. */
+.sales__gap {
+  align-self: center;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.sales__tick,
+.pop__tick {
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.3;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.sales__tick-year {
+  display: block;
+}
+
+/* 업종 표 — 상위 5 + 그 밖. 표가 좁은 폭보다 넓어지면 표 칸이 줄을 바꾼다(이름 칸만). */
+.sales__table {
+  width: 100%;
+  margin-top: 10px;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sales__table th,
+.sales__table td {
+  padding: 3px 4px;
+  border-top: 1px dashed var(--line);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.sales__table thead th {
+  border-top: none;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.sales__table th:first-child {
+  font-weight: 400;
+  text-align: left;
+  white-space: normal;
+  /* 낱말 가운데서 줄을 바꾸지 않는다(검사 뒤 보완 F10 — 412px 에서 「스포츠 강/습」) · 첫 칸 폭은 글자 4.5개 이상(개업·폐업 표와 같은 꼴). */
+  word-break: keep-all;
+  min-width: 5em;
+}
+
+/* 금액 막대 칸 — 길이 = 이 줄 금액 ÷ 상위 첫 줄 금액(화면이 style 로 % 를 준다 · 글자로는 안 낸다). */
+.sales__w {
+  width: 30%;
+  padding-left: 8px;
+}
+
+.sales__w i {
+  display: block;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--est-band);
+}
+
+.sales__rest th,
+.sales__rest td {
+  color: var(--muted);
+}
+
+/* 창업자 칩의 짝 업종 줄 — 개업·폐업 카드의 .oc__hit 와 같은 값. */
+.sales__hit th,
+.sales__hit td {
+  background: var(--accent-soft);
+}
+
+.sales__hit th:first-child {
+  color: var(--accent);
+}
+
+.sales__hit-tail {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+/* 인구 덩이 셋(길단위인구 · 사는 사람 · 일하는 사람) — 상권 덩어리 안에서 점선으로 가른다. */
+.pop__chunk {
+  padding: 8px 0;
+  border-top: 1px dashed var(--line);
+}
+
+.pop__name + .pop__chunk {
+  border-top: none;
+  padding-top: 2px;
+}
+
+.pop__chunk-h {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* 시간대 · 요일 미니 막대 둘 — 넓은 화면·종이는 나란히, 휴대폰은 한 칸씩(720 묶음). */
+.pop__mini {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 16px;
+  margin-top: 8px;
+  max-width: 640px;
+}
+
+.pop__bars-fig {
+  margin: 0;
+  min-width: 0;
+}
+
+.sales__why,
+.pop__why {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+
+.sales__why li + li,
+.pop__why li + li {
+  margin-top: 4px;
+}
+
+.sales__why .sales__src,
+.pop__why .pop__src {
+  margin: 0;
+}
+
 /* 빈 카드 셋(결정 0036 결정 2) — 본문은 "왜 비었나·받으면 무엇이 오나" 한 문장뿐이다. */
 .empty__body {
   margin: 0 0 8px;
@@ -4783,6 +5081,11 @@ body {
   .oc__scroll > .oc__cols {
     direction: ltr;
   }
+
+  /* 상권 인구 카드의 미니 막대 둘(시간대 · 요일 · 결정 0045 PR③) — 휴대폰은 한 칸씩 위아래로. */
+  .pop__mini {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* ── 가지고 나가기(링크 복사) ──────────────────────────────────────────────
@@ -5218,6 +5521,27 @@ body {
   .oc__table,
   .oc__table thead th,
   .oc__why,
+  .sales__lead,
+  .sales__scale,
+  .sales__q,
+  .sales__note,
+  .sales__none,
+  .sales__src,
+  .sales__trend-cap,
+  .sales__gap,
+  .sales__tick,
+  .sales__table,
+  .sales__table thead th,
+  .sales__why,
+  .pop__lead,
+  .pop__scale,
+  .pop__q,
+  .pop__badge-note,
+  .pop__note,
+  .pop__none,
+  .pop__src,
+  .pop__tick,
+  .pop__why,
   .empty__body,
   .grade,
   .grade__badge,
@@ -6116,6 +6440,11 @@ body {
   .oc__latest,
   .oc__trend,
   .oc__table tr,
+  /* 추정매출 · 상권 인구 카드(결정 0045 PR③) — 큰 숫자 줄 · 흐름 그림 · 표 줄 · 인구 덩이 하나씩. ⛔ 카드 통째(`.sales`·`.pop`)에는 걸지 않는다. */
+  .sales__big,
+  .sales__trend,
+  .sales__table tr,
+  .pop__chunk,
   .grade,
   .stack__facts,
   .dmap__canvas,

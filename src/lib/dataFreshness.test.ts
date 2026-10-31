@@ -233,13 +233,18 @@ function rows1016(): DataFreshnessRow[] {
     r('상권 임대 동향 (부동산원)', '분기', '2026Q2'),
     r('필지 (토지 특성)', '공시 연도', '2026'),
     r('상권 개업·폐업 (서울시)', '분기', '20262'),
+    // 결정 0045 — 서울 상권 4종 세 줄(정본 get_data_freshness 13~15번 줄의 글 꼴 그대로).
+    r('상권 추정매출 (서울시)', '분기', '20262'),
+    r('상권 길단위인구 (서울시)', '분기', '20262'),
+    r('상권 상주·직장인구 (서울시)', '값이 바뀐 분기', '상주 2023년 4분기, 직장 2024년 4분기'),
   ];
 }
 
 /**
  * 카드마다 기대하는 한 줄 — 👤 시안(SFpojgaYvHEdRnbx8ZTfQM)의 예시값(10-16 운영 값일 때) + 👤 10-16 보완 결정
  * B1(실거래 끝말 「(최근 두 달은 신고 중)」) · B3(층 목록에 실거래).
- * ⛔ 줄이 없는 카드 넷 — 빈 카드 셋(업종별 추정매출·유동인구·이 자리 가게 이력 · 결정 ②) + LH 공고(B2).
+ * ⛔ 줄이 없는 카드 둘 — 빈 카드 이 자리 가게 이력(결정 ②) + LH 공고(B2). 업종별 추정매출·상권 인구는 결정 0045 PR③ 부터
+ *    서울시 자료 줄이 선다(서울 밖 건물의 빈 카드는 `EmptySection` 이 줄을 빼 그린다).
  */
 const TX_PIECE = '국토부 실거래 2026년 10월 계약분까지 (최근 두 달은 신고 중)';
 
@@ -252,8 +257,8 @@ const EXPECTED_LINES: Record<string, string | null> = {
     '자료: 국세청 기준시가 2026년 1월 1일 고시 · 국토부 실거래 2026년 10월 계약분까지 (최근 두 달은 신고 중) · 부동산원 2026년 2분기 조사',
   rent: '자료: 부동산원 2026년 2분기 조사',
   openclose: '자료: 서울시 상권분석서비스 2026년 2분기',
-  sales: null,
-  pop: null,
+  sales: '자료: 서울시 상권분석서비스 2026년 2분기',
+  pop: '자료: 서울시 상권분석서비스 2026년 2분기 · 서울시 상주·직장인구 상주 2023년 4분기, 직장 2024년 4분기 값',
   history: null,
   lhNotice: null,
   txFlow: '자료: 국토부 실거래 2026년 10월 계약분까지 (최근 두 달은 신고 중)',
@@ -262,14 +267,14 @@ const EXPECTED_LINES: Record<string, string | null> = {
 describe('cardSourceLine — 카드 제목 아래 날짜 줄 (S3)', () => {
   const ALL_PLANS: Record<string, SectionPlan> = { ...SECTION_PLAN, ...ENTRY_SECTION_PLAN };
 
-  it('카드 열두 장 전부 — 날짜 줄 카드 여덟 장은 결정 글 그대로, 넷(빈 카드 셋 · LH)은 줄이 없다', () => {
+  it('카드 열두 장 전부 — 날짜 줄 카드 열 장은 결정 글 그대로, 둘(빈 카드 가게 이력 · LH)은 줄이 없다', () => {
     // 표가 카드를 빠짐없이 덮는다(카드가 새로 생기면 여기 기대 줄을 먼저 정한다).
     expect(Object.keys(EXPECTED_LINES).sort()).toEqual(Object.keys(ALL_PLANS).sort());
     for (const [key, plan] of Object.entries(ALL_PLANS)) {
       expect(cardSourceLine(plan.sources, rows1016()), key).toBe(EXPECTED_LINES[key]);
     }
     const withLine = Object.values(ALL_PLANS).filter((p) => cardSourceLine(p.sources, rows1016()));
-    expect(withLine).toHaveLength(8);
+    expect(withLine).toHaveLength(10);
   });
 
   it('종류별 끝말 — 판·계약분까지(최근 두 달은 신고 중)·계산·기준·고시·조사, 상권정보·서울시 분기는 끝말 없음', () => {
@@ -315,17 +320,27 @@ describe('cardSourceLine — 카드 제목 아래 날짜 줄 (S3)', () => {
     );
   });
 
-  it('빈 카드 셋(결정 ②)과 LH 공고(B2)는 자료 칸이 아예 없다', () => {
-    const none: SectionPlan[] = [
-      SECTION_PLAN.sales,
-      SECTION_PLAN.pop,
-      SECTION_PLAN.history,
-      ENTRY_SECTION_PLAN.lhNotice,
-    ];
+  it('빈 카드 가게 이력(결정 ②)과 LH 공고(B2)는 자료 칸이 아예 없다', () => {
+    const none: SectionPlan[] = [SECTION_PLAN.history, ENTRY_SECTION_PLAN.lhNotice];
     for (const plan of none) {
       expect(plan, plan.title).not.toHaveProperty('sources');
       expect(cardSourceLine(plan.sources, rows1016())).toBeNull();
     }
+  });
+
+  it('업종별 추정매출·상권 인구(결정 0045 PR③)는 서울시 자료 세 줄을 쓴다 — 서버 src 글자로 찾는다', () => {
+    expect(SECTION_PLAN.sales.sources).toEqual(['sales']);
+    expect(SECTION_PLAN.pop.sources).toEqual(['pop_flow', 'pop_people']);
+    expect(CARD_SOURCES.sales.src).toBe('상권 추정매출 (서울시)');
+    expect(CARD_SOURCES.pop_flow.src).toBe('상권 길단위인구 (서울시)');
+    expect(CARD_SOURCES.pop_people.src).toBe('상권 상주·직장인구 (서울시)');
+    // ⛔ 날짜 줄에 출처 이름이 두 번 나오지 않는다(길단위인구 조각 label 과 다른 이름 · 메인 PR③ 결정).
+    expect(CARD_SOURCES.pop_people.label).not.toBe(CARD_SOURCES.pop_flow.label);
+    const line = cardSourceLine(SECTION_PLAN.pop.sources, rows1016()) ?? '';
+    expect(line.split('서울시 상권분석서비스').length - 1).toBe(1);
+    // 양성 대조 — 서버 표에 그 줄이 없으면 그 조각만 빠진다(상주·직장 줄만 빠진 표).
+    const noPeople = rows1016().filter((r) => r.src !== '상권 상주·직장인구 (서울시)');
+    expect(cardSourceLine(SECTION_PLAN.pop.sources, noPeople)).toBe('자료: 서울시 상권분석서비스 2026년 2분기');
   });
 
   it('실거래 조각은 어느 카드에서나 같은 글이다(B1 · 실거래 기록·층별 공표값·동네 흐름·층 목록)', () => {

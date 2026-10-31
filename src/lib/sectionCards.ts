@@ -97,15 +97,15 @@ export const SECTION_PLAN = {
     sources: ['openclose'],
   },
   /*
-    빈 카드 셋(결정 0036 결정 2 · 물결 1-B · 👤 2026-10-11). 창업자가 펼쳐 보는 빈칸 — 업종별 추정매출 ·
-    유동인구 · 이 자리 가게 이력 — 을 **자료가 오기 전부터 카드로 세워 둔다**(없는 칸을 숨기면 "이 화면은
-    그걸 안 다룬다"로 읽힌다). 셋 다 **접힌 채로 시작**한다 — 지금은 "비어 있음" 한 줄뿐이라 펼침 상한을 쓸
-    까닭이 없다. 문구·지역 판정은 `lib/emptyCards.ts` 한 곳.
-    ⛔ 빈 카드는 **아무것도 부르지 않는다**(서버 함수 0 · `sidePrefetch` 에도 안 넣는다).
-    ⛔ 자료가 없으니 날짜 줄(`sources`)도 없다(S3 · 👤 결정 ②).
+    창업자 카드 셋(결정 0036 결정 2 · 물결 1-B · 👤 2026-10-11 → 결정 0045 PR③ · 2026-10-31). 업종별 추정매출 ·
+    상권 인구 · 이 자리 가게 이력 — 셋 다 **접힌 채로 시작**한다.
+    ⓘ 빈 카드는 이제 가게 이력 하나(서울) · 서울 밖은 셋 — 서울 건물의 sales·pop 은 제 컴포넌트(`SalesSection`·
+      `PopSection` · 서울시 공표값)가 그리고, 서울 밖 건물은 `EmptySection` 그대로다(문구·지역 판정은 `lib/emptyCards.ts`).
+    ⛔ 빈 카드는 **아무것도 부르지 않는다**(서버 함수 0) · 날짜 줄은 `sources` 를 둔 카드가 자료를 그릴 때만
+      (`EmptySection` 은 날짜 줄을 그리지 않는다 — S3 · 👤 결정 ②).
   */
-  sales: { title: '업종별 추정매출', role: '창업자', defaultOpen: false },
-  pop: { title: '유동인구', role: '창업자', defaultOpen: false },
+  sales: { title: '업종별 추정매출 (서울시 추정)', role: '창업자', defaultOpen: false, sources: ['sales'] },
+  pop: { title: '상권 인구 (서울시 공표)', role: '창업자', defaultOpen: false, sources: ['pop_flow', 'pop_people'] },
   history: { title: '이 자리 가게 이력', role: '창업자', defaultOpen: false },
 } as const satisfies Record<string, SectionPlan>;
 
@@ -138,7 +138,8 @@ export type RoleLayout = {
  * ⓘ 역할을 고르기 전에는 이 표를 안 쓴다 — `SECTION_PLAN` 의 순서·펼침 그대로다(결정 18 ①).
  */
 export const ROLE_SECTION_LAYOUT = {
-  // 빈 카드 셋(sales·pop·history)의 자리(👤 2026-10-11): 창업자 = 개업·폐업 바로 뒤 · 다른 두 벌 = 맨 끝.
+  // 창업자 카드 셋(sales·pop·history)의 자리(👤 2026-10-11): 창업자 = 개업·폐업 바로 뒤 · 다른 두 벌 = 맨 끝.
+  //   ⓘ 빈 카드는 서울 건물이면 가게 이력 하나(sales·pop 은 서울시 공표값 카드 · 결정 0045 PR③) · 서울 밖은 셋 그대로.
   // 층별 공표값(floorgap)의 자리(결정 0041 E2 · 👤 2026-10-18): 세 벌 모두 내린 참고 매매 시세의 자리를 이어받는다 ·
   // 투자자만 펼침도 이어받고, 창업자·중개사는 자리만 이어받아 접힘 그대로(중개사 펼침은 셋 — 넷째를 채우지 않는다).
   투자자: {

@@ -1064,6 +1064,119 @@ export type DistrictOpenCloseAll = DistrictOpenClose & {
   total_quarters: number;
 };
 
+// ── 서울 상권 추정매출 · 상권 인구 (결정 0045 PR③) ──────────────────────
+// ⛔ **공표값 그대로다.** 서울시 상권분석서비스가 분기마다 상권 단위로 공표한 값이다 — 이 건물의 값이 아니다.
+// ⛔ 추정매출 `amt`·`co` 는 **분기(3개월) 합계**(원 · 건), 길단위인구 숫자는 **3개월간 인구수**(명)다 — 화면이 나누지 않는다.
+// ⓘ 상태(`status`)·분기 꼴(다섯 자리 · Q 없음)은 개업·폐업 함수와 같다.
+
+/** 추정매출 상권 합 한 분기 — 그 상권 업종 행 전부의 당월 매출 금액 합(`amt` · 원)·건수 합(`co` · 건) = 분기(3개월) 합계. */
+export type DistrictSalesQuarter = { quarter: string; amt: number; co: number };
+
+/**
+ * 추정매출 업종 한 줄(그 상권 최신 분기). `top` 줄에만 주중·주말 금액이 온다(화면은 이번에 안 그린다).
+ */
+export type DistrictSalesIndustry = {
+  /** 서울시 서비스 업종 코드(`CS100001` 꼴). */
+  cd: string;
+  nm: string | null;
+  amt: number;
+  co: number;
+  mdwk_amt?: number | null;
+  wkend_amt?: number | null;
+};
+
+/**
+ * 함수 `list_district_sales(p_pnu)` 한 줄.
+ * ⓘ 건물 단위 상태 줄(`no_coord`·`not_seoul`·`outside_seoul_district`)과 `no_data` 줄은 `latest_quarter`·`trend`·`top`·
+ *   `rest_*`·`industries` 가 null 이다(`no_data` 는 `district_*` 만 있다). `ok` 줄만 숫자 칸이 다 찬다.
+ */
+export type DistrictSales = {
+  status: OpenCloseStatus;
+  district_id: string | null;
+  district_nm: string | null;
+  district_type: string | null;
+  /** 그 상권이 창 안에서 **실제로 가진** 최신 분기. 창의 최신과 다를 수 있다. */
+  latest_quarter: string | null;
+  /** 표 전체 기준 최근 분기 창(최신 → 옛). **모든 줄에 같은 값**이다. */
+  window_quarters: string[];
+  /** 최신 → 옛. 창 안에서 그 상권에 빠진 분기는 **아예 없다**. */
+  trend: DistrictSalesQuarter[] | null;
+  /** 최신 분기 업종 상위 5(금액 큰 순). */
+  top: DistrictSalesIndustry[] | null;
+  /** 상위 5 밖 업종 수·금액 합·건수 합(0업종이면 0). */
+  rest_cnt: number | null;
+  rest_amt: number | null;
+  rest_co: number | null;
+  /** 최신 분기 업종 전부(같은 차례 · 상한 100). */
+  industries: DistrictSalesIndustry[] | null;
+};
+
+/** 길단위인구 숫자 칸(3개월간 인구수 · 명). 연령 칸은 이번에 안 그린다. */
+export type DistrictPopFlow = {
+  tot: number;
+  ml: number;
+  fml: number;
+  tmzon_00_06: number;
+  tmzon_06_11: number;
+  tmzon_11_14: number;
+  tmzon_14_17: number;
+  tmzon_17_21: number;
+  tmzon_21_24: number;
+  mon: number;
+  tues: number;
+  wed: number;
+  thur: number;
+  fri: number;
+  sat: number;
+  sun: number;
+  [k: string]: number | null;
+};
+
+/** 상주인구 숫자 칸(명 · 가구). */
+export type DistrictPopResident = {
+  tot: number;
+  ml: number;
+  fml: number;
+  tot_hshld?: number | null;
+  apt_hshld?: number | null;
+  non_apt_hshld?: number | null;
+  [k: string]: number | null | undefined;
+};
+
+/** 직장인구 숫자 칸(명). */
+export type DistrictPopWorker = {
+  tot: number;
+  ml: number;
+  fml: number;
+  [k: string]: number | null | undefined;
+};
+
+/**
+ * 함수 `list_district_pop(p_pnu)` 한 줄.
+ * ⓘ 건물 단위 상태 줄은 `district_*` 부터 전부 null. 상권 줄(`ok`)은 셋 중 그 상권에 자료가 없는 것만 그 칸(분기·값)이 null —
+ *   셋 다 없으면 `no_data`. 상주·직장 값은 표지의 최신 분기 행에서만 온다 — 옛 분기에서 끊긴 상권이면 값이 null 이고
+ *   `*_last_quarter` 만 온다.
+ */
+export type DistrictPop = {
+  status: OpenCloseStatus;
+  district_id: string | null;
+  district_nm: string | null;
+  district_type: string | null;
+  /** 길단위인구 표 전체 최신 분기(모든 상권 줄에 같은 값). */
+  flow_table_quarter: string | null;
+  /** 그 상권 길단위인구의 가장 최근 분기. */
+  flow_quarter: string | null;
+  flow: DistrictPopFlow | null;
+  /** 상주인구 값이 마지막으로 바뀐 분기(표 전체 하나 — 「YYYY년 기준」). 그 상권 값이 없으면 null. */
+  resident_value_quarter: string | null;
+  /** 그 상권이 가진 마지막 상주인구 분기. */
+  resident_last_quarter: string | null;
+  resident: DistrictPopResident | null;
+  worker_value_quarter: string | null;
+  worker_last_quarter: string | null;
+  worker: DistrictPopWorker | null;
+};
+
 /** 대전 동네 폐업 한 분기(결정 0044) — 그 동의 그 분기 폐업 합. 폐업이 없던 분기도 0 으로 온다. */
 export type DaejeonClosureQuarter = { quarter: string; clsbiz_co: number };
 

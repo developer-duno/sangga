@@ -377,8 +377,9 @@ describe('SectionCard — 제목 아래 날짜 줄 (S3 · 👤 2026-10-16)', () 
   });
 
   it('⛔ 빈 카드(자료 칸 없음)에는 줄이 없고 묻지도 않는다 — 양성 대조: 같은 자리에 자료 칸을 주면 줄이 선다', async () => {
+    // ⓘ 빈 카드 = 가게 이력(결정 0045 PR③ 부터 sales·pop 칸에는 서울 카드용 자료 칸이 있다 — 빈 카드는 EmptySection 이 뺀다).
     const { container, unmount } = render(
-      <SectionCard plan={SECTION_PLAN.sales} className="card--empty" summary="비어 있음" />,
+      <SectionCard plan={SECTION_PLAN.history} className="card--empty" summary="비어 있음" />,
     );
     // 다른 카드가 물었다면 답이 왔을 시간을 준다.
     await new Promise((r) => setTimeout(r, 0));
@@ -386,7 +387,7 @@ describe('SectionCard — 제목 아래 날짜 줄 (S3 · 👤 2026-10-16)', () 
     expect(fresh.calls).toEqual([]);
     unmount();
 
-    const withSrc = { ...SECTION_PLAN.sales, sources: ['tx'] } as const satisfies SectionPlan;
+    const withSrc = { ...SECTION_PLAN.history, sources: ['tx'] } as const satisfies SectionPlan;
     const again = render(<SectionCard plan={withSrc} className="card--empty" summary="비어 있음" />);
     await waitFor(() => expect(again.container.querySelector('.card__src')).not.toBeNull());
   });

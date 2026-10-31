@@ -178,14 +178,18 @@ describe('미리 부르기 — 대전 필지에만 대전 함수(결정 0044)', 
     rpcCalls.length = 0;
   });
 
-  it('★ 대전 필지면 일곱 + 대전 함수 · 서울 필지면 일곱 그대로(요청 0 더함)', () => {
+  it('★ 대전 필지면 일곱 + 대전 함수 · 서울 필지면 대전 함수 0(서울 함수 둘만 더함 — 결정 0045 PR③)', () => {
     const dj = startSidePrefetch('3017010100100010000');
     expect([...dj.results.keys()]).toEqual([...SIDE_PREFETCH_FNS, 'get_daejeon_dong_closure']);
     expect(rpcCalls).toEqual([...SIDE_PREFETCH_FNS, 'get_daejeon_dong_closure']);
     rpcCalls.length = 0;
     const se = startSidePrefetch('1168010100100010000');
-    expect([...se.results.keys()]).toEqual([...SIDE_PREFETCH_FNS]);
+    expect([...se.results.keys()]).toEqual([...SIDE_PREFETCH_FNS, 'list_district_sales', 'list_district_pop']);
     expect(rpcCalls).not.toContain('get_daejeon_dong_closure');
+    // 서울·대전 밖(시·도 코드 26 부산)은 일곱 그대로.
+    rpcCalls.length = 0;
+    const etc = startSidePrefetch('2611010100100010000');
+    expect([...etc.results.keys()]).toEqual([...SIDE_PREFETCH_FNS]);
   });
 
   it('★ 시각 기록(후속 ⓑ)은 카드가 받는 것을 안 바꾼다 — takePrefetched = 같은 Promise 객체 · 같은 값 · 상한은 출발부터', async () => {

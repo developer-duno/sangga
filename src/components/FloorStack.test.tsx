@@ -105,7 +105,55 @@ const responses = {
     data: null as unknown,
     error: { code: 'PGRST202', message: 'function does not exist' } as unknown,
   })) as (args: Record<string, unknown>) => { data: unknown; error: unknown } | Promise<unknown>,
+  /**
+   * 서버 함수 list_district_sales · list_district_pop 의 응답(업종별 추정매출 · 상권 인구 · 결정 0045 PR③ — 서울 필지만 부른다).
+   * 기본값을 **함수 없음(PGRST202)** 으로 둔다 — 두 카드가 스스로 사라져 다른 시험의 화면이 그대로다.
+   * 그 카드 자체는 `SalesSection.test.tsx`·`PopSection.test.tsx` 가 본다.
+   */
+  sales: { data: null as unknown, error: { code: 'PGRST202', message: 'function does not exist' } as unknown },
+  pop: { data: null as unknown, error: { code: 'PGRST202', message: 'function does not exist' } as unknown },
 };
+
+/** 추정매출 정상 답 한 줄(상권 하나 · 결정 0045 PR③ — 카드 배치 시험이 쓴다). */
+const SALES_OK = [
+  {
+    status: 'ok',
+    district_id: '3120189',
+    district_nm: '역삼역',
+    district_type: '발달상권',
+    latest_quarter: '20262',
+    window_quarters: ['20262'],
+    trend: [{ quarter: '20262', amt: 723_000_000, co: 15208 }],
+    top: [{ cd: 'CS100001', nm: '한식음식점', amt: 214_000_000, co: 4120, mdwk_amt: 1, wkend_amt: 1 }],
+    rest_cnt: 0,
+    rest_amt: 0,
+    rest_co: 0,
+    industries: [{ cd: 'CS100001', nm: '한식음식점', amt: 214_000_000, co: 4120 }],
+  },
+];
+
+/** 상권 인구 정상 답 한 줄. */
+const POP_OK = [
+  {
+    status: 'ok',
+    district_id: '3120189',
+    district_nm: '역삼역',
+    district_type: '발달상권',
+    flow_table_quarter: '20262',
+    flow_quarter: '20262',
+    flow: {
+      tot: 412560, ml: 190100, fml: 222460,
+      tmzon_00_06: 1, tmzon_06_11: 2, tmzon_11_14: 3, tmzon_14_17: 4, tmzon_17_21: 5, tmzon_21_24: 6,
+      mon: 1, tues: 2, wed: 3, thur: 4, fri: 5, sat: 6, sun: 7,
+    },
+    resident_value_quarter: '20234',
+    resident_last_quarter: '20262',
+    resident: { tot: 2310, ml: 1090, fml: 1220, tot_hshld: 1120 },
+    worker_value_quarter: '20244',
+    worker_last_quarter: '20262',
+    worker: { tot: 6840, ml: 3900, fml: 2940 },
+  },
+];
 
 /** 마지막 rpc 호출의 인자. "구 코드를 pnu 에서 뽑아 보내는가"를 여기서 확인한다. */
 const rpcCalls: Array<{ fn: string; args: unknown }> = [];
@@ -162,6 +210,9 @@ vi.mock('../lib/supabase', () => ({
       if (fn === 'list_floor_industry') {
         return Promise.resolve(responses.floorIndustry((args ?? {}) as Record<string, unknown>));
       }
+      // 업종별 추정매출 · 상권 인구(결정 0045 PR③). 갈라 답하지 않으면 상권 응답(객체)이 흘러들어 늘 '모양 이상 → 카드 없음'으로 굳는다.
+      if (fn === 'list_district_sales') return Promise.resolve(responses.sales);
+      if (fn === 'list_district_pop') return Promise.resolve(responses.pop);
       return Promise.resolve(responses.districts);
     },
   },
@@ -299,6 +350,9 @@ beforeEach(() => {
     data: null,
     error: { code: 'PGRST202', message: 'function does not exist' },
   });
+  // 기본은 함수 없음 = 추정매출·상권 인구 카드 미표시(결정 0045 PR③). 카드 배치 시험만 덮어쓴다.
+  responses.sales = { data: null, error: { code: 'PGRST202', message: 'function does not exist' } };
+  responses.pop = { data: null, error: { code: 'PGRST202', message: 'function does not exist' } };
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
@@ -1755,6 +1809,9 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       ],
       error: null,
     };
+    // 업종별 추정매출 · 상권 인구(결정 0045 PR③) — 서울 건물이라 제 컴포넌트가 선다.
+    responses.sales = { data: SALES_OK, error: null };
+    responses.pop = { data: POP_OK, error: null };
   });
 
   it('배치표가 정한 순서·제목·역할·기본 상태 그대로 그려진다', async () => {
@@ -1778,8 +1835,8 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       '상권 임대 동향 (부동산원 조사)',
       '상권 개업·폐업 (서울시 공표)',
       // 빈 카드 셋(결정 0036 결정 2 · 물결 1-B) — 역할 없음 차례에서는 맨 끝.
-      '업종별 추정매출',
-      '유동인구',
+      '업종별 추정매출 (서울시 추정)',
+      '상권 인구 (서울시 공표)',
       '이 자리 가게 이력',
     ]);
     expect(cards.map((c) => c.role)).toEqual([
@@ -1821,8 +1878,8 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       ['상권 임대 동향 (부동산원 조사)', false],
       ['둘레의 업종 분포', false],
       ['상권 개업·폐업 (서울시 공표)', false],
-      ['업종별 추정매출', false],
-      ['유동인구', false],
+      ['업종별 추정매출 (서울시 추정)', false],
+      ['상권 인구 (서울시 공표)', false],
       ['이 자리 가게 이력', false],
     ],
     창업자: [
@@ -1831,8 +1888,8 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       ['둘레의 업종 분포', true],
       ['상권 개업·폐업 (서울시 공표)', true],
       // 빈 카드 셋은 창업자 벌에서 개업·폐업 바로 뒤(👤 2026-10-11).
-      ['업종별 추정매출', false],
-      ['유동인구', false],
+      ['업종별 추정매출 (서울시 추정)', false],
+      ['상권 인구 (서울시 공표)', false],
       ['이 자리 가게 이력', false],
       ['실거래 기록', false],
       ['층별 공표값 나란히 — 국세청 기준시가 · 구 상가 단가 · 부동산원 임대료', false],
@@ -1847,8 +1904,8 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       ['상권 임대 동향 (부동산원 조사)', false],
       ['둘레의 업종 분포', false],
       ['상권 개업·폐업 (서울시 공표)', false],
-      ['업종별 추정매출', false],
-      ['유동인구', false],
+      ['업종별 추정매출 (서울시 추정)', false],
+      ['상권 인구 (서울시 공표)', false],
       ['이 자리 가게 이력', false],
     ],
   };
@@ -1860,8 +1917,8 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     ['층별 공표값 나란히 — 국세청 기준시가 · 구 상가 단가 · 부동산원 임대료', false],
     ['상권 임대 동향 (부동산원 조사)', false],
     ['상권 개업·폐업 (서울시 공표)', false],
-    ['업종별 추정매출', false],
-    ['유동인구', false],
+    ['업종별 추정매출 (서울시 추정)', false],
+    ['상권 인구 (서울시 공표)', false],
     ['이 자리 가게 이력', false],
   ];
 
@@ -2042,14 +2099,34 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       '공실률 · ㎡당 임대료 · 투자수익률 · 2026년 2분기 조사',
       // 개업·폐업 카드는 상권 이름과 언제까지의 자료인지만 — 값은 적지 않는다(결정 0033 · 👤).
       '역삼역 · 2026년 2분기까지 서울시 공표',
-      // 빈 카드 셋 — 서울 건물이면 셋 다 이 한 줄(👤 결정 0036 결정 2 · 물결 1-B).
-      '지금은 비어 있음',
-      '지금은 비어 있음',
+      // 추정매출 · 상권 인구(결정 0045 PR③) — 상권 이름과 언제 자료인지만(값 0 · 개업·폐업 카드와 같은 규칙).
+      '역삼역 · 2026년 2분기까지 서울시 추정',
+      '역삼역 · 길단위인구 2026년 2분기 · 사는 사람 2023년 · 일하는 사람 2024년 기준',
+      // 빈 카드는 이제 가게 이력 하나(서울 건물 · 👤 결정 0036 결정 2 · 물결 1-B).
       '지금은 비어 있음',
     ]);
   });
 
-  it('★ 빈 카드 셋은 아무것도 부르지 않는다 · 대전 건물이면 매출·유동인구 요약이 그 사실 한 줄', async () => {
+  it('★ 서울 건물은 추정매출·상권 인구를 미리 보낸 답으로 한 번씩만 부르고 빈 카드는 가게 이력 하나다 (결정 0045 PR③)', async () => {
+    const { container } = render(<FloorStack building={building()} />);
+    await waitFor(() => {
+      expect(container.querySelectorAll('.card')).toHaveLength(Object.keys(SECTION_PLAN).length);
+      expect(container.textContent).not.toContain('불러오는 중');
+    });
+    // 미리 부르기가 한 번 보낸 요청을 카드가 받는다 — 카드가 따로 또 묻지 않는다.
+    expect(rpcCalls.filter((x) => x.fn === 'list_district_sales')).toEqual([
+      { fn: 'list_district_sales', args: { p_pnu: '1168010100100010000' } },
+    ]);
+    expect(rpcCalls.filter((x) => x.fn === 'list_district_pop')).toEqual([
+      { fn: 'list_district_pop', args: { p_pnu: '1168010100100010000' } },
+    ]);
+    expect(container.querySelector('.card.sales')).not.toBeNull();
+    expect(container.querySelector('.card.pop')).not.toBeNull();
+    expect(container.querySelectorAll('.card--empty')).toHaveLength(1);
+    expect(container.querySelector('.card--empty')?.classList.contains('card--history')).toBe(true);
+  });
+
+  it('★ 서울 밖 빈 카드 셋은 아무것도 부르지 않는다 · 대전 건물이면 매출·인구 요약이 그 사실 한 줄', async () => {
     const { container } = render(<FloorStack building={building({ pnu: '3011010700108770000' })} />);
     await waitFor(() => {
       expect(container.querySelectorAll('.card')).toHaveLength(Object.keys(SECTION_PLAN).length);
@@ -2061,6 +2138,8 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     expect(summaryOf('card--history')).toBe('지금은 비어 있음');
     // 빈 카드 셋은 종이에서 빠지는 이름표를 단다(인쇄 규칙은 E2E 가 본다).
     expect(container.querySelectorAll('.card--empty')).toHaveLength(3);
+    // ⛔ 빈 카드에는 서울시 자료 날짜 줄이 새지 않는다(sales·pop 칸에는 서울 카드용 자료 칸이 있다 — EmptySection 이 뺀다).
+    expect(container.querySelector('.card--empty .card__src')).toBeNull();
     // ⛔ 부른 함수는 원래 카드들 것뿐이다 — 빈 카드용 함수 이름이 하나도 없다.
     // ⓘ `list_rent_stat_history`(임대 동향의 8분기 흐름 · 결정 0038 V5)는 임대 카드 것이다 — 이름에 'history' 가 들어 있어 이 목록에서만 뺀다.
     for (const c of rpcCalls.filter((x) => x.fn !== 'list_rent_stat_history')) {

@@ -20,6 +20,8 @@ import {
   openClose,
   openCloseNotSeoul,
   daejeonClosure,
+  districtSales,
+  districtPop,
   dataFreshness,
   storeHit,
   unitSummary,
@@ -117,6 +119,11 @@ const OPEN_CLOSE_ALL_PATTERN = '**/rest/v1/rpc/list_district_openclose_all*';
 // ⚠️ 기본값은 **함수가 없는 상태**다 — 그때 대전 건물의 개업·폐업 카드는 지금 대전 화면 그대로라 스펙 AI 가 그대로다.
 //    대전 카드를 보는 것은 스펙 CM 뿐이다(안 막으면 실존하지 않는 도메인으로 나가 DNS 에 좌우된다).
 const DAEJEON_CLOSURE_PATTERN = '**/rest/v1/rpc/get_daejeon_dong_closure*';
+// 업종별 추정매출 · 상권 인구(결정 0045 PR③) — 서울 필지를 열 때만 곁 카드와 함께 미리 나간다(대전 건물은 요청 0).
+// ⚠️ 기본값은 **함수가 없는 상태**다 — 그때 두 카드는 통째로 빠지고 다른 스펙의 카드 수·화면이 그대로다.
+//    카드를 보는 것은 스펙 CN·CO(와 차례 전체를 견주는 AM)뿐이다(안 막으면 실존하지 않는 도메인으로 나가 DNS 에 좌우된다).
+const SALES_PATTERN = '**/rest/v1/rpc/list_district_sales*';
+const POP_PATTERN = '**/rest/v1/rpc/list_district_pop*';
 // 호실 구성표(결정 0032). 요약은 건물을 열 때 · 목록은 층을 펼칠 때 나간다.
 // ⚠️ 기본값은 둘 다 **함수가 없는 상태**다 — 그때 요약도 "자료 없음" 안내도 조용히 빠지는지가
 //    스펙 AH 의 관심사다(빈 배열로 두면 "호실 자료가 없는 건물"이라는 **다른 답**이 되어 안내가 선다).
@@ -236,6 +243,9 @@ async function mockFloorStack(
   await mockMissingFunction(page, OPEN_CLOSE_PATTERN);
   // 대전 동네 폐업도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 스펙 CM 만 덮어쓴다.
   await mockMissingFunction(page, DAEJEON_CLOSURE_PATTERN);
+  // 업종별 추정매출 · 상권 인구도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 스펙 CN·CO·AM 만 덮어쓴다.
+  await mockMissingFunction(page, SALES_PATTERN);
+  await mockMissingFunction(page, POP_PATTERN);
   // 호실 구성표 둘도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 호실을 보는 스펙은
   // 이 뒤에 자기 응답을 한 번 더 등록한다(나중에 등록한 것이 먼저 잡힌다).
   await mockMissingFunction(page, UNIT_SUMMARY_PATTERN);
@@ -871,9 +881,11 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await page.getByRole('button', { name: /테스트빌딩/ }).click();
 
     const stack = page.locator('section.stack');
-    // 다섯 장 + 늘 서는 빈 카드 셋(결정 0036 결정 2 · 물결 1-B — 아무것도 안 불러서 목업이 없어도 선다)
+    // 다섯 장 + 빈 카드 하나(가게 이력 — 결정 0036 결정 2 · 물결 1-B · 아무것도 안 불러서 목업이 없어도 선다).
+    // ⓘ 서울 건물이라 추정매출·상권 인구는 제 카드인데, 함수가 기본(함수 없음)이라 카드째 숨는다(결정 0045 PR③ · CN·CO).
     // ⓘ 층별 공표값은 값 든 칸 하나면 선다(결정 0041 E2) — 이 목업은 구 상가 단가 1층 칸 하나로 선다.
-    await expect(stack.locator('.card')).toHaveCount(8);
+    await expect(stack.locator('.card')).toHaveCount(6);
+    await expect(stack.locator('section.card--empty')).toHaveCount(1);
     await expect(stack.locator('.card__toggle[aria-expanded="true"]')).toHaveCount(4);
 
     const gap = stack.locator('section.gap');
@@ -1144,10 +1156,14 @@ test.describe('층별 스택뷰 — 종이로 뽑기', () => {
     // 화면에서는 — 버튼이 있고 머리글은 없다.
     await expect(page.getByRole('button', { name: '인쇄 · PDF로 저장' })).toBeVisible();
     await expect(page.locator('.printmeta')).toBeHidden();
-    // 빈 카드 셋은 화면에서는 선다(접힌 채 제목 + 요약 한 줄) — 아래 종이에서만 빠진다.
-    for (const k of ['sales', 'pop', 'history']) {
-      await expect(page.locator(`section.card--${k} .card__summary`)).toHaveText('지금은 비어 있음');
-    }
+    // 빈 카드는 화면에서는 선다(접힌 채 제목 + 요약 한 줄) — 아래 종이에서만 빠진다.
+    // ⓘ 서울 건물이라 빈 카드는 가게 이력 하나다(결정 0045 PR③) — 추정매출·상권 인구는 제 카드가 그리고, 여기서는
+    //   그 함수가 기본(함수 없음)이라 카드째 없다.
+    await expect(page.locator('section.card--history .card__summary')).toHaveText('지금은 비어 있음');
+    await expect(page.locator('section.card--sales')).toHaveCount(0);
+    await expect(page.locator('section.card--pop')).toHaveCount(0);
+    await expect(page.locator('section.sales')).toHaveCount(0);
+    await expect(page.locator('section.pop')).toHaveCount(0);
 
     await page.emulateMedia({ media: 'print' });
 
@@ -1164,12 +1180,10 @@ test.describe('층별 스택뷰 — 종이로 뽑기', () => {
     await expect(page.locator('.links')).toBeHidden();
     // 형제 사이트 링크 구역도 같은 이유로 빠진다(2026-10-06).
     await expect(page.locator('.family')).toBeHidden();
-    // 빈 카드 셋도 종이에서 빠진다(👤 물결 1-B — "지금은 비어 있음" 뿐이라 종이 자리만 먹는다).
+    // 빈 카드도 종이에서 빠진다(👤 물결 1-B — "지금은 비어 있음" 뿐이라 종이 자리만 먹는다 · 서울 건물은 가게 이력 하나).
     // ⓘ 빼는 이름표는 빈 상태일 때만 붙는 `card--empty` 다 — 자료가 차면 그때부터 종이에 나온다.
-    await expect(page.locator('section.card--empty')).toHaveCount(3);
-    for (const k of ['sales', 'pop', 'history']) {
-      await expect(page.locator(`section.card--${k}`)).toBeHidden();
-    }
+    await expect(page.locator('section.card--empty')).toHaveCount(1);
+    await expect(page.locator('section.card--history')).toBeHidden();
 
     // ② 이 종이가 무슨 건물이고 언제 것이며 원본이 어디인지.
     const meta = page.locator('.printmeta');
@@ -1641,8 +1655,9 @@ test.describe('층별 스택뷰 — 상권 임대 동향', () => {
     const rent = stack.locator('section.rent');
     await expect(rent).toBeVisible();
     // 카드가 하나 늘어도 **첫 화면 펼침은 여전히 넷**이다(로드맵 Wave 2 의 예산).
-    // 다섯 장 + 빈 카드 셋(물결 1-B) + 층별 공표값(결정 0041 · 접힌 채 — 참고 매매 시세 카드는 내렸다).
-    await expect(stack.locator('.card')).toHaveCount(9);
+    // 다섯 장 + 빈 카드 하나(가게 이력 · 물결 1-B) + 층별 공표값(결정 0041 · 접힌 채 — 참고 매매 시세 카드는 내렸다).
+    // ⓘ 서울 건물이라 추정매출·상권 인구는 제 카드인데, 함수가 기본(함수 없음)이라 카드째 숨는다(결정 0045 PR③ · CN·CO).
+    await expect(stack.locator('.card')).toHaveCount(7);
     await expect(stack.locator('.card__toggle[aria-expanded="true"]')).toHaveCount(4);
     // 접혀 있어도 무엇·언제는 읽힌다. ⛔ 값은 요약에 없다 — 한정어 없이 이 건물 값으로 읽힌다.
     await expect(rent.locator('.card__summary')).toHaveText(
@@ -2528,6 +2543,256 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
     );
     await expect(page.locator('.rsum__tile--openclose')).toContainText('서울 상권만 다루는 자료라 이 건물(대전)에는 없습니다');
   });
+
+  test('CN. 서울 건물 — 「업종별 추정매출 (서울시 추정)」 카드(요약 값 0) · 펼치면 큰 숫자 3개월 합 · 흐름 막대 높이 비례·빠진 분기 「–」 · 업종 표 5 + 그 밖 · 칩 카페 hit · 칩 미용 일부 없음 · 13px · 넘침 0 · 종이에 나옴 · 함수 없으면 카드 0', async ({
+    page,
+  }, testInfo) => {
+    await page.addInitScript(() => {
+      type Kv = { setItem(k: string, v: string): void };
+      (globalThis as unknown as { localStorage: Kv }).localStorage.setItem('sangga.viewerRole', '창업자');
+    });
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()], industryMix());
+    const salesCalls: string[] = [];
+    await page.route(SALES_PATTERN, async (route) => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS_HEADERS });
+      salesCalls.push(route.request().postData() ?? '');
+      await route.fulfill({ status: 200, contentType: 'application/json', headers: CORS_HEADERS, body: JSON.stringify(districtSales()) });
+    });
+
+    /** 창업자 · 칩을 골라 건물을 연다(칩은 저장되지 않아 열 때마다 고른다). */
+    async function openWithChip(chip: string) {
+      await page.goto('/');
+      await gotoTab(page, '지도'); // 휴대폰 — 칩은 지도 머리(창업자 첫 탭이 지도라 이미 거기다)
+      await pickGu(page, '서울', '강남구');
+      await page.locator('.dmap__head .chips').getByRole('button', { name: chip, exact: true }).click();
+      await gotoTab(page, '찾기');
+      await search(page, '테헤란로');
+      await page.getByRole('button', { name: /테스트빌딩/ }).first().click();
+      await expect(page.locator('section.stack')).toBeVisible();
+    }
+
+    await openWithChip('카페');
+    const sales = page.locator('section.stack section.sales');
+    await expect(sales).toBeVisible();
+    await expect(sales.locator('.card__h')).toContainText('업종별 추정매출 (서울시 추정)');
+    // 접힌 요약에 값 0 — 상권과 언제까지만.
+    const summary = sales.locator('.card__summary');
+    await expect(summary).toHaveText('○○역 2번 출구 외 상권 1곳 · 2026년 2분기까지 서울시 추정');
+    expect(await summary.textContent()).not.toMatch(/억|만원|건/);
+    await expect(sales).not.toHaveClass(/card--empty/);
+    // 서울 필지라 미리 부르기가 한 번 보냈고, 카드는 그 답을 받는다(다시 안 묻는다).
+    expect(salesCalls).toEqual([JSON.stringify({ p_pnu: searchHit().pnu })]);
+
+    await openCard(page, /업종별 추정매출/);
+    const first = sales.locator('.sales__district').first();
+    await expect(sales.locator('.sales__district')).toHaveCount(2);
+    await expect(first.locator('.sales__name')).toHaveText('○○역 2번 출구 · 골목상권');
+    await expect(first.locator('.sales__num')).toHaveText('2026년 2분기(3개월) 매출 7억 2,300만원');
+    await expect(first.locator('.sales__big')).toContainText('결제 15,208건');
+    // 눈금 글은 상권 덩어리마다(검사 뒤 보완 F1 — 관광특구가 골목의 약 153배라 카드 하나 눈금이면 골목 막대가 사라진다).
+    await expect(sales.locator('.sales__scale')).toHaveText([
+      '막대가 꽉 차면 7억 6,000만원(3개월 합)',
+      '막대가 꽉 차면 1,163억원(3개월 합)',
+    ]);
+    await expect(first.locator('.sales__scale')).toHaveText('막대가 꽉 차면 7억 6,000만원(3개월 합)');
+    // 흐름 막대 — 옛 → 최신 · 가장 큰 분기(20254) = 칸 높이 · 최신(20262) = 723/760 · 빠진 분기(20244) = 「–」.
+    const cols = first.locator('.sales__col');
+    await expect(cols).toHaveCount(8);
+    const xs = await cols.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().x));
+    expect([...xs].sort((a, b) => a - b)).toEqual(xs);
+    const barH = (q: string) =>
+      first.locator(`.sales__col[data-quarter="${q}"] .sales__bar`).evaluate((e) => e.getBoundingClientRect().height);
+    const boxH = await first.locator('.sales__col[data-quarter="20254"] .sales__bars').evaluate((e) => e.clientHeight);
+    const hMax = await barH('20254');
+    const hLast = await barH('20262');
+    expect(hMax).toBeCloseTo(boxH, 0);
+    expect(hLast / hMax).toBeGreaterThan(723 / 760 - 0.02);
+    expect(hLast / hMax).toBeLessThan(723 / 760 + 0.02);
+    await expect(first.locator('.sales__col[data-quarter="20244"] .sales__bar')).toHaveCount(0);
+    await expect(first.locator('.sales__col[data-quarter="20244"] .sales__gap')).toHaveText('–');
+    await expect(first.locator('.sales__bar--last')).toHaveCount(1);
+    // 둘째 상권(관광특구 · 첫 상권의 약 153배)도 제 눈금에서 가장 큰 분기가 칸 높이 — 상권마다 제 눈금이라 첫 상권 막대도 안 사라진다.
+    const second = sales.locator('.sales__district').nth(1);
+    const bigH = await second.locator('.sales__col[data-quarter="20262"] .sales__bar').evaluate((e) => e.getBoundingClientRect().height);
+    const bigBox = await second.locator('.sales__col[data-quarter="20262"] .sales__bars').evaluate((e) => e.clientHeight);
+    expect(bigH).toBeCloseTo(bigBox, 0);
+    expect(hMax / boxH).toBeGreaterThan(0.95); // 공통 눈금이었다면 760 ÷ 116,300 ≈ 0.7%
+    // 해 글 — 휴대폰 칸 폭에서도 잘리지 않는다(검사 뒤 보완 F10 · 시안 꼴 「’24」).
+    const years = first.locator('.sales__tick-year');
+    await expect(years).toHaveText(['’24', '’25', '’26']);
+    for (const y of await years.all()) {
+      expect(await y.evaluate((e) => e.scrollWidth - e.clientWidth)).toBeLessThanOrEqual(0);
+      const tick = y.locator('xpath=..');
+      // 분기 글 「3분기」는 CI(우분투 글꼴)에서 윈도우보다 1px 넓다(2026-10-31 CI run 41183920386 · 받은 값 1) — 글꼴 차이만큼
+      // 2px 까지 허용한다. 해 글(위)은 그대로 0 — 이 단언의 본론은 「2024년」이 잘리던 결함(F10)이다.
+      expect(await tick.evaluate((e) => e.scrollWidth - e.clientWidth)).toBeLessThanOrEqual(2);
+    }
+    // 업종 표 5 + 그 밖 · 칩 카페 hit 줄.
+    await expect(first.locator('.sales__table tbody tr th')).toHaveText([
+      '한식음식점',
+      '커피-음료 · 고른 업종(카페)',
+      '편의점',
+      '미용실',
+      '스포츠 강습',
+      '그 밖 9업종 (더해서)',
+    ]);
+    // 이름 첫 칸 — 낱말 가운데서 줄을 안 바꾸고(「스포츠 강/습」 금지) 폭은 글자 4.5개 이상(검사 뒤 보완 F10).
+    const nameCell = first.locator('.sales__table tbody tr th').nth(4);
+    const nameBox = await nameCell.evaluate((e) => {
+      const cs = e.ownerDocument.defaultView!.getComputedStyle(e);
+      return { w: e.getBoundingClientRect().width, fs: Number.parseFloat(cs.fontSize), wb: cs.wordBreak };
+    });
+    expect(nameBox.wb).toBe('keep-all');
+    expect(nameBox.w).toBeGreaterThanOrEqual(nameBox.fs * 4.5);
+    // 「강습」 두 글자가 같은 줄(글자 상자의 위 끝이 같다).
+    const gangTops = await nameCell.evaluate((e) => {
+      const t = e.firstChild!;
+      const i = (t.textContent ?? '').indexOf('강습');
+      const r = e.ownerDocument.createRange();
+      const tops: number[] = [];
+      for (const k of [i, i + 1]) {
+        r.setStart(t, k);
+        r.setEnd(t, k + 1);
+        tops.push(r.getBoundingClientRect().top);
+      }
+      return tops;
+    });
+    expect(Math.abs(gangTops[0] - gangTops[1])).toBeLessThan(2);
+    await expect(first.locator('.sales__hit')).toHaveCount(1);
+    await expect(sales).not.toContainText('%');
+    // 13px(화면 묶음).
+    for (const sel of ['.sales__scale', '.sales__tick', '.sales__table', '.sales__why', '.sales__lead']) {
+      await expect(sales.locator(sel).first()).toHaveCSS('font-size', '13px');
+    }
+    const overflow = await page.evaluate(() => {
+      const d = (globalThis as unknown as { document: { documentElement: { scrollWidth: number; clientWidth: number } } })
+        .document.documentElement;
+      return d.scrollWidth - d.clientWidth;
+    });
+    const cardOver = await sales.evaluate((e) => e.scrollWidth - e.clientWidth);
+    testInfo.annotations.push({
+      type: 'CN 실측',
+      description: `${testInfo.project.name}: 막대 ${hMax.toFixed(1)}·${hLast.toFixed(1)} / 칸 ${boxH} · 넘침 ${overflow} · 카드 넘침 ${cardOver}`,
+    });
+    expect(overflow).toBeLessThanOrEqual(0);
+    expect(cardOver).toBeLessThanOrEqual(0);
+
+    // 종이 — 자료가 찬 카드는 종이에 나온다(빈 카드 이름표 없음) · 그림·표 줄은 덩어리 · 막대 색 유지.
+    await page.emulateMedia({ media: 'print' });
+    await expect(sales).toBeVisible();
+    await expect(first.locator('.sales__bar').first()).toHaveCSS('print-color-adjust', 'exact');
+    await expect(first.locator('.sales__trend')).toHaveCSS('break-inside', 'avoid');
+    await expect(first.locator('.sales__table tbody tr').first()).toHaveCSS('break-inside', 'avoid');
+    await expect(sales).not.toHaveCSS('break-inside', 'avoid');
+    await page.emulateMedia({ media: null });
+
+    // 칩 미용(서울시 코드 셋) — 미용실 hit · 네일숍은 상위 5 밖 한 줄 · 피부관리실은 없다는 한 줄(더하지 않는다).
+    await openWithChip('미용');
+    await openCard(page, /업종별 추정매출/);
+    await expect(first.locator('.sales__hit th')).toHaveText('미용실 · 고른 업종(미용)');
+    await expect(first.locator('.sales__chip-out')).toHaveText(['고른 업종(미용): 네일숍 3,000만원 · 610건 (3개월 합 · 상위 5 밖)']);
+    await expect(first.locator('.sales__chip-part')).toHaveText('고른 업종 가운데 피부관리실은 이 자료에 없습니다');
+
+    // 함수가 없으면(PGRST202) — 카드째 없다(「자료 없음」이라 적지 않는다). 나중에 등록한 것이 먼저 잡힌다.
+    await mockMissingFunction(page, SALES_PATTERN);
+    await page.reload();
+    await expect(page.locator('section.stack .stack__head')).toBeVisible();
+    await expect(page.locator('section.stack section.card--floors')).toBeVisible();
+    await expect(page.locator('section.sales')).toHaveCount(0);
+    await expect(page.locator('section.card--sales')).toHaveCount(0);
+  });
+
+  test('CO. 서울 건물 — 「상권 인구 (서울시 공표)」 카드(요약 값 0) · 길단위 큰 숫자 「3개월간」 · 미니 막대 둘(휴대폰은 한 칸씩) · 사는/일하는 「YYYY년 기준」 · 끊긴 상권 「…까지」 · 13px · 넘침 0 · 종이에 나옴 · 함수 없으면 카드 0', async ({
+    page,
+  }, testInfo) => {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()], industryMix());
+    await mockJson(page, POP_PATTERN, districtPop());
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).first().click();
+    const pop = page.locator('section.stack section.pop');
+    await expect(pop).toBeVisible();
+    await expect(pop.locator('.card__h')).toContainText('상권 인구 (서울시 공표)');
+    const summary = pop.locator('.card__summary');
+    await expect(summary).toHaveText(
+      '○○역 2번 출구 외 상권 1곳 · 길단위인구 2026년 2분기 · 사는 사람 2023년 · 일하는 사람 2024년 기준',
+    );
+    expect(await summary.textContent()).not.toMatch(/명/);
+
+    await openCard(page, /상권 인구/);
+    const blocks = pop.locator('.pop__district');
+    await expect(blocks).toHaveCount(2);
+    const first = blocks.first();
+    await expect(first.locator('.pop__chunk--flow .pop__num')).toHaveText('412,560명');
+    await expect(first.locator('.pop__chunk--flow .pop__q')).toHaveText('2026년 2분기 3개월간');
+    // 서울시가 안 바꾼 해 괄호(검사 뒤 보완 F2 · 시안 원문).
+    await expect(first.locator('.pop__chunk--resident .pop__q')).toHaveText('2023년 기준 (서울시가 2024·2025년에는 안 바꿈)');
+    await expect(first.locator('.pop__chunk--worker .pop__q')).toHaveText('2024년 기준 (서울시가 2025년에는 안 바꿈)');
+    // 배지 옆 작은 글(검사 뒤 보완 F4).
+    await expect(pop.locator('.pop__badge-note')).toHaveText('서울시 상권분석서비스 · 생활인구·주민등록·통신사 자료로 서울시가 셈');
+    // 가구 수는 싣지 않는다(메인 결정 나 — 서울시 화면 가구세대 수와 다른 값 · 목업엔 있었다).
+    await expect(first.locator('.pop__chunk--resident .pop__big')).toHaveText(
+      '2,310명2023년 기준 (서울시가 2024·2025년에는 안 바꿈)남 1,090 · 여 1,220',
+    );
+    await expect(pop).not.toContainText('가구');
+    // 미니 막대 둘 — 시간대 6 · 요일 7 · 높이 = 값 ÷ 묶음 최댓값(17~21시 84,000 이 칸 높이 · 0~6시 58,000).
+    const figs = first.locator('.pop__bars-fig');
+    await expect(figs).toHaveCount(2);
+    await expect(figs.nth(0).locator('.pop__scale')).toHaveText('시간대 · 꽉 차면 84,000명(3개월간)');
+    await expect(figs.nth(0).locator('.pop__bar')).toHaveCount(6);
+    await expect(figs.nth(1).locator('.pop__bar')).toHaveCount(7);
+    const hs = await figs.nth(0).locator('.pop__bar').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height));
+    expect(Math.max(...hs)).toBeCloseTo(hs[4], 3);
+    expect(hs[0] / hs[4]).toBeGreaterThan(58000 / 84000 - 0.03);
+    expect(hs[0] / hs[4]).toBeLessThan(58000 / 84000 + 0.03);
+    // 휴대폰은 한 칸씩(위 → 아래) · 넓은 화면은 나란히(같은 줄).
+    const [r0, r1] = await figs.evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).map((r) => ({ top: r.top, bottom: r.bottom })));
+    if (testInfo.project.name === 'mobile') expect(r1.top).toBeGreaterThanOrEqual(r0.bottom - 1);
+    else expect(Math.abs(r1.top - r0.top)).toBeLessThan(2);
+    // 끊긴 상권 — 길단위 「…까지」 · 사는 사람 「…까지」 · 일하는 사람 덩이 없음.
+    const second = blocks.nth(1);
+    await expect(second.locator('.pop__chunk--flow .pop__note')).toHaveText('이 상권 길단위인구 자료는 2025년 4분기까지입니다');
+    await expect(second.locator('.pop__chunk--resident .pop__note')).toHaveText('이 상권 사는 사람 자료는 2022년 4분기까지입니다');
+    await expect(second.locator('.pop__chunk--worker')).toHaveCount(0);
+    await expect(pop).not.toContainText('%');
+    await expect(pop).not.toContainText('하루 평균');
+    for (const sel of ['.pop__scale', '.pop__tick', '.pop__why', '.pop__lead', '.pop__q']) {
+      await expect(pop.locator(sel).first()).toHaveCSS('font-size', '13px');
+    }
+    const overflow = await page.evaluate(() => {
+      const d = (globalThis as unknown as { document: { documentElement: { scrollWidth: number; clientWidth: number } } })
+        .document.documentElement;
+      return d.scrollWidth - d.clientWidth;
+    });
+    const cardOver = await pop.evaluate((e) => e.scrollWidth - e.clientWidth);
+    testInfo.annotations.push({
+      type: 'CO 실측',
+      description: `${testInfo.project.name}: 시간대 막대 ${hs.map((h) => h.toFixed(1)).join('·')} · 넘침 ${overflow} · 카드 넘침 ${cardOver}`,
+    });
+    expect(overflow).toBeLessThanOrEqual(0);
+    expect(cardOver).toBeLessThanOrEqual(0);
+
+    // 종이 — 카드가 나오고 인구 덩이는 한 덩어리 · 막대 색 유지.
+    await page.emulateMedia({ media: 'print' });
+    await expect(pop).toBeVisible();
+    await expect(first.locator('.pop__chunk').first()).toHaveCSS('break-inside', 'avoid');
+    await expect(first.locator('.pop__bar').first()).toHaveCSS('print-color-adjust', 'exact');
+    await expect(pop).not.toHaveCSS('break-inside', 'avoid');
+    await page.emulateMedia({ media: null });
+
+    // 함수가 없으면(PGRST202) — 카드째 없다.
+    await mockMissingFunction(page, POP_PATTERN);
+    await page.reload();
+    await expect(page.locator('section.stack section.card--floors')).toBeVisible();
+    await expect(page.locator('section.pop')).toHaveCount(0);
+    await expect(page.locator('section.card--pop')).toHaveCount(0);
+  });
 });
 
 // ── 첫 화면 역할 단추 (👤 결정 0036 결정 18) ──────────────────────────────────
@@ -2553,6 +2818,9 @@ test.describe('첫 화면 — 역할 단추', () => {
     );
     // 나중에 등록한 것이 먼저 잡힌다 — mockFloorStack 의 '함수 없음' 위에 덮는다.
     await mockJson(page, OPEN_CLOSE_PATTERN, openClose());
+    // 추정매출 · 상권 인구(결정 0045 PR③ — 서울 건물이라 제 카드가 선다).
+    await mockJson(page, SALES_PATTERN, districtSales());
+    await mockJson(page, POP_PATTERN, districtPop());
 
     const NO_ROLE = [
       '속한 상권',
@@ -2563,8 +2831,8 @@ test.describe('첫 화면 — 역할 단추', () => {
       '층별 공표값 나란히 — 국세청 기준시가 · 구 상가 단가 · 부동산원 임대료',
       '상권 임대 동향 (부동산원 조사)',
       '상권 개업·폐업 (서울시 공표)',
-      '업종별 추정매출',
-      '유동인구',
+      '업종별 추정매출 (서울시 추정)',
+      '상권 인구 (서울시 공표)',
       '이 자리 가게 이력',
     ];
     // 빈 카드 셋은 창업자 차례에서 개업·폐업 바로 뒤(👤 물결 1-B).
@@ -2573,8 +2841,8 @@ test.describe('첫 화면 — 역할 단추', () => {
       '층 목록',
       '둘레의 업종 분포',
       '상권 개업·폐업 (서울시 공표)',
-      '업종별 추정매출',
-      '유동인구',
+      '업종별 추정매출 (서울시 추정)',
+      '상권 인구 (서울시 공표)',
       '이 자리 가게 이력',
       '실거래 기록',
       '층별 공표값 나란히 — 국세청 기준시가 · 구 상가 단가 · 부동산원 임대료',
@@ -2697,7 +2965,7 @@ test.describe('첫 화면 — 창업자 입구 · 업종 칩', () => {
     await expect(chips.getByRole('button')).toHaveText(['카페', '한식', '미용', '학원', '편의점', '전체']);
     await expect(chipBtn('전체')).toHaveAttribute('aria-pressed', 'true');
     // 칩 곁 안내 한 줄(👤 F4) — 글자 그대로.
-    await expect(chips.locator('.chips__note')).toHaveText('상권 목록과, 건물을 열면 업종 분포·개업·폐업 카드에 반영됩니다');
+    await expect(chips.locator('.chips__note')).toHaveText('상권 목록과, 건물을 열면 업종 분포·개업·폐업·추정매출 카드에 반영됩니다');
     // ⛔ 좁은 폭(412px)에서도 칩 줄(안내 한 줄 포함)이 옆으로 넘치지 않는다.
     expect(await page.locator('html').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
 

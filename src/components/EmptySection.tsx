@@ -20,8 +20,11 @@ type Props = {
 
 export function EmptySection({ kind, pnu, plan = SECTION_PLAN[kind] }: Props) {
   const { summary, body } = emptyCardText(kind, pnu);
+  // ⛔ 빈 카드에는 날짜 줄이 없다(S3 · 👤 결정 ②) — sales·pop 칸은 서울 카드(결정 0045 PR③)가 쓰는 `sources` 를 가지므로
+  //    서울 밖 건물의 빈 카드에 서울시 자료 날짜가 새지 않게 여기서 뺀다.
+  const emptyPlan: SectionPlan = { ...plan, sources: undefined };
   return (
-    <SectionCard plan={plan} className={`card--empty card--${kind}`} summary={summary}>
+    <SectionCard plan={emptyPlan} className={`card--empty card--${kind}`} summary={summary}>
       <p className="empty__body">{body}</p>
     </SectionCard>
   );

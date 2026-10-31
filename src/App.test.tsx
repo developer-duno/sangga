@@ -852,7 +852,7 @@ describe('App — 창업자 입구 · 업종 칩 (결정 0036 결정 18 ④⑤�
   });
 
   it('★ F4 창업자 칩 줄 곁에 안내 한 줄 — 투자자엔 없다(양성 대조)', async () => {
-    const NOTE = '상권 목록과, 건물을 열면 업종 분포·개업·폐업 카드에 반영됩니다';
+    const NOTE = '상권 목록과, 건물을 열면 업종 분포·개업·폐업·추정매출 카드에 반영됩니다';
     window.localStorage.setItem(KEY, '창업자');
     render(<App />);
     await pickGu('서울', '강남구');
