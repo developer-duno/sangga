@@ -134,7 +134,7 @@ export type PopBig = {
   num: string;
   /** 「○○○○년 2분기 3개월간」 · 「○○○○년 기준」 */
   when: string | null;
-  /** 「남 190,100 · 여 222,460」(+ 「 · 가구 1,120」) */
+  /** 「남 190,100 · 여 222,460」 */
   detail: string;
 };
 
@@ -180,15 +180,16 @@ export function flowLagText(row: DistrictPop): string | null {
 
 // ── 사는 사람 · 일하는 사람 ─────────────────────────────────────────────────
 
-/** 사는 사람(상주인구) 줄 — 「2,310명」 · 「○○○○년 기준」 · 「남 1,090 · 여 1,220 · 가구 1,120」. 값이 없으면 null. */
+/** 사는 사람(상주인구) 줄 — 「2,310명」 · 「○○○○년 기준」 · 「남 1,090 · 여 1,220」(가구 수는 안 싣는다). 값이 없으면 null. */
 export function residentText(row: DistrictPop): PopBig | null {
   const r = row.resident;
   if (row.status !== 'ok' || !r) return null;
-  const hshld = typeof r.tot_hshld === 'number' && Number.isFinite(r.tot_hshld) ? ` · 가구 ${formatCount(r.tot_hshld, '')}` : '';
+  // ⛔ 가구 수는 싣지 않는다(메인 결정 나) — 서울시 화면의 가구세대 수(평창동동측 1,858)와 우리 `tot_hshld`(776)가
+  //    다른 값이라 같은 상권에 다른 가구 수를 적게 된다 · 👤 결정 원문에도 가구는 없다. 칸은 타입에만 남긴다.
   return {
     num: formatCount(r.tot, '명'),
     when: valueYearText(row.resident_value_quarter),
-    detail: `남 ${formatCount(r.ml, '')} · 여 ${formatCount(r.fml, '')}${hshld}`,
+    detail: `남 ${formatCount(r.ml, '')} · 여 ${formatCount(r.fml, '')}`,
   };
 }
 

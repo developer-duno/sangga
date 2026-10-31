@@ -2687,7 +2687,9 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
     await expect(first.locator('.pop__chunk--flow .pop__q')).toHaveText('2026년 2분기 3개월간');
     await expect(first.locator('.pop__chunk--resident .pop__q')).toHaveText('2023년 기준');
     await expect(first.locator('.pop__chunk--worker .pop__q')).toHaveText('2024년 기준');
-    await expect(first.locator('.pop__chunk--resident .pop__big')).toContainText('가구 1,120');
+    // 가구 수는 싣지 않는다(메인 결정 나 — 서울시 화면 가구세대 수와 다른 값 · 목업엔 있었다).
+    await expect(first.locator('.pop__chunk--resident .pop__big')).toHaveText('2,310명2023년 기준남 1,090 · 여 1,220');
+    await expect(pop).not.toContainText('가구');
     // 미니 막대 둘 — 시간대 6 · 요일 7 · 높이 = 값 ÷ 묶음 최댓값(17~21시 84,000 이 칸 높이 · 0~6시 58,000).
     const figs = first.locator('.pop__bars-fig');
     await expect(figs).toHaveCount(2);

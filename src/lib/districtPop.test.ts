@@ -203,7 +203,7 @@ describe('사는 사람 · 일하는 사람', () => {
     expect(residentText(okRow())).toEqual({
       num: '2,310명',
       when: '2023년 기준',
-      detail: '남 1,090 · 여 1,220 · 가구 1,120',
+      detail: '남 1,090 · 여 1,220',
     });
     expect(workerText(okRow())).toEqual({ num: '6,840명', when: '2024년 기준', detail: '남 3,900 · 여 2,940' });
     // last_quarter 는 2026 이다 — 그 해가 새면 「2026년 기준」이 된다.
@@ -212,8 +212,13 @@ describe('사는 사람 · 일하는 사람', () => {
     expect(valueYearText('2023Q4')).toBeNull();
   });
 
-  it('가구 칸이 없으면 그 조각만 뺀다', () => {
-    expect(residentText(okRow({ resident: { tot: 5, ml: 2, fml: 3, tot_hshld: null } }))!.detail).toBe('남 2 · 여 3');
+  it('⛔ 가구 수는 싣지 않는다(메인 결정 나 — 서울시 화면 가구세대 수와 다른 값) · 양성 대조: 답에는 가구 칸이 있다', () => {
+    const r = okRow();
+    expect(r.resident?.tot_hshld).toBe(1120);
+    for (const t of [residentText(r)!.num, residentText(r)!.when ?? '', residentText(r)!.detail]) {
+      expect(t).not.toContain('가구');
+      expect(t).not.toContain('1,120');
+    }
   });
 
   it('★ 끊긴 상권 — 값은 null 이고 마지막 분기만 있으면 「…까지입니다」 · 둘 다 없으면 덩이 없음', () => {

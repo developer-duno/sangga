@@ -143,7 +143,8 @@ describe('PopSection — 자료가 있을 때', () => {
     expect(flow.querySelector('.pop__chunk-h')?.textContent).toBe('길단위인구 (서울시 집계)');
     expect(flow.querySelector('.pop__big')?.textContent).toBe('412,560명2026년 2분기 3개월간남 190,100 · 여 222,460');
     expect(block.querySelector('.pop__chunk--resident .pop__big')?.textContent).toBe(
-      '2,310명2023년 기준남 1,090 · 여 1,220 · 가구 1,120',
+      // 가구 수는 싣지 않는다(메인 결정 나 — 서울시 화면 가구세대 수와 다른 값).
+      '2,310명2023년 기준남 1,090 · 여 1,220',
     );
     expect(block.querySelector('.pop__chunk--worker .pop__big')?.textContent).toBe('6,840명2024년 기준남 3,900 · 여 2,940');
     const why = [...container.querySelectorAll('.pop__why li')].map((li) => li.textContent);
