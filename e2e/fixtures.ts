@@ -4,6 +4,8 @@ import type {
   CoverageStats,
   DataFreshnessRow,
   DaejeonDongClosure,
+  DistrictPop,
+  DistrictSales,
   DistrictOpenClose,
   FloorRow,
   FloorUnit,
@@ -680,6 +682,130 @@ export function daejeonClosure(): DaejeonDongClosure[] {
         { induty_nm: '유원지 및 기타 오락관련 서비스업', clsbiz_co: 21 },
         ...rest,
       ],
+    },
+  ];
+}
+
+/**
+ * 업종별 추정매출(결정 0045 PR③ · `list_district_sales`) — 상권 둘(좁은 상권 먼저 · 합치지 않는다). 숫자는 가짜 보기 숫자.
+ * 첫 상권: 8분기 창에서 20244 가 빠짐('–') · 가장 큰 분기 20254(760,000,000) · 최신 20262 = 7억 2,300만원 · 결제 15,208건 ·
+ * 상위 5(커피-음료 포함 · 미용실 포함) + 그 밖 9업종 · 업종 전부에 네일숍(상위 5 밖) — 피부관리실은 없다.
+ * 둘째 상권: 창 안 두 분기만(나머지 '–').
+ */
+export function districtSales(): DistrictSales[] {
+  const window = ['20262', '20261', '20254', '20253', '20252', '20251', '20244', '20243'];
+  const top = [
+    { cd: 'CS100001', nm: '한식음식점', amt: 214_000_000, co: 4120, mdwk_amt: 150_000_000, wkend_amt: 64_000_000 },
+    { cd: 'CS100010', nm: '커피-음료', amt: 139_000_000, co: 5310, mdwk_amt: 90_000_000, wkend_amt: 49_000_000 },
+    { cd: 'CS300002', nm: '편의점', amt: 98_000_000, co: 3250, mdwk_amt: 70_000_000, wkend_amt: 28_000_000 },
+    { cd: 'CS200028', nm: '미용실', amt: 61_000_000, co: 980, mdwk_amt: 40_000_000, wkend_amt: 21_000_000 },
+    { cd: 'CS200001', nm: '일반교습학원', amt: 47_000_000, co: 410, mdwk_amt: 40_000_000, wkend_amt: 7_000_000 },
+  ];
+  return [
+    {
+      status: 'ok',
+      district_id: '3110001',
+      district_nm: '○○역 2번 출구',
+      district_type: '골목상권',
+      latest_quarter: '20262',
+      window_quarters: window,
+      trend: [
+        { quarter: '20262', amt: 723_000_000, co: 15208 },
+        { quarter: '20261', amt: 654_000_000, co: 14000 },
+        { quarter: '20254', amt: 760_000_000, co: 16000 },
+        { quarter: '20253', amt: 623_000_000, co: 13000 },
+        { quarter: '20252', amt: 707_000_000, co: 15000 },
+        { quarter: '20251', amt: 676_000_000, co: 14500 },
+        { quarter: '20243', amt: 692_000_000, co: 14800 },
+      ],
+      top,
+      rest_cnt: 9,
+      rest_amt: 164_000_000,
+      rest_co: 1138,
+      industries: [
+        ...top.map(({ cd, nm, amt, co }) => ({ cd, nm, amt, co })),
+        { cd: 'CS200029', nm: '네일숍', amt: 30_000_000, co: 610 },
+      ],
+    },
+    {
+      status: 'ok',
+      district_id: '3001496',
+      district_nm: '강남 마이스 관광특구',
+      district_type: '관광특구',
+      latest_quarter: '20262',
+      window_quarters: window,
+      trend: [
+        { quarter: '20262', amt: 380_000_000, co: 9000 },
+        { quarter: '20261', amt: 400_000_000, co: 9500 },
+      ],
+      top: [{ cd: 'CS100001', nm: '한식음식점', amt: 380_000_000, co: 9000 }],
+      rest_cnt: 0,
+      rest_amt: 0,
+      rest_co: 0,
+      industries: [{ cd: 'CS100001', nm: '한식음식점', amt: 380_000_000, co: 9000 }],
+    },
+  ];
+}
+
+/**
+ * 상권 인구(결정 0045 PR③ · `list_district_pop`) — 상권 둘. 첫 상권은 셋 다 · 둘째 상권은 길단위인구가 옛 분기(20254)에서
+ * 끊겼고 사는 사람 값이 없다(마지막 분기 20224 — 「…까지」) · 일하는 사람은 마지막 분기도 없다(덩이 없음).
+ */
+export function districtPop(): DistrictPop[] {
+  const flow = {
+    tot: 412560,
+    ml: 190100,
+    fml: 222460,
+    agrde_10: 30000,
+    agrde_20: 90000,
+    agrde_30: 100000,
+    agrde_40: 80000,
+    agrde_50: 60000,
+    agrde_60_above: 52560,
+    tmzon_00_06: 58000,
+    tmzon_06_11: 82300,
+    tmzon_11_14: 69700,
+    tmzon_14_17: 68000,
+    tmzon_17_21: 84000,
+    tmzon_21_24: 50400,
+    mon: 59900,
+    tues: 59900,
+    wed: 60500,
+    thur: 59900,
+    fri: 59900,
+    sat: 57500,
+    sun: 55000,
+  };
+  return [
+    {
+      status: 'ok',
+      district_id: '3110001',
+      district_nm: '○○역 2번 출구',
+      district_type: '골목상권',
+      flow_table_quarter: '20262',
+      flow_quarter: '20262',
+      flow,
+      resident_value_quarter: '20234',
+      resident_last_quarter: '20262',
+      resident: { tot: 2310, ml: 1090, fml: 1220, tot_hshld: 1120, apt_hshld: 600, non_apt_hshld: 520 },
+      worker_value_quarter: '20244',
+      worker_last_quarter: '20262',
+      worker: { tot: 6840, ml: 3900, fml: 2940 },
+    },
+    {
+      status: 'ok',
+      district_id: '3001496',
+      district_nm: '강남 마이스 관광특구',
+      district_type: '관광특구',
+      flow_table_quarter: '20262',
+      flow_quarter: '20254',
+      flow: { ...flow, tot: 1_200_000, ml: 600_000, fml: 600_000 },
+      resident_value_quarter: null,
+      resident_last_quarter: '20224',
+      resident: null,
+      worker_value_quarter: null,
+      worker_last_quarter: null,
+      worker: null,
     },
   ];
 }
