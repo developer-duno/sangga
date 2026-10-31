@@ -320,12 +320,14 @@ describe('cardSourceLine — 카드 제목 아래 날짜 줄 (S3)', () => {
     );
   });
 
-  it('빈 카드 가게 이력(결정 ②)과 LH 공고(B2)는 자료 칸이 아예 없다', () => {
-    const none: SectionPlan[] = [SECTION_PLAN.history, ENTRY_SECTION_PLAN.lhNotice];
+  it('LH 공고(B2)는 자료 칸이 아예 없다 · 가게 이력은 결정 0045 PR④ 부터 제 자료 칸(가게 이력 줄)', () => {
+    const none: SectionPlan[] = [ENTRY_SECTION_PLAN.lhNotice];
     for (const plan of none) {
       expect(plan, plan.title).not.toHaveProperty('sources');
       expect(cardSourceLine(plan.sources, rows1016())).toBeNull();
     }
+    expect(SECTION_PLAN.history.sources).toEqual(['history']);
+    expect(CARD_SOURCES.history.src).toBe('가게 이력 (점포 자료 누적)');
   });
 
   it('업종별 추정매출·상권 인구(결정 0045 PR③)는 서울시 자료 세 줄을 쓴다 — 서버 src 글자로 찾는다', () => {

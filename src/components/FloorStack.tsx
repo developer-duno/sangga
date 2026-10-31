@@ -124,6 +124,7 @@ import { OpenCloseSection } from './OpenCloseSection';
 import { EmptySection } from './EmptySection';
 import { SalesSection } from './SalesSection';
 import { PopSection } from './PopSection';
+import { HistorySection } from './HistorySection';
 import { isSeoulPnu } from '../lib/openClose';
 import { FloorGapSection } from './FloorGapSection';
 import { SectionCard } from './SectionCard';
@@ -1133,7 +1134,7 @@ export function FloorStack({
       업종별 추정매출 · 상권 인구(결정 0045 PR③ — 서울시 공표 그대로). **서울 필지만** 제 컴포넌트가 스스로 묻고
       (미리 부르기도 서울 필지에만 `SEOUL_PREFETCH_FNS`), 못 읽으면(함수 없음·모양 이상) 스스로 사라진다.
       서울 밖 건물은 빈 카드 그대로(아무것도 부르지 않는다 — 대전 문구는 PR⑤ 몫). ⛔ 이 건물이 아니라 상권 값이다.
-      가게 이력은 아직 빈 카드(결정 0036 결정 2 · 물결 1-B).
+      가게 이력은 2026-11-01(결정 0045 PR④) 부터 제 컴포넌트 — **모든 지역**(전국 점포 분기 자료) · 함수 없음·0줄이면 스스로 사라진다.
     */
     sales: isSeoulPnu(building.pnu) ? (
       <SalesSection pnu={building.pnu} prefetch={sidePrefetch} plan={plans.sales} chip={founderChip} />
@@ -1145,7 +1146,7 @@ export function FloorStack({
     ) : (
       <EmptySection kind="pop" pnu={building.pnu} plan={plans.pop} />
     ),
-    history: <EmptySection kind="history" pnu={building.pnu} plan={plans.history} />,
+    history: <HistorySection pnu={building.pnu} prefetch={sidePrefetch} plan={plans.history} />,
   };
 
   /*

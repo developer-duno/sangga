@@ -19,6 +19,7 @@ import type {
   ParcelTransaction,
   RentStat,
   SigunguTxStat,
+  StoreHistoryRow,
   StoreHit,
   UnitFloorSummary,
 } from '../src/types';
@@ -827,4 +828,40 @@ export function openCloseNotSeoul(): DistrictOpenClose[] {
       window_quarters: OC_WINDOW,
     },
   ];
+}
+
+/**
+ * `get_store_history` 응답 — 가게 이력(결정 0045 PR④ · 가짜 보기 값). 23줄 = 지금 보임 6(첫 줄은 첫 분기부터) +
+ * 안 보임 17 · 서버 차례 그대로(지금 보임 → 보인 분기 수 ↓). `lastYm` = 표지 마지막 분기(어긋남 줄 시험이 한 분기 앞으로 바꾼다).
+ */
+export function storeHistory(lastYm = '202606'): StoreHistoryRow[] {
+  const base = {
+    status: 'ok' as const,
+    total_cnt: 23,
+    current_cnt: 6,
+    history_first_ym: '201712',
+    history_last_ym: lastYm,
+    truncated: false,
+  };
+  const names = ['한솔마트', '다솜피아노교습소', '카페 모모', '우리치과의원', '행복공인중개사사무소', '청춘분식'];
+  const current: StoreHistoryRow[] = names.map((biz_name, i) => ({
+    ...base,
+    floor_no: i === 4 ? null : (i % 3) + 1,
+    biz_name,
+    first_ym: i === 0 ? '201712' : '202003',
+    last_ym: lastYm,
+    seen_cnt: i === 0 ? 35 : 26 - i,
+    is_current: true,
+    truncated: i === 0,
+  }));
+  const gone: StoreHistoryRow[] = Array.from({ length: 17 }, (_v, i) => ({
+    ...base,
+    floor_no: i % 4 === 0 ? -1 : (i % 3) + 1,
+    biz_name: `지난가게${String(i + 1).padStart(2, '0')}`,
+    first_ym: '201903',
+    last_ym: '202312',
+    seen_cnt: 20 - i,
+    is_current: false,
+  }));
+  return [...current, ...gone];
 }

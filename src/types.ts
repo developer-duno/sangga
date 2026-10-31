@@ -1225,3 +1225,36 @@ export type FloorIndustryRow = {
   /** 그 (층, 대분류)의 점포 수 — 1 이상(0 인 줄은 서버가 안 준다). */
   store_cnt: number;
 };
+
+// ── 이 자리 가게 이력 (결정 0045 PR④) ──────────────────────────────────────
+
+/**
+ * 함수 `get_store_history(p_pnu, p_limit, p_offset)` 한 줄 — 칸 이름은 마이그 2026-11-01a 함수 반환 **글자 그대로**.
+ * ⛔ **그 땅(필지)의 점포 줄**이지 건물 값이 아니다 · D등급(우리가 이어 붙인 사슬) · `seen_cnt` 는 영업 기간이 아니다.
+ * ⓘ `status` 'no_data' 줄(그 땅에 줄이 없음 — 한 줄뿐)은 가게 칸 일곱(`floor_no`~`truncated`)이 전부 null 이고
+ *   `total_cnt`·`current_cnt` 가 0 이다. 'ok' 줄은 `floor_no`(층 모름이면 null) 말고는 null 이 없다.
+ * ⓘ `total_cnt`·`current_cnt`·`history_first_ym`·`history_last_ym` 은 모든 줄에 같은 값(그 땅 전체 · 표지).
+ *   분기 꼴은 'YYYYMM'(분기말 달 — 201712 = 2017년 4분기).
+ */
+export type StoreHistoryRow = {
+  status: 'ok' | 'no_data';
+  /** 마지막 분기의 층 — 지하 음수 · 옥탑 99 · 모름 null(0 은 오지 않는다). */
+  floor_no: number | null;
+  /** 마지막 분기의 상호(원문). no_data 면 null. */
+  biz_name: string | null;
+  first_ym: string | null;
+  last_ym: string | null;
+  /** 자료에 보인 분기 수(1 이상). no_data 면 null. */
+  seen_cnt: number | null;
+  is_current: boolean | null;
+  /** 처음 보인 분기가 결과표의 첫 분기인가 — 그 전은 읽지 않았다(「N분기 이상」). */
+  truncated: boolean | null;
+  /** 그 땅 줄 전체 수(넘기기와 무관). */
+  total_cnt: number;
+  /** 그 땅에서 지금 보이는 줄 수. */
+  current_cnt: number;
+  /** 결과표의 첫 분기(표지 first_ym). */
+  history_first_ym: string;
+  /** 결과표의 마지막 분기(표지 last_ym). */
+  history_last_ym: string;
+};

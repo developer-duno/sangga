@@ -377,10 +377,10 @@ describe('SectionCard — 제목 아래 날짜 줄 (S3 · 👤 2026-10-16)', () 
   });
 
   it('⛔ 빈 카드(자료 칸 없음)에는 줄이 없고 묻지도 않는다 — 양성 대조: 같은 자리에 자료 칸을 주면 줄이 선다', async () => {
-    // ⓘ 빈 카드 = 가게 이력(결정 0045 PR③ 부터 sales·pop 칸에는 서울 카드용 자료 칸이 있다 — 빈 카드는 EmptySection 이 뺀다).
-    const { container, unmount } = render(
-      <SectionCard plan={SECTION_PLAN.history} className="card--empty" summary="비어 있음" />,
-    );
+    // ⓘ 결정 0045 PR④ 부터 SECTION_PLAN 의 카드는 전부 자료 칸이 있다(빈 카드는 EmptySection 이 그 칸을 뺀다) —
+    //   그래서 자료 칸 없는 칸을 여기서 만든다(빈 카드가 실제로 받는 꼴).
+    const noSrc: SectionPlan = { title: SECTION_PLAN.history.title, role: SECTION_PLAN.history.role, defaultOpen: false };
+    const { container, unmount } = render(<SectionCard plan={noSrc} className="card--empty" summary="비어 있음" />);
     // 다른 카드가 물었다면 답이 왔을 시간을 준다.
     await new Promise((r) => setTimeout(r, 0));
     expect(container.querySelector('.card__src')).toBeNull();
