@@ -34,10 +34,12 @@
 (분기마다 상권 수가 1,625~1,635 로 흔들린다)까지 세면 상주가 값을 안 바꾼 20242 가 기준 분기가 된다(10-31 실측). 상주·직장은 서울시가 4분기 코드에서만 값을 바꾼다(10-31 실측 —
 상주 20234 · 직장 20244 의 값이 20262 까지 그대로). 추정매출·길단위인구는 분기마다 바뀌어 자연히 max 와 같다.
 
-쓰는 법 (프로젝트 루트에서 · 수집 4종이 다 끝난 날 · 마이그레이션 2026-10-31a 를 넣은 직후)
--------------------------------------------------------------------------------------------
-    python scripts/collectors/load_seoul_trdar.py --dry-run     # 관문 리포트 · DB·파일 쓰기 0
-    python scripts/collectors/load_seoul_trdar.py               # 적재(한 트랜잭션) → post_load.py → --check
+쓰는 법 (프로젝트 루트에서 · 수집 4종이 다 끝난 날)
+---------------------------------------------------
+    python scripts/collectors/load_seoul_trdar.py --dry-run     # ① 관문 리포트 · DB·파일 쓰기 0(관문 ⒤ 는 못 본다)
+    # ② 같은 날 마이그 2026-10-31a 적용(dbx.py -f) — dry-run 이 통과한 **뒤에만**(먼저 넣고 걸리면 신선도
+    #    13·14·15 줄이 '자료 없음'으로 라이브에 남는다)
+    python scripts/collectors/load_seoul_trdar.py               # ③ 적재(한 트랜잭션) → post_load.py → --check
 ⚠️ 적재 **전** 디스크 판정 — (지금 사용량 + 약 +310MB + WAL 여유 1GB) 가 디스크의 85% 미만일 때만. 적재 앞뒤
    `pg_total_relation_size` 를 표 넷에 재서 PROGRESS 에 적는다.
 """
@@ -130,6 +132,9 @@ ROWS_PER_QUARTER = {"sales": (18_000, 26_000), "flow": (1_600, 1_700),
 RE_QUARTER = re.compile(r"^\d{4}[1-4]$")
 RE_FILE = re.compile(r"^(\d{4}[1-4])_(\d{8})\.jsonl$")
 RE_INDUTY = re.compile(r"^CS\d{6}$")
+# ⒜·⒠ 멈춤 문구 끝 한 줄(보완 1 F5) — 상권 수가 바뀐 날은 경계 원천부터 본다.
+DISTRICT_HINT = (" — 서울시가 상권 경계를 바꿨을 수 있다 — 상권 경계 원천(fetch_seoul_district.py → "
+                 "load_seoul_district.py)을 먼저 확인")
 
 
 class GateError(ValueError):
@@ -217,14 +222,14 @@ def quarter_problems(service, quarter, rows, known=None):
     if known is not None:
         missing = sorted({r[1] for r in rows} - known)
         if missing:
-            bad.append("⒜ 서울 상권에 없는 상권 코드 {}개(예 {})".format(len(missing), missing[:5]))
+            bad.append("⒜ 서울 상권에 없는 상권 코드 {}개(예 {}){}".format(len(missing), missing[:5], DISTRICT_HINT))
     keys = [row_key(service, r) for r in rows]
     if len(set(keys)) != len(keys):
         bad.append("⒟ (분기·상권{}) 중복 {:,}개".format("·업종" if service == "sales" else "",
                                                        len(keys) - len(set(keys))))
     lo, hi = ROWS_PER_QUARTER[service]
     if not lo <= len(rows) <= hi:
-        bad.append("⒠ 행수 {:,} — {:,}~{:,} 밖".format(len(rows), lo, hi))
+        bad.append("⒠ 행수 {:,} — {:,}~{:,} 밖{}".format(len(rows), lo, hi, DISTRICT_HINT))
     if service == "sales":
         odd = sorted({r[2] for r in rows if not RE_INDUTY.match(r[2])})
         if odd:
@@ -334,6 +339,21 @@ def induty_warnings(rep):
     union = frozenset().union(*sets.values())
     return ["⒣ 경고: {} 분기 업종 {}종 (전체 {}종 중 빠짐 {})".format(
         q, len(s), len(union), sorted(union - s)[:5]) for q, s in sorted(sets.items()) if s != union]
+
+
+def stale_people_warnings(reports):
+    """상주·직장 max_quarter 가 추정매출 max_quarter 보다 옛 분기면 경고(멈추지 않는다 · 보완 1 F4).
+
+    서울시는 네 자료를 같은 날 게시한다(2026-09-11 갱신일) — 어긋나면 상주·직장을 덜 받았거나 옛 판을 고른 것이다.
+    """
+    top = (reports.get("sales") or {}).get("max_quarter")
+    out = []
+    for s in ("resident", "worker"):
+        mq = (reports.get(s) or {}).get("max_quarter")
+        if top and mq and mq < top:
+            out.append("[경고] 상주·직장이 매출보다 옛 분기 — {} {} < 추정매출 {} · 서울시는 네 자료를 같은 날 게시한다"
+                       "(2026-09-11)".format(s, mq, top))
+    return out
 
 
 # ── SQL ──────────────────────────────────────────────────────────────────────
@@ -471,7 +491,7 @@ def main(argv=None):
           "(한쪽에만 있는 상권은 안 센다).")
     if known is None:
         print("  ⓘ public/districts.geojson 이 없어 관문 ⒜ 미리보기를 건너뜁니다 — 적재 SQL 이 DB 에서 본다.")
-    for w in induty_warnings(reports["sales"]):
+    for w in induty_warnings(reports["sales"]) + stale_people_warnings(reports):
         print("  " + w)
 
     problems = [(s, q, m) for s in SERVICES for q, ms in reports[s]["problems"].items() for m in ms]
@@ -486,6 +506,8 @@ def main(argv=None):
 
     if a.dry_run:
         print()
+        print("  ⓘ 관문 ⒤(추정매출 업종 코드 ⊂ 개업·폐업 표 업종)와 DB 쪽 ⒜ 는 실적재 트랜잭션 안에서 본다 — dry-run 은 못 본다.")
+        print("  ⓘ 순서: 이 dry-run 통과 → 같은 날 마이그 2026-10-31a 적용 → 실적재 → post_load.py · --check")
         print("--dry-run — DB·파일에 아무것도 쓰지 않았습니다.")
         return 0
 

@@ -140,6 +140,31 @@ def test_gate_d_duplicates(small_ranges):
     assert L.quarter_problems("sales", "20262", [r, other], None) == []      # 업종이 다르면 중복 아님
 
 
+def test_gate_a_and_e_point_to_the_district_source(small_ranges):
+    """F5 — ⒜·⒠ 멈춤 문구 끝에 상권 경계 원천을 먼저 보라는 한 줄(다른 관문 문구엔 없다)."""
+    rows = [L.normalize("flow", raw_row("flow", "20262", "9999999"), "20262", "f", "w")]
+    a = [m for m in L.quarter_problems("flow", "20262", rows, {D1}) if m.startswith("⒜")]
+    assert a and a[0].endswith(L.DISTRICT_HINT) and "fetch_seoul_district.py" in a[0]
+    big = [L.normalize("worker", raw_row("worker", "20262", "31100{:02d}".format(i)), "20262", "f", "w")
+           for i in range(11)]
+    e = [m for m in L.quarter_problems("worker", "20262", big, None) if m.startswith("⒠")]
+    assert e and e[0].endswith(L.DISTRICT_HINT)
+    r = L.normalize("sales", raw_row("sales", "20262", D1), "20262", "f", "w")
+    d = [m for m in L.quarter_problems("sales", "20262", [r, r], None) if m.startswith("⒟")]
+    assert d and L.DISTRICT_HINT not in d[0]
+
+
+@pytest.mark.parametrize("people_q,warned", [("20254", True), ("20262", False)])
+def test_people_older_than_sales_warns(people_q, warned):
+    """F4 — 상주·직장 max 가 추정매출 max 보다 옛 분기면 경고 한 줄(멈추지 않음) · 같으면 없음(양성·음성)."""
+    reps = {"sales": {"max_quarter": "20262"}, "flow": {"max_quarter": "20262"},
+            "resident": {"max_quarter": people_q}, "worker": {"max_quarter": "20262"}}
+    w = L.stale_people_warnings(reps)
+    assert bool(w) is warned
+    if warned:
+        assert w[0].startswith("[경고] 상주·직장이 매출보다 옛 분기") and "2026-09-11" in w[0] and "resident 20254" in w[0]
+
+
 def test_gate_e_row_count_range():
     rows = [L.normalize("resident", raw_row("resident", "20262", D1), "20262", "f", "w")]
     assert any(m.startswith("⒠") for m in L.quarter_problems("resident", "20262", rows, None))
@@ -306,6 +331,11 @@ def test_dry_run_writes_nothing(tmp_path, monkeypatch, small_ranges, capsys):
     assert rc == 0 and not (tmp_path / "st").exists()
     out = capsys.readouterr().out
     assert "관문 통과" in out and "20254" in out
+    # F4 — 상주·직장(20254)이 매출(20262)보다 옛 분기라 경고는 서되 멈추지 않는다(rc 0)
+    assert "[경고] 상주·직장이 매출보다 옛 분기" in out
+    # F3 — 관문 ⒤ 는 실적재 트랜잭션 안에서 본다는 한 줄 · dry-run → 마이그 → 실적재 순서
+    assert "관문 ⒤" in out and "dry-run 은 못 본다" in out
+    assert out.index("dry-run 통과") < out.index("마이그 2026-10-31a 적용") < out.index("실적재 → post_load")
 
 
 def test_one_service_missing_stops_everything(tmp_path, monkeypatch, small_ranges, capsys):

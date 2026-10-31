@@ -181,10 +181,11 @@ export const CARD_SOURCES = {
   // 카드가 대전 답을 받았을 때 plan 을 바꿔 끼운다). 기준 = 사람이 대전시 사이트에서 받은 날.
   daejeon_closure: { src: '동네 폐업 (대전시)', label: '대전시 상권분석 서비스', ending: ' 받음' },
   // 결정 0045 PR② — 서울 상권 4종. 카드(PR③)가 아직 없어 지금은 어느 `SECTION_PLAN` 에도 안 붙는다.
-  //   상주·직장 줄의 기준은 「상주 2023년 4분기 · 직장 2024년 4분기」 같은 글이라 `basisText` 가 원본 그대로 적는다.
+  //   상주·직장 줄의 기준은 「상주 2023년 4분기, 직장 2024년 4분기」 같은 글이라 `basisText` 가 원본 그대로 적는다.
   sales: { src: '상권 추정매출 (서울시)', label: '서울시 상권분석서비스', ending: '' },
   pop_flow: { src: '상권 길단위인구 (서울시)', label: '서울시 상권분석서비스', ending: '' },
-  pop_people: { src: '상권 상주·직장인구 (서울시)', label: '서울시 상주·직장인구', ending: ' 값' },
+  // label 에 「상주」를 또 쓰면 기준 글(「상주 …, 직장 …」)과 겹쳐 두 번 나온다 — 출처 이름만.
+  pop_people: { src: '상권 상주·직장인구 (서울시)', label: '서울시 상권분석서비스', ending: ' 값' },
 } as const satisfies Record<string, { src: string; label: string; ending: string }>;
 
 export type CardSourceKey = keyof typeof CARD_SOURCES;

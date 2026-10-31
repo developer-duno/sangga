@@ -52,8 +52,9 @@ OPENCLOSE = "list_district_openclose"
 
 SALES_RETURNS = ("status", "district_id", "district_nm", "district_type", "latest_quarter", "window_quarters",
                  "trend", "top", "rest_cnt", "rest_amt", "rest_co", "industries")
-POP_RETURNS = ("status", "district_id", "district_nm", "district_type", "flow_quarter", "flow",
-               "resident_value_quarter", "resident", "worker_value_quarter", "worker")
+POP_RETURNS = ("status", "district_id", "district_nm", "district_type", "flow_table_quarter", "flow_quarter", "flow",
+               "resident_value_quarter", "resident_last_quarter", "resident",
+               "worker_value_quarter", "worker_last_quarter", "worker")
 
 # 신선도 = 2026-10-29a 판 + 이 갈래들(글자 그대로). 이 표 밖의 차이는 전부 '다른 것도 바뀌었다'다.
 FRESH_ROWS = (
@@ -74,7 +75,7 @@ FRESH_ROWS = (
     "    --   바뀐 분기 둘을 글로 합친다(표지 seoul_trdar_release). 서울시 공지는 연 1회지만 실제 갱신이 불규칙(상주\n"
     "    --   2024·2025 건너뜀)이라 예정일을 계산하지 않는다('none' → null). 표지가 비면 basis 도 null(화면 '자료 없음').\n"
     "    select 15, '상권 상주·직장인구 (서울시)', '값이 바뀐 분기',\n"
-    "           (select '상주 ' || left(a.value_quarter, 4) || '년 ' || right(a.value_quarter, 1) || '분기 · 직장 '\n"
+    "           (select '상주 ' || left(a.value_quarter, 4) || '년 ' || right(a.value_quarter, 1) || '분기, 직장 '\n"
     "                   || left(b.value_quarter, 4) || '년 ' || right(b.value_quarter, 1) || '분기'\n"
     "              from seoul_trdar_release a, seoul_trdar_release b\n"
     "             where a.tbl = 'district_pop_resident' and b.tbl = 'district_pop_worker'),\n"
@@ -481,15 +482,18 @@ SEOUL_OUT = "1168010100100020000"
 SEOUL_NOGEOM = "1168010100100030000"
 DJ = "3017010100100010000"
 SEOUL_B = "1168010100100040000"    # 상권 D4(자료 없음)
+SEOUL_C = "1168010100100050000"    # 상권 D5(상주가 옛 분기 20231 에서 끊김 · 길단위는 있음 — 보완 1 F1)
 
 FIXTURE = """
-insert into parcel (pnu, geom) values ('{sa}', 'PA'), ('{so}', 'PO'), ('{sn}', null), ('{dj}', 'PD'), ('{sb}', 'PB');
+insert into parcel (pnu, geom) values ('{sa}', 'PA'), ('{so}', 'PO'), ('{sn}', null), ('{dj}', 'PD'), ('{sb}', 'PB'),
+  ('{sc}', 'PC');
 insert into district values
   ('D1', '좁은 상권', '골목상권', '11680', '|PA|', 1000),
   ('D2', '넓은 상권', '발달상권', '11680', '|PA|PX|', 9000),
   ('DJ1', '대전 상권', '발달상권', '30170', '|PD|', 500),
-  ('D4', '자료 없는 상권', '골목상권', '11680', '|PB|', 100);
-""".format(sa=SEOUL_A, so=SEOUL_OUT, sn=SEOUL_NOGEOM, dj=DJ, sb=SEOUL_B)
+  ('D4', '자료 없는 상권', '골목상권', '11680', '|PB|', 100),
+  ('D5', '옛 분기에서 끊긴 상권', '골목상권', '11680', '|PC|', 300);
+""".format(sa=SEOUL_A, so=SEOUL_OUT, sn=SEOUL_NOGEOM, dj=DJ, sb=SEOUL_B, sc=SEOUL_C)
 
 SALES_COLS = None   # 첫 호출 때 마이그에서 읽는다
 
@@ -515,6 +519,9 @@ def _fill(cur):
     cur.execute("insert into district_pop_resident (quarter, district_id, tot_repop_co, tot_hshld_co, "
                 "non_apt_hshld_co) values ('20262', 'D1', 1269, 882, 882)")
     cur.execute("insert into district_pop_worker (quarter, district_id, tot_wrc_popltn_co) values ('20262', 'D2', 55)")
+    # D5: 길단위 20261 만 · 상주는 20231 에서 끊김(10-31 raw 실측 꼴 — 상주 4곳 · 직장 2곳)
+    cur.execute("insert into district_pop_flow (quarter, district_id, tot_flpop_co) values ('20261', 'D5', 70)")
+    cur.execute("insert into district_pop_resident (quarter, district_id, tot_repop_co) values ('20231', 'D5', 999)")
     cur.execute("insert into seoul_trdar_release (tbl, max_quarter, value_quarter) values "
                 "('district_sales', '20262', '20262'), ('district_pop_flow', '20262', '20262'), "
                 "('district_pop_resident', '20262', '20234'), ('district_pop_worker', '20262', '20244')")
@@ -633,11 +640,21 @@ class TestRealRunPop:
         assert d1["resident_value_quarter"] == "20234" and d1["resident"]["tot"] == 1269
         assert d1["resident"]["non_apt_hshld"] == 882 and len(d1["resident"]) == 24
         assert d1["worker"] is None and d1["worker_value_quarter"] is None
+        assert (d1["flow_table_quarter"], d1["resident_last_quarter"], d1["worker_last_quarter"]) == \
+            ("20262", "20262", None)
 
     def test_only_worker_is_still_ok(self, cur):
         d2 = _pop(cur, SEOUL_A)[1]
         assert (d2["status"], d2["flow"], d2["resident"]) == ("ok", None, None)
         assert d2["worker_value_quarter"] == "20244" and d2["worker"]["tot"] == 55 and len(d2["worker"]) == 21
+        assert d2["flow_table_quarter"] == "20262" and d2["flow_quarter"] is None     # 표 전체 최신은 늘 싣는다
+
+    def test_district_cut_at_an_old_quarter_gives_no_old_value(self, cur):
+        """F1 — 상주가 20231 에서 끊긴 상권: 옛 값을 「2023년 기준」으로 내보내지 않고 그 칸 null · 마지막 분기는 따로."""
+        d5 = _pop(cur, SEOUL_C)[0]
+        assert (d5["status"], d5["district_id"]) == ("ok", "D5")                       # 길단위가 있으니 ok
+        assert (d5["resident"], d5["resident_value_quarter"], d5["resident_last_quarter"]) == (None, None, "20231")
+        assert (d5["flow_quarter"], d5["flow_table_quarter"]) == ("20261", "20262")    # 화면이 「20261 까지」를 쓸 수 있다
 
     def test_none_of_three_is_no_data(self, cur):
         assert [(r["status"], r["district_id"], r["flow"]) for r in _pop(cur, SEOUL_B)] == [("no_data", "D4", None)]
@@ -670,7 +687,7 @@ class TestRealRunFreshness:
 
     def test_people_row_text_and_no_date(self, cur):
         kind, basis, nxt, cadence = self._rows(cur)["상권 상주·직장인구 (서울시)"]
-        assert (kind, basis, nxt) == ("값이 바뀐 분기", "상주 2023년 4분기 · 직장 2024년 4분기", None)
+        assert (kind, basis, nxt) == ("값이 바뀐 분기", "상주 2023년 4분기, 직장 2024년 4분기", None)
         assert "불규칙" in cadence
 
     def test_empty_release_keeps_the_row(self, pg):

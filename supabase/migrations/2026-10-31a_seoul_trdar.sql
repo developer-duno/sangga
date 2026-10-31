@@ -21,13 +21,14 @@
 --        20262 까지 그대로).
 --   ③ list_district_sales(p_pnu) + api 쌍둥이 — 필지가 속한 서울 상권마다(좁은 상권 먼저 · 합치지 않는다) 표 전체
 --      최근 8분기 창 안의 상권 합(당월 매출 금액·건수)과 그 상권 최신 분기의 업종 상위 5 · 그 밖 합 · 업종 전부.
---   ④ list_district_pop(p_pnu) + api 쌍둥이 — 같은 상권마다 길단위인구(그 상권 최신 분기) · 상주인구 · 직장인구
---      (그 상권 최신 분기 행 + 표지의 「값이 바뀐 분기」).
+--   ④ list_district_pop(p_pnu) + api 쌍둥이 — 같은 상권마다 길단위인구(그 상권 최신 분기 + 표 전체 최신 분기
+--      flow_table_quarter) · 상주인구 · 직장인구(⛔ 표지의 그 표 max_quarter 분기 행만 — 그 상권이 옛 분기에서
+--      끊겼으면 그 칸 null · 그 상권의 마지막 분기는 *_last_quarter · 기준은 표지의 「값이 바뀐 분기」).
 --      ③·④ 의 상권 찾기(me·hit)·빈 상태(head) 판정·차례는 list_district_openclose 본문 글자 그대로다
 --      (tests/test_seoul_trdar_migration.py 가 대조한다). 공개 호출 허용 총계 34 → 36(post_load.py).
 --   ⑤ get_data_freshness 다시 만들기 — 13 「상권 추정매출 (서울시)」 · 14 「상권 길단위인구 (서울시)」(기준 = 분기 ·
 --      규칙은 개업·폐업 줄과 같은 'seoul_openclose' — 분기말 + 5개월 − 하루) · 15 「상권 상주·직장인구 (서울시)」
---      (👤 2026-10-31 「다음 예정 없음」 — 기준 = 값이 바뀐 분기 둘을 글로 합침 「상주 2023년 4분기 · 직장 2024년
+--      (👤 2026-10-31 「다음 예정 없음」 — 기준 = 값이 바뀐 분기 둘을 글로 합침 「상주 2023년 4분기, 직장 2024년
 --      4분기」 · 규칙 'none' → 예정일 null). 새 규칙 갈래는 더하지 않는다 · 나머지 열두 줄·규칙은 글자 그대로다.
 --      ⓘ api.get_data_freshness 는 다시 만들지 않는다 — 통과 함수라 본문이 그대로다(2026-10-29a 와 같은 판단).
 -- ⛔ 머리(language · stable · security definer · set search_path)와 comment 는 정본(schema.sql)과 글자 그대로다 —
@@ -55,10 +56,12 @@
 --        python scripts/collectors/collect_seoul_trdar.py --service all --end-quarter <분기> --quarters 22
 --   2) 적재 **전** 디스크 판정 — (지금 사용량 + 이번 적재 약 +310MB + WAL 여유 1GB) 가 디스크의 85% 미만일 때만
 --      (넘으면 디스크 확장부터 · 분기 감시 이슈 본문과 같은 판정식).
---   3) **같은 날에** 이 파일 적용:  python scripts/dbx.py -f supabase/migrations/2026-10-31a_seoul_trdar.sql
---   4) 곧바로 4종을 **한 번에** 적재(분할 적재 금지 — 한 트랜잭션):
---        python scripts/collectors/load_seoul_trdar.py --dry-run → python scripts/collectors/load_seoul_trdar.py
---   5) python scripts/post_load.py → python scripts/post_load.py --check — 0 이어야 한다(허용 목록 총계 36 ·
+--   3) python scripts/collectors/load_seoul_trdar.py --dry-run — 관문 통과를 **먼저** 확인한다(DB 안 씀 · 관문 ⒤ 업종
+--      코드는 실적재 트랜잭션 안에서 본다). ⛔ 마이그를 먼저 넣고 dry-run 이 걸리면 신선도 13·14·15 줄이
+--      '자료 없음'으로 라이브에 남는다.
+--   4) **같은 날에** 이 파일 적용:  python scripts/dbx.py -f supabase/migrations/2026-10-31a_seoul_trdar.sql
+--   5) 곧바로 4종을 **한 번에** 실적재(분할 적재 금지 — 한 트랜잭션):  python scripts/collectors/load_seoul_trdar.py
+--   6) python scripts/post_load.py → python scripts/post_load.py --check — 0 이어야 한다(허용 목록 총계 36 ·
 --      정본↔라이브 함수 일치).
 --   ⛔ 상권정보 새 분기(202609)·부동산원·개업·폐업·실거래·건축물대장 적재와 **같은 날 넣지 않는다**(디스크·WAL 이
 --      겹치고, 무엇 때문에 어긋났는지 가를 수 없다).
@@ -71,10 +74,11 @@
 -- ------------------------------------------------------------------------
 --   select count(*) from api.get_data_freshness();                                  -- 14
 --   select src, basis_kind, basis, next_expected from api.get_data_freshness() where src like '상권 %(서울시)';
---     → 적재 뒤: 추정매출·길단위인구 = 20262 · 2026-10-31(20263 이면 2027-01-31) / 상주·직장 = 「상주 2023년 4분기 · 직장 2024년 4분기」 · null
+--     → 적재 뒤: 추정매출·길단위인구 = 20262 · 2026-10-31(20263 이면 2027-01-31) / 상주·직장 = 「상주 2023년 4분기, 직장 2024년 4분기」 · null
 --   select tbl, max_quarter, value_quarter from seoul_trdar_release order by tbl;
 --   select status, district_nm, latest_quarter, rest_cnt from api.list_district_sales('<서울 상권 안 필지>');
---   select status, flow_quarter, resident_value_quarter, worker_value_quarter from api.list_district_pop('<같은 필지>');
+--   select status, flow_table_quarter, flow_quarter, resident_value_quarter, resident_last_quarter,
+--          worker_value_quarter, worker_last_quarter from api.list_district_pop('<같은 필지>');
 --   select status from api.list_district_sales('<대전 필지>');                       -- not_seoul
 --   select has_table_privilege('anon', 'district_sales', 'select');                 -- f (다섯 다)
 --
@@ -512,11 +516,14 @@ returns table (
   district_id             text,
   district_nm             text,
   district_type           text,
+  flow_table_quarter      char(5),
   flow_quarter            char(5),
   flow                    jsonb,
   resident_value_quarter  char(5),
+  resident_last_quarter   char(5),
   resident                jsonb,
   worker_value_quarter    char(5),
+  worker_last_quarter     char(5),
   worker                  jsonb
 )
 language sql
@@ -552,24 +559,33 @@ as $$
            end as status
   ),
   rel as (
-    -- 상주·직장의 「값이 마지막으로 바뀐 분기」 — 표 전체 기준 하나(적재기가 표지에 적는다 · 상권마다 아니다).
+    -- 상주·직장의 「값이 마지막으로 바뀐 분기」(value_quarter)와 그 표의 가장 최근 분기(max_quarter) — 표 전체 기준
+    -- 하나(적재기가 표지에 적는다 · 상권마다 아니다). 길단위인구는 표 전체 최신 분기 — 화면이 그 상권의 분기와 견주어
+    -- 「이 상권 자료는 ○분기까지」를 쓸 수 있게 모든 상권 줄에 같은 값을 싣는다.
     select (select r.value_quarter from seoul_trdar_release r where r.tbl = 'district_pop_resident') as resident_vq,
-           (select r.value_quarter from seoul_trdar_release r where r.tbl = 'district_pop_worker')   as worker_vq
+           (select r.max_quarter   from seoul_trdar_release r where r.tbl = 'district_pop_resident') as resident_mq,
+           (select r.value_quarter from seoul_trdar_release r where r.tbl = 'district_pop_worker')   as worker_vq,
+           (select r.max_quarter   from seoul_trdar_release r where r.tbl = 'district_pop_worker')   as worker_mq,
+           (select max(o.quarter) from district_pop_flow o)                                          as flow_tq
   ),
   rows_out as (
     select hd.status,
            null::text as district_id, null::text as district_nm, null::text as district_type,
-           null::char(5) as flow_quarter, null::jsonb as flow,
-           null::char(5) as resident_value_quarter, null::jsonb as resident,
-           null::char(5) as worker_value_quarter, null::jsonb as worker,
+           null::char(5) as flow_table_quarter, null::char(5) as flow_quarter, null::jsonb as flow,
+           null::char(5) as resident_value_quarter, null::char(5) as resident_last_quarter, null::jsonb as resident,
+           null::char(5) as worker_value_quarter, null::char(5) as worker_last_quarter, null::jsonb as worker,
            0::numeric as sort_area
     from head hd
     where hd.status is not null
     union all
     -- 셋 중 그 상권에 자료가 없는 것은 그 칸(분기·값)만 null — 셋 다 없을 때만 no_data.
+    -- ⛔ 상주·직장 값은 **표지의 max_quarter 분기 행**에서만 읽는다 — 그 상권이 옛 분기에서 끊겼으면(10-31 raw 실측:
+    --   상주 4곳 · 직장 2곳) 옛 값을 「YYYY년 기준」으로 내보내지 않고 그 칸을 비운다. 그 상권이 가진 마지막 분기는
+    --   *_last_quarter 로 따로 준다(화면이 「이 상권 자료는 ○분기까지」를 쓸 수 있게).
     select case when f.quarter is null and rs.quarter is null and wk.quarter is null
                 then 'no_data' else 'ok' end,
            h.district_id, h.district_nm, h.district_type,
+           rel.flow_tq,
            f.quarter,
            case when f.quarter is not null then jsonb_build_object(
              'tot',            f.tot_flpop_co,
@@ -595,6 +611,7 @@ as $$
              'sat',            f.sat_flpop_co,
              'sun',            f.sun_flpop_co) end,
            case when rs.quarter is not null then rel.resident_vq end,
+           (select max(o.quarter) from district_pop_resident o where o.district_id = h.district_id),
            case when rs.quarter is not null then jsonb_build_object(
              'tot',            rs.tot_repop_co,
              'ml',             rs.ml_repop_co,
@@ -621,6 +638,7 @@ as $$
              'apt_hshld',      rs.apt_hshld_co,
              'non_apt_hshld',  rs.non_apt_hshld_co) end,
            case when wk.quarter is not null then rel.worker_vq end,
+           (select max(o.quarter) from district_pop_worker o where o.district_id = h.district_id),
            case when wk.quarter is not null then jsonb_build_object(
              'tot',            wk.tot_wrc_popltn_co,
              'ml',             wk.ml_wrc_popltn_co,
@@ -646,17 +664,17 @@ as $$
            h.area_m2
     from hit h
     cross join rel
-    -- 셋 다 그 상권이 가진 **가장 최근 분기** 한 행(색인 (district_id, quarter) 를 거꾸로 한 번 짚는다).
+    -- 길단위인구는 그 상권이 가진 **가장 최근 분기** 한 행(색인 (district_id, quarter) 를 거꾸로 한 번 짚는다) ·
+    -- 상주·직장은 **표지 max_quarter 분기** 한 행(기본키로 한 번 짚는다 — 없으면 null).
     left join lateral (select o.* from district_pop_flow o
                         where o.district_id = h.district_id order by o.quarter desc limit 1) f on true
-    left join lateral (select o.* from district_pop_resident o
-                        where o.district_id = h.district_id order by o.quarter desc limit 1) rs on true
-    left join lateral (select o.* from district_pop_worker o
-                        where o.district_id = h.district_id order by o.quarter desc limit 1) wk on true
+    left join district_pop_resident rs on rs.district_id = h.district_id and rs.quarter = rel.resident_mq
+    left join district_pop_worker wk on wk.district_id = h.district_id and wk.quarter = rel.worker_mq
   )
   select ro.status, ro.district_id, ro.district_nm, ro.district_type,
-         ro.flow_quarter, ro.flow, ro.resident_value_quarter, ro.resident,
-         ro.worker_value_quarter, ro.worker
+         ro.flow_table_quarter, ro.flow_quarter, ro.flow,
+         ro.resident_value_quarter, ro.resident_last_quarter, ro.resident,
+         ro.worker_value_quarter, ro.worker_last_quarter, ro.worker
   from rows_out ro
   -- 좁은 상권이 더 구체적인 설명이라 먼저 온다(list_building_districts 와 같은 정렬).
   order by ro.sort_area asc, ro.district_id;
@@ -664,10 +682,13 @@ $$;
 
 comment on function list_district_pop(text) is
   '결정 0045 이 필지가 속한 서울시 상권마다(좁은 상권 먼저 · 합치지 않는다) 서울시 상권분석서비스가 공표한 '
-  '인구 셋 — 길단위인구(flow: 그 상권이 가진 가장 최근 분기 flow_quarter 의 숫자 22칸 · 서울시 칸 이름은 「유동인구」 · '
-  '단위 미표기) · 상주인구(resident: 그 상권 가장 최근 분기 행의 숫자 24칸 · 가구 셋 포함) · 직장인구(worker: 숫자 21칸). '
+  '인구 셋 — 길단위인구(flow: 그 상권이 가진 가장 최근 분기 flow_quarter 의 숫자 22칸 · flow_table_quarter = 표 전체 '
+  '최신 분기 · 서울시 칸 이름은 「유동인구」 · 단위 미표기) · 상주인구(resident: 표지 seoul_trdar_release 의 그 표 '
+  'max_quarter 분기 행의 숫자 24칸 · 가구 셋 포함) · 직장인구(worker: 같은 규칙 · 숫자 21칸). 그 상권이 그 분기 행을 '
+  '안 가졌으면(옛 분기에서 끊김) 그 칸은 null 이고 옛 값을 내보내지 않는다 — 그 상권의 마지막 분기는 '
+  'resident_last_quarter·worker_last_quarter. '
   '상주·직장은 서울시가 1년 중 4분기에 한 번 값을 바꾸고 다음 해 1·2·3분기가 같은 값이라 「YYYY년 기준」은 '
-  'resident_value_quarter·worker_value_quarter(표지 seoul_trdar_release 의 값이 마지막으로 바뀐 분기 · 표 전체 기준 하나)로 쓴다. '
+  'resident_value_quarter·worker_value_quarter(표지의 값이 마지막으로 바뀐 분기 · 표 전체 기준 하나)로 쓴다. '
   '셋 중 그 상권에 자료가 없는 것은 그 칸만 null 이고, 셋 다 없으면 no_data 다. '
   '상권 찾기·status 는 list_district_openclose 와 같은 글이다: no_coord → not_seoul → outside_seoul_district(이 셋은 한 줄만) · '
   '아니면 상권마다 ok / no_data. 값은 상권 단위 공표값이며 이 건물의 인구가 아니다. '
@@ -682,11 +703,14 @@ returns table (
   district_id             text,
   district_nm             text,
   district_type           text,
+  flow_table_quarter      char(5),
   flow_quarter            char(5),
   flow                    jsonb,
   resident_value_quarter  char(5),
+  resident_last_quarter   char(5),
   resident                jsonb,
   worker_value_quarter    char(5),
+  worker_last_quarter     char(5),
   worker                  jsonb
 )
 language sql
@@ -800,7 +824,7 @@ as $$
     --   바뀐 분기 둘을 글로 합친다(표지 seoul_trdar_release). 서울시 공지는 연 1회지만 실제 갱신이 불규칙(상주
     --   2024·2025 건너뜀)이라 예정일을 계산하지 않는다('none' → null). 표지가 비면 basis 도 null(화면 '자료 없음').
     select 15, '상권 상주·직장인구 (서울시)', '값이 바뀐 분기',
-           (select '상주 ' || left(a.value_quarter, 4) || '년 ' || right(a.value_quarter, 1) || '분기 · 직장 '
+           (select '상주 ' || left(a.value_quarter, 4) || '년 ' || right(a.value_quarter, 1) || '분기, 직장 '
                    || left(b.value_quarter, 4) || '년 ' || right(b.value_quarter, 1) || '분기'
               from seoul_trdar_release a, seoul_trdar_release b
              where a.tbl = 'district_pop_resident' and b.tbl = 'district_pop_worker'),
