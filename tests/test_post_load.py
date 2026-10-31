@@ -105,6 +105,8 @@ def p7_alarms_quiet(monkeypatch):
     monkeypatch.setattr(post_load, "report_snapshot_release", lambda *a: (False, False))
     # 건축물대장 판 표지(2026-10-15a)도 뺀다 — 판정·진짜 배선은 tests/test_freshness_monthly_rules_migration.py.
     monkeypatch.setattr(post_load, "report_ledger_release", lambda: False)
+    # 가게 이력 표지(2026-11-01a · 결정 0045 PR④)도 뺀다 — 판정·배선은 아래 TestStoreHistoryRelease.
+    monkeypatch.setattr(post_load, "report_store_history_release", lambda: None)
     monkeypatch.setattr(post_load, "precheck_snapshot_release", lambda: (False, "202606", ""))
     # 가게 이름 요약표 분기(2026-10-07 · 일곱 번째 판정)도 뺀다 — 판정은 아래 TestStoreNamesFreshness.
     monkeypatch.setattr(post_load, "report_store_names_freshness", lambda: ("202606", "202606", False))
@@ -597,12 +599,14 @@ class TestAnonExposure:
             # 매출 금액·건수, 인구 수만 나간다.
             "api.list_district_sales",
             "api.list_district_pop",
+            # 이 자리 가게 이력(2026-11-01a · 결정 0045 PR④). 표 둘은 **여기 없다** — 그 땅의 층·상호·보인 분기 수만 나간다.
+            "api.get_store_history",
         )
-        # 읽기 4 + 부르기 32 = `--check` 총계 36(2026-10-12a 업종 비중 비교로 30 → 31 · 2026-10-13a 중분류로 31 → 32 ·
+        # 읽기 4 + 부르기 33 = `--check` 총계 37(2026-10-12a 업종 비중 비교로 30 → 31 · 2026-10-13a 중분류로 31 → 32 ·
         # 2026-10-18a 결정 0041 로 참고 시세·성적표 둘을 빼 32 → 30 · 2026-10-24a 층 목록 업종 띠로 30 → 31 ·
         # 2026-10-24b 임대 8분기 흐름으로 31 → 32 · 2026-10-25a 개업·폐업 전부 보기로 32 → 33 ·
-        # 2026-10-29a 결정 0044 대전 동네 폐업으로 33 → 34 · 2026-10-31a 결정 0045 서울 4종 34 → 36).
-        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 36
+        # 2026-10-29a 결정 0044 대전 동네 폐업으로 33 → 34 · 2026-10-31a 결정 0045 서울 4종 34 → 36 · 2026-11-01a 결정 0045 PR④ 가게 이력 36 → 37).
+        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 37
 
     def test_pending_list_is_empty_after_2026_09_05a(self):
         """⛔ **비어 있어야 한다** — 잔존 노출 9개는 2026-09-05a 로 닫혔다.
@@ -1883,3 +1887,65 @@ class TestPrecheck:
         got = self._run(monkeypatch, "202606|202606|2772484|202609|2772484|2772484")
         assert got == (False, "202606", "202609")
         assert "[경고]" in capsys.readouterr().out
+
+
+# ── 가게 이력 표지 (2026-11-01a · 결정 0045 PR④) — [주의]까지만, 종료 코드 무관 ───────────────────
+
+_REAL_STORE_HISTORY_RELEASE = post_load.report_store_history_release
+
+
+class TestStoreHistoryRelease:
+    def _run(self, monkeypatch, capsys, answer):
+        monkeypatch.setattr(post_load, "query_one", lambda sql: answer)
+        _REAL_STORE_HISTORY_RELEASE()
+        return capsys.readouterr().out.strip()
+
+    def test_no_release_is_a_warning(self, monkeypatch, capsys):
+        out = self._run(monkeypatch, capsys, "#202606")
+        assert out == "[주의] 가게 이력 표지 없음 — 적재 전(마이그레이션만 들어간 상태)"
+
+    def test_mismatch_is_a_warning_with_the_order(self, monkeypatch, capsys):
+        out = self._run(monkeypatch, capsys, "201712|202603|1300000|2026-08-01#202606")
+        assert out.startswith("[주의] 가게 이력 표지 202603 ≠ 보여 주는 분기 202606")
+        assert "build_store_history.py → load_store_history.py" in out
+
+    def test_history_ahead_says_post_load_will_lift_it(self, monkeypatch, capsys):
+        """보완 1 F-5 — 이력이 보여 주는 분기보다 앞이면(이력 적재 ~ post_load 사이) 다시 굽지 말라고 안내한다."""
+        out = self._run(monkeypatch, capsys, "201712|202609|1400000|2026-12-01#202606")
+        assert out.startswith("[주의] 가게 이력 표지 202609 > 보여 주는 분기 202606")
+        assert "post_load.py 가 분기 표지를 올리면 풀립니다" in out
+        assert "build_store_history.py" not in out
+
+    def test_same_quarter_is_normal(self, monkeypatch, capsys):
+        out = self._run(monkeypatch, capsys, "201712|202606|1366004|2026-10-31#202606")
+        assert out == "[정상] 가게 이력 표지 202606 = 보여 주는 분기 (줄 1366004 · 빌드 2026-10-31 · 시작 201712)"
+
+    @pytest.mark.parametrize("answer", ["202606", "a|b#202606"])
+    def test_odd_shape_is_a_warning_not_a_crash(self, monkeypatch, capsys, answer):
+        assert self._run(monkeypatch, capsys, answer).startswith("[주의] 가게 이력 표지(store_history_release)를 읽지")
+
+    def test_unreadable_is_a_warning(self, monkeypatch, capsys):
+        def boom(sql):
+            raise RuntimeError("relation \"store_history_release\" does not exist")
+        monkeypatch.setattr(post_load, "query_one", boom)
+        _REAL_STORE_HISTORY_RELEASE()
+        assert capsys.readouterr().out.startswith("[주의] 가게 이력 표지")
+
+    def test_sql_sent_through_psql_c_is_ascii(self):
+        assert post_load.STORE_HISTORY_RELEASE_SQL.isascii()
+
+    @pytest.mark.parametrize("answer", ["#202606", "201712|202603|1|2026-08-01#202606", "boom"])
+    def test_check_exit_code_ignores_it(
+        self, monkeypatch, map_is_fresh, tx_window_is_fresh, coverage_is_fresh,
+        industry_mix_is_fresh, no_anon_writes, answer
+    ):
+        """결정 0045 「표지의 예외」 — 어긋나도 [주의]만, --check 종료 코드는 그대로 0."""
+        def q(sql):
+            if "store_history_release" in sql:
+                if answer == "boom":
+                    raise RuntimeError("relation does not exist")
+                return answer
+            return "200|200" if "count(" in sql else ""
+        monkeypatch.setattr(post_load, "query_one", q)
+        monkeypatch.setattr(post_load, "report_store_history_release", _REAL_STORE_HISTORY_RELEASE)
+        assert post_load.main(["--check"]) == 0

@@ -72,7 +72,7 @@ describe('EmptySection', () => {
   });
 
   it('★ 빈 상태 이름표 card--empty 와 카드 이름표가 붙는다(종이에서 빠지는 길)', () => {
-    for (const kind of ['sales', 'pop', 'history'] as const) {
+    for (const kind of ['sales', 'pop'] as const) {
       const { container, unmount } = render(<EmptySection kind={kind} pnu="1168010500101590000" />);
       const cls = container.querySelector('section.card')!.classList;
       expect(cls.contains('card--empty')).toBe(true);
@@ -83,7 +83,7 @@ describe('EmptySection', () => {
 
   it('★ 아무것도 부르지 않는다(서버 함수 0)', async () => {
     render(<EmptySection kind="pop" pnu="3011010700108770000" />);
-    render(<EmptySection kind="history" pnu="3011010700108770000" />);
+    render(<EmptySection kind="sales" pnu="3011010700108770000" />);
     await Promise.resolve();
     expect(rpcCalls).toEqual([]);
   });

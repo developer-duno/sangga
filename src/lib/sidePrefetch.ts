@@ -10,13 +10,14 @@ import {
   OPEN_CLOSE_FN,
   RENT_HISTORY_FN,
   RENT_STATS_FN,
+  STORE_HISTORY_FN,
 } from './appConstants';
 import { isDaejeonPnu } from './daejeonClosure';
 import { isSeoulPnu } from './openClose';
 
 /**
  * 층별 화면의 곁 카드(둘레의 업종 분포 · 그 비교 글(물결 2-3) · 둘레 인허가 한 줄 · 상권 임대 동향 · 상권 개업·폐업 ·
- * 층 목록의 업종 띠(결정 0038 V4) · 임대 동향의 8분기 흐름(결정 0038 V5)) 요청을
+ * 층 목록의 업종 띠(결정 0038 V4) · 임대 동향의 8분기 흐름(결정 0038 V5) · 이 자리 가게 이력(결정 0045 PR④)) 요청을
  * **건물을 고른 순간** 먼저 출발시킨다(로드맵 속도 P3 — 사장님 결재 2026-09-27 "① 요청만 먼저").
  *
  * 왜: 그 카드들은 층 목록이 온 뒤에야 마운트된다(`FloorStack` 의 `if (loading) return …`).
@@ -27,7 +28,7 @@ import { isSeoulPnu } from './openClose';
  *    (postgrest-js `then()` 안에서 매번 `executeWithRetry()` 를 실행). 요청 객체를 그대로
  *    저장해 부모·자식이 각각 `.then` 하면 두 번 나간다 — 목(mock)은 이걸 못 잡는다.
  *    그래서 여기서 **한 번만** `.then` 해 만든 진짜 Promise 를 나눠 쓴다.
- * ⛔ 보관 열쇠 = 함수 이름 + pnu(일곱 함수 — 서울 필지는 아홉 · 대전 필지는 여덟 — 의 인자는 `p_pnu` 하나뿐이라
+ * ⛔ 보관 열쇠 = 함수 이름 + pnu(여덟 함수 — 서울 필지는 열 · 대전 필지는 아홉 — 의 인자는 `p_pnu` 하나뿐이라
  *    이것이 인자 전부다).
  *    pnu 가 다르면 절대 내주지 않는다 — 건물 A 의 늦은 답이 건물 B 카드에 붙으면 그 순간이
  *    그대로 틀린 정보다. 보관은 **지금 건물 것 한 벌뿐**(부모가 건물이 바뀌면 통째로 갈아 끼운다).
@@ -37,9 +38,10 @@ import { isSeoulPnu } from './openClose';
 export type RpcResult = { data: unknown; error: unknown };
 
 /**
- * 미리 보내는 함수들. 일곱 다 인자가 `{ p_pnu }` 하나다(다섯째 업종 가운데값은 2026-10-12 · 물결 2-3 ·
+ * 미리 보내는 함수들. 여덟 다 인자가 `{ p_pnu }` 하나다(다섯째 업종 가운데값은 2026-10-12 · 물결 2-3 ·
  * 여섯째 층 목록 업종 띠는 2026-10-24 · 결정 0038 V4 — 받는 쪽은 카드가 아니라 `FloorStack` 자신이다 ·
- * 일곱째 임대 동향의 8분기 흐름은 2026-10-24 · 결정 0038 V5 — 받는 쪽은 임대 카드).
+ * 일곱째 임대 동향의 8분기 흐름은 2026-10-24 · 결정 0038 V5 — 받는 쪽은 임대 카드 ·
+ * 여덟째 가게 이력은 2026-11-01 · 결정 0045 PR④ — 모든 필지 · 첫 쪽(함수 기본값 20·0) · 받는 쪽은 이력 카드).
  */
 export const SIDE_PREFETCH_FNS = [
   INDUSTRY_MIX_FN,
@@ -49,6 +51,7 @@ export const SIDE_PREFETCH_FNS = [
   INDUSTRY_MEDIAN_FN,
   FLOOR_INDUSTRY_FN,
   RENT_HISTORY_FN,
+  STORE_HISTORY_FN,
 ] as const;
 
 /**

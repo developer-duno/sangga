@@ -37,7 +37,7 @@ export type SectionPlan = {
   /**
    * 이 카드가 쓰는 자료 — 제목 바로 아래 '자료: … 날짜' 한 줄의 차례 그대로(S3 · 👤 2026-10-16 · 결정 ② 「자료 있는
    * 카드 11개」 → B2 로 LH 공고·성적표를 빼 9개 → 결정 0041 로 참고 매매 시세 카드를 내려 8개). 날짜는 서버 신선도 표에서
-   * 온다(`cardSourceLine`). 없으면(빈 카드 셋 · LH 공고) 줄이 없다.
+   * 온다(`cardSourceLine`). 없으면(LH 공고) 줄이 없다 · 빈 카드(서울 밖 sales·pop)는 `EmptySection` 이 그 칸을 빼고 그린다.
    */
   readonly sources?: readonly CardSourceKey[];
 };
@@ -99,14 +99,15 @@ export const SECTION_PLAN = {
   /*
     창업자 카드 셋(결정 0036 결정 2 · 물결 1-B · 👤 2026-10-11 → 결정 0045 PR③ · 2026-10-31). 업종별 추정매출 ·
     상권 인구 · 이 자리 가게 이력 — 셋 다 **접힌 채로 시작**한다.
-    ⓘ 빈 카드는 이제 가게 이력 하나(서울) · 서울 밖은 셋 — 서울 건물의 sales·pop 은 제 컴포넌트(`SalesSection`·
-      `PopSection` · 서울시 공표값)가 그리고, 서울 밖 건물은 `EmptySection` 그대로다(문구·지역 판정은 `lib/emptyCards.ts`).
+    ⓘ 빈 카드는 서울 밖 sales·pop 둘만(2026-11-01 PR④ 부터 이력은 제 컴포넌트 `HistorySection` · 모든 지역) — 서울 건물의
+      sales·pop 은 제 컴포넌트(`SalesSection`·`PopSection` · 서울시 공표값)가 그리고, 서울 밖 건물은 `EmptySection` 그대로다
+      (문구·지역 판정은 `lib/emptyCards.ts`).
     ⛔ 빈 카드는 **아무것도 부르지 않는다**(서버 함수 0) · 날짜 줄은 `sources` 를 둔 카드가 자료를 그릴 때만
       (`EmptySection` 은 날짜 줄을 그리지 않는다 — S3 · 👤 결정 ②).
   */
   sales: { title: '업종별 추정매출 (서울시 추정)', role: '창업자', defaultOpen: false, sources: ['sales'] },
   pop: { title: '상권 인구 (서울시 공표)', role: '창업자', defaultOpen: false, sources: ['pop_flow', 'pop_people'] },
-  history: { title: '이 자리 가게 이력', role: '창업자', defaultOpen: false },
+  history: { title: '이 자리 가게 이력 (점포 자료 누적)', role: '창업자', defaultOpen: false, sources: ['history'] },
 } as const satisfies Record<string, SectionPlan>;
 
 export type SectionKey = keyof typeof SECTION_PLAN;
@@ -139,7 +140,8 @@ export type RoleLayout = {
  */
 export const ROLE_SECTION_LAYOUT = {
   // 창업자 카드 셋(sales·pop·history)의 자리(👤 2026-10-11): 창업자 = 개업·폐업 바로 뒤 · 다른 두 벌 = 맨 끝.
-  //   ⓘ 빈 카드는 서울 건물이면 가게 이력 하나(sales·pop 은 서울시 공표값 카드 · 결정 0045 PR③) · 서울 밖은 셋 그대로.
+  //   ⓘ 빈 카드는 서울 밖 sales·pop 둘만(서울 건물의 sales·pop 은 서울시 공표값 카드 · 결정 0045 PR③ · 가게 이력은 PR④ 부터
+  //     모든 지역에서 제 카드).
   // 층별 공표값(floorgap)의 자리(결정 0041 E2 · 👤 2026-10-18): 세 벌 모두 내린 참고 매매 시세의 자리를 이어받는다 ·
   // 투자자만 펼침도 이어받고, 창업자·중개사는 자리만 이어받아 접힘 그대로(중개사 펼침은 셋 — 넷째를 채우지 않는다).
   투자자: {
@@ -160,7 +162,7 @@ export const ROLE_SECTION_LAYOUT = {
 export function plansFromLayout(layout: RoleLayout): Record<SectionKey, SectionPlan> {
   const keys = Object.keys(SECTION_PLAN) as SectionKey[];
   return Object.fromEntries(
-    keys.map((k) => [k, { ...SECTION_PLAN[k], defaultOpen: layout.open.includes(k) }]),
+    keys.map((k): [SectionKey, SectionPlan] => [k, { ...SECTION_PLAN[k], defaultOpen: layout.open.includes(k) }]),
   ) as Record<SectionKey, SectionPlan>;
 }
 

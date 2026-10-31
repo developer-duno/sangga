@@ -112,7 +112,20 @@ const responses = {
    */
   sales: { data: null as unknown, error: { code: 'PGRST202', message: 'function does not exist' } as unknown },
   pop: { data: null as unknown, error: { code: 'PGRST202', message: 'function does not exist' } as unknown },
+  /**
+   * 서버 함수 get_store_history 의 응답(이 자리 가게 이력 · 결정 0045 PR④ — 모든 지역). 기본값은 **함수 없음** —
+   * 카드가 스스로 사라진다(그 카드 자체는 `HistorySection.test.tsx` 가 본다).
+   */
+  history: { data: null as unknown, error: { code: 'PGRST202', message: 'function does not exist' } as unknown },
 };
+
+/** 가게 이력 정상 답 두 줄(지금 보임 하나 · 안 보임 하나 · 결정 0045 PR④ — 카드 배치 시험이 쓴다). */
+const HISTORY_OK = [
+  { status: 'ok', floor_no: 1, biz_name: '한솔마트', first_ym: '201712', last_ym: '202606', seen_cnt: 35,
+    is_current: true, truncated: true, total_cnt: 2, current_cnt: 1, history_first_ym: '201712', history_last_ym: '202606' },
+  { status: 'ok', floor_no: 2, biz_name: '알파문구', first_ym: '201803', last_ym: '202106', seen_cnt: 14,
+    is_current: false, truncated: false, total_cnt: 2, current_cnt: 1, history_first_ym: '201712', history_last_ym: '202606' },
+];
 
 /** 추정매출 정상 답 한 줄(상권 하나 · 결정 0045 PR③ — 카드 배치 시험이 쓴다). */
 const SALES_OK = [
@@ -213,6 +226,8 @@ vi.mock('../lib/supabase', () => ({
       // 업종별 추정매출 · 상권 인구(결정 0045 PR③). 갈라 답하지 않으면 상권 응답(객체)이 흘러들어 늘 '모양 이상 → 카드 없음'으로 굳는다.
       if (fn === 'list_district_sales') return Promise.resolve(responses.sales);
       if (fn === 'list_district_pop') return Promise.resolve(responses.pop);
+      // 이 자리 가게 이력(결정 0045 PR④). 같은 이유로 갈라 답한다.
+      if (fn === 'get_store_history') return Promise.resolve(responses.history);
       return Promise.resolve(responses.districts);
     },
   },
@@ -353,6 +368,8 @@ beforeEach(() => {
   // 기본은 함수 없음 = 추정매출·상권 인구 카드 미표시(결정 0045 PR③). 카드 배치 시험만 덮어쓴다.
   responses.sales = { data: null, error: { code: 'PGRST202', message: 'function does not exist' } };
   responses.pop = { data: null, error: { code: 'PGRST202', message: 'function does not exist' } };
+  // 기본은 함수 없음 = 가게 이력 카드 미표시(결정 0045 PR④). 카드 배치 시험만 덮어쓴다.
+  responses.history = { data: null, error: { code: 'PGRST202', message: 'function does not exist' } };
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
@@ -1812,6 +1829,8 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     // 업종별 추정매출 · 상권 인구(결정 0045 PR③) — 서울 건물이라 제 컴포넌트가 선다.
     responses.sales = { data: SALES_OK, error: null };
     responses.pop = { data: POP_OK, error: null };
+    // 이 자리 가게 이력(결정 0045 PR④) — 모든 지역에서 제 컴포넌트가 선다.
+    responses.history = { data: HISTORY_OK, error: null };
   });
 
   it('배치표가 정한 순서·제목·역할·기본 상태 그대로 그려진다', async () => {
@@ -1837,7 +1856,7 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       // 빈 카드 셋(결정 0036 결정 2 · 물결 1-B) — 역할 없음 차례에서는 맨 끝.
       '업종별 추정매출 (서울시 추정)',
       '상권 인구 (서울시 공표)',
-      '이 자리 가게 이력',
+      '이 자리 가게 이력 (점포 자료 누적)',
     ]);
     expect(cards.map((c) => c.role)).toEqual([
       '공통', '공통', '창업자', '투자자', '공통', '투자자', '창업자', '창업자', '창업자', '창업자',
@@ -1880,7 +1899,7 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       ['상권 개업·폐업 (서울시 공표)', false],
       ['업종별 추정매출 (서울시 추정)', false],
       ['상권 인구 (서울시 공표)', false],
-      ['이 자리 가게 이력', false],
+      ['이 자리 가게 이력 (점포 자료 누적)', false],
     ],
     창업자: [
       ['속한 상권', true],
@@ -1890,7 +1909,7 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       // 빈 카드 셋은 창업자 벌에서 개업·폐업 바로 뒤(👤 2026-10-11).
       ['업종별 추정매출 (서울시 추정)', false],
       ['상권 인구 (서울시 공표)', false],
-      ['이 자리 가게 이력', false],
+      ['이 자리 가게 이력 (점포 자료 누적)', false],
       ['실거래 기록', false],
       ['층별 공표값 나란히 — 국세청 기준시가 · 구 상가 단가 · 부동산원 임대료', false],
       ['상권 임대 동향 (부동산원 조사)', false],
@@ -1906,7 +1925,7 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       ['상권 개업·폐업 (서울시 공표)', false],
       ['업종별 추정매출 (서울시 추정)', false],
       ['상권 인구 (서울시 공표)', false],
-      ['이 자리 가게 이력', false],
+      ['이 자리 가게 이력 (점포 자료 누적)', false],
     ],
   };
   const NO_ROLE: Array<[string, boolean]> = [
@@ -1919,7 +1938,7 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     ['상권 개업·폐업 (서울시 공표)', false],
     ['업종별 추정매출 (서울시 추정)', false],
     ['상권 인구 (서울시 공표)', false],
-    ['이 자리 가게 이력', false],
+    ['이 자리 가게 이력 (점포 자료 누적)', false],
   ];
 
   async function settledCards(container: HTMLElement) {
@@ -2102,12 +2121,12 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
       // 추정매출 · 상권 인구(결정 0045 PR③) — 상권 이름과 언제 자료인지만(값 0 · 개업·폐업 카드와 같은 규칙).
       '역삼역 · 2026년 2분기까지 서울시 추정',
       '역삼역 · 길단위인구 2026년 2분기 · 사는 사람 2023년 · 일하는 사람 2024년 기준',
-      // 빈 카드는 이제 가게 이력 하나(서울 건물 · 👤 결정 0036 결정 2 · 물결 1-B).
-      '지금은 비어 있음',
+      // 가게 이력(결정 0045 PR④) — 서버 칸(지금 보임 수 · 전에 보임 수 · 첫 분기 · 분기 수)만 · 비율·판단 0.
+      '지금 보이는 가게 1곳 · 전에 보였던 가게 1곳 · 2017년 4분기부터 점포 자료 35분기',
     ]);
   });
 
-  it('★ 서울 건물은 추정매출·상권 인구를 미리 보낸 답으로 한 번씩만 부르고 빈 카드는 가게 이력 하나다 (결정 0045 PR③)', async () => {
+  it('★ 서울 건물은 추정매출·상권 인구·가게 이력을 미리 보낸 답으로 한 번씩만 부르고 빈 카드는 없다 (결정 0045 PR③·PR④)', async () => {
     const { container } = render(<FloorStack building={building()} />);
     await waitFor(() => {
       expect(container.querySelectorAll('.card')).toHaveLength(Object.keys(SECTION_PLAN).length);
@@ -2122,11 +2141,14 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     ]);
     expect(container.querySelector('.card.sales')).not.toBeNull();
     expect(container.querySelector('.card.pop')).not.toBeNull();
-    expect(container.querySelectorAll('.card--empty')).toHaveLength(1);
-    expect(container.querySelector('.card--empty')?.classList.contains('card--history')).toBe(true);
+    expect(rpcCalls.filter((x) => x.fn === 'get_store_history')).toEqual([
+      { fn: 'get_store_history', args: { p_pnu: '1168010100100010000' } },
+    ]);
+    expect(container.querySelector('.card.hist')).not.toBeNull();
+    expect(container.querySelectorAll('.card--empty')).toHaveLength(0);
   });
 
-  it('★ 서울 밖 빈 카드 셋은 아무것도 부르지 않는다 · 대전 건물이면 매출·인구 요약이 그 사실 한 줄', async () => {
+  it('★ 서울 밖 빈 카드 둘은 아무것도 부르지 않는다 · 대전 건물이면 매출·인구 요약이 그 사실 한 줄 · 가게 이력은 대전도 부른다', async () => {
     const { container } = render(<FloorStack building={building({ pnu: '3011010700108770000' })} />);
     await waitFor(() => {
       expect(container.querySelectorAll('.card')).toHaveLength(Object.keys(SECTION_PLAN).length);
@@ -2135,17 +2157,23 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     const summaryOf = (cls: string) => container.querySelector(`.${cls} .card__summary`)?.textContent;
     expect(summaryOf('card--sales')).toBe('대전은 아직 받지 않았습니다');
     expect(summaryOf('card--pop')).toBe('대전은 아직 받지 않았습니다');
-    expect(summaryOf('card--history')).toBe('지금은 비어 있음');
-    // 빈 카드 셋은 종이에서 빠지는 이름표를 단다(인쇄 규칙은 E2E 가 본다).
-    expect(container.querySelectorAll('.card--empty')).toHaveLength(3);
+    // 가게 이력은 전국 점포 자료라 대전도 제 카드(결정 0045 PR④ · 빈 카드가 아니다).
+    expect(container.querySelector('.card--history.card--empty')).toBeNull();
+    expect(summaryOf('card--history')).toBe('지금 보이는 가게 1곳 · 전에 보였던 가게 1곳 · 2017년 4분기부터 점포 자료 35분기');
+    // 빈 카드 둘은 종이에서 빠지는 이름표를 단다(인쇄 규칙은 E2E 가 본다).
+    expect(container.querySelectorAll('.card--empty')).toHaveLength(2);
     // ⛔ 빈 카드에는 서울시 자료 날짜 줄이 새지 않는다(sales·pop 칸에는 서울 카드용 자료 칸이 있다 — EmptySection 이 뺀다).
     expect(container.querySelector('.card--empty .card__src')).toBeNull();
     // ⛔ 부른 함수는 원래 카드들 것뿐이다 — 빈 카드용 함수 이름이 하나도 없다.
     // ⓘ `list_rent_stat_history`(임대 동향의 8분기 흐름 · 결정 0038 V5)는 임대 카드 것이다 — 이름에 'history' 가 들어 있어 이 목록에서만 뺀다.
-    for (const c of rpcCalls.filter((x) => x.fn !== 'list_rent_stat_history')) {
+    // ⓘ `get_store_history`(가게 이력 · 결정 0045 PR④)는 빈 카드가 아니라 제 카드 것 — 모든 지역에서 부른다.
+    for (const c of rpcCalls.filter((x) => x.fn !== 'list_rent_stat_history' && x.fn !== 'get_store_history')) {
       expect(c.fn).not.toMatch(/sales|pop|history|empty/i);
     }
     expect(rpcCalls.some((x) => x.fn === 'list_rent_stat_history')).toBe(true);
+    expect(rpcCalls.filter((x) => x.fn === 'get_store_history')).toEqual([
+      { fn: 'get_store_history', args: { p_pnu: '3011010700108770000' } },
+    ]);
   });
 
   it('구 이름을 모르면 그 조각을 빼고 적는다 ("null 층대별 단가"가 되지 않게)', async () => {

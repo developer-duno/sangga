@@ -57,6 +57,8 @@
     점포 표에 표지보다 새 분기가 있거나(적재 중 · 적재기 exit 1) 행 수가 표지 기록과 다르면 [주의](종료 코드 무관).
   · 건축물대장 판 표지(ledger_release · 2026-10-15a) — 표가 비었거나 못 읽으면 [사고](종료 코드 1) ·
     정상이면 [정상] 한 줄(판·적은 시각). 표지를 올리는 일은 scripts/publish_ledger_release.py --ym.
+  · 가게 이력 표지(store_history_release · 2026-11-01a · 결정 0045 PR④) — 0줄(적재 전)이거나 마지막 분기 ≠
+    snapshot_release.published_ym 이거나 못 읽으면 [주의](종료 코드 1 아님 — 결정 0045 「표지의 예외」) · 같으면 [정상].
   · 가게 이름 요약표 분기(2026-10-07) — mv_parcel_store_names 의 store_snapshot_ym ≠ 표지 loaded_ym 이거나
     비었으면 [낡음](종료 코드 1).
   · 층 분포 표(2026-10-09 · 물결 2-2) — mv_district_industry_floor 의 분기 ≠ 표지 loaded_ym 이면 [낡음],
@@ -103,6 +105,9 @@ ANALYZE_TABLES = (
     "district_pop_flow",
     "district_pop_resident",
     "district_pop_worker",
+    # 가게 이력(2026-11-01a · 결정 0045 PR④) — 130만 줄을 통째 교체한다(표지 한 줄도 함께).
+    "store_history",
+    "store_history_release",
 )
 
 # ⚠️ **순서가 중요하다.** mv_open_sigungu 는 mv_search_parcel 에서 만들어지므로
@@ -1053,6 +1058,61 @@ def report_ledger_release():
     return any(level == "사고" for level, _ in found)
 
 
+# ── 가게 이력 표지 store_history_release (2026-11-01a · 결정 0045 PR④) ──────────────────
+# 가게 이력은 로컬에서 굽는 결과표라 분기 표지(결정 0035)를 따라 저절로 바뀌지 않는다 — 운영 순서(새 분기 전국 모드 적재 →
+# build_store_history.py → load_store_history.py → post_load.py)를 어기면 이력이 옛 분기를 말한다. 그 어긋남은
+# [주의]로만 알린다(종료 코드에 안 넣는다 — 결정 0045 「가게 이력 — 결정 0035 표지의 예외」). ⛔ ASCII 만 — query_one 은 psql -c.
+STORE_HISTORY_RELEASE_SQL = (
+    "select coalesce((select r.first_ym || '|' || r.last_ym || '|' || r.row_cnt || '|' || r.built_on::text "
+    "from store_history_release r where r.id = 1), '') || '#' || "
+    "coalesce((select s.published_ym::text from snapshot_release s), '');"
+)
+
+
+def judge_store_history_release(first_ym, last_ym, row_cnt, built_on, published_ym):
+    """가게 이력 표지 판정 — (수준, 말) 한 줄(순수 함수). 수준은 '주의' 또는 '정상'."""
+    if not last_ym:
+        return ("주의", "가게 이력 표지 없음 — 적재 전(마이그레이션만 들어간 상태)")
+    if published_ym and last_ym > published_ym:
+        # 보완 1 F-5 — 이력이 앞이면(이력 적재 ~ post_load 사이) 다시 굽지 말고 표지만 올리면 된다.
+        return ("주의", "가게 이력 표지 {} > 보여 주는 분기 {} — 이력이 먼저 들어왔습니다. python scripts/post_load.py 가 "
+                       "분기 표지를 올리면 풀립니다(결정 0045 표지 예외)".format(last_ym, published_ym))
+    if last_ym != published_ym:
+        return ("주의", "가게 이력 표지 {} ≠ 보여 주는 분기 {} — 새 분기 적재 뒤 python scripts/build_store_history.py → "
+                       "load_store_history.py 를 돌리세요(결정 0045 표지 예외)".format(last_ym, published_ym or "(없음)"))
+    return ("정상", "가게 이력 표지 {} = 보여 주는 분기 (줄 {} · 빌드 {} · 시작 {})".format(
+        last_ym, row_cnt, built_on, first_ym))
+
+
+def read_store_history_release():
+    """표지·보여 주는 분기를 읽어 판정 함수의 인자 dict 로. 표가 없거나 못 읽으면 예외."""
+    raw = query_one(STORE_HISTORY_RELEASE_SQL)
+    line = raw.splitlines()[-1] if raw else ""
+    if "#" not in line:
+        raise ValueError("가게 이력 표지 응답 모양이 다릅니다: {!r}".format(raw[:200]))
+    rel, published = line.split("#", 1)
+    parts = rel.split("|") if rel else ["", "", "", ""]
+    if len(parts) != 4:
+        raise ValueError("가게 이력 표지 응답 모양이 다릅니다: {!r}".format(raw[:200]))
+    keys = ("first_ym", "last_ym", "row_cnt", "built_on")
+    out = dict(zip(keys, (p.strip() for p in parts)))
+    out["published_ym"] = published.strip()
+    return out
+
+
+def report_store_history_release():
+    """가게 이력 표지를 재서 한 줄 찍는다. **종료 코드에 영향을 주지 않는다**([주의]까지만).
+
+    조회가 실패해도 --check 전체를 죽이지 않는다 — [주의] 한 줄로 알리고 넘어간다."""
+    try:
+        st = read_store_history_release()
+    except Exception as exc:  # noqa: BLE001 — 표가 없거나(마이그레이션 전) 접속 실패
+        print("[주의] 가게 이력 표지(store_history_release)를 읽지 못했습니다: {}".format(_psql_failure_reason(exc)))
+        return
+    level, msg = judge_store_history_release(**st)
+    print("[{}] {}".format(level, msg))
+
+
 def precheck_snapshot_release():
     """갱신 **전에** 표지를 읽는다(2026-10-07 맹점 검사관 🟡2·🟠4).
 
@@ -1251,6 +1311,9 @@ ANON_CALLABLE_ALLOWLIST = (
     # 서울 상권 인구 셋(2026-10-31a · 결정 0045 PR②). 표 넷(district_pop_flow · district_pop_resident · district_pop_worker ·
     # seoul_trdar_release)은 **여기 없다** — 화면은 이 함수 하나로만 읽고, 나가는 것은 상권 이름과 서울시 공표 인구 수뿐이다.
     "api.list_district_pop",
+    # 이 자리 가게 이력(2026-11-01a · 결정 0045 PR④). 표 둘(store_history · store_history_release)은 **여기 없다** —
+    # 화면은 이 함수 하나로만 읽고, 나가는 것은 그 땅의 층·상호·보인 분기 수뿐이다(상가업소번호는 안 나간다).
+    "api.get_store_history",
 )
 
 # ── 공개키가 아직 못 닫은 "대기" 함수 — 지금은 비어 있다 ─────────────────
@@ -2313,6 +2376,8 @@ def main(argv=None):
         rel_fatal, rel_stale = report_snapshot_release()
         # 건축물대장 판 표지(2026-10-15a · F3) — 비었거나 못 읽으면 [사고] → exit 1.
         ledger_fatal = report_ledger_release()
+        # 가게 이력 표지(2026-11-01a · 결정 0045 PR④) — 어긋나도 [주의]까지만(종료 코드 무관 · 표지의 예외).
+        report_store_history_release()
         return 1 if (stale or map_stale or tx_stale or cov_stale or mix_stale or names_stale
                      or floor_stale or floor_mismatch or median_stale or median_mismatch
                      or median_m_stale or median_m_mismatch or exposed or writable or bad_index or drifted

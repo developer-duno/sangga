@@ -34,6 +34,8 @@ const SIDE_FNS = [
   'list_floor_industry',
   // 임대 동향의 8분기 흐름(결정 0038 C · V5) — 받는 쪽은 임대 카드(인자 `{ p_pnu }` 하나).
   'list_rent_stat_history',
+  // 이 자리 가게 이력(결정 0045 PR④) — 모든 필지 · 받는 쪽은 이력 카드(첫 쪽 = 인자 `{ p_pnu }` 하나).
+  'get_store_history',
 ] as const;
 type SideFn = (typeof SIDE_FNS)[number];
 
@@ -238,6 +240,15 @@ function okSide(fn: SideFn, pnu: string): Res {
   if (fn === 'list_rent_stats') return { data: rentOf(pnu), error: null };
   if (fn === 'list_rent_stat_history') return { data: rentHistoryOf(pnu), error: null };
   if (fn === 'list_district_openclose') return { data: openCloseOf(pnu), error: null };
+  // 가게 이력 — 필지마다 다른 상호(가 = 이력상점가 · 나 = 이력상점나 · 각주 글과 안 겹치는 이름).
+  if (fn === 'get_store_history') {
+    return {
+      data: [{ status: 'ok', floor_no: 1, biz_name: `이력상점${pnu === A.pnu ? '가' : '나'}`, first_ym: '202403',
+        last_ym: '202606', seen_cnt: 10, is_current: true, truncated: false, total_cnt: 1, current_cnt: 1,
+        history_first_ym: '201712', history_last_ym: '202606' }],
+      error: null,
+    };
+  }
   // 층 목록 업종 띠 — 필지마다 다른 대분류(가 = 음식 · 나 = 교육). 층 목록(floorsOf)은 1층 점포 2곳이라 합 2.
   if (fn === 'list_floor_industry') {
     return { data: [{ floor_no: 1, cat_l_cd: pnu === A.pnu ? 'I2' : 'P1', cat_l_nm: null, store_cnt: 2 }], error: null };
@@ -264,7 +275,7 @@ afterEach(() => {
 });
 
 describe('FloorStack — 곁 카드 요청을 먼저 보낸다 (P3)', () => {
-  it('(a) 층 목록이 아직 안 왔는데도 일곱 요청은 이미 출발했다', async () => {
+  it('(a) 층 목록이 아직 안 왔는데도 여덟 요청은 이미 출발했다', async () => {
     // 층 목록은 영영 안 온다(state.floors 비어 있음).
     render(<FloorStack building={building(A)} />);
     expect(screen.getByText('층 정보를 불러오는 중…')).toBeTruthy();
@@ -296,6 +307,9 @@ describe('FloorStack — 곁 카드 요청을 먼저 보낸다 (P3)', () => {
 
     const text = container.textContent ?? '';
     expect(text).toContain('상권나');
+    // 가게 이력(결정 0045 PR④) — 늦게 온 A 의 가게 줄이 B 카드에 붙지 않는다.
+    expect(text).toContain('이력상점나');
+    expect(text).not.toContain('이력상점가');
     expect(text).toContain('반경 500m 이내 222곳');
     expect(text).toContain('새로 올라오는 상가 건물 7동');
     expect(text).not.toContain('상권가');
@@ -348,7 +362,7 @@ describe('FloorStack — 곁 카드 요청을 먼저 보낸다 (P3)', () => {
     expect(screen.queryByText(/새로 올라오는 상가 건물/)).toBeNull();
   });
 
-  it('(d) 건물 한 번 보는 데 일곱 함수 각각 정확히 1회', async () => {
+  it('(d) 건물 한 번 보는 데 여덟 함수 각각 정확히 1회', async () => {
     state.floors.set(A.bld_id, floorsOf(A));
     render(<FloorStack building={building(A)} />);
     await screen.findByText('임대상권가');
@@ -438,7 +452,7 @@ describe('서울 필지만 추정매출·상권 인구를 미리 보낸다 (결�
   const SEOUL_FNS = ['list_district_sales', 'list_district_pop'] as const;
   const D = { bld_id: 'D-1', pnu: '3011010700108770000', tag: '다' };
 
-  it('서울 건물 — 일곱 함수에 둘을 더해 보내고, 카드는 그 답을 받아 다시 묻지 않는다(각 정확히 1회)', async () => {
+  it('서울 건물 — 여덟 함수에 둘을 더해 보내고, 카드는 그 답을 받아 다시 묻지 않는다(각 정확히 1회)', async () => {
     // 층 목록은 영영 안 온다 — 카드가 서기 전에 이미 출발했는지 본다.
     render(<FloorStack building={building(A)} />);
     await waitFor(() => {

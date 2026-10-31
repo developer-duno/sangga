@@ -1887,6 +1887,8 @@ body {
 
 .card__title {
   font-weight: 700;
+  /* 긴 제목은 낱말 단위로 줄을 바꾼다 — 휴대폰에서 「누/적」처럼 낱말 중간에서 끊기지 않게(결정 0045 PR④ 보완 3 H-3). */
+  word-break: keep-all;
 }
 
 /* 역할 태그. 누가 특히 보는 카드인지만 말한다 — 값·등급을 뜻하지 않는다. */
@@ -3799,6 +3801,170 @@ body {
   margin: 0;
 }
 
+/* 이 자리 가게 이력 (점포 자료 누적) — 결정 0045 PR④(시안 「후」의 .grp/.row/.fl/.nm/.sp/.chip/.more/.lag 를 .hist__ 로).
+   ⛔ 그 땅(필지)의 점포 줄이지 건물 값이 아니다 · 줄은 서버 차례 그대로. 13px 은 화면 묶음에, 44px 「더 보기」는 '누르는 것은
+   44px 이상' 목록에, 420px 이하 한 열은 `@media screen and (max-width: 420px)` 에, 종이는 줄 단위 avoid(카드 통째 금지). */
+.hist {
+  margin: 0 0 24px;
+  padding: 14px 16px 6px;
+  background: #fbfcfd;
+}
+
+.hist__lead {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.hist__badge-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin: 0 0 8px;
+}
+
+.hist__q {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  word-break: keep-all;
+}
+
+.hist__lag {
+  margin: 0 0 10px;
+  padding: 6px 10px;
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-line);
+  border-radius: 6px;
+  font-size: 12.5px;
+}
+
+.hist__grp {
+  margin: 10px 0 0;
+}
+
+.hist__grp-h {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.hist__grp-h b {
+  color: var(--text);
+}
+
+.hist__rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hist__row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 2px 10px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-top: 1px dashed var(--line);
+  font-size: 13px;
+}
+
+.hist__row:first-child {
+  border-top: 0;
+}
+
+.hist__fl {
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.hist__body {
+  min-width: 0;
+}
+
+.hist__nm {
+  font-weight: 600;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.hist__sp {
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.hist__sp b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* 지금은 안 보이는 줄 — 흐린 글(모양으로 상태를 가른다 · 글로 변명하지 않는다). */
+.hist__row--gone .hist__nm {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.hist__chip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  vertical-align: 1px;
+}
+
+.hist__more {
+  display: inline-block;
+  margin: 10px 0 0;
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.hist__more:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+/* 단추 줄(보완 3 H-2) — 「지금 보이는 가게 더 보기」와 「전에 보였던 가게 보기」가 나란히, 좁으면 다음 줄로. */
+.hist__mores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 8px;
+}
+
+.hist__notes {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+
+.hist__notes li + li {
+  margin-top: 4px;
+}
+
+/* 좁은 휴대폰(420px 이하) — 층 칸이 윗줄로(한 열). */
+@media screen and (max-width: 420px) {
+  .hist__row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* 빈 카드 셋(결정 0036 결정 2) — 본문은 "왜 비었나·받으면 무엇이 오나" 한 문장뿐이다. */
 .empty__body {
   margin: 0 0 8px;
@@ -5542,6 +5708,15 @@ body {
   .pop__src,
   .pop__tick,
   .pop__why,
+  .hist__lead,
+  .hist__q,
+  .hist__lag,
+  .hist__grp-h,
+  .hist__fl,
+  .hist__sp,
+  .hist__chip,
+  .hist__more,
+  .hist__notes,
   .empty__body,
   .grade,
   .grade__badge,
@@ -5633,7 +5808,9 @@ body {
   .unitpick__opt,
   .list__fold,
   /* 개업·폐업 「전부 보기 (N분기)」(결정 0038 H · V6). */
-  .oc__all {
+  .oc__all,
+  /* 가게 이력 「더 보기 (남은 N곳)」(결정 0045 PR④). */
+  .hist__more {
     min-height: 44px;
   }
 
@@ -6208,6 +6385,10 @@ body {
   .list__fold,
   /* 개업·폐업 「전부 보기 (N분기)」(결정 0038 H · V6) — 누르는 장치다. 고른 창의 그림은 종이에 그대로 나온다. */
   .oc__all,
+  /* 가게 이력 「더 보기 (남은 N곳)」(결정 0045 PR④ 보완 1 F-1) — 누르는 장치다. 받은 줄은 종이에 나온다.
+     단추 줄 상자(보완 3 H-2)도 함께 뺀다. */
+  .hist__more,
+  .hist__mores,
   .modal__back {
     display: none !important;
   }
@@ -6445,6 +6626,8 @@ body {
   .sales__trend,
   .sales__table tr,
   .pop__chunk,
+  /* 가게 이력 카드(결정 0045 PR④) — 가게 줄 하나씩. ⛔ 카드 통째(`.hist`)에는 걸지 않는다. */
+  .hist__row,
   .grade,
   .stack__facts,
   .dmap__canvas,

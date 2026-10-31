@@ -22,6 +22,7 @@ import {
   daejeonClosure,
   districtSales,
   districtPop,
+  storeHistory,
   dataFreshness,
   storeHit,
   unitSummary,
@@ -124,6 +125,10 @@ const DAEJEON_CLOSURE_PATTERN = '**/rest/v1/rpc/get_daejeon_dong_closure*';
 //    카드를 보는 것은 스펙 CN·CO(와 차례 전체를 견주는 AM)뿐이다(안 막으면 실존하지 않는 도메인으로 나가 DNS 에 좌우된다).
 const SALES_PATTERN = '**/rest/v1/rpc/list_district_sales*';
 const POP_PATTERN = '**/rest/v1/rpc/list_district_pop*';
+// 가게 이력(결정 0045 PR④) — 모든 필지에서 곁 카드와 함께 미리 나간다.
+// ⚠️ 기본값은 **함수가 없는 상태**다 — 그때 이력 카드는 통째로 빠진다(예전엔 빈 카드로 늘 서 있었다 — 카드 수·차례를 세는
+//    스펙 기대값을 그만큼 고쳤다). 카드를 보는 것은 스펙 CP(와 차례 전체를 견주는 AM)뿐이다.
+const HISTORY_PATTERN = '**/rest/v1/rpc/get_store_history*';
 // 호실 구성표(결정 0032). 요약은 건물을 열 때 · 목록은 층을 펼칠 때 나간다.
 // ⚠️ 기본값은 둘 다 **함수가 없는 상태**다 — 그때 요약도 "자료 없음" 안내도 조용히 빠지는지가
 //    스펙 AH 의 관심사다(빈 배열로 두면 "호실 자료가 없는 건물"이라는 **다른 답**이 되어 안내가 선다).
@@ -246,6 +251,8 @@ async function mockFloorStack(
   // 업종별 추정매출 · 상권 인구도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 스펙 CN·CO·AM 만 덮어쓴다.
   await mockMissingFunction(page, SALES_PATTERN);
   await mockMissingFunction(page, POP_PATTERN);
+  // 가게 이력도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 스펙 CP·AM 만 덮어쓴다.
+  await mockMissingFunction(page, HISTORY_PATTERN);
   // 호실 구성표 둘도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 호실을 보는 스펙은
   // 이 뒤에 자기 응답을 한 번 더 등록한다(나중에 등록한 것이 먼저 잡힌다).
   await mockMissingFunction(page, UNIT_SUMMARY_PATTERN);
@@ -881,11 +888,11 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await page.getByRole('button', { name: /테스트빌딩/ }).click();
 
     const stack = page.locator('section.stack');
-    // 다섯 장 + 빈 카드 하나(가게 이력 — 결정 0036 결정 2 · 물결 1-B · 아무것도 안 불러서 목업이 없어도 선다).
+    // 다섯 장(가게 이력은 결정 0045 PR④ 부터 제 카드라 기본(함수 없음)에서는 빠진다 — 빈 카드 0 · CP 가 본다).
     // ⓘ 서울 건물이라 추정매출·상권 인구는 제 카드인데, 함수가 기본(함수 없음)이라 카드째 숨는다(결정 0045 PR③ · CN·CO).
     // ⓘ 층별 공표값은 값 든 칸 하나면 선다(결정 0041 E2) — 이 목업은 구 상가 단가 1층 칸 하나로 선다.
-    await expect(stack.locator('.card')).toHaveCount(6);
-    await expect(stack.locator('section.card--empty')).toHaveCount(1);
+    await expect(stack.locator('.card')).toHaveCount(5);
+    await expect(stack.locator('section.card--empty')).toHaveCount(0);
     await expect(stack.locator('.card__toggle[aria-expanded="true"]')).toHaveCount(4);
 
     const gap = stack.locator('section.gap');
@@ -968,7 +975,7 @@ test.describe('화면 아래 — 어디까지 믿을지와 한마디 남기는 �
     //    화면에 박아 두면 적재하는 순간부터 그 글자만 거짓말을 한다.
     const fresh = foot.locator('section.fresh');
     await expect(fresh.getByRole('heading', { name: '이 자료는 언제 것인가' })).toBeVisible();
-    await expect(fresh.locator('tbody tr')).toHaveCount(10); // 결정 0041 로 성적표 줄을 뺀 열 줄
+    await expect(fresh.locator('tbody tr')).toHaveCount(11); // 결정 0041 로 성적표 줄을 뺀 열 줄 + 가게 이력 줄(결정 0045 PR④ 보완 1 F-9)
     await expect(fresh.getByText('점포·업종 (상권정보)')).toBeVisible();
     // '202606' 이 사람 말로 바뀌어 실린다(원본을 그대로 찍지 않는다).
     await expect(fresh.getByText('2026년 2분기').first()).toBeVisible();
@@ -1156,10 +1163,9 @@ test.describe('층별 스택뷰 — 종이로 뽑기', () => {
     // 화면에서는 — 버튼이 있고 머리글은 없다.
     await expect(page.getByRole('button', { name: '인쇄 · PDF로 저장' })).toBeVisible();
     await expect(page.locator('.printmeta')).toBeHidden();
-    // 빈 카드는 화면에서는 선다(접힌 채 제목 + 요약 한 줄) — 아래 종이에서만 빠진다.
-    // ⓘ 서울 건물이라 빈 카드는 가게 이력 하나다(결정 0045 PR③) — 추정매출·상권 인구는 제 카드가 그리고, 여기서는
-    //   그 함수가 기본(함수 없음)이라 카드째 없다.
-    await expect(page.locator('section.card--history .card__summary')).toHaveText('지금은 비어 있음');
+    // ⓘ 서울 건물에는 이제 빈 카드가 없다 — 추정매출·상권 인구(결정 0045 PR③)와 가게 이력(PR④)은 제 카드인데,
+    //   여기서는 그 함수가 기본(함수 없음)이라 카드째 없다. 빈 카드가 종이에서 빠지는 것은 대전 건물(서울 밖 sales·pop)의 몫.
+    await expect(page.locator('section.card--history')).toHaveCount(0);
     await expect(page.locator('section.card--sales')).toHaveCount(0);
     await expect(page.locator('section.card--pop')).toHaveCount(0);
     await expect(page.locator('section.sales')).toHaveCount(0);
@@ -1180,10 +1186,8 @@ test.describe('층별 스택뷰 — 종이로 뽑기', () => {
     await expect(page.locator('.links')).toBeHidden();
     // 형제 사이트 링크 구역도 같은 이유로 빠진다(2026-10-06).
     await expect(page.locator('.family')).toBeHidden();
-    // 빈 카드도 종이에서 빠진다(👤 물결 1-B — "지금은 비어 있음" 뿐이라 종이 자리만 먹는다 · 서울 건물은 가게 이력 하나).
-    // ⓘ 빼는 이름표는 빈 상태일 때만 붙는 `card--empty` 다 — 자료가 차면 그때부터 종이에 나온다.
-    await expect(page.locator('section.card--empty')).toHaveCount(1);
-    await expect(page.locator('section.card--history')).toBeHidden();
+    // ⓘ 서울 건물에는 빈 카드가 없다(위 참조) — 빼는 이름표 `card--empty` 는 빈 상태일 때만 붙는다.
+    await expect(page.locator('section.card--empty')).toHaveCount(0);
 
     // ② 이 종이가 무슨 건물이고 언제 것이며 원본이 어디인지.
     const meta = page.locator('.printmeta');
@@ -1655,9 +1659,9 @@ test.describe('층별 스택뷰 — 상권 임대 동향', () => {
     const rent = stack.locator('section.rent');
     await expect(rent).toBeVisible();
     // 카드가 하나 늘어도 **첫 화면 펼침은 여전히 넷**이다(로드맵 Wave 2 의 예산).
-    // 다섯 장 + 빈 카드 하나(가게 이력 · 물결 1-B) + 층별 공표값(결정 0041 · 접힌 채 — 참고 매매 시세 카드는 내렸다).
+    // 다섯 장 + 층별 공표값(결정 0041 · 접힌 채 — 참고 매매 시세 카드는 내렸다) · 가게 이력은 기본(함수 없음)에서 빠진다(PR④).
     // ⓘ 서울 건물이라 추정매출·상권 인구는 제 카드인데, 함수가 기본(함수 없음)이라 카드째 숨는다(결정 0045 PR③ · CN·CO).
-    await expect(stack.locator('.card')).toHaveCount(7);
+    await expect(stack.locator('.card')).toHaveCount(6);
     await expect(stack.locator('.card__toggle[aria-expanded="true"]')).toHaveCount(4);
     // 접혀 있어도 무엇·언제는 읽힌다. ⛔ 값은 요약에 없다 — 한정어 없이 이 건물 값으로 읽힌다.
     await expect(rent.locator('.card__summary')).toHaveText(
@@ -2429,10 +2433,10 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
     await page.getByRole('button', { name: /대전빌딩/ }).click();
     // ⓘ 층 목록 목업은 그대로라 머리 제목은 앞 건물 이름이다 — 카드 요약이 바뀐 것으로 본다.
     await expect(oc.locator('.card__summary')).toHaveText('서울 상권만 다루는 자료라 이 건물(대전)에는 없습니다');
-    // 빈 카드 — 대전 건물의 매출·유동인구는 그 사실 한 줄, 가게 이력은 지역과 무관(👤 물결 1-B).
+    // 빈 카드 — 대전 건물의 매출·유동인구는 그 사실 한 줄(👤 물결 1-B) · 가게 이력은 제 카드라 기본(함수 없음)에서 빠진다(PR④).
     await expect(stack.locator('section.card--sales .card__summary')).toHaveText('대전은 아직 받지 않았습니다');
     await expect(stack.locator('section.card--pop .card__summary')).toHaveText('대전은 아직 받지 않았습니다');
-    await expect(stack.locator('section.card--history .card__summary')).toHaveText('지금은 비어 있음');
+    await expect(stack.locator('section.card--history')).toHaveCount(0);
     await openCard(page, /상권 개업·폐업/);
     await expect(oc.locator('.oc__lead')).toHaveText(
       '서울시 상권분석서비스는 서울 상권만 다룹니다 — 이 건물(대전)에는 그 자료가 없습니다.',
@@ -2806,7 +2810,7 @@ test.describe('첫 화면 — 역할 단추', () => {
   }) => {
     await mockOpenSigungu(page);
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
-    // 카드가 전부 서게 한다 — 임대·개업폐업까지 답해야 차례 전체를 견줄 수 있다(빈 카드 셋은 늘 선다).
+    // 카드가 전부 서게 한다 — 임대·개업폐업·추정매출·상권 인구·가게 이력까지 답해야 차례 전체를 견줄 수 있다(서울 건물엔 빈 카드가 없다).
     await mockFloorStack(
       page,
       [parcelTx()],
@@ -2821,6 +2825,8 @@ test.describe('첫 화면 — 역할 단추', () => {
     // 추정매출 · 상권 인구(결정 0045 PR③ — 서울 건물이라 제 카드가 선다).
     await mockJson(page, SALES_PATTERN, districtSales());
     await mockJson(page, POP_PATTERN, districtPop());
+    // 가게 이력(결정 0045 PR④ — 모든 지역 · 제 카드).
+    await mockJson(page, HISTORY_PATTERN, storeHistory());
 
     const NO_ROLE = [
       '속한 상권',
@@ -2833,9 +2839,9 @@ test.describe('첫 화면 — 역할 단추', () => {
       '상권 개업·폐업 (서울시 공표)',
       '업종별 추정매출 (서울시 추정)',
       '상권 인구 (서울시 공표)',
-      '이 자리 가게 이력',
+      '이 자리 가게 이력 (점포 자료 누적)',
     ];
-    // 빈 카드 셋은 창업자 차례에서 개업·폐업 바로 뒤(👤 물결 1-B).
+    // 창업자 카드 셋(추정매출·상권 인구·가게 이력)은 창업자 차례에서 개업·폐업 바로 뒤(👤 물결 1-B).
     const FOUNDER = [
       '속한 상권',
       '층 목록',
@@ -2843,7 +2849,7 @@ test.describe('첫 화면 — 역할 단추', () => {
       '상권 개업·폐업 (서울시 공표)',
       '업종별 추정매출 (서울시 추정)',
       '상권 인구 (서울시 공표)',
-      '이 자리 가게 이력',
+      '이 자리 가게 이력 (점포 자료 누적)',
       '실거래 기록',
       '층별 공표값 나란히 — 국세청 기준시가 · 구 상가 단가 · 부동산원 임대료',
       '상권 임대 동향 (부동산원 조사)',
@@ -6917,5 +6923,213 @@ test.describe('층별 스택뷰 — 개업·폐업 전부 보기 (결정 0038 H 
     await expect(oc2.locator('.oc__all--slot')).toHaveCount(0);
     await expect(oc2.locator('.oc__all')).toHaveCount(0);
     await expect(oc2.locator('.oc__district').first().locator('.oc__col')).toHaveCount(8);
+  });
+});
+
+test.describe('층별 스택뷰 — 가게 이력 카드 (결정 0045 PR④)', () => {
+  test('CP. 건물 — 「이 자리 가게 이력 (점포 자료 누적)」 카드(요약 = 지금 N곳 · 전에 M곳 · 분기 수) · 펼치면 묶음 둘 · 칩 「지금은 안 보임」 · 「35분기 이상」 줄 · 더 보기 (남은 3곳) 누르면 23줄 · 어긋남 줄 · 13px · 넘침 0 · 종이에 나옴 · 함수 없으면 카드 0', async ({
+    page,
+  }, testInfo) => {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()], industryMix());
+    await mockJson(page, DATA_FRESHNESS_PATTERN, dataFreshness());
+    const asked: Array<Record<string, unknown>> = [];
+    let lastYm = '202606';
+    await page.route(HISTORY_PATTERN, async (route) => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS_HEADERS });
+      const args = JSON.parse(route.request().postData() ?? '{}') as Record<string, unknown>;
+      asked.push(args);
+      const off = Number(args.p_offset ?? 0);
+      const lim = Number(args.p_limit ?? 20);
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: CORS_HEADERS,
+        body: JSON.stringify(storeHistory(lastYm).slice(off, off + lim)),
+      });
+    });
+
+    async function openIt() {
+      await page.goto('/');
+      await pickGu(page, '서울', '강남구');
+      await search(page, '테헤란로');
+      await page.getByRole('button', { name: /테스트빌딩/ }).first().click();
+      await expect(page.locator('section.stack')).toBeVisible();
+    }
+
+    await openIt();
+    const hist = page.locator('section.stack section.hist');
+    await expect(hist).toBeVisible();
+    await expect(hist.locator('.card__title')).toHaveText('이 자리 가게 이력 (점포 자료 누적)');
+    await expect(hist.locator('.card__summary')).toHaveText(
+      '지금 보이는 가게 6곳 · 전에 보였던 가게 17곳 · 2017년 4분기부터 점포 자료 35분기',
+    );
+    await expect(hist).not.toHaveClass(/card--empty/);
+    // 날짜 줄(보완 1 F-9) — 가짜 신선도 표의 가게 이력 줄이 점포 줄과 같은 분기라 어긋남 줄은 없다.
+    await expect(hist.locator('.card__src')).toContainText('점포 자료 누적(소상공인시장진흥공단) 2026년 2분기');
+    // 첫 쪽은 미리 부르기가 한 번 보냈고 카드는 그 답을 받는다(인자 `{ p_pnu }` 하나 · 다시 안 묻는다).
+    expect(asked).toEqual([{ p_pnu: searchHit().pnu }]);
+
+    await openCard(page, /가게 이력/);
+    const groups = hist.locator('.hist__grp');
+    await expect(groups).toHaveCount(2);
+    await expect(groups.nth(0).locator('.hist__grp-h')).toHaveText('지금 자료에 보이는 가게 6곳');
+    await expect(groups.nth(1).locator('.hist__grp-h')).toHaveText('전에 보였던 가게 17곳 · 지금은 자료에 안 보임');
+    await expect(groups.nth(0).locator('.hist__row').first().locator('.hist__sp')).toHaveText(
+      '자료에 35분기 이상 보임 · 자료 시작(2017년 4분기)부터 계속',
+    );
+    await expect(groups.nth(1).locator('.hist__chip')).toHaveCount(14);
+    await expect(groups.nth(1).locator('.hist__chip').first()).toHaveText('지금은 안 보임');
+    await expect(hist.locator('.hist__lag')).toHaveCount(0);
+    // 「폐업」은 각주 둘째 문장 한 곳뿐이다.
+    expect(((await hist.textContent()) ?? '').split('폐업').length - 1).toBe(1);
+
+    // 더 보기 — 서버 넘기기(p_offset 20) · 다 받으면 단추 없음.
+    const more = hist.locator('.hist__more');
+    await expect(more).toHaveText('더 보기 (남은 3곳)');
+    // 보완 1 F-1 — 누르기 전(20줄 + 단추) 종이에는 단추가 없다(누르는 장치) · 받은 20줄은 나온다.
+    await page.emulateMedia({ media: 'print' });
+    await expect(more).toBeHidden();
+    await expect(hist.locator('.hist__row:visible')).toHaveCount(20);
+    await page.emulateMedia({ media: null });
+    await expect(more).toBeVisible();
+    await more.click();
+    await expect(hist.locator('.hist__row')).toHaveCount(23);
+    await expect(more).toHaveCount(0);
+    expect(asked[1]).toEqual({ p_pnu: searchHit().pnu, p_limit: 20, p_offset: 20 });
+
+    // 13px(화면 묶음).
+    for (const sel of ['.hist__lead', '.hist__grp-h', '.hist__sp', '.hist__fl', '.hist__notes']) {
+      await expect(hist.locator(sel).first()).toHaveCSS('font-size', '13px');
+    }
+    const overflow = await page.evaluate(() => {
+      const d = (globalThis as unknown as { document: { documentElement: { scrollWidth: number; clientWidth: number } } })
+        .document.documentElement;
+      return d.scrollWidth - d.clientWidth;
+    });
+    // 카드 안 넘침은 글꼴 차이(우분투 1px 안팎)만큼 2px 까지 허용 — 진짜 결함 줄은 0 이어야 한다.
+    const cardOver = await hist.evaluate((e) => e.scrollWidth - e.clientWidth);
+    const rowOver = await hist.locator('.hist__row').evaluateAll((els) => els.filter((e) => e.scrollWidth - e.clientWidth > 2).length);
+    testInfo.annotations.push({
+      type: 'CP 실측',
+      description: `${testInfo.project.name}: 넘침 ${overflow} · 카드 넘침 ${cardOver} · 넘친 줄 ${rowOver}`,
+    });
+    expect(overflow).toBeLessThanOrEqual(0);
+    expect(cardOver).toBeLessThanOrEqual(2);
+    expect(rowOver).toBe(0);
+
+    // 종이 — 자료가 찬 카드는 종이에 나온다 · 줄 단위 avoid(카드 통째 아님) · 단추는 이미 없다.
+    await page.emulateMedia({ media: 'print' });
+    await expect(hist).toBeVisible();
+    await expect(hist.locator('.hist__row').first()).toHaveCSS('break-inside', 'avoid');
+    await expect(hist).not.toHaveCSS('break-inside', 'avoid');
+    await page.emulateMedia({ media: null });
+
+    // 어긋남 줄 — 이력 마지막 분기(2026년 1분기)가 점포 자료 분기(2026년 2분기)보다 앞이면 머리에 한 줄.
+    lastYm = '202603';
+    asked.length = 0;
+    await openIt();
+    await openCard(page, /가게 이력/);
+    await expect(hist.locator('.hist__lag')).toHaveText('이 이력은 2026년 1분기까지입니다 (점포 자료는 2026년 2분기)');
+
+    // 함수가 없으면(PGRST202) — 카드째 없다(「자료 없음」이라 적지 않는다). 나중에 등록한 것이 먼저 잡힌다.
+    await mockMissingFunction(page, HISTORY_PATTERN);
+    await openIt();
+    await expect(page.locator('section.stack section.card--history')).toHaveCount(0);
+  });
+
+  test('CQ. 큰 땅 — 첫 쪽 20줄이 전부 지금 보이는 가게면 「지금 보이는 가게 더 보기 (남은 10곳)」 + 「전에 보였던 가게 보기 (5곳)」 · 건너뛰기 = p_offset 30 → 전에 묶음 5줄 + 칩 · 지금 더 보기 = p_offset 20 → 30줄 · 13px · 넘침 0 · 종이에 단추 0 (👤 11-01 · 보완 3 H-2)', async ({
+    page,
+  }, testInfo) => {
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()], industryMix());
+    await mockJson(page, DATA_FRESHNESS_PATTERN, dataFreshness());
+    // 지금 보임 30(지금가게01…) → 전에 보임 5(전에가게01…) · 서버 차례 그대로.
+    const base = storeHistory()[0];
+    const over = { total_cnt: 35, current_cnt: 30, truncated: false };
+    const all = [
+      ...Array.from({ length: 30 }, (_v, i) => ({ ...base, ...over, biz_name: `지금가게${String(i + 1).padStart(2, '0')}` })),
+      ...Array.from({ length: 5 }, (_v, i) => ({
+        ...base,
+        ...over,
+        biz_name: `전에가게${String(i + 1).padStart(2, '0')}`,
+        first_ym: '201903',
+        last_ym: '202312',
+        seen_cnt: 20,
+        is_current: false,
+      })),
+    ];
+    const asked: Array<Record<string, unknown>> = [];
+    await page.route(HISTORY_PATTERN, async (route) => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS_HEADERS });
+      const args = JSON.parse(route.request().postData() ?? '{}') as Record<string, unknown>;
+      asked.push(args);
+      const off = Number(args.p_offset ?? 0);
+      const lim = Number(args.p_limit ?? 20);
+      await route.fulfill({ status: 200, contentType: 'application/json', headers: CORS_HEADERS, body: JSON.stringify(all.slice(off, off + lim)) });
+    });
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).first().click();
+    await expect(page.locator('section.stack')).toBeVisible();
+    const hist = page.locator('section.stack section.hist');
+    await expect(hist).toBeVisible();
+    await openCard(page, /가게 이력/);
+
+    const groups = hist.locator('.hist__grp');
+    const more = hist.locator('.hist__more');
+    await expect(groups).toHaveCount(1);
+    await expect(more).toHaveText(['지금 보이는 가게 더 보기 (남은 10곳)', '전에 보였던 가게 보기 (5곳)']);
+    for (const i of [0, 1]) await expect(more.nth(i)).toHaveCSS('font-size', '13px');
+    // 두 단추가 선 채로도 넘침 0(좁으면 다음 줄로) · 단추 높이 44px 이상(화면 묶음).
+    const twoOver = await hist.evaluate((e) => e.scrollWidth - e.clientWidth);
+    const pageOver = await page.evaluate(() => {
+      const d = (globalThis as unknown as { document: { documentElement: { scrollWidth: number; clientWidth: number } } })
+        .document.documentElement;
+      return d.scrollWidth - d.clientWidth;
+    });
+    expect(twoOver).toBeLessThanOrEqual(2);
+    expect(pageOver).toBeLessThanOrEqual(0);
+    for (const i of [0, 1]) expect((await more.nth(i).boundingBox())!.height).toBeGreaterThanOrEqual(44);
+
+    // 종이에는 단추가 없다(누르는 장치) · 받은 20줄은 나온다.
+    await page.emulateMedia({ media: 'print' });
+    await expect(more.first()).toBeHidden();
+    await expect(more.nth(1)).toBeHidden();
+    await expect(hist.locator('.hist__mores').first()).toBeHidden();
+    await expect(hist.locator('.hist__row:visible')).toHaveCount(20);
+    await page.emulateMedia({ media: null });
+
+    // 건너뛰기 — 전에 보였던 가게 묶음 첫 쪽(p_offset = current_cnt 30).
+    await more.nth(1).click();
+    await expect(groups).toHaveCount(2);
+    expect(asked[asked.length - 1]).toEqual({ p_pnu: searchHit().pnu, p_limit: 20, p_offset: 30 });
+    await expect(groups.nth(1).locator('.hist__grp-h')).toHaveText('전에 보였던 가게 5곳 · 지금은 자료에 안 보임');
+    await expect(groups.nth(1).locator('.hist__nm')).toHaveText(all.slice(30).map((r) => r.biz_name));
+    await expect(groups.nth(1).locator('.hist__chip')).toHaveCount(5);
+    await expect(more).toHaveText(['지금 보이는 가게 더 보기 (남은 10곳)']);
+
+    // 지금 더 보기 — p_offset 20(지금 묶음에 받은 줄 뒤) · 딸려 온 전에 줄은 겹쳐 붙지 않는다.
+    await more.click();
+    await expect(hist.locator('.hist__row')).toHaveCount(35);
+    expect(asked[asked.length - 1]).toEqual({ p_pnu: searchHit().pnu, p_limit: 20, p_offset: 20 });
+    await expect(groups.nth(0).locator('.hist__nm')).toHaveText(all.slice(0, 30).map((r) => r.biz_name));
+    await expect(groups.nth(1).locator('.hist__nm')).toHaveText(all.slice(30).map((r) => r.biz_name));
+    await expect(more).toHaveCount(0);
+
+    // 넘침 — 글꼴 차이(우분투 1px 안팎)만큼 2px 까지 허용 · 페이지는 0.
+    const overflow = await page.evaluate(() => {
+      const d = (globalThis as unknown as { document: { documentElement: { scrollWidth: number; clientWidth: number } } })
+        .document.documentElement;
+      return d.scrollWidth - d.clientWidth;
+    });
+    const cardOver = await hist.evaluate((e) => e.scrollWidth - e.clientWidth);
+    testInfo.annotations.push({ type: 'CQ 실측', description: `${testInfo.project.name}: 넘침 ${overflow} · 카드 넘침 ${cardOver}` });
+    expect(overflow).toBeLessThanOrEqual(0);
+    expect(cardOver).toBeLessThanOrEqual(2);
   });
 });

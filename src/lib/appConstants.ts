@@ -467,3 +467,15 @@ export const DISTRICT_SALES_FN = 'list_district_sales';
  * ⓘ 함수가 아직 없거나(PGRST202)·오류·모양 이상이면 카드를 통째로 생략한다.
  */
 export const DISTRICT_POP_FN = 'list_district_pop';
+
+/**
+ * 이 필지(땅)에 소진공 점포 분기 자료로 보인 가게 줄 — 「이 자리 가게 이력 (점포 자료 누적)」 카드(결정 0045 PR④).
+ *
+ * ⚠️ 인자는 `{ p_pnu, p_limit, p_offset }`(기본 20 · 0 — 첫 쪽은 `{ p_pnu }` 하나로 부른다) · 서울·대전 모두 부른다.
+ * ⛔ 답은 **그 땅(필지)의 점포 줄**이지 건물 값이 아니다 · D등급(우리가 이어 붙인 사슬) · 「보인 분기 수」는 영업 기간이 아니다.
+ * ⓘ 함수가 아직 없거나(PGRST202)·오류·모양 이상·0줄(적재 전)이면 카드를 통째로 생략한다.
+ */
+export const STORE_HISTORY_FN = 'get_store_history';
+
+/** 가게 이력 한 쪽의 줄 수(서버 기본값과 같은 20 · 「더 보기」가 이만큼씩 더 받는다). */
+export const STORE_HISTORY_PAGE = 20;
