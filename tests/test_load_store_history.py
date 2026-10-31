@@ -200,9 +200,9 @@ def test_build_sql_shape():
     assert "(select loaded_ym from snapshot_release) is distinct from '201803'" in sql
     assert "raise exception '⒦" in sql
     assert "truncate store_history;" in sql
-    assert "insert into store_history_release (id, last_ym, built_on, row_cnt, loaded_at)" in sql
-    assert "values (1, '201803', date '2026-11-01', 1234, now())" in sql
-    assert "on conflict (id) do update set last_ym = excluded.last_ym" in sql
+    assert "insert into store_history_release (id, first_ym, last_ym, built_on, row_cnt, loaded_at)" in sql
+    assert "values (1, '201712', '201803', date '2026-11-01', 1234, now())" in sql
+    assert "on conflict (id) do update set first_ym = excluded.first_ym, last_ym = excluded.last_ym" in sql
     assert sql.count("<> 1234 then") == 2
     # ⒦ 는 지우기(truncate) 앞에서 본다
     assert sql.index("⒦") < sql.index("truncate store_history;")

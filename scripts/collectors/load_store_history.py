@@ -6,7 +6,7 @@
 `scripts/build_store_history.py` 가 로컬 zip 을 읽어 구운 `data/derived/store_history/<YYYYMMDD>.csv`
 (+ 같은 이름 `.meta.json`)을 **그대로** 넣는다 — 가게(사슬)마다 한 줄:
   pnu,floor_no,biz_name,biz_no_last,first_ym,last_ym,seen_cnt,is_current,n_links,truncated
-그리고 표지 store_history_release 한 줄(id = 1 · last_ym = 결과표의 마지막 분기 · 빌드 날 · 줄 수).
+그리고 표지 store_history_release 한 줄(id = 1 · first_ym·last_ym = 결과표의 첫·마지막 분기 · 빌드 날 · 줄 수).
 ⛔ seen_cnt 는 「자료에 보인 분기 수」이지 영업 기간이 아니다 · 지금 안 보임 ≠ 폐업.
 
 관문 (하나라도 걸리면 DB 는 손도 안 댄다 · exit 1)
@@ -283,10 +283,11 @@ truncate store_history;
 insert into store_history ({cols})
   select {cols} from stage_history;
 
-insert into store_history_release (id, last_ym, built_on, row_cnt, loaded_at)
-values (1, '{end_ym}', date '{built_on}', {rows}, now())
-on conflict (id) do update set last_ym = excluded.last_ym, built_on = excluded.built_on,
-                               row_cnt = excluded.row_cnt, loaded_at = excluded.loaded_at;
+insert into store_history_release (id, first_ym, last_ym, built_on, row_cnt, loaded_at)
+values (1, '{start_ym}', '{end_ym}', date '{built_on}', {rows}, now())
+on conflict (id) do update set first_ym = excluded.first_ym, last_ym = excluded.last_ym,
+                               built_on = excluded.built_on, row_cnt = excluded.row_cnt,
+                               loaded_at = excluded.loaded_at;
 
 do $$
 begin
@@ -302,8 +303,8 @@ select count(*) as history_rows,
   from store_history;
 
 commit;
-""".format(cols=cols, path=copy_path_literal(path), rows=int(rows), end_ym=meta["end_ym"],
-           built_on=meta["built_on"])
+""".format(cols=cols, path=copy_path_literal(path), rows=int(rows), start_ym=meta["start_ym"],
+           end_ym=meta["end_ym"], built_on=meta["built_on"])
 
 
 # ── 메인 ─────────────────────────────────────────────────────────────────────

@@ -1159,3 +1159,21 @@ def test_seoul_trdar_hints_for_sales_and_flow_only():
     bodies = {i["src"]: cdf.build_issue_body(i, today) for i in cdf.find_overdue(rows, today)}
     assert "load_seoul_trdar.py" in bodies["상권 추정매출 (서울시)"]
     assert "load_seoul_trdar.py" not in bodies["건축 인허가"]
+
+
+# ── 결정 0045 PR④(2026-11-01a) — 가게 이력 줄의 할 일 한 줄 ─────────────────────
+
+
+def test_store_history_hint_is_build_then_load():
+    """가게 이력은 로컬에서 굽는 결과표라 점포 적재만으로는 안 바뀐다 — 빌드 → dry-run → 적재 → post_load 차례를 알린다.
+    열쇠 글자 = 정본 신선도 함수의 src 글자 그대로(다르면 안내가 조용히 안 나온다)."""
+    src = "가게 이력 (점포 자료 누적)"
+    schema = open(os.path.join(ROOT, "supabase", "schema.sql"), encoding="utf-8").read()
+    assert "'{}'".format(src) in schema
+    hint = cdf.source_hint(src)
+    assert hint and "build_store_history.py" in hint and "load_store_history.py --dry-run" in hint
+    assert hint.index("build_store_history.py") < hint.index("load_store_history.py") < hint.index("post_load.py")
+    today = datetime.date(2026, 11, 2)
+    rows = [row(src, "2026-10-31", basis="202606", basis_kind="분기")]
+    bodies = {i["src"]: cdf.build_issue_body(i, today) for i in cdf.find_overdue(rows, today)}
+    assert "build_store_history.py" in bodies[src]

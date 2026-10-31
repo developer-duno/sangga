@@ -479,7 +479,7 @@ create table if not exists unit_business (
 );
 
 comment on table unit_business is '분기 스냅샷. append only. 이전 분기에 있고 이번에 없으면 폐업/이전 = 공실 후보';
-comment on column unit_business.biz_no is '업종분류 개편(837→247) 시 번호가 새로 생성되어 과거와 연계 불가. 주소+상호명 재매칭 필요';
+comment on column unit_business.biz_no is '상가업소번호. 이웃 분기 사이 95~99% 가 같은 번호로 이어진다(2026-10-31 조사 C · 서울·대전) — 가게 이력(store_history · 결정 0045 PR④)의 주 열쇠. 끊기는 자리 셋: 2017Q3 번호 체계 단절(그 분기는 읽지 않는다) · 2022-08 일괄 재발급(대전 번호 65% 에 20220806) · 분기당 약 1% 같은 자리·같은 간판의 새 번호(보조 열쇠 = 같은 땅·층·정규화 상호로 잇는다 · scripts/build_store_history.py). 옛 글 「업종분류 개편 시 번호가 새로 생성되어 연계 불가」는 실측과 어긋나 2026-11-01a 에 고쳤다.';
 
 -- ── 지하인데 층 모름 칸 (2026-10-14a · 물결 2-2c · 결정 0036) ─────────────────────
 -- 원본 층정보가 숫자 없이 지하 표시만('지' — 2026-10-13 원본 전수 실측으로 이 꼴뿐)인 가게. floor_no 는 NULL
@@ -7017,6 +7017,176 @@ grant execute on function api.get_daejeon_dong_closure(text) to anon, authentica
 -- ⛔ public.get_daejeon_dong_closure 는 끝까지 닫아 둔다 — 통과 함수가 security definer 다.
 
 -- =====================================================================
+-- 표·함수: 이 자리 가게 이력 (2026-11-01a · 결정 0045 PR④)
+-- =====================================================================
+-- 소진공 상가(상권)정보 분기 자료(2017Q4~ · 서울+대전)를 **로컬 zip 에서 한 번 읽어**(scripts/build_store_history.py)
+-- 가게(사슬)마다 한 줄로 담는다. 옛 분기는 DB 에 두지 않는다(unit_business 는 최근 4분기 보관 · 2026-10-28) —
+-- 결과표만 적재기(scripts/collectors/load_store_history.py · 통째 교체 · 한 트랜잭션)가 넣는다.
+-- 열쇠 규칙(👤 결정 0045 함정 5): ① 상가업소번호로 잇는다 ② 번호가 끝난 사슬은 다음 분기 새 번호 중 같은
+--   (pnu, 층, 정규화 상호)가 정확히 하나일 때만(끝난 쪽도 하나) ③ 층 모름이면 안 잇는다 ④ 정규화 = 공백 제거 +
+--   전각→반각 ⑤ 값은 마지막 분기 값 ⑥ 한 분기라도 빠지면 새 사슬.
+-- ⛔ seen_cnt 는 「자료에 보인 분기 수」이지 영업 기간이 아니다 · 지금 안 보임 ≠ 폐업 · 옛 상호 ≠ 그 시절 간판.
+-- 두 표는 공개키에게 닫혀 있다(RLS 켬 + 정책 0 + 권한 회수) — 화면은 get_store_history 로만 읽는다.
+-- 표지 store_history_release 를 get_data_freshness 가 읽으므로 그 함수보다 **앞**에 둔다.
+create table if not exists store_history (
+  pnu          char(19) not null,
+  floor_no     smallint check (floor_no is null or floor_no <> 0),
+  biz_name     text not null,
+  biz_no_last  text not null,
+  first_ym     char(6) not null check (first_ym ~ '^\d{4}(03|06|09|12)$'),
+  last_ym      char(6) not null check (last_ym ~ '^\d{4}(03|06|09|12)$'),
+  seen_cnt     smallint not null check (seen_cnt >= 1),
+  is_current   boolean not null,
+  n_links      smallint not null default 0 check (n_links >= 0),
+  truncated    boolean not null,
+  primary key (biz_no_last, first_ym),
+  check (first_ym <= last_ym)
+);
+
+-- 함수가 땅 하나의 줄을 「지금 보임 → 보인 분기 수」 차례로 꺼낸다.
+create index if not exists idx_store_history_pnu on store_history (pnu, is_current desc, seen_cnt desc);
+
+comment on table store_history is
+  '결정 0045 PR④ 이 자리 가게 이력 — 소진공 상가(상권)정보 분기 자료(2017Q4~ · 서울+대전)를 로컬 zip 에서 한 번 읽어 '
+  '가게(사슬)마다 한 줄(scripts/build_store_history.py → load_store_history.py 가 통째 교체). '
+  '「N분기 보임」은 자료에 보인 분기 수이지 영업 기간이 아니다 · 안 보임 ≠ 폐업 · 빠졌다 돌아온 번호는 새 사슬. '
+  '열쇠 = 상가업소번호(①) + 번호가 끝난 사슬만 같은 땅·층·정규화 상호가 양쪽 다 정확히 하나일 때 잇는다(②~⑥). '
+  '공개키 읽기 금지 — 화면은 get_store_history 로만 읽는다';
+comment on column store_history.floor_no is '마지막 분기의 층(정수 · 지하 음수 · 옥탑 99 · 모름 null — 0 없음 · 절대 규칙 4)';
+comment on column store_history.biz_name is '마지막 분기의 상호(원문 그대로)';
+comment on column store_history.biz_no_last is '마지막 분기의 상가업소번호(보조 열쇠로 이었으면 새 번호)';
+comment on column store_history.first_ym is '처음 보인 분기 YYYYMM(분기말 달) — 201712 이면 그 전은 모른다(truncated)';
+comment on column store_history.last_ym is '마지막으로 보인 분기 YYYYMM(분기말 달)';
+comment on column store_history.seen_cnt is '자료에 보인 분기 수(사슬은 끊김이 없어 first~last 분기 수와 같다) — 영업 기간이 아니다';
+comment on column store_history.is_current is '결과표의 마지막 분기에 보이는가';
+comment on column store_history.n_links is '보조 열쇠(같은 땅·층·정규화 상호)로 이은 횟수';
+comment on column store_history.truncated is 'first_ym 이 결과표의 첫 분기(201712)인가 — 그 전 기록은 읽지 않았다';
+
+alter table store_history enable row level security;
+
+-- ⛔ Supabase 는 새 표를 anon 에 자동으로 연다(pg_default_acl) — 만든 자리에서 닫는다.
+revoke all on store_history from public, anon, authenticated;
+
+-- 가게 이력 표지 — 한 줄뿐(id = 1). 적재기가 통째 교체와 같은 트랜잭션에서 적는다.
+create table if not exists store_history_release (
+  id         smallint primary key check (id = 1),
+  first_ym   char(6) not null check (first_ym ~ '^\d{4}(03|06|09|12)$'),
+  last_ym    char(6) not null check (last_ym ~ '^\d{4}(03|06|09|12)$'),
+  built_on   date not null,
+  row_cnt    integer not null,
+  loaded_at  timestamptz not null default now(),
+  check (first_ym <= last_ym)
+);
+
+comment on table store_history_release is
+  '결정 0045 PR④ 가게 이력 표지 — 한 줄뿐(id = 1). first_ym = 결과표의 첫 분기(201712 — 화면 「○년 ○분기~」) · '
+  'last_ym = 결과표의 마지막 분기 · built_on = 로컬에서 구운 날 · '
+  'row_cnt = 넣은 줄 수. 신선도 16번 줄과 post_load --check 가 읽는다 · snapshot_release.published_ym 과 같아야 정상'
+  '(다르면 --check [주의] — 새 분기 적재 뒤 다시 굽고 넣는다). 0줄이면 get_store_history 도 0줄. 공개키 읽기 금지';
+
+alter table store_history_release enable row level security;
+
+-- ⛔ Supabase 는 새 표를 anon 에 자동으로 연다(pg_default_acl) — 만든 자리에서 닫는다.
+revoke all on store_history_release from public, anon, authenticated;
+
+-- 땅(필지) 하나의 가게 줄 — 지금 보임 → 보인 분기 수 ↓ → 층 차례 · 넘기기(p_limit 1~100 · p_offset 0 이상).
+--   표지가 0줄이면(적재 전) 0줄 — 화면은 카드째 숨긴다. 그 땅에 줄이 없으면 status 'no_data' 한 줄(total_cnt 0).
+create or replace function get_store_history(p_pnu text, p_limit int default 20, p_offset int default 0)
+returns table (
+  status           text,
+  floor_no         smallint,
+  biz_name         text,
+  first_ym         char(6),
+  last_ym          char(6),
+  seen_cnt         smallint,
+  is_current       boolean,
+  truncated        boolean,
+  total_cnt        integer,
+  current_cnt      integer,
+  history_first_ym char(6),
+  history_last_ym  char(6)
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with pa as (
+    -- 넘기기 인자 — 한 번에 1~100줄 · 음수 offset 은 0(넘치는 인자로 표를 통째로 긁지 못하게).
+    select least(greatest(coalesce(p_limit, 20), 1), 100) as lim,
+           greatest(coalesce(p_offset, 0), 0) as off
+  ),
+  rel as (
+    -- 표지. 0줄이면(아직 안 넣음) 이 함수도 0줄.
+    select r.first_ym, r.last_ym from store_history_release r
+  ),
+  mine as (
+    -- ⛔ char(19) 로 견준다 — text 로 견주면 칸이 캐스트돼 색인이 죽는다.
+    select h.floor_no, h.biz_name, h.first_ym, h.last_ym, h.seen_cnt, h.is_current, h.truncated,
+           row_number() over (order by h.is_current desc, h.seen_cnt desc, h.floor_no asc nulls last,
+                                       h.biz_name, h.biz_no_last) as rn
+    from store_history h
+    where h.pnu = p_pnu::char(19)
+  ),
+  cnt as (
+    select count(*)::int as n, (count(*) filter (where mine.is_current))::int as n_cur from mine
+  )
+  select case when c.n = 0 then 'no_data' else 'ok' end,
+         m.floor_no, m.biz_name, m.first_ym, m.last_ym, m.seen_cnt, m.is_current, m.truncated,
+         c.n,
+         c.n_cur,
+         r.first_ym,
+         r.last_ym
+  from rel r
+  cross join cnt c
+  cross join pa
+  left join mine m on m.rn > pa.off and m.rn <= pa.off + pa.lim
+  where c.n = 0 or m.rn is not null
+  order by m.rn;
+$$;
+
+comment on function get_store_history(text, integer, integer) is
+  '결정 0045 PR④ 이 자리 가게 이력 — 그 땅(필지)의 가게 줄(건물 값이 아니라 그 땅에 보인 점포 줄). 줄 = 마지막 층·상호·'
+  '처음/마지막 보인 분기·보인 분기 수·지금 보임·첫 분기부터인가(truncated). 차례 = 지금 보임 → 보인 분기 수 ↓ → 층(모름 끝) → '
+  '상호. 넘기기 p_limit(1~100 으로 자름 · 기본 20) · p_offset(음수면 0). total_cnt = 그 땅 줄 전체 수(모든 줄에 같은 값) · '
+  'current_cnt = 그 땅에서 지금 보이는 줄 수(모든 줄에 같은 값 · no_data 면 0) · history_first_ym·history_last_ym = 표지의 첫·마지막 분기. 표지가 0줄이면 0줄(적재 전 — 화면은 카드째 숨김) · 그 땅에 줄이 없으면 '
+  'status no_data 한 줄(total_cnt 0). D등급 — 「N분기 보임」은 자료에 보인 분기 수이지 영업 기간이 아니고, 지금 안 보이는 '
+  '가게도 문을 닫았다는 뜻이 아닐 수 있다. security definer (표 둘이 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. '
+  '나가는 것은 그 땅의 층·상호·분기 수뿐이고 상가업소번호는 안 나간다).';
+
+-- ⚠️ create or replace 는 권한을 유지하지만, 대시보드가 같은 함수를 다시 만들면
+--    Supabase 기본 권한이 anon 을 자동으로 붙인다. 만든 자리에서 다시 닫는다.
+revoke all on function get_store_history(text, integer, integer) from public, anon, authenticated;
+
+-- 화면이 실제로 부르는 것. public 은 REST 노출에서 빠져 있어(2026-08-24 옛 문 닫기)
+-- api 쪽에 통과 함수가 없으면 화면에서 못 부른다.
+create or replace function api.get_store_history(p_pnu text, p_limit int default 20, p_offset int default 0)
+returns table (
+  status           text,
+  floor_no         smallint,
+  biz_name         text,
+  first_ym         char(6),
+  last_ym          char(6),
+  seen_cnt         smallint,
+  is_current       boolean,
+  truncated        boolean,
+  total_cnt        integer,
+  current_cnt      integer,
+  history_first_ym char(6),
+  history_last_ym  char(6)
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$ select * from public.get_store_history(p_pnu, p_limit, p_offset) $$;
+
+revoke all on function api.get_store_history(text, integer, integer) from public, anon, authenticated;
+grant execute on function api.get_store_history(text, integer, integer) to anon, authenticated;
+
+-- ⛔ public.get_store_history 는 끝까지 닫아 둔다 — 통과 함수가 security definer 다.
+
+-- =====================================================================
 -- 함수: get_data_freshness — 이 자료는 언제 것인가 (2026-09-05d)
 -- =====================================================================
 -- 마이그레이션 2026-09-05d. 화면 아래 푸터의 표 한 장이 이 함수 하나만 부른다.
@@ -7037,6 +7207,7 @@ grant execute on function api.get_daejeon_dong_closure(text) to anon, authentica
 -- ⓘ 2026-10-29a(결정 0044) — 여섯째 규칙: 대전시 동네 폐업은 받은 날 + 3개월(분기마다 사람이 대전시 사이트에서 받는다).
 -- ⓘ 2026-10-31a(결정 0045) — 서울 상권 4종 세 줄: 추정매출·길단위인구(13·14)는 개업·폐업과 같은 분기 규칙,
 --   상주·직장인구(15)는 예정일 없음('none' · 사장님 결정 10-31) + 기준 = 값이 바뀐 분기 둘을 글로 합침. 새 규칙 0.
+-- ⓘ 2026-11-01a(결정 0045 PR④) — 가게 이력 한 줄(16): 기준 = 표지 store_history_release.last_ym · 점포 줄과 같은 분기 규칙(sangkwon). 새 규칙 0.
 --
 -- ⓘ 월간 규칙은 2026-10-01a 에 바뀌었다(사장님 결정 2026-10-01). 옛 규칙(기준월 + 2개월 - 하루)은
 --    **지금 들어 있는 판이 게시된 달**의 말일을 띄웠다 — 건축HUB 인허가 월간 파일은 그 달 다음 달
@@ -7154,6 +7325,13 @@ as $$
              where a.tbl = 'district_pop_resident' and b.tbl = 'district_pop_worker'),
            'none',
            '연 1회 (서울시 공지) · 실제는 불규칙 — 예정일 계산 안 함'
+    union all
+    -- 2026-11-01a(결정 0045 PR④) — 가게 이력 결과표의 마지막 분기. 점포 줄(ord 1)과 같은 `sangkwon` 규칙 — 같은 분기면
+    --   같은 날 「지났습니다」가 뜬다(정상 · 새 분기 적재 → 빌드 → 적재 순서). 표지가 비면 basis null(화면 '자료 없음').
+    select 16, '가게 이력 (점포 자료 누적)', '분기',
+           (select r.last_ym::text from store_history_release r),
+           'sangkwon',
+           '분기마다 (새 분기 점포 자료를 적재한 뒤 다시 굽는다)'
   ),
   norm as (
     -- 분기 규칙을 쓰는 세 줄을 **같은 모양('YYYYMM' 분기말 달)** 으로 맞춘다. 이렇게 해야
@@ -7203,7 +7381,7 @@ as $$
 $$;
 
 comment on function get_data_freshness() is
-  '화면 아래 "이 자료는 언제 것인가" 표. 열넷 갈래 자료의 가장 최근 도장(분기·계약월·판·'
+  '화면 아래 "이 자료는 언제 것인가" 표. 열다섯 갈래 자료의 가장 최근 도장(분기·계약월·판·'
   '계산일·수집일·기준월·고시일·공시 연도·받은 날·값이 바뀐 분기)을 창고에서 읽어 한 줄씩 준다. '
   '⛔ 숫자를 화면에 박지 않기 위한 함수다 — 신선도를 글자로 적어 두면 적재하는 순간부터 '
   '그 글자만 거짓말을 한다. next_expected 도 사람이 적는 값이 아니라 규칙으로 계산한다: '
@@ -7222,10 +7400,10 @@ comment on function get_data_freshness() is
   '⛔ api_quota_log 는 안 본다 — 그건 우리 호출 장부이지 자료의 나이가 아니고, 하한선일 뿐이다. '
   '자료가 0행이면 basis 가 null 이고 줄은 그대로 나온다(화면이 "자료 없음"이라 적는다 — '
   '줄을 빼면 "그런 자료를 안 쓴다"로 읽힌다). '
-  'security definer (열넷 표가 전부 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. '
-  '나가는 것은 집계 도장 열네 개뿐이고 원본 행은 한 줄도 안 나간다). 2026-09-05d · 월간 규칙 2026-10-01a · '
+  'security definer (열다섯 표가 전부 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. '
+  '나가는 것은 집계 도장 열다섯 개뿐이고 원본 행은 한 줄도 안 나간다). 2026-09-05d · 월간 규칙 2026-10-01a · '
   '서울 개업·폐업 2026-10-05b · 필지 공시 연도 2026-10-12b · 실거래·대장 판 월간 규칙 2026-10-15a · '
-  '성적표 줄 뺌 2026-10-18a(결정 0041) · 대전시 동네 폐업 2026-10-29a(결정 0044) · 서울 상권 4종 세 줄 2026-10-31a(결정 0045)';
+  '성적표 줄 뺌 2026-10-18a(결정 0041) · 대전시 동네 폐업 2026-10-29a(결정 0044) · 서울 상권 4종 세 줄 2026-10-31a(결정 0045) · 가게 이력 2026-11-01a(결정 0045 PR④)';
 
 -- ⚠️ create or replace 는 권한을 유지하지만, 대시보드가 같은 함수를 다시 만들면
 --    Supabase 기본 권한이 anon 을 자동으로 붙인다. 만든 자리에서 다시 닫는다.

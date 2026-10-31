@@ -188,6 +188,8 @@ export const CARD_SOURCES = {
   // label 은 자료 이름(PR② 지시서 D3 원래 값 · 메인 PR③ 결정) — 출처 이름만 두면 「상권 인구」 카드 날짜 줄에
   //   「서울시 상권분석서비스」가 두 번 나온다(길단위인구 조각과 같은 이름).
   pop_people: { src: '상권 상주·직장인구 (서울시)', label: '서울시 상주·직장인구', ending: ' 값' },
+  // 결정 0045 PR④ — 가게 이력 결과표(로컬에서 굽는다). 화면 카드는 ③-5 에서 `SECTION_PLAN.history.sources` 가 쓴다.
+  history: { src: '가게 이력 (점포 자료 누적)', label: '점포 자료 누적(소상공인시장진흥공단)', ending: '' },
 } as const satisfies Record<string, { src: string; label: string; ending: string }>;
 
 export type CardSourceKey = keyof typeof CARD_SOURCES;

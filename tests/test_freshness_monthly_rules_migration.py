@@ -19,6 +19,7 @@
 """
 
 import datetime
+import glob
 import os
 import re
 import shutil
@@ -85,6 +86,17 @@ SEOUL_ROWS = ("    union all\n"
               "             where a.tbl = 'district_pop_resident' and b.tbl = 'district_pop_worker'),\n"
               "           'none',\n"
               "           '연 1회 (서울시 공지) · 실제는 불규칙 — 예정일 계산 안 함'\n")
+# 2026-11-01a(결정 0045 PR④) — 16번 줄(가게 이력)을 더한 판. 정본과 글자가 같아야 하는 쪽은 이제 이 파일이다
+# (10-31a 판에 그 줄만 더한 글인지는 tests/test_store_history_migration.py 가 대조한다 · 적용 날에 따라 이름이 바뀔 수 있어
+# 이름 끝으로 찾는다).
+STORE_HISTORY_MIGRATION = (sorted(glob.glob(os.path.join(ROOT, "supabase", "migrations", "*_store_history.sql")))
+                           or [os.path.join(ROOT, "supabase", "migrations", "(없음)_store_history.sql")])[-1]
+# 정본 본문(줄 주석 걷음)에서 이 덩어리를 걷으면 10-31a 본문과 같다.
+STORE_HISTORY_ROW = ("    union all\n"
+                     "    select 16, '가게 이력 (점포 자료 누적)', '분기',\n"
+                     "           (select r.last_ym::text from store_history_release r),\n"
+                     "           'sangkwon',\n"
+                     "           '분기마다 (새 분기 점포 자료를 적재한 뒤 다시 굽는다)'\n")
 SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
 FN = "get_data_freshness"
 
@@ -156,9 +168,14 @@ class TestMirrorsTheSchema:
           (결정 0041·0044 가 그 밖의 줄을 건드리지 않았다는 증거).
           2026-10-31a(결정 0045 — 서울 4종 세 줄)부터 정본과 같아야 하는 쪽은 10-31a 이고, 정본 본문에서 그 세 줄을
           걷으면 10-29a 본문과 같아야 한다(그 아래 ②③ 은 10-29a 본문으로 그대로 본다).
+          2026-11-01a(결정 0045 PR④ — 가게 이력 16번 줄)부터 정본과 같아야 하는 쪽은 11-01a 이고, 정본 본문에서 그 줄을
+          걷으면 10-31a 본문과 같아야 한다.
         """
-        assert fn_block(read(SEOUL_TRDAR_MIGRATION)) == fn_block(schema)
-        current = fn_body(schema)
+        assert fn_block(read(STORE_HISTORY_MIGRATION)) == fn_block(schema)
+        latest = fn_body(schema)
+        assert latest.count(STORE_HISTORY_ROW) == 1
+        current = latest.replace(STORE_HISTORY_ROW, "", 1)
+        assert current == fn_body(read(SEOUL_TRDAR_MIGRATION))
         assert current.count(SEOUL_ROWS) == 1
         assert current.replace(SEOUL_ROWS, "", 1) == fn_body(read(DAEJEON_MIGRATION))
         now = fn_body(read(DAEJEON_MIGRATION))
@@ -328,8 +345,9 @@ class TestTheTwoRows:
 
     def test_eleven_rows(self, path):
         """원장 10-15a 는 열한 줄 · 정본은 2026-10-18a(결정 0041 — 성적표 줄 뺌)부터 열 줄 → 2026-10-29a(결정 0044 —
-        대전 줄 더함)부터 다시 열한 줄 → 2026-10-31a(결정 0045 — 서울 4종 세 줄)부터 열네 줄."""
-        assert fn_body(read(path)).count("union all") == (13 if path == SCHEMA else 10)
+        대전 줄 더함)부터 다시 열한 줄 → 2026-10-31a(결정 0045 — 서울 4종 세 줄)부터 열네 줄 →
+        2026-11-01a(결정 0045 PR④ — 가게 이력 줄)부터 열다섯 줄."""
+        assert fn_body(read(path)).count("union all") == (14 if path == SCHEMA else 10)
 
 
 class TestTxDetectorCatches:
@@ -398,6 +416,7 @@ create table daejeon_closure_release (received_on date);
 create table district_sales (quarter char(5));
 create table district_pop_flow (quarter char(5));
 create table seoul_trdar_release (tbl text, value_quarter char(5));
+create table store_history_release (last_ym char(6));
 create table basis_override (v text);
 """
 LEDGER_BASIS = "(select r.release_ym::text from ledger_release r)"
@@ -515,7 +534,7 @@ class TestRealRun:
         cur = _fresh(pg, read(MIGRATION))
         cur.execute(fn_block(read(SCHEMA)))
         cur.execute("insert into transaction values ('202610')")
-        rows = _rows(cur, 14)   # 정본은 성적표 줄을 뺀 열 줄(결정 0041) + 대전 줄(결정 0044) + 서울 4종 세 줄(결정 0045) = 열네 줄
+        rows = _rows(cur, 15)   # 정본은 성적표 줄을 뺀 열 줄(결정 0041) + 대전 줄(결정 0044) + 서울 4종 세 줄(결정 0045) + 가게 이력 줄(0045 PR④) = 열다섯 줄
         assert rows["실거래 (매매)"][2] == "2026-11-30"
         assert rows["건축물대장"][2] == "2026-10-31"
 
@@ -770,7 +789,7 @@ class TestFreshnessIssueHint:
     def test_hint_keys_match_the_server_labels(self):
         """열쇠 글자가 서버 함수의 src 와 같아야 한다 — 다르면 안내가 조용히 안 나온다."""
         labels = server_src_labels(fn_body(read(SCHEMA)))
-        assert len(labels) == 14                                       # 신선도 표 14줄(10-18a 결정 0041 11 → 10 · 10-29a 결정 0044 10 → 11 · 10-31a 결정 0045 11 → 14)
+        assert len(labels) == 15                                       # 신선도 표 15줄(10-18a 결정 0041 11 → 10 · 10-29a 결정 0044 10 → 11 · 10-31a 결정 0045 11 → 14 · 11-01a 결정 0045 PR④ 14 → 15)
         for key in check_data_freshness.SOURCE_HINTS:
             assert key in labels, key
 
@@ -908,6 +927,8 @@ class TestPostLoadLedgerCheck:
         "report_canonical_indexes": lambda: [],
         "report_function_drift": lambda: [],
         "report_snapshot_release": lambda *a: (False, False),
+        # 가게 이력 표지(2026-11-01a · 결정 0045 PR④) — 종료 코드 무관 · 판정은 tests/test_post_load.py.
+        "report_store_history_release": lambda: None,
     }
 
     @pytest.mark.parametrize("fatal,code", [(True, 1), (False, 0)])

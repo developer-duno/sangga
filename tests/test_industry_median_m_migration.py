@@ -399,7 +399,7 @@ class TestPermissions:
         2026-10-24a 결정 0038 V4 층 목록 업종 띠로 30 → 31 · 2026-10-24b 결정 0038 V5 임대 8분기 흐름으로 31 → 32 ·
         2026-10-25a 결정 0038 V6 개업·폐업 전부 보기로 32 → 33 · 2026-10-29a 결정 0044 대전 동네 폐업으로 33 → 34 ·
         2026-10-31a 결정 0045 서울 4종으로 34 → 36)."""
-        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 36
+        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 37
         assert "api.list_industry_median_m" in post_load.ANON_CALLABLE_ALLOWLIST
 
 

@@ -12,7 +12,7 @@
 - **DB 스키마** — `supabase/schema.sql`
 - **부동산 데이터 처리 규격** — 이 문서의 절대 규칙·확정 설계 + 층 정규화 정본 `scripts/normalize_floor.py`(재구현 금지) + 자료 출처 `docs/데이터백서.md`. ⛔ 옛 `budongsan-data` 스킬(2026-08-06판 · `docs/archive/`)은 **쓰지 않는다** — 임대료 역산식·층별효용비율 보정이 들어 있어 절대 규칙 5·결정 0031 과 어긋난다(레포·전역 어디에도 설치돼 있지 않다 · 2026-10-09 👤)
 - **현재 Phase** — **Phase 1 통과**(2026-08-09, 조인률 95.92%/96.86%) → 1단계 서비스범위(서울+대전) 확장 완료(결정 0006) → **Phase 2 통과**(2026-10-07 — 층별 스택 화면, 건물 10/10 원장 대조 일치 · `docs/PROGRESS.md` 「2026-10-07 (6)」). **라이브 https://sangga-one.vercel.app** (Vercel 프로젝트 `sangga`, GitHub 연결이라 **main push 가 곧 배포**. ⛔ **새 배포 주소가 생기면 카카오 콘솔에 그 주소를 등록해야 지도가 뜬다**(미분양아파트 앱 1398824 의 "플랫폼 키 > JS 키 수정 > JavaScript SDK 도메인")). 진행 기록 정본 = `docs/PROGRESS.md` · 결정 = `docs/decisions/`
-- **기능별 경위·⛔ 주의사항** = **`.claude/rules/feature-notes.md`** — 화면 코드(`src/`)·DB 정본(`supabase/`)·`e2e/`·마이그레이션 시험을 열면 자동으로 읽힌다. ⚠️ **파일을 안 열고 기능을 바꾸거나 설명하거나 DB 함수·마이그레이션을 다룰 때는 그 파일을 먼저 직접 연다** — 그 안의 ⛔ 는 어기면 에러 없이 조용히 틀리는 것들이다. 담긴 것(날짜순): 상권 경계·실거래·Stage B(0008·0011~0013) · 둘레의 업종 분포(0014) · 접히는 카드 `SECTION_PLAN` · 첫 배포 · 기본기 3종·의견함(0016·0017) · 주소로 들고 다니기(0019) · 종이로 뽑기(0020) · 국세청 기준시가(0021) · LH 상가 공고(0022) · 곧 올라오는 상가 건물(0023) · 임대 사실 카드·층별 임대료(0024·0031) · 상권→건물 다리(0025) · 성적표 공개 · 자료 신선도(0030) · 넘기기 링크 · 동네 매매 단가 흐름(0027) · 상호명 검색(0028) · 호실 구성표(0032) · 첫 방문 속도(09-27) · 서울 개업·폐업 자료·DB(0033 R1) · 분기 표지 '다 넣은 뒤 한 번에'(0035) · 개별공시지가 한 줄 · 인쇄 한 장 보강·층 차이 세 잣대(0036 1-C) · 참고 시세 같은 용도 묶음·성적표 v3(0040) · 참고 매매 시세 밴드 내림·층별 공표값 나란히(0041) · 실거래 카드 그림 — 구 층대 띠·이 땅 점그림(0038 V2) · 층 목록 업종 띠 — 대분류·층 모름·자리 없는 점포(0038 V4) · 임대 계단 막대·8분기 흐름(0038 V5) · 개업·폐업 전부 보기(0038 V6) · 대전 동네 폐업(0044) · 서울 상권 4종 자료·DB(0045 PR②) · 업종별 추정매출·상권 인구 카드(0045 PR③)
+- **기능별 경위·⛔ 주의사항** = **`.claude/rules/feature-notes.md`** — 화면 코드(`src/`)·DB 정본(`supabase/`)·`e2e/`·마이그레이션 시험을 열면 자동으로 읽힌다. ⚠️ **파일을 안 열고 기능을 바꾸거나 설명하거나 DB 함수·마이그레이션을 다룰 때는 그 파일을 먼저 직접 연다** — 그 안의 ⛔ 는 어기면 에러 없이 조용히 틀리는 것들이다. 담긴 것(날짜순): 상권 경계·실거래·Stage B(0008·0011~0013) · 둘레의 업종 분포(0014) · 접히는 카드 `SECTION_PLAN` · 첫 배포 · 기본기 3종·의견함(0016·0017) · 주소로 들고 다니기(0019) · 종이로 뽑기(0020) · 국세청 기준시가(0021) · LH 상가 공고(0022) · 곧 올라오는 상가 건물(0023) · 임대 사실 카드·층별 임대료(0024·0031) · 상권→건물 다리(0025) · 성적표 공개 · 자료 신선도(0030) · 넘기기 링크 · 동네 매매 단가 흐름(0027) · 상호명 검색(0028) · 호실 구성표(0032) · 첫 방문 속도(09-27) · 서울 개업·폐업 자료·DB(0033 R1) · 분기 표지 '다 넣은 뒤 한 번에'(0035) · 개별공시지가 한 줄 · 인쇄 한 장 보강·층 차이 세 잣대(0036 1-C) · 참고 시세 같은 용도 묶음·성적표 v3(0040) · 참고 매매 시세 밴드 내림·층별 공표값 나란히(0041) · 실거래 카드 그림 — 구 층대 띠·이 땅 점그림(0038 V2) · 층 목록 업종 띠 — 대분류·층 모름·자리 없는 점포(0038 V4) · 임대 계단 막대·8분기 흐름(0038 V5) · 개업·폐업 전부 보기(0038 V6) · 대전 동네 폐업(0044) · 서울 상권 4종 자료·DB(0045 PR②) · 업종별 추정매출·상권 인구 카드(0045 PR③) · 가게 이력 — 로컬 빌드·DB(0045 PR④)
 
 ### 🔴 운영 7계명 (매 세션 확인 — 어기면 복구 불가하거나 조용히 깨진다)
 
@@ -223,6 +223,11 @@ python scripts/collectors/load_seoul_trdar.py                     # 네 표 분�
 # ↓ 대전 동네 폐업(결정 0044 — 대전시 상권분석 서비스 행정동 월별 폐업 · 분기마다 사람이 사이트에서 2025-01 부터 지난달까지 전부(한 달 한 파일) 받아 data/raw/daejeon_8989/<받은 날>/ 에 둔다 · 폴더 이름 = 받은 날)
 python scripts/collectors/load_daejeon8989_closure.py --raw-dir data/raw/daejeon_8989/<받은 날> --dry-run   # 관문·땅→동 지도·넣을 줄·창 미리보기 (DB·파일 쓰기 0 · openpyxl 필요)
 python scripts/collectors/load_daejeon8989_closure.py --raw-dir data/raw/daejeon_8989/<받은 날>             # 가게 업종 33종 · 2025-01 이후만 통째 교체 + 받은 날 (한 트랜잭션) → post_load.py · --check (씨앗에 없는 업종이면 멈춘다 — scripts/seeds/daejeon8989_industries.csv)
+# ↓ 이 자리 가게 이력(결정 0045 PR④ — 로컬 zip 을 읽어 굽고 DB 에는 결과표만). ⛔ 운영 순서: 상권 새 분기 전국 모드 적재 → 빌드 → 이력 적재 → post_load.py
+python scripts/build_store_history.py --reproduce-c   # 조사 C 재현(대전 42분기 · 통과/실패 · 약 3~5분 · DB 0)
+python scripts/build_store_history.py   # ★ 새 분기 전국 모드 적재 뒤 — zip 43개를 읽어 data/derived/store_history/<오늘>.csv(+meta · 약 15분 · DB 0 · git 에 안 넣는다)
+python scripts/collectors/load_store_history.py --dry-run   # 관문 ⒜~⒥ + 요약 (DB·파일 쓰기 0)
+python scripts/collectors/load_store_history.py             # store_history 통째 교체 + 표지 store_history_release (한 트랜잭션 · 관문 ⒦ = 결과표 마지막 분기 ≠ snapshot_release.loaded_ym 이면 롤백) → post_load.py · --check
 python scripts/load_rone_map.py --dry-run                          # seed → district_rone_map 미리보기(DB 쓰기 0)
 python scripts/load_rone_map.py                                    # 매핑 적재 (검증 관문 3종 내장 — 걸리면 통째 롤백)
 python scripts/build_district_geojson.py --dry-run                  # 지도용 상권 파일 미리보기(행수·크기만, 파일 안 씀)
@@ -247,6 +252,8 @@ python scripts/backup_raw.py --verify           # 백업본을 다시 읽어 SHA
 > 📅 **매달 할 일**(F3·F5 · 2026-10-15) — 신선도 표가 두 줄에 날짜를 건다(실거래 = 계약월 + 2개월 − 하루 · 건축물대장 = 판 + 3개월 − 하루). 넘기면 그물 6호가 이슈를 연다.
 > ① **실거래**: 30구 `collect_transactions.py --sigungu-code <구> --recollect-months 6 --end-ym <이번 달>` → 30구 `load_transactions.py --sigungu-code <구>`(⚠️ 구 인자가 없으면 강남만 적재) → `post_load.py`.
 > ② **건축물대장**: 매달 20일 무렵 새 판(N월 판 = (N+1)월 20일 게시) → 적재 **전** 디스크 판정(지금 사용량 + 약 +320MB(10-14 실측 5,464 → 5,783MB) + WAL 여유 1GB 가 디스크의 85% 미만일 때만 — 넘으면 확장부터) → `fetch_bldrgst_bulk.py --kind title` · `flr_ouln` · `expos_area` → `convert_bldrgst_bulk.py --src-dir data/raw/bldrgst_bulk/<판> --out-dir data/raw/bldrgst_bulk_converted_<판>` → 30구 `load_building_ledger.py --raw-dir …/<구> --snapshot-ym <상권 분기>`(30구 모두 exit 0 인지 본다) → `publish_ledger_release.py --ym <판>` → `post_load.py` · `post_load.py --check` → `build_sitemap.py` → 커밋 → 배포 뒤 `indexnow_ping.py --from-sitemap public/sitemap-buildings-1.xml` · 한 번 더 `indexnow_ping.py --from-sitemap public/sitemap-hubs.xml`(구 허브 · 결정 0043) → `backup_raw.py`(포털은 최근 3개월치만 남긴다).
+
+> 📅 **분기마다**(결정 0045 PR④) — 상권 새 분기 전국 모드 적재 → `build_store_history.py`(가게 이력 빌드) → `load_store_history.py`(이력 적재) → `post_load.py` — 이 차례를 어기면 `--check` 가 [주의]·화면이 「…까지입니다」.
 
 > 💾 **원본 백업은 자동이 아니다.** 새 분기 zip을 받았거나 대량 수집을 마쳤으면 `backup_raw.py`를
 > 직접 한 번 돌린다. 과거 분기 zip은 포털에서 내려가면 **재수집이 불가능**하다(절대 규칙 6).

@@ -173,7 +173,7 @@ def test_dup_biz_first_row_only_and_bad_pnu_and_short_rows_are_counted():
 
 @pytest.mark.parametrize("raw, norm", [
     ("스타벅스 (강남점)", "스타벅스(강남점)"),
-    ("ＡＢＣ　마트", "ABC마트"),
+    ("ＡＢＣ\u3000마트", "ABC마트"),
     ("Abc(가)-점", "Abc(가)-점"),
 ])
 def test_normalize_name(raw, norm):
@@ -227,7 +227,7 @@ def test_rule3_unknown_floor_never_links(old_floor, new_floor):
 
 
 def test_rule4_space_and_fullwidth_only_difference_links():
-    book = run_book([("201712", [R("A", "ＧＳ25 강남점")]), ("201803", [R("B", "GS25　강남점")])])
+    book = run_book([("201712", [R("A", "ＧＳ25 강남점")]), ("201803", [R("B", "GS25\u3000강남점")])])
     (c,) = book.chains
     assert c.n_links == 1
 

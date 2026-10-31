@@ -297,6 +297,11 @@ SOURCE_HINTS = {
     #   할 일이 같다. 상주·직장인구 줄은 예정일이 없어(👤 10-31 「다음 예정 없음」) 이 경보가 안 뜬다 — 힌트 없음.
     "상권 추정매출 (서울시)": SEOUL_TRDAR_HINT,
     "상권 길단위인구 (서울시)": SEOUL_TRDAR_HINT,
+    # 결정 0045 PR④(2026-11-01a) — 가게 이력. 로컬에서 굽는 결과표라 점포 적재만으로는 안 바뀐다(표지의 예외).
+    "가게 이력 (점포 자료 누적)": ("**새 분기 점포 자료를 전국 모드로 적재한 뒤 `python scripts/build_store_history.py`(약 15분 · "
+                            "zip 전부 다시 읽음) → `python scripts/collectors/load_store_history.py --dry-run` → 실적재 → "
+                            "`post_load.py` · `--check`** 순서입니다(결정 0045 · 점포 줄과 같은 날 「지났습니다」가 뜨는 것이 "
+                            "정상)."),
 }
 
 
