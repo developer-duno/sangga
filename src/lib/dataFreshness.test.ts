@@ -258,7 +258,7 @@ const EXPECTED_LINES: Record<string, string | null> = {
   rent: '자료: 부동산원 2026년 2분기 조사',
   openclose: '자료: 서울시 상권분석서비스 2026년 2분기',
   sales: '자료: 서울시 상권분석서비스 2026년 2분기',
-  pop: '자료: 서울시 상권분석서비스 2026년 2분기 · 서울시 상권분석서비스 상주 2023년 4분기, 직장 2024년 4분기 값',
+  pop: '자료: 서울시 상권분석서비스 2026년 2분기 · 서울시 상주·직장인구 상주 2023년 4분기, 직장 2024년 4분기 값',
   history: null,
   lhNotice: null,
   txFlow: '자료: 국토부 실거래 2026년 10월 계약분까지 (최근 두 달은 신고 중)',
@@ -334,6 +334,10 @@ describe('cardSourceLine — 카드 제목 아래 날짜 줄 (S3)', () => {
     expect(CARD_SOURCES.sales.src).toBe('상권 추정매출 (서울시)');
     expect(CARD_SOURCES.pop_flow.src).toBe('상권 길단위인구 (서울시)');
     expect(CARD_SOURCES.pop_people.src).toBe('상권 상주·직장인구 (서울시)');
+    // ⛔ 날짜 줄에 출처 이름이 두 번 나오지 않는다(길단위인구 조각 label 과 다른 이름 · 메인 PR③ 결정).
+    expect(CARD_SOURCES.pop_people.label).not.toBe(CARD_SOURCES.pop_flow.label);
+    const line = cardSourceLine(SECTION_PLAN.pop.sources, rows1016()) ?? '';
+    expect(line.split('서울시 상권분석서비스').length - 1).toBe(1);
     // 양성 대조 — 서버 표에 그 줄이 없으면 그 조각만 빠진다(상주·직장 줄만 빠진 표).
     const noPeople = rows1016().filter((r) => r.src !== '상권 상주·직장인구 (서울시)');
     expect(cardSourceLine(SECTION_PLAN.pop.sources, noPeople)).toBe('자료: 서울시 상권분석서비스 2026년 2분기');

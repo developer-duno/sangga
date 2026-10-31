@@ -881,9 +881,11 @@ test.describe('층별 스택뷰 — 검색부터 렌더까지', () => {
     await page.getByRole('button', { name: /테스트빌딩/ }).click();
 
     const stack = page.locator('section.stack');
-    // 다섯 장 + 늘 서는 빈 카드 셋(결정 0036 결정 2 · 물결 1-B — 아무것도 안 불러서 목업이 없어도 선다)
+    // 다섯 장 + 빈 카드 하나(가게 이력 — 결정 0036 결정 2 · 물결 1-B · 아무것도 안 불러서 목업이 없어도 선다).
+    // ⓘ 서울 건물이라 추정매출·상권 인구는 제 카드인데, 함수가 기본(함수 없음)이라 카드째 숨는다(결정 0045 PR③ · CN·CO).
     // ⓘ 층별 공표값은 값 든 칸 하나면 선다(결정 0041 E2) — 이 목업은 구 상가 단가 1층 칸 하나로 선다.
-    await expect(stack.locator('.card')).toHaveCount(8);
+    await expect(stack.locator('.card')).toHaveCount(6);
+    await expect(stack.locator('section.card--empty')).toHaveCount(1);
     await expect(stack.locator('.card__toggle[aria-expanded="true"]')).toHaveCount(4);
 
     const gap = stack.locator('section.gap');
@@ -1178,7 +1180,7 @@ test.describe('층별 스택뷰 — 종이로 뽑기', () => {
     await expect(page.locator('.links')).toBeHidden();
     // 형제 사이트 링크 구역도 같은 이유로 빠진다(2026-10-06).
     await expect(page.locator('.family')).toBeHidden();
-    // 빈 카드 셋도 종이에서 빠진다(👤 물결 1-B — "지금은 비어 있음" 뿐이라 종이 자리만 먹는다).
+    // 빈 카드도 종이에서 빠진다(👤 물결 1-B — "지금은 비어 있음" 뿐이라 종이 자리만 먹는다 · 서울 건물은 가게 이력 하나).
     // ⓘ 빼는 이름표는 빈 상태일 때만 붙는 `card--empty` 다 — 자료가 차면 그때부터 종이에 나온다.
     await expect(page.locator('section.card--empty')).toHaveCount(1);
     await expect(page.locator('section.card--history')).toBeHidden();
@@ -1653,8 +1655,9 @@ test.describe('층별 스택뷰 — 상권 임대 동향', () => {
     const rent = stack.locator('section.rent');
     await expect(rent).toBeVisible();
     // 카드가 하나 늘어도 **첫 화면 펼침은 여전히 넷**이다(로드맵 Wave 2 의 예산).
-    // 다섯 장 + 빈 카드 셋(물결 1-B) + 층별 공표값(결정 0041 · 접힌 채 — 참고 매매 시세 카드는 내렸다).
-    await expect(stack.locator('.card')).toHaveCount(9);
+    // 다섯 장 + 빈 카드 하나(가게 이력 · 물결 1-B) + 층별 공표값(결정 0041 · 접힌 채 — 참고 매매 시세 카드는 내렸다).
+    // ⓘ 서울 건물이라 추정매출·상권 인구는 제 카드인데, 함수가 기본(함수 없음)이라 카드째 숨는다(결정 0045 PR③ · CN·CO).
+    await expect(stack.locator('.card')).toHaveCount(7);
     await expect(stack.locator('.card__toggle[aria-expanded="true"]')).toHaveCount(4);
     // 접혀 있어도 무엇·언제는 읽힌다. ⛔ 값은 요약에 없다 — 한정어 없이 이 건물 값으로 읽힌다.
     await expect(rent.locator('.card__summary')).toHaveText(

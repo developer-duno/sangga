@@ -185,8 +185,9 @@ export const CARD_SOURCES = {
   //   상주·직장 줄의 기준은 「상주 2023년 4분기, 직장 2024년 4분기」 같은 글이라 `basisText` 가 원본 그대로 적는다.
   sales: { src: '상권 추정매출 (서울시)', label: '서울시 상권분석서비스', ending: '' },
   pop_flow: { src: '상권 길단위인구 (서울시)', label: '서울시 상권분석서비스', ending: '' },
-  // label 에 「상주」를 또 쓰면 기준 글(「상주 …, 직장 …」)과 겹쳐 두 번 나온다 — 출처 이름만.
-  pop_people: { src: '상권 상주·직장인구 (서울시)', label: '서울시 상권분석서비스', ending: ' 값' },
+  // label 은 자료 이름(PR② 지시서 D3 원래 값 · 메인 PR③ 결정) — 출처 이름만 두면 「상권 인구」 카드 날짜 줄에
+  //   「서울시 상권분석서비스」가 두 번 나온다(길단위인구 조각과 같은 이름).
+  pop_people: { src: '상권 상주·직장인구 (서울시)', label: '서울시 상주·직장인구', ending: ' 값' },
 } as const satisfies Record<string, { src: string; label: string; ending: string }>;
 
 export type CardSourceKey = keyof typeof CARD_SOURCES;
