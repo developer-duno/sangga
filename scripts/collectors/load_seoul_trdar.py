@@ -341,19 +341,19 @@ def induty_warnings(rep):
         q, len(s), len(union), sorted(union - s)[:5]) for q, s in sorted(sets.items()) if s != union]
 
 
-def stale_people_warnings(reports):
-    """상주·직장 max_quarter 가 추정매출 max_quarter 보다 옛 분기면 경고(멈추지 않는다 · 보완 1 F4).
+def stale_tail_warnings(reports):
+    """네 서비스 중 어느 것이든 max_quarter 가 넷 중 최댓값보다 옛 분기면 경고(멈추지 않는다 · 보완 1 F4 → 보완 2 G4).
 
-    서울시는 네 자료를 같은 날 게시한다(2026-09-11 갱신일) — 어긋나면 상주·직장을 덜 받았거나 옛 판을 고른 것이다.
+    서울시는 네 자료를 같은 날 게시한다(2026-09-11 갱신일) — 어긋나면 그 서비스의 꼬리 분기를 덜 받았거나 옛 판을
+    고른 것이다(⒢ 는 각자 제 범위 안 빠진 분기만 보므로 꼬리 누락은 여기서만 잡힌다).
     """
-    top = (reports.get("sales") or {}).get("max_quarter")
-    out = []
-    for s in ("resident", "worker"):
-        mq = (reports.get(s) or {}).get("max_quarter")
-        if top and mq and mq < top:
-            out.append("[경고] 상주·직장이 매출보다 옛 분기 — {} {} < 추정매출 {} · 서울시는 네 자료를 같은 날 게시한다"
-                       "(2026-09-11)".format(s, mq, top))
-    return out
+    mqs = {s: (reports.get(s) or {}).get("max_quarter") for s in SERVICES}
+    have = [q for q in mqs.values() if q]
+    if not have:
+        return []
+    top = max(have)
+    return ["[경고] {} 가 {}보다 옛 분기({})까지만 — 서울시는 네 자료를 같은 날 게시한다(2026-09-11)".format(
+        s, top, mq) for s, mq in mqs.items() if mq and mq < top]
 
 
 # ── SQL ──────────────────────────────────────────────────────────────────────
@@ -491,7 +491,7 @@ def main(argv=None):
           "(한쪽에만 있는 상권은 안 센다).")
     if known is None:
         print("  ⓘ public/districts.geojson 이 없어 관문 ⒜ 미리보기를 건너뜁니다 — 적재 SQL 이 DB 에서 본다.")
-    for w in induty_warnings(reports["sales"]) + stale_people_warnings(reports):
+    for w in induty_warnings(reports["sales"]) + stale_tail_warnings(reports):
         print("  " + w)
 
     problems = [(s, q, m) for s in SERVICES for q, ms in reports[s]["problems"].items() for m in ms]

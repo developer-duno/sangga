@@ -127,6 +127,17 @@ def test_gate_b_mixed_quarter_and_columns():
         L.normalize("worker", gone, "20262", "f", "w")
 
 
+def test_gate_b_line_quarter_only_differs(tmp_path):
+    """G2 — 줄의 quarter 칸만 파일 분기와 다르고 행 STDR_YYQU_CD 는 같은 꼴: 줄 검사만이 잡는다(행 검사는 지나간다)."""
+    d = tmp_path / "flow"
+    d.mkdir()
+    p = d / "20262_20261031.jsonl"
+    p.write_text(json.dumps({"quarter": "20261", "fetched_at": "x", "row": raw_row("flow", "20262", D1)},
+                            ensure_ascii=False) + "\n", encoding="utf-8")
+    with pytest.raises(L.GateError, match="줄의 quarter"):
+        L.read_quarter_file("flow", str(p), "20262")
+
+
 def test_gate_b_line_quarter_mismatch(tmp_path):
     p = write_q(tmp_path, "flow", "20262", [raw_row("flow", "20262", D1)])
     with pytest.raises(L.GateError, match="⒝"):
@@ -156,13 +167,24 @@ def test_gate_a_and_e_point_to_the_district_source(small_ranges):
 
 @pytest.mark.parametrize("people_q,warned", [("20254", True), ("20262", False)])
 def test_people_older_than_sales_warns(people_q, warned):
-    """F4 — 상주·직장 max 가 추정매출 max 보다 옛 분기면 경고 한 줄(멈추지 않음) · 같으면 없음(양성·음성)."""
+    """F4 — 상주 max 가 다른 서비스 max 보다 옛 분기면 경고 한 줄(멈추지 않음) · 같으면 없음(양성·음성)."""
     reps = {"sales": {"max_quarter": "20262"}, "flow": {"max_quarter": "20262"},
             "resident": {"max_quarter": people_q}, "worker": {"max_quarter": "20262"}}
-    w = L.stale_people_warnings(reps)
-    assert bool(w) is warned
+    w = L.stale_tail_warnings(reps)
+    assert len(w) == (1 if warned else 0)
     if warned:
-        assert w[0].startswith("[경고] 상주·직장이 매출보다 옛 분기") and "2026-09-11" in w[0] and "resident 20254" in w[0]
+        assert w[0] == "[경고] resident 가 20262보다 옛 분기(20254)까지만 — 서울시는 네 자료를 같은 날 게시한다(2026-09-11)"
+
+
+@pytest.mark.parametrize("sales_q,n", [("20254", 1), ("20262", 0)])
+def test_any_service_with_a_missing_tail_warns(sales_q, n):
+    """G4 — 매출 쪽 꼬리가 빠져도(sales 20254 · flow 20262) 경고 1 · 넷 다 같으면 0."""
+    reps = {"sales": {"max_quarter": sales_q}, "flow": {"max_quarter": "20262"},
+            "resident": {"max_quarter": "20262"}, "worker": {"max_quarter": "20262"}}
+    w = L.stale_tail_warnings(reps)
+    assert len(w) == n
+    if n:
+        assert w[0].startswith("[경고] sales 가 20262보다 옛 분기(20254)까지만")
 
 
 def test_gate_e_row_count_range():
@@ -332,7 +354,8 @@ def test_dry_run_writes_nothing(tmp_path, monkeypatch, small_ranges, capsys):
     out = capsys.readouterr().out
     assert "관문 통과" in out and "20254" in out
     # F4 — 상주·직장(20254)이 매출(20262)보다 옛 분기라 경고는 서되 멈추지 않는다(rc 0)
-    assert "[경고] 상주·직장이 매출보다 옛 분기" in out
+    assert "[경고] resident 가 20262보다 옛 분기(20254)까지만" in out
+    assert "[경고] worker 가 20262보다 옛 분기(20254)까지만" in out
     # F3 — 관문 ⒤ 는 실적재 트랜잭션 안에서 본다는 한 줄 · dry-run → 마이그 → 실적재 순서
     assert "관문 ⒤" in out and "dry-run 은 못 본다" in out
     assert out.index("dry-run 통과") < out.index("마이그 2026-10-31a 적용") < out.index("실적재 → post_load")

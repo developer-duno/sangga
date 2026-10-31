@@ -330,6 +330,41 @@ def test_main_exits_2_on_bad_args(argv):
     assert e.value.code == 2
 
 
+class RaisingSession:
+    """주소(키 포함)를 메시지에 담은 네트워크 오류를 늘 던진다 — requests 실제 오류 글의 꼴."""
+
+    def get(self, url, timeout=None):
+        raise requests.ConnectionError("HTTPConnectionPool: Max retries exceeded with url: " + url)
+
+
+def _dry_run_output_on_network_error(monkeypatch, capsys, key, mask=None):
+    monkeypatch.setattr(T, "get_api_key", lambda: key)
+    monkeypatch.setattr(T, "get_supabase_config", lambda: ("https://x", "k"))
+    monkeypatch.setattr(T, "read_progress", lambda *a, **k: {})
+    monkeypatch.setattr(T.requests, "Session", RaisingSession)
+    monkeypatch.setattr(T, "fetch_page", lambda *x, **k: REAL_FETCH(*x, sleep=no_sleep, **k))
+    if mask is not None:
+        monkeypatch.setattr(T, "mask_secret", mask)
+    rc = T.main(["--dry-run", "--service", "resident", "--end-quarter", "20262"])
+    out = capsys.readouterr()
+    return rc, out.out + out.err
+
+
+def test_dry_run_error_output_never_holds_the_key(monkeypatch, capsys):
+    """G1 — 네트워크 오류(주소에 키)가 dry-run `[에러] …` 로 나갈 때 stdout·stderr 전체에 키 글자 0 · 가림 표시 1 이상."""
+    key = "TESTKEY1234567890"
+    rc, said = _dry_run_output_on_network_error(monkeypatch, capsys, key)
+    assert rc == 1 and "[에러]" in said
+    assert key not in said and T.SECRET_MASK in said
+
+
+def test_dry_run_error_masking_positive_control(monkeypatch, capsys):
+    """양성 대조 — 가림을 끈 흉내 함수로는 같은 길에서 키가 찍힌다(위 '키 0' 이 빈 검사가 아니다)."""
+    key = "TESTKEY1234567890"
+    rc, said = _dry_run_output_on_network_error(monkeypatch, capsys, key, mask=lambda text, key=None: str(text))
+    assert rc == 1 and key in said
+
+
 def test_dry_run_writes_nothing(monkeypatch, tmp_path):
     """서비스마다 API 1회 · 장부 읽기만 — 씨앗·저장·파일 쓰기 0(개업·폐업 수집기와 같다 · 메인 결정 10-31)."""
     monkeypatch.setattr(T, "get_api_key", lambda: KEY)
