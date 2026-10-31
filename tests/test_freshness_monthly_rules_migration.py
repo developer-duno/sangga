@@ -63,6 +63,28 @@ DAEJEON_ROW = ("    union all\n"
                "           '분기마다 (사람이 대전시 사이트에서 받음)'\n")
 DAEJEON_BRANCH = ("           when n.rule_kind = 'daejeon_closure' and n.basis ~ '^\\d{4}-\\d{2}-\\d{2}$'\n"
                   "             then (n.basis::date + interval '3 months')::date\n")
+# 2026-10-31a(결정 0045) — 13·14·15 줄(서울 상권 4종)을 더한 판. 정본과 글자가 같아야 하는 쪽은 이제 이 파일이다
+# (10-29a 판에 그 줄만 더한 글인지는 tests/test_seoul_trdar_migration.py 가 대조한다).
+SEOUL_TRDAR_MIGRATION = os.path.join(ROOT, "supabase", "migrations", "2026-10-31a_seoul_trdar.sql")
+# 정본 본문(줄 주석 걷음)에서 이 덩어리를 걷으면 10-29a 본문과 같다.
+SEOUL_ROWS = ("    union all\n"
+              "    select 13, '상권 추정매출 (서울시)', '분기',\n"
+              "           (select max(t.quarter)::text from district_sales t),\n"
+              "           'seoul_openclose',\n"
+              "           '분기마다'\n"
+              "    union all\n"
+              "    select 14, '상권 길단위인구 (서울시)', '분기',\n"
+              "           (select max(t.quarter)::text from district_pop_flow t),\n"
+              "           'seoul_openclose',\n"
+              "           '분기마다'\n"
+              "    union all\n"
+              "    select 15, '상권 상주·직장인구 (서울시)', '값이 바뀐 분기',\n"
+              "           (select '상주 ' || left(a.value_quarter, 4) || '년 ' || right(a.value_quarter, 1) || '분기, 직장 '\n"
+              "                   || left(b.value_quarter, 4) || '년 ' || right(b.value_quarter, 1) || '분기'\n"
+              "              from seoul_trdar_release a, seoul_trdar_release b\n"
+              "             where a.tbl = 'district_pop_resident' and b.tbl = 'district_pop_worker'),\n"
+              "           'none',\n"
+              "           '연 1회 (서울시 공지) · 실제는 불규칙 — 예정일 계산 안 함'\n")
 SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
 FN = "get_data_freshness"
 
@@ -132,9 +154,14 @@ class TestMirrorsTheSchema:
           2026-10-29a(결정 0044 — 대전 줄)부터는 10-29a 다. 그래서 셋을 본다: ① 10-29a 덩어리 == 정본
           ② 정본 본문에서 대전 줄·갈래를 걷으면 10-18a 본문과 같다 ③ 10-15a 본문에서 9번 줄 하나만 걷으면 그 글과 같다
           (결정 0041·0044 가 그 밖의 줄을 건드리지 않았다는 증거).
+          2026-10-31a(결정 0045 — 서울 4종 세 줄)부터 정본과 같아야 하는 쪽은 10-31a 이고, 정본 본문에서 그 세 줄을
+          걷으면 10-29a 본문과 같아야 한다(그 아래 ②③ 은 10-29a 본문으로 그대로 본다).
         """
-        assert fn_block(read(DAEJEON_MIGRATION)) == fn_block(schema)
-        now = fn_body(schema)
+        assert fn_block(read(SEOUL_TRDAR_MIGRATION)) == fn_block(schema)
+        current = fn_body(schema)
+        assert current.count(SEOUL_ROWS) == 1
+        assert current.replace(SEOUL_ROWS, "", 1) == fn_body(read(DAEJEON_MIGRATION))
+        now = fn_body(read(DAEJEON_MIGRATION))
         assert now.count(DAEJEON_ROW) == 1 and now.count(DAEJEON_BRANCH) == 1
         before_daejeon = now.replace(DAEJEON_ROW, "", 1).replace(DAEJEON_BRANCH, "", 1)
         assert fn_body(read(DROP_GATE_MIGRATION)) == before_daejeon
@@ -301,8 +328,8 @@ class TestTheTwoRows:
 
     def test_eleven_rows(self, path):
         """원장 10-15a 는 열한 줄 · 정본은 2026-10-18a(결정 0041 — 성적표 줄 뺌)부터 열 줄 → 2026-10-29a(결정 0044 —
-        대전 줄 더함)부터 다시 열한 줄."""
-        assert fn_body(read(path)).count("union all") == 10
+        대전 줄 더함)부터 다시 열한 줄 → 2026-10-31a(결정 0045 — 서울 4종 세 줄)부터 열네 줄."""
+        assert fn_body(read(path)).count("union all") == (13 if path == SCHEMA else 10)
 
 
 class TestTxDetectorCatches:
@@ -367,6 +394,10 @@ create table price_gate_sigungu (loaded_at timestamptz);
 create table parcel (pnu char(19) primary key, land_price_year smallint);
 create table district_openclose (quarter text);
 create table daejeon_closure_release (received_on date);
+-- 2026-10-31a(결정 0045) — 정본 함수의 서울 상권 4종 세 줄이 읽는 표.
+create table district_sales (quarter char(5));
+create table district_pop_flow (quarter char(5));
+create table seoul_trdar_release (tbl text, value_quarter char(5));
 create table basis_override (v text);
 """
 LEDGER_BASIS = "(select r.release_ym::text from ledger_release r)"
@@ -484,7 +515,7 @@ class TestRealRun:
         cur = _fresh(pg, read(MIGRATION))
         cur.execute(fn_block(read(SCHEMA)))
         cur.execute("insert into transaction values ('202610')")
-        rows = _rows(cur, 11)   # 정본은 성적표 줄을 뺀 열 줄(결정 0041) + 대전 줄(결정 0044) = 열한 줄
+        rows = _rows(cur, 14)   # 정본은 성적표 줄을 뺀 열 줄(결정 0041) + 대전 줄(결정 0044) + 서울 4종 세 줄(결정 0045) = 열네 줄
         assert rows["실거래 (매매)"][2] == "2026-11-30"
         assert rows["건축물대장"][2] == "2026-10-31"
 
@@ -739,7 +770,7 @@ class TestFreshnessIssueHint:
     def test_hint_keys_match_the_server_labels(self):
         """열쇠 글자가 서버 함수의 src 와 같아야 한다 — 다르면 안내가 조용히 안 나온다."""
         labels = server_src_labels(fn_body(read(SCHEMA)))
-        assert len(labels) == 11                                       # 신선도 표 11줄(10-18a 결정 0041 11 → 10 · 10-29a 결정 0044 10 → 11)
+        assert len(labels) == 14                                       # 신선도 표 14줄(10-18a 결정 0041 11 → 10 · 10-29a 결정 0044 10 → 11 · 10-31a 결정 0045 11 → 14)
         for key in check_data_freshness.SOURCE_HINTS:
             assert key in labels, key
 

@@ -215,8 +215,11 @@ class TestMirrorsTheSchema:
     def test_table_blocks(self, mig, schema, name):
         assert table_block(mig, name) == table_block(schema, name)
 
-    def test_freshness_block(self, mig, schema):
-        assert fresh_block(mig) == fresh_block(schema)
+    def test_freshness_block(self, mig):
+        """ⓘ 2026-10-31a(결정 0045 — 서울 4종 세 줄)부터 정본의 신선도 덩어리는 10-31a 와 같다(그 대조는
+        tests/test_data_freshness_migration.py · tests/test_seoul_trdar_migration.py) — 이 원장(10-29a)은
+        '10-18a 판 + 대전 갈래' 글 그대로여야 한다."""
+        assert fresh_derived_problems(fresh_block(mig), fresh_block(read(PREV_FRESH))) == []
 
     def test_tables_come_before_the_freshness_function_in_schema(self, schema):
         """정본을 위에서부터 돌릴 때 sql 함수 본문 검사가 받은 날 표지를 찾아야 한다."""
@@ -230,8 +233,9 @@ class TestMirrorsTheSchema:
 
 
 class TestFreshnessOnlyGainsTheDaejeonRow:
-    def test_new_block_is_the_old_block_plus_the_changes(self, schema):
-        assert fresh_derived_problems(fresh_block(schema), fresh_block(read(PREV_FRESH))) == []
+    def test_new_block_is_the_old_block_plus_the_changes(self, mig):
+        # ⓘ 2026-10-31a 부터 정본은 서울 4종 세 줄이 더 붙어 있어 원장(10-29a)을 본다.
+        assert fresh_derived_problems(fresh_block(mig), fresh_block(read(PREV_FRESH))) == []
 
     @pytest.mark.parametrize("old,new", [
         ("           '월 1회'\n", "           '월 2회'\n"),                              # 다른 줄을 건드림
@@ -239,8 +243,8 @@ class TestFreshnessOnlyGainsTheDaejeonRow:
         ("'daejeon_closure',\n", "'none',\n"),                                         # 규칙 끔
         ("'^\\d{4}-\\d{2}-\\d{2}$'\n             then (n.basis::date", "'.*'\n             then (n.basis::date"),
     ])
-    def test_detector_catches_variants(self, schema, old, new):
-        block = fresh_block(schema)
+    def test_detector_catches_variants(self, mig, old, new):
+        block = fresh_block(mig)
         assert old in block, "전제: 그 글자가 지금 판에 있다"
         assert fresh_derived_problems(block.replace(old, new, 1), fresh_block(read(PREV_FRESH)))
 
@@ -346,9 +350,10 @@ class TestPermissions:
         for t in TABLES:
             assert t not in post_load.ANON_READABLE_ALLOWLIST
 
-    def test_allowlist_total_is_34(self):
-        """읽기 4 + 부르기 30 = `--check` 총계 34(2026-10-25a 의 33 에 이 함수 하나)."""
-        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 34
+    def test_allowlist_total_is_36(self):
+        """읽기 4 + 부르기 32 = `--check` 총계 36(2026-10-25a 의 33 에 이 함수 하나 → 34 ·
+        2026-10-31a 결정 0045 서울 4종 34 → 36)."""
+        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 36
 
 
 class TestMigrationShape:

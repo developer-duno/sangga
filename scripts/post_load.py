@@ -98,6 +98,11 @@ ANALYZE_TABLES = (
     "building_floor",
     "unit",
     "transaction",
+    # 서울 상권 4종(2026-10-31a · 결정 0045 PR②) — 한 번에 수십만 행을 지우고 다시 넣는다.
+    "district_sales",
+    "district_pop_flow",
+    "district_pop_resident",
+    "district_pop_worker",
 )
 
 # ⚠️ **순서가 중요하다.** mv_open_sigungu 는 mv_search_parcel 에서 만들어지므로
@@ -1240,6 +1245,12 @@ ANON_CALLABLE_ALLOWLIST = (
     # daejeon_bjd_dong · daejeon_closure_release)은 **여기 없다** — 화면은 이 함수 하나로만 읽고, 나가는 것은 그 건물이 선
     # 행정동 이름과 대전시 공표 폐업 수(분기 합 · 업종별 4분기 합)뿐이다.
     "api.get_daejeon_dong_closure",
+    # 서울 상권 추정매출(2026-10-31a · 결정 0045 PR②). 표 district_sales 는 **여기 없다** — 화면은 이 함수 하나로만
+    # 읽고, 나가는 것은 이 필지가 속한 서울 상권의 이름과 서울시 공표 매출 금액·건수(분기 합 · 업종 상위 5 · 업종 전부)뿐이다.
+    "api.list_district_sales",
+    # 서울 상권 인구 셋(2026-10-31a · 결정 0045 PR②). 표 넷(district_pop_flow · district_pop_resident · district_pop_worker ·
+    # seoul_trdar_release)은 **여기 없다** — 화면은 이 함수 하나로만 읽고, 나가는 것은 상권 이름과 서울시 공표 인구 수뿐이다.
+    "api.list_district_pop",
 )
 
 # ── 공개키가 아직 못 닫은 "대기" 함수 — 지금은 비어 있다 ─────────────────

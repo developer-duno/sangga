@@ -275,6 +275,11 @@ def build_issue_title(item) -> str:
     return "갱신 예정일이 지난 자료 — {} (예정 {})".format(name, item["next_expected"])
 
 
+# 서울 상권 4종(결정 0045) 할 일 한 줄 — 추정매출·길단위인구 두 열쇠가 같이 쓴다.
+SEOUL_TRDAR_HINT = ("**서울 상권 4종을 함께**: `collect_seoul_trdar.py --service all --end-quarter <분기> --quarters 22` "
+                    "수집 → `load_seoul_trdar.py --dry-run` → 실적재(네 표 한 트랜잭션) → `post_load.py` · "
+                    "`post_load.py --check` 순서입니다(결정 0045 · 한 서비스만 넣지 않는다).")
+
 # 자료별로 '적재만으로는 경보가 안 빠지는' 할 일 한 줄(2026-10-15a · 검사관 지적). 열쇠 = 서버 함수의 src 글자.
 SOURCE_HINTS = {
     "건축물대장": ("**건축물대장은 30개 구를 다 적재한 뒤 `python scripts/publish_ledger_release.py --ym <판>` "
@@ -288,6 +293,10 @@ SOURCE_HINTS = {
                        "2025-01 부터 지난달까지 전부 다시 받기**(`data/raw/daejeon_8989/<받은 날 YYYYMMDD>/adstrd_clsbiz_monthly/`) → "
                        "`load_daejeon8989_closure.py --raw-dir <그 폴더> --dry-run` → 실적재 → `post_load.py` · "
                        "`post_load.py --check` → `backup_raw.py` 순서입니다(결정 0044)."),
+    # 결정 0045(2026-10-31a) — 서울 상권 추정매출·길단위인구. 네 표를 한 트랜잭션으로 넣으므로(분할 적재 금지) 두 줄의
+    #   할 일이 같다. 상주·직장인구 줄은 예정일이 없어(👤 10-31 「다음 예정 없음」) 이 경보가 안 뜬다 — 힌트 없음.
+    "상권 추정매출 (서울시)": SEOUL_TRDAR_HINT,
+    "상권 길단위인구 (서울시)": SEOUL_TRDAR_HINT,
 }
 
 
