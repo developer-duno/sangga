@@ -262,13 +262,29 @@ def read_quarter_rows(opener, where):
 
 class Chain:
     __slots__ = ("pnu", "floor_no", "name_raw", "name_norm", "biz_no_last",
-                 "first_ym", "last_ym", "seen_cnt", "n_links")
+                 "first_ym", "last_ym", "seen_cnt", "n_links", "pnu_lvl", "pnu_move")
 
     def __init__(self, ym, row):
         self.biz_no_last, self.pnu, self.floor_no, self.name_raw, self.name_norm = row
         self.first_ym = self.last_ym = ym
         self.seen_cnt = 1
         self.n_links = 0
+        self.pnu_lvl = 0          # 땅 번호가 바뀐 가장 넓은 폭(0 안 바뀜 · 1 같은 시군구 · 2 같은 시·도 · 3 다른 시·도)
+        self.pnu_move = None      # 그 가장 넓은 바뀜의 (앞 pnu, 뒤 pnu) — 보고 예시용
+
+
+PNU_LEVELS = ((1, "same_sgg", "같은 시군구"), (2, "other_sgg", "다른 시군구·같은 시·도"), (3, "other_sido", "다른 시·도"))
+
+
+def pnu_change_level(old, new):
+    """땅 번호 바뀜의 폭 — 0 같음 · 1 앞 5자리(시군구) 같음 · 2 앞 2자리(시·도) 같음 · 3 시·도도 다름."""
+    if old == new:
+        return 0
+    if old[:5] == new[:5]:
+        return 1
+    if old[:2] == new[:2]:
+        return 2
+    return 3
 
 
 def link_key(pnu, floor_no, name_norm):
@@ -291,6 +307,9 @@ class ChainBook:
         biz, pnu, floor_no, name_raw, name_norm = row
         if chain.pnu != pnu:
             self.pnu_changed += 1
+            lvl = pnu_change_level(chain.pnu, pnu)
+            if lvl > chain.pnu_lvl:
+                chain.pnu_lvl, chain.pnu_move = lvl, (chain.pnu, pnu)
         chain.biz_no_last, chain.pnu, chain.floor_no = biz, pnu, floor_no
         chain.name_raw, chain.name_norm = name_raw, name_norm
         chain.last_ym = ym
@@ -363,8 +382,26 @@ def out_rows(chains, start_ym, end_ym):
     for c in chains:
         rows.append((c.pnu, c.floor_no, c.name_raw, c.biz_no_last, c.first_ym, c.last_ym,
                      c.seen_cnt, c.last_ym == end_ym, c.n_links, c.first_ym == start_ym))
-    rows.sort(key=lambda r: (r[0], not r[7], -r[6], r[1] is None, r[1] if r[1] is not None else 0, r[3]))
+    rows.sort(key=lambda r: (r[0], not r[7], -r[6], r[1] is None, r[1] if r[1] is not None else 0, r[3], r[5]))
     return rows
+
+
+def pnu_change_stats(chains, n_quarters_end):
+    """땅 번호가 바뀐 사슬을 폭(같은 시군구 · 다른 시군구·같은 시·도 · 다른 시·도)으로 나눈다 — 측정만(규칙과 무관).
+
+    → {열쇠: {"chains", "current", "seen_pct"}} + 다른 시·도 예 3건. seen_pct = 그 폭의 지금 보이는 사슬 seen_cnt 합 ÷
+    전체 지금 보이는 사슬 seen_cnt 합(%). 한 사슬이 여러 번 바뀌면 가장 넓은 폭 하나로 센다.
+    """
+    cur_total = sum(c.seen_cnt for c in chains if c.last_ym == n_quarters_end) or 1
+    out = {}
+    for lvl, key, _label in PNU_LEVELS:
+        hit = [c for c in chains if c.pnu_lvl == lvl]
+        cur = [c for c in hit if c.last_ym == n_quarters_end]
+        out[key] = {"chains": len(hit), "current": len(cur),
+                    "seen_pct": sum(c.seen_cnt for c in cur) / cur_total * 100}
+    far = sorted((c for c in chains if c.pnu_lvl == 3), key=lambda c: (-c.seen_cnt, c.biz_no_last))[:3]
+    examples = [(c.name_raw, c.pnu_move[0], c.pnu_move[1], c.first_ym, c.last_ym, c.seen_cnt) for c in far]
+    return out, examples
 
 
 def csv_cells(row):
@@ -502,11 +539,15 @@ def build(zips, sidos, start_ym, end_ym, limit, out_path, today, log=print):
     rows = out_rows(chains, first, last)
     size, digest = write_result(rows, out_path)
     current = [r for r in rows if r[7]]
-    pk = collections.Counter((r[3], r[4]) for r in rows)
+    pk = collections.Counter((r[3], r[5]) for r in rows)
+    moves, far = pnu_change_stats(chains, last)
     meta = {
         "built_on": today.isoformat(), "start_ym": first, "end_ym": last, "sido": list(sidos),
         "quarters": len(quarters), "rows": len(rows), "current_rows": len(current),
         "n_links": sum(r[8] for r in rows), "pnu_changed": sum(books[s][0].pnu_changed for s in sidos),
+        "pnu_changed_same_sgg": moves["same_sgg"]["chains"],
+        "pnu_changed_other_sgg": moves["other_sgg"]["chains"],
+        "pnu_changed_other_sido": moves["other_sido"]["chains"],
         "dup_biz_no": counts.get("dup_biz_no", 0), "bad_pnu": counts.get("bad_pnu", 0),
         "partial": partial, "sha256": digest,
     }
@@ -522,7 +563,15 @@ def build(zips, sidos, start_ym, end_ym, limit, out_path, today, log=print):
         counts.get("short", 0)))
     log("지금 보이는 사슬 seen_cnt 중앙값 {} · 8분기 이상 {:.1f}% · {}분기 전부(truncated) {:.1f}%".format(
         st["median"], st["pct8"], len(quarters), sum(1 for r in current if r[9]) / max(len(current), 1) * 100))
-    log("(biz_no_last, first_ym) 겹침 {:,}".format(sum(1 for n in pk.values() if n > 1)))
+    log("(biz_no_last, last_ym) 겹침 {:,}(0 이어야 한다 — 한 분기에 같은 번호는 한 줄)".format(
+        sum(1 for n in pk.values() if n > 1)))
+    log("땅 번호가 바뀐 사슬(가장 넓은 폭 하나로 셈 · 바뀜 횟수 {:,}):".format(meta["pnu_changed"]))
+    for _lvl, key, label in PNU_LEVELS:
+        m = moves[key]
+        log("  {} — 사슬 {:,} · 그중 지금 보임 {:,} · 지금 보이는 사슬 seen_cnt 합의 {:.2f}%".format(
+            label, m["chains"], m["current"], m["seen_pct"]))
+    for name, a, b, f_ym, l_ym, seen in far:
+        log("  다른 시·도 예: {} · {} → {} · {}~{} · {}분기".format(name, a, b, f_ym, l_ym, seen))
     log("필지별 줄 수 최대 5: " + " · ".join(
         "{} {}줄(지금 {})".format(p, n, per_pnu_cur.get(p, 0)) for p, n in per_pnu.most_common(5)))
     log("csv {} · {:,}바이트 · meta {} · {:.0f}초".format(out_path, size, meta_path_for(out_path), time.time() - t0))

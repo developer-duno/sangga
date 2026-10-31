@@ -239,8 +239,8 @@ class TestHeadsAndReturns:
 
     def test_sort_and_paging_clamp(self, mig):
         body = " ".join(" ".join(code_lines(body_of(fn_block(mig, FN)))).split())
-        assert ("order by h.is_current desc, h.seen_cnt desc, h.floor_no asc nulls last, h.biz_name, h.biz_no_last"
-                in body)
+        assert ("order by h.is_current desc, h.seen_cnt desc, h.floor_no asc nulls last, h.biz_name, h.biz_no_last, "
+                "h.last_ym) as rn" in body)
         assert "least(greatest(coalesce(p_limit, 20), 1), 100)" in body
         assert "greatest(coalesce(p_offset, 0), 0)" in body
         assert "biz_no_last" not in body.split("row_number()")[0].split("select h.")[1]   # 번호는 안 나간다
@@ -285,7 +285,8 @@ class TestPermissions:
 class TestTablesShape:
     def test_history_columns_pk_and_checks(self, mig):
         block = table_block(mig, "store_history")
-        assert "primary key (biz_no_last, first_ym)," in block
+        assert "primary key (biz_no_last, last_ym)," in block
+        assert "primary key (biz_no_last, first_ym)" not in block
         assert "check (first_ym <= last_ym)" in block
         assert re.search(r"(?m)^\s+floor_no\s+smallint check \(floor_no is null or floor_no <> 0\),$", block)
         for c in ("first_ym", "last_ym"):
@@ -557,6 +558,21 @@ class TestRealRunHistory:
                           "true, 0, false)", (PB, "x{:03d}".format(i), "X{:03d}".format(i)))
             rows = _call(c, PB, 1000, 0)
             assert len(rows) == 100 and rows[0]["total_cnt"] == 120
+        finally:
+            _fresh(pg)
+
+    def test_same_number_and_first_quarter_twice_is_allowed(self, pg):
+        """자료 성질(10-31 빌드 17건) — 같은 번호 · 같은 first_ym · 다른 last_ym 두 줄은 들어가고, 같은 last_ym 이면 막힌다."""
+        psycopg2 = pytest.importorskip("psycopg2")
+        c = _fresh(pg)
+        sql = ("insert into store_history (pnu, floor_no, biz_name, biz_no_last, first_ym, last_ym, seen_cnt, "
+               "is_current, n_links, truncated) values (%s, 1, '바고', 'X1', '201712', %s, %s, %s, %s, true)")
+        try:
+            c.execute(sql, (PB, "202212", 21, False, 0))
+            c.execute(sql, (PB, "202606", 35, True, 1))
+            assert [r["seen_cnt"] for r in _call(c, PB)] == [35, 21]
+            with pytest.raises(psycopg2.errors.UniqueViolation):
+                c.execute(sql, (PB, "202606", 1, True, 0))
         finally:
             _fresh(pg)
 

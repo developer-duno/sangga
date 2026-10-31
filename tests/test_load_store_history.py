@@ -147,9 +147,20 @@ def test_e_counts(tmp_path, small_ranges, capsys, j, value):
 
 
 def test_f_duplicate_key(tmp_path, small_ranges, capsys):
+    """주 열쇠 = (biz_no_last, last_ym) — 같은 번호가 같은 마지막 분기로 두 줄이면 멈춘다."""
     rows = base_rows()
-    rows.append([PD, "2", "다른가게", "D1", "201712", "201712", "1", "f", "0", "t"])
+    rows.append([PD, "2", "다른가게", "D1", "201803", "201803", "1", "t", "0", "f"])
     assert "⒡" in gate_of(tmp_path, capsys, rows=rows)
+
+
+def test_f_same_first_ym_with_other_last_ym_passes(tmp_path, small_ranges, capsys):
+    """양성 대조 — 같은 가게가 번호 둘로 동시에 올라 있다 한쪽만 돌아온 꼴(같은 번호 · 같은 first_ym · 다른 last_ym)은
+    자료 성질이라 통과한다(10-31 빌드 17건 · 메인 판정)."""
+    rows = base_rows()
+    rows.append([PD, "2", "같은가게", "D1", "201712", "201712", "1", "f", "0", "t"])
+    path = make_result(tmp_path, rows=rows)
+    assert L.main(["--csv", path, "--dry-run"]) == 0
+    assert "관문 통과" in capsys.readouterr().out
 
 
 def test_g_row_ranges(tmp_path, capsys):
@@ -165,9 +176,16 @@ def test_h_sha_mismatch(tmp_path, small_ranges, capsys):
     assert "⒣" in gate_of(tmp_path, capsys, meta={"sha256": "0" * 64})
 
 
-@pytest.mark.parametrize("floor_no", ["0", "100", "-10", "1층"])
+@pytest.mark.parametrize("floor_no", ["0", "-0", "1층", "1.5"])
 def test_i_floor(tmp_path, small_ranges, capsys, floor_no):
     assert "⒤" in gate_of(tmp_path, capsys, rows=edit(0, 1, floor_no))
+
+
+@pytest.mark.parametrize("floor_no", ["-40", "-26", "99", "120"])
+def test_i_any_nonzero_integer_passes(tmp_path, small_ranges, capsys, floor_no):
+    """⒤ 는 「정수 · 0 아님」만(DB check 와 같은 기준 — 운영 unit_business 에도 −40·−26 이 있다 · 메인 판정)."""
+    path = make_result(tmp_path, rows=edit(0, 1, floor_no))
+    assert L.main(["--csv", path, "--dry-run"]) == 0
 
 
 def test_j_empty_name(tmp_path, small_ranges, capsys):

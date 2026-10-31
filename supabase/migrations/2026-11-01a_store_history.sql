@@ -11,7 +11,7 @@
 --
 -- 무엇이 생기나 (새 객체 + 신선도 함수 한 줄 + 옛 칸 설명 하나 — 기존 표의 행·칸은 한 글자도 안 바꾼다)
 -- ---------------------------------------------------------------------------------------------
---   ① 표 둘 — store_history(가게 사슬 한 줄 · PK (biz_no_last, first_ym) · 색인 (pnu, is_current desc, seen_cnt desc)) ·
+--   ① 표 둘 — store_history(가게 사슬 한 줄 · PK (biz_no_last, last_ym) · 색인 (pnu, is_current desc, seen_cnt desc)) ·
 --      store_history_release(표지 한 줄 · last_ym · 빌드 날 · 줄 수). 둘 다 RLS 켬 + 권한 회수(공개키 0).
 --      적재는 scripts/collectors/load_store_history.py(통째 교체 · 한 트랜잭션 · 관문 ⒜~⒦).
 --   ② 함수 get_store_history(p_pnu text, p_limit int default 20, p_offset int default 0) + api 쌍둥이 — 그 땅의 가게 줄
@@ -109,7 +109,7 @@ create table if not exists store_history (
   is_current   boolean not null,
   n_links      smallint not null default 0 check (n_links >= 0),
   truncated    boolean not null,
-  primary key (biz_no_last, first_ym),
+  primary key (biz_no_last, last_ym),
   check (first_ym <= last_ym)
 );
 
@@ -121,6 +121,8 @@ comment on table store_history is
   '가게(사슬)마다 한 줄(scripts/build_store_history.py → load_store_history.py 가 통째 교체). '
   '「N분기 보임」은 자료에 보인 분기 수이지 영업 기간이 아니다 · 안 보임 ≠ 폐업 · 빠졌다 돌아온 번호는 새 사슬. '
   '열쇠 = 상가업소번호(①) + 번호가 끝난 사슬만 같은 땅·층·정규화 상호가 양쪽 다 정확히 하나일 때 잇는다(②~⑥). '
+  '주 열쇠 = (마지막 번호, 마지막 분기) — 한 분기에 같은 번호는 한 줄이라 늘 다르다. 같은 가게가 번호 둘로 동시에 올라 있다 '
+  '한쪽만 돌아오면 같은 first_ym 줄이 둘 날 수 있다(자료 성질 · 10-31 빌드 17건 + 본사 번호 이동 2건). '
   '공개키 읽기 금지 — 화면은 get_store_history 로만 읽는다';
 comment on column store_history.floor_no is '마지막 분기의 층(정수 · 지하 음수 · 옥탑 99 · 모름 null — 0 없음 · 절대 규칙 4)';
 comment on column store_history.biz_name is '마지막 분기의 상호(원문 그대로)';
@@ -194,7 +196,7 @@ as $$
     -- ⛔ char(19) 로 견준다 — text 로 견주면 칸이 캐스트돼 색인이 죽는다.
     select h.floor_no, h.biz_name, h.first_ym, h.last_ym, h.seen_cnt, h.is_current, h.truncated,
            row_number() over (order by h.is_current desc, h.seen_cnt desc, h.floor_no asc nulls last,
-                                       h.biz_name, h.biz_no_last) as rn
+                                       h.biz_name, h.biz_no_last, h.last_ym) as rn
     from store_history h
     where h.pnu = p_pnu::char(19)
   ),

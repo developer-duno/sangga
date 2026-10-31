@@ -17,10 +17,13 @@
      is_current ⇔ last_ym = end_ym · truncated ⇔ first_ym = start_ym (t/f 만)
   ⒟ pnu 19자리 숫자 + 앞 두 자리 ∈ sido
   ⒠ seen_cnt 1 이상 · first_ym~last_ym 분기 수 이하 · n_links 0 이상 (정수)
-  ⒡ (biz_no_last, first_ym) 중복 0 (표의 주 열쇠 · biz_no_last 빈 칸도 여기서 멈춘다)
+  ⒡ (biz_no_last, last_ym) 중복 0 (표의 주 열쇠 · biz_no_last 빈 칸도 여기서 멈춘다) — 한 분기에 같은 번호는 한 줄이라
+     사슬마다 (마지막 번호, 마지막 분기)가 늘 다르다. (biz_no_last, first_ym) 은 같은 가게가 번호 둘로 동시에 올라 있다
+     한쪽만 돌아오면 겹칠 수 있다(10-31 빌드 17건 + 본사 번호 이동 2건 — 자료 성질 · 메인 판정 2026-10-31).
   ⒢ 행수 범위 ROWS_RANGE · 지금 보이는 줄 수 CURRENT_RANGE
   ⒣ meta rows = csv 줄 수 · meta sha256 = csv 지문
-  ⒤ floor_no = 빈 칸(층 모름) 또는 0 아닌 정수 -9~99 (절대 규칙 4)
+  ⒤ floor_no = 빈 칸(층 모름) 또는 0 아닌 정수 (절대 규칙 4 · DB check 와 같은 기준 — 범위는 층 정규화 정본을 믿는다:
+     운영 unit_business 202606 에도 −40·−26·−18·−17 이 있다 · 메인 판정 2026-10-31)
   ⒥ biz_name 비어 있지 않음
   ⒦ (DB 안 · 실적재 SQL 안) meta end_ym = snapshot_release.loaded_ym — 아니면 raise → 통째 롤백.
      「최신 분기 = unit_business 에 적재된 최신 분기」를 **표지로** 읽는다 — 270만 행 max(snapshot_ym) 를 훑지 않고,
@@ -72,7 +75,6 @@ EXPECT_START_YM = "201712"
 # 조사 C(2026-10-31): 오늘 가게 서울 554,092 + 대전 80,704 = 634,796 · DB 202606 서울 554,069 + 대전 80,701
 ROWS_RANGE = (900_000, 2_000_000)
 CURRENT_RANGE = (600_000, 680_000)
-FLOOR_RANGE = (-9, 99)
 EXAMPLES = 3
 
 
@@ -173,8 +175,8 @@ def row_problems(r, meta):
     if not biz:
         out.append(("⒡", "biz_no_last 가 비었습니다"))
     if floor_no != "":
-        if not RE_INT.match(floor_no) or int(floor_no) == 0 or not FLOOR_RANGE[0] <= int(floor_no) <= FLOOR_RANGE[1]:
-            out.append(("⒤", "floor_no {!r} (빈 칸 또는 0 아닌 정수 {}~{})".format(floor_no, *FLOOR_RANGE)))
+        if not RE_INT.match(floor_no) or int(floor_no) == 0:
+            out.append(("⒤", "floor_no {!r} (빈 칸 또는 0 아닌 정수)".format(floor_no)))
     if not name.strip():
         out.append(("⒥", "biz_name 이 비었습니다"))
     return out
@@ -198,9 +200,9 @@ def check_csv(csv_path, meta):
                 continue
             for code, msg in row_problems(r, meta):
                 problems.setdefault(code, []).append("{}줄: {}".format(i, msg))
-            key = (r[3], r[4])
+            key = (r[3], r[5])
             if key in keys:
-                problems.setdefault("⒡", []).append("{}줄: (biz_no_last, first_ym) 중복 {}".format(i, key))
+                problems.setdefault("⒡", []).append("{}줄: (biz_no_last, last_ym) 중복 {}".format(i, key))
             keys.add(key)
             if r[7] == "t":
                 stats["current"] += 1

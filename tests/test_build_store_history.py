@@ -246,6 +246,28 @@ def test_pnu_change_follows_last_value_and_is_counted():
     assert c.pnu == P2 and book.pnu_changed == 1
 
 
+@pytest.mark.parametrize("old, new, lvl", [
+    (P1, P1, 0), (P1, P2, 1), (P1, "3020010100100010000", 2), (P1, PS, 3),
+])
+def test_pnu_change_level(old, new, lvl):
+    assert B.pnu_change_level(old, new) == lvl
+
+
+def test_pnu_change_stats_counts_widest_move_once():
+    """한 사슬이 같은 시군구 → 다른 시·도로 두 번 바뀌면 다른 시·도 하나로만 센다(바뀜 횟수는 따로 2)."""
+    book = run_book([
+        ("201712", [R("A", pnu=P1), R("K", "그대로", pnu=P1), R("G", "갔다", pnu=P1)]),
+        ("201803", [R("A", pnu=P2), R("K", "그대로", pnu=P1)]),
+        ("201806", [R("A", pnu=PS), R("K", "그대로", pnu=P1)]),
+    ])
+    stats, far = B.pnu_change_stats(book.chains, "201806")
+    assert book.pnu_changed == 2
+    assert {k: v["chains"] for k, v in stats.items()} == {"same_sgg": 0, "other_sgg": 0, "other_sido": 1}
+    assert stats["other_sido"]["current"] == 1
+    assert stats["other_sido"]["seen_pct"] == pytest.approx(3 / 6 * 100)    # A 3 · K 3 (G 는 끝남)
+    assert far == [("김밥", P2, PS, "201712", "201806", 3)]
+
+
 def test_rule6_missing_one_quarter_starts_new_chain():
     book = run_book([
         ("201712", [R("A", "김밥"), R("X", "다른가게")]),
@@ -305,7 +327,8 @@ def two_quarter_zips(tmp_path):
 
 
 META_KEYS = {"built_on", "start_ym", "end_ym", "sido", "quarters", "rows", "current_rows", "n_links",
-             "pnu_changed", "dup_biz_no", "bad_pnu", "partial", "sha256"}
+             "pnu_changed", "pnu_changed_same_sgg", "pnu_changed_other_sgg", "pnu_changed_other_sido",
+             "dup_biz_no", "bad_pnu", "partial", "sha256"}
 
 
 def test_build_writes_csv_and_meta(tmp_path):
