@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 
 /**
  * 빈 카드 하나(결정 0036 결정 2 · 물결 1-B).
@@ -11,10 +11,26 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/react';
  */
 
 const rpcCalls: string[] = [];
+/**
+ * 신선도 함수만은 **정상 답**을 준다(검사 뒤 보완 F7) — 그래야 빈 카드가 자료 칸을 빼지 않았을 때 날짜 줄이 실제로 선다
+ * (빈 답이면 자료 칸이 있어도 줄이 안 서서 「줄 0」 시험이 헛돈다). 서울 상권 4종 세 줄은 정본 꼴 그대로.
+ */
+const FRESH_ROWS = [
+  { src: '상권 추정매출 (서울시)', basis_kind: '분기', basis: '20262', next_expected: null, cadence: '분기마다' },
+  { src: '상권 길단위인구 (서울시)', basis_kind: '분기', basis: '20262', next_expected: null, cadence: '분기마다' },
+  {
+    src: '상권 상주·직장인구 (서울시)',
+    basis_kind: '값이 바뀐 분기',
+    basis: '상주 2023년 4분기, 직장 2024년 4분기',
+    next_expected: null,
+    cadence: '연 1회',
+  },
+];
 vi.mock('../lib/supabase', () => ({
   supabase: {
     rpc: (fn: string) => {
       rpcCalls.push(fn);
+      if (fn === 'get_data_freshness') return Promise.resolve({ data: FRESH_ROWS, error: null });
       return Promise.resolve({ data: null, error: null });
     },
     from: (t: string) => {
@@ -25,6 +41,13 @@ vi.mock('../lib/supabase', () => ({
 }));
 
 const { EmptySection } = await import('./EmptySection');
+const { SectionCard } = await import('./SectionCard');
+const { SECTION_PLAN } = await import('../lib/sectionCards');
+const { resetDataFreshnessCache } = await import('../lib/loadDataFreshness');
+
+beforeEach(() => {
+  resetDataFreshnessCache();
+});
 
 afterEach(() => {
   cleanup();
@@ -66,11 +89,20 @@ describe('EmptySection', () => {
   });
 
   it('⛔ sales·pop 칸의 자료 칸(서울 카드용 · 결정 0045 PR③)이 있어도 빈 카드에는 날짜 줄이 없고 신선도도 안 묻는다', async () => {
-    const { container } = render(<EmptySection kind="sales" pnu="3011010700108770000" />);
-    render(<EmptySection kind="pop" pnu="3011010700108770000" />);
+    const sales = render(<EmptySection kind="sales" pnu="3011010700108770000" />);
+    const pop = render(<EmptySection kind="pop" pnu="3011010700108770000" />);
     await new Promise((r) => setTimeout(r, 0));
-    expect(container.querySelector('.card__src')).toBeNull();
+    expect(sales.container.querySelector('.card__src')).toBeNull();
+    expect(pop.container.querySelector('.card__src')).toBeNull();
     expect(rpcCalls).toEqual([]);
+  });
+
+  it('양성 대조 — 같은 칸(자료 칸 있음)을 빈 카드 거르기 없이 그리면 날짜 줄이 서고 신선도를 묻는다(위 「줄 0」이 헛돌지 않는다)', async () => {
+    expect(SECTION_PLAN.sales.sources?.length).toBeGreaterThan(0);
+    const { container } = render(<SectionCard plan={SECTION_PLAN.pop} className="card--empty" summary="비어 있음" />);
+    await waitFor(() => expect(container.querySelector('.card__src')).not.toBeNull());
+    expect(container.querySelector('.card__src')?.textContent).toContain('서울시 상권분석서비스 2026년 2분기');
+    expect(rpcCalls).toEqual(['get_data_freshness']);
   });
 
   it('대전 건물의 유동인구는 그 사실 한 줄(요약·본문)', () => {

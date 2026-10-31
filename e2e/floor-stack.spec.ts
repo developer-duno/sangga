@@ -2591,7 +2591,12 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
     await expect(first.locator('.sales__name')).toHaveText('○○역 2번 출구 · 골목상권');
     await expect(first.locator('.sales__num')).toHaveText('2026년 2분기(3개월) 매출 7억 2,300만원');
     await expect(first.locator('.sales__big')).toContainText('결제 15,208건');
-    await expect(sales.locator('.sales__scale')).toHaveText('막대가 꽉 차면 7억 6,000만원(3개월 합)');
+    // 눈금 글은 상권 덩어리마다(검사 뒤 보완 F1 — 관광특구가 골목의 약 153배라 카드 하나 눈금이면 골목 막대가 사라진다).
+    await expect(sales.locator('.sales__scale')).toHaveText([
+      '막대가 꽉 차면 7억 6,000만원(3개월 합)',
+      '막대가 꽉 차면 1,163억원(3개월 합)',
+    ]);
+    await expect(first.locator('.sales__scale')).toHaveText('막대가 꽉 차면 7억 6,000만원(3개월 합)');
     // 흐름 막대 — 옛 → 최신 · 가장 큰 분기(20254) = 칸 높이 · 최신(20262) = 723/760 · 빠진 분기(20244) = 「–」.
     const cols = first.locator('.sales__col');
     await expect(cols).toHaveCount(8);
@@ -2608,15 +2613,51 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
     await expect(first.locator('.sales__col[data-quarter="20244"] .sales__bar')).toHaveCount(0);
     await expect(first.locator('.sales__col[data-quarter="20244"] .sales__gap')).toHaveText('–');
     await expect(first.locator('.sales__bar--last')).toHaveCount(1);
+    // 둘째 상권(관광특구 · 첫 상권의 약 153배)도 제 눈금에서 가장 큰 분기가 칸 높이 — 상권마다 제 눈금이라 첫 상권 막대도 안 사라진다.
+    const second = sales.locator('.sales__district').nth(1);
+    const bigH = await second.locator('.sales__col[data-quarter="20262"] .sales__bar').evaluate((e) => e.getBoundingClientRect().height);
+    const bigBox = await second.locator('.sales__col[data-quarter="20262"] .sales__bars').evaluate((e) => e.clientHeight);
+    expect(bigH).toBeCloseTo(bigBox, 0);
+    expect(hMax / boxH).toBeGreaterThan(0.95); // 공통 눈금이었다면 760 ÷ 116,300 ≈ 0.7%
+    // 해 글 — 휴대폰 칸 폭에서도 잘리지 않는다(검사 뒤 보완 F10 · 시안 꼴 「’24」).
+    const years = first.locator('.sales__tick-year');
+    await expect(years).toHaveText(['’24', '’25', '’26']);
+    for (const y of await years.all()) {
+      expect(await y.evaluate((e) => e.scrollWidth - e.clientWidth)).toBeLessThanOrEqual(0);
+      const tick = y.locator('xpath=..');
+      expect(await tick.evaluate((e) => e.scrollWidth - e.clientWidth)).toBeLessThanOrEqual(0);
+    }
     // 업종 표 5 + 그 밖 · 칩 카페 hit 줄.
     await expect(first.locator('.sales__table tbody tr th')).toHaveText([
       '한식음식점',
       '커피-음료 · 고른 업종(카페)',
       '편의점',
       '미용실',
-      '일반교습학원',
+      '스포츠 강습',
       '그 밖 9업종 (더해서)',
     ]);
+    // 이름 첫 칸 — 낱말 가운데서 줄을 안 바꾸고(「스포츠 강/습」 금지) 폭은 글자 4.5개 이상(검사 뒤 보완 F10).
+    const nameCell = first.locator('.sales__table tbody tr th').nth(4);
+    const nameBox = await nameCell.evaluate((e) => {
+      const cs = e.ownerDocument.defaultView!.getComputedStyle(e);
+      return { w: e.getBoundingClientRect().width, fs: Number.parseFloat(cs.fontSize), wb: cs.wordBreak };
+    });
+    expect(nameBox.wb).toBe('keep-all');
+    expect(nameBox.w).toBeGreaterThanOrEqual(nameBox.fs * 4.5);
+    // 「강습」 두 글자가 같은 줄(글자 상자의 위 끝이 같다).
+    const gangTops = await nameCell.evaluate((e) => {
+      const t = e.firstChild!;
+      const i = (t.textContent ?? '').indexOf('강습');
+      const r = e.ownerDocument.createRange();
+      const tops: number[] = [];
+      for (const k of [i, i + 1]) {
+        r.setStart(t, k);
+        r.setEnd(t, k + 1);
+        tops.push(r.getBoundingClientRect().top);
+      }
+      return tops;
+    });
+    expect(Math.abs(gangTops[0] - gangTops[1])).toBeLessThan(2);
     await expect(first.locator('.sales__hit')).toHaveCount(1);
     await expect(sales).not.toContainText('%');
     // 13px(화면 묶음).
@@ -2649,7 +2690,7 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
     await openWithChip('미용');
     await openCard(page, /업종별 추정매출/);
     await expect(first.locator('.sales__hit th')).toHaveText('미용실 · 고른 업종(미용)');
-    await expect(first.locator('.sales__chip-out')).toHaveText(['고른 업종(미용): 네일숍 3,000만원 · 610건 (상위 5 밖)']);
+    await expect(first.locator('.sales__chip-out')).toHaveText(['고른 업종(미용): 네일숍 3,000만원 · 610건 (3개월 합 · 상위 5 밖)']);
     await expect(first.locator('.sales__chip-part')).toHaveText('고른 업종 가운데 피부관리실은 이 자료에 없습니다');
 
     // 함수가 없으면(PGRST202) — 카드째 없다(「자료 없음」이라 적지 않는다). 나중에 등록한 것이 먼저 잡힌다.
@@ -2688,15 +2729,20 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
     const first = blocks.first();
     await expect(first.locator('.pop__chunk--flow .pop__num')).toHaveText('412,560명');
     await expect(first.locator('.pop__chunk--flow .pop__q')).toHaveText('2026년 2분기 3개월간');
-    await expect(first.locator('.pop__chunk--resident .pop__q')).toHaveText('2023년 기준');
-    await expect(first.locator('.pop__chunk--worker .pop__q')).toHaveText('2024년 기준');
+    // 서울시가 안 바꾼 해 괄호(검사 뒤 보완 F2 · 시안 원문).
+    await expect(first.locator('.pop__chunk--resident .pop__q')).toHaveText('2023년 기준 (서울시가 2024·2025년에는 안 바꿈)');
+    await expect(first.locator('.pop__chunk--worker .pop__q')).toHaveText('2024년 기준 (서울시가 2025년에는 안 바꿈)');
+    // 배지 옆 작은 글(검사 뒤 보완 F4).
+    await expect(pop.locator('.pop__badge-note')).toHaveText('서울시 상권분석서비스 · 생활인구·주민등록·통신사 자료로 서울시가 셈');
     // 가구 수는 싣지 않는다(메인 결정 나 — 서울시 화면 가구세대 수와 다른 값 · 목업엔 있었다).
-    await expect(first.locator('.pop__chunk--resident .pop__big')).toHaveText('2,310명2023년 기준남 1,090 · 여 1,220');
+    await expect(first.locator('.pop__chunk--resident .pop__big')).toHaveText(
+      '2,310명2023년 기준 (서울시가 2024·2025년에는 안 바꿈)남 1,090 · 여 1,220',
+    );
     await expect(pop).not.toContainText('가구');
     // 미니 막대 둘 — 시간대 6 · 요일 7 · 높이 = 값 ÷ 묶음 최댓값(17~21시 84,000 이 칸 높이 · 0~6시 58,000).
     const figs = first.locator('.pop__bars-fig');
     await expect(figs).toHaveCount(2);
-    await expect(figs.nth(0).locator('.pop__scale')).toHaveText('시간대 · 꽉 차면 84,000명');
+    await expect(figs.nth(0).locator('.pop__scale')).toHaveText('시간대 · 꽉 차면 84,000명(3개월간)');
     await expect(figs.nth(0).locator('.pop__bar')).toHaveCount(6);
     await expect(figs.nth(1).locator('.pop__bar')).toHaveCount(7);
     const hs = await figs.nth(0).locator('.pop__bar').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height));

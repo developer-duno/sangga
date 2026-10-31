@@ -91,12 +91,36 @@ export function isDistrictPopList(x: unknown): x is DistrictPop[] {
   return Array.isArray(x) && x.length > 0 && x.every(isPopRow);
 }
 
+/**
+ * 모양 검사를 지난 답을 화면이 쓸 꼴로 — `ok` 줄인데 길단위·사는·일하는 셋 다 null 이면 그 줄을 `no_data` 로 다룬다
+ * (검사 뒤 보완 F12 — 빈 덩어리를 그리지 않는다 · 서버는 셋 중 하나라도 있어야 ok 를 주므로 이상한 답 방어다).
+ */
+export function normalizePopRows(rows: readonly DistrictPop[]): DistrictPop[] {
+  return rows.map((r) =>
+    r.status === 'ok' && !r.flow && !r.resident && !r.worker ? { ...r, status: 'no_data' } : r,
+  );
+}
+
 // ── 「YYYY년 기준」 ─────────────────────────────────────────────────────────
 
-/** 값이 마지막으로 바뀐 분기 → 「○○○○년 기준」. 못 읽으면 null. */
-export function valueYearText(valueQuarter: string | null | undefined): string | null {
+/**
+ * 값이 마지막으로 바뀐 분기 → 「○○○○년 기준」. 못 읽으면 null.
+ * 그 상권의 마지막 분기(`lastQuarter`)를 주면 그 사이 서울시가 값을 안 바꾼 해를 시안 원문 꼴로 덧붙인다(검사 뒤 보완 F2) —
+ * 해 = 값이 바뀐 해 + 1 부터 마지막 분기의 해 − 1 까지 · 비면 괄호 없음 · 「(서울시가 ○○○○·○○○○년에는 안 바꿈)」.
+ * ⓘ 해는 서버 값에서 계산한다(글자로 박지 않는다).
+ */
+export function valueYearText(
+  valueQuarter: string | null | undefined,
+  lastQuarter?: string | null,
+): string | null {
   const s = splitQuarter(valueQuarter);
-  return s ? `${s.year}년 기준` : null;
+  if (!s) return null;
+  const base = `${s.year}년 기준`;
+  const last = splitQuarter(lastQuarter);
+  if (!last) return base;
+  const years: number[] = [];
+  for (let y = Number(s.year) + 1; y <= Number(last.year) - 1; y++) years.push(y);
+  return years.length > 0 ? `${base} (서울시가 ${years.join('·')}년에는 안 바꿈)` : base;
 }
 
 // ── 접힌 요약 ───────────────────────────────────────────────────────────────
@@ -159,7 +183,8 @@ function barsOf(f: DistrictPopFlow, keys: readonly (readonly [string, string])[]
   return {
     bars: keys.map(([k, tick], i) => ({ key: k, tick, value: values[i], h: max > 0 ? (values[i] / max) * 100 : 0 })),
     max,
-    scale: max > 0 ? `꽉 차면 ${formatCount(max, '명')}` : null,
+    // 단위 꼬리 「(3개월간)」 — 막대 값도 3개월간 인구수다(검사 뒤 보완 F3).
+    scale: max > 0 ? `꽉 차면 ${formatCount(max, '명')}(3개월간)` : null,
   };
 }
 
@@ -188,7 +213,7 @@ export function residentText(row: DistrictPop): PopBig | null {
   //    다른 값이라 같은 상권에 다른 가구 수를 적게 된다 · 👤 결정 원문에도 가구는 없다. 칸은 타입에만 남긴다.
   return {
     num: formatCount(r.tot, '명'),
-    when: valueYearText(row.resident_value_quarter),
+    when: valueYearText(row.resident_value_quarter, row.resident_last_quarter),
     detail: `남 ${formatCount(r.ml, '')} · 여 ${formatCount(r.fml, '')}`,
   };
 }
@@ -199,7 +224,7 @@ export function workerText(row: DistrictPop): PopBig | null {
   if (row.status !== 'ok' || !w) return null;
   return {
     num: formatCount(w.tot, '명'),
-    when: valueYearText(row.worker_value_quarter),
+    when: valueYearText(row.worker_value_quarter, row.worker_last_quarter),
     detail: `남 ${formatCount(w.ml, '')} · 여 ${formatCount(w.fml, '')}`,
   };
 }
@@ -230,6 +255,8 @@ export const POP_LEAD_REST: readonly [string, string, string] = [
 ];
 
 export const POP_BADGE = 'C등급 · 서울시 집계';
+/** 배지 옆 작은 글(검사 뒤 보완 F4 · 메인 문구 — 추정매출 카드의 `SALES_BADGE_NOTE` 꼴). */
+export const POP_BADGE_NOTE = '서울시 상권분석서비스 · 생활인구·주민등록·통신사 자료로 서울시가 셈';
 
 /** 덩이 머리 셋(목업 글자 그대로). */
 export const POP_CHUNK_TITLES = {

@@ -164,6 +164,52 @@ describe('SalesSection — 자료가 있을 때', () => {
     expect(gap?.querySelector('.sales__gap')?.textContent).toBe('–');
     expect(bar('20262')?.getAttribute('aria-label')).toBe('2026년 2분기 매출 7억 2,300만원 · 결제 15,208건 (3개월 합)');
     expect(screen.getByText('‘–’ 칸은 그 분기에 서울시가 이 상권 자료를 내지 않은 것입니다.')).toBeTruthy();
+    // 눈금 글은 상권 덩어리 안 흐름 그림 머리 아래(검사 뒤 보완 F1) · 해 글은 시안 꼴 「’24」(F10 · 온전한 해는 title).
+    expect(container.querySelector('.sales__district .sales__trend .sales__scale')).not.toBeNull();
+    const firstYear = container.querySelector('.sales__col[data-quarter="20243"] .sales__tick-year');
+    expect(firstYear?.textContent).toBe('’24');
+    expect(firstYear?.getAttribute('title')).toBe('2024년');
+  });
+
+  it('★ 상권마다 제 눈금(검사 뒤 보완 F1) — 관광특구 1,163억 · 골목 19.9억이어도 두 상권 모두 가장 큰 분기가 100% · 눈금 글도 상권마다', async () => {
+    responses.sales = {
+      data: [
+        okRow({
+          district_id: 'small',
+          district_nm: '작은 골목',
+          trend: [
+            { quarter: '20262', amt: 1_990_000_000, co: 100 },
+            { quarter: '20261', amt: 995_000_000, co: 50 },
+          ],
+        }),
+        okRow({
+          district_id: 'big',
+          district_nm: '큰 관광특구',
+          district_type: '관광특구',
+          trend: [
+            { quarter: '20262', amt: 116_300_000_000, co: 9000 },
+            { quarter: '20261', amt: 58_150_000_000, co: 4500 },
+          ],
+        }),
+      ],
+      error: null,
+    };
+    const { container } = render(<SalesSection pnu={PNU} />);
+    await openCard();
+    const blocks = container.querySelectorAll('.sales__district');
+    expect(blocks).toHaveLength(2);
+    const h = (b: Element, q: string) =>
+      Number.parseFloat(b.querySelector<HTMLElement>(`.sales__col[data-quarter="${q}"] .sales__bar`)!.style.height);
+    expect(h(blocks[0], '20262')).toBe(100);
+    expect(h(blocks[0], '20261')).toBeCloseTo(50, 4);
+    expect(h(blocks[1], '20262')).toBe(100);
+    expect(h(blocks[1], '20261')).toBeCloseTo(50, 4);
+    expect([...container.querySelectorAll('.sales__scale')].map((p) => p.textContent)).toEqual([
+      '막대가 꽉 차면 19억 9,000만원(3개월 합)',
+      '막대가 꽉 차면 1,163억원(3개월 합)',
+    ]);
+    // 눈금 글은 상권 덩어리 안에만 — 카드 머리 공통 눈금 줄은 없다.
+    expect(container.querySelector('.sales > .card__body > .sales__scale')).toBeNull();
   });
 
   it('★ 업종 표 5줄 + 그 밖 · 막대 길이 = 첫 줄 대비 · 발 문구 다섯(현금 문장 없음)', async () => {
@@ -210,7 +256,7 @@ describe('SalesSection — 자료가 있을 때', () => {
     await openCard();
     expect(container.querySelector('.sales__hit th')?.textContent).toBe('미용실 · 고른 업종(미용)');
     expect([...container.querySelectorAll('.sales__chip-out')].map((p) => p.textContent)).toEqual([
-      '고른 업종(미용): 네일숍 6,100만원 · 980건 (상위 5 밖)',
+      '고른 업종(미용): 네일숍 6,100만원 · 980건 (3개월 합 · 상위 5 밖)',
     ]);
     expect(container.querySelector('.sales__chip-part')?.textContent).toBe(
       '고른 업종 가운데 피부관리실은 이 자료에 없습니다',

@@ -89,9 +89,6 @@ export function SalesSection({ pnu, prefetch, plan = SECTION_PLAN.sales, chip = 
     );
   }
 
-  // 카드 하나에 눈금 하나 — 상권끼리 같은 높이가 같은 금액이 되게 한다.
-  const scaleMax = salesScaleMax(rows);
-
   return (
     <SectionCard plan={plan} className="sales" summary={summary}>
       <p className="sales__lead">
@@ -104,10 +101,8 @@ export function SalesSection({ pnu, prefetch, plan = SECTION_PLAN.sales, chip = 
         <span className="grade__badge grade__badge--est">{SALES_BADGE}</span>
         <span className="sales__q">{SALES_BADGE_NOTE}</span>
       </p>
-      {scaleMax > 0 && <p className="sales__scale">{salesScaleText(scaleMax)}</p>}
-
       {rows.map((r) => (
-        <SalesBlock key={r.district_id ?? r.status} row={r} scaleMax={scaleMax} chip={chip} />
+        <SalesBlock key={r.district_id ?? r.status} row={r} chip={chip} />
       ))}
 
       <ul className="sales__why">
@@ -125,7 +120,7 @@ export function SalesSection({ pnu, prefetch, plan = SECTION_PLAN.sales, chip = 
 }
 
 /** 상권 하나의 덩어리. 상권끼리 더하지 않는다. */
-function SalesBlock({ row, scaleMax, chip }: { row: DistrictSales; scaleMax: number; chip: FounderChip }) {
+function SalesBlock({ row, chip }: { row: DistrictSales; chip: FounderChip }) {
   const title = districtTitle(row);
   if (row.status === 'no_data') {
     return (
@@ -140,6 +135,8 @@ function SalesBlock({ row, scaleMax, chip }: { row: DistrictSales; scaleMax: num
   // 모양 검사가 ok 줄에는 최신 분기가 있음을 보장한다 — 그래도 없으면 덩어리째 뺀다.
   if (!big || !label) return null;
   const lag = salesLagText(row);
+  // 상권마다 제 눈금(검사 뒤 보완 F1 — 관광특구와 골목상권은 수십 배 차이라 카드 하나 눈금이면 작은 상권 막대가 사라진다).
+  const scaleMax = salesScaleMax(row);
   const cells = salesTrendCells(row, scaleMax);
   const table = salesTableRows(row, chip);
 
@@ -159,6 +156,8 @@ function SalesBlock({ row, scaleMax, chip }: { row: DistrictSales; scaleMax: num
             <b>분기별 매출 흐름</b>
             <span className="sales__dir">왼쪽이 옛 분기, 오른쪽이 최근 · 3개월 합</span>
           </figcaption>
+          {/* 눈금 글 — 이 상권 덩어리의 눈금(상권끼리 막대 키를 견주지 않게 · 화면·종이 둘 다). */}
+          {scaleMax > 0 && <p className="sales__scale">{salesScaleText(scaleMax)}</p>}
           <div className="sales__cols" style={{ gridTemplateColumns: `repeat(${cells.length}, minmax(0, 1fr))` }}>
             {cells.map((c, i) => (
               <div key={c.quarter} className={`sales__col sales__col--${c.kind}`} data-quarter={c.quarter}>
@@ -179,7 +178,10 @@ function SalesBlock({ row, scaleMax, chip }: { row: DistrictSales; scaleMax: num
                 </div>
                 <span className="sales__tick">
                   <span className="sales__tick-q">{c.q ? `${c.q}분기` : ''}</span>
-                  {(i === 0 || c.q === '1') && c.year ? <span className="sales__tick-year">{`${c.year}년`}</span> : null}
+                  {/* 해 글은 시안 꼴 「’24」(검사 뒤 보완 F10 — 네 자리 해 + 「년」은 휴대폰 칸 폭(약 34px)에서 잘렸다 · 온전한 해는 title 과 막대 읽어 주기 글에). */}
+                  {(i === 0 || c.q === '1') && c.year ? (
+                    <span className="sales__tick-year" title={`${c.year}년`}>{`’${c.year.slice(2)}`}</span>
+                  ) : null}
                 </span>
               </div>
             ))}

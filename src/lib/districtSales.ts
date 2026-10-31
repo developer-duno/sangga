@@ -196,7 +196,7 @@ export type SalesTrendCell = {
   kind: 'ok' | 'missing';
   amt: number | null;
   co: number | null;
-  /** 막대 높이(%) — 카드 공통 눈금(`salesScaleMax`)에 대한 비례. missing 이면 0. */
+  /** 막대 높이(%) — 그 상권 눈금(`salesScaleMax`)에 대한 비례. missing 이면 0. */
   h: number;
   /** 창의 가장 최근 칸(오른쪽 끝) — 짙은 색. */
   last: boolean;
@@ -225,16 +225,17 @@ export function salesTrendCells(row: DistrictSales, scaleMax: number): SalesTren
 }
 
 /**
- * 카드 하나의 **공통 눈금** — ok 상권 전부의 창 안 금액 가운데 가장 큰 값 하나(상권끼리 같은 높이 = 같은 금액).
+ * **상권 하나의 눈금** — 그 상권 창 안 금액 가운데 가장 큰 값(검사 뒤 보완 F1).
+ * ⛔ 카드 하나에 눈금 하나로 두지 않는다 — 운영 실측에서 관광특구 3개월 매출(1,163억)이 골목상권 가운데값(19.9억)의 약
+ *    58배라, 공통 눈금이면 좁은 상권 막대가 2% 높이로 사라진다. 그래서 상권 덩어리마다 제 눈금 글을 함께 적는다
+ *    (상권끼리 막대 키를 견주지 않게 · 개업·폐업 카드는 비율이라 공통 눈금 그대로다).
  * 창 밖 분기는 세지 않는다. 그릴 막대가 없거나 전부 0 이면 0.
  */
-export function salesScaleMax(rows: readonly DistrictSales[]): number {
+export function salesScaleMax(row: DistrictSales): number {
+  if (row.status !== 'ok' || !row.trend) return 0;
+  const inWindow = new Set(row.window_quarters);
   let max = 0;
-  for (const r of rows) {
-    if (r.status !== 'ok' || !r.trend) continue;
-    const inWindow = new Set(r.window_quarters);
-    for (const t of r.trend) if (inWindow.has(t.quarter) && t.amt > max) max = t.amt;
-  }
+  for (const t of row.trend) if (inWindow.has(t.quarter) && t.amt > max) max = t.amt;
   return max;
 }
 
@@ -304,13 +305,16 @@ export function salesTableRows(row: DistrictSales, chip: FounderChip): SalesTabl
     const ind = inds.find((i) => i.cd === cd);
     if (ind) {
       chipOutside.push(
-        `고른 업종(${chip}): ${ind.nm || match.seoulNm[cd] || cd} ${formatAmount(ind.amt)} · ${formatCount(ind.co, '건')} (상위 5 밖)`,
+        `고른 업종(${chip}): ${ind.nm || match.seoulNm[cd] || cd} ${formatAmount(ind.amt)} · ${formatCount(ind.co, '건')} (3개월 합 · 상위 5 밖)`,
       );
     } else {
       missing.push(cd);
     }
   }
-  const allMissing = codes.length > 0 && codes.every((cd) => !inds.some((i) => i.cd === cd));
+  // 「이 자료에 없다」는 업종 전부와 상위 5 를 **함께** 보고 정한다(검사 뒤 보완 F11 — 업종 전부 목록이 상위 5 줄을 빠뜨린
+  // 이상한 답이 와도 표에 굵게 선 업종을 「없다」고 말하지 않게).
+  const present = (cd: string) => inds.some((i) => i.cd === cd) || top.some((t) => t.cd === cd);
+  const allMissing = codes.length > 0 && codes.every((cd) => !present(cd));
   const chipNone = allMissing ? `고른 업종(${chip})은 이 자료에 없습니다` : null;
   const chipPartial =
     !allMissing && missing.length > 0

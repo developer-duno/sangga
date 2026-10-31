@@ -6,6 +6,7 @@ import { SectionCard } from './SectionCard';
 import { districtTitle, formatCount, headBody } from '../lib/districtSales';
 import {
   POP_BADGE,
+  POP_BADGE_NOTE,
   POP_BAR_GROUPS,
   POP_CHUNK_TITLES,
   POP_LEAD_REST,
@@ -16,6 +17,7 @@ import {
   flowBigText,
   flowLagText,
   isDistrictPopList,
+  normalizePopRows,
   popSummary,
   residentLagText,
   residentText,
@@ -59,7 +61,8 @@ export function PopSection({ pnu, prefetch, plan = SECTION_PLAN.pop }: Props) {
         console.warn('상권 인구 조회 실패 — 그 카드 없이 표시합니다', error ?? data);
         return;
       }
-      setRows(data);
+      // ok 인데 셋 다 없는 줄은 no_data 로(검사 뒤 보완 F12 — 빈 덩어리를 그리지 않는다).
+      setRows(normalizePopRows(data));
     });
     return () => {
       cancelled = true;
@@ -90,6 +93,7 @@ export function PopSection({ pnu, prefetch, plan = SECTION_PLAN.pop }: Props) {
       </p>
       <p className="pop__badge-line">
         <span className="grade__badge grade__badge--est">{POP_BADGE}</span>
+        <span className="pop__badge-note">{POP_BADGE_NOTE}</span>
       </p>
 
       {rows.map((r) => (

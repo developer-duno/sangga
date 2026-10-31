@@ -137,6 +137,10 @@ describe('PopSection — 자료가 있을 때', () => {
       '이 건물이 속한 상권의 인구입니다 — 서울시가 공표한 상권 값 그대로이고, 이 건물의 인구가 아닙니다.',
     );
     expect(container.querySelector('.grade__badge.grade__badge--est')?.textContent).toBe('C등급 · 서울시 집계');
+    // 배지 옆 작은 글(검사 뒤 보완 F4 · 메인 문구).
+    expect(container.querySelector('.pop__badge-line .pop__badge-note')?.textContent).toBe(
+      '서울시 상권분석서비스 · 생활인구·주민등록·통신사 자료로 서울시가 셈',
+    );
     const block = container.querySelector('.pop__district')!;
     expect(block.querySelector('.pop__name')?.textContent).toBe('○○역 2번 출구 · 골목상권');
     const flow = block.querySelector('.pop__chunk--flow')!;
@@ -144,9 +148,12 @@ describe('PopSection — 자료가 있을 때', () => {
     expect(flow.querySelector('.pop__big')?.textContent).toBe('412,560명2026년 2분기 3개월간남 190,100 · 여 222,460');
     expect(block.querySelector('.pop__chunk--resident .pop__big')?.textContent).toBe(
       // 가구 수는 싣지 않는다(메인 결정 나 — 서울시 화면 가구세대 수와 다른 값).
-      '2,310명2023년 기준남 1,090 · 여 1,220',
+      // 서울시가 안 바꾼 해 괄호(검사 뒤 보완 F2 · 시안 원문).
+      '2,310명2023년 기준 (서울시가 2024·2025년에는 안 바꿈)남 1,090 · 여 1,220',
     );
-    expect(block.querySelector('.pop__chunk--worker .pop__big')?.textContent).toBe('6,840명2024년 기준남 3,900 · 여 2,940');
+    expect(block.querySelector('.pop__chunk--worker .pop__big')?.textContent).toBe(
+      '6,840명2024년 기준 (서울시가 2025년에는 안 바꿈)남 3,900 · 여 2,940',
+    );
     const why = [...container.querySelectorAll('.pop__why li')].map((li) => li.textContent);
     expect(why).toEqual([
       '출처: 서울시 상권분석서비스 「상권-길단위인구」·「상권-상주인구」·「상권-직장인구」(열린데이터광장 · 공공누리 1유형).',
@@ -165,8 +172,8 @@ describe('PopSection — 자료가 있을 때', () => {
     await openCard();
     const figs = container.querySelectorAll('.pop__mini .pop__bars-fig');
     expect(figs).toHaveLength(2);
-    expect(figs[0].querySelector('.pop__scale')?.textContent).toBe('시간대 · 꽉 차면 84,000명');
-    expect(figs[1].querySelector('.pop__scale')?.textContent).toBe('요일 · 꽉 차면 60,500명');
+    expect(figs[0].querySelector('.pop__scale')?.textContent).toBe('시간대 · 꽉 차면 84,000명(3개월간)');
+    expect(figs[1].querySelector('.pop__scale')?.textContent).toBe('요일 · 꽉 차면 60,500명(3개월간)');
     const time = [...figs[0].querySelectorAll<HTMLElement>('.pop__bar')];
     const day = [...figs[1].querySelectorAll<HTMLElement>('.pop__bar')];
     expect(time).toHaveLength(6);
@@ -283,5 +290,32 @@ describe('PopSection — 못 읽었을 때 · 필지가 바뀔 때', () => {
     render(<PopSection pnu={PNU} prefetch={prefetch} />);
     await waitFor(() => expect(document.body.textContent).toMatch(/미리 받은 상권/));
     expect(popCalls()).toHaveLength(0);
+  });
+
+  it('★ 필지가 바뀌면 옛 답을 곧바로 비운다 — 새 답이 오기 전 앞 상권 숫자가 안 남는다(검사 뒤 보완 F6)', async () => {
+    const { container, rerender } = render(<PopSection pnu={PNU} />);
+    await screen.findByText('상권 인구 (서울시 공표)');
+    expect(container.textContent).toContain('○○역 2번 출구');
+    let release!: (v: { data: unknown; error: unknown }) => void;
+    gate.next = new Promise((r) => (release = r));
+    rerender(<PopSection pnu="1168010100100020000" />);
+    // 새 답을 기다리는 동안 카드가 없다(앞 상권 이름·숫자가 붙어 있지 않다).
+    expect(container.textContent).toBe('');
+    await act(async () => release({ data: [okRow({ district_nm: '새 상권' })], error: null }));
+    expect(container.querySelector('.card__summary')?.textContent).toContain('새 상권');
+  });
+
+  it('★ ok 인데 셋 다 없는 줄은 「자료 없음」 덩어리로 그린다 — 빈 덩어리 금지(검사 뒤 보완 F12)', async () => {
+    responses.pop = {
+      data: [okRow({ flow: null, flow_quarter: null, resident: null, worker: null })],
+      error: null,
+    };
+    const { container } = render(<PopSection pnu={PNU} />);
+    await openCard();
+    const block = container.querySelector('.pop__district')!;
+    expect(block.classList.contains('pop__district--nodata')).toBe(true);
+    expect(block.querySelector('.pop__none')?.textContent).toBe('서울시가 이 상권의 인구 자료를 내지 않았습니다.');
+    expect(block.querySelectorAll('.pop__chunk')).toHaveLength(0);
+    expect(container.querySelector('.card__summary')?.textContent).toBe('○○역 2번 출구 · 서울시 인구 자료가 없습니다');
   });
 });

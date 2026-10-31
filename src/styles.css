@@ -3576,6 +3576,19 @@ body {
   white-space: nowrap;
 }
 
+/* 인구 카드의 「YYYY년 기준 (서울시가 ○○○○·○○○○년에는 안 바꿈)」은 길어 좁은 화면에서 낱말 단위로 줄을 바꾼다(검사 뒤 보완 F2). */
+.pop__q {
+  white-space: normal;
+  word-break: keep-all;
+}
+
+/* 인구 배지 옆 작은 글(검사 뒤 보완 F4) — 길어서 좁은 화면에서 줄을 바꾼다(.pop__q 는 한 줄 고정이라 넘친다). */
+.pop__badge-note {
+  color: var(--muted);
+  font-size: 12px;
+  word-break: keep-all;
+}
+
 .sales__note,
 .sales__none,
 .sales__src,
@@ -3698,6 +3711,8 @@ body {
   font-weight: 400;
   text-align: left;
   white-space: normal;
+  /* 낱말 가운데서 줄을 바꾸지 않는다(검사 뒤 보완 F10 — 412px 에서 「스포츠 강/습」) · 첫 칸 폭은 글자 4.5개 이상(개업·폐업 표와 같은 꼴). */
+  word-break: keep-all;
   min-width: 5em;
 }
 
@@ -5521,6 +5536,7 @@ body {
   .pop__lead,
   .pop__scale,
   .pop__q,
+  .pop__badge-note,
   .pop__note,
   .pop__none,
   .pop__src,

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import type { DistrictPop } from '../types';
 import {
   POP_BADGE,
+  POP_BADGE_NOTE,
   POP_BAR_GROUPS,
   POP_CHUNK_TITLES,
   POP_LEAD_REST,
@@ -14,6 +15,7 @@ import {
   flowBigText,
   flowLagText,
   isDistrictPopList,
+  normalizePopRows,
   popSummary,
   residentLagText,
   residentText,
@@ -159,6 +161,25 @@ describe('popSummary — 접힌 요약 (값 0)', () => {
   it('⛔ 요약에 인구 수가 없다', () => {
     expect(popSummary([okRow()], PNU)).not.toMatch(/명|412|2,310/);
   });
+
+  it('★ 길단위 분기는 표 전체 최신(flow_table_quarter) — 그 상권이 옛 분기에서 끊겼어도(검사 뒤 보완 F5 · 개업·폐업 요약과 같은 규칙)', () => {
+    const lagging = okRow({ flow_quarter: '20254', flow_table_quarter: '20262' });
+    expect(popSummary([lagging], PNU)).toBe(
+      '○○역 2번 출구 · 길단위인구 2026년 2분기 · 사는 사람 2023년 · 일하는 사람 2024년 기준',
+    );
+    expect(popSummary([lagging], PNU)).not.toContain('2025년 4분기');
+  });
+});
+
+describe('normalizePopRows — ok 인데 셋 다 없으면 no_data (검사 뒤 보완 F12)', () => {
+  it('★ 셋 다 null 인 ok 줄은 no_data · 하나라도 있으면 그대로 · 상태 줄도 그대로', () => {
+    const empty = okRow({ flow: null, flow_quarter: null, resident: null, worker: null });
+    const out = normalizePopRows([empty, okRow({ resident: null, worker: null }), headRow('not_seoul')]);
+    expect(out.map((r) => r.status)).toEqual(['no_data', 'ok', 'not_seoul']);
+    // no_data 로 바뀐 줄은 요약·덩어리에서 「자료 없음」 갈래로 간다.
+    expect(popSummary([out[0]], PNU)).toBe('○○역 2번 출구 · 서울시 인구 자료가 없습니다');
+    expect(flowBigText(out[0])).toBeNull();
+  });
 });
 
 describe('길단위인구 덩이', () => {
@@ -180,8 +201,9 @@ describe('길단위인구 덩이', () => {
     expect(b.time.bars.find((x) => x.tick === '17~21')!.h).toBe(100);
     expect(b.time.bars[0].h).toBeCloseTo((58000 / 84000) * 100, 6);
     expect(b.time.bars[0].value).toBe(58000);
-    expect(b.time.scale).toBe('꽉 차면 84,000명');
-    expect(b.day.scale).toBe('꽉 차면 60,500명');
+    // 단위 꼬리 「(3개월간)」(검사 뒤 보완 F3).
+    expect(b.time.scale).toBe('꽉 차면 84,000명(3개월간)');
+    expect(b.day.scale).toBe('꽉 차면 60,500명(3개월간)');
     expect(POP_BAR_GROUPS).toEqual({ time: '시간대', day: '요일' });
   });
 
@@ -202,14 +224,26 @@ describe('사는 사람 · 일하는 사람', () => {
   it('★ 「YYYY년 기준」은 값이 마지막으로 바뀐 분기(value_quarter) — 마지막 분기(last_quarter)가 아니다', () => {
     expect(residentText(okRow())).toEqual({
       num: '2,310명',
-      when: '2023년 기준',
+      when: '2023년 기준 (서울시가 2024·2025년에는 안 바꿈)',
       detail: '남 1,090 · 여 1,220',
     });
-    expect(workerText(okRow())).toEqual({ num: '6,840명', when: '2024년 기준', detail: '남 3,900 · 여 2,940' });
+    expect(workerText(okRow())).toEqual({
+      num: '6,840명',
+      when: '2024년 기준 (서울시가 2025년에는 안 바꿈)',
+      detail: '남 3,900 · 여 2,940',
+    });
     // last_quarter 는 2026 이다 — 그 해가 새면 「2026년 기준」이 된다.
     expect(residentText(okRow())!.when).not.toContain('2026');
     expect(valueYearText('20234')).toBe('2023년 기준');
     expect(valueYearText('2023Q4')).toBeNull();
+  });
+
+  it('★ 서울시가 안 바꾼 해 괄호(검사 뒤 보완 F2 · 시안 원문) — 값이 바뀐 해 + 1 ~ 마지막 분기의 해 − 1 · 비면 괄호 없음', () => {
+    expect(valueYearText('20234', '20262')).toBe('2023년 기준 (서울시가 2024·2025년에는 안 바꿈)');
+    expect(valueYearText('20244', '20262')).toBe('2024년 기준 (서울시가 2025년에는 안 바꿈)');
+    expect(valueYearText('20254', '20262')).toBe('2025년 기준');
+    expect(valueYearText('20234', null)).toBe('2023년 기준');
+    expect(valueYearText('20234', '2026Q2')).toBe('2023년 기준');
   });
 
   it('⛔ 가구 수는 싣지 않는다(메인 결정 나 — 서울시 화면 가구세대 수와 다른 값) · 양성 대조: 답에는 가구 칸이 있다', () => {
@@ -259,6 +293,7 @@ function allPopTexts(): string[] {
     POP_LEAD_STRONG,
     ...POP_LEAD_REST,
     POP_BADGE,
+    POP_BADGE_NOTE,
     POP_NO_DATA_TEXT,
     ...Object.values(POP_CHUNK_TITLES),
     ...Object.values(POP_NOTES),
@@ -290,6 +325,28 @@ describe('⛔ 가드 — 분기·연도 글자 · 비율·나누기 · 판단 �
       for (const w of DIVIDE_WORDS) expect(t.includes(w), `${w} · ${t}`).toBe(false);
       expect(JUDGMENT.filter((w) => t.includes(w)), t).toEqual([]);
       expect(FORBIDDEN.filter((w) => t.replace(/\s+/g, '').includes(w)), t).toEqual([]);
+    }
+  });
+
+  it('ⓔ 컴포넌트 원문에 직접 적힌 글(머리·aria-label 틀 등)에도 비율·나누기·판단 낱말·분기 글자가 없다(검사 뒤 보완 F8) · 양성 대조', () => {
+    // 탐지 — 주석을 지운 뒤 따옴표·백틱 글과 JSX 글 가운데 한글이 든 것(districtSales.test 의 같은 이름 함수와 같은 꼴).
+    const koreanLiterals = (src: string) =>
+      (src
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+        .match(/'[^'\n]*'|"[^"\n]*"|`[^`]*`|>[^<>{}\n]+</g) ?? []).filter((s) => /[가-힣]/.test(s));
+    const sample = koreanLiterals('// 많은 사람\n<b>사람이 많은 상권</b>\naria-label={`${n} 하루 평균 3%`}\nstyle={{ height: `${b.h}%` }}');
+    expect(sample).toHaveLength(2);
+    expect(sample.some((s) => JUDGMENT.some((w) => s.includes(w)))).toBe(true);
+    expect(sample.some((s) => hasRatio(s))).toBe(true);
+    const comp = '../components/PopSection.tsx';
+    const real = koreanLiterals(readFileSync(fileURLToPath(new URL(comp, import.meta.url)), 'utf-8'));
+    expect(real.length).toBeGreaterThan(0); // 헛돌지 않는다
+    for (const s of real) {
+      expect(hasRatio(s), s).toBe(false);
+      expect(JUDGMENT.filter((w) => s.includes(w)), s).toEqual([]);
+      expect(findQuarterOrYearLiterals(s), s).toEqual([]);
+      for (const w of DIVIDE_WORDS) expect(s.includes(w), `${w} · ${s}`).toBe(false);
     }
   });
 });

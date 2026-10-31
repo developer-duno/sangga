@@ -206,7 +206,7 @@ describe('salesBigText — 큰 숫자 줄', () => {
 
 describe('흐름 막대 — salesTrendCells · salesScaleMax · salesScaleText', () => {
   it('★ 칸 = 창 전부 · 옛 → 최신 · 빠진 분기는 missing(0 막대 아님) · 최신 칸 표시', () => {
-    const max = salesScaleMax([okRow()]);
+    const max = salesScaleMax(okRow());
     const cells = salesTrendCells(okRow(), max);
     expect(cells.map((c) => c.quarter)).toEqual([...WINDOW].reverse());
     const gap = cells.find((c) => c.quarter === '20244')!;
@@ -217,23 +217,29 @@ describe('흐름 막대 — salesTrendCells · salesScaleMax · salesScaleText',
   });
 
   it('★ 높이 비례 — 가장 큰 분기 = 100 · 다른 분기는 금액 ÷ 그 값', () => {
-    const max = salesScaleMax([okRow()]);
+    const max = salesScaleMax(okRow());
     expect(max).toBe(760_000_000);
     const cells = salesTrendCells(okRow(), max);
     expect(cells.find((c) => c.quarter === '20254')!.h).toBe(100);
     expect(cells.find((c) => c.quarter === '20262')!.h).toBeCloseTo((723 / 760) * 100, 6);
   });
 
-  it('카드 하나에 눈금 하나 — ok 상권 전부의 창 안 최댓값(창 밖 분기는 안 센다)', () => {
-    const other = okRow({
-      district_id: 'x2',
+  it('★ 상권마다 제 눈금(검사 뒤 보완 F1) — 그 상권 창 안 최댓값 · 창 밖 분기는 안 센다 · 큰 상권이 작은 상권 막대를 누르지 않는다', () => {
+    // 운영 꼴 — 관광특구 3개월 매출 1,163억 · 골목상권 가운데값 19.9억(약 58배).
+    const big = okRow({
+      district_id: 'big',
       trend: [
-        { quarter: '20262', amt: 900_000_000, co: 1 },
-        { quarter: '20234', amt: 5_000_000_000, co: 1 }, // 창 밖
+        { quarter: '20262', amt: 116_300_000_000, co: 1 },
+        { quarter: '20234', amt: 999_000_000_000, co: 1 }, // 창 밖
       ],
     });
-    expect(salesScaleMax([okRow(), other, noDataRow()])).toBe(900_000_000);
-    expect(salesScaleMax([noDataRow()])).toBe(0);
+    const small = okRow({ district_id: 'small', trend: [{ quarter: '20262', amt: 1_990_000_000, co: 1 }] });
+    expect(salesScaleMax(big)).toBe(116_300_000_000);
+    expect(salesScaleMax(small)).toBe(1_990_000_000);
+    // 작은 상권도 제 눈금에서 가장 큰 분기가 꽉 찬다(카드 공통 눈금이면 약 1.7% 로 사라진다).
+    expect(salesTrendCells(small, salesScaleMax(small)).find((c) => c.quarter === '20262')!.h).toBe(100);
+    expect(salesScaleMax(noDataRow())).toBe(0);
+    expect(salesScaleMax(headRow('not_seoul'))).toBe(0);
   });
 
   it('눈금 글(목업 글자 그대로)', () => {
@@ -270,7 +276,7 @@ describe('salesTableRows — 업종 표 · 창업자 칩', () => {
   it('★ 칩 미용(코드 셋) — 안 · 상위 5 밖 · 없음 셋이 따로 선다(더하지 않는다)', () => {
     const t = salesTableRows(okRow(), '미용');
     expect(t.rows.filter((r) => r.hit).map((r) => r.name)).toEqual(['미용실']);
-    expect(t.chipOutside).toEqual(['고른 업종(미용): 네일숍 6,100만원 · 980건 (상위 5 밖)']);
+    expect(t.chipOutside).toEqual(['고른 업종(미용): 네일숍 6,100만원 · 980건 (3개월 합 · 상위 5 밖)']);
     expect(t.chipPartial).toBe('고른 업종 가운데 피부관리실은 이 자료에 없습니다');
     expect(t.chipNone).toBeNull();
   });
@@ -278,8 +284,8 @@ describe('salesTableRows — 업종 표 · 창업자 칩', () => {
   it('⛔ 칩 학원(코드 다섯) — 상위 5 밖 둘은 코드마다 한 줄(합친 금액 줄이 없다) · 빠진 둘은 이름으로', () => {
     const t = salesTableRows(okRow(), '학원');
     expect(t.chipOutside).toEqual([
-      '고른 업종(학원): 외국어학원 900만원 · 120건 (상위 5 밖)',
-      '고른 업종(학원): 예술학원 800만원 · 90건 (상위 5 밖)',
+      '고른 업종(학원): 외국어학원 900만원 · 120건 (3개월 합 · 상위 5 밖)',
+      '고른 업종(학원): 예술학원 800만원 · 90건 (3개월 합 · 상위 5 밖)',
     ]);
     // 더한 값(1,700만원·210건)은 어디에도 없다.
     expect(JSON.stringify(t)).not.toContain('1,700만원');
@@ -292,6 +298,17 @@ describe('salesTableRows — 업종 표 · 창업자 칩', () => {
     expect(t.chipNone).toBe('고른 업종(편의점)은 이 자료에 없습니다');
     expect(t.chipPartial).toBeNull();
     expect(t.chipOutside).toEqual([]);
+  });
+
+  it('⛔ 「없다」는 업종 전부 ∪ 상위 5 로 정한다(검사 뒤 보완 F11) — 업종 전부가 상위 5 줄을 빠뜨린 답에서도 굵은 줄을 「없다」고 말하지 않는다', () => {
+    const r = okRow({ industries: INDUSTRIES.filter((x) => x.cd !== 'CS100010') });
+    const t = salesTableRows(r, '카페');
+    expect(t.rows.filter((x) => x.hit).map((x) => x.cd)).toEqual(['CS100010']);
+    expect(t.chipNone).toBeNull();
+    expect(t.chipPartial).toBeNull();
+    // 양성 대조 — 상위 5 에서도 빼면 그때는 「없다」.
+    const gone = salesTableRows(okRow({ top: TOP.filter((x) => x.cd !== 'CS100010'), industries: r.industries }), '카페');
+    expect(gone.chipNone).toBe('고른 업종(카페)은 이 자료에 없습니다');
   });
 });
 
@@ -331,8 +348,10 @@ function forbiddenWords(text: string): string[] {
 
 /** 이 lib 가 만드는 글 전부(대표 입력으로). */
 function allSalesTexts(): string[] {
-  const max = salesScaleMax([okRow()]);
+  const max = salesScaleMax(okRow());
   const texts: string[] = [
+    // 서울시 화면을 설명하는 한 줄도 넣는다 — 아래 「그 한 줄만 빼고」 거르기가 실제로 걸러 낼 것이 있게(검사 뒤 보완 F8).
+    SALES_NOTES.unit,
     salesSummary([okRow(), noDataRow()], PNU),
     salesSummary([noDataRow()], PNU),
     salesSummary([headRow('not_seoul')], '3011010700108770000'),
@@ -359,6 +378,17 @@ function allSalesTexts(): string[] {
     texts.push(...t.chipOutside, t.chipNone ?? '', t.chipPartial ?? '');
   }
   return texts;
+}
+
+/**
+ * 컴포넌트 원문에 **직접 적힌 글**(검사 뒤 보완 F8 — 「분기별 매출 흐름」·표 머리·aria-label 틀·배지 옆 글 등) — 주석을 지운 뒤
+ * 따옴표·백틱 글과 JSX 글 가운데 한글이 든 것만. 막대 폭 `${x}%` 같은 style 값은 한글이 없어 빠진다.
+ * 못 보는 것: 한글 없이 적은 글(영문 문장) · 따옴표 안에 따옴표가 든 글.
+ */
+export function koreanLiterals(src: string): string[] {
+  const noComments = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+  const found = noComments.match(/'[^'\n]*'|"[^"\n]*"|`[^`]*`|>[^<>{}\n]+</g) ?? [];
+  return found.filter((s) => /[가-힣]/.test(s));
 }
 
 describe('⛔ 가드 — 분기·연도 글자 · 비율·나누기 · 판단 낱말 · 금지어', () => {
@@ -400,6 +430,34 @@ describe('⛔ 가드 — 분기·연도 글자 · 비율·나누기 · 판단 �
     for (const t of allSalesTexts()) {
       expect(judgmentWords(t), t).toEqual([]);
       expect(forbiddenWords(t), t).toEqual([]);
+    }
+  });
+
+  it('ⓔ 컴포넌트 원문에 직접 적힌 글에도 비율·나누기·판단 낱말·분기 글자가 없다(검사 뒤 보완 F8) · 양성 대조', () => {
+    // 양성 대조 — 탐지가 JSX 글·aria-label 틀·따옴표 글을 실제로 줍고, style 의 % 와 주석은 줍지 않는다.
+    const sample = [
+      '// 주석의 높은 매출은 안 본다',
+      '<b>업종이 많은 상권</b>',
+      'aria-label={`${c.label} 매출이 20% 늘었다`}',
+      "title='점포당 월평균'",
+      'style={{ width: `${t.w}%` }}',
+    ].join('\n');
+    const lits = koreanLiterals(sample);
+    expect(lits).toHaveLength(3);
+    expect(lits.some((s) => judgmentWords(s).length > 0)).toBe(true);
+    expect(lits.some((s) => hasRatio(s))).toBe(true);
+    expect(lits.some((s) => DIVIDE_WORDS.some((w) => s.includes(w)))).toBe(true);
+    // 실제 원문.
+    // ⓘ 경로를 변수로 넘긴다 — 글자 그대로 쓰면 vite 가 `new URL(…, import.meta.url)` 을 자산 주소로 바꿔 file 주소가 아니게 된다.
+    const comp = '../components/SalesSection.tsx';
+    const src = readFileSync(fileURLToPath(new URL(comp, import.meta.url)), 'utf-8');
+    const real = koreanLiterals(src);
+    expect(real.some((s) => s.includes('분기별 매출 흐름'))).toBe(true); // 헛돌지 않는다
+    for (const s of real) {
+      expect(hasRatio(s), s).toBe(false);
+      expect(judgmentWords(s), s).toEqual([]);
+      expect(findQuarterOrYearLiterals(s), s).toEqual([]);
+      for (const w of DIVIDE_WORDS) expect(s.includes(w), `${w} · ${s}`).toBe(false);
     }
   });
 
