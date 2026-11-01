@@ -448,11 +448,11 @@ describe('곁 카드 — 다른 필지의 미리 보낸 답은 받지 않는다 
   });
 });
 
-describe('서울 필지만 추정매출·상권 인구를 미리 보낸다 (결정 0045 PR③ · SEOUL_PREFETCH_FNS)', () => {
-  const SEOUL_FNS = ['list_district_sales', 'list_district_pop'] as const;
+describe('서울 필지만 추정매출·상권 인구·지하철 승하차를 미리 보낸다 (결정 0045 PR③·PR⑥ · SEOUL_PREFETCH_FNS)', () => {
+  const SEOUL_FNS = ['list_district_sales', 'list_district_pop', 'list_nearby_subway'] as const;
   const D = { bld_id: 'D-1', pnu: '3011010700108770000', tag: '다' };
 
-  it('서울 건물 — 여덟 함수에 둘을 더해 보내고, 카드는 그 답을 받아 다시 묻지 않는다(각 정확히 1회)', async () => {
+  it('서울 건물 — 여덟 함수에 셋을 더해 보내고, 카드는 그 답을 받아 다시 묻지 않는다(각 정확히 1회)', async () => {
     // 층 목록은 영영 안 온다 — 카드가 서기 전에 이미 출발했는지 본다.
     render(<FloorStack building={building(A)} />);
     await waitFor(() => {
@@ -472,7 +472,7 @@ describe('서울 필지만 추정매출·상권 인구를 미리 보낸다 (결�
     for (const fn of SEOUL_FNS) expect(countFetches(fn)).toBe(1);
   });
 
-  it('대전 건물 — 추정매출·상권 인구 요청 0(그 자리는 빈 카드)', async () => {
+  it('대전 건물 — 추정매출·상권 인구·지하철 승하차 요청 0(그 자리는 빈 카드 · 대전 인구는 집계구 카드)', async () => {
     state.floors.set(D.bld_id, floorsOf(D));
     render(<FloorStack building={building(D)} />);
     await screen.findByText('빌딩다');

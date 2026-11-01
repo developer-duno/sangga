@@ -15,8 +15,11 @@ import type { DistrictPop } from '../types';
 
 const responses = {
   pop: { data: null as unknown, error: null as unknown },
+  // 지하철 덩이(결정 0045 PR⑥) — 기본은 함수 없음(덩이 0 · 옛 시험은 그대로).
+  subway: { data: null as unknown, error: { code: 'PGRST202' } as unknown },
 };
 const gate: { next: Promise<{ data: unknown; error: unknown }> | null } = { next: null };
+const subwayGate: { next: Promise<{ data: unknown; error: unknown }> | null } = { next: null };
 const rpcCalls: Array<{ fn: string; args: unknown }> = [];
 
 vi.mock('../lib/supabase', () => ({
@@ -24,6 +27,11 @@ vi.mock('../lib/supabase', () => ({
     rpc: (fn: string, args?: unknown) => {
       rpcCalls.push({ fn, args });
       if (fn === 'get_data_freshness') return Promise.resolve({ data: null, error: { code: 'PGRST202' } });
+      if (fn === 'list_nearby_subway') {
+        const s = subwayGate.next;
+        subwayGate.next = null;
+        return s ?? Promise.resolve(responses.subway);
+      }
       const g = gate.next;
       gate.next = null;
       return g ?? Promise.resolve(responses.pop);
@@ -102,8 +110,10 @@ function noDataRow(): DistrictPop {
 beforeEach(() => {
   rpcCalls.length = 0;
   gate.next = null;
+  subwayGate.next = null;
   resetDataFreshnessCache();
   responses.pop = { data: [okRow(), noDataRow()], error: null };
+  responses.subway = { data: null, error: { code: 'PGRST202' } };
   vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
 
@@ -317,5 +327,279 @@ describe('PopSection — 못 읽었을 때 · 필지가 바뀔 때', () => {
     expect(block.querySelector('.pop__none')?.textContent).toBe('서울시가 이 상권의 인구 자료를 내지 않았습니다.');
     expect(block.querySelectorAll('.pop__chunk')).toHaveLength(0);
     expect(container.querySelector('.card__summary')?.textContent).toBe('○○역 2번 출구 · 서울시 인구 자료가 없습니다');
+  });
+});
+
+// ── 지하철 승하차 덩이(결정 0045 PR⑥ · 👤 11-02 Q1 가 · Q2 가 · Q3 가 · Q4 나) ─────────────────────────────
+
+const subwayCalls = () => rpcCalls.filter((c) => c.fn === 'list_nearby_subway');
+
+const S_BINS = {
+  h04_07: { on: 1200, off: 900 },
+  h07_10: { on: 9000, off: 8000 },
+  h10_14: { on: 5000, off: 6000 },
+  h14_17: { on: 4000, off: 4300 },
+  h17_21: { on: 10000, off: 11000 },
+  h21_04: { on: 2400, off: 2000 },
+};
+
+function subwayOk(over: Record<string, unknown> = {}) {
+  return {
+    status: 'ok',
+    group_id: 101,
+    station_nm: '충무로',
+    lines: ['3호선', '4호선'],
+    lines_with_data: ['3호선', '4호선'],
+    dist_m: 180,
+    has_data: true,
+    window_from: '202510',
+    window_to: '202609',
+    months_n: 12,
+    on_daily: 31600,
+    off_daily: 32300,
+    bins: S_BINS,
+    nearest_nm: null,
+    nearest_lines: null,
+    nearest_dist_m: null,
+    ...over,
+  };
+}
+
+function subwayNone() {
+  return subwayOk({
+    group_id: 202,
+    station_nm: '양재시민의숲',
+    lines: ['신분당선'],
+    lines_with_data: null,
+    dist_m: 320,
+    has_data: false,
+    months_n: 0,
+    on_daily: null,
+    off_daily: null,
+    bins: null,
+  });
+}
+
+function subwayHead(status: string, over: Record<string, unknown> = {}) {
+  return {
+    ...subwayOk(),
+    status,
+    group_id: null,
+    station_nm: null,
+    lines: null,
+    lines_with_data: null,
+    dist_m: null,
+    has_data: null,
+    window_from: null,
+    window_to: null,
+    months_n: null,
+    on_daily: null,
+    off_daily: null,
+    bins: null,
+    ...over,
+  };
+}
+
+async function findSubway(container: HTMLElement, sel = '.pop__chunk.pop__chunk--subway'): Promise<Element> {
+  return waitFor(() => {
+    const c = container.querySelector(sel);
+    expect(c).not.toBeNull();
+    return c!;
+  });
+}
+
+const follows = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+describe('PopSection — 지하철 승하차 덩이 (결정 0045 PR⑥)', () => {
+  it('★ ok 둘(자료 있음 · 자료 밖 노선) — 상권 덩어리 뒤 · 카드 발 문구 앞 · 역 줄 둘 · 막대 여섯 · 발 넷 · p_pnu', async () => {
+    responses.subway = { data: [subwayOk(), subwayNone()], error: null };
+    const { container } = render(<PopSection pnu={PNU} />);
+    await openCard();
+    const chunk = await findSubway(container);
+    expect(subwayCalls()).toEqual([{ fn: 'list_nearby_subway', args: { p_pnu: PNU } }]);
+    // 자리 — 마지막 상권 덩어리 뒤, 카드 발 문구 앞 · 상권 덩어리 안이 아니다.
+    const districts = container.querySelectorAll('.pop__district');
+    expect(follows(districts[districts.length - 1], chunk)).toBe(true);
+    expect(chunk.closest('.pop__district')).toBeNull();
+    const cardWhy = [...container.querySelectorAll('.pop__why')].find((u) => !u.classList.contains('subway__why'))!;
+    expect(follows(chunk, cardWhy)).toBe(true);
+    // 제목 줄 + A 배지(C 색 아님).
+    expect(chunk.querySelector('.pop__chunk-h')?.textContent).toBe(
+      '가까운 지하철역 승하차 인원 (카드 기준 · 건물 500m 안) A등급 · 카드 실측 집계',
+    );
+    expect(chunk.querySelector('.pop__chunk-h .grade__badge')?.classList.contains('grade__badge--est')).toBe(false);
+    // 역 줄 둘.
+    const st = chunk.querySelectorAll('.subway__st');
+    expect(st).toHaveLength(2);
+    expect(st[0].querySelector('.subway__nm')?.textContent).toBe('충무로 3·4호선 · 180m');
+    expect(st[0].querySelector('.subway__num')?.textContent).toBe('승차 31,600 · 하차 32,300 하루 평균');
+    expect(st[0].querySelector('.subway__sub')?.textContent).toBe('최근 12개월(2025년 10월~2026년 9월) 평균');
+    const bars = [...st[0].querySelectorAll<HTMLElement>('.pop__bar')];
+    expect(bars).toHaveLength(6);
+    expect(bars[4].style.height).toBe('100%');
+    expect(Number.parseFloat(bars[0].style.height)).toBeCloseTo((2100 / 21000) * 100, 4);
+    expect(bars[0].getAttribute('aria-label')).toBe('시간대 4~7 승차 1,200 · 하차 900');
+    expect(st[0].querySelector('.pop__scale')?.textContent).toBe('시간대 · 꽉 차면 21,000명(하루 평균 승하차)');
+    expect([...st[0].querySelectorAll('.pop__tick')].map((t) => t.textContent)).toEqual([
+      '4~7',
+      '7~10',
+      '10~14',
+      '14~17',
+      '17~21',
+      '21~',
+    ]);
+    // 자료 밖 노선 줄 — 숫자 대신 글 · 막대 0.
+    expect(st[1].classList.contains('subway__st--none')).toBe(true);
+    expect(st[1].querySelector('.subway__nm')?.textContent).toBe('양재시민의숲 신분당선 · 320m');
+    expect(st[1].querySelector('.subway__num')?.textContent).toBe('승하차 자료 없음 — 서울시 자료 밖 노선');
+    expect(st[1].querySelectorAll('.pop__bar')).toHaveLength(0);
+    // 발 넷 — ②④ 굵게.
+    const notes = [...chunk.querySelectorAll('.subway__why li')];
+    expect(notes.map((li) => li.textContent)).toEqual([
+      '출처: 서울시 「지하철 호선별 역별 시간대별 승하차 인원」·「역사마스터」(열린데이터광장 · 공공누리 1유형).',
+      '교통카드(1회용 포함)를 찍은 승차 수와 하차 수입니다 — 한 사람이 타고 내리면 승차 1·하차 1로 셉니다.',
+      '환승역은 서울시가 관리 호선 한 줄에 몰아 세기도 해 역 이름으로 합쳐 보여 줍니다 · 환승 통로로 갈아탄 사람은 개찰을 안 지나 안 셉니다.',
+      '역 승하차 수이지 이 건물 앞을 지나는 사람 수가 아니고, 이 건물의 값이 아닙니다.',
+    ]);
+    expect(notes[1].querySelector('strong')?.textContent).toBe('승차 수와 하차 수');
+    expect(notes[3].querySelector('strong')?.textContent).toBe(notes[3].textContent);
+    // 카드 발 문구 넷은 그대로 · 「유동인구」는 덩이 어디에도 없다.
+    expect(cardWhy.querySelectorAll('li')).toHaveLength(4);
+    expect(chunk.textContent).not.toContain('유동인구');
+  });
+
+  it('★ 접힌 요약 꼬리 — 역 수만(승하차 값 0) · no_station 「없음」', async () => {
+    responses.subway = { data: [subwayOk(), subwayNone()], error: null };
+    const { container, unmount } = render(<PopSection pnu={PNU} />);
+    await waitFor(() =>
+      expect(container.querySelector('.card__summary')?.textContent).toBe(
+        '○○역 2번 출구 외 상권 1곳 · 길단위인구 2026년 2분기 · 사는 사람 2023년 · 일하는 사람 2024년 기준 · 500m 안 지하철역 2곳',
+      ),
+    );
+    expect(container.querySelector('.card__summary')?.textContent).not.toMatch(/명|31,600/);
+    unmount();
+    responses.subway = { data: [subwayHead('no_station')], error: null };
+    const b = render(<PopSection pnu={PNU} />);
+    await waitFor(() =>
+      expect(b.container.querySelector('.card__summary')?.textContent).toMatch(/ · 500m 안 지하철역 없음$/),
+    );
+  });
+
+  it('★ no_station — 「500m 안에 지하철역이 없습니다」 + 가장 가까운 역(있을 때만)', async () => {
+    responses.subway = {
+      data: [subwayHead('no_station', { nearest_nm: '수유', nearest_lines: ['4호선'], nearest_dist_m: 820 })],
+      error: null,
+    };
+    const { container, unmount } = render(<PopSection pnu={PNU} />);
+    await openCard();
+    const none = await findSubway(container, '.pop__chunk--subway .subway__none');
+    expect([...none.querySelectorAll('p')].map((p) => p.textContent)).toEqual([
+      '500m 안에 지하철역이 없습니다',
+      '가장 가까운 역: 수유 (4호선) · 820m',
+    ]);
+    expect(container.querySelectorAll('.subway__st')).toHaveLength(0);
+    unmount();
+    responses.subway = { data: [subwayHead('no_station')], error: null };
+    const b = render(<PopSection pnu={PNU} />);
+    await openCard();
+    await findSubway(b.container, '.subway__none');
+    expect(b.container.querySelectorAll('.subway__none p')).toHaveLength(1);
+  });
+
+  it('⛔ no_data · no_coord · not_seoul → 덩이 없음 · 카드는 그대로 · 요약 꼬리 없음', async () => {
+    for (const s of ['no_data', 'no_coord', 'not_seoul']) {
+      rpcCalls.length = 0;
+      responses.subway = { data: [subwayHead(s)], error: null };
+      const { container, unmount } = render(<PopSection pnu={PNU} />);
+      await openCard();
+      await waitFor(() => expect(subwayCalls()).toHaveLength(1));
+      await act(async () => {});
+      expect(container.querySelector('.pop__chunk--subway'), s).toBeNull();
+      expect(container.querySelectorAll('.pop__district').length, s).toBe(2);
+      expect(container.querySelector('.card__summary')?.textContent, s).not.toContain('지하철');
+      unmount();
+    }
+  });
+
+  it('⛔ 함수 없음(PGRST202) · 오류 · 섞인 답 · bins 열쇠 빠짐 → 덩이 없음 · 카드 그대로 · 콘솔 경고 한 줄', async () => {
+    const { h21_04: _drop, ...five } = S_BINS;
+    void _drop;
+    for (const res of [
+      { data: null, error: { code: 'PGRST202' } },
+      { data: [subwayOk()], error: { message: 'boom' } },
+      { data: [subwayOk(), subwayHead('no_station')], error: null },
+      { data: [subwayOk({ bins: five })], error: null },
+    ]) {
+      rpcCalls.length = 0;
+      const warn = vi.mocked(console.warn);
+      warn.mockClear();
+      responses.subway = res;
+      const { container, unmount } = render(<PopSection pnu={PNU} />);
+      await openCard();
+      await waitFor(() => expect(subwayCalls()).toHaveLength(1));
+      await act(async () => {});
+      expect(container.querySelector('.pop__chunk--subway'), JSON.stringify(res)).toBeNull();
+      expect(container.querySelector('.pop__district')).not.toBeNull();
+      expect(warn.mock.calls.filter((c) => String(c[0]).includes('지하철'))).toHaveLength(1);
+      unmount();
+    }
+  });
+
+  it('★ 상권 밖(outside_seoul_district) 건물에도 역 덩이는 선다 — 그 문단 아래 · 상권 출처 줄 앞 · 요약 꼬리', async () => {
+    responses.pop = { data: [headRow('outside_seoul_district')], error: null };
+    responses.subway = { data: [subwayOk()], error: null };
+    const { container } = render(<PopSection pnu={PNU} />);
+    await openCard();
+    const chunk = await findSubway(container);
+    const lead = container.querySelector('.pop__lead')!;
+    expect(lead.textContent).toBe('이 건물이 속한 서울시 상권이 없어 자료가 없습니다.');
+    expect(follows(lead, chunk)).toBe(true);
+    const src = [...container.querySelectorAll('.pop__src')].find((p) => !p.closest('.subway__why'))!;
+    expect(follows(chunk, src)).toBe(true);
+    expect(container.querySelector('.card__summary')?.textContent).toBe(
+      '이 건물이 속한 서울시 상권이 없습니다 · 500m 안 지하철역 1곳',
+    );
+  });
+
+  it('⛔ 좌표 없음·서울 밖 빈 상태 카드에는 덩이를 안 그린다(양성 대조: 상권 밖은 그린다 — 위 시험)', async () => {
+    for (const s of ['no_coord', 'not_seoul'] as const) {
+      rpcCalls.length = 0;
+      responses.pop = { data: [headRow(s)], error: null };
+      responses.subway = { data: [subwayOk()], error: null };
+      const { container, unmount } = render(<PopSection pnu={PNU} />);
+      await openCard();
+      await waitFor(() => expect(subwayCalls()).toHaveLength(1));
+      await act(async () => {});
+      expect(container.querySelector('.pop__chunk--subway'), s).toBeNull();
+      unmount();
+    }
+  });
+
+  it('★ 필지가 바뀌면 옛 덩이를 비우고, 늦게 온 앞 필지 답은 버린다 · 미리 받은 답이 있으면 다시 안 묻는다', async () => {
+    let releaseOld!: (v: { data: unknown; error: unknown }) => void;
+    subwayGate.next = new Promise((r) => (releaseOld = r));
+    const { container, rerender, unmount } = render(<PopSection pnu={PNU} />);
+    await openCard();
+    await waitFor(() => expect(subwayCalls()).toHaveLength(1));
+    responses.subway = { data: [subwayOk({ station_nm: '새역' })], error: null };
+    rerender(<PopSection pnu="1168010100100020000" />);
+    await waitFor(() => expect(container.textContent).toContain('새역'));
+    await act(async () => releaseOld({ data: [subwayOk({ station_nm: '옛역' })], error: null }));
+    await act(async () => {});
+    expect(container.textContent).toContain('새역');
+    expect(container.textContent).not.toContain('옛역');
+    unmount();
+
+    rpcCalls.length = 0;
+    const prefetch = {
+      pnu: PNU,
+      results: new Map<string, Promise<{ data: unknown; error: null }>>([
+        ['list_district_pop', Promise.resolve({ data: [okRow()], error: null })],
+        ['list_nearby_subway', Promise.resolve({ data: [subwayOk({ station_nm: '미리역' })], error: null })],
+      ]),
+    };
+    const p = render(<PopSection pnu={PNU} prefetch={prefetch} />);
+    await waitFor(() => expect(p.container.querySelector('.card__summary')?.textContent).toMatch(/지하철역 1곳$/));
+    expect(subwayCalls()).toHaveLength(0);
   });
 });
