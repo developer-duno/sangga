@@ -501,6 +501,9 @@ P_LONELY = "1114010100100030000"     # 서울 — 1.5km 안 역도 없음
 P_MANY = "1114010100100040000"       # 서울 — 500m 안 묶음 12
 P_NOGEOM = "1114010100100050000"
 DJ = "3020010100100010000"           # 대전 — 좌표는 P 와 같다(시·도로 가른다)
+DJ_NOGEOM = "3020010100100020000"    # 대전 — 좌표 없음(no_coord 가 not_seoul 보다 먼저)
+P_BINS = "1114010100100060000"       # 서울 — (126.8, 37.5) · 100m 에 시간역(24시간 서로 다른 값)
+P_NAME = "1114010100100070000"       # 서울 — (126.6, 37.5) · 200m 에 잠실 묶음(이름 다른 두 역)
 
 STATIONS = [
     # (id, 이름, 정규화, 호선, 묶음, lat, lng)
@@ -512,6 +515,12 @@ STATIONS = [
     ("0006", "멀리역", "멀리역", "1호선", 5, 37.5108, 127.1),           # P_FAR 에서 약 1,201m
 ] + [("{:04d}".format(100 + i), "고리{}".format(i), "고리{}".format(i), "2호선", 100 + i,
       37.5 + 0.00036 * (i + 1), 127.2) for i in range(12)]              # P_MANY 둘레 40m 간격 12묶음
+STATIONS += [
+    # 다른 탐침과 17km 넘게 떨어져 기존 결과(묶음 수·줄 수·no_station 의 가장 가까운 역)를 안 바꾼다.
+    ("0020", "시간역", "시간역", "1호선", 200, 37.5009, 126.8),               # P_BINS 에서 약 100m
+    ("0010", "잠실(송파구청)", "잠실", "2호선", 201, 37.5018, 126.6),        # P_NAME 에서 약 200m · id 가장 작음
+    ("0011", "잠실", "잠실", "8호선", 201, 37.5018, 126.6005),               # 같은 묶음(44m) · 원문 이름이 다르다
+]
 
 
 def ride(ym, line, sttn, sid, ln, **hours):
@@ -541,13 +550,21 @@ RIDES = (
     # 신촌 2호선 — 202607 하루 100 · 202608 없음 · 202609 하루 200 → Σ÷Σ = 9100 ÷ 61 = 149(평균의 평균이면 150)
     + [ride("202607", "2호선", "신촌", "0003", "2호선", on_08=3100),
        ride("202609", "2호선", "신촌", "0003", "2호선", on_08=6000)]
+    # 시간역 — 202609(30일) 24시간 전부 서로 다른 값: 하루 평균 승차 H+1 · 하차 25−H (H = 0~23)
+    + [ride("202609", "1호선", "시간역", "0020", "1호선",
+            **{"{}_{:02d}".format(s, h): v for h in range(24)
+               for s, v in (("on", (h + 1) * 30), ("off", (25 - h) * 30))})]
+    # 잠실 묶음 — 두 역 다 승하차 한 달
+    + [ride("202609", "2호선", "잠실", "0010", "2호선", on_08=300),
+       ride("202609", "8호선", "잠실", "0011", "8호선", on_08=600)]
 )
 
 
 def fixture_sql():
     out = ["insert into parcel (pnu, geom) values "
            "('{}', '127.0 37.5'), ('{}', '127.1 37.5'), ('{}', '127.5 37.5'), ('{}', '127.2 37.5'), ('{}', null), "
-           "('{}', '127.0 37.5');".format(P, P_FAR, P_LONELY, P_MANY, P_NOGEOM, DJ)]
+           "('{}', '127.0 37.5'), ('{}', null), ('{}', '126.8 37.5'), ('{}', '126.6 37.5');".format(
+               P, P_FAR, P_LONELY, P_MANY, P_NOGEOM, DJ, DJ_NOGEOM, P_BINS, P_NAME)]
     for sid, nm, norm, ln, g, lat, lng in STATIONS:
         out.append("insert into subway_station (station_id, station_nm, name_norm, line_nm, group_id, lat, lng, geom) "
                    "values ('{}', '{}', '{}', '{}', {}, {}, {}, st_setsrid(st_makepoint({}, {}), 4326));".format(
@@ -681,7 +698,30 @@ class TestRealRunFunction:
         assert [(r["status"], r["nearest_nm"], r["nearest_lines"], r["nearest_dist_m"]) for r in rows] == \
             [("no_station", None, None, None)]
 
-    @pytest.mark.parametrize("pnu,status", [(P_NOGEOM, "no_coord"), (DJ, "not_seoul")])
+    def test_bins_follow_the_six_hour_ranges(self, cur):
+        """24시간 전부 서로 다른 값 — 칸 경계(6시·3시 등)를 옮기면 그 칸이 바뀐다.
+        배정은 👤 Q4 원문 「4~7·7~10·10~14·14~17·17~21·21~」(끝 시각은 그 칸에 안 든다)."""
+        _, rows = _call(cur, P_BINS)
+        assert [(r["status"], r["station_nm"]) for r in rows] == [("ok", "시간역")]
+        b = rows[0]
+        ranges = {"h04_07": (4, 5, 6), "h07_10": (7, 8, 9), "h10_14": (10, 11, 12, 13),
+                  "h14_17": (14, 15, 16), "h17_21": (17, 18, 19, 20), "h21_04": (21, 22, 23, 0, 1, 2, 3)}
+        want = {k: {"on": sum(h + 1 for h in hs), "off": sum(25 - h for h in hs)} for k, hs in ranges.items()}
+        assert want["h04_07"] == {"on": 18, "off": 60} and want["h21_04"] == {"on": 79, "off": 103}
+        assert b["bins"] == want
+        assert (b["on_daily"], b["off_daily"]) == (sum(h + 1 for h in range(24)), sum(25 - h for h in range(24)))
+        assert (b["on_daily"], b["off_daily"]) == (300, 324)
+
+    def test_group_name_is_the_smallest_station_id(self, cur):
+        """묶음 대표 이름 = station_id 가 가장 작은 역의 원문 이름(0010 「잠실(송파구청)」 · 0011 「잠실」)."""
+        _, rows = _call(cur, P_NAME)
+        assert len(rows) == 1
+        r = rows[0]
+        assert (r["status"], r["station_nm"]) == ("ok", "잠실(송파구청)")
+        assert r["lines"] == ["2호선", "8호선"] and r["lines_with_data"] == ["2호선", "8호선"]
+        assert (r["on_daily"], r["months_n"]) == (30, 1)
+
+    @pytest.mark.parametrize("pnu,status", [(P_NOGEOM, "no_coord"), (DJ, "not_seoul"), (DJ_NOGEOM, "no_coord")])
     def test_building_level_status_is_one_row(self, cur, pnu, status):
         _, rows = _call(cur, pnu)
         assert [r["status"] for r in rows] == [status]

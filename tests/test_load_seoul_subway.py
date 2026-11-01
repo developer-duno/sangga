@@ -308,13 +308,14 @@ def test_missing_months():
 def test_pick_latest_files(tmp_path):
     for n in ("master/20261001.json", "master/20261102.json", "master/20261102_2.json", "master/x.json",
               "ridership/202609_20261005.json", "ridership/202609_20261102.json", "ridership/202608_20261005.json",
-              "ridership/202613_20261005.json"):
+              "ridership/202613_20261005.json", "ridership/202609_20261102_2.json"):
         p = tmp_path / n
         p.parent.mkdir(exist_ok=True)
         p.write_text("{}", encoding="utf-8")
     assert os.path.basename(L.pick_master(str(tmp_path))) == "20261102_2.json"
     got = {k: os.path.basename(v) for k, v in L.pick_months(str(tmp_path)).items()}
-    assert got == {"202609": "202609_20261102.json", "202608": "202608_20261005.json"}
+    # 승하차도 마스터와 같은 규칙 — 같은 받은 날이면 꼬리(_2)가 가장 늦은 것.
+    assert got == {"202609": "202609_20261102_2.json", "202608": "202608_20261005.json"}
     assert L.pick_master(str(tmp_path / "없음")) is None
 
 
