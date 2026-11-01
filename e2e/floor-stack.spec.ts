@@ -22,6 +22,7 @@ import {
   daejeonClosure,
   districtSales,
   districtPop,
+  districtCensusPop,
   storeHistory,
   dataFreshness,
   storeHit,
@@ -125,6 +126,10 @@ const DAEJEON_CLOSURE_PATTERN = '**/rest/v1/rpc/get_daejeon_dong_closure*';
 //    카드를 보는 것은 스펙 CN·CO(와 차례 전체를 견주는 AM)뿐이다(안 막으면 실존하지 않는 도메인으로 나가 DNS 에 좌우된다).
 const SALES_PATTERN = '**/rest/v1/rpc/list_district_sales*';
 const POP_PATTERN = '**/rest/v1/rpc/list_district_pop*';
+// 대전 상권 인구(결정 0045 PR⑤) — 대전 필지를 열 때만 곁 카드와 함께 미리 나간다(서울 건물은 요청 0).
+// ⚠️ 기본값은 **함수가 없는 상태**다 — 그때 대전 건물의 상권 인구 카드는 통째로 빠진다(예전엔 빈 카드였다 — AI 의 대전 갈래를
+//    그만큼 고쳤다). 카드를 보는 것은 스펙 CR 뿐이다(안 막으면 실존하지 않는 도메인으로 나가 DNS 에 좌우된다).
+const CENSUS_PATTERN = '**/rest/v1/rpc/get_district_census_pop*';
 // 가게 이력(결정 0045 PR④) — 모든 필지에서 곁 카드와 함께 미리 나간다.
 // ⚠️ 기본값은 **함수가 없는 상태**다 — 그때 이력 카드는 통째로 빠진다(예전엔 빈 카드로 늘 서 있었다 — 카드 수·차례를 세는
 //    스펙 기대값을 그만큼 고쳤다). 카드를 보는 것은 스펙 CP(와 차례 전체를 견주는 AM)뿐이다.
@@ -251,6 +256,8 @@ async function mockFloorStack(
   // 업종별 추정매출 · 상권 인구도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 스펙 CN·CO·AM 만 덮어쓴다.
   await mockMissingFunction(page, SALES_PATTERN);
   await mockMissingFunction(page, POP_PATTERN);
+  // 대전 상권 인구도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 스펙 CR 만 덮어쓴다.
+  await mockMissingFunction(page, CENSUS_PATTERN);
   // 가게 이력도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 스펙 CP·AM 만 덮어쓴다.
   await mockMissingFunction(page, HISTORY_PATTERN);
   // 호실 구성표 둘도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 호실을 보는 스펙은
@@ -2433,9 +2440,11 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
     await page.getByRole('button', { name: /대전빌딩/ }).click();
     // ⓘ 층 목록 목업은 그대로라 머리 제목은 앞 건물 이름이다 — 카드 요약이 바뀐 것으로 본다.
     await expect(oc.locator('.card__summary')).toHaveText('서울 상권만 다루는 자료라 이 건물(대전)에는 없습니다');
-    // 빈 카드 — 대전 건물의 매출·유동인구는 그 사실 한 줄(👤 물결 1-B) · 가게 이력은 제 카드라 기본(함수 없음)에서 빠진다(PR④).
+    // 빈 카드 — 대전 건물의 매출은 그 사실 한 줄(👤 물결 1-B) · 가게 이력은 제 카드라 기본(함수 없음)에서 빠진다(PR④) ·
+    // 상권 인구도 대전은 2026-11-01(결정 0045 PR⑤) 부터 제 카드(통계청 집계구)라 기본(함수 없음)에서 빠진다(빈 카드 아님).
     await expect(stack.locator('section.card--sales .card__summary')).toHaveText('대전은 아직 받지 않았습니다');
-    await expect(stack.locator('section.card--pop .card__summary')).toHaveText('대전은 아직 받지 않았습니다');
+    await expect(stack.locator('section.card--pop')).toHaveCount(0);
+    await expect(stack.locator('section.pop')).toHaveCount(0);
     await expect(stack.locator('section.card--history')).toHaveCount(0);
     await openCard(page, /상권 개업·폐업/);
     await expect(oc.locator('.oc__lead')).toHaveText(
@@ -2715,6 +2724,11 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
     await mockJson(page, SEARCH_PATTERN, [searchHit()]);
     await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()], industryMix());
     await mockJson(page, POP_PATTERN, districtPop());
+    // 서울 건물엔 통계청 상권 인구(결정 0045 PR⑤ · 대전 전용) 요청이 안 나간다.
+    const censusCalls: string[] = [];
+    page.on('request', (r) => {
+      if (r.url().includes('/rpc/get_district_census_pop') && r.method() !== 'OPTIONS') censusCalls.push(r.url());
+    });
 
     await page.goto('/');
     await pickGu(page, '서울', '강남구');
@@ -2723,6 +2737,7 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
     const pop = page.locator('section.stack section.pop');
     await expect(pop).toBeVisible();
     await expect(pop.locator('.card__h')).toContainText('상권 인구 (서울시 공표)');
+    expect(censusCalls).toEqual([]);
     const summary = pop.locator('.card__summary');
     await expect(summary).toHaveText(
       '○○역 2번 출구 외 상권 1곳 · 길단위인구 2026년 2분기 · 사는 사람 2023년 · 일하는 사람 2024년 기준',
@@ -2792,6 +2807,118 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
 
     // 함수가 없으면(PGRST202) — 카드째 없다.
     await mockMissingFunction(page, POP_PATTERN);
+    await page.reload();
+    await expect(page.locator('section.stack section.card--floors')).toBeVisible();
+    await expect(page.locator('section.pop')).toHaveCount(0);
+    await expect(page.locator('section.card--pop')).toHaveCount(0);
+  });
+
+  test('CR. 대전 건물 — 「상권 인구 (통계청 집계구)」 카드(요약 값 0 · 자료 줄 「통계청 SGIS 집계구 … 받음」) · 상권 둘(값 + 범위 · 범위만) · 가구 · 사업체 종사자 · 덩어리 발 · 발 문구 다섯(「일하는 사람」은 한 곳) · 13px · 넘침 0 · 종이에 나옴 · 함수 없으면 카드 0', async ({
+    page,
+  }, testInfo) => {
+    const DJ = '3017010100100010000';
+    const BLD = `${DJ}_1`;
+    await mockOpenSigungu(page);
+    // 나중에 등록한 것이 먼저 잡힌다 — 신선도 표에 17번 줄(SGIS 상권 인구)을 더한다(공용 픽스처는 그대로).
+    await mockJson(page, DATA_FRESHNESS_PATTERN, [
+      ...dataFreshness(),
+      {
+        src: '상권 인구 (통계청 집계구)',
+        basis_kind: '받은 날',
+        basis: '2026-10-08',
+        next_expected: '2099-10-08',
+        cadence: '연 1회 (사람이 신청해 받음)',
+      },
+    ]);
+    await mockJson(page, SEARCH_PATTERN, [searchHit({ bld_id: BLD, pnu: DJ, bld_nm: '대전빌딩', road_addr: '대전 서구 둔산로 1' })]);
+    await mockFloorStack(page, [], [floorRow({ bld_id: BLD, pnu: DJ, floor_no: 2 }), floorRow({ bld_id: BLD, pnu: DJ })], industryMix());
+    await mockJson(page, OPEN_CLOSE_PATTERN, openCloseNotSeoul());
+    const censusCalls: string[] = [];
+    await page.route(CENSUS_PATTERN, async (route) => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS_HEADERS });
+      censusCalls.push(route.request().postData() ?? '');
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: CORS_HEADERS,
+        body: JSON.stringify(districtCensusPop()),
+      });
+    });
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '대전빌딩');
+    await page.getByRole('button', { name: /대전빌딩/ }).first().click();
+
+    const stack = page.locator('section.stack');
+    const pop = stack.locator('section.pop.pop--census');
+    await expect(pop).toBeVisible();
+    await expect(pop.locator('.card__h')).toContainText('상권 인구 (통계청 집계구)');
+    await expect(stack.getByText('상권 인구 (서울시 공표)')).toHaveCount(0);
+    await expect(stack.locator('section.card--pop')).toHaveCount(0);
+    await expect(pop.locator('.card__src')).toHaveText('자료: 통계청 SGIS 집계구 2026년 10월 8일 받음');
+    const summary = pop.locator('.card__summary');
+    await expect(summary).toHaveText('둔산 가짜거리 외 상권 1곳 · 통계청 집계구 2024년 통계');
+    expect(await summary.textContent()).not.toMatch(/명/);
+    // 미리 부르기 한 번 — 카드가 그 답을 받아 다시 묻지 않는다.
+    expect(censusCalls).toEqual([JSON.stringify({ p_pnu: DJ })]);
+
+    await openCard(page, /상권 인구/);
+    await expect(pop.locator('.grade__badge--est')).toHaveText('C등급 · 통계청 집계구 어림');
+    await expect(pop.locator('.pop__badge-note')).toHaveText('통계청 SGIS 2024년 집계구 통계 · 2025년 6월 경계 · 사람이 신청해 받은 자료');
+    const blocks = pop.locator('.pop__district');
+    await expect(blocks).toHaveCount(2);
+    const first = blocks.nth(0);
+    const second = blocks.nth(1);
+    await expect(first.locator('.pop__name')).toHaveText('둔산 가짜거리 · 발달상권');
+    await expect(first.locator('.pop__chunk--resident .pop__chunk-h')).toHaveText('사는 사람 (거주 인구)');
+    await expect(first.locator('.pop__chunk--resident .pop__num')).toHaveText('약 3,120명');
+    await expect(first.locator('.pop__chunk--resident .pop__q')).toHaveText('범위 1,840~4,610명');
+    await expect(first.locator('.pop__chunk--resident .pop__big')).toContainText('가구 약 1,380 (범위 820~2,050)');
+    await expect(first.locator('.pop__chunk--emp .pop__chunk-h')).toHaveText('사업체 종사자 (통계청)');
+    await expect(first.locator('.pop__chunk--emp .pop__num')).toHaveText('약 5,900명');
+    await expect(first.locator('.pop__note')).toHaveText('겹친 집계구 9개 · 통째로 든 집계구 3개 · 상권 넓이의 100% 를 덮음');
+    // 둘째 — 범위만(값을 숨긴다 · .pop__q 없음).
+    await expect(second.locator('.pop__chunk--resident .pop__num')).toHaveText('범위 0~1,380명');
+    await expect(second.locator('.pop__chunk--resident .pop__q')).toHaveCount(0);
+    await expect(second.locator('.pop__chunk--resident .pop__big')).toContainText('가구 범위 0~640');
+    await expect(second.locator('.pop__chunk--emp .pop__num')).toHaveText('범위 0~15,300명');
+    await expect(second.locator('.pop__note')).toHaveText(
+      '겹친 집계구 3개 · 통째로 든 집계구 0개 · 상권 넓이의 99.98% 를 덮음 — 범위가 넓어 값 대신 범위만 적은 칸이 있습니다',
+    );
+    await expect(pop.locator('.pop__why li')).toHaveCount(5);
+    await expect(pop.locator('.pop__why li strong')).toHaveText('이 상권 안의 합계(어림)이며 이 건물의 값이 아닙니다.');
+    // 「일하는 사람」은 발 문구 넷째 한 곳뿐 · 「유동인구」 0.
+    const text = (await pop.textContent()) ?? '';
+    expect(text.split('일하는 사람').length - 1).toBe(1);
+    expect(text).not.toContain('유동인구');
+    await expect(pop.locator('.pop__why li').nth(3)).toContainText('일하는 사람(직장인구)');
+    for (const sel of ['.pop__why', '.pop__lead', '.pop__q', '.pop__note']) {
+      await expect(pop.locator(sel).first()).toHaveCSS('font-size', '13px');
+    }
+    const overflow = await page.evaluate(() => {
+      const d = (globalThis as unknown as { document: { documentElement: { scrollWidth: number; clientWidth: number } } })
+        .document.documentElement;
+      return d.scrollWidth - d.clientWidth;
+    });
+    const cardOver = await pop.evaluate((e) => e.scrollWidth - e.clientWidth);
+    testInfo.annotations.push({ type: 'CR 실측', description: `${testInfo.project.name}: 넘침 ${overflow} · 카드 넘침 ${cardOver}` });
+    expect(overflow).toBeLessThanOrEqual(0);
+    expect(cardOver).toBeLessThanOrEqual(0);
+
+    // 종이 — 카드가 나오고 덩이는 한 덩어리 · 카드 통째 avoid 아님.
+    await page.emulateMedia({ media: 'print' });
+    await expect(pop).toBeVisible();
+    await expect(pop.locator('.pop__why li')).toHaveCount(5);
+    await expect(first.locator('.pop__chunk').first()).toHaveCSS('break-inside', 'avoid');
+    await expect(pop).not.toHaveCSS('break-inside', 'avoid');
+    await page.emulateMedia({ media: null });
+
+    // 함수가 없으면(PGRST202 — mockFloorStack 기본값) — 카드째 없다(빈 카드도 아니다).
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit({ bld_id: BLD, pnu: DJ, bld_nm: '대전빌딩', road_addr: '대전 서구 둔산로 1' })]);
+    await mockFloorStack(page, [], [floorRow({ bld_id: BLD, pnu: DJ, floor_no: 2 }), floorRow({ bld_id: BLD, pnu: DJ })], industryMix());
     await page.reload();
     await expect(page.locator('section.stack section.card--floors')).toBeVisible();
     await expect(page.locator('section.pop')).toHaveCount(0);

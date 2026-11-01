@@ -482,3 +482,33 @@ describe('서울 필지만 추정매출·상권 인구를 미리 보낸다 (결�
     expect(countFetches('list_district_openclose', D.pnu)).toBe(1);
   });
 });
+
+describe('대전 필지만 통계청 상권 인구를 미리 보낸다 (결정 0045 PR⑤ · DAEJEON_PREFETCH_FNS)', () => {
+  const CENSUS = 'get_district_census_pop';
+  const D = { bld_id: 'D-1', pnu: '3011010700108770000', tag: '다' };
+
+  it('대전 건물 — 대전 함수 둘을 보내고, 카드가 선 뒤에도 상권 인구는 정확히 1회(다시 안 묻는다)', async () => {
+    state.floors.set(D.bld_id, floorsOf(D));
+    render(
+      <StrictMode>
+        <FloorStack building={building(D)} />
+      </StrictMode>,
+    );
+    await screen.findByText('빌딩다');
+    await act(async () => {});
+    expect(countFetches(CENSUS, D.pnu)).toBe(1);
+    expect(countFetches(CENSUS)).toBe(1);
+    // 대전 폐업도 같이 나간다(대전 함수 둘).
+    expect(countFetches('get_daejeon_dong_closure', D.pnu)).toBe(1);
+  });
+
+  it('서울 건물 — 통계청 상권 인구 요청 0', async () => {
+    state.floors.set(A.bld_id, floorsOf(A));
+    render(<FloorStack building={building(A)} />);
+    await screen.findByText('빌딩가');
+    await act(async () => {});
+    expect(countFetches(CENSUS)).toBe(0);
+    // 양성 대조 — 서울 함수는 나갔다.
+    expect(countFetches('list_district_pop', A.pnu)).toBe(1);
+  });
+});

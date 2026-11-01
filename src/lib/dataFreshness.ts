@@ -190,7 +190,8 @@ export const CARD_SOURCES = {
   pop_people: { src: '상권 상주·직장인구 (서울시)', label: '서울시 상주·직장인구', ending: ' 값' },
   // 결정 0045 PR④ — 가게 이력 결과표(로컬에서 굽는다). 화면 카드는 ③-5 에서 `SECTION_PLAN.history.sources` 가 쓴다.
   history: { src: '가게 이력 (점포 자료 누적)', label: '점포 자료 누적(소상공인시장진흥공단)', ending: '' },
-  // 결정 0045 PR⑤ — 대전 상권 인구(SGIS 집계구 · 받은 날). 화면 카드는 다음 단계에서 붙인다(지금은 어느 SECTION_PLAN 도 안 쓴다).
+  // 결정 0045 PR⑤ — 대전 상권 인구(SGIS 집계구 · 받은 날). 대전 건물의 상권 인구 카드(`CensusPopSection`)만 이 갈래를 쓴다
+  //   (`SECTION_PLAN` 에는 없다 — 카드가 plan 의 제목·자료 갈래를 바꿔 끼운다 · `daejeon_closure` 와 같은 꼴).
   census_pop: { src: '상권 인구 (통계청 집계구)', label: '통계청 SGIS 집계구', ending: ' 받음' },
 } as const satisfies Record<string, { src: string; label: string; ending: string }>;
 

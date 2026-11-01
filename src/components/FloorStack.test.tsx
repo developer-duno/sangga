@@ -113,6 +113,11 @@ const responses = {
   sales: { data: null as unknown, error: { code: 'PGRST202', message: 'function does not exist' } as unknown },
   pop: { data: null as unknown, error: { code: 'PGRST202', message: 'function does not exist' } as unknown },
   /**
+   * 서버 함수 get_district_census_pop 의 응답(대전 상권 인구 · 결정 0045 PR⑤ — 대전 필지만 부른다). 기본값은 **함수 없음** —
+   * 카드가 스스로 사라진다(그 카드 자체는 `CensusPopSection.test.tsx` 가 본다).
+   */
+  censusPop: { data: null as unknown, error: { code: 'PGRST202', message: 'function does not exist' } as unknown },
+  /**
    * 서버 함수 get_store_history 의 응답(이 자리 가게 이력 · 결정 0045 PR④ — 모든 지역). 기본값은 **함수 없음** —
    * 카드가 스스로 사라진다(그 카드 자체는 `HistorySection.test.tsx` 가 본다).
    */
@@ -142,6 +147,15 @@ const SALES_OK = [
     rest_amt: 0,
     rest_co: 0,
     industries: [{ cd: 'CS100001', nm: '한식음식점', amt: 214_000_000, co: 4120 }],
+  },
+];
+
+/** 대전 상권 인구 정상 답 한 줄(결정 0045 PR⑤ — 카드 배치 시험이 쓴다). */
+const CENSUS_OK = [
+  {
+    status: 'ok', district_id: 'DJ001', district_nm: '둔산 가짜거리', district_type: '발달상권', area_m2: 120000.5,
+    n_overlap: 9, n_full: 3, cover_pct: 100, pop: 3120, pop_lo: 1840, pop_hi: 4610, hh: 1380, hh_lo: 820, hh_hi: 2050,
+    emp: 5900, emp_lo: 2700, emp_hi: 11200, received_on: '2026-10-08', base_year: 2024, bnd_base_date: '2025-06-30',
   },
 ];
 
@@ -226,6 +240,8 @@ vi.mock('../lib/supabase', () => ({
       // 업종별 추정매출 · 상권 인구(결정 0045 PR③). 갈라 답하지 않으면 상권 응답(객체)이 흘러들어 늘 '모양 이상 → 카드 없음'으로 굳는다.
       if (fn === 'list_district_sales') return Promise.resolve(responses.sales);
       if (fn === 'list_district_pop') return Promise.resolve(responses.pop);
+      // 대전 상권 인구(결정 0045 PR⑤). 같은 이유로 갈라 답한다.
+      if (fn === 'get_district_census_pop') return Promise.resolve(responses.censusPop);
       // 이 자리 가게 이력(결정 0045 PR④). 같은 이유로 갈라 답한다.
       if (fn === 'get_store_history') return Promise.resolve(responses.history);
       return Promise.resolve(responses.districts);
@@ -368,6 +384,8 @@ beforeEach(() => {
   // 기본은 함수 없음 = 추정매출·상권 인구 카드 미표시(결정 0045 PR③). 카드 배치 시험만 덮어쓴다.
   responses.sales = { data: null, error: { code: 'PGRST202', message: 'function does not exist' } };
   responses.pop = { data: null, error: { code: 'PGRST202', message: 'function does not exist' } };
+  // 기본은 함수 없음 = 대전 상권 인구 카드 미표시(결정 0045 PR⑤). 카드 배치 시험만 덮어쓴다.
+  responses.censusPop = { data: null, error: { code: 'PGRST202', message: 'function does not exist' } };
   // 기본은 함수 없음 = 가게 이력 카드 미표시(결정 0045 PR④). 카드 배치 시험만 덮어쓴다.
   responses.history = { data: null, error: { code: 'PGRST202', message: 'function does not exist' } };
   vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -2148,7 +2166,9 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     expect(container.querySelectorAll('.card--empty')).toHaveLength(0);
   });
 
-  it('★ 서울 밖 빈 카드 둘은 아무것도 부르지 않는다 · 대전 건물이면 매출·인구 요약이 그 사실 한 줄 · 가게 이력은 대전도 부른다', async () => {
+  it('★ 서울 밖 빈 카드(매출)는 아무것도 부르지 않는다 · 대전 건물이면 매출 요약이 그 사실 한 줄 · 상권 인구는 통계청 집계구 카드 · 가게 이력은 대전도 부른다', async () => {
+    // 대전 상권 인구(결정 0045 PR⑤) — 대전 필지면 pop 자리가 `CensusPopSection`(빈 카드가 아니다).
+    responses.censusPop = { data: CENSUS_OK, error: null };
     const { container } = render(<FloorStack building={building({ pnu: '3011010700108770000' })} />);
     await waitFor(() => {
       expect(container.querySelectorAll('.card')).toHaveLength(Object.keys(SECTION_PLAN).length);
@@ -2156,24 +2176,49 @@ describe('FloorStack — 한 장 요약 카드 배치 (로드맵 Wave 2)', () =>
     });
     const summaryOf = (cls: string) => container.querySelector(`.${cls} .card__summary`)?.textContent;
     expect(summaryOf('card--sales')).toBe('대전은 아직 받지 않았습니다');
-    expect(summaryOf('card--pop')).toBe('대전은 아직 받지 않았습니다');
+    expect(container.querySelector('.card--pop')).toBeNull();
+    expect(container.querySelector('.card.pop.pop--census .card__title')?.textContent).toBe('상권 인구 (통계청 집계구)');
+    expect(summaryOf('pop--census')).toBe('둔산 가짜거리 · 통계청 집계구 2024년 통계');
+    // 서울 카드(list_district_pop)는 대전에서 부르지 않는다 · 통계청 카드는 미리 보낸 답으로 한 번만.
+    expect(rpcCalls.filter((x) => x.fn === 'list_district_pop')).toEqual([]);
+    expect(rpcCalls.filter((x) => x.fn === 'get_district_census_pop')).toEqual([
+      { fn: 'get_district_census_pop', args: { p_pnu: '3011010700108770000' } },
+    ]);
     // 가게 이력은 전국 점포 자료라 대전도 제 카드(결정 0045 PR④ · 빈 카드가 아니다).
     expect(container.querySelector('.card--history.card--empty')).toBeNull();
     expect(summaryOf('card--history')).toBe('지금 보이는 가게 1곳 · 전에 보였던 가게 1곳 · 2017년 4분기부터 점포 자료 35분기');
-    // 빈 카드 둘은 종이에서 빠지는 이름표를 단다(인쇄 규칙은 E2E 가 본다).
-    expect(container.querySelectorAll('.card--empty')).toHaveLength(2);
+    // 빈 카드(매출 하나)는 종이에서 빠지는 이름표를 단다(인쇄 규칙은 E2E 가 본다).
+    expect(container.querySelectorAll('.card--empty')).toHaveLength(1);
     // ⛔ 빈 카드에는 서울시 자료 날짜 줄이 새지 않는다(sales·pop 칸에는 서울 카드용 자료 칸이 있다 — EmptySection 이 뺀다).
     expect(container.querySelector('.card--empty .card__src')).toBeNull();
     // ⛔ 부른 함수는 원래 카드들 것뿐이다 — 빈 카드용 함수 이름이 하나도 없다.
     // ⓘ `list_rent_stat_history`(임대 동향의 8분기 흐름 · 결정 0038 V5)는 임대 카드 것이다 — 이름에 'history' 가 들어 있어 이 목록에서만 뺀다.
     // ⓘ `get_store_history`(가게 이력 · 결정 0045 PR④)는 빈 카드가 아니라 제 카드 것 — 모든 지역에서 부른다.
-    for (const c of rpcCalls.filter((x) => x.fn !== 'list_rent_stat_history' && x.fn !== 'get_store_history')) {
+    // ⓘ `get_district_census_pop`(대전 상권 인구 · 결정 0045 PR⑤)도 빈 카드가 아니라 제 카드 것 — 위에서 한 번만인지 봤다.
+    for (const c of rpcCalls.filter(
+      (x) => x.fn !== 'list_rent_stat_history' && x.fn !== 'get_store_history' && x.fn !== 'get_district_census_pop',
+    )) {
       expect(c.fn).not.toMatch(/sales|pop|history|empty/i);
     }
     expect(rpcCalls.some((x) => x.fn === 'list_rent_stat_history')).toBe(true);
     expect(rpcCalls.filter((x) => x.fn === 'get_store_history')).toEqual([
       { fn: 'get_store_history', args: { p_pnu: '3011010700108770000' } },
     ]);
+  });
+
+  it('★ 상권 인구 자리 — 서울은 서울시 카드(통계청 요청 0) · 서울·대전 밖은 빈 카드(요청 0) (결정 0045 PR⑤)', async () => {
+    responses.pop = { data: POP_OK, error: null };
+    responses.censusPop = { data: CENSUS_OK, error: null };
+    const a = render(<FloorStack building={building()} />);
+    await waitFor(() => expect(a.container.querySelector('.card.pop .card__title')?.textContent).toBe('상권 인구 (서울시 공표)'));
+    expect(a.container.querySelector('.pop--census')).toBeNull();
+    expect(rpcCalls.filter((x) => x.fn === 'get_district_census_pop')).toEqual([]);
+    a.unmount();
+    rpcCalls.length = 0;
+    const b = render(<FloorStack building={building({ pnu: '2611010100100010000' })} />);
+    await waitFor(() => expect(b.container.querySelector('.card--pop.card--empty')).not.toBeNull());
+    expect(b.container.querySelector('.pop--census')).toBeNull();
+    expect(rpcCalls.filter((x) => x.fn === 'get_district_census_pop' || x.fn === 'list_district_pop')).toEqual([]);
   });
 
   it('구 이름을 모르면 그 조각을 빼고 적는다 ("null 층대별 단가"가 되지 않게)', async () => {

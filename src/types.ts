@@ -1177,6 +1177,47 @@ export type DistrictPop = {
   worker: DistrictPopWorker | null;
 };
 
+/**
+ * 함수 `get_district_census_pop(p_pnu)` 의 줄 상태(결정 0045 PR⑤). 건물 단위 셋(no_coord → not_daejeon →
+ * outside_daejeon_district — 한 줄만)이거나, 상권마다 ok / no_data(결과표에 그 상권 줄 없음).
+ */
+export type DistrictCensusPopStatus = 'no_coord' | 'not_daejeon' | 'outside_daejeon_district' | 'ok' | 'no_data';
+
+/**
+ * 함수 `get_district_census_pop(p_pnu)` 한 줄(결정 0045 PR⑤ · 마이그 2026-11-01b 의 반환 칸 그대로).
+ * ⓘ 건물 단위 상태 줄은 `district_*` 부터 숫자 칸이 전부 null · no_data 줄은 숫자 칸이 null(0 이 아니다) ·
+ *   `ok` 가 아니면 숫자 칸은 null. 표지 칸 셋(`received_on`·`base_year`·`bnd_base_date`)은 모든 줄에 같다.
+ * ⛔ 상권 안 합계(어림)이지 이 건물의 값이 아니다 · 사업체 수(est)는 안 온다.
+ */
+export type DistrictCensusPop = {
+  status: DistrictCensusPopStatus;
+  district_id: string | null;
+  district_nm: string | null;
+  district_type: string | null;
+  area_m2: number | null;
+  /** 상권과 조금이라도 겹친 집계구 수. */
+  n_overlap: number | null;
+  /** 상권 안에 통째로 든 집계구 수. */
+  n_full: number | null;
+  /** 상권 넓이 가운데 집계구가 덮은 비율(%) — 서버 값 그대로. */
+  cover_pct: number | null;
+  pop: number | null;
+  pop_lo: number | null;
+  pop_hi: number | null;
+  hh: number | null;
+  hh_lo: number | null;
+  hh_hi: number | null;
+  emp: number | null;
+  emp_lo: number | null;
+  emp_hi: number | null;
+  /** 사람이 받은 날 'YYYY-MM-DD'. */
+  received_on: string | null;
+  /** 통계 연도(네 자리). */
+  base_year: number | null;
+  /** 집계구 경계 기준일 'YYYY-MM-DD'. */
+  bnd_base_date: string | null;
+};
+
 /** 대전 동네 폐업 한 분기(결정 0044) — 그 동의 그 분기 폐업 합. 폐업이 없던 분기도 0 으로 온다. */
 export type DaejeonClosureQuarter = { quarter: string; clsbiz_co: number };
 

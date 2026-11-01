@@ -1,6 +1,7 @@
 import { supabase } from './supabase';
 import {
   DAEJEON_CLOSURE_FN,
+  DISTRICT_CENSUS_POP_FN,
   DISTRICT_POP_FN,
   DISTRICT_SALES_FN,
   FLOOR_INDUSTRY_FN,
@@ -55,10 +56,11 @@ export const SIDE_PREFETCH_FNS = [
 ] as const;
 
 /**
- * 대전 필지(pnu 앞 두 자리 30)일 때만 더 보내는 함수 — 「동네 폐업 (대전시 공표)」(결정 0044 · 인자 `{ p_pnu }`).
- * 받는 쪽은 개업·폐업 카드(대전 자리)와 역할 요약 판. 서울 건물에는 보내지 않는다(요청 0).
+ * 대전 필지(pnu 앞 두 자리 30)일 때만 더 보내는 함수 둘 — 「동네 폐업 (대전시 공표)」(결정 0044) ·
+ * 「상권 인구 (통계청 집계구)」(결정 0045 PR⑤) · 인자 `{ p_pnu }`. 받는 쪽은 개업·폐업 카드(대전 자리)와 역할 요약 판 ·
+ * 상권 인구 카드(대전 자리). 서울 건물에는 보내지 않는다(요청 0).
  */
-export const DAEJEON_PREFETCH_FNS = [DAEJEON_CLOSURE_FN] as const;
+export const DAEJEON_PREFETCH_FNS = [DAEJEON_CLOSURE_FN, DISTRICT_CENSUS_POP_FN] as const;
 
 /**
  * 서울 필지(pnu 앞 두 자리 11)일 때만 더 보내는 함수 둘 — 「업종별 추정매출 (서울시 추정)」·「상권 인구 (서울시 공표)」

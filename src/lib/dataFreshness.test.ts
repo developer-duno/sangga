@@ -345,6 +345,18 @@ describe('cardSourceLine — 카드 제목 아래 날짜 줄 (S3)', () => {
     expect(cardSourceLine(SECTION_PLAN.pop.sources, noPeople)).toBe('자료: 서울시 상권분석서비스 2026년 2분기');
   });
 
+  it('대전 상권 인구(결정 0045 PR⑤)는 census_pop 한 줄 — 「통계청 SGIS 집계구 … 받음」 · SECTION_PLAN 에는 없다(카드가 바꿔 끼운다)', () => {
+    expect(CARD_SOURCES.census_pop.src).toBe('상권 인구 (통계청 집계구)');
+    const rows = [
+      ...rows1016(),
+      row({ src: '상권 인구 (통계청 집계구)', basis_kind: '받은 날', basis: '2026-10-08', next_expected: null, cadence: '-' }),
+    ];
+    expect(cardSourceLine(['census_pop'], rows)).toBe('자료: 통계청 SGIS 집계구 2026년 10월 8일 받음');
+    // 서버 표에 그 줄이 없으면 줄 없음(조각 하나뿐이라).
+    expect(cardSourceLine(['census_pop'], rows1016())).toBeNull();
+    for (const plan of Object.values(SECTION_PLAN)) expect(plan.sources ?? []).not.toContain('census_pop');
+  });
+
   it('실거래 조각은 어느 카드에서나 같은 글이다(B1 · 실거래 기록·층별 공표값·동네 흐름·층 목록)', () => {
     const plans: SectionPlan[] = [
       SECTION_PLAN.tx,
