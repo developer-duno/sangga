@@ -3,6 +3,7 @@ import {
   DAEJEON_CLOSURE_FN,
   DISTRICT_CENSUS_POP_FN,
   DISTRICT_POP_FN,
+  NEARBY_SUBWAY_FN,
   DISTRICT_SALES_FN,
   FLOOR_INDUSTRY_FN,
   INDUSTRY_MEDIAN_FN,
@@ -63,10 +64,11 @@ export const SIDE_PREFETCH_FNS = [
 export const DAEJEON_PREFETCH_FNS = [DAEJEON_CLOSURE_FN, DISTRICT_CENSUS_POP_FN] as const;
 
 /**
- * 서울 필지(pnu 앞 두 자리 11)일 때만 더 보내는 함수 둘 — 「업종별 추정매출 (서울시 추정)」·「상권 인구 (서울시 공표)」
- * (결정 0045 PR③ · 인자 `{ p_pnu }`). 받는 쪽은 그 두 카드. 서울 밖 건물에는 보내지 않는다(요청 0 — 그 자리는 빈 카드).
+ * 서울 필지(pnu 앞 두 자리 11)일 때만 더 보내는 함수 셋 — 「업종별 추정매출 (서울시 추정)」·「상권 인구 (서울시 공표)」
+ * (결정 0045 PR③) · 그 인구 카드 안 지하철 승하차 덩이(결정 0045 PR⑥) · 인자 `{ p_pnu }`. 받는 쪽은 그 두 카드.
+ * 서울 밖 건물에는 보내지 않는다(요청 0 — 그 자리는 빈 카드 · 대전은 집계구 카드).
  */
-export const SEOUL_PREFETCH_FNS = [DISTRICT_SALES_FN, DISTRICT_POP_FN] as const;
+export const SEOUL_PREFETCH_FNS = [DISTRICT_SALES_FN, DISTRICT_POP_FN, NEARBY_SUBWAY_FN] as const;
 
 export type SidePrefetch = {
   pnu: string;

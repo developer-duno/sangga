@@ -108,7 +108,8 @@ export const SECTION_PLAN = {
       (`EmptySection` 은 날짜 줄을 그리지 않는다 — S3 · 👤 결정 ②).
   */
   sales: { title: '업종별 추정매출 (서울시 추정)', role: '창업자', defaultOpen: false, sources: ['sales'] },
-  pop: { title: '상권 인구 (서울시 공표)', role: '창업자', defaultOpen: false, sources: ['pop_flow', 'pop_people'] },
+  // 결정 0045 PR⑥ — 카드 안 지하철 승하차 덩이 몫 `subway` 를 더했다(대전 카드는 plan 의 자료 갈래를 바꿔 끼우므로 영향 0).
+  pop: { title: '상권 인구 (서울시 공표)', role: '창업자', defaultOpen: false, sources: ['pop_flow', 'pop_people', 'subway'] },
   history: { title: '이 자리 가게 이력 (점포 자료 누적)', role: '창업자', defaultOpen: false, sources: ['history'] },
 } as const satisfies Record<string, SectionPlan>;
 

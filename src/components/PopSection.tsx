@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { DISTRICT_POP_FN } from '../lib/appConstants';
+import { DISTRICT_POP_FN, NEARBY_SUBWAY_FN } from '../lib/appConstants';
 import { SECTION_PLAN, type SectionPlan } from '../lib/sectionCards';
 import { SectionCard } from './SectionCard';
 import { districtTitle, formatCount, headBody } from '../lib/districtSales';
@@ -26,8 +26,20 @@ import {
   type FlowBars,
   type PopBig,
 } from '../lib/districtPop';
+import {
+  SUBWAY_BADGE,
+  SUBWAY_CHUNK_TITLE,
+  SUBWAY_NOTES,
+  isNearbySubwayList,
+  subwayBars,
+  subwayNoStationText,
+  subwayNumbers,
+  subwayShows,
+  subwayStationLine,
+  subwaySummaryTail,
+} from '../lib/subwayNearby';
 import { takePrefetched, type RpcResult, type SidePrefetch } from '../lib/sidePrefetch';
-import type { DistrictPop } from '../types';
+import type { DistrictPop, NearbySubway } from '../types';
 
 /**
  * 「상권 인구 (서울시 공표)」 카드 — 결정 0045 PR③(본보기 = 개업·폐업 카드 `OpenCloseSection`).
@@ -37,6 +49,9 @@ import type { DistrictPop } from '../types';
  * ⛔ **이 건물의 값이 아니다.** 이 건물이 속한 서울시 상권 전체의 값이다. 상권이 여럿이면 상권마다 한 덩어리다.
  * ⛔ **분기·연도 글자를 박지 않는다**(시험이 이 파일 원문을 훑는다). 계산은 전부 `lib/districtPop.ts`.
  * ⓘ 서울 필지에만 그린다(FloorStack 이 고른다). 함수가 없거나 모양이 이상하면 카드째 숨긴다.
+ * ⓘ 넷째 덩이 = 가까운 지하철역 승하차(결정 0045 PR⑥ · 카드 수 안 늘림) — 상권 덩어리들 뒤 · 발 문구 앞. 따로 묻고,
+ *   못 읽었거나(PGRST202·오류·모양 이상) no_data·no_coord·not_seoul 이면 **덩이만** 없다(카드는 그대로 · 「자료 없음」 안 적음).
+ *   빈 상태 셋 가운데 상권 밖(outside_seoul_district)에도 덩이는 선다(역은 상권과 무관). 접힌 요약 꼬리는 역 수만.
  */
 type Props = {
   pnu: string;
@@ -69,15 +84,41 @@ export function PopSection({ pnu, prefetch, plan = SECTION_PLAN.pop }: Props) {
     };
   }, [pnu, prefetch]);
 
+  // 넷째 덩이 — 가까운 지하철역 승하차(결정 0045 PR⑥). 카드와 따로 묻고, 못 읽으면 **덩이만** 없다(카드는 그대로).
+  // ⓘ 이 effect 는 위 상권 인구 effect 뒤에 둔다(같은 그림 안 effect 는 적은 차례로 돈다).
+  const [subway, setSubway] = useState<NearbySubway[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setSubway(null);
+    const req: PromiseLike<RpcResult> =
+      takePrefetched(prefetch, NEARBY_SUBWAY_FN, pnu) ?? supabase.rpc(NEARBY_SUBWAY_FN, { p_pnu: pnu });
+    req.then(({ data, error }) => {
+      if (cancelled) return;
+      if (error || !isNearbySubwayList(data)) {
+        console.warn('지하철 승하차 조회 실패 — 그 덩이 없이 표시합니다', error ?? data);
+        return;
+      }
+      setSubway(data);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [pnu, prefetch]);
+
   if (rows === null) return null;
 
-  const summary = popSummary(rows, pnu);
   const head = rows.find((r) => r.status !== 'ok' && r.status !== 'no_data');
+  // 상권 밖 건물에도 역은 있다(역은 상권과 무관) — 빈 상태 셋 가운데 상권 밖만 덩이를 그린다.
+  const withSubway = subwayShows(subway) && (!head || head.status === 'outside_seoul_district');
+  const tail = withSubway ? subwaySummaryTail(subway) : null;
+  const base = popSummary(rows, pnu);
+  const summary = tail ? `${base} · ${tail}` : base;
 
   if (head) {
     return (
       <SectionCard plan={plan} className="pop pop--none" summary={summary}>
         <p className="pop__lead">{headBody(head.status, pnu)}</p>
+        {withSubway && <SubwayChunk rows={subway!} />}
         <p className="pop__src">{POP_NOTES.source}</p>
       </SectionCard>
     );
@@ -99,6 +140,8 @@ export function PopSection({ pnu, prefetch, plan = SECTION_PLAN.pop }: Props) {
       {rows.map((r) => (
         <PopBlock key={r.district_id ?? r.status} row={r} />
       ))}
+
+      {withSubway && <SubwayChunk rows={subway!} />}
 
       <ul className="pop__why">
         <li className="pop__src">{POP_NOTES.source}</li>
@@ -160,6 +203,65 @@ function PopBlock({ row }: { row: DistrictPop }) {
           {worker ? <Big big={worker} /> : <p className="pop__note">{workerLag}</p>}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * 넷째 덩이 — 가까운 지하철역 승하차(결정 0045 PR⑥ · 👤 Q1 가 · Q2 가 · Q3 가 · Q4 나). 역은 서버 차례 그대로(가까운 순).
+ * ⛔ 숫자는 서버 값 그대로 · 막대는 높이만 · 글은 전부 `lib/subwayNearby.ts` 에서(이 파일에 글자를 박지 않는다).
+ */
+function SubwayChunk({ rows }: { rows: readonly NearbySubway[] }) {
+  const noStation = rows.length === 1 && rows[0].status === 'no_station' ? subwayNoStationText(rows[0]) : null;
+  return (
+    <div className="pop__chunk pop__chunk--subway">
+      <p className="pop__chunk-h">
+        {SUBWAY_CHUNK_TITLE} <span className="grade__badge">{SUBWAY_BADGE}</span>
+      </p>
+      {noStation ? (
+        <div className="subway__none">
+          <p>{noStation.main}</p>
+          {noStation.nearest && <p>{noStation.nearest}</p>}
+        </div>
+      ) : (
+        rows.map((r) => <SubwayStation key={r.group_id ?? r.station_nm} row={r} />)
+      )}
+      <ul className="pop__why subway__why">
+        <li className="pop__src">{SUBWAY_NOTES.source}</li>
+        <li>
+          {SUBWAY_NOTES.count[0]}
+          <strong>{SUBWAY_NOTES.count[1]}</strong>
+          {SUBWAY_NOTES.count[2]}
+        </li>
+        <li>{SUBWAY_NOTES.transfer}</li>
+        <li>
+          <strong>{SUBWAY_NOTES.notBuilding}</strong>
+        </li>
+      </ul>
+    </div>
+  );
+}
+
+function SubwayStation({ row }: { row: NearbySubway }) {
+  const st = subwayStationLine(row);
+  const num = subwayNumbers(row);
+  const bars = subwayBars(row);
+  return (
+    <div className={'none' in num ? 'subway__st subway__st--none' : 'subway__st'}>
+      <p className="subway__nm">
+        {st.name} <small>{st.sub}</small>
+      </p>
+      {'none' in num ? (
+        <p className="subway__num">{num.none}</p>
+      ) : (
+        <>
+          <p className="subway__num">
+            <b>{num.on}</b> · <b>{num.off}</b> <span className="subway__unit">{num.tail}</span>
+          </p>
+          <p className="subway__sub">{num.period}</p>
+        </>
+      )}
+      {bars && <MiniBars name={POP_BAR_GROUPS.time} bars={bars} />}
     </div>
   );
 }
