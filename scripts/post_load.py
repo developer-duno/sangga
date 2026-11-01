@@ -108,6 +108,9 @@ ANALYZE_TABLES = (
     # 가게 이력(2026-11-01a · 결정 0045 PR④) — 130만 줄을 통째 교체한다(표지 한 줄도 함께).
     "store_history",
     "store_history_release",
+    # 대전 상권 인구 SGIS(2026-11-01b · 결정 0045 PR⑤) — 상권 37줄을 통째 교체한다(표지 한 줄도 함께).
+    "district_census_pop",
+    "sgis_census_release",
 )
 
 # ⚠️ **순서가 중요하다.** mv_open_sigungu 는 mv_search_parcel 에서 만들어지므로
@@ -1314,6 +1317,10 @@ ANON_CALLABLE_ALLOWLIST = (
     # 이 자리 가게 이력(2026-11-01a · 결정 0045 PR④). 표 둘(store_history · store_history_release)은 **여기 없다** —
     # 화면은 이 함수 하나로만 읽고, 나가는 것은 그 땅의 층·상호·보인 분기 수뿐이다(상가업소번호는 안 나간다).
     "api.get_store_history",
+    # 대전 「상권 인구 (통계청 집계구)」(2026-11-01b · 결정 0045 PR⑤). 표 둘(district_census_pop · sgis_census_release)은
+    # **여기 없다** — 화면은 이 함수 하나로만 읽고, 나가는 것은 그 필지가 속한 대전 상권의 이름과 상권 합계 수(값·하한·상한 ·
+    # 걸친·통째 집계구 수)뿐이다(사업체 수·집계구 경계는 안 나간다).
+    "api.get_district_census_pop",
 )
 
 # ── 공개키가 아직 못 닫은 "대기" 함수 — 지금은 비어 있다 ─────────────────

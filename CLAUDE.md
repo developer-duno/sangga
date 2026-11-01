@@ -228,6 +228,11 @@ python scripts/build_store_history.py --reproduce-c   # 조사 C 재현(대전 4
 python scripts/build_store_history.py   # ★ 새 분기 전국 모드 적재 뒤 — zip 43개(202609 부터 44개)를 읽어 data/derived/store_history/<오늘>.csv(+meta · 약 15분 · DB 0 · git 에 안 넣는다)
 python scripts/collectors/load_store_history.py --dry-run   # 관문 ⒜~⒥ + 요약 (DB·파일 쓰기 0)
 python scripts/collectors/load_store_history.py             # store_history 통째 교체 + 표지 store_history_release (한 트랜잭션 · 관문 ⒦ = 결과표 마지막 분기 ≠ snapshot_release.loaded_ym 이면 롤백) → post_load.py · --check
+# ↓ 대전 상권 인구(결정 0045 PR⑤ — SGIS 집계구를 대전 상권에 면적 비율로 · 어림 C · 상권 합계만 DB). ⛔ 운영 순서: 마이그 2026-11-01b → 빌드 → 적재 --dry-run → 실적재 → post_load.py · --check
+python scripts/build_sgis_district_pop.py --dry-run   # 받은 날 폴더(data/raw/sgis_census/<요청번호>_<YYYY-MM-DD>) 를 읽어 대전 37 상권 요약만 (파일 쓰기 0 · DB 는 상권 도형 읽기만 · shapely·pyshp 필요)
+python scripts/build_sgis_district_pop.py             # → data/derived/sgis_district_pop/<받은 날 YYYYMMDD>.csv(+meta · 약 25초 · git 에 안 넣는다) · --compare-seoul <서울시 상주인구 tsv> 면 서울 1,650 대조도
+python scripts/collectors/load_sgis_district_pop.py --dry-run   # 관문 ⒜~⒣ + 요약 (DB·파일 쓰기 0)
+python scripts/collectors/load_sgis_district_pop.py             # district_census_pop 통째 교체 + 표지 sgis_census_release (한 트랜잭션 · DB 안 관문 ⒤ 상권 집합 · ⒥ 받은 날 앞으로만) → post_load.py · --check
 python scripts/load_rone_map.py --dry-run                          # seed → district_rone_map 미리보기(DB 쓰기 0)
 python scripts/load_rone_map.py                                    # 매핑 적재 (검증 관문 3종 내장 — 걸리면 통째 롤백)
 python scripts/build_district_geojson.py --dry-run                  # 지도용 상권 파일 미리보기(행수·크기만, 파일 안 씀)
@@ -254,6 +259,8 @@ python scripts/backup_raw.py --verify           # 백업본을 다시 읽어 SHA
 > ② **건축물대장**: 매달 20일 무렵 새 판(N월 판 = (N+1)월 20일 게시) → 적재 **전** 디스크 판정(지금 사용량 + 약 +320MB(10-14 실측 5,464 → 5,783MB) + WAL 여유 1GB 가 디스크의 85% 미만일 때만 — 넘으면 확장부터) → `fetch_bldrgst_bulk.py --kind title` · `flr_ouln` · `expos_area` → `convert_bldrgst_bulk.py --src-dir data/raw/bldrgst_bulk/<판> --out-dir data/raw/bldrgst_bulk_converted_<판>` → 30구 `load_building_ledger.py --raw-dir …/<구> --snapshot-ym <상권 분기>`(30구 모두 exit 0 인지 본다) → `publish_ledger_release.py --ym <판>` → `post_load.py` · `post_load.py --check` → `build_sitemap.py` → 커밋 → 배포 뒤 `indexnow_ping.py --from-sitemap public/sitemap-buildings-1.xml` · 한 번 더 `indexnow_ping.py --from-sitemap public/sitemap-hubs.xml`(구 허브 · 결정 0043) → `backup_raw.py`(포털은 최근 3개월치만 남긴다).
 
 > 📅 **분기마다**(결정 0045 PR④) — 상권 새 분기 전국 모드 적재 → `build_store_history.py`(가게 이력 빌드) → `load_store_history.py`(이력 적재) → `post_load.py` — 이 차례를 어기면 `--check` 가 [주의]·화면이 「…까지입니다」.
+
+> 📅 **연 1회 — SGIS**(결정 0045 PR⑤) — 신선도 17번 줄(받은 날 + 12개월)이 「지났습니다」면 SGIS 자료제공에서 집계구 통계·경계를 다시 신청 → `data/raw/sgis_census/<요청번호>_<받은 날>/` → `build_sgis_district_pop.py` → `load_sgis_district_pop.py --dry-run` → 실적재 → `post_load.py` · `--check` → `backup_raw.py`.
 
 > 💾 **원본 백업은 자동이 아니다.** 새 분기 zip을 받았거나 대량 수집을 마쳤으면 `backup_raw.py`를
 > 직접 한 번 돌린다. 과거 분기 zip은 포털에서 내려가면 **재수집이 불가능**하다(절대 규칙 6).

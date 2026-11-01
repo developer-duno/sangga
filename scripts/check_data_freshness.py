@@ -302,6 +302,12 @@ SOURCE_HINTS = {
                             "zip 전부 다시 읽음) → `python scripts/collectors/load_store_history.py --dry-run` → 실적재 → "
                             "`post_load.py` · `--check`** 순서입니다(결정 0045 · 점포 줄과 같은 날 「지났습니다」가 뜨는 것이 "
                             "정상)."),
+    # 결정 0045 PR⑤(2026-11-01b) — 대전 상권 인구(SGIS 집계구). 연 1회 사람이 SGIS 자료제공에서 신청해 받는다.
+    "상권 인구 (통계청 집계구)": ("**SGIS 자료제공(https://sgis.mods.go.kr)에서 집계구 통계(인구·가구·사업체 총괄)와 집계구 경계를 "
+                           "다시 신청해 받아 `data/raw/sgis_census/<요청번호>_<받은 날 YYYY-MM-DD>/` 에 두기** → "
+                           "`python scripts/build_sgis_district_pop.py` → "
+                           "`python scripts/collectors/load_sgis_district_pop.py --dry-run` → 실적재 → `post_load.py` · "
+                           "`post_load.py --check` → `backup_raw.py` 순서입니다(결정 0045 PR⑤)."),
 }
 
 

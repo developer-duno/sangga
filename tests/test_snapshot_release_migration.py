@@ -59,8 +59,9 @@ RECREATED_LATER = {
     # → 성적표 줄(9번)을 뺀 2026-10-18a(결정 0041) → 대전 줄(12번)을 더한 2026-10-29a(결정 0044)가 마지막 판이다.
     # → 서울 상권 4종 세 줄(13·14·15)을 더한 2026-10-31a(결정 0045)가 마지막 판이다.
     # → 가게 이력 16번 줄을 더한 2026-11-01a(결정 0045 PR④ · 적용 날에 따라 이름이 바뀔 수 있어 이름 끝으로)가 마지막 판이다.
-    "get_data_freshness": (sorted(glob.glob(os.path.join(MIG_DIR, "*_store_history.sql")))
-                 or [os.path.join(MIG_DIR, "(없음)_store_history.sql")])[-1],
+    # → 대전 상권 인구 17번 줄을 더한 2026-11-01b(결정 0045 PR⑤ · 이름 끝으로)가 마지막 판이다.
+    "get_data_freshness": (sorted(glob.glob(os.path.join(MIG_DIR, "*_sgis_district_pop.sql")))
+                 or [os.path.join(MIG_DIR, "(없음)_sgis_district_pop.sql")])[-1],
 }
 
 

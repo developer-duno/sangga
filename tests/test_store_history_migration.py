@@ -191,8 +191,11 @@ class TestMirrorsTheSchema:
     def test_comment(self, mig, schema):
         assert fn_comment(mig) == fn_comment(schema)
 
-    def test_freshness_block(self, mig, schema):
-        assert fresh_block(mig) == fresh_block(schema)
+    def test_freshness_block(self, mig):
+        """ⓘ 2026-11-01b(결정 0045 PR⑤ — 대전 상권 인구 17번 줄)부터 정본의 신선도 덩어리는 11-01b 와 같다(그 대조는
+        tests/test_sgis_district_pop_migration.py · tests/test_data_freshness_migration.py) — 이 원장(11-01a)은
+        '10-31a 판 + 가게 이력 갈래' 글 그대로여야 한다."""
+        assert fresh_derived_problems(fresh_block(mig), fresh_block(read(PREV_FRESH))) == []
 
     def test_biz_no_comment(self, mig, schema):
         assert biz_no_comment(mig) == biz_no_comment(schema)
@@ -280,7 +283,7 @@ class TestPermissions:
         assert FN not in post_load.ANON_CALLABLE_ALLOWLIST and "public." + FN not in post_load.ANON_CALLABLE_ALLOWLIST
         for t in TABLES:
             assert t not in post_load.ANON_READABLE_ALLOWLIST
-        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 37
+        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 38
         assert set(TABLES) <= set(post_load.ANALYZE_TABLES)
 
 
