@@ -84,7 +84,7 @@ function isNoStationRow(r: Record<string, unknown>): boolean {
     r.nearest_nm.trim() !== '' &&
     isLineList(r.nearest_lines) &&
     isCount(r.nearest_dist_m) &&
-    (r.nearest_dist_m as number) > 500 &&
+    (r.nearest_dist_m as number) >= 500 && // 서버가 round 하므로 500.0~500.5m 는 500 — 경계 허용(맹점 검사 11-02)
     (r.nearest_dist_m as number) <= 1500
   );
 }
@@ -234,7 +234,7 @@ export const SUBWAY_NO_STATION_TEXT = '500m 안에 지하철역이 없습니다'
 /** 발 문구 넷. ②는 [앞, 굵게, 뒤] · ④는 통째로 굵게. */
 export const SUBWAY_NOTES = {
   source: '출처: 서울시 「지하철 호선별 역별 시간대별 승하차 인원」·「역사마스터」(열린데이터광장 · 공공누리 1유형).',
-  count: ['교통카드(1회용 포함)를 찍은 ', '승차 수와 하차 수', '입니다 — 한 사람이 타고 내리면 승차 1·하차 1로 셉니다.'],
+  count: ['교통카드(1회용 포함)를 찍은 ', '승차 수와 하차 수', '입니다 — 한 사람이 타고 내리면 승차 1·하차 1로 셉니다 · 시간대 막대는 승차와 하차를 더한 값입니다.'],
   transfer:
     '환승역은 서울시가 관리 호선 한 줄에 몰아 세기도 해 역 이름으로 합쳐 보여 줍니다 · 환승 통로로 갈아탄 사람은 개찰을 안 지나 안 셉니다.',
   notBuilding: '역 승하차 수이지 이 건물 앞을 지나는 사람 수가 아니고, 이 건물의 값이 아닙니다.',

@@ -70,7 +70,10 @@
 --     → 20262 | 2026-11-30 · (적재 전) null | null · 202606 | 2026-10-31
 --   ⑤ 적재 뒤: select status, station_nm, lines, dist_m, months_n, on_daily, off_daily
 --                from api.list_nearby_subway('<충무로역 500m 안 서울 필지 19자리>');   → ok · 충무로 · {3호선,4호선} · …
---   explain (analyze) select * from public.list_nearby_subway('<서울 필지>');   -- idx_subway_station_geog Index Scan 확인
+--   ⚠️ explain 은 함수 호출째로 돌리지 않는다(security definer SQL 함수 = Function Scan 한 줄뿐 · 맹점 검사 11-02) — 적재 → post_load(analyze) 뒤에
+--   함수 본문의 반경 질의를 실제 pnu 로 넣어 돈다: explain (analyze, buffers) select s.station_id from subway_station s,
+--     (select geom::geography gg from parcel where pnu = '<서울 필지>') me where st_dwithin(s.geom::geography, me.gg, 500 /* m */, false);
+--   → idx_subway_station_geog 색인 사용·실행 ms 를 PROGRESS 에 적는다(784행이라 seq scan 이어도 1ms 안 — KNN `<->` 는 cross join 이라 색인 차례를 못 탈 수 있다 · 쫓지 않는다)
 --   anon 키:
 --     POST /rest/v1/rpc/list_nearby_subway {"p_pnu":"<서울 필지>"}             → 200 · [ok 줄 1~10 또는 no_station 한 줄]
 --     POST /rest/v1/rpc/list_nearby_subway {"p_pnu":"3020010100100010000"}    → 200 · [not_seoul 한 줄]

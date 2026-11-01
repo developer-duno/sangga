@@ -157,9 +157,10 @@ describe('isNearbySubwayList — 모양 검사', () => {
     expect(isNearbySubwayList([noDataLineRow({ lines_with_data: ['신분당선'] })])).toBe(false);
   });
 
-  it('⛔ no_station — 가장 가까운 역 셋이 일부만 · 거리 500 이하·1,501 이상 → 거부', () => {
+  it('⛔ no_station — 가장 가까운 역 셋이 일부만 · 거리 500 미만·1,501 이상 → 거부(500 은 반올림 경계라 허용)', () => {
     expect(isNearbySubwayList([headRow('no_station', { nearest_nm: '수유' })])).toBe(false);
-    expect(isNearbySubwayList([{ ...NO_STATION, nearest_dist_m: 500 }])).toBe(false);
+    expect(isNearbySubwayList([{ ...NO_STATION, nearest_dist_m: 499 }])).toBe(false);
+    expect(isNearbySubwayList([{ ...NO_STATION, nearest_dist_m: 500 }])).toBe(true);
     expect(isNearbySubwayList([{ ...NO_STATION, nearest_dist_m: 1501 }])).toBe(false);
     expect(isNearbySubwayList([{ ...NO_STATION, nearest_lines: [] }])).toBe(false);
     expect(isNearbySubwayList([{ ...NO_STATION, nearest_dist_m: 1500 }])).toBe(true);
@@ -345,7 +346,7 @@ describe('⛔ 글 가드 — 달·연도 글자 · 「유동인구」 · 금지�
       '출처: 서울시 「지하철 호선별 역별 시간대별 승하차 인원」·「역사마스터」(열린데이터광장 · 공공누리 1유형).',
     );
     expect(SUBWAY_NOTES.count.join('')).toBe(
-      '교통카드(1회용 포함)를 찍은 승차 수와 하차 수입니다 — 한 사람이 타고 내리면 승차 1·하차 1로 셉니다.',
+      '교통카드(1회용 포함)를 찍은 승차 수와 하차 수입니다 — 한 사람이 타고 내리면 승차 1·하차 1로 셉니다 · 시간대 막대는 승차와 하차를 더한 값입니다.',
     );
     expect(SUBWAY_NOTES.notBuilding).toBe('역 승하차 수이지 이 건물 앞을 지나는 사람 수가 아니고, 이 건물의 값이 아닙니다.');
   });
