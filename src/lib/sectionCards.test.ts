@@ -193,6 +193,10 @@ describe('ROLE_SECTION_LAYOUT — 역할 세 벌', () => {
 describe('빈 카드 셋 — sales · pop · history', () => {
   const EMPTY = ['sales', 'pop', 'history'] as const;
 
+  it('상권 인구 카드 자료 갈래 셋 — 길단위인구 · 상주·직장 · 지하철 승하차(결정 0045 PR⑥)', () => {
+    expect(SECTION_PLAN.pop.sources).toEqual(['pop_flow', 'pop_people', 'subway']);
+  });
+
   it('셋 다 창업자 태그이고 접힌 채 시작한다 (세 벌 어디서도 펼치지 않는다)', () => {
     for (const k of EMPTY) {
       expect(SECTION_PLAN[k].role).toBe('창업자');

@@ -3801,6 +3801,42 @@ body {
   margin: 0;
 }
 
+/* 지하철 승하차 덩이(결정 0045 PR⑥) — 역마다 한 묶음(이름 · 승차·하차 · 기간 · 시간대 막대) · 역 사이 점선. 13px 은 화면 묶음에. */
+.subway__st {
+  padding: 6px 0;
+}
+
+.subway__st + .subway__st {
+  border-top: 1px dotted var(--line);
+}
+
+.subway__nm,
+.subway__num,
+.subway__sub,
+.subway__none p {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.subway__nm {
+  font-weight: 600;
+}
+
+.subway__nm small,
+.subway__unit,
+.subway__sub,
+.subway__none,
+.subway__st--none .subway__num {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.subway__st .pop__bars-fig {
+  margin-top: 6px;
+  max-width: 320px;
+}
+
 /* 이 자리 가게 이력 (점포 자료 누적) — 결정 0045 PR④(시안 「후」의 .grp/.row/.fl/.nm/.sp/.chip/.more/.lag 를 .hist__ 로).
    ⛔ 그 땅(필지)의 점포 줄이지 건물 값이 아니다 · 줄은 서버 차례 그대로. 13px 은 화면 묶음에, 44px 「더 보기」는 '누르는 것은
    44px 이상' 목록에, 420px 이하 한 열은 `@media screen and (max-width: 420px)` 에, 종이는 줄 단위 avoid(카드 통째 금지). */
@@ -5708,6 +5744,11 @@ body {
   .pop__src,
   .pop__tick,
   .pop__why,
+  .subway__nm small,
+  .subway__unit,
+  .subway__sub,
+  .subway__none,
+  .subway__st--none .subway__num,
   .hist__lead,
   .hist__q,
   .hist__lag,
@@ -6649,6 +6690,15 @@ body {
   /* 호실 크기 칸 줄(결정 0038 G · V3) — 그림 덩어리에만(§2-9 · 층·카드 통째에는 걸지 않는다). */
   .ucells__row {
     break-inside: avoid;
+  }
+
+  /* 지하철 덩이(결정 0045 PR⑥)는 역이 열 줄까지라 역 줄 하나씩만 — 덩이 통째는 아래에서 푼다. */
+  .subway__st {
+    break-inside: avoid;
+  }
+
+  .pop__chunk.pop__chunk--subway {
+    break-inside: auto;
   }
 
   /*

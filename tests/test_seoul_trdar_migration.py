@@ -354,7 +354,7 @@ class TestPermissions:
             assert f not in post_load.ANON_CALLABLE_ALLOWLIST and "public." + f not in post_load.ANON_CALLABLE_ALLOWLIST
         for t in ALL_TABLES:
             assert t not in post_load.ANON_READABLE_ALLOWLIST
-        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 38
+        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 39
         assert set(TABLES) <= set(post_load.ANALYZE_TABLES)
 
 
@@ -676,9 +676,13 @@ class TestRealRunFreshness:
         return {r[0]: r[1:] for r in rows}
 
     def test_sales_and_flow_rows_due_2026_10_31(self, cur):
-        """20262 → 202606 + 5개월 − 하루 = 2026-10-31(개업·폐업 11번 줄과 같은 규칙·같은 날 · 지시서의 11-30 은 착오).
+        """이 원장(10-31a)의 규칙: 20262 → 202606 + 5개월 − 하루 = 2026-10-31(개업·폐업 11번 줄과 같은 규칙·같은 날).
 
-        ⓘ 「적재 당일 안 지남」은 같은 날까지만 — 20262 를 11월에 넣으면 그날부터 지났다(11번 줄과 같은 처지).
+        ⓘ 이 시험은 10-31a 파일 **하나만** 돌린다(라이브에 적용된 원장 그대로) — 그래서 10-31 이 맞다.
+          2026-11-02a(👤 2026-11-02 「가」 — 서울시 안내문 날짜)부터 정본은 서울시 세 줄을 분기말 + 6개월 − 하루로 계산해
+          20262 → 2026-11-30 이다(옛 주석의 「지시서의 11-30 은 착오」는 거꾸로였다 — 11-30 이 맞다 · 그 단언은
+          tests/test_seoul_subway_migration.py).
+        ⓘ 「적재 당일 안 지남」은 같은 날까지만 — 20262 를 11월에 넣으면 그날부터 지났다(11번 줄과 같은 처지 · 10-31a 판).
         """
         rows = self._rows(cur)
         for src in ("상권 추정매출 (서울시)", "상권 길단위인구 (서울시)"):

@@ -111,6 +111,9 @@ ANALYZE_TABLES = (
     # 대전 상권 인구 SGIS(2026-11-01b · 결정 0045 PR⑤) — 상권 37줄을 통째 교체한다(표지 한 줄도 함께).
     "district_census_pop",
     "sgis_census_release",
+    # 서울 지하철 승하차(2026-11-02a · 결정 0045 PR⑥) — 역사마스터 upsert + 승하차 달 단위 교체.
+    "subway_station",
+    "subway_ridership_m",
 )
 
 # ⚠️ **순서가 중요하다.** mv_open_sigungu 는 mv_search_parcel 에서 만들어지므로
@@ -1321,6 +1324,10 @@ ANON_CALLABLE_ALLOWLIST = (
     # **여기 없다** — 화면은 이 함수 하나로만 읽고, 나가는 것은 그 필지가 속한 대전 상권의 이름과 상권 합계 수(값·하한·상한 ·
     # 걸친·통째 집계구 수)뿐이다(사업체 수·집계구 경계는 안 나간다).
     "api.get_district_census_pop",
+    # 서울 지하철 승하차(2026-11-02a · 결정 0045 PR⑥ · 공개 호출 허용 총계 38 → 39). 표 둘(subway_station ·
+    # subway_ridership_m)은 **여기 없다** — 화면은 이 함수 하나로만 읽고, 나가는 것은 500m 안 역 묶음의 이름·호선·거리와
+    # 역 묶음 합계 수(하루 평균 승차·하차 · 시간대 여섯 칸)뿐이다.
+    "api.list_nearby_subway",
 )
 
 # ── 공개키가 아직 못 닫은 "대기" 함수 — 지금은 비어 있다 ─────────────────

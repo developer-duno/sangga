@@ -330,9 +330,21 @@ describe('cardSourceLine — 카드 제목 아래 날짜 줄 (S3)', () => {
     expect(CARD_SOURCES.history.src).toBe('가게 이력 (점포 자료 누적)');
   });
 
+  it('지하철 승하차(결정 0045 PR⑥) — 「서울시 지하철 승하차 2026년 9월분」 · 상권 인구 카드 날짜 줄 셋째 조각', () => {
+    expect(CARD_SOURCES.subway.src).toBe('지하철 승하차 (서울시)');
+    const rows = [
+      ...rows1016(),
+      row({ src: '지하철 승하차 (서울시)', basis_kind: '기준월', basis: '202609', next_expected: '2026-11-05', cadence: '월간' }),
+    ];
+    expect(cardSourceLine(['subway'], rows)).toBe('자료: 서울시 지하철 승하차 2026년 9월분');
+    expect(cardSourceLine(SECTION_PLAN.pop.sources, rows)).toMatch(/ · 서울시 지하철 승하차 2026년 9월분$/);
+    // 양성 대조 — 서버 표에 그 줄이 없으면 그 조각만 빠진다.
+    expect(cardSourceLine(['subway'], rows1016())).toBeNull();
+  });
+
   it('업종별 추정매출·상권 인구(결정 0045 PR③)는 서울시 자료 세 줄을 쓴다 — 서버 src 글자로 찾는다', () => {
     expect(SECTION_PLAN.sales.sources).toEqual(['sales']);
-    expect(SECTION_PLAN.pop.sources).toEqual(['pop_flow', 'pop_people']);
+    expect(SECTION_PLAN.pop.sources).toEqual(['pop_flow', 'pop_people', 'subway']);
     expect(CARD_SOURCES.sales.src).toBe('상권 추정매출 (서울시)');
     expect(CARD_SOURCES.pop_flow.src).toBe('상권 길단위인구 (서울시)');
     expect(CARD_SOURCES.pop_people.src).toBe('상권 상주·직장인구 (서울시)');
@@ -405,10 +417,10 @@ describe('카드 자료 이름 ↔ 정본 서버 함수의 자료 이름 (S3)', 
     expect(serverSrcLabels("select 1, '함수 없음'")).toEqual([]);
   });
 
-  it('정본의 자료 이름 열여섯 개 = 카드 자료 표 열넷 + 카드에 안 붙는 둘(필지 · LH) — 성적표 줄은 결정 0041 로 뺐고 대전시 동네 폐업은 결정 0044, 서울 상권 4종 세 줄은 결정 0045, 가게 이력 줄은 결정 0045 PR④, 대전 상권 인구 줄은 결정 0045 PR⑤ 로 더했다', () => {
+  it('정본의 자료 이름 열일곱 개 = 카드 자료 표 열다섯 + 카드에 안 붙는 둘(필지 · LH) — 성적표 줄은 결정 0041 로 뺐고 대전시 동네 폐업은 결정 0044, 서울 상권 4종 세 줄은 결정 0045, 가게 이력 줄은 결정 0045 PR④, 대전 상권 인구 줄은 결정 0045 PR⑤, 지하철 승하차 줄은 결정 0045 PR⑥ 로 더했다', () => {
     const sql = readFileSync('supabase/schema.sql', 'utf8');
     const server = serverSrcLabels(sql);
-    expect(server).toHaveLength(16);
+    expect(server).toHaveLength(17);
     expect(server).not.toContain('참고 시세 성적표');
     const ours = [
       ...Object.values(CARD_SOURCES).map((s) => s.src),

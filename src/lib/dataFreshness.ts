@@ -193,6 +193,8 @@ export const CARD_SOURCES = {
   // 결정 0045 PR⑤ — 대전 상권 인구(SGIS 집계구 · 받은 날). 대전 건물의 상권 인구 카드(`CensusPopSection`)만 이 갈래를 쓴다
   //   (`SECTION_PLAN` 에는 없다 — 카드가 plan 의 제목·자료 갈래를 바꿔 끼운다 · `daejeon_closure` 와 같은 꼴).
   census_pop: { src: '상권 인구 (통계청 집계구)', label: '통계청 SGIS 집계구', ending: ' 받음' },
+  // 결정 0045 PR⑥ — 서울 지하철 승하차(기준월 · 표 전체 최근 달). 서울 상권 인구 카드(`SECTION_PLAN.pop`)의 지하철 덩이 몫.
+  subway: { src: '지하철 승하차 (서울시)', label: '서울시 지하철 승하차', ending: '분' },
 } as const satisfies Record<string, { src: string; label: string; ending: string }>;
 
 export type CardSourceKey = keyof typeof CARD_SOURCES;
