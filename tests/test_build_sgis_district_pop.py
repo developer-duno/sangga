@@ -90,9 +90,14 @@ def make_boundary_zip(path, oas=OAS, dates=None):
     w.field("BASE_DATE", "C", 8)
     w.field("ADM_CD", "C", 8)
     w.field("TOT_OA_CD", "C", 20)
-    for i, (code, x0, y0, x1, y1, _pop) in enumerate(oas):
-        # 시계 방향(바깥 고리) — shapefile 관례.
-        w.poly([[(x0, y0), (x0, y1), (x1, y1), (x1, y0), (x0, y0)]])
+    for i, oa in enumerate(oas):
+        if len(oa) == 3:                    # (코드, 고리 점 목록, 값) — 고장 난 도형 시험용
+            code, ring, _pop = oa
+        else:
+            code, x0, y0, x1, y1, _pop = oa
+            # 시계 방향(바깥 고리) — shapefile 관례.
+            ring = [(x0, y0), (x0, y1), (x1, y1), (x1, y0), (x0, y0)]
+        w.poly([ring])
         w.record((dates or {}).get(i, "20250630"), code[:8], code)
     w.close()
     with zipfile.ZipFile(path, "w") as z:
@@ -187,6 +192,36 @@ class TestHandComputed:
         assert "pop 995→1000" in r["clamped"]
         line = b.clamp_line(rows, "대전")
         assert line.startswith("  범위(하한~상한)로 끼운 칸: 대전 ") and "sbiz-7 pop 995→1000" in line
+
+    def test_cover_denominator_is_the_shapely_area_not_the_tsv_column(self, raw):
+        """검사관 🟡 — TSV 넓이 칸(DB st_area · 참고)을 일부러 2배로 적어도 덮임·넓이는 WKT 의 shapely 넓이로 센다."""
+        lines = district_lines()
+        i = next(k for k, ln in enumerate(lines) if ln.startswith("sbiz-1\t"))
+        p = lines[i].split("\t")
+        p[4] = str(float(p[4]) * 2)
+        lines[i] = "\t".join(p)
+        rows, _meta, _ = b.build(str(raw), lambda _s: lines)
+        r = by_id(rows)["sbiz-1"]
+        assert r["area_m2"] == 20000.0 and r["cover_pct"] == 100.0       # 2배 칸을 썼다면 40,000 · 50%
+        assert float(p[4]) == 40000.0                                    # 양성 대조 — 칸은 정말 2배로 들어갔다
+
+    def test_broken_shapes_go_through_buffer_zero(self, raw):
+        """검사관 🟡 — 자기 교차(나비 모양) 집계구 하나와 상권 하나가 buffer(0) 갈래를 지나 결과를 낸다."""
+        from shapely import wkt  # noqa: PLC0415
+
+        bow_oa = [(8000, 0), (8100, 100), (8100, 0), (8000, 100), (8000, 0)]     # 나비 모양(자기 교차)
+        oas = OAS + [("25000000000030", bow_oa, 600)]
+        bow_d = "POLYGON((8000 0,8100 100,8100 0,8000 100,8000 0))"
+        assert not wkt.loads(bow_d).is_valid                                       # 전제: 정말 고장 난 도형
+        make_boundary_zip(str(raw / "bnd_oa_00_2025_2Q.zip"), oas)
+        make_census_zip(str(raw / "_census_reqdoc_1.zip"), oas=oas)
+        _codes, _geoms, bmeta = b.read_boundary(str(raw / "bnd_oa_00_2025_2Q.zip"), ("25",))
+        assert bmeta["n_invalid_fixed"] == 1                                       # 경계 쪽 갈래
+        lines = district_lines() + ["\t".join(["sbiz-8", "나비", "주요상권", "30200", "1.0", bow_d])]
+        rows, _meta, _ = b.build(str(raw), lambda _s: lines)                      # 상권 쪽 갈래(멈추지 않는다)
+        r = by_id(rows)["sbiz-8"]
+        assert r["n_overlap"] >= 1 and r["area_m2"] > 0 and 0 < r["cover_pct"] <= 100.5
+        assert 0 <= r["pop_lo"] <= r["pop"] <= r["pop_hi"] <= 600
 
     def test_clamp_line_says_zero_cells(self):
         """끼운 칸이 없으면 「대전 0칸」 — 상권 이름 없이."""

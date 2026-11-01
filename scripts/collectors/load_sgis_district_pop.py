@@ -16,7 +16,7 @@
   ⒜ csv · meta 둘 다 있다 · meta partial = false · sido = ["30"] · base_year 정수 · bnd_base_date·received_on 날짜 ·
      rows·sha256·built_at·n_oa_total·overlap_min_m2·full_ratio 칸이 있다
   ⒝ 머리줄 = 위 스무 칸 글자 그대로
-  ⒞ district_id 비어 있지 않음 · 중복 0 · 줄이 하나 이상 · sigungu_code 5자리 숫자 + 앞 두 자리 ∈ sido
+  ⒞ district_id·district_nm 비어 있지 않음 · 중복 0 · 줄이 하나 이상 · sigungu_code 5자리 숫자 + 앞 두 자리 ∈ sido
   ⒟ 숫자 칸 전부 0 이상 정수(area_m2·cover_pct 는 소수) · 항목마다 lo ≤ 값 ≤ hi
   ⒠ n_overlap ≥ 1 · 0 ≤ n_full ≤ n_overlap
   ⒡ cover_pct 95.0~100.5(대전 2024 실측 99.975~100 · 집계구가 상권을 거의 다 덮어야 한다)
@@ -163,6 +163,9 @@ def row_problems(rec, sido):
     out = []
     if not rec["district_id"].strip():
         out.append(("⒞", "district_id 가 비었습니다"))
+    # 표 칸이 not null 이라 COPY 가 롤백으로 멈추긴 하지만, 관문에서 먼저 문장으로 멈춘다(검사관 🟡 · 11-01).
+    if not rec["district_nm"].strip():
+        out.append(("⒞", "district_nm 이 비었습니다"))
     sgg = rec["sigungu_code"]
     if not RE_SGG.match(sgg) or sgg[:2] not in sido:
         out.append(("⒞", "sigungu_code {!r} (5자리 숫자 · 앞 두 자리 ∈ {})".format(sgg, sido)))

@@ -117,12 +117,21 @@ class TestGates:
     @pytest.mark.parametrize("rows", [
         [ROWS[0], ROWS[0]],                                   # 중복
         [[""] + ROWS[0][1:]],                                 # 빈 id
+        [ROWS[0][:1] + [" "] + ROWS[0][2:]],                  # 빈칸뿐인 상권 이름(검사관 🟡 · 표 not null 보다 먼저)
         [ROWS[0][:3] + ["11680"] + ROWS[0][4:]],              # 서울 시군구
         [ROWS[0][:3] + ["3020"] + ROWS[0][4:]],               # 네 자리
         [],                                                   # 줄 0
     ])
     def test_c_ids(self, tmp_path, rows):
         assert "⒞" in codes(gate(write_pair(tmp_path, rows=rows))[0])
+
+    def test_c_empty_name_is_a_gate_sentence(self, tmp_path):
+        """⒞ — 빈 상권 이름은 COPY not null 롤백이 아니라 관문 문장으로 멈춘다 · 양성 대조 = 이름이 있으면 통과."""
+        r = list(ROWS[0])
+        r[1] = ""
+        problems = gate(write_pair(tmp_path, rows=[r]))[0]
+        assert any(p.startswith("⒞") and "district_nm 이 비었습니다" in p for p in problems)
+        assert gate(write_pair(tmp_path / "ok", rows=[ROWS[0]]))[0] == []
 
     @pytest.mark.parametrize("col,val", [("pop", "-1"), ("pop", "1.5"), ("hh_hi", ""), ("area_m2", "abc"),
                                          ("pop", "7000"), ("emp_lo", "6000")])
