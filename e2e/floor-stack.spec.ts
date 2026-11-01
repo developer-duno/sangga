@@ -22,6 +22,8 @@ import {
   daejeonClosure,
   districtSales,
   districtPop,
+  nearbySubway,
+  nearbySubwayNoStation,
   districtCensusPop,
   storeHistory,
   dataFreshness,
@@ -126,6 +128,10 @@ const DAEJEON_CLOSURE_PATTERN = '**/rest/v1/rpc/get_daejeon_dong_closure*';
 //    카드를 보는 것은 스펙 CN·CO(와 차례 전체를 견주는 AM)뿐이다(안 막으면 실존하지 않는 도메인으로 나가 DNS 에 좌우된다).
 const SALES_PATTERN = '**/rest/v1/rpc/list_district_sales*';
 const POP_PATTERN = '**/rest/v1/rpc/list_district_pop*';
+// 가까운 지하철역 승하차(결정 0045 PR⑥) — 서울 필지를 열 때만 곁 카드와 함께 미리 나간다(대전 건물은 요청 0).
+// ⚠️ 기본값은 **함수가 없는 상태**다 — 그때 상권 인구 카드 안 지하철 덩이만 빠지고 카드는 그대로다(CO·AM 이 그대로).
+//    덩이를 보는 것은 스펙 CS 뿐이다(안 막으면 실존하지 않는 도메인으로 나가 DNS 에 좌우된다).
+const SUBWAY_PATTERN = '**/rest/v1/rpc/list_nearby_subway*';
 // 대전 상권 인구(결정 0045 PR⑤) — 대전 필지를 열 때만 곁 카드와 함께 미리 나간다(서울 건물은 요청 0).
 // ⚠️ 기본값은 **함수가 없는 상태**다 — 그때 대전 건물의 상권 인구 카드는 통째로 빠진다(예전엔 빈 카드였다 — AI 의 대전 갈래를
 //    그만큼 고쳤다). 카드를 보는 것은 스펙 CR 뿐이다(안 막으면 실존하지 않는 도메인으로 나가 DNS 에 좌우된다).
@@ -256,6 +262,8 @@ async function mockFloorStack(
   // 업종별 추정매출 · 상권 인구도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 스펙 CN·CO·AM 만 덮어쓴다.
   await mockMissingFunction(page, SALES_PATTERN);
   await mockMissingFunction(page, POP_PATTERN);
+  // 지하철 승하차 덩이도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 스펙 CS 만 덮어쓴다.
+  await mockMissingFunction(page, SUBWAY_PATTERN);
   // 대전 상권 인구도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 스펙 CR 만 덮어쓴다.
   await mockMissingFunction(page, CENSUS_PATTERN);
   // 가게 이력도 기본이 **함수가 없는 상태**다(위 상수 주석 참조). 스펙 CP·AM 만 덮어쓴다.
@@ -2923,6 +2931,155 @@ test.describe('층별 스택뷰 — 상권 개업·폐업', () => {
     await expect(page.locator('section.stack section.card--floors')).toBeVisible();
     await expect(page.locator('section.pop')).toHaveCount(0);
     await expect(page.locator('section.card--pop')).toHaveCount(0);
+  });
+
+  test('CS. 서울 건물 — 「상권 인구」 카드 안 지하철 승하차 덩이(👤 11-02 Q1 가 · Q2 가 · Q3 가 · Q4 나) · 요약 꼬리 역 수만 · 자료 줄 「서울시 지하철 승하차 2026년 9월분」 · 역 줄 둘(승차·하차 · 막대 여섯 · 자료 밖 노선) · 발 넷 · 「유동인구」 0 · 13px · 넘침 0 · 종이 역 줄 avoid · 역 0 변형 · 함수 없으면 덩이 0 · 대전 요청 0', async ({
+    page,
+  }, testInfo) => {
+    await mockOpenSigungu(page);
+    // 나중에 등록한 것이 먼저 잡힌다 — 신선도 표에 18번 줄(지하철 승하차)을 더한다(공용 픽스처는 그대로).
+    await mockJson(page, DATA_FRESHNESS_PATTERN, [
+      ...dataFreshness(),
+      { src: '지하철 승하차 (서울시)', basis_kind: '기준월', basis: '202609', next_expected: '2099-11-05', cadence: '월간' },
+    ]);
+    await mockJson(page, SEARCH_PATTERN, [searchHit()]);
+    await mockFloorStack(page, [], [floorRow({ floor_no: 2 }), floorRow()], industryMix());
+    await mockJson(page, POP_PATTERN, districtPop());
+    await mockJson(page, SUBWAY_PATTERN, nearbySubway());
+    const subwayAsked: string[] = [];
+    page.on('request', (r) => {
+      if (r.url().includes('/rpc/list_nearby_subway') && r.method() !== 'OPTIONS') subwayAsked.push(r.postData() ?? '');
+    });
+
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '테헤란로');
+    await page.getByRole('button', { name: /테스트빌딩/ }).first().click();
+    const pop = page.locator('section.stack section.pop');
+    await expect(pop).toBeVisible();
+    const summary = pop.locator('.card__summary');
+    await expect(summary).toHaveText(
+      '○○역 2번 출구 외 상권 1곳 · 길단위인구 2026년 2분기 · 사는 사람 2023년 · 일하는 사람 2024년 기준 · 500m 안 지하철역 2곳',
+    );
+    expect(await summary.textContent()).not.toMatch(/명/);
+    await expect(pop.locator('.card__src')).toContainText('서울시 지하철 승하차 2026년 9월분');
+    expect(subwayAsked.length).toBeGreaterThan(0);
+    expect(subwayAsked.every((a) => JSON.stringify(JSON.parse(a)) === JSON.stringify({ p_pnu: searchHit().pnu }))).toBe(true);
+
+    await openCard(page, /상권 인구/);
+    const chunk = pop.locator('.pop__chunk.pop__chunk--subway');
+    await expect(chunk).toHaveCount(1);
+    await expect(chunk.locator('.pop__chunk-h')).toHaveText('가까운 지하철역 승하차 인원 (카드 기준 · 건물 500m 안) A등급 · 카드 실측 집계');
+    // 자리 — 상권 덩어리들 뒤 · 카드 발 문구 앞.
+    const order = await pop.evaluate((card) => {
+      const kids = [...card.querySelectorAll('.pop__district, .pop__chunk--subway, .pop__why:not(.subway__why)')];
+      return kids.map((k) => (k.classList.contains('pop__district') ? 'd' : k.classList.contains('pop__why') ? 'w' : 's')).join('');
+    });
+    expect(order).toBe('ddsw');
+    const st = chunk.locator('.subway__st');
+    await expect(st).toHaveCount(2);
+    const first = st.nth(0);
+    await expect(first.locator('.subway__nm')).toHaveText('충무로 3·4호선 · 180m');
+    await expect(first.locator('.subway__num')).toHaveText('승차 31,600 · 하차 32,300 하루 평균');
+    await expect(first.locator('.subway__sub')).toHaveText('최근 12개월(2025년 10월~2026년 9월) 평균');
+    await expect(first.locator('.pop__scale')).toHaveText('시간대 · 꽉 차면 21,000명(하루 평균 승하차)');
+    const bars = first.locator('.pop__bar');
+    await expect(bars).toHaveCount(6);
+    // 막대 높이 = (승차+하차) ÷ 여섯 칸 최댓값 — 17~21(21,000)이 칸 높이 · 4~7(2,100)은 0.1배.
+    const hs = await bars.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height));
+    const colH = await first.locator('.pop__bars').first().evaluate((e) => e.getBoundingClientRect().height);
+    expect(Math.max(...hs)).toBeCloseTo(hs[4], 3);
+    expect(hs[4]).toBeGreaterThan(colH - 2);
+    expect(hs[0] / hs[4]).toBeGreaterThan(2100 / 21000 - 0.03);
+    expect(hs[0] / hs[4]).toBeLessThan(2100 / 21000 + 0.03);
+    expect(hs[1] / hs[4]).toBeGreaterThan(17000 / 21000 - 0.03);
+    expect(hs[1] / hs[4]).toBeLessThan(17000 / 21000 + 0.03);
+    await expect(first.locator('.pop__tick')).toHaveText(['4~7', '7~10', '10~14', '14~17', '17~21', '21~']);
+    await expect(bars.first()).toHaveAttribute('aria-label', '시간대 4~7 승차 1,200 · 하차 900');
+    const second = st.nth(1);
+    await expect(second).toHaveClass(/subway__st--none/);
+    await expect(second.locator('.subway__nm')).toHaveText('양재시민의숲 신분당선 · 320m');
+    await expect(second.locator('.subway__num')).toHaveText('승하차 자료 없음 — 서울시 자료 밖 노선');
+    await expect(second.locator('.pop__bar')).toHaveCount(0);
+    // 발 넷(②④ 굵게) · 카드 발 넷은 그대로.
+    const notes = chunk.locator('.subway__why li');
+    await expect(notes).toHaveCount(4);
+    await expect(notes.nth(1).locator('strong')).toHaveText('승차 수와 하차 수');
+    await expect(notes.nth(3).locator('strong')).toHaveText('역 승하차 수이지 이 건물 앞을 지나는 사람 수가 아니고, 이 건물의 값이 아닙니다.');
+    await expect(pop.locator('.pop__why:not(.subway__why) > li')).toHaveCount(4);
+    expect((await chunk.textContent()) ?? '').not.toContain('유동인구');
+    await expect(chunk).not.toContainText('%');
+    for (const sel of ['.subway__sub', '.subway__why', '.subway__nm small', '.subway__unit', '.pop__scale', '.pop__tick']) {
+      await expect(chunk.locator(sel).first(), sel).toHaveCSS('font-size', '13px');
+    }
+    await expect(second.locator('.subway__num')).toHaveCSS('font-size', '13px');
+    const overflow = await page.evaluate(() => {
+      const d = (globalThis as unknown as { document: { documentElement: { scrollWidth: number; clientWidth: number } } })
+        .document.documentElement;
+      return d.scrollWidth - d.clientWidth;
+    });
+    const cardOver = await pop.evaluate((e) => e.scrollWidth - e.clientWidth);
+    const chunkOver = await chunk.evaluate((e) => e.scrollWidth - e.clientWidth);
+    testInfo.annotations.push({
+      type: 'CS 실측',
+      description: `${testInfo.project.name}: 막대 ${hs.map((h) => h.toFixed(1)).join('·')} · 넘침 ${overflow} · 카드 넘침 ${cardOver} · 덩이 넘침 ${chunkOver}`,
+    });
+    expect(overflow).toBeLessThanOrEqual(0);
+    expect(cardOver).toBeLessThanOrEqual(0);
+    expect(chunkOver).toBeLessThanOrEqual(0);
+
+    // 종이 — 덩이가 나오고 역 줄 하나씩만 avoid(덩이·카드 통째 아님) · 막대 색 유지.
+    await page.emulateMedia({ media: 'print' });
+    await expect(chunk).toBeVisible();
+    await expect(st.first()).toHaveCSS('break-inside', 'avoid');
+    await expect(chunk).not.toHaveCSS('break-inside', 'avoid');
+    await expect(pop).not.toHaveCSS('break-inside', 'avoid');
+    await expect(bars.first()).toHaveCSS('print-color-adjust', 'exact');
+    // 양성 대조 — 위 세 덩이의 avoid 는 그대로다.
+    await expect(pop.locator('.pop__chunk--flow').first()).toHaveCSS('break-inside', 'avoid');
+    await page.emulateMedia({ media: null });
+
+    // 역 0 변형(👤 Q3 가) — 「500m 안에 지하철역이 없습니다」 + 가장 가까운 역 · 요약 「없음」.
+    await mockJson(page, SUBWAY_PATTERN, nearbySubwayNoStation());
+    await page.reload();
+    await expect(pop).toBeVisible();
+    await expect(summary).toHaveText(/ · 500m 안 지하철역 없음$/);
+    await openCard(page, /상권 인구/);
+    const none = pop.locator('.pop__chunk--subway .subway__none');
+    await expect(none.locator('p')).toHaveText(['500m 안에 지하철역이 없습니다', '가장 가까운 역: 수유 (4호선) · 820m']);
+    await expect(none).toHaveCSS('font-size', '13px');
+    await expect(pop.locator('.subway__st')).toHaveCount(0);
+
+    // 함수가 없으면(PGRST202) — 덩이만 없다 · 카드·상권 덩어리 그대로 · 요약 꼬리 없음.
+    await mockMissingFunction(page, SUBWAY_PATTERN);
+    await page.reload();
+    await expect(pop).toBeVisible();
+    await expect(summary).toHaveText(
+      '○○역 2번 출구 외 상권 1곳 · 길단위인구 2026년 2분기 · 사는 사람 2023년 · 일하는 사람 2024년 기준',
+    );
+    await openCard(page, /상권 인구/);
+    await expect(pop.locator('.pop__district')).toHaveCount(2);
+    await expect(pop.locator('.pop__chunk--subway')).toHaveCount(0);
+
+    // 대전 건물 — 지하철 요청 0(양성 대조: 대전 곁 함수는 나갔다).
+    const DJ = '3017010100100010000';
+    const BLD = `${DJ}_1`;
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+    subwayAsked.length = 0;
+    const censusAsked: string[] = [];
+    page.on('request', (r) => {
+      if (r.url().includes('/rpc/get_district_census_pop') && r.method() !== 'OPTIONS') censusAsked.push(r.url());
+    });
+    await mockOpenSigungu(page);
+    await mockJson(page, SEARCH_PATTERN, [searchHit({ bld_id: BLD, pnu: DJ, bld_nm: '대전빌딩', road_addr: '대전 서구 둔산로 1' })]);
+    await mockFloorStack(page, [], [floorRow({ bld_id: BLD, pnu: DJ, floor_no: 2 }), floorRow({ bld_id: BLD, pnu: DJ })], industryMix());
+    await page.goto('/');
+    await pickGu(page, '서울', '강남구');
+    await search(page, '대전빌딩');
+    await page.getByRole('button', { name: /대전빌딩/ }).first().click();
+    await expect(page.locator('section.stack section.card--floors')).toBeVisible();
+    await expect.poll(() => censusAsked.length).toBeGreaterThan(0);
+    expect(subwayAsked).toEqual([]);
   });
 });
 

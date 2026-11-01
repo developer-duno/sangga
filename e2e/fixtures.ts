@@ -17,6 +17,7 @@ import type {
   IndustryMix,
   LhNotice,
   NearbyPermits,
+  NearbySubway,
   ParcelTransaction,
   RentStat,
   SigunguTxStat,
@@ -819,6 +820,79 @@ export function districtPop(): DistrictPop[] {
       worker_value_quarter: null,
       worker_last_quarter: null,
       worker: null,
+    },
+  ];
+}
+
+/**
+ * 가까운 지하철역 승하차(결정 0045 PR⑥ · `list_nearby_subway`) — ok 둘(가까운 순 · 서버 차례 그대로). 첫째 = 충무로 3·4호선
+ * 180m · 12개월 자료(시간대 17~21 이 가장 큼) · 둘째 = 양재시민의숲 신분당선 320m(서울시 자료 밖 노선 — 숫자 칸 null).
+ */
+export function nearbySubway(): NearbySubway[] {
+  const empty = { nearest_nm: null, nearest_lines: null, nearest_dist_m: null };
+  return [
+    {
+      status: 'ok',
+      group_id: 101,
+      station_nm: '충무로',
+      lines: ['3호선', '4호선'],
+      lines_with_data: ['3호선', '4호선'],
+      dist_m: 180,
+      has_data: true,
+      window_from: '202510',
+      window_to: '202609',
+      months_n: 12,
+      on_daily: 31600,
+      off_daily: 32300,
+      bins: {
+        h04_07: { on: 1200, off: 900 },
+        h07_10: { on: 9000, off: 8000 },
+        h10_14: { on: 5000, off: 6000 },
+        h14_17: { on: 4000, off: 4300 },
+        h17_21: { on: 10000, off: 11000 },
+        h21_04: { on: 2400, off: 2000 },
+      },
+      ...empty,
+    },
+    {
+      status: 'ok',
+      group_id: 202,
+      station_nm: '양재시민의숲',
+      lines: ['신분당선'],
+      lines_with_data: null,
+      dist_m: 320,
+      has_data: false,
+      window_from: '202510',
+      window_to: '202609',
+      months_n: 0,
+      on_daily: null,
+      off_daily: null,
+      bins: null,
+      ...empty,
+    },
+  ];
+}
+
+/** 500m 안 역 0(결정 0045 PR⑥ · 👤 Q3 가) — 가장 가까운 역이 1.5km 안. */
+export function nearbySubwayNoStation(): NearbySubway[] {
+  return [
+    {
+      status: 'no_station',
+      group_id: null,
+      station_nm: null,
+      lines: null,
+      lines_with_data: null,
+      dist_m: null,
+      has_data: null,
+      window_from: null,
+      window_to: null,
+      months_n: null,
+      on_daily: null,
+      off_daily: null,
+      bins: null,
+      nearest_nm: '수유',
+      nearest_lines: ['4호선'],
+      nearest_dist_m: 820,
     },
   ];
 }
