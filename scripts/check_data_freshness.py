@@ -308,6 +308,13 @@ SOURCE_HINTS = {
                            "`python scripts/build_sgis_district_pop.py` → "
                            "`python scripts/collectors/load_sgis_district_pop.py --dry-run` → 실적재 → `post_load.py` · "
                            "`post_load.py --check` → `backup_raw.py` 순서입니다(결정 0045 PR⑤)."),
+    # 결정 0045 PR⑥(2026-11-02a) — 서울 지하철 승하차. 서울시가 매달 5일 무렵 전월분을 게시한다(미게시 달은 INFO-200).
+    "지하철 승하차 (서울시)": ("**서울 열린데이터광장(OA-12252)에서 새 달 게시(다음 달 5일 무렵)를 먼저 확인한 뒤 "
+                          "`python scripts/collectors/collect_seoul_subway.py --dry-run --end-month <YYYYMM>` → "
+                          "`collect_seoul_subway.py --end-month <YYYYMM>` → "
+                          "`python scripts/collectors/load_seoul_subway.py --dry-run` → 실적재 → `post_load.py` · "
+                          "`post_load.py --check` → `backup_raw.py` 순서입니다(결정 0045 PR⑥ · 미게시 달은 0건이라 "
+                          "pending 으로 남는다)."),
 }
 
 
