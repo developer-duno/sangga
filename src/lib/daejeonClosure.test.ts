@@ -178,14 +178,19 @@ describe('미리 부르기 — 대전 필지에만 대전 함수(결정 0044)', 
     rpcCalls.length = 0;
   });
 
-  it('★ 대전 필지면 일곱 + 대전 함수 둘 · 서울 필지면 대전 함수 0(서울 함수 둘만 더함 — 결정 0045 PR③)', () => {
+  it('★ 대전 필지면 일곱 + 대전 함수 둘 · 서울 필지면 대전 함수 0(서울 함수 셋만 더함 — 결정 0045 PR③·PR⑥)', () => {
     // 대전 함수 둘 = 동네 폐업(결정 0044) + 통계청 집계구 상권 인구(결정 0045 PR⑤).
     const dj = startSidePrefetch('3017010100100010000');
     expect([...dj.results.keys()]).toEqual([...SIDE_PREFETCH_FNS, 'get_daejeon_dong_closure', 'get_district_census_pop']);
     expect(rpcCalls).toEqual([...SIDE_PREFETCH_FNS, 'get_daejeon_dong_closure', 'get_district_census_pop']);
     rpcCalls.length = 0;
     const se = startSidePrefetch('1168010100100010000');
-    expect([...se.results.keys()]).toEqual([...SIDE_PREFETCH_FNS, 'list_district_sales', 'list_district_pop']);
+    expect([...se.results.keys()]).toEqual([
+      ...SIDE_PREFETCH_FNS,
+      'list_district_sales',
+      'list_district_pop',
+      'list_nearby_subway',
+    ]);
     expect(rpcCalls).not.toContain('get_daejeon_dong_closure');
     expect(rpcCalls).not.toContain('get_district_census_pop');
     // 서울·대전 밖(시·도 코드 26 부산)은 일곱 그대로.

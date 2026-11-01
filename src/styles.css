@@ -6688,7 +6688,10 @@ body {
   /* 고른 층의 호 목록 줄(물결 1-C2) — 이름과 면적이 한 줄. */
   .floor__unitprint-list li,
   /* 호실 크기 칸 줄(결정 0038 G · V3) — 그림 덩어리에만(§2-9 · 층·카드 통째에는 걸지 않는다). */
-  .ucells__row,
+  .ucells__row {
+    break-inside: avoid;
+  }
+
   /* 지하철 덩이(결정 0045 PR⑥)는 역이 열 줄까지라 역 줄 하나씩만 — 덩이 통째는 아래에서 푼다. */
   .subway__st {
     break-inside: avoid;
