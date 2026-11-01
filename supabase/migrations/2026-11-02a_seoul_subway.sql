@@ -204,7 +204,8 @@ comment on table subway_ridership_m is
   '기준 · 「환승객 여부와 상관없이 집계」(포털 FAQ — 환승 통로로 갈아탄 사람은 개찰을 안 지나 안 센다) · 공공누리 1유형. '
   '한 줄 = (달 use_mm, 원문 호선 ride_line_nm, 원문 역 ride_sttn_nm) · on_h04~on_h03 / off_h04~off_h03 = 그 달 합계 '
   '(서울시 칸 차례 4시 → 23시 → 0시 → 3시) · on_sum/off_sum = 24칸 합 · job_ymd = 서울시 작업일(다음 달 3일 꼴). '
-  'station_id = 짝표(scripts/seeds/subway_*_map.csv) 뒤 붙은 역사마스터 역 · line_nm = 그 행이 붙은 호선(호선 짝표 적용 뒤 글). '
+  'station_id = 짝표(scripts/seeds/subway_*_map.csv) 뒤 붙은 역사마스터 역 · line_nm = 그 행이 붙은 호선(호선 짝표 뒤 글 · '
+  '역 짝표 map 행은 원문 호선 그대로 — 단 호선 짝표로 바뀌는 경의선 라벨 행(계양·검암·김포공항)은 씨앗의 마스터 호선). '
   '⛔ 환승역은 서울시가 관리 호선 한 줄에 몰아 센다(충무로 3호선 하차 0) — 호선마다 줄을 세우지 말고 subway_station.group_id '
   '로 묶어 더한다. 같은 원문 줄이 두 번 온 달(202603·202607 — 값이 완전히 같음)은 적재기가 하나로 넣는다. '
   '적재 scripts/collectors/load_seoul_subway.py(달 단위 교체). 공개키 읽기 금지 — 화면은 list_nearby_subway 로만 읽는다';

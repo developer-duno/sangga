@@ -21,7 +21,11 @@
   ⛔ 표의 기본키는 **원문 열쇠 (달, 원문 호선, 원문 역)** 다 — 짝표 뒤 같은 마스터 역으로 원문 두 줄이 모일 수 있다(창동 4호선 +
      창동 경원선 · 계양·검암·김포공항의 경의선 라벨 줄 + 공항철도 1호선 줄 — 둘 다 진짜 자료라 합치지도 버리지도 않는다 ·
      함수가 묶음으로 더한다 · 2026-11-02 메인 결정 ⑥-1).
-  칸 `line_nm`(그 행이 붙은 호선 — 화면의 호선 목록에 쓴다) = 역 짝표 map 이면 원문 호선에 호선 짝표만 · 아니면 호선 짝표 뒤 글.
+  칸 `line_nm`(그 행이 붙은 호선 — 함수의 호선 목록 lines = 마스터 호선 ∪ 이 칸) — 메인 결정 (나) 2026-11-02:
+     · 짝표 없는 행 = 호선 짝표 뒤 글(9호선2~3단계 → 9호선(연장) 등)
+     · 역 짝표 map 행 = 원문 호선 그대로(창동 경원선 → 경원선 — 1호선 창동의 진짜 자료라 호선 목록에 남긴다)
+       단 그 원문 호선이 **호선 짝표로 바뀌는 행**(계양·검암·김포공항의 「경의선」 라벨)만 씨앗의 master_line(공항철도1호선) —
+       글자대로 짝표를 쓰면 그 역에 안 다니는 「경의중앙선」이 붙는다. dry-run 리포트가 map 행마다 붙은 역·호선을 표로 찍는다.
 
 역 묶음 — 같은 역사(환승역)
 --------------------------
@@ -276,7 +280,8 @@ def resolve(sttn, line, line_map, station_map, master_key):
         action, m_st, m_ln = hit
         if action == "skip":
             return None, None, "skip"
-        return master_key.get((norm_name(m_st), m_ln)), line_map.get(line, line), "map"
+        # 메인 결정 (나): 원문 호선 그대로 — 단 호선 짝표로 바뀌는 라벨(경의선 → 경의중앙선)이면 씨앗의 마스터 호선.
+        return master_key.get((norm_name(m_st), m_ln)), (m_ln if line in line_map else line), "map"
     ln = line_map.get(line, line)
     return master_key.get((norm_name(sttn), ln)), ln, "plain"
 
@@ -337,6 +342,8 @@ def month_rows(ym, raw_rows, line_map, station_map, master_key, where):
         st["joined"] += 1
         if how == "plain":
             st["plain"] += 1
+        else:
+            st.setdefault("map_rows", {})[(sttn, line)] = (sid, ln)
         out.append((ym, sid, line, sttn, ln, sum(on), sum(off)) + tuple(on) + tuple(off) + (job,))
     return out, st
 
@@ -471,6 +478,9 @@ def scan(raw_dir, months=None, line_map=None, station_map=None):
                    "plain_rate": 100.0 * st["plain"] / len(raw_rows)})
         rep["months"][ym] = st
         rep["rows"][ym] = rows
+        for k, v in st.get("map_rows", {}).items():
+            got = rep.setdefault("map_rows", {}).setdefault(k, {})
+            got[v] = got.get(v, 0) + 1                  # (station_id, line_nm) → 달 수
         rep["problems"] += ["{} {}".format(ym, b) for b in bad]
     rep["problems"] += ride_line_problems(lines_seen, master_lines, line_map)
     have = [m for m in files if m not in rep["empty"]]
@@ -638,6 +648,13 @@ def print_report(rep, dry_run):
                   min(plain)[0], min(plain)[1], max(plain)[0], max(plain)[1], dup or "없음"))
         print("  skip 으로 세어 뺀 행 {} · {}".format(sum(skips.values()),
                                                  " · ".join("{}·{} {}".format(k[0], k[1], n) for k, n in sorted(skips.items()))))
+        names = {s["station_id"]: s["station_nm"] for s in rep.get("stations") or []}
+        print("  역 짝표 map 행 → 붙은 역 · 붙은 호선(line_nm — 함수 호선 목록에 든다 · 메인 결정 (나)):")
+        print("    {:<22} {:<12} {:<10} {:<14} {}".format("원문 (역, 호선)", "station_id", "마스터 역", "line_nm", "달 수"))
+        for (sttn, line), vals in sorted((rep.get("map_rows") or {}).items()):
+            for (sid, ln), n in sorted(vals.items()):
+                print("    {:<22} {:<12} {:<10} {:<14} {}".format(
+                    "{}·{}".format(sttn, line), sid, names.get(sid, "?"), ln, n))
         lm = rep["months"][last]
         print("  0 값 역({} — 환승역 몰아 세기 꼴 · 관문 아님): 승차 0 {}행 {} · 하차 0 {}행 {}".format(
             last, len(lm["zero_on"]), lm["zero_on"], len(lm["zero_off"]),

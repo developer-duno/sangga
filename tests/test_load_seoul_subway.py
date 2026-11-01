@@ -167,6 +167,38 @@ def test_resolve_station_map_then_line_map():
     assert L.resolve("없는역", "1호선", LINE_MAP, STATION_MAP, key) == (None, "1호선", "plain")
 
 
+def test_map_row_line_rule_is_decision_na():
+    """메인 결정 (나) 2026-11-02 — 붙은 호선(line_nm):
+    짝표 없는 행 = 호선 짝표 뒤 글 · map 행 = 원문 호선 그대로 · 단 원문 호선이 호선 짝표로 바뀌는 라벨(경의선)이면 씨앗 master_line.
+    (글자대로 짝표를 쓰면 계양에 안 다니는 「경의중앙선」이 붙는다 — 양성 대조로 그 꼴을 함께 적는다.)"""
+    smap = dict(STATION_MAP)
+    smap[("계양", "경의선")] = ("map", "계양", "공항철도1호선")
+    key = {("창동", "4호선"): "0002", ("계양", "공항철도1호선"): "4208", ("수색", "경의중앙선"): "0004",
+           ("언주", "9호선(연장)"): "0930"}
+    assert L.resolve("계양", "경의선", LINE_MAP, smap, key) == ("4208", "공항철도1호선", "map")
+    assert L.resolve("창동", "경원선", LINE_MAP, smap, key) == ("0002", "경원선", "map")
+    assert L.resolve("수색", "경의선", LINE_MAP, smap, key) == ("0004", "경의중앙선", "plain")       # 짝표 없는 행은 호선 짝표만
+    assert L.resolve("언주", "9호선2~3단계", LINE_MAP, smap, key) == ("0930", "9호선(연장)", "plain")
+    assert LINE_MAP.get("경의선") == "경의중앙선"           # 양성 대조 — 글자대로였다면 계양 줄이 이 글을 받았다
+
+
+def test_real_data_map_rows_line_nm(real_rep):
+    """실자료 — map 행 여섯이 붙은 역·호선(검사관이 보는 dry-run 표와 같은 셈)."""
+    names = {s["station_id"]: (s["station_nm"], s["line_nm"]) for s in real_rep["stations"]}
+    got = {k: [(names[sid], ln) for (sid, ln) in v] for k, v in real_rep["map_rows"].items()}
+    assert got == {
+        ("창동", "경원선"): [(("창동", "4호선"), "경원선")],
+        ("평택지제", "경부선"): [(("지제", "경부선"), "경부선")],
+        ("당고개", "4호선"): [(("불암산", "4호선"), "4호선")],
+        ("계양", "경의선"): [(("계양", "공항철도1호선"), "공항철도1호선")],
+        ("검암", "경의선"): [(("검암", "공항철도1호선"), "공항철도1호선")],
+        ("김포공항", "경의선"): [(("김포공항", "공항철도1호선"), "공항철도1호선")],
+    }
+    assert {ln for m in real_rep["rows"].values() for r in m for ln in [r[4]]} >= {"경원선", "공항철도1호선"}
+    assert not any(r[3] in ("계양", "검암", "김포공항") and r[4] == "경의중앙선"
+                   for m in real_rep["rows"].values() for r in m)
+
+
 # ── 3. 관문 ──────────────────────────────────────────────────────────────────
 
 
