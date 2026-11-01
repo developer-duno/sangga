@@ -1,0 +1,223 @@
+<title>상가 데이터 백서</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600&family=Noto+Serif+KR:wght@600;700&display=swap">
+<style>
+:root{
+  --ground:#F5F7F4;--surface:#FFFFFF;--surface-2:#EDF1EC;--ink:#1C2522;--ink-2:#4B5651;--ink-3:#7A8580;
+  --line:#D9E0DA;--line-strong:#BCC7BF;--accent:#1F6F6B;--accent-soft:#DFEDEA;
+  --gA:#2E7D5B;--gB:#3A6EA5;--gC:#B07A1E;--gD:#9A4A3C;--warn-soft:#FBF1DD;--warn:#8A5A12;
+  --shadow:0 1px 2px rgba(28,37,34,.05),0 6px 18px rgba(28,37,34,.05);
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --ground:#131816;--surface:#1A201E;--surface-2:#222A27;--ink:#E6ECE8;--ink-2:#A8B3AD;--ink-3:#7E8984;
+  --line:#2C3532;--line-strong:#3D4844;--accent:#6CBDB6;--accent-soft:#173130;
+  --gA:#6FC79B;--gB:#86B4E8;--gC:#E0B35C;--gD:#E08E7A;--warn-soft:#2E2616;--warn:#E0B35C;
+  --shadow:0 1px 2px rgba(0,0,0,.35),0 6px 18px rgba(0,0,0,.3);color-scheme:dark;}}
+:root[data-theme="dark"]{
+  --ground:#131816;--surface:#1A201E;--surface-2:#222A27;--ink:#E6ECE8;--ink-2:#A8B3AD;--ink-3:#7E8984;
+  --line:#2C3532;--line-strong:#3D4844;--accent:#6CBDB6;--accent-soft:#173130;
+  --gA:#6FC79B;--gB:#86B4E8;--gC:#E0B35C;--gD:#E08E7A;--warn-soft:#2E2616;--warn:#E0B35C;
+  --shadow:0 1px 2px rgba(0,0,0,.35),0 6px 18px rgba(0,0,0,.3);color-scheme:dark;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:'IBM Plex Sans KR',-apple-system,'Apple SD Gothic Neo','Malgun Gothic',system-ui,sans-serif;font-size:15.5px;line-height:1.7}
+.wrap{max-width:1040px;margin:0 auto;padding-block:28px 72px;padding-inline:16px}
+h1,h2,h3{font-family:'Noto Serif KR','Apple SD Gothic Neo','Malgun Gothic',serif;text-wrap:balance;margin:0}
+h1{font-size:30px;line-height:1.25;font-weight:700}
+h2{font-size:21px;margin:44px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--line-strong)}
+h3{font-size:16.5px;font-weight:600}
+p{margin:0 0 10px;max-width:68ch}
+.eyebrow{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);font-weight:600}
+.lead{color:var(--ink-2);margin-top:10px;max-width:70ch}
+.meta{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:14px;font-size:13px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.notice{background:var(--warn-soft);border-left:3px solid var(--warn);padding:10px 14px;border-radius:0 8px 8px 0;margin:18px 0 0;font-size:14px;max-width:none}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:22px}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.stat b{display:block;font-size:22px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.2}
+.stat span{font-size:12.5px;color:var(--ink-3)}
+.filters{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 18px;align-items:center}
+.filters .lbl{font-size:12.5px;color:var(--ink-3);margin-right:4px}
+.chip{border:1px solid var(--line-strong);background:var(--surface);color:var(--ink-2);border-radius:999px;padding:4px 12px;font-size:13px;cursor:pointer;font-family:inherit}
+.chip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+.chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+details.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);overflow:hidden}
+details.card[hidden]{display:none}
+details.card>summary{list-style:none;cursor:pointer;padding:14px 16px;display:grid;grid-template-columns:1fr auto;gap:6px 10px;align-items:start}
+details.card>summary::-webkit-details-marker{display:none}
+details.card>summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.num{font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.name{font-weight:600;font-size:16px;line-height:1.35}
+.src{font-size:13px;color:var(--ink-2);grid-column:1/-1}
+.row{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.g{display:inline-block;font-size:11.5px;font-weight:600;letter-spacing:.04em;padding:2px 8px;border-radius:6px;color:#fff}
+.g.A{background:var(--gA)}.g.B{background:var(--gB)}.g.C{background:var(--gC)}.g.D{background:var(--gD)}.g.M{background:var(--ink-3)}
+.tag{display:inline-block;font-size:12px;padding:2px 9px;border-radius:999px;background:var(--surface-2);color:var(--ink-2)}
+.rows{font-variant-numeric:tabular-nums;font-weight:500;color:var(--ink)}
+.body{border-top:1px solid var(--line);padding:12px 16px 16px;font-size:14px}
+.body dl{display:grid;grid-template-columns:84px 1fr;gap:6px 12px;margin:0}
+.body dt{color:var(--ink-3);font-size:12.5px;padding-top:2px}
+.body dd{margin:0}
+.body ul{margin:0;padding-left:18px}
+.body li{margin:2px 0}
+code{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace;font-size:.92em;background:var(--surface-2);padding:1px 5px;border-radius:4px}
+.key{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;overflow-x:auto}
+.key pre{margin:0;font-family:ui-monospace,'Cascadia Mono',Consolas,monospace;font-size:13px;line-height:1.6;color:var(--ink-2)}
+table{border-collapse:collapse;width:100%;font-size:14px;background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.tbl{overflow-x:auto}
+th,td{text-align:left;vertical-align:top;padding:9px 11px;border-bottom:1px solid var(--line)}
+th{font-size:12.5px;color:var(--ink-3);font-weight:600;background:var(--surface-2)}
+tr:last-child td{border-bottom:none}
+.ok{color:var(--gA);font-weight:600}.no{color:var(--gD);font-weight:600}
+.rules{counter-reset:r;padding-left:0;list-style:none;max-width:70ch}
+.rules li{counter-increment:r;display:grid;grid-template-columns:30px 1fr;gap:10px;padding:8px 0;border-bottom:1px dashed var(--line)}
+.rules li::before{content:counter(r);font-weight:600;color:var(--accent);background:var(--accent-soft);border-radius:8px;height:28px;display:flex;align-items:center;justify-content:center;font-size:13px}
+.foot{margin-top:40px;font-size:13px;color:var(--ink-3)}
+@media (max-width:600px){h1{font-size:25px}.body dl{grid-template-columns:1fr}.body dt{padding-top:6px}}
+@media (prefers-reduced-motion:no-preference){details.card{transition:box-shadow .15s}details.card[open]{box-shadow:0 2px 6px rgba(28,37,34,.08),0 10px 28px rgba(28,37,34,.08)}}
+</style>
+
+<div class="wrap">
+  <div class="eyebrow">sangga · 데이터 백서 (정본의 열람판)</div>
+  <h1>우리가 실제로 받아 쓰는 자료 전부</h1>
+  <p class="lead">받는 자료 13종과 우리가 만든 산출물 3종. 어디서 오고, 어떻게 받고, 얼마나 자주 새로워지고, 지금 몇 줄이고, 화면 어디에 쓰이고, 어디까지 믿을 수 있는지를 한 장씩. 정본은 레포의 <code>docs/데이터백서.md</code> 이고 이 페이지는 그 문서를 옮긴 것입니다.</p>
+  <div class="meta"><span>기준 커밋 7d7683c (2026-10-08 저녁 · #247 지분 칸 · #248 SGIS 반영)</span><span>실측 2026-10-08 00:12 KST (운영 DB 읽기)</span><span>화면 연결 23곳 확인</span><span>할루 검사 틀림 0 (46회 대조)</span></div>
+  <p class="notice">⛔ 새 자료·표·수집기를 만들면 같은 PR 에서 정본 문서의 카드를 고치고, 이 페이지를 다시 올립니다. 숫자는 "잰 날짜"와 함께 읽습니다 — 화면의 "이 자료는 언제 것인가" 표가 실시간 정본입니다.</p>
+
+  <div class="stats">
+    <div class="stat"><b>13 + 3</b><span>받는 자료 · 우리가 만든 것</span></div>
+    <div class="stat"><b>5,354 MB</b><span>운영 DB 크기</span></div>
+    <div class="stat"><b>30 구</b><span>건물·화면이 열린 지역 (서울 25 · 대전 5)</span></div>
+    <div class="stat"><b>약 44 GB</b><span>원본 보관 (data/raw · 17 폴더)</span></div>
+  </div>
+
+  <h2>1. 자료 카드</h2>
+  <div class="filters" role="group" aria-label="걸러 보기">
+    <span class="lbl">등급</span>
+    <button class="chip" data-f="grade" data-v="" aria-pressed="true" id="f-grade-all">전부</button>
+    <button class="chip" data-f="grade" data-v="A" aria-pressed="false" id="f-grade-a">A 실측·고시</button>
+    <button class="chip" data-f="grade" data-v="B" aria-pressed="false" id="f-grade-b">B 공식 표본</button>
+    <button class="chip" data-f="grade" data-v="C" aria-pressed="false" id="f-grade-c">C 우리 계산</button>
+    <span class="lbl" style="margin-left:10px">주기</span>
+    <button class="chip" data-f="cad" data-v="" aria-pressed="true" id="f-cad-all">전부</button>
+    <button class="chip" data-f="cad" data-v="월" aria-pressed="false" id="f-cad-m">월간</button>
+    <button class="chip" data-f="cad" data-v="분기" aria-pressed="false" id="f-cad-q">분기</button>
+    <button class="chip" data-f="cad" data-v="연" aria-pressed="false" id="f-cad-y">연 1회</button>
+    <button class="chip" data-f="cad" data-v="수시" aria-pressed="false" id="f-cad-x">수시·비정기</button>
+  </div>
+  <div class="grid" id="cards"></div>
+
+  <h2>2. 자료가 서로 이어지는 열쇠</h2>
+  <p>모든 자료는 땅 번호(PNU 19자리) 하나로 묶입니다. 점포는 호(戶)가 없어 층까지만 붙고, 상권은 땅의 좌표가 경계 안에 드는지로 잇습니다.</p>
+  <div class="key"><pre>법정동(10) ─┐
+            ├─ PNU(19) ── 필지(좌표·토지특성) ── 건물(동) ── 층 ── 호실
+점포·업종 ──┘      │                                 │
+                   │                                 └─ 점포는 (PNU, 층)으로만 붙는다 — 호 없음
+                   ├─ 좌표 ∈ 상권 경계 → 상권 → 부동산원 매핑 → 임대 동향
+                   │                              └→ 서울시 개업·폐업 (상권 코드 100% 일치)
+                   ├─ 실거래 (2024-01 이후 집합거래만 PNU 가 붙는다) · 반경 500m 이웃
+                   ├─ 국세청 기준시가 (법정동 + 번지 + 호)
+                   └─ 건축 인허가 (대지 구분 코드 번역 필요)
+LH 공고는 어디에도 안 붙는다(시·도 단위 메타만) · 참고 시세 게이트는 시군구 코드</pre></div>
+
+  <h2>3. 원천이 없는 것 (받을 수 없다)</h2>
+  <div class="tbl"><table>
+    <tr><th>없는 것</th><th>왜</th><th>대신</th></tr>
+    <tr><td>상가 임대료 실거래</td><td>신고 의무가 없다</td><td>부동산원 공표값(상권 평균)을 그대로 — 건물·층별 추정은 하지 않는다(결정 0031)</td></tr>
+    <tr><td>권리금 (건물·상권 단위)</td><td>공적 조사가 시·도 단위뿐</td><td>부동산원 R-ONE 「상가권리금」 연 1회 · 시도 × 업종 5대분류(2026-10-08 확인) — 참고 배경으로만</td></tr>
+    <tr><td>상가 실매출</td><td>카드사 자료는 공공에 없다</td><td>서울시 추정매출(상권 단위 · 아래 4절) 후보</td></tr>
+    <tr><td>통건물 실거래의 정확한 지번</td><td>국토부가 늘 가린다</td><td>구 단위 단가에만 쓴다</td></tr>
+    <tr><td>점포의 호(戶)</td><td>상권정보가 전수 결측</td><td>층까지만 붙인다</td></tr>
+    <tr><td>LH 공고의 호실·가격</td><td>API 가 상가에는 빈 응답</td><td>LH 링크로 넘긴다</td></tr>
+    <tr><td>2017년 이후 실거래 지하층</td><td>국토부 API 가 빈 값을 준다</td><td>지하 시세는 내지 않는다</td></tr>
+    <tr><td>유동인구</td><td>우리 표에 없다</td><td>서울시 생활인구(무료) 후보 — 4절</td></tr>
+  </table></div>
+
+  <h2>4. 받을 수 있는데 아직 안 받는 것 <span class="tag">2026-10-08 조사 · 공식 페이지 기준</span></h2>
+  <div class="tbl"><table>
+    <tr><th>자료</th><th>어디서</th><th>조건</th><th>단위</th><th>우리에 붙나</th><th>상태</th></tr>
+    <tr><td>⭐ 상권 추정매출 (카드사 원천)</td><td>서울시 상권분석서비스 OA-15572</td><td class="ok">무료 · 공공누리 1유형(상업 이용 가능) · 분기</td><td>상권/배후지/행정동/자치구 × 업종</td><td>우리 상권 코드와 같은 체계(결정 0033 이 100% 일치 확인) → 수집·적재 패턴 재사용</td><td>후보 1순위 · 서울만</td></tr>
+    <tr><td>같은 집안 형제 (길단위인구·상주인구·직장인구·소득소비·집객시설)</td><td>열린데이터광장</td><td>같은 조건으로 추정 — 표마다 확인 필요</td><td>상권</td><td>같음</td><td>후보</td></tr>
+    <tr><td>생활인구 (통신 기반)</td><td>서울시 <b>OA-23016</b> 「[내국인] 행정동별 서울 생활인구(250m)」 (KT 원천 · 공개 2026-07-29) — 옛 OA-14991 은 2026-07-31 생산 종료</td><td class="ok">무료 · 공공누리 1유형 · 월 1회 (최신 202609)</td><td>250m 격자 · 행정동</td><td>건물엔 못 붙고 동·격자</td><td>후보</td></tr>
+    <tr><td>소상공인365 상권분석 API</td><td>공공데이터포털 15012005 집안</td><td class="ok">API 는 "이용허락범위 제한 없음" · 웹 약관에도 상업 이용 금지 문구 없음 (10-08 실측 — 출처 표시만 · 8월 판정 정정)</td><td>상권</td><td>전국 (대전 포함)</td><td>후보</td></tr>
+    <tr><td>⭐ SGIS 집계구 통계 (인구·가구·주택·사업체·종사자)</td><td>sgis.mods.go.kr 자료신청 (요청번호 87909 · 10-08 승인)</td><td class="ok">무료 · 공공누리 제1유형 원문 확인 (상업 이용·변경 가능 · 출처 표시) · 자료신청 조건 = 출처 명시 + 결과물 사본 1부 (사이트 주소로) · 약관의 "영리 금지"는 해당 없음 (👤 10-08 · 무료 서비스 · 결정 0036 결정 17)</td><td>집계구 14자리 (전국 108,510개 · 통계 2024 · 경계 2025-2Q)</td><td>상권 도형에 면적 비율로 겹쳐 붙인다 — 대전 37 상권 100% 덮임 · 총괄 5종 빈칸 0 · 업종별 종사자만 13% 비밀보호 빈칸 · 통째로 든 집계구가 적어 (292개 중 19개) 배분값은 추정 = C 배지</td><td>원본 받음 · 적재 전 → 물결 3-6</td></tr>
+    <tr><td>SGIS 생활업종 · 업종통계지도 (국가데이터처)</td><td>sgis.mods.go.kr 오픈API 68개 · 2026-06-26 개편 (생활밀접업종 80종 · 40여 지표) · 생활업종 API 도 있다 (10-08 정정)</td><td class="ok">무료 · 일 한도 무제한 · 공공누리 제1유형 (사이트 저작권 정책 기준)</td><td>행정동·격자 · 통계 API 일부는 집계구까지 내려간다</td><td>업소 수는 소진공 점포와 겹친다 · 업종별 평균 매출액은 화면 전용</td><td>후보</td></tr>
+    <tr><td>행안부 지방행정 인허가 (개업·휴업·폐업)</td><td>공공데이터포털 (localdata.go.kr 은 2026-04-16 폐쇄 — 외부 주장)</td><td class="ok">무료 · 195종 · 수시</td><td>사업장 (전국)</td><td>대전 개업·폐업의 공식 길 후보</td><td>후보 · 물결 4 조사만 (👤 10-08)</td></tr>
+    <tr><td>행안부 일반음식점 표준데이터</td><td>공공데이터포털 15096283</td><td class="ok">무료 · 이용허락 제한 없음</td><td>사업장 (전국 · 인허가일자·영업상태)</td><td>인허가 집안의 한 종 · 폐업일자·면적 칸 미확인 · 우리는 지금 안 쓴다 (점포는 소진공)</td><td>후보 (조사)</td></tr>
+    <tr><td>국민연금 가입 사업장</td><td>공공데이터포털 3046071</td><td class="ok">무료 · 제한 없음 · 월별 · API</td><td>사업장 (좌표 없음)</td><td>법인 3인+·개인 10인+만 → 직장인구는 SGIS 종사자로 정함 (👤 10-08) · 추이용으로만 나중에</td><td>보류</td></tr>
+    <tr><td>주민등록 인구·세대</td><td>공공데이터포털 15108071</td><td class="ok">무료 · 제한 없음 · 월간</td><td>행정동·통·반</td><td>동 단위라 상권에 못 맞춤 → 배후 인구는 SGIS 집계구로</td><td>보류</td></tr>
+    <tr><td>분양 상가 API</td><td>LH 15057999 · 청약홈 15098547 (활성) · <s>서울시 OA-15668</s> (데이터셋 삭제 확정 10-08 · 대체 OA-22404 엔 분양 필드 없음)</td><td>무료</td><td>공고</td><td>결정 0014 §2 예외 (출처 4곳 → 3곳)</td><td>보류</td></tr>
+    <tr><td>카드 매출·유동인구 (유료)</td><td>신한 · BC (무료 화면은 시군구까지) · KB · 삼성 · <s>SKT 지오비전</s> (2026-12-31 전면 종료) · KT TrIP (지자체 패키지 2,000만~5,000만원) · NICE BizMap (55,000원/건) · 오픈업 프로 (월 99만원~) · KDX (도메인 불통) · FinDX (BC 상권별 매출 1,000만~1억원 협의)</td><td class="no">일부 공개 가격 있음 · 나머지 "문의" (경쟁사조사-2026-10)</td><td>상권·격자 (건물 단위 아님)</td><td>—</td><td>지금 안 받음 (👤)</td></tr>
+  </table></div>
+  <p><b>겹치는 자료 판정</b> (10-08 · 더 나은 쪽만 쓴다 · 첫 줄만 대전 37 상권 실측)</p>
+  <ul style="margin:4px 0 12px 20px">
+    <li>SGIS 사업체 수 ↔ 소진공 점포: 상관 0.94 → <b>소진공 유지</b> · SGIS 는 검산용</li>
+    <li>SGIS 주택 ↔ 건축물대장 → <b>건축물대장 유지</b></li>
+    <li>SGIS 인구·가구 → <b>새 것</b> (주민등록은 동 단위)</li>
+    <li>SGIS 종사자 → <b>새 것</b> (국민연금은 작은 사업장이 빠지고 좌표 없음)</li>
+    <li>SGIS 상주 인구·종사자 ↔ 서울 상권분석 상주·직장인구 → <b>서울은 판정 전</b> · 대조 뒤 하나만 (👤)</li>
+    <li>행안부 인허가 ↔ 서울 개업·폐업 공표 → 서울만 겹침 · 대전 후보로만</li>
+    <li>SGIS 생활업종 API ↔ 소진공 → <b>소진공 유지</b></li>
+  </ul>
+
+  <h2>5. 이 문서를 고치는 때</h2>
+  <ol class="rules">
+    <li><span>수집기·표·함수를 새로 만들었다 → 카드 추가. 신선도 함수에 줄을 더했으면 "주기"에 규칙을 적는다.</span></li>
+    <li><span>적재해서 행 수·분기가 바뀌었다 → 그 카드의 숫자와 잰 날짜.</span></li>
+    <li><span>받을 수 있는 자료를 새로 알았거나 조건이 바뀌었다 → 4절.</span></li>
+    <li><span>한계가 해소됐다 → 그 줄에 취소선과 근거.</span></li>
+    <li><span>정본 문서를 고친 뒤 이 페이지를 다시 올린다 — 머리의 기준 커밋을 바꾼다.</span></li>
+  </ol>
+  <p class="foot">등급: A 실측·신고·공식 고시 / B 공식 표본·공표 통계 / C 우리가 계산한 파생값 / D 간접 추론. C·D 는 화면에서 모양으로 가른다(상세계획 §7.4). 운영 7계명과 명령은 레포 <code>CLAUDE.md</code>.</p>
+</div>
+
+<script>
+const CARDS = [
+ {n:1,name:'법정동 코드',tbl:'bjd_code',src:'행정표준코드관리시스템 (code.go.kr)',grade:'A',cad:'수시',rows:'53,387 (존재 20,560 + 폐지 32,827)',how:'전체자료 zip · 키·로그인 없음 · load_bjd_code.py',freq:'개편 때 (2026Q2 광주·전남 → 전남광주통합특별시 12) · 사람 손 · 멱등 upsert',scope:'전국',raw:'data/raw/bjd/',screen:['직접 부르는 카드 없음 — 주소 조립 보조'],limits:['data.go.kr API 는 별도 신청이라 안 씀'],dec:'—'},
+ {n:2,name:'필지(땅) + 토지특성',tbl:'parcel',src:'브이월드 (국토부 · 구 NSDI)',grade:'A',cad:'연',rows:'1,119,149 (전국 16시도 · 토지특성 채움 90.2%)',how:'① 전국 일괄 CSV zip 17개 → load_vworld_bulk.py ② API getLandCharacteristics (VWORLD_KEY · domain 일치) → collect/load_vworld_land.py (필지당 1콜)',freq:'일괄은 반기 게시 · 우리는 연 1회쯤 사람 손 · 갱신 0건이면 exit 1',scope:'전국 (PNU 시드 = 상권정보)',raw:'data/raw/vworld_bulk/ · vworld_land/',screen:['모든 카드의 좌표·지번 뼈대 (좌표는 geom 에서만)','속한 상권 st_contains · 반경 500m 이웃'],limits:['같은 필지 여러 행 → 최신만','성공 코드가 빈 문자열','parcel 에 있는 PNU 만 채운다'],dec:'0003 · 0005'},
+ {n:3,name:'건축물대장 표제부·층별개요·전유공용',tbl:'building · building_floor · unit',src:'건축HUB (국토부) 일괄 파일',grade:'A',cad:'월',rows:'건물 242,631 · 층 1,636,037 · 호실 2,950,009 (건물의 18.45%)',how:'일괄 zip 3종 (4.4GB · 로그인 없음) → fetch_bldrgst_bulk → convert_bldrgst_bulk → load_building_ledger (API 경로 BLDRGST_KEY 는 대비책)',freq:'월간 파일 (최근 3개월치만 게시 → 백업) · 사람 손 · 지금 판 = 2026-08-11 적재분',scope:'서울 25구 + 대전 5구',raw:'data/raw/bldrgst_bulk/ (4.4GB) · bldrgst_bulk_converted/ (20GB)',screen:['건물 검색 (search_buildings)','층별 화면 본체 (v_floor_stack)','층 목록 호실 요약·목록 (list_unit_floor_summary · list_floor_units)','상권→건물 다리'],limits:['건물 이름 53.5% 없음 (도로명 검색이 주 경로)','면적 없는 층 약 3% (막대 안 그림)','unit 행 ≠ 물리 호실 수','원장보다 늦다 (서울스퀘어 2층 사례)','수서동 10필지 표제부 부재'],dec:'0001 · 0002 · 0005 · 0032'},
+ {n:4,name:'점포·업종 (소상공인 상권정보)',tbl:'unit_business',src:'소상공인시장진흥공단 (포털 15012005 / 15083033)',grade:'A',cad:'분기',rows:'3,388,580 (202603 + 202606 · 최신 2,772,484) · 표지 202606/202606',how:'분기 CSV zip (시도 17개 파일 · 키 없음) → load_sangkwon_snapshot.py --sigungu-code all (전국 모드만 표지를 올린다)',freq:'분기 (분기말 + 약 5개월 뒤 게시) · 그물 1호가 알리고 적재는 사람 · 결정 0035 "다 넣은 뒤 한 번에" (snapshot_release)',scope:'전국 (화면은 30구)',raw:'data/raw/sangkwon_zips/ (과거 44개 · 12.2GB · 내려가면 재수집 불가) · sangkwon/ · sangkwon_202606/',screen:['층 목록 점포 칸 (PNU+층)','각주 결측률 (v_coverage_stats)','둘레의 업종 분포 (mv_district_industry_mix)','상호명 검색 (mv_parcel_store_names)','상권→건물 점포 수'],limits:['호(戶) 100% 결측 → 층에만 (스택뷰 D등급)','층 결측 32.9% (3곳 중 1곳이 어느 층에도 안 붙음)','store_cnt 는 밀집도가 아니다 (복수 동 중복 72.5% · 사업자 주소 몰림)','사진 비교는 분기 개업·폐업이 아니다 (결정 0033)','2025-03 사진 서울 좌표 오류 · 2017Q3 구조 다름'],dec:'0007 · 0014 · 0028 · 0035'},
+ {n:5,name:'상업업무용 부동산 매매 실거래',tbl:'transaction',src:'국토교통부 (포털 15126463)',grade:'A',cad:'수시',rows:'327,183 (2006-09 ~ 2026-08 · 서울 282,828 · 대전 40,434 · 전남광주 3,921)',how:'API getRTMSDataSvcNrgTrade (MOLIT_KEY · 시군구×월 1콜) → collect_transactions.py (이어받기 · dry-run 도 씨앗을 쓴다) → load_transactions.py',freq:'국토부 월 공개 · 우리는 수시 · 사람 손',scope:'서울·대전 30구 (나머지 226 시군구 보류)',raw:'data/raw/rtms/ (180MB)',screen:['실거래 기록 (필지 이력 + 구 층대별 단가)','참고 매매 시세 (반경 이웃 mv_tx_parcel_geog)','입구 동네 매매 단가 흐름 (mv_sigungu_tx_yearly)'],limits:['지번은 2024-01부터만 공개 (그 전은 PNU 0 → 구 단위)','통건물 지번 항상 가림','2017년부터 지하층이 비어 온다','초소형 구획 무더기가 ㎡당 중앙값을 튀게 한다 → 한 건 면적 중앙값 병기','지분 거래 칸 is_share (10-08 · 물결 0-2b) — 건물 일부 몫만 사고판 거래(집합 거래의 4.8% · ㎡당 값 약 0.39배). 목록엔 남기고 「지분」 꼬리표 · 단가 계산에서만 뺀다 · 건수는 센다 · 칸은 재적재 뒤에 채워진다'],dec:'0011 · 0012 · 0013 · 0027'},
+ {n:6,name:'상권 경계',tbl:'district',src:'서울시 상권분석서비스 OA-15560 (SHP) + 소진공 주요상권현황 15090955 (CSV)',grade:'A',cad:'수시',rows:'1,687 = 서울 1,650 (골목 1,090 · 전통시장 305 · 발달 249 · 관광특구 6) + 대전 37',how:'서울 SHP zip 2.07MB → fetch/load_seoul_district.py (pyshp · EPSG 5181) / 대전 CSV 30.5MB → fetch/load_sbiz_district.py (서울은 코드가 거부)',freq:'비정기 (서울 마지막 갱신 2026-06-11) · 사람 손 · 바꾸면 build_district_geojson.py 로 지도 파일 다시 굽고 커밋',scope:'서울 + 대전',raw:'data/raw/seoul_district/ · sbiz_district/',screen:['속한 상권','지도 (districts.geojson)','상권→건물 다리','업종 분포 상권 스코프','임대·개업폐업의 열쇠'],limits:['서울 건물 31.5%는 어떤 상권에도 안 든다 (정상)','1.7%는 두 상권에 걸친다 → 개별 전부 나열 · 합산에서 관광특구 제외','대전은 출처가 달라 유형 체계가 다르다'],dec:'0007 · 0008 · 0009 · 0010 · 0011 · 0025'},
+ {n:7,name:'상권 임대 동향 (부동산원 R-ONE)',tbl:'rent_stat · district_rone_map',src:'한국부동산원 R-ONE (포털 15134761)',grade:'B',cad:'분기',rows:'7,232 (2024Q3 ~ 2026Q2 · 8분기) · 매핑 396행 (상권 376 ↔ 잎 85/88)',how:'API SttsApiTblData.do (REB_KEY) → collect_rone.py --end-qid (4유형 × 6지표) → load_rone.py · 매핑 seed → build/load_rone_map.py',freq:'분기 · ⛔ 게시 시기 근거 없음 → R-ONE 화면에서 눈으로 확인한 뒤 --end-qid 필수 (안 주면 미공표 분기가 0건 done 으로 굳는다)',scope:'조사 상권 (서울 381 · 대전 15 매핑)',raw:'data/raw/rone/ (69MB)',screen:['상권 임대 동향 카드 (list_rent_stats — 공실률 · ㎡당 월 임대료 · 층별 임대료 표 · 수익률)'],limits:['지역 축이 시군구가 아니라 조사 상권 (같은 강남 안 1.8배 차)','표본 수 비공표 (B 배지)','층별효용비율 7구간 (지하2층 이하·옥탑 없음)','열린 30구 건물의 80.6%는 조사 대상 상권이 아니다','건물·층별 추정은 하지 않는다 (결정 0031)'],dec:'0024 · 0031'},
+ {n:8,name:'국세청 기준시가 (호실)',tbl:'nts_base_price',src:'국세청 (포털 3036455)',grade:'A',cad:'연',rows:'2,490,451 (2026년판 · 전국)',how:'zip (법정동 사전 + xlsx 5시트) → load_nts_base_price.py (psql \\copy · 한 트랜잭션 · 관문 4종)',freq:'연 1회 (다음 2027-03) · 자동 감시 없음 · 사람 손 · 신선도 규칙 = 고시일 다음 해 3/31',scope:'전국 17시도',raw:'data/raw/nts_base_price/ (139MB)',screen:['참고 매매 시세 카드 안 "국세청 기준시가" 한 줄 (list_base_prices — 층별 ㎡당 중앙값 · 오피스텔 제외 · 게이트 통과 구에서만)'],limits:['세금 과세 기준이지 시세가 아니다 ("세무 기준가격" 부기)','집합건물 호실에만','광주·전남 옛 코드 29·46 → 12 번역'],dec:'0021'},
+ {n:9,name:'LH 상가 분양·임대 공고',tbl:'lh_notice',src:'LH 청약플러스 API',grade:'A',cad:'수시',rows:'574 (2025-08-28 ~ 2026-10-07) · 기준선 20261007',how:'API lhLeaseNoticeInfo1 (MOLIT_KEY · 1년 창) → collect_lh_notices.py (psql 한 트랜잭션 · dry-run 도 포털 30회 · 2분+)',freq:'그물 5호 주 1회 감시 → 적재는 사람 (2026-10-07 여섯 번째) · 기준선 상수는 사람이 올린다',scope:'전국 (시도 단위)',raw:'파일 없음 (DB 직행)',screen:['입구 카드 "LH 상가 분양·입점 공고" (list_lh_notices — 200건 상한 · 같은 종류·제목은 최신 한 줄 · 전국 공고는 접어 둠)'],limits:['호실 목록·가격은 안 온다 (API 가 상가에 빈 응답)','지역이 시도 단위뿐','화면 공고의 약 90%가 LH 가 "전국"이라 적은 것 (제목으로 지역 추측 금지)'],dec:'0022 · 0026'},
+ {n:10,name:'건축 인허가 기본개요',tbl:'arch_permit',src:'건축HUB 일괄 파일 (분류 01)',grade:'A',cad:'월',rows:'567,299 (202608 · 미준공 + 2023 이후 허가만)',how:'월간 zip 438MB → fetch_bldrgst_bulk.py --kind permit-basis → load_arch_permits.py (관문 5종 · 새 달 넣고 옛 달 삭제 → 표는 한 달분)',freq:'월 1회 수동 (다음 달 20일 무렵 게시) · 신선도 규칙 = 기준월 + 3개월 − 하루 · 다음 202609 는 10/31 까지',scope:'전국 (시군구 288)',raw:'data/raw/arch_permit/ (838MB)',screen:['둘레의 업종 분포 카드 "새로 올라오는 상가 건물 N동 · 2년 넘게 미착공 M동" (count_nearby_permits · 주용도 03·04·07·14)'],limits:['주용도 빈 값 70% → 셈은 하한','실효 칸 없음 (단정 금지)','재는 시점은 기준월 말일'],dec:'0023 · 0026'},
+ {n:11,name:'상권 개업·폐업 (서울시 공표)',tbl:'district_openclose',src:'서울시 상권분석서비스 OA-15577 (API)',grade:'B',cad:'분기',rows:'1,680,756 (20211 ~ 20262 · 22분기 · 표 290MB)',how:'API VwsmTrdarStorQq (SEOUL_OPENAPI_KEY · 22분기 ≈ 1,700회) → collect_seoul_openclose.py --end-quarter (의무) → load_seoul_openclose.py (관문 7종 · 분기 단위 교체) · 대비책 연도 zip',freq:'분기 (게시 시기 근거 없음) · 사람 손 · 분할 적재 금지 · 적재 전 디스크 %',scope:'서울 상권 1,650 × 업종 100 (대전 없음)',raw:'data/raw/seoul_openclose/ (706MB)',screen:['상권 개업·폐업 카드 (list_district_openclose — 최근 8분기 창 · 상권마다 합산 + 업종 상위 10)'],limits:['서울뿐 (화면이 "서울 상권만 다룹니다"라 적는다)','머리말 세 벌 · 0건 분기 done 금지','비율 분모 = 유사 업종 점포 수'],dec:'0033'},
+ {n:12,name:'의견함 · 호출 장부',tbl:'app_feedback · collect_progress · api_quota_log',src:'우리 손님 · 우리 수집기',grade:'M',cad:'수시',rows:'의견 0 (43일간)',how:'화면 폼 → api.submit_feedback() (넣기만 열림 · 익명 · 90일 보관 · 종류별 하루 1,000통)',freq:'그물 4호 주 1회 숫자 알림 · 내용은 dbx.py',scope:'—',raw:'—',screen:['의견함 (쓰기 전용)','호출 장부는 화면 어디서도 안 읽는다 (신선도 근거 아님)'],limits:['이름·연락처 칸 없음 (개인정보 의무 전 단계)'],dec:'0016 · 0017 · 0034'},
+ {n:'M1',name:'참고 시세 게이트 (통과 구)',tbl:'price_gate_sigungu',src:'우리 백테스트 (backtest_price.py → 통과구.csv)',grade:'C',cad:'수시',rows:'통과 14구 (서울 10 · 대전 4 · 금천 제외)',how:'load_price_gate.py (관문 3종 · 손 편집 금지)',freq:'재생성 때 (결재 사항 · v2 별건)',scope:'30구',raw:'docs/backtest/통과구.csv',screen:['참고 매매 시세 켜짐/꺼짐 (list_price_bands)','입구 성적표 카드 (list_price_gate)'],limits:['기준 = MdAPE 30% 이하 + 사다리가 구 평균을 이김','표시 = 통과 구 × 2층·3층+만'],dec:'0013'},
+ {n:'M2',name:'성적표 JSON',tbl:'public/scorecard-v1.json',src:'우리 백테스트 CSV 3종',grade:'C',cad:'수시',rows:'v1',how:'build_scorecard_json.py (generated_at = CSV 생성 시각) · 구워서 커밋',freq:'결재 때',scope:'—',raw:'docs/backtest/성적표-v1.md',screen:['입구 카드 "참고 시세는 얼마나 맞나" (화면 코드에 수치 리터럴 0 — 시험이 지킨다)'],limits:['v2 는 VERSION·파일명·SCORECARD_URL 을 함께 올린다'],dec:'0013'},
+ {n:'M3',name:'상권 지도 GeoJSON',tbl:'public/districts.geojson',src:'우리 district 표',grade:'A',cad:'수시',rows:'1,687 · 1.19MB',how:'build_district_geojson.py (ST_SimplifyPreserveTopology · 면적 내림차순) · 구워서 커밋',freq:'상권 재적재 때 (post_load 가 자동으로 굽지 않는다)',scope:'서울 + 대전',raw:'public/districts.geojson',screen:['지도 (DistrictMap) · 상권→건물 다리'],limits:['--check 가 상권 수·계산일을 라이브와 대조'],dec:'0010'},
+];
+const el = document.getElementById('cards');
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+el.innerHTML = CARDS.map(c => `
+<details class="card" data-grade="${c.grade}" data-cad="${esc(c.cad)}">
+  <summary>
+    <span class="num">${esc(c.n)} · ${esc(c.tbl)}</span><span class="g ${c.grade}">${c.grade==='M'?'내부':c.grade}</span>
+    <span class="name" style="grid-column:1/-1">${esc(c.name)}</span>
+    <span class="src">${esc(c.src)}</span>
+    <span class="row"><span class="tag">${esc(c.cad==='월'?'월간':c.cad==='연'?'연 1회':c.cad==='수시'?'수시·비정기':c.cad)}</span><span class="tag rows">${esc(c.rows)}</span></span>
+  </summary>
+  <div class="body"><dl>
+    <dt>받는 법</dt><dd>${esc(c.how)}</dd>
+    <dt>주기·적재</dt><dd>${esc(c.freq)}</dd>
+    <dt>범위</dt><dd>${esc(c.scope)}</dd>
+    <dt>원본 보관</dt><dd>${esc(c.raw)}</dd>
+    <dt>화면에서</dt><dd><ul>${c.screen.map(s=>`<li>${esc(s)}</li>`).join('')}</ul></dd>
+    <dt>한계</dt><dd><ul>${c.limits.map(s=>`<li>${esc(s)}</li>`).join('')}</ul></dd>
+    <dt>결정 문서</dt><dd>${esc(c.dec)}</dd>
+  </dl></div>
+</details>`).join('');
+const state = {grade:'', cad:''};
+function apply(){
+  document.querySelectorAll('#cards details.card').forEach(d => {
+    const ok = (!state.grade || d.dataset.grade===state.grade) && (!state.cad || d.dataset.cad===state.cad);
+    d.hidden = !ok;
+  });
+}
+document.querySelectorAll('.chip').forEach(b => b.addEventListener('click', () => {
+  const f = b.dataset.f; state[f] = b.dataset.v;
+  document.querySelectorAll(`.chip[data-f="${f}"]`).forEach(x => x.setAttribute('aria-pressed', x===b ? 'true' : 'false'));
+  apply();
+}));
+try { const h = location.hash.replace('#',''); if (h) { const t = document.getElementById(h); if (t) t.scrollIntoView(); } } catch (e) {}
+</script>
