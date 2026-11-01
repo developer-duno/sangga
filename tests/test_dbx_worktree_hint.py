@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""dbx.parts() 의 「git 워크트리라 .env 가 없다」 힌트 시험 (2단 마무리 규칙화, 2026-11-01).
+"""dbx.parts() 의 「이 폴더에 .env 가 없다」 힌트 시험 (2단 마무리 규칙화, 2026-11-01).
 
-워크트리에서 빌드·적재 스크립트를 돌리면 .env 가 없어 SANGGA_DATABASE_URL 오류로 멈춘다.
+git 워크트리·검사관 사본(clone --shared)에서 빌드·적재 스크립트를 돌리면 .env 가 없어
+SANGGA_DATABASE_URL 오류로 멈춘다. 본 폴더에는 .env 가 늘 있으니 「.env 없음」이 곧 워크트리·사본이다.
 처방(합친 뒤 본 폴더에서)을 오류 문구가 스스로 말하게 했다. DB·네트워크 0.
 """
 
@@ -26,28 +27,26 @@ def _message(monkeypatch, root):
     return str(exc.value)
 
 
-def test_worktree_git_file_adds_hint(tmp_path, monkeypatch):
-    # 양성: 워크트리의 .git 은 「gitdir: …」 한 줄짜리 파일이다.
-    (tmp_path / ".git").write_text("gitdir: /somewhere/.git/worktrees/x\n", encoding="utf-8")
+def test_no_env_file_adds_hint(tmp_path, monkeypatch):
+    # 양성: .env 가 없는 폴더(워크트리·사본).
     msg = _message(monkeypatch, tmp_path)
-    assert "워크트리" in msg
+    assert ".env 파일이 없습니다" in msg
     assert "본 폴더" in msg
 
 
-def test_main_checkout_git_dir_has_no_hint(tmp_path, monkeypatch):
-    # 음성: 본 폴더의 .git 은 폴더 — 문구 변화 0.
-    (tmp_path / ".git").mkdir()
+def test_existing_env_file_has_no_hint(tmp_path, monkeypatch):
+    # 음성: 빈 .env 가 있는 폴더(본 폴더) — load_dotenv 가 읽어도 변수는 없다. 문구 변화 0.
+    (tmp_path / ".env").write_bytes(b"")
     msg = _message(monkeypatch, tmp_path)
-    assert "워크트리" not in msg
+    assert ".env 파일이 없습니다" not in msg
     assert "본 폴더" not in msg
 
 
 def test_first_line_kept_in_both_cases(tmp_path, monkeypatch):
-    as_file = tmp_path / "wt"
-    as_file.mkdir()
-    (as_file / ".git").write_text("gitdir: /somewhere/.git/worktrees/x\n", encoding="utf-8")
-    as_dir = tmp_path / "main"
-    as_dir.mkdir()
-    (as_dir / ".git").mkdir()
-    for root in (as_file, as_dir):
+    without_env = tmp_path / "wt"
+    without_env.mkdir()
+    with_env = tmp_path / "main"
+    with_env.mkdir()
+    (with_env / ".env").write_bytes(b"")
+    for root in (without_env, with_env):
         assert _message(monkeypatch, root).splitlines()[0] == FIRST_LINE

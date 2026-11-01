@@ -37,11 +37,12 @@ def parts():
     load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
     url = os.environ.get("SANGGA_DATABASE_URL")
     if not url:
-        # git 워크트리는 .git 이 폴더가 아니라 파일이다 — 거기엔 .env 가 없는 게 정상이라 처방을 알려 준다.
+        # 본 폴더에는 .env 가 늘 있다 — 없으면 git 워크트리·검사관 사본이라 처방(본 폴더에서 돌리기)을 알려 준다.
         hint = ""
-        if os.path.isfile(os.path.join(PROJECT_ROOT, ".git")):
-            hint = ("  ⚠️ 여기는 git 워크트리라 .env 가 없습니다 — DB 를 읽거나 쓰는 명령"
-                    "(dbx·빌드·적재·post_load)은 합친 뒤 본 폴더(D:\\sangga)에서 돌리세요.\n")
+        if not os.path.exists(os.path.join(PROJECT_ROOT, ".env")):
+            hint = ("  ⚠️ 이 폴더에는 .env 파일이 없습니다 — git 워크트리·사본에는 원래 없으니, "
+                    "DB 를 읽거나 쓰는 명령(dbx·빌드·적재·post_load)은 합친 뒤 "
+                    "본 폴더(D:\\sangga)에서 돌리세요.\n")
         raise SystemExit(
             "SANGGA_DATABASE_URL 이 .env 에 없습니다.\n"
             + hint +
