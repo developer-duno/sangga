@@ -106,7 +106,7 @@ def build_issue_body(new_quarters, latest_known=LATEST_KNOWN_QUARTER):
         "",
         "## 할 일 (내 PC에서)",
         "",
-        "⛔ 적재 전 디스크 여유 확인 — 지금 사용량(Supabase 대시보드) + 이번 적재 증가(분기마다 약 +1.4GB + 가게 이력 통째 교체 일시 증가(표 크기만큼))"
+        "⛔ 적재 전 디스크 여유 확인 — 지금 사용량(Supabase 대시보드) + 이번 적재 증가(분기마다 약 +1.4GB + 가게 이력 통째 교체 일시 증가 약 +280MB(2026-11-01 실측 표 전체 크기))"
         " + WAL 여유 1GB 가 디스크 크기의 85% 미만일 때만 넣는다. 넘으면 확장 먼저"
         "(적재 직전 % 만 보면 적재 뒤 최고점을 못 본다).",
         "⛔ 서울 개폐업 분기 적재와 같은 날 하지 않는다.",
@@ -131,7 +131,7 @@ def build_issue_body(new_quarters, latest_known=LATEST_KNOWN_QUARTER):
         "# ⛔ 적재기가 exit 1(교차검증 불일치·표지 못 올림·표지 사전 점검 실패 = 넣은 것 없음 → 고치고 다시)이면 여기서 멈추고 안내대로 — 다음 줄로 넘어가지 않는다",
         "python scripts/build_store_history.py            # 가게 이력 빌드 — zip 전부(새 분기 포함) · 약 15분 · DB 0 → data/derived/store_history/<오늘>.csv",
         "python scripts/collectors/load_store_history.py --dry-run   # 관문 ⒜~⒥ 미리보기(DB 쓰기 0)",
-        "python scripts/collectors/load_store_history.py             # 통째 교체 + 표지 — 관문 ⒦(결과표 마지막 분기 = 방금 올린 분기) 걸리면 멈추고 본다 · 일시 디스크 증가 = 표 크기만큼",
+        "python scripts/collectors/load_store_history.py             # 통째 교체 + 표지 — 관문 ⒦(결과표 마지막 분기 = 방금 올린 분기) 걸리면 멈추고 본다 · 일시 디스크 증가 약 +280MB(표 전체 크기)",
         "python scripts/post_load.py                # 요약표 굽기 → 표지 올림(여기서 화면이 한순간에 바뀐다)",
         "python scripts/publish_snapshot.py --show   # 보여 주는 분기 = {} 인지 눈으로".format(folder_ym),
         "python scripts/post_load.py --check   # 권한(노출)·색인·별관 점검 — 위 줄에서는 안 돈다",

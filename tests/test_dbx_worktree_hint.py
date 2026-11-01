@@ -32,6 +32,9 @@ def test_no_env_file_adds_hint(tmp_path, monkeypatch):
     msg = _message(monkeypatch, tmp_path)
     assert ".env 파일이 없습니다" in msg
     assert "본 폴더" in msg
+    # 적대 검사관 변이 2(2026-11-01): 낱말·경로를 바꿔도 통과하던 구멍 — 역슬래시 하나짜리 경로까지 지킨다.
+    assert "워크트리" in msg
+    assert "D:\\sangga" in msg
 
 
 def test_existing_env_file_has_no_hint(tmp_path, monkeypatch):
