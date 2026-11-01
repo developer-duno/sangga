@@ -1178,6 +1178,45 @@ export type DistrictPop = {
 };
 
 /**
+ * 함수 `list_nearby_subway(p_pnu)` 의 줄 상태(결정 0045 PR⑥ · 위부터 배타). 빈 상태 넷(no_coord → not_seoul → no_data →
+ * no_station)은 한 줄 · 역 묶음이 있으면 묶음마다 ok.
+ */
+export type NearbySubwayStatus = 'no_coord' | 'not_seoul' | 'no_data' | 'no_station' | 'ok';
+
+/** 시간대 여섯 칸(4~7 · 7~10 · 10~14 · 14~17 · 17~21 · 21~다음 날 4시) — 칸마다 하루 평균 승차·하차(서버 값 그대로). */
+export type NearbySubwayBins = Record<
+  'h04_07' | 'h07_10' | 'h10_14' | 'h14_17' | 'h17_21' | 'h21_04',
+  { on: number; off: number }
+>;
+
+/**
+ * 함수 `list_nearby_subway(p_pnu)` 한 줄(결정 0045 PR⑥ · 마이그 2026-11-02a 의 반환 칸 그대로).
+ * ⓘ 빈 상태 줄은 status 만 값(no_station 만 가장 가까운 역 셋 — 1.5km 안일 때만) · ok 줄인데 창 안 승하차가 없는 묶음
+ *   (서울시 자료 밖 노선)은 `has_data` false · `on_daily`·`off_daily`·`bins` null.
+ * ⛔ 역 승하차 수이지 이 건물의 값이 아니다.
+ */
+export type NearbySubway = {
+  status: NearbySubwayStatus;
+  group_id: number | null;
+  station_nm: string | null;
+  lines: string[] | null;
+  lines_with_data: string[] | null;
+  dist_m: number | null;
+  has_data: boolean | null;
+  /** 'YYYYMM' — 창(표 전체 최근 달 기준 12개월)의 첫 달·끝 달. */
+  window_from: string | null;
+  window_to: string | null;
+  /** 창 안 그 묶음이 가진 달 수. */
+  months_n: number | null;
+  on_daily: number | null;
+  off_daily: number | null;
+  bins: NearbySubwayBins | null;
+  nearest_nm: string | null;
+  nearest_lines: string[] | null;
+  nearest_dist_m: number | null;
+};
+
+/**
  * 함수 `get_district_census_pop(p_pnu)` 의 줄 상태(결정 0045 PR⑤). 건물 단위 셋(no_coord → not_daejeon →
  * outside_daejeon_district — 한 줄만)이거나, 상권마다 ok / no_data(결과표에 그 상권 줄 없음).
  */

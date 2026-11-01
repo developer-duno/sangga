@@ -180,20 +180,17 @@ function MiniBars({ name, bars }: { name: string; bars: FlowBars }) {
     <figure className="pop__bars-fig">
       <figcaption className="pop__scale">{bars.scale ? `${name} · ${bars.scale}` : name}</figcaption>
       <div className="pop__cols" style={{ gridTemplateColumns: `repeat(${bars.bars.length}, minmax(0, 1fr))` }}>
-        {bars.bars.map((b) => (
-          <div key={b.key} className="pop__col">
-            <div className="pop__bars">
-              <span
-                className="pop__bar"
-                role="img"
-                aria-label={`${name} ${b.tick} ${formatCount(b.value, '명')}`}
-                title={`${name} ${b.tick} ${formatCount(b.value, '명')}`}
-                style={{ height: `${b.h}%` }}
-              />
+        {bars.bars.map((b) => {
+          const said = `${name} ${b.label ?? `${b.tick} ${formatCount(b.value, '명')}`}`;
+          return (
+            <div key={b.key} className="pop__col">
+              <div className="pop__bars">
+                <span className="pop__bar" role="img" aria-label={said} title={said} style={{ height: `${b.h}%` }} />
+              </div>
+              <span className="pop__tick">{b.tick}</span>
             </div>
-            <span className="pop__tick">{b.tick}</span>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </figure>
   );

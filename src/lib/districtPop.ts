@@ -174,7 +174,8 @@ export function flowBigText(row: DistrictPop): PopBig | null {
   };
 }
 
-export type FlowBar = { key: string; tick: string; value: number; h: number };
+/** `label` = 읽어 주기·마우스 글(묶음 이름 뒤 · 없으면 「눈금 N명」 — 지하철 덩이는 승차·하차를 따로 적는다 · 결정 0045 PR⑥). */
+export type FlowBar = { key: string; tick: string; value: number; h: number; label?: string };
 export type FlowBars = { bars: FlowBar[]; max: number; scale: string | null };
 
 function barsOf(f: DistrictPopFlow, keys: readonly (readonly [string, string])[]): FlowBars {

@@ -479,6 +479,16 @@ export const DISTRICT_POP_FN = 'list_district_pop';
 export const DISTRICT_CENSUS_POP_FN = 'get_district_census_pop';
 
 /**
+ * 이 필지에서 반경 500m 안 서울 지하철 역 묶음마다(가까운 순 · 최대 10줄) 서울시 공표 교통카드 승하차 —
+ * 「상권 인구 (서울시 공표)」 카드 안 넷째 덩이(결정 0045 PR⑥ · 카드 수 안 늘림).
+ *
+ * ⚠️ 인자는 `{ p_pnu }` 하나. 서울 필지일 때만 부른다(`SEOUL_PREFETCH_FNS`).
+ * ⛔ 역 승하차 수이지 이 건물 앞을 지나는 사람 수가 아니고 이 건물의 값이 아니다 · 하루 평균·시간대 칸은 서버 값 그대로.
+ * ⓘ 함수가 아직 없거나(PGRST202)·오류·모양 이상·no_data·no_coord·not_seoul 이면 **덩이만** 생략한다(카드는 그대로).
+ */
+export const NEARBY_SUBWAY_FN = 'list_nearby_subway';
+
+/**
  * 이 필지(땅)에 소진공 점포 분기 자료로 보인 가게 줄 — 「이 자리 가게 이력 (점포 자료 누적)」 카드(결정 0045 PR④).
  *
  * ⚠️ 인자는 `{ p_pnu, p_limit, p_offset }`(기본 20 · 0 — 첫 쪽은 `{ p_pnu }` 하나로 부른다) · 서울·대전 모두 부른다.
