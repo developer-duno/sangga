@@ -37,8 +37,15 @@ def parts():
     load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
     url = os.environ.get("SANGGA_DATABASE_URL")
     if not url:
+        # 본 폴더에는 .env 가 늘 있다 — 없으면 git 워크트리·검사관 사본이라 처방(본 폴더에서 돌리기)을 알려 준다.
+        hint = ""
+        if not os.path.exists(os.path.join(PROJECT_ROOT, ".env")):
+            hint = ("  ⚠️ 이 폴더에는 .env 파일이 없습니다 — git 워크트리·사본에는 원래 없으니, "
+                    "DB 를 읽거나 쓰는 명령(dbx·빌드·적재·post_load)은 합친 뒤 "
+                    "본 폴더(D:\\sangga)에서 돌리세요.\n")
         raise SystemExit(
             "SANGGA_DATABASE_URL 이 .env 에 없습니다.\n"
+            + hint +
             "  Supabase 대시보드 → 상단 Connect → Session pooler 의 URI 를 넣으세요.\n"
             "  (Direct connection 은 IPv6 전용이라 IPv4 환경에서 안 될 수 있습니다.)")
     u = urlparse(url)

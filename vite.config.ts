@@ -15,5 +15,7 @@ export default defineConfig({
     //    카카오 스크립트를 실제로 내려받으려 들어 결과가 환경마다 달라진다.
     //    키가 있는 상태가 필요한 테스트는 vi.stubEnv로 그 테스트 안에서만 켠다.
     env: { VITE_KAKAO_JS_KEY: '' },
+    // ⚠️ 전체 실행 부하 때 긴 흐름 시험이 5초를 넘긴다(App.wide 후속 커서 6.2초 · hubHead — 혼자 돌리면 5초 안 · 2026-11-01) → 15초. 진짜 매달림은 15초에 잡힌다.
+    testTimeout: 15_000,
   },
 })

@@ -171,9 +171,32 @@ def test_issue_body_stops_on_loader_exit_1_and_shows_the_flag():
                   if "load_sangkwon_snapshot.py" in ln and ln.rstrip().endswith("--sigungu-code all"))
     assert "적재기가 exit 1" in lines[load_i + 1] and "멈추" in lines[load_i + 1]
     assert "다음 줄로 넘어가지 않는다" in lines[load_i + 1]
-    assert lines[load_i + 2].startswith("python scripts/post_load.py ")
-    assert lines[load_i + 3].startswith("python scripts/publish_snapshot.py --show")
-    assert "보여 주는 분기 = 202609" in lines[load_i + 3]
+    # 새 순서(결정 0045 PR④): 적재 → ⛔ 주석 → 이력 빌드 → 이력 dry-run → 이력 적재 → post_load → 표지 확인
+    assert lines[load_i + 2].startswith("python scripts/build_store_history.py")
+    assert lines[load_i + 3].startswith("python scripts/collectors/load_store_history.py --dry-run")
+    assert lines[load_i + 4].startswith("python scripts/collectors/load_store_history.py ")
+    assert "--dry-run" not in lines[load_i + 4]
+    assert lines[load_i + 5].startswith("python scripts/post_load.py ")
+    assert lines[load_i + 6].startswith("python scripts/publish_snapshot.py --show")
+    assert "보여 주는 분기 = 202609" in lines[load_i + 6]
+
+
+def test_issue_body_has_store_history_steps_between_loader_and_post_load():
+    """결정 0045 「가게 이력 — 결정 0035 표지의 예외」 — 빌드·dry-run·적재 세 줄이 분기 적재와 post_load 사이에
+    있고, '같은 날 이어서 한다'는 예외 문장이 ⛔ 같은 날 줄 바로 뒤(명령 블록 앞)에 있어야 한다."""
+    body = chk.build_issue_body([("20260930", "자료_20260930")])
+    load_idx = body.find("--sigungu-code all\n")
+    post_idx = body.find("python scripts/post_load.py ")
+    assert -1 < load_idx < post_idx
+    between = body[load_idx:post_idx]
+    assert "python scripts/build_store_history.py" in between
+    assert "load_store_history.py --dry-run" in between
+    assert between.count("load_store_history.py") == 2  # dry-run 줄 + 실적재 줄
+    same_day = body.find("⛔ 서울 개폐업 분기 적재와 같은 날 하지 않는다")
+    exception = body.find("ⓘ 가게 이력(결정 0045 PR④)은 예외")
+    assert -1 < same_day < exception < body.find("```powershell")
+    assert "같은 날 이어서 빌드·적재한다" in body
+    assert "가게 이력 통째 교체 일시 증가" in body  # 디스크 판정 문구에도 한 구절
 
 
 def test_issue_body_starts_with_disk_and_same_day_warnings():
