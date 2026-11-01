@@ -7931,7 +7931,7 @@ as $$
     -- 2026-11-02a(결정 0045 PR⑥) — 서울시 지하철 승하차의 기준월(표 전체 max(use_mm) — 기본키 첫 칸이 받친다).
     --   서울시가 매달 5일 무렵 전월분을 게시한다 — 기준월 + 2개월의 5일(규칙 'subway'). 표가 비면 basis null(화면 '자료 없음').
     select 18, '지하철 승하차 (서울시)', '기준월',
-           (select max(r.use_mm)::text from subway_ridership_m r),
+           (select max(t.use_mm)::text from subway_ridership_m t),
            'subway',
            '매달 (서울시가 다음 달 5일 무렵 전월분 게시)'
   ),

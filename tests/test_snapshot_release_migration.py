@@ -60,8 +60,9 @@ RECREATED_LATER = {
     # → 서울 상권 4종 세 줄(13·14·15)을 더한 2026-10-31a(결정 0045)가 마지막 판이다.
     # → 가게 이력 16번 줄을 더한 2026-11-01a(결정 0045 PR④ · 적용 날에 따라 이름이 바뀔 수 있어 이름 끝으로)가 마지막 판이다.
     # → 대전 상권 인구 17번 줄을 더한 2026-11-01b(결정 0045 PR⑤ · 이름 끝으로)가 마지막 판이다.
-    "get_data_freshness": (sorted(glob.glob(os.path.join(MIG_DIR, "*_sgis_district_pop.sql")))
-                 or [os.path.join(MIG_DIR, "(없음)_sgis_district_pop.sql")])[-1],
+    # → 지하철 18번 줄·서울시 세 줄 +6개월로 다시 만든 2026-11-02a(결정 0045 PR⑥ · 이름 끝으로)가 마지막 판이다.
+    "get_data_freshness": (sorted(glob.glob(os.path.join(MIG_DIR, "*_seoul_subway.sql")))
+                 or [os.path.join(MIG_DIR, "(없음)_seoul_subway.sql")])[-1],
 }
 
 

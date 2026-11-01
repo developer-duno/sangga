@@ -1177,3 +1177,19 @@ def test_store_history_hint_is_build_then_load():
     rows = [row(src, "2026-10-31", basis="202606", basis_kind="분기")]
     bodies = {i["src"]: cdf.build_issue_body(i, today) for i in cdf.find_overdue(rows, today)}
     assert "build_store_history.py" in bodies[src]
+
+
+def test_subway_hint_is_check_then_collect_then_load():
+    """지하철 승하차(결정 0045 PR⑥) — 포털 게시 확인(dry-run) → 수집 → 적재 dry-run → 실적재 → post_load → backup 차례.
+    열쇠 글자 = 정본 신선도 함수의 src 글자 그대로(다르면 안내가 조용히 안 나온다)."""
+    src = "지하철 승하차 (서울시)"
+    schema = open(os.path.join(ROOT, "supabase", "schema.sql"), encoding="utf-8").read()
+    assert "'{}'".format(src) in schema
+    hint = cdf.source_hint(src)
+    assert hint and "collect_seoul_subway.py --dry-run --end-month" in hint
+    assert hint.index("collect_seoul_subway.py --dry-run") < hint.index("load_seoul_subway.py --dry-run") \
+        < hint.index("post_load.py") < hint.index("backup_raw.py")
+    today = datetime.date(2026, 11, 6)
+    rows = [row(src, "2026-11-05", basis="202609", basis_kind="기준월")]
+    bodies = {i["src"]: cdf.build_issue_body(i, today) for i in cdf.find_overdue(rows, today)}
+    assert "collect_seoul_subway.py" in bodies[src]

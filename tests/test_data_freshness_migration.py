@@ -93,6 +93,10 @@ STORE_HISTORY_MIGRATION = (sorted(glob.glob(os.path.join(ROOT, "supabase", "migr
 # 이제 이 파일이다(11-01a 판에 그 줄만 더한 글인지는 tests/test_sgis_district_pop_migration.py 가 대조한다 · 이름 끝으로 찾는다).
 SGIS_MIGRATION = (sorted(glob.glob(os.path.join(ROOT, "supabase", "migrations", "*_sgis_district_pop.sql")))
                         or [os.path.join(ROOT, "supabase", "migrations", "(없음)_sgis_district_pop.sql")])[-1]
+# 2026-11-02a(결정 0045 PR⑥) — 18번 줄(서울 지하철 승하차)·서울시 세 줄 +6개월로 다시 만든 가장 최근 판. 정본과 글자가 같아야
+# 하는 쪽은 이제 이 파일이다(11-01b 판에 그 갈래만 더한 글인지는 tests/test_seoul_subway_migration.py 가 대조한다 · 이름 끝으로 찾는다).
+SUBWAY_MIGRATION = (sorted(glob.glob(os.path.join(ROOT, "supabase", "migrations", "*_seoul_subway.sql")))
+                    or [os.path.join(ROOT, "supabase", "migrations", "(없음)_seoul_subway.sql")])[-1]
 MONTHLY_MIGRATION = os.path.join(
     ROOT, "supabase", "migrations", "2026-10-15a_freshness_monthly_rules.sql")
 SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
@@ -121,17 +125,18 @@ SOURCE_LABELS = (
     "상권 상주·직장인구 (서울시)",
     "가게 이력 (점포 자료 누적)",
     "상권 인구 (통계청 집계구)",
+    "지하철 승하차 (서울시)",
 )
 # 결정 0041(2026-10-18a)로 정본에서 뺀 갈래 — 적용된 원장(10-15a)에만 남는다.
 SCHEMA_DROPPED_LABELS = ("참고 시세 성적표",)
-# 결정 0044(2026-10-29a)·결정 0045(2026-10-31a · 2026-11-01a PR④)로 정본에 더한 갈래 — 원장(10-15a)에는 없다.
+# 결정 0044(2026-10-29a)·결정 0045(2026-10-31a · 2026-11-01a PR④ · 11-01b PR⑤ · 11-02a PR⑥)로 정본에 더한 갈래 — 원장(10-15a)에는 없다.
 SCHEMA_ADDED_LABELS = ("동네 폐업 (대전시)", "상권 추정매출 (서울시)", "상권 길단위인구 (서울시)",
                        "상권 상주·직장인구 (서울시)", "가게 이력 (점포 자료 누적)",
-                       "상권 인구 (통계청 집계구)")
+                       "상권 인구 (통계청 집계구)", "지하철 승하차 (서울시)")
 
 
 def labels_for(request):
-    """public_body 가 정본이면 뺀 갈래를 걷은 목록(대전·서울 4종·가게 이력·대전 상권 인구 줄 포함 열여섯 갈래), 원장(10-15a)이면 그 줄들 없는 열한 갈래."""
+    """public_body 가 정본이면 뺀 갈래를 걷은 목록(대전·서울 4종·가게 이력·대전 상권 인구·지하철 줄 포함 열일곱 갈래), 원장(10-15a)이면 그 줄들 없는 열한 갈래."""
     if "schema" in request.node.callspec.id:
         return tuple(x for x in SOURCE_LABELS if x not in SCHEMA_DROPPED_LABELS)
     return tuple(x for x in SOURCE_LABELS if x not in SCHEMA_ADDED_LABELS)
@@ -289,7 +294,7 @@ class TestEverySourceIsListed:
 
         ⓘ 정본은 2026-10-18a(결정 0041)부터 열 줄 → 2026-10-29a(결정 0044 대전 줄)부터 다시 열한 줄 →
           2026-10-31a(결정 0045 서울 4종 세 줄)부터 열네 줄 → 2026-11-01a(결정 0045 PR④ 가게 이력)부터 열다섯 줄 →
-          2026-11-01b(결정 0045 PR⑤ 대전 상권 인구)부터 열여섯 줄,
+          2026-11-01b(결정 0045 PR⑤ 대전 상권 인구)부터 열여섯 줄 → 2026-11-02a(결정 0045 PR⑥ 지하철)부터 열일곱 줄,
           원장 10-15a 는 (성적표 줄이 든) 열한 줄 그대로다.
         """
         labels = labels_for(request)
@@ -365,14 +370,20 @@ class TestNextExpectedRules:
            실거래 = 계약월 + 2개월 - 하루(새 갈래 'tx' — 사장님 결정 2026-10-15).
            '+2개월' 은 'tx' 갈래 **한 자리에만** 있어야 한다 — 인허가 갈래로 새면 매달 1일~20일 무렵 지난
            날짜가 화면에 선다(2026-10-01a 이전 사고). 갈래별 달 수는 monthly_rule_months 가 따로 본다.
+           ⓘ 2026-11-02a(결정 0045 PR⑥) — 정본에는 '+2개월' 이 하나 더 있다: 지하철 승하차 'subway' 갈래(기준월 + 2개월의
+           5일 · `+ interval '4 days'` 꼴이라 tx 의 `- interval '1 day'` 꼴과 갈린다) · 그리고 서울시 분기 갈래
+           'seoul_openclose'(분기말 + 6개월 - 하루 · 👤 2026-11-02 「가」)가 일반 분기 갈래(+5개월) 앞에 하나 더 있다.
         """
         body = statements(function_body(read(path), FN))
         assert body.count("interval '5 months'") == 1, "분기 규칙이 한 번이 아닙니다"
+        assert body.count("interval '6 months'") == (1 if path == SCHEMA else 0), "서울시 분기 규칙(+6개월)이 한 번이 아닙니다"
         # 2026-10-29a(결정 0044) — 정본에는 대전시 동네 폐업의 '받은 날 + 3개월'(날짜 더하기 · to_date 아님)이 하나 더 있다.
         daejeon = body.count("then (n.basis::date + interval '3 months')::date")
         assert daejeon == (1 if path == SCHEMA else 0)
         assert body.count("interval '3 months'") - daejeon == 1, "월간 규칙(+3개월)이 한 번이 아닙니다"
-        assert body.count("interval '2 months'") == 1, "실거래 규칙(+2개월)이 한 번이 아닙니다"
+        subway = body.count("then (to_date(n.basis, 'YYYYMM') + interval '2 months' + interval '4 days')::date")
+        assert subway == (1 if path == SCHEMA else 0)
+        assert body.count("interval '2 months'") - subway == 1, "실거래 규칙(+2개월)이 한 번이 아닙니다"
         assert monthly_rule_months(body) == {"permit": 3, "tx": 2}, (
             "인허가·대장(permit) = +3개월 · 실거래(tx) = +2개월 이 아닙니다: {}".format(monthly_rule_months(body)))
         # 연 1회 규칙은 둘이다 — 국세청(다음 해 3월 31일)·필지 공시 연도(다음 해 6월 30일, 2026-10-12b).
@@ -416,8 +427,10 @@ class TestNextExpectedRules:
         (unit_business.snapshot_ym 은 컬럼 주석이 '2026Q3' 형식도 허용한다.)
         """
         # 2026-10-15a — 실거래 'tx' 갈래가 셋째 자리(대장 판은 인허가 'permit' 갈래를 같이 쓴다).
-        assert public_body.count(r"^\d{4}(0[1-9]|1[0-2])$") == 3, (
-            "'YYYYMM' 모양 검사가 세 자리(상권정보·인허가/대장·실거래)에 다 있지 않습니다"
+        # 2026-11-02a(결정 0045 PR⑥) — 정본에는 지하철 'subway' 갈래가 넷째 자리.
+        want = 4 if "'subway'" in public_body else 3
+        assert public_body.count(r"^\d{4}(0[1-9]|1[0-2])$") == want, (
+            "'YYYYMM' 모양 검사가 {} 자리(상권정보·인허가/대장·실거래·지하철)에 다 있지 않습니다".format(want)
         )
         assert r"^\d{4}Q[1-4]$" in public_body, "부동산원 분기 모양 검사가 없습니다"
         assert r"^\d{4}[1-4]$" in public_body, "서울시 분기(YYYYQ 다섯 자리) 모양 검사가 없습니다"
@@ -628,10 +641,11 @@ class TestPermitRuleMigration:
         #   2026-10-29a(결정 0044)로 '열한 갈래'·대전 줄이 들어가 10-29a 로 옮겼고,
         #   2026-10-31a(결정 0045)로 '열넷 갈래'·서울 4종 줄이 들어가 10-31a 로 옮겼고,
         #   2026-11-01a(결정 0045 PR④)로 '열다섯 갈래'·가게 이력 줄이 들어가 11-01a 로 옮겼고,
-        #   2026-11-01b(결정 0045 PR⑤)로 '열여섯 갈래'·대전 상권 인구 줄이 들어가 11-01b 로 옮겼다.
-        migration_comment = extract_comment(read(SGIS_MIGRATION))
+        #   2026-11-01b(결정 0045 PR⑤)로 '열여섯 갈래'·대전 상권 인구 줄이 들어가 11-01b 로 옮겼고,
+        #   2026-11-02a(결정 0045 PR⑥)로 '열일곱 갈래'·지하철 줄·서울시 +6개월이 들어가 11-02a 로 옮겼다.
+        migration_comment = extract_comment(read(SUBWAY_MIGRATION))
         assert migration_comment == schema_comment, (
-            "11-01b 의 comment 가 정본(schema.sql)과 글자가 다릅니다 — 라이브 설명이 "
+            "11-02a 의 comment 가 정본(schema.sql)과 글자가 다릅니다 — 라이브 설명이 "
             "schema.sql 의 서술과 갈라집니다"
         )
 
@@ -686,6 +700,27 @@ class TestSeoulOpenCloseRule:
         y, m = int(ym[:4]), int(ym[4:]) + 5
         y, m = y + (m - 1) // 12, (m - 1) % 12 + 1
         assert datetime.date(y, m, 1) - datetime.timedelta(days=1) == datetime.date(2026, 10, 31)
+
+    def test_from_11_02a_the_seoul_rows_are_quarter_end_plus_six(self, schema):
+        """2026-11-02a(👤 「가」)부터 서울시 줄(seoul_openclose)은 분기말 + 6개월 - 하루 — 위 10-31 은 그 전 판의 셈이다.
+
+        파이썬 거울: 20262 → 202606 → 2026-11-30 · 네 분기 모두 서울시 안내문(1분기 5월 말 · 2분기 8월 말 · 3분기 11월 말 ·
+        4분기 다음 해 2월 말 — 기준 분기의 **다음** 분기 게시 달) · 정본에 그 갈래가 일반 분기 갈래 앞에 한 번.
+        """
+        import datetime
+        body = statements(function_body(schema, FN))
+        assert body.count("when n.q_ym is not null and n.rule_kind = 'seoul_openclose'\n"
+                          "             then (to_date(n.q_ym, 'YYYYMM') + interval '6 months' - interval '1 day')::date") == 1
+        assert body.index("n.rule_kind = 'seoul_openclose'\n") < body.index("when n.q_ym is not null\n")
+
+        def due(basis):
+            ym = basis[:4] + "{:02d}".format(int(basis[-1]) * 3)
+            y, m = int(ym[:4]), int(ym[4:]) + 6
+            y, m = y + (m - 1) // 12, (m - 1) % 12 + 1
+            return datetime.date(y, m, 1) - datetime.timedelta(days=1)
+
+        assert [due(q) for q in ("20261", "20262", "20263", "20264")] == [
+            datetime.date(2026, 8, 31), datetime.date(2026, 11, 30), datetime.date(2027, 2, 28), datetime.date(2027, 5, 31)]
 
 
 # ── 2026-10-12b — 필지 줄의 기준 = 공시 연도 · 다음 갱신 = 다음 해 6월 30일 ──────────────
@@ -859,8 +894,9 @@ class TestLandYearMigrationShape:
 
         ⓘ 2026-10-15a 부터 정본과 같아야 하는 쪽은 10-15a 였고, 2026-10-18a(결정 0041 — 9번 줄 뺌)부터는
           10-18a 였고, 2026-10-29a(결정 0044 — 대전 줄 더함)부터는 10-29a 였고, 2026-10-31a(결정 0045 — 서울 4종
-          세 줄 더함)부터는 10-31a 였고, 2026-11-01a(결정 0045 PR④ — 가게 이력 줄 더함)부터는 11-01a 다
-          (10-12b·10-15a·10-18a·10-29a·10-31a 는 원장).
+          세 줄 더함)부터는 10-31a 였고, 2026-11-01a(결정 0045 PR④ — 가게 이력 줄 더함)부터는 11-01a 였고,
+          2026-11-01b(PR⑤ — 대전 상권 인구)부터는 11-01b 였고, 2026-11-02a(PR⑥ — 지하철 · 서울시 +6개월)부터는 11-02a 다
+          (10-12b·10-15a·10-18a·10-29a·10-31a·11-01a·11-01b 는 원장).
         """
         def block(sql):
             m = re.search(
@@ -869,7 +905,7 @@ class TestLandYearMigrationShape:
                 sql.replace("\r\n", "\n"))
             assert m, "덩어리를 못 찾았습니다"
             return m.group(0)
-        assert block(read(SGIS_MIGRATION)) == block(schema)
+        assert block(read(SUBWAY_MIGRATION)) == block(schema)
 
     def test_the_10_12b_ledger_is_left_as_applied(self, land_migration):
         """⛔ 10-12b 는 라이브에 적용된 원장이다 — 옛 실거래('none'·'수시')·대장('적재일'·building) 줄 그대로."""
@@ -920,6 +956,8 @@ create table seoul_trdar_release (tbl text, value_quarter char(5));
 create table store_history_release (last_ym char(6));
 -- 2026-11-01b(결정 0045 PR⑤) — 정본 함수의 대전 상권 인구 줄이 이 표지를 읽는다.
 create table sgis_census_release (received_on date);
+-- 2026-11-02a(결정 0045 PR⑥) — 정본 함수의 지하철 승하차 줄이 이 표를 읽는다.
+create table subway_ridership_m (use_mm char(6));
 -- 모양 시험용 — 필지 줄의 basis 를 아무 글자로나 바꿔 넣는 자리(실제 함수에는 없다).
 create table land_basis_override (v text);
 """
@@ -986,8 +1024,11 @@ def _land_row(conn, fn_sql, parcel_years=(), override=None):
     rows = cur.fetchall()
     # 정본은 2026-10-18a(결정 0041)부터 열 줄 → 2026-10-29a(결정 0044 대전 줄)부터 열한 줄 →
     # 2026-10-31a(결정 0045 서울 4종 세 줄)부터 열네 줄 → 2026-11-01a(결정 0045 PR④ 가게 이력)부터 열다섯 줄 ·
+    # 2026-11-01b(PR⑤ 대전 상권 인구)부터 열여섯 줄 → 2026-11-02a(PR⑥ 지하철)부터 열일곱 줄 ·
     # 원장(10-12b)은 열한 줄(성적표 줄이 든 판).
-    if "'상권 인구 (통계청 집계구)'" in fn_sql:
+    if "'지하철 승하차 (서울시)'" in fn_sql:
+        want = 17
+    elif "'상권 인구 (통계청 집계구)'" in fn_sql:
         want = 16
     elif "'가게 이력 (점포 자료 누적)'" in fn_sql:
         want = 15

@@ -283,7 +283,7 @@ class TestPermissions:
         assert FN not in post_load.ANON_CALLABLE_ALLOWLIST and "public." + FN not in post_load.ANON_CALLABLE_ALLOWLIST
         for t in TABLES:
             assert t not in post_load.ANON_READABLE_ALLOWLIST
-        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 38
+        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 39
         assert set(TABLES) <= set(post_load.ANALYZE_TABLES)
 
 

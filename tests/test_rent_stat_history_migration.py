@@ -345,7 +345,7 @@ class TestPermissions:
     def test_allowlist_total_is_36(self):
         """읽기 4 + 부르기 32 = `--check` 총계 36(2026-10-24a 의 31 에 이 함수 하나 · 2026-10-25a V6 개업·폐업 전부 보기가 32 → 33 · 2026-10-29a 결정 0044 대전 동네 폐업이 33 → 34 ·
         2026-10-31a 결정 0045 서울 4종이 34 → 36 — 셋 다 이 마이그레이션 몫 아님)."""
-        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 38
+        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 39
 
 
 class TestMigrationShape:

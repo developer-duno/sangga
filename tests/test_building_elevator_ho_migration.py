@@ -586,7 +586,7 @@ class TestFile:
         # ⓘ 2026-10-25a(결정 0038 V6)가 api.list_district_openclose_all 을 더해 32 → 33(이 마이그레이션 몫 아님).
         # ⓘ 2026-10-29a(결정 0044)가 api.get_daejeon_dong_closure 를 더해 33 → 34(이 마이그레이션 몫 아님).
         # ⓘ 2026-10-31a(결정 0045 PR②)가 api.list_district_sales·api.list_district_pop 을 더해 34 → 36(이 마이그레이션 몫 아님).
-        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 38
+        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 39
         assert "api.list_industry_median" in post_load.ANON_CALLABLE_ALLOWLIST
         assert "api.list_industry_median_m" in post_load.ANON_CALLABLE_ALLOWLIST
         assert "api.search_buildings" in post_load.ANON_CALLABLE_ALLOWLIST

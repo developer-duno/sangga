@@ -603,12 +603,14 @@ class TestAnonExposure:
             "api.get_store_history",
             # 대전 상권 인구 SGIS(2026-11-01b · 결정 0045 PR⑤). 표 둘은 **여기 없다** — 상권 이름과 상권 합계 수만 나간다.
             "api.get_district_census_pop",
+            # 서울 지하철 승하차(2026-11-02a · 결정 0045 PR⑥). 표 둘은 **여기 없다** — 역 묶음 이름·호선·거리와 합계 수만 나간다.
+            "api.list_nearby_subway",
         )
-        # 읽기 4 + 부르기 34 = `--check` 총계 38(2026-11-01b 결정 0045 PR⑤ 대전 상권 인구 37 → 38 · 그 앞 이력:2026-10-12a 업종 비중 비교로 30 → 31 · 2026-10-13a 중분류로 31 → 32 ·
+        # 읽기 4 + 부르기 35 = `--check` 총계 39(2026-11-02a 결정 0045 PR⑥ 지하철 38 → 39 · 2026-11-01b 결정 0045 PR⑤ 대전 상권 인구 37 → 38 · 그 앞 이력:2026-10-12a 업종 비중 비교로 30 → 31 · 2026-10-13a 중분류로 31 → 32 ·
         # 2026-10-18a 결정 0041 로 참고 시세·성적표 둘을 빼 32 → 30 · 2026-10-24a 층 목록 업종 띠로 30 → 31 ·
         # 2026-10-24b 임대 8분기 흐름으로 31 → 32 · 2026-10-25a 개업·폐업 전부 보기로 32 → 33 ·
         # 2026-10-29a 결정 0044 대전 동네 폐업으로 33 → 34 · 2026-10-31a 결정 0045 서울 4종 34 → 36 · 2026-11-01a 결정 0045 PR④ 가게 이력 36 → 37).
-        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 38
+        assert len(post_load.ANON_READABLE_ALLOWLIST) + len(post_load.ANON_CALLABLE_ALLOWLIST) == 39
 
     def test_pending_list_is_empty_after_2026_09_05a(self):
         """⛔ **비어 있어야 한다** — 잔존 노출 9개는 2026-09-05a 로 닫혔다.

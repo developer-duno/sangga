@@ -46,8 +46,10 @@ MIG = os.path.join(MIGS, "2026-10-18a_price_use_group.sql")
 #   그 줄만 더했는지는 tests/test_store_history_migration.py 가 본다 · 적용 날에 따라 이름이 바뀔 수 있어 이름 끝으로 찾는다).
 # → 2026-11-01b(결정 0045 PR⑤)가 17번 줄(대전 상권 인구)을 더해 다시 만들었다 — 이제 그 판과 대조한다(11-01a 도 원장 ·
 #   그 줄만 더했는지는 tests/test_sgis_district_pop_migration.py 가 본다).
-FRESH_LATER = (sorted(glob.glob(os.path.join(MIGS, "*_sgis_district_pop.sql")))
-                 or [os.path.join(MIGS, "(없음)_sgis_district_pop.sql")])[-1]
+# → 2026-11-02a(결정 0045 PR⑥)가 18번 줄(지하철 승하차)·서울시 세 줄 +6개월로 다시 만들었다 — 이제 그 판과 대조한다
+#   (11-01b 도 원장 · 그 갈래만 더했는지는 tests/test_seoul_subway_migration.py 가 본다).
+FRESH_LATER = (sorted(glob.glob(os.path.join(MIGS, "*_seoul_subway.sql")))
+                 or [os.path.join(MIGS, "(없음)_seoul_subway.sql")])[-1]
 # 적용 **전** 라이브 모양을 흉내 낼 때 쓰는 원장들(글자 그대로 꺼낸다).
 MIG_LADDER = os.path.join(MIGS, "2026-10-08a_transaction_share_flag.sql")     # list_price_bands 9칸 · 지분 제외 판
 MIG_STAGE_B = os.path.join(MIGS, "2026-08-16a_stage_b_price_band.sql")        # price_floor_band · 게이트 표
@@ -242,7 +244,8 @@ def test_정본_신선도_9번_줄이_없고_뒤_번호는_그대로다():
     # 2026-10-31a(결정 0045) — 서울 상권 4종 세 줄이 13·14·15 로 붙었다.
     # 2026-11-01a(결정 0045 PR④) — 가게 이력 줄이 16 으로 붙었다.
     # 2026-11-01b(결정 0045 PR⑤) — 대전 상권 인구 줄이 17 로 붙었다.
-    assert freshness_ords(src) == [1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 17]
+    # 2026-11-02a(결정 0045 PR⑥) — 지하철 승하차 줄이 18 로 붙었다.
+    assert freshness_ords(src) == [1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18]
 
 
 def test_정본_권한_목록에_지운_api_가_없다():
