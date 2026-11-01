@@ -102,6 +102,8 @@ export const SECTION_PLAN = {
     ⓘ 빈 카드는 서울 밖 sales·pop 둘만(2026-11-01 PR④ 부터 이력은 제 컴포넌트 `HistorySection` · 모든 지역) — 서울 건물의
       sales·pop 은 제 컴포넌트(`SalesSection`·`PopSection` · 서울시 공표값)가 그리고, 서울 밖 건물은 `EmptySection` 그대로다
       (문구·지역 판정은 `lib/emptyCards.ts`).
+    ⓘ 대전 건물의 pop 은 2026-11-01(결정 0045 PR⑤) 부터 `CensusPopSection` — 이 칸의 자리·펼침은 그대로 쓰고 제목
+      「상권 인구 (통계청 집계구)」·자료 갈래 `census_pop` 만 그 카드가 바꿔 끼운다. pop 빈 카드는 서울·대전 밖 건물만.
     ⛔ 빈 카드는 **아무것도 부르지 않는다**(서버 함수 0) · 날짜 줄은 `sources` 를 둔 카드가 자료를 그릴 때만
       (`EmptySection` 은 날짜 줄을 그리지 않는다 — S3 · 👤 결정 ②).
   */

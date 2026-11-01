@@ -7191,6 +7191,230 @@ grant execute on function api.get_store_history(text, integer, integer) to anon,
 -- ⛔ public.get_store_history 는 끝까지 닫아 둔다 — 통과 함수가 security definer 다.
 
 -- =====================================================================
+-- 표·함수: 대전 상권 인구 — SGIS 집계구 (2026-11-01b · 결정 0045 PR⑤)
+-- =====================================================================
+-- 통계청 SGIS 가 집계구(동보다 작은 통계 구역)마다 낸 인구·가구·종사자·사업체 총괄을 대전 상권 면에 **겹친 면적
+-- 비율로 나눠 담은** 상권 합계만 싣는다(👤 결정 0045 ③-1 — 대전만 · 집계구 경계는 안 싣는다). 서울은 서울시 공표값(PR②).
+-- 굽기는 로컬(scripts/build_sgis_district_pop.py — 겹침 ≥ 100㎡ · 통째 = 겹침/집계구 ≥ 0.99), 적재는
+-- scripts/collectors/load_sgis_district_pop.py(통째 교체 · 받은 날 표지 한 줄 · 한 트랜잭션).
+-- ⛔ 어림(C 등급)이다 — 집계구 안에서 고르게 산다고 보고 나눈 값이라 늘 범위와 함께 낸다(👤 ③-3 · 함정 6):
+--    하한 = 상권 안에 통째로 든 집계구의 합 · 상한 = 조금이라도 걸친 집계구 전부의 합. 「상권 안 합계 — 건물 값 아님」.
+-- 표 둘은 공개키에게 닫혀 있다(RLS 켬 + 정책 0 + 권한 회수) — 화면은 get_district_census_pop 으로만 읽는다.
+-- 표지 sgis_census_release 를 get_data_freshness 가 읽으므로 그 함수보다 **앞**에 둔다.
+create table if not exists district_census_pop (
+  district_id    text primary key,
+  district_nm    text not null,
+  district_type  text,
+  sigungu_code   char(5) not null,
+  area_m2        numeric not null check (area_m2 > 0),
+  n_overlap      integer not null check (n_overlap >= 1),
+  n_full         integer not null,
+  cover_pct      numeric not null,
+  pop            integer not null,
+  pop_lo         integer not null,
+  pop_hi         integer not null,
+  hh             integer not null,
+  hh_lo          integer not null,
+  hh_hi          integer not null,
+  emp            integer not null,
+  emp_lo         integer not null,
+  emp_hi         integer not null,
+  est            integer not null,
+  est_lo         integer not null,
+  est_hi         integer not null,
+  check (0 <= n_full and n_full <= n_overlap),
+  check (0 <= pop_lo and pop_lo <= pop and pop <= pop_hi),
+  check (0 <= hh_lo and hh_lo <= hh and hh <= hh_hi),
+  check (0 <= emp_lo and emp_lo <= emp and emp <= emp_hi),
+  check (0 <= est_lo and est_lo <= est and est <= est_hi)
+);
+
+comment on table district_census_pop is
+  '결정 0045 PR⑤ 대전 상권 안 인구 — 통계청 SGIS 집계구 총괄(인구·가구·종사자·사업체)을 상권 면에 겹친 면적 비율로 '
+  '나눠 담은 상권 합계(어림 · C 등급 · 상권 안 합계이지 건물 값이 아니다). 값 = Σ(겹침 비율 × 집계구 값) · '
+  '하한(_lo) = 상권 안에 통째로(겹침/집계구 ≥ 0.99) 든 집계구의 합 · 상한(_hi) = 100㎡ 이상 걸친 집계구 전부의 합 · '
+  'n_overlap = 걸친 집계구 수 · n_full = 통째로 든 수 · cover_pct = 겹침 합/상권 면적(%). 기준 = 표지 sgis_census_release '
+  '(통계 연도 · 집계구 경계 기준일 · 받은 날 폴더 — 2026-10-08 판은 2024년 통계 · 2025년 2분기 경계). '
+  'scripts/build_sgis_district_pop.py → load_sgis_district_pop.py 가 통째 교체. 공개키 읽기 금지 — 화면은 '
+  'get_district_census_pop 으로만 읽는다(사업체 수 est 는 화면에 안 내보낸다)';
+
+alter table district_census_pop enable row level security;
+
+-- ⛔ Supabase 는 새 표를 anon 에 자동으로 연다(pg_default_acl) — 만든 자리에서 닫는다.
+revoke all on district_census_pop from public, anon, authenticated;
+
+-- SGIS 상권 인구 표지 — 한 줄뿐(id = 1). 적재기가 통째 교체와 같은 트랜잭션에서 적는다.
+create table if not exists sgis_census_release (
+  id              smallint primary key check (id = 1),
+  received_on     date not null,
+  base_year       smallint not null,
+  bnd_base_date   date not null,
+  n_oa_total      integer not null,
+  rows_cnt        integer not null,
+  built_at        timestamptz not null,
+  overlap_min_m2  numeric not null,
+  full_ratio      numeric not null
+);
+
+comment on table sgis_census_release is
+  '결정 0045 PR⑤ SGIS 상권 인구 표지 — 한 줄뿐(id = 1). received_on = SGIS 자료제공에서 받은 날(원본 폴더 이름 끝) · '
+  'base_year = 통계 기준 연도 · bnd_base_date = 집계구 경계 기준일 · n_oa_total = 경계 파일의 집계구 수(전국) · '
+  'rows_cnt = 넣은 상권 줄 수 · built_at = 로컬에서 구운 시각 · overlap_min_m2·full_ratio = 굽기 상수(100㎡ · 0.99). '
+  '신선도 17번 줄(받은 날 + 12개월)이 읽는다. 0줄이면 get_district_census_pop 도 0줄. 공개키 읽기 금지';
+
+alter table sgis_census_release enable row level security;
+
+-- ⛔ Supabase 는 새 표를 anon 에 자동으로 연다(pg_default_acl) — 만든 자리에서 닫는다.
+revoke all on sgis_census_release from public, anon, authenticated;
+
+-- 필지가 속한 대전 상권마다(좁은 상권 먼저 · 합치지 않는다) SGIS 상권 인구 한 줄.
+--   상권 찾기·status·차례는 list_district_pop 글 그대로(서울 → 대전) · 표지 0줄이면 0줄 · 사업체 수(est)는 안 내보낸다.
+create or replace function get_district_census_pop(p_pnu text)
+returns table (
+  status         text,
+  district_id    text,
+  district_nm    text,
+  district_type  text,
+  area_m2        numeric,
+  n_overlap      integer,
+  n_full         integer,
+  cover_pct      numeric,
+  pop            integer,
+  pop_lo         integer,
+  pop_hi         integer,
+  hh             integer,
+  hh_lo          integer,
+  hh_hi          integer,
+  emp            integer,
+  emp_lo         integer,
+  emp_hi         integer,
+  received_on    date,
+  base_year      smallint,
+  bnd_base_date  date
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with me as (
+    -- 좌표가 없으면 아무 상권에도 안 든다는 **단정**이 새어 나가지 않게 따로 가른다(no_coord).
+    -- ⛔ pnu 칸은 char(19) — 인자를 그대로 견주면 칸 쪽이 text 로 캐스트돼 색인이 죽는다.
+    select p.geom
+    from parcel p
+    where p.pnu = p_pnu::char(19) and p.geom is not null
+  ),
+  hit as (
+    -- 대전 필지가 담긴 **대전 상권**만. 술어는 list_building_districts 와 같은 st_contains.
+    select d.district_id, d.district_nm, d.district_type, d.area_m2
+    from district d cross join me
+    where left(p_pnu::char(19), 2) = '30'
+      and left(d.sigungu_code, 2) = '30'
+      and st_contains(d.geom, me.geom)
+  ),
+  head as (
+    -- 건물 단위 상태 셋 — 판정 순서가 곧 뜻이다(위부터, 서로 배타).
+    --   no_coord                 필지 좌표 없음(대전이든 아니든 — 모르는 것은 모른다고)
+    --   not_daejeon              시·도가 대전이 아님(서울 등 — 서울은 서울시 공표값 카드가 따로 있다)
+    --   outside_daejeon_district 대전인데 속한 대전 상권이 없음
+    -- 셋 다 아니면 null → 상권마다 ok / no_data 한 줄씩이 대신 나간다.
+    select case
+             when not exists (select 1 from me) then 'no_coord'
+             when left(p_pnu::char(19), 2) <> '30' then 'not_daejeon'
+             when not exists (select 1 from hit) then 'outside_daejeon_district'
+           end as status
+  ),
+  rel as (
+    -- 표지. 0줄이면(아직 안 넣음) 이 함수도 0줄 — 화면은 카드째 숨긴다.
+    select r.received_on, r.base_year, r.bnd_base_date from sgis_census_release r
+  ),
+  rows_out as (
+    select hd.status,
+           null::text as district_id, null::text as district_nm, null::text as district_type,
+           null::numeric as area_m2, null::integer as n_overlap, null::integer as n_full, null::numeric as cover_pct,
+           null::integer as pop, null::integer as pop_lo, null::integer as pop_hi,
+           null::integer as hh, null::integer as hh_lo, null::integer as hh_hi,
+           null::integer as emp, null::integer as emp_lo, null::integer as emp_hi,
+           0::numeric as sort_area
+    from head hd
+    where hd.status is not null
+    union all
+    -- 결과표에 그 상권 줄이 없으면 no_data(숫자 칸은 전부 null — 0 이 아니다).
+    -- ⛔ 값·하한·상한·겹친 수·통째 수를 **그대로** 낸다 — 「범위가 값의 2배 넘으면 범위만」은 화면 몫(👤 ③-3).
+    select case when c.district_id is null then 'no_data' else 'ok' end,
+           h.district_id, h.district_nm, h.district_type,
+           c.area_m2, c.n_overlap, c.n_full, c.cover_pct,
+           c.pop, c.pop_lo, c.pop_hi,
+           c.hh, c.hh_lo, c.hh_hi,
+           c.emp, c.emp_lo, c.emp_hi,
+           h.area_m2
+    from hit h
+    left join district_census_pop c on c.district_id = h.district_id
+  )
+  select ro.status, ro.district_id, ro.district_nm, ro.district_type,
+         ro.area_m2, ro.n_overlap, ro.n_full, ro.cover_pct,
+         ro.pop, ro.pop_lo, ro.pop_hi,
+         ro.hh, ro.hh_lo, ro.hh_hi,
+         ro.emp, ro.emp_lo, ro.emp_hi,
+         r.received_on, r.base_year, r.bnd_base_date
+  from rows_out ro
+  cross join rel r
+  -- 좁은 상권이 더 구체적인 설명이라 먼저 온다(list_building_districts 와 같은 정렬).
+  order by ro.sort_area asc, ro.district_id;
+$$;
+
+comment on function get_district_census_pop(text) is
+  '결정 0045 PR⑤ 이 필지가 속한 대전 상권마다(좁은 상권 먼저 · 합치지 않는다) 통계청 SGIS 집계구 통계를 겹친 면적 '
+  '비율로 나눠 담은 상권 안 인구 — 거주 인구(pop) · 가구(hh) · 총종사자(emp) 셋, 각각 값 · 하한(_lo = 통째로 든 집계구 합) · '
+  '상한(_hi = 걸친 집계구 전부 합) + 걸친 집계구 수 n_overlap · 통째 수 n_full · 덮임 cover_pct · 상권 면적 area_m2 · '
+  '표지의 받은 날·통계 연도·경계 기준일. 어림(C 등급)이고 상권 안 합계이지 이 건물의 값이 아니다 — 값·범위는 그대로 '
+  '내보내고 「범위가 값의 2배 넘으면 범위만」은 화면이 정한다. 사업체 수는 안 내보낸다(👤 결정 0045 ③-1 셋만). '
+  '상권 찾기·status 는 list_district_pop 과 같은 글이다(서울 → 대전): no_coord → not_daejeon → outside_daejeon_district'
+  '(이 셋은 한 줄만) · 아니면 상권마다 ok / no_data(결과표에 그 상권 줄 없음). 표지가 0줄이면 0줄. '
+  'security definer (district_census_pop·sgis_census_release·district·parcel 이 anon 에게 닫혀 있어 소유자 권한으로 '
+  '대신 읽는다. 나가는 것은 상권 이름·종류와 상권 합계 수뿐이다).';
+
+-- ⚠️ create or replace 는 권한을 유지하지만, 대시보드가 같은 함수를 다시 만들면
+--    Supabase 기본 권한이 anon 을 자동으로 붙인다. 만든 자리에서 다시 닫는다.
+revoke all on function get_district_census_pop(text) from public, anon, authenticated;
+
+-- 화면이 실제로 부르는 것. public 은 REST 노출에서 빠져 있어(2026-08-24 옛 문 닫기)
+-- api 쪽에 통과 함수가 없으면 화면에서 못 부른다.
+create or replace function api.get_district_census_pop(p_pnu text)
+returns table (
+  status         text,
+  district_id    text,
+  district_nm    text,
+  district_type  text,
+  area_m2        numeric,
+  n_overlap      integer,
+  n_full         integer,
+  cover_pct      numeric,
+  pop            integer,
+  pop_lo         integer,
+  pop_hi         integer,
+  hh             integer,
+  hh_lo          integer,
+  hh_hi          integer,
+  emp            integer,
+  emp_lo         integer,
+  emp_hi         integer,
+  received_on    date,
+  base_year      smallint,
+  bnd_base_date  date
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$ select * from public.get_district_census_pop(p_pnu) $$;
+
+revoke all on function api.get_district_census_pop(text) from public, anon, authenticated;
+grant execute on function api.get_district_census_pop(text) to anon, authenticated;
+
+-- ⛔ public.get_district_census_pop 는 끝까지 닫아 둔다 — 통과 함수가 security definer 다.
+
+-- =====================================================================
 -- 함수: get_data_freshness — 이 자료는 언제 것인가 (2026-09-05d)
 -- =====================================================================
 -- 마이그레이션 2026-09-05d. 화면 아래 푸터의 표 한 장이 이 함수 하나만 부른다.
@@ -7212,6 +7436,7 @@ grant execute on function api.get_store_history(text, integer, integer) to anon,
 -- ⓘ 2026-10-31a(결정 0045) — 서울 상권 4종 세 줄: 추정매출·길단위인구(13·14)는 개업·폐업과 같은 분기 규칙,
 --   상주·직장인구(15)는 예정일 없음('none' · 사장님 결정 10-31) + 기준 = 값이 바뀐 분기 둘을 글로 합침. 새 규칙 0.
 -- ⓘ 2026-11-01a(결정 0045 PR④) — 가게 이력 한 줄(16): 기준 = 표지 store_history_release.last_ym · 점포 줄과 같은 분기 규칙(sangkwon). 새 규칙 0.
+-- ⓘ 2026-11-01b(결정 0045 PR⑤) — 일곱째 규칙: SGIS 상권 인구(17)는 받은 날 + 12개월('sgis' · 연 1회 사람이 신청해 받는다).
 --
 -- ⓘ 월간 규칙은 2026-10-01a 에 바뀌었다(사장님 결정 2026-10-01). 옛 규칙(기준월 + 2개월 - 하루)은
 --    **지금 들어 있는 판이 게시된 달**의 말일을 띄웠다 — 건축HUB 인허가 월간 파일은 그 달 다음 달
@@ -7336,6 +7561,13 @@ as $$
            (select r.last_ym::text from store_history_release r),
            'sangkwon',
            '분기마다 (새 분기 점포 자료를 적재한 뒤 다시 굽는다)'
+    union all
+    -- 2026-11-01b(결정 0045 PR⑤) — SGIS 집계구 통계를 대전 상권에 나눠 담은 결과표의 받은 날(표지 sgis_census_release).
+    --   사람이 SGIS 자료제공에서 연 1회 신청해 받는다 — 받은 날 + 12개월(규칙 'sgis'). 표지가 비면 basis null(화면 '자료 없음').
+    select 17, '상권 인구 (통계청 집계구)', '받은 날',
+           (select r.received_on::text from sgis_census_release r),
+           'sgis',
+           '연 1회 (사람이 SGIS 자료제공에서 신청해 받음)'
   ),
   norm as (
     -- 분기 규칙을 쓰는 세 줄을 **같은 모양('YYYYMM' 분기말 달)** 으로 맞춘다. 이렇게 해야
@@ -7378,6 +7610,10 @@ as $$
            --   'YYYY-MM-DD' 일 때만 — 모양이 다르면 ::date 가 터져 표가 통째로 사라진다.
            when n.rule_kind = 'daejeon_closure' and n.basis ~ '^\d{4}-\d{2}-\d{2}$'
              then (n.basis::date + interval '3 months')::date
+           -- SGIS 상권 인구: 받은 날 + 12개월(연 1회 사람이 신청해 받는다 — 2026-11-01b · 결정 0045 PR⑤).
+           --   'YYYY-MM-DD' 일 때만 — 모양이 다르면 ::date 가 터져 표가 통째로 사라진다.
+           when n.rule_kind = 'sgis' and n.basis ~ '^\d{4}-\d{2}-\d{2}$'
+             then (n.basis::date + interval '12 months')::date
          end as next_expected,
          n.cadence
   from norm n
@@ -7385,7 +7621,7 @@ as $$
 $$;
 
 comment on function get_data_freshness() is
-  '화면 아래 "이 자료는 언제 것인가" 표. 열다섯 갈래 자료의 가장 최근 도장(분기·계약월·판·'
+  '화면 아래 "이 자료는 언제 것인가" 표. 열여섯 갈래 자료의 가장 최근 도장(분기·계약월·판·'
   '계산일·수집일·기준월·고시일·공시 연도·받은 날·값이 바뀐 분기)을 창고에서 읽어 한 줄씩 준다. '
   '⛔ 숫자를 화면에 박지 않기 위한 함수다 — 신선도를 글자로 적어 두면 적재하는 순간부터 '
   '그 글자만 거짓말을 한다. next_expected 도 사람이 적는 값이 아니라 규칙으로 계산한다: '
@@ -7394,7 +7630,8 @@ comment on function get_data_freshness() is
   '(인허가 기준월·건축물대장 판)는 기준월 + 3개월 - 하루(다음 판이 공개되는 달의 말일), 실거래는 계약월 + '
   '2개월 - 하루(매달 최근 6개월을 다시 받는다), 국세청 기준시가는 고시일의 다음 해 3월 31일, '
   '필지(개별공시지가)는 공시 연도의 다음 해 6월 30일(기준값이 네 자리 연도일 때만), 대전시 동네 폐업은 '
-  '받은 날 + 3개월(분기마다 사람이 받는다 · 기준값이 YYYY-MM-DD 일 때만). 서울 상권 추정매출·길단위인구는 '
+  '받은 날 + 3개월(분기마다 사람이 받는다 · 기준값이 YYYY-MM-DD 일 때만), SGIS 상권 인구는 받은 날 + 12개월(연 1회 · 같은 모양일 때만). '
+  '서울 상권 추정매출·길단위인구는 '
   '개업·폐업과 같은 분기 규칙이고, 서울 상권 상주·직장인구는 실제 갱신이 불규칙해 예정일을 계산하지 않는다'
   '(기준 = 값이 마지막으로 바뀐 분기 둘을 글로 합침). '
   '주기가 없는 자료는 null 이다 — 없는 주기를 지어내면 "늦었다"는 거짓 신호가 뜬다. '
@@ -7404,10 +7641,10 @@ comment on function get_data_freshness() is
   '⛔ api_quota_log 는 안 본다 — 그건 우리 호출 장부이지 자료의 나이가 아니고, 하한선일 뿐이다. '
   '자료가 0행이면 basis 가 null 이고 줄은 그대로 나온다(화면이 "자료 없음"이라 적는다 — '
   '줄을 빼면 "그런 자료를 안 쓴다"로 읽힌다). '
-  'security definer (열다섯 표가 전부 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. '
-  '나가는 것은 집계 도장 열다섯 개뿐이고 원본 행은 한 줄도 안 나간다). 2026-09-05d · 월간 규칙 2026-10-01a · '
+  'security definer (열여섯 표가 전부 anon 에게 닫혀 있어 소유자 권한으로 대신 읽는다. '
+  '나가는 것은 집계 도장 열여섯 개뿐이고 원본 행은 한 줄도 안 나간다). 2026-09-05d · 월간 규칙 2026-10-01a · '
   '서울 개업·폐업 2026-10-05b · 필지 공시 연도 2026-10-12b · 실거래·대장 판 월간 규칙 2026-10-15a · '
-  '성적표 줄 뺌 2026-10-18a(결정 0041) · 대전시 동네 폐업 2026-10-29a(결정 0044) · 서울 상권 4종 세 줄 2026-10-31a(결정 0045) · 가게 이력 2026-11-01a(결정 0045 PR④)';
+  '성적표 줄 뺌 2026-10-18a(결정 0041) · 대전시 동네 폐업 2026-10-29a(결정 0044) · 서울 상권 4종 세 줄 2026-10-31a(결정 0045) · 가게 이력 2026-11-01a(결정 0045 PR④) · SGIS 상권 인구 2026-11-01b(결정 0045 PR⑤)';
 
 -- ⚠️ create or replace 는 권한을 유지하지만, 대시보드가 같은 함수를 다시 만들면
 --    Supabase 기본 권한이 anon 을 자동으로 붙인다. 만든 자리에서 다시 닫는다.

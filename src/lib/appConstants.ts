@@ -469,6 +469,16 @@ export const DISTRICT_SALES_FN = 'list_district_sales';
 export const DISTRICT_POP_FN = 'list_district_pop';
 
 /**
+ * 이 필지가 속한 **대전** 상권마다 통계청 SGIS 집계구 통계를 면적 비율로 나눈 상권 안 인구(거주 인구 · 가구 · 사업체 종사자)
+ * — 대전 건물의 「상권 인구 (통계청 집계구)」 카드(결정 0045 PR⑤).
+ *
+ * ⚠️ 인자는 `{ p_pnu }` 하나. 대전 필지일 때만 부른다(`DAEJEON_PREFETCH_FNS`).
+ * ⛔ 답은 **상권 안 합계(어림)** 이지 이 건물의 값이 아니다 · 값·하한·상한을 서버 그대로 — 「범위가 값의 2배 넘으면 범위만」은 화면 몫.
+ * ⓘ 함수가 아직 없거나(PGRST202)·0줄(표지 없음)·오류·모양 이상이면 카드를 통째로 생략한다.
+ */
+export const DISTRICT_CENSUS_POP_FN = 'get_district_census_pop';
+
+/**
  * 이 필지(땅)에 소진공 점포 분기 자료로 보인 가게 줄 — 「이 자리 가게 이력 (점포 자료 누적)」 카드(결정 0045 PR④).
  *
  * ⚠️ 인자는 `{ p_pnu, p_limit, p_offset }`(기본 20 · 0 — 첫 쪽은 `{ p_pnu }` 하나로 부른다) · 서울·대전 모두 부른다.

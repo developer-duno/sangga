@@ -91,6 +91,18 @@ SEOUL_ROWS = ("    union all\n"
 # 이름 끝으로 찾는다).
 STORE_HISTORY_MIGRATION = (sorted(glob.glob(os.path.join(ROOT, "supabase", "migrations", "*_store_history.sql")))
                            or [os.path.join(ROOT, "supabase", "migrations", "(없음)_store_history.sql")])[-1]
+# 2026-11-01b(결정 0045 PR⑤) — 17번 줄(대전 상권 인구 SGIS)을 더한 판. 정본과 글자가 같아야 하는 쪽은 이제 이 파일이다
+# (11-01a 판에 그 줄·sgis 규칙만 더한 글인지는 tests/test_sgis_district_pop_migration.py 가 대조한다 · 이름 끝으로 찾는다).
+SGIS_MIGRATION = (sorted(glob.glob(os.path.join(ROOT, "supabase", "migrations", "*_sgis_district_pop.sql")))
+                        or [os.path.join(ROOT, "supabase", "migrations", "(없음)_sgis_district_pop.sql")])[-1]
+# 정본 본문(줄 주석 걷음)에서 이 두 덩어리를 걷으면 11-01a 본문과 같다.
+SGIS_ROW = ("    union all\n"
+            "    select 17, '상권 인구 (통계청 집계구)', '받은 날',\n"
+            "           (select r.received_on::text from sgis_census_release r),\n"
+            "           'sgis',\n"
+            "           '연 1회 (사람이 SGIS 자료제공에서 신청해 받음)'\n")
+SGIS_BRANCH = ("           when n.rule_kind = 'sgis' and n.basis ~ '^\\d{4}-\\d{2}-\\d{2}$'\n"
+               "             then (n.basis::date + interval '12 months')::date\n")
 # 정본 본문(줄 주석 걷음)에서 이 덩어리를 걷으면 10-31a 본문과 같다.
 STORE_HISTORY_ROW = ("    union all\n"
                      "    select 16, '가게 이력 (점포 자료 누적)', '분기',\n"
@@ -170,9 +182,14 @@ class TestMirrorsTheSchema:
           걷으면 10-29a 본문과 같아야 한다(그 아래 ②③ 은 10-29a 본문으로 그대로 본다).
           2026-11-01a(결정 0045 PR④ — 가게 이력 16번 줄)부터 정본과 같아야 하는 쪽은 11-01a 이고, 정본 본문에서 그 줄을
           걷으면 10-31a 본문과 같아야 한다.
+          2026-11-01b(결정 0045 PR⑤ — 대전 상권 인구 17번 줄 · sgis 규칙)부터 정본과 같아야 하는 쪽은 11-01b 이고,
+          정본 본문에서 그 줄·갈래를 걷으면 11-01a 본문과 같아야 한다.
         """
-        assert fn_block(read(STORE_HISTORY_MIGRATION)) == fn_block(schema)
-        latest = fn_body(schema)
+        assert fn_block(read(SGIS_MIGRATION)) == fn_block(schema)
+        newest = fn_body(schema)
+        assert newest.count(SGIS_ROW) == 1 and newest.count(SGIS_BRANCH) == 1
+        latest = newest.replace(SGIS_ROW, "", 1).replace(SGIS_BRANCH, "", 1)
+        assert latest == fn_body(read(STORE_HISTORY_MIGRATION))
         assert latest.count(STORE_HISTORY_ROW) == 1
         current = latest.replace(STORE_HISTORY_ROW, "", 1)
         assert current == fn_body(read(SEOUL_TRDAR_MIGRATION))
@@ -346,8 +363,8 @@ class TestTheTwoRows:
     def test_eleven_rows(self, path):
         """원장 10-15a 는 열한 줄 · 정본은 2026-10-18a(결정 0041 — 성적표 줄 뺌)부터 열 줄 → 2026-10-29a(결정 0044 —
         대전 줄 더함)부터 다시 열한 줄 → 2026-10-31a(결정 0045 — 서울 4종 세 줄)부터 열네 줄 →
-        2026-11-01a(결정 0045 PR④ — 가게 이력 줄)부터 열다섯 줄."""
-        assert fn_body(read(path)).count("union all") == (14 if path == SCHEMA else 10)
+        2026-11-01a(결정 0045 PR④ — 가게 이력 줄)부터 열다섯 줄 → 2026-11-01b(결정 0045 PR⑤ — 대전 상권 인구 줄)부터 열여섯 줄."""
+        assert fn_body(read(path)).count("union all") == (15 if path == SCHEMA else 10)
 
 
 class TestTxDetectorCatches:
@@ -417,6 +434,7 @@ create table district_sales (quarter char(5));
 create table district_pop_flow (quarter char(5));
 create table seoul_trdar_release (tbl text, value_quarter char(5));
 create table store_history_release (last_ym char(6));
+create table sgis_census_release (received_on date);
 create table basis_override (v text);
 """
 LEDGER_BASIS = "(select r.release_ym::text from ledger_release r)"
@@ -534,7 +552,7 @@ class TestRealRun:
         cur = _fresh(pg, read(MIGRATION))
         cur.execute(fn_block(read(SCHEMA)))
         cur.execute("insert into transaction values ('202610')")
-        rows = _rows(cur, 15)   # 정본은 성적표 줄을 뺀 열 줄(결정 0041) + 대전 줄(결정 0044) + 서울 4종 세 줄(결정 0045) + 가게 이력 줄(0045 PR④) = 열다섯 줄
+        rows = _rows(cur, 16)   # 정본은 성적표 줄을 뺀 열 줄(결정 0041) + 대전 줄(결정 0044) + 서울 4종 세 줄(결정 0045) + 가게 이력 줄(0045 PR④) + 대전 상권 인구 줄(0045 PR⑤) = 열여섯 줄
         assert rows["실거래 (매매)"][2] == "2026-11-30"
         assert rows["건축물대장"][2] == "2026-10-31"
 
@@ -789,7 +807,7 @@ class TestFreshnessIssueHint:
     def test_hint_keys_match_the_server_labels(self):
         """열쇠 글자가 서버 함수의 src 와 같아야 한다 — 다르면 안내가 조용히 안 나온다."""
         labels = server_src_labels(fn_body(read(SCHEMA)))
-        assert len(labels) == 15                                       # 신선도 표 15줄(10-18a 결정 0041 11 → 10 · 10-29a 결정 0044 10 → 11 · 10-31a 결정 0045 11 → 14 · 11-01a 결정 0045 PR④ 14 → 15)
+        assert len(labels) == 16                                       # 신선도 표 16줄(10-18a 결정 0041 11 → 10 · 10-29a 결정 0044 10 → 11 · 10-31a 결정 0045 11 → 14 · 11-01a 결정 0045 PR④ 14 → 15 · 11-01b 결정 0045 PR⑤ 15 → 16)
         for key in check_data_freshness.SOURCE_HINTS:
             assert key in labels, key
 

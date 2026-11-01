@@ -89,6 +89,10 @@ SEOUL_TRDAR_MIGRATION = os.path.join(ROOT, "supabase", "migrations", "2026-10-31
 # ⓘ 적용 날이 바뀌면 메인이 적용 전에 파일 이름을 바꾸므로 이름 끝으로 찾는다.
 STORE_HISTORY_MIGRATION = (sorted(glob.glob(os.path.join(ROOT, "supabase", "migrations", "*_store_history.sql")))
                            or [os.path.join(ROOT, "supabase", "migrations", "(없음)_store_history.sql")])[-1]
+# 2026-11-01b(결정 0045 PR⑤) — 17번 줄(대전 상권 인구 SGIS)을 더해 다시 만든 가장 최근 판. 정본과 글자가 같아야 하는 쪽은
+# 이제 이 파일이다(11-01a 판에 그 줄만 더한 글인지는 tests/test_sgis_district_pop_migration.py 가 대조한다 · 이름 끝으로 찾는다).
+SGIS_MIGRATION = (sorted(glob.glob(os.path.join(ROOT, "supabase", "migrations", "*_sgis_district_pop.sql")))
+                        or [os.path.join(ROOT, "supabase", "migrations", "(없음)_sgis_district_pop.sql")])[-1]
 MONTHLY_MIGRATION = os.path.join(
     ROOT, "supabase", "migrations", "2026-10-15a_freshness_monthly_rules.sql")
 SCHEMA = os.path.join(ROOT, "supabase", "schema.sql")
@@ -116,16 +120,18 @@ SOURCE_LABELS = (
     "상권 길단위인구 (서울시)",
     "상권 상주·직장인구 (서울시)",
     "가게 이력 (점포 자료 누적)",
+    "상권 인구 (통계청 집계구)",
 )
 # 결정 0041(2026-10-18a)로 정본에서 뺀 갈래 — 적용된 원장(10-15a)에만 남는다.
 SCHEMA_DROPPED_LABELS = ("참고 시세 성적표",)
 # 결정 0044(2026-10-29a)·결정 0045(2026-10-31a · 2026-11-01a PR④)로 정본에 더한 갈래 — 원장(10-15a)에는 없다.
 SCHEMA_ADDED_LABELS = ("동네 폐업 (대전시)", "상권 추정매출 (서울시)", "상권 길단위인구 (서울시)",
-                       "상권 상주·직장인구 (서울시)", "가게 이력 (점포 자료 누적)")
+                       "상권 상주·직장인구 (서울시)", "가게 이력 (점포 자료 누적)",
+                       "상권 인구 (통계청 집계구)")
 
 
 def labels_for(request):
-    """public_body 가 정본이면 뺀 갈래를 걷은 목록(대전·서울 4종·가게 이력 줄 포함 열다섯 갈래), 원장(10-15a)이면 그 줄들 없는 열한 갈래."""
+    """public_body 가 정본이면 뺀 갈래를 걷은 목록(대전·서울 4종·가게 이력·대전 상권 인구 줄 포함 열여섯 갈래), 원장(10-15a)이면 그 줄들 없는 열한 갈래."""
     if "schema" in request.node.callspec.id:
         return tuple(x for x in SOURCE_LABELS if x not in SCHEMA_DROPPED_LABELS)
     return tuple(x for x in SOURCE_LABELS if x not in SCHEMA_ADDED_LABELS)
@@ -282,7 +288,8 @@ class TestEverySourceIsListed:
         """줄 수를 못 박는다 — 자료를 늘리거나 줄이면 이 시험과 화면 시험이 함께 걸린다.
 
         ⓘ 정본은 2026-10-18a(결정 0041)부터 열 줄 → 2026-10-29a(결정 0044 대전 줄)부터 다시 열한 줄 →
-          2026-10-31a(결정 0045 서울 4종 세 줄)부터 열네 줄 → 2026-11-01a(결정 0045 PR④ 가게 이력)부터 열다섯 줄,
+          2026-10-31a(결정 0045 서울 4종 세 줄)부터 열네 줄 → 2026-11-01a(결정 0045 PR④ 가게 이력)부터 열다섯 줄 →
+          2026-11-01b(결정 0045 PR⑤ 대전 상권 인구)부터 열여섯 줄,
           원장 10-15a 는 (성적표 줄이 든) 열한 줄 그대로다.
         """
         labels = labels_for(request)
@@ -620,10 +627,11 @@ class TestPermitRuleMigration:
         # ⓘ 2026-10-18a(결정 0041)로 '열 갈래'·성적표 줄 뺌이 comment 에 들어가 대조 쪽이 10-18a 로 옮겼고,
         #   2026-10-29a(결정 0044)로 '열한 갈래'·대전 줄이 들어가 10-29a 로 옮겼고,
         #   2026-10-31a(결정 0045)로 '열넷 갈래'·서울 4종 줄이 들어가 10-31a 로 옮겼고,
-        #   2026-11-01a(결정 0045 PR④)로 '열다섯 갈래'·가게 이력 줄이 들어가 11-01a 로 옮겼다.
-        migration_comment = extract_comment(read(STORE_HISTORY_MIGRATION))
+        #   2026-11-01a(결정 0045 PR④)로 '열다섯 갈래'·가게 이력 줄이 들어가 11-01a 로 옮겼고,
+        #   2026-11-01b(결정 0045 PR⑤)로 '열여섯 갈래'·대전 상권 인구 줄이 들어가 11-01b 로 옮겼다.
+        migration_comment = extract_comment(read(SGIS_MIGRATION))
         assert migration_comment == schema_comment, (
-            "11-01a 의 comment 가 정본(schema.sql)과 글자가 다릅니다 — 라이브 설명이 "
+            "11-01b 의 comment 가 정본(schema.sql)과 글자가 다릅니다 — 라이브 설명이 "
             "schema.sql 의 서술과 갈라집니다"
         )
 
@@ -861,7 +869,7 @@ class TestLandYearMigrationShape:
                 sql.replace("\r\n", "\n"))
             assert m, "덩어리를 못 찾았습니다"
             return m.group(0)
-        assert block(read(STORE_HISTORY_MIGRATION)) == block(schema)
+        assert block(read(SGIS_MIGRATION)) == block(schema)
 
     def test_the_10_12b_ledger_is_left_as_applied(self, land_migration):
         """⛔ 10-12b 는 라이브에 적용된 원장이다 — 옛 실거래('none'·'수시')·대장('적재일'·building) 줄 그대로."""
@@ -910,6 +918,8 @@ create table district_pop_flow (quarter char(5));
 create table seoul_trdar_release (tbl text, value_quarter char(5));
 -- 2026-11-01a(결정 0045 PR④) — 정본 함수의 가게 이력 줄이 이 표지를 읽는다.
 create table store_history_release (last_ym char(6));
+-- 2026-11-01b(결정 0045 PR⑤) — 정본 함수의 대전 상권 인구 줄이 이 표지를 읽는다.
+create table sgis_census_release (received_on date);
 -- 모양 시험용 — 필지 줄의 basis 를 아무 글자로나 바꿔 넣는 자리(실제 함수에는 없다).
 create table land_basis_override (v text);
 """
@@ -977,7 +987,9 @@ def _land_row(conn, fn_sql, parcel_years=(), override=None):
     # 정본은 2026-10-18a(결정 0041)부터 열 줄 → 2026-10-29a(결정 0044 대전 줄)부터 열한 줄 →
     # 2026-10-31a(결정 0045 서울 4종 세 줄)부터 열네 줄 → 2026-11-01a(결정 0045 PR④ 가게 이력)부터 열다섯 줄 ·
     # 원장(10-12b)은 열한 줄(성적표 줄이 든 판).
-    if "'가게 이력 (점포 자료 누적)'" in fn_sql:
+    if "'상권 인구 (통계청 집계구)'" in fn_sql:
+        want = 16
+    elif "'가게 이력 (점포 자료 누적)'" in fn_sql:
         want = 15
     elif "'상권 상주·직장인구 (서울시)'" in fn_sql:
         want = 14

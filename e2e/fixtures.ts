@@ -4,6 +4,7 @@ import type {
   CoverageStats,
   DataFreshnessRow,
   DaejeonDongClosure,
+  DistrictCensusPop,
   DistrictPop,
   DistrictSales,
   DistrictOpenClose,
@@ -818,6 +819,57 @@ export function districtPop(): DistrictPop[] {
       worker_value_quarter: null,
       worker_last_quarter: null,
       worker: null,
+    },
+  ];
+}
+
+/**
+ * 대전 상권 인구(결정 0045 PR⑤ · `get_district_census_pop`) — 상권 둘(좁은 상권 먼저 · 서버 차례 그대로).
+ * 첫 상권은 통째로 든 집계구가 있어 값 + 범위 · 둘째 상권은 통째 0개라 셋 다 범위가 값의 2배를 넘어 범위만(시안 숫자 그대로 ·
+ * 상권 이름도 가짜).
+ */
+export function districtCensusPop(): DistrictCensusPop[] {
+  const rel = { received_on: '2026-10-08', base_year: 2024, bnd_base_date: '2025-06-30' };
+  return [
+    {
+      status: 'ok',
+      district_id: 'DJ-A',
+      district_nm: '둔산 가짜거리',
+      district_type: '발달상권',
+      area_m2: 120000.5,
+      n_overlap: 9,
+      n_full: 3,
+      cover_pct: 100,
+      pop: 3120,
+      pop_lo: 1840,
+      pop_hi: 4610,
+      hh: 1380,
+      hh_lo: 820,
+      hh_hi: 2050,
+      emp: 5900,
+      emp_lo: 2700,
+      emp_hi: 11200,
+      ...rel,
+    },
+    {
+      status: 'ok',
+      district_id: 'DJ-B',
+      district_nm: '시청역 가짜출구',
+      district_type: '발달상권',
+      area_m2: 250000,
+      n_overlap: 3,
+      n_full: 0,
+      cover_pct: 99.975,
+      pop: 420,
+      pop_lo: 0,
+      pop_hi: 1380,
+      hh: 190,
+      hh_lo: 0,
+      hh_hi: 640,
+      emp: 4100,
+      emp_lo: 0,
+      emp_hi: 15300,
+      ...rel,
     },
   ];
 }

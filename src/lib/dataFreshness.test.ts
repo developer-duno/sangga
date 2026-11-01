@@ -345,6 +345,18 @@ describe('cardSourceLine — 카드 제목 아래 날짜 줄 (S3)', () => {
     expect(cardSourceLine(SECTION_PLAN.pop.sources, noPeople)).toBe('자료: 서울시 상권분석서비스 2026년 2분기');
   });
 
+  it('대전 상권 인구(결정 0045 PR⑤)는 census_pop 한 줄 — 「통계청 SGIS 집계구 … 받음」 · SECTION_PLAN 에는 없다(카드가 바꿔 끼운다)', () => {
+    expect(CARD_SOURCES.census_pop.src).toBe('상권 인구 (통계청 집계구)');
+    const rows = [
+      ...rows1016(),
+      row({ src: '상권 인구 (통계청 집계구)', basis_kind: '받은 날', basis: '2026-10-08', next_expected: null, cadence: '-' }),
+    ];
+    expect(cardSourceLine(['census_pop'], rows)).toBe('자료: 통계청 SGIS 집계구 2026년 10월 8일 받음');
+    // 서버 표에 그 줄이 없으면 줄 없음(조각 하나뿐이라).
+    expect(cardSourceLine(['census_pop'], rows1016())).toBeNull();
+    for (const plan of Object.values(SECTION_PLAN)) expect(plan.sources ?? []).not.toContain('census_pop');
+  });
+
   it('실거래 조각은 어느 카드에서나 같은 글이다(B1 · 실거래 기록·층별 공표값·동네 흐름·층 목록)', () => {
     const plans: SectionPlan[] = [
       SECTION_PLAN.tx,
@@ -393,10 +405,10 @@ describe('카드 자료 이름 ↔ 정본 서버 함수의 자료 이름 (S3)', 
     expect(serverSrcLabels("select 1, '함수 없음'")).toEqual([]);
   });
 
-  it('정본의 자료 이름 열다섯 개 = 카드 자료 표 열셋 + 카드에 안 붙는 둘(필지 · LH) — 성적표 줄은 결정 0041 로 뺐고 대전시 동네 폐업은 결정 0044, 서울 상권 4종 세 줄은 결정 0045, 가게 이력 줄은 결정 0045 PR④ 로 더했다', () => {
+  it('정본의 자료 이름 열여섯 개 = 카드 자료 표 열넷 + 카드에 안 붙는 둘(필지 · LH) — 성적표 줄은 결정 0041 로 뺐고 대전시 동네 폐업은 결정 0044, 서울 상권 4종 세 줄은 결정 0045, 가게 이력 줄은 결정 0045 PR④, 대전 상권 인구 줄은 결정 0045 PR⑤ 로 더했다', () => {
     const sql = readFileSync('supabase/schema.sql', 'utf8');
     const server = serverSrcLabels(sql);
-    expect(server).toHaveLength(15);
+    expect(server).toHaveLength(16);
     expect(server).not.toContain('참고 시세 성적표');
     const ours = [
       ...Object.values(CARD_SOURCES).map((s) => s.src),
