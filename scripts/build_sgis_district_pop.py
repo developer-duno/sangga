@@ -326,6 +326,7 @@ def compute(districts, codes, geoms, census):
                "n_full": sum(1 for _c, _a, w in hits if w >= FULL_RATIO),
                "cover_pct": round(sum(a for _c, a, _w in hits) / area * 100, 3)}
         row["n_clamped"] = 0
+        row["clamped"] = []          # 끼운 항목 이름(로그용 · csv 에는 안 쓴다)
         for key, _sub, _code in ITEMS:
             vals = [(oa_value(census, key, c), w) for c, _a, w in hits]
             lo = sum(v for v, w in vals if w >= FULL_RATIO)
@@ -334,7 +335,9 @@ def compute(districts, codes, geoms, census):
             # 통째(비율 0.99~1)인 집계구는 하한에 값 전부 · 배분엔 비율만큼 들어가 배분이 하한보다 조금 작을 수 있다
             # (2024 통계 서울 3120150 종사자 5,350 < 하한 5,351 — 대전 0건). 「값이 범위 밖」은 화면에서 모순이라 끼운다.
             clamped = min(max(alloc, lo), hi)
-            row["n_clamped"] += clamped != alloc
+            if clamped != alloc:
+                row["n_clamped"] += 1
+                row["clamped"].append("{} {}→{}".format(key, alloc, clamped))
             row[key], row[key + "_lo"], row[key + "_hi"] = clamped, lo, hi
         rows.append(row)
     return rows
@@ -423,12 +426,19 @@ def compare_ok(st, base_year, ref=SEOUL_REF):
 # ── 요약 ─────────────────────────────────────────────────────────────────────
 
 
-def summary_lines(rows):
+def clamp_line(rows, tag):
+    """범위로 끼운 칸 한 줄 — 「대전 0칸」 또는 「대전 2칸: sbiz-3 pop 297→300 · …」(어느 상권·어느 항목인지)."""
+    hits = ["{} {}".format(r["district_id"], ", ".join(r["clamped"])) for r in rows if r["clamped"]]
+    n = sum(r["n_clamped"] for r in rows)
+    return "  범위(하한~상한)로 끼운 칸: {} {}칸{}".format(tag, n, (": " + " · ".join(hits)) if hits else "")
+
+
+def summary_lines(rows, tag="대전"):
     n_zero = sum(1 for r in rows if r["n_full"] == 0)
     cov = [r["cover_pct"] for r in rows]
-    out = ["  상권 {} · 통째 0 인 상권 {} · 덮임 {:.3f}~{:.3f}% · 걸친 집계구 가운데 {} · 범위로 끼운 칸 {}".format(
-        len(rows), n_zero, min(cov), max(cov), statistics.median(r["n_overlap"] for r in rows),
-        sum(r["n_clamped"] for r in rows))]
+    out = ["  상권 {} · 통째 0 인 상권 {} · 덮임 {:.3f}~{:.3f}% · 걸친 집계구 가운데 {}".format(
+        len(rows), n_zero, min(cov), max(cov), statistics.median(r["n_overlap"] for r in rows)),
+        clamp_line(rows, tag)]
     for r in rows:
         out.append("    {} {} {}/{} 거주 {:,} [{:,}~{:,}] 가구 {:,} 종사자 {:,} [{:,}~{:,}] 덮임 {}%".format(
             r["district_id"], r["district_nm"], r["n_overlap"], r["n_full"], r["pop"], r["pop_lo"], r["pop_hi"],
@@ -480,6 +490,7 @@ def build(raw_dir, district_lines_fn, sido=DEFAULT_SIDO, compare_tsv=None):
     if compare_tsv:
         seoul = [r for r in rows_all if r["sigungu_code"][:2] == COMPARE_SIDO]
         cmp = compare_seoul(seoul, read_official_tsv(compare_tsv))
+        cmp[0]["clamp_line"] = clamp_line(seoul, "서울")
     return rows, meta, cmp
 
 
@@ -536,6 +547,7 @@ def main(argv=None):
             st["within30_pct"]))
         log("  합계 비율 {} · 공표값이 범위 안 {}/{} = {}% · 가구 오차 가운데 {}%".format(
             st["sum_ratio"], st["inside_n"], st["n"], st["inside_pct"], st["hh_median_pct"]))
+        log(st["clamp_line"])
         log("  11-01 기준(통계 {}년): 가운데 {}% · 범위 안 {}% · 허용 ±{}%p".format(
             SEOUL_REF["base_year"], SEOUL_REF["median_pct"], SEOUL_REF["inside_pct"], SEOUL_REF["tol_pp"]))
         if not compare_ok(st, meta["base_year"]):

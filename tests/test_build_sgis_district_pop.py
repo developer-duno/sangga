@@ -58,8 +58,9 @@ def _vals(pop):
     return {"pop": pop, "hh": pop // 2, "emp": pop * 2, "est": pop // 10}
 
 
-def make_census_zip(path, year="2024", override=None, extra_files=None, drop_oa=None):
+def make_census_zip(path, year="2024", override=None, extra_files=None, drop_oa=None, oas=None):
     """총괄 4파일 + 섞인 파일 하나. override = {(oa, key): 글자} · drop_oa = 그 집계구 줄을 다 뺀다."""
+    oas = OAS if oas is None else oas
     names = {"pop": "2025년기준_{}년_인구총괄(총인구).csv", "hh": "2025년기준_{}년_가구총괄.csv",
              "emp": "2025년기준_{}년_산업분류별(11차_대분류)_총괄종사자수.csv",
              "est": "2025년기준_{}년_산업분류별(11차_대분류)_총괄사업체수.csv"}
@@ -68,7 +69,7 @@ def make_census_zip(path, year="2024", override=None, extra_files=None, drop_oa=
         for key, fn in names.items():
             buf = io.StringIO()
             w = csv.writer(buf, lineterminator="\n")
-            for code, *_r, pop in OAS:
+            for code, *_r, pop in oas:
                 if code == drop_oa:
                     continue
                 v = (override or {}).get((code, key), str(_vals(pop)[key]))
@@ -171,6 +172,26 @@ class TestHandComputed:
         assert r3["n_clamped"] == 3 and meta["n_clamped"] == 3
         assert (r3["est"], r3["est_lo"]) == (30, 30)
         assert by_id(rows)["sbiz-1"]["n_clamped"] == 0                 # 양성 대조 — 끼울 일이 없는 상권은 0
+
+    def test_clamp_positive_control_ratio_0_995(self, raw):
+        """메인 조건 ⓑ — 비율 0.995 집계구 하나짜리 상권: 배분 995 < 하한 1,000 → 끼운 뒤 = 하한 · 로그 한 줄에 상권·항목."""
+        oas = OAS + [("25000000000020", 7000, 0, 7100, 100.5, 1000)]          # 10,000 / 10,050 = 0.99502
+        dists = DISTRICTS + [("sbiz-7", "0.995 하나", "주요상권", "30200", 7000, 0, 7100, 100)]
+        make_boundary_zip(str(raw / "bnd_oa_00_2025_2Q.zip"), oas)
+        make_census_zip(str(raw / "_census_reqdoc_1.zip"), oas=oas)
+        rows, _meta, _ = b.build(str(raw), lines_of(dists))
+        r = by_id(rows)["sbiz-7"]
+        assert round(1000 * 10000 / 10050) == 995                             # 끼우기 전(전제)
+        assert (r["n_overlap"], r["n_full"]) == (1, 1)
+        assert (r["pop"], r["pop_lo"], r["pop_hi"]) == (1000, 1000, 1000)
+        assert "pop 995→1000" in r["clamped"]
+        line = b.clamp_line(rows, "대전")
+        assert line.startswith("  범위(하한~상한)로 끼운 칸: 대전 ") and "sbiz-7 pop 995→1000" in line
+
+    def test_clamp_line_says_zero_cells(self):
+        """끼운 칸이 없으면 「대전 0칸」 — 상권 이름 없이."""
+        assert b.clamp_line([{"district_id": "sbiz-1", "clamped": [], "n_clamped": 0}], "대전") == \
+            "  범위(하한~상한)로 끼운 칸: 대전 0칸"
 
     def test_only_daejeon_rows_and_meta(self, raw):
         rows, meta, _ = b.build(str(raw), lines_of())
