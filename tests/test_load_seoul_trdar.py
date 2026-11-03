@@ -274,6 +274,17 @@ def test_one_corrected_district_does_not_move_the_value_quarter(tmp_path, small_
     assert rep["value_quarter"] == "20211"
 
 
+def test_majority_denominator_is_districts_on_both_sides(tmp_path, small_ranges):
+    """분모 = 이웃 두 분기에 **둘 다 있는** 상권 수 — 뒤 분기에서 상권 둘이 빠져도 앞 분기 상권 수로 나누지 않는다.
+    앞 4곳 → 뒤 2곳(둘 다 바뀜) = 2/2 과반 → 그 분기 · 분모를 앞 분기 수(4)로 바꾸면 2 × 2 > 4 아님이라 빨강."""
+    d3, d4 = "3110003", "3110004"
+    write_q(tmp_path, "worker", "20211", [raw_row("worker", "20211", d, 10.0) for d in (D1, D2, d3, d4)])
+    write_q(tmp_path, "worker", "20212", [raw_row("worker", "20212", d, 11.0) for d in (D1, D2)])
+    rep = L.scan_service("worker", L.pick_sources(L.list_raw(str(tmp_path), "worker")))
+    assert rep["changes"] == {"20212": 2} and rep["common"] == {"20212": 2}
+    assert rep["value_quarter"] == "20212"
+
+
 @pytest.mark.parametrize("changed, expected", [(1, "20211"), (5, "20211"), (6, "20212")],
                          ids=["1_of_10", "5_of_10_tie", "6_of_10"])
 def test_value_quarter_majority_threshold(changed, expected):

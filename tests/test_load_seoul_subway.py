@@ -399,7 +399,7 @@ def test_station_seed_map_target_missing_in_master_stops(tmp_path, loose):
 
 @pytest.fixture(scope="module")
 def real_rep(tmp_path_factory):
-    if not os.path.isdir(REAL_RAW):
+    if not os.path.isfile(os.path.join(REAL_RAW, "master", REAL_MASTER)):
         pytest.skip("메인이 받아 둔 raw 가 없다(로컬 전용 · {})".format(REAL_RAW))
     raw = str(tmp_path_factory.mktemp("subway_raw"))
     os.makedirs(os.path.join(raw, "master"))
