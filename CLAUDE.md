@@ -30,7 +30,7 @@
 
 > ⛔ **잠금을 잡는 DDL**(`alter table … set storage` 등 — ACCESS EXCLUSIVE)은 `set lock_timeout` 을 **begin 앞**(세션 설정)에 두고, 머리말의 잠금 수준은 공식 문서로 확인해 적는다(2026-09-27d — 처음 머리말이 "안 막음"이라 틀렸다).
 
-> ⛔ **함수를 다시 만드는 마이그레이션은 머리(`security definer`·`set search_path`·`stable`)와 `comment` 까지 정본에서 잘라 붙이고, 시험으로 정본과 글자 대조한다** — `create or replace` 는 머리 속성을 새 정의로 덮어쓰는데, 드리프트 가드는 `$$` 안 본문만, `--check` 는 언어·본문·search_path 만 본다(security definer·stable·comment 는 아무도 안 본다). 2026-10-01a 적대검증 로컬 실측: `set search_path` 가 빠지면 anon 경로가 `relation does not exist` 로 죽어 화면 표가 통째로 사라지는데 시험 1,130개가 초록이었다(본보기 = `tests/test_data_freshness_migration.py` 의 머리·comment 대조 시험). **같은 종류 — RAISE·format 글 안의 `%` 는 `%%`**: PL/pgSQL 자리표시자로 읽혀 운영 적재 SQL 이 통째로 실패하는데 글자 대조 시험은 못 잡고 **로컬 PG 실행 시험**만 잡는다(2026-10-31 PR④ G-7 — CI 엔 로컬 PG 가 없어 그 약 30개를 건너뛴다 · 적재 SQL 마다 로컬 PG 실행 시험 1건 · CI 에 PostGIS 컨테이너를 붙이는 길은 백로그).
+> ⛔ **함수를 다시 만드는 마이그레이션은 머리(`security definer`·`set search_path`·`stable`)와 `comment` 까지 정본에서 잘라 붙이고, 시험으로 정본과 글자 대조한다** — `create or replace` 는 머리 속성을 새 정의로 덮어쓰는데, 드리프트 가드는 `$$` 안 본문만, `--check` 는 언어·본문·search_path 만 본다(security definer·stable·comment 는 아무도 안 본다). 2026-10-01a 적대검증 로컬 실측: `set search_path` 가 빠지면 anon 경로가 `relation does not exist` 로 죽어 화면 표가 통째로 사라지는데 시험 1,130개가 초록이었다(본보기 = `tests/test_data_freshness_migration.py` 의 머리·comment 대조 시험). **같은 종류 — RAISE·format 글 안의 `%` 는 `%%`**: PL/pgSQL 자리표시자로 읽혀 운영 적재 SQL 이 통째로 실패하는데 글자 대조 시험은 못 잡고 **로컬 PG 실행 시험**만 잡는다(2026-10-31 PR④ G-7 — CI 엔 로컬 PG 가 없어 그 약 30개를 건너뛴다 · 적재 SQL 마다 로컬 PG 실행 시험 1건 · CI 에 PostGIS 컨테이너를 붙이는 길은 백로그). **머리말의 예시 SQL 은 본문과 글자를 다르게 둔다**(`500 /* m */` 처럼) — 시험은 `--` 주석을 걷고 세지만(`test_seoul_subway_migration.py` `code_lines`), 검사관의 바이트 치환 변이는 머리말 예시까지 바꿔 치환 개수가 2 가 된다(2026-11-02a 지하철 마이그 적대검증) · 검사관은 치환 개수가 1 인지 먼저 본다.
 
 > ⚙️ **수집·적재·점검 명령은 Claude가 직접 돌린다** (사장님께 넘기지 않는다). 사장님 손이
 > 꼭 필요한 것은 **Supabase 대시보드 SQL Editor**(마이그레이션·`ANALYZE`)와 **외부 계정 신청**뿐이다.
@@ -137,7 +137,7 @@ main → App → components → lib → types   (단방향 — 역방향 import 
 pnpm dev                                        # 개발 서버 (http://localhost:5173)
 pnpm build                                      # 타입 검사 + 빌드 (tsc -b && vite build)
 pnpm test                                       # 프론트 테스트 (vitest, 2,201개)
-pnpm test:e2e                                   # ★ 화면 E2E (playwright, 90개 × 넓은화면·휴대폰 2벌 + 한 열 PC @onecol 9 = 189회 · 휴대폰 2회 건너뜀) — 아래 경고 참조 · 하나만 = `pnpm test:e2e --grep <제목 조각>`(`--` 를 넣으면 playwright 가 인자를 못 받아 **전체가 돈다** · 2026-11-01 `--list` 실측 · `CN\.` 꼴 백슬래시는 안 먹는다 — 글자 조각으로)
+pnpm test:e2e                                   # ★ 화면 E2E (playwright, 90개 × 넓은화면·휴대폰 2벌 + 한 열 PC @onecol 9 = 189회 · 휴대폰 2회 건너뜀) — 아래 경고 참조 · 하나만 = `pnpm test:e2e --grep <제목 조각>`(`--` 를 넣으면 playwright 가 인자를 못 받아 **전체가 돈다** · 2026-11-01 `--list` 실측 · `CN\.` 꼴 백슬래시는 안 먹는다 — 글자 조각으로 · **임시 캡처 스펙의 파일 이름에 그 태그 글자를 넣지 않는다**(`pr6cap.spec.ts` + `--grep PR6CAP` 이 180회를 돌렸다 · `tmpcap.spec.ts` + `ZZCAP` 은 그 시험만 — 2026-11-02 실측 · 공식 TestConfig.grep: 대조 글자 = 프로젝트 이름 + 파일 이름 + describe + 제목 + 태그를 띄어 이은 것이라 파일 이름도 걸린다)
 pnpm exec oxlint                                # 프론트 린트
 ```
 
@@ -262,7 +262,7 @@ python scripts/backup_raw.py --verify           # 백업본을 다시 읽어 SHA
 > 📅 **매달 할 일**(F3·F5 · 2026-10-15) — 신선도 표가 두 줄에 날짜를 건다(실거래 = 계약월 + 2개월 − 하루 · 건축물대장 = 판 + 3개월 − 하루). 넘기면 그물 6호가 이슈를 연다.
 > ① **실거래**: 30구 `collect_transactions.py --sigungu-code <구> --recollect-months 6 --end-ym <이번 달>` → 30구 `load_transactions.py --sigungu-code <구>`(⚠️ 구 인자가 없으면 강남만 적재) → `post_load.py`.
 > ② **건축물대장**: 매달 20일 무렵 새 판(N월 판 = (N+1)월 20일 게시) → 적재 **전** 디스크 판정(지금 사용량 + 약 +320MB(10-14 실측 5,464 → 5,783MB) + WAL 여유 1GB 가 디스크의 85% 미만일 때만 — 넘으면 확장부터) → `fetch_bldrgst_bulk.py --kind title` · `flr_ouln` · `expos_area` → `convert_bldrgst_bulk.py --src-dir data/raw/bldrgst_bulk/<판> --out-dir data/raw/bldrgst_bulk_converted_<판>` → 30구 `load_building_ledger.py --raw-dir …/<구> --snapshot-ym <상권 분기>`(30구 모두 exit 0 인지 본다) → `publish_ledger_release.py --ym <판>` → `post_load.py` · `post_load.py --check` → `build_sitemap.py` → 커밋 → 배포 뒤 `indexnow_ping.py --from-sitemap public/sitemap-buildings-1.xml` · 한 번 더 `indexnow_ping.py --from-sitemap public/sitemap-hubs.xml`(구 허브 · 결정 0043) → `backup_raw.py`(포털은 최근 3개월치만 남긴다).
-> ③ **지하철**(결정 0045 PR⑥ · 신선도 18번 줄 = 기준월 + 2개월의 5일): 매달 5일 무렵 서울시가 전월분 게시 → `collect_seoul_subway.py --dry-run --end-month <지난달>`(행 수 0 이면 아직 미게시 — 기다린다) → `collect_seoul_subway.py --end-month <지난달>` → `load_seoul_subway.py --dry-run` → 실적재 → `post_load.py` · `post_load.py --check` → `backup_raw.py`. ⚠️ 전월분은 3일 무렵 작업(JOB_YMD)이라 5일 전엔 미게시(INFO-200 → pending 유지)가 정상 · 관문 ⒟(조인률 90%·미매칭 ≤ 10)가 멈추면 먼저 `--master-too` 로 역사마스터를 다시 받아 dry-run(새 역·개명 역이 붙는다) · 그래도 남으면 `scripts/seeds/subway_station_map.csv` 의 skip 줄이 마스터에 새로 생긴 역을 영영 빼는지 본다(skip 씨앗이 마스터 대조보다 먼저 돈다 · 맹점 검사 11-02) · 지난 달을 다시 넣을 땐 `--months` 없이 전체(사라진 역 참조 raise 를 푼다).
+> ③ **지하철**(결정 0045 PR⑥ · 신선도 18번 줄 = 기준월 + 2개월의 5일): 매달 5일 무렵 서울시가 전월분 게시 → `collect_seoul_subway.py --dry-run --end-month <지난달>`(행 수 0 이면 아직 미게시 — 기다린다) → `collect_seoul_subway.py --end-month <지난달>` → `load_seoul_subway.py --dry-run` → 실적재 → `post_load.py` · `post_load.py --check` → `backup_raw.py`. ⚠️ 전월분은 3일 무렵 작업(JOB_YMD)이라 5일 전엔 미게시(INFO-200 → pending 유지)가 정상 · 관문 ⒟(조인률 90%·미매칭 ≤ 10)가 멈추면 먼저 `--master-too` 로 역사마스터를 다시 받아 dry-run(새 역·개명 역이 붙는다) · 그래도 남으면 `scripts/seeds/subway_station_map.csv` 의 skip 줄이 마스터에 새로 생긴 역을 영영 빼는지 본다(skip 씨앗이 마스터 대조보다 먼저 돈다 · 맹점 검사 11-02) · 지난 달을 다시 넣을 땐 `--months` 없이 전체(사라진 역 참조 raise 를 푼다) · `--master-too` 로 받은 새 마스터에서 역 이름이 바뀌거나 빠지면 **옛 달**(적재기는 raw 전 달을 다시 넣는다)이 관문 ⒟ 에 걸린다 → 옛 이름은 `scripts/seeds/subway_station_map.csv` 의 map 줄로 새 역에 잇는다(당고개→불암산 꼴 · 2026-11-04 적대검증 🟡).
 
 > 📅 **분기마다**(결정 0045 PR④) — 상권 새 분기 전국 모드 적재 → `build_store_history.py`(가게 이력 빌드) → `load_store_history.py`(이력 적재) → `post_load.py` — 이 차례를 어기면 `--check` 가 [주의]·화면이 「…까지입니다」. 상권 적재와 **같은 날 이어서** 한다(「물결 3 적재는 상권 적재와 같은 날 넣지 않는다」의 예외 · 그물 1호 이슈 본문도 이 순서 · 2026-11-01 2단 맹점 검사 정정).
 
@@ -300,3 +300,26 @@ python scripts/backup_raw.py --verify           # 백업본을 다시 읽어 SHA
 > ⚠️ **`npm run collect`는 존재하지 않는다.** 그리고 `npm`이 아니라 `pnpm`으로 돌린다.
 > (`package.json` scripts 실측 2026-08-11: dev·build·lint·typecheck·**test**·test:watch·
 > **test:e2e**·preview 8개. "test 계열이 없다"던 예전 서술은 그 뒤 도입돼 낡았다.)
+
+## 머지 뒤 라이브 확인 (전역 CLAUDE.md §0-8 — 「합쳤습니다」로 끝내지 않는다 · 2026-11-04 실측)
+
+① **배포 곳 = Vercel 프로젝트 `sangga`**(GitHub 연결 · main push 가 곧 운영 배포 · PR 마다 미리보기 배포). 사람 손 배포 창이 없으므로 「배포 대기」가 없다 — 머지 직후 바로 ②.
+② **그 커밋의 배포가 성공인지** — 맨 위 기록이 아니라 **해시로** 고른다(Vercel 이 GitHub Deployments 에 적는다 · 7자리 짧은 해시로는 0건이 난다 → 전체 해시):
+```bash
+SHA=$(git rev-parse HEAD)      # 합친 커밋 = 본 폴더 main 을 pull 한 뒤 · 다른 커밋이면 전체 해시를 직접
+DID=$(gh api "repos/developer-duno/sangga/deployments?sha=$SHA&per_page=1" --jq '.[0].id')
+gh api "repos/developer-duno/sangga/deployments/$DID/statuses" --jq '.[0].state + " " + .[0].environment + " " + .[0].created_at'
+# 기대: success Production <UTC 시각>(11-04 실측 d916da0 = success Production 2026-11-01T21:47:05Z) · DID 가 비면 아직 안 올라옴(머지 1~5분 뒤 다시) · failure/error 면 `vercel ls`(CLI 있음)·대시보드 빌드 로그부터 · 빌드 0ms + `git_info_fail` 은 재push(메모리 session-2026-10-10b)
+```
+③ **라이브 확인**(전부 공개 주소 · 로그인 없음):
+```bash
+python scripts/check_live_health.py                                                   # 기대: 「라이브 정상입니다.」(첫 HTML·구 입구 허브 200 · 반쪽 배포까지 잡는다)
+curl -s -o /dev/null -w '%{http_code}' https://sangga-one.vercel.app/ ; echo            # 200
+curl -s -o /dev/null -w '%{http_code}' "https://sangga-one.vercel.app/?sgg=11680" ; echo  # 200 (구 입구 허브 · middleware 갈래 · 결정 0043)
+curl -s -o /dev/null -w '%{http_code}' https://sangga-one.vercel.app/sitemap.xml ; echo  # 200
+curl -s https://sangga-one.vercel.app/ | grep -o 'assets/index-[A-Za-z0-9_-]*[.]js' | head -1   # 번들 이름(배포마다 바뀐다 · 11-04 실측 index-D2YLM-D8.js)
+curl -s "https://sangga-one.vercel.app/<위 번들 경로>" | grep -c '<바뀐 글자>'              # 화면 글자를 바꿨으면 ≥ 1 · 0 이면 옛 번들(캐시) 또는 배포 전 — 숫자로 보고
+```
+바뀐 화면·버튼·그림은 응답 코드만으로 끝내지 않는다 — 스킬 **`live-verify`**(playwright chromium·webkit · 휴대폰 390 + PC 1280 · 바뀐 자리가 **실제로 보이는지**, 본보기 = 11-02 PR⑥ `pr6-live.mjs` 7곳 · 결과는 「N/N」 숫자로). DB 함수·권한을 바꿨으면 `python scripts/post_load.py --check`(허용 N · 정본 함수 드리프트 0)도 같이.
+④ **로그인 뒤 화면 = 해당 없음**(이 사이트엔 로그인이 없다).
+⑤ 첫 HTML·sitemap 이 바뀐 배포면 `python scripts/indexnow_ping.py`(명령 표)까지가 한 세트.
