@@ -689,7 +689,7 @@ class TestRealRunMutations:
 
 
 def _forward_guard(received):
-    """적재기 build_sql 에서 받은 날 앞으로만 관문(do 블록) 하나만 떼어 낸다 — \copy 는 psycopg2 로 못 돌린다."""
+    r"""적재기 build_sql 에서 받은 날 앞으로만 관문(do 블록) 하나만 떼어 낸다 — \copy 는 psycopg2 로 못 돌린다."""
     sql = L.build_sql({"closure": "c.csv", "pnu": "p.csv", "bjd": "b.csv"}, {"closure": 0, "pnu": 0, "bjd": 0}, received)
     m = re.search(r"(?ms)^do \$\$\nbegin\n  if exists \(select 1 from daejeon_closure_release where received_on > .*?^end \$\$;", sql)
     assert m, "받은 날 관문을 못 찾았다"

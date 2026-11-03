@@ -31,7 +31,9 @@ for _p in (os.path.join(ROOT, "scripts"), os.path.join(ROOT, "scripts", "collect
 
 import load_seoul_subway as L  # noqa: E402
 
-REAL_RAW = "D:/tmp/sangga-wave3/pr6-prework/raw"
+REAL_RAW = os.path.join(ROOT, "data", "raw", "seoul_subway")   # 정본 원본(본 폴더만 · 워크트리·CI 는 skip)
+REAL_MASTER = "20261102.json"
+REAL_RIDE = re.compile(r"^(\d{6})_20261102\.json$")              # 11-02 받은 202101~202609 고정 — 새 달·다시 받은 판은 안 섞는다
 MIGRATION = sorted(__import__("glob").glob(os.path.join(ROOT, "supabase", "migrations", "*_seoul_subway.sql")))
 LAT0, LNG0 = 37.5, 127.0
 M_PER_DEG_LAT = 111194.93           # 6371008.8 × π / 180
@@ -402,17 +404,18 @@ def real_rep(tmp_path_factory):
     raw = str(tmp_path_factory.mktemp("subway_raw"))
     os.makedirs(os.path.join(raw, "master"))
     os.makedirs(os.path.join(raw, "ridership"))
-    shutil.copyfile(os.path.join(REAL_RAW, "station_master.json"), os.path.join(raw, "master", "20261102.json"))
-    for n in os.listdir(REAL_RAW):
-        m = re.match(r"ridership_(\d{6})\.json$", n)
-        if m:
-            shutil.copyfile(os.path.join(REAL_RAW, n), os.path.join(raw, "ridership", "{}_20261102.json".format(m.group(1))))
+    shutil.copyfile(os.path.join(REAL_RAW, "master", REAL_MASTER), os.path.join(raw, "master", REAL_MASTER))
+    src = os.path.join(REAL_RAW, "ridership")
+    for n in os.listdir(src):
+        m = REAL_RIDE.match(n)
+        if m and "202101" <= m.group(1) <= "202609":
+            shutil.copyfile(os.path.join(src, n), os.path.join(raw, "ridership", n))
     return L.scan(raw)
 
 
 def test_real_data_passes_every_gate(real_rep):
     assert real_rep["problems"] == []
-    assert len(real_rep["months"]) == 69 and real_rep["empty"] == ["202610"] and real_rep["gaps"] == []
+    assert len(real_rep["months"]) == 69 and real_rep["empty"] == [] and real_rep["gaps"] == []
 
 
 def test_real_data_join_and_rows(real_rep):

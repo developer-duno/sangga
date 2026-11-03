@@ -227,9 +227,10 @@ def test_pick_newest_date_per_quarter_and_skip_pages(tmp_path):
 # ── 5. 값 바뀐 분기 ──────────────────────────────────────────────────────────
 
 
-def scan_three(tmp_path, service, values, extra_last=False):
+def scan_three(tmp_path, service, values, extra_last=False, follow=False):
+    """follow=True 면 D2 도 D1 과 같은 값을 따라 바뀐다(둘 다 바뀜 = 과반) · False 면 D2 는 5.0 고정(1/2 = 과반 아님)."""
     for q, v in zip(("20211", "20212", "20213"), values):
-        rows = [raw_row(service, q, D1, v), raw_row(service, q, D2, 5.0)]
+        rows = [raw_row(service, q, D1, v), raw_row(service, q, D2, v if follow else 5.0)]
         if extra_last and q == "20213":
             rows.append(raw_row(service, q, "3110003", 7.0))
         write_q(tmp_path, service, q, rows)
@@ -242,14 +243,16 @@ def test_value_quarter_no_change_is_the_first(tmp_path, small_ranges):
 
 
 def test_value_quarter_middle_change(tmp_path, small_ranges):
-    rep = scan_three(tmp_path, "worker", (10.0, 11.0, 11.0))
-    assert rep["value_quarter"] == "20212" and rep["changes"] == {"20212": 1, "20213": 0}
+    rep = scan_three(tmp_path, "worker", (10.0, 11.0, 11.0), follow=True)
+    assert rep["value_quarter"] == "20212" and rep["changes"] == {"20212": 2, "20213": 0}
+    assert rep["common"] == {"20212": 2, "20213": 2}
 
 
 def test_value_quarter_ignores_districts_on_one_side(tmp_path, small_ranges):
     """⛔ 상권이 하나 새로 들어온 것만으로 '바뀜'이 되지 않는다(10-31 실측 상주 20242 꼴)."""
-    rep = scan_three(tmp_path, "resident", (10.0, 11.0, 11.0), extra_last=True)
+    rep = scan_three(tmp_path, "resident", (10.0, 11.0, 11.0), extra_last=True, follow=True)
     assert rep["value_quarter"] == "20212"
+    assert rep["common"]["20213"] == 2                                          # 새 상권은 분모에도 안 든다
     assert L.changed_districts({D1: (1,)}, {D1: (1,), D2: (2,)}) == 0          # 양성 대조 짝 ↓
     assert L.changed_districts({D1: (1,)}, {D1: (2,), D2: (2,)}) == 1
 
@@ -259,8 +262,23 @@ def test_new_district_alone_does_not_move_the_value_quarter(tmp_path, small_rang
     ② 같은 자료에서 값 하나만 바꾸면 → 그 분기."""
     rep = scan_three(tmp_path / "a", "resident", (10.0, 10.0, 10.0), extra_last=True)
     assert rep["value_quarter"] == "20211" and rep["changes"] == {"20212": 0, "20213": 0}
-    rep = scan_three(tmp_path / "b", "resident", (10.0, 10.0, 12.0), extra_last=True)
-    assert rep["value_quarter"] == "20213" and rep["changes"]["20213"] == 1
+    rep = scan_three(tmp_path / "b", "resident", (10.0, 10.0, 12.0), extra_last=True, follow=True)
+    assert rep["value_quarter"] == "20213" and rep["changes"]["20213"] == 2
+
+
+def test_one_corrected_district_does_not_move_the_value_quarter(tmp_path, small_ranges):
+    """⛔ 과반 문턱(pr3-review-blindspot 6) — 상권 둘 중 1곳만 고친 분기는 기준 분기를 못 옮긴다(1 × 2 > 2 아님).
+    문턱을 `> 0` 으로 되돌리면 20212 가 되어 빨강."""
+    rep = scan_three(tmp_path, "worker", (10.0, 11.0, 11.0))
+    assert rep["changes"] == {"20212": 1, "20213": 0} and rep["common"] == {"20212": 2, "20213": 2}
+    assert rep["value_quarter"] == "20211"
+
+
+@pytest.mark.parametrize("changed, expected", [(1, "20211"), (5, "20211"), (6, "20212")],
+                         ids=["1_of_10", "5_of_10_tie", "6_of_10"])
+def test_value_quarter_majority_threshold(changed, expected):
+    """둘 다 있는 상권 10곳 중 1곳 → 아님 · 5곳(딱 절반) → 아님 · 6곳 → 그 분기."""
+    assert L.value_quarter({"20212": changed}, ["20211", "20212"], {"20212": 10}) == expected
 
 
 def test_value_quarter_for_sales_compares_all_industries(tmp_path, small_ranges):

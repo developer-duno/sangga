@@ -425,6 +425,14 @@ class TestFreshness:
             assert src in cdf.SOURCE_HINTS and "'{}'".format(src) in schema
         assert "상권 상주·직장인구 (서울시)" not in cdf.SOURCE_HINTS
 
+    def test_openclose_hint_key_is_the_server_label_and_goes_first(self, schema):
+        """11번 줄(개업·폐업) 열쇠 글자 = schema 의 src 글자 · 20263 부터 4종보다 먼저(관문 ⒤)."""
+        src = "상권 개업·폐업 (서울시)"
+        assert src in cdf.SOURCE_HINTS and "select 11, '{}',".format(src) in schema
+        assert "collect_seoul_openclose.py --dry-run" in cdf.SOURCE_HINTS[src]
+        assert "4종보다 먼저" in cdf.SOURCE_HINTS[src]
+        assert "개업·폐업(11번 줄)을 먼저" in cdf.SEOUL_TRDAR_HINT and "관문 ⒤" in cdf.SEOUL_TRDAR_HINT
+
 
 class TestMigrationShape:
     def test_settings_before_begin_and_notify_after_commit(self, mig):

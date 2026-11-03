@@ -278,7 +278,9 @@ def build_issue_title(item) -> str:
 # 서울 상권 4종(결정 0045) 할 일 한 줄 — 추정매출·길단위인구 두 열쇠가 같이 쓴다.
 SEOUL_TRDAR_HINT = ("**서울 상권 4종을 함께**: `collect_seoul_trdar.py --service all --end-quarter <분기> --quarters 22` "
                     "수집 → `load_seoul_trdar.py --dry-run` → 실적재(네 표 한 트랜잭션) → `post_load.py` · "
-                    "`post_load.py --check` 순서입니다(결정 0045 · 한 서비스만 넣지 않는다).")
+                    "`post_load.py --check` 순서입니다(결정 0045 · 한 서비스만 넣지 않는다). "
+                    "서울시 게시를 먼저 확인(`--dry-run` 행 수) · 20263 부터는 개업·폐업(11번 줄)을 먼저 적재하고 4종은 "
+                    "다음 날(관문 ⒤ 가 개업·폐업 표의 업종을 본다).")
 
 # 자료별로 '적재만으로는 경보가 안 빠지는' 할 일 한 줄(2026-10-15a · 검사관 지적). 열쇠 = 서버 함수의 src 글자.
 SOURCE_HINTS = {
@@ -293,6 +295,11 @@ SOURCE_HINTS = {
                        "2025-01 부터 지난달까지 전부 다시 받기**(`data/raw/daejeon_8989/<받은 날 YYYYMMDD>/adstrd_clsbiz_monthly/`) → "
                        "`load_daejeon8989_closure.py --raw-dir <그 폴더> --dry-run` → 실적재 → `post_load.py` · "
                        "`post_load.py --check` → `backup_raw.py` 순서입니다(결정 0044)."),
+    # 결정 0033 — 서울시 상권 개업·폐업(11번 줄). 20263 부터 4종보다 먼저 넣는다(4종 관문 ⒤ 가 이 표의 업종을 본다).
+    "상권 개업·폐업 (서울시)": ("**서울시 게시를 먼저 확인(`collect_seoul_openclose.py --dry-run --end-quarter <분기> --quarters 22` "
+                           "행 수) → 수집 → `load_seoul_openclose.py --dry-run` → 적재 전 디스크 판정(지금 사용량 + 약 +290MB "
+                           "+ WAL 여유 1GB 가 디스크의 85% 미만) → 실적재 → `post_load.py` · `post_load.py --check`** 순서입니다"
+                           "(결정 0033 · 서울 상권 4종보다 먼저 — 4종은 다음 날)."),
     # 결정 0045(2026-10-31a) — 서울 상권 추정매출·길단위인구. 네 표를 한 트랜잭션으로 넣으므로(분할 적재 금지) 두 줄의
     #   할 일이 같다. 상주·직장인구 줄은 예정일이 없어(👤 10-31 「다음 예정 없음」) 이 경보가 안 뜬다 — 힌트 없음.
     "상권 추정매출 (서울시)": SEOUL_TRDAR_HINT,

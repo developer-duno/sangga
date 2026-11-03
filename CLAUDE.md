@@ -218,7 +218,7 @@ python scripts/collectors/load_seoul_openclose.py                  # district_op
 python scripts/collectors/collect_seoul_trdar.py --service all --dry-run --end-quarter <분기> --quarters 22   # 서비스마다 API 1회 + 장부 읽기만 (DB·파일 쓰기 0 · 개업·폐업 수집기와 같다)
 python scripts/collectors/collect_seoul_trdar.py --service all --end-quarter <분기> --quarters 22             # → data/raw/seoul_trdar/<service>/ (매출·길단위 = 분기 이어받기 · 상주·직장 = 서울시가 분기 인자를 무시해 쪽 이어받기 뒤 분기 파일로 나눔)
 python scripts/collectors/load_seoul_trdar.py --dry-run           # 관문 ⒜~⒣ + 서비스마다 최근 분기·값 바뀐 분기 표 (DB·파일 쓰기 0)
-python scripts/collectors/load_seoul_trdar.py                     # 네 표 분기 단위 교체 + 표지 seoul_trdar_release (한 트랜잭션) → post_load.py · --check
+python scripts/collectors/load_seoul_trdar.py                     # 네 표 분기 단위 교체 + 표지 seoul_trdar_release (한 트랜잭션) → post_load.py · --check → backup_raw.py
 # ↑ ⚠️ 적재 **전** 디스크 판정 — 지금 사용량 + 약 +310MB(추정) + WAL 여유 1GB 가 디스크의 85% 미만일 때만(넘으면 확장부터) · 상권 202609·R-ONE·개폐업·실거래·대장 적재와 **같은 날 넣지 않는다**(20263 부터 **개폐업을 먼저**, 4종은 그 다음 날 — 관문 ⒤ 가 개폐업 표의 업종 집합을 보므로 새 업종 코드가 생기면 4종이 먼저 들어갈 수 없다 · 2026-11-01 2단 맹점 검사) · 앞뒤 `pg_total_relation_size` 를 표 넷에 재서 PROGRESS 에
 # ↓ 대전 동네 폐업(결정 0044 — 대전시 상권분석 서비스 행정동 월별 폐업 · 분기마다 사람이 사이트에서 2025-01 부터 지난달까지 전부(한 달 한 파일) 받아 data/raw/daejeon_8989/<받은 날>/ 에 둔다 · 폴더 이름 = 받은 날)
 python scripts/collectors/load_daejeon8989_closure.py --raw-dir data/raw/daejeon_8989/<받은 날> --dry-run   # 관문·땅→동 지도·넣을 줄·창 미리보기 (DB·파일 쓰기 0 · openpyxl 필요)

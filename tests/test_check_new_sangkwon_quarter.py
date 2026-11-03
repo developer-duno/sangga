@@ -356,3 +356,33 @@ def test_latest_known_quarter_is_a_valid_date():
     assert v.startswith("20"), v
     assert "01" <= v[4:6] <= "12", v
     assert "01" <= v[6:8] <= "31", v
+
+
+class _FakeStream:
+    """main() 첫머리 출력 고르기를 기록하는 가짜 출력 — 터미널이 아님(파일·파이프로 돌린 꼴)."""
+
+    def __init__(self):
+        self.calls = []
+
+    def isatty(self):
+        return False
+
+    def reconfigure(self, **kw):
+        self.calls.append(kw)
+
+    def write(self, s):
+        return len(s)
+
+    def flush(self):
+        pass
+
+
+def test_main_sets_utf8_on_stdout_and_stderr(monkeypatch):
+    """cp949 콘솔·파일로 돌려도 한글이 죽지 않게 — 형제 감시 스크립트와 같은 꼴(stdout·stderr 둘 다 utf-8)."""
+    out, err = _FakeStream(), _FakeStream()
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(sys, "stderr", err)
+    with pytest.raises(SystemExit):
+        chk.main(["--help"])
+    want = [{"encoding": "utf-8", "errors": "replace"}]
+    assert out.calls[:1] == want and err.calls[:1] == want
