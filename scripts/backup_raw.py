@@ -26,6 +26,11 @@ data/raw 원본 데이터를 외부 저장소로 백업한다.
        외장 드라이브를 꽂지 않은 채 실행하면, 확인 없이는 엉뚱한 위치에 폴더를
        만들어 "백업했다"는 착각만 남는다.
 
+    4. **여유 공간 검사는 원본 전체가 아니라 「이번에 새로 복사할 양」으로 한다.**
+       /E 는 이미 백업에 있는 파일을 다시 쓰지 않는다. 원본 전체 크기와 비교하면
+       새로 복사할 양이 작아도 원본이 커지는 날 백업을 거부한다. 그래서 대상에 없거나
+       크기가 다른 파일의 원본 크기 합(compare_counts 재사용)만 여유 공간과 비교한다.
+
 사용법:
     python scripts/backup_raw.py --dry-run    # 무엇을 복사할지만 확인 (쓰기 0)
     python scripts/backup_raw.py              # 백업 실행 + 해시 목록 생성
@@ -363,11 +368,22 @@ def main():
 
     free = free_space_bytes(dest)
     if free is not None:
+        # 필요한 양 = 대상에 없거나 크기가 다른 파일의 원본 크기 합(robocopy /E 가 실제로
+        # 새로 쓰는 양). 이미 백업에 있는 파일은 공간을 다시 먹지 않는다 — 설계 판단 4.
+        # 대상 폴더가 아직 없으면 compare_counts 가 전부 빠진 것으로 세어 원본 전체가 된다.
+        missing_pre, mismatch_pre = compare_counts(entries, dest)
+        todo = set(missing_pre) | set(mismatch_pre)
+        need_bytes = sum(size for rel, size in entries if rel in todo)
         print("  대상 여유 공간 : {}".format(human_size(free)))
-        if free < total_bytes:
+        print(
+            "  이번에 새로 복사할 양 : {} (파일 {}개)".format(
+                human_size(need_bytes), len(todo)
+            )
+        )
+        if free < need_bytes:
             print(
-                "[에러] 여유 공간이 원본보다 작습니다 ({} < {}).".format(
-                    human_size(free), human_size(total_bytes)
+                "[에러] 여유 공간이 이번에 새로 복사할 양보다 작습니다 ({} < {}).".format(
+                    human_size(free), human_size(need_bytes)
                 )
             )
             return 1
