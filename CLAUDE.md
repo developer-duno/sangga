@@ -307,7 +307,7 @@ python scripts/backup_raw.py --verify           # 백업본을 다시 읽어 SHA
 ② **그 커밋의 배포가 성공인지** — 맨 위 기록이 아니라 **해시로** 고른다(Vercel 이 GitHub Deployments 에 적는다 · 7자리 짧은 해시로는 0건이 난다 → 전체 해시):
 ```bash
 SHA=$(git rev-parse HEAD)      # 합친 커밋 = 본 폴더 main 을 pull 한 뒤 · 다른 커밋이면 전체 해시를 직접
-DID=$(gh api "repos/developer-duno/sangga/deployments?sha=$SHA&per_page=1" --jq '.[0].id')
+DID=$(gh api "repos/developer-duno/sangga/deployments?sha=$SHA&environment=Production&per_page=1" --jq '.[0].id')
 gh api "repos/developer-duno/sangga/deployments/$DID/statuses" --jq '.[0].state + " " + .[0].environment + " " + .[0].created_at'
 # 기대: success Production <UTC 시각>(11-04 실측 d916da0 = success Production 2026-11-01T21:47:05Z) · DID 가 비면 아직 안 올라옴(머지 1~5분 뒤 다시) · failure/error 면 `vercel ls`(CLI 있음)·대시보드 빌드 로그부터 · 빌드 0ms + `git_info_fail` 은 재push(메모리 session-2026-10-10b)
 ```
