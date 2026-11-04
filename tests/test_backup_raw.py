@@ -375,3 +375,72 @@ class TestFreeSpace:
         """대상 폴더는 아직 없을 수 있다 — 상위로 거슬러 올라가 재야 한다."""
         free = free_space_bytes(str(tmp_path / "a" / "b" / "c"))
         assert free is not None and free > 0
+
+
+class TestFreeSpaceNeedsOnlyNewBytes:
+    """여유 공간 검사는 원본 전체가 아니라 「이번에 새로 복사할 양」과 비교한다.
+
+    robocopy /E 는 이미 백업에 있는 파일을 다시 쓰지 않는다. 원본 전체와 비교하면
+    새로 복사할 양이 작아도 원본이 커지는 날 백업을 거부한다(백로그 ⓙ).
+    가짜로 바꾸는 것은 free_space_bytes 하나뿐 — compare_counts·scan_source 는 진짜다.
+    """
+
+    def _run(self, monkeypatch, tmp_path, src_files, dst_files, free):
+        src = tmp_path / "src"
+        dst = tmp_path / "dst"
+        for name, n in src_files.items():
+            _write(str(src / name), b"x" * n)
+        for name, n in dst_files.items():
+            _write(str(dst / name), b"y" * n)
+        monkeypatch.setattr(backup_raw, "free_space_bytes", lambda _p: free)
+        monkeypatch.setattr(
+            sys, "argv", ["backup_raw.py", "--source", str(src), "--dest", str(dst), "--dry-run"]
+        )
+        return backup_raw.main()
+
+    def test_need_greater_than_free_fails(self, monkeypatch, tmp_path, capsys):
+        # 원본 3파일(10·20·30) 중 10·20 이 대상에 같은 크기로 있음 → 필요 30 > 여유 25
+        code = self._run(
+            monkeypatch, tmp_path, {"a": 10, "b": 20, "c": 30}, {"a": 10, "b": 20}, free=25
+        )
+        out = capsys.readouterr().out
+        assert code == 1
+        assert "여유 공간이 이번에 새로 복사할 양보다 작습니다" in out
+        assert "이번에 새로 복사할 양 : 30B (파일 1개)" in out
+
+    def test_total_greater_than_free_but_need_fits_passes(self, monkeypatch, tmp_path, capsys):
+        # 원본 전체 60 > 여유 25 이지만 전부 이미 백업돼 있어 필요 0 → 통과
+        code = self._run(
+            monkeypatch,
+            tmp_path,
+            {"a": 10, "b": 20, "c": 30},
+            {"a": 10, "b": 20, "c": 30},
+            free=25,
+        )
+        out = capsys.readouterr().out
+        assert code == 0
+        assert "이번에 새로 복사할 양 : 0B (파일 0개)" in out
+
+    def test_empty_destination_needs_whole_source(self, monkeypatch, tmp_path, capsys):
+        # 대상 폴더가 아직 없거나 비어 있으면 전부 빠진 것 → 필요 = 원본 전체 60 > 여유 25
+        code = self._run(monkeypatch, tmp_path, {"a": 10, "b": 20, "c": 30}, {}, free=25)
+        out = capsys.readouterr().out
+        assert code == 1
+        assert "이번에 새로 복사할 양 : 60B (파일 3개)" in out
+
+    def test_size_mismatch_file_counts_as_need(self, monkeypatch, tmp_path, capsys):
+        # a 는 대상에 있지만 크기가 달라 다시 복사된다 → 필요 10 > 여유 5
+        code = self._run(
+            monkeypatch, tmp_path, {"a": 10, "b": 20}, {"a": 3, "b": 20}, free=5
+        )
+        out = capsys.readouterr().out
+        assert code == 1
+        assert "이번에 새로 복사할 양 : 10B (파일 1개)" in out
+
+    def test_free_equal_to_need_passes(self, monkeypatch, tmp_path, capsys):
+        # 경계 — 여유 30 = 필요 30 이면 들어간다(통과) · 여유 29 면 거부
+        src = {"a": 10, "b": 20, "c": 30}
+        dst = {"a": 10, "b": 20}
+        assert self._run(monkeypatch, tmp_path, src, dst, free=30) == 0
+        capsys.readouterr()
+        assert self._run(monkeypatch, tmp_path, src, dst, free=29) == 1
