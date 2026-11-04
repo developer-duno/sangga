@@ -348,6 +348,16 @@ def check(site: str, sleep=time.sleep) -> list[str]:
 
 
 def main() -> int:
+    # cp949 콘솔·파일로 돌려도 한글 출력이 죽지 않게 — 형제 감시 스크립트와 같은 꼴(stdout·stderr 둘 다).
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream.isatty():
+                stream.reconfigure(errors="replace")
+            else:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
     parser = argparse.ArgumentParser(description="라이브 사이트가 서 있는지 밖에서 확인한다.")
     parser.add_argument(
         "--site",

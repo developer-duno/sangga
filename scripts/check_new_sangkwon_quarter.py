@@ -175,6 +175,16 @@ def write_github_output(new_quarters):
 
 
 def main(argv=None):
+    # cp949 콘솔·파일로 돌려도 한글 출력이 죽지 않게 — 형제 감시 스크립트와 같은 꼴(stdout·stderr 둘 다).
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream.isatty():
+                stream.reconfigure(errors="replace")
+            else:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
     ap = argparse.ArgumentParser(description="새 분기 상권정보 스냅샷 감시")
     ap.add_argument("--json", action="store_true", help="기계용 JSON 출력")
     args = ap.parse_args(argv)

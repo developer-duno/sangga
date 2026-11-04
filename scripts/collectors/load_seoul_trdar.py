@@ -30,7 +30,7 @@
 값이 바뀐 분기 (표지 seoul_trdar_release.value_quarter)
 --------------------------------------------------------
 서비스마다 분기 오름차순으로 이웃 분기의 **상권별 숫자 칸 묶음**(추정매출은 그 상권 업종 행 전부)을 견주어 「하나라도
-바뀐 상권이 있는 마지막 분기」(없으면 첫 분기). ⛔ **이웃 두 분기에 둘 다 있는 상권만** 견준다 — 한쪽에만 있는 상권
+바뀐 상권이 둘 다 있는 상권의 과반인 마지막 분기」(없으면 첫 분기 · 과반 = 상권 1곳 정정으로 기준 해가 안 바뀌게 — 11-04). ⛔ **이웃 두 분기에 둘 다 있는 상권만** 견준다 — 한쪽에만 있는 상권
 (분기마다 상권 수가 1,625~1,635 로 흔들린다)까지 세면 상주가 값을 안 바꾼 20242 가 기준 분기가 된다(10-31 실측). 상주·직장은 서울시가 4분기 코드에서만 값을 바꾼다(10-31 실측 —
 상주 20234 · 직장 20244 의 값이 20262 까지 그대로). 추정매출·길단위인구는 분기마다 바뀌어 자연히 max 와 같다.
 
@@ -207,10 +207,22 @@ def changed_districts(prev_sig, cur_sig):
     return sum(1 for d in set(prev_sig) & set(cur_sig) if prev_sig[d] != cur_sig[d])
 
 
-def value_quarter(changes, quarters):
-    """changes = {분기: 앞 분기 대비 바뀐 상권 수}(첫 분기 제외). 바뀐 상권이 있는 마지막 분기 · 없으면 첫 분기."""
+def common_districts(prev_sig, cur_sig):
+    """이웃 두 분기에 **둘 다 있는** 상권 수 — value_quarter 과반 문턱의 분모."""
+    return len(set(prev_sig) & set(cur_sig))
+
+
+def value_quarter(changes, quarters, common):
+    """changes = {분기: 앞 분기 대비 바뀐 상권 수} · common = {분기: 앞 분기와 둘 다 있는 상권 수}(둘 다 첫 분기 제외).
+
+    바뀐 상권이 **과반**(`바뀐 수 × 2 > 둘 다 있는 수` — 같으면 아님)인 마지막 분기 · 없으면 첫 분기.
+
+    왜 과반인가(PR③ 맹점 검사 6 · .omc/handoffs/pr3-review-blindspot.md): 문턱이 `> 0` 이면 서울시가 상권 1곳만
+    고쳐도 그 분기가 기준이 되어 서울 전 상권 카드의 「YYYY년 기준」이 바뀐다. 과반이면 1곳 정정으로 기준 해가 안
+    바뀐다. 실자료(11-04 dry-run)는 값 바뀐 분기에 상권 약 1,630곳 중 1,560~1,648곳이 바뀌어 결과가 그대로다.
+    """
     qs = sorted(quarters)
-    hit = [q for q in qs[1:] if changes.get(q, 0) > 0]
+    hit = [q for q in qs[1:] if changes.get(q, 0) * 2 > common.get(q, 0)]
     return hit[-1] if hit else qs[0]
 
 
@@ -296,7 +308,7 @@ def scan_service(service, sources, known=None, writer=None):
 
     writer 가 있으면 읽은 줄을 바로 CSV 로 쓴다. 돌려줌 = 리포트 dict.
     """
-    rep = {"rows": {}, "src": {}, "problems": {}, "changes": {}, "induty_sets": {}}
+    rep = {"rows": {}, "src": {}, "problems": {}, "changes": {}, "common": {}, "induty_sets": {}}
     prev_sig = None
     for q in sorted(sources):
         try:
@@ -313,6 +325,7 @@ def scan_service(service, sources, known=None, writer=None):
         sig = district_signature(service, rows)
         if prev_sig is not None:
             rep["changes"][q] = changed_districts(prev_sig, sig)
+            rep["common"][q] = common_districts(prev_sig, sig)
         prev_sig = sig
         if service == "sales":
             rep["induty_sets"][q] = frozenset(r[2] for r in rows)
@@ -321,7 +334,7 @@ def scan_service(service, sources, known=None, writer=None):
                 writer.writerow(["" if v is None else v for v in r])
     qs = sorted(rep["rows"])
     rep["max_quarter"] = qs[-1] if qs else None
-    rep["value_quarter"] = value_quarter(rep["changes"], qs) if qs else None
+    rep["value_quarter"] = value_quarter(rep["changes"], qs, rep["common"]) if qs else None
     gaps, older = missing_quarters(qs)
     if not sources:
         rep["problems"]["⒢"] = ["⒢ {} raw 가 없습니다 — 네 서비스를 함께 넣는다(분할 적재 금지)".format(service)]
@@ -486,9 +499,9 @@ def main(argv=None):
         vq = r["value_quarter"]
         print("  {:<9} {:>6} {:>9,}  {:<8} {:<10} {}".format(
             s, len(r["rows"]), sum(r["rows"].values()), r["max_quarter"] or "-", vq or "-",
-            r["changes"].get(vq, "-") if vq else "-"))
+            "{}/{}".format(r["changes"][vq], r["common"][vq]) if vq in r["changes"] else "-"))
     print("  ⓘ 「바뀐 상권」은 이웃 두 분기에 둘 다 있는 상권 가운데 숫자가 하나라도 바뀐 상권이다"
-          "(한쪽에만 있는 상권은 안 센다).")
+          "(한쪽에만 있는 상권은 안 센다 · 뒤 숫자 = 둘 다 있는 상권 수 · 과반이어야 「값 바뀐 분기」).")
     if known is None:
         print("  ⓘ public/districts.geojson 이 없어 관문 ⒜ 미리보기를 건너뜁니다 — 적재 SQL 이 DB 에서 본다.")
     for w in induty_warnings(reports["sales"]) + stale_tail_warnings(reports):
