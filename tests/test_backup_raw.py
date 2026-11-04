@@ -436,3 +436,11 @@ class TestFreeSpaceNeedsOnlyNewBytes:
         out = capsys.readouterr().out
         assert code == 1
         assert "이번에 새로 복사할 양 : 10B (파일 1개)" in out
+
+    def test_free_equal_to_need_passes(self, monkeypatch, tmp_path, capsys):
+        # 경계 — 여유 30 = 필요 30 이면 들어간다(통과) · 여유 29 면 거부
+        src = {"a": 10, "b": 20, "c": 30}
+        dst = {"a": 10, "b": 20}
+        assert self._run(monkeypatch, tmp_path, src, dst, free=30) == 0
+        capsys.readouterr()
+        assert self._run(monkeypatch, tmp_path, src, dst, free=29) == 1
